@@ -67,20 +67,28 @@ static int remove_object(struct infs_volume *vol, const char *path, int want_dir
 
 int infs_unlink(struct infs_volume *vol, const char *path)
 {
-    if (!vol->writable) {
-        errno = EROFS;
+    if (tx_begin(vol) != 0)
         return -1;
+    int rc = remove_object(vol, path, 0);
+    if (rc != 0) {
+        int saved = errno;
+        tx_abort(vol);
+        errno = saved;
     }
-    return remove_object(vol, path, 0);
+    return rc;
 }
 
 int infs_rmdir(struct infs_volume *vol, const char *path)
 {
-    if (!vol->writable) {
-        errno = EROFS;
+    if (tx_begin(vol) != 0)
         return -1;
+    int rc = remove_object(vol, path, 1);
+    if (rc != 0) {
+        int saved = errno;
+        tx_abort(vol);
+        errno = saved;
     }
-    return remove_object(vol, path, 1);
+    return rc;
 }
 
 static int id_is_ancestor(struct infs_volume *vol, const uint8_t ancestor[16],
@@ -108,7 +116,7 @@ static int id_is_ancestor(struct infs_volume *vol, const uint8_t ancestor[16],
     return -1;
 }
 
-int infs_rename(struct infs_volume *vol, const char *oldpath, const char *newpath)
+static int rename_tx(struct infs_volume *vol, const char *oldpath, const char *newpath)
 {
     if (!vol->writable) {
         errno = EROFS;
@@ -202,7 +210,20 @@ int infs_rename(struct infs_volume *vol, const char *oldpath, const char *newpat
     return infs_volume_sync(vol);
 }
 
-static int mutate_stat(struct infs_volume *vol, const char *path,
+int infs_rename(struct infs_volume *vol, const char *oldpath, const char *newpath)
+{
+    if (tx_begin(vol) != 0)
+        return -1;
+    int rc = rename_tx(vol, oldpath, newpath);
+    if (rc != 0) {
+        int saved = errno;
+        tx_abort(vol);
+        errno = saved;
+    }
+    return rc;
+}
+
+static int mutate_stat_tx(struct infs_volume *vol, const char *path,
                        int op, uint64_t a, uint64_t b,
                        const struct timespec tv[2])
 {
@@ -246,14 +267,29 @@ static int mutate_stat(struct infs_volume *vol, const char *path,
     return infs_volume_sync(vol);
 }
 
+static int mutate_stat_guarded(struct infs_volume *vol, const char *path,
+                               int op, uint64_t a, uint64_t b,
+                               const struct timespec tv[2])
+{
+    if (tx_begin(vol) != 0)
+        return -1;
+    int rc = mutate_stat_tx(vol, path, op, a, b, tv);
+    if (rc != 0) {
+        int saved = errno;
+        tx_abort(vol);
+        errno = saved;
+    }
+    return rc;
+}
+
 int infs_chmod(struct infs_volume *vol, const char *path, mode_t mode)
 {
-    return mutate_stat(vol, path, 1, mode, 0, NULL);
+    return mutate_stat_guarded(vol, path, 1, mode, 0, NULL);
 }
 
 int infs_chown(struct infs_volume *vol, const char *path, uid_t uid, gid_t gid)
 {
-    return mutate_stat(vol, path, 2, uid, gid, NULL);
+    return mutate_stat_guarded(vol, path, 2, uid, gid, NULL);
 }
 
 int infs_utimens(struct infs_volume *vol, const char *path,
@@ -261,7 +297,7 @@ int infs_utimens(struct infs_volume *vol, const char *path,
 {
     if (!tv) {
         struct timespec now[2] = {{0, UTIME_NOW}, {0, UTIME_NOW}};
-        return mutate_stat(vol, path, 3, 0, 0, now);
+        return mutate_stat_guarded(vol, path, 3, 0, 0, now);
     }
-    return mutate_stat(vol, path, 3, 0, 0, tv);
+    return mutate_stat_guarded(vol, path, 3, 0, 0, tv);
 }

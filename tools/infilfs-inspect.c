@@ -70,6 +70,19 @@ int main(int argc, char **argv)
     printf("  Root object:     block %" PRIu64 " (%s)\n",
            root_no, root_ok ? "valid" : "INVALID");
     printf("  Valid checkpoints: %u/%u\n", valid, INFS_CHECKPOINT_COUNT);
+    printf("  Checkpoint generations:");
+    const uint64_t total_blocks = size_bytes / INFS_BLOCK_SIZE;
+    const uint64_t cp[INFS_CHECKPOINT_COUNT] = {0, total_blocks / 2u, total_blocks - 1u};
+    for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i) {
+        uint8_t raw[INFS_BLOCK_SIZE];
+        struct infs_superblock_disk copy;
+        if (infs_pread_full(fd, raw, sizeof(raw), (off_t)(cp[i] * INFS_BLOCK_SIZE)) == 0 &&
+            infs_decode_superblock(raw, &copy) == 0)
+            printf(" %" PRIu64, le64toh(copy.generation));
+        else
+            printf(" invalid");
+    }
+    printf("\n");
 
     close(fd);
     return root_ok && index_ok ? 0 : 1;

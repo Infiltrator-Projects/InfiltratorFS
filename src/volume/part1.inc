@@ -12,6 +12,14 @@ static size_t align8(size_t n)
     return (n + (INFS_DIRENT_ALIGN - 1u)) & ~(size_t)(INFS_DIRENT_ALIGN - 1u);
 }
 
+static ino_t object_ino(const uint8_t object_id[16])
+{
+    uint64_t v = infs_crc64_ecma(object_id, 16);
+    if (v == 0)
+        v = 1;
+    return (ino_t)v;
+}
+
 static int id_is_zero(const uint8_t id[16])
 {
     uint8_t v = 0;
@@ -65,18 +73,86 @@ static int read_object(struct infs_volume *vol, uint64_t block_no,
         errno = EIO;
         return -1;
     }
+    const struct infs_object_header_disk *hdr =
+        (const struct infs_object_header_disk *)block;
+    if (!vol->tx_active &&
+        le64toh(hdr->generation) > le64toh(vol->sb.generation)) {
+        errno = EIO;
+        return -1;
+    }
     return 0;
 }
 
-static int write_object(struct infs_volume *vol, uint64_t block_no,
-                        uint8_t block[INFS_BLOCK_SIZE])
+static int alloc_run(struct infs_volume *vol, uint64_t wanted,
+                     uint64_t *start_out, uint64_t *count_out);
+static void free_run(struct infs_volume *vol, uint64_t start, uint64_t count);
+static int index_repoint(struct infs_volume *vol, const uint8_t id[16],
+                         uint64_t object_block, uint16_t type);
+
+static int tx_begin(struct infs_volume *vol)
 {
-    struct infs_object_header_disk *hdr =
-        (struct infs_object_header_disk *)block;
-    hdr->generation = htole64(le64toh(vol->sb.generation) + 1u);
-    if (infs_object_finalize(block) != 0)
+    if (!vol || !vol->writable) {
+        errno = EROFS;
         return -1;
-    return write_block(vol, block_no, block);
+    }
+    if (vol->tx_active)
+        return 0;
+
+    vol->tx_base_bitmap = malloc(vol->bitmap_bytes);
+    if (!vol->tx_base_bitmap)
+        return -1;
+    memcpy(vol->tx_base_bitmap, vol->bitmap, vol->bitmap_bytes);
+    memcpy(&vol->tx_base_sb, &vol->sb, sizeof(vol->sb));
+    vol->tx_deferred_count = 0;
+    vol->tx_active = 1;
+    return 0;
+}
+
+static void tx_abort(struct infs_volume *vol)
+{
+    if (!vol || !vol->tx_active)
+        return;
+    memcpy(&vol->sb, &vol->tx_base_sb, sizeof(vol->sb));
+    memcpy(vol->bitmap, vol->tx_base_bitmap, vol->bitmap_bytes);
+    free(vol->tx_base_bitmap);
+    vol->tx_base_bitmap = NULL;
+    vol->tx_deferred_count = 0;
+    vol->tx_active = 0;
+}
+
+static int tx_defer_range(struct infs_volume *vol, uint64_t start, uint64_t count)
+{
+    if (!count)
+        return 0;
+    if (vol->tx_deferred_count &&
+        vol->tx_deferred[vol->tx_deferred_count - 1u].start +
+            vol->tx_deferred[vol->tx_deferred_count - 1u].count == start) {
+        vol->tx_deferred[vol->tx_deferred_count - 1u].count += count;
+        return 0;
+    }
+    if (vol->tx_deferred_count == vol->tx_deferred_capacity) {
+        size_t next = vol->tx_deferred_capacity ? vol->tx_deferred_capacity * 2u : 16u;
+        struct infs_deferred_range *grown =
+            realloc(vol->tx_deferred, next * sizeof(*grown));
+        if (!grown)
+            return -1;
+        vol->tx_deferred = grown;
+        vol->tx_deferred_capacity = next;
+    }
+    vol->tx_deferred[vol->tx_deferred_count].start = start;
+    vol->tx_deferred[vol->tx_deferred_count].count = count;
+    ++vol->tx_deferred_count;
+    return 0;
+}
+
+static uint64_t bitmap_free_count(const struct infs_volume *vol)
+{
+    uint64_t total = le64toh(vol->sb.total_blocks);
+    uint64_t free_count = 0;
+    for (uint64_t b = 0; b < total; ++b)
+        if (!bitmap_get(vol->bitmap, b))
+            ++free_count;
+    return free_count;
 }
 
 static int zero_blocks(struct infs_volume *vol, uint64_t start, uint64_t count)
@@ -92,22 +168,22 @@ static int zero_blocks(struct infs_volume *vol, uint64_t start, uint64_t count)
 static int alloc_run(struct infs_volume *vol, uint64_t wanted,
                      uint64_t *start_out, uint64_t *count_out)
 {
-    if (!vol->writable) {
-        errno = EROFS;
+    if (!vol || !start_out || !count_out) {
+        errno = EINVAL;
         return -1;
     }
+    if (tx_begin(vol) != 0)
+        return -1;
     if (wanted == 0 || le64toh(vol->sb.free_blocks) == 0) {
         errno = ENOSPC;
         return -1;
     }
 
     uint64_t total = le64toh(vol->sb.total_blocks);
-    uint64_t bitmap_end = le64toh(vol->sb.bitmap_start_block) +
-                          le64toh(vol->sb.bitmap_block_count);
     uint64_t best_start = 0;
     uint64_t best_count = 0;
 
-    for (uint64_t b = bitmap_end; b < total; ) {
+    for (uint64_t b = 1; b < total; ) {
         while (b < total && bitmap_get(vol->bitmap, b))
             ++b;
         if (b == total)
@@ -146,15 +222,114 @@ static int alloc_run(struct infs_volume *vol, uint64_t wanted,
     return 0;
 }
 
+static int alloc_exact_run(struct infs_volume *vol, uint64_t wanted,
+                           uint64_t *start_out)
+{
+    if (!wanted || !start_out) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (tx_begin(vol) != 0)
+        return -1;
+    uint64_t total = le64toh(vol->sb.total_blocks);
+    for (uint64_t start = 1; start + wanted <= total; ) {
+        while (start < total && bitmap_get(vol->bitmap, start))
+            ++start;
+        if (start + wanted > total)
+            break;
+        uint64_t n = 0;
+        while (n < wanted && !bitmap_get(vol->bitmap, start + n))
+            ++n;
+        if (n == wanted) {
+            for (uint64_t i = 0; i < wanted; ++i)
+                bitmap_set(vol->bitmap, start + i, 1);
+            vol->sb.free_blocks = htole64(le64toh(vol->sb.free_blocks) - wanted);
+            if (zero_blocks(vol, start, wanted) != 0) {
+                for (uint64_t i = 0; i < wanted; ++i)
+                    bitmap_set(vol->bitmap, start + i, 0);
+                vol->sb.free_blocks = htole64(le64toh(vol->sb.free_blocks) + wanted);
+                return -1;
+            }
+            *start_out = start;
+            return 0;
+        }
+        start += n ? n : 1u;
+    }
+    errno = ENOSPC;
+    return -1;
+}
+
 static void free_run(struct infs_volume *vol, uint64_t start, uint64_t count)
 {
+    if (!vol || !count)
+        return;
+    if (tx_begin(vol) != 0)
+        return;
     uint64_t total = le64toh(vol->sb.total_blocks);
-    for (uint64_t b = start; b < start + count && b < total; ++b) {
-        if (bitmap_get(vol->bitmap, b)) {
+    uint64_t end = start + count;
+    if (end < start || end > total)
+        end = total;
+
+    uint64_t b = start;
+    while (b < end) {
+        if (!bitmap_get(vol->bitmap, b)) {
+            ++b;
+            continue;
+        }
+        if (!bitmap_get(vol->tx_base_bitmap, b)) {
             bitmap_set(vol->bitmap, b, 0);
             vol->sb.free_blocks = htole64(le64toh(vol->sb.free_blocks) + 1u);
+            ++b;
+            continue;
         }
+
+        uint64_t run = b;
+        while (b < end && bitmap_get(vol->bitmap, b) &&
+               bitmap_get(vol->tx_base_bitmap, b))
+            ++b;
+        (void)tx_defer_range(vol, run, b - run);
     }
+}
+
+static int write_object(struct infs_volume *vol, uint64_t block_no,
+                        uint8_t block[INFS_BLOCK_SIZE])
+{
+    if (tx_begin(vol) != 0)
+        return -1;
+
+    struct infs_object_header_disk *hdr =
+        (struct infs_object_header_disk *)block;
+    hdr->generation = htole64(le64toh(vol->tx_base_sb.generation) + 1u);
+    if (infs_object_finalize(block) != 0)
+        return -1;
+
+    uint64_t new_block = 0, got = 0;
+    if (alloc_run(vol, 1, &new_block, &got) != 0)
+        return -1;
+    if (got != 1) {
+        errno = EIO;
+        return -1;
+    }
+    if (write_block(vol, new_block, block) != 0) {
+        free_run(vol, new_block, 1);
+        return -1;
+    }
+
+    uint16_t type = le16toh(hdr->object_type);
+    if (type == INFS_OBJECT_INDEX) {
+        vol->sb.object_index_block = htole64(new_block);
+        free_run(vol, block_no, 1);
+        return 0;
+    }
+
+    if (index_repoint(vol, hdr->object_id, new_block, type) != 0) {
+        free_run(vol, new_block, 1);
+        return -1;
+    }
+    if (memcmp(hdr->object_id, vol->sb.root_object_id, 16) == 0)
+        vol->sb.root_object_block = htole64(new_block);
+    free_run(vol, block_no, 1);
+    return 0;
 }
 
 static int index_load(struct infs_volume *vol, uint8_t block[INFS_BLOCK_SIZE],
@@ -216,6 +391,28 @@ static int index_find(struct infs_volume *vol, const uint8_t id[16],
                 out->type = le16toh(entries[i].object_type);
             }
             return 0;
+        }
+    }
+    errno = ENOENT;
+    return -1;
+}
+
+static int index_repoint(struct infs_volume *vol, const uint8_t id[16],
+                         uint64_t object_block, uint16_t type)
+{
+    uint8_t block[INFS_BLOCK_SIZE];
+    struct infs_index_payload_disk *payload;
+    uint64_t index_block = le64toh(vol->sb.object_index_block);
+    if (index_load(vol, block, &payload) != 0)
+        return -1;
+    uint32_t count = le32toh(payload->entry_count);
+    struct infs_index_entry_disk *entries =
+        (struct infs_index_entry_disk *)(payload + 1);
+    for (uint32_t i = 0; i < count; ++i) {
+        if (memcmp(entries[i].object_id, id, 16) == 0) {
+            entries[i].object_block = htole64(object_block);
+            entries[i].object_type = htole16(type);
+            return write_object(vol, index_block, block);
         }
     }
     errno = ENOENT;

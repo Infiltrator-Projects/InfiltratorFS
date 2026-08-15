@@ -27,21 +27,25 @@
 - [x] Add bounds checking and corrupted-image rejection tests.
 - [x] Add byte-identity, zero-fill, truncate and cross-directory-move tests.
 - [x] Run the Phase 1 suite under AddressSanitizer and UndefinedBehaviorSanitizer.
-- [ ] Run the mounted copy-tree milestone on Linux Mint with real FUSE3 and `/dev/fuse`.
+- [x] Run the mounted copy-tree milestone on Linux Mint with real FUSE3 and `/dev/fuse` (15 August 2026; unmount/remount and byte-identity verification passed).
 
 Milestone: mount a formatted image, copy a directory tree through ordinary Linux file operations, unmount it, remount it and recover byte-identical data.
 
-## Phase 2 — transactional metadata
+## Phase 2 — transactional metadata — core complete
 
-- [ ] Replace mutable metadata updates with copy-on-write objects.
-- [ ] Replace the single-block object index with a generation-aware scalable tree.
-- [ ] Add generation-aware metadata roots.
-- [ ] Publish commits atomically through checkpoint generations.
-- [ ] Separate allocation reservation from committed allocation state.
-- [ ] Add crash-injection test harness.
-- [ ] Prove generation N remains mountable after interruption at every simulated write boundary while constructing N+1.
+- [x] Replace mutable metadata updates with copy-on-write objects.
+- [x] Make object-index updates copy-on-write while preserving 128-bit object identity.
+- [x] Make the authoritative allocation bitmap copy-on-write.
+- [x] Separate transaction allocation reservations from committed allocation state.
+- [x] Defer reclamation of superseded committed blocks until the new checkpoint is durable.
+- [x] Publish generation N+1 through one durable checkpoint commit point, then replicate the remaining copies.
+- [x] Heal mixed-generation checkpoint copies on writable open before allocating again.
+- [x] Add deterministic crash-injection points before bitmap publication, after bitmap publication and after first-checkpoint publication.
+- [x] Prove pre-commit interruptions mount generation N and post-commit interruption mounts N+1.
+- [x] Verify repeated CoW metadata transactions reclaim superseded blocks rather than leaking free space.
+- [ ] Replace the one-block object index with a scalable tree (moved to Phase 5; not required for transaction correctness).
 
-Milestone: writable crash-consistent filesystem without offline journal replay.
+Milestone: crash-consistent metadata publication without journal replay. Existing allocated file-data overwrites are not yet old-or-new atomic and remain a later data-integrity/data-CoW problem.
 
 ## Phase 3 — integrity
 
@@ -65,6 +69,7 @@ Milestone: writable crash-consistent filesystem without offline journal replay.
 
 ## Phase 5 — scale and performance
 
+- [ ] Replace the one-block object index with a scalable generation-aware tree.
 - [ ] Scalable directory trees.
 - [ ] Free-extent index as rebuildable accelerator over the bitmap.
 - [ ] Parallel allocation paths.

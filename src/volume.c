@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "infilfs/volume.h"
 
+#include "infilfs/checksum.h"
 #include "infilfs/fs.h"
 #include "infilfs/io.h"
 
