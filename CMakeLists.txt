@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.20)
-project(InfiltratorFS VERSION 0.2.0 LANGUAGES C)
+project(InfiltratorFS VERSION 0.3.0 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -34,6 +34,8 @@ target_compile_options(infilfs-phase1-api PRIVATE -Wall -Wextra -Wpedantic)
 enable_testing()
 add_test(NAME infilfs-smoke
     COMMAND bash ${CMAKE_SOURCE_DIR}/tests/smoke.sh ${CMAKE_BINARY_DIR})
+add_test(NAME infilfs-phase2-crash
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/phase2-crash.sh ${CMAKE_BINARY_DIR})
 
 find_package(PkgConfig QUIET)
 if(PkgConfig_FOUND)

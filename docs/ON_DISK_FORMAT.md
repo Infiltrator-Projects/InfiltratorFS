@@ -1,13 +1,13 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-# InfiltratorFS On-Disk Format 0.2
+# InfiltratorFS On-Disk Format 0.3
 
-Status: experimental writable prototype. The format is not frozen and is intentionally incompatible with the earlier 0.1 prototype.
+Status: experimental writable prototype. The format is not frozen and is intentionally incompatible with the earlier 0.1 and 0.2 prototypes.
 
 ## 1. Encoding and allocation unit
 
-All integer fields are little-endian. The format-0.2 filesystem block size is fixed at 4096 bytes and the superblock records a block shift of 12.
+All integer fields are little-endian. The format-0.3 filesystem block size is fixed at 4096 bytes and the superblock records a block shift of 12.
 
-Metadata objects occupy one filesystem block in format 0.2. File data is allocated in 4096-byte blocks described by extents.
+Metadata objects occupy one filesystem block in format 0.3. File data is allocated in 4096-byte blocks described by extents.
 
 ## 2. Volume layout
 
@@ -32,7 +32,7 @@ The bitmap is large enough for one bit per filesystem block. Bits beyond the act
 
 ```text
 magic                   8 bytes: "INFS2026"
-format major/minor      current format is 0.2
+format major/minor      current format is 0.3
 header size             structure-size guard
 block shift             12
 checksum type           CRC64-ECMA
@@ -62,7 +62,7 @@ Bit `b` describes filesystem block `b`:
 1 = allocated or unavailable
 ```
 
-The bitmap is authoritative. On open, format 0.2 recounts free blocks and rejects the volume if the bitmap disagrees with the committed `free_blocks` value. Bitmap storage blocks, checkpoints, the object index and root object must all be marked allocated.
+The bitmap is authoritative. On open, format 0.3 recounts free blocks and rejects the volume if the bitmap disagrees with the committed `free_blocks` value. Bitmap storage blocks, checkpoints, the object index and root object must all be marked allocated.
 
 Future free-extent indexes are accelerators only and must remain rebuildable from this bitmap.
 
@@ -87,7 +87,7 @@ The entire 4096-byte metadata block is checksummed with its checksum field zeroe
 
 ## 6. Persistent object index
 
-The object index maps persistent object IDs to the physical blocks currently containing their metadata objects.
+The object index maps persistent object IDs to the physical blocks currently containing their metadata objects. Linux-visible inode numbers are derived from the persistent object ID rather than this mutable physical mapping.
 
 The payload begins with:
 
@@ -106,9 +106,9 @@ flags                    reserved
 reserved                reserved
 ```
 
-Directories therefore do **not** encode physical object locations. Moving a metadata object can eventually be implemented by changing the object index without rewriting every namespace entry that names that object.
+Directories therefore do **not** encode physical object locations. Format 0.3 moves metadata objects by changing the object index without rewriting every namespace entry that names that object.
 
-Format 0.2 stores the index in one block, which intentionally limits the prototype to roughly one hundred live namespace objects. A later tree-based index will remove this limit.
+Format 0.3 stores the index in one block, which intentionally limits the prototype to roughly one hundred live namespace objects. A later tree-based index will remove this limit.
 
 On open, every index entry is checked for duplicate IDs, valid allocated block placement, matching object ID, matching object type and valid object checksum. The root directory must appear exactly once and match the root identity and block stored in the superblock.
 
@@ -145,9 +145,9 @@ name                     raw name bytes, no terminating NUL
 padding                  zero-filled to 8-byte alignment
 ```
 
-Names are limited to 255 bytes in format 0.2. NUL and `/` are invalid in stored names. `.` and `..` are synthesized by the VFS/FUSE layer and are not stored as directory entries.
+Names are limited to 255 bytes in format 0.3. NUL and `/` are invalid in stored names. `.` and `..` are synthesized by the VFS/FUSE layer and are not stored as directory entries.
 
-A format-0.2 directory occupies one metadata block. This is a prototype scalability limit, not a long-term design rule.
+A format-0.3 directory occupies one metadata block. This is a prototype scalability limit, not a long-term design rule.
 
 ## 9. Regular files and extents
 
@@ -162,7 +162,7 @@ block_count             number of consecutive blocks
 flags                    extent encoding/policy flags
 ```
 
-Format 0.2 implements normal extents only. The logical extent sequence must be contiguous from logical block zero; sparse extents are deferred. Writes beyond EOF therefore allocate the intervening blocks and initialize unwritten bytes to zero.
+Format 0.3 implements normal extents only. The logical extent sequence must be contiguous from logical block zero; sparse extents are deferred. Writes beyond EOF therefore allocate the intervening blocks and initialize unwritten bytes to zero.
 
 The allocator searches the authoritative bitmap for contiguous free runs. Adjacent logical and physical allocations are coalesced into the previous extent when possible. Multiple extents are supported when fragmentation prevents one contiguous run.
 
@@ -170,7 +170,7 @@ Shrinking a file releases blocks beyond the new EOF and zeroes the unused tail o
 
 ## 10. Namespace operations
 
-Format 0.2 supports:
+Format 0.3 supports:
 
 - lookup by pathname;
 - file creation;
@@ -185,13 +185,36 @@ Format 0.2 supports:
 
 Cross-directory rename updates the child object's persistent parent ID. Directory link counts are updated when subdirectories are created, removed or moved.
 
-## 11. Generation and durability status
+## 11. Transaction and checkpoint publication
 
-Every successful mutating operation writes changed metadata, writes the current bitmap, increments the superblock generation, rewrites all three checkpoint copies and calls `fsync()`.
+Format 0.3 assigns each mutating filesystem operation to a transaction based on committed generation `N`. Metadata objects changed by the operation are never rewritten in their committed physical blocks. Replacement objects receive generation `N+1`, are checksummed, and are written to newly reserved blocks. The object index is also copy-on-write, so namespace objects can move without changing their persistent 128-bit IDs.
 
-This provides durable persistence during ordinary operation, but **format 0.2 is not crash-transactional**. Metadata objects and the bitmap are still updated in place. A power loss between individual writes can therefore leave a generation inconsistent.
+The authoritative bitmap is also copy-on-write. Blocks allocated while constructing `N+1` are not reachable from any durable checkpoint until commit. Blocks superseded or deleted by the operation remain reserved while the transaction is being constructed and are marked free only in the new bitmap image. This prevents the allocator from reusing storage still required by the old committed generation before the commit point.
 
-Phase 2 replaces this update model with copy-on-write metadata and atomic generation publication. Format 0.2 must not be described as power-loss safe.
+Commit ordering is:
+
+```text
+write new/unreachable metadata and newly allocated data
+fsync
+write new bitmap image at a new physical location
+fsync
+write one generation N+1 checkpoint
+fsync                         <- atomic publication point
+write the same checkpoint to the other two physical copies
+fsync
+```
+
+The first checkpoint chosen for publication rotates by generation. If power is lost before its durable write, mount selects generation `N`. If power is lost after it, mount selects `N+1`. The remaining older checkpoint copies are still physically valid because superseded blocks were not reused during the interrupted transaction. Before a writable mount allocates again, it heals all checkpoint locations to the newest fully validated generation.
+
+This is a no-replay transaction design: there is no journal whose operations must be replayed to discover the committed namespace. The checkpoint itself identifies the committed root/index/bitmap generation.
+
+### Current data-write boundary
+
+The guarantee above is metadata/allocation crash consistency. New blocks are ordered before the checkpoint that makes them reachable, but writes into already allocated file-data blocks can still occur in place. Therefore format 0.3 does not yet promise old-or-new atomic contents for an arbitrary overwrite of existing file data. Data checksums and stronger data-CoW policies are later phases.
+
+### Crash-injection verification
+
+The test suite contains deterministic failpoints immediately before bitmap publication, immediately after bitmap publication, and immediately after the first checkpoint commit. Tests prove that the first two recover the old generation, the last recovers the new generation, and the subsequent writable open heals all three checkpoint copies before another transaction.
 
 ## 12. Corruption rejection
 
@@ -211,7 +234,7 @@ The current opener rejects, among other conditions:
 
 The intent is to fail closed rather than continue with metadata that cannot be trusted.
 
-## 13. Deliberate format-0.2 limits
+## 13. Deliberate format-0.3 limits
 
 The following are intentionally deferred rather than hidden:
 
@@ -222,7 +245,6 @@ The following are intentionally deferred rather than hidden:
 - no sparse extent representation;
 - no data checksums yet;
 - no compression, reflinks or snapshots;
-- no crash-consistent CoW metadata yet;
 - single-writer FUSE operation.
 
-These constraints keep Phase 1 small enough to verify before the Phase 2 transaction model changes how metadata is published.
+The remaining constraints keep the transaction core understandable while integrity, scale and advanced storage features are developed independently.

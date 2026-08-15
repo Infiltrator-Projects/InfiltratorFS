@@ -39,6 +39,10 @@ int main(int argc, char **argv)
         fail("mkdir beta");
     if (infs_create_file(&vol, "/alpha/data", 0640, getuid(), getgid()) != 0)
         fail("create data");
+    struct stat initial_st;
+    if (infs_getattr(&vol, "/alpha/data", &initial_st) != 0)
+        fail("getattr initial inode");
+    ino_t stable_ino = initial_st.st_ino;
 
     const char first[] = "ABCDEFGHIJ";
     if (infs_write_file(&vol, "/alpha/data", first, sizeof(first) - 1u, 0) !=
@@ -78,6 +82,7 @@ int main(int argc, char **argv)
         fail("getattr");
     expect((st.st_mode & 07777) == 0600, "chmod persisted");
     expect(st.st_size == 10, "size after regrow");
+    expect(st.st_ino == stable_ino, "inode number stable across CoW updates");
 
     if (infs_rename(&vol, "/alpha/data", "/beta/moved") != 0)
         fail("cross-directory rename");
@@ -86,6 +91,7 @@ int main(int argc, char **argv)
            "old name removed");
     if (infs_getattr(&vol, "/beta/moved", &st) != 0)
         fail("new name lookup");
+    expect(st.st_ino == stable_ino, "inode number stable across rename");
 
     if (infs_unlink(&vol, "/beta/moved") != 0)
         fail("unlink");

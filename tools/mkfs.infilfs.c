@@ -107,7 +107,7 @@ int main(int argc, char **argv)
     };
 
     if (root_block >= checkpoints[1]) {
-        fprintf(stderr, "Target is too small for the format 0.2 metadata layout.\n");
+        fprintf(stderr, "Target is too small for the format 0.3 metadata layout.\n");
         close(fd);
         return 1;
     }

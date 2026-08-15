@@ -9,6 +9,11 @@
 
 #include "infilfs/format.h"
 
+struct infs_deferred_range {
+    uint64_t start;
+    uint64_t count;
+};
+
 struct infs_volume {
     int fd;
     int writable;
@@ -16,6 +21,15 @@ struct infs_volume {
     struct infs_superblock_disk sb;
     uint8_t *bitmap;
     size_t bitmap_bytes;
+
+    /* Phase 2 transaction state. The public struct remains intentionally
+     * inspectable while the prototype format is evolving. */
+    int tx_active;
+    struct infs_superblock_disk tx_base_sb;
+    uint8_t *tx_base_bitmap;
+    struct infs_deferred_range *tx_deferred;
+    size_t tx_deferred_count;
+    size_t tx_deferred_capacity;
 };
 
 struct infs_lookup {

@@ -16,34 +16,37 @@ The design is guided by four assumptions:
 
 The filesystem is object-oriented internally. Files, directories, symlinks, snapshots and future metadata classes are persistent objects identified by 128-bit object IDs.
 
-A pathname is a namespace mapping, not the identity of an object. A directory maps names to object IDs. Renaming a file therefore changes namespace metadata without changing the file object's identity.
+A pathname is a namespace mapping, not the identity of an object. A directory maps names to object IDs. Renaming a file therefore changes namespace metadata without changing the file object's identity. The Linux-facing inode number is a stable 64-bit projection of the persistent 128-bit object ID, not a physical metadata block number, so copy-on-write relocation does not change the object's VFS identity.
 
-Format 0.2 introduces a persistent object index mapping object IDs to physical metadata blocks. Directory entries contain object IDs, not physical locations. The root object's current block is also recorded directly in the superblock as a bootstrap/recovery anchor. The single-block format-0.2 index is intentionally temporary; later revisions replace it with a scalable generation-aware tree.
+Format 0.3 uses a persistent object index mapping object IDs to physical metadata blocks. Directory entries contain object IDs, not physical locations. The root object's current block is also recorded directly in the superblock as a bootstrap/recovery anchor. The single-block format-0.3 index is intentionally temporary; later revisions replace it with a scalable generation-aware tree.
 
 ## 3. Transaction model
 
-The architectural target is that critical committed metadata is never modified in place as its only valid copy. **Format 0.2 does not yet satisfy this rule**: Phase 1 uses in-place metadata updates so file/directory semantics can be proven before the transaction layer is introduced.
+Format 0.3 implements the first transactional metadata model. Critical committed metadata is never overwritten as its only valid copy. A transaction:
 
-Phase 2 transactions follow this model:
+1. starts from committed generation N and snapshots the committed bitmap/superblock in memory;
+2. allocates replacement metadata blocks without changing any durable root;
+3. copy-on-write updates the object index whenever an object's physical block changes;
+4. defers reclamation of blocks belonging to generation N;
+5. allocates and writes a new bitmap image describing generation N+1;
+6. flushes new metadata/data and then the new bitmap;
+7. publishes one checksummed checkpoint as the atomic commit point;
+8. replicates the same checkpoint to the other physical checkpoint locations;
+9. allows blocks superseded by N+1 to be reused only after that publication.
 
-1. start from committed generation N;
-2. write replacement metadata blocks elsewhere;
-3. write and verify checksums;
-4. write updated metadata roots;
-5. publish generation N+1 by updating checkpoint records;
-6. only then permit old, unreferenced metadata to be reclaimed.
+A crash before the first new checkpoint leaves only generation N reachable. A crash after the first new checkpoint makes N+1 reachable. If the crash occurs while the remaining checkpoint copies are still old, a writable open validates the newest generation and heals all checkpoint copies before performing another allocation. No journal replay is required.
 
-After power loss the mount code selects the newest internally consistent checkpoint generation. A partially written future generation is ignored.
+The transaction guarantee currently applies to metadata publication and allocation reachability. Existing file-data extents may still be overwritten in place, so arbitrary data overwrites do not yet have old-or-new atomicity.
 
 ## 4. Checkpoints
 
-The filesystem keeps multiple superblock/checkpoint copies at physically separated positions. Formats 0.1 and 0.2 use three copies:
+The filesystem keeps multiple superblock/checkpoint copies at physically separated positions. Formats 0.1 through 0.3 use three fixed physical copies:
 
 - block 0;
 - midpoint block;
 - final block.
 
-Later revisions may increase the number of checkpoints or use rotating checkpoint slots. Each checkpoint contains a generation number, format version, UUID, root pointer, allocation-map location, feature flags and checksum.
+Format 0.3 rotates which physical copy receives the first N+1 publication, spreading the commit-point write among the three locations. Later revisions may increase the number of checkpoints. Each checkpoint contains a generation number, format version, UUID, root pointer, allocation-map location, feature flags and checksum.
 
 The mount rule is not merely "take the first superblock that parses". The implementation validates candidate checkpoints and chooses the newest generation satisfying format and volume-consistency rules.
 
@@ -67,7 +70,7 @@ This asymmetry is intentional: important state has a compact, reconstructable so
 
 File data uses extents rather than linked block chains. An extent describes a logical file range mapped to a physical block range.
 
-Format 0.2 implements ordered normal extents and already includes an extent flags field. Later formats can assign flags for states such as:
+Format 0.3 implements ordered normal extents and already includes an extent flags field. Later formats can assign flags for states such as:
 
 - normal;
 - sparse;
@@ -94,7 +97,7 @@ The common conceptual metadata header contains:
 - checksum algorithm;
 - checksum.
 
-Formats 0.1 and 0.2 use CRC64-ECMA for corruption detection and reserve a 32-byte checksum field so stronger algorithms can be introduced without changing the overall structure shape. Format 0.2 validates checkpoint, root, object-index and namespace metadata before exposing a volume; end-to-end file-data checksums remain Phase 3 work.
+Formats 0.1 through 0.3 use CRC64-ECMA for corruption detection and reserve a 32-byte checksum field so stronger algorithms can be introduced without changing the overall structure shape. Format 0.3 validates checkpoint, bitmap accounting, root, object-index and namespace metadata before exposing a volume; end-to-end file-data checksums remain Phase 3 work.
 
 The long-term design calls for end-to-end data checksums. A checksum should be stored independently enough from the protected data that corruption of the data does not silently corrupt the only record used to authenticate it.
 

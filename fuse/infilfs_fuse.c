@@ -250,7 +250,7 @@ int main(int argc, char **argv)
     fuse_argv[j++] = argv[0];
     for (int i = 2; i < argc; ++i)
         fuse_argv[j++] = argv[i];
-    fuse_argv[j++] = "-s"; /* Phase 1 core is deliberately single-writer. */
+    fuse_argv[j++] = "-s"; /* The current core remains deliberately single-writer. */
     fuse_argv[j++] = "-o";
     fuse_argv[j++] = "default_permissions";
 
