@@ -18,13 +18,13 @@ The filesystem is object-oriented internally. Files, directories, symlinks, snap
 
 A pathname is a namespace mapping, not the identity of an object. A directory maps names to object IDs. Renaming a file therefore changes namespace metadata without changing the file object's identity.
 
-Objects are located through metadata trees in later format revisions. Format 0.1 stores the root object's physical block directly in the superblock to keep the initial implementation small.
+Format 0.2 introduces a persistent object index mapping object IDs to physical metadata blocks. Directory entries contain object IDs, not physical locations. The root object's current block is also recorded directly in the superblock as a bootstrap/recovery anchor. The single-block format-0.2 index is intentionally temporary; later revisions replace it with a scalable generation-aware tree.
 
 ## 3. Transaction model
 
-Critical metadata is never modified in place as the only valid copy.
+The architectural target is that critical committed metadata is never modified in place as its only valid copy. **Format 0.2 does not yet satisfy this rule**: Phase 1 uses in-place metadata updates so file/directory semantics can be proven before the transaction layer is introduced.
 
-A future transaction follows this model:
+Phase 2 transactions follow this model:
 
 1. start from committed generation N;
 2. write replacement metadata blocks elsewhere;
@@ -37,7 +37,7 @@ After power loss the mount code selects the newest internally consistent checkpo
 
 ## 4. Checkpoints
 
-The filesystem keeps multiple superblock/checkpoint copies at physically separated positions. Format 0.1 uses three copies:
+The filesystem keeps multiple superblock/checkpoint copies at physically separated positions. Formats 0.1 and 0.2 use three copies:
 
 - block 0;
 - midpoint block;
@@ -67,7 +67,7 @@ This asymmetry is intentional: important state has a compact, reconstructable so
 
 File data uses extents rather than linked block chains. An extent describes a logical file range mapped to a physical block range.
 
-Future extent records reserve space for flags allowing states such as:
+Format 0.2 implements ordered normal extents and already includes an extent flags field. Later formats can assign flags for states such as:
 
 - normal;
 - sparse;
@@ -94,7 +94,7 @@ The common conceptual metadata header contains:
 - checksum algorithm;
 - checksum.
 
-Format 0.1 uses CRC64-ECMA for corruption detection and reserves a 32-byte checksum field so stronger algorithms can be introduced without changing the overall structure shape.
+Formats 0.1 and 0.2 use CRC64-ECMA for corruption detection and reserve a 32-byte checksum field so stronger algorithms can be introduced without changing the overall structure shape. Format 0.2 validates checkpoint, root, object-index and namespace metadata before exposing a volume; end-to-end file-data checksums remain Phase 3 work.
 
 The long-term design calls for end-to-end data checksums. A checksum should be stored independently enough from the protected data that corruption of the data does not silently corrupt the only record used to authenticate it.
 
