@@ -3,6 +3,8 @@
 
 Status: experimental writable prototype. Format 0.5 is intentionally incompatible with formats 0.1 through 0.4.
 
+Implementation release 0.5.1 adds byte-exact conformance tests and cross-platform compilation checks without changing this on-disk version. The normative conformance rules are summarized in `CONFORMANCE.md`.
+
 ## 1. Encoding
 
 All integer fields are little-endian. The filesystem block size is 4096 bytes and the checkpoint records a block shift of 12. Metadata objects occupy one block in this prototype. File data is described by extents of 4096-byte blocks.

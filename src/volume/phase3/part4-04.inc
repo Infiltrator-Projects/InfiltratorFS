@@ -2,37 +2,34 @@
 static int truncate_file_tx(struct infs_volume *vol, const char *path, uint64_t size)
 {
     if (!vol->writable) {
-        errno = EROFS;
-        return -1;
+        return INFS_STATUS_READ_ONLY;
     }
     struct infs_lookup lk;
     if (infs_lookup_path(vol, path, &lk) != 0)
-        return -1;
+        return INFS_STATUS_ERROR;
     if (lk.type != INFS_OBJECT_FILE) {
-        errno = EISDIR;
-        return -1;
+        return INFS_STATUS_IS_DIRECTORY;
     }
     uint8_t object[INFS_BLOCK_SIZE];
     if (read_object(vol, lk.block, object) != 0)
-        return -1;
+        return INFS_STATUS_ERROR;
     struct infs_file_payload_disk *p;
     struct infs_extent_disk *ext;
     if (file_validate_volume(vol, object, &p, &ext) != 0)
-        return -1;
+        return INFS_STATUS_ERROR;
 
     uint64_t old_size = infs_le64_to_cpu(p->attributes.logical_size);
     if (size > UINT64_MAX - (INFS_BLOCK_SIZE - 1u)) {
-        errno = EFBIG;
-        return -1;
+        return INFS_STATUS_FILE_TOO_LARGE;
     }
     uint64_t target_blocks = (size + INFS_BLOCK_SIZE - 1u) / INFS_BLOCK_SIZE;
     uint64_t have = file_allocated_blocks(p, ext);
     if (target_blocks > have) {
         if (file_ensure_blocks(vol, object, target_blocks) != 0)
-            return -1;
+            return INFS_STATUS_ERROR;
         if (infs_object_finalize(object) != 0 ||
             file_validate_volume(vol, object, &p, &ext) != 0)
-            return -1;
+            return INFS_STATUS_ERROR;
     } else if (target_blocks < have) {
         uint32_t count = infs_le32_to_cpu(p->extent_count);
         uint32_t keep = 0;
@@ -65,49 +62,49 @@ static int truncate_file_tx(struct infs_volume *vol, const char *path, uint64_t 
     if (size < old_size && target_blocks > 0 && (size % INFS_BLOCK_SIZE) != 0) {
         if (infs_object_finalize(object) != 0 ||
             file_validate_volume(vol, object, &p, &ext) != 0)
-            return -1;
+            return INFS_STATUS_ERROR;
         struct infs_object_header_disk *file_hdr =
             (struct infs_object_header_disk *)object;
         uint64_t logical = target_blocks - 1u;
         uint64_t physical;
         if (file_map_block(p, ext, logical, &physical) != 0)
-            return -1;
+            return INFS_STATUS_ERROR;
         uint8_t data[INFS_BLOCK_SIZE];
         if (read_block(vol, physical, data) != 0 ||
             data_block_verify(vol, p, file_hdr->object_id, logical, data) != 0)
-            return -1;
+            return INFS_STATUS_ERROR;
         size_t tail = (size_t)(size % INFS_BLOCK_SIZE);
         memset(data + tail, 0, INFS_BLOCK_SIZE - tail);
         uint64_t replacement = 0, got = 0;
-        if (alloc_run(vol, 1, &replacement, &got) != 0 || got != 1) {
-            if (got != 1 && errno == 0) errno = EIO;
-            return -1;
-        }
+        int status = alloc_run(vol, 1, &replacement, &got);
+        if (status != INFS_STATUS_OK)
+            return status;
+        if (got != 1)
+            return INFS_STATUS_CORRUPT;
         if (write_block(vol, replacement, data) != 0 ||
             file_replace_range(vol, object, logical, 1, replacement) != 0)
-            return -1;
+            return INFS_STATUS_ERROR;
         struct infs_data_checksum_disk digest;
         data_block_checksum(data, &digest);
         if (checksum_set_range(vol, p, file_hdr->object_id, logical, &digest, 1) != 0)
-            return -1;
+            return INFS_STATUS_ERROR;
     }
 
     p->attributes.logical_size = infs_cpu_to_le64(size);
     touch_mctime(vol, &p->attributes);
     if (write_object(vol, lk.block, object) != 0)
-        return -1;
+        return INFS_STATUS_ERROR;
     return infs_volume_sync(vol);
 }
 
-int infs_truncate_file(struct infs_volume *vol, const char *path, uint64_t size)
+infs_status infs_truncate_file(struct infs_volume *vol, const char *path,
+                               uint64_t size)
 {
-    if (tx_begin(vol) != 0)
-        return -1;
-    int rc = truncate_file_tx(vol, path, size);
-    if (rc != 0) {
-        int saved = errno;
+    infs_status status = tx_begin(vol);
+    if (status != INFS_STATUS_OK)
+        return status;
+    status = truncate_file_tx(vol, path, size);
+    if (status != INFS_STATUS_OK)
         tx_abort(vol);
-        errno = saved;
-    }
-    return rc;
+    return status;
 }

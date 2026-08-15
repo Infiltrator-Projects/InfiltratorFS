@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-int infs_scrub(struct infs_volume *vol, struct infs_scrub_report *report)
+infs_status infs_scrub(struct infs_volume *vol,
+                       struct infs_scrub_report *report)
 {
     if (!vol || !report) {
-        errno = EINVAL;
-        return -1;
+        return INFS_STATUS_INVALID_ARGUMENT;
     }
     memset(report, 0, sizeof(*report));
 
     uint8_t index_block[INFS_BLOCK_SIZE];
     struct infs_index_payload_disk *index_payload;
     if (index_load(vol, index_block, &index_payload) != 0)
-        return -1;
+        return INFS_STATUS_ERROR;
     uint32_t entries_count = infs_le32_to_cpu(index_payload->entry_count);
     struct infs_index_entry_disk *entries =
         (struct infs_index_entry_disk *)(index_payload + 1);

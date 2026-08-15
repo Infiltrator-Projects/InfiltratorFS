@@ -18,8 +18,7 @@ static int extent_emit(struct infs_extent_disk *out, uint32_t *count,
         }
     }
     if (*count >= INFS_MAX_FILE_EXTENTS) {
-        errno = EFBIG;
-        return -1;
+        return INFS_STATUS_FILE_TOO_LARGE;
     }
     out[*count].logical_block = infs_cpu_to_le64(logical);
     out[*count].physical_block = infs_cpu_to_le64(physical);
@@ -44,8 +43,7 @@ static int file_replace_range(struct infs_volume *vol,
     int replacement_emitted = 0;
 
     if (replace_end < logical_start) {
-        errno = EINVAL;
-        return -1;
+        return INFS_STATUS_INVALID_ARGUMENT;
     }
 
     for (uint32_t i = 0; i < old_count; ++i) {
@@ -56,20 +54,20 @@ static int file_replace_range(struct infs_volume *vol,
         uint64_t e = l + n;
         if (e <= logical_start || l >= replace_end) {
             if (extent_emit(rebuilt, &new_count, l, phys, n, flags) != 0)
-                return -1;
+                return INFS_STATUS_ERROR;
             continue;
         }
         if (l < logical_start) {
             uint32_t prefix = (uint32_t)(logical_start - l);
             if (extent_emit(rebuilt, &new_count, l, phys, prefix, flags) != 0)
-                return -1;
+                return INFS_STATUS_ERROR;
         }
         uint64_t overlap_start = l > logical_start ? l : logical_start;
         uint64_t overlap_end = e < replace_end ? e : replace_end;
         if (!replacement_emitted) {
             if (extent_emit(rebuilt, &new_count, logical_start, new_physical,
                             (uint32_t)block_count, INFS_EXTENT_NORMAL) != 0)
-                return -1;
+                return INFS_STATUS_ERROR;
             replacement_emitted = 1;
         }
         free_run(vol, phys + (overlap_start - l), overlap_end - overlap_start);
@@ -77,12 +75,11 @@ static int file_replace_range(struct infs_volume *vol,
             uint32_t suffix = (uint32_t)(e - replace_end);
             if (extent_emit(rebuilt, &new_count, replace_end,
                             phys + (replace_end - l), suffix, flags) != 0)
-                return -1;
+                return INFS_STATUS_ERROR;
         }
     }
     if (!replacement_emitted) {
-        errno = EIO;
-        return -1;
+        return INFS_STATUS_CORRUPT;
     }
 
     memset(ext, 0, (size_t)INFS_MAX_FILE_EXTENTS * sizeof(*ext));
@@ -101,11 +98,10 @@ static int data_block_verify(struct infs_volume *vol,
 {
     struct infs_data_checksum_disk expected, actual;
     if (checksum_get(vol, file, owner_id, logical, &expected) != 0)
-        return -1;
+        return INFS_STATUS_ERROR;
     data_block_checksum(data, &actual);
     if (memcmp(&expected, &actual, sizeof(expected)) != 0) {
-        errno = EIO;
-        return -1;
+        return INFS_STATUS_CORRUPT;
     }
     return 0;
 }

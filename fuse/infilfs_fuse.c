@@ -19,9 +19,9 @@
 
 static struct infs_volume g_volume;
 
-static int neg_errno(void)
+static int neg_status(infs_status status)
 {
-    return errno ? -errno : -EIO;
+    return -infs_status_to_errno(status);
 }
 
 static void attributes_to_stat(const struct infs_attributes *attributes,
@@ -55,8 +55,9 @@ static int infs_getattr_cb(const char *path, struct stat *st,
 {
     (void)fi;
     struct infs_attributes attributes;
-    if (infs_get_attributes(&g_volume, path, &attributes) != 0)
-        return neg_errno();
+    infs_status status = infs_get_attributes(&g_volume, path, &attributes);
+    if (status != INFS_STATUS_OK)
+        return neg_status(status);
     attributes_to_stat(&attributes, st);
     return 0;
 }
@@ -74,8 +75,9 @@ static int infs_readdir_cb(const char *path, void *buf, fuse_fill_dir_t filler,
 
     struct infs_dir_item *items = NULL;
     size_t count = 0;
-    if (infs_list_dir(&g_volume, path, &items, &count) != 0)
-        return neg_errno();
+    infs_status status = infs_list_dir(&g_volume, path, &items, &count);
+    if (status != INFS_STATUS_OK)
+        return neg_status(status);
     for (size_t i = 0; i < count; ++i) {
         struct stat st;
         memset(&st, 0, sizeof(st));
@@ -95,9 +97,7 @@ static int infs_mkdir_cb(const char *path, mode_t mode)
         .posix_uid = (uint32_t)ctx->uid,
         .posix_gid = (uint32_t)ctx->gid,
     };
-    if (infs_mkdir(&g_volume, path, &options) != 0)
-        return neg_errno();
-    return 0;
+    return neg_status(infs_mkdir(&g_volume, path, &options));
 }
 
 static int infs_create_cb(const char *path, mode_t mode, struct fuse_file_info *fi)
@@ -109,21 +109,21 @@ static int infs_create_cb(const char *path, mode_t mode, struct fuse_file_info *
         .posix_uid = (uint32_t)ctx->uid,
         .posix_gid = (uint32_t)ctx->gid,
     };
-    if (infs_create_file(&g_volume, path, &options) != 0)
-        return neg_errno();
-    return 0;
+    return neg_status(infs_create_file(&g_volume, path, &options));
 }
 
 static int infs_open_cb(const char *path, struct fuse_file_info *fi)
 {
     struct infs_attributes attributes;
-    if (infs_get_attributes(&g_volume, path, &attributes) != 0)
-        return neg_errno();
+    infs_status status = infs_get_attributes(&g_volume, path, &attributes);
+    if (status != INFS_STATUS_OK)
+        return neg_status(status);
     if (attributes.object_type != INFS_OBJECT_FILE)
         return -EISDIR;
     if ((fi->flags & O_TRUNC) && (fi->flags & O_ACCMODE) != O_RDONLY) {
-        if (infs_truncate_file(&g_volume, path, 0) != 0)
-            return neg_errno();
+        status = infs_truncate_file(&g_volume, path, 0);
+        if (status != INFS_STATUS_OK)
+            return neg_status(status);
     }
     return 0;
 }
@@ -136,7 +136,7 @@ static int infs_read_cb(const char *path, char *buf, size_t size, off_t off,
         return -EINVAL;
     int64_t n = infs_read_file(&g_volume, path, buf, size, (uint64_t)off);
     if (n < 0)
-        return neg_errno();
+        return neg_status((infs_status)n);
     return (int)n;
 }
 
@@ -145,15 +145,16 @@ static int infs_write_cb(const char *path, const char *buf, size_t size, off_t o
 {
     if (fi && (fi->flags & O_APPEND)) {
         struct infs_attributes attributes;
-        if (infs_get_attributes(&g_volume, path, &attributes) != 0)
-            return neg_errno();
+        infs_status status = infs_get_attributes(&g_volume, path, &attributes);
+        if (status != INFS_STATUS_OK)
+            return neg_status(status);
         off = (off_t)attributes.logical_size;
     }
     if (off < 0)
         return -EINVAL;
     int64_t n = infs_write_file(&g_volume, path, buf, size, (uint64_t)off);
     if (n < 0)
-        return neg_errno();
+        return neg_status((infs_status)n);
     return (int)n;
 }
 
@@ -162,41 +163,32 @@ static int infs_truncate_cb(const char *path, off_t size, struct fuse_file_info 
     (void)fi;
     if (size < 0)
         return -EINVAL;
-    if (infs_truncate_file(&g_volume, path, (uint64_t)size) != 0)
-        return neg_errno();
-    return 0;
+    return neg_status(infs_truncate_file(&g_volume, path, (uint64_t)size));
 }
 
 static int infs_unlink_cb(const char *path)
 {
-    if (infs_unlink(&g_volume, path) != 0)
-        return neg_errno();
-    return 0;
+    return neg_status(infs_unlink(&g_volume, path));
 }
 
 static int infs_rmdir_cb(const char *path)
 {
-    if (infs_rmdir(&g_volume, path) != 0)
-        return neg_errno();
-    return 0;
+    return neg_status(infs_rmdir(&g_volume, path));
 }
 
 static int infs_rename_cb(const char *oldpath, const char *newpath, unsigned flags)
 {
     if (flags != 0)
         return -EOPNOTSUPP;
-    if (infs_rename(&g_volume, oldpath, newpath) != 0)
-        return neg_errno();
-    return 0;
+    return neg_status(infs_rename(&g_volume, oldpath, newpath));
 }
 
 static int infs_chmod_cb(const char *path, mode_t mode, struct fuse_file_info *fi)
 {
     (void)fi;
-    if (infs_set_posix_compat(&g_volume, path, INFS_POSIX_SET_PERMISSIONS,
-                              (uint32_t)mode, 0, 0) != 0)
-        return neg_errno();
-    return 0;
+    return neg_status(infs_set_posix_compat(
+        &g_volume, path, INFS_POSIX_SET_PERMISSIONS,
+        (uint32_t)mode, 0, 0));
 }
 
 static int infs_chown_cb(const char *path, uid_t uid, gid_t gid,
@@ -208,10 +200,8 @@ static int infs_chown_cb(const char *path, uid_t uid, gid_t gid,
         mask |= INFS_POSIX_SET_UID;
     if (gid != (gid_t)-1)
         mask |= INFS_POSIX_SET_GID;
-    if (infs_set_posix_compat(&g_volume, path, mask, 0,
-                              (uint32_t)uid, (uint32_t)gid) != 0)
-        return neg_errno();
-    return 0;
+    return neg_status(infs_set_posix_compat(
+        &g_volume, path, mask, 0, (uint32_t)uid, (uint32_t)gid));
 }
 
 static int infs_utimens_cb(const char *path, const struct timespec tv[2],
@@ -226,9 +216,7 @@ static int infs_utimens_cb(const char *path, const struct timespec tv[2],
         .access_time_ns = (int64_t)tv[0].tv_sec * INT64_C(1000000000) + tv[0].tv_nsec,
         .modification_time_ns = (int64_t)tv[1].tv_sec * INT64_C(1000000000) + tv[1].tv_nsec,
     };
-    if (infs_set_times(&g_volume, path, &update) != 0)
-        return neg_errno();
-    return 0;
+    return neg_status(infs_set_times(&g_volume, path, &update));
 }
 
 static int infs_statfs_cb(const char *path, struct statvfs *st)
@@ -249,9 +237,7 @@ static int infs_fsync_cb(const char *path, int datasync, struct fuse_file_info *
     (void)path;
     (void)datasync;
     (void)fi;
-    if (infs_volume_sync(&g_volume) != 0)
-        return neg_errno();
-    return 0;
+    return neg_status(infs_volume_sync(&g_volume));
 }
 
 
@@ -295,8 +281,10 @@ int main(int argc, char **argv)
         return 2;
     }
 
-    if (infs_posix_volume_open(&g_volume, argv[1], 1) != 0) {
-        fprintf(stderr, "Cannot mount InfiltratorFS: %s\n", strerror(errno));
+    infs_status status = infs_posix_volume_open(&g_volume, argv[1], 1);
+    if (status != INFS_STATUS_OK) {
+        fprintf(stderr, "Cannot mount InfiltratorFS: %s\n",
+                infs_status_string(status));
         return 1;
     }
 

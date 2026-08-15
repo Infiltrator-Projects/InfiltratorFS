@@ -17,15 +17,17 @@ int main(int argc, char **argv)
     }
 
     struct infs_storage storage = {0};
-    if (infs_posix_storage_open(&storage, argv[1], 0) != 0) {
-        perror("open");
+    infs_status status = infs_posix_storage_open(&storage, argv[1], 0);
+    if (status != INFS_STATUS_OK) {
+        fprintf(stderr, "open: %s\n", infs_status_string(status));
         return 1;
     }
 
     uint64_t size_bytes = 0;
     int is_block = 0;
-    if (infs_storage_get_size(&storage, &size_bytes, &is_block) != 0) {
-        perror("size");
+    status = infs_storage_get_size(&storage, &size_bytes, &is_block);
+    if (status != INFS_STATUS_OK) {
+        fprintf(stderr, "size: %s\n", infs_status_string(status));
         infs_storage_close(&storage);
         return 1;
     }

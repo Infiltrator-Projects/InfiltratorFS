@@ -18,7 +18,7 @@ InfiltratorFS is divided into four layers:
 3. **Platform services** — callbacks for positioned read/write, durable flush, target size, secure randomness, wall-clock time and close.
 4. **Operating-system adapters** — Linux FUSE/POSIX today; native Linux and Windows drivers later.
 
-The core does not store or expose a Linux file descriptor. It does not depend on FUSE, a Linux VFS inode, `struct stat`, `off_t`, UID/GID types or a Windows handle. Adapters translate those concepts at the boundary.
+The core does not store or expose a Linux file descriptor. It does not depend on FUSE, a Linux VFS inode, `struct stat`, `off_t`, UID/GID types, `errno` or a Windows handle. Adapters translate those concepts at the boundary. Core and storage operations use stable negative `infs_status` values; byte-count APIs return either a non-negative count or one of those values.
 
 The canonical core path form currently uses UTF-8 components separated by `/`. Separators are not stored in directory entries. A Windows adapter may accept Windows path syntax and translate it into core components.
 

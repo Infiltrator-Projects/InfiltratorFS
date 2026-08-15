@@ -18,8 +18,7 @@ static int checksum_validate(uint8_t block[INFS_BLOCK_SIZE],
     if (!infs_validate_object_block(block) ||
         infs_le16_to_cpu(hdr->object_type) != INFS_OBJECT_CHECKSUM ||
         infs_le32_to_cpu(hdr->payload_size) < sizeof(struct infs_checksum_payload_disk)) {
-        errno = EIO;
-        return -1;
+        return INFS_STATUS_CORRUPT;
     }
     struct infs_checksum_payload_disk *p =
         (struct infs_checksum_payload_disk *)(block + sizeof(*hdr));
@@ -27,12 +26,10 @@ static int checksum_validate(uint8_t block[INFS_BLOCK_SIZE],
     size_t need = sizeof(*p) + (size_t)count * sizeof(struct infs_data_checksum_disk);
     if (count > INFS_CHECKSUMS_PER_OBJECT || need > infs_le32_to_cpu(hdr->payload_size) ||
         need > INFS_BLOCK_SIZE - sizeof(*hdr)) {
-        errno = EIO;
-        return -1;
+        return INFS_STATUS_CORRUPT;
     }
     if (owner_id && memcmp(p->owner_object_id, owner_id, 16) != 0) {
-        errno = EIO;
-        return -1;
+        return INFS_STATUS_CORRUPT;
     }
     if (payload_out)
         *payload_out = p;
@@ -48,16 +45,15 @@ static int checksum_create_object(struct infs_volume *vol,
 {
     uint64_t block_no = 0, got = 0;
     if (alloc_run(vol, 1, &block_no, &got) != 0)
-        return -1;
+        return INFS_STATUS_ERROR;
     if (got != 1) {
-        errno = EIO;
-        return -1;
+        return INFS_STATUS_CORRUPT;
     }
 
     uint8_t id[16];
     if (infs_storage_random(&vol->storage, id, sizeof(id)) != 0) {
         free_run(vol, block_no, 1);
-        return -1;
+        return INFS_STATUS_ERROR;
     }
 
     uint8_t block[INFS_BLOCK_SIZE];
@@ -65,7 +61,7 @@ static int checksum_create_object(struct infs_volume *vol,
                          infs_le64_to_cpu(vol->sb.generation) + 1u,
                          sizeof(struct infs_checksum_payload_disk)) != 0) {
         free_run(vol, block_no, 1);
-        return -1;
+        return INFS_STATUS_ERROR;
     }
     struct infs_checksum_payload_disk *p =
         (struct infs_checksum_payload_disk *)(block + sizeof(struct infs_object_header_disk));
@@ -74,11 +70,11 @@ static int checksum_create_object(struct infs_volume *vol,
     p->checksum_count = infs_cpu_to_le32(0);
     if (infs_object_finalize(block) != 0 || write_block(vol, block_no, block) != 0) {
         free_run(vol, block_no, 1);
-        return -1;
+        return INFS_STATUS_ERROR;
     }
     if (index_add(vol, id, block_no, INFS_OBJECT_CHECKSUM) != 0) {
         free_run(vol, block_no, 1);
-        return -1;
+        return INFS_STATUS_ERROR;
     }
     memcpy(id_out, id, 16);
     return 0;

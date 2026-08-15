@@ -13,6 +13,61 @@
 #include <time.h>
 #include <unistd.h>
 
+infs_status infs_status_from_errno(int error_number)
+{
+    switch (error_number) {
+    case 0: return INFS_STATUS_OK;
+    case EINVAL: return INFS_STATUS_INVALID_ARGUMENT;
+    case EIO: return INFS_STATUS_IO_ERROR;
+    case EROFS: return INFS_STATUS_READ_ONLY;
+    case ENOSPC: return INFS_STATUS_NO_SPACE;
+    case ENOENT: return INFS_STATUS_NOT_FOUND;
+    case EEXIST: return INFS_STATUS_ALREADY_EXISTS;
+    case ENOTDIR: return INFS_STATUS_NOT_DIRECTORY;
+    case EISDIR: return INFS_STATUS_IS_DIRECTORY;
+    case ENOTEMPTY: return INFS_STATUS_NOT_EMPTY;
+    case ENAMETOOLONG: return INFS_STATUS_NAME_TOO_LONG;
+    case EFBIG: return INFS_STATUS_FILE_TOO_LARGE;
+    case ENOMEM: return INFS_STATUS_NO_MEMORY;
+    case EINTR: return INFS_STATUS_INTERRUPTED;
+#ifdef EOVERFLOW
+    case EOVERFLOW: return INFS_STATUS_OVERFLOW;
+#endif
+#ifdef ELOOP
+    case ELOOP: return INFS_STATUS_LOOP_DETECTED;
+#endif
+#ifdef EOPNOTSUPP
+    case EOPNOTSUPP: return INFS_STATUS_NOT_SUPPORTED;
+#endif
+    default: return INFS_STATUS_ERROR;
+    }
+}
+
+int infs_status_to_errno(infs_status status)
+{
+    switch (status) {
+    case INFS_STATUS_OK: return 0;
+    case INFS_STATUS_INVALID_ARGUMENT: return EINVAL;
+    case INFS_STATUS_IO_ERROR:
+    case INFS_STATUS_CORRUPT: return EIO;
+    case INFS_STATUS_READ_ONLY: return EROFS;
+    case INFS_STATUS_NO_SPACE: return ENOSPC;
+    case INFS_STATUS_NOT_FOUND: return ENOENT;
+    case INFS_STATUS_ALREADY_EXISTS: return EEXIST;
+    case INFS_STATUS_NOT_DIRECTORY: return ENOTDIR;
+    case INFS_STATUS_IS_DIRECTORY: return EISDIR;
+    case INFS_STATUS_NOT_EMPTY: return ENOTEMPTY;
+    case INFS_STATUS_NAME_TOO_LONG: return ENAMETOOLONG;
+    case INFS_STATUS_FILE_TOO_LARGE: return EFBIG;
+    case INFS_STATUS_NO_MEMORY: return ENOMEM;
+    case INFS_STATUS_INTERRUPTED: return EINTR;
+    case INFS_STATUS_OVERFLOW: return EOVERFLOW;
+    case INFS_STATUS_LOOP_DETECTED: return ELOOP;
+    case INFS_STATUS_NOT_SUPPORTED: return EOPNOTSUPP;
+    default: return EIO;
+    }
+}
+
 int infs_pread_full(int fd, void *buf, size_t count, uint64_t offset)
 {
     uint8_t *p = buf;
@@ -112,41 +167,57 @@ struct infs_posix_storage_context {
     int fd;
 };
 
-static int posix_read_at(void *context, uint64_t offset, void *buffer, size_t size)
+static infs_status posix_read_at(void *context, uint64_t offset,
+                                 void *buffer, size_t size)
 {
     struct infs_posix_storage_context *posix = context;
-    return infs_pread_full(posix->fd, buffer, size, offset);
+    if (infs_pread_full(posix->fd, buffer, size, offset) != 0)
+        return infs_status_from_errno(errno);
+    return INFS_STATUS_OK;
 }
 
-static int posix_write_at(void *context, uint64_t offset,
-                          const void *buffer, size_t size)
+static infs_status posix_write_at(void *context, uint64_t offset,
+                                  const void *buffer, size_t size)
 {
     struct infs_posix_storage_context *posix = context;
-    return infs_pwrite_full(posix->fd, buffer, size, offset);
+    if (infs_pwrite_full(posix->fd, buffer, size, offset) != 0)
+        return infs_status_from_errno(errno);
+    return INFS_STATUS_OK;
 }
 
-static int posix_flush(void *context)
+static infs_status posix_flush(void *context)
 {
     struct infs_posix_storage_context *posix = context;
-    return fsync(posix->fd);
+    if (fsync(posix->fd) != 0)
+        return infs_status_from_errno(errno);
+    return INFS_STATUS_OK;
 }
 
-static int posix_get_size(void *context, uint64_t *size_bytes, int *is_device)
+static infs_status posix_get_size(void *context, uint64_t *size_bytes,
+                                  int *is_device)
 {
     struct infs_posix_storage_context *posix = context;
-    return infs_get_size_bytes(posix->fd, size_bytes, is_device);
+    if (infs_get_size_bytes(posix->fd, size_bytes, is_device) != 0)
+        return infs_status_from_errno(errno);
+    return INFS_STATUS_OK;
 }
 
-static int posix_random(void *context, void *buffer, size_t size)
+static infs_status posix_random(void *context, void *buffer, size_t size)
 {
     (void)context;
-    return infs_random_bytes(buffer, size);
+    if (infs_random_bytes(buffer, size) != 0)
+        return infs_status_from_errno(errno);
+    return INFS_STATUS_OK;
 }
 
-static int64_t posix_time(void *context)
+static infs_status posix_time(void *context, int64_t *time_ns)
 {
     (void)context;
-    return infs_current_time_ns();
+    errno = 0;
+    *time_ns = infs_current_time_ns();
+    if (*time_ns == 0 && errno != 0)
+        return infs_status_from_errno(errno);
+    return INFS_STATUS_OK;
 }
 
 static void posix_close(void *context)
@@ -167,36 +238,38 @@ static const struct infs_storage_ops posix_storage_ops = {
     .close = posix_close,
 };
 
-int infs_posix_storage_open(struct infs_storage *storage,
-                            const char *path, int writable)
+infs_status infs_posix_storage_open(struct infs_storage *storage,
+                                    const char *path, int writable)
 {
-    if (!storage || !path) {
-        errno = EINVAL;
-        return -1;
-    }
+    if (!storage || !path)
+        return INFS_STATUS_INVALID_ARGUMENT;
 
     struct infs_posix_storage_context *context = malloc(sizeof(*context));
     if (!context)
-        return -1;
+        return INFS_STATUS_NO_MEMORY;
     context->fd = open(path, (writable ? O_RDWR : O_RDONLY) | O_CLOEXEC);
     if (context->fd < 0) {
+        infs_status status = infs_status_from_errno(errno);
         free(context);
-        return -1;
+        return status;
     }
 
     storage->ops = &posix_storage_ops;
     storage->context = context;
-    return 0;
+    return INFS_STATUS_OK;
 }
 
-int infs_posix_volume_open(struct infs_volume *vol, const char *path, int writable)
+infs_status infs_posix_volume_open(struct infs_volume *vol,
+                                   const char *path, int writable)
 {
     struct infs_storage storage = {0};
-    if (infs_posix_storage_open(&storage, path, writable) != 0)
-        return -1;
-    if (infs_volume_open_storage(vol, &storage, writable) != 0) {
+    infs_status status = infs_posix_storage_open(&storage, path, writable);
+    if (status != INFS_STATUS_OK)
+        return status;
+    status = infs_volume_open_storage(vol, &storage, writable);
+    if (status != INFS_STATUS_OK) {
         infs_storage_close(&storage);
-        return -1;
+        return status;
     }
-    return 0;
+    return INFS_STATUS_OK;
 }

@@ -93,40 +93,43 @@ struct infs_dir_item {
     uint16_t type;
 };
 
-int infs_volume_open_storage(struct infs_volume *vol,
-                             struct infs_storage *storage, int writable);
+infs_status infs_volume_open_storage(struct infs_volume *vol,
+                                     struct infs_storage *storage,
+                                     int writable);
 void infs_volume_close(struct infs_volume *vol);
-int infs_volume_sync(struct infs_volume *vol);
+infs_status infs_volume_sync(struct infs_volume *vol);
 
-int infs_lookup_path(struct infs_volume *vol, const char *path,
-                     struct infs_lookup *out);
-int infs_get_attributes(struct infs_volume *vol, const char *path,
-                        struct infs_attributes *attributes);
-int infs_list_dir(struct infs_volume *vol, const char *path,
-                  struct infs_dir_item **items, size_t *count);
+infs_status infs_lookup_path(struct infs_volume *vol, const char *path,
+                             struct infs_lookup *out);
+infs_status infs_get_attributes(struct infs_volume *vol, const char *path,
+                                struct infs_attributes *attributes);
+infs_status infs_list_dir(struct infs_volume *vol, const char *path,
+                          struct infs_dir_item **items, size_t *count);
 void infs_free_dir_items(struct infs_dir_item *items);
 
-int infs_create_file(struct infs_volume *vol, const char *path,
-                     const struct infs_create_options *options);
-int infs_mkdir(struct infs_volume *vol, const char *path,
-               const struct infs_create_options *options);
-int infs_unlink(struct infs_volume *vol, const char *path);
-int infs_rmdir(struct infs_volume *vol, const char *path);
-int infs_rename(struct infs_volume *vol, const char *oldpath,
-                const char *newpath);
+infs_status infs_create_file(struct infs_volume *vol, const char *path,
+                             const struct infs_create_options *options);
+infs_status infs_mkdir(struct infs_volume *vol, const char *path,
+                       const struct infs_create_options *options);
+infs_status infs_unlink(struct infs_volume *vol, const char *path);
+infs_status infs_rmdir(struct infs_volume *vol, const char *path);
+infs_status infs_rename(struct infs_volume *vol, const char *oldpath,
+                        const char *newpath);
 
 int64_t infs_read_file(struct infs_volume *vol, const char *path, void *buf,
                        size_t size, uint64_t offset);
 int64_t infs_write_file(struct infs_volume *vol, const char *path,
                         const void *buf, size_t size, uint64_t offset);
-int infs_truncate_file(struct infs_volume *vol, const char *path, uint64_t size);
+infs_status infs_truncate_file(struct infs_volume *vol, const char *path,
+                               uint64_t size);
 
-int infs_set_posix_compat(struct infs_volume *vol, const char *path,
-                          uint32_t mask, uint32_t permissions,
-                          uint32_t uid, uint32_t gid);
-int infs_set_times(struct infs_volume *vol, const char *path,
-                   const struct infs_time_update *update);
+infs_status infs_set_posix_compat(struct infs_volume *vol, const char *path,
+                                  uint32_t mask, uint32_t permissions,
+                                  uint32_t uid, uint32_t gid);
+infs_status infs_set_times(struct infs_volume *vol, const char *path,
+                           const struct infs_time_update *update);
 
-int infs_scrub(struct infs_volume *vol, struct infs_scrub_report *report);
+infs_status infs_scrub(struct infs_volume *vol,
+                       struct infs_scrub_report *report);
 
 #endif

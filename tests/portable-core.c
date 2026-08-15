@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "infilfs/volume.h"
 
-#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,44 +11,44 @@ struct memory_storage {
     uint64_t random_state;
 };
 
-static int memory_read(void *context, uint64_t offset, void *buffer, size_t size)
+static infs_status memory_read(void *context, uint64_t offset,
+                               void *buffer, size_t size)
 {
     struct memory_storage *memory = context;
     if (offset > memory->size || size > memory->size - (size_t)offset) {
-        errno = EIO;
-        return -1;
+        return INFS_STATUS_IO_ERROR;
     }
     memcpy(buffer, memory->bytes + (size_t)offset, size);
-    return 0;
+    return INFS_STATUS_OK;
 }
 
-static int memory_write(void *context, uint64_t offset,
-                        const void *buffer, size_t size)
+static infs_status memory_write(void *context, uint64_t offset,
+                                const void *buffer, size_t size)
 {
     struct memory_storage *memory = context;
     if (offset > memory->size || size > memory->size - (size_t)offset) {
-        errno = EIO;
-        return -1;
+        return INFS_STATUS_IO_ERROR;
     }
     memcpy(memory->bytes + (size_t)offset, buffer, size);
-    return 0;
+    return INFS_STATUS_OK;
 }
 
-static int memory_flush(void *context)
+static infs_status memory_flush(void *context)
 {
     (void)context;
-    return 0;
+    return INFS_STATUS_OK;
 }
 
-static int memory_size(void *context, uint64_t *size_bytes, int *is_device)
+static infs_status memory_size(void *context, uint64_t *size_bytes,
+                               int *is_device)
 {
     struct memory_storage *memory = context;
     *size_bytes = memory->size;
     *is_device = 0;
-    return 0;
+    return INFS_STATUS_OK;
 }
 
-static int memory_random(void *context, void *buffer, size_t size)
+static infs_status memory_random(void *context, void *buffer, size_t size)
 {
     struct memory_storage *memory = context;
     uint8_t *bytes = buffer;
@@ -59,13 +58,14 @@ static int memory_random(void *context, void *buffer, size_t size)
         memory->random_state ^= memory->random_state << 17;
         bytes[i] = (uint8_t)memory->random_state;
     }
-    return 0;
+    return INFS_STATUS_OK;
 }
 
-static int64_t memory_time(void *context)
+static infs_status memory_time(void *context, int64_t *time_ns)
 {
     (void)context;
-    return INT64_C(1786744800000000000);
+    *time_ns = INT64_C(1786744800000000000);
+    return INFS_STATUS_OK;
 }
 
 static void memory_close(void *context)
@@ -85,7 +85,7 @@ static const struct infs_storage_ops memory_ops = {
 
 static void fail(const char *message)
 {
-    fprintf(stderr, "portable-core: %s (errno=%d)\n", message, errno);
+    fprintf(stderr, "portable-core: %s\n", message);
     exit(1);
 }
 
@@ -141,8 +141,8 @@ int main(int argc, char **argv)
         fail("write through memory backend");
 
     const char invalid_path[] = "/invalid-\xc0\x80";
-    errno = 0;
-    if (infs_create_file(&volume, invalid_path, &options) == 0 || errno != EINVAL)
+    if (infs_create_file(&volume, invalid_path, &options) !=
+        INFS_STATUS_INVALID_ARGUMENT)
         fail("reject malformed UTF-8");
     infs_volume_close(&volume);
 
@@ -156,7 +156,7 @@ int main(int argc, char **argv)
         fail("verify persisted bytes");
     struct infs_attributes attributes;
     if (infs_get_attributes(&volume, unicode_path, &attributes) != 0 ||
-        attributes.birth_time_ns != memory_time(NULL) ||
+        attributes.birth_time_ns != INT64_C(1786744800000000000) ||
         attributes.portable_flags != INFS_ATTR_ARCHIVE)
         fail("verify portable attributes");
 

@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-int infs_volume_open_storage(struct infs_volume *vol,
-                             struct infs_storage *storage, int writable)
+infs_status infs_volume_open_storage(struct infs_volume *vol,
+                                     struct infs_storage *storage, int writable)
 {
     if (!vol || !storage || !infs_storage_valid(storage)) {
-        errno = EINVAL;
-        return -1;
+        return INFS_STATUS_INVALID_ARGUMENT;
     }
     memset(vol, 0, sizeof(*vol));
     vol->writable = writable != 0;
@@ -12,14 +11,17 @@ int infs_volume_open_storage(struct infs_volume *vol,
     storage->ops = NULL;
     storage->context = NULL;
     int is_block = 0;
-    if (infs_storage_get_size(&vol->storage, &vol->size_bytes, &is_block) != 0)
+    infs_status status = infs_storage_get_size(
+        &vol->storage, &vol->size_bytes, &is_block);
+    if (status != INFS_STATUS_OK)
         goto fail;
     (void)is_block;
-    if (infs_read_best_superblock(&vol->storage, vol->size_bytes,
-                                  &vol->sb, NULL) != 0)
+    status = infs_read_best_superblock(&vol->storage, vol->size_bytes,
+                                       &vol->sb, NULL);
+    if (status != INFS_STATUS_OK)
         goto fail;
     if (infs_le16_to_cpu(vol->sb.format_minor) != INFS_FORMAT_MINOR) {
-        errno = EOPNOTSUPP;
+        status = INFS_STATUS_NOT_SUPPORTED;
         goto fail;
     }
 
@@ -29,15 +31,19 @@ int infs_volume_open_storage(struct infs_volume *vol,
     if (bitmap_start == 0 || bitmap_blocks == 0 || bitmap_start >= total ||
         bitmap_blocks > total - bitmap_start ||
         bitmap_blocks > SIZE_MAX / INFS_BLOCK_SIZE) {
-        errno = EIO;
+        status = INFS_STATUS_CORRUPT;
         goto fail;
     }
     vol->bitmap_bytes = (size_t)(bitmap_blocks * INFS_BLOCK_SIZE);
     vol->bitmap = malloc(vol->bitmap_bytes);
-    if (!vol->bitmap)
+    if (!vol->bitmap) {
+        status = INFS_STATUS_NO_MEMORY;
         goto fail;
-    if (infs_storage_read(&vol->storage, bitmap_start * INFS_BLOCK_SIZE,
-                          vol->bitmap, vol->bitmap_bytes) != 0)
+    }
+    status = infs_storage_read(&vol->storage,
+                               bitmap_start * INFS_BLOCK_SIZE,
+                               vol->bitmap, vol->bitmap_bytes);
+    if (status != INFS_STATUS_OK)
         goto fail;
 
     uint64_t free_count = 0;
@@ -46,18 +52,18 @@ int infs_volume_open_storage(struct infs_volume *vol,
             ++free_count;
     }
     if (free_count != infs_le64_to_cpu(vol->sb.free_blocks)) {
-        errno = EIO;
+        status = INFS_STATUS_CORRUPT;
         goto fail;
     }
     for (uint64_t b = total; b < (uint64_t)vol->bitmap_bytes * 8u; ++b) {
         if (!bitmap_get(vol->bitmap, b)) {
-            errno = EIO;
+            status = INFS_STATUS_CORRUPT;
             goto fail;
         }
     }
     for (uint64_t b = bitmap_start; b < bitmap_start + bitmap_blocks; ++b) {
         if (!bitmap_get(vol->bitmap, b)) {
-            errno = EIO;
+            status = INFS_STATUS_CORRUPT;
             goto fail;
         }
     }
@@ -71,36 +77,42 @@ int infs_volume_open_storage(struct infs_volume *vol,
     };
     for (size_t i = 0; i < sizeof(critical) / sizeof(critical[0]); ++i) {
         if (critical[i] >= total || !bitmap_get(vol->bitmap, critical[i])) {
-            errno = EIO;
+            status = INFS_STATUS_CORRUPT;
             goto fail;
         }
     }
 
     uint8_t object[INFS_BLOCK_SIZE];
-    if (read_object(vol, infs_le64_to_cpu(vol->sb.root_object_block), object) != 0 ||
-        dir_validate(object, NULL) != 0)
+    status = read_object(vol, infs_le64_to_cpu(vol->sb.root_object_block), object);
+    if (status != INFS_STATUS_OK)
+        goto fail;
+    status = dir_validate(object, NULL);
+    if (status != INFS_STATUS_OK)
         goto fail;
     struct infs_object_header_disk *root_hdr = (struct infs_object_header_disk *)object;
     if (memcmp(root_hdr->object_id, vol->sb.root_object_id, 16) != 0 ||
         !id_is_zero(root_hdr->parent_id)) {
-        errno = EIO;
+        status = INFS_STATUS_CORRUPT;
         goto fail;
     }
-    if (validate_index_entries(vol) != 0 || validate_integrity_metadata(vol) != 0)
+    status = validate_index_entries(vol);
+    if (status != INFS_STATUS_OK)
         goto fail;
-    if (vol->writable && heal_checkpoints(vol) != 0)
+    status = validate_integrity_metadata(vol);
+    if (status != INFS_STATUS_OK)
         goto fail;
-    return 0;
+    if (vol->writable) {
+        status = heal_checkpoints(vol);
+        if (status != INFS_STATUS_OK)
+            goto fail;
+    }
+    return INFS_STATUS_OK;
 
 fail:
-    {
-        int saved = errno;
-        free(vol->bitmap);
-        vol->bitmap = NULL;
-        infs_storage_close(&vol->storage);
-        errno = saved;
-        return -1;
-    }
+    free(vol->bitmap);
+    vol->bitmap = NULL;
+    infs_storage_close(&vol->storage);
+    return status == INFS_STATUS_OK ? INFS_STATUS_ERROR : status;
 }
 
 void infs_volume_close(struct infs_volume *vol)

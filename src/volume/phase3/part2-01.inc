@@ -6,8 +6,7 @@ static int dir_validate(uint8_t block[INFS_BLOCK_SIZE],
     if (!infs_validate_object_block(block) ||
         infs_le16_to_cpu(hdr->object_type) != INFS_OBJECT_DIRECTORY ||
         infs_le32_to_cpu(hdr->payload_size) < sizeof(struct infs_directory_payload_disk)) {
-        errno = EIO;
-        return -1;
+        return INFS_STATUS_CORRUPT;
     }
 
     struct infs_directory_payload_disk *payload =
@@ -16,8 +15,7 @@ static int dir_validate(uint8_t block[INFS_BLOCK_SIZE],
     uint32_t count = infs_le32_to_cpu(payload->entry_count);
     size_t available = infs_le32_to_cpu(hdr->payload_size) - sizeof(*payload);
     if (bytes > available) {
-        errno = EIO;
-        return -1;
+        return INFS_STATUS_CORRUPT;
     }
 
     uint8_t *p = (uint8_t *)(payload + 1);
@@ -25,8 +23,7 @@ static int dir_validate(uint8_t block[INFS_BLOCK_SIZE],
     uint32_t seen = 0;
     while (remaining) {
         if (remaining < sizeof(struct infs_dirent_disk)) {
-            errno = EIO;
-            return -1;
+            return INFS_STATUS_CORRUPT;
         }
         struct infs_dirent_disk *e = (struct infs_dirent_disk *)p;
         uint16_t rec = infs_le16_to_cpu(e->record_size);
@@ -38,20 +35,17 @@ static int dir_validate(uint8_t block[INFS_BLOCK_SIZE],
             sizeof(*e) + name_len > rec ||
             (type != INFS_OBJECT_DIRECTORY && type != INFS_OBJECT_FILE) ||
             memchr(name, '\0', name_len) != NULL || memchr(name, '/', name_len) != NULL) {
-            errno = EIO;
-            return -1;
+            return INFS_STATUS_CORRUPT;
         }
         if (!infs_utf8_validate(name, name_len)) {
-            errno = EIO;
-            return -1;
+            return INFS_STATUS_CORRUPT;
         }
         p += rec;
         remaining -= rec;
         ++seen;
     }
     if (seen != count) {
-        errno = EIO;
-        return -1;
+        return INFS_STATUS_CORRUPT;
     }
     if (payload_out)
         *payload_out = payload;
@@ -86,16 +80,14 @@ static int dir_add(uint8_t block[INFS_BLOCK_SIZE], const char *name,
 {
     struct infs_directory_payload_disk *payload;
     if (dir_validate(block, &payload) != 0)
-        return -1;
+        return INFS_STATUS_ERROR;
     size_t name_len = strlen(name);
     if (name_len == 0 || name_len > INFS_NAME_MAX || strchr(name, '/') ||
         !infs_utf8_validate(name, name_len)) {
-        errno = EINVAL;
-        return -1;
+        return INFS_STATUS_INVALID_ARGUMENT;
     }
     if (dir_find(payload, name, name_len, NULL)) {
-        errno = EEXIST;
-        return -1;
+        return INFS_STATUS_ALREADY_EXISTS;
     }
 
     struct infs_object_header_disk *hdr = (struct infs_object_header_disk *)block;
@@ -103,8 +95,7 @@ static int dir_add(uint8_t block[INFS_BLOCK_SIZE], const char *name,
     size_t bytes = infs_le32_to_cpu(payload->bytes_used);
     size_t needed = sizeof(*payload) + bytes + rec;
     if (needed > INFS_BLOCK_SIZE - sizeof(*hdr)) {
-        errno = ENOSPC;
-        return -1;
+        return INFS_STATUS_NO_SPACE;
     }
 
     uint8_t *p = (uint8_t *)(payload + 1) + bytes;

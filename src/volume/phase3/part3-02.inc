@@ -5,7 +5,7 @@ static int file_ensure_blocks(struct infs_volume *vol, uint8_t block[INFS_BLOCK_
     struct infs_file_payload_disk *p;
     struct infs_extent_disk *ext;
     if (file_validate_volume(vol, block, &p, &ext) != 0)
-        return -1;
+        return INFS_STATUS_ERROR;
     uint64_t have = file_allocated_blocks(p, ext);
     if (needed <= have)
         return 0;
@@ -18,21 +18,19 @@ static int file_ensure_blocks(struct infs_volume *vol, uint8_t block[INFS_BLOCK_
     while (have < needed) {
         uint64_t start, got;
         if (alloc_run(vol, needed - have, &start, &got) != 0)
-            return -1;
+            return INFS_STATUS_ERROR;
         if (count &&
             infs_le64_to_cpu(ext[count - 1u].physical_block) + infs_le32_to_cpu(ext[count - 1u].block_count) == start) {
             uint64_t new_count = (uint64_t)infs_le32_to_cpu(ext[count - 1u].block_count) + got;
             if (new_count > UINT32_MAX) {
                 free_run(vol, start, got);
-                errno = EFBIG;
-                return -1;
+                return INFS_STATUS_FILE_TOO_LARGE;
             }
             ext[count - 1u].block_count = infs_cpu_to_le32((uint32_t)new_count);
         } else {
             if (count >= max_extents) {
                 free_run(vol, start, got);
-                errno = EFBIG;
-                return -1;
+                return INFS_STATUS_FILE_TOO_LARGE;
             }
             ext[count].logical_block = infs_cpu_to_le64(have);
             ext[count].physical_block = infs_cpu_to_le64(start);
@@ -42,7 +40,7 @@ static int file_ensure_blocks(struct infs_volume *vol, uint8_t block[INFS_BLOCK_
             p->extent_count = infs_cpu_to_le32(count);
         }
         if (checksum_set_zero_range(vol, p, hdr->object_id, have, got) != 0)
-            return -1;
+            return INFS_STATUS_ERROR;
         have += got;
     }
     hdr->payload_size = infs_cpu_to_le32((uint32_t)(sizeof(*p) +
@@ -63,6 +61,5 @@ static int file_map_block(const struct infs_file_payload_disk *p,
             return 0;
         }
     }
-    errno = EIO;
-    return -1;
+    return INFS_STATUS_CORRUPT;
 }

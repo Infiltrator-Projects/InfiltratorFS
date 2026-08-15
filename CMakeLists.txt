@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.20)
-project(InfiltratorFS VERSION 0.5.0 LANGUAGES C)
+project(InfiltratorFS VERSION 0.5.1 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -16,6 +16,7 @@ endfunction()
 
 add_library(infilfs_core STATIC
     src/checksum.c
+    src/status.c
     src/storage.c
     src/utf8.c
     src/fs.c
@@ -32,8 +33,18 @@ add_executable(infilfs-portable-core tests/portable-core.c)
 target_link_libraries(infilfs-portable-core PRIVATE infilfs_core)
 infilfs_enable_warnings(infilfs-portable-core)
 
+add_executable(infilfs-format-conformance tests/format-conformance.c)
+target_link_libraries(infilfs-format-conformance PRIVATE infilfs_core)
+infilfs_enable_warnings(infilfs-format-conformance)
+
+add_executable(infilfs-volume-conformance tests/volume-conformance.c)
+target_link_libraries(infilfs-volume-conformance PRIVATE infilfs_core)
+infilfs_enable_warnings(infilfs-volume-conformance)
+
 enable_testing()
 add_test(NAME infilfs-checksum-known-answer COMMAND infilfs-checksum-test)
+add_test(NAME infilfs-format-conformance COMMAND infilfs-format-conformance)
+add_test(NAME infilfs-volume-conformance COMMAND infilfs-volume-conformance)
 
 # Linux/POSIX is the first adapter and test host. The core library and disk
 # format do not depend on this adapter.

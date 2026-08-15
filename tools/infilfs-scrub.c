@@ -2,10 +2,8 @@
 #include "infilfs/posix_io.h"
 #include "infilfs/volume.h"
 
-#include <errno.h>
 #include <inttypes.h>
 #include <stdio.h>
-#include <string.h>
 
 int main(int argc, char **argv)
 {
@@ -15,14 +13,18 @@ int main(int argc, char **argv)
     }
 
     struct infs_volume vol;
-    if (infs_posix_volume_open(&vol, argv[1], 0) != 0) {
-        fprintf(stderr, "infilfs-scrub: open: %s\n", strerror(errno));
+    infs_status status = infs_posix_volume_open(&vol, argv[1], 0);
+    if (status != INFS_STATUS_OK) {
+        fprintf(stderr, "infilfs-scrub: open: %s\n",
+                infs_status_string(status));
         return 1;
     }
 
     struct infs_scrub_report report;
-    if (infs_scrub(&vol, &report) != 0) {
-        fprintf(stderr, "infilfs-scrub: scrub: %s\n", strerror(errno));
+    status = infs_scrub(&vol, &report);
+    if (status != INFS_STATUS_OK) {
+        fprintf(stderr, "infilfs-scrub: scrub: %s\n",
+                infs_status_string(status));
         infs_volume_close(&vol);
         return 1;
     }

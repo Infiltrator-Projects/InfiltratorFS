@@ -4,7 +4,7 @@ static int validate_index_entries(struct infs_volume *vol)
     uint8_t index_block[INFS_BLOCK_SIZE];
     struct infs_index_payload_disk *payload;
     if (index_load(vol, index_block, &payload) != 0)
-        return -1;
+        return INFS_STATUS_ERROR;
     uint32_t count = infs_le32_to_cpu(payload->entry_count);
     struct infs_index_entry_disk *entries =
         (struct infs_index_entry_disk *)(payload + 1);
@@ -17,33 +17,29 @@ static int validate_index_entries(struct infs_volume *vol)
         if (b >= total || !bitmap_get(vol->bitmap, b) ||
             (type != INFS_OBJECT_DIRECTORY && type != INFS_OBJECT_FILE &&
              type != INFS_OBJECT_CHECKSUM)) {
-            errno = EIO;
-            return -1;
+            return INFS_STATUS_CORRUPT;
         }
         for (uint32_t j = 0; j < i; ++j) {
             if (memcmp(entries[i].object_id, entries[j].object_id, 16) == 0) {
-                errno = EIO;
-                return -1;
+                return INFS_STATUS_CORRUPT;
             }
         }
         uint8_t object[INFS_BLOCK_SIZE];
         if (read_object(vol, b, object) != 0)
-            return -1;
+            return INFS_STATUS_ERROR;
         struct infs_object_header_disk *hdr = (struct infs_object_header_disk *)object;
         if (memcmp(hdr->object_id, entries[i].object_id, 16) != 0 ||
             infs_le16_to_cpu(hdr->object_type) != type) {
-            errno = EIO;
-            return -1;
+            return INFS_STATUS_CORRUPT;
         }
         if (memcmp(entries[i].object_id, vol->sb.root_object_id, 16) == 0) {
             if (b != infs_le64_to_cpu(vol->sb.root_object_block) || type != INFS_OBJECT_DIRECTORY)
-                return errno = EIO, -1;
+                return INFS_STATUS_CORRUPT;
             ++root_seen;
         }
     }
     if (root_seen != 1) {
-        errno = EIO;
-        return -1;
+        return INFS_STATUS_CORRUPT;
     }
     return 0;
 }
@@ -75,11 +71,11 @@ static int heal_checkpoints(struct infs_volume *vol)
 
     uint8_t raw[INFS_BLOCK_SIZE];
     if (infs_encode_superblock(raw, &vol->sb) != 0)
-        return -1;
+        return INFS_STATUS_ERROR;
     for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i) {
         uint64_t b = infs_le64_to_cpu(vol->sb.checkpoint_block[i]);
         if (write_block(vol, b, raw) != 0)
-            return -1;
+            return INFS_STATUS_ERROR;
     }
     return infs_storage_flush(&vol->storage);
 }

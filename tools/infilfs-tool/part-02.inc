@@ -40,8 +40,9 @@ static int command_write(struct infs_volume *vol, const char *host,
     int64_t written = infs_write_file(vol, dest, buf, size, (uint64_t)off64);
     free(buf);
     if (written < 0 || (size_t)written != size) {
-        if (written >= 0) errno = EIO;
-        return die_errno("write destination");
+        return die_status("write destination",
+                          written < 0 ? (infs_status)written :
+                                        INFS_STATUS_IO_ERROR);
     }
     return 0;
 }
@@ -57,17 +58,18 @@ static int command_map(struct infs_volume *vol, const char *path,
         return die_errno("map logical block");
     }
     struct infs_lookup lk;
-    if (infs_lookup_path(vol, path, &lk) != 0)
-        return die_errno("map lookup");
-    if (lk.type != INFS_OBJECT_FILE) {
-        errno = EISDIR;
-        return die_errno("map");
-    }
+    infs_status status = infs_lookup_path(vol, path, &lk);
+    if (status != INFS_STATUS_OK)
+        return die_status("map lookup", status);
+    if (lk.type != INFS_OBJECT_FILE)
+        return die_status("map", INFS_STATUS_IS_DIRECTORY);
     uint8_t object[INFS_BLOCK_SIZE];
-    if (infs_storage_read(&vol->storage, lk.block * INFS_BLOCK_SIZE,
-                          object, sizeof(object)) != 0 ||
-        !infs_validate_object_block(object))
-        return die_errno("map metadata");
+    status = infs_storage_read(&vol->storage, lk.block * INFS_BLOCK_SIZE,
+                               object, sizeof(object));
+    if (status != INFS_STATUS_OK)
+        return die_status("map metadata", status);
+    if (!infs_validate_object_block(object))
+        return die_status("map metadata", INFS_STATUS_CORRUPT);
     struct infs_object_header_disk *hdr = (struct infs_object_header_disk *)object;
     struct infs_file_payload_disk *file =
         (struct infs_file_payload_disk *)(object + sizeof(*hdr));
@@ -82,6 +84,5 @@ static int command_map(struct infs_volume *vol, const char *path,
             return 0;
         }
     }
-    errno = ENXIO;
-    return die_errno("map");
+    return die_status("map", INFS_STATUS_NOT_FOUND);
 }

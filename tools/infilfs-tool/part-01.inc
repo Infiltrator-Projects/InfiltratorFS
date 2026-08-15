@@ -36,12 +36,19 @@ static int die_errno(const char *what)
     return 1;
 }
 
+static int die_status(const char *what, infs_status status)
+{
+    fprintf(stderr, "%s: %s\n", what, infs_status_string(status));
+    return 1;
+}
+
 static int command_ls(struct infs_volume *vol, const char *path)
 {
     struct infs_dir_item *items = NULL;
     size_t count = 0;
-    if (infs_list_dir(vol, path, &items, &count) != 0)
-        return die_errno("ls");
+    infs_status status = infs_list_dir(vol, path, &items, &count);
+    if (status != INFS_STATUS_OK)
+        return die_status("ls", status);
     for (size_t i = 0; i < count; ++i)
         printf("%c %s\n", items[i].type == INFS_OBJECT_DIRECTORY ? 'd' : '-', items[i].name);
     infs_free_dir_items(items);
@@ -51,8 +58,9 @@ static int command_ls(struct infs_volume *vol, const char *path)
 static int command_stat(struct infs_volume *vol, const char *path)
 {
     struct infs_attributes attributes;
-    if (infs_get_attributes(vol, path, &attributes) != 0)
-        return die_errno("stat");
+    infs_status status = infs_get_attributes(vol, path, &attributes);
+    if (status != INFS_STATUS_OK)
+        return die_status("stat", status);
     printf("type=%u mode=%#o uid=%u gid=%u links=%" PRIu64
            " size=%" PRIu64 " allocated=%" PRIu64 "\n",
            attributes.object_type, attributes.posix_permissions,
@@ -69,29 +77,31 @@ static int command_put(struct infs_volume *vol, const char *host, const char *de
         return die_errno("open host file");
 
     struct infs_attributes attributes;
-    if (infs_get_attributes(vol, dest, &attributes) != 0) {
-        if (errno != ENOENT) {
+    infs_status status = infs_get_attributes(vol, dest, &attributes);
+    if (status != INFS_STATUS_OK) {
+        if (status != INFS_STATUS_NOT_FOUND) {
             close(input);
-            return die_errno("lookup destination");
+            return die_status("lookup destination", status);
         }
         const struct infs_create_options options = {
             .posix_permissions = 0644,
             .posix_uid = (uint32_t)getuid(),
             .posix_gid = (uint32_t)getgid(),
         };
-        if (infs_create_file(vol, dest, &options) != 0) {
+        status = infs_create_file(vol, dest, &options);
+        if (status != INFS_STATUS_OK) {
             close(input);
-            return die_errno("create destination");
+            return die_status("create destination", status);
         }
     } else if (attributes.object_type != INFS_OBJECT_FILE) {
         close(input);
-        errno = EISDIR;
-        return die_errno("destination");
+        return die_status("destination", INFS_STATUS_IS_DIRECTORY);
     }
 
-    if (infs_truncate_file(vol, dest, 0) != 0) {
+    status = infs_truncate_file(vol, dest, 0);
+    if (status != INFS_STATUS_OK) {
         close(input);
-        return die_errno("truncate destination");
+        return die_status("truncate destination", status);
     }
 
     uint8_t buf[256 * 1024];
@@ -109,9 +119,8 @@ static int command_put(struct infs_volume *vol, const char *host, const char *de
         int64_t w = infs_write_file(vol, dest, buf, (size_t)n, off);
         if (w < 0 || w != n) {
             close(input);
-            if (w >= 0)
-                errno = EIO;
-            return die_errno("write destination");
+            return die_status("write destination",
+                              w < 0 ? (infs_status)w : INFS_STATUS_IO_ERROR);
         }
         off += w;
     }

@@ -13,11 +13,10 @@ static int checksum_locate(struct infs_volume *vol,
 
     if (id_is_zero(file->checksum_head_id)) {
         if (!create) {
-            errno = EIO;
-            return -1;
+            return INFS_STATUS_CORRUPT;
         }
         if (checksum_create_object(vol, owner_id, 0, current_id) != 0)
-            return -1;
+            return INFS_STATUS_ERROR;
         memcpy(file->checksum_head_id, current_id, 16);
     } else {
         memcpy(current_id, file->checksum_head_id, 16);
@@ -26,20 +25,18 @@ static int checksum_locate(struct infs_volume *vol,
     for (uint64_t n = 0; n <= segment; ++n) {
         struct infs_lookup lk;
         if (index_find(vol, current_id, &lk) != 0)
-            return -1;
+            return INFS_STATUS_ERROR;
         if (lk.type != INFS_OBJECT_CHECKSUM) {
-            errno = EIO;
-            return -1;
+            return INFS_STATUS_CORRUPT;
         }
         uint8_t block[INFS_BLOCK_SIZE];
         if (read_object(vol, lk.block, block) != 0)
-            return -1;
+            return INFS_STATUS_ERROR;
         struct infs_checksum_payload_disk *p;
         struct infs_data_checksum_disk *values;
         if (checksum_validate(block, owner_id, &p, &values) != 0 ||
             infs_le64_to_cpu(p->start_logical_block) != expected_start) {
-            errno = EIO;
-            return -1;
+            return INFS_STATUS_CORRUPT;
         }
         if (n == segment) {
             if (lookup_out)
@@ -61,17 +58,16 @@ static int checksum_locate(struct infs_volume *vol,
 
         if (id_is_zero(p->next_object_id)) {
             if (!create) {
-                errno = EIO;
-                return -1;
+                return INFS_STATUS_CORRUPT;
             }
             uint8_t next_id[16];
             if (checksum_create_object(vol, owner_id,
                                        expected_start + INFS_CHECKSUMS_PER_OBJECT,
                                        next_id) != 0)
-                return -1;
+                return INFS_STATUS_ERROR;
             memcpy(p->next_object_id, next_id, 16);
             if (write_object(vol, lk.block, block) != 0)
-                return -1;
+                return INFS_STATUS_ERROR;
             memcpy(current_id, next_id, 16);
         } else {
             memcpy(current_id, p->next_object_id, 16);
@@ -79,6 +75,5 @@ static int checksum_locate(struct infs_volume *vol,
         expected_start += INFS_CHECKSUMS_PER_OBJECT;
     }
 
-    errno = EIO;
-    return -1;
+    return INFS_STATUS_CORRUPT;
 }

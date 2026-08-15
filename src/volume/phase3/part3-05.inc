@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-int infs_volume_sync(struct infs_volume *vol)
+infs_status infs_volume_sync(struct infs_volume *vol)
 {
     if (!vol || !infs_storage_valid(&vol->storage)) {
-        errno = EINVAL;
-        return -1;
+        return INFS_STATUS_INVALID_ARGUMENT;
     }
     if (!vol->writable)
         return 0;
@@ -13,11 +12,11 @@ int infs_volume_sync(struct infs_volume *vol)
     const uint64_t old_bitmap_start = infs_le64_to_cpu(vol->tx_base_sb.bitmap_start_block);
     const uint64_t bitmap_blocks = infs_le64_to_cpu(vol->tx_base_sb.bitmap_block_count);
     if (tx_defer_range(vol, old_bitmap_start, bitmap_blocks) != 0)
-        return -1;
+        return INFS_STATUS_ERROR;
 
     uint64_t new_bitmap_start = 0;
     if (alloc_exact_run(vol, bitmap_blocks, &new_bitmap_start) != 0)
-        return -1;
+        return INFS_STATUS_ERROR;
 
     /* Deferred frees remain reserved until every new metadata/data write is on
      * stable storage. They become reusable only in the new bitmap image. */
@@ -49,26 +48,26 @@ int infs_volume_sync(struct infs_volume *vol)
      * A crash before step 4 selects the old generation. A crash after step 4
      * selects the new generation and a writable open heals the other copies. */
     if (infs_storage_flush(&vol->storage) != 0)
-        return -1;
+        return INFS_STATUS_ERROR;
     phase2_failpoint("before-bitmap");
 
     if (infs_storage_write(&vol->storage, new_bitmap_start * INFS_BLOCK_SIZE,
                            vol->bitmap, vol->bitmap_bytes) != 0)
-        return -1;
+        return INFS_STATUS_ERROR;
     if (infs_storage_flush(&vol->storage) != 0)
-        return -1;
+        return INFS_STATUS_ERROR;
     phase2_failpoint("after-bitmap");
 
     uint8_t sb_block[INFS_BLOCK_SIZE];
     if (infs_encode_superblock(sb_block, &vol->sb) != 0)
-        return -1;
+        return INFS_STATUS_ERROR;
     uint64_t generation = infs_le64_to_cpu(vol->sb.generation);
     unsigned first = (unsigned)(generation % INFS_CHECKPOINT_COUNT);
     uint64_t first_block = infs_le64_to_cpu(vol->sb.checkpoint_block[first]);
     if (write_block(vol, first_block, sb_block) != 0)
-        return -1;
+        return INFS_STATUS_ERROR;
     if (infs_storage_flush(&vol->storage) != 0)
-        return -1;
+        return INFS_STATUS_ERROR;
 
     /* The transaction is committed from this point onward. */
     free(vol->tx_base_bitmap);
@@ -77,24 +76,15 @@ int infs_volume_sync(struct infs_volume *vol)
     vol->tx_active = 0;
     phase2_failpoint("after-checkpoint");
 
-    int replica_error = 0;
-    int saved_errno = 0;
+    infs_status replica_status = INFS_STATUS_OK;
     for (unsigned n = 1; n < INFS_CHECKPOINT_COUNT; ++n) {
         unsigned i = (first + n) % INFS_CHECKPOINT_COUNT;
         uint64_t b = infs_le64_to_cpu(vol->sb.checkpoint_block[i]);
-        if (write_block(vol, b, sb_block) != 0) {
-            if (!replica_error)
-                saved_errno = errno;
-            replica_error = 1;
-        }
+        infs_status status = write_block(vol, b, sb_block);
+        if (status != INFS_STATUS_OK && replica_status == INFS_STATUS_OK)
+            replica_status = status;
     }
-    if (!replica_error && infs_storage_flush(&vol->storage) != 0) {
-        saved_errno = errno;
-        replica_error = 1;
-    }
-    if (replica_error) {
-        errno = saved_errno ? saved_errno : EIO;
-        return -1;
-    }
-    return 0;
+    if (replica_status == INFS_STATUS_OK)
+        replica_status = infs_storage_flush(&vol->storage);
+    return replica_status;
 }

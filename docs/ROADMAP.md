@@ -52,6 +52,17 @@
 - [x] Add a portable in-memory storage-backend persistence test.
 - [x] Keep POSIX I/O and FUSE outside the core engine.
 
+## Phase 3.6 — Format 0.5 conformance — complete
+
+- [x] Publish implementation release 0.5.1 without changing on-disk Format 0.5.
+- [x] Add stable operating-system-neutral `infs_status` values.
+- [x] Map POSIX `errno` only at the adapter boundary.
+- [x] Add exact structure-size and field-offset assertions.
+- [x] Add an independently constructed byte-exact checkpoint test.
+- [x] Add strict valid/invalid UTF-8 conformance vectors.
+- [x] Add deterministic complete-volume malformed-image tests.
+- [x] Add full Linux CI and Windows/MSVC portable-core CI.
+
 ## Phase 4 — modern storage features
 
 - [ ] Sparse extents.

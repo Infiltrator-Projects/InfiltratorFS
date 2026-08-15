@@ -7,20 +7,17 @@ static int file_validate(uint8_t block[INFS_BLOCK_SIZE],
     if (!infs_validate_object_block(block) ||
         infs_le16_to_cpu(hdr->object_type) != INFS_OBJECT_FILE ||
         infs_le32_to_cpu(hdr->payload_size) < sizeof(struct infs_file_payload_disk)) {
-        errno = EIO;
-        return -1;
+        return INFS_STATUS_CORRUPT;
     }
     struct infs_file_payload_disk *p =
         (struct infs_file_payload_disk *)(block + sizeof(*hdr));
     if (infs_le32_to_cpu(p->data_checksum_type) != INFS_CHECKSUM_SHA256) {
-        errno = EIO;
-        return -1;
+        return INFS_STATUS_CORRUPT;
     }
     uint32_t count = infs_le32_to_cpu(p->extent_count);
     size_t need = sizeof(*p) + (size_t)count * sizeof(struct infs_extent_disk);
     if (need > infs_le32_to_cpu(hdr->payload_size) || need > INFS_BLOCK_SIZE - sizeof(*hdr)) {
-        errno = EIO;
-        return -1;
+        return INFS_STATUS_CORRUPT;
     }
     struct infs_extent_disk *ext = (struct infs_extent_disk *)(p + 1);
     uint64_t next_logical = 0;
@@ -30,8 +27,7 @@ static int file_validate(uint8_t block[INFS_BLOCK_SIZE],
         uint32_t blocks = infs_le32_to_cpu(ext[i].block_count);
         (void)physical; /* physical bounds are checked with volume context */
         if (blocks == 0 || logical != next_logical) {
-            errno = EIO;
-            return -1;
+            return INFS_STATUS_CORRUPT;
         }
         next_logical += blocks;
     }
@@ -47,7 +43,7 @@ static int file_validate_volume(struct infs_volume *vol, uint8_t block[INFS_BLOC
                                 struct infs_extent_disk **extents_out)
 {
     if (file_validate(block, payload_out, extents_out) != 0)
-        return -1;
+        return INFS_STATUS_ERROR;
     struct infs_file_payload_disk *p = *payload_out;
     struct infs_extent_disk *ext = *extents_out;
     uint32_t count = infs_le32_to_cpu(p->extent_count);
@@ -56,13 +52,11 @@ static int file_validate_volume(struct infs_volume *vol, uint8_t block[INFS_BLOC
         uint64_t physical = infs_le64_to_cpu(ext[i].physical_block);
         uint32_t blocks = infs_le32_to_cpu(ext[i].block_count);
         if (physical >= total || blocks > total - physical) {
-            errno = EIO;
-            return -1;
+            return INFS_STATUS_CORRUPT;
         }
         for (uint32_t j = 0; j < blocks; ++j) {
             if (!bitmap_get(vol->bitmap, physical + j)) {
-                errno = EIO;
-                return -1;
+                return INFS_STATUS_CORRUPT;
             }
         }
     }

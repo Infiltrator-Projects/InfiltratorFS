@@ -5,7 +5,6 @@
 #include "infilfs/endian.h"
 #include "infilfs/storage.h"
 
-#include <errno.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
@@ -20,13 +19,11 @@ static uint64_t block_crc_with_zeroed_checksum(const uint8_t block[INFS_BLOCK_SI
     return infs_crc64_ecma(tmp, sizeof(tmp));
 }
 
-int infs_encode_superblock(uint8_t block[INFS_BLOCK_SIZE],
-                           const struct infs_superblock_disk *sb)
+infs_status infs_encode_superblock(uint8_t block[INFS_BLOCK_SIZE],
+                                   const struct infs_superblock_disk *sb)
 {
-    if (!block || !sb) {
-        errno = EINVAL;
-        return -1;
-    }
+    if (!block || !sb)
+        return INFS_STATUS_INVALID_ARGUMENT;
     memset(block, 0, INFS_BLOCK_SIZE);
     memcpy(block, sb, sizeof(*sb));
 
@@ -35,7 +32,7 @@ int infs_encode_superblock(uint8_t block[INFS_BLOCK_SIZE],
     uint64_t crc = infs_cpu_to_le64(block_crc_with_zeroed_checksum(
         block, off, sizeof(sb->checksum)));
     memcpy(block + off, &crc, sizeof(crc));
-    return 0;
+    return INFS_STATUS_OK;
 }
 
 int infs_validate_superblock_block(const uint8_t block[INFS_BLOCK_SIZE])
@@ -68,26 +65,24 @@ int infs_validate_superblock_block(const uint8_t block[INFS_BLOCK_SIZE])
     return stored == actual;
 }
 
-int infs_decode_superblock(const uint8_t block[INFS_BLOCK_SIZE],
-                           struct infs_superblock_disk *sb)
+infs_status infs_decode_superblock(const uint8_t block[INFS_BLOCK_SIZE],
+                                   struct infs_superblock_disk *sb)
 {
-    if (!sb || !infs_validate_superblock_block(block)) {
-        errno = EINVAL;
-        return -1;
-    }
+    if (!sb || !infs_validate_superblock_block(block))
+        return INFS_STATUS_INVALID_ARGUMENT;
     memcpy(sb, block, sizeof(*sb));
-    return 0;
+    return INFS_STATUS_OK;
 }
 
-int infs_object_init(uint8_t block[INFS_BLOCK_SIZE], uint16_t object_type,
-                     const uint8_t object_id[16], const uint8_t parent_id[16],
-                     uint64_t generation, uint32_t payload_size)
+infs_status infs_object_init(uint8_t block[INFS_BLOCK_SIZE],
+                             uint16_t object_type,
+                             const uint8_t object_id[16],
+                             const uint8_t parent_id[16],
+                             uint64_t generation, uint32_t payload_size)
 {
     if (!block || !object_id ||
-        payload_size > INFS_BLOCK_SIZE - sizeof(struct infs_object_header_disk)) {
-        errno = EINVAL;
-        return -1;
-    }
+        payload_size > INFS_BLOCK_SIZE - sizeof(struct infs_object_header_disk))
+        return INFS_STATUS_INVALID_ARGUMENT;
 
     memset(block, 0, INFS_BLOCK_SIZE);
     struct infs_object_header_disk *hdr =
@@ -102,22 +97,19 @@ int infs_object_init(uint8_t block[INFS_BLOCK_SIZE], uint16_t object_type,
         memcpy(hdr->parent_id, parent_id, 16);
     hdr->payload_size = infs_cpu_to_le32(payload_size);
     hdr->checksum_type = infs_cpu_to_le32(INFS_CHECKSUM_CRC64_ECMA);
-    return 0;
+    return INFS_STATUS_OK;
 }
 
-int infs_object_finalize(uint8_t block[INFS_BLOCK_SIZE])
+infs_status infs_object_finalize(uint8_t block[INFS_BLOCK_SIZE])
 {
-    if (!block) {
-        errno = EINVAL;
-        return -1;
-    }
+    if (!block)
+        return INFS_STATUS_INVALID_ARGUMENT;
     struct infs_object_header_disk *hdr =
         (struct infs_object_header_disk *)block;
     if (memcmp(hdr->magic, INFS_OBJECT_MAGIC, 8) != 0 ||
         infs_le32_to_cpu(hdr->header_size) != sizeof(*hdr) ||
         infs_le32_to_cpu(hdr->payload_size) > INFS_BLOCK_SIZE - sizeof(*hdr)) {
-        errno = EINVAL;
-        return -1;
+        return INFS_STATUS_INVALID_ARGUMENT;
     }
 
     const size_t off = offsetof(struct infs_object_header_disk, checksum);
@@ -125,7 +117,7 @@ int infs_object_finalize(uint8_t block[INFS_BLOCK_SIZE])
     uint64_t crc = infs_cpu_to_le64(block_crc_with_zeroed_checksum(
         block, off, sizeof(hdr->checksum)));
     memcpy(block + off, &crc, sizeof(crc));
-    return 0;
+    return INFS_STATUS_OK;
 }
 
 int infs_validate_object_block(const uint8_t block[INFS_BLOCK_SIZE])
@@ -162,16 +154,18 @@ static void fill_attributes(struct infs_attributes_disk *attributes,
     attributes->change_time_ns = (int64_t)infs_cpu_to_le64((uint64_t)now_ns);
 }
 
-int infs_encode_root_directory(uint8_t block[INFS_BLOCK_SIZE],
-                               const uint8_t object_id[16],
-                               uint64_t generation,
-                               uint32_t permissions,
-                               uint32_t uid, uint32_t gid,
-                               int64_t now_ns)
+infs_status infs_encode_root_directory(uint8_t block[INFS_BLOCK_SIZE],
+                                       const uint8_t object_id[16],
+                                       uint64_t generation,
+                                       uint32_t permissions,
+                                       uint32_t uid, uint32_t gid,
+                                       int64_t now_ns)
 {
-    if (infs_object_init(block, INFS_OBJECT_DIRECTORY, object_id, NULL,
-                         generation, sizeof(struct infs_directory_payload_disk)) != 0)
-        return -1;
+    infs_status status = infs_object_init(
+        block, INFS_OBJECT_DIRECTORY, object_id, NULL, generation,
+        sizeof(struct infs_directory_payload_disk));
+    if (status != INFS_STATUS_OK)
+        return status;
 
     struct infs_directory_payload_disk *payload =
         (struct infs_directory_payload_disk *)(block + sizeof(struct infs_object_header_disk));
@@ -184,13 +178,15 @@ int infs_encode_root_directory(uint8_t block[INFS_BLOCK_SIZE],
     return infs_object_finalize(block);
 }
 
-int infs_encode_object_index(uint8_t block[INFS_BLOCK_SIZE],
-                             const uint8_t object_id[16],
-                             uint64_t generation)
+infs_status infs_encode_object_index(uint8_t block[INFS_BLOCK_SIZE],
+                                     const uint8_t object_id[16],
+                                     uint64_t generation)
 {
-    if (infs_object_init(block, INFS_OBJECT_INDEX, object_id, NULL,
-                         generation, sizeof(struct infs_index_payload_disk)) != 0)
-        return -1;
+    infs_status status = infs_object_init(
+        block, INFS_OBJECT_INDEX, object_id, NULL, generation,
+        sizeof(struct infs_index_payload_disk));
+    if (status != INFS_STATUS_OK)
+        return status;
     struct infs_index_payload_disk *payload =
         (struct infs_index_payload_disk *)(block + sizeof(struct infs_object_header_disk));
     payload->entry_count = infs_cpu_to_le32(0);
@@ -198,16 +194,14 @@ int infs_encode_object_index(uint8_t block[INFS_BLOCK_SIZE],
     return infs_object_finalize(block);
 }
 
-int infs_read_best_superblock(const struct infs_storage *storage,
-                              uint64_t size_bytes,
-                              struct infs_superblock_disk *out,
-                              unsigned *valid_copies)
+infs_status infs_read_best_superblock(const struct infs_storage *storage,
+                                      uint64_t size_bytes,
+                                      struct infs_superblock_disk *out,
+                                      unsigned *valid_copies)
 {
     if (!infs_storage_valid(storage) ||
-        size_bytes < INFS_BLOCK_SIZE * 3u || !out) {
-        errno = EINVAL;
-        return -1;
-    }
+        size_bytes < INFS_BLOCK_SIZE * 3u || !out)
+        return INFS_STATUS_INVALID_ARGUMENT;
 
     const uint64_t total_blocks = size_bytes / INFS_BLOCK_SIZE;
     const uint64_t candidates[INFS_CHECKPOINT_COUNT] = {
@@ -223,7 +217,8 @@ int infs_read_best_superblock(const struct infs_storage *storage,
 
     for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i) {
         uint64_t offset = candidates[i] * INFS_BLOCK_SIZE;
-        if (infs_storage_read(storage, offset, block, sizeof(block)) != 0)
+        if (infs_storage_read(storage, offset, block, sizeof(block)) !=
+            INFS_STATUS_OK)
             continue;
         if (!infs_validate_superblock_block(block))
             continue;
@@ -248,11 +243,9 @@ int infs_read_best_superblock(const struct infs_storage *storage,
 
     if (valid_copies)
         *valid_copies = valid;
-    if (!found) {
-        errno = EINVAL;
-        return -1;
-    }
-    return 0;
+    if (!found)
+        return INFS_STATUS_CORRUPT;
+    return INFS_STATUS_OK;
 }
 
 void infs_uuid_to_string(const uint8_t id[16], char out[37])

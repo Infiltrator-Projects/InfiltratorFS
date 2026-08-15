@@ -2,7 +2,6 @@
 #include "infilfs/posix_io.h"
 #include "infilfs/volume.h"
 
-#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,7 +9,7 @@
 
 static void fail(const char *what)
 {
-    fprintf(stderr, "phase1-api: %s: %s\n", what, strerror(errno));
+    fprintf(stderr, "phase1-api: %s\n", what);
     exit(1);
 }
 
@@ -100,9 +99,8 @@ int main(int argc, char **argv)
 
     if (infs_rename(&vol, "/alpha/data", "/beta/moved") != 0)
         fail("cross-directory rename");
-    errno = 0;
-    expect(infs_get_attributes(&vol, "/alpha/data", &attributes) != 0 &&
-           errno == ENOENT,
+    expect(infs_get_attributes(&vol, "/alpha/data", &attributes) ==
+               INFS_STATUS_NOT_FOUND,
            "old name removed");
     if (infs_get_attributes(&vol, "/beta/moved", &attributes) != 0)
         fail("new name lookup");

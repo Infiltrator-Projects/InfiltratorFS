@@ -2,12 +2,11 @@
 static int command_cat(struct infs_volume *vol, const char *path)
 {
     struct infs_attributes attributes;
-    if (infs_get_attributes(vol, path, &attributes) != 0)
-        return die_errno("cat");
-    if (attributes.object_type != INFS_OBJECT_FILE) {
-        errno = EISDIR;
-        return die_errno("cat");
-    }
+    infs_status status = infs_get_attributes(vol, path, &attributes);
+    if (status != INFS_STATUS_OK)
+        return die_status("cat", status);
+    if (attributes.object_type != INFS_OBJECT_FILE)
+        return die_status("cat", INFS_STATUS_IS_DIRECTORY);
 
     uint8_t buf[256 * 1024];
     uint64_t off = 0;
@@ -17,11 +16,9 @@ static int command_cat(struct infs_volume *vol, const char *path)
             want = (size_t)(attributes.logical_size - off);
         int64_t n = infs_read_file(vol, path, buf, want, off);
         if (n < 0)
-            return die_errno("read file");
-        if (n == 0) {
-            errno = EIO;
-            return die_errno("short read");
-        }
+            return die_status("read file", (infs_status)n);
+        if (n == 0)
+            return die_status("short read", INFS_STATUS_IO_ERROR);
         size_t done = 0;
         while (done < (size_t)n) {
             ssize_t w = write(STDOUT_FILENO, buf + done, (size_t)n - done);
@@ -49,8 +46,9 @@ int main(int argc, char **argv)
         strcmp(cmd, "cat") != 0 && strcmp(cmd, "map") != 0;
 
     struct infs_volume vol;
-    if (infs_posix_volume_open(&vol, image, writable) != 0)
-        return die_errno("open InfiltratorFS");
+    infs_status status = infs_posix_volume_open(&vol, image, writable);
+    if (status != INFS_STATUS_OK)
+        return die_status("open InfiltratorFS", status);
 
     int rc = 0;
     if (strcmp(cmd, "ls") == 0) {
@@ -63,7 +61,8 @@ int main(int argc, char **argv)
             .posix_uid = (uint32_t)getuid(),
             .posix_gid = (uint32_t)getgid(),
         };
-        if (infs_mkdir(&vol, argv[3], &options) != 0) rc = die_errno("mkdir");
+        status = infs_mkdir(&vol, argv[3], &options);
+        if (status != INFS_STATUS_OK) rc = die_status("mkdir", status);
     } else if (strcmp(cmd, "put") == 0 && argc == 5) {
         rc = command_put(&vol, argv[3], argv[4]);
     } else if (strcmp(cmd, "write") == 0 && argc == 6) {
@@ -73,11 +72,14 @@ int main(int argc, char **argv)
     } else if (strcmp(cmd, "map") == 0 && argc == 5) {
         rc = command_map(&vol, argv[3], argv[4]);
     } else if (strcmp(cmd, "mv") == 0 && argc == 5) {
-        if (infs_rename(&vol, argv[3], argv[4]) != 0) rc = die_errno("mv");
+        status = infs_rename(&vol, argv[3], argv[4]);
+        if (status != INFS_STATUS_OK) rc = die_status("mv", status);
     } else if (strcmp(cmd, "rm") == 0 && argc == 4) {
-        if (infs_unlink(&vol, argv[3]) != 0) rc = die_errno("rm");
+        status = infs_unlink(&vol, argv[3]);
+        if (status != INFS_STATUS_OK) rc = die_status("rm", status);
     } else if (strcmp(cmd, "rmdir") == 0 && argc == 4) {
-        if (infs_rmdir(&vol, argv[3]) != 0) rc = die_errno("rmdir");
+        status = infs_rmdir(&vol, argv[3]);
+        if (status != INFS_STATUS_OK) rc = die_status("rmdir", status);
     } else {
         usage(argv[0]);
         rc = 2;

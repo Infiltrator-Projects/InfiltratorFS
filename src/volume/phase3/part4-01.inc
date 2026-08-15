@@ -1,21 +1,21 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-int infs_get_attributes(struct infs_volume *vol, const char *path,
-                        struct infs_attributes *attributes)
+infs_status infs_get_attributes(struct infs_volume *vol, const char *path,
+                                struct infs_attributes *attributes)
 {
     if (!attributes) {
-        errno = EINVAL;
-        return -1;
+        return INFS_STATUS_INVALID_ARGUMENT;
     }
     struct infs_lookup lk;
-    if (infs_lookup_path(vol, path, &lk) != 0)
-        return -1;
+    infs_status status = infs_lookup_path(vol, path, &lk);
+    if (status != INFS_STATUS_OK)
+        return status;
     uint8_t block[INFS_BLOCK_SIZE];
-    if (read_object(vol, lk.block, block) != 0)
-        return -1;
+    status = read_object(vol, lk.block, block);
+    if (status != INFS_STATUS_OK)
+        return status;
     struct infs_attributes_disk *disk_attributes = object_attributes(block);
     if (!disk_attributes) {
-        errno = EIO;
-        return -1;
+        return INFS_STATUS_CORRUPT;
     }
     memset(attributes, 0, sizeof(*attributes));
     memcpy(attributes->object_id, lk.object_id, sizeof(attributes->object_id));
@@ -39,8 +39,9 @@ int infs_get_attributes(struct infs_volume *vol, const char *path,
     if (lk.type == INFS_OBJECT_FILE) {
         struct infs_file_payload_disk *p;
         struct infs_extent_disk *ext;
-        if (file_validate_volume(vol, block, &p, &ext) != 0)
-            return -1;
+        status = file_validate_volume(vol, block, &p, &ext);
+        if (status != INFS_STATUS_OK)
+            return status;
         attributes->allocated_size = file_allocated_blocks(p, ext) * INFS_BLOCK_SIZE;
         posix = &p->posix;
     } else {
@@ -56,32 +57,31 @@ int infs_get_attributes(struct infs_volume *vol, const char *path,
     return 0;
 }
 
-int infs_list_dir(struct infs_volume *vol, const char *path,
-                  struct infs_dir_item **items, size_t *count_out)
+infs_status infs_list_dir(struct infs_volume *vol, const char *path,
+                          struct infs_dir_item **items, size_t *count_out)
 {
     if (!items || !count_out) {
-        errno = EINVAL;
-        return -1;
+        return INFS_STATUS_INVALID_ARGUMENT;
     }
     *items = NULL;
     *count_out = 0;
     struct infs_lookup lk;
-    if (infs_lookup_path(vol, path, &lk) != 0)
-        return -1;
+    infs_status status = infs_lookup_path(vol, path, &lk);
+    if (status != INFS_STATUS_OK)
+        return status;
     if (lk.type != INFS_OBJECT_DIRECTORY) {
-        errno = ENOTDIR;
-        return -1;
+        return INFS_STATUS_NOT_DIRECTORY;
     }
     uint8_t block[INFS_BLOCK_SIZE];
     if (read_object(vol, lk.block, block) != 0)
-        return -1;
+        return INFS_STATUS_ERROR;
     struct infs_directory_payload_disk *payload;
     if (dir_validate(block, &payload) != 0)
-        return -1;
+        return INFS_STATUS_ERROR;
     uint32_t count = infs_le32_to_cpu(payload->entry_count);
     struct infs_dir_item *list = calloc(count ? count : 1u, sizeof(*list));
     if (!list)
-        return -1;
+        return INFS_STATUS_ERROR;
     uint8_t *p = (uint8_t *)(payload + 1);
     for (uint32_t i = 0; i < count; ++i) {
         struct infs_dirent_disk *e = (struct infs_dirent_disk *)p;
@@ -102,30 +102,26 @@ void infs_free_dir_items(struct infs_dir_item *items)
     free(items);
 }
 
-int infs_create_file(struct infs_volume *vol, const char *path,
-                     const struct infs_create_options *options)
+infs_status infs_create_file(struct infs_volume *vol, const char *path,
+                             const struct infs_create_options *options)
 {
-    if (tx_begin(vol) != 0)
-        return -1;
-    int rc = create_object(vol, path, options, INFS_OBJECT_FILE);
-    if (rc != 0) {
-        int saved = errno;
+    infs_status status = tx_begin(vol);
+    if (status != INFS_STATUS_OK)
+        return status;
+    status = create_object(vol, path, options, INFS_OBJECT_FILE);
+    if (status != INFS_STATUS_OK)
         tx_abort(vol);
-        errno = saved;
-    }
-    return rc;
+    return status;
 }
 
-int infs_mkdir(struct infs_volume *vol, const char *path,
-               const struct infs_create_options *options)
+infs_status infs_mkdir(struct infs_volume *vol, const char *path,
+                       const struct infs_create_options *options)
 {
-    if (tx_begin(vol) != 0)
-        return -1;
-    int rc = create_object(vol, path, options, INFS_OBJECT_DIRECTORY);
-    if (rc != 0) {
-        int saved = errno;
+    infs_status status = tx_begin(vol);
+    if (status != INFS_STATUS_OK)
+        return status;
+    status = create_object(vol, path, options, INFS_OBJECT_DIRECTORY);
+    if (status != INFS_STATUS_OK)
         tx_abort(vol);
-        errno = saved;
-    }
-    return rc;
+    return status;
 }

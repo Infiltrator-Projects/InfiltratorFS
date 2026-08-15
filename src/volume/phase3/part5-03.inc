@@ -4,20 +4,18 @@ static int set_posix_tx(struct infs_volume *vol, const char *path,
                         uint32_t uid, uint32_t gid)
 {
     if (!vol->writable) {
-        errno = EROFS;
-        return -1;
+        return INFS_STATUS_READ_ONLY;
     }
     struct infs_lookup lookup;
     if (infs_lookup_path(vol, path, &lookup) != 0)
-        return -1;
+        return INFS_STATUS_ERROR;
     uint8_t block[INFS_BLOCK_SIZE];
     if (read_object(vol, lookup.block, block) != 0)
-        return -1;
+        return INFS_STATUS_ERROR;
     struct infs_posix_compat_disk *posix = object_posix(block);
     struct infs_attributes_disk *attributes = object_attributes(block);
     if (!posix || !attributes) {
-        errno = EIO;
-        return -1;
+        return INFS_STATUS_CORRUPT;
     }
 
     if (mask & INFS_POSIX_SET_PERMISSIONS)
@@ -30,28 +28,25 @@ static int set_posix_tx(struct infs_volume *vol, const char *path,
         (uint64_t)now_ns(vol));
 
     if (write_object(vol, lookup.block, block) != 0)
-        return -1;
+        return INFS_STATUS_ERROR;
     return infs_volume_sync(vol);
 }
 
-int infs_set_posix_compat(struct infs_volume *vol, const char *path,
-                          uint32_t mask, uint32_t permissions,
-                          uint32_t uid, uint32_t gid)
+infs_status infs_set_posix_compat(struct infs_volume *vol, const char *path,
+                                  uint32_t mask, uint32_t permissions,
+                                  uint32_t uid, uint32_t gid)
 {
     if ((mask & ~(INFS_POSIX_SET_PERMISSIONS | INFS_POSIX_SET_UID |
                   INFS_POSIX_SET_GID)) != 0) {
-        errno = EINVAL;
-        return -1;
+        return INFS_STATUS_INVALID_ARGUMENT;
     }
-    if (tx_begin(vol) != 0)
-        return -1;
-    int rc = set_posix_tx(vol, path, mask, permissions, uid, gid);
-    if (rc != 0) {
-        int saved = errno;
+    infs_status status = tx_begin(vol);
+    if (status != INFS_STATUS_OK)
+        return status;
+    status = set_posix_tx(vol, path, mask, permissions, uid, gid);
+    if (status != INFS_STATUS_OK)
         tx_abort(vol);
-        errno = saved;
-    }
-    return rc;
+    return status;
 }
 
 static int time_action_valid(uint32_t action)
@@ -64,19 +59,17 @@ static int set_times_tx(struct infs_volume *vol, const char *path,
                         const struct infs_time_update *update)
 {
     if (!vol->writable) {
-        errno = EROFS;
-        return -1;
+        return INFS_STATUS_READ_ONLY;
     }
     struct infs_lookup lookup;
     if (infs_lookup_path(vol, path, &lookup) != 0)
-        return -1;
+        return INFS_STATUS_ERROR;
     uint8_t block[INFS_BLOCK_SIZE];
     if (read_object(vol, lookup.block, block) != 0)
-        return -1;
+        return INFS_STATUS_ERROR;
     struct infs_attributes_disk *attributes = object_attributes(block);
     if (!attributes) {
-        errno = EIO;
-        return -1;
+        return INFS_STATUS_CORRUPT;
     }
 
     int64_t now = now_ns(vol);
@@ -93,12 +86,12 @@ static int set_times_tx(struct infs_volume *vol, const char *path,
     attributes->change_time_ns = (int64_t)infs_cpu_to_le64((uint64_t)now);
 
     if (write_object(vol, lookup.block, block) != 0)
-        return -1;
+        return INFS_STATUS_ERROR;
     return infs_volume_sync(vol);
 }
 
-int infs_set_times(struct infs_volume *vol, const char *path,
-                   const struct infs_time_update *update)
+infs_status infs_set_times(struct infs_volume *vol, const char *path,
+                           const struct infs_time_update *update)
 {
     struct infs_time_update now = {
         .access_action = INFS_TIME_NOW,
@@ -108,17 +101,14 @@ int infs_set_times(struct infs_volume *vol, const char *path,
         update = &now;
     if (!time_action_valid(update->access_action) ||
         !time_action_valid(update->modification_action)) {
-        errno = EINVAL;
-        return -1;
+        return INFS_STATUS_INVALID_ARGUMENT;
     }
 
-    if (tx_begin(vol) != 0)
-        return -1;
-    int rc = set_times_tx(vol, path, update);
-    if (rc != 0) {
-        int saved = errno;
+    infs_status status = tx_begin(vol);
+    if (status != INFS_STATUS_OK)
+        return status;
+    status = set_times_tx(vol, path, update);
+    if (status != INFS_STATUS_OK)
         tx_abort(vol);
-        errno = saved;
-    }
-    return rc;
+    return status;
 }

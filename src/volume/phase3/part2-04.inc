@@ -4,37 +4,39 @@ static int create_object(struct infs_volume *vol, const char *path,
                          uint16_t type)
 {
     if (!vol->writable) {
-        errno = EROFS;
-        return -1;
+        return INFS_STATUS_READ_ONLY;
     }
     struct infs_lookup parent;
     char name[INFS_NAME_MAX + 1u];
-    if (split_parent(vol, path, &parent, name) != 0)
-        return -1;
+    infs_status status = split_parent(vol, path, &parent, name);
+    if (status != INFS_STATUS_OK)
+        return status;
 
     uint8_t parent_block[INFS_BLOCK_SIZE];
-    if (read_object(vol, parent.block, parent_block) != 0)
-        return -1;
+    status = read_object(vol, parent.block, parent_block);
+    if (status != INFS_STATUS_OK)
+        return status;
     struct infs_directory_payload_disk *parent_payload;
-    if (dir_validate(parent_block, &parent_payload) != 0)
-        return -1;
+    status = dir_validate(parent_block, &parent_payload);
+    if (status != INFS_STATUS_OK)
+        return status;
     if (dir_find(parent_payload, name, strlen(name), NULL)) {
-        errno = EEXIST;
-        return -1;
+        return INFS_STATUS_ALREADY_EXISTS;
     }
 
     uint64_t object_block, got;
-    if (alloc_run(vol, 1, &object_block, &got) != 0)
-        return -1;
+    status = alloc_run(vol, 1, &object_block, &got);
+    if (status != INFS_STATUS_OK)
+        return status;
     if (got != 1) {
-        errno = EIO;
-        return -1;
+        return INFS_STATUS_CORRUPT;
     }
 
     uint8_t object_id[16];
-    if (infs_storage_random(&vol->storage, object_id, sizeof(object_id)) != 0) {
+    status = infs_storage_random(&vol->storage, object_id, sizeof(object_id));
+    if (status != INFS_STATUS_OK) {
         free_run(vol, object_block, 1);
-        return -1;
+        return status;
     }
 
     uint8_t object[INFS_BLOCK_SIZE];
@@ -44,10 +46,12 @@ static int create_object(struct infs_volume *vol, const char *path,
         payload_size = sizeof(struct infs_directory_payload_disk);
     else
         payload_size = sizeof(struct infs_file_payload_disk);
-    if (infs_object_init(object, type, object_id, parent.object_id,
-                         infs_le64_to_cpu(vol->sb.generation) + 1u, payload_size) != 0) {
+    status = infs_object_init(object, type, object_id, parent.object_id,
+                              infs_le64_to_cpu(vol->sb.generation) + 1u,
+                              payload_size);
+    if (status != INFS_STATUS_OK) {
         free_run(vol, object_block, 1);
-        return -1;
+        return status;
     }
 
     struct infs_attributes_disk *attributes;
@@ -79,24 +83,30 @@ static int create_object(struct infs_volume *vol, const char *path,
     posix->uid = infs_cpu_to_le32(options ? options->posix_uid : 0);
     posix->gid = infs_cpu_to_le32(options ? options->posix_gid : 0);
 
-    if (infs_object_finalize(object) != 0 || write_block(vol, object_block, object) != 0) {
+    status = infs_object_finalize(object);
+    if (status == INFS_STATUS_OK)
+        status = write_block(vol, object_block, object);
+    if (status != INFS_STATUS_OK) {
         free_run(vol, object_block, 1);
-        return -1;
+        return status;
     }
-    if (index_add(vol, object_id, object_block, type) != 0) {
+    status = index_add(vol, object_id, object_block, type);
+    if (status != INFS_STATUS_OK) {
         free_run(vol, object_block, 1);
-        return -1;
+        return status;
     }
-    if (dir_add(parent_block, name, object_id, type) != 0) {
+    status = dir_add(parent_block, name, object_id, type);
+    if (status != INFS_STATUS_OK) {
         (void)index_remove(vol, object_id);
         free_run(vol, object_block, 1);
-        return -1;
+        return status;
     }
     if (type == INFS_OBJECT_DIRECTORY)
         parent_payload->attributes.link_count = infs_cpu_to_le64(
             infs_le64_to_cpu(parent_payload->attributes.link_count) + 1u);
     touch_mctime(vol, &parent_payload->attributes);
-    if (write_object(vol, parent.block, parent_block) != 0)
-        return -1;
+    status = write_object(vol, parent.block, parent_block);
+    if (status != INFS_STATUS_OK)
+        return status;
     return infs_volume_sync(vol);
 }

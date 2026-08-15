@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Build and conformance
+
+on:
+  push:
+    branches:
+      - main
+      - "format-*"
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux full suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  windows:
+    name: Windows portable core
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Configure MSVC
+        run: cmake -S . -B build -A x64
+
+      - name: Build portable targets
+        run: cmake --build build --config Release --parallel
+
+      - name: Run portable conformance tests
+        run: ctest --test-dir build -C Release --output-on-failure

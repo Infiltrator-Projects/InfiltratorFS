@@ -4,12 +4,11 @@ static int dir_remove(uint8_t block[INFS_BLOCK_SIZE], const char *name,
 {
     struct infs_directory_payload_disk *payload;
     if (dir_validate(block, &payload) != 0)
-        return -1;
+        return INFS_STATUS_ERROR;
     size_t offset;
     struct infs_dirent_disk *e = dir_find(payload, name, strlen(name), &offset);
     if (!e) {
-        errno = ENOENT;
-        return -1;
+        return INFS_STATUS_NOT_FOUND;
     }
     uint16_t rec = infs_le16_to_cpu(e->record_size);
     if (removed_copy)
@@ -81,10 +80,11 @@ static int next_component(const char **cursor, char out[INFS_NAME_MAX + 1u])
     while (*p && *p != '/')
         ++p;
     size_t len = (size_t)(p - start);
-    if (len == 0 || len > INFS_NAME_MAX || !infs_utf8_validate(start, len)) {
-        errno = ENAMETOOLONG;
-        return -1;
+    if (len == 0 || len > INFS_NAME_MAX) {
+        return INFS_STATUS_NAME_TOO_LONG;
     }
+    if (!infs_utf8_validate(start, len))
+        return INFS_STATUS_INVALID_ARGUMENT;
     memcpy(out, start, len);
     out[len] = '\0';
     *cursor = p;
@@ -103,43 +103,46 @@ static int lookup_from(struct infs_volume *vol, const struct infs_lookup *start,
             continue;
         if (strcmp(comp, "..") == 0) {
             uint8_t block[INFS_BLOCK_SIZE];
-            if (read_object(vol, cur.block, block) != 0)
-                return -1;
+            int status = read_object(vol, cur.block, block);
+            if (status != INFS_STATUS_OK)
+                return status;
             struct infs_object_header_disk *hdr = (struct infs_object_header_disk *)block;
             if (id_is_zero(hdr->parent_id)) {
                 cur.block = infs_le64_to_cpu(vol->sb.root_object_block);
                 cur.type = INFS_OBJECT_DIRECTORY;
                 memcpy(cur.object_id, vol->sb.root_object_id, 16);
-            } else if (index_find(vol, hdr->parent_id, &cur) != 0) {
-                return -1;
+            } else {
+                status = index_find(vol, hdr->parent_id, &cur);
+                if (status != INFS_STATUS_OK)
+                    return status;
             }
             continue;
         }
         if (cur.type != INFS_OBJECT_DIRECTORY) {
-            errno = ENOTDIR;
-            return -1;
+            return INFS_STATUS_NOT_DIRECTORY;
         }
         uint8_t block[INFS_BLOCK_SIZE];
-        if (read_object(vol, cur.block, block) != 0)
-            return -1;
+        int status = read_object(vol, cur.block, block);
+        if (status != INFS_STATUS_OK)
+            return status;
         struct infs_directory_payload_disk *payload;
-        if (dir_validate(block, &payload) != 0)
-            return -1;
+        status = dir_validate(block, &payload);
+        if (status != INFS_STATUS_OK)
+            return status;
         struct infs_dirent_disk *e = dir_find(payload, comp, strlen(comp), NULL);
         if (!e) {
-            errno = ENOENT;
-            return -1;
+            return INFS_STATUS_NOT_FOUND;
         }
         uint16_t type = infs_le16_to_cpu(e->object_type);
-        if (index_find(vol, e->object_id, &cur) != 0)
-            return -1;
+        status = index_find(vol, e->object_id, &cur);
+        if (status != INFS_STATUS_OK)
+            return status;
         if (cur.type != type) {
-            errno = EIO;
-            return -1;
+            return INFS_STATUS_CORRUPT;
         }
     }
     if (rc < 0)
-        return -1;
+        return rc;
     *out = cur;
     return 0;
 }

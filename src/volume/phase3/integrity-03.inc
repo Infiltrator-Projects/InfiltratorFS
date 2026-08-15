@@ -17,7 +17,7 @@ static int checksum_set_range(struct infs_volume *vol,
         struct infs_data_checksum_disk *values;
         if (checksum_locate(vol, file, owner_id, logical, 1, &lk, block,
                             &p, &values) != 0)
-            return -1;
+            return INFS_STATUS_ERROR;
         for (uint64_t i = 0; i < chunk; ++i)
             values[offset + i] = digests[i];
         uint32_t needed = (uint32_t)(offset + chunk);
@@ -28,7 +28,7 @@ static int checksum_set_range(struct infs_volume *vol,
             (size_t)infs_le32_to_cpu(p->checksum_count) *
             sizeof(struct infs_data_checksum_disk)));
         if (write_object(vol, lk.block, block) != 0)
-            return -1;
+            return INFS_STATUS_ERROR;
 
         logical += chunk;
         digests += chunk;
@@ -52,7 +52,7 @@ static int checksum_set_zero_range(struct infs_volume *vol,
         uint64_t n = count > INFS_CHECKSUMS_PER_OBJECT ?
             INFS_CHECKSUMS_PER_OBJECT : count;
         if (checksum_set_range(vol, file, owner_id, logical, values, n) != 0)
-            return -1;
+            return INFS_STATUS_ERROR;
         logical += n;
         count -= n;
     }
@@ -69,11 +69,10 @@ static int checksum_get(struct infs_volume *vol,
     struct infs_data_checksum_disk *values;
     if (checksum_locate(vol, file, owner_id, logical, 0, NULL, block,
                         &p, &values) != 0)
-        return -1;
+        return INFS_STATUS_ERROR;
     uint64_t offset = logical % INFS_CHECKSUMS_PER_OBJECT;
     if (offset >= infs_le32_to_cpu(p->checksum_count)) {
-        errno = EIO;
-        return -1;
+        return INFS_STATUS_CORRUPT;
     }
     *digest_out = values[offset];
     return 0;
@@ -88,23 +87,22 @@ static int checksum_destroy_chain(struct infs_volume *vol,
     for (uint64_t guard = 0; !id_is_zero(current) && guard < 1048576u; ++guard) {
         struct infs_lookup lk;
         if (index_find(vol, current, &lk) != 0)
-            return -1;
+            return INFS_STATUS_ERROR;
         uint8_t block[INFS_BLOCK_SIZE];
         if (read_object(vol, lk.block, block) != 0)
-            return -1;
+            return INFS_STATUS_ERROR;
         struct infs_checksum_payload_disk *p;
         if (checksum_validate(block, owner_id, &p, NULL) != 0)
-            return -1;
+            return INFS_STATUS_ERROR;
         uint8_t next[16];
         memcpy(next, p->next_object_id, 16);
         if (index_remove(vol, current) != 0)
-            return -1;
+            return INFS_STATUS_ERROR;
         free_run(vol, lk.block, 1);
         memcpy(current, next, 16);
     }
     if (!id_is_zero(current)) {
-        errno = ELOOP;
-        return -1;
+        return INFS_STATUS_LOOP_DETECTED;
     }
     memset(file->checksum_head_id, 0, 16);
     return 0;
