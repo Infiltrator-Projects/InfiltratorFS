@@ -10,15 +10,17 @@
 #define INFS_MAGIC "INFS2026"
 #define INFS_OBJECT_MAGIC "INFOBJ01"
 #define INFS_FORMAT_MAJOR 0u
-#define INFS_FORMAT_MINOR 3u
+#define INFS_FORMAT_MINOR 4u
 #define INFS_CHECKPOINT_COUNT 3u
 #define INFS_CHECKSUM_CRC64_ECMA 1u
+#define INFS_CHECKSUM_SHA256     2u
 #define INFS_LABEL_MAX 64u
 #define INFS_NAME_MAX 255u
 
 #define INFS_OBJECT_DIRECTORY  1u
 #define INFS_OBJECT_FILE       2u
 #define INFS_OBJECT_INDEX      3u
+#define INFS_OBJECT_CHECKSUM   4u
 
 #define INFS_EXTENT_NORMAL     0u
 
@@ -89,7 +91,8 @@ struct __attribute__((packed)) infs_dirent_disk {
 struct __attribute__((packed)) infs_file_payload_disk {
     struct infs_stat_disk stat;
     uint32_t extent_count;
-    uint32_t reserved;
+    uint32_t data_checksum_type;
+    uint8_t  checksum_head_id[16];
 };
 
 struct __attribute__((packed)) infs_extent_disk {
@@ -98,6 +101,25 @@ struct __attribute__((packed)) infs_extent_disk {
     uint32_t block_count;
     uint32_t flags;
 };
+
+
+struct __attribute__((packed)) infs_checksum_payload_disk {
+    uint8_t  owner_object_id[16];
+    uint8_t  next_object_id[16];
+    uint64_t start_logical_block;
+    uint32_t checksum_count;
+    uint32_t reserved;
+    /* struct infs_data_checksum_disk entries immediately follow */
+};
+
+struct __attribute__((packed)) infs_data_checksum_disk {
+    uint8_t bytes[32];
+};
+
+#define INFS_CHECKSUMS_PER_OBJECT \
+    ((INFS_BLOCK_SIZE - sizeof(struct infs_object_header_disk) - \
+      sizeof(struct infs_checksum_payload_disk)) / \
+     sizeof(struct infs_data_checksum_disk))
 
 struct __attribute__((packed)) infs_index_payload_disk {
     uint32_t entry_count;
@@ -122,5 +144,7 @@ _Static_assert(sizeof(struct infs_extent_disk) == 24,
                "extent layout changed");
 _Static_assert(sizeof(struct infs_index_entry_disk) == 32,
                "object index entry layout changed");
+_Static_assert(INFS_CHECKSUMS_PER_OBJECT >= 120,
+               "checksum object capacity unexpectedly small");
 
 #endif

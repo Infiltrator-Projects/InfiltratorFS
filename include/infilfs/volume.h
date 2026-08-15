@@ -38,6 +38,14 @@ struct infs_lookup {
     uint16_t type;
 };
 
+
+struct infs_scrub_report {
+    uint64_t files_checked;
+    uint64_t data_blocks_checked;
+    uint64_t checksum_errors;
+    uint64_t metadata_errors;
+};
+
 struct infs_dir_item {
     char name[INFS_NAME_MAX + 1u];
     uint8_t object_id[16];
@@ -74,5 +82,7 @@ int infs_chmod(struct infs_volume *vol, const char *path, mode_t mode);
 int infs_chown(struct infs_volume *vol, const char *path, uid_t uid, gid_t gid);
 int infs_utimens(struct infs_volume *vol, const char *path,
                  const struct timespec tv[2]);
+
+int infs_scrub(struct infs_volume *vol, struct infs_scrub_report *report);
 
 #endif

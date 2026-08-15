@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.20)
-project(InfiltratorFS VERSION 0.3.0 LANGUAGES C)
+project(InfiltratorFS VERSION 0.4.0 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -27,15 +27,26 @@ add_executable(infilfs-tool tools/infilfs-tool.c)
 target_link_libraries(infilfs-tool PRIVATE infilfs_core)
 target_compile_options(infilfs-tool PRIVATE -Wall -Wextra -Wpedantic)
 
+add_executable(infilfs-scrub tools/infilfs-scrub.c)
+target_link_libraries(infilfs-scrub PRIVATE infilfs_core)
+target_compile_options(infilfs-scrub PRIVATE -Wall -Wextra -Wpedantic)
+
 add_executable(infilfs-phase1-api tests/phase1-api.c)
 target_link_libraries(infilfs-phase1-api PRIVATE infilfs_core)
 target_compile_options(infilfs-phase1-api PRIVATE -Wall -Wextra -Wpedantic)
 
+add_executable(infilfs-checksum-test tests/checksum-test.c)
+target_link_libraries(infilfs-checksum-test PRIVATE infilfs_core)
+target_compile_options(infilfs-checksum-test PRIVATE -Wall -Wextra -Wpedantic)
+
 enable_testing()
+add_test(NAME infilfs-checksum-known-answer COMMAND infilfs-checksum-test)
 add_test(NAME infilfs-smoke
     COMMAND bash ${CMAKE_SOURCE_DIR}/tests/smoke.sh ${CMAKE_BINARY_DIR})
 add_test(NAME infilfs-phase2-crash
     COMMAND bash ${CMAKE_SOURCE_DIR}/tests/phase2-crash.sh ${CMAKE_BINARY_DIR})
+add_test(NAME infilfs-phase3-integrity
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/phase3-integrity.sh ${CMAKE_BINARY_DIR})
 
 find_package(PkgConfig QUIET)
 if(PkgConfig_FOUND)
@@ -50,7 +61,7 @@ else()
     message(STATUS "libfuse3 development files not found; infilfs-fuse will not be built")
 endif()
 
-install(TARGETS mkfs.infilfs infilfs-inspect infilfs-tool RUNTIME DESTINATION bin)
+install(TARGETS mkfs.infilfs infilfs-inspect infilfs-tool infilfs-scrub RUNTIME DESTINATION bin)
 if(TARGET infilfs-fuse)
     install(TARGETS infilfs-fuse RUNTIME DESTINATION bin)
 endif()
