@@ -67,6 +67,8 @@ int main(int argc, char **argv)
         rc = command_put(&vol, argv[3], argv[4]);
     } else if (strcmp(cmd, "write") == 0 && argc == 6) {
         rc = command_write(&vol, argv[3], argv[4], argv[5]);
+    } else if (strcmp(cmd, "punch") == 0 && argc == 6) {
+        rc = command_punch(&vol, argv[3], argv[4], argv[5]);
     } else if (strcmp(cmd, "cat") == 0 && argc == 4) {
         rc = command_cat(&vol, argv[3]);
     } else if (strcmp(cmd, "map") == 0 && argc == 5) {

@@ -2,6 +2,8 @@
 static int64_t write_file_tx(struct infs_volume *vol, const char *path,
                              const void *buf, size_t size, uint64_t offset)
 {
+    if (!vol || !path || (size && !buf))
+        return INFS_STATUS_INVALID_ARGUMENT;
     if (!vol->writable) {
         return INFS_STATUS_READ_ONLY;
     }
@@ -24,9 +26,12 @@ static int64_t write_file_tx(struct infs_volume *vol, const char *path,
     if (file_validate_volume(vol, object, &p, &ext) != 0)
         return INFS_STATUS_ERROR;
     uint64_t end = offset + size;
-    uint64_t needed_blocks = (end + INFS_BLOCK_SIZE - 1u) / INFS_BLOCK_SIZE;
-    if (file_ensure_blocks(vol, object, needed_blocks) != 0)
+    uint64_t needed_blocks = end / INFS_BLOCK_SIZE +
+        ((end % INFS_BLOCK_SIZE) != 0);
+    if (file_ensure_logical_blocks(vol, object, needed_blocks) != 0)
         return INFS_STATUS_ERROR;
+    if (end > infs_le64_to_cpu(p->attributes.logical_size))
+        p->attributes.logical_size = infs_cpu_to_le64(end);
     if (infs_object_finalize(object) != 0 ||
         file_validate_volume(vol, object, &p, &ext) != 0)
         return INFS_STATUS_ERROR;
@@ -43,16 +48,17 @@ static int64_t write_file_tx(struct infs_volume *vol, const char *path,
         if (chunk > size - done)
             chunk = size - done;
         uint64_t physical;
-        if (file_map_block(p, ext, logical, &physical) != 0)
+        uint32_t flags;
+        if (file_map_block(p, ext, logical, &physical, &flags) != 0)
             return INFS_STATUS_ERROR;
 
         int full_overwrite = within == 0 && chunk == INFS_BLOCK_SIZE;
-        if (!full_overwrite) {
+        if (flags == INFS_EXTENT_HOLE || full_overwrite) {
+            memset(data, 0, sizeof(data));
+        } else {
             if (read_block(vol, physical, data) != 0 ||
                 data_block_verify(vol, p, file_hdr->object_id, logical, data) != 0)
                 return INFS_STATUS_ERROR;
-        } else {
-            memset(data, 0, sizeof(data));
         }
         memcpy(data + within, (const uint8_t *)buf + done, chunk);
 
@@ -60,7 +66,8 @@ static int64_t write_file_tx(struct infs_volume *vol, const char *path,
          * it with an unreachable block and repoint the extent metadata. Blocks
          * allocated earlier in this same transaction are already unreachable
          * from N and may be filled in place before publication. */
-        if (bitmap_get(vol->tx_base_bitmap, physical)) {
+        if (flags == INFS_EXTENT_HOLE ||
+            bitmap_get(vol->tx_base_bitmap, physical)) {
             uint64_t replacement = 0, got = 0;
             if (alloc_run(vol, 1, &replacement, &got) != 0)
                 return INFS_STATUS_ERROR;
@@ -68,7 +75,8 @@ static int64_t write_file_tx(struct infs_volume *vol, const char *path,
                 return INFS_STATUS_CORRUPT;
             }
             if (write_block(vol, replacement, data) != 0 ||
-                file_replace_range(vol, object, logical, 1, replacement) != 0)
+                file_replace_range(vol, object, logical, 1, replacement,
+                                   INFS_EXTENT_NORMAL) != 0)
                 return INFS_STATUS_ERROR;
             physical = replacement;
         } else if (write_block(vol, physical, data) != 0) {
@@ -81,8 +89,6 @@ static int64_t write_file_tx(struct infs_volume *vol, const char *path,
             return INFS_STATUS_ERROR;
         done += chunk;
     }
-    if (end > infs_le64_to_cpu(p->attributes.logical_size))
-        p->attributes.logical_size = infs_cpu_to_le64(end);
     touch_mctime(vol, &p->attributes);
     if (write_object(vol, lk.block, object) != 0 || infs_volume_sync(vol) != 0)
         return INFS_STATUS_ERROR;

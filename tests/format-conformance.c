@@ -85,6 +85,15 @@ static void check_layout(void)
     expect(offsetof(struct infs_attributes_disk,
                     extended_attributes_object_id) == 72,
            "extended-attributes offset");
+    expect(sizeof(struct infs_extent_disk) == 24, "extent size");
+    expect(offsetof(struct infs_extent_disk, logical_block) == 0,
+           "extent logical-block offset");
+    expect(offsetof(struct infs_extent_disk, physical_block) == 8,
+           "extent physical-block offset");
+    expect(offsetof(struct infs_extent_disk, block_count) == 16,
+           "extent block-count offset");
+    expect(offsetof(struct infs_extent_disk, flags) == 20,
+           "extent flags offset");
 }
 
 static void make_golden_superblock(struct infs_superblock_disk *sb)
@@ -112,8 +121,9 @@ static void make_golden_superblock(struct infs_superblock_disk *sb)
     }
     sb->compat_flags = infs_cpu_to_le64(UINT64_C(0xc1c2c3c4c5c6c7c8));
     sb->ro_compat_flags = infs_cpu_to_le64(UINT64_C(0xd1d2d3d4d5d6d7d8));
-    sb->incompat_flags = infs_cpu_to_le64(INFS_INCOMPAT_UTF8_NAMES);
-    memcpy(sb->label, "Golden-0.5", 10);
+    sb->incompat_flags = infs_cpu_to_le64(
+        INFS_INCOMPAT_UTF8_NAMES | INFS_INCOMPAT_SPARSE_EXTENTS);
+    memcpy(sb->label, "Golden-0.6", 10);
 }
 
 static void make_expected_superblock(uint8_t block[INFS_BLOCK_SIZE])
@@ -141,8 +151,9 @@ static void make_expected_superblock(uint8_t block[INFS_BLOCK_SIZE])
     }
     put_le64(block, 132, UINT64_C(0xc1c2c3c4c5c6c7c8));
     put_le64(block, 140, UINT64_C(0xd1d2d3d4d5d6d7d8));
-    put_le64(block, 148, INFS_INCOMPAT_UTF8_NAMES);
-    memcpy(block + 156, "Golden-0.5", 10);
+    put_le64(block, 148,
+             INFS_INCOMPAT_UTF8_NAMES | INFS_INCOMPAT_SPARSE_EXTENTS);
+    memcpy(block + 156, "Golden-0.6", 10);
     refresh_crc(block, 220);
 }
 
@@ -178,14 +189,20 @@ static void check_superblock_encoding(void)
     expect_superblock_rejected(encoded, 8, 1, 2, "reject foreign major version");
     expect_superblock_rejected(encoded, 10, INFS_FORMAT_MINOR + 1u, 2,
                                "reject future minor version");
+    expect_superblock_rejected(encoded, 10, INFS_FORMAT_MINOR - 1u, 2,
+                               "reject sparse feature under older minor");
     expect_superblock_rejected(encoded, 12, 251, 2, "reject header-size drift");
     expect_superblock_rejected(encoded, 14, 11, 2, "reject block-size drift");
     expect_superblock_rejected(encoded, 16, INFS_CHECKSUM_SHA256, 4,
                                "reject checkpoint checksum drift");
-    expect_superblock_rejected(encoded, 148, 0, 8,
+    expect_superblock_rejected(encoded, 148, INFS_INCOMPAT_SPARSE_EXTENTS, 8,
                                "reject missing UTF-8 feature");
+    expect_superblock_rejected(encoded, 148, INFS_INCOMPAT_UTF8_NAMES, 8,
+                               "reject missing sparse-extents feature");
     expect_superblock_rejected(encoded, 148,
-                               INFS_INCOMPAT_UTF8_NAMES | (UINT64_C(1) << 63),
+                               INFS_INCOMPAT_UTF8_NAMES |
+                                   INFS_INCOMPAT_SPARSE_EXTENTS |
+                                   (UINT64_C(1) << 63),
                                8, "reject unknown incompatible feature");
 
     encoded[4000] ^= 0x80u;

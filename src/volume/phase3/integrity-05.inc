@@ -30,8 +30,15 @@ static int validate_integrity_metadata(struct infs_volume *vol)
             }
             if (!id_is_zero(cp->next_object_id)) {
                 struct infs_lookup next;
+                uint8_t next_block[INFS_BLOCK_SIZE];
+                struct infs_checksum_payload_disk *next_cp;
                 if (index_find(vol, cp->next_object_id, &next) != 0 ||
-                    next.type != INFS_OBJECT_CHECKSUM) {
+                    next.type != INFS_OBJECT_CHECKSUM ||
+                    read_object(vol, next.block, next_block) != 0 ||
+                    checksum_validate(next_block, cp->owner_object_id,
+                                      &next_cp, NULL) != 0 ||
+                    infs_le64_to_cpu(next_cp->start_logical_block) <=
+                        infs_le64_to_cpu(cp->start_logical_block)) {
                     return INFS_STATUS_CORRUPT;
                 }
             }
@@ -45,16 +52,29 @@ static int validate_integrity_metadata(struct infs_volume *vol)
             struct infs_extent_disk *ext;
             if (file_validate_volume(vol, object, &file, &ext) != 0)
                 return INFS_STATUS_ERROR;
-            uint64_t blocks = file_allocated_blocks(file, ext);
-            if (blocks && id_is_zero(file->checksum_head_id)) {
+            uint64_t allocated = file_allocated_blocks(file, ext);
+            if (allocated && id_is_zero(file->checksum_head_id)) {
                 return INFS_STATUS_CORRUPT;
             }
-            for (uint64_t first = 0; first < blocks; first += INFS_CHECKSUMS_PER_OBJECT) {
-                uint64_t last = first + INFS_CHECKSUMS_PER_OBJECT - 1u;
-                if (last >= blocks) last = blocks - 1u;
-                struct infs_data_checksum_disk digest;
-                if (checksum_get(vol, file, hdr->object_id, last, &digest) != 0)
-                    return INFS_STATUS_ERROR;
+            uint32_t extent_count = infs_le32_to_cpu(file->extent_count);
+            for (uint32_t j = 0; j < extent_count; ++j) {
+                if (infs_le32_to_cpu(ext[j].flags) != INFS_EXTENT_NORMAL)
+                    continue;
+                uint64_t logical = infs_le64_to_cpu(ext[j].logical_block);
+                uint64_t remaining = infs_le32_to_cpu(ext[j].block_count);
+                while (remaining) {
+                    uint64_t chunk = INFS_CHECKSUMS_PER_OBJECT -
+                        (logical % INFS_CHECKSUMS_PER_OBJECT);
+                    if (chunk > remaining)
+                        chunk = remaining;
+                    struct infs_data_checksum_disk digest;
+                    int status = checksum_get(vol, file, hdr->object_id,
+                                              logical + chunk - 1u, &digest);
+                    if (status != 0)
+                        return status;
+                    logical += chunk;
+                    remaining -= chunk;
+                }
             }
         }
     }

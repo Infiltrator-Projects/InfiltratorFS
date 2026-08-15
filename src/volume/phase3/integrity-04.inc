@@ -9,7 +9,10 @@ static int extent_emit(struct infs_extent_disk *out, uint32_t *count,
         struct infs_extent_disk *last = &out[*count - 1u];
         if (infs_le32_to_cpu(last->flags) == flags &&
             infs_le64_to_cpu(last->logical_block) + infs_le32_to_cpu(last->block_count) == logical &&
-            infs_le64_to_cpu(last->physical_block) + infs_le32_to_cpu(last->block_count) == physical) {
+            ((flags == INFS_EXTENT_HOLE && physical == 0) ||
+             (flags == INFS_EXTENT_NORMAL &&
+              infs_le64_to_cpu(last->physical_block) +
+                  infs_le32_to_cpu(last->block_count) == physical))) {
             uint64_t merged = (uint64_t)infs_le32_to_cpu(last->block_count) + blocks;
             if (merged <= UINT32_MAX) {
                 last->block_count = infs_cpu_to_le32((uint32_t)merged);
@@ -31,7 +34,7 @@ static int extent_emit(struct infs_extent_disk *out, uint32_t *count,
 static int file_replace_range(struct infs_volume *vol,
                               uint8_t object[INFS_BLOCK_SIZE],
                               uint64_t logical_start, uint64_t block_count,
-                              uint64_t new_physical)
+                              uint64_t new_physical, uint32_t new_flags)
 {
     struct infs_file_payload_disk *p =
         (struct infs_file_payload_disk *)(object + sizeof(struct infs_object_header_disk));
@@ -42,7 +45,10 @@ static int file_replace_range(struct infs_volume *vol,
     uint64_t replace_end = logical_start + block_count;
     int replacement_emitted = 0;
 
-    if (replace_end < logical_start) {
+    if (replace_end < logical_start || block_count > UINT32_MAX ||
+        (new_flags != INFS_EXTENT_NORMAL && new_flags != INFS_EXTENT_HOLE) ||
+        (new_flags == INFS_EXTENT_HOLE && new_physical != 0) ||
+        (new_flags == INFS_EXTENT_NORMAL && new_physical == 0)) {
         return INFS_STATUS_INVALID_ARGUMENT;
     }
 
@@ -66,15 +72,19 @@ static int file_replace_range(struct infs_volume *vol,
         uint64_t overlap_end = e < replace_end ? e : replace_end;
         if (!replacement_emitted) {
             if (extent_emit(rebuilt, &new_count, logical_start, new_physical,
-                            (uint32_t)block_count, INFS_EXTENT_NORMAL) != 0)
+                            (uint32_t)block_count, new_flags) != 0)
                 return INFS_STATUS_ERROR;
             replacement_emitted = 1;
         }
-        free_run(vol, phys + (overlap_start - l), overlap_end - overlap_start);
+        if (flags == INFS_EXTENT_NORMAL)
+            free_run(vol, phys + (overlap_start - l),
+                     overlap_end - overlap_start);
         if (e > replace_end) {
             uint32_t suffix = (uint32_t)(e - replace_end);
             if (extent_emit(rebuilt, &new_count, replace_end,
-                            phys + (replace_end - l), suffix, flags) != 0)
+                            flags == INFS_EXTENT_HOLE ? 0 :
+                                phys + (replace_end - l),
+                            suffix, flags) != 0)
                 return INFS_STATUS_ERROR;
         }
     }

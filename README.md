@@ -5,19 +5,20 @@ InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem star
 
 Linux is the first implementation and test platform. It is not part of the filesystem's identity: the on-disk format and core engine are designed so a future Windows implementation can use the same volume without conversion or reformatting.
 
-## Current status — implementation 0.5.1 / format 0.5
+## Current status — implementation 0.6.0 / format 0.6
 
-Implementation 0.5.1 preserves the proven Format 0.5 transaction and integrity model, freezes its byte-level portability contract and removes operating-system error codes from the core boundary:
+Implementation 0.6.0 adds sparse files without weakening the proven transaction, integrity or platform-neutrality model:
 
 - 4096-byte little-endian on-disk format;
 - 128-bit persistent filesystem and object identities;
-- extent-based file allocation;
+- normal and hole extents with zero-storage logical ranges;
 - authoritative free-space bitmap;
 - three physically separated, checksummed checkpoints;
 - transactional copy-on-write metadata, data and allocation state;
 - atomic old-or-new generation publication without journal replay;
 - CRC64-ECMA metadata checksums and SHA-256 file-data checksums;
 - independently stored per-block data checksums;
+- sparse checksum chains that allocate metadata only for stored data;
 - platform-neutral file attributes with birth, access, modification and metadata-change times;
 - portable file flags plus references for future security and extended-attribute objects;
 - POSIX permissions isolated as optional Linux adapter metadata;
@@ -25,16 +26,17 @@ Implementation 0.5.1 preserves the proven Format 0.5 transaction and integrity m
 - callback-based storage, durable-flush, randomness and clock services;
 - operating-system-neutral `infs_status` results with adapter mappings;
 - byte-exact layout, malformed-image and deterministic in-memory volume conformance tests;
+- high-offset sparse write, hole-punch, crash-atomicity and reclamation tests;
 - automated Linux and Windows/MSVC core builds;
 - Linux/POSIX I/O and FUSE kept outside the core engine.
 
-The current prototype supports create, mkdir, lookup, enumeration, read, write, truncate, unlink, empty-directory removal, cross-directory rename, attribute updates, direct-image tools and full-volume read-only scrub.
+The current prototype supports create, mkdir, lookup, enumeration, read, write, sparse grow, truncate, hole punch, unlink, empty-directory removal, cross-directory rename, attribute updates, direct-image tools and full-volume read-only scrub.
 
 ## Platform model
 
 | Layer | Status |
 | --- | --- |
-| On-disk format | Platform-neutral format 0.5 |
+| On-disk format | Platform-neutral format 0.6 |
 | Core filesystem engine | Portable C17 with no Linux file descriptor or VFS types |
 | Storage interface | Callback-based and tested with POSIX files/devices and an in-memory backend |
 | Result interface | Stable `infs_status` values; native errors are adapter translations |
@@ -66,6 +68,7 @@ Exercise the filesystem without mounting:
 ./build/infilfs-tool infilfs.img mkdir /docs
 ./build/infilfs-tool infilfs.img put README.md /docs/README.md
 ./build/infilfs-tool infilfs.img cat /docs/README.md
+./build/infilfs-tool infilfs.img punch /docs/README.md 4096 4096
 ```
 
 Mount with the current Linux adapter:
@@ -76,6 +79,8 @@ mkdir -p /tmp/infilfs-mnt
 ```
 
 The FUSE adapter remains single-threaded while the core is a single-writer prototype.
+On Linux Mint, `bash tests/mint-sparse-fuse.sh build` runs the real mounted
+1 TiB sparse-file/write/punch/remount harness after the normal CTest suite.
 
 ## Repository layout
 
@@ -92,14 +97,14 @@ docs/                architecture, format, roadmap and design inspirations
 ## Documentation
 
 - `docs/ARCHITECTURE.md` — platform model, transaction design and long-term rules.
-- `docs/ON_DISK_FORMAT.md` — complete format-0.5 specification.
+- `docs/ON_DISK_FORMAT.md` — complete format-0.6 specification.
 - `docs/CONFORMANCE.md` — byte-level contract and cross-platform test requirements.
 - `docs/ROADMAP.md` — completed work and future Linux/Windows integration.
 - `docs/INSPIRATIONS.md` — ideas borrowed, rejected or reinterpreted.
 
 ## Safety
 
-InfiltratorFS remains experimental. Use image files or disposable media only. Do not store irreplaceable data on format 0.5.
+InfiltratorFS remains experimental. Use image files or disposable media only. Do not store irreplaceable data on format 0.6.
 
 ## License
 

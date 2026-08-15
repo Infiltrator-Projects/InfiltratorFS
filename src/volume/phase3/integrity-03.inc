@@ -15,9 +15,10 @@ static int checksum_set_range(struct infs_volume *vol,
         uint8_t block[INFS_BLOCK_SIZE];
         struct infs_checksum_payload_disk *p;
         struct infs_data_checksum_disk *values;
-        if (checksum_locate(vol, file, owner_id, logical, 1, &lk, block,
-                            &p, &values) != 0)
-            return INFS_STATUS_ERROR;
+        int status = checksum_locate(vol, file, owner_id, logical, 1, &lk,
+                                     block, &p, &values);
+        if (status != 0)
+            return status;
         for (uint64_t i = 0; i < chunk; ++i)
             values[offset + i] = digests[i];
         uint32_t needed = (uint32_t)(offset + chunk);
@@ -37,28 +38,6 @@ static int checksum_set_range(struct infs_volume *vol,
     return 0;
 }
 
-static int checksum_set_zero_range(struct infs_volume *vol,
-                                   struct infs_file_payload_disk *file,
-                                   const uint8_t owner_id[16],
-                                   uint64_t logical, uint64_t count)
-{
-    uint8_t zero[INFS_BLOCK_SIZE] = {0};
-    struct infs_data_checksum_disk digest;
-    data_block_checksum(zero, &digest);
-    struct infs_data_checksum_disk values[INFS_CHECKSUMS_PER_OBJECT];
-    for (size_t i = 0; i < INFS_CHECKSUMS_PER_OBJECT; ++i)
-        values[i] = digest;
-    while (count) {
-        uint64_t n = count > INFS_CHECKSUMS_PER_OBJECT ?
-            INFS_CHECKSUMS_PER_OBJECT : count;
-        if (checksum_set_range(vol, file, owner_id, logical, values, n) != 0)
-            return INFS_STATUS_ERROR;
-        logical += n;
-        count -= n;
-    }
-    return 0;
-}
-
 static int checksum_get(struct infs_volume *vol,
                         struct infs_file_payload_disk *file,
                         const uint8_t owner_id[16], uint64_t logical,
@@ -67,9 +46,10 @@ static int checksum_get(struct infs_volume *vol,
     uint8_t block[INFS_BLOCK_SIZE];
     struct infs_checksum_payload_disk *p;
     struct infs_data_checksum_disk *values;
-    if (checksum_locate(vol, file, owner_id, logical, 0, NULL, block,
-                        &p, &values) != 0)
-        return INFS_STATUS_ERROR;
+    int status = checksum_locate(vol, file, owner_id, logical, 0, NULL, block,
+                                 &p, &values);
+    if (status != 0)
+        return status;
     uint64_t offset = logical % INFS_CHECKSUMS_PER_OBJECT;
     if (offset >= infs_le32_to_cpu(p->checksum_count)) {
         return INFS_STATUS_CORRUPT;

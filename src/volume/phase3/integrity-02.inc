@@ -7,22 +7,26 @@ static int checksum_locate(struct infs_volume *vol,
                            struct infs_checksum_payload_disk **payload_out,
                            struct infs_data_checksum_disk **checksums_out)
 {
-    uint64_t segment = logical / INFS_CHECKSUMS_PER_OBJECT;
-    uint64_t expected_start = 0;
+    uint64_t target_start =
+        (logical / INFS_CHECKSUMS_PER_OBJECT) * INFS_CHECKSUMS_PER_OBJECT;
     uint8_t current_id[16];
+    uint8_t previous_id[16] = {0};
+    uint64_t previous_start = 0;
+    int have_previous = 0;
 
     if (id_is_zero(file->checksum_head_id)) {
         if (!create) {
             return INFS_STATUS_CORRUPT;
         }
-        if (checksum_create_object(vol, owner_id, 0, current_id) != 0)
+        if (checksum_create_object(vol, owner_id, target_start, NULL,
+                                   current_id) != 0)
             return INFS_STATUS_ERROR;
         memcpy(file->checksum_head_id, current_id, 16);
     } else {
         memcpy(current_id, file->checksum_head_id, 16);
     }
 
-    for (uint64_t n = 0; n <= segment; ++n) {
+    for (uint64_t guard = 0; guard < 1048576u; ++guard) {
         struct infs_lookup lk;
         if (index_find(vol, current_id, &lk) != 0)
             return INFS_STATUS_ERROR;
@@ -34,11 +38,15 @@ static int checksum_locate(struct infs_volume *vol,
             return INFS_STATUS_ERROR;
         struct infs_checksum_payload_disk *p;
         struct infs_data_checksum_disk *values;
-        if (checksum_validate(block, owner_id, &p, &values) != 0 ||
-            infs_le64_to_cpu(p->start_logical_block) != expected_start) {
+        if (checksum_validate(block, owner_id, &p, &values) != 0) {
             return INFS_STATUS_CORRUPT;
         }
-        if (n == segment) {
+        uint64_t start = infs_le64_to_cpu(p->start_logical_block);
+        if ((start % INFS_CHECKSUMS_PER_OBJECT) != 0 ||
+            (have_previous && start <= previous_start)) {
+            return INFS_STATUS_CORRUPT;
+        }
+        if (start == target_start) {
             if (lookup_out)
                 *lookup_out = lk;
             if (block_out)
@@ -56,24 +64,59 @@ static int checksum_locate(struct infs_volume *vol,
             return 0;
         }
 
-        if (id_is_zero(p->next_object_id)) {
+        if (start > target_start) {
             if (!create) {
                 return INFS_STATUS_CORRUPT;
             }
-            uint8_t next_id[16];
-            if (checksum_create_object(vol, owner_id,
-                                       expected_start + INFS_CHECKSUMS_PER_OBJECT,
-                                       next_id) != 0)
+            uint8_t inserted_id[16];
+            if (checksum_create_object(vol, owner_id, target_start, current_id,
+                                       inserted_id) != 0)
                 return INFS_STATUS_ERROR;
-            memcpy(p->next_object_id, next_id, 16);
+            if (!have_previous) {
+                memcpy(file->checksum_head_id, inserted_id, 16);
+            } else {
+                struct infs_lookup previous_lk;
+                uint8_t previous_block[INFS_BLOCK_SIZE];
+                struct infs_checksum_payload_disk *previous;
+                if (index_find(vol, previous_id, &previous_lk) != 0 ||
+                    previous_lk.type != INFS_OBJECT_CHECKSUM ||
+                    read_object(vol, previous_lk.block, previous_block) != 0 ||
+                    checksum_validate(previous_block, owner_id, &previous,
+                                      NULL) != 0) {
+                    return INFS_STATUS_CORRUPT;
+                }
+                memcpy(previous->next_object_id, inserted_id, 16);
+                if (write_object(vol, previous_lk.block, previous_block) != 0)
+                    return INFS_STATUS_ERROR;
+            }
+            memcpy(current_id, inserted_id, 16);
+            continue;
+        }
+
+        uint8_t next_id[16];
+        memcpy(next_id, p->next_object_id, 16);
+        if (id_is_zero(next_id)) {
+            if (!create)
+                return INFS_STATUS_CORRUPT;
+            uint8_t inserted_id[16];
+            if (checksum_create_object(vol, owner_id, target_start, NULL,
+                                       inserted_id) != 0)
+                return INFS_STATUS_ERROR;
+            memcpy(p->next_object_id, inserted_id, 16);
             if (write_object(vol, lk.block, block) != 0)
                 return INFS_STATUS_ERROR;
-            memcpy(current_id, next_id, 16);
-        } else {
-            memcpy(current_id, p->next_object_id, 16);
+            memcpy(previous_id, current_id, 16);
+            previous_start = start;
+            have_previous = 1;
+            memcpy(current_id, inserted_id, 16);
+            continue;
         }
-        expected_start += INFS_CHECKSUMS_PER_OBJECT;
+
+        memcpy(previous_id, current_id, 16);
+        previous_start = start;
+        have_previous = 1;
+        memcpy(current_id, next_id, 16);
     }
 
-    return INFS_STATUS_CORRUPT;
+    return INFS_STATUS_LOOP_DETECTED;
 }

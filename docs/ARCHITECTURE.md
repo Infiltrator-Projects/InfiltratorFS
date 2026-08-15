@@ -28,7 +28,7 @@ Files, directories, checksum records and future metadata classes are persistent 
 
 Directories map UTF-8 names to object IDs. Renaming or physically relocating an object does not change its ID. Linux may derive a stable inode number from the ID; Windows may expose the full value as a file ID. Neither projection is stored as the canonical identity.
 
-Format 0.5 uses a persistent object index mapping object IDs to current metadata blocks. The root object block is also present in each checkpoint as a bootstrap and recovery anchor. The current one-block index and directories are prototype limits.
+Format 0.6 uses a persistent object index mapping object IDs to current metadata blocks. The root object block is also present in each checkpoint as a bootstrap and recovery anchor. The current one-block index and directories are prototype limits.
 
 ## 4. Platform-neutral attributes
 
@@ -52,7 +52,7 @@ POSIX permission bits and numeric UID/GID values are retained in a separate comp
 
 ## 5. Namespace rules
 
-Format 0.5 names are well-formed UTF-8 and are limited to 255 bytes per component. NUL and `/` are invalid. `.` and `..` are adapter/core navigation syntax and are not stored.
+Format 0.6 names are well-formed UTF-8 and are limited to 255 bytes per component. NUL and `/` are invalid. `.` and `..` are adapter/core navigation syntax and are not stored.
 
 Current directory lookup is case-sensitive and compares encoded UTF-8 bytes exactly. Unicode normalization and case-folded directory policies must be explicitly versioned before they are enabled. An adapter must not silently create a second definition of filename equality.
 
@@ -81,13 +81,13 @@ The required operation is a durable flush/barrier supplied by the storage adapte
 
 One bitmap bit describes one 4096-byte block. The bitmap is the authoritative free-space record. A future free-extent tree is only a rebuildable accelerator.
 
-File data is stored in extents rather than linked cluster chains. Extent flags reserve space for sparse, compressed, shared, inline, integrity and placement states.
+File data is stored in extents rather than linked cluster chains. Format 0.6 distinguishes normal extents, which map logical blocks to physical storage, from hole extents, which map a logical range to zeros without allocating data blocks. Truncate growth creates holes, writes allocate only touched blocks, and full-block hole punching reclaims storage while preserving logical size. Compression, shared, inline, integrity and placement states remain future extent types.
 
 The allocator will eventually distinguish archive, sequential-growing, streaming, random-write, temporary and VM/disk-image workloads. Policy may alter extent size, locality, CoW, compression, aggregation and protection without changing ordinary file semantics.
 
 ## 8. Integrity and recovery
 
-Metadata blocks are self-identifying, versioned and checksummed. Format 0.5 retains CRC64-ECMA for metadata and SHA-256 for complete 4096-byte file-data blocks. Every allocated logical data block has a separate checksum entry stored in checksummed CoW metadata.
+Metadata blocks are self-identifying, versioned and checksummed. Format 0.6 retains CRC64-ECMA for metadata and SHA-256 for complete 4096-byte file-data blocks. Every allocated logical data block has a separate checksum entry stored in checksummed CoW metadata. Hole extents need no data checksum. Checksum objects form a sorted sparse chain, so a high-offset write allocates checksum metadata for its own segment rather than every preceding hole.
 
 Normal reads verify data before returning it. `infilfs-scrub` verifies every currently allocated regular-file block. Repair is deferred until trustworthy redundant data placement exists.
 

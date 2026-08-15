@@ -17,6 +17,13 @@
 #include <sys/statvfs.h>
 #include <unistd.h>
 
+#ifndef FALLOC_FL_KEEP_SIZE
+#define FALLOC_FL_KEEP_SIZE 0x01
+#endif
+#ifndef FALLOC_FL_PUNCH_HOLE
+#define FALLOC_FL_PUNCH_HOLE 0x02
+#endif
+
 static struct infs_volume g_volume;
 
 static int neg_status(infs_status status)
@@ -166,6 +173,18 @@ static int infs_truncate_cb(const char *path, off_t size, struct fuse_file_info 
     return neg_status(infs_truncate_file(&g_volume, path, (uint64_t)size));
 }
 
+static int infs_fallocate_cb(const char *path, int mode, off_t offset,
+                             off_t length, struct fuse_file_info *fi)
+{
+    (void)fi;
+    if (offset < 0 || length <= 0)
+        return -EINVAL;
+    if (mode != (FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE))
+        return -EOPNOTSUPP;
+    return neg_status(infs_punch_hole(&g_volume, path, (uint64_t)offset,
+                                     (uint64_t)length));
+}
+
 static int infs_unlink_cb(const char *path)
 {
     return neg_status(infs_unlink(&g_volume, path));
@@ -263,6 +282,7 @@ static const struct fuse_operations infs_ops = {
     .read = infs_read_cb,
     .write = infs_write_cb,
     .truncate = infs_truncate_cb,
+    .fallocate = infs_fallocate_cb,
     .unlink = infs_unlink_cb,
     .rmdir = infs_rmdir_cb,
     .rename = infs_rename_cb,

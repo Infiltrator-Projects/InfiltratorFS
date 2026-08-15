@@ -43,8 +43,11 @@ static int remove_object(struct infs_volume *vol, const char *path, int want_dir
         if (checksum_destroy_chain(vol, fp, child.object_id) != 0)
             return INFS_STATUS_ERROR;
         uint32_t count = infs_le32_to_cpu(fp->extent_count);
-        for (uint32_t i = 0; i < count; ++i)
-            free_run(vol, infs_le64_to_cpu(ext[i].physical_block), infs_le32_to_cpu(ext[i].block_count));
+        for (uint32_t i = 0; i < count; ++i) {
+            if (infs_le32_to_cpu(ext[i].flags) == INFS_EXTENT_NORMAL)
+                free_run(vol, infs_le64_to_cpu(ext[i].physical_block),
+                         infs_le32_to_cpu(ext[i].block_count));
+        }
     }
 
     if (dir_remove(parent_block, name, NULL) != 0)

@@ -66,6 +66,14 @@ int main(int argc, char **argv)
         (int64_t)(sizeof(tail) - 1u))
         fail("sparse-style write");
 
+    struct infs_attributes sparse_attributes;
+    if (infs_get_attributes(&vol, "/alpha/data", &sparse_attributes) != 0)
+        fail("get sparse attributes");
+    expect(sparse_attributes.logical_size == tail_off + sizeof(tail) - 1u,
+           "sparse write logical size");
+    expect(sparse_attributes.allocated_size == 2u * INFS_BLOCK_SIZE,
+           "sparse write allocates only touched blocks");
+
     unsigned char probe[32];
     memset(probe, 0xff, sizeof(probe));
     int64_t n = infs_read_file(&vol, "/alpha/data", probe, sizeof(probe),
@@ -73,6 +81,14 @@ int main(int argc, char **argv)
     expect(n == (int64_t)sizeof(probe), "hole probe length");
     for (size_t i = 0; i < sizeof(probe); ++i)
         expect(probe[i] == 0, "unwritten gap must read as zero");
+
+    if (infs_punch_hole(&vol, "/alpha/data",
+                        2u * INFS_BLOCK_SIZE, INFS_BLOCK_SIZE) != 0)
+        fail("punch sparse tail block");
+    if (infs_get_attributes(&vol, "/alpha/data", &sparse_attributes) != 0)
+        fail("get punched attributes");
+    expect(sparse_attributes.allocated_size == INFS_BLOCK_SIZE,
+           "full hole punch reclaims one block");
 
     if (infs_truncate_file(&vol, "/alpha/data", 5) != 0)
         fail("truncate shrink");

@@ -39,7 +39,7 @@ cmp "$source_file" "$out_file"
 
 # Corrupt the root metadata block and require a hard rejection.
 cp "$image" "$corrupt"
-# For a 64 MiB format-0.5 image: block 1 bitmap, block 2 index, block 3 root.
+# For a 64 MiB format-0.6 image: block 1 bitmap, block 2 index, block 3 root.
 printf '\001' | dd of="$corrupt" bs=1 seek=$((3 * 4096 + 256)) conv=notrunc status=none
 if "$tool" "$corrupt" ls / >/dev/null 2>&1; then
     echo "corruption test failed: damaged root was accepted" >&2

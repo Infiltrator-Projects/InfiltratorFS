@@ -2,6 +2,8 @@
 int64_t infs_read_file(struct infs_volume *vol, const char *path, void *buf,
                        size_t size, uint64_t offset)
 {
+    if (!vol || !path || (size && !buf))
+        return INFS_STATUS_INVALID_ARGUMENT;
     if ((uint64_t)size > INT64_MAX) {
         return INFS_STATUS_OVERFLOW;
     }
@@ -38,11 +40,18 @@ int64_t infs_read_file(struct infs_volume *vol, const char *path, void *buf,
         if (chunk > remaining - done)
             chunk = remaining - done;
         uint64_t physical;
-        if (file_map_block(p, ext, logical, &physical) != 0 ||
-            read_block(vol, physical, data) != 0 ||
-            data_block_verify(vol, p, file_hdr->object_id, logical, data) != 0)
+        uint32_t flags;
+        if (file_map_block(p, ext, logical, &physical, &flags) != 0)
             return INFS_STATUS_ERROR;
-        memcpy((uint8_t *)buf + done, data + within, chunk);
+        if (flags == INFS_EXTENT_HOLE) {
+            memset((uint8_t *)buf + done, 0, chunk);
+        } else {
+            if (read_block(vol, physical, data) != 0 ||
+                data_block_verify(vol, p, file_hdr->object_id, logical,
+                                  data) != 0)
+                return INFS_STATUS_ERROR;
+            memcpy((uint8_t *)buf + done, data + within, chunk);
+        }
         done += chunk;
     }
     return (int64_t)done;

@@ -1,9 +1,9 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-# InfiltratorFS On-Disk Format 0.5
+# InfiltratorFS On-Disk Format 0.6
 
-Status: experimental writable prototype. Format 0.5 is intentionally incompatible with formats 0.1 through 0.4.
+Status: experimental writable prototype. Format 0.6 is intentionally incompatible with formats 0.1 through 0.5.
 
-Implementation release 0.5.1 adds byte-exact conformance tests and cross-platform compilation checks without changing this on-disk version. The normative conformance rules are summarized in `CONFORMANCE.md`.
+Implementation 0.6.0 adds sparse extents, sparse checksum indexing and hole punching. The normative conformance rules are summarized in `CONFORMANCE.md`.
 
 ## 1. Encoding
 
@@ -34,7 +34,7 @@ The bitmap contains one bit per filesystem block. Bits beyond the volume end are
 
 ```text
 magic                       8 bytes: "INFS2026"
-format major/minor          0.5
+format major/minor          0.6
 header size                 structure-size guard
 block shift                 12
 checksum algorithm          CRC64-ECMA
@@ -51,7 +51,7 @@ label                       UTF-8, up to 63 bytes plus terminator
 checksum field              32 bytes reserved
 ```
 
-Format 0.5 requires `INFS_INCOMPAT_UTF8_NAMES`. Readers reject unknown incompatible feature flags.
+Format 0.6 requires both `INFS_INCOMPAT_UTF8_NAMES` and `INFS_INCOMPAT_SPARSE_EXTENTS`. Readers reject a missing required bit or any unknown incompatible feature flag. A sparse-extents bit on a pre-0.6 checkpoint is invalid.
 
 CRC64 occupies the first eight checksum bytes. The complete checksum field is zero during calculation. A checkpoint is accepted only when its magic, format, size, block geometry, checksum, volume size, feature flags and expected checkpoint positions validate. The newest valid generation wins.
 
@@ -84,7 +84,7 @@ The entire metadata block is checksummed with the checksum field zeroed.
 
 The index maps a persistent object ID to a physical metadata block and object type. Directory entries contain IDs rather than physical addresses, so relocation changes the index without rewriting every namespace reference.
 
-Format 0.5 stores the index in one block. Entries are validated for duplicate IDs, bounds, allocation state, object identity, type and checksum. The root must appear exactly once and match the checkpoint.
+Format 0.6 stores the index in one block. Entries are validated for duplicate IDs, bounds, allocation state, object identity, type and checksum. The root must appear exactly once and match the checkpoint.
 
 ## 7. Common attributes
 
@@ -112,17 +112,24 @@ A directory payload contains common attributes, POSIX compatibility data, an ent
 
 Each record contains its aligned record size, name length, target object type, flags, 128-bit target ID and name bytes. Names must be well-formed UTF-8, contain 1–255 bytes, and contain neither NUL nor `/`. Records are padded to eight-byte alignment.
 
-Lookup in format 0.5 is case-sensitive and byte-exact. `.` and `..` are synthesized navigation components and are not stored.
+Lookup in format 0.6 is case-sensitive and byte-exact. `.` and `..` are synthesized navigation components and are not stored.
 
 ## 9. Files, extents and checksums
 
 A regular-file payload contains common attributes, POSIX compatibility data, extent count, data-checksum algorithm, checksum-chain head and ordered extent records.
 
-Each extent records a logical start block, physical start block, block count and flags. Format 0.5 implements normal extents only. Logical blocks are contiguous from zero; writes beyond EOF allocate and zero the intervening range.
+Each 24-byte extent records a logical start block, physical start block, 32-bit block count and flags. Extents are ordered and must cover logical blocks contiguously from zero through `ceil(logical_size / 4096)`. A zero block count, logical gap, logical overlap or unknown flag is corruption.
 
-Each allocated logical block has one 32-byte checksum slot in a hidden checksum object. Format 0.5 fills the complete slot with SHA-256. Checksum objects identify their owner, covered logical range and next checksum object.
+Format 0.6 defines:
 
-Checksums cover the complete physical 4096-byte data block, including zero-filled bytes beyond logical EOF. Reads verify before returning data. Shrink zeroes the retained final-block tail so later growth cannot expose truncated bytes.
+- `INFS_EXTENT_NORMAL` (`flags == 0`): `physical_block` is nonzero and maps `block_count` allocated data blocks;
+- `INFS_EXTENT_HOLE` (`flags == 1`): `physical_block` is zero and the logical range reads as zeros without data-block allocation.
+
+Truncate growth appends or extends hole extents. A write into a hole replaces only each touched logical block with a normal extent. A full-block punch replaces the selected range with hole extents and preserves logical size. A partial-block punch keeps a normal block, zeroes the selected bytes through copy-on-write and updates its checksum. Adjacent compatible extents may be coalesced.
+
+Each allocated normal logical block has one 32-byte SHA-256 slot in a hidden checksum object. Hole blocks require no checksum and are never verified as stored data. Checksum objects identify their owner and an aligned logical segment. Their linked list is sorted by strictly increasing segment start, but segments containing only holes may be absent. This permits one high-offset write without allocating checksum metadata for all preceding holes. Inactive checksum slots or objects may remain while the same file still owns other allocated blocks; the complete chain is reclaimed when the file has no allocated data.
+
+Checksums cover the complete physical 4096-byte data block, including zero-filled bytes beyond logical EOF. Reads verify normal data before returning it and synthesize zeros directly for holes. Shrink zeroes the retained normal final-block tail so later growth cannot expose truncated bytes.
 
 ## 10. Transaction publication
 
@@ -145,7 +152,7 @@ Committed file-data blocks are also replaced through CoW. Extent mappings and in
 
 ## 11. Corruption rejection
 
-The opener rejects invalid checkpoint checksums or geometry, unsupported feature flags, inconsistent allocation accounting, reserved blocks marked free, malformed object payloads, invalid UTF-8 names, duplicate index identities, invalid object/index relationships, invalid extents, malformed checksum chains and data checksum mismatches.
+The opener rejects invalid checkpoint checksums or geometry, unsupported feature flags, inconsistent allocation accounting, reserved blocks marked free, malformed object payloads, invalid UTF-8 names, duplicate index identities, invalid object/index relationships, logical extent gaps or overlaps, unknown extent flags, holes with physical storage, normal extents without physical storage, malformed or unsorted checksum chains and data checksum mismatches.
 
 The policy is to fail closed when committed state cannot be trusted.
 
@@ -154,7 +161,7 @@ The policy is to fail closed when committed state cannot be trusted.
 - one-block object index;
 - one-block directories;
 - no hard links or symbolic links;
-- no sparse extents, compression, reflinks or snapshots;
+- no compression, reflinks or snapshots;
 - security and extended-attribute object references are reserved but not implemented;
 - POSIX compatibility metadata exists; Windows security mapping is not implemented;
 - metadata uses CRC64 while file data uses SHA-256;

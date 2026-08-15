@@ -47,7 +47,8 @@
         sb.checkpoint_block[i] = infs_cpu_to_le64(checkpoints[i]);
     memcpy(sb.filesystem_uuid, fs_uuid, sizeof(fs_uuid));
     memcpy(sb.root_object_id, root_id, sizeof(root_id));
-    sb.incompat_flags = infs_cpu_to_le64(INFS_INCOMPAT_UTF8_NAMES);
+    sb.incompat_flags = infs_cpu_to_le64(
+        INFS_INCOMPAT_UTF8_NAMES | INFS_INCOMPAT_SPARSE_EXTENTS);
     memcpy(sb.label, label, strlen(label));
 
     uint8_t block[INFS_BLOCK_SIZE];

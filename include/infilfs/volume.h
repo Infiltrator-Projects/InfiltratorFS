@@ -122,6 +122,8 @@ int64_t infs_write_file(struct infs_volume *vol, const char *path,
                         const void *buf, size_t size, uint64_t offset);
 infs_status infs_truncate_file(struct infs_volume *vol, const char *path,
                                uint64_t size);
+infs_status infs_punch_hole(struct infs_volume *vol, const char *path,
+                            uint64_t offset, uint64_t length);
 
 infs_status infs_set_posix_compat(struct infs_volume *vol, const char *path,
                                   uint32_t mask, uint32_t permissions,

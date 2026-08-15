@@ -79,10 +79,36 @@ static int command_map(struct infs_volume *vol, const char *path,
         uint64_t l = infs_le64_to_cpu(ext[i].logical_block);
         uint32_t n = infs_le32_to_cpu(ext[i].block_count);
         if ((uint64_t)logical >= l && (uint64_t)logical < l + n) {
+            if (infs_le32_to_cpu(ext[i].flags) == INFS_EXTENT_HOLE) {
+                puts("hole");
+                return 0;
+            }
             printf("%" PRIu64 "\n", infs_le64_to_cpu(ext[i].physical_block) +
                    ((uint64_t)logical - l));
             return 0;
         }
     }
     return die_status("map", INFS_STATUS_NOT_FOUND);
+}
+
+static int command_punch(struct infs_volume *vol, const char *path,
+                         const char *offset_text, const char *length_text)
+{
+    char *offset_end = NULL;
+    char *length_end = NULL;
+    errno = 0;
+    unsigned long long offset = strtoull(offset_text, &offset_end, 0);
+    if (errno || !offset_end || *offset_end != '\0') {
+        errno = EINVAL;
+        return die_errno("punch offset");
+    }
+    errno = 0;
+    unsigned long long length = strtoull(length_text, &length_end, 0);
+    if (errno || !length_end || *length_end != '\0') {
+        errno = EINVAL;
+        return die_errno("punch length");
+    }
+    infs_status status = infs_punch_hole(vol, path, (uint64_t)offset,
+                                         (uint64_t)length);
+    return status == INFS_STATUS_OK ? 0 : die_status("punch", status);
 }

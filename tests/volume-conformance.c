@@ -17,6 +17,7 @@ struct memory_image {
     uint8_t *bytes;
     size_t visible_size;
     int fail_reads;
+    uint64_t random_state;
 };
 
 static void fail(const char *message)
@@ -44,6 +45,23 @@ static infs_status memory_read(void *context, uint64_t offset,
     return INFS_STATUS_OK;
 }
 
+static infs_status memory_write(void *context, uint64_t offset,
+                                const void *buffer, size_t size)
+{
+    struct memory_image *image = context;
+    if (offset > image->visible_size ||
+        size > image->visible_size - (size_t)offset)
+        return INFS_STATUS_IO_ERROR;
+    memcpy(image->bytes + (size_t)offset, buffer, size);
+    return INFS_STATUS_OK;
+}
+
+static infs_status memory_flush(void *context)
+{
+    (void)context;
+    return INFS_STATUS_OK;
+}
+
 static infs_status memory_size(void *context, uint64_t *size_bytes,
                                int *is_device)
 {
@@ -58,9 +76,33 @@ static void memory_close(void *context)
     (void)context;
 }
 
+static infs_status memory_random(void *context, void *buffer, size_t size)
+{
+    struct memory_image *image = context;
+    uint8_t *bytes = buffer;
+    for (size_t i = 0; i < size; ++i) {
+        image->random_state ^= image->random_state << 13;
+        image->random_state ^= image->random_state >> 7;
+        image->random_state ^= image->random_state << 17;
+        bytes[i] = (uint8_t)image->random_state;
+    }
+    return INFS_STATUS_OK;
+}
+
+static infs_status memory_time(void *context, int64_t *time_ns)
+{
+    (void)context;
+    *time_ns = INT64_C(1786744800000000000);
+    return INFS_STATUS_OK;
+}
+
 static const struct infs_storage_ops memory_ops = {
     .read_at = memory_read,
+    .write_at = memory_write,
+    .flush = memory_flush,
     .get_size = memory_size,
+    .random_bytes = memory_random,
+    .current_time_ns = memory_time,
     .close = memory_close,
 };
 
@@ -101,6 +143,7 @@ static void build_valid_image(struct memory_image *image)
     memset(image->bytes, 0, TEST_SIZE);
     image->visible_size = TEST_SIZE;
     image->fail_reads = 0;
+    image->random_state = UINT64_C(0x9e3779b97f4a7c15);
 
     uint8_t *bitmap = image->bytes + INFS_BLOCK_SIZE;
     bitmap_set(bitmap, 0, 1);
@@ -156,7 +199,8 @@ static void build_valid_image(struct memory_image *image)
         sb.checkpoint_block[i] = infs_cpu_to_le64(checkpoints[i]);
     memcpy(sb.filesystem_uuid, filesystem_id, 16);
     memcpy(sb.root_object_id, root_id, 16);
-    sb.incompat_flags = infs_cpu_to_le64(INFS_INCOMPAT_UTF8_NAMES);
+    sb.incompat_flags = infs_cpu_to_le64(
+        INFS_INCOMPAT_UTF8_NAMES | INFS_INCOMPAT_SPARSE_EXTENTS);
     memcpy(sb.label, "Conformance", 11);
     expect(infs_encode_superblock(block, &sb) == INFS_STATUS_OK,
            "encode checkpoint");
@@ -218,6 +262,186 @@ static void make_invalid_utf8_root(struct memory_image *image)
            "finalize malformed UTF-8 root");
 }
 
+static void check_sparse_files(struct memory_image *image)
+{
+    static const uint8_t zero_id[16] = {0};
+    const uint64_t sparse_size = (UINT64_C(1) << 40) + 123u;
+    const uint64_t data_offset = (UINT64_C(1) << 40) -
+        (2u * INFS_BLOCK_SIZE) + 77u;
+    const uint64_t data_block_start =
+        (data_offset / INFS_BLOCK_SIZE) * INFS_BLOCK_SIZE;
+    const uint64_t middle_offset = (UINT64_C(1) << 39) + 33u;
+    const uint64_t middle_block_start =
+        (middle_offset / INFS_BLOCK_SIZE) * INFS_BLOCK_SIZE;
+    static const uint8_t payload[] = "SPARSE-DATA";
+    static const uint8_t low_payload[] = "LOW";
+    static const uint8_t middle_payload[] = "MIDDLE";
+    const struct infs_create_options options = {
+        .posix_permissions = 0644,
+        .posix_uid = 1000,
+        .posix_gid = 1000,
+    };
+
+    build_valid_image(image);
+    struct infs_storage storage = make_storage(image);
+    struct infs_volume volume;
+    expect(infs_volume_open_storage(&volume, &storage, 1) == 0,
+           "open writable sparse test image");
+    expect(infs_create_file(&volume, "/sparse", &options) == 0,
+           "create sparse file");
+    uint64_t free_after_create = infs_le64_to_cpu(volume.sb.free_blocks);
+
+    expect(infs_truncate_file(&volume, "/sparse", sparse_size) == 0,
+           "grow sparse file without allocation");
+    struct infs_attributes attributes;
+    expect(infs_get_attributes(&volume, "/sparse", &attributes) == 0 &&
+               attributes.logical_size == sparse_size &&
+               attributes.allocated_size == 0,
+           "report sparse logical and allocated sizes");
+    expect(infs_le64_to_cpu(volume.sb.free_blocks) == free_after_create,
+           "sparse growth consumes no blocks");
+
+    expect(infs_write_file(&volume, "/sparse", payload,
+                           sizeof(payload) - 1u, data_offset) ==
+               (int64_t)(sizeof(payload) - 1u),
+           "write one high-offset sparse block");
+    expect(infs_get_attributes(&volume, "/sparse", &attributes) == 0 &&
+               attributes.logical_size == sparse_size &&
+               attributes.allocated_size == INFS_BLOCK_SIZE,
+           "allocate only the written sparse block");
+
+    uint8_t probe[INFS_BLOCK_SIZE];
+    expect(infs_read_file(&volume, "/sparse", probe, sizeof(probe),
+                          data_block_start) == (int64_t)sizeof(probe),
+           "read sparse data block");
+    for (size_t i = 0; i < sizeof(probe); ++i) {
+        uint8_t expected = 0;
+        if (i >= 77u && i < 77u + sizeof(payload) - 1u)
+            expected = payload[i - 77u];
+        expect(probe[i] == expected, "holes around sparse write read as zero");
+    }
+
+    /* Create checksum segments out of logical order: the high write created
+     * the head, then the low and middle writes must insert before and within
+     * the sorted sparse checksum chain. */
+    expect(infs_write_file(&volume, "/sparse", low_payload,
+                           sizeof(low_payload) - 1u, 17u) ==
+               (int64_t)(sizeof(low_payload) - 1u),
+           "insert low sparse checksum segment");
+    expect(infs_write_file(&volume, "/sparse", middle_payload,
+                           sizeof(middle_payload) - 1u, middle_offset) ==
+               (int64_t)(sizeof(middle_payload) - 1u),
+           "insert middle sparse checksum segment");
+    expect(infs_get_attributes(&volume, "/sparse", &attributes) == 0 &&
+               attributes.allocated_size == 3u * INFS_BLOCK_SIZE,
+           "track three discontiguous sparse blocks");
+
+    struct infs_scrub_report report;
+    expect(infs_scrub(&volume, &report) == 0 &&
+               report.files_checked == 1 &&
+               report.data_blocks_checked == 3 &&
+               report.checksum_errors == 0 && report.metadata_errors == 0,
+           "scrub out-of-order sparse checksum segments");
+
+    expect(infs_punch_hole(&volume, "/sparse", data_offset + 2u, 3u) == 0,
+           "punch partial sparse block");
+    uint8_t expected_payload[sizeof(payload) - 1u];
+    memcpy(expected_payload, payload, sizeof(expected_payload));
+    memset(expected_payload + 2u, 0, 3u);
+    uint8_t payload_readback[sizeof(payload) - 1u];
+    expect(infs_read_file(&volume, "/sparse", payload_readback,
+                          sizeof(payload_readback), data_offset) ==
+               (int64_t)sizeof(payload_readback) &&
+               memcmp(payload_readback, expected_payload,
+                      sizeof(payload_readback)) == 0,
+           "partial punch preserves surrounding bytes");
+    expect(infs_get_attributes(&volume, "/sparse", &attributes) == 0 &&
+               attributes.allocated_size == 3u * INFS_BLOCK_SIZE,
+           "partial punch retains the data block");
+
+    expect(infs_punch_hole(&volume, "/sparse", data_block_start,
+                           INFS_BLOCK_SIZE) == 0,
+           "punch complete sparse block");
+    expect(infs_punch_hole(&volume, "/sparse", 0, INFS_BLOCK_SIZE) == 0,
+           "punch low sparse block");
+    expect(infs_punch_hole(&volume, "/sparse", middle_block_start,
+                           INFS_BLOCK_SIZE) == 0,
+           "punch middle sparse block");
+    expect(infs_get_attributes(&volume, "/sparse", &attributes) == 0 &&
+               attributes.logical_size == sparse_size &&
+               attributes.allocated_size == 0,
+           "full punch reclaims allocation and keeps size");
+    expect(infs_le64_to_cpu(volume.sb.free_blocks) == free_after_create,
+           "full punch reclaims data and checksum blocks");
+    expect(infs_scrub(&volume, &report) == 0 &&
+               report.data_blocks_checked == 0 &&
+               report.checksum_errors == 0 && report.metadata_errors == 0,
+           "scrub skips fully punched holes");
+
+    struct infs_lookup lookup;
+    expect(infs_lookup_path(&volume, "/sparse", &lookup) == 0,
+           "locate punched sparse object");
+    uint8_t *object = image->bytes + lookup.block * INFS_BLOCK_SIZE;
+    struct infs_file_payload_disk *file =
+        (struct infs_file_payload_disk *)(object +
+            sizeof(struct infs_object_header_disk));
+    struct infs_extent_disk *extent = (struct infs_extent_disk *)(file + 1);
+    expect(infs_validate_object_block(object) &&
+               infs_le32_to_cpu(file->extent_count) == 1 &&
+               infs_le32_to_cpu(extent->flags) == INFS_EXTENT_HOLE &&
+               infs_le64_to_cpu(extent->physical_block) == 0 &&
+               memcmp(file->checksum_head_id, zero_id, 16) == 0,
+           "persist one hole extent and no checksum chain");
+    infs_volume_close(&volume);
+
+    storage = make_storage(image);
+    expect(infs_volume_open_storage(&volume, &storage, 0) == 0,
+           "reopen sparse image read-only");
+    memset(payload_readback, 0xff, sizeof(payload_readback));
+    expect(infs_read_file(&volume, "/sparse", payload_readback,
+                          sizeof(payload_readback), data_offset) ==
+               (int64_t)sizeof(payload_readback),
+           "read fully punched bytes after reopen");
+    for (size_t i = 0; i < sizeof(payload_readback); ++i)
+        expect(payload_readback[i] == 0,
+               "fully punched bytes remain zero after reopen");
+    infs_volume_close(&volume);
+
+    uint8_t *valid_sparse_image = malloc(TEST_SIZE);
+    expect(valid_sparse_image != NULL, "allocate sparse corruption snapshot");
+    memcpy(valid_sparse_image, image->bytes, TEST_SIZE);
+
+    object = image->bytes + lookup.block * INFS_BLOCK_SIZE;
+    file = (struct infs_file_payload_disk *)(object +
+        sizeof(struct infs_object_header_disk));
+    extent = (struct infs_extent_disk *)(file + 1);
+    extent->flags = infs_cpu_to_le32(UINT32_C(0x80000000));
+    expect(infs_object_finalize(object) == 0 && open_image(image) != 0,
+           "reject unknown sparse extent flags");
+
+    memcpy(image->bytes, valid_sparse_image, TEST_SIZE);
+    object = image->bytes + lookup.block * INFS_BLOCK_SIZE;
+    file = (struct infs_file_payload_disk *)(object +
+        sizeof(struct infs_object_header_disk));
+    extent = (struct infs_extent_disk *)(file + 1);
+    extent->physical_block = infs_cpu_to_le64(1);
+    expect(infs_object_finalize(object) == 0 && open_image(image) != 0,
+           "reject hole extent with physical storage");
+
+    memcpy(image->bytes, valid_sparse_image, TEST_SIZE);
+    object = image->bytes + lookup.block * INFS_BLOCK_SIZE;
+    file = (struct infs_file_payload_disk *)(object +
+        sizeof(struct infs_object_header_disk));
+    extent = (struct infs_extent_disk *)(file + 1);
+    extent->block_count = infs_cpu_to_le32(
+        infs_le32_to_cpu(extent->block_count) - 1u);
+    expect(infs_object_finalize(object) == 0 && open_image(image) != 0,
+           "reject sparse extent coverage mismatch");
+
+    memcpy(image->bytes, valid_sparse_image, TEST_SIZE);
+    free(valid_sparse_image);
+}
+
 int main(void)
 {
     struct memory_image image = {
@@ -229,6 +453,8 @@ int main(void)
 
     build_valid_image(&image);
     expect(open_image(&image) == 0, "accept deterministic valid image");
+
+    check_sparse_files(&image);
 
     build_valid_image(&image);
     image.bytes[100] ^= 1u;
@@ -243,7 +469,8 @@ int main(void)
     build_valid_image(&image);
     struct infs_superblock_disk sb = current_superblock(&image);
     sb.incompat_flags = infs_cpu_to_le64(
-        INFS_INCOMPAT_UTF8_NAMES | (UINT64_C(1) << 63));
+        INFS_INCOMPAT_UTF8_NAMES | INFS_INCOMPAT_SPARSE_EXTENTS |
+        (UINT64_C(1) << 63));
     rewrite_checkpoints(&image, &sb);
     expect(open_image(&image) != 0, "reject unknown incompatible feature");
 

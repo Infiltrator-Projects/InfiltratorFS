@@ -19,16 +19,11 @@ static int truncate_file_tx(struct infs_volume *vol, const char *path, uint64_t 
         return INFS_STATUS_ERROR;
 
     uint64_t old_size = infs_le64_to_cpu(p->attributes.logical_size);
-    if (size > UINT64_MAX - (INFS_BLOCK_SIZE - 1u)) {
-        return INFS_STATUS_FILE_TOO_LARGE;
-    }
-    uint64_t target_blocks = (size + INFS_BLOCK_SIZE - 1u) / INFS_BLOCK_SIZE;
-    uint64_t have = file_allocated_blocks(p, ext);
+    uint64_t target_blocks = size / INFS_BLOCK_SIZE +
+        ((size % INFS_BLOCK_SIZE) != 0);
+    uint64_t have = file_logical_blocks(p, ext);
     if (target_blocks > have) {
-        if (file_ensure_blocks(vol, object, target_blocks) != 0)
-            return INFS_STATUS_ERROR;
-        if (infs_object_finalize(object) != 0 ||
-            file_validate_volume(vol, object, &p, &ext) != 0)
+        if (file_ensure_logical_blocks(vol, object, target_blocks) != 0)
             return INFS_STATUS_ERROR;
     } else if (target_blocks < have) {
         uint32_t count = infs_le32_to_cpu(p->extent_count);
@@ -37,14 +32,17 @@ static int truncate_file_tx(struct infs_volume *vol, const char *path, uint64_t 
             uint64_t logical = infs_le64_to_cpu(ext[i].logical_block);
             uint64_t physical = infs_le64_to_cpu(ext[i].physical_block);
             uint32_t blocks = infs_le32_to_cpu(ext[i].block_count);
+            uint32_t flags = infs_le32_to_cpu(ext[i].flags);
             if (logical >= target_blocks) {
-                free_run(vol, physical, blocks);
+                if (flags == INFS_EXTENT_NORMAL)
+                    free_run(vol, physical, blocks);
                 continue;
             }
             uint64_t end = logical + blocks;
             if (end > target_blocks) {
                 uint32_t retained = (uint32_t)(target_blocks - logical);
-                free_run(vol, physical + retained, blocks - retained);
+                if (flags == INFS_EXTENT_NORMAL)
+                    free_run(vol, physical + retained, blocks - retained);
                 ext[i].block_count = infs_cpu_to_le32(retained);
             }
             if (keep != i)
@@ -59,38 +57,50 @@ static int truncate_file_tx(struct infs_volume *vol, const char *path, uint64_t 
             (size_t)keep * sizeof(*ext)));
     }
 
+    p->attributes.logical_size = infs_cpu_to_le64(size);
+    if (infs_object_finalize(object) != 0 ||
+        file_validate_volume(vol, object, &p, &ext) != 0)
+        return INFS_STATUS_ERROR;
+
     if (size < old_size && target_blocks > 0 && (size % INFS_BLOCK_SIZE) != 0) {
-        if (infs_object_finalize(object) != 0 ||
-            file_validate_volume(vol, object, &p, &ext) != 0)
-            return INFS_STATUS_ERROR;
         struct infs_object_header_disk *file_hdr =
             (struct infs_object_header_disk *)object;
         uint64_t logical = target_blocks - 1u;
         uint64_t physical;
-        if (file_map_block(p, ext, logical, &physical) != 0)
+        uint32_t flags;
+        if (file_map_block(p, ext, logical, &physical, &flags) != 0)
             return INFS_STATUS_ERROR;
-        uint8_t data[INFS_BLOCK_SIZE];
-        if (read_block(vol, physical, data) != 0 ||
-            data_block_verify(vol, p, file_hdr->object_id, logical, data) != 0)
-            return INFS_STATUS_ERROR;
-        size_t tail = (size_t)(size % INFS_BLOCK_SIZE);
-        memset(data + tail, 0, INFS_BLOCK_SIZE - tail);
-        uint64_t replacement = 0, got = 0;
-        int status = alloc_run(vol, 1, &replacement, &got);
-        if (status != INFS_STATUS_OK)
-            return status;
-        if (got != 1)
-            return INFS_STATUS_CORRUPT;
-        if (write_block(vol, replacement, data) != 0 ||
-            file_replace_range(vol, object, logical, 1, replacement) != 0)
-            return INFS_STATUS_ERROR;
-        struct infs_data_checksum_disk digest;
-        data_block_checksum(data, &digest);
-        if (checksum_set_range(vol, p, file_hdr->object_id, logical, &digest, 1) != 0)
-            return INFS_STATUS_ERROR;
+        if (flags == INFS_EXTENT_NORMAL) {
+            uint8_t data[INFS_BLOCK_SIZE];
+            if (read_block(vol, physical, data) != 0 ||
+                data_block_verify(vol, p, file_hdr->object_id, logical,
+                                  data) != 0)
+                return INFS_STATUS_ERROR;
+            size_t tail = (size_t)(size % INFS_BLOCK_SIZE);
+            memset(data + tail, 0, INFS_BLOCK_SIZE - tail);
+            uint64_t replacement = 0, got = 0;
+            int status = alloc_run(vol, 1, &replacement, &got);
+            if (status != INFS_STATUS_OK)
+                return status;
+            if (got != 1)
+                return INFS_STATUS_CORRUPT;
+            if (write_block(vol, replacement, data) != 0 ||
+                file_replace_range(vol, object, logical, 1, replacement,
+                                   INFS_EXTENT_NORMAL) != 0)
+                return INFS_STATUS_ERROR;
+            struct infs_data_checksum_disk digest;
+            data_block_checksum(data, &digest);
+            if (checksum_set_range(vol, p, file_hdr->object_id, logical,
+                                   &digest, 1) != 0)
+                return INFS_STATUS_ERROR;
+        }
     }
 
-    p->attributes.logical_size = infs_cpu_to_le64(size);
+    if (file_allocated_blocks(p, ext) == 0 &&
+        !id_is_zero(p->checksum_head_id) &&
+        checksum_destroy_chain(vol, p,
+            ((struct infs_object_header_disk *)object)->object_id) != 0)
+        return INFS_STATUS_ERROR;
     touch_mctime(vol, &p->attributes);
     if (write_object(vol, lk.block, object) != 0)
         return INFS_STATUS_ERROR;

@@ -36,24 +36,30 @@ infs_status infs_scrub(struct infs_volume *vol,
             continue;
         }
 
-        uint64_t blocks = file_allocated_blocks(file, ext);
-        for (uint64_t logical = 0; logical < blocks; ++logical) {
-            ++report->data_blocks_checked;
-            uint64_t physical;
-            uint8_t data[INFS_BLOCK_SIZE];
-            if (file_map_block(file, ext, logical, &physical) != 0 ||
-                read_block(vol, physical, data) != 0) {
-                ++report->metadata_errors;
+        uint32_t extent_count = infs_le32_to_cpu(file->extent_count);
+        for (uint32_t j = 0; j < extent_count; ++j) {
+            if (infs_le32_to_cpu(ext[j].flags) != INFS_EXTENT_NORMAL)
                 continue;
+            uint64_t logical = infs_le64_to_cpu(ext[j].logical_block);
+            uint64_t physical = infs_le64_to_cpu(ext[j].physical_block);
+            uint32_t blocks = infs_le32_to_cpu(ext[j].block_count);
+            for (uint32_t k = 0; k < blocks; ++k) {
+                ++report->data_blocks_checked;
+                uint8_t data[INFS_BLOCK_SIZE];
+                if (read_block(vol, physical + k, data) != 0) {
+                    ++report->metadata_errors;
+                    continue;
+                }
+                struct infs_data_checksum_disk expected, actual;
+                if (checksum_get(vol, file, hdr->object_id, logical + k,
+                                 &expected) != 0) {
+                    ++report->metadata_errors;
+                    continue;
+                }
+                data_block_checksum(data, &actual);
+                if (memcmp(&expected, &actual, sizeof(expected)) != 0)
+                    ++report->checksum_errors;
             }
-            struct infs_data_checksum_disk expected, actual;
-            if (checksum_get(vol, file, hdr->object_id, logical, &expected) != 0) {
-                ++report->metadata_errors;
-                continue;
-            }
-            data_block_checksum(data, &actual);
-            if (memcmp(&expected, &actual, sizeof(expected)) != 0)
-                ++report->checksum_errors;
         }
     }
     return 0;

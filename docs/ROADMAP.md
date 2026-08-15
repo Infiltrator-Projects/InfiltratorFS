@@ -63,9 +63,20 @@
 - [x] Add deterministic complete-volume malformed-image tests.
 - [x] Add full Linux CI and Windows/MSVC portable-core CI.
 
+## Phase 4.1 — Format 0.6 sparse files — complete
+
+- [x] Publish incompatible Format 0.6 with an explicit sparse-extents feature bit.
+- [x] Add zero-storage hole extents and exact allocated-size reporting.
+- [x] Make truncate growth allocate no data or checksum blocks.
+- [x] Allocate only blocks touched by writes into holes.
+- [x] Add sorted sparse checksum-object chains for high-offset writes.
+- [x] Add full and partial hole punching in the core API, direct-image tool and FUSE adapter.
+- [x] Preserve copy-on-write publication and SHA-256 verification for sparse data.
+- [x] Add portable 1 TiB logical-file, malformed-extent, crash and leak tests.
+
 ## Phase 4 — modern storage features
 
-- [ ] Sparse extents.
+- [x] Sparse extents.
 - [ ] Inline small files.
 - [ ] Reflinks and shared extents.
 - [ ] Snapshot roots and retained generations.

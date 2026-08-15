@@ -41,6 +41,7 @@ static int checksum_validate(uint8_t block[INFS_BLOCK_SIZE],
 static int checksum_create_object(struct infs_volume *vol,
                                   const uint8_t owner_id[16],
                                   uint64_t start_logical,
+                                  const uint8_t next_id[16],
                                   uint8_t id_out[16])
 {
     uint64_t block_no = 0, got = 0;
@@ -68,6 +69,8 @@ static int checksum_create_object(struct infs_volume *vol,
     memcpy(p->owner_object_id, owner_id, 16);
     p->start_logical_block = infs_cpu_to_le64(start_logical);
     p->checksum_count = infs_cpu_to_le32(0);
+    if (next_id)
+        memcpy(p->next_object_id, next_id, 16);
     if (infs_object_finalize(block) != 0 || write_block(vol, block_no, block) != 0) {
         free_run(vol, block_no, 1);
         return INFS_STATUS_ERROR;
