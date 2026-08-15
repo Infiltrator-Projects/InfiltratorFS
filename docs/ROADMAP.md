@@ -1,46 +1,52 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # InfiltratorFS Roadmap
 
-## Phase 0 — current vertical slice
+## Phase 0 — format skeleton — complete
 
 - [x] Define design principles.
-- [x] Define format 0.1 superblock/checkpoint.
+- [x] Define the initial superblock/checkpoint model.
 - [x] Create three physically separated checkpoints.
 - [x] Implement authoritative allocation bitmap.
 - [x] Implement 128-bit filesystem and object IDs.
-- [x] Implement checksummed root-directory object.
+- [x] Implement checksummed metadata objects.
 - [x] Implement `mkfs.infilfs`.
 - [x] Implement `infilfs-inspect`.
-- [x] Add optional FUSE3 read-only mount of the empty root.
-- [x] Add image-based smoke test.
+- [x] Add image-based smoke testing.
 
-## Phase 1 — actual files and directories
+## Phase 1 — actual files and directories — core complete
 
-- [ ] Define persistent object index.
-- [ ] Define variable-length directory entries.
-- [ ] Define extent records.
-- [ ] Allocate and free extents through the bitmap.
-- [ ] Implement lookup, create, mkdir, unlink and rename.
-- [ ] Implement file read and write.
-- [ ] Add timestamps, mode bits, ownership and Linux permission semantics.
-- [ ] Add robust bounds checking and corrupted-image rejection tests.
+- [x] Define persistent object index.
+- [x] Define variable-length directory entries.
+- [x] Define extent records.
+- [x] Allocate and free extents through the bitmap.
+- [x] Implement lookup, create, mkdir, unlink, rmdir and rename.
+- [x] Implement file read, write and truncate.
+- [x] Store mode bits, UID/GID, link counts and nanosecond timestamps.
+- [x] Add direct-image utility for persistence testing without FUSE.
+- [x] Convert FUSE front end to the writable core engine.
+- [x] Add bounds checking and corrupted-image rejection tests.
+- [x] Add byte-identity, zero-fill, truncate and cross-directory-move tests.
+- [x] Run the Phase 1 suite under AddressSanitizer and UndefinedBehaviorSanitizer.
+- [ ] Run the mounted copy-tree milestone on Linux Mint with real FUSE3 and `/dev/fuse`.
 
-Milestone: copy a directory tree onto an InfiltratorFS image, unmount it, remount it and recover byte-identical data.
+Milestone: mount a formatted image, copy a directory tree through ordinary Linux file operations, unmount it, remount it and recover byte-identical data.
 
 ## Phase 2 — transactional metadata
 
 - [ ] Replace mutable metadata updates with copy-on-write objects.
+- [ ] Replace the single-block object index with a generation-aware scalable tree.
 - [ ] Add generation-aware metadata roots.
-- [ ] Publish commits through checkpoint generations.
+- [ ] Publish commits atomically through checkpoint generations.
+- [ ] Separate allocation reservation from committed allocation state.
 - [ ] Add crash-injection test harness.
-- [ ] Prove old generation remains mountable after interruption at every simulated write boundary.
+- [ ] Prove generation N remains mountable after interruption at every simulated write boundary while constructing N+1.
 
 Milestone: writable crash-consistent filesystem without offline journal replay.
 
 ## Phase 3 — integrity
 
 - [ ] Add data-extent checksums.
-- [ ] Introduce stronger 256-bit checksum algorithm while retaining algorithm IDs.
+- [ ] Introduce a stronger 256-bit checksum algorithm while retaining algorithm IDs.
 - [ ] Add mounted metadata scrub.
 - [ ] Add mounted data scrub.
 - [ ] Add duplicate-metadata recovery where trustworthy copies exist.
@@ -59,8 +65,8 @@ Milestone: writable crash-consistent filesystem without offline journal replay.
 
 ## Phase 5 — scale and performance
 
+- [ ] Scalable directory trees.
 - [ ] Free-extent index as rebuildable accelerator over the bitmap.
-- [ ] Scalable object and directory trees.
 - [ ] Parallel allocation paths.
 - [ ] Allocation locality scoring.
 - [ ] Fragmentation/contiguity metrics.
@@ -85,4 +91,4 @@ Milestone: writable crash-consistent filesystem without offline journal replay.
 
 ## Deliberately deferred
 
-Global synchronous deduplication, distributed/network filesystem semantics and application-visible transaction APIs are not first-generation requirements. They remain possible research directions once the core filesystem is proven.
+Global synchronous deduplication, distributed/network filesystem semantics and application-visible transaction APIs are not first-generation requirements. They remain possible research directions once the core filesystem and crash-consistency model are proven.

@@ -2,6 +2,7 @@
 #include "infilfs/format.h"
 #include "infilfs/fs.h"
 #include "infilfs/io.h"
+#include "infilfs/volume.h"
 
 #include <endian.h>
 #include <fcntl.h>
@@ -40,11 +41,15 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    uint8_t root_block[INFS_BLOCK_SIZE];
-    uint64_t root_block_no = le64toh(sb.root_object_block);
-    int root_ok = infs_pread_full(fd, root_block, sizeof(root_block),
-                                  (off_t)(root_block_no * INFS_BLOCK_SIZE)) == 0 &&
-                  infs_validate_object_block(root_block);
+    uint8_t root[INFS_BLOCK_SIZE], index[INFS_BLOCK_SIZE];
+    uint64_t root_no = le64toh(sb.root_object_block);
+    uint64_t index_no = le64toh(sb.object_index_block);
+    int root_ok = infs_pread_full(fd, root, sizeof(root),
+                                  (off_t)(root_no * INFS_BLOCK_SIZE)) == 0 &&
+                  infs_validate_object_block(root);
+    int index_ok = infs_pread_full(fd, index, sizeof(index),
+                                   (off_t)(index_no * INFS_BLOCK_SIZE)) == 0 &&
+                   infs_validate_object_block(index);
 
     char uuid_text[37];
     infs_uuid_to_string(sb.filesystem_uuid, uuid_text);
@@ -60,10 +65,12 @@ int main(int argc, char **argv)
     printf("  Free blocks:     %" PRIu64 "\n", le64toh(sb.free_blocks));
     printf("  Bitmap:          block %" PRIu64 ", %" PRIu64 " blocks\n",
            le64toh(sb.bitmap_start_block), le64toh(sb.bitmap_block_count));
+    printf("  Object index:    block %" PRIu64 " (%s)\n",
+           index_no, index_ok ? "valid" : "INVALID");
     printf("  Root object:     block %" PRIu64 " (%s)\n",
-           root_block_no, root_ok ? "valid" : "INVALID");
+           root_no, root_ok ? "valid" : "INVALID");
     printf("  Valid checkpoints: %u/%u\n", valid, INFS_CHECKPOINT_COUNT);
 
     close(fd);
-    return root_ok ? 0 : 1;
+    return root_ok && index_ok ? 0 : 1;
 }
