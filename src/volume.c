@@ -2,18 +2,15 @@
 #include "infilfs/volume.h"
 
 #include "infilfs/checksum.h"
+#include "infilfs/endian.h"
 #include "infilfs/fs.h"
-#include "infilfs/io.h"
+#include "infilfs/storage.h"
+#include "infilfs/utf8.h"
 
-#include <endian.h>
 #include <errno.h>
-#include <fcntl.h>
-#include <limits.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
-#include <unistd.h>
 
 #define INFS_DIRENT_ALIGN 8u
 

@@ -11,16 +11,16 @@ int infs_scrub(struct infs_volume *vol, struct infs_scrub_report *report)
     struct infs_index_payload_disk *index_payload;
     if (index_load(vol, index_block, &index_payload) != 0)
         return -1;
-    uint32_t entries_count = le32toh(index_payload->entry_count);
+    uint32_t entries_count = infs_le32_to_cpu(index_payload->entry_count);
     struct infs_index_entry_disk *entries =
         (struct infs_index_entry_disk *)(index_payload + 1);
 
     for (uint32_t i = 0; i < entries_count; ++i) {
-        if (le16toh(entries[i].object_type) != INFS_OBJECT_FILE)
+        if (infs_le16_to_cpu(entries[i].object_type) != INFS_OBJECT_FILE)
             continue;
         ++report->files_checked;
 
-        uint64_t object_block = le64toh(entries[i].object_block);
+        uint64_t object_block = infs_le64_to_cpu(entries[i].object_block);
         uint8_t object[INFS_BLOCK_SIZE];
         if (read_object(vol, object_block, object) != 0) {
             ++report->metadata_errors;

@@ -7,12 +7,12 @@ static int extent_emit(struct infs_extent_disk *out, uint32_t *count,
         return 0;
     if (*count) {
         struct infs_extent_disk *last = &out[*count - 1u];
-        if (le32toh(last->flags) == flags &&
-            le64toh(last->logical_block) + le32toh(last->block_count) == logical &&
-            le64toh(last->physical_block) + le32toh(last->block_count) == physical) {
-            uint64_t merged = (uint64_t)le32toh(last->block_count) + blocks;
+        if (infs_le32_to_cpu(last->flags) == flags &&
+            infs_le64_to_cpu(last->logical_block) + infs_le32_to_cpu(last->block_count) == logical &&
+            infs_le64_to_cpu(last->physical_block) + infs_le32_to_cpu(last->block_count) == physical) {
+            uint64_t merged = (uint64_t)infs_le32_to_cpu(last->block_count) + blocks;
             if (merged <= UINT32_MAX) {
-                last->block_count = htole32((uint32_t)merged);
+                last->block_count = infs_cpu_to_le32((uint32_t)merged);
                 return 0;
             }
         }
@@ -21,10 +21,10 @@ static int extent_emit(struct infs_extent_disk *out, uint32_t *count,
         errno = EFBIG;
         return -1;
     }
-    out[*count].logical_block = htole64(logical);
-    out[*count].physical_block = htole64(physical);
-    out[*count].block_count = htole32(blocks);
-    out[*count].flags = htole32(flags);
+    out[*count].logical_block = infs_cpu_to_le64(logical);
+    out[*count].physical_block = infs_cpu_to_le64(physical);
+    out[*count].block_count = infs_cpu_to_le32(blocks);
+    out[*count].flags = infs_cpu_to_le32(flags);
     ++*count;
     return 0;
 }
@@ -37,7 +37,7 @@ static int file_replace_range(struct infs_volume *vol,
     struct infs_file_payload_disk *p =
         (struct infs_file_payload_disk *)(object + sizeof(struct infs_object_header_disk));
     struct infs_extent_disk *ext = (struct infs_extent_disk *)(p + 1);
-    uint32_t old_count = le32toh(p->extent_count);
+    uint32_t old_count = infs_le32_to_cpu(p->extent_count);
     struct infs_extent_disk rebuilt[INFS_MAX_FILE_EXTENTS];
     uint32_t new_count = 0;
     uint64_t replace_end = logical_start + block_count;
@@ -49,10 +49,10 @@ static int file_replace_range(struct infs_volume *vol,
     }
 
     for (uint32_t i = 0; i < old_count; ++i) {
-        uint64_t l = le64toh(ext[i].logical_block);
-        uint64_t phys = le64toh(ext[i].physical_block);
-        uint32_t n = le32toh(ext[i].block_count);
-        uint32_t flags = le32toh(ext[i].flags);
+        uint64_t l = infs_le64_to_cpu(ext[i].logical_block);
+        uint64_t phys = infs_le64_to_cpu(ext[i].physical_block);
+        uint32_t n = infs_le32_to_cpu(ext[i].block_count);
+        uint32_t flags = infs_le32_to_cpu(ext[i].flags);
         uint64_t e = l + n;
         if (e <= logical_start || l >= replace_end) {
             if (extent_emit(rebuilt, &new_count, l, phys, n, flags) != 0)
@@ -87,9 +87,9 @@ static int file_replace_range(struct infs_volume *vol,
 
     memset(ext, 0, (size_t)INFS_MAX_FILE_EXTENTS * sizeof(*ext));
     memcpy(ext, rebuilt, (size_t)new_count * sizeof(*ext));
-    p->extent_count = htole32(new_count);
+    p->extent_count = infs_cpu_to_le32(new_count);
     struct infs_object_header_disk *hdr = (struct infs_object_header_disk *)object;
-    hdr->payload_size = htole32((uint32_t)(sizeof(*p) +
+    hdr->payload_size = infs_cpu_to_le32((uint32_t)(sizeof(*p) +
         (size_t)new_count * sizeof(*ext)));
     return 0;
 }

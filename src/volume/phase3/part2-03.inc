@@ -7,7 +7,7 @@ int infs_lookup_path(struct infs_volume *vol, const char *path,
         return -1;
     }
     struct infs_lookup root = {
-        .block = le64toh(vol->sb.root_object_block),
+        .block = infs_le64_to_cpu(vol->sb.root_object_block),
         .type = INFS_OBJECT_DIRECTORY
     };
     memcpy(root.object_id, vol->sb.root_object_id, 16);
@@ -39,7 +39,7 @@ static int split_parent(struct infs_volume *vol, const char *path,
         return -1;
     }
 
-    char parent_path[PATH_MAX];
+    char parent_path[INFS_PATH_MAX];
     size_t plen = (size_t)(slash - path);
     if (plen == 0)
         plen = 1;

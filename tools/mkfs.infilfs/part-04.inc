@@ -17,11 +17,11 @@
     struct infs_index_payload_disk *ip =
         (struct infs_index_payload_disk *)(block + sizeof(*ih));
     struct infs_index_entry_disk *ie = (struct infs_index_entry_disk *)(ip + 1);
-    ip->entry_count = htole32(1);
+    ip->entry_count = infs_cpu_to_le32(1);
     memcpy(ie->object_id, root_id, 16);
-    ie->object_block = htole64(root_block);
-    ie->object_type = htole16(INFS_OBJECT_DIRECTORY);
-    ih->payload_size = htole32(sizeof(*ip) + sizeof(*ie));
+    ie->object_block = infs_cpu_to_le64(root_block);
+    ie->object_type = infs_cpu_to_le16(INFS_OBJECT_DIRECTORY);
+    ih->payload_size = infs_cpu_to_le32(sizeof(*ip) + sizeof(*ie));
     if (infs_object_finalize(block) != 0 ||
         infs_pwrite_full(fd, block, sizeof(block),
                          (off_t)(index_block * INFS_BLOCK_SIZE)) != 0) {
@@ -31,9 +31,9 @@
         return 1;
     }
 
-    if (infs_encode_root_directory(block, root_id, 1,
+    if (infs_encode_root_directory(block, root_id, 1, 0755u,
                                    (uint32_t)getuid(), (uint32_t)getgid(),
-                                   current_time_ns()) != 0 ||
+                                   infs_current_time_ns()) != 0 ||
         infs_pwrite_full(fd, block, sizeof(block),
                          (off_t)(root_block * INFS_BLOCK_SIZE)) != 0) {
         perror("write root directory");

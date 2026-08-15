@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-ssize_t infs_read_file(struct infs_volume *vol, const char *path, void *buf,
-                       size_t size, off_t offset)
+int64_t infs_read_file(struct infs_volume *vol, const char *path, void *buf,
+                       size_t size, uint64_t offset)
 {
-    if (offset < 0) {
-        errno = EINVAL;
+    if ((uint64_t)size > INT64_MAX) {
+        errno = EOVERFLOW;
         return -1;
     }
     struct infs_lookup lk;
@@ -22,8 +22,8 @@ ssize_t infs_read_file(struct infs_volume *vol, const char *path, void *buf,
     struct infs_extent_disk *ext;
     if (file_validate_volume(vol, object, &p, &ext) != 0)
         return -1;
-    uint64_t file_size = le64toh(p->stat.size);
-    uint64_t off = (uint64_t)offset;
+    uint64_t file_size = infs_le64_to_cpu(p->attributes.logical_size);
+    uint64_t off = offset;
     if (off >= file_size)
         return 0;
     uint64_t remaining64 = file_size - off;
@@ -47,5 +47,5 @@ ssize_t infs_read_file(struct infs_volume *vol, const char *path, void *buf,
         memcpy((uint8_t *)buf + done, data + within, chunk);
         done += chunk;
     }
-    return (ssize_t)done;
+    return (int64_t)done;
 }

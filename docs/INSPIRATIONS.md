@@ -10,6 +10,7 @@ InfiltratorFS does not copy another filesystem's on-disk format. It treats files
 | ext4 | Extent-based allocation and practical Linux semantics. |
 | XFS | Allocation scalability, extent orientation, allocation-group thinking and online checking direction. |
 | NTFS | Rich metadata model, allocation bitmap concept, sparse data and named-metadata ideas. |
+| ReFS | Windows-native integrity, allocation-on-write and large-scale metadata ideas. |
 | ZFS | End-to-end integrity, distrust of storage, copy-on-write roots, scrub and snapshot philosophy. |
 | Btrfs | Reflinks, shared extents, snapshots and Linux-native CoW ideas. |
 | APFS | Modern CoW metadata, clone/snapshot concepts and encryption-domain thinking. |
@@ -37,6 +38,10 @@ The exact bitmap remains small, simple and reconstructable. A later free-extent 
 ### Persistent object identity independent of pathname and location
 
 A 128-bit object ID survives rename and physical relocation. Namespace, physical placement and identity are separate concepts.
+
+### Platform-neutral core with explicit adapters
+
+The disk format and core engine use fixed-width records, UTF-8 names and storage callbacks. Linux/POSIX metadata and I/O live in the current adapter; future Windows attributes, security identifiers and storage services can be mapped without changing a volume's identity or rewriting its data.
 
 ### Workload-aware data policy
 

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-static ssize_t write_file_tx(struct infs_volume *vol, const char *path,
-                        const void *buf, size_t size, off_t offset)
+static int64_t write_file_tx(struct infs_volume *vol, const char *path,
+                             const void *buf, size_t size, uint64_t offset)
 {
     if (!vol->writable) {
         errno = EROFS;
         return -1;
     }
-    if (offset < 0 || (uint64_t)offset > UINT64_MAX - size) {
+    if ((uint64_t)size > INT64_MAX || offset > UINT64_MAX - size) {
         errno = EINVAL;
         return -1;
     }
@@ -26,7 +26,7 @@ static ssize_t write_file_tx(struct infs_volume *vol, const char *path,
     struct infs_extent_disk *ext;
     if (file_validate_volume(vol, object, &p, &ext) != 0)
         return -1;
-    uint64_t end = (uint64_t)offset + size;
+    uint64_t end = offset + size;
     uint64_t needed_blocks = (end + INFS_BLOCK_SIZE - 1u) / INFS_BLOCK_SIZE;
     if (file_ensure_blocks(vol, object, needed_blocks) != 0)
         return -1;
@@ -39,7 +39,7 @@ static ssize_t write_file_tx(struct infs_volume *vol, const char *path,
     size_t done = 0;
     uint8_t data[INFS_BLOCK_SIZE];
     while (done < size) {
-        uint64_t pos = (uint64_t)offset + done;
+        uint64_t pos = offset + done;
         uint64_t logical = pos / INFS_BLOCK_SIZE;
         size_t within = (size_t)(pos % INFS_BLOCK_SIZE);
         size_t chunk = INFS_BLOCK_SIZE - within;
@@ -85,22 +85,22 @@ static ssize_t write_file_tx(struct infs_volume *vol, const char *path,
             return -1;
         done += chunk;
     }
-    if (end > le64toh(p->stat.size))
-        p->stat.size = htole64(end);
-    touch_mctime(&p->stat);
+    if (end > infs_le64_to_cpu(p->attributes.logical_size))
+        p->attributes.logical_size = infs_cpu_to_le64(end);
+    touch_mctime(vol, &p->attributes);
     if (write_object(vol, lk.block, object) != 0 || infs_volume_sync(vol) != 0)
         return -1;
-    return (ssize_t)done;
+    return (int64_t)done;
 }
 
-ssize_t infs_write_file(struct infs_volume *vol, const char *path,
-                        const void *buf, size_t size, off_t offset)
+int64_t infs_write_file(struct infs_volume *vol, const char *path,
+                        const void *buf, size_t size, uint64_t offset)
 {
     if (size == 0)
         return 0;
     if (tx_begin(vol) != 0)
         return -1;
-    ssize_t rc = write_file_tx(vol, path, buf, size, offset);
+    int64_t rc = write_file_tx(vol, path, buf, size, offset);
     if (rc < 0) {
         int saved = errno;
         tx_abort(vol);

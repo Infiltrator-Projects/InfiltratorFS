@@ -4,6 +4,7 @@
 
 #include <stdint.h>
 #include "infilfs/format.h"
+#include "infilfs/storage.h"
 
 int infs_encode_superblock(uint8_t block[INFS_BLOCK_SIZE],
                            const struct infs_superblock_disk *sb);
@@ -20,13 +21,15 @@ int infs_validate_object_block(const uint8_t block[INFS_BLOCK_SIZE]);
 int infs_encode_root_directory(uint8_t block[INFS_BLOCK_SIZE],
                                const uint8_t object_id[16],
                                uint64_t generation,
+                               uint32_t permissions,
                                uint32_t uid, uint32_t gid,
                                int64_t now_ns);
 int infs_encode_object_index(uint8_t block[INFS_BLOCK_SIZE],
                              const uint8_t object_id[16],
                              uint64_t generation);
 
-int infs_read_best_superblock(int fd, uint64_t size_bytes,
+int infs_read_best_superblock(const struct infs_storage *storage,
+                              uint64_t size_bytes,
                               struct infs_superblock_disk *out,
                               unsigned *valid_copies);
 

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "infilfs/volume.h"
 #include "infilfs/fs.h"
-#include "infilfs/io.h"
+#include "infilfs/posix_io.h"
 
-#include <endian.h>
+#include "infilfs/endian.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
@@ -50,12 +50,15 @@ static int command_ls(struct infs_volume *vol, const char *path)
 
 static int command_stat(struct infs_volume *vol, const char *path)
 {
-    struct stat st;
-    if (infs_getattr(vol, path, &st) != 0)
+    struct infs_attributes attributes;
+    if (infs_get_attributes(vol, path, &attributes) != 0)
         return die_errno("stat");
-    printf("mode=%#o uid=%u gid=%u nlink=%ju size=%jd blocks=%jd\n",
-           (unsigned)st.st_mode, (unsigned)st.st_uid, (unsigned)st.st_gid,
-           (uintmax_t)st.st_nlink, (intmax_t)st.st_size, (intmax_t)st.st_blocks);
+    printf("type=%u mode=%#o uid=%u gid=%u links=%" PRIu64
+           " size=%" PRIu64 " allocated=%" PRIu64 "\n",
+           attributes.object_type, attributes.posix_permissions,
+           attributes.posix_uid, attributes.posix_gid,
+           attributes.link_count, attributes.logical_size,
+           attributes.allocated_size);
     return 0;
 }
 
@@ -65,17 +68,22 @@ static int command_put(struct infs_volume *vol, const char *host, const char *de
     if (input < 0)
         return die_errno("open host file");
 
-    struct stat st;
-    if (infs_getattr(vol, dest, &st) != 0) {
+    struct infs_attributes attributes;
+    if (infs_get_attributes(vol, dest, &attributes) != 0) {
         if (errno != ENOENT) {
             close(input);
             return die_errno("lookup destination");
         }
-        if (infs_create_file(vol, dest, 0644, getuid(), getgid()) != 0) {
+        const struct infs_create_options options = {
+            .posix_permissions = 0644,
+            .posix_uid = (uint32_t)getuid(),
+            .posix_gid = (uint32_t)getgid(),
+        };
+        if (infs_create_file(vol, dest, &options) != 0) {
             close(input);
             return die_errno("create destination");
         }
-    } else if (!S_ISREG(st.st_mode)) {
+    } else if (attributes.object_type != INFS_OBJECT_FILE) {
         close(input);
         errno = EISDIR;
         return die_errno("destination");
@@ -87,7 +95,7 @@ static int command_put(struct infs_volume *vol, const char *host, const char *de
     }
 
     uint8_t buf[256 * 1024];
-    off_t off = 0;
+    uint64_t off = 0;
     for (;;) {
         ssize_t n = read(input, buf, sizeof(buf));
         if (n < 0) {
@@ -98,7 +106,7 @@ static int command_put(struct infs_volume *vol, const char *host, const char *de
         }
         if (n == 0)
             break;
-        ssize_t w = infs_write_file(vol, dest, buf, (size_t)n, off);
+        int64_t w = infs_write_file(vol, dest, buf, (size_t)n, off);
         if (w < 0 || w != n) {
             close(input);
             if (w >= 0)

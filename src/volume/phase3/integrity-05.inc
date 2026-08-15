@@ -5,22 +5,22 @@ static int validate_integrity_metadata(struct infs_volume *vol)
     struct infs_index_payload_disk *payload;
     if (index_load(vol, index_block, &payload) != 0)
         return -1;
-    uint32_t count = le32toh(payload->entry_count);
+    uint32_t count = infs_le32_to_cpu(payload->entry_count);
     struct infs_index_entry_disk *entries =
         (struct infs_index_entry_disk *)(payload + 1);
 
     for (uint32_t i = 0; i < count; ++i) {
-        uint16_t type = le16toh(entries[i].object_type);
+        uint16_t type = infs_le16_to_cpu(entries[i].object_type);
         if (type == INFS_OBJECT_CHECKSUM) {
             uint8_t block[INFS_BLOCK_SIZE];
-            if (read_object(vol, le64toh(entries[i].object_block), block) != 0)
+            if (read_object(vol, infs_le64_to_cpu(entries[i].object_block), block) != 0)
                 return -1;
             struct infs_object_header_disk *hdr =
                 (struct infs_object_header_disk *)block;
             struct infs_checksum_payload_disk *cp;
             if (checksum_validate(block, NULL, &cp, NULL) != 0 ||
                 memcmp(hdr->parent_id, cp->owner_object_id, 16) != 0 ||
-                (le64toh(cp->start_logical_block) % INFS_CHECKSUMS_PER_OBJECT) != 0) {
+                (infs_le64_to_cpu(cp->start_logical_block) % INFS_CHECKSUMS_PER_OBJECT) != 0) {
                 errno = EIO;
                 return -1;
             }
@@ -40,7 +40,7 @@ static int validate_integrity_metadata(struct infs_volume *vol)
             }
         } else if (type == INFS_OBJECT_FILE) {
             uint8_t object[INFS_BLOCK_SIZE];
-            if (read_object(vol, le64toh(entries[i].object_block), object) != 0)
+            if (read_object(vol, infs_le64_to_cpu(entries[i].object_block), object) != 0)
                 return -1;
             struct infs_object_header_disk *hdr =
                 (struct infs_object_header_disk *)object;

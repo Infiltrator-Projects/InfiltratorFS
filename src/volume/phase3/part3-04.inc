@@ -1,30 +1,31 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-int infs_volume_open(struct infs_volume *vol, const char *path, int writable)
+int infs_volume_open_storage(struct infs_volume *vol,
+                             struct infs_storage *storage, int writable)
 {
-    if (!vol || !path) {
+    if (!vol || !storage || !infs_storage_valid(storage)) {
         errno = EINVAL;
         return -1;
     }
     memset(vol, 0, sizeof(*vol));
-    vol->fd = -1;
     vol->writable = writable != 0;
-    vol->fd = open(path, (writable ? O_RDWR : O_RDONLY) | O_CLOEXEC);
-    if (vol->fd < 0)
-        return -1;
+    vol->storage = *storage;
+    storage->ops = NULL;
+    storage->context = NULL;
     int is_block = 0;
-    if (infs_get_size_bytes(vol->fd, &vol->size_bytes, &is_block) != 0)
+    if (infs_storage_get_size(&vol->storage, &vol->size_bytes, &is_block) != 0)
         goto fail;
     (void)is_block;
-    if (infs_read_best_superblock(vol->fd, vol->size_bytes, &vol->sb, NULL) != 0)
+    if (infs_read_best_superblock(&vol->storage, vol->size_bytes,
+                                  &vol->sb, NULL) != 0)
         goto fail;
-    if (le16toh(vol->sb.format_minor) != INFS_FORMAT_MINOR) {
+    if (infs_le16_to_cpu(vol->sb.format_minor) != INFS_FORMAT_MINOR) {
         errno = EOPNOTSUPP;
         goto fail;
     }
 
-    uint64_t bitmap_start = le64toh(vol->sb.bitmap_start_block);
-    uint64_t bitmap_blocks = le64toh(vol->sb.bitmap_block_count);
-    uint64_t total = le64toh(vol->sb.total_blocks);
+    uint64_t bitmap_start = infs_le64_to_cpu(vol->sb.bitmap_start_block);
+    uint64_t bitmap_blocks = infs_le64_to_cpu(vol->sb.bitmap_block_count);
+    uint64_t total = infs_le64_to_cpu(vol->sb.total_blocks);
     if (bitmap_start == 0 || bitmap_blocks == 0 || bitmap_start >= total ||
         bitmap_blocks > total - bitmap_start ||
         bitmap_blocks > SIZE_MAX / INFS_BLOCK_SIZE) {
@@ -35,8 +36,8 @@ int infs_volume_open(struct infs_volume *vol, const char *path, int writable)
     vol->bitmap = malloc(vol->bitmap_bytes);
     if (!vol->bitmap)
         goto fail;
-    if (infs_pread_full(vol->fd, vol->bitmap, vol->bitmap_bytes,
-                        (off_t)(bitmap_start * INFS_BLOCK_SIZE)) != 0)
+    if (infs_storage_read(&vol->storage, bitmap_start * INFS_BLOCK_SIZE,
+                          vol->bitmap, vol->bitmap_bytes) != 0)
         goto fail;
 
     uint64_t free_count = 0;
@@ -44,7 +45,7 @@ int infs_volume_open(struct infs_volume *vol, const char *path, int writable)
         if (!bitmap_get(vol->bitmap, b))
             ++free_count;
     }
-    if (free_count != le64toh(vol->sb.free_blocks)) {
+    if (free_count != infs_le64_to_cpu(vol->sb.free_blocks)) {
         errno = EIO;
         goto fail;
     }
@@ -62,11 +63,11 @@ int infs_volume_open(struct infs_volume *vol, const char *path, int writable)
     }
 
     uint64_t critical[] = {
-        le64toh(vol->sb.checkpoint_block[0]),
-        le64toh(vol->sb.checkpoint_block[1]),
-        le64toh(vol->sb.checkpoint_block[2]),
-        le64toh(vol->sb.object_index_block),
-        le64toh(vol->sb.root_object_block)
+        infs_le64_to_cpu(vol->sb.checkpoint_block[0]),
+        infs_le64_to_cpu(vol->sb.checkpoint_block[1]),
+        infs_le64_to_cpu(vol->sb.checkpoint_block[2]),
+        infs_le64_to_cpu(vol->sb.object_index_block),
+        infs_le64_to_cpu(vol->sb.root_object_block)
     };
     for (size_t i = 0; i < sizeof(critical) / sizeof(critical[0]); ++i) {
         if (critical[i] >= total || !bitmap_get(vol->bitmap, critical[i])) {
@@ -76,7 +77,7 @@ int infs_volume_open(struct infs_volume *vol, const char *path, int writable)
     }
 
     uint8_t object[INFS_BLOCK_SIZE];
-    if (read_object(vol, le64toh(vol->sb.root_object_block), object) != 0 ||
+    if (read_object(vol, infs_le64_to_cpu(vol->sb.root_object_block), object) != 0 ||
         dir_validate(object, NULL) != 0)
         goto fail;
     struct infs_object_header_disk *root_hdr = (struct infs_object_header_disk *)object;
@@ -96,9 +97,7 @@ fail:
         int saved = errno;
         free(vol->bitmap);
         vol->bitmap = NULL;
-        if (vol->fd >= 0)
-            close(vol->fd);
-        vol->fd = -1;
+        infs_storage_close(&vol->storage);
         errno = saved;
         return -1;
     }
@@ -117,7 +116,5 @@ void infs_volume_close(struct infs_volume *vol)
     vol->tx_deferred_capacity = 0;
     free(vol->bitmap);
     vol->bitmap = NULL;
-    if (vol->fd >= 0)
-        close(vol->fd);
-    vol->fd = -1;
+    infs_storage_close(&vol->storage);
 }

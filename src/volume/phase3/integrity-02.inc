@@ -37,7 +37,7 @@ static int checksum_locate(struct infs_volume *vol,
         struct infs_checksum_payload_disk *p;
         struct infs_data_checksum_disk *values;
         if (checksum_validate(block, owner_id, &p, &values) != 0 ||
-            le64toh(p->start_logical_block) != expected_start) {
+            infs_le64_to_cpu(p->start_logical_block) != expected_start) {
             errno = EIO;
             return -1;
         }

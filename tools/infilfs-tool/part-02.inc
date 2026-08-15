@@ -37,7 +37,7 @@ static int command_write(struct infs_volume *vol, const char *host,
         done += (size_t)n;
     }
     close(input);
-    ssize_t written = infs_write_file(vol, dest, buf, size, (off_t)off64);
+    int64_t written = infs_write_file(vol, dest, buf, size, (uint64_t)off64);
     free(buf);
     if (written < 0 || (size_t)written != size) {
         if (written >= 0) errno = EIO;
@@ -64,20 +64,20 @@ static int command_map(struct infs_volume *vol, const char *path,
         return die_errno("map");
     }
     uint8_t object[INFS_BLOCK_SIZE];
-    if (infs_pread_full(vol->fd, object, sizeof(object),
-                        (off_t)(lk.block * INFS_BLOCK_SIZE)) != 0 ||
+    if (infs_storage_read(&vol->storage, lk.block * INFS_BLOCK_SIZE,
+                          object, sizeof(object)) != 0 ||
         !infs_validate_object_block(object))
         return die_errno("map metadata");
     struct infs_object_header_disk *hdr = (struct infs_object_header_disk *)object;
     struct infs_file_payload_disk *file =
         (struct infs_file_payload_disk *)(object + sizeof(*hdr));
-    uint32_t count = le32toh(file->extent_count);
+    uint32_t count = infs_le32_to_cpu(file->extent_count);
     struct infs_extent_disk *ext = (struct infs_extent_disk *)(file + 1);
     for (uint32_t i = 0; i < count; ++i) {
-        uint64_t l = le64toh(ext[i].logical_block);
-        uint32_t n = le32toh(ext[i].block_count);
+        uint64_t l = infs_le64_to_cpu(ext[i].logical_block);
+        uint32_t n = infs_le32_to_cpu(ext[i].block_count);
         if ((uint64_t)logical >= l && (uint64_t)logical < l + n) {
-            printf("%" PRIu64 "\n", le64toh(ext[i].physical_block) +
+            printf("%" PRIu64 "\n", infs_le64_to_cpu(ext[i].physical_block) +
                    ((uint64_t)logical - l));
             return 0;
         }

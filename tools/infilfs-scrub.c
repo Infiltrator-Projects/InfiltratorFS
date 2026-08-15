@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "infilfs/posix_io.h"
 #include "infilfs/volume.h"
 
 #include <errno.h>
@@ -14,7 +15,7 @@ int main(int argc, char **argv)
     }
 
     struct infs_volume vol;
-    if (infs_volume_open(&vol, argv[1], 0) != 0) {
+    if (infs_posix_volume_open(&vol, argv[1], 0) != 0) {
         fprintf(stderr, "infilfs-scrub: open: %s\n", strerror(errno));
         return 1;
     }

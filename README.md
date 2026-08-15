@@ -1,48 +1,42 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # InfiltratorFS
 
-InfiltratorFS is a clean-sheet experimental filesystem for Linux, started in 2026. It has no requirement to preserve on-disk compatibility with FAT, NTFS, ext, Amiga FFS, or another legacy filesystem. The implementation is Linux-first and written in C.
+InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem started in 2026. It is written in C and has no requirement to preserve on-disk compatibility with FAT, NTFS, ext, Amiga FFS or any other legacy filesystem.
 
-## Design direction
+Linux is the first implementation and test platform. It is not part of the filesystem's identity: the on-disk format and core engine are designed so a future Windows implementation can use the same volume without conversion or reformatting.
 
-- 128-bit persistent object identifiers rather than reusable inode numbers.
-- Extent-based file allocation; no FAT-style cluster chains.
-- Authoritative free-space bitmap with a future rebuildable free-extent accelerator.
-- Checksummed, self-identifying metadata.
-- Multiple physically separated filesystem checkpoints.
-- Transactional copy-on-write metadata with atomic generation publication.
-- End-to-end data integrity, snapshots, reflinks, sparse extents, inline small files and historical recovery in later phases.
-- Allocation policies that can eventually adapt to HDD, SSD, NVMe and removable flash.
-- No dependency on FUSE in the on-disk format or core engine.
+## Current status — format 0.5
 
-## Current status — format 0.4 / Phase 3 data integrity core
+Format 0.5 preserves the proven format-0.4 transaction and integrity model while removing Linux/POSIX assumptions from the core contract:
 
-Format 0.4 extends the Phase 2 transaction model to ordinary file-data overwrites and adds end-to-end data verification:
+- 4096-byte little-endian on-disk format;
+- 128-bit persistent filesystem and object identities;
+- extent-based file allocation;
+- authoritative free-space bitmap;
+- three physically separated, checksummed checkpoints;
+- transactional copy-on-write metadata, data and allocation state;
+- atomic old-or-new generation publication without journal replay;
+- CRC64-ECMA metadata checksums and SHA-256 file-data checksums;
+- independently stored per-block data checksums;
+- platform-neutral file attributes with birth, access, modification and metadata-change times;
+- portable file flags plus references for future security and extended-attribute objects;
+- POSIX permissions isolated as optional Linux adapter metadata;
+- mandatory well-formed UTF-8 namespace components;
+- callback-based storage, durable-flush, randomness and clock services;
+- Linux/POSIX I/O and FUSE kept outside the core engine.
 
-- every allocated logical file block has an independently stored checksum;
-- checksum records live in hidden 128-bit checksum objects addressed through the persistent object index;
-- checksum entries reserve 32 bytes each so stronger 256-bit algorithms can be introduced later without redesigning the checksum-object layout;
-- SHA-256 is the format-0.4 file-data checksum algorithm and occupies the full 32-byte checksum entry;
-- normal reads verify every full 4096-byte data block before returning bytes to the caller;
-- writes to committed data blocks allocate replacement blocks rather than overwriting generation N in place;
-- file extent metadata and checksum objects are published atomically with the same generation checkpoint as the data;
-- pre-commit crashes retain the old bytes, while post-checkpoint crashes expose the new bytes;
-- read-only `infilfs-scrub` walks all regular-file blocks and reports checksum or checksum-metadata errors;
-- deliberate single-byte data corruption is detected by both the normal read path and scrubber;
-- repeated data-CoW overwrites reclaim superseded data/checksum metadata without leaking space.
+The current prototype supports create, mkdir, lookup, enumeration, read, write, truncate, unlink, empty-directory removal, cross-directory rename, attribute updates, direct-image tools and full-volume read-only scrub.
 
-Format 0.4 still uses a one-block object index and one-block directories as deliberate prototype limits. Metadata still uses CRC64-ECMA in format 0.4, while file data uses SHA-256. Repair from redundant data copies and forensic reconstruction remain later integrity work.
+## Platform model
 
-## Implemented filesystem operations
-
-- create and mkdir;
-- lookup and directory enumeration;
-- read and write;
-- grow/shrink truncate with zero-fill semantics;
-- unlink and empty-directory removal;
-- same-directory and cross-directory rename;
-- mode, ownership and nanosecond timestamps;
-- direct-image tools, `infilfs-scrub`, and a writable FUSE3 front end.
+| Layer | Status |
+| --- | --- |
+| On-disk format | Platform-neutral format 0.5 |
+| Core filesystem engine | Portable C17 with no Linux file descriptor or VFS types |
+| Storage interface | Callback-based and tested with POSIX files/devices and an in-memory backend |
+| Linux userspace adapter | Implemented through POSIX I/O and FUSE3 |
+| Native Linux kernel driver | Planned |
+| Windows storage adapter and native driver | Planned; no format redesign should be required |
 
 ## Build on Linux Mint
 
@@ -62,45 +56,45 @@ truncate -s 128M infilfs.img
 ./build/infilfs-scrub infilfs.img
 ```
 
-Exercise it without mounting:
+Exercise the filesystem without mounting:
 
 ```bash
 ./build/infilfs-tool infilfs.img mkdir /docs
 ./build/infilfs-tool infilfs.img put README.md /docs/README.md
-./build/infilfs-tool infilfs.img ls /docs
 ./build/infilfs-tool infilfs.img cat /docs/README.md
 ```
 
-Mount through FUSE3:
+Mount with the current Linux adapter:
 
 ```bash
 mkdir -p /tmp/infilfs-mnt
 ./build/infilfs-fuse infilfs.img /tmp/infilfs-mnt -f
 ```
 
-The FUSE implementation remains deliberately single-threaded while the core is a single-writer prototype.
+The FUSE adapter remains single-threaded while the core is a single-writer prototype.
 
 ## Repository layout
 
 ```text
-include/infilfs/     on-disk structures and core APIs
-src/                 checksum, block I/O and filesystem engine
-tools/               formatter, inspector and direct-image utility
-fuse/                Linux FUSE3 front end
-tests/               persistence, corruption and crash-injection tests
-docs/                architecture, format and roadmap
+include/infilfs/     portable format, storage and filesystem interfaces
+src/                 portable checksum, storage and filesystem core
+src/platform/        current platform adapters
+tools/               formatter, inspector, scrubber and direct-image utility
+fuse/                Linux FUSE3 adapter
+tests/               integrity, crash, namespace and portable-backend tests
+docs/                architecture, format, roadmap and design inspirations
 ```
 
 ## Documentation
 
-- `docs/ARCHITECTURE.md` — design model and long-term rules.
-- `docs/ON_DISK_FORMAT.md` — current format 0.4 structures, checksum objects and transaction protocol.
-- `docs/ROADMAP.md` — implementation phases and completion state.
-- `docs/INSPIRATIONS.md` — ideas borrowed, rejected or reinterpreted from other filesystems.
+- `docs/ARCHITECTURE.md` — platform model, transaction design and long-term rules.
+- `docs/ON_DISK_FORMAT.md` — complete format-0.5 specification.
+- `docs/ROADMAP.md` — completed work and future Linux/Windows integration.
+- `docs/INSPIRATIONS.md` — ideas borrowed, rejected or reinterpreted.
 
 ## Safety
 
-InfiltratorFS is experimental. Use image files or disposable media only. Do not store irreplaceable data on format 0.4.
+InfiltratorFS remains experimental. Use image files or disposable media only. Do not store irreplaceable data on format 0.5.
 
 ## License
 

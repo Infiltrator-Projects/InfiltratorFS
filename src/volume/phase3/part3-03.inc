@@ -5,15 +5,15 @@ static int validate_index_entries(struct infs_volume *vol)
     struct infs_index_payload_disk *payload;
     if (index_load(vol, index_block, &payload) != 0)
         return -1;
-    uint32_t count = le32toh(payload->entry_count);
+    uint32_t count = infs_le32_to_cpu(payload->entry_count);
     struct infs_index_entry_disk *entries =
         (struct infs_index_entry_disk *)(payload + 1);
-    uint64_t total = le64toh(vol->sb.total_blocks);
+    uint64_t total = infs_le64_to_cpu(vol->sb.total_blocks);
     int root_seen = 0;
 
     for (uint32_t i = 0; i < count; ++i) {
-        uint64_t b = le64toh(entries[i].object_block);
-        uint16_t type = le16toh(entries[i].object_type);
+        uint64_t b = infs_le64_to_cpu(entries[i].object_block);
+        uint16_t type = infs_le16_to_cpu(entries[i].object_type);
         if (b >= total || !bitmap_get(vol->bitmap, b) ||
             (type != INFS_OBJECT_DIRECTORY && type != INFS_OBJECT_FILE &&
              type != INFS_OBJECT_CHECKSUM)) {
@@ -31,12 +31,12 @@ static int validate_index_entries(struct infs_volume *vol)
             return -1;
         struct infs_object_header_disk *hdr = (struct infs_object_header_disk *)object;
         if (memcmp(hdr->object_id, entries[i].object_id, 16) != 0 ||
-            le16toh(hdr->object_type) != type) {
+            infs_le16_to_cpu(hdr->object_type) != type) {
             errno = EIO;
             return -1;
         }
         if (memcmp(entries[i].object_id, vol->sb.root_object_id, 16) == 0) {
-            if (b != le64toh(vol->sb.root_object_block) || type != INFS_OBJECT_DIRECTORY)
+            if (b != infs_le64_to_cpu(vol->sb.root_object_block) || type != INFS_OBJECT_DIRECTORY)
                 return errno = EIO, -1;
             ++root_seen;
         }
@@ -64,7 +64,7 @@ static int heal_checkpoints(struct infs_volume *vol)
 {
     int need_heal = 0;
     for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i) {
-        uint64_t b = le64toh(vol->sb.checkpoint_block[i]);
+        uint64_t b = infs_le64_to_cpu(vol->sb.checkpoint_block[i]);
         if (!checkpoint_matches(vol, b, &vol->sb)) {
             need_heal = 1;
             break;
@@ -77,16 +77,16 @@ static int heal_checkpoints(struct infs_volume *vol)
     if (infs_encode_superblock(raw, &vol->sb) != 0)
         return -1;
     for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i) {
-        uint64_t b = le64toh(vol->sb.checkpoint_block[i]);
+        uint64_t b = infs_le64_to_cpu(vol->sb.checkpoint_block[i]);
         if (write_block(vol, b, raw) != 0)
             return -1;
     }
-    return fsync(vol->fd);
+    return infs_storage_flush(&vol->storage);
 }
 
 static void phase2_failpoint(const char *stage)
 {
     const char *requested = getenv("INFS_TEST_CRASH_STAGE");
     if (requested && strcmp(requested, stage) == 0)
-        _exit(97);
+        _Exit(97);
 }

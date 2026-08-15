@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "infilfs/posix_io.h"
 #include "infilfs/volume.h"
 
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
 #include <unistd.h>
 
 static void fail(const char *what)
@@ -30,36 +30,48 @@ int main(int argc, char **argv)
     }
 
     struct infs_volume vol;
-    if (infs_volume_open(&vol, argv[1], 1) != 0)
+    if (infs_posix_volume_open(&vol, argv[1], 1) != 0)
         fail("open");
 
-    if (infs_mkdir(&vol, "/alpha", 0750, getuid(), getgid()) != 0)
+    const struct infs_create_options directory_options = {
+        .posix_permissions = 0750,
+        .posix_uid = (uint32_t)getuid(),
+        .posix_gid = (uint32_t)getgid(),
+    };
+    const struct infs_create_options file_options = {
+        .posix_permissions = 0640,
+        .posix_uid = (uint32_t)getuid(),
+        .posix_gid = (uint32_t)getgid(),
+    };
+
+    if (infs_mkdir(&vol, "/alpha", &directory_options) != 0)
         fail("mkdir alpha");
-    if (infs_mkdir(&vol, "/beta", 0755, getuid(), getgid()) != 0)
+    if (infs_mkdir(&vol, "/beta", &directory_options) != 0)
         fail("mkdir beta");
-    if (infs_create_file(&vol, "/alpha/data", 0640, getuid(), getgid()) != 0)
+    if (infs_create_file(&vol, "/alpha/data", &file_options) != 0)
         fail("create data");
-    struct stat initial_st;
-    if (infs_getattr(&vol, "/alpha/data", &initial_st) != 0)
-        fail("getattr initial inode");
-    ino_t stable_ino = initial_st.st_ino;
+    struct infs_attributes initial_attributes;
+    if (infs_get_attributes(&vol, "/alpha/data", &initial_attributes) != 0)
+        fail("get attributes initial object");
+    uint8_t stable_id[16];
+    memcpy(stable_id, initial_attributes.object_id, sizeof(stable_id));
 
     const char first[] = "ABCDEFGHIJ";
     if (infs_write_file(&vol, "/alpha/data", first, sizeof(first) - 1u, 0) !=
-        (ssize_t)(sizeof(first) - 1u))
+        (int64_t)(sizeof(first) - 1u))
         fail("initial write");
 
     const char tail[] = "XYZ";
-    off_t tail_off = (off_t)(INFS_BLOCK_SIZE * 2u + 3u);
+    uint64_t tail_off = INFS_BLOCK_SIZE * 2u + 3u;
     if (infs_write_file(&vol, "/alpha/data", tail, sizeof(tail) - 1u, tail_off) !=
-        (ssize_t)(sizeof(tail) - 1u))
+        (int64_t)(sizeof(tail) - 1u))
         fail("sparse-style write");
 
     unsigned char probe[32];
     memset(probe, 0xff, sizeof(probe));
-    ssize_t n = infs_read_file(&vol, "/alpha/data", probe, sizeof(probe),
-                               (off_t)INFS_BLOCK_SIZE + 100);
-    expect(n == (ssize_t)sizeof(probe), "hole probe length");
+    int64_t n = infs_read_file(&vol, "/alpha/data", probe, sizeof(probe),
+                               INFS_BLOCK_SIZE + 100u);
+    expect(n == (int64_t)sizeof(probe), "hole probe length");
     for (size_t i = 0; i < sizeof(probe); ++i)
         expect(probe[i] == 0, "unwritten gap must read as zero");
 
@@ -75,23 +87,27 @@ int main(int argc, char **argv)
     for (size_t i = 5; i < 10; ++i)
         expect(ten[i] == 0, "regrown bytes must be zero");
 
-    if (infs_chmod(&vol, "/alpha/data", 0600) != 0)
+    if (infs_set_posix_compat(&vol, "/alpha/data",
+                              INFS_POSIX_SET_PERMISSIONS, 0600, 0, 0) != 0)
         fail("chmod");
-    struct stat st;
-    if (infs_getattr(&vol, "/alpha/data", &st) != 0)
-        fail("getattr");
-    expect((st.st_mode & 07777) == 0600, "chmod persisted");
-    expect(st.st_size == 10, "size after regrow");
-    expect(st.st_ino == stable_ino, "inode number stable across CoW updates");
+    struct infs_attributes attributes;
+    if (infs_get_attributes(&vol, "/alpha/data", &attributes) != 0)
+        fail("get attributes");
+    expect(attributes.posix_permissions == 0600, "chmod persisted");
+    expect(attributes.logical_size == 10, "size after regrow");
+    expect(memcmp(attributes.object_id, stable_id, 16) == 0,
+           "object identity stable across CoW updates");
 
     if (infs_rename(&vol, "/alpha/data", "/beta/moved") != 0)
         fail("cross-directory rename");
     errno = 0;
-    expect(infs_getattr(&vol, "/alpha/data", &st) != 0 && errno == ENOENT,
+    expect(infs_get_attributes(&vol, "/alpha/data", &attributes) != 0 &&
+           errno == ENOENT,
            "old name removed");
-    if (infs_getattr(&vol, "/beta/moved", &st) != 0)
+    if (infs_get_attributes(&vol, "/beta/moved", &attributes) != 0)
         fail("new name lookup");
-    expect(st.st_ino == stable_ino, "inode number stable across rename");
+    expect(memcmp(attributes.object_id, stable_id, 16) == 0,
+           "object identity stable across rename");
 
     if (infs_unlink(&vol, "/beta/moved") != 0)
         fail("unlink");
@@ -102,7 +118,7 @@ int main(int argc, char **argv)
 
     infs_volume_close(&vol);
 
-    if (infs_volume_open(&vol, argv[1], 0) != 0)
+    if (infs_posix_volume_open(&vol, argv[1], 0) != 0)
         fail("reopen read-only");
     struct infs_dir_item *items = NULL;
     size_t count = 0;

@@ -29,6 +29,10 @@ int main(int argc, char **argv)
         fprintf(stderr, "Label is too long (maximum %u bytes).\n", INFS_LABEL_MAX - 1u);
         return 2;
     }
+    if (!infs_utf8_validate(label, strlen(label))) {
+        fprintf(stderr, "Label must be valid UTF-8.\n");
+        return 2;
+    }
 
     int fd = open(path, O_RDWR | O_CLOEXEC);
     if (fd < 0) {
@@ -68,7 +72,7 @@ int main(int argc, char **argv)
     };
 
     if (root_block >= checkpoints[1]) {
-        fprintf(stderr, "Target is too small for the format 0.4 metadata layout.\n");
+        fprintf(stderr, "Target is too small for the format 0.5 metadata layout.\n");
         close(fd);
         return 1;
     }

@@ -31,22 +31,23 @@
     struct infs_superblock_disk sb;
     memset(&sb, 0, sizeof(sb));
     memcpy(sb.magic, INFS_MAGIC, 8);
-    sb.format_major = htole16(INFS_FORMAT_MAJOR);
-    sb.format_minor = htole16(INFS_FORMAT_MINOR);
-    sb.header_size = htole16(sizeof(sb));
-    sb.block_shift = htole16(INFS_BLOCK_SHIFT);
-    sb.checksum_type = htole32(INFS_CHECKSUM_CRC64_ECMA);
-    sb.generation = htole64(1);
-    sb.total_blocks = htole64(total_blocks);
-    sb.free_blocks = htole64(total_blocks - used_blocks);
-    sb.bitmap_start_block = htole64(bitmap_start);
-    sb.bitmap_block_count = htole64(bitmap_blocks);
-    sb.object_index_block = htole64(index_block);
-    sb.root_object_block = htole64(root_block);
+    sb.format_major = infs_cpu_to_le16(INFS_FORMAT_MAJOR);
+    sb.format_minor = infs_cpu_to_le16(INFS_FORMAT_MINOR);
+    sb.header_size = infs_cpu_to_le16(sizeof(sb));
+    sb.block_shift = infs_cpu_to_le16(INFS_BLOCK_SHIFT);
+    sb.checksum_type = infs_cpu_to_le32(INFS_CHECKSUM_CRC64_ECMA);
+    sb.generation = infs_cpu_to_le64(1);
+    sb.total_blocks = infs_cpu_to_le64(total_blocks);
+    sb.free_blocks = infs_cpu_to_le64(total_blocks - used_blocks);
+    sb.bitmap_start_block = infs_cpu_to_le64(bitmap_start);
+    sb.bitmap_block_count = infs_cpu_to_le64(bitmap_blocks);
+    sb.object_index_block = infs_cpu_to_le64(index_block);
+    sb.root_object_block = infs_cpu_to_le64(root_block);
     for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i)
-        sb.checkpoint_block[i] = htole64(checkpoints[i]);
+        sb.checkpoint_block[i] = infs_cpu_to_le64(checkpoints[i]);
     memcpy(sb.filesystem_uuid, fs_uuid, sizeof(fs_uuid));
     memcpy(sb.root_object_id, root_id, sizeof(root_id));
+    sb.incompat_flags = infs_cpu_to_le64(INFS_INCOMPAT_UTF8_NAMES);
     memcpy(sb.label, label, strlen(label));
 
     uint8_t block[INFS_BLOCK_SIZE];

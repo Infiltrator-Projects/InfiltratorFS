@@ -1,55 +1,51 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-static int mutate_stat_tx(struct infs_volume *vol, const char *path,
-                       int op, uint64_t a, uint64_t b,
-                       const struct timespec tv[2])
+static int set_posix_tx(struct infs_volume *vol, const char *path,
+                        uint32_t mask, uint32_t permissions,
+                        uint32_t uid, uint32_t gid)
 {
     if (!vol->writable) {
         errno = EROFS;
         return -1;
     }
-    struct infs_lookup lk;
-    if (infs_lookup_path(vol, path, &lk) != 0)
+    struct infs_lookup lookup;
+    if (infs_lookup_path(vol, path, &lookup) != 0)
         return -1;
     uint8_t block[INFS_BLOCK_SIZE];
-    if (read_object(vol, lk.block, block) != 0)
+    if (read_object(vol, lookup.block, block) != 0)
         return -1;
-    struct infs_stat_disk *st = object_stat(block);
-    if (!st) {
+    struct infs_posix_compat_disk *posix = object_posix(block);
+    struct infs_attributes_disk *attributes = object_attributes(block);
+    if (!posix || !attributes) {
         errno = EIO;
         return -1;
     }
-    uint64_t n = now_ns();
-    if (op == 1) {
-        uint32_t old = le32toh(st->mode);
-        st->mode = htole32((old & S_IFMT) | ((uint32_t)a & 07777u));
-    } else if (op == 2) {
-        if ((uid_t)a != (uid_t)-1)
-            st->uid = htole32((uint32_t)a);
-        if ((gid_t)b != (gid_t)-1)
-            st->gid = htole32((uint32_t)b);
-    } else if (op == 3) {
-        uint64_t at = tv[0].tv_nsec == UTIME_NOW ? n :
-            tv[0].tv_nsec == UTIME_OMIT ? le64toh(st->atime_ns) :
-            (uint64_t)tv[0].tv_sec * 1000000000ull + (uint64_t)tv[0].tv_nsec;
-        uint64_t mt = tv[1].tv_nsec == UTIME_NOW ? n :
-            tv[1].tv_nsec == UTIME_OMIT ? le64toh(st->mtime_ns) :
-            (uint64_t)tv[1].tv_sec * 1000000000ull + (uint64_t)tv[1].tv_nsec;
-        st->atime_ns = htole64(at);
-        st->mtime_ns = htole64(mt);
-    }
-    st->ctime_ns = htole64(n);
-    if (write_object(vol, lk.block, block) != 0)
+
+    if (mask & INFS_POSIX_SET_PERMISSIONS)
+        posix->permissions = infs_cpu_to_le32(permissions & 07777u);
+    if (mask & INFS_POSIX_SET_UID)
+        posix->uid = infs_cpu_to_le32(uid);
+    if (mask & INFS_POSIX_SET_GID)
+        posix->gid = infs_cpu_to_le32(gid);
+    attributes->change_time_ns = (int64_t)infs_cpu_to_le64(
+        (uint64_t)now_ns(vol));
+
+    if (write_object(vol, lookup.block, block) != 0)
         return -1;
     return infs_volume_sync(vol);
 }
 
-static int mutate_stat_guarded(struct infs_volume *vol, const char *path,
-                               int op, uint64_t a, uint64_t b,
-                               const struct timespec tv[2])
+int infs_set_posix_compat(struct infs_volume *vol, const char *path,
+                          uint32_t mask, uint32_t permissions,
+                          uint32_t uid, uint32_t gid)
 {
+    if ((mask & ~(INFS_POSIX_SET_PERMISSIONS | INFS_POSIX_SET_UID |
+                  INFS_POSIX_SET_GID)) != 0) {
+        errno = EINVAL;
+        return -1;
+    }
     if (tx_begin(vol) != 0)
         return -1;
-    int rc = mutate_stat_tx(vol, path, op, a, b, tv);
+    int rc = set_posix_tx(vol, path, mask, permissions, uid, gid);
     if (rc != 0) {
         int saved = errno;
         tx_abort(vol);
@@ -58,22 +54,71 @@ static int mutate_stat_guarded(struct infs_volume *vol, const char *path,
     return rc;
 }
 
-int infs_chmod(struct infs_volume *vol, const char *path, mode_t mode)
+static int time_action_valid(uint32_t action)
 {
-    return mutate_stat_guarded(vol, path, 1, mode, 0, NULL);
+    return action == INFS_TIME_OMIT || action == INFS_TIME_NOW ||
+           action == INFS_TIME_SET;
 }
 
-int infs_chown(struct infs_volume *vol, const char *path, uid_t uid, gid_t gid)
+static int set_times_tx(struct infs_volume *vol, const char *path,
+                        const struct infs_time_update *update)
 {
-    return mutate_stat_guarded(vol, path, 2, uid, gid, NULL);
-}
-
-int infs_utimens(struct infs_volume *vol, const char *path,
-                 const struct timespec tv[2])
-{
-    if (!tv) {
-        struct timespec now[2] = {{0, UTIME_NOW}, {0, UTIME_NOW}};
-        return mutate_stat_guarded(vol, path, 3, 0, 0, now);
+    if (!vol->writable) {
+        errno = EROFS;
+        return -1;
     }
-    return mutate_stat_guarded(vol, path, 3, 0, 0, tv);
+    struct infs_lookup lookup;
+    if (infs_lookup_path(vol, path, &lookup) != 0)
+        return -1;
+    uint8_t block[INFS_BLOCK_SIZE];
+    if (read_object(vol, lookup.block, block) != 0)
+        return -1;
+    struct infs_attributes_disk *attributes = object_attributes(block);
+    if (!attributes) {
+        errno = EIO;
+        return -1;
+    }
+
+    int64_t now = now_ns(vol);
+    if (update->access_action == INFS_TIME_NOW)
+        attributes->access_time_ns = (int64_t)infs_cpu_to_le64((uint64_t)now);
+    else if (update->access_action == INFS_TIME_SET)
+        attributes->access_time_ns = (int64_t)infs_cpu_to_le64(
+            (uint64_t)update->access_time_ns);
+    if (update->modification_action == INFS_TIME_NOW)
+        attributes->modification_time_ns = (int64_t)infs_cpu_to_le64((uint64_t)now);
+    else if (update->modification_action == INFS_TIME_SET)
+        attributes->modification_time_ns = (int64_t)infs_cpu_to_le64(
+            (uint64_t)update->modification_time_ns);
+    attributes->change_time_ns = (int64_t)infs_cpu_to_le64((uint64_t)now);
+
+    if (write_object(vol, lookup.block, block) != 0)
+        return -1;
+    return infs_volume_sync(vol);
+}
+
+int infs_set_times(struct infs_volume *vol, const char *path,
+                   const struct infs_time_update *update)
+{
+    struct infs_time_update now = {
+        .access_action = INFS_TIME_NOW,
+        .modification_action = INFS_TIME_NOW,
+    };
+    if (!update)
+        update = &now;
+    if (!time_action_valid(update->access_action) ||
+        !time_action_valid(update->modification_action)) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (tx_begin(vol) != 0)
+        return -1;
+    int rc = set_times_tx(vol, path, update);
+    if (rc != 0) {
+        int saved = errno;
+        tx_abort(vol);
+        errno = saved;
+    }
+    return rc;
 }

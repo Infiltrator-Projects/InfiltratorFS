@@ -21,11 +21,11 @@ static int checksum_set_range(struct infs_volume *vol,
         for (uint64_t i = 0; i < chunk; ++i)
             values[offset + i] = digests[i];
         uint32_t needed = (uint32_t)(offset + chunk);
-        if (needed > le32toh(p->checksum_count))
-            p->checksum_count = htole32(needed);
+        if (needed > infs_le32_to_cpu(p->checksum_count))
+            p->checksum_count = infs_cpu_to_le32(needed);
         struct infs_object_header_disk *hdr = (struct infs_object_header_disk *)block;
-        hdr->payload_size = htole32((uint32_t)(sizeof(*p) +
-            (size_t)le32toh(p->checksum_count) *
+        hdr->payload_size = infs_cpu_to_le32((uint32_t)(sizeof(*p) +
+            (size_t)infs_le32_to_cpu(p->checksum_count) *
             sizeof(struct infs_data_checksum_disk)));
         if (write_object(vol, lk.block, block) != 0)
             return -1;
@@ -71,7 +71,7 @@ static int checksum_get(struct infs_volume *vol,
                         &p, &values) != 0)
         return -1;
     uint64_t offset = logical % INFS_CHECKSUMS_PER_OBJECT;
-    if (offset >= le32toh(p->checksum_count)) {
+    if (offset >= infs_le32_to_cpu(p->checksum_count)) {
         errno = EIO;
         return -1;
     }

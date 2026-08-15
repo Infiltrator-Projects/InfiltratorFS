@@ -24,7 +24,7 @@ static int rename_tx(struct infs_volume *vol, const char *oldpath, const char *n
     }
     uint8_t source_id[16];
     memcpy(source_id, source->object_id, 16);
-    uint16_t source_type = le16toh(source->object_type);
+    uint16_t source_type = infs_le16_to_cpu(source->object_type);
 
     if (old_parent.block == new_parent.block) {
         memcpy(new_block, old_block, sizeof(new_block));
@@ -55,7 +55,7 @@ static int rename_tx(struct infs_volume *vol, const char *oldpath, const char *n
             dir_add(new_block, new_name, source_id, source_type) != 0)
             return -1;
         np = (struct infs_directory_payload_disk *)(new_block + sizeof(struct infs_object_header_disk));
-        touch_mctime(&np->stat);
+        touch_mctime(vol, &np->attributes);
         if (write_object(vol, new_parent.block, new_block) != 0)
             return -1;
     } else {
@@ -65,13 +65,14 @@ static int rename_tx(struct infs_volume *vol, const char *oldpath, const char *n
         op = (struct infs_directory_payload_disk *)(old_block + sizeof(struct infs_object_header_disk));
         np = (struct infs_directory_payload_disk *)(new_block + sizeof(struct infs_object_header_disk));
         if (source_type == INFS_OBJECT_DIRECTORY) {
-            uint32_t on = le32toh(op->stat.nlink);
+            uint64_t on = infs_le64_to_cpu(op->attributes.link_count);
             if (on > 2)
-                op->stat.nlink = htole32(on - 1u);
-            np->stat.nlink = htole32(le32toh(np->stat.nlink) + 1u);
+                op->attributes.link_count = infs_cpu_to_le64(on - 1u);
+            np->attributes.link_count = infs_cpu_to_le64(
+                infs_le64_to_cpu(np->attributes.link_count) + 1u);
         }
-        touch_mctime(&op->stat);
-        touch_mctime(&np->stat);
+        touch_mctime(vol, &op->attributes);
+        touch_mctime(vol, &np->attributes);
         if (write_object(vol, old_parent.block, old_block) != 0 ||
             write_object(vol, new_parent.block, new_block) != 0)
             return -1;
@@ -84,9 +85,9 @@ static int rename_tx(struct infs_volume *vol, const char *oldpath, const char *n
             return -1;
         struct infs_object_header_disk *ch = (struct infs_object_header_disk *)child_block;
         memcpy(ch->parent_id, new_parent.object_id, 16);
-        struct infs_stat_disk *st = object_stat(child_block);
+        struct infs_attributes_disk *st = object_attributes(child_block);
         if (st)
-            st->ctime_ns = htole64(now_ns());
+            st->change_time_ns = (int64_t)infs_cpu_to_le64((uint64_t)now_ns(vol));
         if (write_object(vol, child.block, child_block) != 0)
             return -1;
     }

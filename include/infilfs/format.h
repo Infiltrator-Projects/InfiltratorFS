@@ -10,7 +10,7 @@
 #define INFS_MAGIC "INFS2026"
 #define INFS_OBJECT_MAGIC "INFOBJ01"
 #define INFS_FORMAT_MAJOR 0u
-#define INFS_FORMAT_MINOR 4u
+#define INFS_FORMAT_MINOR 5u
 #define INFS_CHECKPOINT_COUNT 3u
 #define INFS_CHECKSUM_CRC64_ECMA 1u
 #define INFS_CHECKSUM_SHA256     2u
@@ -24,7 +24,24 @@
 
 #define INFS_EXTENT_NORMAL     0u
 
-struct __attribute__((packed)) infs_superblock_disk {
+#define INFS_INCOMPAT_UTF8_NAMES UINT64_C(0x0000000000000001)
+#define INFS_KNOWN_INCOMPAT_FLAGS INFS_INCOMPAT_UTF8_NAMES
+
+#define INFS_ATTR_READ_ONLY           UINT64_C(0x0000000000000001)
+#define INFS_ATTR_HIDDEN              UINT64_C(0x0000000000000002)
+#define INFS_ATTR_SYSTEM              UINT64_C(0x0000000000000004)
+#define INFS_ATTR_ARCHIVE             UINT64_C(0x0000000000000008)
+#define INFS_ATTR_TEMPORARY           UINT64_C(0x0000000000000010)
+#define INFS_ATTR_NOT_CONTENT_INDEXED UINT64_C(0x0000000000000020)
+
+#if defined(_MSC_VER)
+#pragma pack(push, 1)
+#define INFS_PACKED
+#else
+#define INFS_PACKED __attribute__((packed))
+#endif
+
+struct INFS_PACKED infs_superblock_disk {
     uint8_t  magic[8];
     uint16_t format_major;
     uint16_t format_minor;
@@ -48,7 +65,7 @@ struct __attribute__((packed)) infs_superblock_disk {
     uint8_t  checksum[32];
 };
 
-struct __attribute__((packed)) infs_object_header_disk {
+struct INFS_PACKED infs_object_header_disk {
     uint8_t  magic[8];
     uint16_t object_type;
     uint16_t object_version;
@@ -61,25 +78,35 @@ struct __attribute__((packed)) infs_object_header_disk {
     uint8_t  checksum[32];
 };
 
-struct __attribute__((packed)) infs_stat_disk {
-    uint32_t mode;
-    uint32_t uid;
-    uint32_t gid;
-    uint32_t nlink;
-    uint64_t size;
-    int64_t  atime_ns;
-    int64_t  mtime_ns;
-    int64_t  ctime_ns;
-    uint64_t flags;
+struct INFS_PACKED infs_attributes_disk {
+    uint64_t logical_size;
+    uint64_t link_count;
+    uint64_t portable_flags;
+    int64_t  birth_time_ns;
+    int64_t  access_time_ns;
+    int64_t  modification_time_ns;
+    int64_t  change_time_ns;
+    uint8_t  security_object_id[16];
+    uint8_t  extended_attributes_object_id[16];
 };
 
-struct __attribute__((packed)) infs_directory_payload_disk {
-    struct infs_stat_disk stat;
+/* Optional POSIX compatibility data. It is an adapter record, not the
+ * filesystem's security or object-identity model. */
+struct INFS_PACKED infs_posix_compat_disk {
+    uint32_t permissions;
+    uint32_t uid;
+    uint32_t gid;
+    uint32_t flags;
+};
+
+struct INFS_PACKED infs_directory_payload_disk {
+    struct infs_attributes_disk attributes;
+    struct infs_posix_compat_disk posix;
     uint32_t entry_count;
     uint32_t bytes_used;
 };
 
-struct __attribute__((packed)) infs_dirent_disk {
+struct INFS_PACKED infs_dirent_disk {
     uint16_t record_size;
     uint16_t name_length;
     uint16_t object_type;
@@ -88,14 +115,15 @@ struct __attribute__((packed)) infs_dirent_disk {
     /* name bytes immediately follow; record padded to 8-byte alignment */
 };
 
-struct __attribute__((packed)) infs_file_payload_disk {
-    struct infs_stat_disk stat;
+struct INFS_PACKED infs_file_payload_disk {
+    struct infs_attributes_disk attributes;
+    struct infs_posix_compat_disk posix;
     uint32_t extent_count;
     uint32_t data_checksum_type;
     uint8_t  checksum_head_id[16];
 };
 
-struct __attribute__((packed)) infs_extent_disk {
+struct INFS_PACKED infs_extent_disk {
     uint64_t logical_block;
     uint64_t physical_block;
     uint32_t block_count;
@@ -103,7 +131,7 @@ struct __attribute__((packed)) infs_extent_disk {
 };
 
 
-struct __attribute__((packed)) infs_checksum_payload_disk {
+struct INFS_PACKED infs_checksum_payload_disk {
     uint8_t  owner_object_id[16];
     uint8_t  next_object_id[16];
     uint64_t start_logical_block;
@@ -112,7 +140,7 @@ struct __attribute__((packed)) infs_checksum_payload_disk {
     /* struct infs_data_checksum_disk entries immediately follow */
 };
 
-struct __attribute__((packed)) infs_data_checksum_disk {
+struct INFS_PACKED infs_data_checksum_disk {
     uint8_t bytes[32];
 };
 
@@ -121,12 +149,12 @@ struct __attribute__((packed)) infs_data_checksum_disk {
       sizeof(struct infs_checksum_payload_disk)) / \
      sizeof(struct infs_data_checksum_disk))
 
-struct __attribute__((packed)) infs_index_payload_disk {
+struct INFS_PACKED infs_index_payload_disk {
     uint32_t entry_count;
     uint32_t reserved;
 };
 
-struct __attribute__((packed)) infs_index_entry_disk {
+struct INFS_PACKED infs_index_entry_disk {
     uint8_t  object_id[16];
     uint64_t object_block;
     uint16_t object_type;
@@ -134,17 +162,37 @@ struct __attribute__((packed)) infs_index_entry_disk {
     uint32_t reserved;
 };
 
-_Static_assert(sizeof(struct infs_superblock_disk) < INFS_BLOCK_SIZE,
-               "superblock header must fit in one filesystem block");
-_Static_assert(sizeof(struct infs_object_header_disk) < INFS_BLOCK_SIZE,
-               "object header must fit in one filesystem block");
+_Static_assert(sizeof(struct infs_superblock_disk) == 252,
+               "superblock header layout changed");
+_Static_assert(sizeof(struct infs_object_header_disk) == 96,
+               "object header layout changed");
+_Static_assert(sizeof(struct infs_attributes_disk) == 88,
+               "common attributes layout changed");
+_Static_assert(sizeof(struct infs_posix_compat_disk) == 16,
+               "POSIX compatibility layout changed");
+_Static_assert(sizeof(struct infs_directory_payload_disk) == 112,
+               "directory payload layout changed");
 _Static_assert(sizeof(struct infs_dirent_disk) == 24,
                "directory entry header layout changed");
+_Static_assert(sizeof(struct infs_file_payload_disk) == 128,
+               "file payload layout changed");
 _Static_assert(sizeof(struct infs_extent_disk) == 24,
                "extent layout changed");
+_Static_assert(sizeof(struct infs_checksum_payload_disk) == 48,
+               "checksum payload layout changed");
+_Static_assert(sizeof(struct infs_data_checksum_disk) == 32,
+               "data checksum layout changed");
+_Static_assert(sizeof(struct infs_index_payload_disk) == 8,
+               "index payload layout changed");
 _Static_assert(sizeof(struct infs_index_entry_disk) == 32,
                "object index entry layout changed");
 _Static_assert(INFS_CHECKSUMS_PER_OBJECT >= 120,
                "checksum object capacity unexpectedly small");
+
+#if defined(_MSC_VER)
+#pragma pack(pop)
+#endif
+
+#undef INFS_PACKED
 
 #endif

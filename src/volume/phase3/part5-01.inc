@@ -35,7 +35,7 @@ static int remove_object(struct infs_volume *vol, const char *path, int want_dir
         struct infs_directory_payload_disk *cp;
         if (dir_validate(child_block, &cp) != 0)
             return -1;
-        if (le32toh(cp->entry_count) != 0) {
+        if (infs_le32_to_cpu(cp->entry_count) != 0) {
             errno = ENOTEMPTY;
             return -1;
         }
@@ -46,19 +46,19 @@ static int remove_object(struct infs_volume *vol, const char *path, int want_dir
             return -1;
         if (checksum_destroy_chain(vol, fp, child.object_id) != 0)
             return -1;
-        uint32_t count = le32toh(fp->extent_count);
+        uint32_t count = infs_le32_to_cpu(fp->extent_count);
         for (uint32_t i = 0; i < count; ++i)
-            free_run(vol, le64toh(ext[i].physical_block), le32toh(ext[i].block_count));
+            free_run(vol, infs_le64_to_cpu(ext[i].physical_block), infs_le32_to_cpu(ext[i].block_count));
     }
 
     if (dir_remove(parent_block, name, NULL) != 0)
         return -1;
     if (child.type == INFS_OBJECT_DIRECTORY) {
-        uint32_t nlink = le32toh(pp->stat.nlink);
+        uint64_t nlink = infs_le64_to_cpu(pp->attributes.link_count);
         if (nlink > 2)
-            pp->stat.nlink = htole32(nlink - 1u);
+            pp->attributes.link_count = infs_cpu_to_le64(nlink - 1u);
     }
-    touch_mctime(&pp->stat);
+    touch_mctime(vol, &pp->attributes);
     if (write_object(vol, parent.block, parent_block) != 0)
         return -1;
     if (index_remove(vol, child.object_id) != 0)

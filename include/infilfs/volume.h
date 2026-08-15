@@ -4,10 +4,51 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include <sys/stat.h>
-#include <sys/types.h>
 
 #include "infilfs/format.h"
+#include "infilfs/storage.h"
+
+#define INFS_PATH_MAX 4096u
+
+#define INFS_POSIX_SET_PERMISSIONS UINT32_C(0x00000001)
+#define INFS_POSIX_SET_UID         UINT32_C(0x00000002)
+#define INFS_POSIX_SET_GID         UINT32_C(0x00000004)
+
+#define INFS_TIME_OMIT UINT32_C(0)
+#define INFS_TIME_NOW  UINT32_C(1)
+#define INFS_TIME_SET  UINT32_C(2)
+
+struct infs_create_options {
+    uint64_t portable_flags;
+    uint32_t posix_permissions;
+    uint32_t posix_uid;
+    uint32_t posix_gid;
+};
+
+struct infs_attributes {
+    uint8_t object_id[16];
+    uint16_t object_type;
+    uint64_t logical_size;
+    uint64_t allocated_size;
+    uint64_t link_count;
+    uint64_t portable_flags;
+    int64_t birth_time_ns;
+    int64_t access_time_ns;
+    int64_t modification_time_ns;
+    int64_t change_time_ns;
+    uint8_t security_object_id[16];
+    uint8_t extended_attributes_object_id[16];
+    uint32_t posix_permissions;
+    uint32_t posix_uid;
+    uint32_t posix_gid;
+};
+
+struct infs_time_update {
+    uint32_t access_action;
+    uint32_t modification_action;
+    int64_t access_time_ns;
+    int64_t modification_time_ns;
+};
 
 struct infs_deferred_range {
     uint64_t start;
@@ -15,7 +56,7 @@ struct infs_deferred_range {
 };
 
 struct infs_volume {
-    int fd;
+    struct infs_storage storage;
     int writable;
     uint64_t size_bytes;
     struct infs_superblock_disk sb;
@@ -52,36 +93,39 @@ struct infs_dir_item {
     uint16_t type;
 };
 
-int infs_volume_open(struct infs_volume *vol, const char *path, int writable);
+int infs_volume_open_storage(struct infs_volume *vol,
+                             struct infs_storage *storage, int writable);
 void infs_volume_close(struct infs_volume *vol);
 int infs_volume_sync(struct infs_volume *vol);
 
 int infs_lookup_path(struct infs_volume *vol, const char *path,
                      struct infs_lookup *out);
-int infs_getattr(struct infs_volume *vol, const char *path, struct stat *st);
+int infs_get_attributes(struct infs_volume *vol, const char *path,
+                        struct infs_attributes *attributes);
 int infs_list_dir(struct infs_volume *vol, const char *path,
                   struct infs_dir_item **items, size_t *count);
 void infs_free_dir_items(struct infs_dir_item *items);
 
-int infs_create_file(struct infs_volume *vol, const char *path, mode_t mode,
-                     uid_t uid, gid_t gid);
-int infs_mkdir(struct infs_volume *vol, const char *path, mode_t mode,
-               uid_t uid, gid_t gid);
+int infs_create_file(struct infs_volume *vol, const char *path,
+                     const struct infs_create_options *options);
+int infs_mkdir(struct infs_volume *vol, const char *path,
+               const struct infs_create_options *options);
 int infs_unlink(struct infs_volume *vol, const char *path);
 int infs_rmdir(struct infs_volume *vol, const char *path);
 int infs_rename(struct infs_volume *vol, const char *oldpath,
                 const char *newpath);
 
-ssize_t infs_read_file(struct infs_volume *vol, const char *path, void *buf,
-                       size_t size, off_t offset);
-ssize_t infs_write_file(struct infs_volume *vol, const char *path,
-                        const void *buf, size_t size, off_t offset);
-int infs_truncate_file(struct infs_volume *vol, const char *path, off_t size);
+int64_t infs_read_file(struct infs_volume *vol, const char *path, void *buf,
+                       size_t size, uint64_t offset);
+int64_t infs_write_file(struct infs_volume *vol, const char *path,
+                        const void *buf, size_t size, uint64_t offset);
+int infs_truncate_file(struct infs_volume *vol, const char *path, uint64_t size);
 
-int infs_chmod(struct infs_volume *vol, const char *path, mode_t mode);
-int infs_chown(struct infs_volume *vol, const char *path, uid_t uid, gid_t gid);
-int infs_utimens(struct infs_volume *vol, const char *path,
-                 const struct timespec tv[2]);
+int infs_set_posix_compat(struct infs_volume *vol, const char *path,
+                          uint32_t mask, uint32_t permissions,
+                          uint32_t uid, uint32_t gid);
+int infs_set_times(struct infs_volume *vol, const char *path,
+                   const struct infs_time_update *update);
 
 int infs_scrub(struct infs_volume *vol, struct infs_scrub_report *report);
 

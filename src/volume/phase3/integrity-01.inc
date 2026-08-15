@@ -16,16 +16,16 @@ static int checksum_validate(uint8_t block[INFS_BLOCK_SIZE],
 {
     struct infs_object_header_disk *hdr = (struct infs_object_header_disk *)block;
     if (!infs_validate_object_block(block) ||
-        le16toh(hdr->object_type) != INFS_OBJECT_CHECKSUM ||
-        le32toh(hdr->payload_size) < sizeof(struct infs_checksum_payload_disk)) {
+        infs_le16_to_cpu(hdr->object_type) != INFS_OBJECT_CHECKSUM ||
+        infs_le32_to_cpu(hdr->payload_size) < sizeof(struct infs_checksum_payload_disk)) {
         errno = EIO;
         return -1;
     }
     struct infs_checksum_payload_disk *p =
         (struct infs_checksum_payload_disk *)(block + sizeof(*hdr));
-    uint32_t count = le32toh(p->checksum_count);
+    uint32_t count = infs_le32_to_cpu(p->checksum_count);
     size_t need = sizeof(*p) + (size_t)count * sizeof(struct infs_data_checksum_disk);
-    if (count > INFS_CHECKSUMS_PER_OBJECT || need > le32toh(hdr->payload_size) ||
+    if (count > INFS_CHECKSUMS_PER_OBJECT || need > infs_le32_to_cpu(hdr->payload_size) ||
         need > INFS_BLOCK_SIZE - sizeof(*hdr)) {
         errno = EIO;
         return -1;
@@ -55,14 +55,14 @@ static int checksum_create_object(struct infs_volume *vol,
     }
 
     uint8_t id[16];
-    if (infs_random_bytes(id, sizeof(id)) != 0) {
+    if (infs_storage_random(&vol->storage, id, sizeof(id)) != 0) {
         free_run(vol, block_no, 1);
         return -1;
     }
 
     uint8_t block[INFS_BLOCK_SIZE];
     if (infs_object_init(block, INFS_OBJECT_CHECKSUM, id, owner_id,
-                         le64toh(vol->sb.generation) + 1u,
+                         infs_le64_to_cpu(vol->sb.generation) + 1u,
                          sizeof(struct infs_checksum_payload_disk)) != 0) {
         free_run(vol, block_no, 1);
         return -1;
@@ -70,8 +70,8 @@ static int checksum_create_object(struct infs_volume *vol,
     struct infs_checksum_payload_disk *p =
         (struct infs_checksum_payload_disk *)(block + sizeof(struct infs_object_header_disk));
     memcpy(p->owner_object_id, owner_id, 16);
-    p->start_logical_block = htole64(start_logical);
-    p->checksum_count = htole32(0);
+    p->start_logical_block = infs_cpu_to_le64(start_logical);
+    p->checksum_count = infs_cpu_to_le32(0);
     if (infs_object_finalize(block) != 0 || write_block(vol, block_no, block) != 0) {
         free_run(vol, block_no, 1);
         return -1;
