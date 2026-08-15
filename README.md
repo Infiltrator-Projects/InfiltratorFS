@@ -15,26 +15,23 @@ InfiltratorFS is a clean-sheet experimental filesystem for Linux, started in 202
 - Allocation policies that can eventually adapt to HDD, SSD, NVMe and removable flash.
 - No dependency on FUSE in the on-disk format or core engine.
 
-## Current status — format 0.3 / Phase 2 transaction core
+## Current status — format 0.4 / Phase 3 data integrity core
 
-Format 0.3 keeps the writable Phase 1 namespace and extent engine and adds the first crash-consistency model:
+Format 0.4 extends the Phase 2 transaction model to ordinary file-data overwrites and adds end-to-end data verification:
 
-- all modified metadata objects are written to newly allocated blocks;
-- object-index updates are themselves copy-on-write;
-- Linux `st_ino` values are derived from persistent object IDs rather than physical metadata blocks, so CoW relocation does not change inode identity;
-- the allocation bitmap is copy-on-write rather than overwritten in place;
-- allocation reservations remain unreachable until checkpoint publication;
-- blocks superseded by a transaction are not reusable until the new checkpoint is durable;
-- one physically separated checkpoint is published as the atomic commit point;
-- the remaining checkpoint copies are then replicated;
-- after a crash between checkpoint copies, a writable open heals all copies to the newest fully validated generation before allocating again;
-- simulated crashes before bitmap publication, after bitmap publication and immediately after the first checkpoint publication are covered by automated tests.
+- every allocated logical file block has an independently stored checksum;
+- checksum records live in hidden 128-bit checksum objects addressed through the persistent object index;
+- checksum entries reserve 32 bytes each so stronger 256-bit algorithms can be introduced later without redesigning the checksum-object layout;
+- SHA-256 is the format-0.4 file-data checksum algorithm and occupies the full 32-byte checksum entry;
+- normal reads verify every full 4096-byte data block before returning bytes to the caller;
+- writes to committed data blocks allocate replacement blocks rather than overwriting generation N in place;
+- file extent metadata and checksum objects are published atomically with the same generation checkpoint as the data;
+- pre-commit crashes retain the old bytes, while post-checkpoint crashes expose the new bytes;
+- read-only `infilfs-scrub` walks all regular-file blocks and reports checksum or checksum-metadata errors;
+- deliberate single-byte data corruption is detected by both the normal read path and scrubber;
+- repeated data-CoW overwrites reclaim superseded data/checksum metadata without leaking space.
 
-Format 0.3 still uses a one-block object index and one-block directories as deliberate prototype limits. Those become scalable trees later without changing 128-bit object identity.
-
-### Crash-consistency boundary
-
-Format 0.3 protects filesystem **metadata publication** and newly allocated blocks from half-committed namespace/allocation state. Existing file-data blocks may still be overwritten in place, so an application overwriting bytes inside an already allocated extent does not yet receive old-or-new data atomicity. End-to-end data checksums and stronger data-CoW policies are later work.
+Format 0.4 still uses a one-block object index and one-block directories as deliberate prototype limits. Metadata still uses CRC64-ECMA in format 0.4, while file data uses SHA-256. Repair from redundant data copies and forensic reconstruction remain later integrity work.
 
 ## Implemented filesystem operations
 
@@ -45,7 +42,7 @@ Format 0.3 protects filesystem **metadata publication** and newly allocated bloc
 - unlink and empty-directory removal;
 - same-directory and cross-directory rename;
 - mode, ownership and nanosecond timestamps;
-- direct-image tools and a writable FUSE3 front end.
+- direct-image tools, `infilfs-scrub`, and a writable FUSE3 front end.
 
 ## Build on Linux Mint
 
@@ -62,6 +59,7 @@ Create and inspect an image:
 truncate -s 128M infilfs.img
 ./build/mkfs.infilfs -L test-volume infilfs.img
 ./build/infilfs-inspect infilfs.img
+./build/infilfs-scrub infilfs.img
 ```
 
 Exercise it without mounting:
@@ -96,13 +94,13 @@ docs/                architecture, format and roadmap
 ## Documentation
 
 - `docs/ARCHITECTURE.md` — design model and long-term rules.
-- `docs/ON_DISK_FORMAT.md` — current format 0.3 structures and transaction protocol.
+- `docs/ON_DISK_FORMAT.md` — current format 0.4 structures, checksum objects and transaction protocol.
 - `docs/ROADMAP.md` — implementation phases and completion state.
 - `docs/INSPIRATIONS.md` — ideas borrowed, rejected or reinterpreted from other filesystems.
 
 ## Safety
 
-InfiltratorFS is experimental. Use image files or disposable media only. Do not store irreplaceable data on format 0.3.
+InfiltratorFS is experimental. Use image files or disposable media only. Do not store irreplaceable data on format 0.4.
 
 ## License
 

@@ -1,0 +1,68 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+    bitmap_set(bitmap, checkpoints[0]);
+    bitmap_set(bitmap, checkpoints[1]);
+    bitmap_set(bitmap, checkpoints[2]);
+    for (uint64_t b = bitmap_start; b < bitmap_start + bitmap_blocks; ++b)
+        bitmap_set(bitmap, b);
+    bitmap_set(bitmap, index_block);
+    bitmap_set(bitmap, root_block);
+
+    for (uint64_t b = total_blocks; b < bitmap_blocks * INFS_BLOCK_SIZE * 8ull; ++b)
+        bitmap_set(bitmap, b);
+
+    uint64_t used_blocks = 0;
+    for (uint64_t b = 0; b < total_blocks; ++b)
+        if (bitmap_get(bitmap, b))
+            ++used_blocks;
+
+    uint8_t fs_uuid[16];
+    uint8_t root_id[16];
+    uint8_t index_id[16];
+    if (infs_random_bytes(fs_uuid, sizeof(fs_uuid)) != 0 ||
+        infs_random_bytes(root_id, sizeof(root_id)) != 0 ||
+        infs_random_bytes(index_id, sizeof(index_id)) != 0) {
+        perror("getrandom");
+        free(bitmap);
+        close(fd);
+        return 1;
+    }
+
+    struct infs_superblock_disk sb;
+    memset(&sb, 0, sizeof(sb));
+    memcpy(sb.magic, INFS_MAGIC, 8);
+    sb.format_major = htole16(INFS_FORMAT_MAJOR);
+    sb.format_minor = htole16(INFS_FORMAT_MINOR);
+    sb.header_size = htole16(sizeof(sb));
+    sb.block_shift = htole16(INFS_BLOCK_SHIFT);
+    sb.checksum_type = htole32(INFS_CHECKSUM_CRC64_ECMA);
+    sb.generation = htole64(1);
+    sb.total_blocks = htole64(total_blocks);
+    sb.free_blocks = htole64(total_blocks - used_blocks);
+    sb.bitmap_start_block = htole64(bitmap_start);
+    sb.bitmap_block_count = htole64(bitmap_blocks);
+    sb.object_index_block = htole64(index_block);
+    sb.root_object_block = htole64(root_block);
+    for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i)
+        sb.checkpoint_block[i] = htole64(checkpoints[i]);
+    memcpy(sb.filesystem_uuid, fs_uuid, sizeof(fs_uuid));
+    memcpy(sb.root_object_id, root_id, sizeof(root_id));
+    memcpy(sb.label, label, strlen(label));
+
+    uint8_t block[INFS_BLOCK_SIZE];
+    if (infs_encode_superblock(block, &sb) != 0) {
+        perror("encode superblock");
+        free(bitmap);
+        close(fd);
+        return 1;
+    }
+
+    for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i) {
+        off_t off = (off_t)(checkpoints[i] * INFS_BLOCK_SIZE);
+        if (infs_pwrite_full(fd, block, sizeof(block), off) != 0) {
+            perror("write checkpoint");
+            free(bitmap);
+            close(fd);
+            return 1;
+        }
+    }
