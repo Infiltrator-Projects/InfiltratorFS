@@ -83,11 +83,11 @@ static int checksum_destroy_chain(struct infs_volume *vol,
                                   struct infs_file_payload_disk *file,
                                   const uint8_t owner_id[16])
 {
-    uint8_t id[16];
-    memcpy(id, file->checksum_head_id, 16);
-    while (!id_is_zero(id)) {
+    uint8_t current[16];
+    memcpy(current, file->checksum_head_id, 16);
+    for (uint64_t guard = 0; !id_is_zero(current) && guard < 1048576u; ++guard) {
         struct infs_lookup lk;
-        if (index_find(vol, id, &lk) != 0)
+        if (index_find(vol, current, &lk) != 0)
             return -1;
         uint8_t block[INFS_BLOCK_SIZE];
         if (read_object(vol, lk.block, block) != 0)
@@ -97,10 +97,14 @@ static int checksum_destroy_chain(struct infs_volume *vol,
             return -1;
         uint8_t next[16];
         memcpy(next, p->next_object_id, 16);
-        free_run(vol, lk.block, 1);
-        if (index_remove(vol, id) != 0)
+        if (index_remove(vol, current) != 0)
             return -1;
-        memcpy(id, next, 16);
+        free_run(vol, lk.block, 1);
+        memcpy(current, next, 16);
+    }
+    if (!id_is_zero(current)) {
+        errno = ELOOP;
+        return -1;
     }
     memset(file->checksum_head_id, 0, 16);
     return 0;

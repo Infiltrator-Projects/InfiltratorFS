@@ -59,6 +59,10 @@ static ssize_t write_file_tx(struct infs_volume *vol, const char *path,
         }
         memcpy(data + within, (const uint8_t *)buf + done, chunk);
 
+        /* A block that existed in generation N is never overwritten. Replace
+         * it with an unreachable block and repoint the extent metadata. Blocks
+         * allocated earlier in this same transaction are already unreachable
+         * from N and may be filled in place before publication. */
         if (bitmap_get(vol->tx_base_bitmap, physical)) {
             uint64_t replacement = 0, got = 0;
             if (alloc_run(vol, 1, &replacement, &got) != 0)
