@@ -109,6 +109,18 @@ static int timespec_to_ns(const struct timespec *value, int64_t *out)
     return 0;
 }
 
+static int readdir_cookie_start(off_t off, size_t count, size_t *start_out)
+{
+    if (!start_out || off < 0)
+        return -EINVAL;
+    uint64_t cookie = (uint64_t)off;
+    uint64_t end = (uint64_t)count + 2u;
+    if (cookie > end)
+        cookie = end;
+    *start_out = (size_t)cookie;
+    return 0;
+}
+
 static int attributes_to_stat(const struct infs_attributes *attributes,
                               struct stat *st)
 {
@@ -152,23 +164,49 @@ static int infs_readdir_cb(const char *path, void *buf, fuse_fill_dir_t filler,
                            off_t off, struct fuse_file_info *fi,
                            enum fuse_readdir_flags flags)
 {
-    (void)off;
     (void)fi;
     (void)flags;
-    if (filler(buf, ".", NULL, 0, 0) != 0 ||
-        filler(buf, "..", NULL, 0, 0) != 0)
-        return 0;
 
     struct infs_dir_item *items = NULL;
     size_t count = 0;
     infs_status status = infs_list_dir(&g_volume, path, &items, &count);
     if (status != INFS_STATUS_OK)
         return neg_status(status);
-    for (size_t i = 0; i < count; ++i) {
+
+    size_t position = 0;
+    int rc = readdir_cookie_start(off, count, &position);
+    if (rc != 0) {
+        infs_free_dir_items(items);
+        return rc;
+    }
+
+    if (position == 0u) {
+        if (filler(buf, ".", NULL, 1, 0) != 0) {
+            infs_free_dir_items(items);
+            return 0;
+        }
+        position = 1u;
+    }
+    if (position == 1u) {
+        if (filler(buf, "..", NULL, 2, 0) != 0) {
+            infs_free_dir_items(items);
+            return 0;
+        }
+        position = 2u;
+    }
+
+    size_t item_index = position > 2u ? position - 2u : 0u;
+    for (size_t i = item_index; i < count; ++i) {
         struct stat st;
         memset(&st, 0, sizeof(st));
         st.st_mode = items[i].type == INFS_OBJECT_DIRECTORY ? S_IFDIR : S_IFREG;
-        if (filler(buf, items[i].name, &st, 0, 0) != 0)
+        off_t next = 0;
+        rc = uint64_to_off_t((uint64_t)i + 3u, &next);
+        if (rc != 0) {
+            infs_free_dir_items(items);
+            return rc;
+        }
+        if (filler(buf, items[i].name, &st, next, 0) != 0)
             break;
     }
     infs_free_dir_items(items);
