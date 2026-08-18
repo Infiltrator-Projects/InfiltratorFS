@@ -140,9 +140,6 @@ static int rename_tx(struct infs_volume *vol, const char *oldpath,
                 return INFS_STATUS_CORRUPT;
             new_payload->attributes.link_count = infs_cpu_to_le64(links - 1u);
         }
-        /* The directory helpers intentionally validate the object checksum on
-         * entry. Re-finalize after each in-memory structural edit before a
-         * second helper touches the same block. */
         status = infs_object_finalize(new_block);
         if (status != INFS_STATUS_OK)
             return status;
@@ -161,6 +158,8 @@ static int rename_tx(struct infs_volume *vol, const char *oldpath,
         new_payload = (struct infs_directory_payload_disk *)(
             new_block + sizeof(struct infs_object_header_disk));
         touch_mctime(vol, &new_payload->attributes);
+        if (vol->tx_error != INFS_STATUS_OK)
+            return vol->tx_error;
         status = write_object(vol, old_parent.block, new_block);
         if (status != INFS_STATUS_OK)
             return status;
@@ -186,6 +185,8 @@ static int rename_tx(struct infs_volume *vol, const char *oldpath,
         }
         touch_mctime(vol, &old_payload->attributes);
         touch_mctime(vol, &new_payload->attributes);
+        if (vol->tx_error != INFS_STATUS_OK)
+            return vol->tx_error;
         status = write_object(vol, old_parent.block, old_block);
         if (status != INFS_STATUS_OK)
             return status;
@@ -206,12 +207,16 @@ static int rename_tx(struct infs_volume *vol, const char *oldpath,
         (struct infs_object_header_disk *)source_block;
     if (!same_parent)
         memcpy(source_header->parent_id, new_parent.object_id, 16);
-    struct infs_attributes_disk *source_attributes =
-        object_attributes(source_block);
+    struct infs_attributes_disk *source_attributes = object_attributes(source_block);
     if (!source_attributes)
         return INFS_STATUS_CORRUPT;
-    source_attributes->change_time_ns = (int64_t)infs_cpu_to_le64(
-        (uint64_t)now_ns(vol));
+
+    int64_t now = 0;
+    status = infs_storage_current_time_ns(&vol->storage, &now);
+    if (status != INFS_STATUS_OK)
+        return status;
+    source_attributes->change_time_ns =
+        (int64_t)infs_cpu_to_le64((uint64_t)now);
     status = write_object(vol, current_source.block, source_block);
     if (status != INFS_STATUS_OK)
         return status;

@@ -5,11 +5,12 @@ static int file_ensure_logical_blocks(struct infs_volume *vol,
 {
     struct infs_file_payload_disk *p;
     struct infs_extent_disk *ext;
-    if (file_validate_volume(vol, block, &p, &ext) != 0)
-        return INFS_STATUS_ERROR;
+    infs_status status = file_validate_volume(vol, block, &p, &ext);
+    if (status != INFS_STATUS_OK)
+        return status;
     uint64_t have = file_logical_blocks(p, ext);
     if (needed <= have)
-        return 0;
+        return INFS_STATUS_OK;
 
     struct infs_object_header_disk *hdr =
         (struct infs_object_header_disk *)block;
@@ -46,7 +47,7 @@ static int file_ensure_logical_blocks(struct infs_volume *vol,
     }
     hdr->payload_size = infs_cpu_to_le32((uint32_t)(sizeof(*p) +
         (size_t)count * sizeof(struct infs_extent_disk)));
-    return 0;
+    return INFS_STATUS_OK;
 }
 
 static int file_map_block(const struct infs_file_payload_disk *p,
@@ -66,7 +67,7 @@ static int file_map_block(const struct infs_file_payload_disk *p,
             }
             if (flags_out)
                 *flags_out = flags;
-            return 0;
+            return INFS_STATUS_OK;
         }
     }
     return INFS_STATUS_CORRUPT;

@@ -2,9 +2,8 @@
 infs_status infs_get_attributes(struct infs_volume *vol, const char *path,
                                 struct infs_attributes *attributes)
 {
-    if (!attributes) {
+    if (!attributes)
         return INFS_STATUS_INVALID_ARGUMENT;
-    }
     struct infs_lookup lk;
     infs_status status = infs_lookup_path(vol, path, &lk);
     if (status != INFS_STATUS_OK)
@@ -14,9 +13,8 @@ infs_status infs_get_attributes(struct infs_volume *vol, const char *path,
     if (status != INFS_STATUS_OK)
         return status;
     struct infs_attributes_disk *disk_attributes = object_attributes(block);
-    if (!disk_attributes) {
+    if (!disk_attributes)
         return INFS_STATUS_CORRUPT;
-    }
     memset(attributes, 0, sizeof(*attributes));
     memcpy(attributes->object_id, lk.object_id, sizeof(attributes->object_id));
     attributes->object_type = lk.type;
@@ -42,7 +40,8 @@ infs_status infs_get_attributes(struct infs_volume *vol, const char *path,
         status = file_validate_volume(vol, block, &p, &ext);
         if (status != INFS_STATUS_OK)
             return status;
-        attributes->allocated_size = file_allocated_blocks(p, ext) * INFS_BLOCK_SIZE;
+        attributes->allocated_size =
+            file_allocated_blocks(p, ext) * INFS_BLOCK_SIZE;
         posix = &p->posix;
     } else {
         const struct infs_directory_payload_disk *p =
@@ -54,34 +53,37 @@ infs_status infs_get_attributes(struct infs_volume *vol, const char *path,
     attributes->posix_permissions = infs_le32_to_cpu(posix->permissions);
     attributes->posix_uid = infs_le32_to_cpu(posix->uid);
     attributes->posix_gid = infs_le32_to_cpu(posix->gid);
-    return 0;
+    return INFS_STATUS_OK;
 }
 
 infs_status infs_list_dir(struct infs_volume *vol, const char *path,
                           struct infs_dir_item **items, size_t *count_out)
 {
-    if (!items || !count_out) {
+    if (!items || !count_out)
         return INFS_STATUS_INVALID_ARGUMENT;
-    }
     *items = NULL;
     *count_out = 0;
+
     struct infs_lookup lk;
     infs_status status = infs_lookup_path(vol, path, &lk);
     if (status != INFS_STATUS_OK)
         return status;
-    if (lk.type != INFS_OBJECT_DIRECTORY) {
+    if (lk.type != INFS_OBJECT_DIRECTORY)
         return INFS_STATUS_NOT_DIRECTORY;
-    }
+
     uint8_t block[INFS_BLOCK_SIZE];
-    if (read_object(vol, lk.block, block) != 0)
-        return INFS_STATUS_ERROR;
+    status = read_object(vol, lk.block, block);
+    if (status != INFS_STATUS_OK)
+        return status;
     struct infs_directory_payload_disk *payload;
-    if (dir_validate(block, &payload) != 0)
-        return INFS_STATUS_ERROR;
+    status = dir_validate(block, &payload);
+    if (status != INFS_STATUS_OK)
+        return status;
+
     uint32_t count = infs_le32_to_cpu(payload->entry_count);
     struct infs_dir_item *list = calloc(count ? count : 1u, sizeof(*list));
     if (!list)
-        return INFS_STATUS_ERROR;
+        return INFS_STATUS_NO_MEMORY;
     uint8_t *p = (uint8_t *)(payload + 1);
     for (uint32_t i = 0; i < count; ++i) {
         struct infs_dirent_disk *e = (struct infs_dirent_disk *)p;
@@ -94,7 +96,7 @@ infs_status infs_list_dir(struct infs_volume *vol, const char *path,
     }
     *items = list;
     *count_out = count;
-    return 0;
+    return INFS_STATUS_OK;
 }
 
 void infs_free_dir_items(struct infs_dir_item *items)
@@ -105,6 +107,12 @@ void infs_free_dir_items(struct infs_dir_item *items)
 infs_status infs_create_file(struct infs_volume *vol, const char *path,
                              const struct infs_create_options *options)
 {
+    if (!vol || !path || path[0] != '/')
+        return INFS_STATUS_INVALID_ARGUMENT;
+    size_t length = strlen(path);
+    if (length > 1u && path[length - 1u] == '/')
+        return INFS_STATUS_NOT_DIRECTORY;
+
     infs_status status = tx_begin(vol);
     if (status != INFS_STATUS_OK)
         return status;
@@ -117,6 +125,8 @@ infs_status infs_create_file(struct infs_volume *vol, const char *path,
 infs_status infs_mkdir(struct infs_volume *vol, const char *path,
                        const struct infs_create_options *options)
 {
+    if (!vol || !path || path[0] != '/')
+        return INFS_STATUS_INVALID_ARGUMENT;
     infs_status status = tx_begin(vol);
     if (status != INFS_STATUS_OK)
         return status;

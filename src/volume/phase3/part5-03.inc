@@ -3,20 +3,26 @@ static int set_posix_tx(struct infs_volume *vol, const char *path,
                         uint32_t mask, uint32_t permissions,
                         uint32_t uid, uint32_t gid)
 {
-    if (!vol->writable) {
+    if (!vol->writable)
         return INFS_STATUS_READ_ONLY;
-    }
+
     struct infs_lookup lookup;
-    if (infs_lookup_path(vol, path, &lookup) != 0)
-        return INFS_STATUS_ERROR;
+    infs_status status = infs_lookup_path(vol, path, &lookup);
+    if (status != INFS_STATUS_OK)
+        return status;
     uint8_t block[INFS_BLOCK_SIZE];
-    if (read_object(vol, lookup.block, block) != 0)
-        return INFS_STATUS_ERROR;
+    status = read_object(vol, lookup.block, block);
+    if (status != INFS_STATUS_OK)
+        return status;
     struct infs_posix_compat_disk *posix = object_posix(block);
     struct infs_attributes_disk *attributes = object_attributes(block);
-    if (!posix || !attributes) {
+    if (!posix || !attributes)
         return INFS_STATUS_CORRUPT;
-    }
+
+    int64_t now = 0;
+    status = infs_storage_current_time_ns(&vol->storage, &now);
+    if (status != INFS_STATUS_OK)
+        return status;
 
     if (mask & INFS_POSIX_SET_PERMISSIONS)
         posix->permissions = infs_cpu_to_le32(permissions & 07777u);
@@ -24,11 +30,12 @@ static int set_posix_tx(struct infs_volume *vol, const char *path,
         posix->uid = infs_cpu_to_le32(uid);
     if (mask & INFS_POSIX_SET_GID)
         posix->gid = infs_cpu_to_le32(gid);
-    attributes->change_time_ns = (int64_t)infs_cpu_to_le64(
-        (uint64_t)now_ns(vol));
+    attributes->change_time_ns =
+        (int64_t)infs_cpu_to_le64((uint64_t)now);
 
-    if (write_object(vol, lookup.block, block) != 0)
-        return INFS_STATUS_ERROR;
+    status = write_object(vol, lookup.block, block);
+    if (status != INFS_STATUS_OK)
+        return status;
     return infs_volume_sync(vol);
 }
 
@@ -36,10 +43,12 @@ infs_status infs_set_posix_compat(struct infs_volume *vol, const char *path,
                                   uint32_t mask, uint32_t permissions,
                                   uint32_t uid, uint32_t gid)
 {
-    if ((mask & ~(INFS_POSIX_SET_PERMISSIONS | INFS_POSIX_SET_UID |
-                  INFS_POSIX_SET_GID)) != 0) {
+    if (!vol || !path)
         return INFS_STATUS_INVALID_ARGUMENT;
-    }
+    if ((mask & ~(INFS_POSIX_SET_PERMISSIONS | INFS_POSIX_SET_UID |
+                  INFS_POSIX_SET_GID)) != 0)
+        return INFS_STATUS_INVALID_ARGUMENT;
+
     infs_status status = tx_begin(vol);
     if (status != INFS_STATUS_OK)
         return status;
@@ -58,41 +67,51 @@ static int time_action_valid(uint32_t action)
 static int set_times_tx(struct infs_volume *vol, const char *path,
                         const struct infs_time_update *update)
 {
-    if (!vol->writable) {
+    if (!vol->writable)
         return INFS_STATUS_READ_ONLY;
-    }
-    struct infs_lookup lookup;
-    if (infs_lookup_path(vol, path, &lookup) != 0)
-        return INFS_STATUS_ERROR;
-    uint8_t block[INFS_BLOCK_SIZE];
-    if (read_object(vol, lookup.block, block) != 0)
-        return INFS_STATUS_ERROR;
-    struct infs_attributes_disk *attributes = object_attributes(block);
-    if (!attributes) {
-        return INFS_STATUS_CORRUPT;
-    }
 
-    int64_t now = now_ns(vol);
+    struct infs_lookup lookup;
+    infs_status status = infs_lookup_path(vol, path, &lookup);
+    if (status != INFS_STATUS_OK)
+        return status;
+    uint8_t block[INFS_BLOCK_SIZE];
+    status = read_object(vol, lookup.block, block);
+    if (status != INFS_STATUS_OK)
+        return status;
+    struct infs_attributes_disk *attributes = object_attributes(block);
+    if (!attributes)
+        return INFS_STATUS_CORRUPT;
+
+    int64_t now = 0;
+    status = infs_storage_current_time_ns(&vol->storage, &now);
+    if (status != INFS_STATUS_OK)
+        return status;
     if (update->access_action == INFS_TIME_NOW)
-        attributes->access_time_ns = (int64_t)infs_cpu_to_le64((uint64_t)now);
+        attributes->access_time_ns =
+            (int64_t)infs_cpu_to_le64((uint64_t)now);
     else if (update->access_action == INFS_TIME_SET)
         attributes->access_time_ns = (int64_t)infs_cpu_to_le64(
             (uint64_t)update->access_time_ns);
     if (update->modification_action == INFS_TIME_NOW)
-        attributes->modification_time_ns = (int64_t)infs_cpu_to_le64((uint64_t)now);
+        attributes->modification_time_ns =
+            (int64_t)infs_cpu_to_le64((uint64_t)now);
     else if (update->modification_action == INFS_TIME_SET)
         attributes->modification_time_ns = (int64_t)infs_cpu_to_le64(
             (uint64_t)update->modification_time_ns);
-    attributes->change_time_ns = (int64_t)infs_cpu_to_le64((uint64_t)now);
+    attributes->change_time_ns =
+        (int64_t)infs_cpu_to_le64((uint64_t)now);
 
-    if (write_object(vol, lookup.block, block) != 0)
-        return INFS_STATUS_ERROR;
+    status = write_object(vol, lookup.block, block);
+    if (status != INFS_STATUS_OK)
+        return status;
     return infs_volume_sync(vol);
 }
 
 infs_status infs_set_times(struct infs_volume *vol, const char *path,
                            const struct infs_time_update *update)
 {
+    if (!vol || !path)
+        return INFS_STATUS_INVALID_ARGUMENT;
     struct infs_time_update now = {
         .access_action = INFS_TIME_NOW,
         .modification_action = INFS_TIME_NOW,
@@ -100,9 +119,8 @@ infs_status infs_set_times(struct infs_volume *vol, const char *path,
     if (!update)
         update = &now;
     if (!time_action_valid(update->access_action) ||
-        !time_action_valid(update->modification_action)) {
+        !time_action_valid(update->modification_action))
         return INFS_STATUS_INVALID_ARGUMENT;
-    }
 
     infs_status status = tx_begin(vol);
     if (status != INFS_STATUS_OK)

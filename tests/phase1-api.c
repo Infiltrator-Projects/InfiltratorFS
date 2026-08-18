@@ -55,6 +55,36 @@ int main(int argc, char **argv)
     uint8_t stable_id[16];
     memcpy(stable_id, initial_attributes.object_id, sizeof(stable_id));
 
+    struct infs_attributes path_attributes;
+    expect(infs_get_attributes(&vol, "/alpha/data/", &path_attributes) ==
+               INFS_STATUS_NOT_DIRECTORY,
+           "trailing slash requires a directory");
+    expect(infs_get_attributes(&vol, "/alpha/data/.", &path_attributes) ==
+               INFS_STATUS_NOT_DIRECTORY,
+           "dot cannot traverse a regular file");
+    expect(infs_get_attributes(&vol, "/alpha/data/..", &path_attributes) ==
+               INFS_STATUS_NOT_DIRECTORY,
+           "dot-dot cannot traverse a regular file");
+    expect(infs_get_attributes(&vol, "/alpha/./data", &path_attributes) ==
+               INFS_STATUS_OK,
+           "dot traversal through a directory works");
+    expect(infs_get_attributes(&vol, "/alpha/../alpha/data", &path_attributes) ==
+               INFS_STATUS_OK,
+           "dot-dot traversal through a directory works");
+    expect(infs_create_file(&vol, "/alpha/not-a-directory/", &file_options) ==
+               INFS_STATUS_NOT_DIRECTORY,
+           "create-file trailing slash requires directory semantics");
+    expect(infs_unlink(&vol, "/alpha/data/") == INFS_STATUS_NOT_DIRECTORY,
+           "unlink trailing slash requires directory semantics");
+
+    char long_path[INFS_PATH_MAX + 1u];
+    long_path[0] = '/';
+    memset(long_path + 1, 'a', INFS_PATH_MAX - 1u);
+    long_path[INFS_PATH_MAX] = '\0';
+    expect(infs_get_attributes(&vol, long_path, &path_attributes) ==
+               INFS_STATUS_NAME_TOO_LONG,
+           "core path limit is enforced before traversal");
+
     const char first[] = "ABCDEFGHIJ";
     if (infs_write_file(&vol, "/alpha/data", first, sizeof(first) - 1u, 0) !=
         (int64_t)(sizeof(first) - 1u))
