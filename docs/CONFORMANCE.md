@@ -57,9 +57,9 @@ A writable storage backend must provide positioned write, durable flush, random-
 
 ## Recovery selection
 
-Physical checkpoint copies are first screened independently for checkpoint checksum, format and volume-geometry validity. Recovery then considers the surviving candidates in descending generation order and validates the complete graph referenced by each candidate: bitmap geometry/accounting, critical allocation, root, object index, exact ownership, namespace graph and checksum graph.
+Physical checkpoint copies are first screened independently for checkpoint checksum, format and volume-geometry validity. An unreadable physical checkpoint copy is tolerated as lost redundancy when another independently valid checkpoint copy survives. If no valid checkpoint copy survives and at least one checkpoint read failed, the originating storage error is returned rather than being mislabeled as corruption. Recovery then considers the surviving candidates in descending generation order and validates the complete graph referenced by each candidate: bitmap geometry/accounting, critical allocation, root, object index, exact ownership, namespace graph and checksum graph.
 
-A candidate whose committed referenced graph is structurally corrupt may be rejected in favor of the next older individually valid committed candidate. Missing or cyclic internal metadata references encountered while validating an otherwise committed graph are classified as graph corruption. External failures such as storage I/O errors, memory exhaustion or unsupported feature/format semantics are not reclassified as corruption and must not be silently hidden by falling back to an older generation.
+A candidate whose committed referenced graph is structurally corrupt may be rejected in favor of the next older individually valid committed candidate. Missing or cyclic internal metadata references encountered while validating an otherwise committed graph are classified as graph corruption. External failures encountered while validating a candidate graph, such as storage I/O errors, memory exhaustion or unsupported feature/format semantics, are not reclassified as corruption and must not be silently hidden by falling back to an older generation.
 
 A read-only recovery leaves physical checkpoint copies unchanged. After writable recovery selects an older valid graph, the implementation rewrites and durably flushes all three checkpoint replicas to that selected committed generation before returning the volume writable.
 
@@ -88,7 +88,7 @@ The same portable test creates a 1 TiB logical sparse file in a 16 MiB memory im
 
 `infilfs-open-hardening` adds the 0.6.2 regression gates for a valid-CRC checkpoint whose bitmap is too small to represent `total_blocks` and for an attempted writable open on a backend that lacks mutation-critical callbacks. The malformed bitmap must be rejected before bit traversal.
 
-`infilfs-063-hardening` adds deterministic 0.6.3 regression gates for full-graph fallback from corrupt newer checkpoints to an older committed generation, writable replica healing after fallback, refusal to mask a newer-generation I/O failure, and rename trailing-slash semantics.
+`infilfs-063-hardening` adds deterministic 0.6.3 regression gates for single-replica checkpoint-read tolerance, all-replica checkpoint-read error propagation, full-graph fallback from corrupt newer checkpoints to an older committed generation, writable replica healing after fallback, refusal to mask a newer-generation graph I/O failure, and rename trailing-slash semantics.
 
 `infilfs-sparse-files` adds deterministic transaction failpoints around high-offset writes and hole punches. It requires old-or-new visibility at the checkpoint boundary and checks repeated allocation/reclamation for block leaks.
 
