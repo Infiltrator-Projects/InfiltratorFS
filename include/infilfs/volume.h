@@ -58,6 +58,7 @@ struct infs_deferred_range {
 struct infs_volume {
     struct infs_storage storage;
     int writable;
+    int checkpoint_repair_needed;
     uint64_t size_bytes;
     struct infs_superblock_disk sb;
     uint8_t *bitmap;
@@ -66,6 +67,7 @@ struct infs_volume {
     /* Phase 2 transaction state. The public struct remains intentionally
      * inspectable while the prototype format is evolving. */
     int tx_active;
+    infs_status tx_error;
     struct infs_superblock_disk tx_base_sb;
     uint8_t *tx_base_bitmap;
     struct infs_deferred_range *tx_deferred;

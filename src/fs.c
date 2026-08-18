@@ -4,6 +4,7 @@
 #include "infilfs/checksum.h"
 #include "infilfs/endian.h"
 #include "infilfs/storage.h"
+#include "infilfs/utf8.h"
 
 #include <stddef.h>
 #include <stdio.h>
@@ -19,10 +20,25 @@ static uint64_t block_crc_with_zeroed_checksum(const uint8_t block[INFS_BLOCK_SI
     return infs_crc64_ecma(tmp, sizeof(tmp));
 }
 
+static int superblock_label_valid(const uint8_t label[INFS_LABEL_MAX])
+{
+    const uint8_t *end = memchr(label, 0, INFS_LABEL_MAX);
+    if (!end)
+        return 0;
+    size_t length = (size_t)(end - label);
+    if (length && !infs_utf8_validate(label, length))
+        return 0;
+    for (size_t i = length + 1u; i < INFS_LABEL_MAX; ++i) {
+        if (label[i] != 0)
+            return 0;
+    }
+    return 1;
+}
+
 infs_status infs_encode_superblock(uint8_t block[INFS_BLOCK_SIZE],
                                    const struct infs_superblock_disk *sb)
 {
-    if (!block || !sb)
+    if (!block || !sb || !superblock_label_valid(sb->label))
         return INFS_STATUS_INVALID_ARGUMENT;
     memset(block, 0, INFS_BLOCK_SIZE);
     memcpy(block, sb, sizeof(*sb));
@@ -52,6 +68,8 @@ int infs_validate_superblock_block(const uint8_t block[INFS_BLOCK_SIZE])
     if (infs_le16_to_cpu(sb->block_shift) != INFS_BLOCK_SHIFT)
         return 0;
     if (infs_le32_to_cpu(sb->checksum_type) != INFS_CHECKSUM_CRC64_ECMA)
+        return 0;
+    if (!superblock_label_valid(sb->label))
         return 0;
     uint64_t incompat_flags = infs_le64_to_cpu(sb->incompat_flags);
     uint64_t required_flags = INFS_INCOMPAT_UTF8_NAMES;
@@ -114,6 +132,7 @@ infs_status infs_object_finalize(uint8_t block[INFS_BLOCK_SIZE])
     struct infs_object_header_disk *hdr =
         (struct infs_object_header_disk *)block;
     if (memcmp(hdr->magic, INFS_OBJECT_MAGIC, 8) != 0 ||
+        infs_le16_to_cpu(hdr->object_version) != 1u ||
         infs_le32_to_cpu(hdr->header_size) != sizeof(*hdr) ||
         infs_le32_to_cpu(hdr->payload_size) > INFS_BLOCK_SIZE - sizeof(*hdr)) {
         return INFS_STATUS_INVALID_ARGUMENT;
@@ -132,6 +151,8 @@ int infs_validate_object_block(const uint8_t block[INFS_BLOCK_SIZE])
     const struct infs_object_header_disk *hdr =
         (const struct infs_object_header_disk *)block;
     if (memcmp(hdr->magic, INFS_OBJECT_MAGIC, 8) != 0)
+        return 0;
+    if (infs_le16_to_cpu(hdr->object_version) != 1u)
         return 0;
     if (infs_le32_to_cpu(hdr->header_size) != sizeof(*hdr))
         return 0;
