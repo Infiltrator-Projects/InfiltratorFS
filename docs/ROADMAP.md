@@ -35,6 +35,7 @@
 - [x] Deliberate corruption and data-crash tests.
 - [x] Multi-object checksum chains.
 - [ ] Duplicate metadata/data recovery.
+- [ ] Validate a checkpoint's referenced generation graph during recovery and fall back to an older valid committed generation when the newest candidate graph is corrupt.
 - [ ] Forensic raw-object scanner.
 - [ ] Snapshot-coordinated online scrub.
 
@@ -89,6 +90,18 @@
 - [x] Refuse formatting mounted/held real block targets even when `--force` is supplied.
 - [x] Publish formatter checkpoints only after referenced metadata is durably written.
 - [x] Expand regression coverage and compile/test the FUSE adapter under Linux, Clang, ASan/UBSan and GCC `-fanalyzer` gates.
+
+## Phase 4.3 — implementation 0.6.2 source hardening — complete
+
+- [x] Reject a committed bitmap that is too small to represent `total_blocks` before any bitmap traversal.
+- [x] Require mutation-capable storage backends to provide write, flush, randomness and clock callbacks.
+- [x] Preserve concrete `infs_status` failures through checksum, write, truncate, punch, enumeration, remove, rename and attribute-update paths.
+- [x] Fail transactions on clock-service errors instead of silently committing zero timestamps.
+- [x] Add malformed-open/backend-capability regression coverage.
+- [x] Enforce directory traversal semantics for trailing slash, `.` and `..` path components and enforce the core path-length limit.
+- [x] Normalize pre-epoch FUSE timestamps, overflow-check time/offset conversions and reject oversized I/O before mutation.
+- [x] Reopen real formatter block targets with `O_EXCL`, then revalidate identity and geometry before destructive writes.
+- [x] Keep on-disk Format 0.6 unchanged.
 
 ## Phase 4 — modern storage features
 
