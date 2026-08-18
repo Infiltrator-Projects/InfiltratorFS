@@ -23,9 +23,10 @@ static int checksum_validate(uint8_t block[INFS_BLOCK_SIZE],
     struct infs_checksum_payload_disk *p =
         (struct infs_checksum_payload_disk *)(block + sizeof(*hdr));
     uint32_t count = infs_le32_to_cpu(p->checksum_count);
+    if (count > INFS_CHECKSUMS_PER_OBJECT)
+        return INFS_STATUS_CORRUPT;
     size_t need = sizeof(*p) + (size_t)count * sizeof(struct infs_data_checksum_disk);
-    if (count > INFS_CHECKSUMS_PER_OBJECT ||
-        need != infs_le32_to_cpu(hdr->payload_size) ||
+    if (need != infs_le32_to_cpu(hdr->payload_size) ||
         need > INFS_BLOCK_SIZE - sizeof(*hdr) ||
         infs_le32_to_cpu(p->reserved) != 0 || id_is_zero(p->owner_object_id)) {
         return INFS_STATUS_CORRUPT;
