@@ -11,12 +11,15 @@ static int file_validate(uint8_t block[INFS_BLOCK_SIZE],
     }
     struct infs_file_payload_disk *p =
         (struct infs_file_payload_disk *)(block + sizeof(*hdr));
+    if (validate_common_metadata(&p->attributes, &p->posix) != INFS_STATUS_OK)
+        return INFS_STATUS_CORRUPT;
     if (infs_le32_to_cpu(p->data_checksum_type) != INFS_CHECKSUM_SHA256) {
         return INFS_STATUS_CORRUPT;
     }
     uint32_t count = infs_le32_to_cpu(p->extent_count);
     size_t need = sizeof(*p) + (size_t)count * sizeof(struct infs_extent_disk);
-    if (need > infs_le32_to_cpu(hdr->payload_size) || need > INFS_BLOCK_SIZE - sizeof(*hdr)) {
+    if (need != infs_le32_to_cpu(hdr->payload_size) ||
+        need > INFS_BLOCK_SIZE - sizeof(*hdr)) {
         return INFS_STATUS_CORRUPT;
     }
     struct infs_extent_disk *ext = (struct infs_extent_disk *)(p + 1);
@@ -44,7 +47,7 @@ static int file_validate(uint8_t block[INFS_BLOCK_SIZE],
         *payload_out = p;
     if (extents_out)
         *extents_out = ext;
-    return 0;
+    return INFS_STATUS_OK;
 }
 
 static int file_validate_volume(struct infs_volume *vol, uint8_t block[INFS_BLOCK_SIZE],
@@ -53,8 +56,9 @@ static int file_validate_volume(struct infs_volume *vol, uint8_t block[INFS_BLOC
 {
     struct infs_file_payload_disk *p;
     struct infs_extent_disk *ext;
-    if (file_validate(block, &p, &ext) != 0)
-        return INFS_STATUS_ERROR;
+    int status = file_validate(block, &p, &ext);
+    if (status != INFS_STATUS_OK)
+        return status;
     uint32_t count = infs_le32_to_cpu(p->extent_count);
     uint64_t total = infs_le64_to_cpu(vol->sb.total_blocks);
     for (uint32_t i = 0; i < count; ++i) {
@@ -76,7 +80,7 @@ static int file_validate_volume(struct infs_volume *vol, uint8_t block[INFS_BLOC
         *payload_out = p;
     if (extents_out)
         *extents_out = ext;
-    return 0;
+    return INFS_STATUS_OK;
 }
 
 static uint64_t file_logical_blocks(const struct infs_file_payload_disk *p,

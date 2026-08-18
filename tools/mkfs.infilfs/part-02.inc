@@ -53,6 +53,21 @@ int main(int argc, char **argv)
         close(fd);
         return 1;
     }
+    if (is_block) {
+        int in_use = block_device_in_use(fd);
+        if (in_use > 0) {
+            fprintf(stderr,
+                    "Refusing to format an active block device or a disk with an active child partition.\n");
+            close(fd);
+            return 1;
+        }
+        if (in_use < 0) {
+            fprintf(stderr,
+                    "Refusing to format because block-device usage could not be verified safely.\n");
+            close(fd);
+            return 1;
+        }
+    }
     if (size_bytes < INFS_MIN_SIZE_BYTES) {
         fprintf(stderr, "Target is too small; minimum is 16 MiB.\n");
         close(fd);

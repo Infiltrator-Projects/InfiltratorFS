@@ -11,10 +11,13 @@ static int dir_validate(uint8_t block[INFS_BLOCK_SIZE],
 
     struct infs_directory_payload_disk *payload =
         (struct infs_directory_payload_disk *)(block + sizeof(*hdr));
+    if (validate_common_metadata(&payload->attributes, &payload->posix) !=
+        INFS_STATUS_OK)
+        return INFS_STATUS_CORRUPT;
     uint32_t bytes = infs_le32_to_cpu(payload->bytes_used);
     uint32_t count = infs_le32_to_cpu(payload->entry_count);
     size_t available = infs_le32_to_cpu(hdr->payload_size) - sizeof(*payload);
-    if (bytes > available) {
+    if (bytes != available) {
         return INFS_STATUS_CORRUPT;
     }
 
@@ -34,11 +37,19 @@ static int dir_validate(uint8_t block[INFS_BLOCK_SIZE],
             name_len == 0 || name_len > INFS_NAME_MAX ||
             sizeof(*e) + name_len > rec ||
             (type != INFS_OBJECT_DIRECTORY && type != INFS_OBJECT_FILE) ||
+            infs_le16_to_cpu(e->flags) != 0 || id_is_zero(e->object_id) ||
             memchr(name, '\0', name_len) != NULL || memchr(name, '/', name_len) != NULL) {
             return INFS_STATUS_CORRUPT;
         }
         if (!infs_utf8_validate(name, name_len)) {
             return INFS_STATUS_CORRUPT;
+        }
+        if ((name_len == 1u && name[0] == '.') ||
+            (name_len == 2u && name[0] == '.' && name[1] == '.'))
+            return INFS_STATUS_CORRUPT;
+        for (size_t i = sizeof(*e) + name_len; i < rec; ++i) {
+            if (p[i] != 0)
+                return INFS_STATUS_CORRUPT;
         }
         p += rec;
         remaining -= rec;
@@ -49,7 +60,7 @@ static int dir_validate(uint8_t block[INFS_BLOCK_SIZE],
     }
     if (payload_out)
         *payload_out = payload;
-    return 0;
+    return INFS_STATUS_OK;
 }
 
 static struct infs_dirent_disk *dir_find(struct infs_directory_payload_disk *payload,
@@ -79,11 +90,13 @@ static int dir_add(uint8_t block[INFS_BLOCK_SIZE], const char *name,
                    const uint8_t object_id[16], uint16_t type)
 {
     struct infs_directory_payload_disk *payload;
-    if (dir_validate(block, &payload) != 0)
-        return INFS_STATUS_ERROR;
+    int status = dir_validate(block, &payload);
+    if (status != INFS_STATUS_OK)
+        return status;
     size_t name_len = strlen(name);
     if (name_len == 0 || name_len > INFS_NAME_MAX || strchr(name, '/') ||
-        !infs_utf8_validate(name, name_len)) {
+        strcmp(name, ".") == 0 || strcmp(name, "..") == 0 ||
+        id_is_zero(object_id) || !infs_utf8_validate(name, name_len)) {
         return INFS_STATUS_INVALID_ARGUMENT;
     }
     if (dir_find(payload, name, name_len, NULL)) {
@@ -109,5 +122,5 @@ static int dir_add(uint8_t block[INFS_BLOCK_SIZE], const char *name,
     payload->entry_count = infs_cpu_to_le32(infs_le32_to_cpu(payload->entry_count) + 1u);
     payload->bytes_used = infs_cpu_to_le32((uint32_t)(bytes + rec));
     hdr->payload_size = infs_cpu_to_le32((uint32_t)needed);
-    return 0;
+    return INFS_STATUS_OK;
 }

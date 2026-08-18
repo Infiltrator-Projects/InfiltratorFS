@@ -31,6 +31,38 @@ static int neg_status(infs_status status)
     return -infs_status_to_errno(status);
 }
 
+static void apply_mount_options(const char *options, int *read_only)
+{
+    const char *p = options;
+    while (p && *p) {
+        const char *end = strchr(p, ',');
+        size_t length = end ? (size_t)(end - p) : strlen(p);
+        if (length == 2u && memcmp(p, "ro", 2) == 0)
+            *read_only = 1;
+        else if (length == 2u && memcmp(p, "rw", 2) == 0)
+            *read_only = 0;
+        if (!end)
+            break;
+        p = end + 1;
+    }
+}
+
+static int fuse_requested_read_only(int argc, char **argv)
+{
+    int read_only = 0;
+    for (int i = 3; i < argc; ++i) {
+        if (strcmp(argv[i], "-r") == 0 ||
+            strcmp(argv[i], "--read-only") == 0) {
+            read_only = 1;
+        } else if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
+            apply_mount_options(argv[++i], &read_only);
+        } else if (strncmp(argv[i], "-o", 2) == 0 && argv[i][2] != '\0') {
+            apply_mount_options(argv[i] + 2, &read_only);
+        }
+    }
+    return read_only;
+}
+
 static void attributes_to_stat(const struct infs_attributes *attributes,
                                struct stat *st)
 {
@@ -256,9 +288,10 @@ static int infs_fsync_cb(const char *path, int datasync, struct fuse_file_info *
     (void)path;
     (void)datasync;
     (void)fi;
+    if (!g_volume.writable)
+        return 0;
     return neg_status(infs_volume_sync(&g_volume));
 }
-
 
 static void *infs_init_cb(struct fuse_conn_info *conn, struct fuse_config *cfg)
 {
@@ -301,9 +334,11 @@ int main(int argc, char **argv)
         return 2;
     }
 
-    infs_status status = infs_posix_volume_open(&g_volume, argv[1], 1);
+    int read_only = fuse_requested_read_only(argc, argv);
+    infs_status status = infs_posix_volume_open(&g_volume, argv[1], !read_only);
     if (status != INFS_STATUS_OK) {
-        fprintf(stderr, "Cannot mount InfiltratorFS: %s\n",
+        fprintf(stderr, "Cannot mount InfiltratorFS%s: %s\n",
+                read_only ? " read-only" : "",
                 infs_status_string(status));
         return 1;
     }

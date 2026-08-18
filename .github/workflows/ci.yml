@@ -6,6 +6,7 @@ on:
     branches:
       - main
       - "format-*"
+      - "release/*"
       - "agent/*"
   pull_request:
 
@@ -18,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Linux adapter dependencies
         run: sudo apt-get update && sudo apt-get install -y libfuse3-dev fuse3
@@ -39,7 +40,10 @@ jobs:
       CC: clang
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+
+      - name: Install Linux adapter dependencies
+        run: sudo apt-get update && sudo apt-get install -y libfuse3-dev fuse3
 
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
@@ -58,7 +62,10 @@ jobs:
       UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+
+      - name: Install Linux adapter dependencies
+        run: sudo apt-get update && sudo apt-get install -y libfuse3-dev fuse3
 
       - name: Configure sanitizers
         run: >-
@@ -77,7 +84,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+
+      - name: Install Linux adapter dependencies
+        run: sudo apt-get update && sudo apt-get install -y libfuse3-dev fuse3
 
       - name: Configure analyzer
         run: >-
@@ -87,12 +97,15 @@ jobs:
       - name: Build
         run: cmake --build build --parallel
 
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
   windows:
     name: Windows portable core
     runs-on: windows-latest
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Configure MSVC
         run: cmake -S . -B build -A x64

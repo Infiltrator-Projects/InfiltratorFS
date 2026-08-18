@@ -3,9 +3,11 @@ static int create_object(struct infs_volume *vol, const char *path,
                          const struct infs_create_options *options,
                          uint16_t type)
 {
-    if (!vol->writable) {
+    if (!vol->writable)
         return INFS_STATUS_READ_ONLY;
-    }
+    if (options && (options->portable_flags & ~INFS_KNOWN_ATTR_FLAGS) != 0)
+        return INFS_STATUS_INVALID_ARGUMENT;
+
     struct infs_lookup parent;
     char name[INFS_NAME_MAX + 1u];
     infs_status status = split_parent(vol, path, &parent, name);
@@ -20,20 +22,18 @@ static int create_object(struct infs_volume *vol, const char *path,
     status = dir_validate(parent_block, &parent_payload);
     if (status != INFS_STATUS_OK)
         return status;
-    if (dir_find(parent_payload, name, strlen(name), NULL)) {
+    if (dir_find(parent_payload, name, strlen(name), NULL))
         return INFS_STATUS_ALREADY_EXISTS;
-    }
 
     uint64_t object_block, got;
     status = alloc_run(vol, 1, &object_block, &got);
     if (status != INFS_STATUS_OK)
         return status;
-    if (got != 1) {
+    if (got != 1)
         return INFS_STATUS_CORRUPT;
-    }
 
     uint8_t object_id[16];
-    status = infs_storage_random(&vol->storage, object_id, sizeof(object_id));
+    status = generate_unique_object_id(vol, object_id);
     if (status != INFS_STATUS_OK) {
         free_run(vol, object_block, 1);
         return status;
@@ -82,6 +82,7 @@ static int create_object(struct infs_volume *vol, const char *path,
          (type == INFS_OBJECT_DIRECTORY ? 0755u : 0644u)) & 07777u);
     posix->uid = infs_cpu_to_le32(options ? options->posix_uid : 0);
     posix->gid = infs_cpu_to_le32(options ? options->posix_gid : 0);
+    posix->flags = 0;
 
     status = infs_object_finalize(object);
     if (status == INFS_STATUS_OK)

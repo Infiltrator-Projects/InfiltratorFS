@@ -13,7 +13,14 @@
 
 #define INFS_DIRENT_ALIGN 8u
 
+static int validate_common_metadata(
+    const struct infs_attributes_disk *attributes,
+    const struct infs_posix_compat_disk *posix);
 static int validate_integrity_metadata(struct infs_volume *vol);
+static int validate_namespace_graph(struct infs_volume *vol);
+static int validate_checksum_graph(struct infs_volume *vol);
+static infs_status generate_unique_object_id(struct infs_volume *vol,
+                                             uint8_t id[16]);
 
 #include "volume/part1.inc"
 #include "volume/phase3/part2-01.inc"
