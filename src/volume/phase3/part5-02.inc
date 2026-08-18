@@ -140,10 +140,19 @@ static int rename_tx(struct infs_volume *vol, const char *oldpath,
                 return INFS_STATUS_CORRUPT;
             new_payload->attributes.link_count = infs_cpu_to_le64(links - 1u);
         }
+        /* The directory helpers intentionally validate the object checksum on
+         * entry. Re-finalize after each in-memory structural edit before a
+         * second helper touches the same block. */
+        status = infs_object_finalize(new_block);
+        if (status != INFS_STATUS_OK)
+            return status;
     }
 
     if (same_parent) {
         status = dir_remove(new_block, old_name, NULL);
+        if (status != INFS_STATUS_OK)
+            return status;
+        status = infs_object_finalize(new_block);
         if (status != INFS_STATUS_OK)
             return status;
         status = dir_add(new_block, new_name, source_id, source_type);
