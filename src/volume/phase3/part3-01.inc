@@ -17,6 +17,11 @@ static int file_validate(uint8_t block[INFS_BLOCK_SIZE],
         return INFS_STATUS_CORRUPT;
     }
     uint32_t count = infs_le32_to_cpu(p->extent_count);
+    const size_t max_extents =
+        (INFS_BLOCK_SIZE - sizeof(*hdr) - sizeof(*p)) /
+        sizeof(struct infs_extent_disk);
+    if ((size_t)count > max_extents)
+        return INFS_STATUS_CORRUPT;
     size_t need = sizeof(*p) + (size_t)count * sizeof(struct infs_extent_disk);
     if (need != infs_le32_to_cpu(hdr->payload_size) ||
         need > INFS_BLOCK_SIZE - sizeof(*hdr)) {
