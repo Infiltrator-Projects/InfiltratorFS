@@ -69,7 +69,9 @@ static int index_repoint(struct infs_volume *vol, const uint8_t id[16],
 
 static int tx_begin(struct infs_volume *vol)
 {
-    if (!vol || !vol->writable)
+    if (!vol)
+        return INFS_STATUS_INVALID_ARGUMENT;
+    if (!vol->writable)
         return INFS_STATUS_READ_ONLY;
     if (vol->tx_active)
         return vol->tx_error;
