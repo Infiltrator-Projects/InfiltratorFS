@@ -74,6 +74,22 @@
 - [x] Preserve copy-on-write publication and SHA-256 verification for sparse data.
 - [x] Add portable 1 TiB logical-file, malformed-extent, crash and leak tests.
 
+## Phase 4.2 — implementation 0.6.1 Format 0.6 hardening — complete
+
+- [x] Preserve the Format 0.6 packed layout and feature identity while publishing an implementation bugfix release.
+- [x] Validate exact ownership of every committed allocated block.
+- [x] Validate the complete namespace graph: unique names, target type/identity, parent links, link counts and root reachability.
+- [x] Reject stored `.` / `..`, dangling namespace references and unintended multiple references while hard links are unsupported.
+- [x] Validate that every indexed checksum object is reachable exactly once from its owning file chain.
+- [x] Enforce canonical zero padding and currently reserved metadata fields.
+- [x] Enforce unknown read-only-compatible features as read-only and reject them for writable open.
+- [x] Generate nonzero collision-checked persistent object IDs.
+- [x] Implement atomic POSIX rename replacement for files and empty directories.
+- [x] Open FUSE backing storage genuinely read-only for read-only mounts.
+- [x] Refuse formatting mounted/held real block targets even when `--force` is supplied.
+- [x] Publish formatter checkpoints only after referenced metadata is durably written.
+- [x] Expand regression coverage and compile/test the FUSE adapter under Linux, Clang, ASan/UBSan and GCC `-fanalyzer` gates.
+
 ## Phase 4 — modern storage features
 
 - [x] Sparse extents.
