@@ -6,6 +6,14 @@ static void discard_candidate_state(struct infs_volume *vol)
     vol->bitmap_bytes = 0;
 }
 
+static infs_status checkpoint_graph_status(infs_status status)
+{
+    if (status == INFS_STATUS_NOT_FOUND ||
+        status == INFS_STATUS_LOOP_DETECTED)
+        return INFS_STATUS_CORRUPT;
+    return status;
+}
+
 static infs_status read_checkpoint_candidates(
     struct infs_volume *vol,
     struct infs_superblock_disk candidates[INFS_CHECKPOINT_COUNT],
@@ -120,10 +128,10 @@ static infs_status load_checkpoint_graph(
     uint8_t object[INFS_BLOCK_SIZE];
     status = read_object(vol, infs_le64_to_cpu(vol->sb.root_object_block), object);
     if (status != INFS_STATUS_OK)
-        return status;
+        return checkpoint_graph_status(status);
     status = dir_validate(object, NULL);
     if (status != INFS_STATUS_OK)
-        return status;
+        return checkpoint_graph_status(status);
     struct infs_object_header_disk *root_hdr =
         (struct infs_object_header_disk *)object;
     if (memcmp(root_hdr->object_id, vol->sb.root_object_id, 16) != 0 ||
@@ -132,14 +140,14 @@ static infs_status load_checkpoint_graph(
 
     status = validate_index_entries(vol);
     if (status != INFS_STATUS_OK)
-        return status;
+        return checkpoint_graph_status(status);
     status = validate_integrity_metadata(vol);
     if (status != INFS_STATUS_OK)
-        return status;
+        return checkpoint_graph_status(status);
     status = validate_namespace_graph(vol);
     if (status != INFS_STATUS_OK)
-        return status;
-    return validate_checksum_graph(vol);
+        return checkpoint_graph_status(status);
+    return checkpoint_graph_status(validate_checksum_graph(vol));
 }
 
 infs_status infs_volume_open_storage(struct infs_volume *vol,
