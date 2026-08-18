@@ -224,12 +224,38 @@ static int rename_tx(struct infs_volume *vol, const char *oldpath,
     return infs_volume_sync(vol);
 }
 
+static infs_status validate_rename_trailing_slash(struct infs_volume *vol,
+                                                  const char *path)
+{
+    size_t length = 0;
+    infs_status status = path_length_checked(path, &length);
+    if (status != INFS_STATUS_OK)
+        return status;
+    if (length <= 1u || path[length - 1u] != '/')
+        return INFS_STATUS_OK;
+
+    struct infs_lookup lookup;
+    status = infs_lookup_path(vol, path, &lookup);
+    if (status != INFS_STATUS_OK)
+        return status;
+    return lookup.type == INFS_OBJECT_DIRECTORY ?
+        INFS_STATUS_OK : INFS_STATUS_NOT_DIRECTORY;
+}
+
 infs_status infs_rename(struct infs_volume *vol, const char *oldpath,
                         const char *newpath)
 {
-    if (!vol || !oldpath || !newpath)
+    if (!vol || !oldpath || !newpath || oldpath[0] != '/' || newpath[0] != '/')
         return INFS_STATUS_INVALID_ARGUMENT;
-    infs_status status = tx_begin(vol);
+
+    infs_status status = validate_rename_trailing_slash(vol, oldpath);
+    if (status != INFS_STATUS_OK)
+        return status;
+    status = validate_rename_trailing_slash(vol, newpath);
+    if (status != INFS_STATUS_OK)
+        return status;
+
+    status = tx_begin(vol);
     if (status != INFS_STATUS_OK)
         return status;
     status = rename_tx(vol, oldpath, newpath);
