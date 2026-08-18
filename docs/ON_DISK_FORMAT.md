@@ -3,7 +3,7 @@
 
 Status: experimental writable prototype. Format 0.6 is intentionally incompatible with formats 0.1 through 0.5.
 
-Implementation 0.6.0 introduced sparse extents, sparse checksum indexing and hole punching. Implementation 0.6.1 hardens validation and operating semantics without changing any Format 0.6 packed field, offset or feature identity. The normative acceptance rules are summarized in `CONFORMANCE.md`.
+Implementation 0.6.0 introduced sparse extents, sparse checksum indexing and hole punching. Implementation 0.6.1 hardened structural validation and namespace/integrity semantics. Implementation 0.6.2 closes post-release source-level geometry, error-propagation, adapter and destructive-tool safety defects without changing any Format 0.6 packed field, offset or feature identity. The normative acceptance rules are summarized in `CONFORMANCE.md`.
 
 ## 1. Encoding
 
@@ -55,15 +55,15 @@ Generation, filesystem UUID and root object ID are nonzero.
 
 Format 0.6 requires both `INFS_INCOMPAT_UTF8_NAMES` and `INFS_INCOMPAT_SPARSE_EXTENTS`. Readers reject a missing required bit or any unknown incompatible feature flag. A sparse-extents bit on a pre-0.6 checkpoint is invalid.
 
-Feature classes have distinct compatibility semantics. Unknown incompatible bits prevent any open. Unknown read-only-compatible bits may be opened read-only but prevent writable open. Unknown compatible bits may be ignored. Implementation 0.6.1 currently defines no compatible or read-only-compatible bits for newly created Format 0.6 volumes.
+Feature classes have distinct compatibility semantics. Unknown incompatible bits prevent any open. Unknown read-only-compatible bits may be opened read-only but prevent writable open. Unknown compatible bits may be ignored. Implementation 0.6.2 currently defines no compatible or read-only-compatible bits for newly created Format 0.6 volumes.
 
 CRC64 occupies the first eight checksum bytes. The remaining checksum bytes are zero in Format 0.6. The complete checksum field is zero during calculation. A checkpoint is accepted only when its magic, format, size, block geometry, checksum, volume size, feature flags, canonical padding and expected checkpoint positions validate. The newest valid generation wins.
 
 ## 4. Allocation bitmap
 
-Bit `b` describes block `b`: zero means free; one means allocated or unavailable. The bitmap is authoritative. Open recounts free blocks and rejects disagreement with the committed checkpoint.
+Bit `b` describes block `b`: zero means free; one means allocated or unavailable. The bitmap is authoritative. Before any bitmap bit is traversed, the reader proves that the declared bitmap contains enough bits to represent every block in `total_blocks`. Open then recounts free blocks and rejects disagreement with the committed checkpoint.
 
-Implementation 0.6.1 additionally reconstructs ownership from the committed roots. Every allocated in-volume block must be owned exactly once by a checkpoint, current bitmap image, current object-index root, indexed metadata object or normal file extent. An overlap or an allocated-but-unreachable block is corruption. Future shared/reflink extents require an explicit format feature and reference-accounting rules before duplicate data ownership can become valid.
+Implementations 0.6.1 and later additionally reconstruct ownership from the committed roots. Every allocated in-volume block must be owned exactly once by a checkpoint, current bitmap image, current object-index root, indexed metadata object or normal file extent. An overlap or an allocated-but-unreachable block is corruption. Future shared/reflink extents require an explicit format feature and reference-accounting rules before duplicate data ownership can become valid.
 
 ## 5. Object header
 
@@ -107,7 +107,7 @@ extended-attributes object ID   future named metadata, zero when absent
 
 This record is independent of Linux `struct stat` and Windows file-information structures.
 
-Format 0.6.1 accepts only the portable attribute flags currently defined in `format.h`. Security and extended-attribute references remain zero until their object classes and compatibility feature are specified.
+Implementations 0.6.1 and later accept only the portable attribute flags currently defined in `format.h`. Security and extended-attribute references remain zero until their object classes and compatibility feature are specified. The current portable flags are persistent cross-platform metadata; mutation-policy semantics for flags such as `READ_ONLY` require a future explicit core API/policy rather than being inferred silently by one adapter.
 
 `struct infs_posix_compat_disk` follows the common attributes in current file and directory payloads. It contains permission bits, numeric UID/GID values and reserved flags. Permission bits are limited to `07777`; the current reserved flags field is zero. This is adapter metadata, not persistent object identity or the final cross-platform security model.
 
@@ -142,7 +142,9 @@ Checksums cover the complete physical 4096-byte data block, including zero-fille
 
 ## 10. Transaction publication
 
-The storage backend must provide positioned read/write and a durable flush operation. Commit ordering is:
+A writable storage backend must provide positioned write, durable flush, secure-random and current-time services in addition to read and size services. A mutation does not silently substitute a zero timestamp when the clock service fails.
+
+Commit ordering is:
 
 ```text
 write new unreachable metadata and data
@@ -163,13 +165,15 @@ Committed file-data blocks are replaced through CoW. Extent mappings and indepen
 
 ## 11. Formatting safety and publication
 
-`mkfs.infilfs` refuses a real block device without `--force`. Implementation 0.6.1 also refuses a mounted target, a whole-disk target with a mounted child partition, or a target/child held by another Linux block layer. If active-use status cannot be established safely, formatting a real block device fails closed.
+`mkfs.infilfs` refuses a real block device without `--force`. It also refuses a mounted target, a whole-disk target with a mounted child partition, or a target/child held by another Linux block layer. If active-use status cannot be established safely, formatting a real block device fails closed.
+
+Implementation 0.6.2 additionally reopens the exact block target with Linux `O_EXCL` after advisory mount/holder preflight, verifies that the device identity and geometry are unchanged, and retains that exclusive descriptor through the destructive write sequence. Failure to obtain exclusivity aborts formatting before the first write.
 
 Formatting first invalidates the three candidate checkpoint locations and flushes that invalidation. It then writes the bitmap, initial index and root, durably flushes those referenced structures, and only then publishes the three valid generation-1 checkpoints. Therefore an interrupted format should be unmountable rather than presenting a valid checkpoint that references incomplete initial metadata.
 
 ## 12. Corruption rejection
 
-The opener rejects invalid checkpoint checksums or geometry, unsupported feature usage, inconsistent allocation accounting, noncanonical reserved data, invalid identities/generations, malformed object payloads, invalid UTF-8 names, stored navigation entries, duplicate names or index identities, dangling or multiply referenced namespace objects, wrong parent/type relationships, unreachable namespace objects, incorrect link counts, physical-block ownership overlap, allocated-but-unreachable blocks, logical extent gaps/overlaps, unknown extent flags, holes with physical storage, normal extents without physical storage, malformed/unsorted/shared/orphaned checksum chains and data checksum mismatches.
+The opener rejects invalid checkpoint checksums or geometry, an allocation bitmap too small for the declared volume, unsupported feature usage, inconsistent allocation accounting, noncanonical reserved data, invalid identities/generations, malformed object payloads, invalid UTF-8 names, stored navigation entries, duplicate names or index identities, dangling or multiply referenced namespace objects, wrong parent/type relationships, unreachable namespace objects, incorrect link counts, physical-block ownership overlap, allocated-but-unreachable blocks, logical extent gaps/overlaps, unknown extent flags, holes with physical storage, normal extents without physical storage, malformed/unsorted/shared/orphaned checksum chains and data checksum mismatches.
 
 The policy is to fail closed when committed state cannot be trusted.
 
