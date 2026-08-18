@@ -19,6 +19,7 @@ struct memory_image {
     uint64_t random_state;
     uint64_t fail_read_block;
     int fail_reads;
+    int fail_checkpoint_reads;
 };
 
 static void fail(const char *message)
@@ -33,15 +34,24 @@ static void expect(int condition, const char *message)
         fail(message);
 }
 
+static int is_checkpoint_block(uint64_t block)
+{
+    return block == 0 || block == TEST_BLOCKS / 2u ||
+           block == TEST_BLOCKS - 1u;
+}
+
 static infs_status memory_read(void *context, uint64_t offset,
                                void *buffer, size_t size)
 {
     struct memory_image *image = context;
     if (offset > image->size || size > image->size - (size_t)offset)
         return INFS_STATUS_IO_ERROR;
-    if (image->fail_reads && size == INFS_BLOCK_SIZE &&
-        offset == image->fail_read_block * INFS_BLOCK_SIZE)
-        return INFS_STATUS_IO_ERROR;
+    if (size == INFS_BLOCK_SIZE) {
+        uint64_t block = offset / INFS_BLOCK_SIZE;
+        if ((image->fail_reads && block == image->fail_read_block) ||
+            (image->fail_checkpoint_reads && is_checkpoint_block(block)))
+            return INFS_STATUS_IO_ERROR;
+    }
     memcpy(buffer, image->bytes + (size_t)offset, size);
     return INFS_STATUS_OK;
 }
@@ -147,6 +157,7 @@ static void build_valid_image(struct memory_image *image)
     image->random_state = UINT64_C(0x9e3779b97f4a7c15);
     image->fail_read_block = UINT64_MAX;
     image->fail_reads = 0;
+    image->fail_checkpoint_reads = 0;
 
     uint8_t *bitmap = image->bytes + INFS_BLOCK_SIZE;
     bitmap_set(bitmap, 0);
@@ -255,6 +266,23 @@ static uint64_t prepare_newer_corrupt_generation(struct memory_image *image,
     return newer_root;
 }
 
+static void check_checkpoint_replica_reads(struct memory_image *image)
+{
+    build_valid_image(image);
+    image->fail_read_block = 0;
+    image->fail_reads = 1;
+    struct infs_volume volume;
+    expect(open_image(image, 0, &volume) == INFS_STATUS_OK,
+           "one unreadable checkpoint replica is tolerated");
+    infs_volume_close(&volume);
+
+    build_valid_image(image);
+    image->fail_checkpoint_reads = 1;
+    expect(open_image(image, 0, &volume) == INFS_STATUS_IO_ERROR,
+           "all unreadable checkpoint replicas preserve I/O failure");
+    image->fail_checkpoint_reads = 0;
+}
+
 static void check_checkpoint_graph_fallback(struct memory_image *image)
 {
     uint8_t old_checkpoint[INFS_BLOCK_SIZE];
@@ -298,7 +326,7 @@ static void check_checkpoint_graph_io_is_not_masked(struct memory_image *image)
     image->fail_reads = 1;
     struct infs_volume volume;
     expect(open_image(image, 0, &volume) == INFS_STATUS_IO_ERROR,
-           "do not hide newer-generation I/O failure by falling back");
+           "do not hide newer-generation graph I/O failure by falling back");
     image->fail_reads = 0;
 }
 
@@ -345,6 +373,7 @@ int main(void)
     if (!image.bytes)
         fail("allocate memory image");
 
+    check_checkpoint_replica_reads(&image);
     check_checkpoint_graph_fallback(&image);
     check_checkpoint_graph_io_is_not_masked(&image);
     check_rename_trailing_slashes(&image);
