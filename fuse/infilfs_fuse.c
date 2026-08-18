@@ -66,6 +66,17 @@ static int fuse_requested_read_only(int argc, char **argv)
     return read_only;
 }
 
+static int uint64_to_off_t(uint64_t value, off_t *out)
+{
+    if (!out)
+        return -EINVAL;
+    off_t converted = (off_t)value;
+    if (converted < 0 || (uint64_t)converted != value)
+        return -EOVERFLOW;
+    *out = converted;
+    return 0;
+}
+
 static void ns_to_timespec(int64_t ns, struct timespec *out)
 {
     int64_t seconds = ns / INFS_NS_PER_SECOND;
@@ -103,8 +114,10 @@ static int attributes_to_stat(const struct infs_attributes *attributes,
 {
     if (!attributes || !st)
         return -EINVAL;
-    if ((uint64_t)(off_t)attributes->logical_size != attributes->logical_size)
-        return -EOVERFLOW;
+    off_t logical_size = 0;
+    int rc = uint64_to_off_t(attributes->logical_size, &logical_size);
+    if (rc != 0)
+        return rc;
 
     memset(st, 0, sizeof(*st));
     st->st_mode = (attributes->object_type == INFS_OBJECT_DIRECTORY ?
@@ -112,7 +125,7 @@ static int attributes_to_stat(const struct infs_attributes *attributes,
     st->st_uid = (uid_t)attributes->posix_uid;
     st->st_gid = (gid_t)attributes->posix_gid;
     st->st_nlink = (nlink_t)attributes->link_count;
-    st->st_size = (off_t)attributes->logical_size;
+    st->st_size = logical_size;
     st->st_blksize = INFS_BLOCK_SIZE;
     st->st_blocks = (blkcnt_t)(attributes->allocated_size / 512u);
     uint64_t inode = infs_crc64_ecma(attributes->object_id, 16);
@@ -227,9 +240,9 @@ static int infs_write_cb(const char *path, const char *buf, size_t size, off_t o
         infs_status status = infs_get_attributes(&g_volume, path, &attributes);
         if (status != INFS_STATUS_OK)
             return neg_status(status);
-        if ((uint64_t)(off_t)attributes.logical_size != attributes.logical_size)
-            return -EOVERFLOW;
-        off = (off_t)attributes.logical_size;
+        int rc = uint64_to_off_t(attributes.logical_size, &off);
+        if (rc != 0)
+            return rc;
     }
     int64_t n = infs_write_file(&g_volume, path, buf, size, (uint64_t)off);
     if (n < 0)
