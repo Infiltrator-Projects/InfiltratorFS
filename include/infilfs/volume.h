@@ -58,6 +58,7 @@ struct infs_deferred_range {
 struct infs_volume {
     struct infs_storage storage;
     int writable;
+    int checkpoint_repair_needed;
     uint64_t size_bytes;
     struct infs_superblock_disk sb;
     uint8_t *bitmap;
