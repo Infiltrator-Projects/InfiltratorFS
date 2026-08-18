@@ -16,6 +16,9 @@ infs_status infs_volume_sync(struct infs_volume *vol)
         return infs_storage_flush(&vol->storage);
     }
 
+    if (vol->tx_error != INFS_STATUS_OK)
+        return vol->tx_error;
+
     const uint64_t old_bitmap_start =
         infs_le64_to_cpu(vol->tx_base_sb.bitmap_start_block);
     const uint64_t bitmap_blocks =
@@ -28,6 +31,9 @@ infs_status infs_volume_sync(struct infs_volume *vol)
     status = alloc_exact_run(vol, bitmap_blocks, &new_bitmap_start);
     if (status != INFS_STATUS_OK)
         return status;
+
+    if (vol->tx_error != INFS_STATUS_OK)
+        return vol->tx_error;
 
     /* Deferred frees remain reserved until every new metadata/data write is on
      * stable storage. They become reusable only in the new bitmap image. */
@@ -97,6 +103,7 @@ infs_status infs_volume_sync(struct infs_volume *vol)
     free(vol->tx_base_bitmap);
     vol->tx_base_bitmap = NULL;
     vol->tx_deferred_count = 0;
+    vol->tx_error = INFS_STATUS_OK;
     vol->tx_active = 0;
     phase2_failpoint("after-checkpoint");
 
