@@ -207,17 +207,21 @@ static int infs_read_cb(const char *path, char *buf, size_t size, off_t off,
     (void)fi;
     if (off < 0)
         return -EINVAL;
+    if (size > (size_t)INT_MAX)
+        return -EOVERFLOW;
     int64_t n = infs_read_file(&g_volume, path, buf, size, (uint64_t)off);
     if (n < 0)
         return neg_status((infs_status)n);
-    if (n > INT_MAX)
-        return -EOVERFLOW;
     return (int)n;
 }
 
 static int infs_write_cb(const char *path, const char *buf, size_t size, off_t off,
                          struct fuse_file_info *fi)
 {
+    if (off < 0)
+        return -EINVAL;
+    if (size > (size_t)INT_MAX)
+        return -EOVERFLOW;
     if (fi && (fi->flags & O_APPEND)) {
         struct infs_attributes attributes;
         infs_status status = infs_get_attributes(&g_volume, path, &attributes);
@@ -227,13 +231,9 @@ static int infs_write_cb(const char *path, const char *buf, size_t size, off_t o
             return -EOVERFLOW;
         off = (off_t)attributes.logical_size;
     }
-    if (off < 0)
-        return -EINVAL;
     int64_t n = infs_write_file(&g_volume, path, buf, size, (uint64_t)off);
     if (n < 0)
         return neg_status((infs_status)n);
-    if (n > INT_MAX)
-        return -EOVERFLOW;
     return (int)n;
 }
 
