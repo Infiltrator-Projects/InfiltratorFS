@@ -86,8 +86,12 @@ static int remove_object(struct infs_volume *vol, const char *path, int want_dir
 
 infs_status infs_unlink(struct infs_volume *vol, const char *path)
 {
-    if (!vol || !path)
+    if (!vol || !path || path[0] != '/')
         return INFS_STATUS_INVALID_ARGUMENT;
+    size_t length = strlen(path);
+    if (length > 1u && path[length - 1u] == '/')
+        return INFS_STATUS_NOT_DIRECTORY;
+
     infs_status status = tx_begin(vol);
     if (status != INFS_STATUS_OK)
         return status;
@@ -99,7 +103,7 @@ infs_status infs_unlink(struct infs_volume *vol, const char *path)
 
 infs_status infs_rmdir(struct infs_volume *vol, const char *path)
 {
-    if (!vol || !path)
+    if (!vol || !path || path[0] != '/')
         return INFS_STATUS_INVALID_ARGUMENT;
     infs_status status = tx_begin(vol);
     if (status != INFS_STATUS_OK)
