@@ -41,10 +41,15 @@ add_executable(infilfs-volume-conformance tests/volume-conformance.c)
 target_link_libraries(infilfs-volume-conformance PRIVATE infilfs_core)
 infilfs_enable_warnings(infilfs-volume-conformance)
 
+add_executable(infilfs-hardening-conformance tests/hardening-conformance.c)
+target_link_libraries(infilfs-hardening-conformance PRIVATE infilfs_core)
+infilfs_enable_warnings(infilfs-hardening-conformance)
+
 enable_testing()
 add_test(NAME infilfs-checksum-known-answer COMMAND infilfs-checksum-test)
 add_test(NAME infilfs-format-conformance COMMAND infilfs-format-conformance)
 add_test(NAME infilfs-volume-conformance COMMAND infilfs-volume-conformance)
+add_test(NAME infilfs-hardening-conformance COMMAND infilfs-hardening-conformance)
 
 # Linux/POSIX is the first adapter and test host. The core library and disk
 # format do not depend on this adapter.
