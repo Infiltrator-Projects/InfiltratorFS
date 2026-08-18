@@ -55,6 +55,23 @@ int main(int argc, char **argv)
     uint8_t stable_id[16];
     memcpy(stable_id, initial_attributes.object_id, sizeof(stable_id));
 
+    struct infs_attributes path_attributes;
+    expect(infs_get_attributes(&vol, "/alpha/data/", &path_attributes) ==
+               INFS_STATUS_NOT_DIRECTORY,
+           "trailing slash requires a directory");
+    expect(infs_get_attributes(&vol, "/alpha/data/.", &path_attributes) ==
+               INFS_STATUS_NOT_DIRECTORY,
+           "dot cannot traverse a regular file");
+    expect(infs_get_attributes(&vol, "/alpha/data/..", &path_attributes) ==
+               INFS_STATUS_NOT_DIRECTORY,
+           "dot-dot cannot traverse a regular file");
+    expect(infs_get_attributes(&vol, "/alpha/./data", &path_attributes) ==
+               INFS_STATUS_OK,
+           "dot traversal through a directory works");
+    expect(infs_get_attributes(&vol, "/alpha/../alpha/data", &path_attributes) ==
+               INFS_STATUS_OK,
+           "dot-dot traversal through a directory works");
+
     const char first[] = "ABCDEFGHIJ";
     if (infs_write_file(&vol, "/alpha/data", first, sizeof(first) - 1u, 0) !=
         (int64_t)(sizeof(first) - 1u))
