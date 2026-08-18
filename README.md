@@ -5,32 +5,41 @@ InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem star
 
 Linux is the first implementation and test platform. It is not part of the filesystem's identity: the on-disk format and core engine are designed so a future Windows implementation can use the same volume without conversion or reformatting.
 
-## Current status — implementation 0.6.0 / format 0.6
+## Current status — implementation 0.6.1 / format 0.6
 
-Implementation 0.6.0 adds sparse files without weakening the proven transaction, integrity or platform-neutrality model:
+Implementation 0.6.1 is a compatibility-preserving hardening release for on-disk Format 0.6. It retains the sparse-file design introduced by 0.6.0 and strengthens validation, failure semantics, Linux adapter behaviour and destructive-tool safety without changing the disk layout.
+
+Current properties include:
 
 - 4096-byte little-endian on-disk format;
-- 128-bit persistent filesystem and object identities;
+- nonzero 128-bit persistent filesystem and object identities;
 - normal and hole extents with zero-storage logical ranges;
-- authoritative free-space bitmap;
+- authoritative free-space bitmap with exact live-block ownership validation;
 - three physically separated, checksummed checkpoints;
 - transactional copy-on-write metadata, data and allocation state;
 - atomic old-or-new generation publication without journal replay;
 - CRC64-ECMA metadata checksums and SHA-256 file-data checksums;
 - independently stored per-block data checksums;
 - sparse checksum chains that allocate metadata only for stored data;
+- checksum-chain reachability validation so hidden checksum metadata cannot be orphaned or shared accidentally;
 - platform-neutral file attributes with birth, access, modification and metadata-change times;
-- portable file flags plus references for future security and extended-attribute objects;
+- portable file flags plus reserved references for future security and extended-attribute objects;
 - POSIX permissions isolated as optional Linux adapter metadata;
 - mandatory well-formed UTF-8 namespace components;
+- root-to-leaf namespace validation for unique names, target identity/type, parent links, link counts and reachability;
+- canonical zero/reserved-field validation for the current Format 0.6 contract;
 - callback-based storage, durable-flush, randomness and clock services;
 - operating-system-neutral `infs_status` results with adapter mappings;
+- ordinary POSIX rename replacement semantics in the core/FUSE adapter;
+- genuinely read-only backing storage for FUSE `-r` / `-o ro` mounts;
+- safer block-device formatting that refuses mounted/held targets even with `--force`;
+- formatter publication ordering that leaves an interrupted format unmountable rather than publishing checkpoints before referenced metadata is durable;
 - byte-exact layout, malformed-image and deterministic in-memory volume conformance tests;
 - high-offset sparse write, hole-punch, crash-atomicity and reclamation tests;
-- automated Linux and Windows/MSVC core builds;
-- Linux/POSIX I/O and FUSE kept outside the core engine.
+- automated Linux, Windows/MSVC, Clang, ASan/UBSan and GCC `-fanalyzer` gates;
+- Linux/POSIX I/O and FUSE kept outside the portable core engine.
 
-The current prototype supports create, mkdir, lookup, enumeration, read, write, sparse grow, truncate, hole punch, unlink, empty-directory removal, cross-directory rename, attribute updates, direct-image tools and full-volume read-only scrub.
+The current prototype supports create, mkdir, lookup, enumeration, read, write, sparse grow, truncate, hole punch, unlink, empty-directory removal, atomic rename/replacement, attribute updates, direct-image tools and full-volume read-only scrub.
 
 ## Platform model
 
@@ -71,16 +80,20 @@ Exercise the filesystem without mounting:
 ./build/infilfs-tool infilfs.img punch /docs/README.md 4096 4096
 ```
 
-Mount with the current Linux adapter:
+Mount read/write with the current Linux adapter:
 
 ```bash
 mkdir -p /tmp/infilfs-mnt
 ./build/infilfs-fuse infilfs.img /tmp/infilfs-mnt -f
 ```
 
-The FUSE adapter remains single-threaded while the core is a single-writer prototype.
-On Linux Mint, `bash tests/mint-sparse-fuse.sh build` runs the real mounted
-1 TiB sparse-file/write/punch/remount harness after the normal CTest suite.
+Mount read-only without opening the backing image/device writable:
+
+```bash
+./build/infilfs-fuse infilfs.img /tmp/infilfs-mnt -f -o ro
+```
+
+The FUSE adapter remains single-threaded while the core is a single-writer prototype. On Linux Mint, `bash tests/mint-sparse-fuse.sh build` runs the real mounted 1 TiB sparse-file/write/punch/remount harness after the normal CTest suite.
 
 ## Repository layout
 
@@ -104,7 +117,7 @@ docs/                architecture, format, roadmap and design inspirations
 
 ## Safety
 
-InfiltratorFS remains experimental. Use image files or disposable media only. Do not store irreplaceable data on format 0.6.
+InfiltratorFS remains experimental. Use image files or disposable media only. Do not store irreplaceable data on Format 0.6.
 
 ## License
 

@@ -19,9 +19,9 @@
     uint8_t fs_uuid[16];
     uint8_t root_id[16];
     uint8_t index_id[16];
-    if (infs_random_bytes(fs_uuid, sizeof(fs_uuid)) != 0 ||
-        infs_random_bytes(root_id, sizeof(root_id)) != 0 ||
-        infs_random_bytes(index_id, sizeof(index_id)) != 0) {
+    if (generate_id(fs_uuid, NULL, NULL) != 0 ||
+        generate_id(root_id, fs_uuid, NULL) != 0 ||
+        generate_id(index_id, fs_uuid, root_id) != 0) {
         perror("getrandom");
         free(bitmap);
         close(fd);
@@ -47,24 +47,28 @@
         sb.checkpoint_block[i] = infs_cpu_to_le64(checkpoints[i]);
     memcpy(sb.filesystem_uuid, fs_uuid, sizeof(fs_uuid));
     memcpy(sb.root_object_id, root_id, sizeof(root_id));
+    sb.compat_flags = infs_cpu_to_le64(INFS_KNOWN_COMPAT_FLAGS);
+    sb.ro_compat_flags = infs_cpu_to_le64(INFS_KNOWN_RO_COMPAT_FLAGS);
     sb.incompat_flags = infs_cpu_to_le64(
         INFS_INCOMPAT_UTF8_NAMES | INFS_INCOMPAT_SPARSE_EXTENTS);
     memcpy(sb.label, label, strlen(label));
 
-    uint8_t block[INFS_BLOCK_SIZE];
-    if (infs_encode_superblock(block, &sb) != 0) {
-        perror("encode superblock");
-        free(bitmap);
-        close(fd);
-        return 1;
-    }
-
+    /* Invalidate any previous InfiltratorFS checkpoints before constructing
+     * the new metadata. If formatting is interrupted before final publication,
+     * the target is deliberately unmountable rather than half-formatted. */
+    uint8_t block[INFS_BLOCK_SIZE] = {0};
     for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i) {
         off_t off = (off_t)(checkpoints[i] * INFS_BLOCK_SIZE);
         if (infs_pwrite_full(fd, block, sizeof(block), off) != 0) {
-            perror("write checkpoint");
+            perror("invalidate checkpoint");
             free(bitmap);
             close(fd);
             return 1;
         }
+    }
+    if (fsync(fd) != 0) {
+        perror("fsync checkpoint invalidation");
+        free(bitmap);
+        close(fd);
+        return 1;
     }

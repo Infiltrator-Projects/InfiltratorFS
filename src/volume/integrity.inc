@@ -5,3 +5,4 @@
 #include "phase3/integrity-04.inc"
 #include "phase3/integrity-05.inc"
 #include "phase3/integrity-06.inc"
+#include "phase3/integrity-07.inc"

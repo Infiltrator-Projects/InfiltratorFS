@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # Format 0.6 Conformance
 
-Implementation 0.6.0 defines the portable contract of on-disk Format 0.6. Format 0.6 is intentionally incompatible with Format 0.5 because hole extents and sparse checksum chains change required interpretation and validation.
+Implementation 0.6.1 defines the hardened portable contract of on-disk Format 0.6. Format 0.6 is intentionally incompatible with Format 0.5 because hole extents and sparse checksum chains change required interpretation and validation. Implementation 0.6.1 does not change any packed field, offset, feature bit or disk-layout version introduced by 0.6.0.
 
 ## Required representation
 
@@ -16,16 +16,35 @@ A conforming implementation must preserve:
 - mandatory `INFS_INCOMPAT_UTF8_NAMES` support;
 - mandatory `INFS_INCOMPAT_SPARSE_EXTENTS` support;
 - metadata object version 1 for all Format 0.6 object classes;
+- nonzero 128-bit filesystem and object identities;
+- nonzero committed generations;
 - a NUL-terminated, well-formed UTF-8 checkpoint label with canonical zero padding;
+- zero bytes in currently reserved checksum-field tails, metadata block tails, directory-record padding and currently reserved structure fields;
 - strict rejection of overlong UTF-8, surrogate code points, truncated sequences and values above U+10FFFF;
 - byte-exact, case-sensitive namespace comparison for Format 0.6;
-- 128-bit persistent volume and object identities;
+- no stored `.` or `..` directory entries;
+- exactly one namespace reference to each non-root file/directory because Format 0.6 has no hard links;
+- exact parent-ID agreement between a namespace entry and its child object;
+- root-to-leaf reachability of every indexed file/directory, with the root unreferenced and parentless;
+- file link count 1 and directory link count `2 + direct child-directory count`;
 - common attributes and isolated POSIX compatibility metadata;
+- only currently defined portable attribute flags; future security/xattr object references remain zero until their feature is defined;
 - normal extents with nonzero physical locations and hole extents with physical location zero;
 - contiguous logical extent coverage through the rounded-up logical file size;
 - zero reads and zero allocated-size contribution for holes;
 - SHA-256 entries for every allocated data block, addressed by sorted sparse checksum chains; inactive slots or checksum objects may remain while the same file still owns other allocated blocks;
+- every indexed checksum object reachable exactly once from its owning file's checksum head, with matching owner/parent identities and strictly increasing aligned segment starts;
 - exact ownership of every allocated in-volume block by a checkpoint, the current bitmap, the current object-index root, an indexed metadata object or a normal data extent. Physical ownership overlap and unreachable allocated blocks are corruption in Format 0.6.
+
+## Feature-flag compatibility
+
+Format 0.6 uses the conventional three feature classes deliberately:
+
+- unknown `incompat_flags` require refusal to open;
+- unknown `ro_compat_flags` may be opened read-only but must not be opened writable;
+- unknown `compat_flags` may be ignored because they do not change required read/write interpretation.
+
+Current implementation 0.6.1 defines no compatible or read-only-compatible feature bits. Both masks therefore remain zero for newly formatted volumes, while the reader preserves the compatibility semantics above for future extensions.
 
 ## Portable result contract
 
@@ -35,9 +54,11 @@ Operating-system adapters perform native translation. The current POSIX adapter 
 
 Once the first generation-N+1 checkpoint is durably flushed, the transaction is committed. Failure while replicating that already-committed checkpoint to secondary locations does not retroactively turn the namespace or data mutation into a failed operation. The volume records degraded checkpoint redundancy and a subsequent explicit sync heals the replicas or reports the storage error.
 
+Ordinary rename replacement is a single filesystem transaction. A file may replace an existing file; a directory may replace an empty directory. Replacing a non-empty directory is rejected. Type-incompatible replacement is rejected. The source object's persistent ID is retained and no intermediate committed namespace is published.
+
 ## Automated checks
 
-`infilfs-format-conformance` checks exact structure sizes and offsets, independently constructs the expected checkpoint bytes, and rejects incompatible versions, altered geometry, unsupported feature flags, checksum damage and malformed UTF-8.
+`infilfs-format-conformance` checks exact structure sizes and offsets, independently constructs the expected checkpoint bytes, and rejects incompatible versions, altered geometry, unsupported incompatible features, checksum damage and malformed UTF-8.
 
 `infilfs-volume-conformance` constructs a deterministic complete volume in memory. It verifies the valid image, checkpoint redundancy and rejection of:
 
@@ -50,14 +71,14 @@ Once the first generation-N+1 checkpoint is durably flushed, the transaction is 
 - truncated storage geometry;
 - storage read failures.
 
-The same portable test creates a 1 TiB logical sparse file in a 16 MiB memory image. It verifies allocation-free growth, out-of-order high/low/middle checksum-segment insertion, zero-filled reads, partial and full hole punching, exact reclamation, scrub behaviour, read-only reopen and rejection of unknown flags, physically backed holes and incomplete logical coverage.
+The same portable test creates a 1 TiB logical sparse file in a 16 MiB memory image. It verifies allocation-free growth, out-of-order high/low/middle checksum-segment insertion, zero-filled reads, partial and full hole punching, exact reclamation, scrub behaviour, read-only reopen and rejection of unknown extent flags, physically backed holes and incomplete logical coverage.
 
-`infilfs-hardening-conformance` adds focused regression checks for non-terminated checkpoint labels, unsupported object versions, unreachable allocated blocks, exact read-status propagation, post-commit checkpoint-replica failure and explicit replica healing.
+`infilfs-hardening-conformance` covers checkpoint-label termination, canonical padding/reserved fields, object versions, read-only-compatible feature semantics, exact block ownership, namespace uniqueness/reachability/parentage, checksum-object reachability, read-status propagation, POSIX rename replacement, post-commit checkpoint-replica failure and explicit replica healing.
 
 `infilfs-sparse-files` adds deterministic transaction failpoints around high-offset writes and hole punches. It requires old-or-new visibility at the checkpoint boundary and checks repeated allocation/reclamation for block leaks.
 
-GitHub Actions builds and tests the full Linux implementation and separately builds the portable core with Microsoft Visual C on Windows. The hardening matrix also runs Clang conformance, AddressSanitizer/UndefinedBehaviorSanitizer and GCC `-fanalyzer`. Windows CI does not claim a Windows filesystem driver; it proves that the format/core boundary is not tied to Linux compilation.
+GitHub Actions builds and tests the full Linux implementation, including the FUSE adapter, and separately builds the portable core with Microsoft Visual C on Windows. The hardening matrix also runs Clang, AddressSanitizer/UndefinedBehaviorSanitizer and GCC `-fanalyzer`; the Linux-side hardening jobs install the FUSE development headers so the adapter is compiled under those gates as well.
 
 ## Compatibility rule
 
-Any future change that alters the golden checkpoint bytes, packed offsets, extent semantics, required namespace rules or accepted incompatible features must be treated as an explicit format revision. It must not be released silently under Format 0.6.
+A future change that alters golden checkpoint bytes, packed offsets, extent semantics, namespace representation, or the interpretation required by existing compatible/incompatible feature bits requires an explicit format revision or a newly defined compatibility feature bit as appropriate. Tightening rejection of metadata that Format 0.6 already defines as reserved, unreachable, multiply owned or structurally inconsistent is implementation hardening and does not create a new disk format.

@@ -2,9 +2,8 @@
 infs_status infs_volume_open_storage(struct infs_volume *vol,
                                      struct infs_storage *storage, int writable)
 {
-    if (!vol || !storage || !infs_storage_valid(storage)) {
+    if (!vol || !storage || !infs_storage_valid(storage))
         return INFS_STATUS_INVALID_ARGUMENT;
-    }
     memset(vol, 0, sizeof(*vol));
     vol->writable = writable != 0;
     vol->storage = *storage;
@@ -21,6 +20,12 @@ infs_status infs_volume_open_storage(struct infs_volume *vol,
     if (status != INFS_STATUS_OK)
         goto fail;
     if (infs_le16_to_cpu(vol->sb.format_minor) != INFS_FORMAT_MINOR) {
+        status = INFS_STATUS_NOT_SUPPORTED;
+        goto fail;
+    }
+    if (vol->writable &&
+        (infs_le64_to_cpu(vol->sb.ro_compat_flags) &
+         ~INFS_KNOWN_RO_COMPAT_FLAGS) != 0) {
         status = INFS_STATUS_NOT_SUPPORTED;
         goto fail;
     }
@@ -89,7 +94,8 @@ infs_status infs_volume_open_storage(struct infs_volume *vol,
     status = dir_validate(object, NULL);
     if (status != INFS_STATUS_OK)
         goto fail;
-    struct infs_object_header_disk *root_hdr = (struct infs_object_header_disk *)object;
+    struct infs_object_header_disk *root_hdr =
+        (struct infs_object_header_disk *)object;
     if (memcmp(root_hdr->object_id, vol->sb.root_object_id, 16) != 0 ||
         !id_is_zero(root_hdr->parent_id)) {
         status = INFS_STATUS_CORRUPT;
@@ -99,6 +105,12 @@ infs_status infs_volume_open_storage(struct infs_volume *vol,
     if (status != INFS_STATUS_OK)
         goto fail;
     status = validate_integrity_metadata(vol);
+    if (status != INFS_STATUS_OK)
+        goto fail;
+    status = validate_namespace_graph(vol);
+    if (status != INFS_STATUS_OK)
+        goto fail;
+    status = validate_checksum_graph(vol);
     if (status != INFS_STATUS_OK)
         goto fail;
     if (vol->writable) {
