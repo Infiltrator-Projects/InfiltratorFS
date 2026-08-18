@@ -5,9 +5,9 @@ InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem star
 
 Linux is the first implementation and test platform. It is not part of the filesystem's identity: the on-disk format and core engine are designed so a future Windows implementation can use the same volume without conversion or reformatting.
 
-## Current status — implementation 0.6.2 / format 0.6
+## Current status — implementation 0.6.3 / format 0.6
 
-Implementation 0.6.2 is a compatibility-preserving source-hardening release for on-disk Format 0.6. It follows the structural validation work in 0.6.1 and closes malformed-geometry memory-safety, error-propagation, clock-service, FUSE conversion and formatter-exclusivity defects found by a post-release source audit. No packed field, feature bit or on-disk layout changes.
+Implementation 0.6.3 is a compatibility-preserving recovery and API-hardening release for on-disk Format 0.6. It validates each checkpoint's complete referenced generation graph before selection, can fall back from a corrupt newest graph to an older valid committed generation, preserves external I/O/service failures instead of disguising them as recovery, and closes remaining pathname, transaction-status and formatter-clock defects found after 0.6.2. No packed field, feature bit or on-disk layout changes.
 
 Current properties include:
 
@@ -16,6 +16,8 @@ Current properties include:
 - normal and hole extents with zero-storage logical ranges;
 - authoritative free-space bitmap with exact live-block ownership validation and minimum-coverage geometry checks before bitmap traversal;
 - three physically separated, checksummed checkpoints;
+- descending-generation checkpoint selection with complete referenced-graph validation and corruption-only fallback to an older committed generation;
+- writable recovery that heals all checkpoint replicas to the selected committed generation;
 - transactional copy-on-write metadata, data and allocation state;
 - atomic old-or-new generation publication without journal replay;
 - CRC64-ECMA metadata checksums and SHA-256 file-data checksums;
@@ -30,13 +32,13 @@ Current properties include:
 - canonical zero/reserved-field validation for the current Format 0.6 contract;
 - callback-based storage, durable-flush, randomness and clock services, with writable opens requiring every mutation-critical service;
 - operating-system-neutral `infs_status` results preserved through public mutation/read helpers and translated only at adapter boundaries;
-- ordinary POSIX rename replacement semantics in the core/FUSE adapter;
+- ordinary POSIX rename replacement semantics, including trailing-slash directory requirements;
 - genuinely read-only backing storage for FUSE `-r` / `-o ro` mounts;
 - normalized pre-epoch FUSE timestamps and overflow-checked `utimens` conversion;
-- block-device formatting that refuses mounted/held targets and acquires an exclusive Linux block-device open before destructive writes;
+- block-device formatting that refuses mounted/held targets, acquires an exclusive Linux block-device open before destructive writes, and fails if the initial realtime clock query fails;
 - formatter publication ordering that leaves an interrupted format unmountable rather than publishing checkpoints before referenced metadata is durable;
 - byte-exact layout, malformed-image and deterministic in-memory volume conformance tests;
-- explicit regression coverage for undersized allocation bitmaps and incomplete writable storage backends;
+- explicit regressions for undersized allocation bitmaps, incomplete writable backends, checkpoint-graph fallback, non-masked recovery I/O failures and rename trailing slashes;
 - high-offset sparse write, hole-punch, crash-atomicity and reclamation tests;
 - automated Linux, Windows/MSVC, Clang, ASan/UBSan and GCC `-fanalyzer` gates;
 - Linux/POSIX I/O and FUSE kept outside the portable core engine.
