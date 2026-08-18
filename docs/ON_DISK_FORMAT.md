@@ -3,7 +3,7 @@
 
 Status: experimental writable prototype. Format 0.6 is intentionally incompatible with formats 0.1 through 0.5.
 
-Implementation 0.6.0 introduced sparse extents, sparse checksum indexing and hole punching. Implementation 0.6.1 hardened structural validation and namespace/integrity semantics. Implementation 0.6.2 closes post-release source-level geometry, error-propagation, adapter and destructive-tool safety defects without changing any Format 0.6 packed field, offset or feature identity. The normative acceptance rules are summarized in `CONFORMANCE.md`.
+Implementation 0.6.0 introduced sparse extents, sparse checksum indexing and hole punching. Implementation 0.6.1 hardened structural validation and namespace/integrity semantics. Implementation 0.6.2 closed post-release source-level geometry, error-propagation, adapter and destructive-tool safety defects. Implementation 0.6.3 adds complete checkpoint-graph recovery selection and remaining API/tool hardening without changing any Format 0.6 packed field, offset or feature identity. The normative acceptance rules are summarized in `CONFORMANCE.md`.
 
 ## 1. Encoding
 
@@ -55,9 +55,9 @@ Generation, filesystem UUID and root object ID are nonzero.
 
 Format 0.6 requires both `INFS_INCOMPAT_UTF8_NAMES` and `INFS_INCOMPAT_SPARSE_EXTENTS`. Readers reject a missing required bit or any unknown incompatible feature flag. A sparse-extents bit on a pre-0.6 checkpoint is invalid.
 
-Feature classes have distinct compatibility semantics. Unknown incompatible bits prevent any open. Unknown read-only-compatible bits may be opened read-only but prevent writable open. Unknown compatible bits may be ignored. Implementation 0.6.2 currently defines no compatible or read-only-compatible bits for newly created Format 0.6 volumes.
+Feature classes have distinct compatibility semantics. Unknown incompatible bits prevent any open. Unknown read-only-compatible bits may be opened read-only but prevent writable open. Unknown compatible bits may be ignored. Implementation 0.6.3 currently defines no compatible or read-only-compatible bits for newly created Format 0.6 volumes.
 
-CRC64 occupies the first eight checksum bytes. The remaining checksum bytes are zero in Format 0.6. The complete checksum field is zero during calculation. A checkpoint is accepted only when its magic, format, size, block geometry, checksum, volume size, feature flags, canonical padding and expected checkpoint positions validate. The newest valid generation wins.
+CRC64 occupies the first eight checksum bytes. The remaining checksum bytes are zero in Format 0.6. The complete checksum field is zero during calculation. A physical checkpoint copy first passes its own magic, format, size, block geometry, checksum, volume size, feature flags, canonical padding and expected checkpoint-position checks. Implementation 0.6.3 then validates the complete graph referenced by surviving checkpoint candidates in descending generation order. The newest candidate with a structurally valid committed graph wins; a corrupt newer graph may fall back to an older valid committed graph. External I/O, memory or unsupported-feature failures are not treated as graph corruption and therefore do not silently trigger fallback.
 
 ## 4. Allocation bitmap
 
@@ -117,7 +117,7 @@ A directory payload contains common attributes, POSIX compatibility data, an ent
 
 Each record contains its aligned record size, name length, target object type, flags, 128-bit target ID and name bytes. Names must be well-formed UTF-8, contain 1–255 bytes, and contain neither NUL nor `/`. Records are padded to eight-byte alignment. Current record flags and padding are zero.
 
-Lookup in Format 0.6 is case-sensitive and byte-exact. `.` and `..` are synthesized navigation components and are never stored.
+Lookup in Format 0.6 is case-sensitive and byte-exact. `.` and `..` are synthesized navigation components and are never stored. Pathnames ending in `/` retain directory semantics in namespace operations; rename does not silently strip a trailing slash from a regular-file source or nonexistent destination.
 
 Format 0.6 has no hard links. Therefore every non-root file or directory must be referenced by exactly one directory entry. Every directory entry must resolve to an indexed object of the declared type, and the child's stored parent ID must identify the containing directory. Names within a directory are unique. Every file/directory must be reachable from the root; the root itself has no parent and no incoming namespace entry. File link count is 1; directory link count is 2 plus its direct child-directory count. These rules also make disconnected directory cycles invalid committed state.
 
@@ -140,7 +140,7 @@ Every indexed checksum object must be reachable exactly once from its owning fil
 
 Checksums cover the complete physical 4096-byte data block, including zero-filled bytes beyond logical EOF. Reads verify normal data before returning it and synthesize zeros directly for holes. Shrink zeroes the retained normal final-block tail so later growth cannot expose truncated bytes.
 
-## 10. Transaction publication
+## 10. Transaction publication and recovery
 
 A writable storage backend must provide positioned write, durable flush, secure-random and current-time services in addition to read and size services. A mutation does not silently substitute a zero timestamp when the clock service fails.
 
@@ -157,7 +157,7 @@ write remaining checkpoint copies
 durable flush
 ```
 
-The first checkpoint location rotates by generation. A crash before publication selects generation `N`; a crash after publication selects `N+1`. A writable open heals older checkpoint copies before further allocation.
+The first checkpoint location rotates by generation. A crash before publication leaves generation `N` committed; a crash after publication leaves generation `N+1` committed. During open, each individually valid checkpoint candidate is validated through its referenced bitmap, metadata, namespace and checksum graph before selection. If a newer candidate's committed graph is structurally corrupt, recovery may select the next older valid committed graph. A writable fallback then rewrites and durably flushes all three checkpoint copies to the selected generation before exposing the volume writable. Read-only recovery does not modify the media.
 
 Once the first generation-N+1 checkpoint has been durably flushed, the mutation is committed even if later replication of secondary checkpoint copies fails. The implementation records degraded checkpoint redundancy and reports the namespace/data mutation as successful; a later explicit sync heals the replicas or reports the remaining storage error.
 
@@ -167,7 +167,7 @@ Committed file-data blocks are replaced through CoW. Extent mappings and indepen
 
 `mkfs.infilfs` refuses a real block device without `--force`. It also refuses a mounted target, a whole-disk target with a mounted child partition, or a target/child held by another Linux block layer. If active-use status cannot be established safely, formatting a real block device fails closed.
 
-Implementation 0.6.2 additionally reopens the exact block target with Linux `O_EXCL` after advisory mount/holder preflight, verifies that the device identity and geometry are unchanged, and retains that exclusive descriptor through the destructive write sequence. Failure to obtain exclusivity aborts formatting before the first write.
+Implementation 0.6.2 and later reopen the exact block target with Linux `O_EXCL` after advisory mount/holder preflight, verify that the device identity and geometry are unchanged, and retain that exclusive descriptor through the destructive write sequence. Failure to obtain exclusivity aborts formatting before the first write. Implementation 0.6.3 also treats failure of the initial realtime-clock query as a formatter error rather than silently creating zero initial timestamps.
 
 Formatting first invalidates the three candidate checkpoint locations and flushes that invalidation. It then writes the bitmap, initial index and root, durably flushes those referenced structures, and only then publishes the three valid generation-1 checkpoints. Therefore an interrupted format should be unmountable rather than presenting a valid checkpoint that references incomplete initial metadata.
 
@@ -175,7 +175,9 @@ Formatting first invalidates the three candidate checkpoint locations and flushe
 
 The opener rejects invalid checkpoint checksums or geometry, an allocation bitmap too small for the declared volume, unsupported feature usage, inconsistent allocation accounting, noncanonical reserved data, invalid identities/generations, malformed object payloads, invalid UTF-8 names, stored navigation entries, duplicate names or index identities, dangling or multiply referenced namespace objects, wrong parent/type relationships, unreachable namespace objects, incorrect link counts, physical-block ownership overlap, allocated-but-unreachable blocks, logical extent gaps/overlaps, unknown extent flags, holes with physical storage, normal extents without physical storage, malformed/unsorted/shared/orphaned checksum chains and data checksum mismatches.
 
-The policy is to fail closed when committed state cannot be trusted.
+A corrupt newest checkpoint graph is not automatically fatal when an older independently valid committed checkpoint graph survives. Structural missing/cyclic internal references are treated as graph corruption for candidate selection. Storage I/O failures, memory exhaustion and unsupported format/feature semantics are preserved as their actual failures and are not hidden by fallback.
+
+The policy is to fail closed when committed state cannot be trusted while retaining a known-good older committed generation when the distributed checkpoint set proves one is available.
 
 ## 13. Prototype limits
 
