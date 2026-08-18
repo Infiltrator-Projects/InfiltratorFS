@@ -54,6 +54,25 @@ static int object_type_valid(uint16_t type)
            type == INFS_OBJECT_INDEX || type == INFS_OBJECT_CHECKSUM;
 }
 
+static int index_payload_shape_valid(const uint8_t block[INFS_BLOCK_SIZE],
+                                     uint32_t payload_size)
+{
+    if (payload_size < sizeof(struct infs_index_payload_disk))
+        return 0;
+    const struct infs_index_payload_disk *payload =
+        (const struct infs_index_payload_disk *)(
+            block + sizeof(struct infs_object_header_disk));
+    uint32_t count = infs_le32_to_cpu(payload->entry_count);
+    const size_t max_entries =
+        (INFS_BLOCK_SIZE - sizeof(struct infs_object_header_disk) -
+         sizeof(*payload)) / sizeof(struct infs_index_entry_disk);
+    if ((size_t)count > max_entries)
+        return 0;
+    size_t expected = sizeof(*payload) +
+        (size_t)count * sizeof(struct infs_index_entry_disk);
+    return expected == payload_size;
+}
+
 infs_status infs_encode_superblock(uint8_t block[INFS_BLOCK_SIZE],
                                    const struct infs_superblock_disk *sb)
 {
@@ -172,7 +191,9 @@ infs_status infs_object_finalize(uint8_t block[INFS_BLOCK_SIZE])
         infs_le64_to_cpu(hdr->generation) == 0 ||
         !id_is_nonzero(hdr->object_id) ||
         payload_size > INFS_BLOCK_SIZE - sizeof(*hdr) ||
-        infs_le32_to_cpu(hdr->checksum_type) != INFS_CHECKSUM_CRC64_ECMA) {
+        infs_le32_to_cpu(hdr->checksum_type) != INFS_CHECKSUM_CRC64_ECMA ||
+        (object_type == INFS_OBJECT_INDEX &&
+         !index_payload_shape_valid(block, payload_size))) {
         return INFS_STATUS_INVALID_ARGUMENT;
     }
 
@@ -207,6 +228,9 @@ int infs_validate_object_block(const uint8_t block[INFS_BLOCK_SIZE])
     if (payload_size > INFS_BLOCK_SIZE - sizeof(*hdr))
         return 0;
     if (infs_le32_to_cpu(hdr->checksum_type) != INFS_CHECKSUM_CRC64_ECMA)
+        return 0;
+    if (object_type == INFS_OBJECT_INDEX &&
+        !index_payload_shape_valid(block, payload_size))
         return 0;
     if (!bytes_are_zero(hdr->checksum + sizeof(uint64_t),
                         sizeof(hdr->checksum) - sizeof(uint64_t)) ||
