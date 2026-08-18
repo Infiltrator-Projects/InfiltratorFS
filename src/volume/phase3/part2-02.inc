@@ -105,14 +105,20 @@ static int lookup_from(struct infs_volume *vol, const struct infs_lookup *start,
 {
     struct infs_lookup cur = *start;
     const char *cursor = relative;
+    size_t relative_len = strlen(relative);
+    int trailing_slash = relative_len > 0 && relative[relative_len - 1u] == '/';
     char comp[INFS_NAME_MAX + 1u];
     int rc;
     while ((rc = next_component(&cursor, comp)) > 0) {
+        /* Every component, including `.` and `..`, is directory traversal
+         * through the current object. A regular file cannot be traversed. */
+        if (cur.type != INFS_OBJECT_DIRECTORY)
+            return INFS_STATUS_NOT_DIRECTORY;
         if (strcmp(comp, ".") == 0)
             continue;
         if (strcmp(comp, "..") == 0) {
             uint8_t block[INFS_BLOCK_SIZE];
-            int status = read_object(vol, cur.block, block);
+            infs_status status = read_object(vol, cur.block, block);
             if (status != INFS_STATUS_OK)
                 return status;
             struct infs_object_header_disk *hdr =
@@ -125,13 +131,13 @@ static int lookup_from(struct infs_volume *vol, const struct infs_lookup *start,
                 status = index_find(vol, hdr->parent_id, &cur);
                 if (status != INFS_STATUS_OK)
                     return status;
+                if (cur.type != INFS_OBJECT_DIRECTORY)
+                    return INFS_STATUS_CORRUPT;
             }
             continue;
         }
-        if (cur.type != INFS_OBJECT_DIRECTORY)
-            return INFS_STATUS_NOT_DIRECTORY;
         uint8_t block[INFS_BLOCK_SIZE];
-        int status = read_object(vol, cur.block, block);
+        infs_status status = read_object(vol, cur.block, block);
         if (status != INFS_STATUS_OK)
             return status;
         struct infs_directory_payload_disk *payload;
@@ -150,6 +156,8 @@ static int lookup_from(struct infs_volume *vol, const struct infs_lookup *start,
     }
     if (rc < 0)
         return rc;
+    if (trailing_slash && cur.type != INFS_OBJECT_DIRECTORY)
+        return INFS_STATUS_NOT_DIRECTORY;
     *out = cur;
     return INFS_STATUS_OK;
 }
