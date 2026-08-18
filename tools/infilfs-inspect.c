@@ -58,7 +58,8 @@ int main(int argc, char **argv)
     printf("  Format:          %u.%u\n",
            infs_le16_to_cpu(sb.format_major), infs_le16_to_cpu(sb.format_minor));
     printf("  UUID:            %s\n", uuid_text);
-    printf("  Label:           %s\n", (char *)sb.label);
+    printf("  Label:           %.*s\n", (int)(INFS_LABEL_MAX - 1u),
+           (const char *)sb.label);
     printf("  Generation:      %" PRIu64 "\n", infs_le64_to_cpu(sb.generation));
     printf("  Block size:      %u bytes\n", 1u << infs_le16_to_cpu(sb.block_shift));
     printf("  Total blocks:    %" PRIu64 "\n", infs_le64_to_cpu(sb.total_blocks));
