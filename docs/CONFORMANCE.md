@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # Format 0.6 Conformance
 
-Implementation 0.6.2 defines the hardened portable contract of on-disk Format 0.6. Format 0.6 is intentionally incompatible with Format 0.5 because hole extents and sparse checksum chains change required interpretation and validation. Implementations 0.6.1 and 0.6.2 do not change any packed field, offset, feature bit or disk-layout version introduced by 0.6.0; 0.6.2 closes source-level malformed-geometry, status-propagation and adapter/tool safety defects found after the 0.6.1 release.
+Implementation 0.6.3 defines the hardened portable contract of on-disk Format 0.6. Format 0.6 is intentionally incompatible with Format 0.5 because hole extents and sparse checksum chains change required interpretation and validation. Implementations 0.6.1 through 0.6.3 do not change any packed field, offset, feature bit or disk-layout version introduced by 0.6.0; 0.6.3 adds recovery selection and remaining API/tool hardening without changing the byte format.
 
 ## Required representation
 
@@ -45,7 +45,7 @@ Format 0.6 uses the conventional three feature classes deliberately:
 - unknown `ro_compat_flags` may be opened read-only but must not be opened writable;
 - unknown `compat_flags` may be ignored because they do not change required read/write interpretation.
 
-Current implementation 0.6.2 defines no compatible or read-only-compatible feature bits. Both masks therefore remain zero for newly formatted volumes, while the reader preserves the compatibility semantics above for future extensions.
+Current implementation 0.6.3 defines no compatible or read-only-compatible feature bits. Both masks therefore remain zero for newly formatted volumes, while the reader preserves the compatibility semantics above for future extensions.
 
 ## Portable result contract
 
@@ -53,11 +53,19 @@ The core and storage-service boundary return `infs_status` values. Successful op
 
 Operating-system adapters perform native translation. The current POSIX adapter maps between `infs_status` and `errno`. A future Windows adapter can map the same values to Win32 errors or NTSTATUS without changing the core or disk format.
 
-A writable storage backend must provide positioned write, durable flush, random-byte and current-time services in addition to the read/size services required for read-only access. A mutation fails if its required clock service fails; the filesystem does not silently substitute a zero timestamp.
+A writable storage backend must provide positioned write, durable flush, random-byte and current-time services in addition to the read/size services required for read-only access. A mutation fails if its required clock service fails; the filesystem does not silently substitute a zero timestamp. The formatter follows the same fail-closed clock policy for the initial root timestamps.
+
+## Recovery selection
+
+Physical checkpoint copies are first screened independently for checkpoint checksum, format and volume-geometry validity. An unreadable physical checkpoint copy is tolerated as lost redundancy when another independently valid checkpoint copy survives. If no valid checkpoint copy survives and at least one checkpoint read failed, the originating storage error is returned rather than being mislabeled as corruption. Recovery then considers the surviving candidates in descending generation order and validates the complete graph referenced by each candidate: bitmap geometry/accounting, critical allocation, root, object index, exact ownership, namespace graph and checksum graph.
+
+A candidate whose committed referenced graph is structurally corrupt may be rejected in favor of the next older individually valid committed candidate. Missing or cyclic internal metadata references encountered while validating an otherwise committed graph are classified as graph corruption. External failures encountered while validating a candidate graph, such as storage I/O errors, memory exhaustion or unsupported feature/format semantics, are not reclassified as corruption and must not be silently hidden by falling back to an older generation.
+
+A read-only recovery leaves physical checkpoint copies unchanged. After writable recovery selects an older valid graph, the implementation rewrites and durably flushes all three checkpoint replicas to that selected committed generation before returning the volume writable.
 
 Once the first generation-N+1 checkpoint is durably flushed, the transaction is committed. Failure while replicating that already-committed checkpoint to secondary locations does not retroactively turn the namespace or data mutation into a failed operation. The volume records degraded checkpoint redundancy and a subsequent explicit sync heals the replicas or reports the storage error.
 
-Ordinary rename replacement is a single filesystem transaction. A file may replace an existing file; a directory may replace an empty directory. Replacing a non-empty directory is rejected. Type-incompatible replacement is rejected. The source object's persistent ID is retained and no intermediate committed namespace is published.
+Ordinary rename replacement is a single filesystem transaction. A file may replace an existing file; a directory may replace an empty directory. Replacing a non-empty directory is rejected. Type-incompatible replacement is rejected. A trailing slash retains directory semantics for both source and destination rather than being silently stripped. The source object's persistent ID is retained and no intermediate committed namespace is published.
 
 ## Automated checks
 
@@ -80,9 +88,13 @@ The same portable test creates a 1 TiB logical sparse file in a 16 MiB memory im
 
 `infilfs-open-hardening` adds the 0.6.2 regression gates for a valid-CRC checkpoint whose bitmap is too small to represent `total_blocks` and for an attempted writable open on a backend that lacks mutation-critical callbacks. The malformed bitmap must be rejected before bit traversal.
 
+`infilfs-063-hardening` adds deterministic 0.6.3 regression gates for single-replica checkpoint-read tolerance, all-replica checkpoint-read error propagation, full-graph fallback from corrupt newer checkpoints to an older committed generation, writable replica healing after fallback, refusal to mask a newer-generation graph I/O failure, and rename trailing-slash semantics.
+
 `infilfs-sparse-files` adds deterministic transaction failpoints around high-offset writes and hole punches. It requires old-or-new visibility at the checkpoint boundary and checks repeated allocation/reclamation for block leaks.
 
 GitHub Actions builds and tests the full Linux implementation, including the FUSE adapter, and separately builds the portable core with Microsoft Visual C on Windows. The hardening matrix also runs Clang, AddressSanitizer/UndefinedBehaviorSanitizer and GCC `-fanalyzer`; the Linux-side hardening jobs install the FUSE development headers so the adapter is compiled under those gates as well.
+
+The high-level FUSE adapter deliberately uses libfuse's documented offsetless `readdir` mode: it ignores the incoming directory offset and passes zero offsets to the filler so libfuse consumes the complete directory in one operation. Synthetic resumable cookies are not part of the current adapter contract.
 
 ## Compatibility rule
 

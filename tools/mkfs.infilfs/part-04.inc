@@ -33,9 +33,17 @@
         return 1;
     }
 
+    errno = 0;
+    int64_t root_time_ns = infs_current_time_ns();
+    if (root_time_ns == 0 && errno != 0) {
+        perror("clock_gettime");
+        free(bitmap);
+        close(fd);
+        return 1;
+    }
     if (infs_encode_root_directory(block, root_id, 1, 0755u,
                                    (uint32_t)getuid(), (uint32_t)getgid(),
-                                   infs_current_time_ns()) != INFS_STATUS_OK ||
+                                   root_time_ns) != INFS_STATUS_OK ||
         infs_pwrite_full(fd, block, sizeof(block),
                          (off_t)(root_block * INFS_BLOCK_SIZE)) != 0) {
         perror("write root directory");
@@ -77,7 +85,7 @@
     char uuid_text[37];
     infs_uuid_to_string(fs_uuid, uuid_text);
     printf("InfiltratorFS formatted successfully\n");
-    printf("  Implementation: 0.6.2\n");
+    printf("  Implementation: 0.6.3\n");
     printf("  Format:          %u.%u\n", INFS_FORMAT_MAJOR, INFS_FORMAT_MINOR);
     printf("  UUID:            %s\n", uuid_text);
     printf("  Label:           %s\n", (char *)sb.label);

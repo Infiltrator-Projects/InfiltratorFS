@@ -35,7 +35,7 @@
 - [x] Deliberate corruption and data-crash tests.
 - [x] Multi-object checksum chains.
 - [ ] Duplicate metadata/data recovery.
-- [ ] Validate a checkpoint's referenced generation graph during recovery and fall back to an older valid committed generation when the newest candidate graph is corrupt.
+- [x] Validate a checkpoint's referenced generation graph during recovery and fall back to an older valid committed generation when the newest candidate graph is corrupt.
 - [ ] Forensic raw-object scanner.
 - [ ] Snapshot-coordinated online scrub.
 
@@ -101,6 +101,19 @@
 - [x] Enforce directory traversal semantics for trailing slash, `.` and `..` path components and enforce the core path-length limit.
 - [x] Normalize pre-epoch FUSE timestamps, overflow-check time/offset conversions and reject oversized I/O before mutation.
 - [x] Reopen real formatter block targets with `O_EXCL`, then revalidate identity and geometry before destructive writes.
+- [x] Keep on-disk Format 0.6 unchanged.
+
+## Phase 4.4 — implementation 0.6.3 recovery hardening — complete
+
+- [x] Validate each physical checkpoint's complete referenced generation graph before accepting it for recovery.
+- [x] Try committed checkpoint candidates in descending generation order and fall back only when the newer candidate graph is structurally corrupt.
+- [x] Preserve I/O, memory and unsupported-feature failures rather than hiding them behind an older-generation fallback.
+- [x] Heal all physical checkpoint replicas to the selected generation after writable fallback recovery.
+- [x] Preserve trailing-slash directory semantics across rename source and destination paths.
+- [x] Return `INVALID_ARGUMENT` rather than `READ_ONLY` for a null internal transaction volume.
+- [x] Fail formatting when the initial realtime-clock query fails instead of silently creating zero initial timestamps.
+- [x] Add deterministic portable checkpoint-fallback, non-masked-I/O and rename-path regression coverage.
+- [x] Verify and retain libfuse's documented high-level `readdir` mode instead of introducing unnecessary synthetic directory cookies.
 - [x] Keep on-disk Format 0.6 unchanged.
 
 ## Phase 4 — modern storage features
