@@ -39,8 +39,15 @@ static int create_object(struct infs_volume *vol, const char *path,
         return status;
     }
 
+    int64_t now = 0;
+    status = infs_storage_current_time_ns(&vol->storage, &now);
+    if (status != INFS_STATUS_OK) {
+        free_run(vol, object_block, 1);
+        return status;
+    }
+    uint64_t n = (uint64_t)now;
+
     uint8_t object[INFS_BLOCK_SIZE];
-    uint64_t n = (uint64_t)now_ns(vol);
     uint32_t payload_size;
     if (type == INFS_OBJECT_DIRECTORY)
         payload_size = sizeof(struct infs_directory_payload_disk);
@@ -58,21 +65,24 @@ static int create_object(struct infs_volume *vol, const char *path,
     struct infs_posix_compat_disk *posix;
     if (type == INFS_OBJECT_DIRECTORY) {
         struct infs_directory_payload_disk *p =
-            (struct infs_directory_payload_disk *)(object + sizeof(struct infs_object_header_disk));
+            (struct infs_directory_payload_disk *)(
+                object + sizeof(struct infs_object_header_disk));
         memset(p, 0, sizeof(*p));
         attributes = &p->attributes;
         posix = &p->posix;
         attributes->link_count = infs_cpu_to_le64(2);
     } else {
         struct infs_file_payload_disk *p =
-            (struct infs_file_payload_disk *)(object + sizeof(struct infs_object_header_disk));
+            (struct infs_file_payload_disk *)(
+                object + sizeof(struct infs_object_header_disk));
         memset(p, 0, sizeof(*p));
         p->data_checksum_type = infs_cpu_to_le32(INFS_CHECKSUM_SHA256);
         attributes = &p->attributes;
         posix = &p->posix;
         attributes->link_count = infs_cpu_to_le64(1);
     }
-    attributes->portable_flags = infs_cpu_to_le64(options ? options->portable_flags : 0);
+    attributes->portable_flags = infs_cpu_to_le64(
+        options ? options->portable_flags : 0);
     attributes->birth_time_ns = (int64_t)infs_cpu_to_le64(n);
     attributes->access_time_ns = (int64_t)infs_cpu_to_le64(n);
     attributes->modification_time_ns = (int64_t)infs_cpu_to_le64(n);
@@ -106,6 +116,8 @@ static int create_object(struct infs_volume *vol, const char *path,
         parent_payload->attributes.link_count = infs_cpu_to_le64(
             infs_le64_to_cpu(parent_payload->attributes.link_count) + 1u);
     touch_mctime(vol, &parent_payload->attributes);
+    if (vol->tx_error != INFS_STATUS_OK)
+        return vol->tx_error;
     status = write_object(vol, parent.block, parent_block);
     if (status != INFS_STATUS_OK)
         return status;

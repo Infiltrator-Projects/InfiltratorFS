@@ -10,6 +10,7 @@
 #include "infilfs/endian.h"
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,6 +24,8 @@
 #ifndef FALLOC_FL_PUNCH_HOLE
 #define FALLOC_FL_PUNCH_HOLE 0x02
 #endif
+
+#define INFS_NS_PER_SECOND INT64_C(1000000000)
 
 static struct infs_volume g_volume;
 
@@ -63,14 +66,51 @@ static int fuse_requested_read_only(int argc, char **argv)
     return read_only;
 }
 
-static void attributes_to_stat(const struct infs_attributes *attributes,
-                               struct stat *st)
+static void ns_to_timespec(int64_t ns, struct timespec *out)
 {
+    int64_t seconds = ns / INFS_NS_PER_SECOND;
+    int64_t nanoseconds = ns % INFS_NS_PER_SECOND;
+    if (nanoseconds < 0) {
+        --seconds;
+        nanoseconds += INFS_NS_PER_SECOND;
+    }
+    out->tv_sec = (time_t)seconds;
+    out->tv_nsec = (long)nanoseconds;
+}
+
+static int timespec_to_ns(const struct timespec *value, int64_t *out)
+{
+    if (!value || !out || value->tv_nsec < 0 ||
+        value->tv_nsec >= INFS_NS_PER_SECOND)
+        return -EINVAL;
+
+    int64_t seconds = (int64_t)value->tv_sec;
+    if ((time_t)seconds != value->tv_sec)
+        return -EOVERFLOW;
+    if (seconds > INT64_MAX / INFS_NS_PER_SECOND ||
+        seconds < INT64_MIN / INFS_NS_PER_SECOND)
+        return -EOVERFLOW;
+
+    int64_t base = seconds * INFS_NS_PER_SECOND;
+    if (base > INT64_MAX - (int64_t)value->tv_nsec)
+        return -EOVERFLOW;
+    *out = base + (int64_t)value->tv_nsec;
+    return 0;
+}
+
+static int attributes_to_stat(const struct infs_attributes *attributes,
+                              struct stat *st)
+{
+    if (!attributes || !st)
+        return -EINVAL;
+    if ((uint64_t)(off_t)attributes->logical_size != attributes->logical_size)
+        return -EOVERFLOW;
+
     memset(st, 0, sizeof(*st));
     st->st_mode = (attributes->object_type == INFS_OBJECT_DIRECTORY ?
                    S_IFDIR : S_IFREG) | attributes->posix_permissions;
-    st->st_uid = attributes->posix_uid;
-    st->st_gid = attributes->posix_gid;
+    st->st_uid = (uid_t)attributes->posix_uid;
+    st->st_gid = (gid_t)attributes->posix_gid;
     st->st_nlink = (nlink_t)attributes->link_count;
     st->st_size = (off_t)attributes->logical_size;
     st->st_blksize = INFS_BLOCK_SIZE;
@@ -78,15 +118,10 @@ static void attributes_to_stat(const struct infs_attributes *attributes,
     uint64_t inode = infs_crc64_ecma(attributes->object_id, 16);
     st->st_ino = (ino_t)(inode ? inode : 1u);
 
-    int64_t at = attributes->access_time_ns;
-    int64_t mt = attributes->modification_time_ns;
-    int64_t ct = attributes->change_time_ns;
-    st->st_atim.tv_sec = (time_t)(at / INT64_C(1000000000));
-    st->st_atim.tv_nsec = (long)(at % INT64_C(1000000000));
-    st->st_mtim.tv_sec = (time_t)(mt / INT64_C(1000000000));
-    st->st_mtim.tv_nsec = (long)(mt % INT64_C(1000000000));
-    st->st_ctim.tv_sec = (time_t)(ct / INT64_C(1000000000));
-    st->st_ctim.tv_nsec = (long)(ct % INT64_C(1000000000));
+    ns_to_timespec(attributes->access_time_ns, &st->st_atim);
+    ns_to_timespec(attributes->modification_time_ns, &st->st_mtim);
+    ns_to_timespec(attributes->change_time_ns, &st->st_ctim);
+    return 0;
 }
 
 static int infs_getattr_cb(const char *path, struct stat *st,
@@ -97,8 +132,7 @@ static int infs_getattr_cb(const char *path, struct stat *st,
     infs_status status = infs_get_attributes(&g_volume, path, &attributes);
     if (status != INFS_STATUS_OK)
         return neg_status(status);
-    attributes_to_stat(&attributes, st);
-    return 0;
+    return attributes_to_stat(&attributes, st);
 }
 
 static int infs_readdir_cb(const char *path, void *buf, fuse_fill_dir_t filler,
@@ -176,6 +210,8 @@ static int infs_read_cb(const char *path, char *buf, size_t size, off_t off,
     int64_t n = infs_read_file(&g_volume, path, buf, size, (uint64_t)off);
     if (n < 0)
         return neg_status((infs_status)n);
+    if (n > INT_MAX)
+        return -EOVERFLOW;
     return (int)n;
 }
 
@@ -187,6 +223,8 @@ static int infs_write_cb(const char *path, const char *buf, size_t size, off_t o
         infs_status status = infs_get_attributes(&g_volume, path, &attributes);
         if (status != INFS_STATUS_OK)
             return neg_status(status);
+        if ((uint64_t)(off_t)attributes.logical_size != attributes.logical_size)
+            return -EOVERFLOW;
         off = (off_t)attributes.logical_size;
     }
     if (off < 0)
@@ -194,6 +232,8 @@ static int infs_write_cb(const char *path, const char *buf, size_t size, off_t o
     int64_t n = infs_write_file(&g_volume, path, buf, size, (uint64_t)off);
     if (n < 0)
         return neg_status((infs_status)n);
+    if (n > INT_MAX)
+        return -EOVERFLOW;
     return (int)n;
 }
 
@@ -259,14 +299,25 @@ static int infs_utimens_cb(const char *path, const struct timespec tv[2],
                            struct fuse_file_info *fi)
 {
     (void)fi;
+    if (!tv)
+        return neg_status(infs_set_times(&g_volume, path, NULL));
+
     struct infs_time_update update = {
         .access_action = tv[0].tv_nsec == UTIME_OMIT ? INFS_TIME_OMIT :
                          tv[0].tv_nsec == UTIME_NOW ? INFS_TIME_NOW : INFS_TIME_SET,
         .modification_action = tv[1].tv_nsec == UTIME_OMIT ? INFS_TIME_OMIT :
                                tv[1].tv_nsec == UTIME_NOW ? INFS_TIME_NOW : INFS_TIME_SET,
-        .access_time_ns = (int64_t)tv[0].tv_sec * INT64_C(1000000000) + tv[0].tv_nsec,
-        .modification_time_ns = (int64_t)tv[1].tv_sec * INT64_C(1000000000) + tv[1].tv_nsec,
     };
+    if (update.access_action == INFS_TIME_SET) {
+        int rc = timespec_to_ns(&tv[0], &update.access_time_ns);
+        if (rc != 0)
+            return rc;
+    }
+    if (update.modification_action == INFS_TIME_SET) {
+        int rc = timespec_to_ns(&tv[1], &update.modification_time_ns);
+        if (rc != 0)
+            return rc;
+    }
     return neg_status(infs_set_times(&g_volume, path, &update));
 }
 

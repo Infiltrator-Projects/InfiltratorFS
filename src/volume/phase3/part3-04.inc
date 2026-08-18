@@ -9,9 +9,18 @@ infs_status infs_volume_open_storage(struct infs_volume *vol,
     vol->storage = *storage;
     storage->ops = NULL;
     storage->context = NULL;
+
+    infs_status status = INFS_STATUS_OK;
+    if (vol->writable &&
+        (!vol->storage.ops->write_at || !vol->storage.ops->flush ||
+         !vol->storage.ops->random_bytes ||
+         !vol->storage.ops->current_time_ns)) {
+        status = INFS_STATUS_INVALID_ARGUMENT;
+        goto fail;
+    }
+
     int is_block = 0;
-    infs_status status = infs_storage_get_size(
-        &vol->storage, &vol->size_bytes, &is_block);
+    status = infs_storage_get_size(&vol->storage, &vol->size_bytes, &is_block);
     if (status != INFS_STATUS_OK)
         goto fail;
     (void)is_block;
@@ -33,9 +42,15 @@ infs_status infs_volume_open_storage(struct infs_volume *vol,
     uint64_t bitmap_start = infs_le64_to_cpu(vol->sb.bitmap_start_block);
     uint64_t bitmap_blocks = infs_le64_to_cpu(vol->sb.bitmap_block_count);
     uint64_t total = infs_le64_to_cpu(vol->sb.total_blocks);
+    const uint64_t bits_per_bitmap_block =
+        (uint64_t)INFS_BLOCK_SIZE * UINT64_C(8);
+    uint64_t minimum_bitmap_blocks = total / bits_per_bitmap_block +
+        ((total % bits_per_bitmap_block) != 0);
     if (bitmap_start == 0 || bitmap_blocks == 0 || bitmap_start >= total ||
         bitmap_blocks > total - bitmap_start ||
-        bitmap_blocks > SIZE_MAX / INFS_BLOCK_SIZE) {
+        bitmap_blocks < minimum_bitmap_blocks ||
+        bitmap_blocks > SIZE_MAX / INFS_BLOCK_SIZE ||
+        infs_le64_to_cpu(vol->sb.free_blocks) > total) {
         status = INFS_STATUS_CORRUPT;
         goto fail;
     }

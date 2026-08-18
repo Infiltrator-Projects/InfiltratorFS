@@ -4,31 +4,32 @@ static int extent_emit(struct infs_extent_disk *out, uint32_t *count,
                        uint32_t flags)
 {
     if (!blocks)
-        return 0;
+        return INFS_STATUS_OK;
     if (*count) {
         struct infs_extent_disk *last = &out[*count - 1u];
         if (infs_le32_to_cpu(last->flags) == flags &&
-            infs_le64_to_cpu(last->logical_block) + infs_le32_to_cpu(last->block_count) == logical &&
+            infs_le64_to_cpu(last->logical_block) +
+                infs_le32_to_cpu(last->block_count) == logical &&
             ((flags == INFS_EXTENT_HOLE && physical == 0) ||
              (flags == INFS_EXTENT_NORMAL &&
               infs_le64_to_cpu(last->physical_block) +
                   infs_le32_to_cpu(last->block_count) == physical))) {
-            uint64_t merged = (uint64_t)infs_le32_to_cpu(last->block_count) + blocks;
+            uint64_t merged =
+                (uint64_t)infs_le32_to_cpu(last->block_count) + blocks;
             if (merged <= UINT32_MAX) {
                 last->block_count = infs_cpu_to_le32((uint32_t)merged);
-                return 0;
+                return INFS_STATUS_OK;
             }
         }
     }
-    if (*count >= INFS_MAX_FILE_EXTENTS) {
+    if (*count >= INFS_MAX_FILE_EXTENTS)
         return INFS_STATUS_FILE_TOO_LARGE;
-    }
     out[*count].logical_block = infs_cpu_to_le64(logical);
     out[*count].physical_block = infs_cpu_to_le64(physical);
     out[*count].block_count = infs_cpu_to_le32(blocks);
     out[*count].flags = infs_cpu_to_le32(flags);
     ++*count;
-    return 0;
+    return INFS_STATUS_OK;
 }
 
 static int file_replace_range(struct infs_volume *vol,
@@ -37,7 +38,8 @@ static int file_replace_range(struct infs_volume *vol,
                               uint64_t new_physical, uint32_t new_flags)
 {
     struct infs_file_payload_disk *p =
-        (struct infs_file_payload_disk *)(object + sizeof(struct infs_object_header_disk));
+        (struct infs_file_payload_disk *)(
+            object + sizeof(struct infs_object_header_disk));
     struct infs_extent_disk *ext = (struct infs_extent_disk *)(p + 1);
     uint32_t old_count = infs_le32_to_cpu(p->extent_count);
     struct infs_extent_disk rebuilt[INFS_MAX_FILE_EXTENTS];
@@ -48,9 +50,8 @@ static int file_replace_range(struct infs_volume *vol,
     if (replace_end < logical_start || block_count > UINT32_MAX ||
         (new_flags != INFS_EXTENT_NORMAL && new_flags != INFS_EXTENT_HOLE) ||
         (new_flags == INFS_EXTENT_HOLE && new_physical != 0) ||
-        (new_flags == INFS_EXTENT_NORMAL && new_physical == 0)) {
+        (new_flags == INFS_EXTENT_NORMAL && new_physical == 0))
         return INFS_STATUS_INVALID_ARGUMENT;
-    }
 
     for (uint32_t i = 0; i < old_count; ++i) {
         uint64_t l = infs_le64_to_cpu(ext[i].logical_block);
@@ -58,47 +59,56 @@ static int file_replace_range(struct infs_volume *vol,
         uint32_t n = infs_le32_to_cpu(ext[i].block_count);
         uint32_t flags = infs_le32_to_cpu(ext[i].flags);
         uint64_t e = l + n;
+        infs_status status;
         if (e <= logical_start || l >= replace_end) {
-            if (extent_emit(rebuilt, &new_count, l, phys, n, flags) != 0)
-                return INFS_STATUS_ERROR;
+            status = extent_emit(rebuilt, &new_count, l, phys, n, flags);
+            if (status != INFS_STATUS_OK)
+                return status;
             continue;
         }
         if (l < logical_start) {
             uint32_t prefix = (uint32_t)(logical_start - l);
-            if (extent_emit(rebuilt, &new_count, l, phys, prefix, flags) != 0)
-                return INFS_STATUS_ERROR;
+            status = extent_emit(rebuilt, &new_count, l, phys, prefix, flags);
+            if (status != INFS_STATUS_OK)
+                return status;
         }
         uint64_t overlap_start = l > logical_start ? l : logical_start;
         uint64_t overlap_end = e < replace_end ? e : replace_end;
         if (!replacement_emitted) {
-            if (extent_emit(rebuilt, &new_count, logical_start, new_physical,
-                            (uint32_t)block_count, new_flags) != 0)
-                return INFS_STATUS_ERROR;
+            status = extent_emit(rebuilt, &new_count, logical_start,
+                                 new_physical, (uint32_t)block_count,
+                                 new_flags);
+            if (status != INFS_STATUS_OK)
+                return status;
             replacement_emitted = 1;
         }
-        if (flags == INFS_EXTENT_NORMAL)
+        if (flags == INFS_EXTENT_NORMAL) {
             free_run(vol, phys + (overlap_start - l),
                      overlap_end - overlap_start);
+            if (vol->tx_error != INFS_STATUS_OK)
+                return vol->tx_error;
+        }
         if (e > replace_end) {
             uint32_t suffix = (uint32_t)(e - replace_end);
-            if (extent_emit(rebuilt, &new_count, replace_end,
-                            flags == INFS_EXTENT_HOLE ? 0 :
-                                phys + (replace_end - l),
-                            suffix, flags) != 0)
-                return INFS_STATUS_ERROR;
+            status = extent_emit(rebuilt, &new_count, replace_end,
+                                 flags == INFS_EXTENT_HOLE ? 0 :
+                                     phys + (replace_end - l),
+                                 suffix, flags);
+            if (status != INFS_STATUS_OK)
+                return status;
         }
     }
-    if (!replacement_emitted) {
+    if (!replacement_emitted)
         return INFS_STATUS_CORRUPT;
-    }
 
     memset(ext, 0, (size_t)INFS_MAX_FILE_EXTENTS * sizeof(*ext));
     memcpy(ext, rebuilt, (size_t)new_count * sizeof(*ext));
     p->extent_count = infs_cpu_to_le32(new_count);
-    struct infs_object_header_disk *hdr = (struct infs_object_header_disk *)object;
+    struct infs_object_header_disk *hdr =
+        (struct infs_object_header_disk *)object;
     hdr->payload_size = infs_cpu_to_le32((uint32_t)(sizeof(*p) +
         (size_t)new_count * sizeof(*ext)));
-    return 0;
+    return INFS_STATUS_OK;
 }
 
 static int data_block_verify(struct infs_volume *vol,
@@ -107,11 +117,11 @@ static int data_block_verify(struct infs_volume *vol,
                              const uint8_t data[INFS_BLOCK_SIZE])
 {
     struct infs_data_checksum_disk expected, actual;
-    if (checksum_get(vol, file, owner_id, logical, &expected) != 0)
-        return INFS_STATUS_ERROR;
+    infs_status status = checksum_get(vol, file, owner_id, logical, &expected);
+    if (status != INFS_STATUS_OK)
+        return status;
     data_block_checksum(data, &actual);
-    if (memcmp(&expected, &actual, sizeof(expected)) != 0) {
+    if (memcmp(&expected, &actual, sizeof(expected)) != 0)
         return INFS_STATUS_CORRUPT;
-    }
-    return 0;
+    return INFS_STATUS_OK;
 }

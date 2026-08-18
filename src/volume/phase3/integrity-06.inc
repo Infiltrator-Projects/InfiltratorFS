@@ -2,15 +2,15 @@
 infs_status infs_scrub(struct infs_volume *vol,
                        struct infs_scrub_report *report)
 {
-    if (!vol || !report) {
+    if (!vol || !report)
         return INFS_STATUS_INVALID_ARGUMENT;
-    }
     memset(report, 0, sizeof(*report));
 
     uint8_t index_block[INFS_BLOCK_SIZE];
     struct infs_index_payload_disk *index_payload;
-    if (index_load(vol, index_block, &index_payload) != 0)
-        return INFS_STATUS_ERROR;
+    infs_status status = index_load(vol, index_block, &index_payload);
+    if (status != INFS_STATUS_OK)
+        return status;
     uint32_t entries_count = infs_le32_to_cpu(index_payload->entry_count);
     struct infs_index_entry_disk *entries =
         (struct infs_index_entry_disk *)(index_payload + 1);
@@ -22,7 +22,7 @@ infs_status infs_scrub(struct infs_volume *vol,
 
         uint64_t object_block = infs_le64_to_cpu(entries[i].object_block);
         uint8_t object[INFS_BLOCK_SIZE];
-        if (read_object(vol, object_block, object) != 0) {
+        if (read_object(vol, object_block, object) != INFS_STATUS_OK) {
             ++report->metadata_errors;
             continue;
         }
@@ -30,7 +30,7 @@ infs_status infs_scrub(struct infs_volume *vol,
             (struct infs_object_header_disk *)object;
         struct infs_file_payload_disk *file;
         struct infs_extent_disk *ext;
-        if (file_validate_volume(vol, object, &file, &ext) != 0 ||
+        if (file_validate_volume(vol, object, &file, &ext) != INFS_STATUS_OK ||
             memcmp(hdr->object_id, entries[i].object_id, 16) != 0) {
             ++report->metadata_errors;
             continue;
@@ -46,13 +46,13 @@ infs_status infs_scrub(struct infs_volume *vol,
             for (uint32_t k = 0; k < blocks; ++k) {
                 ++report->data_blocks_checked;
                 uint8_t data[INFS_BLOCK_SIZE];
-                if (read_block(vol, physical + k, data) != 0) {
+                if (read_block(vol, physical + k, data) != INFS_STATUS_OK) {
                     ++report->metadata_errors;
                     continue;
                 }
                 struct infs_data_checksum_disk expected, actual;
                 if (checksum_get(vol, file, hdr->object_id, logical + k,
-                                 &expected) != 0) {
+                                 &expected) != INFS_STATUS_OK) {
                     ++report->metadata_errors;
                     continue;
                 }
@@ -62,5 +62,5 @@ infs_status infs_scrub(struct infs_volume *vol,
             }
         }
     }
-    return 0;
+    return INFS_STATUS_OK;
 }

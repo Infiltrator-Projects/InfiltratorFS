@@ -7,29 +7,36 @@ static int punch_partial_block(struct infs_volume *vol,
 {
     uint64_t physical;
     uint32_t flags;
-    if (file_map_block(file, ext, logical, &physical, &flags) != 0)
-        return INFS_STATUS_CORRUPT;
+    infs_status status = file_map_block(file, ext, logical, &physical, &flags);
+    if (status != INFS_STATUS_OK)
+        return status;
     if (flags == INFS_EXTENT_HOLE)
-        return 0;
+        return INFS_STATUS_OK;
 
     struct infs_object_header_disk *hdr =
         (struct infs_object_header_disk *)object;
     uint8_t data[INFS_BLOCK_SIZE];
-    if (read_block(vol, physical, data) != 0 ||
-        data_block_verify(vol, file, hdr->object_id, logical, data) != 0)
-        return INFS_STATUS_ERROR;
+    status = read_block(vol, physical, data);
+    if (status != INFS_STATUS_OK)
+        return status;
+    status = data_block_verify(vol, file, hdr->object_id, logical, data);
+    if (status != INFS_STATUS_OK)
+        return status;
     memset(data + within, 0, length);
 
     uint64_t replacement = 0, got = 0;
-    int status = alloc_run(vol, 1, &replacement, &got);
-    if (status != 0)
+    status = alloc_run(vol, 1, &replacement, &got);
+    if (status != INFS_STATUS_OK)
         return status;
     if (got != 1)
         return INFS_STATUS_CORRUPT;
-    if (write_block(vol, replacement, data) != 0 ||
-        file_replace_range(vol, object, logical, 1, replacement,
-                           INFS_EXTENT_NORMAL) != 0)
-        return INFS_STATUS_ERROR;
+    status = write_block(vol, replacement, data);
+    if (status != INFS_STATUS_OK)
+        return status;
+    status = file_replace_range(vol, object, logical, 1, replacement,
+                                INFS_EXTENT_NORMAL);
+    if (status != INFS_STATUS_OK)
+        return status;
 
     struct infs_data_checksum_disk digest;
     data_block_checksum(data, &digest);
@@ -40,19 +47,21 @@ static int punch_hole_tx(struct infs_volume *vol, const char *path,
                          uint64_t offset, uint64_t length)
 {
     struct infs_lookup lk;
-    int status = infs_lookup_path(vol, path, &lk);
-    if (status != 0)
+    infs_status status = infs_lookup_path(vol, path, &lk);
+    if (status != INFS_STATUS_OK)
         return status;
     if (lk.type != INFS_OBJECT_FILE)
         return INFS_STATUS_IS_DIRECTORY;
 
     uint8_t object[INFS_BLOCK_SIZE];
-    if (read_object(vol, lk.block, object) != 0)
-        return INFS_STATUS_ERROR;
+    status = read_object(vol, lk.block, object);
+    if (status != INFS_STATUS_OK)
+        return status;
     struct infs_file_payload_disk *file;
     struct infs_extent_disk *ext;
-    if (file_validate_volume(vol, object, &file, &ext) != 0)
-        return INFS_STATUS_ERROR;
+    status = file_validate_volume(vol, object, &file, &ext);
+    if (status != INFS_STATUS_OK)
+        return status;
 
     uint64_t file_size = infs_le64_to_cpu(file->attributes.logical_size);
     uint64_t logical_end = file_size;
@@ -74,7 +83,7 @@ static int punch_hole_tx(struct infs_volume *vol, const char *path,
             chunk = (size_t)(end - pos);
         status = punch_partial_block(vol, object, file, ext,
                                      pos / INFS_BLOCK_SIZE, within, chunk);
-        if (status != 0)
+        if (status != INFS_STATUS_OK)
             return status;
         pos += chunk;
     }
@@ -85,7 +94,7 @@ static int punch_hole_tx(struct infs_volume *vol, const char *path,
             UINT32_MAX : (uint32_t)full_blocks;
         status = file_replace_range(vol, object, pos / INFS_BLOCK_SIZE,
                                     chunk, 0, INFS_EXTENT_HOLE);
-        if (status != 0)
+        if (status != INFS_STATUS_OK)
             return status;
         pos += (uint64_t)chunk * INFS_BLOCK_SIZE;
         full_blocks -= chunk;
@@ -95,7 +104,7 @@ static int punch_hole_tx(struct infs_volume *vol, const char *path,
         status = punch_partial_block(vol, object, file, ext,
                                      pos / INFS_BLOCK_SIZE, 0,
                                      (size_t)(end - pos));
-        if (status != 0)
+        if (status != INFS_STATUS_OK)
             return status;
     }
 
@@ -104,12 +113,15 @@ static int punch_hole_tx(struct infs_volume *vol, const char *path,
     if (file_allocated_blocks(file, ext) == 0 &&
         !id_is_zero(file->checksum_head_id)) {
         status = checksum_destroy_chain(vol, file, hdr->object_id);
-        if (status != 0)
+        if (status != INFS_STATUS_OK)
             return status;
     }
     touch_mctime(vol, &file->attributes);
-    if (write_object(vol, lk.block, object) != 0)
-        return INFS_STATUS_ERROR;
+    if (vol->tx_error != INFS_STATUS_OK)
+        return vol->tx_error;
+    status = write_object(vol, lk.block, object);
+    if (status != INFS_STATUS_OK)
+        return status;
     return infs_volume_sync(vol);
 }
 

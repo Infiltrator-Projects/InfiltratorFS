@@ -3,71 +3,91 @@ static int remove_object(struct infs_volume *vol, const char *path, int want_dir
 {
     struct infs_lookup parent;
     char name[INFS_NAME_MAX + 1u];
-    if (split_parent(vol, path, &parent, name) != 0)
-        return INFS_STATUS_ERROR;
+    infs_status status = split_parent(vol, path, &parent, name);
+    if (status != INFS_STATUS_OK)
+        return status;
+
     uint8_t parent_block[INFS_BLOCK_SIZE];
-    if (read_object(vol, parent.block, parent_block) != 0)
-        return INFS_STATUS_ERROR;
+    status = read_object(vol, parent.block, parent_block);
+    if (status != INFS_STATUS_OK)
+        return status;
     struct infs_directory_payload_disk *pp;
-    if (dir_validate(parent_block, &pp) != 0)
-        return INFS_STATUS_ERROR;
+    status = dir_validate(parent_block, &pp);
+    if (status != INFS_STATUS_OK)
+        return status;
     struct infs_dirent_disk *de = dir_find(pp, name, strlen(name), NULL);
-    if (!de) {
+    if (!de)
         return INFS_STATUS_NOT_FOUND;
-    }
+
     struct infs_lookup child;
-    if (index_find(vol, de->object_id, &child) != 0)
-        return INFS_STATUS_ERROR;
-    if (want_directory && child.type != INFS_OBJECT_DIRECTORY) {
+    status = index_find(vol, de->object_id, &child);
+    if (status != INFS_STATUS_OK)
+        return status;
+    if (want_directory && child.type != INFS_OBJECT_DIRECTORY)
         return INFS_STATUS_NOT_DIRECTORY;
-    }
-    if (!want_directory && child.type == INFS_OBJECT_DIRECTORY) {
+    if (!want_directory && child.type == INFS_OBJECT_DIRECTORY)
         return INFS_STATUS_IS_DIRECTORY;
-    }
 
     uint8_t child_block[INFS_BLOCK_SIZE];
-    if (read_object(vol, child.block, child_block) != 0)
-        return INFS_STATUS_ERROR;
+    status = read_object(vol, child.block, child_block);
+    if (status != INFS_STATUS_OK)
+        return status;
     if (child.type == INFS_OBJECT_DIRECTORY) {
         struct infs_directory_payload_disk *cp;
-        if (dir_validate(child_block, &cp) != 0)
-            return INFS_STATUS_ERROR;
-        if (infs_le32_to_cpu(cp->entry_count) != 0) {
+        status = dir_validate(child_block, &cp);
+        if (status != INFS_STATUS_OK)
+            return status;
+        if (infs_le32_to_cpu(cp->entry_count) != 0)
             return INFS_STATUS_NOT_EMPTY;
-        }
     } else if (child.type == INFS_OBJECT_FILE) {
         struct infs_file_payload_disk *fp;
         struct infs_extent_disk *ext;
-        if (file_validate_volume(vol, child_block, &fp, &ext) != 0)
-            return INFS_STATUS_ERROR;
-        if (checksum_destroy_chain(vol, fp, child.object_id) != 0)
-            return INFS_STATUS_ERROR;
+        status = file_validate_volume(vol, child_block, &fp, &ext);
+        if (status != INFS_STATUS_OK)
+            return status;
+        status = checksum_destroy_chain(vol, fp, child.object_id);
+        if (status != INFS_STATUS_OK)
+            return status;
         uint32_t count = infs_le32_to_cpu(fp->extent_count);
         for (uint32_t i = 0; i < count; ++i) {
             if (infs_le32_to_cpu(ext[i].flags) == INFS_EXTENT_NORMAL)
                 free_run(vol, infs_le64_to_cpu(ext[i].physical_block),
                          infs_le32_to_cpu(ext[i].block_count));
         }
+        if (vol->tx_error != INFS_STATUS_OK)
+            return vol->tx_error;
+    } else {
+        return INFS_STATUS_CORRUPT;
     }
 
-    if (dir_remove(parent_block, name, NULL) != 0)
-        return INFS_STATUS_ERROR;
+    status = dir_remove(parent_block, name, NULL);
+    if (status != INFS_STATUS_OK)
+        return status;
     if (child.type == INFS_OBJECT_DIRECTORY) {
         uint64_t nlink = infs_le64_to_cpu(pp->attributes.link_count);
-        if (nlink > 2)
-            pp->attributes.link_count = infs_cpu_to_le64(nlink - 1u);
+        if (nlink <= 2u)
+            return INFS_STATUS_CORRUPT;
+        pp->attributes.link_count = infs_cpu_to_le64(nlink - 1u);
     }
     touch_mctime(vol, &pp->attributes);
-    if (write_object(vol, parent.block, parent_block) != 0)
-        return INFS_STATUS_ERROR;
-    if (index_remove(vol, child.object_id) != 0)
-        return INFS_STATUS_ERROR;
+    if (vol->tx_error != INFS_STATUS_OK)
+        return vol->tx_error;
+    status = write_object(vol, parent.block, parent_block);
+    if (status != INFS_STATUS_OK)
+        return status;
+    status = index_remove(vol, child.object_id);
+    if (status != INFS_STATUS_OK)
+        return status;
     free_run(vol, child.block, 1);
+    if (vol->tx_error != INFS_STATUS_OK)
+        return vol->tx_error;
     return infs_volume_sync(vol);
 }
 
 infs_status infs_unlink(struct infs_volume *vol, const char *path)
 {
+    if (!vol || !path)
+        return INFS_STATUS_INVALID_ARGUMENT;
     infs_status status = tx_begin(vol);
     if (status != INFS_STATUS_OK)
         return status;
@@ -79,6 +99,8 @@ infs_status infs_unlink(struct infs_volume *vol, const char *path)
 
 infs_status infs_rmdir(struct infs_volume *vol, const char *path)
 {
+    if (!vol || !path)
+        return INFS_STATUS_INVALID_ARGUMENT;
     infs_status status = tx_begin(vol);
     if (status != INFS_STATUS_OK)
         return status;
@@ -99,12 +121,15 @@ static int id_is_ancestor(struct infs_volume *vol, const uint8_t ancestor[16],
         if (memcmp(cur, vol->sb.root_object_id, 16) == 0)
             return 0;
         struct infs_lookup lk;
-        if (index_find(vol, cur, &lk) != 0)
-            return INFS_STATUS_ERROR;
+        infs_status status = index_find(vol, cur, &lk);
+        if (status != INFS_STATUS_OK)
+            return status;
         uint8_t block[INFS_BLOCK_SIZE];
-        if (read_object(vol, lk.block, block) != 0)
-            return INFS_STATUS_ERROR;
-        struct infs_object_header_disk *hdr = (struct infs_object_header_disk *)block;
+        status = read_object(vol, lk.block, block);
+        if (status != INFS_STATUS_OK)
+            return status;
+        struct infs_object_header_disk *hdr =
+            (struct infs_object_header_disk *)block;
         if (id_is_zero(hdr->parent_id))
             return 0;
         memcpy(cur, hdr->parent_id, 16);
