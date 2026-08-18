@@ -30,13 +30,17 @@ static infs_status read_checkpoint_candidates(
         total_blocks - 1u
     };
     unsigned found = 0;
+    infs_status first_read_error = INFS_STATUS_OK;
     uint8_t raw[INFS_BLOCK_SIZE];
 
     for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i) {
         infs_status status = infs_storage_read(
             &vol->storage, blocks[i] * INFS_BLOCK_SIZE, raw, sizeof(raw));
-        if (status != INFS_STATUS_OK)
+        if (status != INFS_STATUS_OK) {
+            if (first_read_error == INFS_STATUS_OK)
+                first_read_error = status;
             continue;
+        }
         if (!infs_validate_superblock_block(raw))
             continue;
 
@@ -53,7 +57,10 @@ static infs_status read_checkpoint_candidates(
         ++found;
     }
 
-    return found ? INFS_STATUS_OK : INFS_STATUS_CORRUPT;
+    if (found)
+        return INFS_STATUS_OK;
+    return first_read_error != INFS_STATUS_OK ?
+        first_read_error : INFS_STATUS_CORRUPT;
 }
 
 static infs_status load_checkpoint_graph(
