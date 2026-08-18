@@ -1,11 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-static int64_t now_ns(const struct infs_volume *vol)
-{
-    int64_t value = 0;
-    (void)infs_storage_current_time_ns(&vol->storage, &value);
-    return value;
-}
-
 static size_t align8(size_t n)
 {
     return (n + (INFS_DIRENT_ALIGN - 1u)) & ~(size_t)(INFS_DIRENT_ALIGN - 1u);
