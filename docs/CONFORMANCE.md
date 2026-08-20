@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # Format 0.6 Conformance
 
-Implementation 0.6.3 defines the hardened portable contract of on-disk Format 0.6. Format 0.6 is intentionally incompatible with Format 0.5 because hole extents and sparse checksum chains change required interpretation and validation. Implementations 0.6.1 through 0.6.3 do not change any packed field, offset, feature bit or disk-layout version introduced by 0.6.0; 0.6.3 adds recovery selection and remaining API/tool hardening without changing the byte format.
+Implementation 0.6.4 defines the hardened portable contract of on-disk Format 0.6. Format 0.6 is intentionally incompatible with Format 0.5 because hole extents and sparse checksum chains change required interpretation and validation. Implementations 0.6.1 through 0.6.4 do not change any packed field, offset, feature bit or disk-layout version introduced by 0.6.0; 0.6.4 adds fail-closed checkpoint publication and POSIX opener coordination without changing the byte format.
 
 ## Required representation
 
@@ -45,7 +45,7 @@ Format 0.6 uses the conventional three feature classes deliberately:
 - unknown `ro_compat_flags` may be opened read-only but must not be opened writable;
 - unknown `compat_flags` may be ignored because they do not change required read/write interpretation.
 
-Current implementation 0.6.3 defines no compatible or read-only-compatible feature bits. Both masks therefore remain zero for newly formatted volumes, while the reader preserves the compatibility semantics above for future extensions.
+Current implementation 0.6.4 defines no compatible or read-only-compatible feature bits. Both masks therefore remain zero for newly formatted volumes, while the reader preserves the compatibility semantics above for future extensions.
 
 ## Portable result contract
 
@@ -57,13 +57,15 @@ A writable storage backend must provide positioned write, durable flush, random-
 
 ## Recovery selection
 
-Physical checkpoint copies are first screened independently for checkpoint checksum, format and volume-geometry validity. An unreadable physical checkpoint copy is tolerated as lost redundancy when another independently valid checkpoint copy survives. If no valid checkpoint copy survives and at least one checkpoint read failed, the originating storage error is returned rather than being mislabeled as corruption. Recovery then considers the surviving candidates in descending generation order and validates the complete graph referenced by each candidate: bitmap geometry/accounting, critical allocation, root, object index, exact ownership, namespace graph and checksum graph.
+Physical checkpoint copies are first screened independently for checkpoint checksum, format and volume-geometry validity. A read-only opener may tolerate an unreadable physical checkpoint copy as lost redundancy when another independently valid checkpoint copy survives. A writable opener must instead return the originating storage error: after a crash between first-checkpoint publication and replication, the unreadable copy could contain the only newer committed generation and must not be overwritten by healing. If no valid checkpoint copy survives and at least one checkpoint read failed, the originating storage error is returned rather than being mislabeled as corruption. Recovery then considers the surviving candidates in descending generation order and validates the complete graph referenced by each candidate: bitmap geometry/accounting, critical allocation, root, object index, exact ownership, namespace graph and checksum graph.
 
 A candidate whose committed referenced graph is structurally corrupt may be rejected in favor of the next older individually valid committed candidate. Missing or cyclic internal metadata references encountered while validating an otherwise committed graph are classified as graph corruption. External failures encountered while validating a candidate graph, such as storage I/O errors, memory exhaustion or unsupported feature/format semantics, are not reclassified as corruption and must not be silently hidden by falling back to an older generation.
 
 A read-only recovery leaves physical checkpoint copies unchanged. After writable recovery selects an older valid graph, the implementation rewrites and durably flushes all three checkpoint replicas to that selected committed generation before returning the volume writable.
 
-Once the first generation-N+1 checkpoint is durably flushed, the transaction is committed. Failure while replicating that already-committed checkpoint to secondary locations does not retroactively turn the namespace or data mutation into a failed operation. The volume records degraded checkpoint redundancy and a subsequent explicit sync heals the replicas or reports the storage error.
+Once the first generation-N+1 checkpoint is durably flushed, the transaction is committed. Failure while replicating that already-committed checkpoint to secondary locations does not retroactively turn the namespace or data mutation into a failed operation. The volume records degraded checkpoint redundancy and a subsequent explicit sync heals the replicas or reports the storage error. If the first checkpoint write or its immediately following flush fails, durability is indeterminate: the live volume disables mutation, preserves that error on later mutation/sync attempts, and requires close-and-reopen recovery before any allocation can continue.
+
+The POSIX backend acquires nonblocking advisory locks for the lifetime of each storage opener. Read-only openers use shared locks. Writable openers and the formatter use exclusive locks. Lock contention returns `INFS_STATUS_BUSY` before volume recovery or destructive formatting begins.
 
 Ordinary rename replacement is a single filesystem transaction. A file may replace an existing file; a directory may replace an empty directory. Replacing a non-empty directory is rejected. Type-incompatible replacement is rejected. A trailing slash retains directory semantics for both source and destination rather than being silently stripped. The source object's persistent ID is retained and no intermediate committed namespace is published.
 
@@ -84,11 +86,13 @@ Ordinary rename replacement is a single filesystem transaction. A file may repla
 
 The same portable test creates a 1 TiB logical sparse file in a 16 MiB memory image. It verifies allocation-free growth, out-of-order high/low/middle checksum-segment insertion, zero-filled reads, partial and full hole punching, exact reclamation, scrub behaviour, read-only reopen and rejection of unknown extent flags, physically backed holes and incomplete logical coverage.
 
-`infilfs-hardening-conformance` covers checkpoint-label termination, canonical padding/reserved fields, object versions, read-only-compatible feature semantics, exact block ownership, namespace uniqueness/reachability/parentage, checksum-object reachability, read-status propagation, POSIX rename replacement, post-commit checkpoint-replica failure and explicit replica healing.
+`infilfs-hardening-conformance` covers checkpoint-label termination, canonical padding/reserved fields, object versions, read-only-compatible feature semantics, exact block ownership, namespace uniqueness/reachability/parentage, checksum-object reachability, read-status propagation, POSIX rename replacement, post-commit checkpoint-replica failure, explicit replica healing and mandatory reopen after an indeterminate first-checkpoint flush.
 
 `infilfs-open-hardening` adds the 0.6.2 regression gates for a valid-CRC checkpoint whose bitmap is too small to represent `total_blocks` and for an attempted writable open on a backend that lacks mutation-critical callbacks. The malformed bitmap must be rejected before bit traversal.
 
-`infilfs-063-hardening` adds deterministic 0.6.3 regression gates for single-replica checkpoint-read tolerance, all-replica checkpoint-read error propagation, full-graph fallback from corrupt newer checkpoints to an older committed generation, writable replica healing after fallback, refusal to mask a newer-generation graph I/O failure, and rename trailing-slash semantics.
+`infilfs-063-hardening` retains the deterministic 0.6.3 recovery gates and adds 0.6.4 coverage proving that writable open refuses an unreadable checkpoint and preserves a possibly newer generation stored only in that location.
+
+`infilfs-posix-locking` verifies shared-reader coexistence, writer exclusion, writer-versus-reader exclusion, lock release on close and native `BUSY` status translation.
 
 `infilfs-sparse-files` adds deterministic transaction failpoints around high-offset writes and hole punches. It requires old-or-new visibility at the checkpoint boundary and checks repeated allocation/reclamation for block leaks.
 

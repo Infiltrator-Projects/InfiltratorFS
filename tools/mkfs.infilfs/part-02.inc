@@ -107,6 +107,13 @@ int main(int argc, char **argv)
             return 1;
         }
     }
+    if (flock(fd, LOCK_EX | LOCK_NB) != 0) {
+        perror("exclusive storage lock");
+        fprintf(stderr,
+                "Refusing to format storage that is open by another InfiltratorFS process.\n");
+        close(fd);
+        return 1;
+    }
     if (size_bytes < INFS_MIN_SIZE_BYTES) {
         fprintf(stderr, "Target is too small; minimum is 16 MiB.\n");
         close(fd);

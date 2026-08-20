@@ -7,6 +7,7 @@
 #include <limits.h>
 #include <linux/fs.h>
 #include <stdlib.h>
+#include <sys/file.h>
 #include <sys/ioctl.h>
 #include <sys/random.h>
 #include <sys/stat.h>
@@ -30,6 +31,8 @@ infs_status infs_status_from_errno(int error_number)
     case EFBIG: return INFS_STATUS_FILE_TOO_LARGE;
     case ENOMEM: return INFS_STATUS_NO_MEMORY;
     case EINTR: return INFS_STATUS_INTERRUPTED;
+    case EBUSY:
+    case EAGAIN: return INFS_STATUS_BUSY;
 #ifdef EOVERFLOW
     case EOVERFLOW: return INFS_STATUS_OVERFLOW;
 #endif
@@ -61,6 +64,7 @@ int infs_status_to_errno(infs_status status)
     case INFS_STATUS_FILE_TOO_LARGE: return EFBIG;
     case INFS_STATUS_NO_MEMORY: return ENOMEM;
     case INFS_STATUS_INTERRUPTED: return EINTR;
+    case INFS_STATUS_BUSY: return EBUSY;
     case INFS_STATUS_OVERFLOW: return EOVERFLOW;
     case INFS_STATUS_LOOP_DETECTED: return ELOOP;
     case INFS_STATUS_NOT_SUPPORTED: return EOPNOTSUPP;
@@ -250,6 +254,14 @@ infs_status infs_posix_storage_open(struct infs_storage *storage,
     context->fd = open(path, (writable ? O_RDWR : O_RDONLY) | O_CLOEXEC);
     if (context->fd < 0) {
         infs_status status = infs_status_from_errno(errno);
+        free(context);
+        return status;
+    }
+
+    int lock_operation = (writable ? LOCK_EX : LOCK_SH) | LOCK_NB;
+    if (flock(context->fd, lock_operation) != 0) {
+        infs_status status = infs_status_from_errno(errno);
+        close(context->fd);
         free(context);
         return status;
     }

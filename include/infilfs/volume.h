@@ -59,6 +59,10 @@ struct infs_volume {
     struct infs_storage storage;
     int writable;
     int checkpoint_repair_needed;
+    /* Nonzero after the commit checkpoint may have reached storage but its
+     * durability could not be established. No further mutation is safe until
+     * the volume is closed and recovered from its physical checkpoints. */
+    infs_status reopen_required_status;
     uint64_t size_bytes;
     struct infs_superblock_disk sb;
     uint8_t *bitmap;
