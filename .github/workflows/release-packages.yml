@@ -1,0 +1,94 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Release packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to package and update
+        required: true
+        default: v0.6.4
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  linux-deb:
+    name: Linux Debian package
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out the tagged source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes cmake ninja-build fuse3 libfuse3-dev
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Build Debian package
+        id: package
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="${RELEASE_TAG#v}"
+          architecture="$(dpkg --print-architecture)"
+          filename="infiltratorfs_${version}_${architecture}.deb"
+          package_root="${RUNNER_TEMP}/infiltratorfs-package"
+
+          rm -rf "${package_root}"
+          install -d "${package_root}/DEBIAN"
+          install -d "${package_root}/usr/share/doc/infiltratorfs"
+          cmake --install build --prefix "${package_root}/usr"
+          install -m 0644 LICENSE "${package_root}/usr/share/doc/infiltratorfs/copyright"
+          install -m 0644 README.md "${package_root}/usr/share/doc/infiltratorfs/README.md"
+
+          installed_size="$(du -sk "${package_root}/usr" | cut -f1)"
+          printf '%s\n' \
+            'Package: infiltratorfs' \
+            "Version: ${version}" \
+            'Section: utils' \
+            'Priority: optional' \
+            "Architecture: ${architecture}" \
+            'Maintainer: The First Infiltrator' \
+            'Depends: fuse3, libfuse3-3' \
+            "Installed-Size: ${installed_size}" \
+            'Homepage: https://github.com/The-First-Infiltrator/InfiltratorFS' \
+            'Description: experimental userspace filesystem tools' \
+            ' InfiltratorFS Format 0.6 formatter, inspector, scrubber, utility,' \
+            ' and Linux FUSE adapter. Use only with image files or disposable media.' \
+            > "${package_root}/DEBIAN/control"
+
+          install -d dist
+          dpkg-deb --root-owner-group --build "${package_root}" "dist/${filename}"
+          sha256sum "dist/${filename}" > "dist/${filename}.sha256"
+          echo "filename=${filename}" >> "${GITHUB_OUTPUT}"
+
+      - name: Preserve package as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: infiltratorfs-linux-deb
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Attach package to the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: gh release upload "${RELEASE_TAG}" dist/* --repo "${GITHUB_REPOSITORY}" --clobber
