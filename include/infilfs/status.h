@@ -27,6 +27,7 @@ typedef int32_t infs_status;
 #define INFS_STATUS_NOT_SUPPORTED    -INT32_C(16)
 #define INFS_STATUS_NO_MEMORY        -INT32_C(17)
 #define INFS_STATUS_INTERRUPTED      -INT32_C(18)
+#define INFS_STATUS_BUSY             -INT32_C(19)
 
 const char *infs_status_string(infs_status status);
 

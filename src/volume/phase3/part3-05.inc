@@ -1,8 +1,22 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+static infs_status require_checkpoint_recovery(struct infs_volume *vol,
+                                               infs_status status)
+{
+    if (status == INFS_STATUS_OK)
+        status = INFS_STATUS_IO_ERROR;
+    vol->reopen_required_status = status;
+    vol->writable = 0;
+    vol->checkpoint_repair_needed = 0;
+    tx_abort(vol);
+    return status;
+}
+
 infs_status infs_volume_sync(struct infs_volume *vol)
 {
     if (!vol || !infs_storage_valid(&vol->storage))
         return INFS_STATUS_INVALID_ARGUMENT;
+    if (vol->reopen_required_status != INFS_STATUS_OK)
+        return vol->reopen_required_status;
     if (!vol->writable)
         return INFS_STATUS_OK;
 
@@ -91,10 +105,10 @@ infs_status infs_volume_sync(struct infs_volume *vol)
         infs_le64_to_cpu(vol->sb.checkpoint_block[first]);
     status = write_block(vol, first_block, sb_block);
     if (status != INFS_STATUS_OK)
-        return status;
+        return require_checkpoint_recovery(vol, status);
     status = infs_storage_flush(&vol->storage);
     if (status != INFS_STATUS_OK)
-        return status;
+        return require_checkpoint_recovery(vol, status);
 
     /* The transaction is durably committed from this point onward. A failure
      * while replicating secondary checkpoints must not be reported to callers

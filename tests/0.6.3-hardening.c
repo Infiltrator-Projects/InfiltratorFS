@@ -276,11 +276,60 @@ static void check_checkpoint_replica_reads(struct memory_image *image)
            "one unreadable checkpoint replica is tolerated");
     infs_volume_close(&volume);
 
+    image->fail_reads = 1;
+    expect(open_image(image, 1, &volume) == INFS_STATUS_IO_ERROR,
+           "writable open refuses an unreadable checkpoint replica");
+    image->fail_reads = 0;
+
     build_valid_image(image);
     image->fail_checkpoint_reads = 1;
     expect(open_image(image, 0, &volume) == INFS_STATUS_IO_ERROR,
            "all unreadable checkpoint replicas preserve I/O failure");
     image->fail_checkpoint_reads = 0;
+}
+
+static void check_unreadable_newer_checkpoint_is_preserved(
+    struct memory_image *image)
+{
+    const uint64_t checkpoints[INFS_CHECKPOINT_COUNT] = {0, 2048, 4095};
+    uint8_t old_checkpoint[INFS_BLOCK_SIZE];
+    build_valid_image(image);
+    memcpy(old_checkpoint, image->bytes, sizeof(old_checkpoint));
+
+    struct infs_volume volume;
+    expect(open_image(image, 1, &volume) == INFS_STATUS_OK,
+           "open image for mixed-generation preservation test");
+    expect(infs_create_file(&volume, "/newer", &file_options) == INFS_STATUS_OK,
+           "commit generation for unreadable-replica test");
+    infs_volume_close(&volume);
+
+    /* Model a crash after generation two's primary checkpoint (block 4095)
+     * became durable but before its two replicas were updated. */
+    memcpy(image->bytes + checkpoints[0] * INFS_BLOCK_SIZE,
+           old_checkpoint, sizeof(old_checkpoint));
+    memcpy(image->bytes + checkpoints[1] * INFS_BLOCK_SIZE,
+           old_checkpoint, sizeof(old_checkpoint));
+    uint8_t newer_checkpoint[INFS_BLOCK_SIZE];
+    memcpy(newer_checkpoint,
+           image->bytes + checkpoints[2] * INFS_BLOCK_SIZE,
+           sizeof(newer_checkpoint));
+
+    image->fail_read_block = checkpoints[2];
+    image->fail_reads = 1;
+    expect(open_image(image, 0, &volume) == INFS_STATUS_OK,
+           "read-only open may inspect surviving older replicas");
+    expect(infs_le64_to_cpu(volume.sb.generation) == 1u,
+           "read-only inspection selected the visible older generation");
+    infs_volume_close(&volume);
+
+    image->fail_reads = 1;
+    expect(open_image(image, 1, &volume) == INFS_STATUS_IO_ERROR,
+           "writable open does not guess past an unreadable newer replica");
+    image->fail_reads = 0;
+    expect(memcmp(newer_checkpoint,
+                  image->bytes + checkpoints[2] * INFS_BLOCK_SIZE,
+                  sizeof(newer_checkpoint)) == 0,
+           "failed writable open preserves the possible newer checkpoint");
 }
 
 static void check_checkpoint_graph_fallback(struct memory_image *image)
@@ -374,6 +423,7 @@ int main(void)
         fail("allocate memory image");
 
     check_checkpoint_replica_reads(&image);
+    check_unreadable_newer_checkpoint_is_preserved(&image);
     check_checkpoint_graph_fallback(&image);
     check_checkpoint_graph_io_is_not_masked(&image);
     check_rename_trailing_slashes(&image);

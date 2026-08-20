@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.20)
-project(InfiltratorFS VERSION 0.6.3 LANGUAGES C)
+project(InfiltratorFS VERSION 0.6.4 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -84,6 +84,13 @@ if(UNIX)
     target_link_libraries(infilfs-phase1-api PRIVATE infilfs_posix)
     target_compile_definitions(infilfs-phase1-api PRIVATE _GNU_SOURCE)
     infilfs_enable_warnings(infilfs-phase1-api)
+
+    add_executable(infilfs-posix-locking tests/posix-locking.c)
+    target_link_libraries(infilfs-posix-locking PRIVATE infilfs_posix)
+    target_compile_definitions(infilfs-posix-locking PRIVATE _GNU_SOURCE)
+    infilfs_enable_warnings(infilfs-posix-locking)
+
+    add_test(NAME infilfs-posix-locking COMMAND infilfs-posix-locking)
 
     add_test(NAME infilfs-smoke
         COMMAND bash ${CMAKE_SOURCE_DIR}/tests/smoke.sh ${CMAKE_BINARY_DIR})

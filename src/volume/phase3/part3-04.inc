@@ -57,6 +57,12 @@ static infs_status read_checkpoint_candidates(
         ++found;
     }
 
+    /* A read-only opener can inspect any surviving replica. A writable opener
+     * must not heal over an unreadable location: that location may hold the
+     * only durably committed newer generation after a crash between primary
+     * checkpoint publication and replication. */
+    if (first_read_error != INFS_STATUS_OK && vol->writable)
+        return first_read_error;
     if (found)
         return INFS_STATUS_OK;
     return first_read_error != INFS_STATUS_OK ?

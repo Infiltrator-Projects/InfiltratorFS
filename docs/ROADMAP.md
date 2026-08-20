@@ -116,6 +116,17 @@
 - [x] Verify and retain libfuse's documented high-level `readdir` mode instead of introducing unnecessary synthetic directory cookies.
 - [x] Keep on-disk Format 0.6 unchanged.
 
+## Phase 4.5 — implementation 0.6.4 commit and concurrency safety — complete
+
+- [x] Refuse writable recovery when any physical checkpoint is unreadable and may contain the only newer committed generation.
+- [x] Preserve read-only inspection through surviving checkpoint replicas without modifying media.
+- [x] Disable all further mutation and require close-and-reopen recovery when the first checkpoint publication write or durability flush has an indeterminate outcome.
+- [x] Enforce shared read-only and exclusive writable POSIX storage locks.
+- [x] Coordinate the formatter with mounted volumes and other tools through the same exclusive storage lock.
+- [x] Add deterministic mixed-generation, indeterminate-commit and POSIX lock-contention regression coverage.
+- [x] Document the high-level FUSE adapter's incomplete open-handle semantics as unsupported.
+- [x] Keep on-disk Format 0.6 unchanged.
+
 ## Phase 4 — modern storage features
 
 - [x] Sparse extents.
@@ -162,6 +173,7 @@
 
 - [x] POSIX file/device backend.
 - [x] FUSE3 reference adapter.
+- [ ] Persistent FUSE inode/open-file handles with unlink/rename lifetime conformance tests.
 - [ ] Native Linux kernel driver.
 - [ ] `mount.infilfs` and standard utilities.
 - [ ] Debian/Ubuntu/Linux Mint packaging.

@@ -71,6 +71,8 @@ static int tx_begin(struct infs_volume *vol)
 {
     if (!vol)
         return INFS_STATUS_INVALID_ARGUMENT;
+    if (vol->reopen_required_status != INFS_STATUS_OK)
+        return vol->reopen_required_status;
     if (!vol->writable)
         return INFS_STATUS_READ_ONLY;
     if (vol->tx_active)

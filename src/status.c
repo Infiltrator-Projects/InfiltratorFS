@@ -23,6 +23,7 @@ const char *infs_status_string(infs_status status)
     case INFS_STATUS_NOT_SUPPORTED: return "operation or format is not supported";
     case INFS_STATUS_NO_MEMORY: return "not enough memory";
     case INFS_STATUS_INTERRUPTED: return "operation was interrupted";
+    case INFS_STATUS_BUSY: return "storage target is busy";
     default: return "unknown filesystem status";
     }
 }

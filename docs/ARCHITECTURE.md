@@ -73,7 +73,9 @@ Committed critical metadata is never overwritten as its only valid copy. A trans
 9. replicates that checkpoint to the other physical locations;
 10. makes superseded generation-`N` blocks reusable only after publication.
 
-A crash before the first new checkpoint retains generation `N`. A crash after it exposes generation `N+1`. Mixed checkpoint generations are healed before a writable opener allocates again. No journal replay is required.
+A crash before the first new checkpoint retains generation `N`. A crash after it exposes generation `N+1`. Mixed readable checkpoint generations are healed before a writable opener allocates again. If a physical checkpoint cannot be read, writable recovery fails closed because that location may contain the only newer commit; read-only inspection may still use surviving replicas. If the live writer cannot establish whether first-checkpoint publication became durable, it disables further mutation and requires checkpoint recovery through close and reopen. No journal replay is required.
+
+The POSIX adapter places a shared advisory lock on every read-only storage opener and an exclusive advisory lock on writers. The formatter participates in the same protocol. This makes the prototype's single-writer assumption an enforced process boundary rather than a caller convention.
 
 The required operation is a durable flush/barrier supplied by the storage adapter. Linux currently implements it with `fsync`; a Windows implementation can use the corresponding Windows storage primitive.
 

@@ -268,6 +268,9 @@ static void check_status_mapping(void)
     expect(strcmp(infs_status_string(INFS_STATUS_CORRUPT),
                   "filesystem corruption detected") == 0,
            "stable status text");
+    expect(strcmp(infs_status_string(INFS_STATUS_BUSY),
+                  "storage target is busy") == 0,
+           "busy status text");
 }
 
 int main(void)

@@ -21,6 +21,9 @@ struct memory_image {
     uint64_t random_state;
     uint64_t fail_write_block;
     int fail_writes;
+    uint64_t fail_flush_after_block;
+    int fail_flushes;
+    int flush_failure_pending;
 };
 
 static void fail(const char *message)
@@ -55,12 +58,20 @@ static infs_status memory_write(void *context, uint64_t offset,
         offset == image->fail_write_block * INFS_BLOCK_SIZE)
         return INFS_STATUS_IO_ERROR;
     memcpy(image->bytes + (size_t)offset, buffer, size);
+    if (image->fail_flushes && size == INFS_BLOCK_SIZE &&
+        offset == image->fail_flush_after_block * INFS_BLOCK_SIZE)
+        image->flush_failure_pending = 1;
     return INFS_STATUS_OK;
 }
 
 static infs_status memory_flush(void *context)
 {
-    (void)context;
+    struct memory_image *image = context;
+    if (image->flush_failure_pending && image->fail_flushes) {
+        image->flush_failure_pending = 0;
+        --image->fail_flushes;
+        return INFS_STATUS_IO_ERROR;
+    }
     return INFS_STATUS_OK;
 }
 
@@ -154,6 +165,9 @@ static void build_valid_image(struct memory_image *image)
     image->random_state = UINT64_C(0x9e3779b97f4a7c15);
     image->fail_write_block = UINT64_MAX;
     image->fail_writes = 0;
+    image->fail_flush_after_block = UINT64_MAX;
+    image->fail_flushes = 0;
+    image->flush_failure_pending = 0;
 
     uint8_t *bitmap = image->bytes + INFS_BLOCK_SIZE;
     bitmap_set(bitmap, 0, 1);
@@ -700,6 +714,46 @@ static void check_post_commit_replica_failure(struct memory_image *image)
     infs_volume_close(&volume);
 }
 
+static void check_indeterminate_commit_requires_reopen(
+    struct memory_image *image)
+{
+    build_valid_image(image);
+    struct infs_volume volume;
+    expect(open_image(image, 1, &volume) == INFS_STATUS_OK,
+           "open writable indeterminate-commit image");
+
+    /* Generation two publishes at checkpoint index two (block 4095). The
+     * write reaches the backend, but the following flush reports failure, so
+     * the caller cannot know whether generation one or two is durable. */
+    image->fail_flush_after_block = TEST_BLOCKS - 1u;
+    image->fail_flushes = 1;
+    expect(infs_create_file(&volume, "/uncertain", &file_options) ==
+               INFS_STATUS_IO_ERROR,
+           "surface commit-checkpoint flush failure");
+    expect(volume.reopen_required_status == INFS_STATUS_IO_ERROR,
+           "record that checkpoint recovery is required");
+    expect(!volume.writable,
+           "disable mutation after an indeterminate commit");
+    expect(infs_create_file(&volume, "/must-not-write", &file_options) ==
+               INFS_STATUS_IO_ERROR,
+           "reject later mutation until reopen");
+    expect(infs_volume_sync(&volume) == INFS_STATUS_IO_ERROR,
+           "sync continues to report the recovery requirement");
+    infs_volume_close(&volume);
+
+    image->fail_flush_after_block = UINT64_MAX;
+    image->fail_flushes = 0;
+    expect(open_image(image, 0, &volume) == INFS_STATUS_OK,
+           "recover indeterminate commit by reopening checkpoints");
+    struct infs_lookup lookup;
+    expect(infs_lookup_path(&volume, "/uncertain", &lookup) == INFS_STATUS_OK,
+           "reopen selects the checkpoint that reached storage");
+    expect(infs_lookup_path(&volume, "/must-not-write", &lookup) ==
+               INFS_STATUS_NOT_FOUND,
+           "poisoned volume performed no later mutation");
+    infs_volume_close(&volume);
+}
+
 int main(void)
 {
     struct memory_image image = {
@@ -726,6 +780,7 @@ int main(void)
     check_checksum_reachability(&image);
     check_rename_replacement(&image);
     check_post_commit_replica_failure(&image);
+    check_indeterminate_commit_requires_reopen(&image);
 
     free(image.bytes);
     puts("hardening-conformance: PASS");

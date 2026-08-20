@@ -5,9 +5,9 @@ InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem star
 
 Linux is the first implementation and test platform. It is not part of the filesystem's identity: the on-disk format and core engine are designed so a future Windows implementation can use the same volume without conversion or reformatting.
 
-## Current status — implementation 0.6.3 / format 0.6
+## Current status — implementation 0.6.4 / format 0.6
 
-Implementation 0.6.3 is a compatibility-preserving recovery and API-hardening release for on-disk Format 0.6. It validates each checkpoint's complete referenced generation graph before selection, can fall back from a corrupt newest graph to an older valid committed generation, preserves external I/O/service failures instead of disguising them as recovery, and closes remaining pathname, transaction-status and formatter-clock defects found after 0.6.2. No packed field, feature bit or on-disk layout changes.
+Implementation 0.6.4 is a compatibility-preserving recovery and concurrency-hardening release for on-disk Format 0.6. It refuses writable recovery when an unreadable checkpoint replica could hide a newer committed generation, requires close-and-reopen recovery after an indeterminate commit-checkpoint write or flush, and coordinates POSIX readers, writers and the formatter with nonblocking storage locks. No packed field, feature bit or on-disk layout changes.
 
 Current properties include:
 
@@ -17,7 +17,7 @@ Current properties include:
 - authoritative free-space bitmap with exact live-block ownership validation and minimum-coverage geometry checks before bitmap traversal;
 - three physically separated, checksummed checkpoints;
 - descending-generation checkpoint selection with complete referenced-graph validation and corruption-only fallback to an older committed generation;
-- writable recovery that heals all checkpoint replicas to the selected committed generation;
+- writable recovery that heals all readable checkpoint replicas to the selected committed generation and refuses to overwrite an unreadable replica;
 - transactional copy-on-write metadata, data and allocation state;
 - atomic old-or-new generation publication without journal replay;
 - CRC64-ECMA metadata checksums and SHA-256 file-data checksums;
@@ -31,11 +31,13 @@ Current properties include:
 - root-to-leaf namespace validation for unique names, target identity/type, parent links, link counts and reachability;
 - canonical zero/reserved-field validation for the current Format 0.6 contract;
 - callback-based storage, durable-flush, randomness and clock services, with writable opens requiring every mutation-critical service;
+- fail-closed close-and-reopen recovery after a commit-checkpoint write or flush whose outcome is indeterminate;
 - operating-system-neutral `infs_status` results preserved through public mutation/read helpers and translated only at adapter boundaries;
 - ordinary POSIX rename replacement semantics, including trailing-slash directory requirements;
 - genuinely read-only backing storage for FUSE `-r` / `-o ro` mounts;
 - normalized pre-epoch FUSE timestamps and overflow-checked `utimens` conversion;
 - block-device formatting that refuses mounted/held targets, acquires an exclusive Linux block-device open before destructive writes, and fails if the initial realtime clock query fails;
+- shared POSIX storage locks for concurrent read-only tools and an exclusive lock for writers and the formatter;
 - formatter publication ordering that leaves an interrupted format unmountable rather than publishing checkpoints before referenced metadata is durable;
 - byte-exact layout, malformed-image and deterministic in-memory volume conformance tests;
 - explicit regressions for undersized allocation bitmaps, incomplete writable backends, checkpoint-graph fallback, non-masked recovery I/O failures and rename trailing slashes;
@@ -97,7 +99,7 @@ Mount read-only without opening the backing image/device writable:
 ./build/infilfs-fuse infilfs.img /tmp/infilfs-mnt -f -o ro
 ```
 
-The FUSE adapter remains single-threaded while the core is a single-writer prototype. On Linux Mint, `bash tests/mint-sparse-fuse.sh build` runs the real mounted 1 TiB sparse-file/write/punch/remount harness after the normal CTest suite.
+The FUSE adapter remains single-threaded while the core is a single-writer prototype. The POSIX backend now enforces that model: multiple read-only openers may coexist, while a writable opener or formatter holds the storage target exclusively. On Linux Mint, `bash tests/mint-sparse-fuse.sh build` runs the real mounted 1 TiB sparse-file/write/punch/remount harness after the normal CTest suite.
 
 ## Repository layout
 
@@ -122,6 +124,8 @@ docs/                architecture, format, roadmap and design inspirations
 ## Safety
 
 InfiltratorFS remains experimental. Use image files or disposable media only. Do not store irreplaceable data on Format 0.6.
+
+The current high-level FUSE adapter resolves operations by pathname and does not yet retain persistent inode/open-file state. POSIX open-handle semantics across unlink and rename are therefore incomplete; applications that keep descriptors open while names move or disappear can observe incorrect behaviour. Treat that workload as unsupported until the adapter has explicit handle-lifetime tests and implementation.
 
 ## License
 
