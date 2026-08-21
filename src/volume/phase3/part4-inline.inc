@@ -62,10 +62,11 @@ static infs_status file_release_external_storage(
     for (uint32_t i = 0; i < count; ++i) {
         if (infs_le32_to_cpu(ext[i].flags) != INFS_EXTENT_NORMAL)
             continue;
-        free_run(vol, infs_le64_to_cpu(ext[i].physical_block),
-                 infs_le32_to_cpu(ext[i].block_count));
-        if (vol->tx_error != INFS_STATUS_OK)
-            return vol->tx_error;
+        status = file_free_unshared_run(
+            vol, hdr->object_id, infs_le64_to_cpu(ext[i].physical_block),
+            infs_le32_to_cpu(ext[i].block_count));
+        if (status != INFS_STATUS_OK)
+            return status;
     }
     return INFS_STATUS_OK;
 }
