@@ -20,19 +20,14 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v6
-
       - name: Install Linux adapter dependencies
         run: sudo apt-get update && sudo apt-get install -y desktop-file-utils libfuse3-dev fuse3
-
       - name: Validate Mint desktop integration
         run: desktop-file-validate packaging/infiltratorfs-manager.desktop
-
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-
       - name: Build
         run: cmake --build build --parallel
-
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
@@ -44,16 +39,12 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v6
-
       - name: Install Linux adapter dependencies
         run: sudo apt-get update && sudo apt-get install -y libfuse3-dev fuse3
-
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
-
       - name: Build
         run: cmake --build build --parallel
-
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
@@ -66,19 +57,15 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v6
-
       - name: Install Linux adapter dependencies
         run: sudo apt-get update && sudo apt-get install -y libfuse3-dev fuse3
-
       - name: Configure sanitizers
         run: >-
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
           -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
-
       - name: Build
         run: cmake --build build --parallel
-
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
@@ -88,18 +75,14 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v6
-
       - name: Install Linux adapter dependencies
         run: sudo apt-get update && sudo apt-get install -y libfuse3-dev fuse3
-
       - name: Configure analyzer
         run: >-
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
           -DCMAKE_C_FLAGS="-fanalyzer"
-
       - name: Build
         run: cmake --build build --parallel
-
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
@@ -109,16 +92,12 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v6
-
       - name: Configure MSVC
         run: cmake -S . -B build -A x64
-
       - name: Build Windows targets
         run: cmake --build build --config Release --parallel
-
       - name: Run Windows conformance tests
         run: ctest --test-dir build -C Release --output-on-failure
-
       - name: Upload Windows transfer app
         uses: actions/upload-artifact@v4
         with:
@@ -127,7 +106,7 @@ jobs:
           if-no-files-found: error
 
   publish-windows:
-    name: Publish Windows 0.7.1
+    name: Publish Windows 0.8.0
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [linux, clang, sanitizers, analyzer, windows]
     runs-on: ubuntu-latest
@@ -139,20 +118,19 @@ jobs:
         with:
           name: InfiltratorFS-Windows
           path: dist
-
-      - name: Create or update Windows emergency release
+      - name: Create or update 0.8.0 release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if ! gh release view v0.7.1 --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            gh release create v0.7.1 \
+          if ! gh release view v0.8.0 --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release create v0.8.0 \
               --repo "${GITHUB_REPOSITORY}" \
               --target "${GITHUB_SHA}" \
-              --title "InfiltratorFS 0.7.1 — Windows Transfer" \
-              --notes "Native Windows emergency transfer utility for InfiltratorFS Format 0.7. Select a non-system volume, format it as InfiltratorFS, then add or drag files and folders directly into the filesystem. Includes Win32 raw-volume locking/dismount, native formatting, read/write and scrub support. Experimental: use disposable or backed-up media only."
+              --title "InfiltratorFS 0.8.0 — Shared Extents" \
+              --notes "Implementation 0.8.0 adds generic core reflinks and shared physical extents to InfiltratorFS Format 0.7. Reflink clones share data blocks without duplicating them; writes break sharing through transactional CoW; truncate, hole punch, unlink, rename replacement and inline folding preserve blocks until their final file reference disappears. The feature is protected by the INFS_INCOMPAT_SHARED_EXTENTS incompatibility bit. Includes portable reflink/remount/scrub conformance coverage and the native Windows transfer utility. Experimental: use disposable or backed-up media only."
           fi
-          gh release upload v0.7.1 dist/InfiltratorFS-Windows.exe \
+          gh release upload v0.8.0 dist/InfiltratorFS-Windows.exe \
             --repo "${GITHUB_REPOSITORY}" --clobber
 
   report-windows-release:
@@ -175,12 +153,12 @@ jobs:
         run: |
           set -euo pipefail
           state=success
-          description="v0.7.1 Windows executable verified and published"
+          description="v0.8.0 shared-extents build verified and published"
           for result in "$LINUX_RESULT" "$CLANG_RESULT" "$SANITIZERS_RESULT" \
                         "$ANALYZER_RESULT" "$WINDOWS_RESULT" "$RELEASE_RESULT"; do
             if [ "$result" != "success" ]; then
               state=failure
-              description="v0.7.1 build/release gate failed"
+              description="v0.8.0 build/release gate failed"
               break
             fi
           done
@@ -188,5 +166,5 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
             -f state="$state" \
-            -f context="InfiltratorFS Windows 0.7.1" \
+            -f context="InfiltratorFS 0.8.0" \
             -f description="$description"
