@@ -105,10 +105,35 @@ jobs:
           path: build/Release/InfiltratorFS-Windows.exe
           if-no-files-found: error
 
-  publish-windows:
-    name: Publish Windows 0.8.0
+  linux-packages:
+    name: Linux GUI packages
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [linux, clang, sanitizers, analyzer, windows]
+    needs: [linux]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+      - name: Install package build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake desktop-file-utils fuse3 libfuse3-dev pkg-config zenity policykit-1 xdg-utils
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build --parallel
+      - name: Build Linux release packages
+        run: bash packaging/build-linux-packages.sh build dist
+      - name: Upload Linux installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: InfiltratorFS-Linux
+          path: dist/*
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish 0.8.0
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [linux, clang, sanitizers, analyzer, windows, linux-packages]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -117,6 +142,11 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: InfiltratorFS-Windows
+          path: dist
+      - name: Download verified Linux installers
+        uses: actions/download-artifact@v4
+        with:
+          name: InfiltratorFS-Linux
           path: dist
       - name: Create or update 0.8.0 release
         env:
@@ -128,15 +158,15 @@ jobs:
               --repo "${GITHUB_REPOSITORY}" \
               --target "${GITHUB_SHA}" \
               --title "InfiltratorFS 0.8.0 — Shared Extents" \
-              --notes "Implementation 0.8.0 adds generic core reflinks and shared physical extents to InfiltratorFS Format 0.7. Reflink clones share data blocks without duplicating them; writes break sharing through transactional CoW; truncate, hole punch, unlink, rename replacement and inline folding preserve blocks until their final file reference disappears. The feature is protected by the INFS_INCOMPAT_SHARED_EXTENTS incompatibility bit. Includes portable reflink/remount/scrub conformance coverage and the native Windows transfer utility. Experimental: use disposable or backed-up media only."
+              --notes "Implementation 0.8.0 adds generic core reflinks and shared physical extents to InfiltratorFS Format 0.7. Reflink clones share data blocks without duplicating them; writes break sharing through transactional CoW; truncate, hole punch, unlink, rename replacement and inline folding preserve blocks until their final file reference disappears. The feature is protected by the INFS_INCOMPAT_SHARED_EXTENTS incompatibility bit. Includes portable reflink/remount/scrub conformance coverage, Linux Mint GUI installers and the native Windows transfer utility. Experimental: use disposable or backed-up media only."
           fi
-          gh release upload v0.8.0 dist/InfiltratorFS-Windows.exe \
+          gh release upload v0.8.0 dist/* \
             --repo "${GITHUB_REPOSITORY}" --clobber
 
-  report-windows-release:
-    name: Report Windows release gate
+  report-release:
+    name: Report release gate
     if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [linux, clang, sanitizers, analyzer, windows, publish-windows]
+    needs: [linux, clang, sanitizers, analyzer, windows, linux-packages, publish-release]
     runs-on: ubuntu-latest
     permissions:
       statuses: write
@@ -149,13 +179,15 @@ jobs:
           SANITIZERS_RESULT: ${{ needs.sanitizers.result }}
           ANALYZER_RESULT: ${{ needs.analyzer.result }}
           WINDOWS_RESULT: ${{ needs.windows.result }}
-          RELEASE_RESULT: ${{ needs.publish-windows.result }}
+          PACKAGES_RESULT: ${{ needs.linux-packages.result }}
+          RELEASE_RESULT: ${{ needs.publish-release.result }}
         run: |
           set -euo pipefail
           state=success
-          description="v0.8.0 shared-extents build verified and published"
+          description="v0.8.0 Linux/Windows build verified and published"
           for result in "$LINUX_RESULT" "$CLANG_RESULT" "$SANITIZERS_RESULT" \
-                        "$ANALYZER_RESULT" "$WINDOWS_RESULT" "$RELEASE_RESULT"; do
+                        "$ANALYZER_RESULT" "$WINDOWS_RESULT" "$PACKAGES_RESULT" \
+                        "$RELEASE_RESULT"; do
             if [ "$result" != "success" ]; then
               state=failure
               description="v0.8.0 build/release gate failed"
