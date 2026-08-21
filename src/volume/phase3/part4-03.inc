@@ -163,7 +163,7 @@ static int64_t write_file_tx(struct infs_volume *vol, const char *path,
 
 static int64_t write_file_common(struct infs_volume *vol, const char *path,
                                  const void *buf, size_t size, uint64_t offset,
-                                 int publish)
+                                 int force_publish)
 {
     if (!vol || !path || (size && !buf))
         return INFS_STATUS_INVALID_ARGUMENT;
@@ -182,11 +182,13 @@ static int64_t write_file_common(struct infs_volume *vol, const char *path,
         tx_abort(vol);
         return rc;
     }
-    if (publish) {
+
+    if (force_publish)
         status = infs_volume_sync(vol);
-        if (status != INFS_STATUS_OK)
-            return status;
-    }
+    else
+        status = finish_mutation(vol, (uint64_t)size + INFS_BLOCK_SIZE);
+    if (status != INFS_STATUS_OK)
+        return status;
     return rc;
 }
 
