@@ -56,7 +56,7 @@ static int truncate_file_tx(struct infs_volume *vol, const char *path, uint64_t 
         status = write_object(vol, lk.block, object);
         if (status != INFS_STATUS_OK)
             return status;
-        return infs_volume_sync(vol);
+        return finish_mutation(vol, (uint64_t)INFS_BLOCK_SIZE * 2u);
     }
 
     if (file_is_inline(object, p)) {
@@ -175,7 +175,7 @@ static int truncate_file_tx(struct infs_volume *vol, const char *path, uint64_t 
     status = write_object(vol, lk.block, object);
     if (status != INFS_STATUS_OK)
         return status;
-    return infs_volume_sync(vol);
+    return finish_mutation(vol, (uint64_t)INFS_BLOCK_SIZE * 4u);
 }
 
 infs_status infs_truncate_file(struct infs_volume *vol, const char *path,
