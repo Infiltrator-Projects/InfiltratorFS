@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-/* Format 0.6.1 implementation hardening. These checks strengthen acceptance
- * of the existing Format 0.6 byte layout; they do not add disk fields. */
+/* Format hardening. These checks validate namespace reachability, link counts,
+ * checksum ownership and the scalable Format 0.8 metadata representation. */
 
 static int validate_common_metadata(
     const struct infs_attributes_disk *attributes,
@@ -55,13 +55,55 @@ static int index_entry_index(const struct infs_index_entry_disk *entries,
     return INFS_STATUS_NOT_FOUND;
 }
 
-static int directory_has_duplicate_names(
-    const struct infs_directory_payload_disk *payload)
+static int directory_entries_snapshot(
+    struct infs_volume *vol, uint8_t directory[INFS_BLOCK_SIZE],
+    uint8_t **owned_out, const uint8_t **base_out, size_t *bytes_out,
+    uint32_t *count_out)
 {
-    const uint8_t *base = (const uint8_t *)(payload + 1);
-    size_t bytes = infs_le32_to_cpu(payload->bytes_used);
-    size_t first_off = 0;
+    if (!owned_out || !base_out || !bytes_out || !count_out)
+        return INFS_STATUS_INVALID_ARGUMENT;
+    *owned_out = NULL;
+    *base_out = NULL;
+    *bytes_out = 0;
+    *count_out = 0;
 
+    struct infs_directory_payload_disk *payload;
+    infs_status status = dir_validate(directory, &payload);
+    if (status != INFS_STATUS_OK)
+        return status;
+    struct infs_object_header_disk *header =
+        (struct infs_object_header_disk *)directory;
+    uint32_t count = infs_le32_to_cpu(payload->entry_count);
+    if (infs_le16_to_cpu(header->object_version) ==
+        INFS_OBJECT_VERSION_PAGED) {
+        uint8_t *snapshot = NULL;
+        size_t bytes = 0;
+        uint32_t snapshot_count = 0;
+        status = paged_dir_snapshot(vol, directory, &snapshot, &bytes,
+                                    &snapshot_count);
+        if (status != INFS_STATUS_OK)
+            return status;
+        if (snapshot_count != count) {
+            free(snapshot);
+            return INFS_STATUS_CORRUPT;
+        }
+        *owned_out = snapshot;
+        *base_out = snapshot;
+        *bytes_out = bytes;
+        *count_out = count;
+        return INFS_STATUS_OK;
+    }
+
+    *base_out = (const uint8_t *)(payload + 1);
+    *bytes_out = infs_le32_to_cpu(payload->bytes_used);
+    *count_out = count;
+    return INFS_STATUS_OK;
+}
+
+static int directory_blob_has_duplicate_names(const uint8_t *base,
+                                               size_t bytes)
+{
+    size_t first_off = 0;
     while (first_off < bytes) {
         const struct infs_dirent_disk *first =
             (const struct infs_dirent_disk *)(base + first_off);
@@ -89,23 +131,22 @@ static int directory_has_duplicate_names(
 
 static int validate_namespace_graph(struct infs_volume *vol)
 {
-    uint8_t index_block[INFS_BLOCK_SIZE];
-    struct infs_index_payload_disk *payload;
-    int status = index_load(vol, index_block, &payload);
+    struct infs_index_entry_disk *entries = NULL;
+    uint32_t count = 0;
+    int status = index_snapshot(vol, &entries, &count);
     if (status != INFS_STATUS_OK)
         return status;
-
-    uint32_t count = infs_le32_to_cpu(payload->entry_count);
-    struct infs_index_entry_disk *entries =
-        (struct infs_index_entry_disk *)(payload + 1);
-    if (count == 0)
+    if (count == 0) {
+        free(entries);
         return INFS_STATUS_CORRUPT;
+    }
 
     uint32_t *references = calloc(count, sizeof(*references));
     uint32_t *child_directories = calloc(count, sizeof(*child_directories));
     uint8_t *reachable = calloc(count, 1);
     uint8_t *expanded = calloc(count, 1);
     if (!references || !child_directories || !reachable || !expanded) {
+        free(entries);
         free(references);
         free(child_directories);
         free(reachable);
@@ -132,22 +173,29 @@ static int validate_namespace_graph(struct infs_volume *vol)
                              directory);
         if (status != INFS_STATUS_OK)
             goto out;
-        struct infs_directory_payload_disk *dir;
-        status = dir_validate(directory, &dir);
-        if (status != INFS_STATUS_OK)
+        uint8_t *owned = NULL;
+        const uint8_t *base = NULL;
+        size_t bytes = 0;
+        uint32_t dir_count = 0;
+        status = directory_entries_snapshot(vol, directory, &owned, &base,
+                                            &bytes, &dir_count);
+        if (status != INFS_STATUS_OK) {
+            free(owned);
             goto out;
-        if (directory_has_duplicate_names(dir)) {
+        }
+        if (directory_blob_has_duplicate_names(base, bytes)) {
+            free(owned);
             status = INFS_STATUS_CORRUPT;
             goto out;
         }
 
         struct infs_object_header_disk *directory_header =
             (struct infs_object_header_disk *)directory;
-        uint8_t *cursor = (uint8_t *)(dir + 1);
-        size_t remaining = infs_le32_to_cpu(dir->bytes_used);
-        while (remaining) {
+        size_t offset = 0;
+        uint32_t seen = 0;
+        while (offset < bytes) {
             struct infs_dirent_disk *entry =
-                (struct infs_dirent_disk *)cursor;
+                (struct infs_dirent_disk *)(base + offset);
             uint16_t rec = infs_le16_to_cpu(entry->record_size);
             uint16_t type = infs_le16_to_cpu(entry->object_type);
             uint32_t target = 0;
@@ -157,10 +205,12 @@ static int validate_namespace_graph(struct infs_volume *vol)
                 infs_le16_to_cpu(entries[target].object_type) != type ||
                 (type != INFS_OBJECT_FILE &&
                  type != INFS_OBJECT_DIRECTORY)) {
+                free(owned);
                 status = INFS_STATUS_CORRUPT;
                 goto out;
             }
             if (++references[target] != 1u) {
+                free(owned);
                 status = INFS_STATUS_CORRUPT;
                 goto out;
             }
@@ -170,18 +220,26 @@ static int validate_namespace_graph(struct infs_volume *vol)
             uint8_t child[INFS_BLOCK_SIZE];
             status = read_object(
                 vol, infs_le64_to_cpu(entries[target].object_block), child);
-            if (status != INFS_STATUS_OK)
+            if (status != INFS_STATUS_OK) {
+                free(owned);
                 goto out;
+            }
             struct infs_object_header_disk *child_header =
                 (struct infs_object_header_disk *)child;
             if (memcmp(child_header->parent_id,
                        directory_header->object_id, 16) != 0) {
+                free(owned);
                 status = INFS_STATUS_CORRUPT;
                 goto out;
             }
 
-            cursor += rec;
-            remaining -= rec;
+            offset += rec;
+            ++seen;
+        }
+        free(owned);
+        if (seen != dir_count) {
+            status = INFS_STATUS_CORRUPT;
+            goto out;
         }
     }
 
@@ -236,25 +294,37 @@ static int validate_namespace_graph(struct infs_volume *vol)
                 vol, infs_le64_to_cpu(entries[i].object_block), directory);
             if (status != INFS_STATUS_OK)
                 goto out;
-            struct infs_directory_payload_disk *dir;
-            status = dir_validate(directory, &dir);
-            if (status != INFS_STATUS_OK)
+            uint8_t *owned = NULL;
+            const uint8_t *base = NULL;
+            size_t bytes = 0;
+            uint32_t dir_count = 0;
+            status = directory_entries_snapshot(vol, directory, &owned, &base,
+                                                &bytes, &dir_count);
+            if (status != INFS_STATUS_OK) {
+                free(owned);
                 goto out;
-            uint8_t *cursor = (uint8_t *)(dir + 1);
-            size_t remaining = infs_le32_to_cpu(dir->bytes_used);
-            while (remaining) {
+            }
+            size_t offset = 0;
+            uint32_t seen = 0;
+            while (offset < bytes) {
                 struct infs_dirent_disk *entry =
-                    (struct infs_dirent_disk *)cursor;
+                    (struct infs_dirent_disk *)(base + offset);
                 uint16_t rec = infs_le16_to_cpu(entry->record_size);
                 uint32_t target = 0;
                 if (index_entry_index(entries, count, entry->object_id,
                                       &target) != INFS_STATUS_OK) {
+                    free(owned);
                     status = INFS_STATUS_CORRUPT;
                     goto out;
                 }
                 reachable[target] = 1;
-                cursor += rec;
-                remaining -= rec;
+                offset += rec;
+                ++seen;
+            }
+            free(owned);
+            if (seen != dir_count) {
+                status = INFS_STATUS_CORRUPT;
+                goto out;
             }
         }
         if (!progress)
@@ -272,6 +342,7 @@ static int validate_namespace_graph(struct infs_volume *vol)
 
     status = INFS_STATUS_OK;
 out:
+    free(entries);
     free(references);
     free(child_directories);
     free(reachable);
@@ -281,18 +352,17 @@ out:
 
 static int validate_checksum_graph(struct infs_volume *vol)
 {
-    uint8_t index_block[INFS_BLOCK_SIZE];
-    struct infs_index_payload_disk *payload;
-    int status = index_load(vol, index_block, &payload);
+    struct infs_index_entry_disk *entries = NULL;
+    uint32_t count = 0;
+    int status = index_snapshot(vol, &entries, &count);
     if (status != INFS_STATUS_OK)
         return status;
 
-    uint32_t count = infs_le32_to_cpu(payload->entry_count);
-    struct infs_index_entry_disk *entries =
-        (struct infs_index_entry_disk *)(payload + 1);
     uint8_t *seen = calloc(count ? count : 1u, 1);
-    if (!seen)
+    if (!seen) {
+        free(entries);
         return INFS_STATUS_NO_MEMORY;
+    }
 
     for (uint32_t i = 0; i < count; ++i) {
         if (infs_le16_to_cpu(entries[i].object_type) != INFS_OBJECT_FILE)
@@ -378,6 +448,7 @@ static int validate_checksum_graph(struct infs_volume *vol)
 
     status = INFS_STATUS_OK;
 out:
+    free(entries);
     free(seen);
     return status;
 }
