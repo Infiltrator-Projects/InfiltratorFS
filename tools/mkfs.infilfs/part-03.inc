@@ -7,6 +7,7 @@
         bitmap_set(bitmap, b);
     bitmap_set(bitmap, index_block);
     bitmap_set(bitmap, root_block);
+    bitmap_set(bitmap, index_page_block);
 
     for (uint64_t b = total_blocks; b < bitmap_blocks * INFS_BLOCK_SIZE * 8ull; ++b)
         bitmap_set(bitmap, b);
@@ -51,7 +52,8 @@
     sb.ro_compat_flags = infs_cpu_to_le64(INFS_KNOWN_RO_COMPAT_FLAGS);
     sb.incompat_flags = infs_cpu_to_le64(
         INFS_INCOMPAT_UTF8_NAMES | INFS_INCOMPAT_SPARSE_EXTENTS |
-        INFS_INCOMPAT_INLINE_DATA | INFS_INCOMPAT_SHARED_EXTENTS);
+        INFS_INCOMPAT_INLINE_DATA | INFS_INCOMPAT_SHARED_EXTENTS |
+        INFS_INCOMPAT_PAGED_METADATA);
     memcpy(sb.label, label, strlen(label));
 
     /* Invalidate any previous InfiltratorFS checkpoints before constructing
