@@ -79,12 +79,13 @@ if(WIN32)
     add_test(NAME infilfs-win32-storage COMMAND infilfs-win32-storage)
 
     add_executable(infiltratorfs-windows WIN32
-        tools/windows/infiltratorfs-windows.c
-        tools/windows/infiltratorfs-windows.rc)
-    target_include_directories(infiltratorfs-windows PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}/tools/windows")
+        tools/windows/infiltratorfs-windows.c)
     target_link_libraries(infiltratorfs-windows PRIVATE
         infilfs_win32 comdlg32 shell32 ole32)
+    if(MSVC)
+        target_link_options(infiltratorfs-windows PRIVATE
+            "/MANIFESTUAC:\"level='requireAdministrator' uiAccess='false'\"")
+    endif()
     infilfs_enable_warnings(infiltratorfs-windows)
     set_target_properties(infiltratorfs-windows PROPERTIES
         OUTPUT_NAME "InfiltratorFS-Windows")
