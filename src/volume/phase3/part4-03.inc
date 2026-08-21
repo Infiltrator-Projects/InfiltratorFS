@@ -89,6 +89,10 @@ static int64_t write_file_tx(struct infs_volume *vol, const char *path,
         (struct infs_object_header_disk *)object;
     size_t done = 0;
     uint8_t data[INFS_BLOCK_SIZE];
+    struct infs_data_checksum_disk pending_digests[INFS_CHECKSUMS_PER_OBJECT];
+    uint64_t pending_start = 0;
+    uint32_t pending_count = 0;
+
     while (done < size) {
         uint64_t pos = offset + done;
         uint64_t logical = pos / INFS_BLOCK_SIZE;
@@ -145,11 +149,40 @@ static int64_t write_file_tx(struct infs_volume *vol, const char *path,
 
         struct infs_data_checksum_disk digest;
         data_block_checksum(data, &digest);
-        status = checksum_set_range(vol, p, file_hdr->object_id, logical,
-                                    &digest, 1);
+
+        /* One FUSE write commonly contains tens of 4 KiB blocks. Updating the
+         * checksum object for every block separately forced repeated object
+         * index walks and metadata writes. Accumulate consecutive digests and
+         * let checksum_set_range update each checksum object in bulk. */
+        if (pending_count != 0 &&
+            logical != pending_start + pending_count) {
+            status = checksum_set_range(vol, p, file_hdr->object_id,
+                                        pending_start, pending_digests,
+                                        pending_count);
+            if (status != INFS_STATUS_OK)
+                return status;
+            pending_count = 0;
+        }
+        if (pending_count == 0)
+            pending_start = logical;
+        pending_digests[pending_count++] = digest;
+        if (pending_count == INFS_CHECKSUMS_PER_OBJECT) {
+            status = checksum_set_range(vol, p, file_hdr->object_id,
+                                        pending_start, pending_digests,
+                                        pending_count);
+            if (status != INFS_STATUS_OK)
+                return status;
+            pending_count = 0;
+        }
+        done += chunk;
+    }
+
+    if (pending_count != 0) {
+        status = checksum_set_range(vol, p, file_hdr->object_id,
+                                    pending_start, pending_digests,
+                                    pending_count);
         if (status != INFS_STATUS_OK)
             return status;
-        done += chunk;
     }
 
     touch_mctime(vol, &p->attributes);
