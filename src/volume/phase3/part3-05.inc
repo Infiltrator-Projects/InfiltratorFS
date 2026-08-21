@@ -7,6 +7,7 @@ static infs_status require_checkpoint_recovery(struct infs_volume *vol,
     vol->reopen_required_status = status;
     vol->writable = 0;
     vol->checkpoint_repair_needed = 0;
+    vol->tx_pending_bytes = 0;
     tx_abort(vol);
     return status;
 }
@@ -21,6 +22,7 @@ infs_status infs_volume_sync(struct infs_volume *vol)
         return INFS_STATUS_OK;
 
     if (!vol->tx_active) {
+        vol->tx_pending_bytes = 0;
         if (vol->checkpoint_repair_needed) {
             infs_status status = heal_checkpoints(vol);
             if (status != INFS_STATUS_OK)
@@ -50,27 +52,35 @@ infs_status infs_volume_sync(struct infs_volume *vol)
         return vol->tx_error;
 
     /* Deferred frees remain reserved until every new metadata/data write is on
-     * stable storage. They become reusable only in the new bitmap image. */
+     * stable storage. They become reusable only in the new bitmap image. Keep
+     * free_blocks incrementally instead of rescanning every block in a large
+     * volume at each commit. */
+    uint64_t free_blocks = infs_le64_to_cpu(vol->sb.free_blocks);
+    uint64_t total = infs_le64_to_cpu(vol->sb.total_blocks);
     for (size_t i = 0; i < vol->tx_deferred_count; ++i) {
         uint64_t start = vol->tx_deferred[i].start;
         uint64_t count = vol->tx_deferred[i].count;
-        uint64_t total = infs_le64_to_cpu(vol->sb.total_blocks);
-        for (uint64_t b = start; b < start + count && b < total; ++b)
+        for (uint64_t b = start; b < start + count && b < total; ++b) {
+            if (!bitmap_get(vol->bitmap, b))
+                continue;
             bitmap_set(vol->bitmap, b, 0);
+            if (free_blocks == UINT64_MAX)
+                return INFS_STATUS_OVERFLOW;
+            ++free_blocks;
+        }
     }
     for (uint64_t i = 0; i < bitmap_blocks; ++i)
         bitmap_set(vol->bitmap, new_bitmap_start + i, 1);
     for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i)
         bitmap_set(vol->bitmap,
                    infs_le64_to_cpu(vol->sb.checkpoint_block[i]), 1);
-    for (uint64_t b = infs_le64_to_cpu(vol->sb.total_blocks);
-         b < (uint64_t)vol->bitmap_bytes * 8u; ++b)
+    for (uint64_t b = total; b < (uint64_t)vol->bitmap_bytes * 8u; ++b)
         bitmap_set(vol->bitmap, b, 1);
 
     vol->sb.bitmap_start_block = infs_cpu_to_le64(new_bitmap_start);
     vol->sb.generation = infs_cpu_to_le64(
         infs_le64_to_cpu(vol->tx_base_sb.generation) + 1u);
-    vol->sb.free_blocks = infs_cpu_to_le64(bitmap_free_count(vol));
+    vol->sb.free_blocks = infs_cpu_to_le64(free_blocks);
 
     /* Ordered transaction protocol:
      *   1. new metadata/data already written to unreachable blocks;
@@ -119,6 +129,7 @@ infs_status infs_volume_sync(struct infs_volume *vol)
     vol->tx_deferred_count = 0;
     vol->tx_error = INFS_STATUS_OK;
     vol->tx_active = 0;
+    vol->tx_pending_bytes = 0;
     phase2_failpoint("after-checkpoint");
 
     infs_status replica_status = INFS_STATUS_OK;
@@ -139,5 +150,53 @@ infs_status infs_volume_sync(struct infs_volume *vol)
     }
 
     vol->checkpoint_repair_needed = 0;
+    return INFS_STATUS_OK;
+}
+
+infs_status infs_volume_set_deferred_publish(struct infs_volume *vol,
+                                             int enabled,
+                                             uint64_t threshold_bytes)
+{
+    if (!vol || !infs_storage_valid(&vol->storage))
+        return INFS_STATUS_INVALID_ARGUMENT;
+    if (enabled && !vol->writable)
+        return INFS_STATUS_READ_ONLY;
+
+    if (!enabled && vol->deferred_publish && vol->tx_active) {
+        infs_status status = infs_volume_sync(vol);
+        if (status != INFS_STATUS_OK)
+            return status;
+    }
+
+    vol->deferred_publish = enabled != 0;
+    vol->deferred_publish_threshold_bytes = enabled ?
+        (threshold_bytes ? threshold_bytes :
+         INFS_DEFAULT_DEFERRED_PUBLISH_BYTES) : 0;
+    if (!vol->tx_active)
+        vol->tx_pending_bytes = 0;
+    return INFS_STATUS_OK;
+}
+
+static infs_status finish_mutation(struct infs_volume *vol,
+                                   uint64_t approximate_dirty_bytes)
+{
+    if (!vol || !vol->tx_active)
+        return INFS_STATUS_INVALID_ARGUMENT;
+    if (vol->tx_error != INFS_STATUS_OK)
+        return vol->tx_error;
+
+    if (UINT64_MAX - vol->tx_pending_bytes < approximate_dirty_bytes)
+        vol->tx_pending_bytes = UINT64_MAX;
+    else
+        vol->tx_pending_bytes += approximate_dirty_bytes;
+
+    if (!vol->deferred_publish)
+        return infs_volume_sync(vol);
+
+    uint64_t threshold = vol->deferred_publish_threshold_bytes;
+    if (!threshold)
+        threshold = INFS_DEFAULT_DEFERRED_PUBLISH_BYTES;
+    if (vol->tx_pending_bytes >= threshold)
+        return infs_volume_sync(vol);
     return INFS_STATUS_OK;
 }
