@@ -22,6 +22,50 @@ static int truncate_file_tx(struct infs_volume *vol, const char *path, uint64_t 
         return status;
 
     uint64_t old_size = infs_le64_to_cpu(p->attributes.logical_size);
+    int inline_enabled =
+        (infs_le64_to_cpu(vol->sb.incompat_flags) &
+         INFS_INCOMPAT_INLINE_DATA) != 0;
+
+    if (inline_enabled && size <= INFS_INLINE_DATA_MAX) {
+        uint8_t inline_data[INFS_INLINE_DATA_MAX] = {0};
+        uint64_t preserve64 = old_size < size ? old_size : size;
+        if (preserve64) {
+            int64_t got = infs_read_file(vol, path, inline_data,
+                                         (size_t)preserve64, 0);
+            if (got < 0)
+                return (infs_status)got;
+            if ((uint64_t)got != preserve64)
+                return INFS_STATUS_CORRUPT;
+        }
+        status = file_store_inline(vol, object, inline_data, (size_t)size);
+        if (status != INFS_STATUS_OK)
+            return status;
+        p = (struct infs_file_payload_disk *)(
+            object + sizeof(struct infs_object_header_disk));
+        touch_mctime(vol, &p->attributes);
+        if (vol->tx_error != INFS_STATUS_OK)
+            return vol->tx_error;
+        status = infs_object_finalize(object);
+        if (status != INFS_STATUS_OK)
+            return status;
+        status = file_validate_volume(vol, object, &p, &ext);
+        if (status != INFS_STATUS_OK)
+            return status;
+        status = write_object(vol, lk.block, object);
+        if (status != INFS_STATUS_OK)
+            return status;
+        return infs_volume_sync(vol);
+    }
+
+    if (file_is_inline(object, p)) {
+        status = file_promote_inline(vol, object);
+        if (status != INFS_STATUS_OK)
+            return status;
+        status = file_validate_volume(vol, object, &p, &ext);
+        if (status != INFS_STATUS_OK)
+            return status;
+    }
+
     uint64_t target_blocks = size / INFS_BLOCK_SIZE +
         ((size % INFS_BLOCK_SIZE) != 0);
     uint64_t have = file_logical_blocks(p, ext);

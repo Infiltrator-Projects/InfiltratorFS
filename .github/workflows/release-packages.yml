@@ -7,7 +7,7 @@ on:
       tag:
         description: Existing release tag to package and update
         required: true
-        default: v0.6.5
+        default: v0.7.0
         type: string
 
 permissions:
@@ -73,7 +73,7 @@ jobs:
             "Installed-Size: ${installed_size}" \
             'Homepage: https://github.com/The-First-Infiltrator/InfiltratorFS' \
             'Description: experimental userspace filesystem tools' \
-            ' InfiltratorFS Format 0.6 formatter, inspector, scrubber, utility,' \
+            ' InfiltratorFS Format 0.7 formatter, inspector, scrubber, utility,' \
             ' Linux FUSE adapter and Linux Mint desktop manager.' \
             ' Use only with image files or disposable media.' \
             > "${package_root}/DEBIAN/control"

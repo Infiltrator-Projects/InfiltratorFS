@@ -64,6 +64,36 @@ static int punch_hole_tx(struct infs_volume *vol, const char *path,
         return status;
 
     uint64_t file_size = infs_le64_to_cpu(file->attributes.logical_size);
+    uint64_t end = offset + length;
+    if (end > file_size)
+        end = file_size;
+
+    if (file_is_inline(object, file)) {
+        uint8_t inline_data[INFS_INLINE_DATA_MAX];
+        status = file_read_small_content(vol, object, inline_data);
+        if (status != INFS_STATUS_OK)
+            return status;
+        memset(inline_data + (size_t)offset, 0, (size_t)(end - offset));
+        status = file_store_inline(vol, object, inline_data, (size_t)file_size);
+        if (status != INFS_STATUS_OK)
+            return status;
+        file = (struct infs_file_payload_disk *)(
+            object + sizeof(struct infs_object_header_disk));
+        touch_mctime(vol, &file->attributes);
+        if (vol->tx_error != INFS_STATUS_OK)
+            return vol->tx_error;
+        status = infs_object_finalize(object);
+        if (status != INFS_STATUS_OK)
+            return status;
+        status = file_validate_volume(vol, object, &file, &ext);
+        if (status != INFS_STATUS_OK)
+            return status;
+        status = write_object(vol, lk.block, object);
+        if (status != INFS_STATUS_OK)
+            return status;
+        return infs_volume_sync(vol);
+    }
+
     uint64_t logical_end = file_size;
     uint64_t tail = file_size % INFS_BLOCK_SIZE;
     if (tail) {
@@ -71,7 +101,7 @@ static int punch_hole_tx(struct infs_volume *vol, const char *path,
         logical_end = file_size > UINT64_MAX - padding ?
             UINT64_MAX : file_size + padding;
     }
-    uint64_t end = offset + length;
+    end = offset + length;
     if (end > logical_end)
         end = logical_end;
     uint64_t pos = offset;

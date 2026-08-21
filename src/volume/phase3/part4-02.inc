@@ -35,6 +35,11 @@ int64_t infs_read_file(struct infs_volume *vol, const char *path, void *buf,
     if ((uint64_t)remaining > remaining64)
         remaining = (size_t)remaining64;
 
+    if (file_is_inline(object, p)) {
+        memcpy(buf, file_inline_bytes(p) + (size_t)off, remaining);
+        return (int64_t)remaining;
+    }
+
     size_t done = 0;
     uint8_t data[INFS_BLOCK_SIZE];
     while (done < remaining) {

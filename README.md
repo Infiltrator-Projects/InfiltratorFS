@@ -5,15 +5,17 @@ InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem star
 
 Linux is the first implementation and test platform. It is not part of the filesystem's identity: the on-disk format and core engine are designed so a future Windows implementation can use the same volume without conversion or reformatting.
 
-## Current status — implementation 0.6.5 / format 0.6
+## Current status — implementation 0.7.0 / format 0.7
 
-Implementation 0.6.5 adds a Linux Mint desktop manager for image creation, formatting, inspection, scrubbing, mounting and opening volumes in the normal file manager. It preserves the recovery and concurrency hardening from 0.6.4 and does not change any packed field, feature bit or on-disk layout.
+Implementation 0.7.0 adds inline small files as the next modern-storage feature. On inline-enabled Format 0.7 volumes, non-empty regular files up to 3,840 bytes can keep their contents and an independent SHA-256 digest inside the existing file metadata object instead of allocating separate data and checksum blocks. Growth beyond the threshold promotes the file transactionally to ordinary checksummed CoW extents; shrinking back to the threshold or below can fold it inline again. Format 0.7 retains read support for older Format 0.6 volumes and can also represent an extent-only 0.7 volume with the inline-data feature bit clear.
 
 Current properties include:
 
 - 4096-byte little-endian on-disk format;
 - nonzero 128-bit persistent filesystem and object identities;
 - normal and hole extents with zero-storage logical ranges;
+- inline small files up to 3,840 bytes on inline-enabled Format 0.7 volumes;
+- automatic inline-to-extent promotion and extent-to-inline folding without changing the file API;
 - authoritative free-space bitmap with exact live-block ownership validation and minimum-coverage geometry checks before bitmap traversal;
 - three physically separated, checksummed checkpoints;
 - descending-generation checkpoint selection with complete referenced-graph validation and corruption-only fallback to an older committed generation;
@@ -21,15 +23,15 @@ Current properties include:
 - transactional copy-on-write metadata, data and allocation state;
 - atomic old-or-new generation publication without journal replay;
 - CRC64-ECMA metadata checksums and SHA-256 file-data checksums;
-- independently stored per-block data checksums;
-- sparse checksum chains that allocate metadata only for stored data;
+- independently stored per-block data checksums for extent-backed files and an embedded SHA-256 digest for inline files;
+- sparse checksum chains that allocate metadata only for stored extent data;
 - checksum-chain reachability validation so hidden checksum metadata cannot be orphaned or shared accidentally;
 - platform-neutral file attributes with birth, access, modification and metadata-change times;
 - portable file flags plus reserved references for future security and extended-attribute objects;
 - POSIX permissions isolated as optional Linux adapter metadata;
 - mandatory well-formed UTF-8 namespace components;
 - root-to-leaf namespace validation for unique names, target identity/type, parent links, link counts and reachability;
-- canonical zero/reserved-field validation for the current Format 0.6 contract;
+- canonical zero/reserved-field validation for the current format contract;
 - callback-based storage, durable-flush, randomness and clock services, with writable opens requiring every mutation-critical service;
 - fail-closed close-and-reopen recovery after a commit-checkpoint write or flush whose outcome is indeterminate;
 - operating-system-neutral `infs_status` results preserved through public mutation/read helpers and translated only at adapter boundaries;
@@ -41,17 +43,18 @@ Current properties include:
 - formatter publication ordering that leaves an interrupted format unmountable rather than publishing checkpoints before referenced metadata is durable;
 - byte-exact layout, malformed-image and deterministic in-memory volume conformance tests;
 - explicit regressions for undersized allocation bitmaps, incomplete writable backends, checkpoint-graph fallback, non-masked recovery I/O failures and rename trailing slashes;
+- dedicated inline threshold, sparse-gap, hole-punch, promotion, folding, scrub and remount tests;
 - high-offset sparse write, hole-punch, crash-atomicity and reclamation tests;
 - automated Linux, Windows/MSVC, Clang, ASan/UBSan and GCC `-fanalyzer` gates;
 - Linux/POSIX I/O and FUSE kept outside the portable core engine.
 
-The current prototype supports create, mkdir, lookup, enumeration, read, write, sparse grow, truncate, hole punch, unlink, empty-directory removal, atomic rename/replacement, attribute updates, direct-image tools and full-volume read-only scrub.
+The current prototype supports create, mkdir, lookup, enumeration, read, write, inline small-file storage, sparse grow, truncate, hole punch, unlink, empty-directory removal, atomic rename/replacement, attribute updates, direct-image tools and full-volume read-only scrub.
 
 ## Platform model
 
 | Layer | Status |
 | --- | --- |
-| On-disk format | Platform-neutral format 0.6 |
+| On-disk format | Platform-neutral format 0.7; Format 0.6 remains readable |
 | Core filesystem engine | Portable C17 with no Linux file descriptor or VFS types |
 | Storage interface | Callback-based and tested with POSIX files/devices and an in-memory backend |
 | Result interface | Stable `infs_status` values; native errors are adapter translations |
@@ -112,7 +115,7 @@ The Debian package installs **InfiltratorFS Manager** in Mint's application menu
 
 Mint Disks remains responsible for creating the disk partition. The manager deliberately lists removable partitions only and uses PolicyKit authorization for operations that need raw-device access. InfiltratorFS is not yet registered as a filesystem type with UDisks, so Mint Disks itself will continue to display a formatted partition as unknown.
 
-The FUSE adapter remains single-threaded while the core is a single-writer prototype. The POSIX backend now enforces that model: multiple read-only openers may coexist, while a writable opener or formatter holds the storage target exclusively. On Linux Mint, `bash tests/mint-sparse-fuse.sh build` runs the real mounted 1 TiB sparse-file/write/punch/remount harness after the normal CTest suite.
+The FUSE adapter remains single-threaded while the core is a single-writer prototype. The POSIX backend enforces that model: multiple read-only openers may coexist, while a writable opener or formatter holds the storage target exclusively. On Linux Mint, `bash tests/mint-sparse-fuse.sh build` runs the real mounted 1 TiB sparse-file/write/punch/remount harness after the normal CTest suite.
 
 ## Repository layout
 
@@ -129,18 +132,17 @@ docs/                architecture, format, roadmap and design inspirations
 ## Documentation
 
 - `docs/ARCHITECTURE.md` — platform model, transaction design and long-term rules.
-- `docs/ON_DISK_FORMAT.md` — complete format-0.6 specification.
+- `docs/ON_DISK_FORMAT.md` — complete Format 0.7 specification.
 - `docs/CONFORMANCE.md` — byte-level contract and cross-platform test requirements.
 - `docs/ROADMAP.md` — completed work and future Linux/Windows integration.
 - `docs/INSPIRATIONS.md` — ideas borrowed, rejected or reinterpreted.
 
 ## Safety
 
-InfiltratorFS remains experimental. Use image files or disposable media only. Do not store irreplaceable data on Format 0.6.
+InfiltratorFS remains experimental. Use image files or disposable media only. Do not store irreplaceable data on Format 0.7.
 
 The current high-level FUSE adapter resolves operations by pathname and does not yet retain persistent inode/open-file state. POSIX open-handle semantics across unlink and rename are therefore incomplete; applications that keep descriptors open while names move or disappear can observe incorrect behaviour. Treat that workload as unsupported until the adapter has explicit handle-lifetime tests and implementation.
 
 ## License
 
 GPL-3.0-or-later.
-

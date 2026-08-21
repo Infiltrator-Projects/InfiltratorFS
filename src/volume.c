@@ -33,6 +33,7 @@ static infs_status generate_unique_object_id(struct infs_volume *vol,
 #include "volume/phase3/part3-04.inc"
 #include "volume/phase3/part3-05.inc"
 #include "volume/integrity.inc"
+#include "volume/phase3/part4-inline.inc"
 #include "volume/phase3/part4-01.inc"
 #include "volume/phase3/part4-02.inc"
 #include "volume/phase3/part4-03.inc"

@@ -94,6 +94,7 @@ static void check_layout(void)
            "extent block-count offset");
     expect(offsetof(struct infs_extent_disk, flags) == 20,
            "extent flags offset");
+    expect(INFS_INLINE_DATA_MAX == 3840u, "inline-data capacity");
 }
 
 static void make_golden_superblock(struct infs_superblock_disk *sb)
@@ -122,8 +123,9 @@ static void make_golden_superblock(struct infs_superblock_disk *sb)
     sb->compat_flags = infs_cpu_to_le64(UINT64_C(0xc1c2c3c4c5c6c7c8));
     sb->ro_compat_flags = infs_cpu_to_le64(UINT64_C(0xd1d2d3d4d5d6d7d8));
     sb->incompat_flags = infs_cpu_to_le64(
-        INFS_INCOMPAT_UTF8_NAMES | INFS_INCOMPAT_SPARSE_EXTENTS);
-    memcpy(sb->label, "Golden-0.6", 10);
+        INFS_INCOMPAT_UTF8_NAMES | INFS_INCOMPAT_SPARSE_EXTENTS |
+        INFS_INCOMPAT_INLINE_DATA);
+    memcpy(sb->label, "Golden-0.7", 10);
 }
 
 static void make_expected_superblock(uint8_t block[INFS_BLOCK_SIZE])
@@ -152,8 +154,9 @@ static void make_expected_superblock(uint8_t block[INFS_BLOCK_SIZE])
     put_le64(block, 132, UINT64_C(0xc1c2c3c4c5c6c7c8));
     put_le64(block, 140, UINT64_C(0xd1d2d3d4d5d6d7d8));
     put_le64(block, 148,
-             INFS_INCOMPAT_UTF8_NAMES | INFS_INCOMPAT_SPARSE_EXTENTS);
-    memcpy(block + 156, "Golden-0.6", 10);
+             INFS_INCOMPAT_UTF8_NAMES | INFS_INCOMPAT_SPARSE_EXTENTS |
+                 INFS_INCOMPAT_INLINE_DATA);
+    memcpy(block + 156, "Golden-0.7", 10);
     refresh_crc(block, 220);
 }
 
@@ -190,7 +193,7 @@ static void check_superblock_encoding(void)
     expect_superblock_rejected(encoded, 10, INFS_FORMAT_MINOR + 1u, 2,
                                "reject future minor version");
     expect_superblock_rejected(encoded, 10, INFS_FORMAT_MINOR - 1u, 2,
-                               "reject sparse feature under older minor");
+                               "reject inline feature under older minor");
     expect_superblock_rejected(encoded, 12, 251, 2, "reject header-size drift");
     expect_superblock_rejected(encoded, 14, 11, 2, "reject block-size drift");
     expect_superblock_rejected(encoded, 16, INFS_CHECKSUM_SHA256, 4,
@@ -202,8 +205,17 @@ static void check_superblock_encoding(void)
     expect_superblock_rejected(encoded, 148,
                                INFS_INCOMPAT_UTF8_NAMES |
                                    INFS_INCOMPAT_SPARSE_EXTENTS |
+                                   INFS_INCOMPAT_INLINE_DATA |
                                    (UINT64_C(1) << 63),
                                8, "reject unknown incompatible feature");
+
+    uint8_t extent_only[INFS_BLOCK_SIZE];
+    memcpy(extent_only, encoded, sizeof(extent_only));
+    put_le64(extent_only, 148,
+             INFS_INCOMPAT_UTF8_NAMES | INFS_INCOMPAT_SPARSE_EXTENTS);
+    refresh_crc(extent_only, 220);
+    expect(infs_validate_superblock_block(extent_only),
+           "accept Format 0.7 extent-only volume");
 
     encoded[4000] ^= 0x80u;
     expect(!infs_validate_superblock_block(encoded), "reject checksum mismatch");
