@@ -41,7 +41,7 @@ cmp "$source_file" "$out_file"
 # rejection. The root is copy-on-write and is not required to remain at the
 # formatter's original physical block after mutations.
 cp "$image" "$corrupt"
-root_block=$("$inspect" "$corrupt" | awk '/^Root object:/ {print $4; exit}')
+root_block=$("$inspect" "$corrupt" | awk '/Root object:/ {print $4; exit}')
 if [[ ! "$root_block" =~ ^[0-9]+$ ]]; then
     echo "corruption test failed: could not determine current root block" >&2
     exit 1
