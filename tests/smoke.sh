@@ -37,10 +37,17 @@ cmp "$source_file" "$out_file"
 "$tool" "$image" rmdir /docs
 "$inspect" "$image" >/dev/null
 
-# Corrupt the root metadata block and require a hard rejection.
+# Corrupt the currently referenced root metadata block and require a hard
+# rejection. The root is copy-on-write and is not required to remain at the
+# formatter's original physical block after mutations.
 cp "$image" "$corrupt"
-# For a 64 MiB format-0.6 image: block 1 bitmap, block 2 index, block 3 root.
-printf '\001' | dd of="$corrupt" bs=1 seek=$((3 * 4096 + 256)) conv=notrunc status=none
+root_block=$("$inspect" "$corrupt" | awk '/^Root object:/ {print $4; exit}')
+if [[ ! "$root_block" =~ ^[0-9]+$ ]]; then
+    echo "corruption test failed: could not determine current root block" >&2
+    exit 1
+fi
+printf '\001' | dd of="$corrupt" bs=1 \
+    seek=$((root_block * 4096 + 256)) conv=notrunc status=none
 if "$tool" "$corrupt" ls / >/dev/null 2>&1; then
     echo "corruption test failed: damaged root was accepted" >&2
     exit 1
