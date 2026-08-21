@@ -68,14 +68,14 @@ static int rename_tx(struct infs_volume *vol, const char *oldpath,
     status = dir_validate(old_block, &old_payload);
     if (status != INFS_STATUS_OK)
         return status;
-    struct infs_dirent_disk *source_entry =
-        dir_find(old_payload, old_name, strlen(old_name), NULL);
-    if (!source_entry)
-        return INFS_STATUS_NOT_FOUND;
+    struct infs_dirent_disk source_entry;
+    status = dir_lookup_volume(vol, old_block, old_name, &source_entry);
+    if (status != INFS_STATUS_OK)
+        return status;
 
     uint8_t source_id[16];
-    memcpy(source_id, source_entry->object_id, 16);
-    uint16_t source_type = infs_le16_to_cpu(source_entry->object_type);
+    memcpy(source_id, source_entry.object_id, 16);
+    uint16_t source_type = infs_le16_to_cpu(source_entry.object_type);
     struct infs_lookup source;
     status = index_find(vol, source_id, &source);
     if (status != INFS_STATUS_OK)
@@ -96,18 +96,21 @@ static int rename_tx(struct infs_volume *vol, const char *oldpath,
     if (status != INFS_STATUS_OK)
         return status;
 
-    struct infs_dirent_disk *destination_entry =
-        dir_find(new_payload, new_name, strlen(new_name), NULL);
+    struct infs_dirent_disk destination_entry;
+    status = dir_lookup_volume(vol, new_block, new_name, &destination_entry);
+    int have_destination = status == INFS_STATUS_OK;
+    if (!have_destination && status != INFS_STATUS_NOT_FOUND)
+        return status;
+
     struct infs_lookup destination;
-    int have_destination = destination_entry != NULL;
     uint16_t destination_type = 0;
     if (have_destination) {
-        if (memcmp(destination_entry->object_id, source_id, 16) == 0) {
+        if (memcmp(destination_entry.object_id, source_id, 16) == 0) {
             tx_abort(vol);
             return INFS_STATUS_OK;
         }
-        destination_type = infs_le16_to_cpu(destination_entry->object_type);
-        status = index_find(vol, destination_entry->object_id, &destination);
+        destination_type = infs_le16_to_cpu(destination_entry.object_type);
+        status = index_find(vol, destination_entry.object_id, &destination);
         if (status != INFS_STATUS_OK)
             return status;
         if (destination.type != destination_type)
@@ -132,7 +135,7 @@ static int rename_tx(struct infs_volume *vol, const char *oldpath,
         status = destroy_replaced_object_tx(vol, &destination);
         if (status != INFS_STATUS_OK)
             return status;
-        status = dir_remove(new_block, new_name, NULL);
+        status = dir_remove_volume(vol, new_block, new_name, NULL);
         if (status != INFS_STATUS_OK)
             return status;
         new_payload = (struct infs_directory_payload_disk *)(
@@ -149,13 +152,13 @@ static int rename_tx(struct infs_volume *vol, const char *oldpath,
     }
 
     if (same_parent) {
-        status = dir_remove(new_block, old_name, NULL);
+        status = dir_remove_volume(vol, new_block, old_name, NULL);
         if (status != INFS_STATUS_OK)
             return status;
         status = infs_object_finalize(new_block);
         if (status != INFS_STATUS_OK)
             return status;
-        status = dir_add(new_block, new_name, source_id, source_type);
+        status = dir_add_volume(vol, new_block, new_name, source_id, source_type);
         if (status != INFS_STATUS_OK)
             return status;
         new_payload = (struct infs_directory_payload_disk *)(
@@ -167,10 +170,10 @@ static int rename_tx(struct infs_volume *vol, const char *oldpath,
         if (status != INFS_STATUS_OK)
             return status;
     } else {
-        status = dir_add(new_block, new_name, source_id, source_type);
+        status = dir_add_volume(vol, new_block, new_name, source_id, source_type);
         if (status != INFS_STATUS_OK)
             return status;
-        status = dir_remove(old_block, old_name, NULL);
+        status = dir_remove_volume(vol, old_block, old_name, NULL);
         if (status != INFS_STATUS_OK)
             return status;
 
