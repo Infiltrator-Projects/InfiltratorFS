@@ -31,7 +31,18 @@ static infs_status file_store_inline(
     struct infs_volume *vol, uint8_t object[INFS_BLOCK_SIZE],
     const uint8_t *data, size_t size);
 
+/* Format 0.8 paged-index dispatch targets. part1 owns the classic index
+ * implementation and calls these when it encounters a version-2 index head. */
+static int paged_index_find(struct infs_volume *vol, const uint8_t id[16],
+                            struct infs_lookup *out);
+static int paged_index_repoint(struct infs_volume *vol, const uint8_t id[16],
+                               uint64_t object_block, uint16_t type);
+static int paged_index_add(struct infs_volume *vol, const uint8_t id[16],
+                           uint64_t object_block, uint16_t type);
+static int paged_index_remove(struct infs_volume *vol, const uint8_t id[16]);
+
 #include "volume/part1.inc"
+#include "volume/phase3/paged-metadata.inc"
 #include "volume/phase3/part2-01.inc"
 #include "volume/phase3/part2-02.inc"
 #include "volume/phase3/part2-03.inc"
