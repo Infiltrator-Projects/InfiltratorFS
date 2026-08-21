@@ -15,6 +15,8 @@ static int truncate_file_tx(struct infs_volume *vol, const char *path, uint64_t 
     status = read_object(vol, lk.block, object);
     if (status != INFS_STATUS_OK)
         return status;
+    struct infs_object_header_disk *hdr =
+        (struct infs_object_header_disk *)object;
     struct infs_file_payload_disk *p;
     struct infs_extent_disk *ext;
     status = file_validate_volume(vol, object, &p, &ext);
@@ -82,28 +84,33 @@ static int truncate_file_tx(struct infs_volume *vol, const char *path, uint64_t 
             uint32_t blocks = infs_le32_to_cpu(ext[i].block_count);
             uint32_t flags = infs_le32_to_cpu(ext[i].flags);
             if (logical >= target_blocks) {
-                if (flags == INFS_EXTENT_NORMAL)
-                    free_run(vol, physical, blocks);
+                if (flags == INFS_EXTENT_NORMAL) {
+                    status = file_free_unshared_run(
+                        vol, hdr->object_id, physical, blocks);
+                    if (status != INFS_STATUS_OK)
+                        return status;
+                }
                 continue;
             }
             uint64_t extent_end = logical + blocks;
             if (extent_end > target_blocks) {
                 uint32_t retained = (uint32_t)(target_blocks - logical);
-                if (flags == INFS_EXTENT_NORMAL)
-                    free_run(vol, physical + retained, blocks - retained);
+                if (flags == INFS_EXTENT_NORMAL) {
+                    status = file_free_unshared_run(
+                        vol, hdr->object_id, physical + retained,
+                        blocks - retained);
+                    if (status != INFS_STATUS_OK)
+                        return status;
+                }
                 ext[i].block_count = infs_cpu_to_le32(retained);
             }
             if (keep != i)
                 ext[keep] = ext[i];
             ++keep;
         }
-        if (vol->tx_error != INFS_STATUS_OK)
-            return vol->tx_error;
         if (keep < count)
             memset(&ext[keep], 0, (size_t)(count - keep) * sizeof(*ext));
         p->extent_count = infs_cpu_to_le32(keep);
-        struct infs_object_header_disk *hdr =
-            (struct infs_object_header_disk *)object;
         hdr->payload_size = infs_cpu_to_le32((uint32_t)(sizeof(*p) +
             (size_t)keep * sizeof(*ext)));
     }
@@ -118,8 +125,6 @@ static int truncate_file_tx(struct infs_volume *vol, const char *path, uint64_t 
 
     if (size < old_size && target_blocks > 0 &&
         (size % INFS_BLOCK_SIZE) != 0) {
-        struct infs_object_header_disk *file_hdr =
-            (struct infs_object_header_disk *)object;
         uint64_t logical = target_blocks - 1u;
         uint64_t physical;
         uint32_t flags;
@@ -131,8 +136,7 @@ static int truncate_file_tx(struct infs_volume *vol, const char *path, uint64_t 
             status = read_block(vol, physical, data);
             if (status != INFS_STATUS_OK)
                 return status;
-            status = data_block_verify(vol, p, file_hdr->object_id, logical,
-                                       data);
+            status = data_block_verify(vol, p, hdr->object_id, logical, data);
             if (status != INFS_STATUS_OK)
                 return status;
             size_t tail = (size_t)(size % INFS_BLOCK_SIZE);
@@ -152,7 +156,7 @@ static int truncate_file_tx(struct infs_volume *vol, const char *path, uint64_t 
                 return status;
             struct infs_data_checksum_disk digest;
             data_block_checksum(data, &digest);
-            status = checksum_set_range(vol, p, file_hdr->object_id, logical,
+            status = checksum_set_range(vol, p, hdr->object_id, logical,
                                         &digest, 1);
             if (status != INFS_STATUS_OK)
                 return status;
@@ -161,8 +165,7 @@ static int truncate_file_tx(struct infs_volume *vol, const char *path, uint64_t 
 
     if (file_allocated_blocks(p, ext) == 0 &&
         !id_is_zero(p->checksum_head_id)) {
-        status = checksum_destroy_chain(
-            vol, p, ((struct infs_object_header_disk *)object)->object_id);
+        status = checksum_destroy_chain(vol, p, hdr->object_id);
         if (status != INFS_STATUS_OK)
             return status;
     }
