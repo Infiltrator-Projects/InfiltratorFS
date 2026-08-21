@@ -22,8 +22,11 @@ static int create_object(struct infs_volume *vol, const char *path,
     status = dir_validate(parent_block, &parent_payload);
     if (status != INFS_STATUS_OK)
         return status;
-    if (dir_find(parent_payload, name, strlen(name), NULL))
+    status = dir_lookup_volume(vol, parent_block, name, NULL);
+    if (status == INFS_STATUS_OK)
         return INFS_STATUS_ALREADY_EXISTS;
+    if (status != INFS_STATUS_NOT_FOUND)
+        return status;
 
     uint64_t object_block, got;
     status = alloc_run(vol, 1, &object_block, &got);
@@ -59,6 +62,14 @@ static int create_object(struct infs_volume *vol, const char *path,
     if (status != INFS_STATUS_OK) {
         free_run(vol, object_block, 1);
         return status;
+    }
+    if (type == INFS_OBJECT_DIRECTORY &&
+        (infs_le64_to_cpu(vol->sb.incompat_flags) &
+         INFS_INCOMPAT_PAGED_METADATA) != 0) {
+        struct infs_object_header_disk *header =
+            (struct infs_object_header_disk *)object;
+        header->object_version =
+            infs_cpu_to_le16(INFS_OBJECT_VERSION_PAGED);
     }
 
     struct infs_attributes_disk *attributes;
@@ -106,7 +117,7 @@ static int create_object(struct infs_volume *vol, const char *path,
         free_run(vol, object_block, 1);
         return status;
     }
-    status = dir_add(parent_block, name, object_id, type);
+    status = dir_add_volume(vol, parent_block, name, object_id, type);
     if (status != INFS_STATUS_OK) {
         (void)index_remove(vol, object_id);
         free_run(vol, object_block, 1);
