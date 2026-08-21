@@ -7,14 +7,37 @@ static int ownership_claim(uint8_t *owners, uint64_t total, uint64_t block)
     return INFS_STATUS_OK;
 }
 
+static int ownership_claim_data(uint8_t *owners, uint8_t *data_owners,
+                                uint64_t total, uint64_t block,
+                                int allow_shared)
+{
+    if (block >= total)
+        return INFS_STATUS_CORRUPT;
+    if (bitmap_get(owners, block)) {
+        if (!allow_shared || !bitmap_get(data_owners, block))
+            return INFS_STATUS_CORRUPT;
+        return INFS_STATUS_OK;
+    }
+    bitmap_set(owners, block, 1);
+    bitmap_set(data_owners, block, 1);
+    return INFS_STATUS_OK;
+}
+
 static int validate_bitmap_ownership(struct infs_volume *vol,
                                      const struct infs_index_entry_disk *entries,
                                      uint32_t count)
 {
     uint64_t total = infs_le64_to_cpu(vol->sb.total_blocks);
     uint8_t *owners = calloc(1, vol->bitmap_bytes);
-    if (!owners)
+    uint8_t *data_owners = calloc(1, vol->bitmap_bytes);
+    if (!owners || !data_owners) {
+        free(owners);
+        free(data_owners);
         return INFS_STATUS_NO_MEMORY;
+    }
+    int allow_shared =
+        (infs_le64_to_cpu(vol->sb.incompat_flags) &
+         INFS_INCOMPAT_SHARED_EXTENTS) != 0;
 
     int status = INFS_STATUS_OK;
     for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i) {
@@ -64,7 +87,8 @@ static int validate_bitmap_ownership(struct infs_volume *vol,
             uint64_t physical = infs_le64_to_cpu(ext[j].physical_block);
             uint32_t blocks = infs_le32_to_cpu(ext[j].block_count);
             for (uint32_t k = 0; k < blocks; ++k) {
-                status = ownership_claim(owners, total, physical + k);
+                status = ownership_claim_data(
+                    owners, data_owners, total, physical + k, allow_shared);
                 if (status != INFS_STATUS_OK)
                     goto out;
             }
@@ -79,6 +103,7 @@ static int validate_bitmap_ownership(struct infs_volume *vol,
     }
 
 out:
+    free(data_owners);
     free(owners);
     return status;
 }
