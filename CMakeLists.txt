@@ -81,6 +81,8 @@ if(WIN32)
     add_executable(infiltratorfs-windows WIN32
         tools/windows/infiltratorfs-windows.c
         tools/windows/infiltratorfs-windows.rc)
+    target_include_directories(infiltratorfs-windows PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/windows")
     target_link_libraries(infiltratorfs-windows PRIVATE
         infilfs_win32 comdlg32 shell32 ole32)
     infilfs_enable_warnings(infiltratorfs-windows)
