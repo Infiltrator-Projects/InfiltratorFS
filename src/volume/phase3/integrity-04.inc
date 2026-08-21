@@ -37,6 +37,8 @@ static int file_replace_range(struct infs_volume *vol,
                               uint64_t logical_start, uint64_t block_count,
                               uint64_t new_physical, uint32_t new_flags)
 {
+    struct infs_object_header_disk *hdr =
+        (struct infs_object_header_disk *)object;
     struct infs_file_payload_disk *p =
         (struct infs_file_payload_disk *)(
             object + sizeof(struct infs_object_header_disk));
@@ -83,10 +85,11 @@ static int file_replace_range(struct infs_volume *vol,
             replacement_emitted = 1;
         }
         if (flags == INFS_EXTENT_NORMAL) {
-            free_run(vol, phys + (overlap_start - l),
-                     overlap_end - overlap_start);
-            if (vol->tx_error != INFS_STATUS_OK)
-                return vol->tx_error;
+            status = file_free_unshared_run(
+                vol, hdr->object_id, phys + (overlap_start - l),
+                overlap_end - overlap_start);
+            if (status != INFS_STATUS_OK)
+                return status;
         }
         if (e > replace_end) {
             uint32_t suffix = (uint32_t)(e - replace_end);
@@ -104,8 +107,6 @@ static int file_replace_range(struct infs_volume *vol,
     memset(ext, 0, (size_t)INFS_MAX_FILE_EXTENTS * sizeof(*ext));
     memcpy(ext, rebuilt, (size_t)new_count * sizeof(*ext));
     p->extent_count = infs_cpu_to_le32(new_count);
-    struct infs_object_header_disk *hdr =
-        (struct infs_object_header_disk *)object;
     hdr->payload_size = infs_cpu_to_le32((uint32_t)(sizeof(*p) +
         (size_t)new_count * sizeof(*ext)));
     return INFS_STATUS_OK;
