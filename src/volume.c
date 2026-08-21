@@ -24,6 +24,12 @@ static infs_status generate_unique_object_id(struct infs_volume *vol,
 static infs_status file_free_unshared_run(
     struct infs_volume *vol, const uint8_t owner_id[16],
     uint64_t start, uint64_t count);
+static infs_status file_read_small_content(
+    struct infs_volume *vol, uint8_t object[INFS_BLOCK_SIZE],
+    uint8_t data[INFS_INLINE_DATA_MAX]);
+static infs_status file_store_inline(
+    struct infs_volume *vol, uint8_t object[INFS_BLOCK_SIZE],
+    const uint8_t *data, size_t size);
 
 #include "volume/part1.inc"
 #include "volume/phase3/part2-01.inc"
