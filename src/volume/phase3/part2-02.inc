@@ -27,6 +27,23 @@ static int dir_remove(uint8_t block[INFS_BLOCK_SIZE], const char *name,
     return INFS_STATUS_OK;
 }
 
+static int dir_remove_volume(struct infs_volume *vol,
+                             uint8_t block[INFS_BLOCK_SIZE], const char *name,
+                             struct infs_dirent_disk *removed_copy)
+{
+    struct infs_directory_payload_disk *payload;
+    infs_status status = dir_validate(block, &payload);
+    if (status != INFS_STATUS_OK)
+        return status;
+    (void)payload;
+    struct infs_object_header_disk *header =
+        (struct infs_object_header_disk *)block;
+    if (infs_le16_to_cpu(header->object_version) ==
+        INFS_OBJECT_VERSION_PAGED)
+        return paged_dir_remove(vol, block, name, removed_copy);
+    return dir_remove(block, name, removed_copy);
+}
+
 static struct infs_attributes_disk *object_attributes(uint8_t block[INFS_BLOCK_SIZE])
 {
     struct infs_object_header_disk *hdr = (struct infs_object_header_disk *)block;
@@ -140,15 +157,12 @@ static int lookup_from(struct infs_volume *vol, const struct infs_lookup *start,
         infs_status status = read_object(vol, cur.block, block);
         if (status != INFS_STATUS_OK)
             return status;
-        struct infs_directory_payload_disk *payload;
-        status = dir_validate(block, &payload);
+        struct infs_dirent_disk entry;
+        status = dir_lookup_volume(vol, block, comp, &entry);
         if (status != INFS_STATUS_OK)
             return status;
-        struct infs_dirent_disk *e = dir_find(payload, comp, strlen(comp), NULL);
-        if (!e)
-            return INFS_STATUS_NOT_FOUND;
-        uint16_t type = infs_le16_to_cpu(e->object_type);
-        status = index_find(vol, e->object_id, &cur);
+        uint16_t type = infs_le16_to_cpu(entry.object_type);
+        status = index_find(vol, entry.object_id, &cur);
         if (status != INFS_STATUS_OK)
             return status;
         if (cur.type != type)
