@@ -91,7 +91,7 @@ static int punch_hole_tx(struct infs_volume *vol, const char *path,
         status = write_object(vol, lk.block, object);
         if (status != INFS_STATUS_OK)
             return status;
-        return infs_volume_sync(vol);
+        return finish_mutation(vol, (uint64_t)INFS_BLOCK_SIZE * 2u);
     }
 
     uint64_t logical_end = file_size;
@@ -152,7 +152,7 @@ static int punch_hole_tx(struct infs_volume *vol, const char *path,
     status = write_object(vol, lk.block, object);
     if (status != INFS_STATUS_OK)
         return status;
-    return infs_volume_sync(vol);
+    return finish_mutation(vol, length + INFS_BLOCK_SIZE);
 }
 
 infs_status infs_punch_hole(struct infs_volume *vol, const char *path,
