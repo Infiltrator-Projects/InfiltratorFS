@@ -9,6 +9,8 @@
 #include "infilfs/storage.h"
 
 #define INFS_PATH_MAX 4096u
+#define INFS_DEFAULT_DEFERRED_PUBLISH_BYTES \
+    (UINT64_C(16) * 1024u * 1024u)
 
 #define INFS_POSIX_SET_PERMISSIONS UINT32_C(0x00000001)
 #define INFS_POSIX_SET_UID         UINT32_C(0x00000002)
@@ -69,7 +71,7 @@ struct infs_volume {
     size_t bitmap_bytes;
 
     /* Transaction state. Adapters may deliberately leave a transaction open
-     * across buffered writes and publish it with infs_volume_sync(). */
+     * across buffered mutations and publish it with infs_volume_sync(). */
     int tx_active;
     infs_status tx_error;
     struct infs_superblock_disk tx_base_sb;
@@ -77,6 +79,14 @@ struct infs_volume {
     struct infs_deferred_range *tx_deferred;
     size_t tx_deferred_count;
     size_t tx_deferred_capacity;
+
+    /* Generic publication policy. With deferred publication enabled, normal
+     * mutators remain in the active transaction until the approximate dirty
+     * byte threshold is reached. Explicit infs_volume_sync() always publishes
+     * immediately. This is an adapter policy, not an on-disk format feature. */
+    int deferred_publish;
+    uint64_t deferred_publish_threshold_bytes;
+    uint64_t tx_pending_bytes;
 };
 
 struct infs_lookup {
@@ -103,6 +113,12 @@ infs_status infs_volume_open_storage(struct infs_volume *vol,
                                      int writable);
 void infs_volume_close(struct infs_volume *vol);
 infs_status infs_volume_sync(struct infs_volume *vol);
+/* Enable or disable bounded deferred publication for normal mutators.
+ * threshold_bytes == 0 selects INFS_DEFAULT_DEFERRED_PUBLISH_BYTES.
+ * Explicit infs_volume_sync() remains a forced durability boundary. */
+infs_status infs_volume_set_deferred_publish(struct infs_volume *vol,
+                                             int enabled,
+                                             uint64_t threshold_bytes);
 
 infs_status infs_lookup_path(struct infs_volume *vol, const char *path,
                              struct infs_lookup *out);
@@ -126,8 +142,9 @@ int64_t infs_read_file(struct infs_volume *vol, const char *path, void *buf,
 /* Durable convenience write: the successful call publishes the transaction. */
 int64_t infs_write_file(struct infs_volume *vol, const char *path,
                         const void *buf, size_t size, uint64_t offset);
-/* Buffered generic write: successful calls remain in the active transaction.
- * Call infs_volume_sync() at a durability boundary such as flush/fsync/close. */
+/* Adapter-oriented write: with deferred publication enabled, successful calls
+ * remain in the active transaction until the configured threshold or an
+ * explicit infs_volume_sync(); otherwise this behaves like a durable write. */
 int64_t infs_write_file_buffered(struct infs_volume *vol, const char *path,
                                  const void *buf, size_t size,
                                  uint64_t offset);
