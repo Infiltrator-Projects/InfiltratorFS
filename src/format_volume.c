@@ -187,7 +187,7 @@ infs_status infs_format_storage(struct infs_storage *storage, const char *label)
     if (status != INFS_STATUS_OK)
         goto done;
 
-    status = infs_encode_object_index(block, index_id, 1u);
+    status = infs_encode_paged_object_index(block, index_id, 1u);
     if (status != INFS_STATUS_OK)
         goto done;
     struct infs_object_header_disk *index_header =
@@ -208,8 +208,8 @@ infs_status infs_format_storage(struct infs_storage *storage, const char *label)
     if (status != INFS_STATUS_OK)
         goto done;
 
-    status = infs_encode_root_directory(block, root_id, 1u, 0755u, 0u, 0u,
-                                        root_time_ns);
+    status = infs_encode_paged_root_directory(
+        block, root_id, 1u, 0755u, 0u, 0u, root_time_ns);
     if (status != INFS_STATUS_OK)
         goto done;
     status = infs_storage_write(storage, root_block * INFS_BLOCK_SIZE,
