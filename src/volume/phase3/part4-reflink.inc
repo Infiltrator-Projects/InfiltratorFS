@@ -219,7 +219,7 @@ static infs_status reflink_file_tx(struct infs_volume *vol,
     status = write_object(vol, destination_lookup.block, destination_object);
     if (status != INFS_STATUS_OK)
         return status;
-    return infs_volume_sync(vol);
+    return finish_mutation(vol, logical_size + INFS_BLOCK_SIZE);
 }
 
 infs_status infs_reflink_file(struct infs_volume *vol, const char *source_path,
