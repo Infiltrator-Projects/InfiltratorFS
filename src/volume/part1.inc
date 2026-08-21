@@ -26,6 +26,99 @@ static void bitmap_set(uint8_t *bitmap, uint64_t block, int allocated)
         bitmap[block >> 3] &= (uint8_t)~mask;
 }
 
+#define INFS_OBJECT_CACHE_SLOTS 4096u
+
+struct infs_object_cache_entry {
+    uint8_t object_id[16];
+    uint64_t block;
+    uint16_t type;
+    uint8_t valid;
+};
+
+static uint64_t object_cache_hash(const uint8_t id[16])
+{
+    uint64_t hash = UINT64_C(1469598103934665603);
+    for (unsigned i = 0; i < 16; ++i) {
+        hash ^= id[i];
+        hash *= UINT64_C(1099511628211);
+    }
+    return hash;
+}
+
+static void object_cache_clear(struct infs_volume *vol)
+{
+    if (vol && vol->object_cache && vol->object_cache_slots)
+        memset(vol->object_cache, 0,
+               vol->object_cache_slots * sizeof(*vol->object_cache));
+}
+
+static void object_cache_init(struct infs_volume *vol)
+{
+    if (!vol || vol->object_cache)
+        return;
+    vol->object_cache = calloc(INFS_OBJECT_CACHE_SLOTS,
+                               sizeof(*vol->object_cache));
+    if (vol->object_cache)
+        vol->object_cache_slots = INFS_OBJECT_CACHE_SLOTS;
+}
+
+static void object_cache_destroy(struct infs_volume *vol)
+{
+    if (!vol)
+        return;
+    free(vol->object_cache);
+    vol->object_cache = NULL;
+    vol->object_cache_slots = 0;
+}
+
+static int object_cache_lookup(struct infs_volume *vol, const uint8_t id[16],
+                               struct infs_lookup *out)
+{
+    if (!vol || !vol->object_cache || !vol->object_cache_slots)
+        return 0;
+    size_t slot = (size_t)(object_cache_hash(id) &
+                           (vol->object_cache_slots - 1u));
+    struct infs_object_cache_entry *entry = &vol->object_cache[slot];
+    if (!entry->valid || memcmp(entry->object_id, id, 16) != 0)
+        return 0;
+    uint64_t total = infs_le64_to_cpu(vol->sb.total_blocks);
+    if (entry->block >= total || !bitmap_get(vol->bitmap, entry->block)) {
+        entry->valid = 0;
+        return 0;
+    }
+    if (out) {
+        memcpy(out->object_id, entry->object_id, 16);
+        out->block = entry->block;
+        out->type = entry->type;
+    }
+    return 1;
+}
+
+static void object_cache_store(struct infs_volume *vol, const uint8_t id[16],
+                               uint64_t block, uint16_t type)
+{
+    if (!vol || !vol->object_cache || !vol->object_cache_slots)
+        return;
+    size_t slot = (size_t)(object_cache_hash(id) &
+                           (vol->object_cache_slots - 1u));
+    struct infs_object_cache_entry *entry = &vol->object_cache[slot];
+    memcpy(entry->object_id, id, 16);
+    entry->block = block;
+    entry->type = type;
+    entry->valid = 1;
+}
+
+static void object_cache_remove(struct infs_volume *vol, const uint8_t id[16])
+{
+    if (!vol || !vol->object_cache || !vol->object_cache_slots)
+        return;
+    size_t slot = (size_t)(object_cache_hash(id) &
+                           (vol->object_cache_slots - 1u));
+    struct infs_object_cache_entry *entry = &vol->object_cache[slot];
+    if (entry->valid && memcmp(entry->object_id, id, 16) == 0)
+        entry->valid = 0;
+}
+
 static int write_block(struct infs_volume *vol, uint64_t block_no,
                        const uint8_t block[INFS_BLOCK_SIZE])
 {
@@ -100,6 +193,7 @@ static void tx_abort(struct infs_volume *vol)
     vol->tx_deferred_count = 0;
     vol->tx_error = INFS_STATUS_OK;
     vol->tx_active = 0;
+    object_cache_clear(vol);
 }
 
 static int tx_defer_range(struct infs_volume *vol, uint64_t start, uint64_t count)
@@ -169,6 +263,32 @@ static int zero_blocks(struct infs_volume *vol, uint64_t start, uint64_t count)
     return INFS_STATUS_OK;
 }
 
+static int alloc_scan_segment(struct infs_volume *vol, uint64_t wanted,
+                              uint64_t begin, uint64_t end,
+                              uint64_t *best_start, uint64_t *best_count)
+{
+    for (uint64_t b = begin; b < end; ) {
+        while (b < end && bitmap_get(vol->bitmap, b))
+            ++b;
+        if (b == end)
+            break;
+        uint64_t start = b;
+        while (b < end && !bitmap_get(vol->bitmap, b) &&
+               b - start < wanted)
+            ++b;
+        uint64_t len = b - start;
+        if (len > *best_count) {
+            *best_start = start;
+            *best_count = len;
+        }
+        if (len == wanted)
+            return 1;
+        while (b < end && !bitmap_get(vol->bitmap, b))
+            ++b;
+    }
+    return 0;
+}
+
 static int alloc_run(struct infs_volume *vol, uint64_t wanted,
                      uint64_t *start_out, uint64_t *count_out)
 {
@@ -181,27 +301,25 @@ static int alloc_run(struct infs_volume *vol, uint64_t wanted,
         return INFS_STATUS_NO_SPACE;
 
     uint64_t total = infs_le64_to_cpu(vol->sb.total_blocks);
+    uint64_t cursor = vol->allocation_cursor;
+    if (cursor < 1u || cursor >= total)
+        cursor = 1u;
     uint64_t best_start = 0;
     uint64_t best_count = 0;
+    int found = alloc_scan_segment(vol, wanted, cursor, total,
+                                   &best_start, &best_count);
+    if (!found && cursor > 1u)
+        found = alloc_scan_segment(vol, wanted, 1u, cursor,
+                                   &best_start, &best_count);
 
-    for (uint64_t b = 1; b < total; ) {
-        while (b < total && bitmap_get(vol->bitmap, b))
-            ++b;
-        if (b == total)
-            break;
-        uint64_t start = b;
-        while (b < total && !bitmap_get(vol->bitmap, b) &&
-               b - start < wanted)
-            ++b;
-        uint64_t len = b - start;
-        if (len > best_count) {
-            best_start = start;
-            best_count = len;
-        }
-        if (len == wanted)
-            break;
-        while (b < total && !bitmap_get(vol->bitmap, b))
-            ++b;
+    /* Splitting the circular search at the cursor can bisect a physically
+     * contiguous free run. Only fragmented/no-full-run cases pay for this
+     * correctness fallback; the common one-block path stops immediately. */
+    if (!found && cursor > 1u && best_count < wanted) {
+        best_start = 0;
+        best_count = 0;
+        (void)alloc_scan_segment(vol, wanted, 1u, total,
+                                 &best_start, &best_count);
     }
 
     if (best_count == 0)
@@ -220,9 +338,33 @@ static int alloc_run(struct infs_volume *vol, uint64_t wanted,
         return status;
     }
 
+    vol->allocation_cursor = best_start + best_count;
+    if (vol->allocation_cursor >= total)
+        vol->allocation_cursor = 1u;
     *start_out = best_start;
     *count_out = best_count;
     return INFS_STATUS_OK;
+}
+
+static int alloc_exact_scan_segment(struct infs_volume *vol, uint64_t wanted,
+                                    uint64_t begin, uint64_t end,
+                                    uint64_t *start_out)
+{
+    for (uint64_t start = begin; start < end; ) {
+        while (start < end && bitmap_get(vol->bitmap, start))
+            ++start;
+        if (start >= end || wanted > end - start)
+            break;
+        uint64_t n = 0;
+        while (n < wanted && !bitmap_get(vol->bitmap, start + n))
+            ++n;
+        if (n == wanted) {
+            *start_out = start;
+            return 1;
+        }
+        start += n ? n : 1u;
+    }
+    return 0;
 }
 
 static int alloc_exact_run(struct infs_volume *vol, uint64_t wanted,
@@ -234,33 +376,36 @@ static int alloc_exact_run(struct infs_volume *vol, uint64_t wanted,
     if (status != INFS_STATUS_OK)
         return status;
     uint64_t total = infs_le64_to_cpu(vol->sb.total_blocks);
-    for (uint64_t start = 1; start + wanted <= total; ) {
-        while (start < total && bitmap_get(vol->bitmap, start))
-            ++start;
-        if (start + wanted > total)
-            break;
-        uint64_t n = 0;
-        while (n < wanted && !bitmap_get(vol->bitmap, start + n))
-            ++n;
-        if (n == wanted) {
-            for (uint64_t i = 0; i < wanted; ++i)
-                bitmap_set(vol->bitmap, start + i, 1);
-            vol->sb.free_blocks = infs_cpu_to_le64(
-                infs_le64_to_cpu(vol->sb.free_blocks) - wanted);
-            status = zero_blocks(vol, start, wanted);
-            if (status != INFS_STATUS_OK) {
-                for (uint64_t i = 0; i < wanted; ++i)
-                    bitmap_set(vol->bitmap, start + i, 0);
-                vol->sb.free_blocks = infs_cpu_to_le64(
-                    infs_le64_to_cpu(vol->sb.free_blocks) + wanted);
-                return status;
-            }
-            *start_out = start;
-            return INFS_STATUS_OK;
-        }
-        start += n ? n : 1u;
+    uint64_t cursor = vol->allocation_cursor;
+    if (cursor < 1u || cursor >= total)
+        cursor = 1u;
+
+    uint64_t start = 0;
+    int found = alloc_exact_scan_segment(vol, wanted, cursor, total, &start);
+    if (!found && cursor > 1u)
+        found = alloc_exact_scan_segment(vol, wanted, 1u, cursor, &start);
+    if (!found && cursor > 1u)
+        found = alloc_exact_scan_segment(vol, wanted, 1u, total, &start);
+    if (!found)
+        return INFS_STATUS_NO_SPACE;
+
+    for (uint64_t i = 0; i < wanted; ++i)
+        bitmap_set(vol->bitmap, start + i, 1);
+    vol->sb.free_blocks = infs_cpu_to_le64(
+        infs_le64_to_cpu(vol->sb.free_blocks) - wanted);
+    status = zero_blocks(vol, start, wanted);
+    if (status != INFS_STATUS_OK) {
+        for (uint64_t i = 0; i < wanted; ++i)
+            bitmap_set(vol->bitmap, start + i, 0);
+        vol->sb.free_blocks = infs_cpu_to_le64(
+            infs_le64_to_cpu(vol->sb.free_blocks) + wanted);
+        return status;
     }
-    return INFS_STATUS_NO_SPACE;
+    vol->allocation_cursor = start + wanted;
+    if (vol->allocation_cursor >= total)
+        vol->allocation_cursor = 1u;
+    *start_out = start;
+    return INFS_STATUS_OK;
 }
 
 static void free_run(struct infs_volume *vol, uint64_t start, uint64_t count)
@@ -391,6 +536,13 @@ static int index_find(struct infs_volume *vol, const uint8_t id[16],
         return INFS_STATUS_OK;
     }
 
+    struct infs_lookup found;
+    if (object_cache_lookup(vol, id, &found)) {
+        if (out)
+            *out = found;
+        return INFS_STATUS_OK;
+    }
+
     uint8_t block[INFS_BLOCK_SIZE];
     struct infs_index_payload_disk *payload;
     infs_status status = index_load(vol, block, &payload);
@@ -399,8 +551,15 @@ static int index_find(struct infs_volume *vol, const uint8_t id[16],
     struct infs_object_header_disk *header =
         (struct infs_object_header_disk *)block;
     if (infs_le16_to_cpu(header->object_version) ==
-        INFS_OBJECT_VERSION_PAGED)
-        return paged_index_find(vol, id, out);
+        INFS_OBJECT_VERSION_PAGED) {
+        status = paged_index_find(vol, id, &found);
+        if (status == INFS_STATUS_OK) {
+            object_cache_store(vol, id, found.block, found.type);
+            if (out)
+                *out = found;
+        }
+        return status;
+    }
 
     uint32_t count = infs_le32_to_cpu(payload->entry_count);
     struct infs_index_entry_disk *entries =
@@ -411,11 +570,12 @@ static int index_find(struct infs_volume *vol, const uint8_t id[16],
             if (obj_block >= infs_le64_to_cpu(vol->sb.total_blocks) ||
                 !bitmap_get(vol->bitmap, obj_block))
                 return INFS_STATUS_CORRUPT;
-            if (out) {
-                memcpy(out->object_id, id, 16);
-                out->block = obj_block;
-                out->type = infs_le16_to_cpu(entries[i].object_type);
-            }
+            memcpy(found.object_id, id, 16);
+            found.block = obj_block;
+            found.type = infs_le16_to_cpu(entries[i].object_type);
+            object_cache_store(vol, id, found.block, found.type);
+            if (out)
+                *out = found;
             return INFS_STATUS_OK;
         }
     }
@@ -434,8 +594,12 @@ static int index_repoint(struct infs_volume *vol, const uint8_t id[16],
     struct infs_object_header_disk *header =
         (struct infs_object_header_disk *)block;
     if (infs_le16_to_cpu(header->object_version) ==
-        INFS_OBJECT_VERSION_PAGED)
-        return paged_index_repoint(vol, id, object_block, type);
+        INFS_OBJECT_VERSION_PAGED) {
+        status = paged_index_repoint(vol, id, object_block, type);
+        if (status == INFS_STATUS_OK)
+            object_cache_store(vol, id, object_block, type);
+        return status;
+    }
 
     uint32_t count = infs_le32_to_cpu(payload->entry_count);
     struct infs_index_entry_disk *entries =
@@ -444,7 +608,10 @@ static int index_repoint(struct infs_volume *vol, const uint8_t id[16],
         if (memcmp(entries[i].object_id, id, 16) == 0) {
             entries[i].object_block = infs_cpu_to_le64(object_block);
             entries[i].object_type = infs_cpu_to_le16(type);
-            return write_object(vol, index_block, block);
+            status = write_object(vol, index_block, block);
+            if (status == INFS_STATUS_OK)
+                object_cache_store(vol, id, object_block, type);
+            return status;
         }
     }
     return INFS_STATUS_NOT_FOUND;
@@ -461,8 +628,12 @@ static int index_add(struct infs_volume *vol, const uint8_t id[16],
     struct infs_object_header_disk *head_header =
         (struct infs_object_header_disk *)head;
     if (infs_le16_to_cpu(head_header->object_version) ==
-        INFS_OBJECT_VERSION_PAGED)
-        return paged_index_add(vol, id, object_block, type);
+        INFS_OBJECT_VERSION_PAGED) {
+        status = paged_index_add(vol, id, object_block, type);
+        if (status == INFS_STATUS_OK)
+            object_cache_store(vol, id, object_block, type);
+        return status;
+    }
 
     struct infs_lookup existing;
     status = index_find(vol, id, &existing);
@@ -487,8 +658,11 @@ static int index_add(struct infs_volume *vol, const uint8_t id[16],
     e->object_type = infs_cpu_to_le16(type);
     payload->entry_count = infs_cpu_to_le32(count + 1u);
     hdr->payload_size = infs_cpu_to_le32((uint32_t)new_size);
-    return write_object(vol,
-                        infs_le64_to_cpu(vol->sb.object_index_block), head);
+    status = write_object(
+        vol, infs_le64_to_cpu(vol->sb.object_index_block), head);
+    if (status == INFS_STATUS_OK)
+        object_cache_store(vol, id, object_block, type);
+    return status;
 }
 
 static int index_remove(struct infs_volume *vol, const uint8_t id[16])
@@ -501,8 +675,12 @@ static int index_remove(struct infs_volume *vol, const uint8_t id[16])
     struct infs_object_header_disk *hdr =
         (struct infs_object_header_disk *)block;
     if (infs_le16_to_cpu(hdr->object_version) ==
-        INFS_OBJECT_VERSION_PAGED)
-        return paged_index_remove(vol, id);
+        INFS_OBJECT_VERSION_PAGED) {
+        status = paged_index_remove(vol, id);
+        if (status == INFS_STATUS_OK)
+            object_cache_remove(vol, id);
+        return status;
+    }
 
     uint32_t count = infs_le32_to_cpu(payload->entry_count);
     struct infs_index_entry_disk *entries =
@@ -517,8 +695,11 @@ static int index_remove(struct infs_volume *vol, const uint8_t id[16])
             hdr->payload_size = infs_cpu_to_le32((uint32_t)(
                 sizeof(*payload) +
                 (size_t)(count - 1u) * sizeof(*entries)));
-            return write_object(
+            status = write_object(
                 vol, infs_le64_to_cpu(vol->sb.object_index_block), block);
+            if (status == INFS_STATUS_OK)
+                object_cache_remove(vol, id);
+            return status;
         }
     }
     return INFS_STATUS_NOT_FOUND;
