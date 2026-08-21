@@ -7,14 +7,11 @@ static infs_status file_other_reference_cover(
     *cover_end = cursor;
     *next_start = end;
 
-    uint8_t index_block[INFS_BLOCK_SIZE];
-    struct infs_index_payload_disk *payload;
-    infs_status status = index_load(vol, index_block, &payload);
+    struct infs_index_entry_disk *entries = NULL;
+    uint32_t count = 0;
+    infs_status status = index_snapshot(vol, &entries, &count);
     if (status != INFS_STATUS_OK)
         return status;
-    uint32_t count = infs_le32_to_cpu(payload->entry_count);
-    struct infs_index_entry_disk *entries =
-        (struct infs_index_entry_disk *)(payload + 1);
 
     for (uint32_t i = 0; i < count; ++i) {
         if (infs_le16_to_cpu(entries[i].object_type) != INFS_OBJECT_FILE ||
@@ -24,13 +21,17 @@ static infs_status file_other_reference_cover(
         uint8_t object[INFS_BLOCK_SIZE];
         status = read_object(vol, infs_le64_to_cpu(entries[i].object_block),
                              object);
-        if (status != INFS_STATUS_OK)
+        if (status != INFS_STATUS_OK) {
+            free(entries);
             return status;
+        }
         struct infs_file_payload_disk *file;
         struct infs_extent_disk *ext;
         status = file_validate_volume(vol, object, &file, &ext);
-        if (status != INFS_STATUS_OK)
+        if (status != INFS_STATUS_OK) {
+            free(entries);
             return status;
+        }
 
         uint32_t extent_count = infs_le32_to_cpu(file->extent_count);
         for (uint32_t j = 0; j < extent_count; ++j) {
@@ -50,6 +51,7 @@ static infs_status file_other_reference_cover(
             }
         }
     }
+    free(entries);
     return INFS_STATUS_OK;
 }
 
