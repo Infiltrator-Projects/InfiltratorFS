@@ -137,10 +137,22 @@
 - [x] Package the manager, launcher and runtime dependencies in the Debian release asset.
 - [x] Keep on-disk Format 0.6 unchanged.
 
+## Phase 4.7 — implementation 0.7.0 inline small files — complete
+
+- [x] Publish Format 0.7 and define the `INFS_INCOMPAT_INLINE_DATA` feature bit without changing existing packed structure sizes or offsets.
+- [x] Keep non-empty regular files up to 3,840 bytes inside their existing file metadata object on inline-enabled volumes.
+- [x] Store an independent SHA-256 digest beside inline bytes while retaining the enclosing object's CRC64 metadata checksum.
+- [x] Preserve zero-filled unwritten ranges and hole-punch semantics while a file remains inline.
+- [x] Promote inline files transactionally to ordinary CoW extents when growth crosses 3,840 bytes.
+- [x] Fold extent-backed files back inline when truncate shrinks them to 3,840 bytes or less.
+- [x] Reclaim external data and checksum blocks when folding a file inline.
+- [x] Keep Format 0.6 readable and permit extent-only Format 0.7 volumes with the inline-data bit clear.
+- [x] Add portable threshold, promotion, folding, punch, scrub and remount conformance coverage.
+
 ## Phase 4 — modern storage features
 
 - [x] Sparse extents.
-- [ ] Inline small files.
+- [x] Inline small files.
 - [ ] Reflinks and shared extents.
 - [ ] Snapshot roots and retained generations.
 - [ ] Native historical undelete policy.
