@@ -120,8 +120,6 @@ int infs_validate_superblock_block(const uint8_t block[INFS_BLOCK_SIZE])
     uint64_t required_flags = INFS_INCOMPAT_UTF8_NAMES;
     if (format_minor >= 6u)
         required_flags |= INFS_INCOMPAT_SPARSE_EXTENTS;
-    if (format_minor >= 7u)
-        required_flags |= INFS_INCOMPAT_INLINE_DATA;
     if ((incompat_flags & ~INFS_KNOWN_INCOMPAT_FLAGS) != 0 ||
         (incompat_flags & required_flags) != required_flags ||
         (format_minor < 6u &&
