@@ -25,12 +25,15 @@ static int destroy_replaced_object_tx(struct infs_volume *vol,
             return status;
         uint32_t count = infs_le32_to_cpu(file->extent_count);
         for (uint32_t i = 0; i < count; ++i) {
-            if (infs_le32_to_cpu(extents[i].flags) == INFS_EXTENT_NORMAL)
-                free_run(vol, infs_le64_to_cpu(extents[i].physical_block),
-                         infs_le32_to_cpu(extents[i].block_count));
+            if (infs_le32_to_cpu(extents[i].flags) != INFS_EXTENT_NORMAL)
+                continue;
+            status = file_free_unshared_run(
+                vol, target->object_id,
+                infs_le64_to_cpu(extents[i].physical_block),
+                infs_le32_to_cpu(extents[i].block_count));
+            if (status != INFS_STATUS_OK)
+                return status;
         }
-        if (vol->tx_error != INFS_STATUS_OK)
-            return vol->tx_error;
     } else {
         return INFS_STATUS_CORRUPT;
     }
