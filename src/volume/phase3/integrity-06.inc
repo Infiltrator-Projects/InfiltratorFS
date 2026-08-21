@@ -6,14 +6,11 @@ infs_status infs_scrub(struct infs_volume *vol,
         return INFS_STATUS_INVALID_ARGUMENT;
     memset(report, 0, sizeof(*report));
 
-    uint8_t index_block[INFS_BLOCK_SIZE];
-    struct infs_index_payload_disk *index_payload;
-    infs_status status = index_load(vol, index_block, &index_payload);
+    struct infs_index_entry_disk *entries = NULL;
+    uint32_t entries_count = 0;
+    infs_status status = index_snapshot(vol, &entries, &entries_count);
     if (status != INFS_STATUS_OK)
         return status;
-    uint32_t entries_count = infs_le32_to_cpu(index_payload->entry_count);
-    struct infs_index_entry_disk *entries =
-        (struct infs_index_entry_disk *)(index_payload + 1);
 
     for (uint32_t i = 0; i < entries_count; ++i) {
         if (infs_le16_to_cpu(entries[i].object_type) != INFS_OBJECT_FILE)
@@ -67,5 +64,6 @@ infs_status infs_scrub(struct infs_volume *vol,
             }
         }
     }
+    free(entries);
     return INFS_STATUS_OK;
 }
