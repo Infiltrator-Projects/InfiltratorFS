@@ -5,24 +5,22 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "infilfs/format.h"
-#include "infilfs/storage.h"
+#include "format.h"
+#include "status.h"
+#include "storage.h"
 
 #define INFS_PATH_MAX 4096u
 
-#define INFS_POSIX_SET_PERMISSIONS UINT32_C(0x00000001)
-#define INFS_POSIX_SET_UID         UINT32_C(0x00000002)
-#define INFS_POSIX_SET_GID         UINT32_C(0x00000004)
+struct infs_lookup {
+    uint8_t object_id[16];
+    uint16_t type;
+    uint64_t block;
+};
 
-#define INFS_TIME_OMIT UINT32_C(0)
-#define INFS_TIME_NOW  UINT32_C(1)
-#define INFS_TIME_SET  UINT32_C(2)
-
-struct infs_create_options {
-    uint64_t portable_flags;
-    uint32_t posix_permissions;
-    uint32_t posix_uid;
-    uint32_t posix_gid;
+struct infs_dir_item {
+    char name[INFS_NAME_MAX + 1];
+    uint8_t object_id[16];
+    uint16_t type;
 };
 
 struct infs_attributes {
@@ -43,48 +41,12 @@ struct infs_attributes {
     uint32_t posix_gid;
 };
 
-struct infs_time_update {
-    uint32_t access_action;
-    uint32_t modification_action;
-    int64_t access_time_ns;
-    int64_t modification_time_ns;
+struct infs_create_options {
+    uint64_t portable_flags;
+    uint32_t posix_permissions;
+    uint32_t posix_uid;
+    uint32_t posix_gid;
 };
-
-struct infs_deferred_range {
-    uint64_t start;
-    uint64_t count;
-};
-
-struct infs_volume {
-    struct infs_storage storage;
-    int writable;
-    int checkpoint_repair_needed;
-    /* Nonzero after the commit checkpoint may have reached storage but its
-     * durability could not be established. No further mutation is safe until
-     * the volume is closed and recovered from its physical checkpoints. */
-    infs_status reopen_required_status;
-    uint64_t size_bytes;
-    struct infs_superblock_disk sb;
-    uint8_t *bitmap;
-    size_t bitmap_bytes;
-
-    /* Phase 2 transaction state. The public struct remains intentionally
-     * inspectable while the prototype format is evolving. */
-    int tx_active;
-    infs_status tx_error;
-    struct infs_superblock_disk tx_base_sb;
-    uint8_t *tx_base_bitmap;
-    struct infs_deferred_range *tx_deferred;
-    size_t tx_deferred_count;
-    size_t tx_deferred_capacity;
-};
-
-struct infs_lookup {
-    uint8_t object_id[16];
-    uint64_t block;
-    uint16_t type;
-};
-
 
 struct infs_scrub_report {
     uint64_t files_checked;
@@ -93,10 +55,19 @@ struct infs_scrub_report {
     uint64_t metadata_errors;
 };
 
-struct infs_dir_item {
-    char name[INFS_NAME_MAX + 1u];
-    uint8_t object_id[16];
-    uint16_t type;
+struct infs_volume {
+    struct infs_storage storage;
+    struct infs_superblock_disk sb;
+    uint8_t *bitmap;
+    size_t bitmap_bytes;
+    uint8_t *tx_base_bitmap;
+    uint8_t *tx_reclaim_bitmap;
+    uint64_t tx_base_free_blocks;
+    int writable;
+    int tx_active;
+    int tx_committed;
+    infs_status tx_error;
+    int write_disabled;
 };
 
 infs_status infs_volume_open_storage(struct infs_volume *vol,
@@ -109,6 +80,10 @@ infs_status infs_lookup_path(struct infs_volume *vol, const char *path,
                              struct infs_lookup *out);
 infs_status infs_get_attributes(struct infs_volume *vol, const char *path,
                                 struct infs_attributes *attributes);
+infs_status infs_set_attributes(struct infs_volume *vol, const char *path,
+                                uint64_t portable_flags,
+                                uint32_t posix_permissions,
+                                uint32_t posix_uid, uint32_t posix_gid);
 infs_status infs_list_dir(struct infs_volume *vol, const char *path,
                           struct infs_dir_item **items, size_t *count);
 void infs_free_dir_items(struct infs_dir_item *items);
@@ -130,14 +105,8 @@ infs_status infs_truncate_file(struct infs_volume *vol, const char *path,
                                uint64_t size);
 infs_status infs_punch_hole(struct infs_volume *vol, const char *path,
                             uint64_t offset, uint64_t length);
-
-infs_status infs_set_posix_compat(struct infs_volume *vol, const char *path,
-                                  uint32_t mask, uint32_t permissions,
-                                  uint32_t uid, uint32_t gid);
-infs_status infs_set_times(struct infs_volume *vol, const char *path,
-                           const struct infs_time_update *update);
-
-infs_status infs_scrub(struct infs_volume *vol,
-                       struct infs_scrub_report *report);
+infs_status infs_reflink_file(struct infs_volume *vol, const char *source_path,
+                              const char *destination_path);
+infs_status infs_scrub(struct infs_volume *vol, struct infs_scrub_report *report);
 
 #endif
