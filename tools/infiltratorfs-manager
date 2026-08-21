@@ -148,7 +148,7 @@ select_partition()
         is_system_partition "$name" && continue
         kind=$(partition_candidate_kind "$name" "$removable" "$parent" "${transport:-}") || continue
         rows+=(FALSE "$name" "$size" "$kind")
-    done < <(lsblk -prndo NAME,SIZE,TYPE,RM,PKNAME,TRAN)
+    done < <(lsblk -prno NAME,SIZE,TYPE,RM,PKNAME,TRAN)
 
     if (( ${#rows[@]} == 0 )); then
         show_error "No removable, USB, or SD-card partitions were found. If the card has no partition yet, create one in Mint Disks and try again."
