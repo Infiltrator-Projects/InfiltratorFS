@@ -196,6 +196,9 @@ int main(void)
 
     expect(infs_create_file(&volume, "/buffered.bin", NULL) == INFS_STATUS_OK,
            "create buffered-write target");
+    expect(infs_volume_set_deferred_publish(
+               &volume, 1, UINT64_C(1024) * 1024u) == INFS_STATUS_OK,
+           "enable generic deferred publication");
     uint64_t generation_before = infs_le64_to_cpu(volume.sb.generation);
     uint64_t flushes_before = image.flushes;
     uint8_t chunk[512];
@@ -247,7 +250,7 @@ int main(void)
     expect(infs_read_file(&volume, "/buffered.bin", readback,
                           sizeof(readback), 0) == (int64_t)sizeof(readback),
            "read buffered file after remount");
-    expect(memcmp(readback, expected, sizeof(expected)) == 0,
+    expect(memcmp(readback, expected, sizeof(readback)) == 0,
            "buffered file persists after remount");
     infs_volume_close(&volume);
 
