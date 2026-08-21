@@ -87,6 +87,14 @@ struct infs_volume {
     int deferred_publish;
     uint64_t deferred_publish_threshold_bytes;
     uint64_t tx_pending_bytes;
+
+    /* Runtime-only performance hints. These never appear on disk and are
+     * shared by every adapter. allocation_cursor makes allocation next-fit
+     * instead of restarting at block 1, while object_cache accelerates stable
+     * object-id to block lookups for the paged index. */
+    uint64_t allocation_cursor;
+    struct infs_object_cache_entry *object_cache;
+    size_t object_cache_slots;
 };
 
 struct infs_lookup {
