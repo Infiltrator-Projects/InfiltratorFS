@@ -105,10 +105,8 @@ static int rename_tx(struct infs_volume *vol, const char *oldpath,
     struct infs_lookup destination;
     uint16_t destination_type = 0;
     if (have_destination) {
-        if (memcmp(destination_entry.object_id, source_id, 16) == 0) {
-            tx_abort(vol);
+        if (memcmp(destination_entry.object_id, source_id, 16) == 0)
             return INFS_STATUS_OK;
-        }
         destination_type = infs_le16_to_cpu(destination_entry.object_type);
         status = index_find(vol, destination_entry.object_id, &destination);
         if (status != INFS_STATUS_OK)
@@ -227,7 +225,7 @@ static int rename_tx(struct infs_volume *vol, const char *oldpath,
     if (status != INFS_STATUS_OK)
         return status;
 
-    return infs_volume_sync(vol);
+    return finish_mutation(vol, (uint64_t)INFS_BLOCK_SIZE * 6u);
 }
 
 static infs_status validate_rename_trailing_slash(struct infs_volume *vol,
