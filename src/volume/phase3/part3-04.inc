@@ -78,7 +78,8 @@ static infs_status load_checkpoint_graph(
     discard_candidate_state(vol);
     vol->sb = *candidate;
 
-    if (infs_le16_to_cpu(vol->sb.format_minor) != INFS_FORMAT_MINOR)
+    uint16_t format_minor = infs_le16_to_cpu(vol->sb.format_minor);
+    if (format_minor < 6u || format_minor > INFS_FORMAT_MINOR)
         return INFS_STATUS_NOT_SUPPORTED;
     if (vol->writable &&
         (infs_le64_to_cpu(vol->sb.ro_compat_flags) &
@@ -149,6 +150,24 @@ static infs_status load_checkpoint_graph(
         (struct infs_object_header_disk *)object;
     if (memcmp(root_hdr->object_id, vol->sb.root_object_id, 16) != 0 ||
         !id_is_zero(root_hdr->parent_id))
+        return INFS_STATUS_CORRUPT;
+
+    uint8_t index_object[INFS_BLOCK_SIZE];
+    struct infs_index_payload_disk *index_payload;
+    status = index_load(vol, index_object, &index_payload);
+    if (status != INFS_STATUS_OK)
+        return checkpoint_graph_status(status);
+    (void)index_payload;
+    struct infs_object_header_disk *index_hdr =
+        (struct infs_object_header_disk *)index_object;
+    int paged_feature =
+        (infs_le64_to_cpu(vol->sb.incompat_flags) &
+         INFS_INCOMPAT_PAGED_METADATA) != 0;
+    int root_paged =
+        infs_le16_to_cpu(root_hdr->object_version) == INFS_OBJECT_VERSION_PAGED;
+    int index_paged =
+        infs_le16_to_cpu(index_hdr->object_version) == INFS_OBJECT_VERSION_PAGED;
+    if (paged_feature != root_paged || paged_feature != index_paged)
         return INFS_STATUS_CORRUPT;
 
     status = validate_index_entries(vol);
