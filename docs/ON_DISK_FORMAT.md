@@ -115,7 +115,7 @@ Implementations 0.6.1 and later accept only the portable attribute flags current
 
 A directory payload contains common attributes, POSIX compatibility data, an entry count and the byte count occupied by variable-length records.
 
-Each record contains its aligned record size, name length, target object type, flags, 128-bit target ID and name bytes. Names must be well-formed UTF-8, contain 1â€“255 bytes, and contain neither NUL nor `/`. Records are padded to eight-byte alignment. Current record flags and padding are zero.
+Each record contains its aligned record size, name length, target object type, flags, 128-bit target ID and name bytes. Names must be well-formed UTF-8, contain 1–255 bytes, and contain neither NUL nor `/`. Records are padded to eight-byte alignment. Current record flags and padding are zero.
 
 Lookup in Format 0.6 is case-sensitive and byte-exact. `.` and `..` are synthesized navigation components and are never stored. Pathnames ending in `/` retain directory semantics in namespace operations; rename does not silently strip a trailing slash from a regular-file source or nonexistent destination.
 
