@@ -317,6 +317,20 @@ static int write_object(struct infs_volume *vol, uint64_t block_no,
     if (status != INFS_STATUS_OK)
         return status;
 
+    uint16_t type = infs_le16_to_cpu(hdr->object_type);
+
+    /* Once a COW object has been created inside the current transaction it is
+     * unreachable from the committed checkpoint. Reusing that transaction-
+     * private block avoids another allocation, index-page rewrite and free for
+     * every buffered FUSE write to the same file. */
+    if (block_no < infs_le64_to_cpu(vol->sb.total_blocks) &&
+        !bitmap_get(vol->tx_base_bitmap, block_no)) {
+        status = write_block(vol, block_no, block);
+        if (status != INFS_STATUS_OK)
+            return status;
+        return vol->tx_error;
+    }
+
     uint64_t new_block = 0, got = 0;
     status = alloc_run(vol, 1, &new_block, &got);
     if (status != INFS_STATUS_OK)
@@ -330,7 +344,6 @@ static int write_object(struct infs_volume *vol, uint64_t block_no,
         return status;
     }
 
-    uint16_t type = infs_le16_to_cpu(hdr->object_type);
     if (type == INFS_OBJECT_INDEX) {
         vol->sb.object_index_block = infs_cpu_to_le64(new_block);
         free_run(vol, block_no, 1);
@@ -361,16 +374,8 @@ static int index_load(struct infs_volume *vol, uint8_t block[INFS_BLOCK_SIZE],
         infs_le32_to_cpu(hdr->payload_size) <
             sizeof(struct infs_index_payload_disk))
         return INFS_STATUS_CORRUPT;
-    struct infs_index_payload_disk *payload =
-        (struct infs_index_payload_disk *)(block + sizeof(*hdr));
-    uint32_t count = infs_le32_to_cpu(payload->entry_count);
-    size_t need = sizeof(*payload) +
-        (size_t)count * sizeof(struct infs_index_entry_disk);
-    if (need > infs_le32_to_cpu(hdr->payload_size) ||
-        need > INFS_BLOCK_SIZE - sizeof(*hdr))
-        return INFS_STATUS_CORRUPT;
     if (payload_out)
-        *payload_out = payload;
+        *payload_out = (struct infs_index_payload_disk *)(block + sizeof(*hdr));
     return INFS_STATUS_OK;
 }
 
@@ -391,6 +396,12 @@ static int index_find(struct infs_volume *vol, const uint8_t id[16],
     infs_status status = index_load(vol, block, &payload);
     if (status != INFS_STATUS_OK)
         return status;
+    struct infs_object_header_disk *header =
+        (struct infs_object_header_disk *)block;
+    if (infs_le16_to_cpu(header->object_version) ==
+        INFS_OBJECT_VERSION_PAGED)
+        return paged_index_find(vol, id, out);
+
     uint32_t count = infs_le32_to_cpu(payload->entry_count);
     struct infs_index_entry_disk *entries =
         (struct infs_index_entry_disk *)(payload + 1);
@@ -420,6 +431,12 @@ static int index_repoint(struct infs_volume *vol, const uint8_t id[16],
     infs_status status = index_load(vol, block, &payload);
     if (status != INFS_STATUS_OK)
         return status;
+    struct infs_object_header_disk *header =
+        (struct infs_object_header_disk *)block;
+    if (infs_le16_to_cpu(header->object_version) ==
+        INFS_OBJECT_VERSION_PAGED)
+        return paged_index_repoint(vol, id, object_block, type);
+
     uint32_t count = infs_le32_to_cpu(payload->entry_count);
     struct infs_index_entry_disk *entries =
         (struct infs_index_entry_disk *)(payload + 1);
@@ -436,20 +453,26 @@ static int index_repoint(struct infs_volume *vol, const uint8_t id[16],
 static int index_add(struct infs_volume *vol, const uint8_t id[16],
                      uint64_t object_block, uint16_t type)
 {
+    uint8_t head[INFS_BLOCK_SIZE];
+    struct infs_index_payload_disk *head_payload;
+    infs_status status = index_load(vol, head, &head_payload);
+    if (status != INFS_STATUS_OK)
+        return status;
+    struct infs_object_header_disk *head_header =
+        (struct infs_object_header_disk *)head;
+    if (infs_le16_to_cpu(head_header->object_version) ==
+        INFS_OBJECT_VERSION_PAGED)
+        return paged_index_add(vol, id, object_block, type);
+
     struct infs_lookup existing;
-    infs_status status = index_find(vol, id, &existing);
+    status = index_find(vol, id, &existing);
     if (status == INFS_STATUS_OK)
         return INFS_STATUS_ALREADY_EXISTS;
     if (status != INFS_STATUS_NOT_FOUND)
         return status;
 
-    uint8_t block[INFS_BLOCK_SIZE];
-    struct infs_index_payload_disk *payload;
-    status = index_load(vol, block, &payload);
-    if (status != INFS_STATUS_OK)
-        return status;
-    struct infs_object_header_disk *hdr =
-        (struct infs_object_header_disk *)block;
+    struct infs_index_payload_disk *payload = head_payload;
+    struct infs_object_header_disk *hdr = head_header;
     uint32_t count = infs_le32_to_cpu(payload->entry_count);
     size_t new_size = sizeof(*payload) +
         (size_t)(count + 1u) * sizeof(struct infs_index_entry_disk);
@@ -465,7 +488,7 @@ static int index_add(struct infs_volume *vol, const uint8_t id[16],
     payload->entry_count = infs_cpu_to_le32(count + 1u);
     hdr->payload_size = infs_cpu_to_le32((uint32_t)new_size);
     return write_object(vol,
-                        infs_le64_to_cpu(vol->sb.object_index_block), block);
+                        infs_le64_to_cpu(vol->sb.object_index_block), head);
 }
 
 static int index_remove(struct infs_volume *vol, const uint8_t id[16])
@@ -477,6 +500,10 @@ static int index_remove(struct infs_volume *vol, const uint8_t id[16])
         return status;
     struct infs_object_header_disk *hdr =
         (struct infs_object_header_disk *)block;
+    if (infs_le16_to_cpu(hdr->object_version) ==
+        INFS_OBJECT_VERSION_PAGED)
+        return paged_index_remove(vol, id);
+
     uint32_t count = infs_le32_to_cpu(payload->entry_count);
     struct infs_index_entry_disk *entries =
         (struct infs_index_entry_disk *)(payload + 1);
