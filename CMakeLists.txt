@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.20)
-project(InfiltratorFS VERSION 0.8.2 LANGUAGES C)
+project(InfiltratorFS VERSION 0.9.0 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -62,6 +62,10 @@ add_executable(infilfs-reflink tests/reflink.c)
 target_link_libraries(infilfs-reflink PRIVATE infilfs_core)
 infilfs_enable_warnings(infilfs-reflink)
 
+add_executable(infilfs-paged-metadata tests/paged-metadata.c)
+target_link_libraries(infilfs-paged-metadata PRIVATE infilfs_core)
+infilfs_enable_warnings(infilfs-paged-metadata)
+
 enable_testing()
 add_test(NAME infilfs-checksum-known-answer COMMAND infilfs-checksum-test)
 add_test(NAME infilfs-format-conformance COMMAND infilfs-format-conformance)
@@ -71,6 +75,7 @@ add_test(NAME infilfs-open-hardening COMMAND infilfs-open-hardening)
 add_test(NAME infilfs-063-hardening COMMAND infilfs-063-hardening)
 add_test(NAME infilfs-inline-files COMMAND infilfs-inline-files)
 add_test(NAME infilfs-reflink COMMAND infilfs-reflink)
+add_test(NAME infilfs-paged-metadata COMMAND infilfs-paged-metadata)
 
 if(WIN32)
     add_library(infilfs_win32 STATIC src/platform/win32_io.c)
@@ -141,6 +146,8 @@ if(UNIX)
         COMMAND bash -n ${CMAKE_SOURCE_DIR}/tools/infiltratorfs-manager)
     add_test(NAME infilfs-manager-helper-shell-syntax
         COMMAND bash -n ${CMAKE_SOURCE_DIR}/tools/infiltratorfs-manager-helper)
+    add_test(NAME infilfs-manager-partition-discovery
+        COMMAND bash ${CMAKE_SOURCE_DIR}/tests/manager-partition-discovery.sh)
 
     find_package(PkgConfig QUIET)
     if(PkgConfig_FOUND)
