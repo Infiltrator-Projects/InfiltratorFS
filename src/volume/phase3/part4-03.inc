@@ -58,9 +58,6 @@ static int64_t write_file_tx(struct infs_volume *vol, const char *path,
         status = write_object(vol, lk.block, object);
         if (status != INFS_STATUS_OK)
             return status;
-        status = infs_volume_sync(vol);
-        if (status != INFS_STATUS_OK)
-            return status;
         return (int64_t)size;
     }
 
@@ -161,14 +158,12 @@ static int64_t write_file_tx(struct infs_volume *vol, const char *path,
     status = write_object(vol, lk.block, object);
     if (status != INFS_STATUS_OK)
         return status;
-    status = infs_volume_sync(vol);
-    if (status != INFS_STATUS_OK)
-        return status;
     return (int64_t)done;
 }
 
-int64_t infs_write_file(struct infs_volume *vol, const char *path,
-                        const void *buf, size_t size, uint64_t offset)
+static int64_t write_file_common(struct infs_volume *vol, const char *path,
+                                 const void *buf, size_t size, uint64_t offset,
+                                 int publish)
 {
     if (!vol || !path || (size && !buf))
         return INFS_STATUS_INVALID_ARGUMENT;
@@ -183,7 +178,26 @@ int64_t infs_write_file(struct infs_volume *vol, const char *path,
     if (status != INFS_STATUS_OK)
         return status;
     int64_t rc = write_file_tx(vol, path, buf, size, offset);
-    if (rc < 0)
+    if (rc < 0) {
         tx_abort(vol);
+        return rc;
+    }
+    if (publish) {
+        status = infs_volume_sync(vol);
+        if (status != INFS_STATUS_OK)
+            return status;
+    }
     return rc;
+}
+
+int64_t infs_write_file(struct infs_volume *vol, const char *path,
+                        const void *buf, size_t size, uint64_t offset)
+{
+    return write_file_common(vol, path, buf, size, offset, 1);
+}
+
+int64_t infs_write_file_buffered(struct infs_volume *vol, const char *path,
+                                 const void *buf, size_t size, uint64_t offset)
+{
+    return write_file_common(vol, path, buf, size, offset, 0);
 }
