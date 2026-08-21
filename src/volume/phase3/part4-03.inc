@@ -30,7 +30,11 @@ static int64_t write_file_tx(struct infs_volume *vol, const char *path,
 
     uint64_t old_size = infs_le64_to_cpu(p->attributes.logical_size);
     uint64_t end = offset + size;
-    if (old_size <= INFS_INLINE_DATA_MAX && end <= INFS_INLINE_DATA_MAX) {
+    int inline_enabled =
+        (infs_le64_to_cpu(vol->sb.incompat_flags) &
+         INFS_INCOMPAT_INLINE_DATA) != 0;
+    if (inline_enabled && old_size <= INFS_INLINE_DATA_MAX &&
+        end <= INFS_INLINE_DATA_MAX) {
         uint8_t inline_data[INFS_INLINE_DATA_MAX];
         status = file_read_small_content(vol, object, inline_data);
         if (status != INFS_STATUS_OK)
