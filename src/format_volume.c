@@ -74,13 +74,14 @@ infs_status infs_format_storage(struct infs_storage *storage, const char *label)
     const uint64_t bitmap_start = 1u;
     const uint64_t index_block = bitmap_start + bitmap_blocks;
     const uint64_t root_block = index_block + 1u;
+    const uint64_t index_page_block = root_block + 1u;
     const uint64_t checkpoints[INFS_CHECKPOINT_COUNT] = {
         0u, total_blocks / 2u, total_blocks - 1u
     };
 
     if (bitmap_blocks > SIZE_MAX / INFS_BLOCK_SIZE)
         return INFS_STATUS_OVERFLOW;
-    if (root_block >= checkpoints[1])
+    if (index_page_block >= checkpoints[1])
         return INFS_STATUS_NO_SPACE;
 
     size_t bitmap_alloc = (size_t)(bitmap_blocks * INFS_BLOCK_SIZE);
@@ -96,11 +97,12 @@ infs_status infs_format_storage(struct infs_storage *storage, const char *label)
         formatter_bitmap_set(bitmap, block);
     formatter_bitmap_set(bitmap, index_block);
     formatter_bitmap_set(bitmap, root_block);
+    formatter_bitmap_set(bitmap, index_page_block);
     for (uint64_t block = total_blocks;
          block < (uint64_t)bitmap_alloc * 8u; ++block)
         formatter_bitmap_set(bitmap, block);
 
-    const uint64_t used_blocks = bitmap_blocks + 5u;
+    const uint64_t used_blocks = bitmap_blocks + 6u;
     uint8_t filesystem_uuid[16];
     uint8_t root_id[16];
     uint8_t index_id[16];
@@ -144,7 +146,8 @@ infs_status infs_format_storage(struct infs_storage *storage, const char *label)
     sb.ro_compat_flags = infs_cpu_to_le64(INFS_KNOWN_RO_COMPAT_FLAGS);
     sb.incompat_flags = infs_cpu_to_le64(
         INFS_INCOMPAT_UTF8_NAMES | INFS_INCOMPAT_SPARSE_EXTENTS |
-        INFS_INCOMPAT_INLINE_DATA | INFS_INCOMPAT_SHARED_EXTENTS);
+        INFS_INCOMPAT_INLINE_DATA | INFS_INCOMPAT_SHARED_EXTENTS |
+        INFS_INCOMPAT_PAGED_METADATA);
     memcpy(sb.label, label, label_length);
 
     uint8_t block[INFS_BLOCK_SIZE] = {0};
@@ -163,6 +166,27 @@ infs_status infs_format_storage(struct infs_storage *storage, const char *label)
     if (status != INFS_STATUS_OK)
         goto done;
 
+    status = infs_metadata_page_init(block, INFS_INDEX_PAGE_MAGIC, index_id, 1u);
+    if (status != INFS_STATUS_OK)
+        goto done;
+    struct infs_metadata_page_disk *index_page =
+        (struct infs_metadata_page_disk *)block;
+    struct infs_index_entry_disk *entry =
+        (struct infs_index_entry_disk *)(index_page + 1);
+    memset(entry, 0, sizeof(*entry));
+    memcpy(entry->object_id, root_id, 16u);
+    entry->object_block = infs_cpu_to_le64(root_block);
+    entry->object_type = infs_cpu_to_le16(INFS_OBJECT_DIRECTORY);
+    index_page->entry_count = infs_cpu_to_le32(1u);
+    index_page->bytes_used = infs_cpu_to_le32(sizeof(*entry));
+    status = infs_metadata_page_finalize(block);
+    if (status != INFS_STATUS_OK)
+        goto done;
+    status = infs_storage_write(storage, index_page_block * INFS_BLOCK_SIZE,
+                                block, sizeof(block));
+    if (status != INFS_STATUS_OK)
+        goto done;
+
     status = infs_encode_object_index(block, index_id, 1u);
     if (status != INFS_STATUS_OK)
         goto done;
@@ -170,16 +194,12 @@ infs_status infs_format_storage(struct infs_storage *storage, const char *label)
         (struct infs_object_header_disk *)block;
     struct infs_index_payload_disk *index_payload =
         (struct infs_index_payload_disk *)(block + sizeof(*index_header));
-    struct infs_index_entry_disk *entry =
-        (struct infs_index_entry_disk *)(index_payload + 1);
+    uint64_t *page_pointer = (uint64_t *)(index_payload + 1);
     index_payload->entry_count = infs_cpu_to_le32(1u);
-    index_payload->reserved = 0;
-    memset(entry, 0, sizeof(*entry));
-    memcpy(entry->object_id, root_id, 16u);
-    entry->object_block = infs_cpu_to_le64(root_block);
-    entry->object_type = infs_cpu_to_le16(INFS_OBJECT_DIRECTORY);
+    index_payload->reserved = infs_cpu_to_le32(1u);
+    page_pointer[0] = infs_cpu_to_le64(index_page_block);
     index_header->payload_size = infs_cpu_to_le32(
-        (uint32_t)(sizeof(*index_payload) + sizeof(*entry)));
+        (uint32_t)(sizeof(*index_payload) + sizeof(*page_pointer)));
     status = infs_object_finalize(block);
     if (status != INFS_STATUS_OK)
         goto done;
