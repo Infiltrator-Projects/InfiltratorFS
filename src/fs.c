@@ -143,8 +143,6 @@ int infs_validate_superblock_block(const uint8_t block[INFS_BLOCK_SIZE])
     uint64_t required_flags = INFS_INCOMPAT_UTF8_NAMES;
     if (format_minor >= 6u)
         required_flags |= INFS_INCOMPAT_SPARSE_EXTENTS;
-    if (format_minor >= 8u)
-        required_flags |= INFS_INCOMPAT_PAGED_METADATA;
     if ((incompat_flags & ~INFS_KNOWN_INCOMPAT_FLAGS) != 0 ||
         (incompat_flags & required_flags) != required_flags ||
         (format_minor < 6u &&
@@ -364,12 +362,10 @@ static void fill_attributes(struct infs_attributes_disk *attributes,
     attributes->change_time_ns = (int64_t)infs_cpu_to_le64((uint64_t)now_ns);
 }
 
-infs_status infs_encode_root_directory(uint8_t block[INFS_BLOCK_SIZE],
-                                       const uint8_t object_id[16],
-                                       uint64_t generation,
-                                       uint32_t permissions,
-                                       uint32_t uid, uint32_t gid,
-                                       int64_t now_ns)
+static infs_status encode_root_directory_version(
+    uint8_t block[INFS_BLOCK_SIZE], const uint8_t object_id[16],
+    uint64_t generation, uint32_t permissions, uint32_t uid, uint32_t gid,
+    int64_t now_ns, uint16_t object_version)
 {
     infs_status status = infs_object_init(
         block, INFS_OBJECT_DIRECTORY, object_id, NULL, generation,
@@ -379,7 +375,7 @@ infs_status infs_encode_root_directory(uint8_t block[INFS_BLOCK_SIZE],
 
     struct infs_object_header_disk *header =
         (struct infs_object_header_disk *)block;
-    header->object_version = infs_cpu_to_le16(INFS_OBJECT_VERSION_PAGED);
+    header->object_version = infs_cpu_to_le16(object_version);
     struct infs_directory_payload_disk *payload =
         (struct infs_directory_payload_disk *)(block + sizeof(*header));
     fill_attributes(&payload->attributes, 2u, now_ns);
@@ -391,9 +387,33 @@ infs_status infs_encode_root_directory(uint8_t block[INFS_BLOCK_SIZE],
     return infs_object_finalize(block);
 }
 
-infs_status infs_encode_object_index(uint8_t block[INFS_BLOCK_SIZE],
-                                     const uint8_t object_id[16],
-                                     uint64_t generation)
+infs_status infs_encode_root_directory(uint8_t block[INFS_BLOCK_SIZE],
+                                       const uint8_t object_id[16],
+                                       uint64_t generation,
+                                       uint32_t permissions,
+                                       uint32_t uid, uint32_t gid,
+                                       int64_t now_ns)
+{
+    return encode_root_directory_version(
+        block, object_id, generation, permissions, uid, gid, now_ns,
+        INFS_OBJECT_VERSION_CLASSIC);
+}
+
+infs_status infs_encode_paged_root_directory(uint8_t block[INFS_BLOCK_SIZE],
+                                             const uint8_t object_id[16],
+                                             uint64_t generation,
+                                             uint32_t permissions,
+                                             uint32_t uid, uint32_t gid,
+                                             int64_t now_ns)
+{
+    return encode_root_directory_version(
+        block, object_id, generation, permissions, uid, gid, now_ns,
+        INFS_OBJECT_VERSION_PAGED);
+}
+
+static infs_status encode_object_index_version(
+    uint8_t block[INFS_BLOCK_SIZE], const uint8_t object_id[16],
+    uint64_t generation, uint16_t object_version)
 {
     infs_status status = infs_object_init(
         block, INFS_OBJECT_INDEX, object_id, NULL, generation,
@@ -402,12 +422,28 @@ infs_status infs_encode_object_index(uint8_t block[INFS_BLOCK_SIZE],
         return status;
     struct infs_object_header_disk *header =
         (struct infs_object_header_disk *)block;
-    header->object_version = infs_cpu_to_le16(INFS_OBJECT_VERSION_PAGED);
+    header->object_version = infs_cpu_to_le16(object_version);
     struct infs_index_payload_disk *payload =
         (struct infs_index_payload_disk *)(block + sizeof(*header));
     payload->entry_count = infs_cpu_to_le32(0);
     payload->reserved = infs_cpu_to_le32(0);
     return infs_object_finalize(block);
+}
+
+infs_status infs_encode_object_index(uint8_t block[INFS_BLOCK_SIZE],
+                                     const uint8_t object_id[16],
+                                     uint64_t generation)
+{
+    return encode_object_index_version(
+        block, object_id, generation, INFS_OBJECT_VERSION_CLASSIC);
+}
+
+infs_status infs_encode_paged_object_index(uint8_t block[INFS_BLOCK_SIZE],
+                                           const uint8_t object_id[16],
+                                           uint64_t generation)
+{
+    return encode_object_index_version(
+        block, object_id, generation, INFS_OBJECT_VERSION_PAGED);
 }
 
 infs_status infs_read_best_superblock(const struct infs_storage *storage,
