@@ -85,25 +85,79 @@ select_image()
     target_kind="image"
 }
 
+is_sd_mmc_parent()
+{
+    local parent="$1"
+    parent="${parent##*/}"
+    [[ "$parent" =~ ^mmcblk[0-9]+$ ]] || return 1
+
+    local type_file="/sys/class/block/$parent/device/type"
+    [[ -r "$type_file" ]] || return 1
+
+    local card_type=""
+    read -r card_type < "$type_file" || return 1
+    [[ "$card_type" == "SD" || "$card_type" == "SDIO" ||
+       "$card_type" == "SDcombo" ]]
+}
+
+is_system_partition()
+{
+    local candidate="$1"
+    local candidate_real mount_point source source_real
+    candidate_real="$(readlink -f -- "$candidate" 2>/dev/null || printf '%s' "$candidate")"
+
+    for mount_point in / /boot /boot/efi; do
+        source="$(findmnt -nro SOURCE "$mount_point" 2>/dev/null || true)"
+        [[ -n "$source" ]] || continue
+        source_real="$(readlink -f -- "$source" 2>/dev/null || printf '%s' "$source")"
+        [[ "$candidate_real" != "$source_real" ]] || return 0
+    done
+    return 1
+}
+
+partition_candidate_kind()
+{
+    local name="$1"
+    local removable="$2"
+    local parent="$3"
+    local transport="$4"
+    parent="${parent##*/}"
+
+    if [[ "$removable" == "1" ]]; then
+        printf 'Removable\n'
+        return 0
+    fi
+    if [[ "$transport" == "usb" ]]; then
+        printf 'USB\n'
+        return 0
+    fi
+    if is_sd_mmc_parent "$parent"; then
+        printf 'SD card\n'
+        return 0
+    fi
+    return 1
+}
+
 select_partition()
 {
     local -a rows=()
-    local name size type removable selection
+    local name size type removable parent transport kind selection
 
-    while read -r name size type removable; do
-        if [[ "$type" == "part" && "$removable" == "1" ]]; then
-            rows+=(FALSE "$name" "$size")
-        fi
-    done < <(lsblk -prndo NAME,SIZE,TYPE,RM)
+    while read -r name size type removable parent transport; do
+        [[ "$type" == "part" ]] || continue
+        is_system_partition "$name" && continue
+        kind=$(partition_candidate_kind "$name" "$removable" "$parent" "${transport:-}") || continue
+        rows+=(FALSE "$name" "$size" "$kind")
+    done < <(lsblk -prndo NAME,SIZE,TYPE,RM,PKNAME,TRAN)
 
     if (( ${#rows[@]} == 0 )); then
-        show_error "No removable partitions were found. Create one in Mint Disks, reconnect the device, and try again."
+        show_error "No removable, USB, or SD-card partitions were found. If the card has no partition yet, create one in Mint Disks and try again."
         return
     fi
 
-    selection=$(zenity --list --radiolist --title="$APP_NAME" --width=620 --height=380 \
-        --text="Select a disposable removable partition. Its existing data may be destroyed." \
-        --column="Select" --column="Device" --column="Size" --print-column=2 \
+    selection=$(zenity --list --radiolist --title="$APP_NAME" --width=700 --height=400 \
+        --text="Select the SD/removable partition to use. Formatting will destroy its existing data." \
+        --column="Select" --column="Device" --column="Size" --column="Detected as" --print-column=2 \
         "${rows[@]}") || return
 
     target="$selection"
@@ -116,11 +170,11 @@ select_target()
     choice=$(zenity --list --radiolist --title="$APP_NAME" --width=560 --height=280 \
         --text="What would you like to use?" \
         --column="Select" --column="Target type" --print-column=2 \
-        TRUE "Image file" FALSE "Removable partition") || return
+        TRUE "Image file" FALSE "Removable / SD partition") || return
 
     case "$choice" in
         "Image file") select_image ;;
-        "Removable partition") select_partition ;;
+        "Removable / SD partition") select_partition ;;
     esac
 }
 
@@ -248,7 +302,7 @@ unmount_target()
     show_info "The filesystem was unmounted safely."
 }
 
-for required_command in zenity lsblk mountpoint pkexec xdg-open; do
+for required_command in zenity lsblk mountpoint pkexec xdg-open findmnt readlink; do
     if ! command -v "$required_command" >/dev/null 2>&1; then
         printf '%s: required command not found: %s\n' "$APP_NAME" "$required_command" >&2
         exit 1
@@ -265,7 +319,7 @@ while true; do
         --text="Current target: $current_target" --hide-header \
         --column="Action" --column="Description" --print-column=1 \
         "Create image" "Create and format a safe image file" \
-        "Select target" "Choose an existing image or removable partition" \
+        "Select target" "Choose an existing image or removable/SD partition" \
         "Format" "Format the selected target as InfiltratorFS" \
         "Inspect" "Display filesystem identity and geometry" \
         "Scrub" "Run a read-only integrity check" \
@@ -284,4 +338,3 @@ while true; do
         "Quit") break ;;
     esac
 done
-
