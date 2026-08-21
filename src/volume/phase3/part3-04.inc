@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 static void discard_candidate_state(struct infs_volume *vol)
 {
+    object_cache_destroy(vol);
     free(vol->bitmap);
     vol->bitmap = NULL;
     vol->bitmap_bytes = 0;
+    vol->allocation_cursor = 1u;
 }
 
 static infs_status checkpoint_graph_status(infs_status status)
@@ -190,6 +192,7 @@ infs_status infs_volume_open_storage(struct infs_volume *vol,
     memset(vol, 0, sizeof(*vol));
     vol->writable = writable != 0;
     vol->storage = *storage;
+    vol->allocation_cursor = 1u;
     storage->ops = NULL;
     storage->context = NULL;
 
@@ -252,6 +255,11 @@ infs_status infs_volume_open_storage(struct infs_volume *vol,
         if (status != INFS_STATUS_OK)
             goto fail;
     }
+
+    /* Runtime caches are deliberately best-effort: failure to allocate a
+     * cache must never make an otherwise valid filesystem unmountable. */
+    object_cache_init(vol);
+    vol->allocation_cursor = 1u;
     return INFS_STATUS_OK;
 
 fail:
