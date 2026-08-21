@@ -127,6 +127,7 @@ int main(int argc, char **argv)
     const uint64_t bitmap_start = 1u;
     const uint64_t index_block = bitmap_start + bitmap_blocks;
     const uint64_t root_block = index_block + 1u;
+    const uint64_t index_page_block = root_block + 1u;
     const uint64_t checkpoints[INFS_CHECKPOINT_COUNT] = {
         0,
         total_blocks / 2u,
@@ -138,8 +139,8 @@ int main(int argc, char **argv)
         close(fd);
         return 1;
     }
-    if (root_block >= checkpoints[1]) {
-        fprintf(stderr, "Target is too small for the format 0.6 metadata layout.\n");
+    if (index_page_block >= checkpoints[1]) {
+        fprintf(stderr, "Target is too small for the Format 0.8 metadata layout.\n");
         close(fd);
         return 1;
     }
