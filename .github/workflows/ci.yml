@@ -131,7 +131,7 @@ jobs:
           if-no-files-found: error
 
   publish-release:
-    name: Publish 0.8.0
+    name: Publish 0.8.1
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [linux, clang, sanitizers, analyzer, windows, linux-packages]
     runs-on: ubuntu-latest
@@ -148,19 +148,19 @@ jobs:
         with:
           name: InfiltratorFS-Linux
           path: dist
-      - name: Create or update 0.8.0 release
+      - name: Create or update 0.8.1 release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if ! gh release view v0.8.0 --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            gh release create v0.8.0 \
+          if ! gh release view v0.8.1 --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release create v0.8.1 \
               --repo "${GITHUB_REPOSITORY}" \
               --target "${GITHUB_SHA}" \
-              --title "InfiltratorFS 0.8.0 — Shared Extents" \
-              --notes "Implementation 0.8.0 adds generic core reflinks and shared physical extents to InfiltratorFS Format 0.7. Reflink clones share data blocks without duplicating them; writes break sharing through transactional CoW; truncate, hole punch, unlink, rename replacement and inline folding preserve blocks until their final file reference disappears. The feature is protected by the INFS_INCOMPAT_SHARED_EXTENTS incompatibility bit. Includes portable reflink/remount/scrub conformance coverage, Linux Mint GUI installers and the native Windows transfer utility. Experimental: use disposable or backed-up media only."
+              --title "InfiltratorFS 0.8.1 — Linux SD-card Manager hotfix" \
+              --notes "Implementation 0.8.1 keeps the 0.8.0 shared-extents/reflink core and fixes Linux GUI target discovery for SD cards. InfiltratorFS Manager now recognizes genuine SD/MMC card partitions through sysfs card type, plus removable and USB partitions, instead of relying only on lsblk RM=1. The privileged helper uses the same validation and refuses active system partitions. Includes refreshed .deb and native .run Linux installers plus the Windows utility. Disk Format remains 0.7 with the shared-extents incompatibility feature bit."
           fi
-          gh release upload v0.8.0 dist/* \
+          gh release upload v0.8.1 dist/* \
             --repo "${GITHUB_REPOSITORY}" --clobber
 
   report-release:
@@ -184,13 +184,13 @@ jobs:
         run: |
           set -euo pipefail
           state=success
-          description="v0.8.0 Linux/Windows build verified and published"
+          description="v0.8.1 Linux/Windows build verified and published"
           for result in "$LINUX_RESULT" "$CLANG_RESULT" "$SANITIZERS_RESULT" \
                         "$ANALYZER_RESULT" "$WINDOWS_RESULT" "$PACKAGES_RESULT" \
                         "$RELEASE_RESULT"; do
             if [ "$result" != "success" ]; then
               state=failure
-              description="v0.8.0 build/release gate failed"
+              description="v0.8.1 build/release gate failed"
               break
             fi
           done
@@ -198,5 +198,5 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
             -f state="$state" \
-            -f context="InfiltratorFS 0.8.0" \
+            -f context="InfiltratorFS 0.8.1" \
             -f description="$description"
