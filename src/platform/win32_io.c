@@ -7,6 +7,7 @@
 #include <winioctl.h>
 #include <bcrypt.h>
 
+#include <limits.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <wchar.h>
