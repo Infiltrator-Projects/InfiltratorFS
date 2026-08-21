@@ -5,9 +5,9 @@ InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem star
 
 Linux is the first implementation and test platform. It is not part of the filesystem's identity: the on-disk format and core engine are designed so a future Windows implementation can use the same volume without conversion or reformatting.
 
-## Current status — implementation 0.6.4 / format 0.6
+## Current status — implementation 0.6.5 / format 0.6
 
-Implementation 0.6.4 is a compatibility-preserving recovery and concurrency-hardening release for on-disk Format 0.6. It refuses writable recovery when an unreadable checkpoint replica could hide a newer committed generation, requires close-and-reopen recovery after an indeterminate commit-checkpoint write or flush, and coordinates POSIX readers, writers and the formatter with nonblocking storage locks. No packed field, feature bit or on-disk layout changes.
+Implementation 0.6.5 adds a Linux Mint desktop manager for image creation, formatting, inspection, scrubbing, mounting and opening volumes in the normal file manager. It preserves the recovery and concurrency hardening from 0.6.4 and does not change any packed field, feature bit or on-disk layout.
 
 Current properties include:
 
@@ -99,6 +99,19 @@ Mount read-only without opening the backing image/device writable:
 ./build/infilfs-fuse infilfs.img /tmp/infilfs-mnt -f -o ro
 ```
 
+## Linux Mint desktop manager
+
+The Debian package installs **InfiltratorFS Manager** in Mint's application menu. It can:
+
+- create and format an image file;
+- select a removable partition created in Mint Disks;
+- format a selected target with an explicit destructive-action confirmation;
+- inspect or scrub a volume;
+- mount it and open it in Nemo; and
+- unmount it safely.
+
+Mint Disks remains responsible for creating the disk partition. The manager deliberately lists removable partitions only and uses PolicyKit authorization for operations that need raw-device access. InfiltratorFS is not yet registered as a filesystem type with UDisks, so Mint Disks itself will continue to display a formatted partition as unknown.
+
 The FUSE adapter remains single-threaded while the core is a single-writer prototype. The POSIX backend now enforces that model: multiple read-only openers may coexist, while a writable opener or formatter holds the storage target exclusively. On Linux Mint, `bash tests/mint-sparse-fuse.sh build` runs the real mounted 1 TiB sparse-file/write/punch/remount harness after the normal CTest suite.
 
 ## Repository layout
@@ -130,3 +143,4 @@ The current high-level FUSE adapter resolves operations by pathname and does not
 ## License
 
 GPL-3.0-or-later.
+

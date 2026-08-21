@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.20)
-project(InfiltratorFS VERSION 0.6.4 LANGUAGES C)
+project(InfiltratorFS VERSION 0.6.5 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -102,6 +102,10 @@ if(UNIX)
         COMMAND bash ${CMAKE_SOURCE_DIR}/tests/phase3-integrity.sh ${CMAKE_BINARY_DIR})
     add_test(NAME infilfs-sparse-files
         COMMAND bash ${CMAKE_SOURCE_DIR}/tests/sparse-files.sh ${CMAKE_BINARY_DIR})
+    add_test(NAME infilfs-manager-shell-syntax
+        COMMAND bash -n ${CMAKE_SOURCE_DIR}/tools/infiltratorfs-manager)
+    add_test(NAME infilfs-manager-helper-shell-syntax
+        COMMAND bash -n ${CMAKE_SOURCE_DIR}/tools/infiltratorfs-manager-helper)
 
     find_package(PkgConfig QUIET)
     if(PkgConfig_FOUND)
@@ -122,4 +126,10 @@ if(UNIX)
     if(TARGET infilfs-fuse)
         install(TARGETS infilfs-fuse RUNTIME DESTINATION bin)
     endif()
+    install(PROGRAMS tools/infiltratorfs-manager DESTINATION bin)
+    install(PROGRAMS tools/infiltratorfs-manager-helper
+            DESTINATION lib/infiltratorfs)
+    install(FILES packaging/infiltratorfs-manager.desktop
+            DESTINATION share/applications)
 endif()
+

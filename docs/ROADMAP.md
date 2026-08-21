@@ -127,6 +127,16 @@
 - [x] Document the high-level FUSE adapter's incomplete open-handle semantics as unsupported.
 - [x] Keep on-disk Format 0.6 unchanged.
 
+## Phase 4.6 — implementation 0.6.5 Linux Mint desktop packaging — complete
+
+- [x] Add a Mint application-menu launcher for InfiltratorFS management.
+- [x] Support image creation, formatting, inspection, scrubbing, mounting and safe unmounting through Zenity.
+- [x] List removable partitions created by Mint Disks while excluding fixed disks from the GUI.
+- [x] Gate raw-device operations through PolicyKit and a constrained privileged helper.
+- [x] Open mounted volumes in the normal desktop file manager.
+- [x] Package the manager, launcher and runtime dependencies in the Debian release asset.
+- [x] Keep on-disk Format 0.6 unchanged.
+
 ## Phase 4 — modern storage features
 
 - [x] Sparse extents.
@@ -176,7 +186,7 @@
 - [ ] Persistent FUSE inode/open-file handles with unlink/rename lifetime conformance tests.
 - [ ] Native Linux kernel driver.
 - [ ] `mount.infilfs` and standard utilities.
-- [ ] Debian/Ubuntu/Linux Mint packaging.
+- [x] Debian/Ubuntu/Linux Mint packaging with an application-menu manager.
 
 ### Windows
 
@@ -190,3 +200,4 @@
 ## Deliberately deferred
 
 Global synchronous deduplication, distributed/network filesystem semantics and application-visible transactions are not first-generation requirements.
+

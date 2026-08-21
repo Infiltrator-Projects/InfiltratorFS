@@ -22,7 +22,10 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Install Linux adapter dependencies
-        run: sudo apt-get update && sudo apt-get install -y libfuse3-dev fuse3
+        run: sudo apt-get update && sudo apt-get install -y desktop-file-utils libfuse3-dev fuse3
+
+      - name: Validate Mint desktop integration
+        run: desktop-file-validate packaging/infiltratorfs-manager.desktop
 
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -115,3 +118,4 @@ jobs:
 
       - name: Run portable conformance tests
         run: ctest --test-dir build -C Release --output-on-failure
+

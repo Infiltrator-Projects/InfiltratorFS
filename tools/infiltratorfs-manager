@@ -1,0 +1,287 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+set -u
+
+readonly APP_NAME="InfiltratorFS Manager"
+readonly HELPER="/usr/lib/infiltratorfs/infiltratorfs-manager-helper"
+
+target=""
+target_kind=""
+
+show_error()
+{
+    zenity --error --title="$APP_NAME" --width=520 --text="$1"
+}
+
+show_info()
+{
+    zenity --info --title="$APP_NAME" --width=520 --text="$1"
+}
+
+run_and_show_error()
+{
+    local output rc
+    output=$("$@" 2>&1)
+    rc=$?
+    if (( rc != 0 )); then
+        show_error "${output:-The operation failed.}"
+        return "$rc"
+    fi
+    return 0
+}
+
+ask_label()
+{
+    zenity --entry --title="$APP_NAME" \
+        --text="Filesystem label:" --entry-text="InfiltratorFS"
+}
+
+create_image()
+{
+    local path size_mib label
+    path=$(zenity --file-selection --save --confirm-overwrite \
+        --title="Create an InfiltratorFS image" \
+        --filename="$HOME/infiltratorfs.img") || return
+
+    size_mib=$(zenity --entry --title="$APP_NAME" \
+        --text="Image size in MiB (minimum 16):" --entry-text="512") || return
+    if [[ ! "$size_mib" =~ ^[0-9]+$ ]] || (( size_mib < 16 )); then
+        show_error "Enter an image size of at least 16 MiB."
+        return
+    fi
+
+    label=$(ask_label) || return
+    if [[ -z "$label" ]]; then
+        show_error "The label cannot be empty."
+        return
+    fi
+
+    if [[ -e "$path" ]]; then
+        zenity --question --title="$APP_NAME" --width=520 \
+            --text="This will overwrite the InfiltratorFS metadata in:\n\n$path\n\nContinue?" || return
+    fi
+
+    if ! run_and_show_error truncate -s "${size_mib}M" -- "$path"; then
+        return
+    fi
+    if ! run_and_show_error /usr/bin/mkfs.infilfs -L "$label" "$path"; then
+        return
+    fi
+
+    target="$path"
+    target_kind="image"
+    show_info "The image was created and formatted successfully."
+}
+
+select_image()
+{
+    local path
+    path=$(zenity --file-selection --title="Select an InfiltratorFS image") || return
+    if [[ ! -f "$path" ]]; then
+        show_error "Select a regular image file."
+        return
+    fi
+    target="$path"
+    target_kind="image"
+}
+
+select_partition()
+{
+    local -a rows=()
+    local name size type removable selection
+
+    while read -r name size type removable; do
+        if [[ "$type" == "part" && "$removable" == "1" ]]; then
+            rows+=(FALSE "$name" "$size")
+        fi
+    done < <(lsblk -prndo NAME,SIZE,TYPE,RM)
+
+    if (( ${#rows[@]} == 0 )); then
+        show_error "No removable partitions were found. Create one in Mint Disks, reconnect the device, and try again."
+        return
+    fi
+
+    selection=$(zenity --list --radiolist --title="$APP_NAME" --width=620 --height=380 \
+        --text="Select a disposable removable partition. Its existing data may be destroyed." \
+        --column="Select" --column="Device" --column="Size" --print-column=2 \
+        "${rows[@]}") || return
+
+    target="$selection"
+    target_kind="block"
+}
+
+select_target()
+{
+    local choice
+    choice=$(zenity --list --radiolist --title="$APP_NAME" --width=560 --height=280 \
+        --text="What would you like to use?" \
+        --column="Select" --column="Target type" --print-column=2 \
+        TRUE "Image file" FALSE "Removable partition") || return
+
+    case "$choice" in
+        "Image file") select_image ;;
+        "Removable partition") select_partition ;;
+    esac
+}
+
+require_target()
+{
+    if [[ -z "$target" ]]; then
+        show_error "Select or create a target first."
+        return 1
+    fi
+    return 0
+}
+
+format_target()
+{
+    local label
+    require_target || return
+    label=$(ask_label) || return
+    if [[ -z "$label" ]]; then
+        show_error "The label cannot be empty."
+        return
+    fi
+
+    zenity --question --title="$APP_NAME" --width=560 \
+        --text="FORMATTING DESTROYS EXISTING DATA\n\nTarget: $target\nLabel: $label\n\nContinue?" || return
+
+    if [[ "$target_kind" == "block" ]]; then
+        run_and_show_error pkexec "$HELPER" format-block "$target" "$label" || return
+    else
+        run_and_show_error /usr/bin/mkfs.infilfs -L "$label" "$target" || return
+    fi
+    show_info "Formatting completed successfully."
+}
+
+show_command_output()
+{
+    local title_text="$1"
+    shift
+    local output rc
+    output=$("$@" 2>&1)
+    rc=$?
+    printf '%s\n' "$output" | zenity --text-info --title="$title_text" \
+        --width=720 --height=520 --font="monospace"
+    return "$rc"
+}
+
+inspect_target()
+{
+    require_target || return
+    if [[ "$target_kind" == "block" ]]; then
+        show_command_output "InfiltratorFS inspection" pkexec "$HELPER" inspect-block "$target"
+    else
+        show_command_output "InfiltratorFS inspection" /usr/bin/infilfs-inspect "$target"
+    fi
+}
+
+scrub_target()
+{
+    require_target || return
+    if [[ "$target_kind" == "block" ]]; then
+        show_command_output "InfiltratorFS scrub" pkexec "$HELPER" scrub-block "$target"
+    else
+        show_command_output "InfiltratorFS scrub" /usr/bin/infilfs-scrub "$target"
+    fi
+}
+
+mount_point_for_target()
+{
+    if [[ "$target_kind" == "block" ]]; then
+        printf '/media/%s/InfiltratorFS\n' "$USER"
+    else
+        printf '%s/InfiltratorFS\n' "$HOME"
+    fi
+}
+
+mount_and_open()
+{
+    local mount_point
+    require_target || return
+    mount_point=$(mount_point_for_target)
+
+    if mountpoint -q "$mount_point" 2>/dev/null; then
+        xdg-open "$mount_point" >/dev/null 2>&1 &
+        return
+    fi
+
+    if [[ "$target_kind" == "block" ]]; then
+        run_and_show_error pkexec "$HELPER" mount-block "$target" \
+            "$(id -u)" "$(id -g)" "$mount_point" || return
+    else
+        mkdir -p -- "$mount_point" || {
+            show_error "Could not create $mount_point"
+            return
+        }
+        if [[ -n "$(find "$mount_point" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
+            show_error "$mount_point must be empty before mounting."
+            return
+        fi
+        run_and_show_error /usr/bin/infilfs-fuse "$target" "$mount_point" || return
+    fi
+
+    if ! mountpoint -q "$mount_point"; then
+        show_error "The filesystem did not appear at $mount_point."
+        return
+    fi
+    xdg-open "$mount_point" >/dev/null 2>&1 &
+}
+
+unmount_target()
+{
+    local mount_point
+    require_target || return
+    mount_point=$(mount_point_for_target)
+
+    if ! mountpoint -q "$mount_point" 2>/dev/null; then
+        show_error "$mount_point is not mounted."
+        return
+    fi
+
+    if [[ "$target_kind" == "block" ]]; then
+        run_and_show_error pkexec "$HELPER" unmount-block \
+            "$(id -u)" "$mount_point" || return
+    else
+        run_and_show_error fusermount3 -u "$mount_point" || return
+    fi
+    show_info "The filesystem was unmounted safely."
+}
+
+for required_command in zenity lsblk mountpoint pkexec xdg-open; do
+    if ! command -v "$required_command" >/dev/null 2>&1; then
+        printf '%s: required command not found: %s\n' "$APP_NAME" "$required_command" >&2
+        exit 1
+    fi
+done
+
+while true; do
+    current_target="None selected"
+    if [[ -n "$target" ]]; then
+        current_target="$target"
+    fi
+
+    action=$(zenity --list --title="$APP_NAME" --width=720 --height=500 \
+        --text="Current target: $current_target" --hide-header \
+        --column="Action" --column="Description" --print-column=1 \
+        "Create image" "Create and format a safe image file" \
+        "Select target" "Choose an existing image or removable partition" \
+        "Format" "Format the selected target as InfiltratorFS" \
+        "Inspect" "Display filesystem identity and geometry" \
+        "Scrub" "Run a read-only integrity check" \
+        "Mount and open" "Mount the filesystem and open it in Nemo" \
+        "Unmount" "Safely unmount the selected target" \
+        "Quit" "Close the manager") || break
+
+    case "$action" in
+        "Create image") create_image ;;
+        "Select target") select_target ;;
+        "Format") format_target ;;
+        "Inspect") inspect_target ;;
+        "Scrub") scrub_target ;;
+        "Mount and open") mount_and_open ;;
+        "Unmount") unmount_target ;;
+        "Quit") break ;;
+    esac
+done
+

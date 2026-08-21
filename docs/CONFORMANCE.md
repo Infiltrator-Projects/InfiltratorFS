@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # Format 0.6 Conformance
 
-Implementation 0.6.4 defines the hardened portable contract of on-disk Format 0.6. Format 0.6 is intentionally incompatible with Format 0.5 because hole extents and sparse checksum chains change required interpretation and validation. Implementations 0.6.1 through 0.6.4 do not change any packed field, offset, feature bit or disk-layout version introduced by 0.6.0; 0.6.4 adds fail-closed checkpoint publication and POSIX opener coordination without changing the byte format.
+Implementation 0.6.5 defines the hardened portable contract of on-disk Format 0.6. Format 0.6 is intentionally incompatible with Format 0.5 because hole extents and sparse checksum chains change required interpretation and validation. Implementations 0.6.1 through 0.6.5 do not change any packed field, offset, feature bit or disk-layout version introduced by 0.6.0; 0.6.4 adds fail-closed checkpoint publication and POSIX opener coordination, while 0.6.5 adds Linux Mint desktop packaging without changing the byte format.
 
 ## Required representation
 
@@ -45,7 +45,7 @@ Format 0.6 uses the conventional three feature classes deliberately:
 - unknown `ro_compat_flags` may be opened read-only but must not be opened writable;
 - unknown `compat_flags` may be ignored because they do not change required read/write interpretation.
 
-Current implementation 0.6.4 defines no compatible or read-only-compatible feature bits. Both masks therefore remain zero for newly formatted volumes, while the reader preserves the compatibility semantics above for future extensions.
+Current implementation 0.6.5 defines no compatible or read-only-compatible feature bits. Both masks therefore remain zero for newly formatted volumes, while the reader preserves the compatibility semantics above for future extensions.
 
 ## Portable result contract
 
@@ -103,3 +103,4 @@ The high-level FUSE adapter deliberately uses libfuse's documented offsetless `r
 ## Compatibility rule
 
 A future change that alters golden checkpoint bytes, packed offsets, extent semantics, namespace representation, or the interpretation required by existing compatible/incompatible feature bits requires an explicit format revision or a newly defined compatibility feature bit as appropriate. Tightening rejection of metadata that Format 0.6 already defines as reserved, unreachable, multiply owned, structurally inconsistent or geometrically impossible is implementation hardening and does not create a new disk format.
+
