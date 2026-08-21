@@ -33,7 +33,7 @@
         return 1;
     }
 
-    if (infs_encode_object_index(block, index_id, 1) != INFS_STATUS_OK) {
+    if (infs_encode_paged_object_index(block, index_id, 1) != INFS_STATUS_OK) {
         fprintf(stderr, "encode object index failed\n");
         free(bitmap);
         close(fd);
@@ -64,9 +64,10 @@
         close(fd);
         return 1;
     }
-    if (infs_encode_root_directory(block, root_id, 1, 0755u,
-                                   (uint32_t)getuid(), (uint32_t)getgid(),
-                                   root_time_ns) != INFS_STATUS_OK ||
+    if (infs_encode_paged_root_directory(
+            block, root_id, 1, 0755u,
+            (uint32_t)getuid(), (uint32_t)getgid(), root_time_ns) !=
+            INFS_STATUS_OK ||
         infs_pwrite_full(fd, block, sizeof(block),
                          (off_t)(root_block * INFS_BLOCK_SIZE)) != 0) {
         perror("write root directory");
