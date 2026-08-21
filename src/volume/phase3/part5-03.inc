@@ -36,7 +36,7 @@ static int set_posix_tx(struct infs_volume *vol, const char *path,
     status = write_object(vol, lookup.block, block);
     if (status != INFS_STATUS_OK)
         return status;
-    return infs_volume_sync(vol);
+    return finish_mutation(vol, (uint64_t)INFS_BLOCK_SIZE * 2u);
 }
 
 infs_status infs_set_posix_compat(struct infs_volume *vol, const char *path,
@@ -104,7 +104,7 @@ static int set_times_tx(struct infs_volume *vol, const char *path,
     status = write_object(vol, lookup.block, block);
     if (status != INFS_STATUS_OK)
         return status;
-    return infs_volume_sync(vol);
+    return finish_mutation(vol, (uint64_t)INFS_BLOCK_SIZE * 2u);
 }
 
 infs_status infs_set_times(struct infs_volume *vol, const char *path,
