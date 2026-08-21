@@ -154,3 +154,39 @@ jobs:
           fi
           gh release upload v0.7.1 dist/InfiltratorFS-Windows.exe \
             --repo "${GITHUB_REPOSITORY}" --clobber
+
+  report-windows-release:
+    name: Report Windows release gate
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [linux, clang, sanitizers, analyzer, windows, publish-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      statuses: write
+    steps:
+      - name: Publish readable commit status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LINUX_RESULT: ${{ needs.linux.result }}
+          CLANG_RESULT: ${{ needs.clang.result }}
+          SANITIZERS_RESULT: ${{ needs.sanitizers.result }}
+          ANALYZER_RESULT: ${{ needs.analyzer.result }}
+          WINDOWS_RESULT: ${{ needs.windows.result }}
+          RELEASE_RESULT: ${{ needs.publish-windows.result }}
+        run: |
+          set -euo pipefail
+          state=success
+          description="v0.7.1 Windows executable verified and published"
+          for result in "$LINUX_RESULT" "$CLANG_RESULT" "$SANITIZERS_RESULT" \
+                        "$ANALYZER_RESULT" "$WINDOWS_RESULT" "$RELEASE_RESULT"; do
+            if [ "$result" != "success" ]; then
+              state=failure
+              description="v0.7.1 build/release gate failed"
+              break
+            fi
+          done
+          gh api --method POST \
+            -H "Accept: application/vnd.github+json" \
+            "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -f state="$state" \
+            -f context="InfiltratorFS Windows 0.7.1" \
+            -f description="$description"
