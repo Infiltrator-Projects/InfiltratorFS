@@ -85,7 +85,7 @@ static int remove_object(struct infs_volume *vol, const char *path, int want_dir
     free_run(vol, child.block, 1);
     if (vol->tx_error != INFS_STATUS_OK)
         return vol->tx_error;
-    return infs_volume_sync(vol);
+    return finish_mutation(vol, (uint64_t)INFS_BLOCK_SIZE * 4u);
 }
 
 infs_status infs_unlink(struct infs_volume *vol, const char *path)
