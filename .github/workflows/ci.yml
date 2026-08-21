@@ -135,7 +135,7 @@ jobs:
           if-no-files-found: error
 
   publish-release:
-    name: Publish 0.8.2
+    name: Publish 0.9.0
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [linux, clang, sanitizers, analyzer, windows, linux-packages]
     runs-on: ubuntu-latest
@@ -152,19 +152,19 @@ jobs:
         with:
           name: InfiltratorFS-Linux
           path: dist
-      - name: Create or update 0.8.2 release
+      - name: Create or update 0.9.0 release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if ! gh release view v0.8.2 --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            gh release create v0.8.2 \
+          if ! gh release view v0.9.0 --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release create v0.9.0 \
               --repo "${GITHUB_REPOSITORY}" \
               --target "${GITHUB_SHA}" \
-              --title "InfiltratorFS 0.8.2 — Linux partition discovery hotfix" \
-              --notes "Implementation 0.8.2 keeps the 0.8.0 shared-extents/reflink core and fixes the Linux Manager partition selector. The selector accidentally used lsblk -d, which suppresses partitions, so valid SD-card partitions such as /dev/mmcblk0p1 were never presented even when the card itself was correctly detected. The -d flag is removed and CI now has a regression gate that verifies partition enumeration stays enabled. Disk Format remains 0.7 with the shared-extents incompatibility feature bit."
+              --title "InfiltratorFS 0.9.0 — Scalable Metadata" \
+              --notes "Implementation 0.9.0 introduces InfiltratorFS Format 0.8 scalable metadata. Directories and the persistent object index now grow across independently checksummed metadata pages instead of being limited to one 4 KiB object. This removes the false ENOSPC seen during real Nemo copies with many filenames. The generic core also gains buffered writes; the Linux FUSE adapter batches write chunks and publishes them at flush/fsync/release durability boundaries instead of forcing a full transaction for every write. Includes stress coverage beyond the former directory and index limits, buffered-write generation checks, scrub/remount validation, shared extents/reflinks, Linux .deb/.run packages and the Windows utility. Experimental: use disposable or backed-up media only."
           fi
-          gh release upload v0.8.2 dist/* \
+          gh release upload v0.9.0 dist/* \
             --repo "${GITHUB_REPOSITORY}" --clobber
 
   report-release:
@@ -188,13 +188,13 @@ jobs:
         run: |
           set -euo pipefail
           state=success
-          description="v0.8.2 Linux/Windows build verified and published"
+          description="v0.9.0 scalable metadata build verified and published"
           for result in "$LINUX_RESULT" "$CLANG_RESULT" "$SANITIZERS_RESULT" \
                         "$ANALYZER_RESULT" "$WINDOWS_RESULT" "$PACKAGES_RESULT" \
                         "$RELEASE_RESULT"; do
             if [ "$result" != "success" ]; then
               state=failure
-              description="v0.8.2 build/release gate failed"
+              description="v0.9.0 build/release gate failed"
               break
             fi
           done
@@ -202,5 +202,5 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
             -f state="$state" \
-            -f context="InfiltratorFS 0.8.2" \
+            -f context="InfiltratorFS 0.9.0" \
             -f description="$description"
