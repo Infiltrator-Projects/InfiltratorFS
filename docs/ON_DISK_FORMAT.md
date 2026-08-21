@@ -3,7 +3,7 @@
 
 Status: experimental writable prototype. Format 0.6 is intentionally incompatible with formats 0.1 through 0.5.
 
-Implementation 0.6.0 introduced sparse extents, sparse checksum indexing and hole punching. Implementation 0.6.1 hardened structural validation and namespace/integrity semantics. Implementation 0.6.2 closed post-release source-level geometry, error-propagation, adapter and destructive-tool safety defects. Implementation 0.6.3 added complete checkpoint-graph recovery selection. Implementation 0.6.4 adds fail-closed checkpoint publication and POSIX storage locking without changing any Format 0.6 packed field, offset or feature identity. The normative acceptance rules are summarized in `CONFORMANCE.md`.
+Implementation 0.6.0 introduced sparse extents, sparse checksum indexing and hole punching. Implementation 0.6.1 hardened structural validation and namespace/integrity semantics. Implementation 0.6.2 closed post-release source-level geometry, error-propagation, adapter and destructive-tool safety defects. Implementation 0.6.3 added complete checkpoint-graph recovery selection. Implementation 0.6.4 adds fail-closed checkpoint publication and POSIX storage locking. Implementation 0.6.5 adds Linux Mint desktop packaging without changing any Format 0.6 packed field, offset or feature identity. The normative acceptance rules are summarized in `CONFORMANCE.md`.
 
 ## 1. Encoding
 
@@ -55,7 +55,7 @@ Generation, filesystem UUID and root object ID are nonzero.
 
 Format 0.6 requires both `INFS_INCOMPAT_UTF8_NAMES` and `INFS_INCOMPAT_SPARSE_EXTENTS`. Readers reject a missing required bit or any unknown incompatible feature flag. A sparse-extents bit on a pre-0.6 checkpoint is invalid.
 
-Feature classes have distinct compatibility semantics. Unknown incompatible bits prevent any open. Unknown read-only-compatible bits may be opened read-only but prevent writable open. Unknown compatible bits may be ignored. Implementation 0.6.4 currently defines no compatible or read-only-compatible bits for newly created Format 0.6 volumes.
+Feature classes have distinct compatibility semantics. Unknown incompatible bits prevent any open. Unknown read-only-compatible bits may be opened read-only but prevent writable open. Unknown compatible bits may be ignored. Implementation 0.6.5 currently defines no compatible or read-only-compatible bits for newly created Format 0.6 volumes.
 
 CRC64 occupies the first eight checksum bytes. The remaining checksum bytes are zero in Format 0.6. The complete checksum field is zero during calculation. A physical checkpoint copy first passes its own magic, format, size, block geometry, checksum, volume size, feature flags, canonical padding and expected checkpoint-position checks. Implementations 0.6.3 and later then validate the complete graph referenced by surviving checkpoint candidates in descending generation order. The newest candidate with a structurally valid committed graph wins; a corrupt newer graph may fall back to an older valid committed graph. External I/O, memory or unsupported-feature failures are not treated as graph corruption and therefore do not silently trigger fallback.
 
@@ -115,7 +115,7 @@ Implementations 0.6.1 and later accept only the portable attribute flags current
 
 A directory payload contains common attributes, POSIX compatibility data, an entry count and the byte count occupied by variable-length records.
 
-Each record contains its aligned record size, name length, target object type, flags, 128-bit target ID and name bytes. Names must be well-formed UTF-8, contain 1–255 bytes, and contain neither NUL nor `/`. Records are padded to eight-byte alignment. Current record flags and padding are zero.
+Each record contains its aligned record size, name length, target object type, flags, 128-bit target ID and name bytes. Names must be well-formed UTF-8, contain 1â€“255 bytes, and contain neither NUL nor `/`. Records are padded to eight-byte alignment. Current record flags and padding are zero.
 
 Lookup in Format 0.6 is case-sensitive and byte-exact. `.` and `..` are synthesized navigation components and are never stored. Pathnames ending in `/` retain directory semantics in namespace operations; rename does not silently strip a trailing slash from a regular-file source or nonexistent destination.
 
@@ -190,3 +190,4 @@ The policy is to fail closed when committed state cannot be trusted while retain
 - metadata uses CRC64 while file data uses SHA-256;
 - scrub detects but cannot yet repair corruption;
 - one writable core instance at a time.
+
