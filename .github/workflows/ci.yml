@@ -104,7 +104,7 @@ jobs:
         run: ctest --test-dir build --output-on-failure
 
   windows:
-    name: Windows portable core
+    name: Windows native app and portable core
     runs-on: windows-latest
     steps:
       - name: Check out source
@@ -113,9 +113,15 @@ jobs:
       - name: Configure MSVC
         run: cmake -S . -B build -A x64
 
-      - name: Build portable targets
+      - name: Build Windows targets
         run: cmake --build build --config Release --parallel
 
-      - name: Run portable conformance tests
+      - name: Run Windows conformance tests
         run: ctest --test-dir build -C Release --output-on-failure
 
+      - name: Upload Windows transfer app
+        uses: actions/upload-artifact@v4
+        with:
+          name: InfiltratorFS-Windows
+          path: build/Release/InfiltratorFS-Windows.exe
+          if-no-files-found: error

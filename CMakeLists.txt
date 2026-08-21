@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.20)
-project(InfiltratorFS VERSION 0.7.0 LANGUAGES C)
+project(InfiltratorFS VERSION 0.7.1 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -21,6 +21,7 @@ add_library(infilfs_core STATIC
     src/utf8.c
     src/fs.c
     src/volume.c
+    src/format_volume.c
 )
 target_include_directories(infilfs_core PUBLIC include)
 infilfs_enable_warnings(infilfs_core)
@@ -65,6 +66,27 @@ add_test(NAME infilfs-hardening-conformance COMMAND infilfs-hardening-conformanc
 add_test(NAME infilfs-open-hardening COMMAND infilfs-open-hardening)
 add_test(NAME infilfs-063-hardening COMMAND infilfs-063-hardening)
 add_test(NAME infilfs-inline-files COMMAND infilfs-inline-files)
+
+if(WIN32)
+    add_library(infilfs_win32 STATIC src/platform/win32_io.c)
+    target_include_directories(infilfs_win32 PUBLIC include)
+    target_link_libraries(infilfs_win32 PUBLIC infilfs_core bcrypt)
+    infilfs_enable_warnings(infilfs_win32)
+
+    add_executable(infilfs-win32-storage tests/win32-storage.c)
+    target_link_libraries(infilfs-win32-storage PRIVATE infilfs_win32)
+    infilfs_enable_warnings(infilfs-win32-storage)
+    add_test(NAME infilfs-win32-storage COMMAND infilfs-win32-storage)
+
+    add_executable(infiltratorfs-windows WIN32
+        tools/windows/infiltratorfs-windows.c
+        tools/windows/infiltratorfs-windows.rc)
+    target_link_libraries(infiltratorfs-windows PRIVATE
+        infilfs_win32 comdlg32 shell32 ole32)
+    infilfs_enable_warnings(infiltratorfs-windows)
+    set_target_properties(infiltratorfs-windows PROPERTIES
+        OUTPUT_NAME "InfiltratorFS-Windows")
+endif()
 
 # Linux/POSIX is the first adapter and test host. The core library and disk
 # format do not depend on this adapter.
