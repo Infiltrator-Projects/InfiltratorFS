@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # InfiltratorFS Roadmap
 
-## Phase 0 â€” format skeleton â€” complete
+## Phase 0 — format skeleton — complete
 
 - [x] Three physically separated checkpoints.
 - [x] Authoritative allocation bitmap.
@@ -9,7 +9,7 @@
 - [x] Checksummed metadata objects.
 - [x] Formatter, inspector and image-based smoke test.
 
-## Phase 1 â€” files and directories â€” core complete
+## Phase 1 — files and directories — core complete
 
 - [x] Persistent object index, variable directory entries and extents.
 - [x] Lookup, create, mkdir, unlink, rmdir and rename.
@@ -18,7 +18,7 @@
 - [x] Bounds checking and corrupted-image rejection.
 - [x] Linux Mint mounted copy-tree/remount/byte-identity milestone on 15 August 2026.
 
-## Phase 2 â€” transactional metadata â€” core complete
+## Phase 2 — transactional metadata — core complete
 
 - [x] Copy-on-write metadata, object index and allocation bitmap.
 - [x] Generation-based checkpoint publication.
@@ -26,7 +26,7 @@
 - [x] Deterministic pre/post-commit crash tests.
 - [x] Repeated-CoW leak tests.
 
-## Phase 3 â€” data integrity â€” core complete
+## Phase 3 — data integrity — core complete
 
 - [x] Independent per-logical-block data checksums.
 - [x] SHA-256 data verification.
@@ -39,7 +39,7 @@
 - [ ] Forensic raw-object scanner.
 - [ ] Snapshot-coordinated online scrub.
 
-## Phase 3.5 â€” platform-neutral foundation â€” complete
+## Phase 3.5 — platform-neutral foundation — complete
 
 - [x] Define InfiltratorFS as platform-neutral rather than Linux-specific.
 - [x] Publish incompatible format 0.5.
@@ -53,7 +53,7 @@
 - [x] Add a portable in-memory storage-backend persistence test.
 - [x] Keep POSIX I/O and FUSE outside the core engine.
 
-## Phase 3.6 â€” Format 0.5 conformance â€” complete
+## Phase 3.6 — Format 0.5 conformance — complete
 
 - [x] Publish implementation release 0.5.1 without changing on-disk Format 0.5.
 - [x] Add stable operating-system-neutral `infs_status` values.
@@ -64,7 +64,7 @@
 - [x] Add deterministic complete-volume malformed-image tests.
 - [x] Add full Linux CI and Windows/MSVC portable-core CI.
 
-## Phase 4.1 â€” Format 0.6 sparse files â€” complete
+## Phase 4.1 — Format 0.6 sparse files — complete
 
 - [x] Publish incompatible Format 0.6 with an explicit sparse-extents feature bit.
 - [x] Add zero-storage hole extents and exact allocated-size reporting.
@@ -75,7 +75,7 @@
 - [x] Preserve copy-on-write publication and SHA-256 verification for sparse data.
 - [x] Add portable 1 TiB logical-file, malformed-extent, crash and leak tests.
 
-## Phase 4.2 â€” implementation 0.6.1 Format 0.6 hardening â€” complete
+## Phase 4.2 — implementation 0.6.1 Format 0.6 hardening — complete
 
 - [x] Preserve the Format 0.6 packed layout and feature identity while publishing an implementation bugfix release.
 - [x] Validate exact ownership of every committed allocated block.
@@ -91,7 +91,7 @@
 - [x] Publish formatter checkpoints only after referenced metadata is durably written.
 - [x] Expand regression coverage and compile/test the FUSE adapter under Linux, Clang, ASan/UBSan and GCC `-fanalyzer` gates.
 
-## Phase 4.3 â€” implementation 0.6.2 source hardening â€” complete
+## Phase 4.3 — implementation 0.6.2 source hardening — complete
 
 - [x] Reject a committed bitmap that is too small to represent `total_blocks` before any bitmap traversal.
 - [x] Require mutation-capable storage backends to provide write, flush, randomness and clock callbacks.
@@ -103,7 +103,7 @@
 - [x] Reopen real formatter block targets with `O_EXCL`, then revalidate identity and geometry before destructive writes.
 - [x] Keep on-disk Format 0.6 unchanged.
 
-## Phase 4.4 â€” implementation 0.6.3 recovery hardening â€” complete
+## Phase 4.4 — implementation 0.6.3 recovery hardening — complete
 
 - [x] Validate each physical checkpoint's complete referenced generation graph before accepting it for recovery.
 - [x] Try committed checkpoint candidates in descending generation order and fall back only when the newer candidate graph is structurally corrupt.
@@ -116,7 +116,7 @@
 - [x] Verify and retain libfuse's documented high-level `readdir` mode instead of introducing unnecessary synthetic directory cookies.
 - [x] Keep on-disk Format 0.6 unchanged.
 
-## Phase 4.5 â€” implementation 0.6.4 commit and concurrency safety â€” complete
+## Phase 4.5 — implementation 0.6.4 commit and concurrency safety — complete
 
 - [x] Refuse writable recovery when any physical checkpoint is unreadable and may contain the only newer committed generation.
 - [x] Preserve read-only inspection through surviving checkpoint replicas without modifying media.
@@ -127,7 +127,7 @@
 - [x] Document the high-level FUSE adapter's incomplete open-handle semantics as unsupported.
 - [x] Keep on-disk Format 0.6 unchanged.
 
-## Phase 4.6 â€” implementation 0.6.5 Linux Mint desktop packaging â€” complete
+## Phase 4.6 — implementation 0.6.5 Linux Mint desktop packaging — complete
 
 - [x] Add a Mint application-menu launcher for InfiltratorFS management.
 - [x] Support image creation, formatting, inspection, scrubbing, mounting and safe unmounting through Zenity.
@@ -137,7 +137,7 @@
 - [x] Package the manager, launcher and runtime dependencies in the Debian release asset.
 - [x] Keep on-disk Format 0.6 unchanged.
 
-## Phase 4 â€” modern storage features
+## Phase 4 — modern storage features
 
 - [x] Sparse extents.
 - [ ] Inline small files.
@@ -148,7 +148,7 @@
 - [ ] Workload-aware allocation.
 - [ ] Media-aware placement.
 
-## Phase 5 â€” scale and performance
+## Phase 5 — scale and performance
 
 - [ ] Scalable generation-aware object-index tree.
 - [ ] Scalable directory trees.
@@ -158,7 +158,7 @@
 - [ ] Online optimise/defragment operation.
 - [ ] Millions-of-files and large-volume stress tests.
 
-## Phase 6 â€” security and protection
+## Phase 6 — security and protection
 
 - [ ] Versioned security objects with typed principals and ACL entries.
 - [ ] Linux UID/GID/mode mapping policy.
@@ -169,7 +169,7 @@
 - [ ] Encryption domains and key wrapping.
 - [ ] Authenticated metadata for encrypted volumes.
 
-## Phase 7 â€” namespace portability
+## Phase 7 — namespace portability
 
 - [ ] Versioned Unicode normalization policy.
 - [ ] Optional case-folded directory policy with unambiguous comparison rules.
@@ -177,7 +177,7 @@
 - [ ] Symbolic links and generic reparse-point objects.
 - [ ] Hard links and transactional reference accounting.
 
-## Phase 8 â€” operating-system integration
+## Phase 8 — operating-system integration
 
 ### Linux
 
