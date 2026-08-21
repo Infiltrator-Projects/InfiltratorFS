@@ -14,20 +14,34 @@ static int dir_validate(uint8_t block[INFS_BLOCK_SIZE],
     if (validate_common_metadata(&payload->attributes, &payload->posix) !=
         INFS_STATUS_OK)
         return INFS_STATUS_CORRUPT;
-    uint32_t bytes = infs_le32_to_cpu(payload->bytes_used);
+
     uint32_t count = infs_le32_to_cpu(payload->entry_count);
-    size_t available = infs_le32_to_cpu(hdr->payload_size) - sizeof(*payload);
-    if (bytes != available) {
-        return INFS_STATUS_CORRUPT;
+    uint16_t version = infs_le16_to_cpu(hdr->object_version);
+    if (version == INFS_OBJECT_VERSION_PAGED) {
+        uint32_t page_count = infs_le32_to_cpu(payload->bytes_used);
+        size_t expected = sizeof(*payload) +
+            (size_t)page_count * sizeof(uint64_t);
+        if (page_count > INFS_DIRECTORY_PAGE_POINTERS ||
+            expected != infs_le32_to_cpu(hdr->payload_size) ||
+            (count == 0 && page_count != 0) ||
+            (count != 0 && page_count == 0))
+            return INFS_STATUS_CORRUPT;
+        if (payload_out)
+            *payload_out = payload;
+        return INFS_STATUS_OK;
     }
+
+    uint32_t bytes = infs_le32_to_cpu(payload->bytes_used);
+    size_t available = infs_le32_to_cpu(hdr->payload_size) - sizeof(*payload);
+    if (bytes != available)
+        return INFS_STATUS_CORRUPT;
 
     uint8_t *p = (uint8_t *)(payload + 1);
     size_t remaining = bytes;
     uint32_t seen = 0;
     while (remaining) {
-        if (remaining < sizeof(struct infs_dirent_disk)) {
+        if (remaining < sizeof(struct infs_dirent_disk))
             return INFS_STATUS_CORRUPT;
-        }
         struct infs_dirent_disk *e = (struct infs_dirent_disk *)p;
         uint16_t rec = infs_le16_to_cpu(e->record_size);
         uint16_t name_len = infs_le16_to_cpu(e->name_length);
@@ -38,26 +52,22 @@ static int dir_validate(uint8_t block[INFS_BLOCK_SIZE],
             sizeof(*e) + name_len > rec ||
             (type != INFS_OBJECT_DIRECTORY && type != INFS_OBJECT_FILE) ||
             infs_le16_to_cpu(e->flags) != 0 || id_is_zero(e->object_id) ||
-            memchr(name, '\0', name_len) != NULL || memchr(name, '/', name_len) != NULL) {
+            memchr(name, '\0', name_len) != NULL || memchr(name, '/', name_len) != NULL)
             return INFS_STATUS_CORRUPT;
-        }
-        if (!infs_utf8_validate(name, name_len)) {
+        if (!infs_utf8_validate(name, name_len))
             return INFS_STATUS_CORRUPT;
-        }
         if ((name_len == 1u && name[0] == '.') ||
             (name_len == 2u && name[0] == '.' && name[1] == '.'))
             return INFS_STATUS_CORRUPT;
-        for (size_t i = sizeof(*e) + name_len; i < rec; ++i) {
+        for (size_t i = sizeof(*e) + name_len; i < rec; ++i)
             if (p[i] != 0)
                 return INFS_STATUS_CORRUPT;
-        }
         p += rec;
         remaining -= rec;
         ++seen;
     }
-    if (seen != count) {
+    if (seen != count)
         return INFS_STATUS_CORRUPT;
-    }
     if (payload_out)
         *payload_out = payload;
     return INFS_STATUS_OK;
@@ -86,6 +96,29 @@ static struct infs_dirent_disk *dir_find(struct infs_directory_payload_disk *pay
     return NULL;
 }
 
+static int dir_lookup_volume(struct infs_volume *vol,
+                             uint8_t block[INFS_BLOCK_SIZE], const char *name,
+                             struct infs_dirent_disk *entry_out)
+{
+    struct infs_directory_payload_disk *payload;
+    infs_status status = dir_validate(block, &payload);
+    if (status != INFS_STATUS_OK)
+        return status;
+    struct infs_object_header_disk *header =
+        (struct infs_object_header_disk *)block;
+    if (infs_le16_to_cpu(header->object_version) ==
+        INFS_OBJECT_VERSION_PAGED)
+        return paged_dir_lookup(vol, block, name, entry_out);
+
+    struct infs_dirent_disk *entry =
+        dir_find(payload, name, strlen(name), NULL);
+    if (!entry)
+        return INFS_STATUS_NOT_FOUND;
+    if (entry_out)
+        memcpy(entry_out, entry, sizeof(*entry_out));
+    return INFS_STATUS_OK;
+}
+
 static int dir_add(uint8_t block[INFS_BLOCK_SIZE], const char *name,
                    const uint8_t object_id[16], uint16_t type)
 {
@@ -96,20 +129,17 @@ static int dir_add(uint8_t block[INFS_BLOCK_SIZE], const char *name,
     size_t name_len = strlen(name);
     if (name_len == 0 || name_len > INFS_NAME_MAX || strchr(name, '/') ||
         strcmp(name, ".") == 0 || strcmp(name, "..") == 0 ||
-        id_is_zero(object_id) || !infs_utf8_validate(name, name_len)) {
+        id_is_zero(object_id) || !infs_utf8_validate(name, name_len))
         return INFS_STATUS_INVALID_ARGUMENT;
-    }
-    if (dir_find(payload, name, name_len, NULL)) {
+    if (dir_find(payload, name, name_len, NULL))
         return INFS_STATUS_ALREADY_EXISTS;
-    }
 
     struct infs_object_header_disk *hdr = (struct infs_object_header_disk *)block;
     size_t rec = align8(sizeof(struct infs_dirent_disk) + name_len);
     size_t bytes = infs_le32_to_cpu(payload->bytes_used);
     size_t needed = sizeof(*payload) + bytes + rec;
-    if (needed > INFS_BLOCK_SIZE - sizeof(*hdr)) {
+    if (needed > INFS_BLOCK_SIZE - sizeof(*hdr))
         return INFS_STATUS_NO_SPACE;
-    }
 
     uint8_t *p = (uint8_t *)(payload + 1) + bytes;
     memset(p, 0, rec);
@@ -123,4 +153,21 @@ static int dir_add(uint8_t block[INFS_BLOCK_SIZE], const char *name,
     payload->bytes_used = infs_cpu_to_le32((uint32_t)(bytes + rec));
     hdr->payload_size = infs_cpu_to_le32((uint32_t)needed);
     return INFS_STATUS_OK;
+}
+
+static int dir_add_volume(struct infs_volume *vol,
+                          uint8_t block[INFS_BLOCK_SIZE], const char *name,
+                          const uint8_t object_id[16], uint16_t type)
+{
+    struct infs_directory_payload_disk *payload;
+    infs_status status = dir_validate(block, &payload);
+    if (status != INFS_STATUS_OK)
+        return status;
+    (void)payload;
+    struct infs_object_header_disk *header =
+        (struct infs_object_header_disk *)block;
+    if (infs_le16_to_cpu(header->object_version) ==
+        INFS_OBJECT_VERSION_PAGED)
+        return paged_dir_add(vol, block, name, object_id, type);
+    return dir_add(block, name, object_id, type);
 }
