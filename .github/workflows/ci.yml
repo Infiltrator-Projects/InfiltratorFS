@@ -125,3 +125,32 @@ jobs:
           name: InfiltratorFS-Windows
           path: build/Release/InfiltratorFS-Windows.exe
           if-no-files-found: error
+
+  publish-windows:
+    name: Publish Windows 0.7.1
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [linux, clang, sanitizers, analyzer, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified Windows executable
+        uses: actions/download-artifact@v4
+        with:
+          name: InfiltratorFS-Windows
+          path: dist
+
+      - name: Create or update Windows emergency release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! gh release view v0.7.1 --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release create v0.7.1 \
+              --repo "${GITHUB_REPOSITORY}" \
+              --target "${GITHUB_SHA}" \
+              --title "InfiltratorFS 0.7.1 — Windows Transfer" \
+              --notes "Native Windows emergency transfer utility for InfiltratorFS Format 0.7. Select a non-system volume, format it as InfiltratorFS, then add or drag files and folders directly into the filesystem. Includes Win32 raw-volume locking/dismount, native formatting, read/write and scrub support. Experimental: use disposable or backed-up media only."
+          fi
+          gh release upload v0.7.1 dist/InfiltratorFS-Windows.exe \
+            --repo "${GITHUB_REPOSITORY}" --clobber
