@@ -5,7 +5,7 @@ InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem star
 
 Linux is the first implementation and test platform. It is not part of the filesystem's identity: the on-disk format and core engine are designed so a future Windows implementation can use the same volume without conversion or reformatting.
 
-## Current status â€” implementation 0.6.5 / format 0.6
+## Current status — implementation 0.6.5 / format 0.6
 
 Implementation 0.6.5 adds a Linux Mint desktop manager for image creation, formatting, inspection, scrubbing, mounting and opening volumes in the normal file manager. It preserves the recovery and concurrency hardening from 0.6.4 and does not change any packed field, feature bit or on-disk layout.
 
@@ -128,11 +128,11 @@ docs/                architecture, format, roadmap and design inspirations
 
 ## Documentation
 
-- `docs/ARCHITECTURE.md` â€” platform model, transaction design and long-term rules.
-- `docs/ON_DISK_FORMAT.md` â€” complete format-0.6 specification.
-- `docs/CONFORMANCE.md` â€” byte-level contract and cross-platform test requirements.
-- `docs/ROADMAP.md` â€” completed work and future Linux/Windows integration.
-- `docs/INSPIRATIONS.md` â€” ideas borrowed, rejected or reinterpreted.
+- `docs/ARCHITECTURE.md` — platform model, transaction design and long-term rules.
+- `docs/ON_DISK_FORMAT.md` — complete format-0.6 specification.
+- `docs/CONFORMANCE.md` — byte-level contract and cross-platform test requirements.
+- `docs/ROADMAP.md` — completed work and future Linux/Windows integration.
+- `docs/INSPIRATIONS.md` — ideas borrowed, rejected or reinterpreted.
 
 ## Safety
 
