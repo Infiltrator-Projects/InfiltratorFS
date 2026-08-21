@@ -54,8 +54,17 @@ static int object_type_valid(uint16_t type)
            type == INFS_OBJECT_INDEX || type == INFS_OBJECT_CHECKSUM;
 }
 
+static int object_version_valid(uint16_t type, uint16_t version)
+{
+    if (version == INFS_OBJECT_VERSION_CLASSIC)
+        return 1;
+    return version == INFS_OBJECT_VERSION_PAGED &&
+           (type == INFS_OBJECT_DIRECTORY || type == INFS_OBJECT_INDEX);
+}
+
 static int index_payload_shape_valid(const uint8_t block[INFS_BLOCK_SIZE],
-                                     uint32_t payload_size)
+                                     uint32_t payload_size,
+                                     uint16_t object_version)
 {
     if (payload_size < sizeof(struct infs_index_payload_disk))
         return 0;
@@ -63,13 +72,27 @@ static int index_payload_shape_valid(const uint8_t block[INFS_BLOCK_SIZE],
         (const struct infs_index_payload_disk *)(
             block + sizeof(struct infs_object_header_disk));
     uint32_t count = infs_le32_to_cpu(payload->entry_count);
-    const size_t max_entries =
-        (INFS_BLOCK_SIZE - sizeof(struct infs_object_header_disk) -
-         sizeof(*payload)) / sizeof(struct infs_index_entry_disk);
-    if ((size_t)count > max_entries)
+
+    if (object_version == INFS_OBJECT_VERSION_CLASSIC) {
+        const size_t max_entries =
+            (INFS_BLOCK_SIZE - sizeof(struct infs_object_header_disk) -
+             sizeof(*payload)) / sizeof(struct infs_index_entry_disk);
+        if (infs_le32_to_cpu(payload->reserved) != 0 ||
+            (size_t)count > max_entries)
+            return 0;
+        size_t expected = sizeof(*payload) +
+            (size_t)count * sizeof(struct infs_index_entry_disk);
+        return expected == payload_size;
+    }
+
+    uint32_t page_count = infs_le32_to_cpu(payload->reserved);
+    if (page_count > INFS_INDEX_PAGE_POINTERS ||
+        (count == 0 && page_count != 0) ||
+        (count != 0 && page_count == 0) ||
+        (uint64_t)count >
+            (uint64_t)page_count * INFS_INDEX_ENTRIES_PER_PAGE)
         return 0;
-    size_t expected = sizeof(*payload) +
-        (size_t)count * sizeof(struct infs_index_entry_disk);
+    size_t expected = sizeof(*payload) + (size_t)page_count * sizeof(uint64_t);
     return expected == payload_size;
 }
 
@@ -120,12 +143,16 @@ int infs_validate_superblock_block(const uint8_t block[INFS_BLOCK_SIZE])
     uint64_t required_flags = INFS_INCOMPAT_UTF8_NAMES;
     if (format_minor >= 6u)
         required_flags |= INFS_INCOMPAT_SPARSE_EXTENTS;
+    if (format_minor >= 8u)
+        required_flags |= INFS_INCOMPAT_PAGED_METADATA;
     if ((incompat_flags & ~INFS_KNOWN_INCOMPAT_FLAGS) != 0 ||
         (incompat_flags & required_flags) != required_flags ||
         (format_minor < 6u &&
          (incompat_flags & INFS_INCOMPAT_SPARSE_EXTENTS) != 0) ||
         (format_minor < 7u &&
-         (incompat_flags & INFS_INCOMPAT_INLINE_DATA) != 0))
+         (incompat_flags & INFS_INCOMPAT_INLINE_DATA) != 0) ||
+        (format_minor < 8u &&
+         (incompat_flags & INFS_INCOMPAT_PAGED_METADATA) != 0))
         return 0;
 
     const size_t off = offsetof(struct infs_superblock_disk, checksum);
@@ -167,7 +194,7 @@ infs_status infs_object_init(uint8_t block[INFS_BLOCK_SIZE],
         (struct infs_object_header_disk *)block;
     memcpy(hdr->magic, INFS_OBJECT_MAGIC, 8);
     hdr->object_type = infs_cpu_to_le16(object_type);
-    hdr->object_version = infs_cpu_to_le16(1);
+    hdr->object_version = infs_cpu_to_le16(INFS_OBJECT_VERSION_CLASSIC);
     hdr->header_size = infs_cpu_to_le32(sizeof(*hdr));
     hdr->generation = infs_cpu_to_le64(generation);
     memcpy(hdr->object_id, object_id, 16);
@@ -185,17 +212,18 @@ infs_status infs_object_finalize(uint8_t block[INFS_BLOCK_SIZE])
     struct infs_object_header_disk *hdr =
         (struct infs_object_header_disk *)block;
     uint16_t object_type = infs_le16_to_cpu(hdr->object_type);
+    uint16_t object_version = infs_le16_to_cpu(hdr->object_version);
     uint32_t payload_size = infs_le32_to_cpu(hdr->payload_size);
     if (memcmp(hdr->magic, INFS_OBJECT_MAGIC, 8) != 0 ||
         !object_type_valid(object_type) ||
-        infs_le16_to_cpu(hdr->object_version) != 1u ||
+        !object_version_valid(object_type, object_version) ||
         infs_le32_to_cpu(hdr->header_size) != sizeof(*hdr) ||
         infs_le64_to_cpu(hdr->generation) == 0 ||
         !id_is_nonzero(hdr->object_id) ||
         payload_size > INFS_BLOCK_SIZE - sizeof(*hdr) ||
         infs_le32_to_cpu(hdr->checksum_type) != INFS_CHECKSUM_CRC64_ECMA ||
         (object_type == INFS_OBJECT_INDEX &&
-         !index_payload_shape_valid(block, payload_size))) {
+         !index_payload_shape_valid(block, payload_size, object_version))) {
         return INFS_STATUS_INVALID_ARGUMENT;
     }
 
@@ -214,12 +242,12 @@ int infs_validate_object_block(const uint8_t block[INFS_BLOCK_SIZE])
     const struct infs_object_header_disk *hdr =
         (const struct infs_object_header_disk *)block;
     uint16_t object_type = infs_le16_to_cpu(hdr->object_type);
+    uint16_t object_version = infs_le16_to_cpu(hdr->object_version);
     uint32_t payload_size = infs_le32_to_cpu(hdr->payload_size);
     if (memcmp(hdr->magic, INFS_OBJECT_MAGIC, 8) != 0)
         return 0;
-    if (!object_type_valid(object_type))
-        return 0;
-    if (infs_le16_to_cpu(hdr->object_version) != 1u)
+    if (!object_type_valid(object_type) ||
+        !object_version_valid(object_type, object_version))
         return 0;
     if (infs_le32_to_cpu(hdr->header_size) != sizeof(*hdr))
         return 0;
@@ -232,7 +260,7 @@ int infs_validate_object_block(const uint8_t block[INFS_BLOCK_SIZE])
     if (infs_le32_to_cpu(hdr->checksum_type) != INFS_CHECKSUM_CRC64_ECMA)
         return 0;
     if (object_type == INFS_OBJECT_INDEX &&
-        !index_payload_shape_valid(block, payload_size))
+        !index_payload_shape_valid(block, payload_size, object_version))
         return 0;
     if (!bytes_are_zero(hdr->checksum + sizeof(uint64_t),
                         sizeof(hdr->checksum) - sizeof(uint64_t)) ||
@@ -246,6 +274,81 @@ int infs_validate_object_block(const uint8_t block[INFS_BLOCK_SIZE])
     uint64_t stored = infs_le64_to_cpu(stored_le);
     uint64_t actual = block_crc_with_zeroed_checksum(
         block, off, sizeof(hdr->checksum));
+    return stored == actual;
+}
+
+infs_status infs_metadata_page_init(uint8_t block[INFS_BLOCK_SIZE],
+                                    const uint8_t magic[8],
+                                    const uint8_t owner_object_id[16],
+                                    uint64_t generation)
+{
+    if (!block || !magic || !owner_object_id ||
+        !id_is_nonzero(owner_object_id) || generation == 0)
+        return INFS_STATUS_INVALID_ARGUMENT;
+    memset(block, 0, INFS_BLOCK_SIZE);
+    struct infs_metadata_page_disk *page =
+        (struct infs_metadata_page_disk *)block;
+    memcpy(page->magic, magic, 8);
+    page->generation = infs_cpu_to_le64(generation);
+    memcpy(page->owner_object_id, owner_object_id, 16);
+    page->checksum_type = infs_cpu_to_le32(INFS_CHECKSUM_CRC64_ECMA);
+    return INFS_STATUS_OK;
+}
+
+infs_status infs_metadata_page_finalize(uint8_t block[INFS_BLOCK_SIZE])
+{
+    if (!block)
+        return INFS_STATUS_INVALID_ARGUMENT;
+    struct infs_metadata_page_disk *page =
+        (struct infs_metadata_page_disk *)block;
+    uint32_t bytes_used = infs_le32_to_cpu(page->bytes_used);
+    if ((memcmp(page->magic, INFS_DIRECTORY_PAGE_MAGIC, 8) != 0 &&
+         memcmp(page->magic, INFS_INDEX_PAGE_MAGIC, 8) != 0) ||
+        infs_le64_to_cpu(page->generation) == 0 ||
+        !id_is_nonzero(page->owner_object_id) ||
+        bytes_used > INFS_METADATA_PAGE_DATA_SIZE ||
+        infs_le32_to_cpu(page->checksum_type) != INFS_CHECKSUM_CRC64_ECMA ||
+        infs_le32_to_cpu(page->reserved) != 0)
+        return INFS_STATUS_INVALID_ARGUMENT;
+
+    memset(block + sizeof(*page) + bytes_used, 0,
+           INFS_BLOCK_SIZE - sizeof(*page) - bytes_used);
+    const size_t off = offsetof(struct infs_metadata_page_disk, checksum);
+    memset(block + off, 0, sizeof(page->checksum));
+    uint64_t crc = infs_cpu_to_le64(block_crc_with_zeroed_checksum(
+        block, off, sizeof(page->checksum)));
+    memcpy(block + off, &crc, sizeof(crc));
+    return INFS_STATUS_OK;
+}
+
+int infs_validate_metadata_page(const uint8_t block[INFS_BLOCK_SIZE],
+                                const uint8_t magic[8],
+                                const uint8_t owner_object_id[16])
+{
+    if (!block || !magic || !owner_object_id)
+        return 0;
+    const struct infs_metadata_page_disk *page =
+        (const struct infs_metadata_page_disk *)block;
+    uint32_t bytes_used = infs_le32_to_cpu(page->bytes_used);
+    if (memcmp(page->magic, magic, 8) != 0 ||
+        infs_le64_to_cpu(page->generation) == 0 ||
+        !id_is_nonzero(page->owner_object_id) ||
+        memcmp(page->owner_object_id, owner_object_id, 16) != 0 ||
+        bytes_used > INFS_METADATA_PAGE_DATA_SIZE ||
+        infs_le32_to_cpu(page->checksum_type) != INFS_CHECKSUM_CRC64_ECMA ||
+        infs_le32_to_cpu(page->reserved) != 0 ||
+        !bytes_are_zero(page->checksum + sizeof(uint64_t),
+                        sizeof(page->checksum) - sizeof(uint64_t)) ||
+        !bytes_are_zero(block + sizeof(*page) + bytes_used,
+                        INFS_BLOCK_SIZE - sizeof(*page) - bytes_used))
+        return 0;
+
+    const size_t off = offsetof(struct infs_metadata_page_disk, checksum);
+    uint64_t stored_le;
+    memcpy(&stored_le, block + off, sizeof(stored_le));
+    uint64_t stored = infs_le64_to_cpu(stored_le);
+    uint64_t actual = block_crc_with_zeroed_checksum(
+        block, off, sizeof(page->checksum));
     return stored == actual;
 }
 
@@ -274,8 +377,11 @@ infs_status infs_encode_root_directory(uint8_t block[INFS_BLOCK_SIZE],
     if (status != INFS_STATUS_OK)
         return status;
 
+    struct infs_object_header_disk *header =
+        (struct infs_object_header_disk *)block;
+    header->object_version = infs_cpu_to_le16(INFS_OBJECT_VERSION_PAGED);
     struct infs_directory_payload_disk *payload =
-        (struct infs_directory_payload_disk *)(block + sizeof(struct infs_object_header_disk));
+        (struct infs_directory_payload_disk *)(block + sizeof(*header));
     fill_attributes(&payload->attributes, 2u, now_ns);
     payload->posix.permissions = infs_cpu_to_le32(permissions & 07777u);
     payload->posix.uid = infs_cpu_to_le32(uid);
@@ -294,10 +400,13 @@ infs_status infs_encode_object_index(uint8_t block[INFS_BLOCK_SIZE],
         sizeof(struct infs_index_payload_disk));
     if (status != INFS_STATUS_OK)
         return status;
+    struct infs_object_header_disk *header =
+        (struct infs_object_header_disk *)block;
+    header->object_version = infs_cpu_to_le16(INFS_OBJECT_VERSION_PAGED);
     struct infs_index_payload_disk *payload =
-        (struct infs_index_payload_disk *)(block + sizeof(struct infs_object_header_disk));
+        (struct infs_index_payload_disk *)(block + sizeof(*header));
     payload->entry_count = infs_cpu_to_le32(0);
-    payload->reserved = 0;
+    payload->reserved = infs_cpu_to_le32(0);
     return infs_object_finalize(block);
 }
 
