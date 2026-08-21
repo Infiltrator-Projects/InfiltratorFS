@@ -10,7 +10,7 @@
 #define INFS_MAGIC "INFS2026"
 #define INFS_OBJECT_MAGIC "INFOBJ01"
 #define INFS_FORMAT_MAJOR 0u
-#define INFS_FORMAT_MINOR 6u
+#define INFS_FORMAT_MINOR 7u
 #define INFS_CHECKPOINT_COUNT 3u
 #define INFS_CHECKSUM_CRC64_ECMA 1u
 #define INFS_CHECKSUM_SHA256     2u
@@ -27,10 +27,12 @@
 
 #define INFS_INCOMPAT_UTF8_NAMES UINT64_C(0x0000000000000001)
 #define INFS_INCOMPAT_SPARSE_EXTENTS UINT64_C(0x0000000000000002)
+#define INFS_INCOMPAT_INLINE_DATA UINT64_C(0x0000000000000004)
 #define INFS_KNOWN_COMPAT_FLAGS UINT64_C(0)
 #define INFS_KNOWN_RO_COMPAT_FLAGS UINT64_C(0)
 #define INFS_KNOWN_INCOMPAT_FLAGS \
-    (INFS_INCOMPAT_UTF8_NAMES | INFS_INCOMPAT_SPARSE_EXTENTS)
+    (INFS_INCOMPAT_UTF8_NAMES | INFS_INCOMPAT_SPARSE_EXTENTS | \
+     INFS_INCOMPAT_INLINE_DATA)
 
 #define INFS_ATTR_READ_ONLY           UINT64_C(0x0000000000000001)
 #define INFS_ATTR_HIDDEN              UINT64_C(0x0000000000000002)
@@ -156,6 +158,15 @@ struct INFS_PACKED infs_data_checksum_disk {
       sizeof(struct infs_checksum_payload_disk)) / \
      sizeof(struct infs_data_checksum_disk))
 
+/* Format 0.7 inline files reuse the existing file object block. A non-empty
+ * inline file stores one SHA-256 digest immediately after the fixed file
+ * payload, followed by logical_size bytes of data. The digest authenticates
+ * the same zero-padded 4096-byte logical block used by normal data storage. */
+#define INFS_INLINE_DATA_MAX \
+    (INFS_BLOCK_SIZE - sizeof(struct infs_object_header_disk) - \
+     sizeof(struct infs_file_payload_disk) - \
+     sizeof(struct infs_data_checksum_disk))
+
 struct INFS_PACKED infs_index_payload_disk {
     uint32_t entry_count;
     uint32_t reserved;
@@ -195,6 +206,8 @@ _Static_assert(sizeof(struct infs_index_entry_disk) == 32,
                "object index entry layout changed");
 _Static_assert(INFS_CHECKSUMS_PER_OBJECT >= 120,
                "checksum object capacity unexpectedly small");
+_Static_assert(INFS_INLINE_DATA_MAX == 3840u,
+               "inline-data capacity unexpectedly changed");
 
 #if defined(_MSC_VER)
 #pragma pack(pop)
