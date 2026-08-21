@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.20)
-project(InfiltratorFS VERSION 0.7.1 LANGUAGES C)
+project(InfiltratorFS VERSION 0.8.0 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -58,6 +58,10 @@ add_executable(infilfs-inline-files tests/inline-files.c)
 target_link_libraries(infilfs-inline-files PRIVATE infilfs_core)
 infilfs_enable_warnings(infilfs-inline-files)
 
+add_executable(infilfs-reflink tests/reflink.c)
+target_link_libraries(infilfs-reflink PRIVATE infilfs_core)
+infilfs_enable_warnings(infilfs-reflink)
+
 enable_testing()
 add_test(NAME infilfs-checksum-known-answer COMMAND infilfs-checksum-test)
 add_test(NAME infilfs-format-conformance COMMAND infilfs-format-conformance)
@@ -66,6 +70,7 @@ add_test(NAME infilfs-hardening-conformance COMMAND infilfs-hardening-conformanc
 add_test(NAME infilfs-open-hardening COMMAND infilfs-open-hardening)
 add_test(NAME infilfs-063-hardening COMMAND infilfs-063-hardening)
 add_test(NAME infilfs-inline-files COMMAND infilfs-inline-files)
+add_test(NAME infilfs-reflink COMMAND infilfs-reflink)
 
 if(WIN32)
     add_library(infilfs_win32 STATIC src/platform/win32_io.c)
