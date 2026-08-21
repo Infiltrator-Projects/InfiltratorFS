@@ -359,14 +359,19 @@ static int infs_flush_cb(const char *path, struct fuse_file_info *fi)
 {
     (void)path;
     (void)fi;
-    return sync_pending_writes();
+    /* FUSE flush is a close-time notification and may be called repeatedly.
+     * It is not a durability request. The generic bounded publish policy keeps
+     * writeback finite without turning every close into a full bitmap commit. */
+    return 0;
 }
 
 static int infs_release_cb(const char *path, struct fuse_file_info *fi)
 {
     (void)path;
     (void)fi;
-    return sync_pending_writes();
+    /* release means the final file handle is gone; POSIX does not require it
+     * to have fsync semantics. Explicit fsync and unmount remain durable. */
+    return 0;
 }
 
 static int infs_fsync_cb(const char *path, int datasync, struct fuse_file_info *fi)
@@ -427,6 +432,16 @@ int main(int argc, char **argv)
                 read_only ? " read-only" : "",
                 infs_status_string(status));
         return 1;
+    }
+
+    if (!read_only) {
+        status = infs_volume_set_deferred_publish(&g_volume, 1, 0);
+        if (status != INFS_STATUS_OK) {
+            fprintf(stderr, "Cannot enable InfiltratorFS deferred publication: %s\n",
+                    infs_status_string(status));
+            infs_volume_close(&g_volume);
+            return 1;
+        }
     }
 
     char **fuse_argv = calloc((size_t)argc + 3u, sizeof(*fuse_argv));
