@@ -121,5 +121,5 @@ static int create_object(struct infs_volume *vol, const char *path,
     status = write_object(vol, parent.block, parent_block);
     if (status != INFS_STATUS_OK)
         return status;
-    return infs_volume_sync(vol);
+    return INFS_STATUS_OK;
 }
