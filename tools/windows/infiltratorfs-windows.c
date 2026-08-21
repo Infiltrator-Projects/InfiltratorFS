@@ -19,6 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
+#include <wctype.h>
 
 #define IDC_TARGET       1001
 #define IDC_REFRESH      1002
