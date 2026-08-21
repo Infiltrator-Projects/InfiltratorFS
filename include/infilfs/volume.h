@@ -68,8 +68,8 @@ struct infs_volume {
     uint8_t *bitmap;
     size_t bitmap_bytes;
 
-    /* Phase 2 transaction state. The public struct remains intentionally
-     * inspectable while the prototype format is evolving. */
+    /* Transaction state. Adapters may deliberately leave a transaction open
+     * across buffered writes and publish it with infs_volume_sync(). */
     int tx_active;
     infs_status tx_error;
     struct infs_superblock_disk tx_base_sb;
@@ -123,8 +123,14 @@ infs_status infs_rename(struct infs_volume *vol, const char *oldpath,
 
 int64_t infs_read_file(struct infs_volume *vol, const char *path, void *buf,
                        size_t size, uint64_t offset);
+/* Durable convenience write: the successful call publishes the transaction. */
 int64_t infs_write_file(struct infs_volume *vol, const char *path,
                         const void *buf, size_t size, uint64_t offset);
+/* Buffered generic write: successful calls remain in the active transaction.
+ * Call infs_volume_sync() at a durability boundary such as flush/fsync/close. */
+int64_t infs_write_file_buffered(struct infs_volume *vol, const char *path,
+                                 const void *buf, size_t size,
+                                 uint64_t offset);
 infs_status infs_truncate_file(struct infs_volume *vol, const char *path,
                                uint64_t size);
 infs_status infs_punch_hole(struct infs_volume *vol, const char *path,
