@@ -9,8 +9,10 @@
 #define INFS_BLOCK_SHIFT 12u
 #define INFS_MAGIC "INFS2026"
 #define INFS_OBJECT_MAGIC "INFOBJ01"
+#define INFS_DIRECTORY_PAGE_MAGIC "INFSDP01"
+#define INFS_INDEX_PAGE_MAGIC "INFSIP01"
 #define INFS_FORMAT_MAJOR 0u
-#define INFS_FORMAT_MINOR 7u
+#define INFS_FORMAT_MINOR 8u
 #define INFS_CHECKPOINT_COUNT 3u
 #define INFS_CHECKSUM_CRC64_ECMA 1u
 #define INFS_CHECKSUM_SHA256     2u
@@ -22,6 +24,9 @@
 #define INFS_OBJECT_INDEX      3u
 #define INFS_OBJECT_CHECKSUM   4u
 
+#define INFS_OBJECT_VERSION_CLASSIC 1u
+#define INFS_OBJECT_VERSION_PAGED   2u
+
 #define INFS_EXTENT_NORMAL     0u
 #define INFS_EXTENT_HOLE       1u
 
@@ -29,11 +34,13 @@
 #define INFS_INCOMPAT_SPARSE_EXTENTS UINT64_C(0x0000000000000002)
 #define INFS_INCOMPAT_INLINE_DATA UINT64_C(0x0000000000000004)
 #define INFS_INCOMPAT_SHARED_EXTENTS UINT64_C(0x0000000000000008)
+#define INFS_INCOMPAT_PAGED_METADATA UINT64_C(0x0000000000000010)
 #define INFS_KNOWN_COMPAT_FLAGS UINT64_C(0)
 #define INFS_KNOWN_RO_COMPAT_FLAGS UINT64_C(0)
 #define INFS_KNOWN_INCOMPAT_FLAGS \
     (INFS_INCOMPAT_UTF8_NAMES | INFS_INCOMPAT_SPARSE_EXTENTS | \
-     INFS_INCOMPAT_INLINE_DATA | INFS_INCOMPAT_SHARED_EXTENTS)
+     INFS_INCOMPAT_INLINE_DATA | INFS_INCOMPAT_SHARED_EXTENTS | \
+     INFS_INCOMPAT_PAGED_METADATA)
 
 #define INFS_ATTR_READ_ONLY           UINT64_C(0x0000000000000001)
 #define INFS_ATTR_HIDDEN              UINT64_C(0x0000000000000002)
@@ -89,6 +96,22 @@ struct INFS_PACKED infs_object_header_disk {
     uint8_t  checksum[32];
 };
 
+/* Format 0.8 metadata pages are deliberately not persistent objects. They are
+ * owned by one directory or by the object-index head and are reached through
+ * physical block pointers stored in that head object. They nevertheless carry
+ * their own generation, owner identity and checksum so scrub/recovery can
+ * authenticate every page independently. */
+struct INFS_PACKED infs_metadata_page_disk {
+    uint8_t  magic[8];
+    uint64_t generation;
+    uint8_t  owner_object_id[16];
+    uint32_t entry_count;
+    uint32_t bytes_used;
+    uint32_t checksum_type;
+    uint32_t reserved;
+    uint8_t  checksum[32];
+};
+
 struct INFS_PACKED infs_attributes_disk {
     uint64_t logical_size;
     uint64_t link_count;
@@ -110,6 +133,11 @@ struct INFS_PACKED infs_posix_compat_disk {
     uint32_t flags;
 };
 
+/* Version 1 directories store serialized dirents immediately after this
+ * payload and bytes_used is their byte length. Version 2 directories store an
+ * array of little-endian uint64 physical metadata-page pointers immediately
+ * after this payload; bytes_used is then the page count. entry_count remains
+ * the total number of directory entries in both versions. */
 struct INFS_PACKED infs_directory_payload_disk {
     struct infs_attributes_disk attributes;
     struct infs_posix_compat_disk posix;
@@ -168,6 +196,10 @@ struct INFS_PACKED infs_data_checksum_disk {
      sizeof(struct infs_file_payload_disk) - \
      sizeof(struct infs_data_checksum_disk))
 
+/* Version 1 index objects store entries immediately after this payload and
+ * reserved is zero. Version 2 index heads store little-endian uint64 physical
+ * index-page pointers after this payload; reserved is the page count and
+ * entry_count is the total entry count across all pages. */
 struct INFS_PACKED infs_index_payload_disk {
     uint32_t entry_count;
     uint32_t reserved;
@@ -181,10 +213,23 @@ struct INFS_PACKED infs_index_entry_disk {
     uint32_t reserved;
 };
 
+#define INFS_METADATA_PAGE_DATA_SIZE \
+    (INFS_BLOCK_SIZE - sizeof(struct infs_metadata_page_disk))
+#define INFS_INDEX_ENTRIES_PER_PAGE \
+    (INFS_METADATA_PAGE_DATA_SIZE / sizeof(struct infs_index_entry_disk))
+#define INFS_DIRECTORY_PAGE_POINTERS \
+    ((INFS_BLOCK_SIZE - sizeof(struct infs_object_header_disk) - \
+      sizeof(struct infs_directory_payload_disk)) / sizeof(uint64_t))
+#define INFS_INDEX_PAGE_POINTERS \
+    ((INFS_BLOCK_SIZE - sizeof(struct infs_object_header_disk) - \
+      sizeof(struct infs_index_payload_disk)) / sizeof(uint64_t))
+
 _Static_assert(sizeof(struct infs_superblock_disk) == 252,
                "superblock header layout changed");
 _Static_assert(sizeof(struct infs_object_header_disk) == 96,
                "object header layout changed");
+_Static_assert(sizeof(struct infs_metadata_page_disk) == 80,
+               "metadata page header layout changed");
 _Static_assert(sizeof(struct infs_attributes_disk) == 88,
                "common attributes layout changed");
 _Static_assert(sizeof(struct infs_posix_compat_disk) == 16,
@@ -209,6 +254,12 @@ _Static_assert(INFS_CHECKSUMS_PER_OBJECT >= 120,
                "checksum object capacity unexpectedly small");
 _Static_assert(INFS_INLINE_DATA_MAX == 3840u,
                "inline-data capacity unexpectedly changed");
+_Static_assert(INFS_INDEX_ENTRIES_PER_PAGE == 125u,
+               "index page capacity unexpectedly changed");
+_Static_assert(INFS_DIRECTORY_PAGE_POINTERS >= 480u,
+               "directory head page-pointer capacity unexpectedly small");
+_Static_assert(INFS_INDEX_PAGE_POINTERS >= 490u,
+               "index head page-pointer capacity unexpectedly small");
 
 #if defined(_MSC_VER)
 #pragma pack(pop)
