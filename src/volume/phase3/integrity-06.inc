@@ -36,6 +36,11 @@ infs_status infs_scrub(struct infs_volume *vol,
             continue;
         }
 
+        if (file_is_inline(object, file)) {
+            ++report->data_blocks_checked;
+            continue;
+        }
+
         uint32_t extent_count = infs_le32_to_cpu(file->extent_count);
         for (uint32_t j = 0; j < extent_count; ++j) {
             if (infs_le32_to_cpu(ext[j].flags) != INFS_EXTENT_NORMAL)
