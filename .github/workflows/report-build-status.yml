@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Report build workflow status
+
+on:
+  workflow_run:
+    workflows: ["Build and conformance"]
+    types: [completed]
+
+permissions:
+  statuses: write
+
+jobs:
+  report:
+    if: github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish build result and run URL
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+        run: |
+          set -euo pipefail
+          state=failure
+          description="Build and conformance failed"
+          if [ "$CONCLUSION" = "success" ]; then
+            state=success
+            description="Build and conformance passed"
+          fi
+          gh api --method POST \
+            -H "Accept: application/vnd.github+json" \
+            "repos/${GITHUB_REPOSITORY}/statuses/${HEAD_SHA}" \
+            -f state="$state" \
+            -f context="Build and conformance workflow" \
+            -f description="$description" \
+            -f target_url="$RUN_URL"
