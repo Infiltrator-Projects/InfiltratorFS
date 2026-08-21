@@ -244,7 +244,8 @@ static int infs_write_cb(const char *path, const char *buf, size_t size, off_t o
         if (rc != 0)
             return rc;
     }
-    int64_t n = infs_write_file(&g_volume, path, buf, size, (uint64_t)off);
+    int64_t n = infs_write_file_buffered(&g_volume, path, buf, size,
+                                         (uint64_t)off);
     if (n < 0)
         return neg_status((infs_status)n);
     return (int)n;
@@ -347,14 +348,33 @@ static int infs_statfs_cb(const char *path, struct statvfs *st)
     return 0;
 }
 
+static int sync_pending_writes(void)
+{
+    if (!g_volume.writable || !g_volume.tx_active)
+        return 0;
+    return neg_status(infs_volume_sync(&g_volume));
+}
+
+static int infs_flush_cb(const char *path, struct fuse_file_info *fi)
+{
+    (void)path;
+    (void)fi;
+    return sync_pending_writes();
+}
+
+static int infs_release_cb(const char *path, struct fuse_file_info *fi)
+{
+    (void)path;
+    (void)fi;
+    return sync_pending_writes();
+}
+
 static int infs_fsync_cb(const char *path, int datasync, struct fuse_file_info *fi)
 {
     (void)path;
     (void)datasync;
     (void)fi;
-    if (!g_volume.writable)
-        return 0;
-    return neg_status(infs_volume_sync(&g_volume));
+    return sync_pending_writes();
 }
 
 static void *infs_init_cb(struct fuse_conn_info *conn, struct fuse_config *cfg)
@@ -378,6 +398,8 @@ static const struct fuse_operations infs_ops = {
     .open = infs_open_cb,
     .read = infs_read_cb,
     .write = infs_write_cb,
+    .flush = infs_flush_cb,
+    .release = infs_release_cb,
     .truncate = infs_truncate_cb,
     .fallocate = infs_fallocate_cb,
     .unlink = infs_unlink_cb,
@@ -424,6 +446,14 @@ int main(int argc, char **argv)
 
     int rc = fuse_main(j, fuse_argv, &infs_ops, NULL);
     free(fuse_argv);
+    if (g_volume.writable && g_volume.tx_active) {
+        infs_status sync_status = infs_volume_sync(&g_volume);
+        if (sync_status != INFS_STATUS_OK && rc == 0) {
+            fprintf(stderr, "Final InfiltratorFS sync failed: %s\n",
+                    infs_status_string(sync_status));
+            rc = 1;
+        }
+    }
     infs_volume_close(&g_volume);
     return rc;
 }
