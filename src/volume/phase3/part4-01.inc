@@ -168,7 +168,7 @@ infs_status infs_create_file(struct infs_volume *vol, const char *path,
         return status;
     status = create_object(vol, path, options, INFS_OBJECT_FILE);
     if (status == INFS_STATUS_OK)
-        status = infs_volume_sync(vol);
+        status = finish_mutation(vol, (uint64_t)INFS_BLOCK_SIZE * 4u);
     if (status != INFS_STATUS_OK)
         tx_abort(vol);
     return status;
@@ -184,7 +184,7 @@ infs_status infs_mkdir(struct infs_volume *vol, const char *path,
         return status;
     status = create_object(vol, path, options, INFS_OBJECT_DIRECTORY);
     if (status == INFS_STATUS_OK)
-        status = infs_volume_sync(vol);
+        status = finish_mutation(vol, (uint64_t)INFS_BLOCK_SIZE * 4u);
     if (status != INFS_STATUS_OK)
         tx_abort(vol);
     return status;
