@@ -7,6 +7,32 @@
         return 1;
     }
 
+    if (infs_metadata_page_init(block, INFS_INDEX_PAGE_MAGIC, index_id, 1) !=
+        INFS_STATUS_OK) {
+        fprintf(stderr, "encode object index page failed\n");
+        free(bitmap);
+        close(fd);
+        return 1;
+    }
+    struct infs_metadata_page_disk *index_page =
+        (struct infs_metadata_page_disk *)block;
+    struct infs_index_entry_disk *ie =
+        (struct infs_index_entry_disk *)(index_page + 1);
+    memset(ie, 0, sizeof(*ie));
+    memcpy(ie->object_id, root_id, 16);
+    ie->object_block = infs_cpu_to_le64(root_block);
+    ie->object_type = infs_cpu_to_le16(INFS_OBJECT_DIRECTORY);
+    index_page->entry_count = infs_cpu_to_le32(1);
+    index_page->bytes_used = infs_cpu_to_le32(sizeof(*ie));
+    if (infs_metadata_page_finalize(block) != INFS_STATUS_OK ||
+        infs_pwrite_full(fd, block, sizeof(block),
+                         (off_t)(index_page_block * INFS_BLOCK_SIZE)) != 0) {
+        perror("write object index page");
+        free(bitmap);
+        close(fd);
+        return 1;
+    }
+
     if (infs_encode_object_index(block, index_id, 1) != INFS_STATUS_OK) {
         fprintf(stderr, "encode object index failed\n");
         free(bitmap);
@@ -16,14 +42,11 @@
     struct infs_object_header_disk *ih = (struct infs_object_header_disk *)block;
     struct infs_index_payload_disk *ip =
         (struct infs_index_payload_disk *)(block + sizeof(*ih));
-    struct infs_index_entry_disk *ie = (struct infs_index_entry_disk *)(ip + 1);
+    uint64_t *page_pointer = (uint64_t *)(ip + 1);
     ip->entry_count = infs_cpu_to_le32(1);
-    ip->reserved = 0;
-    memset(ie, 0, sizeof(*ie));
-    memcpy(ie->object_id, root_id, 16);
-    ie->object_block = infs_cpu_to_le64(root_block);
-    ie->object_type = infs_cpu_to_le16(INFS_OBJECT_DIRECTORY);
-    ih->payload_size = infs_cpu_to_le32(sizeof(*ip) + sizeof(*ie));
+    ip->reserved = infs_cpu_to_le32(1);
+    page_pointer[0] = infs_cpu_to_le64(index_page_block);
+    ih->payload_size = infs_cpu_to_le32(sizeof(*ip) + sizeof(*page_pointer));
     if (infs_object_finalize(block) != INFS_STATUS_OK ||
         infs_pwrite_full(fd, block, sizeof(block),
                          (off_t)(index_block * INFS_BLOCK_SIZE)) != 0) {
@@ -85,7 +108,7 @@
     char uuid_text[37];
     infs_uuid_to_string(fs_uuid, uuid_text);
     printf("InfiltratorFS formatted successfully\n");
-    printf("  Implementation: 0.7.0\n");
+    printf("  Implementation: 0.9.0\n");
     printf("  Format:          %u.%u\n", INFS_FORMAT_MAJOR, INFS_FORMAT_MINOR);
     printf("  UUID:            %s\n", uuid_text);
     printf("  Label:           %s\n", (char *)sb.label);
@@ -94,6 +117,7 @@
     printf("  Free blocks:     %" PRIu64 "\n", total_blocks - used_blocks);
     printf("  Bitmap blocks:   %" PRIu64 "\n", bitmap_blocks);
     printf("  Object index:    block %" PRIu64 "\n", index_block);
+    printf("  Index page:      block %" PRIu64 "\n", index_page_block);
     printf("  Root block:      block %" PRIu64 "\n", root_block);
     printf("  Checkpoints:     %" PRIu64 ", %" PRIu64 ", %" PRIu64 "\n",
            checkpoints[0], checkpoints[1], checkpoints[2]);
