@@ -15,12 +15,13 @@ static int remove_object(struct infs_volume *vol, const char *path, int want_dir
     status = dir_validate(parent_block, &pp);
     if (status != INFS_STATUS_OK)
         return status;
-    struct infs_dirent_disk *de = dir_find(pp, name, strlen(name), NULL);
-    if (!de)
-        return INFS_STATUS_NOT_FOUND;
+    struct infs_dirent_disk de;
+    status = dir_lookup_volume(vol, parent_block, name, &de);
+    if (status != INFS_STATUS_OK)
+        return status;
 
     struct infs_lookup child;
-    status = index_find(vol, de->object_id, &child);
+    status = index_find(vol, de.object_id, &child);
     if (status != INFS_STATUS_OK)
         return status;
     if (want_directory && child.type != INFS_OBJECT_DIRECTORY)
@@ -63,7 +64,7 @@ static int remove_object(struct infs_volume *vol, const char *path, int want_dir
         return INFS_STATUS_CORRUPT;
     }
 
-    status = dir_remove(parent_block, name, NULL);
+    status = dir_remove_volume(vol, parent_block, name, NULL);
     if (status != INFS_STATUS_OK)
         return status;
     if (child.type == INFS_OBJECT_DIRECTORY) {
