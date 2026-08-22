@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.20)
-project(InfiltratorFS VERSION 0.9.9 LANGUAGES C)
+project(InfiltratorFS VERSION 0.9.10 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -100,8 +100,14 @@ if(WIN32)
     infilfs_enable_warnings(infilfs-win32-partition-region)
     add_test(NAME infilfs-win32-partition-region COMMAND infilfs-win32-partition-region)
 
+    configure_file(
+        tools/windows/infiltratorfs-windows-version.rc.in
+        ${CMAKE_CURRENT_BINARY_DIR}/infiltratorfs-windows-version.rc
+        @ONLY)
+
     add_executable(infiltratorfs-windows WIN32
-        tools/windows/infiltratorfs-windows-entry.c)
+        tools/windows/infiltratorfs-windows-entry.c
+        ${CMAKE_CURRENT_BINARY_DIR}/infiltratorfs-windows-version.rc)
     target_link_libraries(infiltratorfs-windows PRIVATE
         infilfs_win32 comdlg32 shell32 ole32)
     target_compile_definitions(infiltratorfs-windows PRIVATE
@@ -112,7 +118,7 @@ if(WIN32)
     endif()
     infilfs_enable_warnings(infiltratorfs-windows)
     set_target_properties(infiltratorfs-windows PROPERTIES
-        OUTPUT_NAME "InfiltratorFS-Windows")
+        OUTPUT_NAME "InfiltratorFS-Windows-${PROJECT_VERSION}")
 endif()
 
 # Linux/POSIX is the first adapter and test host. The core library and disk
