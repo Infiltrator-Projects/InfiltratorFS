@@ -132,11 +132,30 @@ jobs:
           Select-String -Path tools/windows/infiltratorfs-windows-entry.c -Pattern 'INFS_WINDOWS_TRANSFER_PUBLISH_BYTES' -SimpleMatch
           Select-String -Path src/platform/win32_partition_io.c -Pattern 'GLOBALROOT' -SimpleMatch
           Select-String -Path src/platform/win32_partition_io.c -Pattern 'IOCTL_DISK_GET_DRIVE_LAYOUT_EX' -SimpleMatch
+      - name: Verify versioned Windows executable and metadata
+        shell: pwsh
+        run: |
+          $cmake = Get-Content CMakeLists.txt -Raw
+          if ($cmake -notmatch 'project\(InfiltratorFS VERSION ([0-9]+\.[0-9]+\.[0-9]+) LANGUAGES C\)') {
+            throw 'Could not determine InfiltratorFS version from CMakeLists.txt'
+          }
+          $version = $Matches[1]
+          $exe = "build\Release\InfiltratorFS-Windows-$version.exe"
+          if (!(Test-Path $exe)) {
+            throw "Versioned Windows executable was not built: $exe"
+          }
+          $info = (Get-Item $exe).VersionInfo
+          if (!$info.FileVersion.StartsWith($version)) {
+            throw "FileVersion '$($info.FileVersion)' does not match $version"
+          }
+          if (!$info.ProductVersion.StartsWith($version)) {
+            throw "ProductVersion '$($info.ProductVersion)' does not match $version"
+          }
       - name: Upload Windows transfer app
         uses: actions/upload-artifact@v4
         with:
           name: InfiltratorFS-Windows
-          path: build/Release/InfiltratorFS-Windows.exe
+          path: build/Release/InfiltratorFS-Windows-*.exe
           if-no-files-found: error
 
   linux-packages:
