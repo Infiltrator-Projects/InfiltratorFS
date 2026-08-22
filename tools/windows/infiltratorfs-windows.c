@@ -196,7 +196,8 @@ static int copy_host_file(const wchar_t *host_path, const char *dest_path)
         }
         if (!got)
             break;
-        int64_t written = infs_write_file(&g_volume, dest_path, buffer, got, offset);
+        int64_t written = infs_write_file_buffered(
+            &g_volume, dest_path, buffer, got, offset);
         if (written != (int64_t)got) {
             set_status_code(L"Write InfiltratorFS file",
                             written < 0 ? (infs_status)written : INFS_STATUS_IO_ERROR);
@@ -207,6 +208,13 @@ static int copy_host_file(const wchar_t *host_path, const char *dest_path)
     }
     free(buffer);
     CloseHandle(input);
+    if (okay) {
+        status = infs_volume_sync(&g_volume);
+        if (status != INFS_STATUS_OK) {
+            set_status_code(L"Commit copied file", status);
+            okay = 0;
+        }
+    }
     return okay;
 }
 
@@ -343,6 +351,22 @@ static int open_selected_volume(int format_first)
         return 0;
     }
 
+    uint64_t detected_size = 0;
+    int detected_device = 0;
+    status = infs_storage_get_size(&storage, &detected_size, &detected_device);
+    if (status != INFS_STATUS_OK) {
+        infs_storage_close(&storage);
+        set_status_code(L"Determine selected volume size", status);
+        return 0;
+    }
+    (void)detected_device;
+    wchar_t probe_status[192];
+    _snwprintf_s(probe_status,
+                 sizeof(probe_status) / sizeof(probe_status[0]), _TRUNCATE,
+                 L"Selected %c: raw volume size %.2f GiB. Preparing InfiltratorFS ...",
+                 letter, (double)detected_size / (1024.0 * 1024.0 * 1024.0));
+    set_status(probe_status);
+
     if (format_first) {
         wchar_t wide_label[INFS_LABEL_MAX] = L"InfiltratorFS";
         GetWindowTextW(GetDlgItem(g_main_window, IDC_LABEL), wide_label,
@@ -355,7 +379,12 @@ static int open_selected_volume(int format_first)
                         L"InfiltratorFS", MB_OK | MB_ICONERROR);
             return 0;
         }
-        set_status(L"Formatting selected volume as InfiltratorFS Format 0.7 ...");
+        wchar_t format_status[160];
+        _snwprintf_s(format_status,
+                     sizeof(format_status) / sizeof(format_status[0]), _TRUNCATE,
+                     L"Formatting selected volume as InfiltratorFS Format %u.%u ...",
+                     (unsigned)INFS_FORMAT_MAJOR, (unsigned)INFS_FORMAT_MINOR);
+        set_status(format_status);
         status = infs_format_storage(&storage, label);
         if (status != INFS_STATUS_OK) {
             infs_storage_close(&storage);
@@ -580,7 +609,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous,
     wc.lpszClassName = class_name;
     if (!RegisterClassW(&wc))
         return 1;
-    HWND window = CreateWindowW(class_name, L"InfiltratorFS Windows Transfer 0.7.1",
+    HWND window = CreateWindowW(class_name, L"InfiltratorFS Windows Transfer 0.9.3",
                                 WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU |
                                 WS_MINIMIZEBOX,
                                 CW_USEDEFAULT, CW_USEDEFAULT, 760, 570,
