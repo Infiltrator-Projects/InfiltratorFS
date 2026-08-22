@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.20)
-project(InfiltratorFS VERSION 0.9.4 LANGUAGES C)
+project(InfiltratorFS VERSION 0.9.5 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -92,6 +92,8 @@ if(WIN32)
         tools/windows/infiltratorfs-windows.c)
     target_link_libraries(infiltratorfs-windows PRIVATE
         infilfs_win32 comdlg32 shell32 ole32)
+    target_compile_definitions(infiltratorfs-windows PRIVATE
+        INFILFS_VERSION_W=L\"${PROJECT_VERSION}\")
     if(MSVC)
         target_link_options(infiltratorfs-windows PRIVATE
             "/MANIFESTUAC:\"level='requireAdministrator' uiAccess='false'\"")
