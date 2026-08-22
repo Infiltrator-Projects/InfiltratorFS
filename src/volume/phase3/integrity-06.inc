@@ -1,4 +1,31 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+static int scrub_reportable_metadata_status(infs_status status)
+{
+    return status == INFS_STATUS_CORRUPT ||
+           status == INFS_STATUS_NOT_FOUND ||
+           status == INFS_STATUS_LOOP_DETECTED;
+}
+
+static infs_status scrub_validate_full_metadata(
+    struct infs_volume *vol, struct infs_scrub_report *report)
+{
+    infs_status status = validate_index_entries(vol);
+    if (status == INFS_STATUS_OK)
+        status = validate_integrity_metadata(vol);
+    if (status == INFS_STATUS_OK)
+        status = validate_namespace_graph(vol);
+    if (status == INFS_STATUS_OK)
+        status = validate_checksum_graph(vol);
+
+    if (status == INFS_STATUS_OK)
+        return INFS_STATUS_OK;
+    if (scrub_reportable_metadata_status(status)) {
+        ++report->metadata_errors;
+        return INFS_STATUS_OK;
+    }
+    return status;
+}
+
 infs_status infs_scrub(struct infs_volume *vol,
                        struct infs_scrub_report *report)
 {
@@ -6,9 +33,18 @@ infs_status infs_scrub(struct infs_volume *vol,
         return INFS_STATUS_INVALID_ARGUMENT;
     memset(report, 0, sizeof(*report));
 
+    /* Whole-volume graph validation belongs here rather than in the normal
+     * device-open path. Scrub is explicitly the expensive consistency pass:
+     * verify index/object agreement, bitmap ownership, namespace reachability,
+     * link counts, checksum ownership and checksum-chain structure before
+     * reading every allocated data block below. */
+    infs_status status = scrub_validate_full_metadata(vol, report);
+    if (status != INFS_STATUS_OK || report->metadata_errors != 0)
+        return status;
+
     struct infs_index_entry_disk *entries = NULL;
     uint32_t entries_count = 0;
-    infs_status status = index_snapshot(vol, &entries, &entries_count);
+    status = index_snapshot(vol, &entries, &entries_count);
     if (status != INFS_STATUS_OK)
         return status;
 
