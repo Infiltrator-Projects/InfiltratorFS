@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.20)
-project(InfiltratorFS VERSION 0.9.7 LANGUAGES C)
+project(InfiltratorFS VERSION 0.9.8 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -66,6 +66,10 @@ add_executable(infilfs-paged-metadata tests/paged-metadata.c)
 target_link_libraries(infilfs-paged-metadata PRIVATE infilfs_core)
 infilfs_enable_warnings(infilfs-paged-metadata)
 
+add_executable(infilfs-device-open tests/device-open.c)
+target_link_libraries(infilfs-device-open PRIVATE infilfs_core)
+infilfs_enable_warnings(infilfs-device-open)
+
 enable_testing()
 add_test(NAME infilfs-checksum-known-answer COMMAND infilfs-checksum-test)
 add_test(NAME infilfs-format-conformance COMMAND infilfs-format-conformance)
@@ -76,6 +80,7 @@ add_test(NAME infilfs-063-hardening COMMAND infilfs-063-hardening)
 add_test(NAME infilfs-inline-files COMMAND infilfs-inline-files)
 add_test(NAME infilfs-reflink COMMAND infilfs-reflink)
 add_test(NAME infilfs-paged-metadata COMMAND infilfs-paged-metadata)
+add_test(NAME infilfs-device-open COMMAND infilfs-device-open)
 
 if(WIN32)
     add_library(infilfs_win32 STATIC
