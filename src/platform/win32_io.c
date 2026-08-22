@@ -161,7 +161,7 @@ static infs_status volume_size_from_extents(HANDLE handle,
     size_t capacity = sizeof(VOLUME_DISK_EXTENTS) +
                       7u * sizeof(DISK_EXTENT);
     for (unsigned attempt = 0; attempt < 8u; ++attempt) {
-        if (capacity > (size_t)DWORD_MAX)
+        if (capacity > (size_t)UINT32_MAX)
             return INFS_STATUS_OVERFLOW;
         VOLUME_DISK_EXTENTS *extents = malloc(capacity);
         if (!extents)
@@ -190,7 +190,7 @@ static infs_status volume_size_from_extents(HANDLE handle,
         free(extents);
         if (error != ERROR_MORE_DATA)
             return status_from_win32(error);
-        if (capacity > (size_t)DWORD_MAX / 2u)
+        if (capacity > (size_t)UINT32_MAX / 2u)
             return INFS_STATUS_OVERFLOW;
         capacity *= 2u;
     }
