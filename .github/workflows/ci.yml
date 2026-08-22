@@ -157,7 +157,7 @@ jobs:
           if-no-files-found: error
 
   publish-release:
-    name: Publish 0.9.3
+    name: Publish 0.9.4
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [linux, clang, sanitizers, analyzer, windows, linux-packages]
     runs-on: ubuntu-latest
@@ -174,19 +174,19 @@ jobs:
         with:
           name: InfiltratorFS-Linux
           path: dist
-      - name: Create or update 0.9.3 release
+      - name: Create or update 0.9.4 release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if ! gh release view v0.9.3 --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            gh release create v0.9.3 \
+          if ! gh release view v0.9.4 --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release create v0.9.4 \
               --repo "${GITHUB_REPOSITORY}" \
               --target "${GITHUB_SHA}" \
-              --title "InfiltratorFS 0.9.3 — Windows Volume Interoperability" \
-              --notes "Implementation 0.9.3 keeps InfiltratorFS Format 0.8 and fixes opening real Windows drive-letter/volume handles that reject IOCTL_DISK_GET_LENGTH_INFO. The Win32 storage adapter now falls back through partition-length, volume-extent and seekable-handle size queries instead of treating one unsupported Windows IOCTL as an unsupported filesystem. CI now creates a real Format 0.8 image with the Linux mkfs/tool path, carries that exact image to the Windows runner, and requires the Windows core to open it and read its file contents before the Windows executable can be released. No reformat is required for existing Format 0.8 media. Experimental: use disposable or backed-up media only."
+              --title "InfiltratorFS 0.9.4 — Windows Raw Volume Discovery" \
+              --notes "Implementation 0.9.4 keeps InfiltratorFS Format 0.8 and fixes Windows discovery of Linux-created InfiltratorFS partitions that have no Windows drive letter. The Windows utility now enumerates Windows volume GUIDs rather than relying on GetLogicalDrives, probes candidate raw volumes directly for valid InfiltratorFS checkpoints, identifies detected InfiltratorFS volumes by format, size and label, and still exposes ordinary mounted non-system Windows volumes for formatting. Anonymous non-InfiltratorFS recovery/EFI/raw volumes remain hidden by default for safety. The Windows UI now includes standard File and Help menus plus About InfiltratorFS. Existing Format 0.8 media does not require reformatting. Experimental: use disposable or backed-up media only."
           fi
-          gh release upload v0.9.3 dist/* \
+          gh release upload v0.9.4 dist/* \
             --repo "${GITHUB_REPOSITORY}" --clobber
 
   report-release:
@@ -210,13 +210,13 @@ jobs:
         run: |
           set -euo pipefail
           state=success
-          description="v0.9.3 Windows interoperability build verified and published"
+          description="v0.9.4 Windows raw-volume discovery build verified and published"
           for result in "$LINUX_RESULT" "$CLANG_RESULT" "$SANITIZERS_RESULT" \
                         "$ANALYZER_RESULT" "$WINDOWS_RESULT" "$PACKAGES_RESULT" \
                         "$RELEASE_RESULT"; do
             if [ "$result" != "success" ]; then
               state=failure
-              description="v0.9.3 build/release gate failed"
+              description="v0.9.4 build/release gate failed"
               break
             fi
           done
@@ -224,5 +224,5 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
             -f state="$state" \
-            -f context="InfiltratorFS 0.9.3" \
+            -f context="InfiltratorFS 0.9.4" \
             -f description="$description"
