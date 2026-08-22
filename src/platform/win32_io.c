@@ -17,6 +17,9 @@ struct infs_win32_storage_context {
     int locked;
     int is_device;
     int is_volume;
+    int has_region;
+    uint64_t base_offset;
+    uint64_t region_size;
 };
 
 static infs_status status_from_win32(DWORD error)
@@ -64,6 +67,27 @@ static int path_is_volume(const wchar_t *path)
            path[5] == L':' && path[6] == L'\0';
 }
 
+static infs_status checked_absolute_offset(
+    const struct infs_win32_storage_context *win,
+    uint64_t offset, size_t size, uint64_t *absolute)
+{
+    if (!win || !absolute)
+        return INFS_STATUS_INVALID_ARGUMENT;
+    if (win->has_region) {
+        if (offset > win->region_size ||
+            (uint64_t)size > win->region_size - offset)
+            return INFS_STATUS_INVALID_ARGUMENT;
+        if (win->base_offset > UINT64_MAX - offset)
+            return INFS_STATUS_OVERFLOW;
+        *absolute = win->base_offset + offset;
+    } else {
+        *absolute = offset;
+    }
+    if (*absolute > INT64_MAX)
+        return INFS_STATUS_OVERFLOW;
+    return INFS_STATUS_OK;
+}
+
 static infs_status win32_seek(HANDLE handle, uint64_t offset)
 {
     if (offset > INT64_MAX)
@@ -79,7 +103,11 @@ static infs_status win32_read_at(void *context, uint64_t offset,
                                  void *buffer, size_t size)
 {
     struct infs_win32_storage_context *win = context;
-    infs_status status = win32_seek(win->handle, offset);
+    uint64_t absolute = 0;
+    infs_status status = checked_absolute_offset(win, offset, size, &absolute);
+    if (status != INFS_STATUS_OK)
+        return status;
+    status = win32_seek(win->handle, absolute);
     if (status != INFS_STATUS_OK)
         return status;
     uint8_t *out = buffer;
@@ -101,7 +129,11 @@ static infs_status win32_write_at(void *context, uint64_t offset,
                                   const void *buffer, size_t size)
 {
     struct infs_win32_storage_context *win = context;
-    infs_status status = win32_seek(win->handle, offset);
+    uint64_t absolute = 0;
+    infs_status status = checked_absolute_offset(win, offset, size, &absolute);
+    if (status != INFS_STATUS_OK)
+        return status;
+    status = win32_seek(win->handle, absolute);
     if (status != INFS_STATUS_OK)
         return status;
     const uint8_t *in = buffer;
@@ -203,15 +235,17 @@ static infs_status win32_get_size(void *context, uint64_t *size_bytes,
     struct infs_win32_storage_context *win = context;
     if (!size_bytes || !is_device)
         return INFS_STATUS_INVALID_ARGUMENT;
+
+    if (win->has_region) {
+        *size_bytes = win->region_size;
+        *is_device = 1;
+        return INFS_STATUS_OK;
+    }
+
     if (win->is_device) {
         infs_status first_error = INFS_STATUS_NOT_SUPPORTED;
         infs_status status;
 
-        /* Drive-letter and volume-GUID handles are volume/partition handles,
-         * not necessarily physical-disk handles. Some Windows storage stacks
-         * reject IOCTL_DISK_GET_LENGTH_INFO for these handles even though raw
-         * reads work. Prefer the partition length, then fall back through the
-         * other supported volume queries. */
         if (win->is_volume) {
             status = volume_size_from_partition(win->handle, size_bytes);
             if (status == INFS_STATUS_OK) {
@@ -239,9 +273,6 @@ static infs_status win32_get_size(void *context, uint64_t *size_bytes,
                 first_error = status;
         }
 
-        /* A few virtual/storage-filter drivers expose a seekable volume handle
-         * but reject all disk IOCTLs. GetFileSizeEx is harmless as a final
-         * fallback and is accepted by some of those stacks. */
         LARGE_INTEGER length;
         if (GetFileSizeEx(win->handle, &length) && length.QuadPart > 0) {
             *size_bytes = (uint64_t)length.QuadPart;
@@ -323,11 +354,14 @@ static const struct infs_storage_ops win32_storage_ops = {
     win32_close
 };
 
-infs_status infs_win32_storage_open(struct infs_storage *storage,
-                                    const wchar_t *path, int writable,
-                                    int lock_and_dismount)
+static infs_status open_common(struct infs_storage *storage,
+                               const wchar_t *path, int writable,
+                               int lock_and_dismount,
+                               int has_region,
+                               uint64_t base_offset,
+                               uint64_t region_size)
 {
-    if (!storage || !path || !path[0])
+    if (!storage || !path || !path[0] || (has_region && !region_size))
         return INFS_STATUS_INVALID_ARGUMENT;
     storage->ops = NULL;
     storage->context = NULL;
@@ -336,8 +370,11 @@ infs_status infs_win32_storage_open(struct infs_storage *storage,
     if (!win)
         return INFS_STATUS_NO_MEMORY;
     win->handle = INVALID_HANDLE_VALUE;
-    win->is_device = path_is_device(path);
-    win->is_volume = path_is_volume(path);
+    win->is_device = path_is_device(path) || has_region;
+    win->is_volume = path_is_volume(path) && !has_region;
+    win->has_region = has_region;
+    win->base_offset = base_offset;
+    win->region_size = region_size;
 
     DWORD access = GENERIC_READ | (writable ? GENERIC_WRITE : 0u);
     DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
@@ -350,7 +387,33 @@ infs_status infs_win32_storage_open(struct infs_storage *storage,
         return status;
     }
 
-    if (win->is_device && writable && lock_and_dismount) {
+    if (has_region) {
+        uint64_t backing_size = 0;
+        infs_status size_status;
+        if (path_is_device(path))
+            size_status = volume_size_from_length_info(win->handle, &backing_size);
+        else {
+            LARGE_INTEGER length;
+            if (!GetFileSizeEx(win->handle, &length))
+                size_status = status_from_win32(GetLastError());
+            else if (length.QuadPart <= 0)
+                size_status = INFS_STATUS_CORRUPT;
+            else {
+                backing_size = (uint64_t)length.QuadPart;
+                size_status = INFS_STATUS_OK;
+            }
+        }
+        if (size_status != INFS_STATUS_OK ||
+            base_offset > backing_size ||
+            region_size > backing_size - base_offset) {
+            CloseHandle(win->handle);
+            free(win);
+            return size_status != INFS_STATUS_OK ?
+                size_status : INFS_STATUS_INVALID_ARGUMENT;
+        }
+    }
+
+    if (win->is_device && !has_region && writable && lock_and_dismount) {
         DWORD returned = 0;
         if (!DeviceIoControl(win->handle, FSCTL_LOCK_VOLUME,
                              NULL, 0, NULL, 0, &returned, NULL)) {
@@ -376,5 +439,23 @@ infs_status infs_win32_storage_open(struct infs_storage *storage,
     storage->ops = &win32_storage_ops;
     storage->context = win;
     return INFS_STATUS_OK;
+}
+
+infs_status infs_win32_storage_open(struct infs_storage *storage,
+                                    const wchar_t *path, int writable,
+                                    int lock_and_dismount)
+{
+    return open_common(storage, path, writable, lock_and_dismount,
+                       0, 0, 0);
+}
+
+infs_status infs_win32_storage_open_region(struct infs_storage *storage,
+                                           const wchar_t *path,
+                                           uint64_t base_offset,
+                                           uint64_t region_size,
+                                           int writable)
+{
+    return open_common(storage, path, writable, 0,
+                       1, base_offset, region_size);
 }
 #endif
