@@ -403,7 +403,11 @@ static infs_status open_common(struct infs_storage *storage,
 
     DWORD access = GENERIC_READ | (writable ? GENERIC_WRITE : 0u);
     DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
-    DWORD flags = FILE_ATTRIBUTE_NORMAL | (writable ? FILE_FLAG_WRITE_THROUGH : 0u);
+    /* Transaction durability is expressed by explicit FlushFileBuffers calls
+     * at InfiltratorFS publication barriers. FILE_FLAG_WRITE_THROUGH on every
+     * ordinary block write duplicates those barriers and catastrophically
+     * penalises removable media. */
+    DWORD flags = FILE_ATTRIBUTE_NORMAL;
     win->handle = CreateFileW(path, access, share, NULL, OPEN_EXISTING,
                               flags, NULL);
     if (win->handle == INVALID_HANDLE_VALUE) {

@@ -20,6 +20,7 @@ struct memory_image {
     uint64_t fail_read_block;
     int fail_reads;
     int fail_checkpoint_reads;
+    int is_device;
 };
 
 static void fail(const char *message)
@@ -77,7 +78,7 @@ static infs_status memory_size(void *context, uint64_t *size_bytes,
 {
     struct memory_image *image = context;
     *size_bytes = image->size;
-    *is_device = 0;
+    *is_device = image->is_device;
     return INFS_STATUS_OK;
 }
 
@@ -158,6 +159,7 @@ static void build_valid_image(struct memory_image *image)
     image->fail_read_block = UINT64_MAX;
     image->fail_reads = 0;
     image->fail_checkpoint_reads = 0;
+    image->is_device = 0;
 
     uint8_t *bitmap = image->bytes + INFS_BLOCK_SIZE;
     bitmap_set(bitmap, 0);
@@ -266,6 +268,35 @@ static uint64_t prepare_newer_corrupt_generation(struct memory_image *image,
     return newer_root;
 }
 
+static void prepare_newer_deep_corrupt_generation(
+    struct memory_image *image, uint8_t old_checkpoint[INFS_BLOCK_SIZE])
+{
+    build_valid_image(image);
+    memcpy(old_checkpoint, image->bytes, INFS_BLOCK_SIZE);
+
+    struct infs_volume volume;
+    expect(open_image(image, 1, &volume) == INFS_STATUS_OK,
+           "open image for deep-corruption generation");
+    expect(infs_create_file(&volume, "/newer", &file_options) == INFS_STATUS_OK,
+           "commit deep-corruption generation");
+    infs_volume_close(&volume);
+
+    expect(open_image(image, 0, &volume) == INFS_STATUS_OK,
+           "open clean newer generation before corruption");
+    struct infs_lookup lookup;
+    expect(infs_lookup_path(&volume, "/newer", &lookup) == INFS_STATUS_OK,
+           "locate deep-corruption file object");
+    uint64_t newer_file = lookup.block;
+    infs_volume_close(&volume);
+
+    /* Corrupt a non-root object. A lightweight device open can still validate
+     * the checkpoint, bitmap, root and index, so this specifically exercises
+     * the rule that degraded writable recovery must perform the deep graph
+     * checks before healing replicas. */
+    image->bytes[newer_file * INFS_BLOCK_SIZE + 257u] ^= 0x5au;
+    memcpy(image->bytes, old_checkpoint, INFS_BLOCK_SIZE);
+}
+
 static void check_checkpoint_replica_reads(struct memory_image *image)
 {
     build_valid_image(image);
@@ -365,6 +396,33 @@ static void check_checkpoint_graph_fallback(struct memory_image *image)
     }
 }
 
+static void check_block_device_recovery_verifies_before_healing(
+    struct memory_image *image)
+{
+    const uint64_t checkpoints[INFS_CHECKPOINT_COUNT] = {0, 2048, 4095};
+    uint8_t old_checkpoint[INFS_BLOCK_SIZE];
+    prepare_newer_deep_corrupt_generation(image, old_checkpoint);
+    image->is_device = 1;
+
+    struct infs_volume volume;
+    expect(open_image(image, 1, &volume) == INFS_STATUS_OK,
+           "degraded device recovery falls back after deep verification");
+    expect(infs_le64_to_cpu(volume.sb.generation) == 1u,
+           "degraded device recovery selected older valid graph");
+    infs_volume_close(&volume);
+
+    for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i) {
+        struct infs_superblock_disk healed;
+        expect(infs_decode_superblock(
+                   image->bytes + checkpoints[i] * INFS_BLOCK_SIZE,
+                   &healed) == INFS_STATUS_OK,
+               "decode device-recovery healed checkpoint");
+        expect(infs_le64_to_cpu(healed.generation) == 1u,
+               "device recovery healed only after deep validation");
+    }
+    image->is_device = 0;
+}
+
 static void check_checkpoint_graph_io_is_not_masked(struct memory_image *image)
 {
     uint8_t old_checkpoint[INFS_BLOCK_SIZE];
@@ -377,6 +435,34 @@ static void check_checkpoint_graph_io_is_not_masked(struct memory_image *image)
     expect(open_image(image, 0, &volume) == INFS_STATUS_IO_ERROR,
            "do not hide newer-generation graph I/O failure by falling back");
     image->fail_reads = 0;
+}
+
+static void check_generation_overflow(struct memory_image *image)
+{
+    const uint64_t checkpoints[INFS_CHECKPOINT_COUNT] = {0, 2048, 4095};
+    build_valid_image(image);
+
+    for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i) {
+        uint8_t raw[INFS_BLOCK_SIZE];
+        memcpy(raw, image->bytes + checkpoints[i] * INFS_BLOCK_SIZE,
+               sizeof(raw));
+        struct infs_superblock_disk sb;
+        expect(infs_decode_superblock(raw, &sb) == INFS_STATUS_OK,
+               "decode checkpoint for generation overflow");
+        sb.generation = infs_cpu_to_le64(UINT64_MAX);
+        expect(infs_encode_superblock(raw, &sb) == INFS_STATUS_OK,
+               "encode maximum generation checkpoint");
+        memcpy(image->bytes + checkpoints[i] * INFS_BLOCK_SIZE,
+               raw, sizeof(raw));
+    }
+
+    struct infs_volume volume;
+    expect(open_image(image, 1, &volume) == INFS_STATUS_OK,
+           "maximum committed generation remains readable");
+    expect(infs_create_file(&volume, "/overflow", &file_options) ==
+               INFS_STATUS_OVERFLOW,
+           "mutation rejects generation wrap before modifying state");
+    infs_volume_close(&volume);
 }
 
 static void check_rename_trailing_slashes(struct memory_image *image)
@@ -425,7 +511,9 @@ int main(void)
     check_checkpoint_replica_reads(&image);
     check_unreadable_newer_checkpoint_is_preserved(&image);
     check_checkpoint_graph_fallback(&image);
+    check_block_device_recovery_verifies_before_healing(&image);
     check_checkpoint_graph_io_is_not_masked(&image);
+    check_generation_overflow(&image);
     check_rename_trailing_slashes(&image);
 
     free(image.bytes);

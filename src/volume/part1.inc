@@ -171,6 +171,12 @@ static int tx_begin(struct infs_volume *vol)
     if (vol->tx_active)
         return vol->tx_error;
 
+    uint64_t next_generation = 0;
+    if (!infiltratr_u64_add_checked(infs_le64_to_cpu(vol->sb.generation),
+                                    UINT64_C(1), &next_generation) ||
+        next_generation == 0)
+        return INFS_STATUS_OVERFLOW;
+
     vol->tx_base_bitmap = malloc(vol->bitmap_bytes);
     if (!vol->tx_base_bitmap)
         return INFS_STATUS_NO_MEMORY;
@@ -454,10 +460,14 @@ static int write_object(struct infs_volume *vol, uint64_t block_no,
     if (status != INFS_STATUS_OK)
         return status;
 
+    uint64_t generation = 0;
+    status = transaction_next_generation(vol, &generation);
+    if (status != INFS_STATUS_OK)
+        return status;
+
     struct infs_object_header_disk *hdr =
         (struct infs_object_header_disk *)block;
-    hdr->generation = infs_cpu_to_le64(
-        infs_le64_to_cpu(vol->tx_base_sb.generation) + 1u);
+    hdr->generation = infs_cpu_to_le64(generation);
     status = infs_object_finalize(block);
     if (status != INFS_STATUS_OK)
         return status;

@@ -78,6 +78,25 @@ int main(void)
         DeleteFileW(path);
         return fail("bounded region open failed");
     }
+
+    /* A second writer to the same bounded region must be rejected while the
+     * first writer is alive. This is the portable CI analogue of the named
+     * per-partition writer mutex used for PhysicalDrive regions. */
+    struct infs_storage second = {0};
+    status = infs_win32_storage_open_partition_region(
+        &second, path, base, region, 1);
+    if (status == INFS_STATUS_OK) {
+        infs_storage_close(&second);
+        infs_storage_close(&storage);
+        DeleteFileW(path);
+        return fail("second writable region was not excluded");
+    }
+    if (status != INFS_STATUS_BUSY) {
+        infs_storage_close(&storage);
+        DeleteFileW(path);
+        return fail("second writable region did not report busy");
+    }
+
     status = infs_format_storage(&storage, "PartitionRegionCI");
     if (status != INFS_STATUS_OK) {
         infs_storage_close(&storage);
@@ -118,7 +137,7 @@ int main(void)
     }
     CloseHandle(file);
     DeleteFileW(path);
-    puts("Win32 partition-region bounded storage test passed");
+    puts("Win32 partition-region bounds and single-writer test passed");
     return 0;
 }
 #else

@@ -1,71 +1,69 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # InfiltratorFS
 
-InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem started in 2026. It is written in C and has no requirement to preserve on-disk compatibility with FAT, NTFS, ext, Amiga FFS or any other legacy filesystem.
+InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem started in 2026. The persistent format and core engine are written in portable C; Linux and Windows are adapters over the same on-disk structures rather than separate filesystem implementations.
 
-Linux is the first implementation and test platform. It is not part of the filesystem's identity: the on-disk format and core engine are designed so a future Windows implementation can use the same volume without conversion or reformatting.
+## Current status — implementation 0.9.11 / disk format 0.8
 
-## Current status — implementation 0.7.0 / format 0.7
+Format 0.8 is unchanged by the 0.9.x implementation releases. Media created by earlier Format 0.8 builds does **not** need to be reformatted to use 0.9.11.
 
-Implementation 0.7.0 adds inline small files as the next modern-storage feature. On inline-enabled Format 0.7 volumes, non-empty regular files up to 3,840 bytes can keep their contents and an independent SHA-256 digest inside the existing file metadata object instead of allocating separate data and checksum blocks. Growth beyond the threshold promotes the file transactionally to ordinary checksummed CoW extents; shrinking back to the threshold or below can fold it inline again. Format 0.7 retains read support for older Format 0.6 volumes and can also represent an extent-only 0.7 volume with the inline-data feature bit clear.
+Implementation 0.9.11 focuses on portability reuse, recovery safety and real-device I/O behaviour:
 
-Current properties include:
+- consumes **Infiltratr Common 1.11.0** for fixed-width endian conversion, strict UTF-8 validation, exact EINTR-safe positioned POSIX I/O and checked/saturating arithmetic;
+- keeps healthy real-device opens lightweight instead of performing a whole-filesystem scrub at mount time;
+- requires complete graph validation before a writable opener heals mixed/degraded checkpoint replicas, so fast mounting cannot overwrite the last known-good recovery generation;
+- rejects transaction-generation wrap instead of allowing `UINT64_MAX + 1` to fold to generation zero;
+- removes redundant Windows `FILE_FLAG_WRITE_THROUGH`; durability remains controlled by the filesystem's explicit `FlushFileBuffers` transaction barriers;
+- adds single-writer exclusion for Windows raw partition-region access while retaining bounded partition I/O;
+- keeps the Windows bulk-copy adapter on a bounded deferred-publication window to avoid publishing the full allocation bitmap for every small write chunk; and
+- preserves the 0.9.10 versioned Windows executable naming and embedded Windows File/Product version metadata.
 
-- 4096-byte little-endian on-disk format;
+Format 0.8 currently provides:
+
+- 4096-byte little-endian blocks;
 - nonzero 128-bit persistent filesystem and object identities;
-- normal and hole extents with zero-storage logical ranges;
-- inline small files up to 3,840 bytes on inline-enabled Format 0.7 volumes;
-- automatic inline-to-extent promotion and extent-to-inline folding without changing the file API;
-- authoritative free-space bitmap with exact live-block ownership validation and minimum-coverage geometry checks before bitmap traversal;
-- three physically separated, checksummed checkpoints;
-- descending-generation checkpoint selection with complete referenced-graph validation and corruption-only fallback to an older committed generation;
-- writable recovery that heals all readable checkpoint replicas to the selected committed generation and refuses to overwrite an unreadable replica;
-- transactional copy-on-write metadata, data and allocation state;
-- atomic old-or-new generation publication without journal replay;
-- CRC64-ECMA metadata checksums and SHA-256 file-data checksums;
-- independently stored per-block data checksums for extent-backed files and an embedded SHA-256 digest for inline files;
-- sparse checksum chains that allocate metadata only for stored extent data;
-- checksum-chain reachability validation so hidden checksum metadata cannot be orphaned or shared accidentally;
-- platform-neutral file attributes with birth, access, modification and metadata-change times;
-- portable file flags plus reserved references for future security and extended-attribute objects;
-- POSIX permissions isolated as optional Linux adapter metadata;
+- three physically separated checksummed checkpoints with generation-based recovery;
+- authoritative bitmap allocation plus next-fit runtime allocation hints;
+- transactional copy-on-write metadata/data publication;
+- paged directory and object-index metadata for scalable entry capacity;
+- inline small files and automatic inline/extent transitions;
+- normal and hole extents, sparse growth and hole punching;
+- shared extents/reflinks with CoW on later writes;
+- CRC64-ECMA metadata integrity and SHA-256 file-data integrity;
+- independently stored checksums for extent-backed data;
+- portable timestamps/attributes and optional POSIX compatibility metadata;
 - mandatory well-formed UTF-8 namespace components;
-- root-to-leaf namespace validation for unique names, target identity/type, parent links, link counts and reachability;
-- canonical zero/reserved-field validation for the current format contract;
-- callback-based storage, durable-flush, randomness and clock services, with writable opens requiring every mutation-critical service;
-- fail-closed close-and-reopen recovery after a commit-checkpoint write or flush whose outcome is indeterminate;
-- operating-system-neutral `infs_status` results preserved through public mutation/read helpers and translated only at adapter boundaries;
-- ordinary POSIX rename replacement semantics, including trailing-slash directory requirements;
-- genuinely read-only backing storage for FUSE `-r` / `-o ro` mounts;
-- normalized pre-epoch FUSE timestamps and overflow-checked `utimens` conversion;
-- block-device formatting that refuses mounted/held targets, acquires an exclusive Linux block-device open before destructive writes, and fails if the initial realtime clock query fails;
-- shared POSIX storage locks for concurrent read-only tools and an exclusive lock for writers and the formatter;
-- formatter publication ordering that leaves an interrupted format unmountable rather than publishing checkpoints before referenced metadata is durable;
-- byte-exact layout, malformed-image and deterministic in-memory volume conformance tests;
-- explicit regressions for undersized allocation bitmaps, incomplete writable backends, checkpoint-graph fallback, non-masked recovery I/O failures and rename trailing slashes;
-- dedicated inline threshold, sparse-gap, hole-punch, promotion, folding, scrub and remount tests;
-- high-offset sparse write, hole-punch, crash-atomicity and reclamation tests;
-- automated Linux, Windows/MSVC, Clang, ASan/UBSan and GCC `-fanalyzer` gates;
-- Linux/POSIX I/O and FUSE kept outside the portable core engine.
-
-The current prototype supports create, mkdir, lookup, enumeration, read, write, inline small-file storage, sparse grow, truncate, hole punch, unlink, empty-directory removal, atomic rename/replacement, attribute updates, direct-image tools and full-volume read-only scrub.
+- namespace, ownership, checksum-chain and metadata graph validation;
+- explicit read-only scrub/verify with file, data-block, checksum-error and metadata-error reporting;
+- callback-based storage, durability, randomness and clock services; and
+- operating-system-neutral `infs_status` values translated only at adapter boundaries.
 
 ## Platform model
 
 | Layer | Status |
 | --- | --- |
-| On-disk format | Platform-neutral format 0.7; Format 0.6 remains readable |
-| Core filesystem engine | Portable C17 with no Linux file descriptor or VFS types |
-| Storage interface | Callback-based and tested with POSIX files/devices and an in-memory backend |
-| Result interface | Stable `infs_status` values; native errors are adapter translations |
+| On-disk format | Platform-neutral Format 0.8 |
+| Core filesystem engine | Portable C17; no Linux fd/VFS or Win32 handle types |
+| Shared foundations | Infiltratr Common 1.11.0 |
+| Storage interface | Callback-based; POSIX, Win32 and in-memory test backends |
 | Linux userspace adapter | Implemented through POSIX I/O and FUSE3 |
-| Native Linux kernel driver | Planned |
-| Windows storage adapter and native driver | Planned; no format redesign should be required |
+| Windows transfer/raw-volume adapter | Implemented; opens Format 0.8 partitions without a drive letter or Windows filesystem driver |
+| Native Linux kernel driver | Future work |
+| Native Windows filesystem driver / Explorer mount | Future work |
+
+The Windows transfer application is **not** a Windows kernel filesystem driver. It discovers raw physical partitions, opens InfiltratorFS directly, lists the current root directory, copies files/folders and runs a full scrub. Explorer drive-letter mounting requires a future Windows filesystem driver, but no Format 0.8 conversion or reformat is intended to be necessary.
+
+## Infiltratr Common dependency
+
+InfiltratorFS pins Infiltratr Common 1.11.0. A parent/installed `InfiltratrCommon` package may provide the targets; otherwise the repository submodule is used. CMake also has an exact-commit FetchContent fallback for source archives where Git submodules are unavailable.
+
+The filesystem-specific transaction, allocation, namespace, checksum and on-disk-format rules remain inside InfiltratorFS. Common owns only generally reusable primitives.
 
 ## Build on Linux Mint
 
 ```bash
 sudo apt install build-essential cmake pkg-config libfuse3-dev fuse3
+git submodule update --init --recursive
 cmake -S . -B build
 cmake --build build
 ctest --test-dir build --output-on-failure
@@ -89,59 +87,59 @@ Exercise the filesystem without mounting:
 ./build/infilfs-tool infilfs.img punch /docs/README.md 4096 4096
 ```
 
-Mount read/write with the current Linux adapter:
+Mount read/write with FUSE:
 
 ```bash
 mkdir -p /tmp/infilfs-mnt
 ./build/infilfs-fuse infilfs.img /tmp/infilfs-mnt -f
 ```
 
-Mount read-only without opening the backing image/device writable:
+Mount read-only:
 
 ```bash
 ./build/infilfs-fuse infilfs.img /tmp/infilfs-mnt -f -o ro
 ```
 
+The FUSE adapter remains deliberately single-threaded while the current core is single-writer. POSIX storage uses shared locks for read-only openers and an exclusive lock for writers/formatters. Explicit `fsync` and final unmount publish any deferred transaction.
+
 ## Linux Mint desktop manager
 
-The Debian package installs **InfiltratorFS Manager** in Mint's application menu. It can:
+The Debian package installs **InfiltratorFS Manager**. It can create/format images, select removable partitions, format with destructive-action confirmation, inspect/scrub, mount through FUSE, open in Nemo and unmount safely. Mint Disks may display an InfiltratorFS partition as unknown because InfiltratorFS is not yet registered as a native UDisks filesystem type.
 
-- create and format an image file;
-- select a removable partition created in Mint Disks;
-- format a selected target with an explicit destructive-action confirmation;
-- inspect or scrub a volume;
-- mount it and open it in Nemo; and
-- unmount it safely.
+## Windows transfer application
 
-Mint Disks remains responsible for creating the disk partition. The manager deliberately lists removable partitions only and uses PolicyKit authorization for operations that need raw-device access. InfiltratorFS is not yet registered as a filesystem type with UDisks, so Mint Disks itself will continue to display a formatted partition as unknown.
+The Windows release contains a versioned executable such as:
 
-The FUSE adapter remains single-threaded while the core is a single-writer prototype. The POSIX backend enforces that model: multiple read-only openers may coexist, while a writable opener or formatter holds the storage target exclusively. On Linux Mint, `bash tests/mint-sparse-fuse.sh build` runs the real mounted 1 TiB sparse-file/write/punch/remount harness after the normal CTest suite.
+```text
+InfiltratorFS-Windows-0.9.11.exe
+```
+
+Run it elevated when accessing raw media. It can discover normal Windows volumes and SD/MMC/USB partitions directly from their physical partition tables, including a Format 0.8 partition with no drive letter. Writable raw-partition opens are bounded to the selected partition and use cooperative single-writer exclusion. Transaction durability is provided by explicit filesystem flush barriers rather than write-through on every individual block write.
+
+## Recovery and scrub
+
+A normal healthy block-device open validates the checkpoints, bitmap and essential root/index state needed for operation without walking every file. Full namespace/ownership/checksum graph verification belongs to **Scrub / Verify**.
+
+Recovery is stricter. If a writable block-device open sees checkpoint replicas that are missing or disagree, each candidate is fully graph-validated before any checkpoint copy is healed. A corrupt newer graph may fall back to an older valid committed generation; an unreadable checkpoint location remains a hard writable-open error because it might contain the only durable newer generation.
 
 ## Repository layout
 
 ```text
-include/infilfs/     portable format, storage and filesystem interfaces
-src/                 portable checksum, storage and filesystem core
-src/platform/        current platform adapters
-tools/               formatter, inspector, scrubber and direct-image utility
-fuse/                Linux FUSE3 adapter
-tests/               integrity, crash, namespace and portable-backend tests
-docs/                architecture, format, roadmap and design inspirations
+include/infilfs/          public format/storage/filesystem interfaces
+src/                      portable filesystem core
+src/infiltratr-common/    pinned Infiltratr Common submodule
+src/platform/             POSIX and Win32 storage adapters
+tools/                    formatter, inspector, scrubber and transfer tools
+fuse/                     Linux FUSE3 adapter
+tests/                    conformance, recovery, crash and platform tests
+docs/                     architecture and on-disk-format documentation
 ```
-
-## Documentation
-
-- `docs/ARCHITECTURE.md` — platform model, transaction design and long-term rules.
-- `docs/ON_DISK_FORMAT.md` — complete Format 0.7 specification.
-- `docs/CONFORMANCE.md` — byte-level contract and cross-platform test requirements.
-- `docs/ROADMAP.md` — completed work and future Linux/Windows integration.
-- `docs/INSPIRATIONS.md` — ideas borrowed, rejected or reinterpreted.
 
 ## Safety
 
-InfiltratorFS remains experimental. Use image files or disposable media only. Do not store irreplaceable data on Format 0.7.
+InfiltratorFS remains experimental. Keep backups and use disposable/test media while developing it.
 
-The current high-level FUSE adapter resolves operations by pathname and does not yet retain persistent inode/open-file state. POSIX open-handle semantics across unlink and rename are therefore incomplete; applications that keep descriptors open while names move or disappear can observe incorrect behaviour. Treat that workload as unsupported until the adapter has explicit handle-lifetime tests and implementation.
+The FUSE adapter currently resolves operations by pathname rather than retaining complete persistent open-inode state. POSIX open-handle behaviour across unlink/rename is therefore not yet the final kernel-filesystem model.
 
 ## License
 

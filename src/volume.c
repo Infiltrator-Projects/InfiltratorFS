@@ -6,12 +6,25 @@
 #include "infilfs/fs.h"
 #include "infilfs/storage.h"
 #include "infilfs/utf8.h"
+#include "infiltratr/core.h"
 
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 
 #define INFS_DIRENT_ALIGN 8u
+
+static infs_status transaction_next_generation(const struct infs_volume *vol,
+                                               uint64_t *generation)
+{
+    if (!vol || !generation)
+        return INFS_STATUS_INVALID_ARGUMENT;
+    uint64_t current = infs_le64_to_cpu(vol->tx_base_sb.generation);
+    if (!infiltratr_u64_add_checked(current, UINT64_C(1), generation) ||
+        *generation == 0)
+        return INFS_STATUS_OVERFLOW;
+    return INFS_STATUS_OK;
+}
 
 static int validate_common_metadata(
     const struct infs_attributes_disk *attributes,

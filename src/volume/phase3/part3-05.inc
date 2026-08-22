@@ -35,11 +35,16 @@ infs_status infs_volume_sync(struct infs_volume *vol)
     if (vol->tx_error != INFS_STATUS_OK)
         return vol->tx_error;
 
+    uint64_t next_generation = 0;
+    infs_status status = transaction_next_generation(vol, &next_generation);
+    if (status != INFS_STATUS_OK)
+        return status;
+
     const uint64_t old_bitmap_start =
         infs_le64_to_cpu(vol->tx_base_sb.bitmap_start_block);
     const uint64_t bitmap_blocks =
         infs_le64_to_cpu(vol->tx_base_sb.bitmap_block_count);
-    infs_status status = tx_defer_range(vol, old_bitmap_start, bitmap_blocks);
+    status = tx_defer_range(vol, old_bitmap_start, bitmap_blocks);
     if (status != INFS_STATUS_OK)
         return status;
 
@@ -78,8 +83,7 @@ infs_status infs_volume_sync(struct infs_volume *vol)
         bitmap_set(vol->bitmap, b, 1);
 
     vol->sb.bitmap_start_block = infs_cpu_to_le64(new_bitmap_start);
-    vol->sb.generation = infs_cpu_to_le64(
-        infs_le64_to_cpu(vol->tx_base_sb.generation) + 1u);
+    vol->sb.generation = infs_cpu_to_le64(next_generation);
     vol->sb.free_blocks = infs_cpu_to_le64(free_blocks);
 
     /* Ordered transaction protocol:
@@ -185,10 +189,8 @@ static infs_status finish_mutation(struct infs_volume *vol,
     if (vol->tx_error != INFS_STATUS_OK)
         return vol->tx_error;
 
-    if (UINT64_MAX - vol->tx_pending_bytes < approximate_dirty_bytes)
-        vol->tx_pending_bytes = UINT64_MAX;
-    else
-        vol->tx_pending_bytes += approximate_dirty_bytes;
+    vol->tx_pending_bytes = infiltratr_u64_add_saturating(
+        vol->tx_pending_bytes, approximate_dirty_bytes);
 
     if (!vol->deferred_publish)
         return infs_volume_sync(vol);

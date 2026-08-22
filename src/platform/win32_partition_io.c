@@ -14,6 +14,7 @@
 
 struct infs_win32_partition_context {
     HANDLE handle;
+    HANDLE writer_mutex;
     uint64_t base_offset;
     uint64_t region_size;
 };
@@ -182,6 +183,10 @@ static void partition_close(void *context)
         return;
     if (ctx->handle != INVALID_HANDLE_VALUE)
         CloseHandle(ctx->handle);
+    if (ctx->writer_mutex) {
+        ReleaseMutex(ctx->writer_mutex);
+        CloseHandle(ctx->writer_mutex);
+    }
     free(ctx);
 }
 
@@ -207,6 +212,41 @@ static int parse_physical_drive_number(const wchar_t *path, DWORD *disk_number)
         return 0;
     *disk_number = (DWORD)value;
     return 1;
+}
+
+static infs_status acquire_partition_writer_mutex(
+    const wchar_t *physical_path,
+    uint64_t base_offset,
+    uint64_t region_size,
+    HANDLE *mutex_out)
+{
+    if (!mutex_out)
+        return INFS_STATUS_INVALID_ARGUMENT;
+    *mutex_out = NULL;
+
+    DWORD disk_number = 0;
+    if (!parse_physical_drive_number(physical_path, &disk_number))
+        return INFS_STATUS_OK;
+
+    wchar_t name[192];
+    if (_snwprintf_s(name, sizeof(name) / sizeof(name[0]), _TRUNCATE,
+                     L"Global\\InfiltratorFS-Disk%lu-%016llX-%016llX",
+                     (unsigned long)disk_number,
+                     (unsigned long long)base_offset,
+                     (unsigned long long)region_size) < 0)
+        return INFS_STATUS_OVERFLOW;
+
+    HANDLE mutex = CreateMutexW(NULL, FALSE, name);
+    if (!mutex)
+        return status_from_win32(GetLastError());
+    DWORD wait = WaitForSingleObject(mutex, 0);
+    if (wait == WAIT_OBJECT_0 || wait == WAIT_ABANDONED) {
+        *mutex_out = mutex;
+        return INFS_STATUS_OK;
+    }
+    DWORD error = wait == WAIT_FAILED ? GetLastError() : ERROR_BUSY;
+    CloseHandle(mutex);
+    return status_from_win32(error);
 }
 
 static DRIVE_LAYOUT_INFORMATION_EX *read_drive_layout(HANDLE disk)
@@ -288,9 +328,26 @@ infs_status infs_win32_storage_open_partition_region(
     storage->ops = NULL;
     storage->context = NULL;
 
+    DWORD disk_number = 0;
+    int physical_path = parse_physical_drive_number(path, &disk_number);
+    (void)disk_number;
+
+    HANDLE writer_mutex = NULL;
+    if (writable && physical_path) {
+        infs_status lock_status = acquire_partition_writer_mutex(
+            path, base_offset, region_size, &writer_mutex);
+        if (lock_status != INFS_STATUS_OK)
+            return lock_status;
+    }
+
     DWORD access = GENERIC_READ | (writable ? GENERIC_WRITE : 0u);
-    DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
-    DWORD flags = FILE_ATTRIBUTE_NORMAL | (writable ? FILE_FLAG_WRITE_THROUGH : 0u);
+    /* Regular bounded files can use Win32 share denial directly. Physical
+     * disks need broad sharing because unrelated partitions and the storage
+     * stack may hold handles; their InfiltratorFS single-writer exclusion is
+     * provided by the region-specific named mutex above. */
+    DWORD share = writable && !physical_path ? 0u :
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+    DWORD flags = FILE_ATTRIBUTE_NORMAL;
 
     HANDLE handle = CreateFileW(path, access, share, NULL, OPEN_EXISTING,
                                 flags, NULL);
@@ -300,21 +357,37 @@ infs_status infs_win32_storage_open_partition_region(
         wchar_t partition_path[256];
         if (!resolve_partition_device(path, base_offset, region_size,
                                       partition_path,
-                                      sizeof(partition_path) / sizeof(partition_path[0])))
+                                      sizeof(partition_path) / sizeof(partition_path[0]))) {
+            if (writer_mutex) {
+                ReleaseMutex(writer_mutex);
+                CloseHandle(writer_mutex);
+            }
             return status_from_win32(first_error);
+        }
         handle = CreateFileW(partition_path, access, share, NULL,
                              OPEN_EXISTING, flags, NULL);
-        if (handle == INVALID_HANDLE_VALUE)
-            return status_from_win32(GetLastError());
+        if (handle == INVALID_HANDLE_VALUE) {
+            DWORD error = GetLastError();
+            if (writer_mutex) {
+                ReleaseMutex(writer_mutex);
+                CloseHandle(writer_mutex);
+            }
+            return status_from_win32(error);
+        }
         actual_base = 0;
     }
 
     struct infs_win32_partition_context *ctx = calloc(1u, sizeof(*ctx));
     if (!ctx) {
         CloseHandle(handle);
+        if (writer_mutex) {
+            ReleaseMutex(writer_mutex);
+            CloseHandle(writer_mutex);
+        }
         return INFS_STATUS_NO_MEMORY;
     }
     ctx->handle = handle;
+    ctx->writer_mutex = writer_mutex;
     ctx->base_offset = actual_base;
     ctx->region_size = region_size;
     storage->ops = &partition_ops;

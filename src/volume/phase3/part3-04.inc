@@ -71,6 +71,31 @@ static infs_status read_checkpoint_candidates(
         first_read_error : INFS_STATUS_CORRUPT;
 }
 
+static int checkpoint_candidates_all_agree(
+    const struct infs_superblock_disk candidates[INFS_CHECKPOINT_COUNT],
+    const uint8_t valid[INFS_CHECKPOINT_COUNT])
+{
+    int first = -1;
+    unsigned count = 0;
+    for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i) {
+        if (!valid[i])
+            continue;
+        if (first < 0)
+            first = (int)i;
+        ++count;
+    }
+    if (count != INFS_CHECKPOINT_COUNT || first < 0)
+        return 0;
+    for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i) {
+        if (i == (unsigned)first)
+            continue;
+        if (memcmp(&candidates[i], &candidates[first],
+                   sizeof(candidates[i])) != 0)
+            return 0;
+    }
+    return 1;
+}
+
 static infs_status load_checkpoint_graph(
     struct infs_volume *vol, const struct infs_superblock_disk *candidate,
     int full_verify)
@@ -227,13 +252,23 @@ infs_status infs_volume_open_storage(struct infs_volume *vol,
     status = infs_storage_get_size(&vol->storage, &vol->size_bytes, &is_block);
     if (status != INFS_STATUS_OK)
         goto fail;
-    int full_verify = !is_block;
 
     struct infs_superblock_disk candidates[INFS_CHECKPOINT_COUNT];
     uint8_t valid[INFS_CHECKPOINT_COUNT];
     status = read_checkpoint_candidates(vol, candidates, valid);
     if (status != INFS_STATUS_OK)
         goto fail;
+
+    /* Ordinary healthy block-device mounts stay lightweight. A writable
+     * recovery mount is different: if checkpoint replicas are missing or do
+     * not agree byte-for-byte, healing them could destroy the last known-good
+     * generation. In that degraded state require the complete graph checks
+     * while selecting the recovery candidate, then and only then repair the
+     * replicas. */
+    int full_verify = !is_block;
+    if (vol->writable && is_block &&
+        !checkpoint_candidates_all_agree(candidates, valid))
+        full_verify = 1;
 
     int selected = 0;
     for (unsigned attempt = 0; attempt < INFS_CHECKPOINT_COUNT; ++attempt) {

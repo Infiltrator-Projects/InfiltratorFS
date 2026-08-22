@@ -1,10 +1,44 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.20)
-project(InfiltratorFS VERSION 0.9.10 LANGUAGES C)
+project(InfiltratorFS VERSION 0.9.11 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
+
+set(INFILTRATR_COMMON_REQUIRED_VERSION "1.11.0")
+set(INFILTRATR_COMMON_REQUIRED_COMMIT
+    "6c1a6c239e51dcf7946b6303a9bad639e8455a17")
+
+# InfiltratorFS consumes the same Common contract as the other Infiltrator
+# projects. Prefer a parent-provided/installed 1.11.0 package, then the pinned
+# submodule. A source checkout without initialised submodules still remains
+# buildable by fetching the exact immutable Common commit.
+if(NOT TARGET InfiltratrCommon::Portable)
+    find_package(InfiltratrCommon ${INFILTRATR_COMMON_REQUIRED_VERSION} EXACT
+                 CONFIG QUIET)
+endif()
+if(NOT TARGET InfiltratrCommon::Portable)
+    set(INFILTRATR_COMMON_BUILD_TESTS OFF CACHE BOOL
+        "Build Infiltratr Common tests as part of InfiltratorFS" FORCE)
+    set(INFILTRATR_COMMON_WARNINGS_AS_ERRORS OFF CACHE BOOL
+        "Treat vendored Infiltratr Common warnings as errors" FORCE)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/infiltratr-common/CMakeLists.txt")
+        add_subdirectory(src/infiltratr-common EXCLUDE_FROM_ALL)
+    else()
+        include(FetchContent)
+        FetchContent_Declare(infiltratr_common
+            GIT_REPOSITORY https://github.com/The-First-Infiltrator/Infiltrator-Libraries.git
+            GIT_TAG ${INFILTRATR_COMMON_REQUIRED_COMMIT}
+            GIT_SHALLOW FALSE)
+        FetchContent_MakeAvailable(infiltratr_common)
+    endif()
+endif()
+if(NOT TARGET InfiltratrCommon::Portable OR
+   NOT TARGET InfiltratrCommon::Common)
+    message(FATAL_ERROR
+        "Infiltratr Common ${INFILTRATR_COMMON_REQUIRED_VERSION} is required")
+endif()
 
 function(infilfs_enable_warnings target)
     if(MSVC)
@@ -24,6 +58,7 @@ add_library(infilfs_core STATIC
     src/format_volume.c
 )
 target_include_directories(infilfs_core PUBLIC include)
+target_link_libraries(infilfs_core PUBLIC InfiltratrCommon::Portable)
 infilfs_enable_warnings(infilfs_core)
 
 add_executable(infilfs-checksum-test tests/checksum-test.c)
@@ -126,7 +161,8 @@ endif()
 if(UNIX)
     add_library(infilfs_posix STATIC src/platform/posix_io.c)
     target_include_directories(infilfs_posix PUBLIC include)
-    target_link_libraries(infilfs_posix PUBLIC infilfs_core)
+    target_link_libraries(infilfs_posix PUBLIC
+        infilfs_core InfiltratrCommon::Common)
     target_compile_definitions(infilfs_posix PRIVATE _GNU_SOURCE)
     infilfs_enable_warnings(infilfs_posix)
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "infilfs/posix_io.h"
 #include "infilfs/volume.h"
+#include "infiltratr/posix_io.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -74,50 +75,12 @@ int infs_status_to_errno(infs_status status)
 
 int infs_pread_full(int fd, void *buf, size_t count, uint64_t offset)
 {
-    uint8_t *p = buf;
-    while (count) {
-        if (offset > (uint64_t)INT64_MAX) {
-            errno = EOVERFLOW;
-            return -1;
-        }
-        ssize_t n = pread(fd, p, count, (off_t)offset);
-        if (n < 0) {
-            if (errno == EINTR) continue;
-            return -1;
-        }
-        if (n == 0) {
-            errno = EIO;
-            return -1;
-        }
-        p += (size_t)n;
-        count -= (size_t)n;
-        offset += n;
-    }
-    return 0;
+    return infiltratr_pread_full(fd, buf, count, offset);
 }
 
 int infs_pwrite_full(int fd, const void *buf, size_t count, uint64_t offset)
 {
-    const uint8_t *p = buf;
-    while (count) {
-        if (offset > (uint64_t)INT64_MAX) {
-            errno = EOVERFLOW;
-            return -1;
-        }
-        ssize_t n = pwrite(fd, p, count, (off_t)offset);
-        if (n < 0) {
-            if (errno == EINTR) continue;
-            return -1;
-        }
-        if (n == 0) {
-            errno = EIO;
-            return -1;
-        }
-        p += (size_t)n;
-        count -= (size_t)n;
-        offset += n;
-    }
-    return 0;
+    return infiltratr_pwrite_full(fd, buf, count, offset);
 }
 
 int infs_get_size_bytes(int fd, uint64_t *size_bytes, int *is_block_device)
@@ -175,7 +138,7 @@ static infs_status posix_read_at(void *context, uint64_t offset,
                                  void *buffer, size_t size)
 {
     struct infs_posix_storage_context *posix = context;
-    if (infs_pread_full(posix->fd, buffer, size, offset) != 0)
+    if (infiltratr_pread_full(posix->fd, buffer, size, offset) != 0)
         return infs_status_from_errno(errno);
     return INFS_STATUS_OK;
 }
@@ -184,7 +147,7 @@ static infs_status posix_write_at(void *context, uint64_t offset,
                                   const void *buffer, size_t size)
 {
     struct infs_posix_storage_context *posix = context;
-    if (infs_pwrite_full(posix->fd, buffer, size, offset) != 0)
+    if (infiltratr_pwrite_full(posix->fd, buffer, size, offset) != 0)
         return infs_status_from_errno(errno);
     return INFS_STATUS_OK;
 }
