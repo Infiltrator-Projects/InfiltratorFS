@@ -4,6 +4,7 @@
 #define _UNICODE
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <winioctl.h>
 #include <commdlg.h>
 #include <shellapi.h>
 #include <shlobj.h>
@@ -22,6 +23,10 @@
 #include <string.h>
 #include <wchar.h>
 
+#ifndef INFILFS_VERSION_W
+#define INFILFS_VERSION_W L"0.9.5"
+#endif
+
 #define IDC_TARGET       1001
 #define IDC_REFRESH      1002
 #define IDC_LABEL        1003
@@ -38,14 +43,21 @@
 #define IDM_FILE_EXIT    2003
 #define IDM_HELP_ABOUT   2101
 
-#define MAX_TARGETS      128u
-#define TARGET_PATH_MAX  128u
+#define MAX_TARGETS      256u
+#define TARGET_PATH_MAX  160u
+#define MAX_SYSTEM_DISKS 16u
+#define MAX_PHYSICAL_DISKS 64u
 
 struct target_volume {
     wchar_t device_path[TARGET_PATH_MAX];
     wchar_t volume_name[TARGET_PATH_MAX];
     wchar_t mount_point[MAX_PATH];
     uint64_t size_bytes;
+    uint64_t region_offset;
+    DWORD disk_number;
+    DWORD partition_number;
+    int have_disk_location;
+    int use_region;
     int is_infiltrator;
     uint16_t format_major;
     uint16_t format_minor;
@@ -57,6 +69,8 @@ static int g_volume_open = 0;
 static HWND g_main_window = NULL;
 static struct target_volume g_targets[MAX_TARGETS];
 static size_t g_target_count = 0;
+static DWORD g_system_disks[MAX_SYSTEM_DISKS];
+static size_t g_system_disk_count = 0;
 
 static void set_status(const wchar_t *text)
 {
@@ -89,13 +103,6 @@ static void close_volume(void)
     }
 }
 
-static void update_buttons(void)
-{
-    EnableWindow(GetDlgItem(g_main_window, IDC_ADD_FILES), g_volume_open);
-    EnableWindow(GetDlgItem(g_main_window, IDC_ADD_FOLDER), g_volume_open);
-    EnableWindow(GetDlgItem(g_main_window, IDC_SCRUB), g_volume_open);
-}
-
 static struct target_volume *selected_target(void)
 {
     HWND combo = GetDlgItem(g_main_window, IDC_TARGET);
@@ -106,6 +113,16 @@ static struct target_volume *selected_target(void)
     if (data == CB_ERR || data < 0 || (size_t)data >= g_target_count)
         return NULL;
     return &g_targets[(size_t)data];
+}
+
+static void update_buttons(void)
+{
+    int have_target = selected_target() != NULL;
+    EnableWindow(GetDlgItem(g_main_window, IDC_FORMAT), have_target);
+    EnableWindow(GetDlgItem(g_main_window, IDC_OPEN), have_target);
+    EnableWindow(GetDlgItem(g_main_window, IDC_ADD_FILES), g_volume_open);
+    EnableWindow(GetDlgItem(g_main_window, IDC_ADD_FOLDER), g_volume_open);
+    EnableWindow(GetDlgItem(g_main_window, IDC_SCRUB), g_volume_open);
 }
 
 static void trim_volume_slash(const wchar_t *volume_name,
@@ -132,35 +149,98 @@ static int first_mount_point(const wchar_t *volume_name,
     return 1;
 }
 
+static int disk_is_system(DWORD disk_number)
+{
+    for (size_t i = 0; i < g_system_disk_count; ++i) {
+        if (g_system_disks[i] == disk_number)
+            return 1;
+    }
+    return 0;
+}
+
+static void remember_system_disk(DWORD disk_number)
+{
+    if (disk_is_system(disk_number) || g_system_disk_count >= MAX_SYSTEM_DISKS)
+        return;
+    g_system_disks[g_system_disk_count++] = disk_number;
+}
+
+static int query_volume_extents(const wchar_t *device_path,
+                                VOLUME_DISK_EXTENTS **out_extents)
+{
+    if (!out_extents)
+        return 0;
+    *out_extents = NULL;
+    HANDLE handle = CreateFileW(device_path, GENERIC_READ,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (handle == INVALID_HANDLE_VALUE)
+        return 0;
+
+    size_t capacity = sizeof(VOLUME_DISK_EXTENTS) + 15u * sizeof(DISK_EXTENT);
+    for (unsigned attempt = 0; attempt < 8u; ++attempt) {
+        if (capacity > UINT32_MAX) {
+            CloseHandle(handle);
+            return 0;
+        }
+        VOLUME_DISK_EXTENTS *extents = malloc(capacity);
+        if (!extents) {
+            CloseHandle(handle);
+            return 0;
+        }
+        DWORD returned = 0;
+        if (DeviceIoControl(handle, IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS,
+                            NULL, 0, extents, (DWORD)capacity,
+                            &returned, NULL)) {
+            CloseHandle(handle);
+            *out_extents = extents;
+            return 1;
+        }
+        DWORD error = GetLastError();
+        free(extents);
+        if (error != ERROR_MORE_DATA)
+            break;
+        capacity *= 2u;
+    }
+    CloseHandle(handle);
+    return 0;
+}
+
+static void discover_system_disks(void)
+{
+    g_system_disk_count = 0;
+    wchar_t windows_dir[MAX_PATH] = {0};
+    if (!GetWindowsDirectoryW(windows_dir, MAX_PATH) || !windows_dir[0])
+        return;
+    wchar_t device[8] = L"\\\\.\\C:";
+    device[4] = windows_dir[0];
+    VOLUME_DISK_EXTENTS *extents = NULL;
+    if (!query_volume_extents(device, &extents))
+        return;
+    for (DWORD i = 0; i < extents->NumberOfDiskExtents; ++i)
+        remember_system_disk(extents->Extents[i].DiskNumber);
+    free(extents);
+}
+
 static int volume_is_system(const wchar_t *volume_name,
                             const wchar_t *system_volume)
 {
-    if (!system_volume[0])
+    if (system_volume[0] && _wcsicmp(volume_name, system_volume) == 0)
+        return 1;
+    wchar_t device[TARGET_PATH_MAX];
+    trim_volume_slash(volume_name, device);
+    VOLUME_DISK_EXTENTS *extents = NULL;
+    if (!query_volume_extents(device, &extents))
         return 0;
-    return _wcsicmp(volume_name, system_volume) == 0;
-}
-
-static int probe_infiltratorfs(const wchar_t *device_path,
-                               uint64_t *size_bytes,
-                               struct infs_superblock_disk *sb)
-{
-    struct infs_storage storage = {0};
-    infs_status status = infs_win32_storage_open(&storage, device_path, 0, 0);
-    if (status != INFS_STATUS_OK)
-        return 0;
-
-    int is_device = 0;
-    status = infs_storage_get_size(&storage, size_bytes, &is_device);
-    if (status != INFS_STATUS_OK) {
-        infs_storage_close(&storage);
-        return 0;
+    int result = 0;
+    for (DWORD i = 0; i < extents->NumberOfDiskExtents; ++i) {
+        if (disk_is_system(extents->Extents[i].DiskNumber)) {
+            result = 1;
+            break;
+        }
     }
-    (void)is_device;
-
-    unsigned valid = 0;
-    status = infs_read_best_superblock(&storage, *size_bytes, sb, &valid);
-    infs_storage_close(&storage);
-    return status == INFS_STATUS_OK && valid != 0;
+    free(extents);
+    return result;
 }
 
 static void superblock_label_to_wide(const struct infs_superblock_disk *sb,
@@ -174,34 +254,103 @@ static void superblock_label_to_wide(const struct infs_superblock_disk *sb,
         wcscpy_s(out, INFS_LABEL_MAX + 1u, L"InfiltratorFS");
 }
 
-static int add_target(HWND combo, const wchar_t *volume_name,
-                      const wchar_t *system_volume)
+static int probe_infiltratorfs_volume(const wchar_t *device_path,
+                                      uint64_t *size_bytes,
+                                      struct infs_superblock_disk *sb)
 {
-    if (g_target_count >= MAX_TARGETS || volume_is_system(volume_name, system_volume))
+    struct infs_storage storage = {0};
+    infs_status status = infs_win32_storage_open(&storage, device_path, 0, 0);
+    if (status != INFS_STATUS_OK)
+        return 0;
+    int is_device = 0;
+    status = infs_storage_get_size(&storage, size_bytes, &is_device);
+    if (status != INFS_STATUS_OK) {
+        infs_storage_close(&storage);
+        return 0;
+    }
+    (void)is_device;
+    unsigned valid = 0;
+    status = infs_read_best_superblock(&storage, *size_bytes, sb, &valid);
+    infs_storage_close(&storage);
+    return status == INFS_STATUS_OK && valid != 0;
+}
+
+static int probe_infiltratorfs_region(const wchar_t *device_path,
+                                      uint64_t offset, uint64_t size_bytes,
+                                      struct infs_superblock_disk *sb)
+{
+    struct infs_storage storage = {0};
+    infs_status status = infs_win32_storage_open_region(
+        &storage, device_path, offset, size_bytes, 0);
+    if (status != INFS_STATUS_OK)
+        return 0;
+    unsigned valid = 0;
+    status = infs_read_best_superblock(&storage, size_bytes, sb, &valid);
+    infs_storage_close(&storage);
+    return status == INFS_STATUS_OK && valid != 0;
+}
+
+static int add_combo_target(HWND combo, struct target_volume *candidate,
+                            const wchar_t *display)
+{
+    if (g_target_count >= MAX_TARGETS)
+        return 0;
+    size_t target_index = g_target_count;
+    g_targets[target_index] = *candidate;
+    LRESULT combo_index = SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)display);
+    if (combo_index == CB_ERR || combo_index == CB_ERRSPACE)
+        return 0;
+    SendMessageW(combo, CB_SETITEMDATA, (WPARAM)combo_index,
+                 (LPARAM)target_index);
+    ++g_target_count;
+    return candidate->is_infiltrator ? 2 : 1;
+}
+
+static int add_volume_target(HWND combo, const wchar_t *volume_name,
+                             const wchar_t *system_volume)
+{
+    if (g_target_count >= MAX_TARGETS ||
+        volume_is_system(volume_name, system_volume))
         return 0;
 
     struct target_volume candidate;
     memset(&candidate, 0, sizeof(candidate));
-    wcsncpy_s(candidate.volume_name, TARGET_PATH_MAX, volume_name, _TRUNCATE);
+    wcsncpy_s(candidate.volume_name, TARGET_PATH_MAX,
+              volume_name, _TRUNCATE);
     trim_volume_slash(volume_name, candidate.device_path);
     int has_mount = first_mount_point(volume_name, candidate.mount_point);
 
+    VOLUME_DISK_EXTENTS *extents = NULL;
+    if (query_volume_extents(candidate.device_path, &extents)) {
+        if (extents->NumberOfDiskExtents == 1u) {
+            candidate.have_disk_location = 1;
+            candidate.disk_number = extents->Extents[0].DiskNumber;
+            candidate.region_offset =
+                (uint64_t)extents->Extents[0].StartingOffset.QuadPart;
+            candidate.size_bytes =
+                (uint64_t)extents->Extents[0].ExtentLength.QuadPart;
+        }
+        free(extents);
+    }
+
     struct infs_superblock_disk sb;
     memset(&sb, 0, sizeof(sb));
-    candidate.is_infiltrator = probe_infiltratorfs(candidate.device_path,
-                                                   &candidate.size_bytes, &sb);
+    uint64_t probed_size = 0;
+    candidate.is_infiltrator = probe_infiltratorfs_volume(
+        candidate.device_path, &probed_size, &sb);
+    if (probed_size)
+        candidate.size_bytes = probed_size;
     if (candidate.is_infiltrator) {
         candidate.format_major = infs_le16_to_cpu(sb.format_major);
         candidate.format_minor = infs_le16_to_cpu(sb.format_minor);
         superblock_label_to_wide(&sb, candidate.infs_label);
     }
 
-    /* Keep ordinary mounted Windows volumes available for formatting, but do
-     * not expose anonymous EFI/recovery/raw volumes merely because they exist.
-     * An unmounted volume is shown automatically when it positively identifies
-     * itself as InfiltratorFS. */
-    if (!candidate.is_infiltrator && !has_mount)
-        return 0;
+    if (!candidate.size_bytes && has_mount) {
+        ULARGE_INTEGER total = {0};
+        if (GetDiskFreeSpaceExW(candidate.mount_point, NULL, &total, NULL))
+            candidate.size_bytes = (uint64_t)total.QuadPart;
+    }
 
     wchar_t windows_fs[64] = L"RAW / unknown";
     wchar_t windows_label[MAX_PATH] = L"";
@@ -212,7 +361,7 @@ static int add_target(HWND combo, const wchar_t *volume_name,
                               (DWORD)(sizeof(windows_fs) / sizeof(windows_fs[0])));
     }
 
-    wchar_t location[80];
+    wchar_t location[96];
     if (has_mount && wcslen(candidate.mount_point) >= 2u &&
         candidate.mount_point[1] == L':') {
         _snwprintf_s(location, sizeof(location) / sizeof(location[0]), _TRUNCATE,
@@ -220,12 +369,18 @@ static int add_target(HWND combo, const wchar_t *volume_name,
     } else if (has_mount) {
         wcsncpy_s(location, sizeof(location) / sizeof(location[0]),
                   candidate.mount_point, _TRUNCATE);
+    } else if (candidate.have_disk_location) {
+        _snwprintf_s(location, sizeof(location) / sizeof(location[0]), _TRUNCATE,
+                     L"Disk %lu / no drive letter",
+                     (unsigned long)candidate.disk_number);
     } else {
-        wcscpy_s(location, sizeof(location) / sizeof(location[0]), L"No drive letter");
+        wcscpy_s(location, sizeof(location) / sizeof(location[0]),
+                  L"No drive letter");
     }
 
-    wchar_t display[384];
-    double gib = (double)candidate.size_bytes / (1024.0 * 1024.0 * 1024.0);
+    wchar_t display[448];
+    double gib = (double)candidate.size_bytes /
+                 (1024.0 * 1024.0 * 1024.0);
     if (candidate.is_infiltrator) {
         _snwprintf_s(display, sizeof(display) / sizeof(display[0]), _TRUNCATE,
                      L"[InfiltratorFS %u.%u]  %s  %.2f GiB  %s",
@@ -233,25 +388,164 @@ static int add_target(HWND combo, const wchar_t *volume_name,
                      (unsigned)candidate.format_minor,
                      location, gib,
                      candidate.infs_label[0] ? candidate.infs_label : L"InfiltratorFS");
-    } else if (candidate.size_bytes) {
+    } else {
         _snwprintf_s(display, sizeof(display) / sizeof(display[0]), _TRUNCATE,
                      L"%s  %s  %.2f GiB%s%s",
                      location, windows_fs, gib,
                      windows_label[0] ? L"  " : L"",
                      windows_label);
-    } else {
-        _snwprintf_s(display, sizeof(display) / sizeof(display[0]), _TRUNCATE,
-                     L"%s  %s", location, windows_fs);
+    }
+    return add_combo_target(combo, &candidate, display);
+}
+
+static int target_matches_partition(DWORD disk_number,
+                                    uint64_t offset, uint64_t size_bytes)
+{
+    for (size_t i = 0; i < g_target_count; ++i) {
+        const struct target_volume *target = &g_targets[i];
+        if (!target->have_disk_location)
+            continue;
+        if (target->disk_number == disk_number &&
+            target->region_offset == offset &&
+            target->size_bytes == size_bytes)
+            return 1;
+    }
+    return 0;
+}
+
+static int physical_disk_is_removable(HANDLE disk)
+{
+    STORAGE_HOTPLUG_INFO hotplug;
+    DWORD returned = 0;
+    memset(&hotplug, 0, sizeof(hotplug));
+    hotplug.Size = sizeof(hotplug);
+    if (!DeviceIoControl(disk, IOCTL_STORAGE_GET_HOTPLUG_INFO,
+                         NULL, 0, &hotplug, sizeof(hotplug),
+                         &returned, NULL))
+        return 0;
+    return hotplug.MediaRemovable || hotplug.DeviceHotplug;
+}
+
+static DRIVE_LAYOUT_INFORMATION_EX *read_drive_layout(HANDLE disk)
+{
+    size_t capacity = 64u * 1024u;
+    for (unsigned attempt = 0; attempt < 6u; ++attempt) {
+        if (capacity > UINT32_MAX)
+            return NULL;
+        DRIVE_LAYOUT_INFORMATION_EX *layout = malloc(capacity);
+        if (!layout)
+            return NULL;
+        DWORD returned = 0;
+        if (DeviceIoControl(disk, IOCTL_DISK_GET_DRIVE_LAYOUT_EX,
+                            NULL, 0, layout, (DWORD)capacity,
+                            &returned, NULL))
+            return layout;
+        DWORD error = GetLastError();
+        free(layout);
+        if (error != ERROR_INSUFFICIENT_BUFFER && error != ERROR_MORE_DATA)
+            return NULL;
+        capacity *= 2u;
+    }
+    return NULL;
+}
+
+static int add_physical_partition_target(HWND combo, DWORD disk_number,
+                                         const PARTITION_INFORMATION_EX *part,
+                                         int removable)
+{
+    if (!part || part->PartitionNumber == 0 ||
+        part->StartingOffset.QuadPart < 0 ||
+        part->PartitionLength.QuadPart <= 0)
+        return 0;
+
+    uint64_t offset = (uint64_t)part->StartingOffset.QuadPart;
+    uint64_t size_bytes = (uint64_t)part->PartitionLength.QuadPart;
+    if (target_matches_partition(disk_number, offset, size_bytes))
+        return 0;
+
+    struct target_volume candidate;
+    memset(&candidate, 0, sizeof(candidate));
+    _snwprintf_s(candidate.device_path,
+                 sizeof(candidate.device_path) / sizeof(candidate.device_path[0]),
+                 _TRUNCATE, L"\\\\.\\PhysicalDrive%lu",
+                 (unsigned long)disk_number);
+    candidate.size_bytes = size_bytes;
+    candidate.region_offset = offset;
+    candidate.disk_number = disk_number;
+    candidate.partition_number = part->PartitionNumber;
+    candidate.have_disk_location = 1;
+    candidate.use_region = 1;
+
+    struct infs_superblock_disk sb;
+    memset(&sb, 0, sizeof(sb));
+    candidate.is_infiltrator = probe_infiltratorfs_region(
+        candidate.device_path, offset, size_bytes, &sb);
+    if (candidate.is_infiltrator) {
+        candidate.format_major = infs_le16_to_cpu(sb.format_major);
+        candidate.format_minor = infs_le16_to_cpu(sb.format_minor);
+        superblock_label_to_wide(&sb, candidate.infs_label);
     }
 
-    size_t target_index = g_target_count;
-    g_targets[target_index] = candidate;
-    LRESULT combo_index = SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)display);
-    if (combo_index == CB_ERR || combo_index == CB_ERRSPACE)
+    /* Always surface positively identified InfiltratorFS partitions. Raw
+     * anonymous partitions are only surfaced on removable/hot-plug media so
+     * the formatter remains useful without presenting internal system/data
+     * partitions as casual destructive targets. */
+    if (!candidate.is_infiltrator && !removable)
         return 0;
-    SendMessageW(combo, CB_SETITEMDATA, (WPARAM)combo_index, (LPARAM)target_index);
-    ++g_target_count;
-    return candidate.is_infiltrator ? 2 : 1;
+
+    wchar_t display[448];
+    double gib = (double)size_bytes / (1024.0 * 1024.0 * 1024.0);
+    if (candidate.is_infiltrator) {
+        _snwprintf_s(display, sizeof(display) / sizeof(display[0]), _TRUNCATE,
+                     L"[InfiltratorFS %u.%u]  Disk %lu partition %lu  %.2f GiB  %s",
+                     (unsigned)candidate.format_major,
+                     (unsigned)candidate.format_minor,
+                     (unsigned long)disk_number,
+                     (unsigned long)part->PartitionNumber,
+                     gib,
+                     candidate.infs_label[0] ? candidate.infs_label : L"InfiltratorFS");
+    } else {
+        _snwprintf_s(display, sizeof(display) / sizeof(display[0]), _TRUNCATE,
+                     L"[RAW partition]  Disk %lu partition %lu  %.2f GiB",
+                     (unsigned long)disk_number,
+                     (unsigned long)part->PartitionNumber,
+                     gib);
+    }
+    return add_combo_target(combo, &candidate, display);
+}
+
+static void enumerate_physical_partitions(HWND combo,
+                                          int *added,
+                                          int *infiltrator_count)
+{
+    for (DWORD disk_number = 0; disk_number < MAX_PHYSICAL_DISKS; ++disk_number) {
+        if (disk_is_system(disk_number))
+            continue;
+        wchar_t path[64];
+        _snwprintf_s(path, sizeof(path) / sizeof(path[0]), _TRUNCATE,
+                     L"\\\\.\\PhysicalDrive%lu", (unsigned long)disk_number);
+        HANDLE disk = CreateFileW(path, GENERIC_READ,
+                                  FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                  NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (disk == INVALID_HANDLE_VALUE)
+            continue;
+        int removable = physical_disk_is_removable(disk);
+        DRIVE_LAYOUT_INFORMATION_EX *layout = read_drive_layout(disk);
+        CloseHandle(disk);
+        if (!layout)
+            continue;
+
+        for (DWORD i = 0; i < layout->PartitionCount; ++i) {
+            int result = add_physical_partition_target(
+                combo, disk_number, &layout->PartitionEntry[i], removable);
+            if (result) {
+                ++*added;
+                if (result == 2)
+                    ++*infiltrator_count;
+            }
+        }
+        free(layout);
+    }
 }
 
 static void refresh_volumes(void)
@@ -259,6 +553,7 @@ static void refresh_volumes(void)
     HWND combo = GetDlgItem(g_main_window, IDC_TARGET);
     SendMessageW(combo, CB_RESETCONTENT, 0, 0);
     g_target_count = 0;
+    discover_system_disks();
 
     wchar_t system_volume[TARGET_PATH_MAX] = L"";
     wchar_t windows_dir[MAX_PATH] = {0};
@@ -269,15 +564,15 @@ static void refresh_volumes(void)
                                                   sizeof(system_volume[0])));
     }
 
+    int added = 0;
+    int infiltrator_count = 0;
     wchar_t volume_name[TARGET_PATH_MAX];
     HANDLE find = FindFirstVolumeW(volume_name,
                                    (DWORD)(sizeof(volume_name) /
                                            sizeof(volume_name[0])));
-    int added = 0;
-    int infiltrator_count = 0;
     if (find != INVALID_HANDLE_VALUE) {
         for (;;) {
-            int result = add_target(combo, volume_name, system_volume);
+            int result = add_volume_target(combo, volume_name, system_volume);
             if (result) {
                 ++added;
                 if (result == 2)
@@ -291,19 +586,25 @@ static void refresh_volumes(void)
         FindVolumeClose(find);
     }
 
+    /* Critical for filesystems Windows does not understand: those partitions
+     * can exist in Disk Management without any Win32 volume GUID. Walk the
+     * physical partition tables and probe bounded partition regions directly. */
+    enumerate_physical_partitions(combo, &added, &infiltrator_count);
+
     if (added)
         SendMessageW(combo, CB_SETCURSEL, 0, 0);
+    update_buttons();
 
     if (infiltrator_count > 0) {
-        wchar_t text[192];
+        wchar_t text[224];
         _snwprintf_s(text, sizeof(text) / sizeof(text[0]), _TRUNCATE,
-                     L"Found %d InfiltratorFS volume%s. Volumes do not need a Windows drive letter.",
+                     L"Found %d InfiltratorFS partition%s. Drive letters and Windows filesystem drivers are not required.",
                      infiltrator_count, infiltrator_count == 1 ? L"" : L"s");
         set_status(text);
     } else if (added) {
-        set_status(L"No InfiltratorFS volume detected. Mounted non-system volumes are available for formatting.");
+        set_status(L"No InfiltratorFS partition detected. Non-system Windows volumes and removable raw partitions are shown.");
     } else {
-        set_status(L"No usable non-system volumes were found.");
+        set_status(L"No usable non-system volumes or partitions were found.");
     }
 }
 
@@ -349,7 +650,8 @@ static int copy_host_file(const wchar_t *host_path, const char *dest_path)
     if (input == INVALID_HANDLE_VALUE)
         return 0;
 
-    struct infs_create_options options = {0};
+    struct infs_create_options options;
+    memset(&options, 0, sizeof(options));
     options.posix_permissions = 0644u;
     infs_status status = infs_create_file(&g_volume, dest_path, &options);
     if (status == INFS_STATUS_ALREADY_EXISTS)
@@ -409,7 +711,8 @@ static int copy_host_path(const wchar_t *host_path, const char *parent_dest)
         return 0;
     char name[INFS_NAME_MAX + 1u];
     if (!utf8_component(base, name)) {
-        MessageBoxW(g_main_window, L"A filename is too long or cannot be represented as UTF-8.",
+        MessageBoxW(g_main_window,
+                    L"A filename is too long or cannot be represented as UTF-8.",
                     L"InfiltratorFS", MB_OK | MB_ICONERROR);
         return 0;
     }
@@ -418,14 +721,15 @@ static int copy_host_path(const wchar_t *host_path, const char *parent_dest)
         return 0;
 
     wchar_t status_text[512];
-    _snwprintf_s(status_text, sizeof(status_text) / sizeof(status_text[0]), _TRUNCATE,
-                 L"Copying %s ...", base);
+    _snwprintf_s(status_text, sizeof(status_text) / sizeof(status_text[0]),
+                 _TRUNCATE, L"Copying %s ...", base);
     set_status(status_text);
 
     if (!(attrs & FILE_ATTRIBUTE_DIRECTORY))
         return copy_host_file(host_path, dest);
 
-    struct infs_create_options options = {0};
+    struct infs_create_options options;
+    memset(&options, 0, sizeof(options));
     options.posix_permissions = 0755u;
     infs_status status = infs_mkdir(&g_volume, dest, &options);
     if (status != INFS_STATUS_OK && status != INFS_STATUS_ALREADY_EXISTS) {
@@ -443,7 +747,8 @@ static int copy_host_path(const wchar_t *host_path, const char *parent_dest)
         return GetLastError() == ERROR_FILE_NOT_FOUND;
     int okay = 1;
     do {
-        if (wcscmp(data.cFileName, L".") == 0 || wcscmp(data.cFileName, L"..") == 0)
+        if (wcscmp(data.cFileName, L".") == 0 ||
+            wcscmp(data.cFileName, L"..") == 0)
             continue;
         wchar_t child[32768];
         if (_snwprintf_s(child, sizeof(child) / sizeof(child[0]), _TRUNCATE,
@@ -475,38 +780,62 @@ static void refresh_contents(void)
     }
     for (size_t i = 0; i < count; ++i) {
         wchar_t name[INFS_NAME_MAX + 1u];
-        if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, items[i].name, -1,
-                                 name, (int)(sizeof(name) / sizeof(name[0]))))
+        if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                                 items[i].name, -1, name,
+                                 (int)(sizeof(name) / sizeof(name[0]))))
             continue;
         wchar_t display[512];
         _snwprintf_s(display, sizeof(display) / sizeof(display[0]), _TRUNCATE,
-                     items[i].type == INFS_OBJECT_DIRECTORY ? L"[DIR]  %s" : L"       %s",
-                     name);
+                     items[i].type == INFS_OBJECT_DIRECTORY ?
+                     L"[DIR]  %s" : L"       %s", name);
         SendMessageW(list, LB_ADDSTRING, 0, (LPARAM)display);
     }
     infs_free_dir_items(items);
-    wchar_t text[160];
+    wchar_t text[192];
     _snwprintf_s(text, sizeof(text) / sizeof(text[0]), _TRUNCATE,
                  L"Ready. %zu item%s in the root. Drag files or folders onto this window to copy them.",
                  count, count == 1u ? L"" : L"s");
     set_status(text);
 }
 
+static infs_status open_target_storage(struct target_volume *target,
+                                       struct infs_storage *storage,
+                                       int writable)
+{
+    if (target->use_region) {
+        return infs_win32_storage_open_region(
+            storage, target->device_path,
+            target->region_offset, target->size_bytes, writable);
+    }
+    return infs_win32_storage_open(storage, target->device_path,
+                                   writable, writable);
+}
+
 static int open_selected_volume(int format_first)
 {
     struct target_volume *target = selected_target();
     if (!target) {
-        MessageBoxW(g_main_window, L"Select a target volume first.", L"InfiltratorFS",
-                    MB_OK | MB_ICONWARNING);
+        MessageBoxW(g_main_window, L"Select a target volume or partition first.",
+                    L"InfiltratorFS", MB_OK | MB_ICONWARNING);
         return 0;
     }
 
     if (format_first) {
-        wchar_t prompt[768];
-        _snwprintf_s(prompt, sizeof(prompt) / sizeof(prompt[0]), _TRUNCATE,
-                     L"FORMAT THIS VOLUME AS INFILTRATORFS?\n\nLocation: %s\nSize: %.2f GiB\n\nEverything currently on this volume will be destroyed.\n\nThis app will lock and dismount the selected volume before writing.",
-                     target->mount_point[0] ? target->mount_point : L"No drive letter",
-                     (double)target->size_bytes / (1024.0 * 1024.0 * 1024.0));
+        wchar_t prompt[896];
+        if (target->use_region) {
+            _snwprintf_s(prompt, sizeof(prompt) / sizeof(prompt[0]), _TRUNCATE,
+                         L"FORMAT DISK %lu PARTITION %lu AS INFILTRATORFS?\n\nSize: %.2f GiB\n\nEverything currently in this partition will be destroyed. The raw storage view is bounded to this partition.",
+                         (unsigned long)target->disk_number,
+                         (unsigned long)target->partition_number,
+                         (double)target->size_bytes /
+                         (1024.0 * 1024.0 * 1024.0));
+        } else {
+            _snwprintf_s(prompt, sizeof(prompt) / sizeof(prompt[0]), _TRUNCATE,
+                         L"FORMAT THIS VOLUME AS INFILTRATORFS?\n\nLocation: %s\nSize: %.2f GiB\n\nEverything currently on this volume will be destroyed. Windows will be locked out of the selected volume before writing.",
+                         target->mount_point[0] ? target->mount_point : L"No drive letter",
+                         (double)target->size_bytes /
+                         (1024.0 * 1024.0 * 1024.0));
+        }
         if (MessageBoxW(g_main_window, prompt, L"Confirm destructive format",
                         MB_YESNO | MB_DEFBUTTON2 | MB_ICONWARNING) != IDYES)
             return 0;
@@ -515,10 +844,12 @@ static int open_selected_volume(int format_first)
     close_volume();
     update_buttons();
     struct infs_storage storage = {0};
-    set_status(L"Locking selected Windows volume ...");
-    infs_status status = infs_win32_storage_open(&storage, target->device_path, 1, 1);
+    set_status(target->use_region ?
+               L"Opening bounded raw partition ..." :
+               L"Locking selected Windows volume ...");
+    infs_status status = open_target_storage(target, &storage, 1);
     if (status != INFS_STATUS_OK) {
-        set_status_code(L"Lock selected volume", status);
+        set_status_code(L"Open selected storage", status);
         return 0;
     }
 
@@ -527,16 +858,10 @@ static int open_selected_volume(int format_first)
     status = infs_storage_get_size(&storage, &detected_size, &detected_device);
     if (status != INFS_STATUS_OK) {
         infs_storage_close(&storage);
-        set_status_code(L"Determine selected volume size", status);
+        set_status_code(L"Determine selected storage size", status);
         return 0;
     }
     (void)detected_device;
-    wchar_t probe_status[224];
-    _snwprintf_s(probe_status,
-                 sizeof(probe_status) / sizeof(probe_status[0]), _TRUNCATE,
-                 L"Raw volume size %.2f GiB. Preparing InfiltratorFS ...",
-                 (double)detected_size / (1024.0 * 1024.0 * 1024.0));
-    set_status(probe_status);
 
     if (format_first) {
         wchar_t wide_label[INFS_LABEL_MAX] = L"InfiltratorFS";
@@ -553,7 +878,7 @@ static int open_selected_volume(int format_first)
         wchar_t format_status[160];
         _snwprintf_s(format_status,
                      sizeof(format_status) / sizeof(format_status[0]), _TRUNCATE,
-                     L"Formatting selected volume as InfiltratorFS Format %u.%u ...",
+                     L"Formatting as InfiltratorFS Format %u.%u ...",
                      (unsigned)INFS_FORMAT_MAJOR, (unsigned)INFS_FORMAT_MINOR);
         set_status(format_status);
         status = infs_format_storage(&storage, label);
@@ -594,8 +919,8 @@ static void add_files_dialog(void)
     dialog.lpstrFile = buffer;
     dialog.nMaxFile = capacity;
     dialog.lpstrFilter = L"All files\0*.*\0\0";
-    dialog.Flags = OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_ALLOWMULTISELECT |
-                   OFN_PATHMUSTEXIST;
+    dialog.Flags = OFN_EXPLORER | OFN_FILEMUSTEXIST |
+                   OFN_ALLOWMULTISELECT | OFN_PATHMUSTEXIST;
     if (!GetOpenFileNameW(&dialog)) {
         free(buffer);
         return;
@@ -608,7 +933,8 @@ static void add_files_dialog(void)
         okay = copy_host_path(first, "/");
     } else {
         wchar_t directory[32768];
-        wcsncpy_s(directory, sizeof(directory) / sizeof(directory[0]), first, _TRUNCATE);
+        wcsncpy_s(directory, sizeof(directory) / sizeof(directory[0]),
+                  first, _TRUNCATE);
         while (*next) {
             wchar_t full[32768];
             if (_snwprintf_s(full, sizeof(full) / sizeof(full[0]), _TRUNCATE,
@@ -662,27 +988,45 @@ static void scrub_volume(void)
                  (unsigned long long)report.checksum_errors,
                  (unsigned long long)report.metadata_errors);
     set_status(L"Scrub completed successfully.");
-    MessageBoxW(g_main_window, message, L"InfiltratorFS Scrub", MB_OK | MB_ICONINFORMATION);
+    MessageBoxW(g_main_window, message, L"InfiltratorFS Scrub",
+                MB_OK | MB_ICONINFORMATION);
 }
 
 static void show_about(void)
 {
-    wchar_t text[768];
-    _snwprintf_s(text, sizeof(text) / sizeof(text[0]), _TRUNCATE,
-                 L"InfiltratorFS Windows Transfer 0.9.4\n\n"
-                 L"InfiltratorFS implementation 0.9.4\n"
-                 L"On-disk format %u.%u\n\n"
-                 L"Native Windows volume utility using the same portable InfiltratorFS core as Linux.\n\n"
-                 L"License: GPL-3.0-or-later\n"
-                 L"Copyright (c) 2026 Shannon Smith",
-                 (unsigned)INFS_FORMAT_MAJOR, (unsigned)INFS_FORMAT_MINOR);
-    MessageBoxW(g_main_window, text, L"About InfiltratorFS", MB_OK | MB_ICONINFORMATION);
+    wchar_t message[1024];
+    _snwprintf_s(message, sizeof(message) / sizeof(message[0]), _TRUNCATE,
+                 L"InfiltratorFS Windows Transfer " INFILFS_VERSION_W
+                 L"\n\nInfiltratorFS implementation " INFILFS_VERSION_W
+                 L"\nDisk format: %u.%u\n\nPortable InfiltratorFS core with a native Windows storage/UI adapter.\nWindows discovery includes raw physical partitions that have no drive letter or Windows filesystem driver.\n\nLicence: GPL-3.0-or-later\n\nExperimental filesystem — use backed-up or disposable media while testing.",
+                 (unsigned)INFS_FORMAT_MAJOR,
+                 (unsigned)INFS_FORMAT_MINOR);
+    MessageBoxW(g_main_window, message, L"About InfiltratorFS",
+                MB_OK | MB_ICONINFORMATION);
+}
+
+static HMENU create_main_menu(void)
+{
+    HMENU menu = CreateMenu();
+    HMENU file = CreatePopupMenu();
+    HMENU help = CreatePopupMenu();
+    if (!menu || !file || !help)
+        return menu;
+    AppendMenuW(file, MF_STRING, IDM_FILE_REFRESH, L"&Refresh Volumes\tF5");
+    AppendMenuW(file, MF_STRING, IDM_FILE_OPEN, L"&Open Selected Volume");
+    AppendMenuW(file, MF_SEPARATOR, 0, NULL);
+    AppendMenuW(file, MF_STRING, IDM_FILE_EXIT, L"E&xit");
+    AppendMenuW(help, MF_STRING, IDM_HELP_ABOUT, L"&About InfiltratorFS");
+    AppendMenuW(menu, MF_POPUP, (UINT_PTR)file, L"&File");
+    AppendMenuW(menu, MF_POPUP, (UINT_PTR)help, L"&Help");
+    return menu;
 }
 
 static void handle_drop(HDROP drop)
 {
     if (!g_volume_open) {
-        MessageBoxW(g_main_window, L"Format or open an InfiltratorFS volume first.",
+        MessageBoxW(g_main_window,
+                    L"Format or open an InfiltratorFS volume first.",
                     L"InfiltratorFS", MB_OK | MB_ICONINFORMATION);
         DragFinish(drop);
         return;
@@ -708,77 +1052,64 @@ static void handle_drop(HDROP drop)
         refresh_contents();
 }
 
-static HMENU create_main_menu(void)
-{
-    HMENU bar = CreateMenu();
-    HMENU file = CreatePopupMenu();
-    HMENU help = CreatePopupMenu();
-    if (!bar || !file || !help)
-        return bar;
-
-    AppendMenuW(file, MF_STRING, IDM_FILE_REFRESH, L"&Refresh Volumes\tF5");
-    AppendMenuW(file, MF_STRING, IDM_FILE_OPEN, L"&Open Selected Volume");
-    AppendMenuW(file, MF_SEPARATOR, 0, NULL);
-    AppendMenuW(file, MF_STRING, IDM_FILE_EXIT, L"E&xit");
-    AppendMenuW(help, MF_STRING, IDM_HELP_ABOUT, L"&About InfiltratorFS");
-    AppendMenuW(bar, MF_POPUP, (UINT_PTR)file, L"&File");
-    AppendMenuW(bar, MF_POPUP, (UINT_PTR)help, L"&Help");
-    return bar;
-}
-
 static LRESULT CALLBACK window_proc(HWND hwnd, UINT message,
                                     WPARAM wparam, LPARAM lparam)
 {
     switch (message) {
     case WM_CREATE: {
         g_main_window = hwnd;
+        SetMenu(hwnd, create_main_menu());
         HFONT font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
-        CreateWindowW(L"STATIC", L"Target Windows volume:", WS_CHILD | WS_VISIBLE,
-                      18, 18, 180, 22, hwnd, NULL, NULL, NULL);
-        HWND combo = CreateWindowW(L"COMBOBOX", L"", WS_CHILD | WS_VISIBLE |
-                      CBS_DROPDOWNLIST | WS_VSCROLL, 18, 42, 520, 360,
-                      hwnd, (HMENU)IDC_TARGET, NULL, NULL);
-        CreateWindowW(L"BUTTON", L"Refresh", WS_CHILD | WS_VISIBLE,
-                      550, 40, 85, 27, hwnd, (HMENU)IDC_REFRESH, NULL, NULL);
+        CreateWindowW(L"STATIC", L"Target Windows volume / partition:",
+                      WS_CHILD | WS_VISIBLE, 18, 18, 260, 22,
+                      hwnd, NULL, NULL, NULL);
+        HWND combo = CreateWindowW(L"COMBOBOX", L"",
+                      WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL,
+                      18, 42, 500, 360, hwnd, (HMENU)IDC_TARGET, NULL, NULL);
+        HWND refresh = CreateWindowW(L"BUTTON", L"Refresh",
+                      WS_CHILD | WS_VISIBLE, 530, 40, 90, 27,
+                      hwnd, (HMENU)IDC_REFRESH, NULL, NULL);
         CreateWindowW(L"STATIC", L"Volume label:", WS_CHILD | WS_VISIBLE,
-                      650, 18, 100, 22, hwnd, NULL, NULL, NULL);
+                      640, 18, 120, 22, hwnd, NULL, NULL, NULL);
         HWND label = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"InfiltratorFS",
-                      WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL, 650, 42, 245, 25,
+                      WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
+                      640, 42, 255, 25,
                       hwnd, (HMENU)IDC_LABEL, NULL, NULL);
-        CreateWindowW(L"BUTTON", L"FORMAT selected volume", WS_CHILD | WS_VISIBLE,
-                      18, 82, 220, 34, hwnd, (HMENU)IDC_FORMAT, NULL, NULL);
-        CreateWindowW(L"BUTTON", L"Open existing InfiltratorFS", WS_CHILD | WS_VISIBLE,
-                      250, 82, 230, 34, hwnd, (HMENU)IDC_OPEN, NULL, NULL);
-        HWND add_files = CreateWindowW(L"BUTTON", L"Add Files...", WS_CHILD | WS_VISIBLE,
-                      650, 82, 115, 34, hwnd, (HMENU)IDC_ADD_FILES, NULL, NULL);
-        HWND add_folder = CreateWindowW(L"BUTTON", L"Add Folder...", WS_CHILD | WS_VISIBLE,
-                      775, 82, 120, 34, hwnd, (HMENU)IDC_ADD_FOLDER, NULL, NULL);
+        HWND format = CreateWindowW(L"BUTTON", L"FORMAT selected volume",
+                      WS_CHILD | WS_VISIBLE, 18, 82, 220, 34,
+                      hwnd, (HMENU)IDC_FORMAT, NULL, NULL);
+        HWND open = CreateWindowW(L"BUTTON", L"Open existing InfiltratorFS",
+                      WS_CHILD | WS_VISIBLE, 250, 82, 225, 34,
+                      hwnd, (HMENU)IDC_OPEN, NULL, NULL);
+        HWND add_files = CreateWindowW(L"BUTTON", L"Add Files...",
+                      WS_CHILD | WS_VISIBLE, 640, 82, 120, 34,
+                      hwnd, (HMENU)IDC_ADD_FILES, NULL, NULL);
+        HWND add_folder = CreateWindowW(L"BUTTON", L"Add Folder...",
+                      WS_CHILD | WS_VISIBLE, 770, 82, 125, 34,
+                      hwnd, (HMENU)IDC_ADD_FOLDER, NULL, NULL);
         HWND list = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", L"",
                       WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOINTEGRALHEIGHT,
-                      18, 145, 877, 350, hwnd, (HMENU)IDC_CONTENTS, NULL, NULL);
-        HWND scrub = CreateWindowW(L"BUTTON", L"Scrub / Verify", WS_CHILD | WS_VISIBLE,
-                      18, 506, 130, 30, hwnd, (HMENU)IDC_SCRUB, NULL, NULL);
-        HWND status = CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_LEFT,
-                      162, 511, 733, 42, hwnd, (HMENU)IDC_STATUS, NULL, NULL);
-        SendMessageW(combo, WM_SETFONT, (WPARAM)font, TRUE);
-        SendMessageW(label, WM_SETFONT, (WPARAM)font, TRUE);
-        SendMessageW(add_files, WM_SETFONT, (WPARAM)font, TRUE);
-        SendMessageW(add_folder, WM_SETFONT, (WPARAM)font, TRUE);
-        SendMessageW(list, WM_SETFONT, (WPARAM)font, TRUE);
-        SendMessageW(scrub, WM_SETFONT, (WPARAM)font, TRUE);
-        SendMessageW(status, WM_SETFONT, (WPARAM)font, TRUE);
+                      18, 145, 877, 390, hwnd, (HMENU)IDC_CONTENTS, NULL, NULL);
+        HWND scrub = CreateWindowW(L"BUTTON", L"Scrub / Verify",
+                      WS_CHILD | WS_VISIBLE, 18, 548, 125, 30,
+                      hwnd, (HMENU)IDC_SCRUB, NULL, NULL);
+        HWND status = CreateWindowW(L"STATIC", L"",
+                      WS_CHILD | WS_VISIBLE | SS_LEFT,
+                      155, 553, 740, 44, hwnd, (HMENU)IDC_STATUS, NULL, NULL);
+        HWND controls[] = {combo, refresh, label, format, open,
+                           add_files, add_folder, list, scrub, status};
+        for (size_t i = 0; i < sizeof(controls) / sizeof(controls[0]); ++i)
+            SendMessageW(controls[i], WM_SETFONT, (WPARAM)font, TRUE);
         DragAcceptFiles(hwnd, TRUE);
         refresh_volumes();
         update_buttons();
         return 0;
     }
-    case WM_KEYDOWN:
-        if (wparam == VK_F5) {
-            refresh_volumes();
+    case WM_COMMAND:
+        if (LOWORD(wparam) == IDC_TARGET && HIWORD(wparam) == CBN_SELCHANGE) {
+            update_buttons();
             return 0;
         }
-        break;
-    case WM_COMMAND:
         switch (LOWORD(wparam)) {
         case IDC_REFRESH:
         case IDM_FILE_REFRESH: refresh_volumes(); return 0;
@@ -796,6 +1127,12 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message,
     case WM_DROPFILES:
         handle_drop((HDROP)wparam);
         return 0;
+    case WM_KEYDOWN:
+        if (wparam == VK_F5) {
+            refresh_volumes();
+            return 0;
+        }
+        break;
     case WM_DESTROY:
         close_volume();
         PostQuitMessage(0);
@@ -822,13 +1159,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous,
     wc.lpszClassName = class_name;
     if (!RegisterClassW(&wc))
         return 1;
-
-    HMENU menu = create_main_menu();
-    HWND window = CreateWindowW(class_name, L"InfiltratorFS Windows Transfer 0.9.4",
-                                WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU |
-                                WS_MINIMIZEBOX,
-                                CW_USEDEFAULT, CW_USEDEFAULT, 930, 610,
-                                NULL, menu, instance, NULL);
+    HWND window = CreateWindowW(
+        class_name, L"InfiltratorFS Windows Transfer " INFILFS_VERSION_W,
+        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
+        CW_USEDEFAULT, CW_USEDEFAULT, 930, 640,
+        NULL, NULL, instance, NULL);
     if (!window)
         return 1;
     ShowWindow(window, show_command);
