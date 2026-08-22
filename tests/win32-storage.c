@@ -13,7 +13,8 @@
 
 static int fail(const char *message, infs_status status)
 {
-    fprintf(stderr, "%s: %s (%d)\n", message, infs_status_string(status), status);
+    fprintf(stderr, "%s: %s (%d)\n", message,
+            infs_status_string(status), status);
     return 1;
 }
 
@@ -61,6 +62,146 @@ static int verify_linux_image(const char *utf8_path)
     return 0;
 }
 
+static int make_temp_file(wchar_t path[MAX_PATH], LONGLONG size)
+{
+    wchar_t temp_dir[MAX_PATH];
+    if (!GetTempPathW(MAX_PATH, temp_dir) ||
+        !GetTempFileNameW(temp_dir, L"IFS", 0, path))
+        return 0;
+    HANDLE image = CreateFileW(path, GENERIC_READ | GENERIC_WRITE, 0, NULL,
+                               CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (image == INVALID_HANDLE_VALUE) {
+        DeleteFileW(path);
+        return 0;
+    }
+    LARGE_INTEGER length;
+    length.QuadPart = size;
+    int ok = SetFilePointerEx(image, length, NULL, FILE_BEGIN) &&
+             SetEndOfFile(image);
+    CloseHandle(image);
+    if (!ok)
+        DeleteFileW(path);
+    return ok;
+}
+
+static int test_region_backend(void)
+{
+    wchar_t path[MAX_PATH];
+    const uint64_t mib = UINT64_C(1024) * UINT64_C(1024);
+    const uint64_t region_offset = mib;
+    const uint64_t region_size = 64u * mib;
+    const uint64_t backing_size = 66u * mib;
+    if (!make_temp_file(path, (LONGLONG)backing_size)) {
+        fprintf(stderr, "region temporary path creation failed\n");
+        return 1;
+    }
+
+    HANDLE raw = CreateFileW(path, GENERIC_READ | GENERIC_WRITE, 0, NULL,
+                             OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (raw == INVALID_HANDLE_VALUE) {
+        DeleteFileW(path);
+        return 1;
+    }
+    const unsigned char before = 0x5a;
+    const unsigned char after = 0xa5;
+    DWORD done = 0;
+    LARGE_INTEGER pos;
+    pos.QuadPart = 0;
+    if (!SetFilePointerEx(raw, pos, NULL, FILE_BEGIN) ||
+        !WriteFile(raw, &before, 1, &done, NULL) || done != 1) {
+        CloseHandle(raw);
+        DeleteFileW(path);
+        return 1;
+    }
+    pos.QuadPart = (LONGLONG)(region_offset + region_size);
+    if (!SetFilePointerEx(raw, pos, NULL, FILE_BEGIN) ||
+        !WriteFile(raw, &after, 1, &done, NULL) || done != 1) {
+        CloseHandle(raw);
+        DeleteFileW(path);
+        return 1;
+    }
+    CloseHandle(raw);
+
+    struct infs_storage storage = {0};
+    infs_status status = infs_win32_storage_open_region(
+        &storage, path, region_offset, region_size, 1);
+    if (status != INFS_STATUS_OK) {
+        DeleteFileW(path);
+        return fail("open bounded region", status);
+    }
+    uint64_t reported = 0;
+    int is_device = 0;
+    status = infs_storage_get_size(&storage, &reported, &is_device);
+    if (status != INFS_STATUS_OK || reported != region_size || !is_device) {
+        infs_storage_close(&storage);
+        DeleteFileW(path);
+        fprintf(stderr, "bounded region reported incorrect size\n");
+        return 1;
+    }
+    status = infs_format_storage(&storage, "Windows Region CI");
+    if (status != INFS_STATUS_OK) {
+        infs_storage_close(&storage);
+        DeleteFileW(path);
+        return fail("format bounded region", status);
+    }
+
+    struct infs_volume volume;
+    status = infs_volume_open_storage(&volume, &storage, 1);
+    if (status != INFS_STATUS_OK) {
+        infs_storage_close(&storage);
+        DeleteFileW(path);
+        return fail("open formatted bounded region", status);
+    }
+    struct infs_create_options options = {0};
+    options.posix_permissions = 0644u;
+    status = infs_create_file(&volume, "/region.txt", &options);
+    if (status != INFS_STATUS_OK) {
+        infs_volume_close(&volume);
+        DeleteFileW(path);
+        return fail("create file in bounded region", status);
+    }
+    static const char text[] = "bounded-partition-region\n";
+    int64_t written = infs_write_file(&volume, "/region.txt", text,
+                                      sizeof(text) - 1u, 0u);
+    if (written != (int64_t)(sizeof(text) - 1u)) {
+        infs_volume_close(&volume);
+        DeleteFileW(path);
+        return fail("write bounded region file",
+                    written < 0 ? (infs_status)written : INFS_STATUS_IO_ERROR);
+    }
+    infs_volume_close(&volume);
+
+    raw = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL,
+                      OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (raw == INVALID_HANDLE_VALUE) {
+        DeleteFileW(path);
+        return 1;
+    }
+    unsigned char check_before = 0, check_after = 0;
+    pos.QuadPart = 0;
+    if (!SetFilePointerEx(raw, pos, NULL, FILE_BEGIN) ||
+        !ReadFile(raw, &check_before, 1, &done, NULL) || done != 1) {
+        CloseHandle(raw);
+        DeleteFileW(path);
+        return 1;
+    }
+    pos.QuadPart = (LONGLONG)(region_offset + region_size);
+    if (!SetFilePointerEx(raw, pos, NULL, FILE_BEGIN) ||
+        !ReadFile(raw, &check_after, 1, &done, NULL) || done != 1) {
+        CloseHandle(raw);
+        DeleteFileW(path);
+        return 1;
+    }
+    CloseHandle(raw);
+    DeleteFileW(path);
+    if (check_before != before || check_after != after) {
+        fprintf(stderr, "bounded region wrote outside its partition\n");
+        return 1;
+    }
+    puts("bounded Win32 partition-region test passed");
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     if (argc == 2)
@@ -70,28 +211,14 @@ int main(int argc, char **argv)
         return 2;
     }
 
-    wchar_t temp_dir[MAX_PATH];
+    if (test_region_backend() != 0)
+        return 1;
+
     wchar_t path[MAX_PATH];
-    if (!GetTempPathW(MAX_PATH, temp_dir) ||
-        !GetTempFileNameW(temp_dir, L"IFS", 0, path)) {
+    if (!make_temp_file(path, 64ll * 1024ll * 1024ll)) {
         fprintf(stderr, "temporary path creation failed\n");
         return 1;
     }
-
-    HANDLE image = CreateFileW(path, GENERIC_READ | GENERIC_WRITE, 0, NULL,
-                               CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (image == INVALID_HANDLE_VALUE) {
-        DeleteFileW(path);
-        return 1;
-    }
-    LARGE_INTEGER length;
-    length.QuadPart = 64ll * 1024ll * 1024ll;
-    if (!SetFilePointerEx(image, length, NULL, FILE_BEGIN) || !SetEndOfFile(image)) {
-        CloseHandle(image);
-        DeleteFileW(path);
-        return 1;
-    }
-    CloseHandle(image);
 
     struct infs_storage storage = {0};
     infs_status status = infs_win32_storage_open(&storage, path, 1, 0);
@@ -128,7 +255,8 @@ int main(int argc, char **argv)
     if (written != (int64_t)(sizeof(text) - 1u)) {
         infs_volume_close(&volume);
         DeleteFileW(path);
-        return fail("write file", written < 0 ? (infs_status)written : INFS_STATUS_IO_ERROR);
+        return fail("write file",
+                    written < 0 ? (infs_status)written : INFS_STATUS_IO_ERROR);
     }
     infs_volume_close(&volume);
 
