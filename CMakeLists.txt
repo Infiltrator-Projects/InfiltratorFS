@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.20)
-project(InfiltratorFS VERSION 0.9.6 LANGUAGES C)
+project(InfiltratorFS VERSION 0.9.7 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -78,7 +78,9 @@ add_test(NAME infilfs-reflink COMMAND infilfs-reflink)
 add_test(NAME infilfs-paged-metadata COMMAND infilfs-paged-metadata)
 
 if(WIN32)
-    add_library(infilfs_win32 STATIC src/platform/win32_io.c)
+    add_library(infilfs_win32 STATIC
+        src/platform/win32_io.c
+        src/platform/win32_partition_io.c)
     target_include_directories(infilfs_win32 PUBLIC include)
     target_link_libraries(infilfs_win32 PUBLIC infilfs_core bcrypt)
     infilfs_enable_warnings(infilfs_win32)
@@ -88,8 +90,13 @@ if(WIN32)
     infilfs_enable_warnings(infilfs-win32-storage)
     add_test(NAME infilfs-win32-storage COMMAND infilfs-win32-storage)
 
+    add_executable(infilfs-win32-partition-region tests/win32-partition-region.c)
+    target_link_libraries(infilfs-win32-partition-region PRIVATE infilfs_win32)
+    infilfs_enable_warnings(infilfs-win32-partition-region)
+    add_test(NAME infilfs-win32-partition-region COMMAND infilfs-win32-partition-region)
+
     add_executable(infiltratorfs-windows WIN32
-        tools/windows/infiltratorfs-windows.c)
+        tools/windows/infiltratorfs-windows-entry.c)
     target_link_libraries(infiltratorfs-windows PRIVATE
         infilfs_win32 comdlg32 shell32 ole32)
     target_compile_definitions(infiltratorfs-windows PRIVATE

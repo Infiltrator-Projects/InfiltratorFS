@@ -124,12 +124,12 @@ jobs:
       - name: Open Linux-created Format 0.8 image on Windows
         shell: pwsh
         run: '& .\build\Release\infilfs-win32-storage.exe .\cross-platform\linux-format08.img'
-      - name: Verify SD/MMC discovery code is compiled
+      - name: Verify physical-partition fallback is compiled
         shell: pwsh
         run: |
-          Select-String -Path tools/windows/infiltratorfs-windows.c -Pattern 'BusTypeSd' -SimpleMatch
-          Select-String -Path tools/windows/infiltratorfs-windows.c -Pattern 'BusTypeMmc' -SimpleMatch
-          Select-String -Path src/platform/win32_io.c -Pattern 'IOCTL_DISK_GET_DRIVE_GEOMETRY_EX' -SimpleMatch
+          Select-String -Path tools/windows/infiltratorfs-windows-entry.c -Pattern 'desired_access == GENERIC_READ' -SimpleMatch
+          Select-String -Path src/platform/win32_partition_io.c -Pattern 'GLOBALROOT' -SimpleMatch
+          Select-String -Path src/platform/win32_partition_io.c -Pattern 'IOCTL_DISK_GET_DRIVE_LAYOUT_EX' -SimpleMatch
       - name: Upload Windows transfer app
         uses: actions/upload-artifact@v4
         with:
@@ -163,7 +163,7 @@ jobs:
           if-no-files-found: error
 
   publish-release:
-    name: Publish 0.9.6
+    name: Publish 0.9.7
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [linux, clang, sanitizers, analyzer, windows, linux-packages]
     runs-on: ubuntu-latest
@@ -180,19 +180,19 @@ jobs:
         with:
           name: InfiltratorFS-Linux
           path: dist
-      - name: Create or update 0.9.6 release
+      - name: Create or update 0.9.7 release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if ! gh release view v0.9.6 --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            gh release create v0.9.6 \
+          if ! gh release view v0.9.7 --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release create v0.9.7 \
               --repo "${GITHUB_REPOSITORY}" \
               --target "${GITHUB_SHA}" \
-              --title "InfiltratorFS 0.9.6 — Windows SDXC Discovery" \
-              --notes "Implementation 0.9.6 keeps InfiltratorFS Format 0.8 and fixes Windows discovery on real SDXC/card-reader hardware. Physical-partition probing no longer requires IOCTL_DISK_GET_LENGTH_INFO to succeed: the Win32 backend now falls back through drive geometry and seekable-handle size queries before rejecting a bounded physical-disk region. The Windows utility also identifies SD, MMC and USB bus types as removable media because built-in card readers often report neither MediaRemovable nor DeviceHotplug. Zero-sized ghost volume entries are suppressed. Existing Format 0.8 media does not require reformatting. Experimental: use disposable or backed-up media only."
+              --title "InfiltratorFS 0.9.7 — Windows SD Partition Access" \
+              --notes "Implementation 0.9.7 keeps InfiltratorFS Format 0.8 and fixes the remaining Windows SD/card-reader discovery path. Physical-drive enumeration now retries metadata-only opens when a card-reader stack rejects GENERIC_READ for IOCTL-only discovery. Actual partition probes use a dedicated bounded partition backend which first tries the physical disk directly and, when necessary, resolves the partition-table region to the matching \\?\\GLOBALROOT\\Device\\HarddiskN\\PartitionM device. This lets Windows discover and open Linux-created InfiltratorFS partitions even when the whole-disk raw handle is restricted. A Windows conformance test verifies the new bounded backend cannot write outside its assigned region. Existing Format 0.8 media does not require reformatting. Experimental: use disposable or backed-up media only."
           fi
-          gh release upload v0.9.6 dist/* \
+          gh release upload v0.9.7 dist/* \
             --repo "${GITHUB_REPOSITORY}" --clobber
 
   report-release:
@@ -216,13 +216,13 @@ jobs:
         run: |
           set -euo pipefail
           state=success
-          description="v0.9.6 Windows SDXC discovery verified and published"
+          description="v0.9.7 Windows SD partition access verified and published"
           for result in "$LINUX_RESULT" "$CLANG_RESULT" "$SANITIZERS_RESULT" \
                         "$ANALYZER_RESULT" "$WINDOWS_RESULT" "$PACKAGES_RESULT" \
                         "$RELEASE_RESULT"; do
             if [ "$result" != "success" ]; then
               state=failure
-              description="v0.9.6 build/release gate failed"
+              description="v0.9.7 build/release gate failed"
               break
             fi
           done
@@ -230,5 +230,5 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
             -f state="$state" \
-            -f context="InfiltratorFS 0.9.6" \
+            -f context="InfiltratorFS 0.9.7" \
             -f description="$description"
