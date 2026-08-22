@@ -72,7 +72,8 @@ static infs_status read_checkpoint_candidates(
 }
 
 static infs_status load_checkpoint_graph(
-    struct infs_volume *vol, const struct infs_superblock_disk *candidate)
+    struct infs_volume *vol, const struct infs_superblock_disk *candidate,
+    int full_verify)
 {
     if (!vol || !candidate)
         return INFS_STATUS_INVALID_ARGUMENT;
@@ -172,6 +173,23 @@ static infs_status load_checkpoint_graph(
     if (paged_feature != root_paged || paged_feature != index_paged)
         return INFS_STATUS_CORRUPT;
 
+    /* A real mounted device should not perform an fsck-equivalent graph walk
+     * merely to become usable. Verify the root can be resolved through the
+     * active index, then leave whole-volume ownership/namespace/checksum graph
+     * validation to infs_scrub(). Regular image files retain the historical
+     * strict-open behaviour so conformance and forensic/offline workflows stay
+     * maximally defensive. */
+    struct infs_lookup root_lookup;
+    status = index_find(vol, vol->sb.root_object_id, &root_lookup);
+    if (status != INFS_STATUS_OK ||
+        root_lookup.block != infs_le64_to_cpu(vol->sb.root_object_block) ||
+        root_lookup.type != INFS_OBJECT_DIRECTORY)
+        return status == INFS_STATUS_OK ? INFS_STATUS_CORRUPT :
+            checkpoint_graph_status(status);
+
+    if (!full_verify)
+        return INFS_STATUS_OK;
+
     status = validate_index_entries(vol);
     if (status != INFS_STATUS_OK)
         return checkpoint_graph_status(status);
@@ -209,7 +227,7 @@ infs_status infs_volume_open_storage(struct infs_volume *vol,
     status = infs_storage_get_size(&vol->storage, &vol->size_bytes, &is_block);
     if (status != INFS_STATUS_OK)
         goto fail;
-    (void)is_block;
+    int full_verify = !is_block;
 
     struct infs_superblock_disk candidates[INFS_CHECKPOINT_COUNT];
     uint8_t valid[INFS_CHECKPOINT_COUNT];
@@ -234,7 +252,7 @@ infs_status infs_volume_open_storage(struct infs_volume *vol,
             break;
 
         valid[best] = 0;
-        status = load_checkpoint_graph(vol, &candidates[best]);
+        status = load_checkpoint_graph(vol, &candidates[best], full_verify);
         if (status == INFS_STATUS_OK) {
             selected = 1;
             break;
