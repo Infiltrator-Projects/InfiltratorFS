@@ -187,6 +187,22 @@ static infs_status volume_size_from_length_info(HANDLE handle,
     return INFS_STATUS_OK;
 }
 
+static infs_status volume_size_from_geometry(HANDLE handle,
+                                             uint64_t *size_bytes)
+{
+    uint8_t buffer[sizeof(DISK_GEOMETRY_EX) + 1024u];
+    DISK_GEOMETRY_EX *geometry = (DISK_GEOMETRY_EX *)buffer;
+    DWORD returned = 0;
+    if (!DeviceIoControl(handle, IOCTL_DISK_GET_DRIVE_GEOMETRY_EX,
+                         NULL, 0, buffer, (DWORD)sizeof(buffer),
+                         &returned, NULL))
+        return status_from_win32(GetLastError());
+    if (geometry->DiskSize.QuadPart <= 0)
+        return INFS_STATUS_CORRUPT;
+    *size_bytes = (uint64_t)geometry->DiskSize.QuadPart;
+    return INFS_STATUS_OK;
+}
+
 static infs_status volume_size_from_extents(HANDLE handle,
                                             uint64_t *size_bytes)
 {
@@ -229,6 +245,47 @@ static infs_status volume_size_from_extents(HANDLE handle,
     return INFS_STATUS_NOT_SUPPORTED;
 }
 
+static infs_status device_size_best_effort(HANDLE handle, int is_volume,
+                                           uint64_t *size_bytes)
+{
+    infs_status first_error = INFS_STATUS_NOT_SUPPORTED;
+    infs_status status;
+
+    if (is_volume) {
+        status = volume_size_from_partition(handle, size_bytes);
+        if (status == INFS_STATUS_OK)
+            return INFS_STATUS_OK;
+        first_error = status;
+    }
+
+    status = volume_size_from_length_info(handle, size_bytes);
+    if (status == INFS_STATUS_OK)
+        return INFS_STATUS_OK;
+    if (first_error == INFS_STATUS_NOT_SUPPORTED)
+        first_error = status;
+
+    status = volume_size_from_geometry(handle, size_bytes);
+    if (status == INFS_STATUS_OK)
+        return INFS_STATUS_OK;
+    if (first_error == INFS_STATUS_NOT_SUPPORTED)
+        first_error = status;
+
+    if (is_volume) {
+        status = volume_size_from_extents(handle, size_bytes);
+        if (status == INFS_STATUS_OK)
+            return INFS_STATUS_OK;
+        if (first_error == INFS_STATUS_NOT_SUPPORTED)
+            first_error = status;
+    }
+
+    LARGE_INTEGER length;
+    if (GetFileSizeEx(handle, &length) && length.QuadPart > 0) {
+        *size_bytes = (uint64_t)length.QuadPart;
+        return INFS_STATUS_OK;
+    }
+    return first_error;
+}
+
 static infs_status win32_get_size(void *context, uint64_t *size_bytes,
                                   int *is_device)
 {
@@ -243,43 +300,11 @@ static infs_status win32_get_size(void *context, uint64_t *size_bytes,
     }
 
     if (win->is_device) {
-        infs_status first_error = INFS_STATUS_NOT_SUPPORTED;
-        infs_status status;
-
-        if (win->is_volume) {
-            status = volume_size_from_partition(win->handle, size_bytes);
-            if (status == INFS_STATUS_OK) {
-                *is_device = 1;
-                return INFS_STATUS_OK;
-            }
-            first_error = status;
-        }
-
-        status = volume_size_from_length_info(win->handle, size_bytes);
-        if (status == INFS_STATUS_OK) {
+        infs_status status = device_size_best_effort(
+            win->handle, win->is_volume, size_bytes);
+        if (status == INFS_STATUS_OK)
             *is_device = 1;
-            return INFS_STATUS_OK;
-        }
-        if (first_error == INFS_STATUS_NOT_SUPPORTED)
-            first_error = status;
-
-        if (win->is_volume) {
-            status = volume_size_from_extents(win->handle, size_bytes);
-            if (status == INFS_STATUS_OK) {
-                *is_device = 1;
-                return INFS_STATUS_OK;
-            }
-            if (first_error == INFS_STATUS_NOT_SUPPORTED)
-                first_error = status;
-        }
-
-        LARGE_INTEGER length;
-        if (GetFileSizeEx(win->handle, &length) && length.QuadPart > 0) {
-            *size_bytes = (uint64_t)length.QuadPart;
-            *is_device = 1;
-            return INFS_STATUS_OK;
-        }
-        return first_error;
+        return status;
     }
 
     LARGE_INTEGER length;
@@ -391,7 +416,8 @@ static infs_status open_common(struct infs_storage *storage,
         uint64_t backing_size = 0;
         infs_status size_status;
         if (path_is_device(path))
-            size_status = volume_size_from_length_info(win->handle, &backing_size);
+            size_status = device_size_best_effort(
+                win->handle, path_is_volume(path), &backing_size);
         else {
             LARGE_INTEGER length;
             if (!GetFileSizeEx(win->handle, &length))
