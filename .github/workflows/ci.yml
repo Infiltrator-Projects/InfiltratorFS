@@ -124,10 +124,12 @@ jobs:
       - name: Open Linux-created Format 0.8 image on Windows
         shell: pwsh
         run: '& .\build\Release\infilfs-win32-storage.exe .\cross-platform\linux-format08.img'
-      - name: Verify physical-partition fallback is compiled
+      - name: Verify Windows storage and transfer policy are compiled
         shell: pwsh
         run: |
           Select-String -Path tools/windows/infiltratorfs-windows-entry.c -Pattern 'desired_access == GENERIC_READ' -SimpleMatch
+          Select-String -Path tools/windows/infiltratorfs-windows-entry.c -Pattern 'infs_volume_set_deferred_publish' -SimpleMatch
+          Select-String -Path tools/windows/infiltratorfs-windows-entry.c -Pattern 'INFS_WINDOWS_TRANSFER_PUBLISH_BYTES' -SimpleMatch
           Select-String -Path src/platform/win32_partition_io.c -Pattern 'GLOBALROOT' -SimpleMatch
           Select-String -Path src/platform/win32_partition_io.c -Pattern 'IOCTL_DISK_GET_DRIVE_LAYOUT_EX' -SimpleMatch
       - name: Upload Windows transfer app
@@ -163,13 +165,23 @@ jobs:
           if-no-files-found: error
 
   publish-release:
-    name: Publish 0.9.8
+    name: Publish release
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [linux, clang, sanitizers, analyzer, windows, linux-packages]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+      - name: Read project version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(sed -nE 's/^project\(InfiltratorFS VERSION ([0-9]+\.[0-9]+\.[0-9]+) LANGUAGES C\)$/\1/p' CMakeLists.txt)"
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Download verified Windows executable
         uses: actions/download-artifact@v4
         with:
@@ -180,19 +192,25 @@ jobs:
         with:
           name: InfiltratorFS-Linux
           path: dist
-      - name: Create or update 0.9.8 release
+      - name: Create or update release
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          if ! gh release view v0.9.8 --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            gh release create v0.9.8 \
+          tag="v${VERSION}"
+          if ! gh release view "$tag" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release create "$tag" \
               --repo "${GITHUB_REPOSITORY}" \
               --target "${GITHUB_SHA}" \
-              --title "InfiltratorFS 0.9.8 — Fast Real-Device Open" \
-              --notes "Implementation 0.9.8 keeps InfiltratorFS Format 0.8 and fixes the excessive read activity and UI stalls seen when opening a real SDXC InfiltratorFS partition. The generic core now distinguishes real block devices from regular image files: device opens validate checkpoints, bitmap bounds/free counts, root metadata, paged-format agreement and root index resolution, then become operational without performing an fsck-equivalent whole-volume graph walk. Regular image-file opens retain the historical strict validation used by conformance/offline workflows. Full index/object, bitmap-ownership, namespace/link-count and checksum-graph validation now runs explicitly as part of Scrub / Verify, followed by the existing full data checksum pass. A new device-open regression test populates a paged directory with 220 files, asserts real-device open stays below a bounded read budget, confirms the directory is usable immediately, and then verifies explicit scrub remains clean. Existing Format 0.8 media does not require reformatting. Experimental: use disposable or backed-up media only."
+              --title "InfiltratorFS ${VERSION}" \
+              --generate-notes
+          else
+            gh release edit "$tag" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "InfiltratorFS ${VERSION}"
           fi
-          gh release upload v0.9.8 dist/* \
+          gh release upload "$tag" dist/* \
             --repo "${GITHUB_REPOSITORY}" --clobber
 
   report-release:
@@ -201,11 +219,23 @@ jobs:
     needs: [linux, clang, sanitizers, analyzer, windows, linux-packages, publish-release]
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       statuses: write
     steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+      - name: Read project version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(sed -nE 's/^project\(InfiltratorFS VERSION ([0-9]+\.[0-9]+\.[0-9]+) LANGUAGES C\)$/\1/p' CMakeLists.txt)"
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Publish readable commit status
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
           LINUX_RESULT: ${{ needs.linux.result }}
           CLANG_RESULT: ${{ needs.clang.result }}
           SANITIZERS_RESULT: ${{ needs.sanitizers.result }}
@@ -216,13 +246,13 @@ jobs:
         run: |
           set -euo pipefail
           state=success
-          description="v0.9.8 fast real-device open verified and published"
+          description="v${VERSION} verified and published"
           for result in "$LINUX_RESULT" "$CLANG_RESULT" "$SANITIZERS_RESULT" \
                         "$ANALYZER_RESULT" "$WINDOWS_RESULT" "$PACKAGES_RESULT" \
                         "$RELEASE_RESULT"; do
             if [ "$result" != "success" ]; then
               state=failure
-              description="v0.9.8 build/release gate failed"
+              description="v${VERSION} build/release gate failed"
               break
             fi
           done
@@ -230,5 +260,5 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
             -f state="$state" \
-            -f context="InfiltratorFS 0.9.8" \
+            -f context="InfiltratorFS ${VERSION}" \
             -f description="$description"
