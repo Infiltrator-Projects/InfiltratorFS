@@ -157,7 +157,7 @@ jobs:
           if-no-files-found: error
 
   publish-release:
-    name: Publish 0.9.4
+    name: Publish 0.9.5
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [linux, clang, sanitizers, analyzer, windows, linux-packages]
     runs-on: ubuntu-latest
@@ -174,19 +174,19 @@ jobs:
         with:
           name: InfiltratorFS-Linux
           path: dist
-      - name: Create or update 0.9.4 release
+      - name: Create or update 0.9.5 release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if ! gh release view v0.9.4 --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            gh release create v0.9.4 \
+          if ! gh release view v0.9.5 --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release create v0.9.5 \
               --repo "${GITHUB_REPOSITORY}" \
               --target "${GITHUB_SHA}" \
-              --title "InfiltratorFS 0.9.4 — Windows Raw Volume Discovery" \
-              --notes "Implementation 0.9.4 keeps InfiltratorFS Format 0.8 and fixes Windows discovery of Linux-created InfiltratorFS partitions that have no Windows drive letter. The Windows utility now enumerates Windows volume GUIDs rather than relying on GetLogicalDrives, probes candidate raw volumes directly for valid InfiltratorFS checkpoints, identifies detected InfiltratorFS volumes by format, size and label, and still exposes ordinary mounted non-system Windows volumes for formatting. Anonymous non-InfiltratorFS recovery/EFI/raw volumes remain hidden by default for safety. The Windows UI now includes standard File and Help menus plus About InfiltratorFS. Existing Format 0.8 media does not require reformatting. Experimental: use disposable or backed-up media only."
+              --title "InfiltratorFS 0.9.5 — Windows Physical Partition Discovery" \
+              --notes "Implementation 0.9.5 keeps InfiltratorFS Format 0.8 and fixes Windows discovery for partitions that Disk Management can see but for which Windows creates no volume GUID or drive letter. The Windows utility now enumerates non-system physical disks with IOCTL_DISK_GET_DRIVE_LAYOUT_EX, probes each bounded partition region directly for InfiltratorFS checkpoints, and can open Linux-created InfiltratorFS partitions without Paragon or another filesystem driver. The Win32 storage adapter adds strict bounded-region I/O so raw physical-disk access cannot escape the selected partition. Windows CI now tests that bounded region formatting/writes preserve sentinel bytes outside the selected region, in addition to opening the Linux-created Format 0.8 image. The application version is injected from CMake so the title/About version cannot silently remain stale. Existing Format 0.8 media does not require reformatting. Experimental: use disposable or backed-up media only."
           fi
-          gh release upload v0.9.4 dist/* \
+          gh release upload v0.9.5 dist/* \
             --repo "${GITHUB_REPOSITORY}" --clobber
 
   report-release:
@@ -210,13 +210,13 @@ jobs:
         run: |
           set -euo pipefail
           state=success
-          description="v0.9.4 Windows raw-volume discovery build verified and published"
+          description="v0.9.5 Windows physical-partition discovery verified and published"
           for result in "$LINUX_RESULT" "$CLANG_RESULT" "$SANITIZERS_RESULT" \
                         "$ANALYZER_RESULT" "$WINDOWS_RESULT" "$PACKAGES_RESULT" \
                         "$RELEASE_RESULT"; do
             if [ "$result" != "success" ]; then
               state=failure
-              description="v0.9.4 build/release gate failed"
+              description="v0.9.5 build/release gate failed"
               break
             fi
           done
@@ -224,5 +224,5 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
             -f state="$state" \
-            -f context="InfiltratorFS 0.9.4" \
+            -f context="InfiltratorFS 0.9.5" \
             -f description="$description"
