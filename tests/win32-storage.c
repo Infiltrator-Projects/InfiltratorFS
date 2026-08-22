@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #ifdef _WIN32
+#include "infilfs/endian.h"
 #include "infilfs/format_volume.h"
 #include "infilfs/volume.h"
 #include "infilfs/win32_io.h"
@@ -16,8 +17,59 @@ static int fail(const char *message, infs_status status)
     return 1;
 }
 
-int main(void)
+static int verify_linux_image(const char *utf8_path)
 {
+    wchar_t path[32768];
+    if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8_path, -1,
+                             path, (int)(sizeof(path) / sizeof(path[0])))) {
+        fprintf(stderr, "cross-platform image path is not valid UTF-8\n");
+        return 1;
+    }
+
+    struct infs_storage storage = {0};
+    infs_status status = infs_win32_storage_open(&storage, path, 0, 0);
+    if (status != INFS_STATUS_OK)
+        return fail("open Linux-created image through Win32 backend", status);
+
+    struct infs_volume volume;
+    status = infs_volume_open_storage(&volume, &storage, 0);
+    if (status != INFS_STATUS_OK) {
+        infs_storage_close(&storage);
+        return fail("open Linux-created InfiltratorFS image", status);
+    }
+
+    if (infs_le16_to_cpu(volume.sb.format_major) != 0u ||
+        infs_le16_to_cpu(volume.sb.format_minor) != 8u) {
+        infs_volume_close(&volume);
+        fprintf(stderr, "Linux-created image is not Format 0.8\n");
+        return 1;
+    }
+
+    static const char expected[] = "linux-to-windows-format-0.8\n";
+    char buffer[sizeof(expected)] = {0};
+    int64_t read_count = infs_read_file(&volume, "/linux-cross-platform.txt",
+                                       buffer, sizeof(expected) - 1u, 0u);
+    if (read_count != (int64_t)(sizeof(expected) - 1u) ||
+        memcmp(buffer, expected, sizeof(expected) - 1u) != 0) {
+        infs_volume_close(&volume);
+        fprintf(stderr, "Linux-created image read-back mismatch\n");
+        return 1;
+    }
+
+    infs_volume_close(&volume);
+    puts("Linux-created Format 0.8 image opened successfully on Windows");
+    return 0;
+}
+
+int main(int argc, char **argv)
+{
+    if (argc == 2)
+        return verify_linux_image(argv[1]);
+    if (argc != 1) {
+        fprintf(stderr, "Usage: %s [linux-created-image]\n", argv[0]);
+        return 2;
+    }
+
     wchar_t temp_dir[MAX_PATH];
     wchar_t path[MAX_PATH];
     if (!GetTempPathW(MAX_PATH, temp_dir) ||
