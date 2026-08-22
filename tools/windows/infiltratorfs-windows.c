@@ -24,7 +24,7 @@
 #include <wchar.h>
 
 #ifndef INFILFS_VERSION_W
-#define INFILFS_VERSION_W L"0.9.5"
+#define INFILFS_VERSION_W L"0.9.6"
 #endif
 
 #define IDC_TARGET       1001
@@ -352,6 +352,11 @@ static int add_volume_target(HWND combo, const wchar_t *volume_name,
             candidate.size_bytes = (uint64_t)total.QuadPart;
     }
 
+    /* A zero-sized target cannot be bounded safely and is not useful for
+     * formatting or probing. Do not show misleading 0.00 GiB ghost volumes. */
+    if (!candidate.size_bytes)
+        return 0;
+
     wchar_t windows_fs[64] = L"RAW / unknown";
     wchar_t windows_label[MAX_PATH] = L"";
     if (!candidate.is_infiltrator) {
@@ -419,11 +424,32 @@ static int physical_disk_is_removable(HANDLE disk)
     DWORD returned = 0;
     memset(&hotplug, 0, sizeof(hotplug));
     hotplug.Size = sizeof(hotplug);
-    if (!DeviceIoControl(disk, IOCTL_STORAGE_GET_HOTPLUG_INFO,
-                         NULL, 0, &hotplug, sizeof(hotplug),
-                         &returned, NULL))
-        return 0;
-    return hotplug.MediaRemovable || hotplug.DeviceHotplug;
+    if (DeviceIoControl(disk, IOCTL_STORAGE_GET_HOTPLUG_INFO,
+                        NULL, 0, &hotplug, sizeof(hotplug),
+                        &returned, NULL) &&
+        (hotplug.MediaRemovable || hotplug.DeviceHotplug))
+        return 1;
+
+    /* Built-in SD/MMC readers commonly report neither hot-plug flag even
+     * though their media is removable. Ask the storage stack for the bus type
+     * as a second source of truth. USB is included for external card readers. */
+    STORAGE_PROPERTY_QUERY query;
+    memset(&query, 0, sizeof(query));
+    query.PropertyId = StorageDeviceProperty;
+    query.QueryType = PropertyStandardQuery;
+    uint8_t buffer[1024];
+    memset(buffer, 0, sizeof(buffer));
+    if (DeviceIoControl(disk, IOCTL_STORAGE_QUERY_PROPERTY,
+                        &query, sizeof(query), buffer, sizeof(buffer),
+                        &returned, NULL)) {
+        STORAGE_DEVICE_DESCRIPTOR *descriptor =
+            (STORAGE_DEVICE_DESCRIPTOR *)buffer;
+        if (descriptor->BusType == BusTypeSd ||
+            descriptor->BusType == BusTypeMmc ||
+            descriptor->BusType == BusTypeUsb)
+            return 1;
+    }
+    return 0;
 }
 
 static DRIVE_LAYOUT_INFORMATION_EX *read_drive_layout(HANDLE disk)
@@ -486,10 +512,6 @@ static int add_physical_partition_target(HWND combo, DWORD disk_number,
         superblock_label_to_wide(&sb, candidate.infs_label);
     }
 
-    /* Always surface positively identified InfiltratorFS partitions. Raw
-     * anonymous partitions are only surfaced on removable/hot-plug media so
-     * the formatter remains useful without presenting internal system/data
-     * partitions as casual destructive targets. */
     if (!candidate.is_infiltrator && !removable)
         return 0;
 
@@ -506,7 +528,7 @@ static int add_physical_partition_target(HWND combo, DWORD disk_number,
                      candidate.infs_label[0] ? candidate.infs_label : L"InfiltratorFS");
     } else {
         _snwprintf_s(display, sizeof(display) / sizeof(display[0]), _TRUNCATE,
-                     L"[RAW partition]  Disk %lu partition %lu  %.2f GiB",
+                     L"[RAW removable partition]  Disk %lu partition %lu  %.2f GiB",
                      (unsigned long)disk_number,
                      (unsigned long)part->PartitionNumber,
                      gib);
@@ -586,9 +608,6 @@ static void refresh_volumes(void)
         FindVolumeClose(find);
     }
 
-    /* Critical for filesystems Windows does not understand: those partitions
-     * can exist in Disk Management without any Win32 volume GUID. Walk the
-     * physical partition tables and probe bounded partition regions directly. */
     enumerate_physical_partitions(combo, &added, &infiltrator_count);
 
     if (added)
@@ -602,7 +621,7 @@ static void refresh_volumes(void)
                      infiltrator_count, infiltrator_count == 1 ? L"" : L"s");
         set_status(text);
     } else if (added) {
-        set_status(L"No InfiltratorFS partition detected. Non-system Windows volumes and removable raw partitions are shown.");
+        set_status(L"No InfiltratorFS partition detected. Non-system Windows volumes and removable SD/MMC/USB partitions are shown.");
     } else {
         set_status(L"No usable non-system volumes or partitions were found.");
     }
