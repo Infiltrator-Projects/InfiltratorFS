@@ -16,6 +16,7 @@ struct infs_win32_storage_context {
     HANDLE handle;
     int locked;
     int is_device;
+    int is_volume;
 };
 
 static infs_status status_from_win32(DWORD error)
@@ -49,6 +50,18 @@ static int path_is_device(const wchar_t *path)
 {
     return wcsncmp(path, L"\\\\.\\", 4u) == 0 ||
            wcsncmp(path, L"\\\\?\\Volume{", 11u) == 0;
+}
+
+static int path_is_volume(const wchar_t *path)
+{
+    if (wcsncmp(path, L"\\\\?\\Volume{", 11u) == 0)
+        return 1;
+    if (wcsncmp(path, L"\\\\.\\", 4u) != 0)
+        return 0;
+    wchar_t letter = path[4];
+    return ((letter >= L'A' && letter <= L'Z') ||
+            (letter >= L'a' && letter <= L'z')) &&
+           path[5] == L':' && path[6] == L'\0';
 }
 
 static infs_status win32_seek(HANDLE handle, uint64_t offset)
@@ -114,6 +127,76 @@ static infs_status win32_flush(void *context)
     return INFS_STATUS_OK;
 }
 
+static infs_status volume_size_from_partition(HANDLE handle,
+                                              uint64_t *size_bytes)
+{
+    PARTITION_INFORMATION_EX part;
+    DWORD returned = 0;
+    if (!DeviceIoControl(handle, IOCTL_DISK_GET_PARTITION_INFO_EX,
+                         NULL, 0, &part, sizeof(part), &returned, NULL))
+        return status_from_win32(GetLastError());
+    if (part.PartitionLength.QuadPart <= 0)
+        return INFS_STATUS_CORRUPT;
+    *size_bytes = (uint64_t)part.PartitionLength.QuadPart;
+    return INFS_STATUS_OK;
+}
+
+static infs_status volume_size_from_length_info(HANDLE handle,
+                                                uint64_t *size_bytes)
+{
+    GET_LENGTH_INFORMATION length;
+    DWORD returned = 0;
+    if (!DeviceIoControl(handle, IOCTL_DISK_GET_LENGTH_INFO,
+                         NULL, 0, &length, sizeof(length), &returned, NULL))
+        return status_from_win32(GetLastError());
+    if (length.Length.QuadPart <= 0)
+        return INFS_STATUS_CORRUPT;
+    *size_bytes = (uint64_t)length.Length.QuadPart;
+    return INFS_STATUS_OK;
+}
+
+static infs_status volume_size_from_extents(HANDLE handle,
+                                            uint64_t *size_bytes)
+{
+    size_t capacity = sizeof(VOLUME_DISK_EXTENTS) +
+                      7u * sizeof(DISK_EXTENT);
+    for (unsigned attempt = 0; attempt < 8u; ++attempt) {
+        if (capacity > (size_t)DWORD_MAX)
+            return INFS_STATUS_OVERFLOW;
+        VOLUME_DISK_EXTENTS *extents = malloc(capacity);
+        if (!extents)
+            return INFS_STATUS_NO_MEMORY;
+        DWORD returned = 0;
+        if (DeviceIoControl(handle, IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS,
+                            NULL, 0, extents, (DWORD)capacity,
+                            &returned, NULL)) {
+            uint64_t total = 0;
+            DWORD count = extents->NumberOfDiskExtents;
+            for (DWORD i = 0; i < count; ++i) {
+                LONGLONG length = extents->Extents[i].ExtentLength.QuadPart;
+                if (length <= 0 || (uint64_t)length > UINT64_MAX - total) {
+                    free(extents);
+                    return INFS_STATUS_CORRUPT;
+                }
+                total += (uint64_t)length;
+            }
+            free(extents);
+            if (!total)
+                return INFS_STATUS_CORRUPT;
+            *size_bytes = total;
+            return INFS_STATUS_OK;
+        }
+        DWORD error = GetLastError();
+        free(extents);
+        if (error != ERROR_MORE_DATA)
+            return status_from_win32(error);
+        if (capacity > (size_t)DWORD_MAX / 2u)
+            return INFS_STATUS_OVERFLOW;
+        capacity *= 2u;
+    }
+    return INFS_STATUS_NOT_SUPPORTED;
+}
+
 static infs_status win32_get_size(void *context, uint64_t *size_bytes,
                                   int *is_device)
 {
@@ -121,17 +204,53 @@ static infs_status win32_get_size(void *context, uint64_t *size_bytes,
     if (!size_bytes || !is_device)
         return INFS_STATUS_INVALID_ARGUMENT;
     if (win->is_device) {
-        GET_LENGTH_INFORMATION length;
-        DWORD returned = 0;
-        if (!DeviceIoControl(win->handle, IOCTL_DISK_GET_LENGTH_INFO,
-                             NULL, 0, &length, sizeof(length), &returned, NULL))
-            return status_from_win32(GetLastError());
-        if (length.Length.QuadPart < 0)
-            return INFS_STATUS_CORRUPT;
-        *size_bytes = (uint64_t)length.Length.QuadPart;
-        *is_device = 1;
-        return INFS_STATUS_OK;
+        infs_status first_error = INFS_STATUS_NOT_SUPPORTED;
+        infs_status status;
+
+        /* Drive-letter and volume-GUID handles are volume/partition handles,
+         * not necessarily physical-disk handles. Some Windows storage stacks
+         * reject IOCTL_DISK_GET_LENGTH_INFO for these handles even though raw
+         * reads work. Prefer the partition length, then fall back through the
+         * other supported volume queries. */
+        if (win->is_volume) {
+            status = volume_size_from_partition(win->handle, size_bytes);
+            if (status == INFS_STATUS_OK) {
+                *is_device = 1;
+                return INFS_STATUS_OK;
+            }
+            first_error = status;
+        }
+
+        status = volume_size_from_length_info(win->handle, size_bytes);
+        if (status == INFS_STATUS_OK) {
+            *is_device = 1;
+            return INFS_STATUS_OK;
+        }
+        if (first_error == INFS_STATUS_NOT_SUPPORTED)
+            first_error = status;
+
+        if (win->is_volume) {
+            status = volume_size_from_extents(win->handle, size_bytes);
+            if (status == INFS_STATUS_OK) {
+                *is_device = 1;
+                return INFS_STATUS_OK;
+            }
+            if (first_error == INFS_STATUS_NOT_SUPPORTED)
+                first_error = status;
+        }
+
+        /* A few virtual/storage-filter drivers expose a seekable volume handle
+         * but reject all disk IOCTLs. GetFileSizeEx is harmless as a final
+         * fallback and is accepted by some of those stacks. */
+        LARGE_INTEGER length;
+        if (GetFileSizeEx(win->handle, &length) && length.QuadPart > 0) {
+            *size_bytes = (uint64_t)length.QuadPart;
+            *is_device = 1;
+            return INFS_STATUS_OK;
+        }
+        return first_error;
     }
+
     LARGE_INTEGER length;
     if (!GetFileSizeEx(win->handle, &length))
         return status_from_win32(GetLastError());
@@ -218,6 +337,7 @@ infs_status infs_win32_storage_open(struct infs_storage *storage,
         return INFS_STATUS_NO_MEMORY;
     win->handle = INVALID_HANDLE_VALUE;
     win->is_device = path_is_device(path);
+    win->is_volume = path_is_volume(path);
 
     DWORD access = GENERIC_READ | (writable ? GENERIC_WRITE : 0u);
     DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
