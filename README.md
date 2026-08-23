@@ -1,71 +1,67 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+
 # InfiltratorFS
+
+[![Build and conformance](https://github.com/The-First-Infiltrator/InfiltratorFS/actions/workflows/ci.yml/badge.svg)](https://github.com/The-First-Infiltrator/InfiltratorFS/actions/workflows/ci.yml)
 
 InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem started in 2026. The persistent format and core engine are written in portable C; Linux and Windows are adapters over the same on-disk structures rather than separate filesystem implementations.
 
-## Current status — implementation 0.9.11 / disk format 0.8
+**Current implementation:** 0.9.11  
+**On-disk format:** 0.8  
+**Shared foundation:** Infiltratr Common 1.11.0  
+**Licence:** GPL-3.0-or-later
 
-Format 0.8 is unchanged by the 0.9.x implementation releases. Media created by earlier Format 0.8 builds does **not** need to be reformatted to use 0.9.11.
+Format 0.8 is unchanged by the 0.9.x implementation releases. Media created by earlier Format 0.8 builds does not need to be reformatted to use implementation 0.9.11.
 
-Implementation 0.9.11 focuses on portability reuse, recovery safety and real-device I/O behaviour:
-
-- consumes **Infiltratr Common 1.11.0** for fixed-width endian conversion, strict UTF-8 validation, exact EINTR-safe positioned POSIX I/O and checked/saturating arithmetic;
-- keeps healthy real-device opens lightweight instead of performing a whole-filesystem scrub at mount time;
-- requires complete graph validation before a writable opener heals mixed/degraded checkpoint replicas, so fast mounting cannot overwrite the last known-good recovery generation;
-- rejects transaction-generation wrap instead of allowing `UINT64_MAX + 1` to fold to generation zero;
-- removes redundant Windows `FILE_FLAG_WRITE_THROUGH`; durability remains controlled by the filesystem's explicit `FlushFileBuffers` transaction barriers;
-- adds single-writer exclusion for Windows raw partition-region access while retaining bounded partition I/O;
-- keeps the Windows bulk-copy adapter on a bounded deferred-publication window to avoid publishing the full allocation bitmap for every small write chunk; and
-- preserves the 0.9.10 versioned Windows executable naming and embedded Windows File/Product version metadata.
+## Capabilities
 
 Format 0.8 currently provides:
 
 - 4096-byte little-endian blocks;
 - nonzero 128-bit persistent filesystem and object identities;
 - three physically separated checksummed checkpoints with generation-based recovery;
-- authoritative bitmap allocation plus next-fit runtime allocation hints;
+- authoritative bitmap allocation with next-fit runtime hints;
 - transactional copy-on-write metadata/data publication;
-- paged directory and object-index metadata for scalable entry capacity;
-- inline small files and automatic inline/extent transitions;
-- normal and hole extents, sparse growth and hole punching;
+- paged directory and object-index metadata;
+- inline small files with automatic inline/extent transitions;
+- normal/hole extents, sparse growth and hole punching;
 - shared extents/reflinks with CoW on later writes;
 - CRC64-ECMA metadata integrity and SHA-256 file-data integrity;
-- independently stored checksums for extent-backed data;
-- portable timestamps/attributes and optional POSIX compatibility metadata;
+- portable timestamps/attributes plus optional POSIX compatibility metadata;
 - mandatory well-formed UTF-8 namespace components;
-- namespace, ownership, checksum-chain and metadata graph validation;
-- explicit read-only scrub/verify with file, data-block, checksum-error and metadata-error reporting;
-- callback-based storage, durability, randomness and clock services; and
-- operating-system-neutral `infs_status` values translated only at adapter boundaries.
+- namespace, ownership, checksum-chain and metadata-graph validation;
+- explicit read-only scrub/verify; and
+- callback-based storage, durability, randomness and clock services.
 
-## Platform model
+Implementation 0.9.11 focuses on portability reuse, recovery safety and real-device I/O behaviour, including complete graph validation before checkpoint healing, generation-wrap rejection, Windows raw-partition single-writer exclusion and bounded deferred publication for bulk Windows transfers.
+
+## Architecture
 
 | Layer | Status |
 | --- | --- |
-| On-disk format | Platform-neutral Format 0.8 |
-| Core filesystem engine | Portable C17; no Linux fd/VFS or Win32 handle types |
-| Shared foundations | Infiltratr Common 1.11.0 |
-| Storage interface | Callback-based; POSIX, Win32 and in-memory test backends |
-| Linux userspace adapter | Implemented through POSIX I/O and FUSE3 |
-| Windows transfer/raw-volume adapter | Implemented; opens Format 0.8 partitions without a drive letter or Windows filesystem driver |
-| Native Linux kernel driver | Future work |
-| Native Windows filesystem driver / Explorer mount | Future work |
+| On-disk format | Platform-neutral Format 0.8. |
+| Core filesystem engine | Portable C17; no Linux fd/VFS or Win32 handle types. |
+| Shared foundations | Infiltratr Common 1.11.0. |
+| Storage interface | Callback-based POSIX, Win32 and in-memory backends. |
+| Linux userspace adapter | Implemented through POSIX I/O and FUSE3. |
+| Windows transfer/raw-volume adapter | Implemented for direct Format 0.8 partition access. |
+| Native Linux kernel driver | Future work. |
+| Native Windows filesystem driver / Explorer mount | Future work. |
 
-The Windows transfer application is **not** a Windows kernel filesystem driver. It discovers raw physical partitions, opens InfiltratorFS directly, lists the current root directory, copies files/folders and runs a full scrub. Explorer drive-letter mounting requires a future Windows filesystem driver, but no Format 0.8 conversion or reformat is intended to be necessary.
+Filesystem-specific transaction, allocation, namespace, checksum and on-disk-format rules remain in InfiltratorFS. Common owns only generally reusable primitives such as endian conversion, UTF-8 validation, exact POSIX positioned I/O and checked arithmetic.
 
-## Infiltratr Common dependency
+The Windows transfer application is not a Windows kernel filesystem driver. It can discover and access Format 0.8 partitions directly, including partitions without a drive letter, but Explorer drive-letter mounting remains future work.
 
-InfiltratorFS pins Infiltratr Common 1.11.0. A parent/installed `InfiltratrCommon` package may provide the targets; otherwise the repository submodule is used. CMake also has an exact-commit FetchContent fallback for source archives where Git submodules are unavailable.
+## Build and test
 
-The filesystem-specific transaction, allocation, namespace, checksum and on-disk-format rules remain inside InfiltratorFS. Common owns only generally reusable primitives.
-
-## Build on Linux Mint
+On Linux Mint, Ubuntu or another supported Debian-family development host:
 
 ```bash
 sudo apt install build-essential cmake pkg-config libfuse3-dev fuse3
-git submodule update --init --recursive
-cmake -S . -B build
-cmake --build build
+git clone --recurse-submodules https://github.com/The-First-Infiltrator/InfiltratorFS.git
+cd InfiltratorFS
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
@@ -84,43 +80,52 @@ Exercise the filesystem without mounting:
 ./build/infilfs-tool infilfs.img mkdir /docs
 ./build/infilfs-tool infilfs.img put README.md /docs/README.md
 ./build/infilfs-tool infilfs.img cat /docs/README.md
-./build/infilfs-tool infilfs.img punch /docs/README.md 4096 4096
 ```
 
-Mount read/write with FUSE:
+Mount through FUSE3:
 
 ```bash
 mkdir -p /tmp/infilfs-mnt
 ./build/infilfs-fuse infilfs.img /tmp/infilfs-mnt -f
 ```
 
-Mount read-only:
+GitHub Actions runs Linux, Clang, sanitizer and static-analyzer suites, cross-platform image qualification, native Windows builds/tests and Linux package construction.
 
-```bash
-./build/infilfs-fuse infilfs.img /tmp/infilfs-mnt -f -o ro
-```
+## Desktop and Windows tools
 
-The FUSE adapter remains deliberately single-threaded while the current core is single-writer. POSIX storage uses shared locks for read-only openers and an exclusive lock for writers/formatters. Explicit `fsync` and final unmount publish any deferred transaction.
+The Linux Debian package installs **InfiltratorFS Manager**, which can create/format images, select removable partitions, inspect/scrub, mount through FUSE, open in Nemo and unmount safely.
 
-## Linux Mint desktop manager
+The Windows release contains a versioned executable such as `InfiltratorFS-Windows-0.9.11.exe`. Run it elevated when accessing raw media. It can discover physical partitions, list the root directory, copy files/folders and run a full scrub while bounding raw I/O to the selected partition.
 
-The Debian package installs **InfiltratorFS Manager**. It can create/format images, select removable partitions, format with destructive-action confirmation, inspect/scrub, mount through FUSE, open in Nemo and unmount safely. Mint Disks may display an InfiltratorFS partition as unknown because InfiltratorFS is not yet registered as a native UDisks filesystem type.
+## Release assets
 
-## Windows transfer application
+A numbered release publishes:
 
-The Windows release contains a versioned executable such as:
+| File | Purpose |
+| --- | --- |
+| `infiltratorfs_<version>_amd64.deb` | Generic Linux amd64 Debian package. |
+| `infiltratorfs-<version>-linux-native.run` | Native local Linux build/install program. |
+| `InfiltratorFS-Windows-<version>.exe` | Native Windows transfer/raw-volume application. |
+| `InfiltratorFS-<version>-source.zip` | Exact tested source archive. |
+| `SHA256SUMS.txt` | SHA-256 checksums for all published project artifacts. |
 
-```text
-InfiltratorFS-Windows-0.9.11.exe
-```
+## Repository and release policy
 
-Run it elevated when accessing raw media. It can discover normal Windows volumes and SD/MMC/USB partitions directly from their physical partition tables, including a Format 0.8 partition with no drive letter. Writable raw-partition opens are bounded to the selected partition and use cooperative single-writer exclusion. Transaction durability is provided by explicit filesystem flush barriers rather than write-through on every individual block write.
+This repository uses `main` as its working branch. Development changes are made directly on `main`; the normal project workflow does not depend on PR, feature or release branches.
 
-## Recovery and scrub
+Every push to `main` runs Build and conformance. Ordinary commits do not publish. A commit is release-eligible only when its subject begins with the exact implementation version as `Release <version>` and the complete Build and conformance workflow succeeds.
 
-A normal healthy block-device open validates the checkpoints, bitmap and essential root/index state needed for operation without walking every file. Full namespace/ownership/checksum graph verification belongs to **Scrub / Verify**.
+The publisher checks out the exact tested commit, verifies it is still current `main`, rebuilds/tests Linux and Windows release targets, constructs the `.deb`, `.run`, Windows executable and source ZIP, generates checksums, then creates the version tag and GitHub release. Existing version tags and published releases are immutable and are never moved, replaced or edited in place.
 
-Recovery is stricter. If a writable block-device open sees checkpoint replicas that are missing or disagree, each candidate is fully graph-validated before any checkpoint copy is healed. A corrupt newer graph may fall back to an older valid committed generation; an unreadable checkpoint location remains a hard writable-open error because it might contain the only durable newer generation.
+Manually runnable build/test helpers, where present, are diagnostic tools only and are not release-approval mechanisms.
+
+## Recovery and safety
+
+A healthy block-device open validates the checkpoints, bitmap and essential root/index state needed for operation without walking every file. Full namespace/ownership/checksum graph verification belongs to **Scrub / Verify**.
+
+If a writable open sees missing or disagreeing checkpoint replicas, each candidate is fully graph-validated before any healing occurs. A corrupt newer graph may fall back to an older valid committed generation; an unreadable checkpoint location remains a hard writable-open error because it might contain the only durable newer generation.
+
+InfiltratorFS remains experimental. Keep verified backups and use disposable/test media during development. The current FUSE adapter is deliberately single-threaded while the core remains single-writer, and POSIX open-handle behaviour across unlink/rename is not yet the final kernel-filesystem model.
 
 ## Repository layout
 
@@ -135,12 +140,6 @@ tests/                    conformance, recovery, crash and platform tests
 docs/                     architecture and on-disk-format documentation
 ```
 
-## Safety
+## Licence
 
-InfiltratorFS remains experimental. Keep backups and use disposable/test media while developing it.
-
-The FUSE adapter currently resolves operations by pathname rather than retaining complete persistent open-inode state. POSIX open-handle behaviour across unlink/rename is therefore not yet the final kernel-filesystem model.
-
-## License
-
-GPL-3.0-or-later.
+InfiltratorFS is free software licensed under the GNU General Public License version 3 or, at your option, any later version (`GPL-3.0-or-later`). See the repository licence file for the complete terms.
