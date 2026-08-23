@@ -12,9 +12,12 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  linux-release:
-    name: Linux release packages and source
+  source:
+    name: Resolve exact release source
     runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+      version: ${{ steps.source.outputs.version }}
     steps:
       - name: Check out current main
         uses: actions/checkout@v6
@@ -23,7 +26,8 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      - name: Verify exact current main
+      - name: Resolve exact current main and version
+        id: source
         shell: bash
         run: |
           set -euo pipefail
@@ -32,6 +36,35 @@ jobs:
           main_commit=$(git rev-parse origin/main)
           if [[ "$head_commit" != "$main_commit" ]]; then
             printf 'Release checkout %s is not current main %s.\n' "$head_commit" "$main_commit" >&2
+            exit 1
+          fi
+          version="$(sed -nE 's/^project\(InfiltratorFS VERSION ([0-9]+\.[0-9]+\.[0-9]+) LANGUAGES C\)$/\1/p' CMakeLists.txt)"
+          test -n "$version"
+          echo "sha=$main_commit" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  linux-release:
+    name: Linux release packages and source
+    needs: source
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out exact release source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Verify release source is still current main
+        env:
+          EXPECTED_SHA: ${{ needs.source.outputs.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main --tags
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          if [[ "$(git rev-parse origin/main)" != "$EXPECTED_SHA" ]]; then
+            printf 'Current main moved after release approval; restart publication.\n' >&2
             exit 1
           fi
 
@@ -52,31 +85,31 @@ jobs:
           desktop-file-validate packaging/infiltratorfs-manager.desktop
 
       - name: Build Linux packages and complete source archive
-        id: package
+        env:
+          VERSION: ${{ needs.source.outputs.version }}
         shell: bash
         run: |
           set -euo pipefail
-          version="$(sed -nE 's/^project\(InfiltratorFS VERSION ([0-9]+\.[0-9]+\.[0-9]+) LANGUAGES C\)$/\1/p' CMakeLists.txt)"
-          test -n "$version"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          source_version="$(sed -nE 's/^project\(InfiltratorFS VERSION ([0-9]+\.[0-9]+\.[0-9]+) LANGUAGES C\)$/\1/p' CMakeLists.txt)"
+          test "$source_version" = "$VERSION"
 
           bash packaging/build-linux-packages.sh build dist
 
-          deb="infiltratorfs_${version}_amd64.deb"
-          installer="infiltratorfs-${version}-linux-native.run"
-          source="InfiltratorFS-${version}-source.zip"
+          deb="infiltratorfs_${VERSION}_amd64.deb"
+          installer="infiltratorfs-${VERSION}-linux-native.run"
+          source="InfiltratorFS-${VERSION}-source.zip"
           test -f "dist/$deb"
           test -x "dist/$installer"
-          test "$(dpkg-deb --field "dist/$deb" Version)" = "$version"
+          test "$(dpkg-deb --field "dist/$deb" Version)" = "$VERSION"
 
-          staging="$RUNNER_TEMP/InfiltratorFS-${version}"
+          staging="$RUNNER_TEMP/InfiltratorFS-${VERSION}"
           mkdir -p "$staging"
           rsync -a \
             --exclude='.git' \
             --exclude='build' \
             --exclude='dist' \
             ./ "$staging/"
-          (cd "$RUNNER_TEMP" && zip -qry "$GITHUB_WORKSPACE/dist/$source" "InfiltratorFS-${version}")
+          (cd "$RUNNER_TEMP" && zip -qry "$GITHUB_WORKSPACE/dist/$source" "InfiltratorFS-${VERSION}")
           unzip -tq "dist/$source"
 
       - name: Preserve Linux and source release assets
@@ -84,9 +117,9 @@ jobs:
         with:
           name: InfiltratorFS-release-linux-source
           path: |
-            dist/infiltratorfs_${{ steps.package.outputs.version }}_amd64.deb
-            dist/infiltratorfs-${{ steps.package.outputs.version }}-linux-native.run
-            dist/InfiltratorFS-${{ steps.package.outputs.version }}-source.zip
+            dist/infiltratorfs_${{ needs.source.outputs.version }}_amd64.deb
+            dist/infiltratorfs-${{ needs.source.outputs.version }}-linux-native.run
+            dist/InfiltratorFS-${{ needs.source.outputs.version }}-source.zip
           if-no-files-found: error
           retention-days: 30
 
@@ -108,23 +141,26 @@ jobs:
 
   windows-release:
     name: Windows release executable
-    needs: linux-release
+    needs: [source, linux-release]
     runs-on: windows-latest
     steps:
-      - name: Check out current main
+      - name: Check out exact release source
         uses: actions/checkout@v6
         with:
-          ref: main
+          ref: ${{ needs.source.outputs.sha }}
           fetch-depth: 0
           submodules: recursive
 
-      - name: Verify exact current main
+      - name: Verify release source is still current main
         shell: pwsh
+        env:
+          EXPECTED_SHA: ${{ needs.source.outputs.sha }}
         run: |
           git fetch origin main --tags
           $head = (git rev-parse HEAD).Trim()
           $main = (git rev-parse origin/main).Trim()
-          if ($head -ne $main) { throw "Release checkout $head is not current main $main." }
+          if ($head -ne $env:EXPECTED_SHA) { throw "Release checkout $head does not match approved source $env:EXPECTED_SHA." }
+          if ($main -ne $env:EXPECTED_SHA) { throw 'Current main moved after release approval; restart publication.' }
 
       - name: Download Linux-created Format 0.8 image
         uses: actions/download-artifact@v4
@@ -140,41 +176,41 @@ jobs:
           ctest --test-dir build -C Release --output-on-failure
           & .\build\Release\infilfs-win32-storage.exe .\cross-platform\linux-format08.img
 
-      - name: Verify and preserve Windows executable
-        id: package
+      - name: Verify Windows executable and version metadata
         shell: pwsh
+        env:
+          VERSION: ${{ needs.source.outputs.version }}
         run: |
           $cmake = Get-Content CMakeLists.txt -Raw
           if ($cmake -notmatch 'project\(InfiltratorFS VERSION ([0-9]+\.[0-9]+\.[0-9]+) LANGUAGES C\)') {
             throw 'Could not determine InfiltratorFS version from CMakeLists.txt'
           }
-          $version = $Matches[1]
-          $exe = "build\Release\InfiltratorFS-Windows-$version.exe"
+          if ($Matches[1] -ne $env:VERSION) { throw "Source version '$($Matches[1])' does not match approved version '$env:VERSION'." }
+          $exe = "build\Release\InfiltratorFS-Windows-$env:VERSION.exe"
           if (!(Test-Path $exe)) { throw "Versioned Windows executable was not built: $exe" }
           $info = (Get-Item $exe).VersionInfo
-          if (!$info.FileVersion.StartsWith($version)) { throw "FileVersion '$($info.FileVersion)' does not match $version" }
-          if (!$info.ProductVersion.StartsWith($version)) { throw "ProductVersion '$($info.ProductVersion)' does not match $version" }
-          "version=$version" >> $env:GITHUB_OUTPUT
+          if (!$info.FileVersion.StartsWith($env:VERSION)) { throw "FileVersion '$($info.FileVersion)' does not match $env:VERSION" }
+          if (!$info.ProductVersion.StartsWith($env:VERSION)) { throw "ProductVersion '$($info.ProductVersion)' does not match $env:VERSION" }
 
       - name: Preserve Windows release asset
         uses: actions/upload-artifact@v4
         with:
           name: InfiltratorFS-release-windows
-          path: build/Release/InfiltratorFS-Windows-${{ steps.package.outputs.version }}.exe
+          path: build/Release/InfiltratorFS-Windows-${{ needs.source.outputs.version }}.exe
           if-no-files-found: error
           retention-days: 30
 
   publish:
     name: Publish immutable release
-    needs: [linux-release, windows-release]
+    needs: [source, linux-release, windows-release]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
-      - name: Check out current main
+      - name: Check out exact release source
         uses: actions/checkout@v6
         with:
-          ref: main
+          ref: ${{ needs.source.outputs.sha }}
           fetch-depth: 0
           submodules: recursive
 
@@ -188,20 +224,22 @@ jobs:
       - name: Create exact tag and publish all assets
         env:
           GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA: ${{ needs.source.outputs.sha }}
+          VERSION: ${{ needs.source.outputs.version }}
         shell: bash
         run: |
           set -euo pipefail
           git fetch origin main --tags
           head_commit=$(git rev-parse HEAD)
           main_commit=$(git rev-parse origin/main)
-          if [[ "$head_commit" != "$main_commit" ]]; then
-            printf 'Release checkout %s is not current main %s.\n' "$head_commit" "$main_commit" >&2
+          test "$head_commit" = "$EXPECTED_SHA"
+          if [[ "$main_commit" != "$EXPECTED_SHA" ]]; then
+            printf 'Current main moved after release approval; restart publication.\n' >&2
             exit 1
           fi
-
-          version="$(sed -nE 's/^project\(InfiltratorFS VERSION ([0-9]+\.[0-9]+\.[0-9]+) LANGUAGES C\)$/\1/p' CMakeLists.txt)"
-          test -n "$version"
-          tag="v${version}"
+          source_version="$(sed -nE 's/^project\(InfiltratorFS VERSION ([0-9]+\.[0-9]+\.[0-9]+) LANGUAGES C\)$/\1/p' CMakeLists.txt)"
+          test "$source_version" = "$VERSION"
+          tag="v${VERSION}"
 
           if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
             printf 'Release tag %s already exists; published releases are immutable.\n' "$tag" >&2
@@ -212,15 +250,14 @@ jobs:
             exit 1
           fi
 
-          deb="infiltratorfs_${version}_amd64.deb"
-          installer="infiltratorfs-${version}-linux-native.run"
-          windows="InfiltratorFS-Windows-${version}.exe"
-          source="InfiltratorFS-${version}-source.zip"
+          deb="infiltratorfs_${VERSION}_amd64.deb"
+          installer="infiltratorfs-${VERSION}-linux-native.run"
+          windows="InfiltratorFS-Windows-${VERSION}.exe"
+          source="InfiltratorFS-${VERSION}-source.zip"
           for asset in "$deb" "$installer" "$windows" "$source"; do
             test -s "release-assets/$asset"
           done
-          test -x "release-assets/$installer"
-          test "$(dpkg-deb --field "release-assets/$deb" Version)" = "$version"
+          test "$(dpkg-deb --field "release-assets/$deb" Version)" = "$VERSION"
           unzip -tq "release-assets/$source"
 
           (
@@ -228,7 +265,7 @@ jobs:
             sha256sum "$deb" "$installer" "$windows" "$source" > SHA256SUMS.txt
           )
 
-          git tag "$tag" "$head_commit"
+          git tag "$tag" "$EXPECTED_SHA"
           git push origin "$tag"
 
           gh release create "$tag" \
@@ -238,8 +275,8 @@ jobs:
             "release-assets/$source" \
             "release-assets/SHA256SUMS.txt" \
             --verify-tag \
-            --target "$head_commit" \
-            --title "InfiltratorFS $version" \
+            --target "$EXPECTED_SHA" \
+            --title "InfiltratorFS $VERSION" \
             --generate-notes \
             --latest
 
