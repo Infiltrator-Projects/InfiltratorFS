@@ -1,105 +1,253 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-name: Release packages
+name: Publish release
 
 on:
   workflow_dispatch:
-    inputs:
-      tag:
-        description: Existing release tag to package and update
-        required: true
-        default: v0.7.0
-        type: string
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: publish-release-${{ github.repository }}
+  cancel-in-progress: false
 
 jobs:
-  linux-deb:
-    name: Linux Debian package
+  linux-release:
+    name: Linux release packages and source
     runs-on: ubuntu-24.04
-
     steps:
-      - name: Check out the tagged source
-        uses: actions/checkout@v4
+      - name: Check out current main
+        uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.tag }}
+          ref: main
+          fetch-depth: 0
+          submodules: recursive
 
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes cmake desktop-file-utils ninja-build fuse3 libfuse3-dev
-
-      - name: Validate desktop integration
-        run: desktop-file-validate packaging/infiltratorfs-manager.desktop
-
-      - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-
-      - name: Build
-        run: cmake --build build --parallel
-
-      - name: Test
-        run: ctest --test-dir build --output-on-failure
-
-      - name: Build Debian package
-        id: package
-        env:
-          RELEASE_TAG: ${{ inputs.tag }}
+      - name: Verify exact current main
         shell: bash
         run: |
           set -euo pipefail
+          git fetch origin main --tags
+          head_commit=$(git rev-parse HEAD)
+          main_commit=$(git rev-parse origin/main)
+          if [[ "$head_commit" != "$main_commit" ]]; then
+            printf 'Release checkout %s is not current main %s.\n' "$head_commit" "$main_commit" >&2
+            exit 1
+          fi
 
-          version="${RELEASE_TAG#v}"
-          architecture="$(dpkg --print-architecture)"
-          filename="infiltratorfs_${version}_${architecture}.deb"
-          package_root="${RUNNER_TEMP}/infiltratorfs-package"
+      - name: Install build dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake desktop-file-utils fuse3 libfuse3-dev \
+            pkg-config policykit-1 rsync unzip xdg-utils zenity zip
 
-          rm -rf "${package_root}"
-          install -d "${package_root}/DEBIAN"
-          install -d "${package_root}/usr/share/doc/infiltratorfs"
-          cmake --install build --prefix "${package_root}/usr"
-          install -m 0644 LICENSE "${package_root}/usr/share/doc/infiltratorfs/copyright"
-          install -m 0644 README.md "${package_root}/usr/share/doc/infiltratorfs/README.md"
+      - name: Configure, build and test
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel
+          ctest --test-dir build --output-on-failure
+          desktop-file-validate packaging/infiltratorfs-manager.desktop
 
-          installed_size="$(du -sk "${package_root}/usr" | cut -f1)"
-          printf '%s\n' \
-            'Package: infiltratorfs' \
-            "Version: ${version}" \
-            'Section: utils' \
-            'Priority: optional' \
-            "Architecture: ${architecture}" \
-            'Maintainer: The First Infiltrator' \
-            'Depends: fuse3, libfuse3-3, policykit-1, util-linux, xdg-utils, zenity' \
-            "Installed-Size: ${installed_size}" \
-            'Homepage: https://github.com/The-First-Infiltrator/InfiltratorFS' \
-            'Description: experimental userspace filesystem tools' \
-            ' InfiltratorFS Format 0.7 formatter, inspector, scrubber, utility,' \
-            ' Linux FUSE adapter and Linux Mint desktop manager.' \
-            ' Use only with image files or disposable media.' \
-            > "${package_root}/DEBIAN/control"
+      - name: Build Linux packages and complete source archive
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(sed -nE 's/^project\(InfiltratorFS VERSION ([0-9]+\.[0-9]+\.[0-9]+) LANGUAGES C\)$/\1/p' CMakeLists.txt)"
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
-          install -d dist
-          dpkg-deb --root-owner-group --build "${package_root}" "dist/${filename}"
-          dpkg-deb --contents "dist/${filename}" > dist/package-contents.txt
-          grep -q 'usr/bin/infiltratorfs-manager$' dist/package-contents.txt
-          grep -q 'usr/lib/infiltratorfs/infiltratorfs-manager-helper$' dist/package-contents.txt
-          grep -q 'usr/share/applications/infiltratorfs-manager.desktop$' dist/package-contents.txt
-          test "$(dpkg-deb --field "dist/${filename}" Version)" = "${version}"
-          sha256sum "dist/${filename}" > "dist/${filename}.sha256"
-          rm dist/package-contents.txt
-          echo "filename=${filename}" >> "${GITHUB_OUTPUT}"
+          bash packaging/build-linux-packages.sh build dist
 
-      - name: Preserve package as a workflow artifact
+          deb="infiltratorfs_${version}_amd64.deb"
+          installer="infiltratorfs-${version}-linux-native.run"
+          source="InfiltratorFS-${version}-source.zip"
+          test -f "dist/$deb"
+          test -x "dist/$installer"
+          test "$(dpkg-deb --field "dist/$deb" Version)" = "$version"
+
+          staging="$RUNNER_TEMP/InfiltratorFS-${version}"
+          mkdir -p "$staging"
+          rsync -a \
+            --exclude='.git' \
+            --exclude='build' \
+            --exclude='dist' \
+            ./ "$staging/"
+          (cd "$RUNNER_TEMP" && zip -qry "$GITHUB_WORKSPACE/dist/$source" "InfiltratorFS-${version}")
+          unzip -tq "dist/$source"
+
+      - name: Preserve Linux and source release assets
         uses: actions/upload-artifact@v4
         with:
-          name: infiltratorfs-linux-deb
-          path: dist/*
+          name: InfiltratorFS-release-linux-source
+          path: |
+            dist/infiltratorfs_${{ steps.package.outputs.version }}_amd64.deb
+            dist/infiltratorfs-${{ steps.package.outputs.version }}-linux-native.run
+            dist/InfiltratorFS-${{ steps.package.outputs.version }}-source.zip
           if-no-files-found: error
           retention-days: 30
 
-      - name: Attach package to the GitHub release
+      - name: Build Linux-created cross-platform image
+        run: |
+          truncate -s 64M build/linux-format08.img
+          build/mkfs.infilfs -L LinuxCrossPlatform build/linux-format08.img
+          printf 'linux-to-windows-format-0.8\n' > build/linux-cross-platform.txt
+          build/infilfs-tool build/linux-format08.img put build/linux-cross-platform.txt /linux-cross-platform.txt
+          build/infilfs-scrub build/linux-format08.img
+
+      - name: Preserve cross-platform test image
+        uses: actions/upload-artifact@v4
+        with:
+          name: InfiltratorFS-release-test-image
+          path: build/linux-format08.img
+          if-no-files-found: error
+          retention-days: 1
+
+  windows-release:
+    name: Windows release executable
+    needs: linux-release
+    runs-on: windows-latest
+    steps:
+      - name: Check out current main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Verify exact current main
+        shell: pwsh
+        run: |
+          git fetch origin main --tags
+          $head = (git rev-parse HEAD).Trim()
+          $main = (git rev-parse origin/main).Trim()
+          if ($head -ne $main) { throw "Release checkout $head is not current main $main." }
+
+      - name: Download Linux-created Format 0.8 image
+        uses: actions/download-artifact@v4
+        with:
+          name: InfiltratorFS-release-test-image
+          path: cross-platform
+
+      - name: Configure, build and test
+        shell: pwsh
+        run: |
+          cmake -S . -B build -A x64
+          cmake --build build --config Release --parallel
+          ctest --test-dir build -C Release --output-on-failure
+          & .\build\Release\infilfs-win32-storage.exe .\cross-platform\linux-format08.img
+
+      - name: Verify and preserve Windows executable
+        id: package
+        shell: pwsh
+        run: |
+          $cmake = Get-Content CMakeLists.txt -Raw
+          if ($cmake -notmatch 'project\(InfiltratorFS VERSION ([0-9]+\.[0-9]+\.[0-9]+) LANGUAGES C\)') {
+            throw 'Could not determine InfiltratorFS version from CMakeLists.txt'
+          }
+          $version = $Matches[1]
+          $exe = "build\Release\InfiltratorFS-Windows-$version.exe"
+          if (!(Test-Path $exe)) { throw "Versioned Windows executable was not built: $exe" }
+          $info = (Get-Item $exe).VersionInfo
+          if (!$info.FileVersion.StartsWith($version)) { throw "FileVersion '$($info.FileVersion)' does not match $version" }
+          if (!$info.ProductVersion.StartsWith($version)) { throw "ProductVersion '$($info.ProductVersion)' does not match $version" }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Preserve Windows release asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: InfiltratorFS-release-windows
+          path: build/Release/InfiltratorFS-Windows-${{ steps.package.outputs.version }}.exe
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Publish immutable release
+    needs: [linux-release, windows-release]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Check out current main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Download verified release assets
+        uses: actions/download-artifact@v4
+        with:
+          pattern: InfiltratorFS-release-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create exact tag and publish all assets
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.tag }}
-        run: gh release upload "${RELEASE_TAG}" dist/* --repo "${GITHUB_REPOSITORY}" --clobber
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main --tags
+          head_commit=$(git rev-parse HEAD)
+          main_commit=$(git rev-parse origin/main)
+          if [[ "$head_commit" != "$main_commit" ]]; then
+            printf 'Release checkout %s is not current main %s.\n' "$head_commit" "$main_commit" >&2
+            exit 1
+          fi
 
+          version="$(sed -nE 's/^project\(InfiltratorFS VERSION ([0-9]+\.[0-9]+\.[0-9]+) LANGUAGES C\)$/\1/p' CMakeLists.txt)"
+          test -n "$version"
+          tag="v${version}"
+
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            printf 'Release tag %s already exists; published releases are immutable.\n' "$tag" >&2
+            exit 1
+          fi
+          if gh release view "$tag" >/dev/null 2>&1; then
+            printf 'Release %s already exists; published releases are immutable.\n' "$tag" >&2
+            exit 1
+          fi
+
+          deb="infiltratorfs_${version}_amd64.deb"
+          installer="infiltratorfs-${version}-linux-native.run"
+          windows="InfiltratorFS-Windows-${version}.exe"
+          source="InfiltratorFS-${version}-source.zip"
+          for asset in "$deb" "$installer" "$windows" "$source"; do
+            test -s "release-assets/$asset"
+          done
+          test -x "release-assets/$installer"
+          test "$(dpkg-deb --field "release-assets/$deb" Version)" = "$version"
+          unzip -tq "release-assets/$source"
+
+          (
+            cd release-assets
+            sha256sum "$deb" "$installer" "$windows" "$source" > SHA256SUMS.txt
+          )
+
+          git tag "$tag" "$head_commit"
+          git push origin "$tag"
+
+          gh release create "$tag" \
+            "release-assets/$deb" \
+            "release-assets/$installer" \
+            "release-assets/$windows" \
+            "release-assets/$source" \
+            "release-assets/SHA256SUMS.txt" \
+            --verify-tag \
+            --target "$head_commit" \
+            --title "InfiltratorFS $version" \
+            --generate-notes \
+            --latest
+
+          expected_assets=$(printf '%s\n%s\n%s\n%s\n%s\n' \
+            "$deb" "$installer" "$windows" "$source" SHA256SUMS.txt | sort)
+          published_assets=$(gh release view "$tag" --json assets --jq '.assets[].name' | sort)
+          if [[ "$published_assets" != "$expected_assets" ]]; then
+            printf 'Release %s has an unexpected asset set.\n' "$tag" >&2
+            printf 'Expected:\n%s\nPublished:\n%s\n' "$expected_assets" "$published_assets" >&2
+            exit 1
+          fi
