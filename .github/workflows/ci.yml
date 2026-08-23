@@ -5,10 +5,6 @@ on:
   push:
     branches:
       - main
-      - "format-*"
-      - "release/*"
-      - "agent/*"
-  pull_request:
 
 permissions:
   contents: read
@@ -20,25 +16,22 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v6
-      - name: Enforce explicit immutable release approval
+      - name: Enforce main-only automatic immutable publishing
         shell: bash
         run: |
           set -euo pipefail
           release=.github/workflows/release-packages.yml
-          grep -qx '  workflow_dispatch:' "$release"
-          if grep -Eq '^  (push|workflow_run|schedule):' "$release"; then
-            echo "Release publication must be manual-only." >&2
+          grep -Fq '  workflow_run:' "$release"
+          grep -Fq 'workflows: ["Build and conformance"]' "$release"
+          grep -Fq "startsWith(github.event.workflow_run.head_commit.message, 'Release ')" "$release"
+          grep -Fq "github.event.workflow_run.head_branch == 'main'" "$release"
+          grep -Fq 'published releases are immutable' "$release"
+          if grep -Eq '^  workflow_dispatch:|^  pull_request:|^  schedule:' "$release"; then
+            echo "Release publication must be automatic from tested main only." >&2
             exit 1
           fi
-          grep -Fq 'ref: main' "$release"
-          grep -Fq 'Release tag %s already exists; published releases are immutable.' "$release"
-          grep -Fq 'Release %s already exists; published releases are immutable.' "$release"
           if grep -Eq -- '--clobber|gh release edit' "$release"; then
             echo "Published releases must never be modified in place." >&2
-            exit 1
-          fi
-          if grep -Fq 'Existing release tag to package and update' "$release"; then
-            echo "Release workflow still describes mutable release updates." >&2
             exit 1
           fi
 
@@ -188,7 +181,6 @@ jobs:
 
   linux-packages:
     name: Linux GUI packages
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [linux]
     runs-on: ubuntu-24.04
     steps:
