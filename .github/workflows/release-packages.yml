@@ -2,7 +2,9 @@
 name: Publish release
 
 on:
-  workflow_dispatch:
+  workflow_run:
+    workflows: ["Build and conformance"]
+    types: [completed]
 
 permissions:
   contents: read
@@ -14,32 +16,44 @@ concurrency:
 jobs:
   source:
     name: Resolve exact release source
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      startsWith(github.event.workflow_run.head_commit.message, 'Release ')
     runs-on: ubuntu-24.04
     outputs:
       sha: ${{ steps.source.outputs.sha }}
       version: ${{ steps.source.outputs.version }}
     steps:
-      - name: Check out current main
+      - name: Check out exact tested main commit
         uses: actions/checkout@v6
         with:
-          ref: main
+          ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
           submodules: recursive
 
       - name: Resolve exact current main and version
         id: source
+        env:
+          EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
         shell: bash
         run: |
           set -euo pipefail
           git fetch origin main --tags
           head_commit=$(git rev-parse HEAD)
           main_commit=$(git rev-parse origin/main)
-          if [[ "$head_commit" != "$main_commit" ]]; then
-            printf 'Release checkout %s is not current main %s.\n' "$head_commit" "$main_commit" >&2
+          if [[ "$head_commit" != "$EXPECTED_SHA" || "$main_commit" != "$EXPECTED_SHA" ]]; then
+            printf 'Release source %s is not exact current main %s.\n' "$head_commit" "$main_commit" >&2
             exit 1
           fi
           version="$(sed -nE 's/^project\(InfiltratorFS VERSION ([0-9]+\.[0-9]+\.[0-9]+) LANGUAGES C\)$/\1/p' CMakeLists.txt)"
           test -n "$version"
+          subject="$(git log -1 --format=%s "$head_commit")"
+          if [[ "$subject" != "Release ${version}" && "$subject" != "Release ${version}:"* ]]; then
+            printf 'Release commit subject must begin with Release %s.\n' "$version" >&2
+            exit 1
+          fi
           echo "sha=$main_commit" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
@@ -64,7 +78,7 @@ jobs:
           git fetch origin main --tags
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
           if [[ "$(git rev-parse origin/main)" != "$EXPECTED_SHA" ]]; then
-            printf 'Current main moved after release approval; restart publication.\n' >&2
+            printf 'Current main moved after release verification; publication stops.\n' >&2
             exit 1
           fi
 
@@ -160,7 +174,7 @@ jobs:
           $head = (git rev-parse HEAD).Trim()
           $main = (git rev-parse origin/main).Trim()
           if ($head -ne $env:EXPECTED_SHA) { throw "Release checkout $head does not match approved source $env:EXPECTED_SHA." }
-          if ($main -ne $env:EXPECTED_SHA) { throw 'Current main moved after release approval; restart publication.' }
+          if ($main -ne $env:EXPECTED_SHA) { throw 'Current main moved after release verification; publication stops.' }
 
       - name: Download Linux-created Format 0.8 image
         uses: actions/download-artifact@v4
@@ -185,7 +199,7 @@ jobs:
           if ($cmake -notmatch 'project\(InfiltratorFS VERSION ([0-9]+\.[0-9]+\.[0-9]+) LANGUAGES C\)') {
             throw 'Could not determine InfiltratorFS version from CMakeLists.txt'
           }
-          if ($Matches[1] -ne $env:VERSION) { throw "Source version '$($Matches[1])' does not match approved version '$env:VERSION'." }
+          if ($Matches[1] -ne $env:VERSION) { throw "Source version '$($Matches[1])' does not match release version '$env:VERSION'." }
           $exe = "build\Release\InfiltratorFS-Windows-$env:VERSION.exe"
           if (!(Test-Path $exe)) { throw "Versioned Windows executable was not built: $exe" }
           $info = (Get-Item $exe).VersionInfo
@@ -234,7 +248,7 @@ jobs:
           main_commit=$(git rev-parse origin/main)
           test "$head_commit" = "$EXPECTED_SHA"
           if [[ "$main_commit" != "$EXPECTED_SHA" ]]; then
-            printf 'Current main moved after release approval; restart publication.\n' >&2
+            printf 'Current main moved after release verification; publication stops.\n' >&2
             exit 1
           fi
           source_version="$(sed -nE 's/^project\(InfiltratorFS VERSION ([0-9]+\.[0-9]+\.[0-9]+) LANGUAGES C\)$/\1/p' CMakeLists.txt)"
