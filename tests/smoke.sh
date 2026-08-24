@@ -14,9 +14,11 @@ image="$tmp/infilfs.img"
 source_file="$tmp/source.bin"
 out_file="$tmp/out.bin"
 corrupt="$tmp/corrupt.img"
+mkfs_output="$tmp/mkfs-output.txt"
 
 truncate -s 64M "$image"
-"$mkfs" -L SmokeTest "$image" >/dev/null
+"$mkfs" -L SmokeTest "$image" >"$mkfs_output"
+grep -Fq 'Implementation: 0.10.0' "$mkfs_output"
 "$inspect" "$image" >/dev/null
 "$api_test" "$image" >/dev/null
 

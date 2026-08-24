@@ -170,6 +170,8 @@ if(UNIX)
     add_executable(infilfs-inspect tools/infilfs-inspect.c)
     add_executable(infilfs-tool tools/infilfs-tool.c)
     add_executable(infilfs-scrub tools/infilfs-scrub.c)
+    target_compile_definitions(mkfs.infilfs PRIVATE
+        INFILFS_IMPLEMENTATION_VERSION=\"${PROJECT_VERSION}\")
     foreach(tool_target IN ITEMS mkfs.infilfs infilfs-inspect infilfs-tool infilfs-scrub)
         target_link_libraries(${tool_target} PRIVATE infilfs_posix)
         target_compile_definitions(${tool_target} PRIVATE _GNU_SOURCE)

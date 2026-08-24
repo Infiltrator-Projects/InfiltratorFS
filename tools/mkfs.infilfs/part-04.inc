@@ -109,7 +109,7 @@
     char uuid_text[37];
     infs_uuid_to_string(fs_uuid, uuid_text);
     printf("InfiltratorFS formatted successfully\n");
-    printf("  Implementation: 0.9.0\n");
+    printf("  Implementation: %s\n", INFILFS_IMPLEMENTATION_VERSION);
     printf("  Format:          %u.%u\n", INFS_FORMAT_MAJOR, INFS_FORMAT_MINOR);
     printf("  UUID:            %s\n", uuid_text);
     printf("  Label:           %s\n", (char *)sb.label);
@@ -127,4 +127,3 @@
     close(fd);
     return 0;
 }
-
