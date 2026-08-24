@@ -6,12 +6,12 @@
 
 InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem started in 2026. The persistent format and core engine are written in portable C; Linux and Windows are adapters over the same on-disk structures rather than separate filesystem implementations.
 
-**Current implementation:** 0.11.0<br>
+**Current implementation:** 0.12.0<br>
 **On-disk format:** 0.8<br>
 **Shared foundation:** Infiltratr Common 1.11.0<br>
 **Licence:** GPL-3.0-or-later
 
-Format 0.8 is unchanged by the 0.9.x releases and implementations 0.10.0–0.11.0. Media created by earlier Format 0.8 builds does not need to be reformatted.
+Format 0.8 is unchanged by the 0.9.x releases and implementations 0.10.0–0.12.0. Media created by earlier Format 0.8 builds does not need to be reformatted.
 
 ## Capabilities
 
@@ -33,7 +33,7 @@ Format 0.8 currently provides:
 - explicit read-only scrub/verify; and
 - callback-based storage, durability, randomness and clock services.
 
-Implementation 0.11.0 adds a portable read-only forensic scanner without changing Format 0.8. It scans every complete physical block for independently valid checkpoints, object heads, directory pages and index pages, classifies records against the current allocation map when one survives, and continues raw discovery when every checkpoint is damaged. Human-readable TSV and JSON Lines output are available through `infilfs-forensic`; the same scan is exposed in the Linux Manager. The native `.run` remains a self-extracting Bash installer containing the complete release source tree and pinned Common submodule.
+Implementation 0.12.0 adds persistent Linux FUSE file handles without changing Format 0.8. Open descriptors continue to identify the same file across direct or parent-directory rename, unlink and atomic replacement of an open destination. Unlinked objects are retained transactionally in a hidden system-marked adapter namespace until their final descriptor closes; stale retained objects left by an interrupted mount are reclaimed on the next writable mount. Implementation 0.11.0's portable read-only forensic scanner remains available through `infilfs-forensic` and the Linux Manager. The native `.run` remains a self-extracting Bash installer containing the complete release source tree and pinned Common submodule.
 
 ## Architecture
 
@@ -97,7 +97,7 @@ GitHub Actions runs Linux, Clang, sanitizer and static-analyzer suites, cross-pl
 
 The Linux Debian package installs **InfiltratorFS Manager**, which can create/format images, select non-system disk partitions including fixed, USB, SD and other removable media, inspect, scrub, run forensic raw-metadata scans, mount through FUSE, open in Nemo and unmount safely. Whole disks and storage backing the active system partitions remain excluded.
 
-The Windows release contains a versioned executable such as `InfiltratorFS-Windows-0.11.0.exe`. Run it elevated when accessing raw media. It can discover physical partitions, list the root directory, copy files/folders and run a full scrub while bounding raw I/O to the selected partition.
+The Windows release contains a versioned executable such as `InfiltratorFS-Windows-0.12.0.exe`. Run it elevated when accessing raw media. It can discover physical partitions, list the root directory, copy files/folders and run a full scrub while bounding raw I/O to the selected partition.
 
 ## Release assets
 
@@ -115,8 +115,8 @@ GitHub provides the standard source-code ZIP and tarball automatically from the 
 To inspect the native Linux build before allowing it to install anything:
 
 ```bash
-chmod +x infiltratorfs-0.11.0-linux-native.run
-./infiltratorfs-0.11.0-linux-native.run --dry-run
+chmod +x infiltratorfs-0.12.0-linux-native.run
+./infiltratorfs-0.12.0-linux-native.run --dry-run
 ```
 
 Run the same file without `--dry-run` to compile, test and install InfiltratorFS natively. If required packages are missing, it displays the exact `apt-get` commands and asks before installing them.
@@ -137,7 +137,7 @@ A healthy block-device open validates the checkpoints, bitmap and essential root
 
 If a writable open sees missing or disagreeing checkpoint replicas, each candidate is fully graph-validated before any healing occurs. A corrupt newer graph may fall back to an older valid committed generation; an unreadable checkpoint location remains a hard writable-open error because it might contain the only durable newer generation.
 
-InfiltratorFS remains experimental. Keep verified backups and use disposable/test media during development. The current FUSE adapter is deliberately single-threaded while the core remains single-writer, and POSIX open-handle behaviour across unlink/rename is not yet the final kernel-filesystem model.
+InfiltratorFS remains experimental. Keep verified backups and use disposable/test media during development. The current FUSE adapter is deliberately single-threaded while the core remains single-writer. Persistent file-handle lifetime across unlink and rename is implemented in the adapter; parallel operation and the final native kernel-filesystem model remain future work.
 
 ## Repository layout
 

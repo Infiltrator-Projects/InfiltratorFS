@@ -188,6 +188,17 @@
 - [x] Reject damaged candidate records and add deterministic CoW-orphan/checkpoint-loss coverage.
 - [x] Keep on-disk Format 0.8 unchanged.
 
+## Phase 4.12 — implementation 0.12.0 persistent FUSE file handles — complete
+
+- [x] Allocate stable adapter handles for FUSE create and open operations.
+- [x] Route descriptor-based reads, writes, truncate, allocation and attribute updates through the retained object path.
+- [x] Preserve open files across direct rename and parent-directory rename.
+- [x] Preserve an open destination across atomic rename replacement.
+- [x] Keep an unlinked file usable until its final descriptor closes.
+- [x] Reclaim hidden handle-retention objects after final close and interrupted mounts.
+- [x] Add mounted rename, replacement, unlink, read, write, truncate and fsync lifetime coverage.
+- [x] Keep on-disk Format 0.8 unchanged.
+
 ## Phase 4 — modern storage features
 
 - [x] Sparse extents.
@@ -234,7 +245,7 @@
 
 - [x] POSIX file/device backend.
 - [x] FUSE3 reference adapter.
-- [ ] Persistent FUSE inode/open-file handles with unlink/rename lifetime conformance tests.
+- [x] Persistent FUSE inode/open-file handles with unlink/rename lifetime conformance tests.
 - [ ] Native Linux kernel driver.
 - [ ] `mount.infilfs` and standard utilities.
 - [x] Debian/Ubuntu/Linux Mint packaging with an application-menu manager.

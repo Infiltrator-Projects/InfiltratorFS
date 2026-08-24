@@ -7,6 +7,7 @@ mkfs="$build_dir/mkfs.infilfs"
 tool="$build_dir/infilfs-tool"
 scrub="$build_dir/infilfs-scrub"
 fuse="$build_dir/infilfs-fuse"
+handle_test="$build_dir/infilfs-fuse-open-handles"
 
 if [[ ! -r /dev/fuse || ! -w /dev/fuse ]] ||
    ! command -v fusermount3 >/dev/null 2>&1; then
@@ -14,7 +15,7 @@ if [[ ! -r /dev/fuse || ! -w /dev/fuse ]] ||
     exit 77
 fi
 
-for program in "$mkfs" "$tool" "$scrub" "$fuse"; do
+for program in "$mkfs" "$tool" "$scrub" "$fuse" "$handle_test"; do
     if [[ ! -x "$program" ]]; then
         echo "mint-sparse-fuse: missing executable: $program" >&2
         exit 2
@@ -31,6 +32,7 @@ ordinary_source="$tmp/ordinary-source.bin"
 ordinary_readback="$tmp/ordinary-readback.bin"
 fuse_log="$tmp/fuse.log"
 fuse_pid=""
+holder_pid=""
 current_step="initialization"
 
 report_error() {
@@ -52,6 +54,10 @@ cleanup() {
     fi
     if [[ -n "$fuse_pid" ]]; then
         wait "$fuse_pid" 2>/dev/null || true
+    fi
+    if [[ -n "$holder_pid" ]]; then
+        kill -TERM "$holder_pid" 2>/dev/null || true
+        wait "$holder_pid" 2>/dev/null || true
     fi
     rm -rf "$tmp"
 }
@@ -83,6 +89,27 @@ unmount_image() {
     fuse_pid=""
 }
 
+interrupt_with_open_unlink() {
+    local ready="$tmp/interrupted-ready"
+    "$handle_test" --hold-unlinked "$mount_dir" "$ready" &
+    holder_pid=$!
+    for _ in $(seq 1 50); do
+        [[ -f "$ready" ]] && break
+        kill -0 "$holder_pid" 2>/dev/null
+        sleep 0.1
+    done
+    [[ -f "$ready" ]]
+    kill -KILL "$fuse_pid"
+    wait "$fuse_pid" 2>/dev/null || true
+    fuse_pid=""
+    if mountpoint -q "$mount_dir" 2>/dev/null; then
+        fusermount3 -uz "$mount_dir"
+    fi
+    kill -TERM "$holder_pid" 2>/dev/null || true
+    wait "$holder_pid" 2>/dev/null || true
+    holder_pid=""
+}
+
 logical_size=$((1024 * 1024 * 1024 * 1024))
 logical_block=268435454
 block_offset=$((logical_block * 4096))
@@ -95,6 +122,18 @@ head -c 4096 /dev/zero > "$zero_block"
 head -c 98765 /dev/urandom > "$ordinary_source"
 
 step 'mounting the freshly formatted image'
+mount_image
+step 'verifying rename and unlink lifetime for open file descriptors'
+"$handle_test" "$mount_dir"
+step 'interrupting a mount with an unlinked descriptor retained'
+interrupt_with_open_unlink
+step 'remounting to reclaim the interrupted open handle'
+mount_image
+unmount_image
+if "$tool" "$image" ls / | grep -Fq '.infilfs-open-handles-'; then
+    echo 'mint-sparse-fuse: stale open-handle directory survived remount' >&2
+    exit 1
+fi
 mount_image
 step 'creating and mutating an ordinary nested file'
 mkdir -p "$mount_dir/tree/subdirectory"

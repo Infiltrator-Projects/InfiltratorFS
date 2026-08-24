@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.20)
-project(InfiltratorFS VERSION 0.11.0 LANGUAGES C)
+project(InfiltratorFS VERSION 0.12.0 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -194,6 +194,10 @@ if(UNIX)
     target_link_libraries(infilfs-posix-locking PRIVATE infilfs_posix)
     target_compile_definitions(infilfs-posix-locking PRIVATE _GNU_SOURCE)
     infilfs_enable_warnings(infilfs-posix-locking)
+
+    add_executable(infilfs-fuse-open-handles tests/fuse-open-handles.c)
+    target_compile_definitions(infilfs-fuse-open-handles PRIVATE _GNU_SOURCE)
+    infilfs_enable_warnings(infilfs-fuse-open-handles)
 
     add_test(NAME infilfs-posix-locking COMMAND infilfs-posix-locking)
 

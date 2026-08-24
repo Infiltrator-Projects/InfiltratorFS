@@ -22,6 +22,8 @@ The core does not store or expose a Linux file descriptor. It does not depend on
 
 The canonical core path form currently uses UTF-8 components separated by `/`. Separators are not stored in directory entries. A Windows adapter may accept Windows path syntax and translate it into core components.
 
+The Linux FUSE adapter assigns each opened file a stable in-memory handle containing its persistent object ID and current retained path. Rename updates matching handle paths, including descendants of a renamed directory. Unlink and atomic replacement move an open object into an adapter-owned hidden, system-marked directory until its final descriptor closes. Writable mount startup reclaims stale retention directories left by interruption. These are ordinary transactional Format 0.8 namespace operations, so the lifetime policy adds no adapter state to the disk format.
+
 ## 3. Persistent object model
 
 Files, directories, checksum records and future metadata classes are persistent objects identified by 128-bit IDs. A pathname is a namespace mapping, not object identity.

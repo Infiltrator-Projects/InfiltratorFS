@@ -132,6 +132,8 @@ Ordinary rename replacement is a single filesystem transaction. A file may repla
 
 GitHub Actions builds and tests the full Linux implementation, separately builds the portable core and native transfer application with Microsoft Visual C, and opens a Linux-created Format 0.8 image through the Win32 backend. The hardening matrix also runs Clang, AddressSanitizer/UndefinedBehaviorSanitizer and GCC `-fanalyzer`. When `/dev/fuse` is available, `infilfs-mint-fuse` performs mounted copy, rename, permission, sparse, punch, unmount and remount verification.
 
+Implementation 0.12.0 additionally requires mounted conformance for descriptor lifetime across direct rename, parent-directory rename, unlink and atomic replacement of an open destination. The test continues reading, writing, truncating and syncing through the original descriptor after its pathname changes or disappears. Retained objects use an adapter-owned hidden, system-marked directory built from ordinary Format 0.8 namespace objects; final close and the next writable mount both verify reclamation without a disk-format extension.
+
 The high-level FUSE adapter deliberately uses libfuse's documented offsetless `readdir` mode: it ignores the incoming directory offset and passes zero offsets to the filler so libfuse consumes the complete directory in one operation. Synthetic resumable cookies are not part of the current adapter contract.
 
 ## Compatibility rule
