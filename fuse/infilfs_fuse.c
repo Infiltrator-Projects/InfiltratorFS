@@ -17,6 +17,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
+#include <sys/xattr.h>
 #include <unistd.h>
 
 #ifndef FALLOC_FL_KEEP_SIZE
@@ -29,6 +30,30 @@
 #define INFS_NS_PER_SECOND INT64_C(1000000000)
 #define INFS_HANDLE_MAGIC UINT64_C(0x494e4653484e444c)
 #define INFS_ORPHAN_PREFIX ".infilfs-open-handles-"
+#define INFS_LINUX_META_DIRECTORY "/.infilfs-posix-meta"
+#define INFS_LINUX_META_MAGIC "INPSXM01"
+#define INFS_LINUX_META_VERSION UINT32_C(1)
+#define INFS_LINUX_META_MAX (UINT32_C(1024) * 1024u)
+
+struct infs_linux_meta_header {
+    uint8_t magic[8];
+    uint32_t version;
+    uint32_t special_mode;
+    uint64_t special_rdev;
+    uint32_t xattr_bytes;
+    uint32_t reserved;
+};
+
+struct infs_linux_xattr_record {
+    uint16_t name_length;
+    uint16_t reserved;
+    uint32_t value_length;
+};
+
+_Static_assert(sizeof(struct infs_linux_meta_header) == 32u,
+               "Linux metadata header layout changed");
+_Static_assert(sizeof(struct infs_linux_xattr_record) == 8u,
+               "Linux xattr record layout changed");
 
 static struct infs_volume g_volume;
 
@@ -165,6 +190,489 @@ static int internal_orphan_directory(const char *path)
 static int neg_status(infs_status status)
 {
     return -infs_status_to_errno(status);
+}
+
+
+static int linux_meta_path(const uint8_t object_id[16],
+                 char path[INFS_PATH_MAX + 1u])
+{
+    char object_text[37];
+    infs_uuid_to_string(object_id, object_text);
+    int length = snprintf(path, INFS_PATH_MAX + 1u, "%s/%s",
+                INFS_LINUX_META_DIRECTORY, object_text);
+    return length < 0 || length > (int)INFS_PATH_MAX ? -ENAMETOOLONG : 0;
+}
+
+static int linux_meta_directory_is_internal(void)
+{
+    struct infs_attributes attributes;
+    if (infs_get_attributes(&g_volume, INFS_LINUX_META_DIRECTORY,
+                  &attributes) != INFS_STATUS_OK)
+        return 0;
+    const uint64_t required = INFS_ATTR_HIDDEN | INFS_ATTR_SYSTEM;
+    return attributes.object_type == INFS_OBJECT_DIRECTORY &&
+        (attributes.portable_flags & required) == required;
+}
+
+static infs_status ensure_linux_meta_directory(void)
+{
+    struct infs_lookup existing;
+    infs_status status = infs_lookup_path(
+        &g_volume, INFS_LINUX_META_DIRECTORY, &existing);
+    if (status == INFS_STATUS_OK)
+        return linux_meta_directory_is_internal() ? INFS_STATUS_OK :
+  INFS_STATUS_ALREADY_EXISTS;
+    if (status != INFS_STATUS_NOT_FOUND)
+        return status;
+
+    const struct infs_create_options options = {
+        .portable_flags = INFS_ATTR_HIDDEN | INFS_ATTR_SYSTEM,
+        .posix_permissions = 0700,
+        .posix_uid = (uint32_t)getuid(),
+        .posix_gid = (uint32_t)getgid(),
+    };
+    return infs_mkdir(&g_volume, INFS_LINUX_META_DIRECTORY, &options);
+}
+
+static void linux_meta_init_header(struct infs_linux_meta_header *header)
+{
+    memset(header, 0, sizeof(*header));
+    memcpy(header->magic, INFS_LINUX_META_MAGIC, sizeof(header->magic));
+    header->version = infs_cpu_to_le32(INFS_LINUX_META_VERSION);
+}
+
+static int linux_meta_load(const uint8_t object_id[16], uint8_t **blob_out,
+                 size_t *size_out)
+{
+    if (!blob_out || !size_out)
+        return -EINVAL;
+    *blob_out = NULL;
+    *size_out = 0;
+
+    char path[INFS_PATH_MAX + 1u];
+    int rc = linux_meta_path(object_id, path);
+    if (rc != 0)
+        return rc;
+
+    struct infs_attributes attributes;
+    infs_status status = infs_get_attributes(&g_volume, path, &attributes);
+    if (status == INFS_STATUS_NOT_FOUND) {
+        uint8_t *blob = calloc(1, sizeof(struct infs_linux_meta_header));
+        if (!blob)
+  return -ENOMEM;
+        linux_meta_init_header((struct infs_linux_meta_header *)blob);
+        *blob_out = blob;
+        *size_out = sizeof(struct infs_linux_meta_header);
+        return 0;
+    }
+    if (status != INFS_STATUS_OK)
+        return neg_status(status);
+    if (attributes.object_type != INFS_OBJECT_FILE ||
+        attributes.logical_size < sizeof(struct infs_linux_meta_header) ||
+        attributes.logical_size > INFS_LINUX_META_MAX)
+        return -EIO;
+
+    size_t size = (size_t)attributes.logical_size;
+    uint8_t *blob = malloc(size);
+    if (!blob)
+        return -ENOMEM;
+    int64_t n = infs_read_file(&g_volume, path, blob, size, 0);
+    if (n < 0) {
+        free(blob);
+        return neg_status((infs_status)n);
+    }
+    if ((size_t)n != size) {
+        free(blob);
+        return -EIO;
+    }
+
+    struct infs_linux_meta_header *header =
+        (struct infs_linux_meta_header *)blob;
+    if (memcmp(header->magic, INFS_LINUX_META_MAGIC, sizeof(header->magic)) != 0 ||
+        infs_le32_to_cpu(header->version) != INFS_LINUX_META_VERSION ||
+        infs_le32_to_cpu(header->xattr_bytes) !=
+  size - sizeof(struct infs_linux_meta_header)) {
+        free(blob);
+        return -EIO;
+    }
+
+    size_t offset = sizeof(*header);
+    while (offset < size) {
+        if (size - offset < sizeof(struct infs_linux_xattr_record)) {
+  free(blob);
+  return -EIO;
+        }
+        const struct infs_linux_xattr_record *record =
+  (const struct infs_linux_xattr_record *)(blob + offset);
+        size_t name_length = infs_le16_to_cpu(record->name_length);
+        size_t value_length = infs_le32_to_cpu(record->value_length);
+        size_t record_size = sizeof(*record) + name_length + value_length;
+        if (name_length == 0 || record_size > size - offset) {
+  free(blob);
+  return -EIO;
+        }
+        offset += record_size;
+    }
+    if (offset != size) {
+        free(blob);
+        return -EIO;
+    }
+
+    *blob_out = blob;
+    *size_out = size;
+    return 0;
+}
+
+static int linux_meta_store(const uint8_t object_id[16], const uint8_t *blob,
+                  size_t size)
+{
+    if (!blob || size < sizeof(struct infs_linux_meta_header) ||
+        size > INFS_LINUX_META_MAX)
+        return -EINVAL;
+    const struct infs_linux_meta_header *header =
+        (const struct infs_linux_meta_header *)blob;
+    const int empty = infs_le32_to_cpu(header->special_mode) == 0 &&
+        infs_le32_to_cpu(header->xattr_bytes) == 0;
+
+    char path[INFS_PATH_MAX + 1u];
+    int rc = linux_meta_path(object_id, path);
+    if (rc != 0)
+        return rc;
+
+    struct infs_lookup existing;
+    infs_status status = infs_lookup_path(&g_volume, path, &existing);
+    if (empty) {
+        if (status == INFS_STATUS_NOT_FOUND)
+  return 0;
+        if (status != INFS_STATUS_OK)
+  return neg_status(status);
+        status = infs_unlink(&g_volume, path);
+        if (status != INFS_STATUS_OK)
+  return neg_status(status);
+        if (g_volume.tx_active) {
+  status = infs_volume_sync(&g_volume);
+  if (status != INFS_STATUS_OK)
+      return neg_status(status);
+        }
+        return 0;
+    }
+
+    status = ensure_linux_meta_directory();
+    if (status != INFS_STATUS_OK)
+        return neg_status(status);
+    status = infs_lookup_path(&g_volume, path, &existing);
+    if (status == INFS_STATUS_NOT_FOUND) {
+        const struct infs_create_options options = {
+  .portable_flags = INFS_ATTR_HIDDEN | INFS_ATTR_SYSTEM,
+  .posix_permissions = 0600,
+  .posix_uid = (uint32_t)getuid(),
+  .posix_gid = (uint32_t)getgid(),
+        };
+        status = infs_create_file(&g_volume, path, &options);
+    }
+    if (status != INFS_STATUS_OK)
+        return neg_status(status);
+
+    status = infs_truncate_file(&g_volume, path, 0);
+    if (status != INFS_STATUS_OK)
+        return neg_status(status);
+    int64_t n = infs_write_file_buffered(&g_volume, path, blob, size, 0);
+    if (n < 0)
+        return neg_status((infs_status)n);
+    if ((size_t)n != size)
+        return -EIO;
+    status = infs_volume_sync(&g_volume);
+    return status == INFS_STATUS_OK ? 0 : neg_status(status);
+}
+
+static void linux_meta_remove(const uint8_t object_id[16])
+{
+    char path[INFS_PATH_MAX + 1u];
+    if (linux_meta_path(object_id, path) != 0)
+        return;
+    infs_status status = infs_unlink(&g_volume, path);
+    if (status != INFS_STATUS_OK && status != INFS_STATUS_NOT_FOUND)
+        return;
+    if (g_volume.tx_active)
+        (void)infs_volume_sync(&g_volume);
+}
+
+static int linux_meta_find_xattr(const uint8_t *blob, size_t size,
+                       const char *name, size_t *offset_out,
+                       size_t *record_size_out,
+                       size_t *value_offset_out,
+                       size_t *value_length_out)
+{
+    size_t wanted = strlen(name);
+    size_t offset = sizeof(struct infs_linux_meta_header);
+    while (offset < size) {
+        const struct infs_linux_xattr_record *record =
+  (const struct infs_linux_xattr_record *)(blob + offset);
+        size_t name_length = infs_le16_to_cpu(record->name_length);
+        size_t value_length = infs_le32_to_cpu(record->value_length);
+        size_t record_size = sizeof(*record) + name_length + value_length;
+        if (name_length == wanted &&
+  memcmp(blob + offset + sizeof(*record), name, wanted) == 0) {
+  if (offset_out)
+      *offset_out = offset;
+  if (record_size_out)
+      *record_size_out = record_size;
+  if (value_offset_out)
+      *value_offset_out = offset + sizeof(*record) + name_length;
+  if (value_length_out)
+      *value_length_out = value_length;
+  return 1;
+        }
+        offset += record_size;
+    }
+    return 0;
+}
+
+static int linux_meta_get_special(const uint8_t object_id[16], mode_t *mode,
+                        dev_t *rdev)
+{
+    uint8_t *blob = NULL;
+    size_t size = 0;
+    int rc = linux_meta_load(object_id, &blob, &size);
+    if (rc != 0)
+        return rc;
+    (void)size;
+    const struct infs_linux_meta_header *header =
+        (const struct infs_linux_meta_header *)blob;
+    uint32_t stored_mode = infs_le32_to_cpu(header->special_mode);
+    uint64_t stored_rdev = infs_le64_to_cpu(header->special_rdev);
+    free(blob);
+    if (mode)
+        *mode = (mode_t)stored_mode;
+    if (rdev)
+        *rdev = (dev_t)stored_rdev;
+    return 0;
+}
+
+static int linux_meta_set_special(const uint8_t object_id[16], mode_t mode,
+                        dev_t rdev)
+{
+    uint8_t *blob = NULL;
+    size_t size = 0;
+    int rc = linux_meta_load(object_id, &blob, &size);
+    if (rc != 0)
+        return rc;
+    struct infs_linux_meta_header *header =
+        (struct infs_linux_meta_header *)blob;
+    header->special_mode = infs_cpu_to_le32((uint32_t)(mode & S_IFMT));
+    header->special_rdev = infs_cpu_to_le64((uint64_t)rdev);
+    rc = linux_meta_store(object_id, blob, size);
+    free(blob);
+    return rc;
+}
+
+static int infs_setxattr_cb(const char *path, const char *name,
+                  const char *value, size_t value_size, int flags)
+{
+    if (!name || name[0] == '\0' || strlen(name) > UINT16_MAX ||
+        value_size > UINT32_MAX)
+        return -EINVAL;
+    struct infs_attributes attributes;
+    infs_status status = infs_get_attributes(&g_volume, path, &attributes);
+    if (status != INFS_STATUS_OK)
+        return neg_status(status);
+
+    uint8_t *blob = NULL;
+    size_t size = 0;
+    int rc = linux_meta_load(attributes.object_id, &blob, &size);
+    if (rc != 0)
+        return rc;
+
+    size_t old_offset = 0, old_size = 0;
+    int exists = linux_meta_find_xattr(blob, size, name, &old_offset,
+                             &old_size, NULL, NULL);
+    if ((flags & XATTR_CREATE) && exists) {
+        free(blob);
+        return -EEXIST;
+    }
+    if ((flags & XATTR_REPLACE) && !exists) {
+        free(blob);
+        return -ENODATA;
+    }
+
+    size_t name_length = strlen(name);
+    size_t new_record_size = sizeof(struct infs_linux_xattr_record) +
+        name_length + value_size;
+    size_t new_size = size - (exists ? old_size : 0u) + new_record_size;
+    if (new_size > INFS_LINUX_META_MAX) {
+        free(blob);
+        return -E2BIG;
+    }
+    uint8_t *updated = calloc(1, new_size);
+    if (!updated) {
+        free(blob);
+        return -ENOMEM;
+    }
+
+    size_t write_offset = 0;
+    if (exists) {
+        memcpy(updated, blob, old_offset);
+        write_offset = old_offset;
+        memcpy(updated + write_offset, blob + old_offset + old_size,
+     size - old_offset - old_size);
+        write_offset += size - old_offset - old_size;
+    } else {
+        memcpy(updated, blob, size);
+        write_offset = size;
+    }
+
+    struct infs_linux_xattr_record record = {
+        .name_length = infs_cpu_to_le16((uint16_t)name_length),
+        .value_length = infs_cpu_to_le32((uint32_t)value_size),
+    };
+    memcpy(updated + write_offset, &record, sizeof(record));
+    memcpy(updated + write_offset + sizeof(record), name, name_length);
+    if (value_size != 0)
+        memcpy(updated + write_offset + sizeof(record) + name_length,
+     value, value_size);
+
+    struct infs_linux_meta_header *header =
+        (struct infs_linux_meta_header *)updated;
+    header->xattr_bytes = infs_cpu_to_le32(
+        (uint32_t)(new_size - sizeof(*header)));
+    rc = linux_meta_store(attributes.object_id, updated, new_size);
+    free(updated);
+    free(blob);
+    return rc;
+}
+
+static int infs_getxattr_cb(const char *path, const char *name, char *value,
+                  size_t size)
+{
+    struct infs_attributes attributes;
+    infs_status status = infs_get_attributes(&g_volume, path, &attributes);
+    if (status != INFS_STATUS_OK)
+        return neg_status(status);
+    uint8_t *blob = NULL;
+    size_t blob_size = 0;
+    int rc = linux_meta_load(attributes.object_id, &blob, &blob_size);
+    if (rc != 0)
+        return rc;
+    size_t value_offset = 0, value_length = 0;
+    if (!linux_meta_find_xattr(blob, blob_size, name, NULL, NULL,
+                    &value_offset, &value_length)) {
+        free(blob);
+        return -ENODATA;
+    }
+    if (size == 0) {
+        free(blob);
+        return value_length > INT_MAX ? -EOVERFLOW : (int)value_length;
+    }
+    if (size < value_length) {
+        free(blob);
+        return -ERANGE;
+    }
+    memcpy(value, blob + value_offset, value_length);
+    free(blob);
+    return value_length > INT_MAX ? -EOVERFLOW : (int)value_length;
+}
+
+static int infs_listxattr_cb(const char *path, char *list, size_t size)
+{
+    struct infs_attributes attributes;
+    infs_status status = infs_get_attributes(&g_volume, path, &attributes);
+    if (status != INFS_STATUS_OK)
+        return neg_status(status);
+    uint8_t *blob = NULL;
+    size_t blob_size = 0;
+    int rc = linux_meta_load(attributes.object_id, &blob, &blob_size);
+    if (rc != 0)
+        return rc;
+
+    size_t needed = 0;
+    size_t offset = sizeof(struct infs_linux_meta_header);
+    while (offset < blob_size) {
+        const struct infs_linux_xattr_record *record =
+  (const struct infs_linux_xattr_record *)(blob + offset);
+        size_t name_length = infs_le16_to_cpu(record->name_length);
+        size_t value_length = infs_le32_to_cpu(record->value_length);
+        needed += name_length + 1u;
+        offset += sizeof(*record) + name_length + value_length;
+    }
+    if (size == 0) {
+        free(blob);
+        return needed > INT_MAX ? -EOVERFLOW : (int)needed;
+    }
+    if (size < needed) {
+        free(blob);
+        return -ERANGE;
+    }
+    offset = sizeof(struct infs_linux_meta_header);
+    size_t out = 0;
+    while (offset < blob_size) {
+        const struct infs_linux_xattr_record *record =
+  (const struct infs_linux_xattr_record *)(blob + offset);
+        size_t name_length = infs_le16_to_cpu(record->name_length);
+        size_t value_length = infs_le32_to_cpu(record->value_length);
+        memcpy(list + out, blob + offset + sizeof(*record), name_length);
+        list[out + name_length] = '\0';
+        out += name_length + 1u;
+        offset += sizeof(*record) + name_length + value_length;
+    }
+    free(blob);
+    return needed > INT_MAX ? -EOVERFLOW : (int)needed;
+}
+
+static int infs_removexattr_cb(const char *path, const char *name)
+{
+    struct infs_attributes attributes;
+    infs_status status = infs_get_attributes(&g_volume, path, &attributes);
+    if (status != INFS_STATUS_OK)
+        return neg_status(status);
+    uint8_t *blob = NULL;
+    size_t size = 0;
+    int rc = linux_meta_load(attributes.object_id, &blob, &size);
+    if (rc != 0)
+        return rc;
+    size_t old_offset = 0, old_size = 0;
+    if (!linux_meta_find_xattr(blob, size, name, &old_offset, &old_size,
+                    NULL, NULL)) {
+        free(blob);
+        return -ENODATA;
+    }
+    memmove(blob + old_offset, blob + old_offset + old_size,
+  size - old_offset - old_size);
+    size -= old_size;
+    struct infs_linux_meta_header *header =
+        (struct infs_linux_meta_header *)blob;
+    header->xattr_bytes = infs_cpu_to_le32(
+        (uint32_t)(size - sizeof(*header)));
+    rc = linux_meta_store(attributes.object_id, blob, size);
+    free(blob);
+    return rc;
+}
+
+static int infs_mknod_cb(const char *path, mode_t mode, dev_t rdev)
+{
+    if (!S_ISREG(mode) && !S_ISFIFO(mode) && !S_ISSOCK(mode) &&
+        !S_ISCHR(mode) && !S_ISBLK(mode))
+        return -EINVAL;
+    struct fuse_context *ctx = fuse_get_context();
+    const struct infs_create_options options = {
+        .posix_permissions = (uint32_t)(mode & 07777),
+        .posix_uid = (uint32_t)ctx->uid,
+        .posix_gid = (uint32_t)ctx->gid,
+    };
+    infs_status status = infs_create_file(&g_volume, path, &options);
+    if (status != INFS_STATUS_OK)
+        return neg_status(status);
+    if (S_ISREG(mode))
+        return 0;
+    struct infs_attributes attributes;
+    status = infs_get_attributes(&g_volume, path, &attributes);
+    if (status != INFS_STATUS_OK) {
+        (void)infs_unlink(&g_volume, path);
+        return neg_status(status);
+    }
+    int rc = linux_meta_set_special(attributes.object_id, mode, rdev);
+    if (rc != 0)
+        (void)infs_unlink(&g_volume, path);
+    return rc;
 }
 
 static infs_status ensure_orphan_directory(void)
@@ -374,7 +882,15 @@ static int attributes_to_stat(const struct infs_attributes *attributes,
     mode_t type_mode = attributes->object_type == INFS_OBJECT_DIRECTORY ?
         S_IFDIR : attributes->object_type == INFS_OBJECT_SYMLINK ?
         S_IFLNK : S_IFREG;
+    dev_t special_rdev = 0;
+    if (attributes->object_type == INFS_OBJECT_FILE) {
+        mode_t special_mode = 0;
+        if (linux_meta_get_special(attributes->object_id, &special_mode,
+                                   &special_rdev) == 0 && special_mode != 0)
+            type_mode = special_mode;
+    }
     st->st_mode = type_mode | attributes->posix_permissions;
+    st->st_rdev = special_rdev;
     st->st_uid = (uid_t)attributes->posix_uid;
     st->st_gid = (gid_t)attributes->posix_gid;
     st->st_nlink = (nlink_t)attributes->link_count;
@@ -426,10 +942,20 @@ static int infs_readdir_cb(const char *path, void *buf, fuse_fill_dir_t filler,
                 internal_orphan_directory(internal_path))
                 continue;
         }
+        if (strcmp(path, "/") == 0 &&
+            strcmp(items[i].name, ".infilfs-posix-meta") == 0 &&
+            linux_meta_directory_is_internal())
+            continue;
         struct stat st;
         memset(&st, 0, sizeof(st));
         st.st_mode = items[i].type == INFS_OBJECT_DIRECTORY ? S_IFDIR :
             items[i].type == INFS_OBJECT_SYMLINK ? S_IFLNK : S_IFREG;
+        if (items[i].type == INFS_OBJECT_FILE) {
+            mode_t special_mode = 0;
+            if (linux_meta_get_special(items[i].object_id, &special_mode, NULL) == 0 &&
+                special_mode != 0)
+                st.st_mode = special_mode;
+        }
         if (filler(buf, items[i].name, &st, 0, 0) != 0)
             break;
     }
@@ -566,15 +1092,53 @@ static int infs_truncate_cb(const char *path, off_t size, struct fuse_file_info 
 }
 
 static int infs_fallocate_cb(const char *path, int mode, off_t offset,
-                             off_t length, struct fuse_file_info *fi)
+                   off_t length, struct fuse_file_info *fi)
 {
     if (offset < 0 || length <= 0)
         return -EINVAL;
-    if (mode != (FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE))
+    const char *actual_path = operation_path(path, fi);
+    if (mode == (FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE))
+        return neg_status(infs_punch_hole(
+  &g_volume, actual_path, (uint64_t)offset, (uint64_t)length));
+    if (mode != 0)
         return -EOPNOTSUPP;
-    return neg_status(infs_punch_hole(
-        &g_volume, operation_path(path, fi), (uint64_t)offset,
-        (uint64_t)length));
+
+    uint64_t start = (uint64_t)offset;
+    uint64_t span = (uint64_t)length;
+    if (start > UINT64_MAX - span)
+        return -EFBIG;
+    uint64_t end = start + span;
+    const size_t buffer_size = 64u * 1024u;
+    uint8_t *buffer = calloc(1, buffer_size);
+    if (!buffer)
+        return -ENOMEM;
+
+    uint64_t position = start;
+    while (position < end) {
+        size_t chunk = (size_t)((end - position) < buffer_size ?
+  (end - position) : buffer_size);
+        memset(buffer, 0, chunk);
+        int64_t read_count = infs_read_file(
+  &g_volume, actual_path, buffer, chunk, position);
+        if (read_count < 0) {
+  free(buffer);
+  return neg_status((infs_status)read_count);
+        }
+        int64_t written = infs_write_file_buffered(
+  &g_volume, actual_path, buffer, chunk, position);
+        if (written < 0) {
+  free(buffer);
+  return neg_status((infs_status)written);
+        }
+        if ((size_t)written != chunk) {
+  free(buffer);
+  return -EIO;
+        }
+        position += chunk;
+    }
+    free(buffer);
+    infs_status status = infs_volume_sync(&g_volume);
+    return status == INFS_STATUS_OK ? 0 : neg_status(status);
 }
 
 static int infs_unlink_cb(const char *path)
@@ -583,8 +1147,12 @@ static int infs_unlink_cb(const char *path)
     infs_status status = infs_get_attributes(&g_volume, path, &attributes);
     if (status != INFS_STATUS_OK)
         return neg_status(status);
-    if (!object_has_open_handle(attributes.object_id))
-        return neg_status(infs_unlink(&g_volume, path));
+    if (!object_has_open_handle(attributes.object_id)) {
+        infs_status unlink_status = infs_unlink(&g_volume, path);
+        if (unlink_status == INFS_STATUS_OK && attributes.link_count <= 1u)
+            linux_meta_remove(attributes.object_id);
+        return neg_status(unlink_status);
+    }
 
     char orphan_path[INFS_PATH_MAX + 1u];
     status = move_open_file_to_orphan(
@@ -597,7 +1165,14 @@ static int infs_unlink_cb(const char *path)
 
 static int infs_rmdir_cb(const char *path)
 {
-    return neg_status(infs_rmdir(&g_volume, path));
+    struct infs_attributes attributes;
+    infs_status status = infs_get_attributes(&g_volume, path, &attributes);
+    if (status != INFS_STATUS_OK)
+        return neg_status(status);
+    status = infs_rmdir(&g_volume, path);
+    if (status == INFS_STATUS_OK)
+        linux_meta_remove(attributes.object_id);
+    return neg_status(status);
 }
 
 static int infs_rename_cb(const char *oldpath, const char *newpath, unsigned flags)
@@ -714,6 +1289,9 @@ static int infs_statfs_cb(const char *path, struct statvfs *st)
     st->f_blocks = infs_le64_to_cpu(g_volume.sb.total_blocks);
     st->f_bfree = infs_le64_to_cpu(g_volume.sb.free_blocks);
     st->f_bavail = st->f_bfree;
+    st->f_files = st->f_blocks;
+    st->f_ffree = st->f_bfree;
+    st->f_favail = st->f_bavail;
     st->f_namemax = INFS_NAME_MAX;
     return 0;
 }
@@ -764,6 +1342,7 @@ static int infs_release_cb(const char *path, struct fuse_file_info *fi)
         infs_status status = infs_unlink(&g_volume, orphan_path);
         if (status != INFS_STATUS_OK && status != INFS_STATUS_NOT_FOUND)
             return neg_status(status);
+        linux_meta_remove(object_id);
         if (g_orphan_directory[0] != '\0') {
             status = infs_rmdir(&g_volume, g_orphan_directory);
             if (status == INFS_STATUS_OK)
@@ -790,6 +1369,8 @@ static void *infs_init_cb(struct fuse_conn_info *conn, struct fuse_config *cfg)
      * objects remain transactional Format 0.8 entries instead of libfuse's
      * generic .fuse_hidden path convention. */
     cfg->hard_remove = 1;
+    cfg->use_ino = 1;
+    cfg->attr_timeout = 0.0;
 #ifdef FUSE_CAP_HANDLE_KILLPRIV
     conn->want &= ~FUSE_CAP_HANDLE_KILLPRIV;
 #endif
@@ -803,6 +1384,7 @@ static const struct fuse_operations infs_ops = {
     .init = infs_init_cb,
     .getattr = infs_getattr_cb,
     .readdir = infs_readdir_cb,
+    .mknod = infs_mknod_cb,
     .mkdir = infs_mkdir_cb,
     .symlink = infs_symlink_cb,
     .readlink = infs_readlink_cb,
@@ -821,6 +1403,10 @@ static const struct fuse_operations infs_ops = {
     .chmod = infs_chmod_cb,
     .chown = infs_chown_cb,
     .utimens = infs_utimens_cb,
+    .setxattr = infs_setxattr_cb,
+    .getxattr = infs_getxattr_cb,
+    .listxattr = infs_listxattr_cb,
+    .removexattr = infs_removexattr_cb,
     .statfs = infs_statfs_cb,
     .fsync = infs_fsync_cb,
 };

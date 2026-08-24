@@ -156,6 +156,17 @@ ln "$mount_dir/tree/subdirectory/renamed.bin" "$mount_dir/hard-link.bin"
    "$(stat -c '%i' "$mount_dir/hard-link.bin")" ]]
 [[ "$(stat -c '%h' "$mount_dir/hard-link.bin")" == 2 ]]
 cmp "$ordinary_source" "$mount_dir/hard-link.bin"
+step 'validating persistent user extended attributes'
+python3 -c 'import os,sys; p=sys.argv[1]; os.setxattr(p,"user.infiltratorfs_test",b"xattr-ok"); assert os.getxattr(p,"user.infiltratorfs_test")==b"xattr-ok"; assert "user.infiltratorfs_test" in os.listxattr(p); os.removexattr(p,"user.infiltratorfs_test")' "$mount_dir/tree/subdirectory/renamed.bin"
+step 'creating and validating FIFO and Unix socket nodes'
+mkfifo "$mount_dir/test.fifo"
+[[ -p "$mount_dir/test.fifo" ]]
+python3 -c 'import os,socket,stat,sys; p=sys.argv[1]; s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); s.bind(p); s.close(); assert stat.S_ISSOCK(os.lstat(p).st_mode)' "$mount_dir/test.sock"
+rm "$mount_dir/test.fifo" "$mount_dir/test.sock"
+step 'allocating a normal fallocate range'
+fallocate -l 4M "$mount_dir/preallocated.bin"
+[[ "$(stat -c '%s' "$mount_dir/preallocated.bin")" == 4194304 ]]
+rm "$mount_dir/preallocated.bin"
 step 'creating a 1 TiB sparse file'
 truncate -s "$logical_size" "$mount_dir/sparse.bin"
 read -r size blocks < <(stat -c '%s %b' "$mount_dir/sparse.bin")
