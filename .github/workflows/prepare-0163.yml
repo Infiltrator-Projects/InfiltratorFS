@@ -1,0 +1,94 @@
+name: Temporary 0.16.3 release preparation
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    if: github.event.issue.title == 'Trigger InfiltratorFS 0.16.3 release prep'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Update implementation identity and documentation
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('CMakeLists.txt')
+          s = p.read_text()
+          s = s.replace('project(InfiltratorFS VERSION 0.16.2 LANGUAGES C)',
+                        'project(InfiltratorFS VERSION 0.16.3 LANGUAGES C)', 1)
+          p.write_text(s)
+
+          p = Path('tests/smoke.sh')
+          s = p.read_text().replace("Implementation: 0.16.2", "Implementation: 0.16.3", 1)
+          p.write_text(s)
+
+          p = Path('README.md')
+          s = p.read_text()
+          s = s.replace('**Current implementation:** 0.16.2<br>',
+                        '**Current implementation:** 0.16.3<br>', 1)
+          s = s.replace('`InfiltratorFS-Windows-0.16.2.exe`',
+                        '`InfiltratorFS-Windows-0.16.3.exe`', 1)
+          s = s.replace('chmod +x infiltratorfs-0.16.2-linux-native.run',
+                        'chmod +x infiltratorfs-0.16.3-linux-native.run', 1)
+          s = s.replace('./infiltratorfs-0.16.2-linux-native.run --dry-run',
+                        './infiltratorfs-0.16.3-linux-native.run --dry-run', 1)
+          marker = ('Implementation 0.16.2 separates sequential data and metadata allocation directions so normal large copies remain compact instead of exhausting the bounded inline extent list.')
+          addition = (' Implementation 0.16.3 completes the Linux userspace compatibility path needed by desktop file managers: persistent extended attributes, FIFO/Unix-socket/device-node metadata, normal fallocate, stable hard-link inode reporting, and nonzero inode-capacity statistics, with mounted regression coverage. Format 0.11 is unchanged.')
+          if marker not in s:
+              raise SystemExit('README history marker missing')
+          s = s.replace(marker, marker + addition, 1)
+          p.write_text(s)
+
+          p = Path('docs/ROADMAP.md')
+          s = p.read_text()
+          marker = '''## Phase 4.17 — implementation 0.16.2 large sequential files — complete\n\n- [x] Allocate file data and CoW/checksum metadata from opposite directions.\n- [x] Prevent ordinary copy-sized writes from consuming one extent per publish.\n- [x] Reproduce the former approximately 40 MiB direct-copy extent exhaustion.\n- [x] Verify 192 durable sequential writes, compact extent mapping, full scrub and reopen.\n- [x] Keep on-disk Format 0.11 unchanged.\n'''
+          addition = '''\n## Phase 4.18 — implementation 0.16.3 Linux desktop compatibility — complete\n\n- [x] Persist Linux extended attributes through adapter-owned hidden system metadata.\n- [x] Represent FIFO, Unix-domain socket, character-device and block-device node metadata through the Linux adapter.\n- [x] Support normal `fallocate` ranges while preserving existing file bytes.\n- [x] Report stable hard-link inode identity and current link counts through FUSE.\n- [x] Report nonzero inode-capacity statistics to desktop and POSIX callers.\n- [x] Add mounted xattr, FIFO, Unix-socket and normal-fallocate regression coverage.\n- [x] Keep on-disk Format 0.11 unchanged; native cross-platform xattr/security objects remain future format work.\n'''
+          if marker not in s:
+              raise SystemExit('ROADMAP 0.16.2 marker missing')
+          s = s.replace(marker, marker + addition, 1)
+          p.write_text(s)
+
+          p = Path('docs/CONFORMANCE.md')
+          s = p.read_text()
+          s = s.replace(
+              'When `/dev/fuse` is available, `infilfs-mint-fuse` performs mounted copy, rename, permission, symbolic-link, hard-link, sparse, punch, unmount and remount verification.',
+              'When `/dev/fuse` is available, `infilfs-mint-fuse` performs mounted copy, rename, permission, symbolic-link, hard-link, persistent xattr, FIFO, Unix-socket, normal-fallocate, sparse, punch, unmount and remount verification.',
+              1)
+          marker = ('Implementation 0.16.2 requires physically separate data and metadata allocation directions. A sequential file written across 192 separate durable calls must complete, retain no more than two extents on the deterministic test volume, pass full data scrub and remain byte-exact after reopen. This crosses all 161 inline extent slots and reproduces the write-cycle pattern behind the former approximately 40 MiB direct-copy `EFBIG` failure.')
+          addition = ('\n\nImplementation 0.16.3 requires the Linux FUSE adapter to preserve `user.*` extended attributes across adapter operations, create and report FIFO and Unix-domain socket nodes with their correct POSIX types, accept normal `fallocate` without changing pre-existing bytes, return stable inode identity and link counts for hard links, and provide nonzero file-capacity values through `statvfs`. These are Linux adapter semantics stored using hidden system-marked ordinary Format 0.11 objects and do not alter the portable on-disk format.')
+          if marker not in s:
+              raise SystemExit('CONFORMANCE 0.16.2 marker missing')
+          s = s.replace(marker, marker + addition, 1)
+          p.write_text(s)
+          PY
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Commit release preparation to main
+        shell: bash
+        run: |
+          git config user.name 'Shannon Smith'
+          git config user.email 'infiltratr@yandex.com'
+          git rm .github/workflows/prepare-0163.yml
+          git add CMakeLists.txt README.md docs/ROADMAP.md docs/CONFORMANCE.md tests/smoke.sh
+          git commit -m 'Prepare 0.16.3 Linux compatibility release'
+          git push origin HEAD:main
