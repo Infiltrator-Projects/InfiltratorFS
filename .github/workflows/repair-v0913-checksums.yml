@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Repair v0.9.13 release checksums
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/repair-v0913-checksums.yml
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Regenerate checksums for published project assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag='v0.9.13'
+          deb='infiltratorfs_0.9.13_amd64.deb'
+          installer='infiltratorfs-0.9.13-linux-native.run'
+          windows='InfiltratorFS-Windows-0.9.13.exe'
+
+          mkdir release-assets
+          gh release download "$tag" --dir release-assets
+          for asset in "$deb" "$installer" "$windows"; do
+            test -s "release-assets/$asset"
+          done
+          test ! -e 'release-assets/InfiltratorFS-0.9.13-source.zip'
+
+          (
+            cd release-assets
+            sha256sum "$deb" "$installer" "$windows" > SHA256SUMS.txt
+            test "$(wc -l < SHA256SUMS.txt)" -eq 3
+            ! grep -Fq 'source.zip' SHA256SUMS.txt
+          )
+
+          gh release upload "$tag" release-assets/SHA256SUMS.txt --clobber
