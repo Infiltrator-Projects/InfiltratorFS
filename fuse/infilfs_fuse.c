@@ -385,16 +385,33 @@ static int linux_meta_store(const uint8_t object_id[16], const uint8_t *blob,
     return status == INFS_STATUS_OK ? 0 : neg_status(status);
 }
 
-static void linux_meta_remove(const uint8_t object_id[16])
+static int linux_meta_remove(const uint8_t object_id[16])
 {
     char path[INFS_PATH_MAX + 1u];
-    if (linux_meta_path(object_id, path) != 0)
-        return;
-    infs_status status = infs_unlink(&g_volume, path);
-    if (status != INFS_STATUS_OK && status != INFS_STATUS_NOT_FOUND)
-        return;
-    if (g_volume.tx_active)
-        (void)infs_volume_sync(&g_volume);
+    int rc = linux_meta_path(object_id, path);
+    if (rc != 0)
+        return rc;
+
+    /* Probe first. Calling infs_unlink() for a metadata path that does
+     * not exist would abort an already-active deferred transaction.
+     * That could silently roll back the user's successful unlink while
+     * the FUSE callback still returned success. */
+    struct infs_lookup existing;
+    infs_status status = infs_lookup_path(&g_volume, path, &existing);
+    if (status == INFS_STATUS_NOT_FOUND)
+        return 0;
+    if (status != INFS_STATUS_OK)
+        return neg_status(status);
+
+    status = infs_unlink(&g_volume, path);
+    if (status != INFS_STATUS_OK)
+        return neg_status(status);
+    if (g_volume.tx_active) {
+        status = infs_volume_sync(&g_volume);
+        if (status != INFS_STATUS_OK)
+            return neg_status(status);
+    }
+    return 0;
 }
 
 static int linux_meta_find_xattr(const uint8_t *blob, size_t size,
@@ -1149,9 +1166,14 @@ static int infs_unlink_cb(const char *path)
         return neg_status(status);
     if (!object_has_open_handle(attributes.object_id)) {
         infs_status unlink_status = infs_unlink(&g_volume, path);
-        if (unlink_status == INFS_STATUS_OK && attributes.link_count <= 1u)
-            linux_meta_remove(attributes.object_id);
-        return neg_status(unlink_status);
+        if (unlink_status != INFS_STATUS_OK)
+            return neg_status(unlink_status);
+        if (attributes.link_count <= 1u) {
+            int rc = linux_meta_remove(attributes.object_id);
+            if (rc != 0)
+                return rc;
+        }
+        return 0;
     }
 
     char orphan_path[INFS_PATH_MAX + 1u];
@@ -1170,9 +1192,9 @@ static int infs_rmdir_cb(const char *path)
     if (status != INFS_STATUS_OK)
         return neg_status(status);
     status = infs_rmdir(&g_volume, path);
-    if (status == INFS_STATUS_OK)
-        linux_meta_remove(attributes.object_id);
-    return neg_status(status);
+    if (status != INFS_STATUS_OK)
+        return neg_status(status);
+    return linux_meta_remove(attributes.object_id);
 }
 
 static int infs_rename_cb(const char *oldpath, const char *newpath, unsigned flags)
@@ -1342,7 +1364,9 @@ static int infs_release_cb(const char *path, struct fuse_file_info *fi)
         infs_status status = infs_unlink(&g_volume, orphan_path);
         if (status != INFS_STATUS_OK && status != INFS_STATUS_NOT_FOUND)
             return neg_status(status);
-        linux_meta_remove(object_id);
+        int meta_rc = linux_meta_remove(object_id);
+        if (meta_rc != 0)
+            return meta_rc;
         if (g_orphan_directory[0] != '\0') {
             status = infs_rmdir(&g_volume, g_orphan_directory);
             if (status == INFS_STATUS_OK)

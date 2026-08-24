@@ -262,6 +262,14 @@ Pre-1.0 development is current-format-only. A new development format supersedes 
 - [x] Add mounted xattr, FIFO, Unix-socket and normal-fallocate regression coverage.
 - [x] Keep on-disk Format 0.11 unchanged; native cross-platform xattr/security objects remain future format work.
 
+## Phase 4.19 — implementation 0.16.4 Linux unlink transaction repair — complete
+
+- [x] Probe adapter-owned hidden metadata before attempting its removal.
+- [x] Prevent a missing Linux metadata record from aborting an already-successful ordinary unlink transaction.
+- [x] Propagate genuine metadata-cleanup failures instead of reporting a false successful delete.
+- [x] Verify plain-file deletion and recursive `rm -rf` deletion through mounted FUSE.
+- [x] Keep on-disk Format 0.11 unchanged.
+
 ## Phase 4 — modern storage features
 
 - [x] Sparse extents.

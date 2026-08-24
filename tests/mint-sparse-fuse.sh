@@ -215,6 +215,15 @@ read -r size blocks < <(stat -c '%s %b' "$mount_dir/sparse.bin")
 dd if="$mount_dir/sparse.bin" of="$readback" bs=4096 \
     skip="$logical_block" count=1 status=none
 cmp "$zero_block" "$readback"
+step 'verifying ordinary unlink is not rolled back by absent Linux metadata'
+printf 'delete-me\n' > "$mount_dir/delete-plain.txt"
+rm "$mount_dir/delete-plain.txt"
+[[ ! -e "$mount_dir/delete-plain.txt" ]]
+step 'verifying recursive directory deletion after ordinary unlink'
+mkdir -p "$mount_dir/delete-tree/a/b"
+printf 'nested-delete\n' > "$mount_dir/delete-tree/a/b/file.txt"
+rm -rf "$mount_dir/delete-tree"
+[[ ! -e "$mount_dir/delete-tree" ]]
 step 'performing the final unmount'
 unmount_image
 
