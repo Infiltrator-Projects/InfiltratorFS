@@ -52,7 +52,7 @@ cmp "$source_file" "$out_file"
 cmp "$source_file" "$out_file"
 [[ "$("$tool" "$image" stat /archive/moved.bin)" == *"links=2"* ]]
 "$tool" "$image" snapshot-create before-removal
-"$tool" "$image" snapshot-list | grep -Fq '^before-removal generation='
+"$tool" "$image" snapshot-list | grep -Eq '^before-removal generation='
 "$tool" "$image" rm /archive/moved.bin
 "$tool" "$image" cat /docs/hard-link.bin > "$out_file"
 cmp "$source_file" "$out_file"
