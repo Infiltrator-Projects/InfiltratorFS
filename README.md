@@ -106,8 +106,9 @@ A numbered release publishes:
 | `infiltratorfs_<version>_amd64.deb` | Generic Linux amd64 Debian package. |
 | `infiltratorfs-<version>-linux-native.run` | Native local Linux build/install program. |
 | `InfiltratorFS-Windows-<version>.exe` | Native Windows transfer/raw-volume application. |
-| `InfiltratorFS-<version>-source.zip` | Exact tested source archive. |
 | `SHA256SUMS.txt` | SHA-256 checksums for all published project artifacts. |
+
+GitHub provides the standard source-code ZIP and tarball automatically from the exact release tag.
 
 To inspect the native Linux build before allowing it to install anything:
 
@@ -124,7 +125,7 @@ This repository uses `main` as its working branch. Development changes are made 
 
 Every push to `main` runs Build and conformance. Ordinary commits do not publish. A commit is release-eligible only when its subject begins with the exact implementation version as `Release <version>` and the complete Build and conformance workflow succeeds.
 
-The publisher checks out the exact tested commit, verifies it is still current `main`, rebuilds/tests Linux and Windows release targets, constructs the `.deb`, `.run`, Windows executable and source ZIP, generates checksums, then creates the version tag and GitHub release. Existing version tags and published releases are immutable and are never moved, replaced or edited in place.
+The publisher checks out the exact tested commit, verifies it is still current `main`, rebuilds/tests Linux and Windows release targets, constructs the `.deb`, `.run` and Windows executable, generates checksums, then creates the version tag and GitHub release. GitHub supplies source-code archives from that tag automatically. Existing version tags and published releases are immutable and are never moved or replaced.
 
 Manually runnable build/test helpers, where present, are diagnostic tools only and are not release-approval mechanisms.
 

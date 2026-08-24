@@ -58,7 +58,7 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
   linux-release:
-    name: Linux release packages and source
+    name: Linux release packages
     needs: source
     runs-on: ubuntu-24.04
     steps:
@@ -89,7 +89,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential cmake desktop-file-utils fuse3 libfuse3-dev \
-            pkg-config policykit-1 rsync unzip xdg-utils zenity zip
+            pkg-config policykit-1 xdg-utils zenity
 
       - name: Configure, build and test
         run: |
@@ -98,7 +98,7 @@ jobs:
           ctest --test-dir build --output-on-failure
           desktop-file-validate packaging/infiltratorfs-manager.desktop
 
-      - name: Build Linux packages and complete source archive
+      - name: Build Linux packages
         env:
           VERSION: ${{ needs.source.outputs.version }}
         shell: bash
@@ -111,7 +111,6 @@ jobs:
 
           deb="infiltratorfs_${VERSION}_amd64.deb"
           installer="infiltratorfs-${VERSION}-linux-native.run"
-          source="InfiltratorFS-${VERSION}-source.zip"
           test -f "dist/$deb"
           test -x "dist/$installer"
           test "$(dpkg-deb --field "dist/$deb" Version)" = "$VERSION"
@@ -124,26 +123,13 @@ jobs:
             dpkg-deb --field "dist/$deb" Depends | grep -Eq "(^|, )${dependency}([ ,]|$)"
           done
 
-          staging="$RUNNER_TEMP/InfiltratorFS-${VERSION}"
-          mkdir -p "$staging"
-          rsync -a \
-            --exclude='.git' \
-            --exclude='build' \
-            --exclude='dist' \
-            ./ "$staging/"
-          (cd "$RUNNER_TEMP" && zip -qry "$GITHUB_WORKSPACE/dist/$source" "InfiltratorFS-${VERSION}")
-          unzip -tq "dist/$source"
-          unzip -Z1 "dist/$source" | grep -Fqx \
-            "InfiltratorFS-${VERSION}/src/infiltratr-common/CMakeLists.txt"
-
-      - name: Preserve Linux and source release assets
+      - name: Preserve Linux release assets
         uses: actions/upload-artifact@v4
         with:
-          name: InfiltratorFS-release-linux-source
+          name: InfiltratorFS-release-linux
           path: |
             dist/infiltratorfs_${{ needs.source.outputs.version }}_amd64.deb
             dist/infiltratorfs-${{ needs.source.outputs.version }}-linux-native.run
-            dist/InfiltratorFS-${{ needs.source.outputs.version }}-source.zip
           if-no-files-found: error
           retention-days: 30
 
@@ -277,16 +263,14 @@ jobs:
           deb="infiltratorfs_${VERSION}_amd64.deb"
           installer="infiltratorfs-${VERSION}-linux-native.run"
           windows="InfiltratorFS-Windows-${VERSION}.exe"
-          source="InfiltratorFS-${VERSION}-source.zip"
-          for asset in "$deb" "$installer" "$windows" "$source"; do
+          for asset in "$deb" "$installer" "$windows"; do
             test -s "release-assets/$asset"
           done
           test "$(dpkg-deb --field "release-assets/$deb" Version)" = "$VERSION"
-          unzip -tq "release-assets/$source"
 
           (
             cd release-assets
-            sha256sum "$deb" "$installer" "$windows" "$source" > SHA256SUMS.txt
+            sha256sum "$deb" "$installer" "$windows" > SHA256SUMS.txt
           )
 
           git tag "$tag" "$EXPECTED_SHA"
@@ -296,7 +280,6 @@ jobs:
             "release-assets/$deb" \
             "release-assets/$installer" \
             "release-assets/$windows" \
-            "release-assets/$source" \
             "release-assets/SHA256SUMS.txt" \
             --verify-tag \
             --target "$EXPECTED_SHA" \
@@ -304,8 +287,8 @@ jobs:
             --generate-notes \
             --latest
 
-          expected_assets=$(printf '%s\n%s\n%s\n%s\n%s\n' \
-            "$deb" "$installer" "$windows" "$source" SHA256SUMS.txt | sort)
+          expected_assets=$(printf '%s\n%s\n%s\n%s\n' \
+            "$deb" "$installer" "$windows" SHA256SUMS.txt | sort)
           published_assets=$(gh release view "$tag" --json assets --jq '.assets[].name' | sort)
           if [[ "$published_assets" != "$expected_assets" ]]; then
             printf 'Release %s has an unexpected asset set.\n' "$tag" >&2
