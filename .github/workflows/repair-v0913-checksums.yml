@@ -26,7 +26,7 @@ jobs:
           windows='InfiltratorFS-Windows-0.9.13.exe'
 
           mkdir release-assets
-          gh release download "$tag" --dir release-assets
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir release-assets
           for asset in "$deb" "$installer" "$windows"; do
             test -s "release-assets/$asset"
           done
@@ -39,4 +39,5 @@ jobs:
             ! grep -Fq 'source.zip' SHA256SUMS.txt
           )
 
-          gh release upload "$tag" release-assets/SHA256SUMS.txt --clobber
+          gh release upload "$tag" release-assets/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" --clobber
