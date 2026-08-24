@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.20)
-project(InfiltratorFS VERSION 0.16.7 LANGUAGES C)
+project(InfiltratorFS VERSION 0.16.8 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -110,6 +110,10 @@ add_executable(infilfs-snapshots tests/snapshots.c)
 target_link_libraries(infilfs-snapshots PRIVATE infilfs_core)
 infilfs_enable_warnings(infilfs-snapshots)
 
+add_executable(infilfs-online-scrub tests/online-scrub.c)
+target_link_libraries(infilfs-online-scrub PRIVATE infilfs_core)
+infilfs_enable_warnings(infilfs-online-scrub)
+
 add_executable(infilfs-large-files tests/large-files.c)
 target_link_libraries(infilfs-large-files PRIVATE infilfs_core)
 infilfs_enable_warnings(infilfs-large-files)
@@ -134,6 +138,7 @@ add_test(NAME infilfs-reflink COMMAND infilfs-reflink)
 add_test(NAME infilfs-paged-metadata COMMAND infilfs-paged-metadata)
 add_test(NAME infilfs-namespace-links COMMAND infilfs-namespace-links)
 add_test(NAME infilfs-snapshots COMMAND infilfs-snapshots)
+add_test(NAME infilfs-online-scrub COMMAND infilfs-online-scrub)
 add_test(NAME infilfs-large-files COMMAND infilfs-large-files)
 add_test(NAME infilfs-device-open COMMAND infilfs-device-open)
 add_test(NAME infilfs-forensic-api COMMAND infilfs-forensic-api)

@@ -32,6 +32,7 @@ infs_status infs_scrub(struct infs_volume *vol,
     if (!vol || !report)
         return INFS_STATUS_INVALID_ARGUMENT;
     memset(report, 0, sizeof(*report));
+    report->scrub_generation = infs_le64_to_cpu(vol->sb.generation);
 
     /* Whole-volume graph validation belongs here rather than in the normal
      * device-open path. Scrub is explicitly the expensive consistency pass:
@@ -143,6 +144,7 @@ infs_status infs_scrub(struct infs_volume *vol,
                     break;
                 if (!first_visit)
                     continue;
+                ++report->snapshots_checked;
                 char name[INFS_SNAPSHOT_NAME_MAX + 1u] = {0};
                 uint16_t length = infs_le16_to_cpu(records[i].name_length);
                 memcpy(name, records[i].name, length);
@@ -159,6 +161,7 @@ infs_status infs_scrub(struct infs_volume *vol,
                 report->data_blocks_checked += historical.data_blocks_checked;
                 report->checksum_errors += historical.checksum_errors;
                 report->metadata_errors += historical.metadata_errors;
+                report->snapshots_checked += historical.snapshots_checked;
             }
         }
         if (owns_context) {
@@ -169,4 +172,73 @@ infs_status infs_scrub(struct infs_volume *vol,
             return status;
     }
     return INFS_STATUS_OK;
+}
+
+
+infs_status infs_snapshot_scrub(struct infs_volume *vol, const char *snapshot,
+                                struct infs_scrub_report *report)
+{
+    if (!vol || !snapshot || !report)
+        return INFS_STATUS_INVALID_ARGUMENT;
+    struct infs_volume view;
+    infs_status status = snapshot_open_view(vol, snapshot, &view);
+    if (status != INFS_STATUS_OK)
+        return status;
+    status = infs_scrub(&view, report);
+    snapshot_close_view(&view);
+    return status;
+}
+
+static infs_status online_scrub_unique_name(struct infs_volume *vol,
+                                            char name[INFS_SNAPSHOT_NAME_MAX + 1u])
+{
+    static const char hex[] = "0123456789abcdef";
+    const char prefix[] = ".infilfs-online-scrub-";
+    uint8_t nonce[12];
+    for (unsigned attempt = 0; attempt < 8u; ++attempt) {
+        infs_status status = infs_storage_random(&vol->storage, nonce,
+                                                 sizeof(nonce));
+        if (status != INFS_STATUS_OK)
+            return status;
+        size_t at = 0;
+        memcpy(name, prefix, sizeof(prefix) - 1u);
+        at += sizeof(prefix) - 1u;
+        for (size_t i = 0; i < sizeof(nonce); ++i) {
+            name[at++] = hex[nonce[i] >> 4];
+            name[at++] = hex[nonce[i] & 0x0fu];
+        }
+        name[at] = '\0';
+        struct infs_snapshot_record_disk record;
+        status = snapshot_find_record(vol, name, &record);
+        if (status == INFS_STATUS_NOT_FOUND)
+            return INFS_STATUS_OK;
+        if (status != INFS_STATUS_OK)
+            return status;
+    }
+    return INFS_STATUS_ALREADY_EXISTS;
+}
+
+infs_status infs_scrub_online(struct infs_volume *vol,
+                              struct infs_scrub_report *report)
+{
+    if (!vol || !report)
+        return INFS_STATUS_INVALID_ARGUMENT;
+    if (!snapshots_enabled(vol))
+        return INFS_STATUS_NOT_SUPPORTED;
+    if (!vol->writable)
+        return INFS_STATUS_READ_ONLY;
+
+    char snapshot[INFS_SNAPSHOT_NAME_MAX + 1u];
+    infs_status status = online_scrub_unique_name(vol, snapshot);
+    if (status != INFS_STATUS_OK)
+        return status;
+    status = infs_snapshot_create(vol, snapshot);
+    if (status != INFS_STATUS_OK)
+        return status;
+
+    infs_status scrub_status = infs_snapshot_scrub(vol, snapshot, report);
+    infs_status cleanup_status = infs_snapshot_delete(vol, snapshot);
+    if (scrub_status != INFS_STATUS_OK)
+        return scrub_status;
+    return cleanup_status;
 }

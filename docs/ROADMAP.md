@@ -39,7 +39,7 @@ Pre-1.0 development is current-format-only. A new development format supersedes 
 - [ ] Duplicate metadata/data recovery.
 - [x] Validate a checkpoint's referenced generation graph during recovery and fall back to an older valid committed generation when the newest candidate graph is corrupt.
 - [x] Forensic raw-object scanner.
-- [ ] Snapshot-coordinated online scrub.
+- [x] Snapshot-coordinated online scrub.
 
 ## Phase 3.5 — platform-neutral foundation — complete
 
@@ -363,3 +363,13 @@ Global synchronous deduplication, distributed/network filesystem semantics and a
 - [x] Promote fragmented files from compact inline extents to checksummed paged extent metadata.
 - [x] Keep low-fragmentation files compact while supporting tens of thousands of extents per file.
 - [x] Account extent metadata pages in scrub/ownership validation.
+
+
+## Phase 4.23 — implementation 0.16.8 snapshot-coordinated online scrub — complete
+
+- [x] Add an explicit API for scrubbing one immutable named snapshot generation.
+- [x] Add online scrub coordination that pins the current committed generation with a temporary retained snapshot before scanning.
+- [x] Remove the temporary retention record after the scan while preserving pre-existing user snapshots.
+- [x] Report the exact generation verified and the number of retained snapshot generations traversed.
+- [x] Add direct-image regression coverage for stable-generation verification, cleanup and read-only rejection.
+- [x] Keep on-disk Format 0.12 unchanged.

@@ -142,6 +142,8 @@ struct infs_scrub_report {
     uint64_t data_blocks_checked;
     uint64_t checksum_errors;
     uint64_t metadata_errors;
+    uint64_t scrub_generation;
+    uint64_t snapshots_checked;
 };
 
 struct infs_dir_item {
@@ -244,5 +246,15 @@ infs_status infs_set_times(struct infs_volume *vol, const char *path,
 
 infs_status infs_scrub(struct infs_volume *vol,
                        struct infs_scrub_report *report);
+/* Scrub one immutable named snapshot. The report records the generation that
+ * was actually verified. */
+infs_status infs_snapshot_scrub(struct infs_volume *vol, const char *snapshot,
+                                struct infs_scrub_report *report);
+/* Capture the current committed generation as a temporary retained snapshot,
+ * scrub that immutable view, then remove the temporary retention record. This
+ * gives adapters a stable scrub target without holding the live namespace at a
+ * moving generation. */
+infs_status infs_scrub_online(struct infs_volume *vol,
+                              struct infs_scrub_report *report);
 
 #endif
