@@ -156,7 +156,7 @@ static int metadata_page_store(struct infs_volume *vol, uint64_t old_block,
         return status;
 
     if (old_block != 0 && old_block < infs_le64_to_cpu(vol->sb.total_blocks) &&
-        !bitmap_get(vol->tx_base_bitmap, old_block)) {
+        !bitmap_get(tx_cow_base_bitmap(vol), old_block)) {
         status = write_block(vol, old_block, block);
         if (status != INFS_STATUS_OK)
             return status;
@@ -280,11 +280,16 @@ static int paged_index_add(struct infs_volume *vol, const uint8_t id[16],
                            uint64_t object_block, uint16_t type)
 {
     struct infs_lookup existing;
-    infs_status status = paged_index_find(vol, id, &existing);
-    if (status == INFS_STATUS_OK)
+    infs_status status;
+    if (object_cache_lookup(vol, id, &existing))
         return INFS_STATUS_ALREADY_EXISTS;
-    if (status != INFS_STATUS_NOT_FOUND)
-        return status;
+    if (!vol->object_cache_complete) {
+        status = paged_index_find(vol, id, &existing);
+        if (status == INFS_STATUS_OK)
+            return INFS_STATUS_ALREADY_EXISTS;
+        if (status != INFS_STATUS_NOT_FOUND)
+            return status;
+    }
 
     uint8_t head[INFS_BLOCK_SIZE];
     struct infs_index_payload_disk *payload;
@@ -353,7 +358,11 @@ static int paged_index_add(struct infs_volume *vol, const uint8_t id[16],
     payload->entry_count = infs_cpu_to_le32(total_count + 1u);
     header->payload_size = infs_cpu_to_le32((uint32_t)(
         sizeof(*payload) + (size_t)page_count * sizeof(uint64_t)));
-    return write_object(vol, head_block, head);
+    status = write_object(vol, head_block, head);
+    if (status == INFS_STATUS_OK)
+        (void)object_cache_store_page(vol, id, object_block, type,
+                                      page_count - 1u);
+    return status;
 }
 
 static int paged_index_remove(struct infs_volume *vol, const uint8_t id[16])
@@ -486,6 +495,64 @@ fail:
     return status;
 }
 
+
+static int object_cache_rebuild(struct infs_volume *vol)
+{
+    if (!vol || !vol->object_cache || !vol->object_cache_slots)
+        return INFS_STATUS_OK;
+    object_cache_clear(vol);
+    uint8_t head[INFS_BLOCK_SIZE];
+    struct infs_index_payload_disk *payload;
+    infs_status status = index_load(vol, head, &payload);
+    if (status != INFS_STATUS_OK)
+        return status;
+    struct infs_object_header_disk *header =
+        (struct infs_object_header_disk *)head;
+    if (infs_le16_to_cpu(header->object_version) == INFS_OBJECT_VERSION_PAGED) {
+        uint32_t page_count = infs_le32_to_cpu(payload->reserved);
+        uint64_t *pages = index_page_pointers(payload);
+        for (uint32_t p = 0; p < page_count; ++p) {
+            uint8_t page_data[INFS_BLOCK_SIZE];
+            status = read_block(vol, infs_le64_to_cpu(pages[p]), page_data);
+            if (status != INFS_STATUS_OK)
+                goto fail;
+            struct infs_index_entry_disk *entries;
+            uint32_t count;
+            status = index_page_validate(vol, page_data, header->object_id,
+                                         &entries, &count);
+            if (status != INFS_STATUS_OK)
+                goto fail;
+            for (uint32_t i = 0; i < count; ++i) {
+                if (!object_cache_store_page(
+                        vol, entries[i].object_id,
+                        infs_le64_to_cpu(entries[i].object_block),
+                        infs_le16_to_cpu(entries[i].object_type), p))
+                    goto capacity;
+            }
+        }
+    } else {
+        uint32_t count = infs_le32_to_cpu(payload->entry_count);
+        struct infs_index_entry_disk *entries =
+            (struct infs_index_entry_disk *)(payload + 1);
+        for (uint32_t i = 0; i < count; ++i) {
+            if (!object_cache_store_page(
+                    vol, entries[i].object_id,
+                    infs_le64_to_cpu(entries[i].object_block),
+                    infs_le16_to_cpu(entries[i].object_type),
+                    INFS_INDEX_PAGE_UNKNOWN))
+                goto capacity;
+        }
+    }
+    vol->object_cache_complete = 1;
+    return INFS_STATUS_OK;
+capacity:
+    object_cache_clear(vol);
+    return INFS_STATUS_OK;
+fail:
+    object_cache_clear(vol);
+    return status;
+}
+
 static int paged_dir_lookup(struct infs_volume *vol,
                             uint8_t head[INFS_BLOCK_SIZE], const char *name,
                             struct infs_dirent_disk *entry_out)
@@ -494,10 +561,17 @@ static int paged_dir_lookup(struct infs_volume *vol,
         (struct infs_object_header_disk *)head;
     struct infs_directory_payload_disk *payload =
         (struct infs_directory_payload_disk *)(head + sizeof(*header));
-    size_t name_length = strlen(name);
+    if (directory_cache_lookup(vol, header->object_id, name, entry_out))
+        return INFS_STATUS_OK;
+    if (directory_cache_complete(vol, header->object_id))
+        return INFS_STATUS_NOT_FOUND;
+
+    size_t wanted_length = strlen(name);
     uint32_t page_count = infs_le32_to_cpu(payload->bytes_used);
     uint64_t *pages = directory_page_pointers(payload);
-
+    struct infs_dirent_disk wanted;
+    int have_wanted = 0;
+    int cached_all = 1;
     for (uint32_t p = 0; p < page_count; ++p) {
         uint64_t page_block = infs_le64_to_cpu(pages[p]);
         if (page_block == 0 ||
@@ -520,17 +594,28 @@ static int paged_dir_lookup(struct infs_volume *vol,
                 (struct infs_dirent_disk *)(entries + offset);
             uint16_t record_size = infs_le16_to_cpu(entry->record_size);
             uint16_t stored_length = infs_le16_to_cpu(entry->name_length);
-            if (stored_length == name_length &&
-                memcmp(entries + offset + sizeof(*entry), name,
-                       name_length) == 0) {
-                if (entry_out)
-                    memcpy(entry_out, entry, sizeof(*entry_out));
-                return INFS_STATUS_OK;
+            char cached_name[INFS_NAME_MAX + 1u];
+            memcpy(cached_name, entries + offset + sizeof(*entry), stored_length);
+            cached_name[stored_length] = '\0';
+            if (!directory_cache_store(vol, header->object_id, cached_name,
+                                       entry->object_id,
+                                       infs_le16_to_cpu(entry->object_type), p))
+                cached_all = 0;
+            if (!have_wanted && stored_length == wanted_length &&
+                memcmp(cached_name, name, wanted_length) == 0) {
+                wanted = *entry;
+                have_wanted = 1;
             }
             offset += record_size;
         }
     }
-    return INFS_STATUS_NOT_FOUND;
+    if (cached_all)
+        directory_cache_mark_complete(vol, header->object_id);
+    if (!have_wanted)
+        return INFS_STATUS_NOT_FOUND;
+    if (entry_out)
+        *entry_out = wanted;
+    return INFS_STATUS_OK;
 }
 
 static int paged_dir_add(struct infs_volume *vol,
@@ -618,6 +703,8 @@ static int paged_dir_add(struct infs_volume *vol,
         infs_le32_to_cpu(payload->entry_count) + 1u);
     header->payload_size = infs_cpu_to_le32((uint32_t)(
         sizeof(*payload) + (size_t)page_count * sizeof(uint64_t)));
+    (void)directory_cache_store(vol, header->object_id, name, object_id, type,
+                                page_count - 1u);
     return INFS_STATUS_OK;
 }
 
@@ -632,8 +719,15 @@ static int paged_dir_remove(struct infs_volume *vol,
     size_t name_length = strlen(name);
     uint32_t page_count = infs_le32_to_cpu(payload->bytes_used);
     uint64_t *pages = directory_page_pointers(payload);
+    uint32_t hinted_page = INFS_DIRECTORY_PAGE_UNKNOWN;
+    (void)directory_cache_page(vol, header->object_id, name, &hinted_page);
 
-    for (uint32_t p = 0; p < page_count; ++p) {
+    for (uint32_t pass = 0; pass < (hinted_page < page_count ? 2u : 1u); ++pass) {
+      uint32_t begin = (pass == 0 && hinted_page < page_count) ? hinted_page : 0u;
+      uint32_t finish = (pass == 0 && hinted_page < page_count) ? hinted_page + 1u : page_count;
+      for (uint32_t p = begin; p < finish; ++p) {
+        if (pass == 1 && p == hinted_page)
+            continue;
         uint64_t page_block = infs_le64_to_cpu(pages[p]);
         uint8_t page_data[INFS_BLOCK_SIZE];
         infs_status status = read_block(vol, page_block, page_data);
@@ -666,6 +760,7 @@ static int paged_dir_remove(struct infs_volume *vol,
 
                 if (count == 1u) {
                     free_run(vol, page_block, 1);
+                    directory_cache_invalidate_parent(vol, header->object_id);
                     if (p + 1u < page_count)
                         memmove(&pages[p], &pages[p + 1u],
                                 (size_t)(page_count - p - 1u) * sizeof(*pages));
@@ -679,6 +774,7 @@ static int paged_dir_remove(struct infs_volume *vol,
                     if (status != INFS_STATUS_OK)
                         return status;
                     pages[p] = infs_cpu_to_le64(replacement);
+                    directory_cache_remove(vol, header->object_id, name);
                 }
                 uint32_t total = infs_le32_to_cpu(payload->entry_count);
                 if (total == 0)
@@ -691,6 +787,7 @@ static int paged_dir_remove(struct infs_volume *vol,
             }
             offset += record_size;
         }
+      }
     }
     return INFS_STATUS_NOT_FOUND;
 }

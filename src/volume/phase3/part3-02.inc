@@ -8,9 +8,14 @@ static int file_ensure_logical_blocks(struct infs_volume *vol,
     infs_status status = file_validate_volume(vol, block, &p, &ext);
     if (status != INFS_STATUS_OK)
         return status;
-    uint64_t have = file_logical_blocks(p, ext);
+    uint64_t have = 0;
+    status = file_logical_blocks_volume(vol, block, p, ext, &have);
+    if (status != INFS_STATUS_OK)
+        return status;
     if (needed <= have)
         return INFS_STATUS_OK;
+    if (file_has_paged_extents(block))
+        return paged_extent_ensure(vol, block, p, needed);
 
     struct infs_object_header_disk *hdr =
         (struct infs_object_header_disk *)block;
@@ -50,11 +55,15 @@ static int file_ensure_logical_blocks(struct infs_volume *vol,
     return INFS_STATUS_OK;
 }
 
-static int file_map_block(const struct infs_file_payload_disk *p,
-                          const struct infs_extent_disk *ext,
+static int file_map_block(struct infs_volume *vol,
+                          uint8_t object[INFS_BLOCK_SIZE],
+                          struct infs_file_payload_disk *p,
+                          struct infs_extent_disk *ext,
                           uint64_t logical, uint64_t *physical,
                           uint32_t *flags_out)
 {
+    if (file_has_paged_extents(object))
+        return paged_extent_map(vol, object, p, logical, physical, flags_out);
     uint32_t count = infs_le32_to_cpu(p->extent_count);
     for (uint32_t i = 0; i < count; ++i) {
         uint64_t l = infs_le64_to_cpu(ext[i].logical_block);

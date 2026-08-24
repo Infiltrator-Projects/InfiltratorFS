@@ -40,8 +40,13 @@ static int dir_remove_volume(struct infs_volume *vol,
         (struct infs_object_header_disk *)block;
     if (infs_le16_to_cpu(header->object_version) ==
         INFS_OBJECT_VERSION_PAGED)
-        return paged_dir_remove(vol, block, name, removed_copy);
-    return dir_remove(block, name, removed_copy);
+        status = paged_dir_remove(vol, block, name, removed_copy);
+    else
+        status = dir_remove(block, name, removed_copy);
+    if (status == INFS_STATUS_OK &&
+        infs_le16_to_cpu(header->object_version) != INFS_OBJECT_VERSION_PAGED)
+        directory_cache_remove(vol, header->object_id, name);
+    return status;
 }
 
 static struct infs_attributes_disk *object_attributes(uint8_t block[INFS_BLOCK_SIZE])

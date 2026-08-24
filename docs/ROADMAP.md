@@ -235,7 +235,7 @@ Pre-1.0 development is current-format-only. A new development format supersedes 
 
 ## Phase 4.16 — implementation 0.16.0 snapshot roots — complete
 
-- [x] Publish feature-gated Format 0.11 with snapshot-catalog object type 6.
+- [x] Publish feature-gated Format 0.12 with snapshot-catalog object type 6.
 - [x] Capture named immutable generation, root, object-index and bitmap images.
 - [x] Preserve superseded metadata and data while any retained generation owns it.
 - [x] List and browse read-only historical paths through the portable API and `infilfs-tool`.
@@ -250,7 +250,7 @@ Pre-1.0 development is current-format-only. A new development format supersedes 
 - [x] Prevent ordinary copy-sized writes from consuming one extent per publish.
 - [x] Reproduce the former approximately 40 MiB direct-copy extent exhaustion.
 - [x] Verify 192 durable sequential writes, compact extent mapping, full scrub and reopen.
-- [x] Keep on-disk Format 0.11 unchanged.
+- [x] Keep on-disk Format 0.12 unchanged.
 
 ## Phase 4.18 — implementation 0.16.3 Linux desktop compatibility — complete
 
@@ -260,7 +260,7 @@ Pre-1.0 development is current-format-only. A new development format supersedes 
 - [x] Report stable hard-link inode identity and current link counts through FUSE.
 - [x] Report nonzero inode-capacity statistics to desktop and POSIX callers.
 - [x] Add mounted xattr, FIFO, Unix-socket and normal-fallocate regression coverage.
-- [x] Keep on-disk Format 0.11 unchanged; native cross-platform xattr/security objects remain future format work.
+- [x] Keep on-disk Format 0.12 unchanged; native cross-platform xattr/security objects remain future format work.
 
 ## Phase 4.19 — implementation 0.16.4 Linux unlink transaction repair — complete
 
@@ -268,7 +268,7 @@ Pre-1.0 development is current-format-only. A new development format supersedes 
 - [x] Prevent a missing Linux metadata record from aborting an already-successful ordinary unlink transaction.
 - [x] Propagate genuine metadata-cleanup failures instead of reporting a false successful delete.
 - [x] Verify plain-file deletion and recursive `rm -rf` deletion through mounted FUSE.
-- [x] Keep on-disk Format 0.11 unchanged.
+- [x] Keep on-disk Format 0.12 unchanged.
 
 ## Phase 4 — modern storage features
 
@@ -329,7 +329,7 @@ Pre-1.0 development is current-format-only. A new development format supersedes 
 - [ ] Windows attribute, security and filename adapter.
 - [ ] Native Windows filesystem driver.
 - [x] Windows formatter, root transfer/listing and scrub application.
-- [x] Shared Linux/Windows Format 0.11 volume interoperability tests.
+- [x] Shared Linux/Windows Format 0.12 volume interoperability tests.
 
 ## Deliberately deferred
 
@@ -344,7 +344,7 @@ Global synchronous deduplication, distributed/network filesystem semantics and a
 - [x] Scale Linux FUSE deferred publication from 16 MiB up to a bounded 256 MiB.
 - [x] Preserve explicit `fsync()`/`sync()` as immediate durability boundaries.
 - [x] Add mounted sequential write, sync and byte-compare regression coverage.
-- [x] Keep Format 0.11 unchanged.
+- [x] Keep Format 0.12 unchanged.
 
 
 ## Phase 4.21 — implementation 0.16.6 CPU hot-path performance — complete
@@ -353,4 +353,13 @@ Global synchronous deduplication, distributed/network filesystem semantics and a
 - [x] Fall back safely to the persistent checksum head if a runtime cursor becomes stale.
 - [x] Replace bit-at-a-time CRC64-ECMA with an on-disk-identical table-driven implementation.
 - [x] Add CRC64 known-answer and algorithmic traversal regressions.
-- [x] Preserve Format 0.11 and explicit durability semantics.
+- [x] Preserve Format 0.12 and explicit durability semantics.
+
+
+## Phase 4.22 — Format 0.12 scalable metadata — complete
+
+- [x] Operation-level rollback savepoints preserve earlier acknowledged buffered mutations.
+- [x] Runtime hashed object and directory indexes remove repeated linear metadata scans.
+- [x] Promote fragmented files from compact inline extents to checksummed paged extent metadata.
+- [x] Keep low-fragmentation files compact while supporting tens of thousands of extents per file.
+- [x] Account extent metadata pages in scrub/ownership validation.

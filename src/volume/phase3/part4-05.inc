@@ -7,7 +7,7 @@ static int punch_partial_block(struct infs_volume *vol,
 {
     uint64_t physical;
     uint32_t flags;
-    infs_status status = file_map_block(file, ext, logical, &physical, &flags);
+    infs_status status = file_map_block(vol, object, file, ext, logical, &physical, &flags);
     if (status != INFS_STATUS_OK)
         return status;
     if (flags == INFS_EXTENT_HOLE)
@@ -140,8 +140,12 @@ static int punch_hole_tx(struct infs_volume *vol, const char *path,
 
     struct infs_object_header_disk *hdr =
         (struct infs_object_header_disk *)object;
-    if (file_allocated_blocks(file, ext) == 0 &&
-        !id_is_zero(file->checksum_head_id)) {
+    uint64_t allocated_blocks = 0;
+    status = file_allocated_blocks_volume(
+        vol, object, file, ext, &allocated_blocks);
+    if (status != INFS_STATUS_OK)
+        return status;
+    if (allocated_blocks == 0 && !id_is_zero(file->checksum_head_id)) {
         status = checksum_destroy_chain(vol, file, hdr->object_id);
         if (status != INFS_STATUS_OK)
             return status;
@@ -174,11 +178,14 @@ infs_status infs_punch_hole(struct infs_volume *vol, const char *path,
     if (offset >= attributes.logical_size)
         return INFS_STATUS_OK;
 
-    status = tx_begin(vol);
+    int started_transaction = 0;
+    status = mutation_scope_begin(vol, &started_transaction);
     if (status != INFS_STATUS_OK)
         return status;
     status = punch_hole_tx(vol, path, offset, length);
     if (status != INFS_STATUS_OK)
-        tx_abort(vol);
+        mutation_scope_fail(vol, started_transaction);
+    else
+        mutation_scope_success(vol);
     return status;
 }

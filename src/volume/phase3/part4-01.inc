@@ -40,8 +40,12 @@ infs_status infs_get_attributes(struct infs_volume *vol, const char *path,
         status = file_validate_volume(vol, block, &p, &ext);
         if (status != INFS_STATUS_OK)
             return status;
-        attributes->allocated_size =
-            file_allocated_blocks(p, ext) * INFS_BLOCK_SIZE;
+        uint64_t allocated_blocks = 0;
+        status = file_allocated_blocks_volume(
+            vol, block, p, ext, &allocated_blocks);
+        if (status != INFS_STATUS_OK)
+            return status;
+        attributes->allocated_size = allocated_blocks * INFS_BLOCK_SIZE;
         posix = &p->posix;
     } else if (lk.type == INFS_OBJECT_DIRECTORY) {
         const struct infs_object_header_disk *header =
@@ -172,14 +176,17 @@ infs_status infs_create_file(struct infs_volume *vol, const char *path,
     if (length > 1u && path[length - 1u] == '/')
         return INFS_STATUS_NOT_DIRECTORY;
 
-    infs_status status = tx_begin(vol);
+    int started_transaction = 0;
+    infs_status status = mutation_scope_begin(vol, &started_transaction);
     if (status != INFS_STATUS_OK)
         return status;
     status = create_object(vol, path, options, INFS_OBJECT_FILE, NULL);
     if (status == INFS_STATUS_OK)
         status = finish_mutation(vol, (uint64_t)INFS_BLOCK_SIZE * 4u);
     if (status != INFS_STATUS_OK)
-        tx_abort(vol);
+        mutation_scope_fail(vol, started_transaction);
+    else
+        mutation_scope_success(vol);
     return status;
 }
 
@@ -188,14 +195,17 @@ infs_status infs_mkdir(struct infs_volume *vol, const char *path,
 {
     if (!vol || !path || path[0] != '/')
         return INFS_STATUS_INVALID_ARGUMENT;
-    infs_status status = tx_begin(vol);
+    int started_transaction = 0;
+    infs_status status = mutation_scope_begin(vol, &started_transaction);
     if (status != INFS_STATUS_OK)
         return status;
     status = create_object(vol, path, options, INFS_OBJECT_DIRECTORY, NULL);
     if (status == INFS_STATUS_OK)
         status = finish_mutation(vol, (uint64_t)INFS_BLOCK_SIZE * 4u);
     if (status != INFS_STATUS_OK)
-        tx_abort(vol);
+        mutation_scope_fail(vol, started_transaction);
+    else
+        mutation_scope_success(vol);
     return status;
 }
 
@@ -209,7 +219,8 @@ infs_status infs_create_symlink(struct infs_volume *vol, const char *path,
     if (length > 1u && path[length - 1u] == '/')
         return INFS_STATUS_NOT_DIRECTORY;
 
-    infs_status status = tx_begin(vol);
+    int started_transaction = 0;
+    infs_status status = mutation_scope_begin(vol, &started_transaction);
     if (status != INFS_STATUS_OK)
         return status;
     status = create_object(
@@ -217,7 +228,9 @@ infs_status infs_create_symlink(struct infs_volume *vol, const char *path,
     if (status == INFS_STATUS_OK)
         status = finish_mutation(vol, (uint64_t)INFS_BLOCK_SIZE * 4u);
     if (status != INFS_STATUS_OK)
-        tx_abort(vol);
+        mutation_scope_fail(vol, started_transaction);
+    else
+        mutation_scope_success(vol);
     return status;
 }
 
@@ -335,11 +348,14 @@ infs_status infs_link_file(struct infs_volume *vol, const char *existing_path,
     size_t length = strlen(new_path);
     if (length > 1u && new_path[length - 1u] == '/')
         return INFS_STATUS_NOT_DIRECTORY;
-    infs_status status = tx_begin(vol);
+    int started_transaction = 0;
+    infs_status status = mutation_scope_begin(vol, &started_transaction);
     if (status != INFS_STATUS_OK)
         return status;
     status = link_file_tx(vol, existing_path, new_path);
     if (status != INFS_STATUS_OK)
-        tx_abort(vol);
+        mutation_scope_fail(vol, started_transaction);
+    else
+        mutation_scope_success(vol);
     return status;
 }

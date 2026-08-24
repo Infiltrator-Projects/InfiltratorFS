@@ -49,12 +49,15 @@ infs_status infs_set_posix_compat(struct infs_volume *vol, const char *path,
                   INFS_POSIX_SET_GID)) != 0)
         return INFS_STATUS_INVALID_ARGUMENT;
 
-    infs_status status = tx_begin(vol);
+    int started_transaction = 0;
+    infs_status status = mutation_scope_begin(vol, &started_transaction);
     if (status != INFS_STATUS_OK)
         return status;
     status = set_posix_tx(vol, path, mask, permissions, uid, gid);
     if (status != INFS_STATUS_OK)
-        tx_abort(vol);
+        mutation_scope_fail(vol, started_transaction);
+    else
+        mutation_scope_success(vol);
     return status;
 }
 
@@ -122,11 +125,14 @@ infs_status infs_set_times(struct infs_volume *vol, const char *path,
         !time_action_valid(update->modification_action))
         return INFS_STATUS_INVALID_ARGUMENT;
 
-    infs_status status = tx_begin(vol);
+    int started_transaction = 0;
+    infs_status status = mutation_scope_begin(vol, &started_transaction);
     if (status != INFS_STATUS_OK)
         return status;
     status = set_times_tx(vol, path, update);
     if (status != INFS_STATUS_OK)
-        tx_abort(vol);
+        mutation_scope_fail(vol, started_transaction);
+    else
+        mutation_scope_success(vol);
     return status;
 }

@@ -26,13 +26,15 @@ static void bitmap_set(uint8_t *bitmap, uint64_t block, int allocated)
         bitmap[block >> 3] &= (uint8_t)~mask;
 }
 
-#define INFS_OBJECT_CACHE_SLOTS 4096u
+#define INFS_OBJECT_CACHE_SLOTS 65536u
+#define INFS_INDEX_PAGE_UNKNOWN UINT32_MAX
 
 struct infs_object_cache_entry {
     uint8_t object_id[16];
     uint64_t block;
+    uint32_t index_page;
     uint16_t type;
-    uint8_t valid;
+    uint8_t state; /* 0 empty, 1 live, 2 tombstone */
 };
 
 static uint64_t object_cache_hash(const uint8_t id[16])
@@ -47,9 +49,12 @@ static uint64_t object_cache_hash(const uint8_t id[16])
 
 static void object_cache_clear(struct infs_volume *vol)
 {
-    if (vol && vol->object_cache && vol->object_cache_slots)
+    if (!vol)
+        return;
+    if (vol->object_cache && vol->object_cache_slots)
         memset(vol->object_cache, 0,
                vol->object_cache_slots * sizeof(*vol->object_cache));
+    vol->object_cache_complete = 0;
 }
 
 static void object_cache_init(struct infs_volume *vol)
@@ -69,21 +74,37 @@ static void object_cache_destroy(struct infs_volume *vol)
     free(vol->object_cache);
     vol->object_cache = NULL;
     vol->object_cache_slots = 0;
+    vol->object_cache_complete = 0;
+}
+
+static struct infs_object_cache_entry *object_cache_find_entry(
+    struct infs_volume *vol, const uint8_t id[16])
+{
+    if (!vol || !vol->object_cache || !vol->object_cache_slots)
+        return NULL;
+    size_t mask = vol->object_cache_slots - 1u;
+    size_t slot = (size_t)(object_cache_hash(id) & mask);
+    for (size_t probe = 0; probe < vol->object_cache_slots; ++probe) {
+        struct infs_object_cache_entry *entry =
+            &vol->object_cache[(slot + probe) & mask];
+        if (entry->state == 0)
+            return NULL;
+        if (entry->state == 1 && memcmp(entry->object_id, id, 16) == 0)
+            return entry;
+    }
+    return NULL;
 }
 
 static int object_cache_lookup(struct infs_volume *vol, const uint8_t id[16],
                                struct infs_lookup *out)
 {
-    if (!vol || !vol->object_cache || !vol->object_cache_slots)
-        return 0;
-    size_t slot = (size_t)(object_cache_hash(id) &
-                           (vol->object_cache_slots - 1u));
-    struct infs_object_cache_entry *entry = &vol->object_cache[slot];
-    if (!entry->valid || memcmp(entry->object_id, id, 16) != 0)
+    struct infs_object_cache_entry *entry = object_cache_find_entry(vol, id);
+    if (!entry)
         return 0;
     uint64_t total = infs_le64_to_cpu(vol->sb.total_blocks);
     if (entry->block >= total || !bitmap_get(vol->bitmap, entry->block)) {
-        entry->valid = 0;
+        entry->state = 2;
+        vol->object_cache_complete = 0;
         return 0;
     }
     if (out) {
@@ -94,29 +115,66 @@ static int object_cache_lookup(struct infs_volume *vol, const uint8_t id[16],
     return 1;
 }
 
+static int object_cache_lookup_page(struct infs_volume *vol,
+                                    const uint8_t id[16], uint32_t *page_out)
+{
+    struct infs_object_cache_entry *entry = object_cache_find_entry(vol, id);
+    if (!entry || entry->index_page == INFS_INDEX_PAGE_UNKNOWN)
+        return 0;
+    if (page_out)
+        *page_out = entry->index_page;
+    return 1;
+}
+
+static int object_cache_store_page(struct infs_volume *vol,
+                                   const uint8_t id[16], uint64_t block,
+                                   uint16_t type, uint32_t index_page)
+{
+    if (!vol || !vol->object_cache || !vol->object_cache_slots)
+        return 0;
+    size_t mask = vol->object_cache_slots - 1u;
+    size_t slot = (size_t)(object_cache_hash(id) & mask);
+    size_t tombstone = SIZE_MAX;
+    for (size_t probe = 0; probe < vol->object_cache_slots; ++probe) {
+        size_t at = (slot + probe) & mask;
+        struct infs_object_cache_entry *entry = &vol->object_cache[at];
+        if (entry->state == 1 && memcmp(entry->object_id, id, 16) == 0) {
+            entry->block = block;
+            entry->type = type;
+            if (index_page != INFS_INDEX_PAGE_UNKNOWN)
+                entry->index_page = index_page;
+            return 1;
+        }
+        if (entry->state == 2 && tombstone == SIZE_MAX)
+            tombstone = at;
+        if (entry->state != 0)
+            continue;
+        if (tombstone != SIZE_MAX)
+            entry = &vol->object_cache[tombstone];
+        memset(entry, 0, sizeof(*entry));
+        memcpy(entry->object_id, id, 16);
+        entry->block = block;
+        entry->type = type;
+        entry->index_page = index_page;
+        entry->state = 1;
+        return 1;
+    }
+    vol->object_cache_complete = 0;
+    return 0;
+}
+
 static void object_cache_store(struct infs_volume *vol, const uint8_t id[16],
                                uint64_t block, uint16_t type)
 {
-    if (!vol || !vol->object_cache || !vol->object_cache_slots)
-        return;
-    size_t slot = (size_t)(object_cache_hash(id) &
-                           (vol->object_cache_slots - 1u));
-    struct infs_object_cache_entry *entry = &vol->object_cache[slot];
-    memcpy(entry->object_id, id, 16);
-    entry->block = block;
-    entry->type = type;
-    entry->valid = 1;
+    (void)object_cache_store_page(vol, id, block, type,
+                                  INFS_INDEX_PAGE_UNKNOWN);
 }
 
 static void object_cache_remove(struct infs_volume *vol, const uint8_t id[16])
 {
-    if (!vol || !vol->object_cache || !vol->object_cache_slots)
-        return;
-    size_t slot = (size_t)(object_cache_hash(id) &
-                           (vol->object_cache_slots - 1u));
-    struct infs_object_cache_entry *entry = &vol->object_cache[slot];
-    if (entry->valid && memcmp(entry->object_id, id, 16) == 0)
-        entry->valid = 0;
+    struct infs_object_cache_entry *entry = object_cache_find_entry(vol, id);
+    if (entry)
+        entry->state = 2;
 }
 
 static int write_block(struct infs_volume *vol, uint64_t block_no,
@@ -188,10 +246,125 @@ static int tx_begin(struct infs_volume *vol)
     return INFS_STATUS_OK;
 }
 
+static const uint8_t *tx_cow_base_bitmap(const struct infs_volume *vol)
+{
+    return vol && vol->tx_operation_active && vol->tx_operation_bitmap ?
+        vol->tx_operation_bitmap : (vol ? vol->tx_base_bitmap : NULL);
+}
+
+static infs_status tx_operation_begin(struct infs_volume *vol)
+{
+    if (!vol || !vol->tx_active || vol->tx_operation_active)
+        return INFS_STATUS_INVALID_ARGUMENT;
+    vol->tx_operation_bitmap = malloc(vol->bitmap_bytes);
+    if (!vol->tx_operation_bitmap)
+        return INFS_STATUS_NO_MEMORY;
+    memcpy(vol->tx_operation_bitmap, vol->bitmap, vol->bitmap_bytes);
+    if (vol->tx_deferred_count) {
+        vol->tx_operation_deferred = malloc(
+            vol->tx_deferred_count * sizeof(*vol->tx_operation_deferred));
+        if (!vol->tx_operation_deferred) {
+            free(vol->tx_operation_bitmap);
+            vol->tx_operation_bitmap = NULL;
+            return INFS_STATUS_NO_MEMORY;
+        }
+        memcpy(vol->tx_operation_deferred, vol->tx_deferred,
+               vol->tx_deferred_count * sizeof(*vol->tx_operation_deferred));
+    }
+    vol->tx_operation_deferred_count = vol->tx_deferred_count;
+    vol->tx_operation_sb = vol->sb;
+    vol->tx_operation_pending_bytes = vol->tx_pending_bytes;
+    vol->tx_operation_data_cursor = vol->data_allocation_cursor;
+    vol->tx_operation_metadata_cursor = vol->metadata_allocation_cursor;
+    vol->tx_operation_active = 1;
+    return INFS_STATUS_OK;
+}
+
+static void tx_operation_discard(struct infs_volume *vol)
+{
+    if (!vol)
+        return;
+    free(vol->tx_operation_bitmap);
+    vol->tx_operation_bitmap = NULL;
+    free(vol->tx_operation_deferred);
+    vol->tx_operation_deferred = NULL;
+    vol->tx_operation_deferred_count = 0;
+    vol->tx_operation_active = 0;
+}
+
+static void tx_operation_commit(struct infs_volume *vol)
+{
+    tx_operation_discard(vol);
+}
+
+static void tx_operation_abort(struct infs_volume *vol)
+{
+    if (!vol || !vol->tx_operation_active)
+        return;
+    vol->sb = vol->tx_operation_sb;
+    memcpy(vol->bitmap, vol->tx_operation_bitmap, vol->bitmap_bytes);
+    if (vol->tx_operation_deferred_count) {
+        if (vol->tx_deferred_capacity < vol->tx_operation_deferred_count) {
+            struct infs_deferred_range *grown = realloc(
+                vol->tx_deferred, vol->tx_operation_deferred_count *
+                sizeof(*vol->tx_deferred));
+            if (!grown) {
+                tx_operation_discard(vol);
+                tx_abort(vol);
+                return;
+            }
+            vol->tx_deferred = grown;
+            vol->tx_deferred_capacity = vol->tx_operation_deferred_count;
+        }
+        memcpy(vol->tx_deferred, vol->tx_operation_deferred,
+               vol->tx_operation_deferred_count * sizeof(*vol->tx_deferred));
+    }
+    vol->tx_deferred_count = vol->tx_operation_deferred_count;
+    vol->tx_pending_bytes = vol->tx_operation_pending_bytes;
+    vol->data_allocation_cursor = vol->tx_operation_data_cursor;
+    vol->metadata_allocation_cursor = vol->tx_operation_metadata_cursor;
+    vol->tx_error = INFS_STATUS_OK;
+    tx_operation_discard(vol);
+    object_cache_clear(vol);
+    directory_cache_clear(vol);
+    vol->checksum_cursor_valid = 0;
+    (void)object_cache_rebuild(vol);
+}
+
+static infs_status mutation_scope_begin(struct infs_volume *vol,
+                                        int *started_transaction)
+{
+    if (!vol || !started_transaction)
+        return INFS_STATUS_INVALID_ARGUMENT;
+    *started_transaction = !vol->tx_active;
+    infs_status status = tx_begin(vol);
+    if (status != INFS_STATUS_OK)
+        return status;
+    status = tx_operation_begin(vol);
+    if (status != INFS_STATUS_OK && *started_transaction)
+        tx_abort(vol);
+    return status;
+}
+
+static void mutation_scope_fail(struct infs_volume *vol,
+                                int started_transaction)
+{
+    tx_operation_abort(vol);
+    if (started_transaction && vol && vol->tx_active)
+        tx_abort(vol);
+}
+
+static void mutation_scope_success(struct infs_volume *vol)
+{
+    tx_operation_commit(vol);
+}
+
 static void tx_abort(struct infs_volume *vol)
 {
     if (!vol || !vol->tx_active)
         return;
+    if (vol->tx_operation_active)
+        tx_operation_discard(vol);
     memcpy(&vol->sb, &vol->tx_base_sb, sizeof(vol->sb));
     memcpy(vol->bitmap, vol->tx_base_bitmap, vol->bitmap_bytes);
     free(vol->tx_base_bitmap);
@@ -542,7 +715,7 @@ static void free_run(struct infs_volume *vol, uint64_t start, uint64_t count)
             ++b;
             continue;
         }
-        if (!bitmap_get(vol->tx_base_bitmap, b)) {
+        if (!bitmap_get(tx_cow_base_bitmap(vol), b)) {
             bitmap_set(vol->bitmap, b, 0);
             vol->sb.free_blocks = infs_cpu_to_le64(
                 infs_le64_to_cpu(vol->sb.free_blocks) + 1u);
@@ -552,7 +725,7 @@ static void free_run(struct infs_volume *vol, uint64_t start, uint64_t count)
 
         uint64_t run = b;
         while (b < end && bitmap_get(vol->bitmap, b) &&
-               bitmap_get(vol->tx_base_bitmap, b))
+               bitmap_get(tx_cow_base_bitmap(vol), b))
             ++b;
         status = tx_defer_range(vol, run, b - run);
         if (status != INFS_STATUS_OK)
@@ -586,7 +759,7 @@ static int write_object(struct infs_volume *vol, uint64_t block_no,
      * private block avoids another allocation, index-page rewrite and free for
      * every buffered FUSE write to the same file. */
     if (block_no < infs_le64_to_cpu(vol->sb.total_blocks) &&
-        !bitmap_get(vol->tx_base_bitmap, block_no)) {
+        !bitmap_get(tx_cow_base_bitmap(vol), block_no)) {
         status = write_block(vol, block_no, block);
         if (status != INFS_STATUS_OK)
             return status;
@@ -659,6 +832,8 @@ static int index_find(struct infs_volume *vol, const uint8_t id[16],
             *out = found;
         return INFS_STATUS_OK;
     }
+    if (vol->object_cache_complete)
+        return INFS_STATUS_NOT_FOUND;
 
     uint8_t block[INFS_BLOCK_SIZE];
     struct infs_index_payload_disk *payload;

@@ -70,9 +70,19 @@ static int truncate_file_tx(struct infs_volume *vol, const char *path, uint64_t 
 
     uint64_t target_blocks = size / INFS_BLOCK_SIZE +
         ((size % INFS_BLOCK_SIZE) != 0);
-    uint64_t have = file_logical_blocks(p, ext);
+    uint64_t have = 0;
+    status = file_logical_blocks_volume(vol, object, p, ext, &have);
+    if (status != INFS_STATUS_OK)
+        return status;
     if (target_blocks > have) {
         status = file_ensure_logical_blocks(vol, object, target_blocks);
+        if (status != INFS_STATUS_OK)
+            return status;
+    } else if (target_blocks < have && file_has_paged_extents(object)) {
+        status = paged_extent_truncate(vol, object, p, target_blocks);
+        if (status != INFS_STATUS_OK)
+            return status;
+        status = file_validate_volume(vol, object, &p, &ext);
         if (status != INFS_STATUS_OK)
             return status;
     } else if (target_blocks < have) {
@@ -128,7 +138,7 @@ static int truncate_file_tx(struct infs_volume *vol, const char *path, uint64_t 
         uint64_t logical = target_blocks - 1u;
         uint64_t physical;
         uint32_t flags;
-        status = file_map_block(p, ext, logical, &physical, &flags);
+        status = file_map_block(vol, object, p, ext, logical, &physical, &flags);
         if (status != INFS_STATUS_OK)
             return status;
         if (flags == INFS_EXTENT_NORMAL) {
@@ -163,8 +173,12 @@ static int truncate_file_tx(struct infs_volume *vol, const char *path, uint64_t 
         }
     }
 
-    if (file_allocated_blocks(p, ext) == 0 &&
-        !id_is_zero(p->checksum_head_id)) {
+    uint64_t allocated_blocks = 0;
+    status = file_allocated_blocks_volume(
+        vol, object, p, ext, &allocated_blocks);
+    if (status != INFS_STATUS_OK)
+        return status;
+    if (allocated_blocks == 0 && !id_is_zero(p->checksum_head_id)) {
         status = checksum_destroy_chain(vol, p, hdr->object_id);
         if (status != INFS_STATUS_OK)
             return status;
@@ -183,11 +197,14 @@ infs_status infs_truncate_file(struct infs_volume *vol, const char *path,
 {
     if (!vol || !path)
         return INFS_STATUS_INVALID_ARGUMENT;
-    infs_status status = tx_begin(vol);
+    int started_transaction = 0;
+    infs_status status = mutation_scope_begin(vol, &started_transaction);
     if (status != INFS_STATUS_OK)
         return status;
     status = truncate_file_tx(vol, path, size);
     if (status != INFS_STATUS_OK)
-        tx_abort(vol);
+        mutation_scope_fail(vol, started_transaction);
+    else
+        mutation_scope_success(vol);
     return status;
 }

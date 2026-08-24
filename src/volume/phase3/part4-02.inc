@@ -52,7 +52,7 @@ int64_t infs_read_file(struct infs_volume *vol, const char *path, void *buf,
 
         uint64_t physical;
         uint32_t flags;
-        status = file_map_block(p, ext, logical, &physical, &flags);
+        status = file_map_block(vol, object, p, ext, logical, &physical, &flags);
         if (status != INFS_STATUS_OK)
             return status;
         if (flags == INFS_EXTENT_HOLE) {

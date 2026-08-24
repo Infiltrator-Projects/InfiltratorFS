@@ -33,12 +33,20 @@ static infs_status file_other_reference_cover(
             return status;
         }
 
-        uint32_t extent_count = infs_le32_to_cpu(file->extent_count);
+        struct infs_extent_disk *all = NULL;
+        uint32_t extent_count = 0;
+        int owned = 0;
+        status = file_extent_snapshot(vol, object, file, ext,
+                                      &all, &extent_count, &owned);
+        if (status != INFS_STATUS_OK) {
+            free(entries);
+            return status;
+        }
         for (uint32_t j = 0; j < extent_count; ++j) {
-            if (infs_le32_to_cpu(ext[j].flags) != INFS_EXTENT_NORMAL)
+            if (infs_le32_to_cpu(all[j].flags) != INFS_EXTENT_NORMAL)
                 continue;
-            uint64_t physical = infs_le64_to_cpu(ext[j].physical_block);
-            uint64_t blocks = infs_le32_to_cpu(ext[j].block_count);
+            uint64_t physical = infs_le64_to_cpu(all[j].physical_block);
+            uint64_t blocks = infs_le32_to_cpu(all[j].block_count);
             uint64_t extent_end = physical + blocks;
             if (extent_end <= cursor || physical >= end)
                 continue;
@@ -50,6 +58,8 @@ static infs_status file_other_reference_cover(
                 *next_start = physical;
             }
         }
+        if (owned)
+            free(all);
     }
     free(entries);
     return INFS_STATUS_OK;
@@ -188,28 +198,47 @@ static infs_status reflink_file_tx(struct infs_volume *vol,
         if (status != INFS_STATUS_OK)
             return status;
     } else {
-        uint32_t extent_count = infs_le32_to_cpu(source->extent_count);
+        struct infs_extent_disk *source_all = NULL;
+        uint32_t extent_count = 0;
+        int source_owned = 0;
+        status = file_extent_snapshot(vol, source_object, source, source_extents,
+                                      &source_all, &extent_count, &source_owned);
+        if (status != INFS_STATUS_OK)
+            return status;
         memset(destination + 1, 0,
                INFS_BLOCK_SIZE - sizeof(struct infs_object_header_disk) -
                sizeof(*destination));
         destination->attributes.logical_size = infs_cpu_to_le64(logical_size);
-        destination->extent_count = infs_cpu_to_le32(extent_count);
         destination->data_checksum_type = infs_cpu_to_le32(INFS_CHECKSUM_SHA256);
         memset(destination->checksum_head_id, 0,
                sizeof(destination->checksum_head_id));
-        destination_extents = (struct infs_extent_disk *)(destination + 1);
-        memcpy(destination_extents, source_extents,
-               (size_t)extent_count * sizeof(*destination_extents));
         struct infs_object_header_disk *destination_header =
             (struct infs_object_header_disk *)destination_object;
-        destination_header->payload_size = infs_cpu_to_le32((uint32_t)(
-            sizeof(*destination) +
-            (size_t)extent_count * sizeof(*destination_extents)));
+        if (extent_count <= INFS_MAX_FILE_EXTENTS) {
+            destination_header->object_version =
+                infs_cpu_to_le16(INFS_OBJECT_VERSION_CLASSIC);
+            destination->extent_count = infs_cpu_to_le32(extent_count);
+            destination_extents = (struct infs_extent_disk *)(destination + 1);
+            memcpy(destination_extents, source_all,
+                   (size_t)extent_count * sizeof(*destination_extents));
+            destination_header->payload_size = infs_cpu_to_le32((uint32_t)(
+                sizeof(*destination) +
+                (size_t)extent_count * sizeof(*destination_extents)));
+        } else {
+            status = paged_extent_rewrite_all(vol, destination_object,
+                destination, source_all, extent_count, 1);
+            if (status != INFS_STATUS_OK) {
+                if (source_owned) free(source_all);
+                return status;
+            }
+            destination_extents = NULL;
+        }
         struct infs_object_header_disk *source_header =
             (struct infs_object_header_disk *)source_object;
         status = reflink_copy_checksums(
             vol, source, source_header->object_id, destination,
-            destination_header->object_id, destination_extents, extent_count);
+            destination_header->object_id, source_all, extent_count);
+        if (source_owned) free(source_all);
         if (status != INFS_STATUS_OK)
             return status;
     }
@@ -235,11 +264,14 @@ infs_status infs_reflink_file(struct infs_volume *vol, const char *source_path,
         destination_path[destination_length - 1u] == '/')
         return INFS_STATUS_NOT_DIRECTORY;
 
-    infs_status status = tx_begin(vol);
+    int started_transaction = 0;
+    infs_status status = mutation_scope_begin(vol, &started_transaction);
     if (status != INFS_STATUS_OK)
         return status;
     status = reflink_file_tx(vol, source_path, destination_path);
     if (status != INFS_STATUS_OK)
-        tx_abort(vol);
+        mutation_scope_fail(vol, started_transaction);
+    else
+        mutation_scope_success(vol);
     return status;
 }

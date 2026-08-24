@@ -50,6 +50,11 @@ static infs_status snapshot_union_bitmap(struct infs_volume *vol,
 static int build_live_ownership_bitmap(
     struct infs_volume *vol, const struct infs_index_entry_disk *entries,
     uint32_t count, uint8_t *owners);
+static void tx_abort(struct infs_volume *vol);
+static void directory_cache_clear(struct infs_volume *vol);
+static void directory_cache_destroy(struct infs_volume *vol);
+static void directory_cache_init(struct infs_volume *vol);
+static int object_cache_rebuild(struct infs_volume *vol);
 
 static int namespace_object_type(uint16_t type)
 {
@@ -89,7 +94,9 @@ static int paged_index_add(struct infs_volume *vol, const uint8_t id[16],
 static int paged_index_remove(struct infs_volume *vol, const uint8_t id[16]);
 
 #include "volume/part1.inc"
+#include "volume/phase3/runtime-cache.inc"
 #include "volume/phase3/paged-metadata.inc"
+#include "volume/phase3/paged-extents.inc"
 #include "volume/phase3/part2-01.inc"
 #include "volume/phase3/part2-02.inc"
 #include "volume/phase3/part2-03.inc"

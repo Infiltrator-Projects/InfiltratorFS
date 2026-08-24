@@ -7,15 +7,15 @@
 InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem started in 2026. The persistent format and core engine are written in portable C; Linux and Windows are adapters over the same on-disk structures rather than separate filesystem implementations.
 
 **Current implementation:** 0.16.6<br>
-**On-disk format:** 0.11<br>
+**On-disk format:** 0.12<br>
 **Shared foundation:** Infiltratr Common 1.11.0<br>
 **Licence:** GPL-3.0-or-later
 
-Format 0.11 adds named read-only snapshot roots and retained historical generations. During pre-1.0 development, each build accepts only its current on-disk format; development media may need to be reformatted after a format revision.
+Format 0.12 adds named read-only snapshot roots and retained historical generations. During pre-1.0 development, each build accepts only its current on-disk format; development media may need to be reformatted after a format revision.
 
 ## Capabilities
 
-Format 0.11 currently provides:
+Format 0.12 currently provides:
 
 - 4096-byte little-endian blocks;
 - nonzero 128-bit persistent filesystem and object identities;
@@ -37,13 +37,13 @@ Format 0.11 currently provides:
 - explicit read-only scrub/verify; and
 - callback-based storage, durability, randomness and clock services.
 
-Implementation 0.16.0 added native named snapshots. Each snapshot records a complete immutable generation root and can be listed, browsed, read, scrubbed and deleted through the portable API or direct-image tool. CoW reclamation preserves blocks referenced by any retained generation and releases them after the final reference is deleted. Implementation 0.16.1 removes pre-release backward-compatibility handling and accepts only current Format 0.11 media. Implementation 0.16.2 separates sequential data and metadata allocation directions so normal large copies remain compact instead of exhausting the bounded inline extent list. Implementation 0.16.3 completes the Linux userspace compatibility path needed by desktop file managers: persistent extended attributes, FIFO/Unix-socket/device-node metadata, normal fallocate, stable hard-link inode reporting, and nonzero inode-capacity statistics, with mounted regression coverage. Format 0.11 is unchanged. Implementation 0.16.4 fixes Linux-adapter metadata cleanup so probing an absent hidden metadata record cannot abort and silently roll back an ordinary unlink; mounted conformance now verifies both single-file and recursive tree deletion. Format 0.11 remains unchanged.
+Implementation 0.16.0 added native named snapshots. Each snapshot records a complete immutable generation root and can be listed, browsed, read, scrubbed and deleted through the portable API or direct-image tool. CoW reclamation preserves blocks referenced by any retained generation and releases them after the final reference is deleted. Implementation 0.16.1 removes pre-release backward-compatibility handling and accepts only current Format 0.12 media. Implementation 0.16.2 separates sequential data and metadata allocation directions so normal large copies remain compact instead of exhausting the bounded inline extent list. Implementation 0.16.3 completes the Linux userspace compatibility path needed by desktop file managers: persistent extended attributes, FIFO/Unix-socket/device-node metadata, normal fallocate, stable hard-link inode reporting, and nonzero inode-capacity statistics, with mounted regression coverage. Format 0.12 is unchanged. Implementation 0.16.4 fixes Linux-adapter metadata cleanup so probing an absent hidden metadata record cannot abort and silently roll back an ordinary unlink; mounted conformance now verifies both single-file and recursive tree deletion. Format 0.12 remains unchanged.
 
 ## Architecture
 
 | Layer | Status |
 | --- | --- |
-| On-disk format | Platform-neutral development Format 0.11 only. |
+| On-disk format | Platform-neutral development Format 0.12 only. |
 | Core filesystem engine | Portable C17; no Linux fd/VFS or Win32 handle types. |
 | Shared foundations | Infiltratr Common 1.11.0. |
 | Storage interface | Callback-based POSIX, Win32 and in-memory backends. |
@@ -174,7 +174,10 @@ docs/                     architecture and on-disk-format documentation
 InfiltratorFS is free software licensed under the GNU General Public License version 3 or, at your option, any later version (`GPL-3.0-or-later`). See the repository licence file for the complete terms.
 
 
-Implementation 0.16.5 removes sequential-write amplification: aligned hole/new-file writes use contiguous full-overwrite runs, transaction bitmap images skip redundant pre-zeroing, and Linux FUSE automatic publication scales from 16 MiB to a bounded 256 MiB while explicit fsync/sync remains immediate. Format 0.11 is unchanged.
+Implementation 0.16.5 removes sequential-write amplification: aligned hole/new-file writes use contiguous full-overwrite runs, transaction bitmap images skip redundant pre-zeroing, and Linux FUSE automatic publication scales from 16 MiB to a bounded 256 MiB while explicit fsync/sync remains immediate. Format 0.12 is unchanged.
 
 
-Implementation 0.16.6 removes sequential-write CPU amplification: checksum-object lookup keeps a validated runtime cursor so forward growth is linear instead of restarting from the checksum-chain head, and CRC64-ECMA metadata checks use an on-disk-identical table-driven implementation instead of bit-at-a-time processing. Format 0.11 is unchanged.
+Implementation 0.16.6 removes sequential-write CPU amplification: checksum-object lookup keeps a validated runtime cursor so forward growth is linear instead of restarting from the checksum-chain head, and CRC64-ECMA metadata checks use an on-disk-identical table-driven implementation instead of bit-at-a-time processing. Format 0.12 is unchanged.
+
+
+Implementation 0.16.7 / Format 0.12 adds operation-level transaction savepoints, runtime hashed object/directory indexes, and checksummed paged extent metadata so fragmented files are no longer bounded by the classic single-object extent array.

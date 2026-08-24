@@ -405,7 +405,11 @@ static int validate_checksum_graph(struct infs_volume *vol)
         if (status != INFS_STATUS_OK)
             goto out;
 
-        uint64_t allocated = file_allocated_blocks(file, extents);
+        uint64_t allocated = 0;
+        status = file_allocated_blocks_volume(
+            vol, file_block, file, extents, &allocated);
+        if (status != INFS_STATUS_OK)
+            goto out;
         if (allocated == 0) {
             if (!id_is_zero(file->checksum_head_id)) {
                 status = INFS_STATUS_CORRUPT;

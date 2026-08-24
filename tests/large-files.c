@@ -15,6 +15,8 @@
 #define TEST_SIZE ((size_t)(TEST_BLOCKS * INFS_BLOCK_SIZE))
 #define COPY_CHUNK_SIZE INFS_BLOCK_SIZE
 #define TEST_FILE_SIZE (UINT64_C(192) * COPY_CHUNK_SIZE)
+#define FRAGMENTED_LOGICAL_BLOCKS 384u
+#define FRAGMENTED_WRITTEN_BLOCKS 100u
 
 struct memory_image {
     uint8_t *bytes;
@@ -139,6 +141,33 @@ static void verify_range(struct infs_volume *volume, uint64_t offset)
            "large-file probe data");
 }
 
+static void verify_fragmented_data(struct infs_volume *volume,
+                                   uint64_t logical_block)
+{
+    uint8_t actual[INFS_BLOCK_SIZE];
+    uint8_t expected[INFS_BLOCK_SIZE];
+    uint64_t offset = logical_block * INFS_BLOCK_SIZE;
+    fill_pattern(expected, sizeof(expected), offset);
+    expect(infs_read_file(volume, "/fragmented.bin", actual, sizeof(actual),
+                          offset) == (int64_t)sizeof(actual),
+           "read fragmented data block");
+    expect(memcmp(actual, expected, sizeof(actual)) == 0,
+           "fragmented data block contents");
+}
+
+static void verify_fragmented_hole(struct infs_volume *volume,
+                                   uint64_t logical_block)
+{
+    uint8_t actual[INFS_BLOCK_SIZE];
+    uint8_t zero[INFS_BLOCK_SIZE] = {0};
+    expect(infs_read_file(volume, "/fragmented.bin", actual, sizeof(actual),
+                          logical_block * INFS_BLOCK_SIZE) ==
+               (int64_t)sizeof(actual),
+           "read fragmented hole block");
+    expect(memcmp(actual, zero, sizeof(actual)) == 0,
+           "fragmented hole reads as zero");
+}
+
 int main(void)
 {
     struct memory_image image = {
@@ -157,6 +186,11 @@ int main(void)
     storage = make_storage(&image);
     expect(infs_volume_open_storage(&volume, &storage, 1) == INFS_STATUS_OK,
            "open writable volume");
+    expect(infs_le16_to_cpu(volume.sb.format_minor) == 12u,
+           "Format minor is 0.12");
+    expect((infs_le64_to_cpu(volume.sb.incompat_flags) &
+            INFS_INCOMPAT_PAGED_EXTENTS) != 0,
+           "paged extent feature enabled");
     expect(infs_create_file(&volume, "/movie.bin", NULL) == INFS_STATUS_OK,
            "create large file");
 
@@ -198,22 +232,82 @@ int main(void)
     verify_range(&volume, TEST_FILE_SIZE / 2u);
     verify_range(&volume, TEST_FILE_SIZE - INFS_BLOCK_SIZE);
 
+    /* Force more than the old single-object extent ceiling. Alternating data
+     * and holes creates over 161 logical extents while retaining only 100
+     * allocated data blocks. Format 0.12 must promote the extent vector to
+     * checksummed paged metadata and preserve it through scrub/remount. */
+    expect(infs_create_file(&volume, "/fragmented.bin", NULL) == INFS_STATUS_OK,
+           "create fragmented file");
+    expect(infs_truncate_file(
+               &volume, "/fragmented.bin",
+               (uint64_t)FRAGMENTED_LOGICAL_BLOCKS * INFS_BLOCK_SIZE) ==
+               INFS_STATUS_OK,
+           "create sparse fragmented logical range");
+    expect(infs_volume_set_deferred_publish(
+               &volume, 1, UINT64_C(64) * 1024u * 1024u) == INFS_STATUS_OK,
+           "enable deferred publication for fragmentation workload");
+
+    uint8_t fragmented_block[INFS_BLOCK_SIZE];
+    for (uint64_t i = 0; i < FRAGMENTED_WRITTEN_BLOCKS; ++i) {
+        uint64_t logical = i * 2u;
+        uint64_t offset = logical * INFS_BLOCK_SIZE;
+        fill_pattern(fragmented_block, sizeof(fragmented_block), offset);
+        expect(infs_write_file_buffered(
+                   &volume, "/fragmented.bin", fragmented_block,
+                   sizeof(fragmented_block), offset) ==
+                   (int64_t)sizeof(fragmented_block),
+               "write alternating fragmented data block");
+    }
+    expect(infs_volume_sync(&volume) == INFS_STATUS_OK,
+           "publish fragmented file transaction");
+
+    expect(infs_lookup_path(&volume, "/fragmented.bin", &lookup) ==
+               INFS_STATUS_OK,
+           "lookup fragmented file");
+    object = image.bytes + lookup.block * INFS_BLOCK_SIZE;
+    expect(infs_validate_object_block(object), "validate fragmented object");
+    struct infs_object_header_disk *header =
+        (struct infs_object_header_disk *)object;
+    file = (struct infs_file_payload_disk *)(header + 1);
+    expect(infs_le16_to_cpu(header->object_version) == INFS_OBJECT_VERSION_PAGED,
+           "fragmented file promoted to paged extents");
+    expect(infs_le32_to_cpu(file->extent_count) > 161u,
+           "fragmented file exceeds legacy inline extent ceiling");
+
+    expect(infs_get_attributes(&volume, "/fragmented.bin", &attributes) ==
+               INFS_STATUS_OK &&
+               attributes.logical_size ==
+                   (uint64_t)FRAGMENTED_LOGICAL_BLOCKS * INFS_BLOCK_SIZE &&
+               attributes.allocated_size ==
+                   (uint64_t)FRAGMENTED_WRITTEN_BLOCKS * INFS_BLOCK_SIZE,
+           "paged extent size and allocation accounting");
+    verify_fragmented_data(&volume, 0u);
+    verify_fragmented_hole(&volume, 1u);
+    verify_fragmented_data(&volume, 98u);
+    verify_fragmented_hole(&volume, 99u);
+    verify_fragmented_data(&volume, 198u);
+    verify_fragmented_hole(&volume, 199u);
+    verify_fragmented_hole(&volume, FRAGMENTED_LOGICAL_BLOCKS - 1u);
+
     struct infs_scrub_report report;
     expect(infs_scrub(&volume, &report) == INFS_STATUS_OK &&
-               report.files_checked == 1u &&
+               report.files_checked == 2u &&
                report.data_blocks_checked ==
-                   TEST_FILE_SIZE / INFS_BLOCK_SIZE &&
+                   TEST_FILE_SIZE / INFS_BLOCK_SIZE +
+                   FRAGMENTED_WRITTEN_BLOCKS &&
                report.checksum_errors == 0 && report.metadata_errors == 0,
-           "scrub complete large file");
+           "scrub complete compact and paged-extent files");
     infs_volume_close(&volume);
 
     storage = make_storage(&image);
     expect(infs_volume_open_storage(&volume, &storage, 0) == INFS_STATUS_OK,
            "reopen large-file volume");
     verify_range(&volume, TEST_FILE_SIZE - INFS_BLOCK_SIZE);
+    verify_fragmented_data(&volume, 198u);
+    verify_fragmented_hole(&volume, 199u);
     infs_volume_close(&volume);
 
     free(image.bytes);
-    puts("large-file sequential-copy conformance: ok");
+    puts("large-file and paged-extent conformance: ok");
     return 0;
 }

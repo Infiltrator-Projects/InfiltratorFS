@@ -11,12 +11,13 @@
 #define INFS_OBJECT_MAGIC "INFOBJ01"
 #define INFS_DIRECTORY_PAGE_MAGIC "INFSDP01"
 #define INFS_INDEX_PAGE_MAGIC "INFSIP01"
+#define INFS_EXTENT_PAGE_MAGIC "INFSEP01"
 
 /* Before the first stable release, readers deliberately accept only this
  * exact development format. A format revision replaces its predecessor; it
  * does not add an older-format reader or migration path. */
 #define INFS_FORMAT_MAJOR 0u
-#define INFS_FORMAT_MINOR 11u
+#define INFS_FORMAT_MINOR 12u
 #define INFS_CHECKPOINT_COUNT 3u
 #define INFS_CHECKSUM_CRC64_ECMA 1u
 #define INFS_CHECKSUM_SHA256     2u
@@ -45,13 +46,15 @@
 #define INFS_INCOMPAT_SYMBOLIC_LINKS UINT64_C(0x0000000000000020)
 #define INFS_INCOMPAT_HARD_LINKS UINT64_C(0x0000000000000040)
 #define INFS_INCOMPAT_SNAPSHOTS UINT64_C(0x0000000000000080)
+#define INFS_INCOMPAT_PAGED_EXTENTS UINT64_C(0x0000000000000100)
 #define INFS_KNOWN_COMPAT_FLAGS UINT64_C(0)
 #define INFS_KNOWN_RO_COMPAT_FLAGS UINT64_C(0)
 #define INFS_KNOWN_INCOMPAT_FLAGS \
     (INFS_INCOMPAT_UTF8_NAMES | INFS_INCOMPAT_SPARSE_EXTENTS | \
      INFS_INCOMPAT_INLINE_DATA | INFS_INCOMPAT_SHARED_EXTENTS | \
      INFS_INCOMPAT_PAGED_METADATA | INFS_INCOMPAT_SYMBOLIC_LINKS | \
-     INFS_INCOMPAT_HARD_LINKS | INFS_INCOMPAT_SNAPSHOTS)
+     INFS_INCOMPAT_HARD_LINKS | INFS_INCOMPAT_SNAPSHOTS | \
+     INFS_INCOMPAT_PAGED_EXTENTS)
 
 #define INFS_ATTR_READ_ONLY           UINT64_C(0x0000000000000001)
 #define INFS_ATTR_HIDDEN              UINT64_C(0x0000000000000002)
@@ -187,6 +190,16 @@ struct INFS_PACKED infs_symlink_payload_disk {
     (INFS_BLOCK_SIZE - sizeof(struct infs_object_header_disk) - \
      sizeof(struct infs_symlink_payload_disk))
 
+
+/* Format 0.12 version-2 file objects keep the fixed file payload and then
+ * store this extent-head followed by little-endian uint64 physical pointers
+ * to independently checksummed extent metadata pages. extent_count remains
+ * the total number of extents across all pages. */
+struct INFS_PACKED infs_extent_head_disk {
+    uint32_t page_count;
+    uint32_t reserved;
+};
+
 struct INFS_PACKED infs_extent_disk {
     uint64_t logical_block;
     uint64_t physical_block;
@@ -273,12 +286,18 @@ struct INFS_PACKED infs_snapshot_record_disk {
     (INFS_BLOCK_SIZE - sizeof(struct infs_metadata_page_disk))
 #define INFS_INDEX_ENTRIES_PER_PAGE \
     (INFS_METADATA_PAGE_DATA_SIZE / sizeof(struct infs_index_entry_disk))
+#define INFS_EXTENTS_PER_PAGE \
+    (INFS_METADATA_PAGE_DATA_SIZE / sizeof(struct infs_extent_disk))
 #define INFS_DIRECTORY_PAGE_POINTERS \
     ((INFS_BLOCK_SIZE - sizeof(struct infs_object_header_disk) - \
       sizeof(struct infs_directory_payload_disk)) / sizeof(uint64_t))
 #define INFS_INDEX_PAGE_POINTERS \
     ((INFS_BLOCK_SIZE - sizeof(struct infs_object_header_disk) - \
       sizeof(struct infs_index_payload_disk)) / sizeof(uint64_t))
+#define INFS_EXTENT_PAGE_POINTERS \
+    ((INFS_BLOCK_SIZE - sizeof(struct infs_object_header_disk) - \
+      sizeof(struct infs_file_payload_disk) - \
+      sizeof(struct infs_extent_head_disk)) / sizeof(uint64_t))
 
 _Static_assert(sizeof(struct infs_superblock_disk) == 252,
                "superblock header layout changed");
@@ -298,6 +317,8 @@ _Static_assert(sizeof(struct infs_file_payload_disk) == 128,
                "file payload layout changed");
 _Static_assert(sizeof(struct infs_symlink_payload_disk) == 112,
                "symbolic-link payload layout changed");
+_Static_assert(sizeof(struct infs_extent_head_disk) == 8,
+               "extent head layout changed");
 _Static_assert(sizeof(struct infs_extent_disk) == 24,
                "extent layout changed");
 _Static_assert(sizeof(struct infs_checksum_payload_disk) == 48,
@@ -324,10 +345,14 @@ _Static_assert(INFS_SYMLINK_TARGET_MAX == 3888u,
                "symbolic-link target capacity unexpectedly changed");
 _Static_assert(INFS_INDEX_ENTRIES_PER_PAGE == 125u,
                "index page capacity unexpectedly changed");
+_Static_assert(INFS_EXTENTS_PER_PAGE == 167u,
+               "extent page capacity unexpectedly changed");
 _Static_assert(INFS_DIRECTORY_PAGE_POINTERS >= 480u,
                "directory head page-pointer capacity unexpectedly small");
 _Static_assert(INFS_INDEX_PAGE_POINTERS >= 490u,
                "index head page-pointer capacity unexpectedly small");
+_Static_assert(INFS_EXTENT_PAGE_POINTERS >= 480u,
+               "extent head page-pointer capacity unexpectedly small");
 
 #if defined(_MSC_VER)
 #pragma pack(pop)

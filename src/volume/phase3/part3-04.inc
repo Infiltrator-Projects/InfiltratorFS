@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 static void discard_candidate_state(struct infs_volume *vol)
 {
+    directory_cache_destroy(vol);
     object_cache_destroy(vol);
     free(vol->bitmap);
     vol->bitmap = NULL;
@@ -313,6 +314,8 @@ infs_status infs_volume_open_storage(struct infs_volume *vol,
     /* Runtime caches are deliberately best-effort: failure to allocate a
      * cache must never make an otherwise valid filesystem unmountable. */
     object_cache_init(vol);
+    directory_cache_init(vol);
+    (void)object_cache_rebuild(vol);
     vol->data_allocation_cursor = 1u;
     vol->metadata_allocation_cursor =
         infs_le64_to_cpu(vol->sb.total_blocks);
@@ -331,6 +334,7 @@ void infs_volume_close(struct infs_volume *vol)
     tx_abort(vol);
     free(vol->tx_base_bitmap);
     vol->tx_base_bitmap = NULL;
+    tx_operation_discard(vol);
     free(vol->tx_deferred);
     vol->tx_deferred = NULL;
     vol->tx_deferred_count = 0;

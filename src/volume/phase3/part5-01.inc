@@ -63,17 +63,29 @@ static int remove_object(struct infs_volume *vol, const char *path, int want_dir
             status = checksum_destroy_chain(vol, fp, child.object_id);
             if (status != INFS_STATUS_OK)
                 return status;
-            uint32_t count = infs_le32_to_cpu(fp->extent_count);
+            struct infs_extent_disk *all = NULL;
+            uint32_t count = 0;
+            int owned = 0;
+            status = file_extent_snapshot(vol, child_block, fp, ext,
+                                          &all, &count, &owned);
+            if (status != INFS_STATUS_OK)
+                return status;
             for (uint32_t i = 0; i < count; ++i) {
-                if (infs_le32_to_cpu(ext[i].flags) != INFS_EXTENT_NORMAL)
+                if (infs_le32_to_cpu(all[i].flags) != INFS_EXTENT_NORMAL)
                     continue;
                 status = file_free_unshared_run(
                     vol, child.object_id,
-                    infs_le64_to_cpu(ext[i].physical_block),
-                    infs_le32_to_cpu(ext[i].block_count));
-                if (status != INFS_STATUS_OK)
+                    infs_le64_to_cpu(all[i].physical_block),
+                    infs_le32_to_cpu(all[i].block_count));
+                if (status != INFS_STATUS_OK) {
+                    if (owned) free(all);
                     return status;
+                }
             }
+            if (owned) free(all);
+            status = paged_extent_destroy_pages(vol, child_block, fp);
+            if (status != INFS_STATUS_OK)
+                return status;
         }
     } else if (child.type == INFS_OBJECT_SYMLINK) {
         status = symlink_validate(vol, child_block, NULL, NULL);
@@ -121,12 +133,15 @@ infs_status infs_unlink(struct infs_volume *vol, const char *path)
     if (length > 1u && path[length - 1u] == '/')
         return INFS_STATUS_NOT_DIRECTORY;
 
-    infs_status status = tx_begin(vol);
+    int started_transaction = 0;
+    infs_status status = mutation_scope_begin(vol, &started_transaction);
     if (status != INFS_STATUS_OK)
         return status;
     status = remove_object(vol, path, 0);
     if (status != INFS_STATUS_OK)
-        tx_abort(vol);
+        mutation_scope_fail(vol, started_transaction);
+    else
+        mutation_scope_success(vol);
     return status;
 }
 
@@ -134,12 +149,15 @@ infs_status infs_rmdir(struct infs_volume *vol, const char *path)
 {
     if (!vol || !path || path[0] != '/')
         return INFS_STATUS_INVALID_ARGUMENT;
-    infs_status status = tx_begin(vol);
+    int started_transaction = 0;
+    infs_status status = mutation_scope_begin(vol, &started_transaction);
     if (status != INFS_STATUS_OK)
         return status;
     status = remove_object(vol, path, 1);
     if (status != INFS_STATUS_OK)
-        tx_abort(vol);
+        mutation_scope_fail(vol, started_transaction);
+    else
+        mutation_scope_success(vol);
     return status;
 }
 

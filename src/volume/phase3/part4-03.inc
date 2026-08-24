@@ -103,7 +103,7 @@ static int64_t write_file_tx(struct infs_volume *vol, const char *path,
 
         uint64_t physical;
         uint32_t flags;
-        status = file_map_block(p, ext, logical, &physical, &flags);
+        status = file_map_block(vol, object, p, ext, logical, &physical, &flags);
         if (status != INFS_STATUS_OK)
             return status;
 
@@ -111,16 +111,43 @@ static int64_t write_file_tx(struct infs_volume *vol, const char *path,
     size - done >= INFS_BLOCK_SIZE) {
     uint64_t wanted = (uint64_t)((size - done) / INFS_BLOCK_SIZE);
     uint64_t hole_blocks = 0;
-    uint32_t extent_count = infs_le32_to_cpu(p->extent_count);
-    for (uint32_t i = 0; i < extent_count; ++i) {
-        uint64_t extent_logical = infs_le64_to_cpu(ext[i].logical_block);
-        uint64_t extent_blocks = infs_le32_to_cpu(ext[i].block_count);
-        if (logical >= extent_logical &&
-            logical < extent_logical + extent_blocks) {
-            if (infs_le32_to_cpu(ext[i].flags) != INFS_EXTENT_HOLE)
-                return INFS_STATUS_CORRUPT;
-            hole_blocks = extent_logical + extent_blocks - logical;
-            break;
+    if (file_has_paged_extents(object)) {
+        uint8_t extent_page[INFS_BLOCK_SIZE];
+        struct infs_extent_disk *page_extents = NULL;
+        uint32_t page_extent_count = 0;
+        status = paged_extent_find_page(
+            vol, object, p, logical, NULL, extent_page,
+            &page_extents, &page_extent_count);
+        if (status != INFS_STATUS_OK)
+            return status;
+        for (uint32_t i = 0; i < page_extent_count; ++i) {
+            uint64_t extent_logical =
+                infs_le64_to_cpu(page_extents[i].logical_block);
+            uint64_t extent_blocks =
+                infs_le32_to_cpu(page_extents[i].block_count);
+            if (logical >= extent_logical &&
+                logical < extent_logical + extent_blocks) {
+                if (infs_le32_to_cpu(page_extents[i].flags) !=
+                    INFS_EXTENT_HOLE)
+                    return INFS_STATUS_CORRUPT;
+                hole_blocks = extent_logical + extent_blocks - logical;
+                break;
+            }
+        }
+    } else {
+        uint32_t extent_count = infs_le32_to_cpu(p->extent_count);
+        for (uint32_t i = 0; i < extent_count; ++i) {
+            uint64_t extent_logical =
+                infs_le64_to_cpu(ext[i].logical_block);
+            uint64_t extent_blocks =
+                infs_le32_to_cpu(ext[i].block_count);
+            if (logical >= extent_logical &&
+                logical < extent_logical + extent_blocks) {
+                if (infs_le32_to_cpu(ext[i].flags) != INFS_EXTENT_HOLE)
+                    return INFS_STATUS_CORRUPT;
+                hole_blocks = extent_logical + extent_blocks - logical;
+                break;
+            }
         }
     }
     if (hole_blocks == 0)
@@ -204,7 +231,7 @@ static int64_t write_file_tx(struct infs_volume *vol, const char *path,
          * allocated earlier in this same transaction are already unreachable
          * from N and may be filled in place before publication. */
         if (flags == INFS_EXTENT_HOLE ||
-            bitmap_get(vol->tx_base_bitmap, physical)) {
+            bitmap_get(tx_cow_base_bitmap(vol), physical)) {
             uint64_t replacement = 0, got = 0;
             status = alloc_data_run(vol, 1, &replacement, &got);
             if (status != INFS_STATUS_OK)
@@ -285,12 +312,13 @@ static int64_t write_file_common(struct infs_volume *vol, const char *path,
     if (size == 0)
         return 0;
 
-    infs_status status = tx_begin(vol);
+    int started_transaction = 0;
+    infs_status status = mutation_scope_begin(vol, &started_transaction);
     if (status != INFS_STATUS_OK)
         return status;
     int64_t rc = write_file_tx(vol, path, buf, size, offset);
     if (rc < 0) {
-        tx_abort(vol);
+        mutation_scope_fail(vol, started_transaction);
         return rc;
     }
 
@@ -298,8 +326,11 @@ static int64_t write_file_common(struct infs_volume *vol, const char *path,
         status = infs_volume_sync(vol);
     else
         status = finish_mutation(vol, (uint64_t)size + INFS_BLOCK_SIZE);
-    if (status != INFS_STATUS_OK)
+    if (status != INFS_STATUS_OK) {
+        mutation_scope_fail(vol, started_transaction);
         return status;
+    }
+    mutation_scope_success(vol);
     return rc;
 }
 

@@ -77,6 +77,31 @@ static int claim_directory_metadata_pages(struct infs_volume *vol,
     return INFS_STATUS_OK;
 }
 
+static int claim_file_extent_metadata_pages(struct infs_volume *vol,
+                                            uint8_t *owners, uint64_t total,
+                                            uint64_t object_block)
+{
+    uint8_t object[INFS_BLOCK_SIZE];
+    infs_status status = read_object(vol, object_block, object);
+    if (status != INFS_STATUS_OK)
+        return status;
+    struct infs_file_payload_disk *file;
+    status = file_validate_volume(vol, object, &file, NULL);
+    if (status != INFS_STATUS_OK)
+        return status;
+    if (!file_has_paged_extents(object))
+        return INFS_STATUS_OK;
+    struct infs_extent_head_disk *head = file_extent_head(file);
+    uint32_t pages = infs_le32_to_cpu(head->page_count);
+    uint64_t *ptr = file_extent_page_pointers(file);
+    for (uint32_t i = 0; i < pages; ++i) {
+        status = ownership_claim(owners, total, infs_le64_to_cpu(ptr[i]));
+        if (status != INFS_STATUS_OK)
+            return status;
+    }
+    return INFS_STATUS_OK;
+}
+
 static int build_live_ownership_bitmap(
     struct infs_volume *vol, const struct infs_index_entry_disk *entries,
     uint32_t count, uint8_t *owners)
@@ -131,6 +156,10 @@ static int build_live_ownership_bitmap(
         }
         if (object_type != INFS_OBJECT_FILE)
             continue;
+        status = claim_file_extent_metadata_pages(vol, owners, total,
+                                                  object_block);
+        if (status != INFS_STATUS_OK)
+            goto out;
 
         uint8_t object[INFS_BLOCK_SIZE];
         status = read_object(vol, object_block, object);
@@ -143,19 +172,28 @@ static int build_live_ownership_bitmap(
         if (status != INFS_STATUS_OK)
             goto out;
 
-        uint32_t extent_count = infs_le32_to_cpu(file->extent_count);
+        struct infs_extent_disk *all = NULL;
+        uint32_t extent_count = 0;
+        int owned = 0;
+        status = file_extent_snapshot(vol, object, file, ext,
+                                      &all, &extent_count, &owned);
+        if (status != INFS_STATUS_OK)
+            goto out;
         for (uint32_t j = 0; j < extent_count; ++j) {
-            if (infs_le32_to_cpu(ext[j].flags) != INFS_EXTENT_NORMAL)
+            if (infs_le32_to_cpu(all[j].flags) != INFS_EXTENT_NORMAL)
                 continue;
-            uint64_t physical = infs_le64_to_cpu(ext[j].physical_block);
-            uint32_t blocks = infs_le32_to_cpu(ext[j].block_count);
+            uint64_t physical = infs_le64_to_cpu(all[j].physical_block);
+            uint32_t blocks = infs_le32_to_cpu(all[j].block_count);
             for (uint32_t k = 0; k < blocks; ++k) {
                 status = ownership_claim_data(
                     owners, data_owners, total, physical + k, allow_shared);
-                if (status != INFS_STATUS_OK)
+                if (status != INFS_STATUS_OK) {
+                    if (owned) free(all);
                     goto out;
+                }
             }
         }
+        if (owned) free(all);
     }
 
 out:
@@ -267,17 +305,27 @@ static int validate_integrity_metadata(struct infs_volume *vol)
             status = file_validate_volume(vol, object, &file, &ext);
             if (status != INFS_STATUS_OK)
                 goto out;
-            uint64_t allocated = file_allocated_blocks(file, ext);
+            uint64_t allocated = 0;
+            status = file_allocated_blocks_volume(
+                vol, object, file, ext, &allocated);
+            if (status != INFS_STATUS_OK)
+                goto out;
             if (allocated && id_is_zero(file->checksum_head_id)) {
                 status = INFS_STATUS_CORRUPT;
                 goto out;
             }
-            uint32_t extent_count = infs_le32_to_cpu(file->extent_count);
+            struct infs_extent_disk *all = NULL;
+            uint32_t extent_count = 0;
+            int owned = 0;
+            status = file_extent_snapshot(vol, object, file, ext,
+                                          &all, &extent_count, &owned);
+            if (status != INFS_STATUS_OK)
+                goto out;
             for (uint32_t j = 0; j < extent_count; ++j) {
-                if (infs_le32_to_cpu(ext[j].flags) != INFS_EXTENT_NORMAL)
+                if (infs_le32_to_cpu(all[j].flags) != INFS_EXTENT_NORMAL)
                     continue;
-                uint64_t logical = infs_le64_to_cpu(ext[j].logical_block);
-                uint64_t remaining = infs_le32_to_cpu(ext[j].block_count);
+                uint64_t logical = infs_le64_to_cpu(all[j].logical_block);
+                uint64_t remaining = infs_le32_to_cpu(all[j].block_count);
                 while (remaining) {
                     uint64_t chunk = INFS_CHECKSUMS_PER_OBJECT -
                         (logical % INFS_CHECKSUMS_PER_OBJECT);
@@ -292,6 +340,7 @@ static int validate_integrity_metadata(struct infs_volume *vol)
                     remaining -= chunk;
                 }
             }
+            if (owned) free(all);
         } else if (type == INFS_OBJECT_DIRECTORY) {
             uint8_t object[INFS_BLOCK_SIZE];
             status = read_object(

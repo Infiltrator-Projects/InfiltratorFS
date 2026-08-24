@@ -80,6 +80,18 @@ struct infs_volume {
     size_t tx_deferred_count;
     size_t tx_deferred_capacity;
 
+    /* Savepoint for one externally visible mutation inside a deferred
+     * transaction. Earlier successful syscalls remain intact if this one
+     * fails. */
+    int tx_operation_active;
+    struct infs_superblock_disk tx_operation_sb;
+    uint8_t *tx_operation_bitmap;
+    struct infs_deferred_range *tx_operation_deferred;
+    size_t tx_operation_deferred_count;
+    uint64_t tx_operation_pending_bytes;
+    uint64_t tx_operation_data_cursor;
+    uint64_t tx_operation_metadata_cursor;
+
     /* Generic publication policy. With deferred publication enabled, normal
      * mutators remain in the active transaction until the approximate dirty
      * byte threshold is reached. Explicit infs_volume_sync() always publishes
@@ -97,6 +109,11 @@ struct infs_volume {
     uint64_t metadata_allocation_cursor;
     struct infs_object_cache_entry *object_cache;
     size_t object_cache_slots;
+    int object_cache_complete;
+    struct infs_directory_cache_entry *directory_cache;
+    size_t directory_cache_slots;
+    struct infs_directory_cache_state *directory_cache_states;
+    size_t directory_cache_state_slots;
 
     /* Runtime-only checksum-chain cursor. Sequential growth must not restart
      * lookup from the persistent chain head for every checksum group. */

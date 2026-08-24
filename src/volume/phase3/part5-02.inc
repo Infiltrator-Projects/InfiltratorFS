@@ -38,17 +38,29 @@ static int destroy_replaced_object_tx(struct infs_volume *vol,
         status = checksum_destroy_chain(vol, file, target->object_id);
         if (status != INFS_STATUS_OK)
             return status;
-        uint32_t count = infs_le32_to_cpu(file->extent_count);
+        struct infs_extent_disk *all = NULL;
+        uint32_t count = 0;
+        int owned = 0;
+        status = file_extent_snapshot(vol, object, file, extents,
+                                      &all, &count, &owned);
+        if (status != INFS_STATUS_OK)
+            return status;
         for (uint32_t i = 0; i < count; ++i) {
-            if (infs_le32_to_cpu(extents[i].flags) != INFS_EXTENT_NORMAL)
+            if (infs_le32_to_cpu(all[i].flags) != INFS_EXTENT_NORMAL)
                 continue;
             status = file_free_unshared_run(
                 vol, target->object_id,
-                infs_le64_to_cpu(extents[i].physical_block),
-                infs_le32_to_cpu(extents[i].block_count));
-            if (status != INFS_STATUS_OK)
+                infs_le64_to_cpu(all[i].physical_block),
+                infs_le32_to_cpu(all[i].block_count));
+            if (status != INFS_STATUS_OK) {
+                if (owned) free(all);
                 return status;
+            }
         }
+        if (owned) free(all);
+        status = paged_extent_destroy_pages(vol, object, file);
+        if (status != INFS_STATUS_OK)
+            return status;
     } else if (target->type == INFS_OBJECT_SYMLINK) {
         status = symlink_validate(vol, object, NULL, NULL);
         if (status != INFS_STATUS_OK)
@@ -280,11 +292,14 @@ infs_status infs_rename(struct infs_volume *vol, const char *oldpath,
     if (status != INFS_STATUS_OK)
         return status;
 
-    status = tx_begin(vol);
+    int started_transaction = 0;
+    status = mutation_scope_begin(vol, &started_transaction);
     if (status != INFS_STATUS_OK)
         return status;
     status = rename_tx(vol, oldpath, newpath);
     if (status != INFS_STATUS_OK)
-        tx_abort(vol);
+        mutation_scope_fail(vol, started_transaction);
+    else
+        mutation_scope_success(vol);
     return status;
 }

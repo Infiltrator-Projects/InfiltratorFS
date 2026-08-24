@@ -131,16 +131,43 @@ static int dir_lookup_volume(struct infs_volume *vol,
         return status;
     struct infs_object_header_disk *header =
         (struct infs_object_header_disk *)block;
+    if (directory_cache_lookup(vol, header->object_id, name, entry_out))
+        return INFS_STATUS_OK;
+    if (directory_cache_complete(vol, header->object_id))
+        return INFS_STATUS_NOT_FOUND;
     if (infs_le16_to_cpu(header->object_version) ==
         INFS_OBJECT_VERSION_PAGED)
         return paged_dir_lookup(vol, block, name, entry_out);
 
-    struct infs_dirent_disk *entry =
-        dir_find(payload, name, strlen(name), NULL);
-    if (!entry)
+    uint8_t *cursor = (uint8_t *)(payload + 1);
+    size_t remaining = infs_le32_to_cpu(payload->bytes_used);
+    size_t wanted_length = strlen(name);
+    struct infs_dirent_disk *wanted = NULL;
+    int cached_all = 1;
+    while (remaining) {
+        struct infs_dirent_disk *entry = (struct infs_dirent_disk *)cursor;
+        uint16_t record_size = infs_le16_to_cpu(entry->record_size);
+        uint16_t name_length = infs_le16_to_cpu(entry->name_length);
+        char cached_name[INFS_NAME_MAX + 1u];
+        memcpy(cached_name, cursor + sizeof(*entry), name_length);
+        cached_name[name_length] = '\0';
+        if (!directory_cache_store(vol, header->object_id, cached_name,
+                                   entry->object_id,
+                                   infs_le16_to_cpu(entry->object_type),
+                                   INFS_DIRECTORY_PAGE_UNKNOWN))
+            cached_all = 0;
+        if (name_length == wanted_length &&
+            memcmp(cached_name, name, wanted_length) == 0)
+            wanted = entry;
+        cursor += record_size;
+        remaining -= record_size;
+    }
+    if (cached_all)
+        directory_cache_mark_complete(vol, header->object_id);
+    if (!wanted)
         return INFS_STATUS_NOT_FOUND;
     if (entry_out)
-        memcpy(entry_out, entry, sizeof(*entry_out));
+        memcpy(entry_out, wanted, sizeof(*entry_out));
     return INFS_STATUS_OK;
 }
 
@@ -194,6 +221,12 @@ static int dir_add_volume(struct infs_volume *vol,
         (struct infs_object_header_disk *)block;
     if (infs_le16_to_cpu(header->object_version) ==
         INFS_OBJECT_VERSION_PAGED)
-        return paged_dir_add(vol, block, name, object_id, type);
-    return dir_add(block, name, object_id, type);
+        status = paged_dir_add(vol, block, name, object_id, type);
+    else
+        status = dir_add(block, name, object_id, type);
+    if (status == INFS_STATUS_OK &&
+        infs_le16_to_cpu(header->object_version) != INFS_OBJECT_VERSION_PAGED)
+        (void)directory_cache_store(vol, header->object_id, name, object_id,
+                                    type, INFS_DIRECTORY_PAGE_UNKNOWN);
+    return status;
 }

@@ -22,7 +22,7 @@ static infs_status file_read_small_content(
 
     uint64_t physical;
     uint32_t flags;
-    status = file_map_block(file, ext, 0, &physical, &flags);
+    status = file_map_block(vol, object, file, ext, 0, &physical, &flags);
     if (status != INFS_STATUS_OK)
         return status;
     if (flags == INFS_EXTENT_HOLE)
@@ -58,17 +58,25 @@ static infs_status file_release_external_storage(
             return status;
     }
 
-    uint32_t count = infs_le32_to_cpu(file->extent_count);
+    struct infs_extent_disk *all = NULL;
+    uint32_t count = 0;
+    int owned = 0;
+    status = file_extent_snapshot(vol, object, file, ext, &all, &count, &owned);
+    if (status != INFS_STATUS_OK)
+        return status;
     for (uint32_t i = 0; i < count; ++i) {
-        if (infs_le32_to_cpu(ext[i].flags) != INFS_EXTENT_NORMAL)
+        if (infs_le32_to_cpu(all[i].flags) != INFS_EXTENT_NORMAL)
             continue;
         status = file_free_unshared_run(
-            vol, hdr->object_id, infs_le64_to_cpu(ext[i].physical_block),
-            infs_le32_to_cpu(ext[i].block_count));
-        if (status != INFS_STATUS_OK)
+            vol, hdr->object_id, infs_le64_to_cpu(all[i].physical_block),
+            infs_le32_to_cpu(all[i].block_count));
+        if (status != INFS_STATUS_OK) {
+            if (owned) free(all);
             return status;
+        }
     }
-    return INFS_STATUS_OK;
+    if (owned) free(all);
+    return paged_extent_destroy_pages(vol, object, file);
 }
 
 static infs_status file_store_inline(
@@ -92,6 +100,7 @@ static infs_status file_store_inline(
     struct infs_object_header_disk *hdr =
         (struct infs_object_header_disk *)object;
     file = (struct infs_file_payload_disk *)(object + sizeof(*hdr));
+    hdr->object_version = infs_cpu_to_le16(INFS_OBJECT_VERSION_CLASSIC);
     memset(file + 1, 0,
            INFS_BLOCK_SIZE - sizeof(*hdr) - sizeof(*file));
     file->attributes.logical_size = infs_cpu_to_le64((uint64_t)size);

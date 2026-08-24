@@ -74,13 +74,25 @@ infs_status infs_scrub(struct infs_volume *vol,
             continue;
         }
 
+        struct infs_extent_disk *scan_extents = ext;
         uint32_t extent_count = infs_le32_to_cpu(file->extent_count);
+        int owned_extents = 0;
+        status = file_extent_snapshot(vol, object, file, ext,
+                                      &scan_extents, &extent_count,
+                                      &owned_extents);
+        if (status != INFS_STATUS_OK) {
+            ++report->metadata_errors;
+            continue;
+        }
         for (uint32_t j = 0; j < extent_count; ++j) {
-            if (infs_le32_to_cpu(ext[j].flags) != INFS_EXTENT_NORMAL)
+            if (infs_le32_to_cpu(scan_extents[j].flags) != INFS_EXTENT_NORMAL)
                 continue;
-            uint64_t logical = infs_le64_to_cpu(ext[j].logical_block);
-            uint64_t physical = infs_le64_to_cpu(ext[j].physical_block);
-            uint32_t blocks = infs_le32_to_cpu(ext[j].block_count);
+            uint64_t logical =
+                infs_le64_to_cpu(scan_extents[j].logical_block);
+            uint64_t physical =
+                infs_le64_to_cpu(scan_extents[j].physical_block);
+            uint32_t blocks =
+                infs_le32_to_cpu(scan_extents[j].block_count);
             for (uint32_t k = 0; k < blocks; ++k) {
                 ++report->data_blocks_checked;
                 uint8_t data[INFS_BLOCK_SIZE];
@@ -99,6 +111,8 @@ infs_status infs_scrub(struct infs_volume *vol,
                     ++report->checksum_errors;
             }
         }
+        if (owned_extents)
+            free(scan_extents);
     }
     free(entries);
 

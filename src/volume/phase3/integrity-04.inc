@@ -3,33 +3,8 @@ static int extent_emit(struct infs_extent_disk *out, uint32_t *count,
                        uint64_t logical, uint64_t physical, uint32_t blocks,
                        uint32_t flags)
 {
-    if (!blocks)
-        return INFS_STATUS_OK;
-    if (*count) {
-        struct infs_extent_disk *last = &out[*count - 1u];
-        if (infs_le32_to_cpu(last->flags) == flags &&
-            infs_le64_to_cpu(last->logical_block) +
-                infs_le32_to_cpu(last->block_count) == logical &&
-            ((flags == INFS_EXTENT_HOLE && physical == 0) ||
-             (flags == INFS_EXTENT_NORMAL &&
-              infs_le64_to_cpu(last->physical_block) +
-                  infs_le32_to_cpu(last->block_count) == physical))) {
-            uint64_t merged =
-                (uint64_t)infs_le32_to_cpu(last->block_count) + blocks;
-            if (merged <= UINT32_MAX) {
-                last->block_count = infs_cpu_to_le32((uint32_t)merged);
-                return INFS_STATUS_OK;
-            }
-        }
-    }
-    if (*count >= INFS_MAX_FILE_EXTENTS)
-        return INFS_STATUS_FILE_TOO_LARGE;
-    out[*count].logical_block = infs_cpu_to_le64(logical);
-    out[*count].physical_block = infs_cpu_to_le64(physical);
-    out[*count].block_count = infs_cpu_to_le32(blocks);
-    out[*count].flags = infs_cpu_to_le32(flags);
-    ++*count;
-    return INFS_STATUS_OK;
+    return extent_emit_capacity(out, count, INFS_MAX_FILE_EXTENTS,
+                                logical, physical, blocks, flags);
 }
 
 static int file_replace_range(struct infs_volume *vol,
@@ -40,76 +15,100 @@ static int file_replace_range(struct infs_volume *vol,
     struct infs_object_header_disk *hdr =
         (struct infs_object_header_disk *)object;
     struct infs_file_payload_disk *p =
-        (struct infs_file_payload_disk *)(
-            object + sizeof(struct infs_object_header_disk));
-    struct infs_extent_disk *ext = (struct infs_extent_disk *)(p + 1);
-    uint32_t old_count = infs_le32_to_cpu(p->extent_count);
-    struct infs_extent_disk rebuilt[INFS_MAX_FILE_EXTENTS];
-    uint32_t new_count = 0;
+        (struct infs_file_payload_disk *)(object + sizeof(*hdr));
     uint64_t replace_end = logical_start + block_count;
-    int replacement_emitted = 0;
-
     if (replace_end < logical_start || block_count > UINT32_MAX ||
         (new_flags != INFS_EXTENT_NORMAL && new_flags != INFS_EXTENT_HOLE) ||
         (new_flags == INFS_EXTENT_HOLE && new_physical != 0) ||
         (new_flags == INFS_EXTENT_NORMAL && new_physical == 0))
         return INFS_STATUS_INVALID_ARGUMENT;
+    if (file_has_paged_extents(object))
+        return paged_extent_replace(vol, object, p, logical_start, block_count,
+                                    new_physical, new_flags);
 
+    struct infs_extent_disk *ext = (struct infs_extent_disk *)(p + 1);
+    uint32_t old_count = infs_le32_to_cpu(p->extent_count);
+    uint32_t capacity = old_count + 3u;
+    struct infs_extent_disk *rebuilt = calloc(capacity, sizeof(*rebuilt));
+    if (!rebuilt)
+        return INFS_STATUS_NO_MEMORY;
+    struct { uint64_t start, count; } *release = calloc(
+        old_count ? old_count : 1u, sizeof(*release));
+    if (!release) {
+        free(rebuilt);
+        return INFS_STATUS_NO_MEMORY;
+    }
+    uint32_t new_count = 0, release_count = 0;
+    int emitted = 0;
+    infs_status status = INFS_STATUS_OK;
     for (uint32_t i = 0; i < old_count; ++i) {
         uint64_t l = infs_le64_to_cpu(ext[i].logical_block);
         uint64_t phys = infs_le64_to_cpu(ext[i].physical_block);
         uint32_t n = infs_le32_to_cpu(ext[i].block_count);
         uint32_t flags = infs_le32_to_cpu(ext[i].flags);
         uint64_t e = l + n;
-        infs_status status;
         if (e <= logical_start || l >= replace_end) {
-            status = extent_emit(rebuilt, &new_count, l, phys, n, flags);
+            status = extent_emit_capacity(rebuilt, &new_count, capacity,
+                                          l, phys, n, flags);
             if (status != INFS_STATUS_OK)
-                return status;
+                goto out;
             continue;
         }
         if (l < logical_start) {
-            uint32_t prefix = (uint32_t)(logical_start - l);
-            status = extent_emit(rebuilt, &new_count, l, phys, prefix, flags);
+            status = extent_emit_capacity(rebuilt, &new_count, capacity,
+                l, phys, (uint32_t)(logical_start - l), flags);
             if (status != INFS_STATUS_OK)
-                return status;
+                goto out;
         }
         uint64_t overlap_start = l > logical_start ? l : logical_start;
         uint64_t overlap_end = e < replace_end ? e : replace_end;
-        if (!replacement_emitted) {
-            status = extent_emit(rebuilt, &new_count, logical_start,
-                                 new_physical, (uint32_t)block_count,
-                                 new_flags);
+        if (!emitted) {
+            status = extent_emit_capacity(rebuilt, &new_count, capacity,
+                logical_start, new_physical, (uint32_t)block_count, new_flags);
             if (status != INFS_STATUS_OK)
-                return status;
-            replacement_emitted = 1;
+                goto out;
+            emitted = 1;
         }
         if (flags == INFS_EXTENT_NORMAL) {
-            status = file_free_unshared_run(
-                vol, hdr->object_id, phys + (overlap_start - l),
-                overlap_end - overlap_start);
-            if (status != INFS_STATUS_OK)
-                return status;
+            release[release_count].start = phys + (overlap_start - l);
+            release[release_count].count = overlap_end - overlap_start;
+            ++release_count;
         }
         if (e > replace_end) {
-            uint32_t suffix = (uint32_t)(e - replace_end);
-            status = extent_emit(rebuilt, &new_count, replace_end,
-                                 flags == INFS_EXTENT_HOLE ? 0 :
-                                     phys + (replace_end - l),
-                                 suffix, flags);
+            status = extent_emit_capacity(rebuilt, &new_count, capacity,
+                replace_end, flags == INFS_EXTENT_HOLE ? 0 :
+                    phys + (replace_end - l),
+                (uint32_t)(e - replace_end), flags);
             if (status != INFS_STATUS_OK)
-                return status;
+                goto out;
         }
     }
-    if (!replacement_emitted)
-        return INFS_STATUS_CORRUPT;
-
-    memset(ext, 0, (size_t)INFS_MAX_FILE_EXTENTS * sizeof(*ext));
-    memcpy(ext, rebuilt, (size_t)new_count * sizeof(*ext));
-    p->extent_count = infs_cpu_to_le32(new_count);
-    hdr->payload_size = infs_cpu_to_le32((uint32_t)(sizeof(*p) +
-        (size_t)new_count * sizeof(*ext)));
-    return INFS_STATUS_OK;
+    if (!emitted) {
+        status = INFS_STATUS_CORRUPT;
+        goto out;
+    }
+    if (new_count <= INFS_MAX_FILE_EXTENTS) {
+        memset(ext, 0, (size_t)INFS_MAX_FILE_EXTENTS * sizeof(*ext));
+        memcpy(ext, rebuilt, (size_t)new_count * sizeof(*ext));
+        p->extent_count = infs_cpu_to_le32(new_count);
+        hdr->payload_size = infs_cpu_to_le32((uint32_t)(
+            sizeof(*p) + (size_t)new_count * sizeof(*ext)));
+    } else {
+        status = paged_extent_rewrite_all(
+            vol, object, p, rebuilt, new_count, 1);
+        if (status != INFS_STATUS_OK)
+            goto out;
+    }
+    for (uint32_t i = 0; i < release_count; ++i) {
+        status = file_free_unshared_run(vol, hdr->object_id,
+                                        release[i].start, release[i].count);
+        if (status != INFS_STATUS_OK)
+            goto out;
+    }
+out:
+    free(release);
+    free(rebuilt);
+    return status;
 }
 
 static int data_block_verify(struct infs_volume *vol,

@@ -1,14 +1,14 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-# Format 0.11 Conformance
+# Format 0.12 Conformance
 
-Format 0.11 includes regular-file hard links, named snapshot roots and retained historical generations. Pre-1.0 development builds accept exactly current Format 0.11 and do not open earlier development formats. Newly formatted volumes enable UTF-8 names, sparse extents, inline data, shared extents, paged metadata, symbolic links, hard links and snapshots.
+Format 0.12 includes regular-file hard links, named snapshot roots and retained historical generations. Pre-1.0 development builds accept exactly current Format 0.12 and do not open earlier development formats. Newly formatted volumes enable UTF-8 names, sparse extents, inline data, shared extents, paged metadata, symbolic links, hard links and snapshots.
 
 ## Required representation
 
 A conforming implementation must preserve:
 
 - 4096-byte filesystem blocks;
-- exact Format 0.11 major/minor identity; all other development revisions are rejected;
+- exact Format 0.12 major/minor identity; all other development revisions are rejected;
 - fixed-width integer fields encoded little-endian;
 - the exact packed field offsets and sizes declared in `include/infilfs/format.h`;
 - three checkpoint locations at block zero, the volume midpoint and the final block;
@@ -76,13 +76,13 @@ When `INFS_INCOMPAT_PAGED_METADATA` is set, the root directory and object-index 
 
 Before the first stable release, a development build accepts only its exact current format major/minor. A later development format replaces the earlier format; no compatibility reader or migration path is required.
 
-Within current Format 0.11, the conventional three feature classes remain defined for the stable compatibility policy:
+Within current Format 0.12, the conventional three feature classes remain defined for the stable compatibility policy:
 
 - unknown `incompat_flags` require refusal to open;
 - unknown `ro_compat_flags` may be opened read-only but must not be opened writable;
 - unknown `compat_flags` may be ignored because they do not change required read/write interpretation.
 
-`INFS_INCOMPAT_UTF8_NAMES` and `INFS_INCOMPAT_SPARSE_EXTENTS` are required for Format 0.11. The remaining known incompatible bits select representations understood by this format, and the current formatter enables all of them. Format 0.11 defines no compatible or read-only-compatible bits for newly created volumes.
+`INFS_INCOMPAT_UTF8_NAMES` and `INFS_INCOMPAT_SPARSE_EXTENTS` are required for Format 0.12. The remaining known incompatible bits select representations understood by this format, and the current formatter enables all of them. Format 0.12 defines no compatible or read-only-compatible bits for newly created volumes.
 
 ## Symbolic-link acceptance
 
@@ -152,7 +152,7 @@ Ordinary rename replacement is a single filesystem transaction. A file may repla
 
 `infilfs-open-hardening`, `infilfs-063-hardening`, `infilfs-posix-locking` and `infilfs-sparse-files` retain the existing geometry, recovery, locking and crash-atomicity regression gates.
 
-GitHub Actions builds and tests the full Linux implementation, separately builds the portable core and native transfer application with Microsoft Visual C, and opens a Linux-created Format 0.11 image through the Win32 backend. The hardening matrix also runs Clang, AddressSanitizer/UndefinedBehaviorSanitizer and GCC `-fanalyzer`. When `/dev/fuse` is available, `infilfs-mint-fuse` performs mounted copy, rename, permission, symbolic-link, hard-link, persistent xattr, FIFO, Unix-socket, normal-fallocate, sparse, punch, unmount and remount verification.
+GitHub Actions builds and tests the full Linux implementation, separately builds the portable core and native transfer application with Microsoft Visual C, and opens a Linux-created Format 0.12 image through the Win32 backend. The hardening matrix also runs Clang, AddressSanitizer/UndefinedBehaviorSanitizer and GCC `-fanalyzer`. When `/dev/fuse` is available, `infilfs-mint-fuse` performs mounted copy, rename, permission, symbolic-link, hard-link, persistent xattr, FIFO, Unix-socket, normal-fallocate, sparse, punch, unmount and remount verification.
 
 Implementation 0.16.0 requires named read-only snapshot roots through the portable API and direct-image tool. Conformance verifies immutable historical data and namespace state, nested generation retention, full remount, scrub of retained data, feature gating, deletion and final block reclamation.
 
@@ -160,7 +160,7 @@ Implementation 0.16.1 removes pre-1.0 backward-format acceptance. Conformance re
 
 Implementation 0.16.2 requires physically separate data and metadata allocation directions. A sequential file written across 192 separate durable calls must complete, retain no more than two extents on the deterministic test volume, pass full data scrub and remain byte-exact after reopen. This crosses all 161 inline extent slots and reproduces the write-cycle pattern behind the former approximately 40 MiB direct-copy `EFBIG` failure.
 
-Implementation 0.16.3 requires the Linux FUSE adapter to preserve `user.*` extended attributes across adapter operations, create and report FIFO and Unix-domain socket nodes with their correct POSIX types, accept normal `fallocate` without changing pre-existing bytes, return stable inode identity and link counts for hard links, and provide nonzero file-capacity values through `statvfs`. These are Linux adapter semantics stored using hidden system-marked ordinary Format 0.11 objects and do not alter the portable on-disk format.
+Implementation 0.16.3 requires the Linux FUSE adapter to preserve `user.*` extended attributes across adapter operations, create and report FIFO and Unix-domain socket nodes with their correct POSIX types, accept normal `fallocate` without changing pre-existing bytes, return stable inode identity and link counts for hard links, and provide nonzero file-capacity values through `statvfs`. These are Linux adapter semantics stored using hidden system-marked ordinary Format 0.12 objects and do not alter the portable on-disk format.
 
 Implementation 0.16.4 requires Linux-adapter hidden-metadata cleanup to probe for metadata existence before starting a nested unlink. An absent adapter metadata record must not abort or roll back the user object unlink. Mounted conformance verifies that an ordinary unlink is observably absent immediately afterward and that recursive `rm -rf` can remove a nested ordinary tree completely.
 
@@ -179,7 +179,7 @@ The high-level FUSE adapter deliberately uses libfuse's documented offsetless `r
 Until the first stable release, a change that alters golden checkpoint bytes, packed offsets or interpretation increments the development format and replaces its predecessor without a compatibility reader or migration requirement. From the first stable release onward, such changes require a compatible feature extension or a defined migration policy. Tightening rejection of metadata already defined as reserved, unreachable, multiply owned, structurally inconsistent or geometrically impossible remains implementation hardening.
 
 
-Implementation 0.16.5 permits transaction-private full-overwrite allocations to skip pre-zeroing only when the complete data or bitmap image is written before checkpoint publication. Mounted conformance verifies an aligned sequential write through FUSE, explicit sync, and byte-identical readback. Linux automatic publication may use a bounded volume-adaptive threshold; explicit fsync/sync remains immediate. Format 0.11 is unchanged.
+Implementation 0.16.5 permits transaction-private full-overwrite allocations to skip pre-zeroing only when the complete data or bitmap image is written before checkpoint publication. Mounted conformance verifies an aligned sequential write through FUSE, explicit sync, and byte-identical readback. Linux automatic publication may use a bounded volume-adaptive threshold; explicit fsync/sync remains immediate. Format 0.12 is unchanged.
 
 
-Implementation 0.16.6 changes only runtime lookup/checksum execution. CRC64-ECMA results remain byte-identical to Format 0.11. A runtime checksum-chain cursor may skip already traversed checksum objects for monotonically forward access, but is not persistent and falls back to the persistent head when invalid or stale.
+Implementation 0.16.6 changes only runtime lookup/checksum execution. CRC64-ECMA results remain byte-identical to Format 0.12. A runtime checksum-chain cursor may skip already traversed checksum objects for monotonically forward access, but is not persistent and falls back to the persistent head when invalid or stale.
