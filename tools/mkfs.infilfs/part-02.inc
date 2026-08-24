@@ -140,7 +140,7 @@ int main(int argc, char **argv)
         return 1;
     }
     if (index_page_block >= checkpoints[1]) {
-        fprintf(stderr, "Target is too small for the Format 0.9 metadata layout.\n");
+        fprintf(stderr, "Target is too small for the Format 0.10 metadata layout.\n");
         close(fd);
         return 1;
     }

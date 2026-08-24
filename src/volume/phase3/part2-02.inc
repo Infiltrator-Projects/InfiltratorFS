@@ -104,6 +104,20 @@ static void touch_mctime(struct infs_volume *vol,
     attributes->change_time_ns = (int64_t)infs_cpu_to_le64(n);
 }
 
+static void touch_ctime(struct infs_volume *vol,
+                        struct infs_attributes_disk *attributes)
+{
+    int64_t now = 0;
+    infs_status status = infs_storage_current_time_ns(&vol->storage, &now);
+    if (status != INFS_STATUS_OK) {
+        if (vol->tx_active && vol->tx_error == INFS_STATUS_OK)
+            vol->tx_error = status;
+        return;
+    }
+    attributes->change_time_ns =
+        (int64_t)infs_cpu_to_le64((uint64_t)now);
+}
+
 static int next_component(const char **cursor, char out[INFS_NAME_MAX + 1u])
 {
     const char *p = *cursor;

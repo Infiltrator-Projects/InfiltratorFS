@@ -28,11 +28,12 @@ static void usage(const char *prog)
         "  %s <image> reflink <source-path> <destination-path>\n"
         "  %s <image> symlink <target> <path>\n"
         "  %s <image> readlink <path>\n"
+        "  %s <image> link <existing-path> <new-path>\n"
         "  %s <image> mv <old-path> <new-path>\n"
         "  %s <image> rm <path>\n"
         "  %s <image> rmdir <path>\n",
         prog, prog, prog, prog, prog, prog, prog, prog, prog, prog, prog,
-        prog, prog, prog);
+        prog, prog, prog, prog);
 }
 
 static int die_errno(const char *what)

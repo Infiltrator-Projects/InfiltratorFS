@@ -57,6 +57,13 @@ static int symbolic_links_enabled(const struct infs_volume *vol)
          INFS_INCOMPAT_SYMBOLIC_LINKS) != 0;
 }
 
+static int hard_links_enabled(const struct infs_volume *vol)
+{
+    return vol &&
+        (infs_le64_to_cpu(vol->sb.incompat_flags) &
+         INFS_INCOMPAT_HARD_LINKS) != 0;
+}
+
 /* Format 0.8 paged-index dispatch targets. part1 owns the classic index
  * implementation and calls these when it encounters a version-2 index head. */
 static int paged_index_find(struct infs_volume *vol, const uint8_t id[16],

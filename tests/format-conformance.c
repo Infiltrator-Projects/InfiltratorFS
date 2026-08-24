@@ -234,6 +234,17 @@ static void check_superblock_encoding(void)
     expect(!infs_validate_superblock_block(pre_symlink),
            "reject symbolic-link feature before Format 0.9");
 
+    uint8_t pre_hard_link[INFS_BLOCK_SIZE];
+    memcpy(pre_hard_link, encoded, sizeof(pre_hard_link));
+    put_le16(pre_hard_link, 10, 9u);
+    put_le64(pre_hard_link, 148,
+             INFS_INCOMPAT_UTF8_NAMES | INFS_INCOMPAT_SPARSE_EXTENTS |
+                 INFS_INCOMPAT_INLINE_DATA | INFS_INCOMPAT_PAGED_METADATA |
+                 INFS_INCOMPAT_SYMBOLIC_LINKS | INFS_INCOMPAT_HARD_LINKS);
+    refresh_crc(pre_hard_link, 220);
+    expect(!infs_validate_superblock_block(pre_hard_link),
+           "reject hard-link feature before Format 0.10");
+
     uint8_t extent_only[INFS_BLOCK_SIZE];
     memcpy(extent_only, encoded, sizeof(extent_only));
     put_le16(extent_only, 10, 7u);

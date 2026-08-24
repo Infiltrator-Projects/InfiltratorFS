@@ -143,14 +143,14 @@ int main(void)
     struct infs_storage storage = make_storage(&image);
     expect(infs_format_storage(&storage, "paged-metadata-test") ==
                INFS_STATUS_OK,
-           "format Format 0.9 volume");
+           "format Format 0.10 volume");
 
     struct infs_volume volume;
     storage = make_storage(&image);
     expect(infs_volume_open_storage(&volume, &storage, 1) == INFS_STATUS_OK,
            "open paged volume writable");
-    expect(infs_le16_to_cpu(volume.sb.format_minor) == 9u,
-           "Format minor is 0.9");
+    expect(infs_le16_to_cpu(volume.sb.format_minor) == 10u,
+           "Format minor is 0.10");
     expect((infs_le64_to_cpu(volume.sb.incompat_flags) &
             INFS_INCOMPAT_PAGED_METADATA) != 0,
            "paged metadata feature enabled");

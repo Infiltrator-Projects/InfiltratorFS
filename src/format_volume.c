@@ -147,7 +147,8 @@ infs_status infs_format_storage(struct infs_storage *storage, const char *label)
     sb.incompat_flags = infs_cpu_to_le64(
         INFS_INCOMPAT_UTF8_NAMES | INFS_INCOMPAT_SPARSE_EXTENTS |
         INFS_INCOMPAT_INLINE_DATA | INFS_INCOMPAT_SHARED_EXTENTS |
-        INFS_INCOMPAT_PAGED_METADATA | INFS_INCOMPAT_SYMBOLIC_LINKS);
+        INFS_INCOMPAT_PAGED_METADATA | INFS_INCOMPAT_SYMBOLIC_LINKS |
+        INFS_INCOMPAT_HARD_LINKS);
     memcpy(sb.label, label, label_length);
 
     uint8_t block[INFS_BLOCK_SIZE] = {0};

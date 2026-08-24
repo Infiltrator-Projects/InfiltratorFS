@@ -100,6 +100,9 @@ int main(int argc, char **argv)
         if (status != INFS_STATUS_OK) rc = die_status("symlink", status);
     } else if (strcmp(cmd, "readlink") == 0 && argc == 4) {
         rc = command_readlink(&vol, argv[3]);
+    } else if (strcmp(cmd, "link") == 0 && argc == 5) {
+        status = infs_link_file(&vol, argv[3], argv[4]);
+        if (status != INFS_STATUS_OK) rc = die_status("link", status);
     } else if (strcmp(cmd, "mv") == 0 && argc == 5) {
         status = infs_rename(&vol, argv[3], argv[4]);
         if (status != INFS_STATUS_OK) rc = die_status("mv", status);

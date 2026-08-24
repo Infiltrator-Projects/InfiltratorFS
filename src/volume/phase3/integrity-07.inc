@@ -208,7 +208,14 @@ static int validate_namespace_graph(struct infs_volume *vol)
                 status = INFS_STATUS_CORRUPT;
                 goto out;
             }
-            if (++references[target] != 1u) {
+            if (references[target] == UINT32_MAX) {
+                free(owned);
+                status = INFS_STATUS_CORRUPT;
+                goto out;
+            }
+            ++references[target];
+            if (references[target] > 1u &&
+                (type != INFS_OBJECT_FILE || !hard_links_enabled(vol))) {
                 free(owned);
                 status = INFS_STATUS_CORRUPT;
                 goto out;
@@ -225,7 +232,10 @@ static int validate_namespace_graph(struct infs_volume *vol)
             }
             struct infs_object_header_disk *child_header =
                 (struct infs_object_header_disk *)child;
-            if (memcmp(child_header->parent_id,
+            int unparented_hard_link = type == INFS_OBJECT_FILE &&
+                hard_links_enabled(vol) && id_is_zero(child_header->parent_id);
+            if (!unparented_hard_link &&
+                memcmp(child_header->parent_id,
                        directory_header->object_id, 16) != 0) {
                 free(owned);
                 status = INFS_STATUS_CORRUPT;
@@ -264,13 +274,27 @@ static int validate_namespace_graph(struct infs_volume *vol)
                 status = INFS_STATUS_CORRUPT;
                 goto out;
             }
-        } else if (references[i] != 1u || id_is_zero(header->parent_id)) {
-            status = INFS_STATUS_CORRUPT;
-            goto out;
+        } else {
+            if (references[i] == 0) {
+                status = INFS_STATUS_CORRUPT;
+                goto out;
+            }
+            if (type == INFS_OBJECT_FILE && hard_links_enabled(vol)) {
+                if (references[i] > 1u && !id_is_zero(header->parent_id)) {
+                    status = INFS_STATUS_CORRUPT;
+                    goto out;
+                }
+            } else if (references[i] != 1u ||
+                       id_is_zero(header->parent_id)) {
+                status = INFS_STATUS_CORRUPT;
+                goto out;
+            }
         }
 
         uint64_t expected_links = type == INFS_OBJECT_DIRECTORY ?
-            2u + (uint64_t)child_directories[i] : 1u;
+            2u + (uint64_t)child_directories[i] :
+            type == INFS_OBJECT_FILE && hard_links_enabled(vol) ?
+            references[i] : 1u;
         if (infs_le64_to_cpu(attributes->link_count) != expected_links) {
             status = INFS_STATUS_CORRUPT;
             goto out;

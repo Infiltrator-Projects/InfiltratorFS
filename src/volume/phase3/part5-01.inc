@@ -33,6 +33,7 @@ static int remove_object(struct infs_volume *vol, const char *path, int want_dir
     status = read_object(vol, child.block, child_block);
     if (status != INFS_STATUS_OK)
         return status;
+    int retain_file = 0;
     if (child.type == INFS_OBJECT_DIRECTORY) {
         struct infs_directory_payload_disk *cp;
         status = dir_validate(child_block, &cp);
@@ -46,19 +47,33 @@ static int remove_object(struct infs_volume *vol, const char *path, int want_dir
         status = file_validate_volume(vol, child_block, &fp, &ext);
         if (status != INFS_STATUS_OK)
             return status;
-        status = checksum_destroy_chain(vol, fp, child.object_id);
-        if (status != INFS_STATUS_OK)
-            return status;
-        uint32_t count = infs_le32_to_cpu(fp->extent_count);
-        for (uint32_t i = 0; i < count; ++i) {
-            if (infs_le32_to_cpu(ext[i].flags) != INFS_EXTENT_NORMAL)
-                continue;
-            status = file_free_unshared_run(
-                vol, child.object_id,
-                infs_le64_to_cpu(ext[i].physical_block),
-                infs_le32_to_cpu(ext[i].block_count));
+        uint64_t links = infs_le64_to_cpu(fp->attributes.link_count);
+        if (links == 0)
+            return INFS_STATUS_CORRUPT;
+        if (links > 1u) {
+            if (!hard_links_enabled(vol))
+                return INFS_STATUS_CORRUPT;
+            fp->attributes.link_count = infs_cpu_to_le64(links - 1u);
+            struct infs_object_header_disk *header =
+                (struct infs_object_header_disk *)child_block;
+            memset(header->parent_id, 0, sizeof(header->parent_id));
+            touch_ctime(vol, &fp->attributes);
+            retain_file = 1;
+        } else {
+            status = checksum_destroy_chain(vol, fp, child.object_id);
             if (status != INFS_STATUS_OK)
                 return status;
+            uint32_t count = infs_le32_to_cpu(fp->extent_count);
+            for (uint32_t i = 0; i < count; ++i) {
+                if (infs_le32_to_cpu(ext[i].flags) != INFS_EXTENT_NORMAL)
+                    continue;
+                status = file_free_unshared_run(
+                    vol, child.object_id,
+                    infs_le64_to_cpu(ext[i].physical_block),
+                    infs_le32_to_cpu(ext[i].block_count));
+                if (status != INFS_STATUS_OK)
+                    return status;
+            }
         }
     } else if (child.type == INFS_OBJECT_SYMLINK) {
         status = symlink_validate(vol, child_block, NULL, NULL);
@@ -83,6 +98,12 @@ static int remove_object(struct infs_volume *vol, const char *path, int want_dir
     status = write_object(vol, parent.block, parent_block);
     if (status != INFS_STATUS_OK)
         return status;
+    if (retain_file) {
+        status = write_object(vol, child.block, child_block);
+        if (status != INFS_STATUS_OK)
+            return status;
+        return finish_mutation(vol, (uint64_t)INFS_BLOCK_SIZE * 5u);
+    }
     status = index_remove(vol, child.object_id);
     if (status != INFS_STATUS_OK)
         return status;

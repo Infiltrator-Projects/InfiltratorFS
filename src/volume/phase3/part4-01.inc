@@ -253,3 +253,93 @@ infs_status infs_read_symlink(struct infs_volume *vol, const char *path,
     target[length] = '\0';
     return INFS_STATUS_OK;
 }
+
+static infs_status link_file_tx(struct infs_volume *vol,
+                                const char *existing_path,
+                                const char *new_path)
+{
+    if (!vol->writable)
+        return INFS_STATUS_READ_ONLY;
+    if (!hard_links_enabled(vol))
+        return INFS_STATUS_NOT_SUPPORTED;
+
+    struct infs_lookup source;
+    infs_status status = infs_lookup_path(vol, existing_path, &source);
+    if (status != INFS_STATUS_OK)
+        return status;
+    if (source.type == INFS_OBJECT_DIRECTORY)
+        return INFS_STATUS_IS_DIRECTORY;
+    if (source.type != INFS_OBJECT_FILE)
+        return INFS_STATUS_NOT_SUPPORTED;
+
+    struct infs_lookup parent;
+    char name[INFS_NAME_MAX + 1u];
+    status = split_parent(vol, new_path, &parent, name);
+    if (status != INFS_STATUS_OK)
+        return status;
+    uint8_t parent_block[INFS_BLOCK_SIZE];
+    status = read_object(vol, parent.block, parent_block);
+    if (status != INFS_STATUS_OK)
+        return status;
+    struct infs_directory_payload_disk *parent_payload;
+    status = dir_validate(parent_block, &parent_payload);
+    if (status != INFS_STATUS_OK)
+        return status;
+    status = dir_lookup_volume(vol, parent_block, name, NULL);
+    if (status == INFS_STATUS_OK)
+        return INFS_STATUS_ALREADY_EXISTS;
+    if (status != INFS_STATUS_NOT_FOUND)
+        return status;
+
+    uint8_t source_block[INFS_BLOCK_SIZE];
+    status = read_object(vol, source.block, source_block);
+    if (status != INFS_STATUS_OK)
+        return status;
+    struct infs_file_payload_disk *file;
+    status = file_validate_volume(vol, source_block, &file, NULL);
+    if (status != INFS_STATUS_OK)
+        return status;
+    uint64_t links = infs_le64_to_cpu(file->attributes.link_count);
+    if (links == 0)
+        return INFS_STATUS_CORRUPT;
+    if (links == UINT64_MAX)
+        return INFS_STATUS_OVERFLOW;
+
+    status = dir_add_volume(
+        vol, parent_block, name, source.object_id, INFS_OBJECT_FILE);
+    if (status != INFS_STATUS_OK)
+        return status;
+    file->attributes.link_count = infs_cpu_to_le64(links + 1u);
+    struct infs_object_header_disk *source_header =
+        (struct infs_object_header_disk *)source_block;
+    memset(source_header->parent_id, 0, sizeof(source_header->parent_id));
+    touch_ctime(vol, &file->attributes);
+    touch_mctime(vol, &parent_payload->attributes);
+    if (vol->tx_error != INFS_STATUS_OK)
+        return vol->tx_error;
+    status = write_object(vol, source.block, source_block);
+    if (status != INFS_STATUS_OK)
+        return status;
+    status = write_object(vol, parent.block, parent_block);
+    if (status != INFS_STATUS_OK)
+        return status;
+    return finish_mutation(vol, (uint64_t)INFS_BLOCK_SIZE * 5u);
+}
+
+infs_status infs_link_file(struct infs_volume *vol, const char *existing_path,
+                           const char *new_path)
+{
+    if (!vol || !existing_path || !new_path || existing_path[0] != '/' ||
+        new_path[0] != '/')
+        return INFS_STATUS_INVALID_ARGUMENT;
+    size_t length = strlen(new_path);
+    if (length > 1u && new_path[length - 1u] == '/')
+        return INFS_STATUS_NOT_DIRECTORY;
+    infs_status status = tx_begin(vol);
+    if (status != INFS_STATUS_OK)
+        return status;
+    status = link_file_tx(vol, existing_path, new_path);
+    if (status != INFS_STATUS_OK)
+        tx_abort(vol);
+    return status;
+}

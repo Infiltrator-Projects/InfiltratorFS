@@ -6,16 +6,16 @@
 
 InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem started in 2026. The persistent format and core engine are written in portable C; Linux and Windows are adapters over the same on-disk structures rather than separate filesystem implementations.
 
-**Current implementation:** 0.14.0<br>
-**On-disk format:** 0.9<br>
+**Current implementation:** 0.15.0<br>
+**On-disk format:** 0.10<br>
 **Shared foundation:** Infiltratr Common 1.11.0<br>
 **Licence:** GPL-3.0-or-later
 
-Format 0.9 adds feature-gated native symbolic-link objects. Format 0.8 media remains readable and does not need to be reformatted.
+Format 0.10 adds feature-gated regular-file hard links with transactional reference accounting. Format 0.6–0.9 media remains readable and does not need to be reformatted.
 
 ## Capabilities
 
-Format 0.9 currently provides:
+Format 0.10 currently provides:
 
 - 4096-byte little-endian blocks;
 - nonzero 128-bit persistent filesystem and object identities;
@@ -27,6 +27,7 @@ Format 0.9 currently provides:
 - normal/hole extents, sparse growth and hole punching;
 - shared extents/reflinks with CoW on later writes;
 - first-class relative and absolute UTF-8 symbolic links;
+- regular-file hard links with shared persistent identity;
 - CRC64-ECMA metadata integrity and SHA-256 file-data integrity;
 - portable timestamps/attributes plus optional POSIX compatibility metadata;
 - mandatory well-formed UTF-8 namespace components;
@@ -34,24 +35,24 @@ Format 0.9 currently provides:
 - explicit read-only scrub/verify; and
 - callback-based storage, durability, randomness and clock services.
 
-Implementation 0.14.0 adds native symbolic-link create, read, rename, replace, unlink, scrub and forensic support. Linux FUSE exposes standard `symlink(2)` and `readlink(2)` behavior, while `infilfs-tool` provides offline `symlink` and `readlink` commands. Earlier standard Linux utilities, persistent FUSE descriptor lifetime and forensic scanning remain available. The native `.run` remains a self-extracting Bash installer containing the complete release source tree and pinned Common submodule.
+Implementation 0.15.0 adds native regular-file hard links. Every name resolves to the same object ID and content, link counts are updated transactionally across create, unlink and rename replacement, and Linux FUSE exposes standard `link(2)` behavior. Direct-image `link` support and corruption/remount coverage are included. Symbolic links, standard Linux utilities, persistent FUSE descriptor lifetime and forensic scanning remain available.
 
 ## Architecture
 
 | Layer | Status |
 | --- | --- |
-| On-disk format | Platform-neutral Format 0.9; Format 0.8 remains readable. |
+| On-disk format | Platform-neutral Format 0.10; Format 0.6–0.9 remains readable. |
 | Core filesystem engine | Portable C17; no Linux fd/VFS or Win32 handle types. |
 | Shared foundations | Infiltratr Common 1.11.0. |
 | Storage interface | Callback-based POSIX, Win32 and in-memory backends. |
 | Linux userspace adapter | Implemented through POSIX I/O and FUSE3. |
-| Windows transfer/raw-volume adapter | Implemented for direct Format 0.8/0.9 partition access. |
+| Windows transfer/raw-volume adapter | Implemented for direct Format 0.6–0.10 partition access. |
 | Native Linux kernel driver | Future work. |
 | Native Windows filesystem driver / Explorer mount | Future work. |
 
 Filesystem-specific transaction, allocation, namespace, checksum and on-disk-format rules remain in InfiltratorFS. Common owns only generally reusable primitives such as endian conversion, UTF-8 validation, exact POSIX positioned I/O and checked arithmetic.
 
-The Windows transfer application is not a Windows kernel filesystem driver. It can discover and access Format 0.8/0.9 partitions directly, including partitions without a drive letter, but Explorer drive-letter mounting remains future work.
+The Windows transfer application is not a Windows kernel filesystem driver. It can discover and access supported InfiltratorFS partitions directly, including partitions without a drive letter, but Explorer drive-letter mounting remains future work.
 
 ## Build and test
 
@@ -84,6 +85,7 @@ Exercise the filesystem without mounting:
 ./build/infilfs-tool infilfs.img reflink /docs/README.md /docs/README-copy.md
 ./build/infilfs-tool infilfs.img symlink README.md /docs/current
 ./build/infilfs-tool infilfs.img readlink /docs/current
+./build/infilfs-tool infilfs.img link /docs/README.md /docs/README-hardlink.md
 ./build/infilfs-tool infilfs.img cat /docs/README.md
 ```
 
@@ -107,7 +109,7 @@ GitHub Actions runs Linux, Clang, sanitizer and static-analyzer suites, cross-pl
 
 The Linux Debian package installs **InfiltratorFS Manager**, which can create/format images, select non-system disk partitions including fixed, USB, SD and other removable media, inspect, scrub, run forensic raw-metadata scans, mount through FUSE, open in Nemo and unmount safely. Whole disks and storage backing the active system partitions remain excluded.
 
-The Windows release contains a versioned executable such as `InfiltratorFS-Windows-0.14.0.exe`. Run it elevated when accessing raw media. It can discover physical partitions, list the root directory, copy files/folders and run a full scrub while bounding raw I/O to the selected partition.
+The Windows release contains a versioned executable such as `InfiltratorFS-Windows-0.15.0.exe`. Run it elevated when accessing raw media. It can discover physical partitions, list the root directory, copy files/folders and run a full scrub while bounding raw I/O to the selected partition.
 
 ## Release assets
 
@@ -125,8 +127,8 @@ GitHub provides the standard source-code ZIP and tarball automatically from the 
 To inspect the native Linux build before allowing it to install anything:
 
 ```bash
-chmod +x infiltratorfs-0.14.0-linux-native.run
-./infiltratorfs-0.14.0-linux-native.run --dry-run
+chmod +x infiltratorfs-0.15.0-linux-native.run
+./infiltratorfs-0.15.0-linux-native.run --dry-run
 ```
 
 Run the same file without `--dry-run` to compile, test and install InfiltratorFS natively. If required packages are missing, it displays the exact `apt-get` commands and asks before installing them.

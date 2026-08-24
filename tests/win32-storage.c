@@ -40,13 +40,13 @@ static int verify_linux_image(const char *utf8_path)
     }
 
     if (infs_le16_to_cpu(volume.sb.format_major) != 0u ||
-        infs_le16_to_cpu(volume.sb.format_minor) != 9u) {
+        infs_le16_to_cpu(volume.sb.format_minor) != 10u) {
         infs_volume_close(&volume);
-        fprintf(stderr, "Linux-created image is not Format 0.9\n");
+        fprintf(stderr, "Linux-created image is not Format 0.10\n");
         return 1;
     }
 
-    static const char expected[] = "linux-to-windows-format-0.9\n";
+    static const char expected[] = "linux-to-windows-format-0.10\n";
     char buffer[sizeof(expected)] = {0};
     int64_t read_count = infs_read_file(&volume, "/linux-cross-platform.txt",
                                        buffer, sizeof(expected) - 1u, 0u);
@@ -58,7 +58,7 @@ static int verify_linux_image(const char *utf8_path)
     }
 
     infs_volume_close(&volume);
-    puts("Linux-created Format 0.9 image opened successfully on Windows");
+    puts("Linux-created Format 0.10 image opened successfully on Windows");
     return 0;
 }
 

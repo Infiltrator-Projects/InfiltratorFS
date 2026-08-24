@@ -20,7 +20,7 @@ mkfs_output="$tmp/mkfs-output.txt"
 
 truncate -s 64M "$image"
 "$mkfs" -L SmokeTest "$image" >"$mkfs_output"
-grep -Fq 'Implementation: 0.14.0' "$mkfs_output"
+grep -Fq 'Implementation: 0.15.0' "$mkfs_output"
 "$inspect" "$image" >/dev/null
 INFILFS_SCRUB="$scrub" "$fsck_helper" -n "$image" >/dev/null
 "$api_test" "$image" >/dev/null
@@ -47,7 +47,14 @@ cmp "$source_file" "$out_file"
 "$tool" "$image" mv /docs/current /archive/current
 [[ "$("$tool" "$image" readlink /archive/current)" == ../archive/moved.bin ]]
 "$tool" "$image" rm /archive/current
+"$tool" "$image" link /archive/moved.bin /docs/hard-link.bin
+"$tool" "$image" cat /docs/hard-link.bin > "$out_file"
+cmp "$source_file" "$out_file"
+[[ "$("$tool" "$image" stat /archive/moved.bin)" == *"links=2"* ]]
 "$tool" "$image" rm /archive/moved.bin
+"$tool" "$image" cat /docs/hard-link.bin > "$out_file"
+cmp "$source_file" "$out_file"
+"$tool" "$image" rm /docs/hard-link.bin
 "$tool" "$image" rmdir /archive
 "$tool" "$image" rmdir /docs
 "$inspect" "$image" >/dev/null

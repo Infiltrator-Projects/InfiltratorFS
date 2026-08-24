@@ -20,6 +20,21 @@ static int destroy_replaced_object_tx(struct infs_volume *vol,
         status = file_validate_volume(vol, object, &file, &extents);
         if (status != INFS_STATUS_OK)
             return status;
+        uint64_t links = infs_le64_to_cpu(file->attributes.link_count);
+        if (links == 0)
+            return INFS_STATUS_CORRUPT;
+        if (links > 1u) {
+            if (!hard_links_enabled(vol))
+                return INFS_STATUS_CORRUPT;
+            file->attributes.link_count = infs_cpu_to_le64(links - 1u);
+            struct infs_object_header_disk *header =
+                (struct infs_object_header_disk *)object;
+            memset(header->parent_id, 0, sizeof(header->parent_id));
+            touch_ctime(vol, &file->attributes);
+            if (vol->tx_error != INFS_STATUS_OK)
+                return vol->tx_error;
+            return write_object(vol, target->block, object);
+        }
         status = checksum_destroy_chain(vol, file, target->object_id);
         if (status != INFS_STATUS_OK)
             return status;
@@ -213,7 +228,9 @@ static int rename_tx(struct infs_volume *vol, const char *oldpath,
         return status;
     struct infs_object_header_disk *source_header =
         (struct infs_object_header_disk *)source_block;
-    if (!same_parent)
+    if (!same_parent &&
+        !(source_type == INFS_OBJECT_FILE && hard_links_enabled(vol) &&
+          id_is_zero(source_header->parent_id)))
         memcpy(source_header->parent_id, new_parent.object_id, 16);
     struct infs_attributes_disk *source_attributes = object_attributes(source_block);
     if (!source_attributes)

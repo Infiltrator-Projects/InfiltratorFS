@@ -1,9 +1,9 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-# InfiltratorFS On-Disk Format 0.9
+# InfiltratorFS On-Disk Format 0.10
 
-Status: experimental writable prototype. Format 0.9 extends Format 0.8 with feature-gated native symbolic-link objects. Formats 0.1 through 0.5 remain incompatible; Format 0.6, 0.7 and 0.8 volumes remain readable.
+Status: experimental writable prototype. Format 0.10 extends Format 0.9 with feature-gated regular-file hard links and transactional reference accounting. Formats 0.1 through 0.5 remain incompatible; Format 0.6 through 0.9 volumes remain readable.
 
-Implementation 0.6.0 introduced sparse extents, sparse checksum indexing and hole punching. Implementation 0.7.0 defined `INFS_INCOMPAT_INLINE_DATA`. Implementation 0.8.0 added `INFS_INCOMPAT_SHARED_EXTENTS`; Format 0.8 added `INFS_INCOMPAT_PAGED_METADATA` and version-2 metadata heads. Format 0.9 adds `INFS_INCOMPAT_SYMBOLIC_LINKS` and object type 5. The normative acceptance rules are summarized in `CONFORMANCE.md`.
+Implementation 0.6.0 introduced sparse extents, sparse checksum indexing and hole punching. Implementation 0.7.0 defined `INFS_INCOMPAT_INLINE_DATA`. Implementation 0.8.0 added `INFS_INCOMPAT_SHARED_EXTENTS`; Format 0.8 added `INFS_INCOMPAT_PAGED_METADATA` and version-2 metadata heads. Format 0.9 added `INFS_INCOMPAT_SYMBOLIC_LINKS` and object type 5. Format 0.10 adds `INFS_INCOMPAT_HARD_LINKS` without changing packed object layouts. The normative acceptance rules are summarized in `CONFORMANCE.md`.
 
 ## 1. Encoding
 
@@ -35,7 +35,7 @@ The bitmap contains one bit per filesystem block. Bits beyond the volume end are
 
 ```text
 magic                       8 bytes: "INFS2026"
-format major/minor          0.9
+format major/minor          0.10
 header size                 structure-size guard
 block shift                 12
 checksum algorithm          CRC64-ECMA
@@ -54,11 +54,11 @@ checksum field              32 bytes reserved
 
 Generation, filesystem UUID and root object ID are nonzero.
 
-Format 0.9 requires `INFS_INCOMPAT_UTF8_NAMES` and `INFS_INCOMPAT_SPARSE_EXTENTS`. New volumes also enable `INFS_INCOMPAT_INLINE_DATA`, `INFS_INCOMPAT_SHARED_EXTENTS`, `INFS_INCOMPAT_PAGED_METADATA` and `INFS_INCOMPAT_SYMBOLIC_LINKS`. When the paged feature is set, it requires version-2 directory and object-index heads; disagreement between the feature bit and either required head version is corruption. Symbolic-link objects and directory/index entries declaring them are valid only when their feature bit is present. Readers reject a missing required bit or any unknown incompatible feature flag.
+Format 0.10 requires `INFS_INCOMPAT_UTF8_NAMES` and `INFS_INCOMPAT_SPARSE_EXTENTS`. New volumes also enable `INFS_INCOMPAT_INLINE_DATA`, `INFS_INCOMPAT_SHARED_EXTENTS`, `INFS_INCOMPAT_PAGED_METADATA`, `INFS_INCOMPAT_SYMBOLIC_LINKS` and `INFS_INCOMPAT_HARD_LINKS`. When the paged feature is set, it requires version-2 directory and object-index heads; disagreement between the feature bit and either required head version is corruption. Symbolic-link objects and directory/index entries declaring them are valid only when their feature bit is present. Multiple directory references to one regular-file object are valid only when the hard-link feature bit is present. Readers reject a missing required bit or any unknown incompatible feature flag.
 
-Compatibility remains feature-driven. Inline data is invalid before Format 0.7. Shared extents are understood only when their incompatible feature bit is present. Paged metadata is invalid before Format 0.8. Symbolic links are invalid before Format 0.9.
+Compatibility remains feature-driven. Inline data is invalid before Format 0.7. Shared extents are understood only when their incompatible feature bit is present. Paged metadata is invalid before Format 0.8. Symbolic links are invalid before Format 0.9. Multiple file references are invalid before Format 0.10.
 
-Feature classes have distinct compatibility semantics. Unknown incompatible bits prevent any open. Unknown read-only-compatible bits may be opened read-only but prevent writable open. Unknown compatible bits may be ignored. Format 0.9 defines no compatible or read-only-compatible bits for newly created volumes.
+Feature classes have distinct compatibility semantics. Unknown incompatible bits prevent any open. Unknown read-only-compatible bits may be opened read-only but prevent writable open. Unknown compatible bits may be ignored. Format 0.10 defines no compatible or read-only-compatible bits for newly created volumes.
 
 CRC64 occupies the first eight checksum bytes. The remaining checksum bytes are zero. The complete checksum field is zero during calculation. A physical checkpoint copy first passes its own magic, format, size, block geometry, checksum, volume size, feature flags, canonical padding and expected checkpoint-position checks. The implementation then validates the complete graph referenced by surviving checkpoint candidates in descending generation order. The newest candidate with a structurally valid committed graph wins; a corrupt newer graph may fall back to an older valid committed graph. External I/O, memory or unsupported-feature failures are not treated as graph corruption and therefore do not silently trigger fallback.
 
@@ -120,9 +120,9 @@ A Format 0.8 directory head contains common attributes, POSIX compatibility data
 
 Each record contains its aligned record size, name length, target object type, flags, 128-bit target ID and name bytes. Names must be well-formed UTF-8, contain 1–255 bytes, and contain neither NUL nor `/`. Records are padded to eight-byte alignment. Current record flags and padding are zero.
 
-Lookup in Format 0.9 is case-sensitive and byte-exact. `.` and `..` are synthesized navigation components and are never stored. Pathnames ending in `/` retain directory semantics in namespace operations; rename does not silently strip a trailing slash from a non-directory source or nonexistent destination.
+Lookup in Format 0.10 is case-sensitive and byte-exact. `.` and `..` are synthesized navigation components and are never stored. Pathnames ending in `/` retain directory semantics in namespace operations; rename does not silently strip a trailing slash from a non-directory source or nonexistent destination.
 
-Format 0.9 has no hard links. Therefore every non-root file, directory or symbolic link must be referenced by exactly one directory entry. Every directory entry must resolve to an indexed object of the declared type, and the child's stored parent ID must identify the containing directory. Names within a directory are unique. Every namespace object must be reachable from the root; the root itself has no parent and no incoming namespace entry. File and symbolic-link link counts are 1; directory link count is 2 plus its direct child-directory count. These rules also make disconnected directory cycles invalid committed state.
+With `INFS_INCOMPAT_HARD_LINKS`, a regular file may be referenced by one or more directory entries while retaining one indexed object, one data/checksum representation and one persistent object ID. Its stored link count equals its exact incoming directory-reference count. Creating the second name clears the file object's parent ID to zero because no single containing directory is authoritative; that zero remains valid if later unlink reduces the count to one. A file that has never been multiply linked may retain its sole containing directory ID. Directory and symbolic-link objects remain single-parent and singly referenced. Directory link count remains 2 plus its direct child-directory count. Hard links to directories or symbolic links are unsupported. Every namespace object remains root-reachable, every dirent type and identity must match the index, and names within each directory remain unique.
 
 ### Symbolic links
 
@@ -202,7 +202,7 @@ Committed extent-backed file-data blocks are replaced through CoW. Inline file u
 
 The formatter reopens the exact block target with Linux `O_EXCL` after advisory mount/holder preflight, verifies that the device identity and geometry are unchanged, and retains that exclusive descriptor through the destructive write sequence. Failure to obtain exclusivity aborts formatting before the first write. Failure of the initial realtime-clock query is also a formatter error rather than silently creating zero initial timestamps. The formatter additionally takes the same nonblocking exclusive advisory lock used by writable POSIX volume openers, coordinating both image files and block targets with the formatter.
 
-Formatting first invalidates the three candidate checkpoint locations and flushes that invalidation. It then writes the bitmap, initial paged index and root, durably flushes those referenced structures, and only then publishes the three valid generation-1 checkpoints. Therefore an interrupted format is unmountable rather than presenting a valid checkpoint that references incomplete initial metadata. Implementation 0.14.0 creates Format 0.9 checkpoints with inline data, shared extents, paged metadata and symbolic links enabled.
+Formatting first invalidates the three candidate checkpoint locations and flushes that invalidation. It then writes the bitmap, initial paged index and root, durably flushes those referenced structures, and only then publishes the three valid generation-1 checkpoints. Therefore an interrupted format is unmountable rather than presenting a valid checkpoint that references incomplete initial metadata. Implementation 0.15.0 creates Format 0.10 checkpoints with inline data, shared extents, paged metadata, symbolic links and hard links enabled.
 
 ## 12. Corruption rejection
 

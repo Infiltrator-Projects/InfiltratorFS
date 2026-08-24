@@ -476,6 +476,12 @@ static int infs_readlink_cb(const char *path, char *buffer, size_t size)
     return 0;
 }
 
+static int infs_link_cb(const char *existing_path, const char *new_path)
+{
+    return neg_status(infs_link_file(
+        &g_volume, existing_path, new_path));
+}
+
 static int infs_create_cb(const char *path, mode_t mode, struct fuse_file_info *fi)
 {
     struct fuse_context *ctx = fuse_get_context();
@@ -800,6 +806,7 @@ static const struct fuse_operations infs_ops = {
     .mkdir = infs_mkdir_cb,
     .symlink = infs_symlink_cb,
     .readlink = infs_readlink_cb,
+    .link = infs_link_cb,
     .create = infs_create_cb,
     .open = infs_open_cb,
     .read = infs_read_cb,

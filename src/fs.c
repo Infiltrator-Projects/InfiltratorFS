@@ -172,7 +172,9 @@ int infs_validate_superblock_block(const uint8_t block[INFS_BLOCK_SIZE])
         (format_minor < 8u &&
          (incompat_flags & INFS_INCOMPAT_PAGED_METADATA) != 0) ||
         (format_minor < 9u &&
-         (incompat_flags & INFS_INCOMPAT_SYMBOLIC_LINKS) != 0))
+         (incompat_flags & INFS_INCOMPAT_SYMBOLIC_LINKS) != 0) ||
+        (format_minor < 10u &&
+         (incompat_flags & INFS_INCOMPAT_HARD_LINKS) != 0))
         return 0;
 
     const size_t off = offsetof(struct infs_superblock_disk, checksum);

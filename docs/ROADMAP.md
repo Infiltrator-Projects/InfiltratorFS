@@ -220,6 +220,17 @@
 - [x] Keep Format 0.6–0.8 volumes readable and reject the new feature under older versions.
 - [x] Add portable, mounted-FUSE, remount, corruption-boundary and Windows interoperability coverage.
 
+## Phase 4.15 — implementation 0.15.0 regular-file hard links — complete
+
+- [x] Publish feature-gated Format 0.10 without changing packed object layouts.
+- [x] Map multiple names to one regular-file object ID, payload and checksum chain.
+- [x] Update exact reference counts transactionally across link, unlink and rename replacement.
+- [x] Preserve linked files across cross-directory rename, writes, scrub and remount.
+- [x] Expose hard links through the portable API, `infilfs-tool` and Linux FUSE.
+- [x] Reject hard links to directories and symbolic links.
+- [x] Keep Format 0.6–0.9 volumes readable and reject the new feature under older versions.
+- [x] Add portable, mounted-FUSE, corruption-boundary and Windows interoperability coverage.
+
 ## Phase 4 — modern storage features
 
 - [x] Sparse extents.
@@ -259,7 +270,7 @@
 - [ ] Cross-platform removable-volume filename profile.
 - [x] Symbolic links.
 - [ ] Generic reparse-point objects.
-- [ ] Hard links and transactional reference accounting.
+- [x] Hard links and transactional reference accounting.
 
 ## Phase 8 — operating-system integration
 
@@ -279,7 +290,7 @@
 - [ ] Windows attribute, security and filename adapter.
 - [ ] Native Windows filesystem driver.
 - [x] Windows formatter, root transfer/listing and scrub application.
-- [x] Shared Linux/Windows Format 0.9 volume interoperability tests.
+- [x] Shared Linux/Windows Format 0.10 volume interoperability tests.
 
 ## Deliberately deferred
 

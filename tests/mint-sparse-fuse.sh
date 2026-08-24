@@ -150,6 +150,12 @@ ln -s /tree/subdirectory/renamed.bin "$mount_dir/absolute-link"
 [[ "$(readlink "$mount_dir/absolute-link")" == /tree/subdirectory/renamed.bin ]]
 cmp "$ordinary_source" "$mount_dir/tree/subdirectory/relative-link"
 cmp "$ordinary_source" "$mount_dir/absolute-link"
+step 'creating and validating a native regular-file hard link'
+ln "$mount_dir/tree/subdirectory/renamed.bin" "$mount_dir/hard-link.bin"
+[[ "$(stat -c '%i' "$mount_dir/tree/subdirectory/renamed.bin")" == \
+   "$(stat -c '%i' "$mount_dir/hard-link.bin")" ]]
+[[ "$(stat -c '%h' "$mount_dir/hard-link.bin")" == 2 ]]
+cmp "$ordinary_source" "$mount_dir/hard-link.bin"
 step 'creating a 1 TiB sparse file'
 truncate -s "$logical_size" "$mount_dir/sparse.bin"
 read -r size blocks < <(stat -c '%s %b' "$mount_dir/sparse.bin")
@@ -189,6 +195,10 @@ cmp "$ordinary_source" "$ordinary_readback"
 [[ "$(readlink "$mount_dir/tree/subdirectory/relative-link")" == renamed.bin ]]
 [[ "$(readlink "$mount_dir/absolute-link")" == /tree/subdirectory/renamed.bin ]]
 cmp "$ordinary_source" "$mount_dir/tree/subdirectory/relative-link"
+[[ "$(stat -c '%i' "$mount_dir/tree/subdirectory/renamed.bin")" == \
+   "$(stat -c '%i' "$mount_dir/hard-link.bin")" ]]
+[[ "$(stat -c '%h' "$mount_dir/hard-link.bin")" == 2 ]]
+cmp "$ordinary_source" "$mount_dir/hard-link.bin"
 read -r size blocks < <(stat -c '%s %b' "$mount_dir/sparse.bin")
 [[ "$size" == "$logical_size" && "$blocks" == 0 ]]
 dd if="$mount_dir/sparse.bin" of="$readback" bs=4096 \

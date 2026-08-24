@@ -137,7 +137,7 @@ jobs:
         run: |
           truncate -s 64M build/linux-format08.img
           build/mkfs.infilfs -L LinuxCrossPlatform build/linux-format08.img
-          printf 'linux-to-windows-format-0.9\n' > build/linux-cross-platform.txt
+          printf 'linux-to-windows-format-0.10\n' > build/linux-cross-platform.txt
           build/infilfs-tool build/linux-format08.img put build/linux-cross-platform.txt /linux-cross-platform.txt
           build/infilfs-scrub build/linux-format08.img
 
@@ -172,7 +172,7 @@ jobs:
           if ($head -ne $env:EXPECTED_SHA) { throw "Release checkout $head does not match approved source $env:EXPECTED_SHA." }
           if ($main -ne $env:EXPECTED_SHA) { throw 'Current main moved after release verification; publication stops.' }
 
-      - name: Download Linux-created Format 0.9 image
+      - name: Download Linux-created Format 0.10 image
         uses: actions/download-artifact@v4
         with:
           name: InfiltratorFS-release-test-image
