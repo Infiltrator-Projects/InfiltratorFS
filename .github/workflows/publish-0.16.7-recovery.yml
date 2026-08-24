@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-name: Recover 0.16.8 release
+name: Finalize qualified 0.16.8 release
 
 on:
   push:
@@ -9,7 +9,8 @@ on:
       - .github/workflows/publish-0.16.7-recovery.yml
 
 permissions:
-  contents: read
+  actions: read
+  contents: write
 
 concurrency:
   group: recover-infiltratorfs-0.16.8
@@ -18,10 +19,11 @@ concurrency:
 env:
   RELEASE_SHA: c30c47b9fa1df00b292a36b0d2fafbafa4b99bfb
   VERSION: 0.16.8
+  QUALIFIED_RUN_ID: '32788558349'
 
 jobs:
-  linux:
-    name: Requalify Linux and build 0.16.8 assets
+  publish:
+    name: Publish already-qualified 0.16.8 release
     runs-on: ubuntu-24.04
     steps:
       - name: Check out exact 0.16.8 release source
@@ -30,146 +32,36 @@ jobs:
           ref: ${{ env.RELEASE_SHA }}
           fetch-depth: 0
           submodules: recursive
-      - name: Verify exact historical release commit
+
+      - name: Verify exact release commit
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
           test "$(git log -1 --format=%s)" = "Release $VERSION"
           grep -Fq "project(InfiltratorFS VERSION $VERSION LANGUAGES C)" CMakeLists.txt
-      - name: Install Linux build dependencies
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential cmake desktop-file-utils fuse3 libfuse3-dev \
-            pkg-config policykit-1 xdg-utils zenity
-      - name: Configure, build and run Linux conformance
-        run: |
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --parallel
-          ctest --test-dir build --output-on-failure
-          desktop-file-validate packaging/infiltratorfs-manager.desktop
-      - name: Build and verify Linux packages
-        shell: bash
-        run: |
-          set -euo pipefail
-          bash packaging/build-linux-packages.sh build dist
-          deb="dist/infiltratorfs_${VERSION}_amd64.deb"
-          installer="dist/infiltratorfs-${VERSION}-linux-native.run"
-          test -s "$deb"
-          test -x "$installer"
-          test "$(dpkg-deb --field "$deb" Version)" = "$VERSION"
-          "$installer" --verify
-          "$installer" --dry-run | tee dist/native-installer-dry-run.txt
-          grep -Fq 'Dry run only; no packages will be installed' dist/native-installer-dry-run.txt
-          grep -Fq 'Native build commands:' dist/native-installer-dry-run.txt
-          rm -f dist/native-installer-dry-run.txt
-      - name: Build Format 0.12 Linux-to-Windows qualification image
-        shell: bash
-        run: |
-          set -euo pipefail
-          truncate -s 64M build/linux-cross-platform.img
-          build/mkfs.infilfs -L LinuxCrossPlatform build/linux-cross-platform.img | tee build/mkfs-output.txt
-          grep -Fq 'Format:          0.12' build/mkfs-output.txt
-          printf 'linux-to-windows-cross-platform\n' > build/linux-cross-platform.txt
-          build/infilfs-tool build/linux-cross-platform.img put build/linux-cross-platform.txt /linux-cross-platform.txt
-          build/infilfs-scrub build/linux-cross-platform.img
-      - name: Upload Linux release inputs
-        uses: actions/upload-artifact@v4
-        with:
-          name: recover-0.16.8-linux
-          path: |
-            dist/infiltratorfs_${{ env.VERSION }}_amd64.deb
-            dist/infiltratorfs-${{ env.VERSION }}-linux-native.run
-            build/linux-cross-platform.img
-          if-no-files-found: error
-          retention-days: 7
 
-  windows:
-    name: Requalify Windows and build 0.16.8 executable
-    needs: linux
-    runs-on: windows-latest
-    steps:
-      - name: Check out exact 0.16.8 release source
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ env.RELEASE_SHA }}
-          fetch-depth: 0
-          submodules: recursive
-      - name: Download Linux qualification image
-        uses: actions/download-artifact@v4
-        with:
-          name: recover-0.16.8-linux
-          path: recovered
-      - name: Configure, build and run Windows conformance
-        shell: pwsh
-        run: |
-          if ((git rev-parse HEAD).Trim() -ne $env:RELEASE_SHA) { throw 'Historical release checkout mismatch.' }
-          cmake -S . -B build -A x64
-          cmake --build build --config Release --parallel
-          ctest --test-dir build -C Release --output-on-failure
-      - name: Verify Linux Format 0.12 image through exact 0.16.8 Win32 backend
-        shell: pwsh
-        run: |
-          $image = Get-ChildItem .\recovered -Recurse -Filter linux-cross-platform.img | Select-Object -First 1
-          if (!$image) { throw 'Linux cross-platform image was not found in the downloaded artifact.' }
-          $testPath = 'tests/win32-storage.c'
-          $source = Get-Content $testPath -Raw
-          $source = $source.Replace('format_minor) != 11u', 'format_minor) != 12u')
-          $source = $source.Replace('Linux-created image is not Format 0.11', 'Linux-created image is not Format 0.12')
-          $source = $source.Replace('linux-to-windows-format-0.11\n', 'linux-to-windows-cross-platform\n')
-          $source = $source.Replace('Linux-created Format 0.11 image opened successfully on Windows', 'Linux-created Format 0.12 image opened successfully on Windows')
-          Set-Content -Path $testPath -Value $source -NoNewline
-          cmake --build build --config Release --target infilfs-win32-storage
-          & .\build\Release\infilfs-win32-storage.exe $image.FullName
-      - name: Verify Windows executable metadata
-        shell: pwsh
-        run: |
-          $exe = "build\Release\InfiltratorFS-Windows-$env:VERSION.exe"
-          if (!(Test-Path $exe)) { throw "Missing $exe" }
-          $info = (Get-Item $exe).VersionInfo
-          if (!$info.FileVersion.StartsWith($env:VERSION)) { throw "FileVersion mismatch: $($info.FileVersion)" }
-          if (!$info.ProductVersion.StartsWith($env:VERSION)) { throw "ProductVersion mismatch: $($info.ProductVersion)" }
-      - name: Upload Windows release asset
-        uses: actions/upload-artifact@v4
-        with:
-          name: recover-0.16.8-windows
-          path: build/Release/InfiltratorFS-Windows-${{ env.VERSION }}.exe
-          if-no-files-found: error
-          retention-days: 7
-
-  publish:
-    name: Publish immutable 0.16.8 release
-    needs: [linux, windows]
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-    steps:
-      - name: Check out exact 0.16.8 release source
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ env.RELEASE_SHA }}
-          fetch-depth: 0
-          submodules: recursive
-      - name: Download verified release assets
+      - name: Download qualified Linux and Windows artifacts
         uses: actions/download-artifact@v4
         with:
           pattern: recover-0.16.8-*
-          path: release-assets
+          path: qualified-assets
           merge-multiple: true
-      - name: Publish exact historical commit as v0.16.8
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.QUALIFIED_RUN_ID }}
+
+      - name: Stage, verify, checksum and publish v0.16.8
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
-          test "$(git log -1 --format=%s)" = "Release $VERSION"
-          grep -Fq "project(InfiltratorFS VERSION $VERSION LANGUAGES C)" CMakeLists.txt
-          git fetch origin --tags
           tag="v${VERSION}"
+          deb="infiltratorfs_${VERSION}_amd64.deb"
+          installer="infiltratorfs-${VERSION}-linux-native.run"
+          windows="InfiltratorFS-Windows-${VERSION}.exe"
+
           if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
             echo "Tag ${tag} already exists; refusing to move it." >&2
             exit 1
@@ -178,20 +70,25 @@ jobs:
             echo "Release ${tag} already exists; refusing to modify it." >&2
             exit 1
           fi
-          deb="infiltratorfs_${VERSION}_amd64.deb"
-          installer="infiltratorfs-${VERSION}-linux-native.run"
-          windows="InfiltratorFS-Windows-${VERSION}.exe"
+
+          mkdir -p release-assets
           for asset in "$deb" "$installer" "$windows"; do
-            test -s "release-assets/$asset"
+            source_path="$(find qualified-assets -type f -name "$asset" -print -quit)"
+            test -n "$source_path"
+            test -s "$source_path"
+            cp "$source_path" "release-assets/$asset"
           done
+
           test "$(dpkg-deb --field "release-assets/$deb" Version)" = "$VERSION"
-          "release-assets/$installer" --verify
+          bash "release-assets/$installer" --verify
           (
             cd release-assets
             sha256sum "$deb" "$installer" "$windows" > SHA256SUMS.txt
           )
+
           git tag "$tag" "$RELEASE_SHA"
           git push origin "$tag"
+
           gh release create "$tag" \
             "release-assets/$deb" \
             "release-assets/$installer" \
@@ -202,6 +99,12 @@ jobs:
             --title "InfiltratorFS $VERSION" \
             --generate-notes \
             --latest
-          expected_assets=$(printf '%s\n%s\n%s\n%s\n' "$deb" "$installer" "$windows" SHA256SUMS.txt | sort)
+
+          expected_assets=$(printf '%s\n%s\n%s\n%s\n' \
+            "$deb" "$installer" "$windows" SHA256SUMS.txt | sort)
           published_assets=$(gh release view "$tag" --json assets --jq '.assets[].name' | sort)
-          test "$published_assets" = "$expected_assets"
+          if [[ "$published_assets" != "$expected_assets" ]]; then
+            printf 'Unexpected release asset set.\nExpected:\n%s\nPublished:\n%s\n' \
+              "$expected_assets" "$published_assets" >&2
+            exit 1
+          fi
