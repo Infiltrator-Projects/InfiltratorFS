@@ -8,7 +8,7 @@ infilfs-forensic volume.img
 infilfs-forensic --jsonl /dev/sdb1 > evidence.jsonl
 ```
 
-The scanner authenticates each recognized record independently using the checks already defined by Format 0.8:
+The scanner authenticates each recognized record independently using the checks already defined by Format 0.9, including native symbolic-link objects:
 
 - checkpoint structure, geometry-independent fields and CRC64;
 - object magic, type/version, identity, payload shape, canonical padding and CRC64;

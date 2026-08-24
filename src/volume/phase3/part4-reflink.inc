@@ -157,7 +157,8 @@ static infs_status reflink_file_tx(struct infs_volume *vol,
     options.posix_permissions = infs_le32_to_cpu(source->posix.permissions);
     options.posix_uid = infs_le32_to_cpu(source->posix.uid);
     options.posix_gid = infs_le32_to_cpu(source->posix.gid);
-    status = create_object(vol, destination_path, &options, INFS_OBJECT_FILE);
+    status = create_object(
+        vol, destination_path, &options, INFS_OBJECT_FILE, NULL);
     if (status != INFS_STATUS_OK)
         return status;
 

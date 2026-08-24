@@ -296,6 +296,15 @@ static int validate_integrity_metadata(struct infs_volume *vol)
                 }
                 (void)bytes;
             }
+        } else if (type == INFS_OBJECT_SYMLINK) {
+            uint8_t object[INFS_BLOCK_SIZE];
+            status = read_object(
+                vol, infs_le64_to_cpu(entries[i].object_block), object);
+            if (status != INFS_STATUS_OK)
+                goto out;
+            status = symlink_validate(vol, object, NULL, NULL);
+            if (status != INFS_STATUS_OK)
+                goto out;
         }
     }
     status = INFS_STATUS_OK;

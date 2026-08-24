@@ -60,6 +60,10 @@ static int remove_object(struct infs_volume *vol, const char *path, int want_dir
             if (status != INFS_STATUS_OK)
                 return status;
         }
+    } else if (child.type == INFS_OBJECT_SYMLINK) {
+        status = symlink_validate(vol, child_block, NULL, NULL);
+        if (status != INFS_STATUS_OK)
+            return status;
     } else {
         return INFS_STATUS_CORRUPT;
     }

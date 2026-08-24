@@ -210,6 +210,16 @@
 - [x] Include both helpers in native and Debian installations.
 - [x] Keep on-disk Format 0.8 unchanged.
 
+## Phase 4.14 — implementation 0.14.0 native symbolic links — complete
+
+- [x] Publish feature-gated Format 0.9 with symbolic-link object type 5.
+- [x] Store nonempty relative or absolute UTF-8 targets inline with portable metadata.
+- [x] Create, read, rename, replace, unlink and scrub symbolic links through the portable core.
+- [x] Expose standard `symlink(2)` and `readlink(2)` behavior through Linux FUSE.
+- [x] Add offline `symlink` and `readlink` commands and forensic classification.
+- [x] Keep Format 0.6–0.8 volumes readable and reject the new feature under older versions.
+- [x] Add portable, mounted-FUSE, remount, corruption-boundary and Windows interoperability coverage.
+
 ## Phase 4 — modern storage features
 
 - [x] Sparse extents.
@@ -247,7 +257,8 @@
 - [ ] Versioned Unicode normalization policy.
 - [ ] Optional case-folded directory policy with unambiguous comparison rules.
 - [ ] Cross-platform removable-volume filename profile.
-- [ ] Symbolic links and generic reparse-point objects.
+- [x] Symbolic links.
+- [ ] Generic reparse-point objects.
 - [ ] Hard links and transactional reference accounting.
 
 ## Phase 8 — operating-system integration
@@ -268,7 +279,7 @@
 - [ ] Windows attribute, security and filename adapter.
 - [ ] Native Windows filesystem driver.
 - [x] Windows formatter, root transfer/listing and scrub application.
-- [x] Shared Linux/Windows Format 0.8 volume interoperability tests.
+- [x] Shared Linux/Windows Format 0.9 volume interoperability tests.
 
 ## Deliberately deferred
 

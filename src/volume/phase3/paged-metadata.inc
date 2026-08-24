@@ -64,7 +64,8 @@ static int index_page_validate(struct infs_volume *vol,
             infs_le16_to_cpu(entries[i].flags) != 0 ||
             infs_le32_to_cpu(entries[i].reserved) != 0 ||
             (type != INFS_OBJECT_DIRECTORY && type != INFS_OBJECT_FILE &&
-             type != INFS_OBJECT_CHECKSUM))
+             type != INFS_OBJECT_CHECKSUM && type != INFS_OBJECT_SYMLINK) ||
+            (type == INFS_OBJECT_SYMLINK && !symbolic_links_enabled(vol)))
             return INFS_STATUS_CORRUPT;
     }
     if (entries_out)
@@ -104,7 +105,8 @@ static int directory_page_validate(struct infs_volume *vol,
             (record_size & 7u) != 0 || name_length == 0 ||
             name_length > INFS_NAME_MAX ||
             sizeof(*entry) + name_length > record_size ||
-            (type != INFS_OBJECT_DIRECTORY && type != INFS_OBJECT_FILE) ||
+            !namespace_object_type(type) ||
+            (type == INFS_OBJECT_SYMLINK && !symbolic_links_enabled(vol)) ||
             infs_le16_to_cpu(entry->flags) != 0 ||
             id_is_zero(entry->object_id) ||
             memchr(name, '\0', name_length) != NULL ||
@@ -535,7 +537,7 @@ static int paged_dir_add(struct infs_volume *vol,
     if (name_length == 0 || name_length > INFS_NAME_MAX || strchr(name, '/') ||
         strcmp(name, ".") == 0 || strcmp(name, "..") == 0 ||
         id_is_zero(object_id) || !infs_utf8_validate(name, name_length) ||
-        (type != INFS_OBJECT_DIRECTORY && type != INFS_OBJECT_FILE))
+        !namespace_object_type(type))
         return INFS_STATUS_INVALID_ARGUMENT;
     infs_status status = paged_dir_lookup(vol, head, name, NULL);
     if (status == INFS_STATUS_OK)

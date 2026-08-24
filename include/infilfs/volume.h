@@ -140,6 +140,12 @@ infs_status infs_create_file(struct infs_volume *vol, const char *path,
                              const struct infs_create_options *options);
 infs_status infs_mkdir(struct infs_volume *vol, const char *path,
                        const struct infs_create_options *options);
+infs_status infs_create_symlink(struct infs_volume *vol, const char *path,
+                                const char *target,
+                                const struct infs_create_options *options);
+infs_status infs_read_symlink(struct infs_volume *vol, const char *path,
+                              char *target, size_t capacity,
+                              size_t *length_out);
 infs_status infs_unlink(struct infs_volume *vol, const char *path);
 infs_status infs_rmdir(struct infs_volume *vol, const char *path);
 infs_status infs_rename(struct infs_volume *vol, const char *oldpath,

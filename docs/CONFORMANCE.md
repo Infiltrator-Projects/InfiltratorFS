@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-# Format 0.8 Conformance
+# Format 0.9 Conformance
 
-Format 0.8 retains Format 0.7 inline files and feature-gated shared extents while adding version-2 directory/index heads and independently checksummed metadata pages. Format 0.6 and 0.7 volumes remain readable. New Format 0.8 volumes enable UTF-8 names, sparse extents, inline data, shared extents and paged metadata.
+Format 0.9 retains Format 0.8 paged metadata while adding feature-gated native symbolic-link objects. Format 0.6, 0.7 and 0.8 volumes remain readable. New Format 0.9 volumes enable UTF-8 names, sparse extents, inline data, shared extents, paged metadata and symbolic links.
 
 ## Required representation
 
@@ -18,6 +18,7 @@ A conforming implementation must preserve:
 - `INFS_INCOMPAT_INLINE_DATA` accepted only for Format 0.7 and later;
 - `INFS_INCOMPAT_SHARED_EXTENTS` governing duplicate normal-data ownership;
 - mandatory `INFS_INCOMPAT_PAGED_METADATA` for newly formatted Format 0.8 volumes;
+- mandatory `INFS_INCOMPAT_SYMBOLIC_LINKS` for newly formatted Format 0.9 volumes;
 - object version 1 for classic objects and version 2 for paged directory/index heads;
 - owner-identified, generation-matched, CRC64-protected directory and index pages;
 - nonzero 128-bit filesystem and object identities;
@@ -70,13 +71,17 @@ When `INFS_INCOMPAT_PAGED_METADATA` is set, the root directory and object-index 
 
 ## Feature-flag compatibility
 
-Format 0.8 uses the conventional three feature classes deliberately:
+Format 0.9 uses the conventional three feature classes deliberately:
 
 - unknown `incompat_flags` require refusal to open;
 - unknown `ro_compat_flags` may be opened read-only but must not be opened writable;
 - unknown `compat_flags` may be ignored because they do not change required read/write interpretation.
 
-`INFS_INCOMPAT_UTF8_NAMES`, `INFS_INCOMPAT_SPARSE_EXTENTS` and `INFS_INCOMPAT_PAGED_METADATA` are required on newly formatted Format 0.8 volumes. `INFS_INCOMPAT_INLINE_DATA` changes file-payload interpretation and is invalid before Format 0.7. `INFS_INCOMPAT_SHARED_EXTENTS` changes normal-data ownership rules. `INFS_INCOMPAT_PAGED_METADATA` is invalid before Format 0.8. Format 0.8 defines no compatible or read-only-compatible bits.
+`INFS_INCOMPAT_UTF8_NAMES`, `INFS_INCOMPAT_SPARSE_EXTENTS`, `INFS_INCOMPAT_PAGED_METADATA` and `INFS_INCOMPAT_SYMBOLIC_LINKS` are required on newly formatted Format 0.9 volumes. `INFS_INCOMPAT_INLINE_DATA` changes file-payload interpretation and is invalid before Format 0.7. `INFS_INCOMPAT_SHARED_EXTENTS` changes normal-data ownership rules. `INFS_INCOMPAT_PAGED_METADATA` is invalid before Format 0.8, and `INFS_INCOMPAT_SYMBOLIC_LINKS` is invalid before Format 0.9. Format 0.9 defines no compatible or read-only-compatible bits.
+
+## Symbolic-link acceptance
+
+A symbolic-link object is accepted only when the symbolic-link incompatible feature is enabled. It must use classic object version 1, valid common/POSIX metadata, link count 1, and an exact payload containing a nonempty NUL-free UTF-8 target of at most 3,888 bytes. The target length, payload size and common logical size must agree; the reserved field must be zero. Directory entries, index entries, namespace reachability and scrub all preserve and verify object type 5. Relative and absolute targets are opaque to the portable core and resolved by the operating-system adapter.
 
 ## Portable result contract
 
@@ -104,7 +109,7 @@ Ordinary rename replacement is a single filesystem transaction. A file may repla
 
 ## Automated checks
 
-`infilfs-format-conformance` checks exact structure sizes and offsets, independently constructs expected Format 0.8 checkpoint bytes, proves version-gated features cannot appear under an older minor version, accepts compatible legacy checkpoints, rejects unsupported incompatible features and verifies UTF-8/checksum rules.
+`infilfs-format-conformance` checks exact structure sizes and offsets, independently constructs expected checkpoint bytes, proves version-gated features cannot appear under an older minor version, accepts compatible legacy checkpoints, rejects unsupported incompatible features and verifies UTF-8/checksum rules. `infilfs-symlinks` covers creation, target reads, attributes, listing, rename/replacement, unlink, invalid targets, scrub and remount.
 
 `infilfs-inline-files` constructs a deterministic inline-enabled volume in memory and verifies:
 
@@ -130,7 +135,9 @@ Ordinary rename replacement is a single filesystem transaction. A file may repla
 
 `infilfs-open-hardening`, `infilfs-063-hardening`, `infilfs-posix-locking` and `infilfs-sparse-files` retain the existing geometry, recovery, locking and crash-atomicity regression gates.
 
-GitHub Actions builds and tests the full Linux implementation, separately builds the portable core and native transfer application with Microsoft Visual C, and opens a Linux-created Format 0.8 image through the Win32 backend. The hardening matrix also runs Clang, AddressSanitizer/UndefinedBehaviorSanitizer and GCC `-fanalyzer`. When `/dev/fuse` is available, `infilfs-mint-fuse` performs mounted copy, rename, permission, sparse, punch, unmount and remount verification.
+GitHub Actions builds and tests the full Linux implementation, separately builds the portable core and native transfer application with Microsoft Visual C, and opens a Linux-created Format 0.9 image through the Win32 backend. The hardening matrix also runs Clang, AddressSanitizer/UndefinedBehaviorSanitizer and GCC `-fanalyzer`. When `/dev/fuse` is available, `infilfs-mint-fuse` performs mounted copy, rename, permission, symbolic-link, sparse, punch, unmount and remount verification.
+
+Implementation 0.14.0 requires native relative and absolute symbolic links through both the portable API and Linux FUSE. Mounted conformance verifies `ln -s`, `readlink`, target traversal and persistence across remount. Offline conformance verifies exact target bytes and metadata, namespace mutations, scrub, feature-version gating and invalid target rejection.
 
 Implementation 0.12.0 additionally requires mounted conformance for descriptor lifetime across direct rename, parent-directory rename, unlink and atomic replacement of an open destination. The test continues reading, writing, truncating and syncing through the original descriptor after its pathname changes or disappears. Retained objects use an adapter-owned hidden, system-marked directory built from ordinary Format 0.8 namespace objects; final close and the next writable mount both verify reclamation without a disk-format extension.
 

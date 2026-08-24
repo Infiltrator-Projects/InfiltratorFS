@@ -51,7 +51,8 @@ static int superblock_label_valid(const uint8_t label[INFS_LABEL_MAX])
 static int object_type_valid(uint16_t type)
 {
     return type == INFS_OBJECT_DIRECTORY || type == INFS_OBJECT_FILE ||
-           type == INFS_OBJECT_INDEX || type == INFS_OBJECT_CHECKSUM;
+           type == INFS_OBJECT_INDEX || type == INFS_OBJECT_CHECKSUM ||
+           type == INFS_OBJECT_SYMLINK;
 }
 
 static int object_version_valid(uint16_t type, uint16_t version)
@@ -94,6 +95,25 @@ static int index_payload_shape_valid(const uint8_t block[INFS_BLOCK_SIZE],
         return 0;
     size_t expected = sizeof(*payload) + (size_t)page_count * sizeof(uint64_t);
     return expected == payload_size;
+}
+
+static int symlink_payload_shape_valid(const uint8_t block[INFS_BLOCK_SIZE],
+                                       uint32_t payload_size)
+{
+    if (payload_size < sizeof(struct infs_symlink_payload_disk))
+        return 0;
+    const struct infs_symlink_payload_disk *payload =
+        (const struct infs_symlink_payload_disk *)(
+            block + sizeof(struct infs_object_header_disk));
+    uint32_t length = infs_le32_to_cpu(payload->target_length);
+    if (length == 0 || length > INFS_SYMLINK_TARGET_MAX ||
+        infs_le32_to_cpu(payload->reserved) != 0 ||
+        payload_size != sizeof(*payload) + length ||
+        infs_le64_to_cpu(payload->attributes.logical_size) != length)
+        return 0;
+    const uint8_t *target = (const uint8_t *)(payload + 1);
+    return memchr(target, '\0', length) == NULL &&
+        infs_utf8_validate(target, length);
 }
 
 infs_status infs_encode_superblock(uint8_t block[INFS_BLOCK_SIZE],
@@ -150,7 +170,9 @@ int infs_validate_superblock_block(const uint8_t block[INFS_BLOCK_SIZE])
         (format_minor < 7u &&
          (incompat_flags & INFS_INCOMPAT_INLINE_DATA) != 0) ||
         (format_minor < 8u &&
-         (incompat_flags & INFS_INCOMPAT_PAGED_METADATA) != 0))
+         (incompat_flags & INFS_INCOMPAT_PAGED_METADATA) != 0) ||
+        (format_minor < 9u &&
+         (incompat_flags & INFS_INCOMPAT_SYMBOLIC_LINKS) != 0))
         return 0;
 
     const size_t off = offsetof(struct infs_superblock_disk, checksum);
@@ -221,7 +243,9 @@ infs_status infs_object_finalize(uint8_t block[INFS_BLOCK_SIZE])
         payload_size > INFS_BLOCK_SIZE - sizeof(*hdr) ||
         infs_le32_to_cpu(hdr->checksum_type) != INFS_CHECKSUM_CRC64_ECMA ||
         (object_type == INFS_OBJECT_INDEX &&
-         !index_payload_shape_valid(block, payload_size, object_version))) {
+         !index_payload_shape_valid(block, payload_size, object_version)) ||
+        (object_type == INFS_OBJECT_SYMLINK &&
+         !symlink_payload_shape_valid(block, payload_size))) {
         return INFS_STATUS_INVALID_ARGUMENT;
     }
 
@@ -259,6 +283,9 @@ int infs_validate_object_block(const uint8_t block[INFS_BLOCK_SIZE])
         return 0;
     if (object_type == INFS_OBJECT_INDEX &&
         !index_payload_shape_valid(block, payload_size, object_version))
+        return 0;
+    if (object_type == INFS_OBJECT_SYMLINK &&
+        !symlink_payload_shape_valid(block, payload_size))
         return 0;
     if (!bytes_are_zero(hdr->checksum + sizeof(uint64_t),
                         sizeof(hdr->checksum) - sizeof(uint64_t)) ||

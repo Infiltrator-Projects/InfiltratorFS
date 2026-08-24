@@ -58,6 +58,8 @@ POSIX permission bits and numeric UID/GID values are retained in a separate comp
 
 Format 0.8 names are well-formed UTF-8 and are limited to 255 bytes per component. NUL and `/` are invalid. `.` and `..` are adapter/core navigation syntax and are not stored.
 
+Format 0.9 adds first-class symbolic-link namespace objects behind an incompatible feature bit. Each link retains common object identity, timestamps and portable/POSIX attributes while storing a nonempty inline UTF-8 target of up to 3,888 bytes. The portable core creates, reads and validates the opaque target; Linux FUSE delegates normal relative/absolute traversal to the kernel through `readlink`.
+
 Current directory lookup is case-sensitive and compares encoded UTF-8 bytes exactly. Unicode normalization and case-folded directory policies must be explicitly versioned before they are enabled. An adapter must not silently create a second definition of filename equality.
 
 Platform-specific filename restrictions belong in the relevant adapter. A future portability profile may impose a stricter shared subset for removable volumes intended to move routinely between operating systems.
@@ -97,7 +99,7 @@ Format 0.8 permits shared normal extents. A reflink creates a new file object an
 
 ## 8. Integrity and recovery
 
-Metadata blocks are self-identifying, versioned and checksummed. Format 0.8 uses CRC64-ECMA for object heads and metadata pages and SHA-256 for logical file data.
+Metadata blocks are self-identifying, versioned and checksummed. Format 0.9 uses CRC64-ECMA for object heads and metadata pages and SHA-256 for logical file data.
 
 Every allocated extent-backed logical data block has a separate checksum entry stored in checksummed CoW metadata. Hole extents need no data checksum. Checksum objects form a sorted sparse chain, so a high-offset write allocates checksum metadata for its own segment rather than every preceding hole.
 

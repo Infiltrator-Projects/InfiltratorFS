@@ -34,6 +34,19 @@ static int command_cat(struct infs_volume *vol, const char *path)
     return 0;
 }
 
+static int command_readlink(struct infs_volume *vol, const char *path)
+{
+    char target[INFS_SYMLINK_TARGET_MAX + 1u];
+    size_t length = 0;
+    infs_status status = infs_read_symlink(
+        vol, path, target, sizeof(target), &length);
+    if (status != INFS_STATUS_OK)
+        return die_status("readlink", status);
+    if (fwrite(target, 1, length, stdout) != length || putchar('\n') == EOF)
+        return die_errno("stdout");
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 3) {
@@ -43,7 +56,8 @@ int main(int argc, char **argv)
     const char *image = argv[1];
     const char *cmd = argv[2];
     int writable = strcmp(cmd, "ls") != 0 && strcmp(cmd, "stat") != 0 &&
-        strcmp(cmd, "cat") != 0 && strcmp(cmd, "map") != 0;
+        strcmp(cmd, "cat") != 0 && strcmp(cmd, "map") != 0 &&
+        strcmp(cmd, "readlink") != 0;
 
     struct infs_volume vol;
     infs_status status = infs_posix_volume_open(&vol, image, writable);
@@ -76,6 +90,16 @@ int main(int argc, char **argv)
     } else if (strcmp(cmd, "reflink") == 0 && argc == 5) {
         status = infs_reflink_file(&vol, argv[3], argv[4]);
         if (status != INFS_STATUS_OK) rc = die_status("reflink", status);
+    } else if (strcmp(cmd, "symlink") == 0 && argc == 5) {
+        const struct infs_create_options options = {
+            .posix_permissions = 0777,
+            .posix_uid = (uint32_t)getuid(),
+            .posix_gid = (uint32_t)getgid(),
+        };
+        status = infs_create_symlink(&vol, argv[4], argv[3], &options);
+        if (status != INFS_STATUS_OK) rc = die_status("symlink", status);
+    } else if (strcmp(cmd, "readlink") == 0 && argc == 4) {
+        rc = command_readlink(&vol, argv[3]);
     } else if (strcmp(cmd, "mv") == 0 && argc == 5) {
         status = infs_rename(&vol, argv[3], argv[4]);
         if (status != INFS_STATUS_OK) rc = die_status("mv", status);

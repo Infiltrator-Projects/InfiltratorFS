@@ -59,13 +59,13 @@ jobs:
         run: |
           truncate -s 64M build/linux-format08.img
           build/mkfs.infilfs -L LinuxCrossPlatform build/linux-format08.img
-          printf 'linux-to-windows-format-0.8\n' > build/linux-cross-platform.txt
+          printf 'linux-to-windows-format-0.9\n' > build/linux-cross-platform.txt
           build/infilfs-tool build/linux-format08.img put build/linux-cross-platform.txt /linux-cross-platform.txt
           build/infilfs-scrub build/linux-format08.img
-      - name: Upload Linux-created Format 0.8 image
+      - name: Upload Linux-created Format 0.9 image
         uses: actions/upload-artifact@v4
         with:
-          name: InfiltratorFS-Linux-Format08-TestImage
+          name: InfiltratorFS-Linux-Format09-TestImage
           path: build/linux-format08.img
           if-no-files-found: error
 
@@ -131,10 +131,10 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v6
-      - name: Download Linux-created Format 0.8 image
+      - name: Download Linux-created Format 0.9 image
         uses: actions/download-artifact@v4
         with:
-          name: InfiltratorFS-Linux-Format08-TestImage
+          name: InfiltratorFS-Linux-Format09-TestImage
           path: cross-platform
       - name: Configure MSVC
         run: cmake -S . -B build -A x64
@@ -142,7 +142,7 @@ jobs:
         run: cmake --build build --config Release --parallel
       - name: Run Windows conformance tests
         run: ctest --test-dir build -C Release --output-on-failure
-      - name: Open Linux-created Format 0.8 image on Windows
+      - name: Open Linux-created Format 0.9 image on Windows
         shell: pwsh
         run: '& .\build\Release\infilfs-win32-storage.exe .\cross-platform\linux-format08.img'
       - name: Verify Windows storage and transfer policy are compiled

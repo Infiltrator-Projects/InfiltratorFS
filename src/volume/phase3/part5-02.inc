@@ -34,6 +34,10 @@ static int destroy_replaced_object_tx(struct infs_volume *vol,
             if (status != INFS_STATUS_OK)
                 return status;
         }
+    } else if (target->type == INFS_OBJECT_SYMLINK) {
+        status = symlink_validate(vol, object, NULL, NULL);
+        if (status != INFS_STATUS_OK)
+            return status;
     } else {
         return INFS_STATUS_CORRUPT;
     }
@@ -113,7 +117,7 @@ static int rename_tx(struct infs_volume *vol, const char *oldpath,
             return status;
         if (destination.type != destination_type)
             return INFS_STATUS_CORRUPT;
-        if (source_type == INFS_OBJECT_FILE &&
+        if (source_type != INFS_OBJECT_DIRECTORY &&
             destination_type == INFS_OBJECT_DIRECTORY)
             return INFS_STATUS_IS_DIRECTORY;
         if (source_type == INFS_OBJECT_DIRECTORY &&

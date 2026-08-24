@@ -143,6 +143,13 @@ mv "$mount_dir/tree/subdirectory/original.bin" \
     "$mount_dir/tree/subdirectory/renamed.bin"
 cmp "$ordinary_source" "$mount_dir/tree/subdirectory/renamed.bin"
 [[ "$(stat -c '%a' "$mount_dir/tree/subdirectory/renamed.bin")" == 640 ]]
+step 'creating and resolving native symbolic links'
+ln -s renamed.bin "$mount_dir/tree/subdirectory/relative-link"
+ln -s /tree/subdirectory/renamed.bin "$mount_dir/absolute-link"
+[[ "$(readlink "$mount_dir/tree/subdirectory/relative-link")" == renamed.bin ]]
+[[ "$(readlink "$mount_dir/absolute-link")" == /tree/subdirectory/renamed.bin ]]
+cmp "$ordinary_source" "$mount_dir/tree/subdirectory/relative-link"
+cmp "$ordinary_source" "$mount_dir/absolute-link"
 step 'creating a 1 TiB sparse file'
 truncate -s "$logical_size" "$mount_dir/sparse.bin"
 read -r size blocks < <(stat -c '%s %b' "$mount_dir/sparse.bin")
@@ -179,6 +186,9 @@ mount_image
 cp "$mount_dir/tree/subdirectory/renamed.bin" "$ordinary_readback"
 cmp "$ordinary_source" "$ordinary_readback"
 [[ "$(stat -c '%a' "$mount_dir/tree/subdirectory/renamed.bin")" == 640 ]]
+[[ "$(readlink "$mount_dir/tree/subdirectory/relative-link")" == renamed.bin ]]
+[[ "$(readlink "$mount_dir/absolute-link")" == /tree/subdirectory/renamed.bin ]]
+cmp "$ordinary_source" "$mount_dir/tree/subdirectory/relative-link"
 read -r size blocks < <(stat -c '%s %b' "$mount_dir/sparse.bin")
 [[ "$size" == "$logical_size" && "$blocks" == 0 ]]
 dd if="$mount_dir/sparse.bin" of="$readback" bs=4096 \

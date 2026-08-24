@@ -43,7 +43,7 @@ infs_status infs_get_attributes(struct infs_volume *vol, const char *path,
         attributes->allocated_size =
             file_allocated_blocks(p, ext) * INFS_BLOCK_SIZE;
         posix = &p->posix;
-    } else {
+    } else if (lk.type == INFS_OBJECT_DIRECTORY) {
         const struct infs_object_header_disk *header =
             (const struct infs_object_header_disk *)block;
         const struct infs_directory_payload_disk *p =
@@ -54,6 +54,15 @@ infs_status infs_get_attributes(struct infs_volume *vol, const char *path,
             blocks += infs_le32_to_cpu(p->bytes_used);
         attributes->allocated_size = blocks * INFS_BLOCK_SIZE;
         posix = &p->posix;
+    } else if (lk.type == INFS_OBJECT_SYMLINK) {
+        struct infs_symlink_payload_disk *p;
+        status = symlink_validate(vol, block, &p, NULL);
+        if (status != INFS_STATUS_OK)
+            return status;
+        attributes->allocated_size = INFS_BLOCK_SIZE;
+        posix = &p->posix;
+    } else {
+        return INFS_STATUS_CORRUPT;
     }
     attributes->posix_permissions = infs_le32_to_cpu(posix->permissions);
     attributes->posix_uid = infs_le32_to_cpu(posix->uid);
@@ -166,7 +175,7 @@ infs_status infs_create_file(struct infs_volume *vol, const char *path,
     infs_status status = tx_begin(vol);
     if (status != INFS_STATUS_OK)
         return status;
-    status = create_object(vol, path, options, INFS_OBJECT_FILE);
+    status = create_object(vol, path, options, INFS_OBJECT_FILE, NULL);
     if (status == INFS_STATUS_OK)
         status = finish_mutation(vol, (uint64_t)INFS_BLOCK_SIZE * 4u);
     if (status != INFS_STATUS_OK)
@@ -182,10 +191,65 @@ infs_status infs_mkdir(struct infs_volume *vol, const char *path,
     infs_status status = tx_begin(vol);
     if (status != INFS_STATUS_OK)
         return status;
-    status = create_object(vol, path, options, INFS_OBJECT_DIRECTORY);
+    status = create_object(vol, path, options, INFS_OBJECT_DIRECTORY, NULL);
     if (status == INFS_STATUS_OK)
         status = finish_mutation(vol, (uint64_t)INFS_BLOCK_SIZE * 4u);
     if (status != INFS_STATUS_OK)
         tx_abort(vol);
     return status;
+}
+
+infs_status infs_create_symlink(struct infs_volume *vol, const char *path,
+                                const char *target,
+                                const struct infs_create_options *options)
+{
+    if (!vol || !path || path[0] != '/' || !target)
+        return INFS_STATUS_INVALID_ARGUMENT;
+    size_t length = strlen(path);
+    if (length > 1u && path[length - 1u] == '/')
+        return INFS_STATUS_NOT_DIRECTORY;
+
+    infs_status status = tx_begin(vol);
+    if (status != INFS_STATUS_OK)
+        return status;
+    status = create_object(
+        vol, path, options, INFS_OBJECT_SYMLINK, target);
+    if (status == INFS_STATUS_OK)
+        status = finish_mutation(vol, (uint64_t)INFS_BLOCK_SIZE * 4u);
+    if (status != INFS_STATUS_OK)
+        tx_abort(vol);
+    return status;
+}
+
+infs_status infs_read_symlink(struct infs_volume *vol, const char *path,
+                              char *target, size_t capacity,
+                              size_t *length_out)
+{
+    if (!vol || !path || path[0] != '/' || !length_out ||
+        (!target && capacity != 0))
+        return INFS_STATUS_INVALID_ARGUMENT;
+    struct infs_lookup lookup;
+    infs_status status = infs_lookup_path(vol, path, &lookup);
+    if (status != INFS_STATUS_OK)
+        return status;
+    if (lookup.type != INFS_OBJECT_SYMLINK)
+        return INFS_STATUS_INVALID_ARGUMENT;
+    uint8_t object[INFS_BLOCK_SIZE];
+    status = read_object(vol, lookup.block, object);
+    if (status != INFS_STATUS_OK)
+        return status;
+    struct infs_symlink_payload_disk *payload;
+    const uint8_t *stored_target;
+    status = symlink_validate(vol, object, &payload, &stored_target);
+    if (status != INFS_STATUS_OK)
+        return status;
+    size_t length = infs_le32_to_cpu(payload->target_length);
+    *length_out = length;
+    if (!target && capacity == 0)
+        return INFS_STATUS_OK;
+    if (capacity <= length)
+        return INFS_STATUS_OVERFLOW;
+    memcpy(target, stored_target, length);
+    target[length] = '\0';
+    return INFS_STATUS_OK;
 }

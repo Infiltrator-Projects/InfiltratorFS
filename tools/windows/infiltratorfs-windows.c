@@ -804,9 +804,11 @@ static void refresh_contents(void)
                                  (int)(sizeof(name) / sizeof(name[0]))))
             continue;
         wchar_t display[512];
+        const wchar_t *prefix = items[i].type == INFS_OBJECT_DIRECTORY ?
+            L"[DIR]  " : items[i].type == INFS_OBJECT_SYMLINK ?
+            L"[LINK] " : L"       ";
         _snwprintf_s(display, sizeof(display) / sizeof(display[0]), _TRUNCATE,
-                     items[i].type == INFS_OBJECT_DIRECTORY ?
-                     L"[DIR]  %s" : L"       %s", name);
+                     L"%s%s", prefix, name);
         SendMessageW(list, LB_ADDSTRING, 0, (LPARAM)display);
     }
     infs_free_dir_items(items);

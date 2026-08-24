@@ -26,11 +26,13 @@ static void usage(const char *prog)
         "  %s <image> cat <path>\n"
         "  %s <image> map <path> <logical-block>\n"
         "  %s <image> reflink <source-path> <destination-path>\n"
+        "  %s <image> symlink <target> <path>\n"
+        "  %s <image> readlink <path>\n"
         "  %s <image> mv <old-path> <new-path>\n"
         "  %s <image> rm <path>\n"
         "  %s <image> rmdir <path>\n",
         prog, prog, prog, prog, prog, prog, prog, prog, prog, prog, prog,
-        prog);
+        prog, prog, prog);
 }
 
 static int die_errno(const char *what)
@@ -53,7 +55,10 @@ static int command_ls(struct infs_volume *vol, const char *path)
     if (status != INFS_STATUS_OK)
         return die_status("ls", status);
     for (size_t i = 0; i < count; ++i)
-        printf("%c %s\n", items[i].type == INFS_OBJECT_DIRECTORY ? 'd' : '-', items[i].name);
+        printf("%c %s\n",
+               items[i].type == INFS_OBJECT_DIRECTORY ? 'd' :
+               items[i].type == INFS_OBJECT_SYMLINK ? 'l' : '-',
+               items[i].name);
     infs_free_dir_items(items);
     return 0;
 }

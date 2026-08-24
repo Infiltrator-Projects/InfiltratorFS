@@ -12,7 +12,7 @@
 #define INFS_DIRECTORY_PAGE_MAGIC "INFSDP01"
 #define INFS_INDEX_PAGE_MAGIC "INFSIP01"
 #define INFS_FORMAT_MAJOR 0u
-#define INFS_FORMAT_MINOR 8u
+#define INFS_FORMAT_MINOR 9u
 #define INFS_CHECKPOINT_COUNT 3u
 #define INFS_CHECKSUM_CRC64_ECMA 1u
 #define INFS_CHECKSUM_SHA256     2u
@@ -23,6 +23,7 @@
 #define INFS_OBJECT_FILE       2u
 #define INFS_OBJECT_INDEX      3u
 #define INFS_OBJECT_CHECKSUM   4u
+#define INFS_OBJECT_SYMLINK    5u
 
 #define INFS_OBJECT_VERSION_CLASSIC 1u
 #define INFS_OBJECT_VERSION_PAGED   2u
@@ -35,12 +36,13 @@
 #define INFS_INCOMPAT_INLINE_DATA UINT64_C(0x0000000000000004)
 #define INFS_INCOMPAT_SHARED_EXTENTS UINT64_C(0x0000000000000008)
 #define INFS_INCOMPAT_PAGED_METADATA UINT64_C(0x0000000000000010)
+#define INFS_INCOMPAT_SYMBOLIC_LINKS UINT64_C(0x0000000000000020)
 #define INFS_KNOWN_COMPAT_FLAGS UINT64_C(0)
 #define INFS_KNOWN_RO_COMPAT_FLAGS UINT64_C(0)
 #define INFS_KNOWN_INCOMPAT_FLAGS \
     (INFS_INCOMPAT_UTF8_NAMES | INFS_INCOMPAT_SPARSE_EXTENTS | \
      INFS_INCOMPAT_INLINE_DATA | INFS_INCOMPAT_SHARED_EXTENTS | \
-     INFS_INCOMPAT_PAGED_METADATA)
+     INFS_INCOMPAT_PAGED_METADATA | INFS_INCOMPAT_SYMBOLIC_LINKS)
 
 #define INFS_ATTR_READ_ONLY           UINT64_C(0x0000000000000001)
 #define INFS_ATTR_HIDDEN              UINT64_C(0x0000000000000002)
@@ -162,6 +164,20 @@ struct INFS_PACKED infs_file_payload_disk {
     uint8_t  checksum_head_id[16];
 };
 
+/* Format 0.9 symbolic links store their UTF-8 target bytes directly after
+ * this fixed payload. Targets may be absolute or relative and are never
+ * interpreted by the portable core. */
+struct INFS_PACKED infs_symlink_payload_disk {
+    struct infs_attributes_disk attributes;
+    struct infs_posix_compat_disk posix;
+    uint32_t target_length;
+    uint32_t reserved;
+};
+
+#define INFS_SYMLINK_TARGET_MAX \
+    (INFS_BLOCK_SIZE - sizeof(struct infs_object_header_disk) - \
+     sizeof(struct infs_symlink_payload_disk))
+
 struct INFS_PACKED infs_extent_disk {
     uint64_t logical_block;
     uint64_t physical_block;
@@ -240,6 +256,8 @@ _Static_assert(sizeof(struct infs_dirent_disk) == 24,
                "directory entry header layout changed");
 _Static_assert(sizeof(struct infs_file_payload_disk) == 128,
                "file payload layout changed");
+_Static_assert(sizeof(struct infs_symlink_payload_disk) == 112,
+               "symbolic-link payload layout changed");
 _Static_assert(sizeof(struct infs_extent_disk) == 24,
                "extent layout changed");
 _Static_assert(sizeof(struct infs_checksum_payload_disk) == 48,
@@ -254,6 +272,8 @@ _Static_assert(INFS_CHECKSUMS_PER_OBJECT >= 120,
                "checksum object capacity unexpectedly small");
 _Static_assert(INFS_INLINE_DATA_MAX == 3840u,
                "inline-data capacity unexpectedly changed");
+_Static_assert(INFS_SYMLINK_TARGET_MAX == 3888u,
+               "symbolic-link target capacity unexpectedly changed");
 _Static_assert(INFS_INDEX_ENTRIES_PER_PAGE == 125u,
                "index page capacity unexpectedly changed");
 _Static_assert(INFS_DIRECTORY_PAGE_POINTERS >= 480u,

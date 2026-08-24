@@ -38,6 +38,7 @@ static const char *object_type_name(uint16_t type)
     switch (type) {
     case INFS_OBJECT_DIRECTORY: return "directory";
     case INFS_OBJECT_FILE: return "file";
+    case INFS_OBJECT_SYMLINK: return "symlink";
     case INFS_OBJECT_INDEX: return "index";
     case INFS_OBJECT_CHECKSUM: return "checksum";
     default: return "none";

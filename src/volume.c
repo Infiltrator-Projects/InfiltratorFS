@@ -44,6 +44,19 @@ static infs_status file_store_inline(
     struct infs_volume *vol, uint8_t object[INFS_BLOCK_SIZE],
     const uint8_t *data, size_t size);
 
+static int namespace_object_type(uint16_t type)
+{
+    return type == INFS_OBJECT_DIRECTORY || type == INFS_OBJECT_FILE ||
+        type == INFS_OBJECT_SYMLINK;
+}
+
+static int symbolic_links_enabled(const struct infs_volume *vol)
+{
+    return vol &&
+        (infs_le64_to_cpu(vol->sb.incompat_flags) &
+         INFS_INCOMPAT_SYMBOLIC_LINKS) != 0;
+}
+
 /* Format 0.8 paged-index dispatch targets. part1 owns the classic index
  * implementation and calls these when it encounters a version-2 index head. */
 static int paged_index_find(struct infs_volume *vol, const uint8_t id[16],

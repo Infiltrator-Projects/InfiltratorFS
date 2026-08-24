@@ -95,6 +95,10 @@ static void check_layout(void)
     expect(offsetof(struct infs_extent_disk, flags) == 20,
            "extent flags offset");
     expect(INFS_INLINE_DATA_MAX == 3840u, "inline-data capacity");
+    expect(sizeof(struct infs_symlink_payload_disk) == 112u,
+           "symbolic-link payload size");
+    expect(INFS_SYMLINK_TARGET_MAX == 3888u,
+           "symbolic-link target capacity");
 }
 
 static void make_golden_superblock(struct infs_superblock_disk *sb)
@@ -218,6 +222,17 @@ static void check_superblock_encoding(void)
     refresh_crc(pre_paged, 220);
     expect(!infs_validate_superblock_block(pre_paged),
            "reject paged metadata feature before Format 0.8");
+
+    uint8_t pre_symlink[INFS_BLOCK_SIZE];
+    memcpy(pre_symlink, encoded, sizeof(pre_symlink));
+    put_le16(pre_symlink, 10, 8u);
+    put_le64(pre_symlink, 148,
+             INFS_INCOMPAT_UTF8_NAMES | INFS_INCOMPAT_SPARSE_EXTENTS |
+                 INFS_INCOMPAT_INLINE_DATA | INFS_INCOMPAT_PAGED_METADATA |
+                 INFS_INCOMPAT_SYMBOLIC_LINKS);
+    refresh_crc(pre_symlink, 220);
+    expect(!infs_validate_superblock_block(pre_symlink),
+           "reject symbolic-link feature before Format 0.9");
 
     uint8_t extent_only[INFS_BLOCK_SIZE];
     memcpy(extent_only, encoded, sizeof(extent_only));

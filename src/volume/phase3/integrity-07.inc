@@ -203,8 +203,7 @@ static int validate_namespace_graph(struct infs_volume *vol)
                                        &target);
             if (status != INFS_STATUS_OK || target == root_index ||
                 infs_le16_to_cpu(entries[target].object_type) != type ||
-                (type != INFS_OBJECT_FILE &&
-                 type != INFS_OBJECT_DIRECTORY)) {
+                !namespace_object_type(type)) {
                 free(owned);
                 status = INFS_STATUS_CORRUPT;
                 goto out;
@@ -245,7 +244,7 @@ static int validate_namespace_graph(struct infs_volume *vol)
 
     for (uint32_t i = 0; i < count; ++i) {
         uint16_t type = infs_le16_to_cpu(entries[i].object_type);
-        if (type != INFS_OBJECT_DIRECTORY && type != INFS_OBJECT_FILE)
+        if (!namespace_object_type(type))
             continue;
         uint8_t object[INFS_BLOCK_SIZE];
         status = read_object(vol, infs_le64_to_cpu(entries[i].object_block),
@@ -270,8 +269,8 @@ static int validate_namespace_graph(struct infs_volume *vol)
             goto out;
         }
 
-        uint64_t expected_links = type == INFS_OBJECT_FILE ? 1u :
-            2u + (uint64_t)child_directories[i];
+        uint64_t expected_links = type == INFS_OBJECT_DIRECTORY ?
+            2u + (uint64_t)child_directories[i] : 1u;
         if (infs_le64_to_cpu(attributes->link_count) != expected_links) {
             status = INFS_STATUS_CORRUPT;
             goto out;
@@ -333,8 +332,7 @@ static int validate_namespace_graph(struct infs_volume *vol)
 
     for (uint32_t i = 0; i < count; ++i) {
         uint16_t type = infs_le16_to_cpu(entries[i].object_type);
-        if ((type == INFS_OBJECT_DIRECTORY || type == INFS_OBJECT_FILE) &&
-            !reachable[i]) {
+        if (namespace_object_type(type) && !reachable[i]) {
             status = INFS_STATUS_CORRUPT;
             goto out;
         }

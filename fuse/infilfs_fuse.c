@@ -371,8 +371,10 @@ static int attributes_to_stat(const struct infs_attributes *attributes,
         return rc;
 
     memset(st, 0, sizeof(*st));
-    st->st_mode = (attributes->object_type == INFS_OBJECT_DIRECTORY ?
-                   S_IFDIR : S_IFREG) | attributes->posix_permissions;
+    mode_t type_mode = attributes->object_type == INFS_OBJECT_DIRECTORY ?
+        S_IFDIR : attributes->object_type == INFS_OBJECT_SYMLINK ?
+        S_IFLNK : S_IFREG;
+    st->st_mode = type_mode | attributes->posix_permissions;
     st->st_uid = (uid_t)attributes->posix_uid;
     st->st_gid = (gid_t)attributes->posix_gid;
     st->st_nlink = (nlink_t)attributes->link_count;
@@ -426,7 +428,8 @@ static int infs_readdir_cb(const char *path, void *buf, fuse_fill_dir_t filler,
         }
         struct stat st;
         memset(&st, 0, sizeof(st));
-        st.st_mode = items[i].type == INFS_OBJECT_DIRECTORY ? S_IFDIR : S_IFREG;
+        st.st_mode = items[i].type == INFS_OBJECT_DIRECTORY ? S_IFDIR :
+            items[i].type == INFS_OBJECT_SYMLINK ? S_IFLNK : S_IFREG;
         if (filler(buf, items[i].name, &st, 0, 0) != 0)
             break;
     }
@@ -443,6 +446,34 @@ static int infs_mkdir_cb(const char *path, mode_t mode)
         .posix_gid = (uint32_t)ctx->gid,
     };
     return neg_status(infs_mkdir(&g_volume, path, &options));
+}
+
+static int infs_symlink_cb(const char *target, const char *path)
+{
+    struct fuse_context *ctx = fuse_get_context();
+    const struct infs_create_options options = {
+        .posix_permissions = 0777,
+        .posix_uid = (uint32_t)ctx->uid,
+        .posix_gid = (uint32_t)ctx->gid,
+    };
+    return neg_status(infs_create_symlink(
+        &g_volume, path, target, &options));
+}
+
+static int infs_readlink_cb(const char *path, char *buffer, size_t size)
+{
+    if (!buffer || size == 0)
+        return -EINVAL;
+    char target[INFS_SYMLINK_TARGET_MAX + 1u];
+    size_t length = 0;
+    infs_status status = infs_read_symlink(
+        &g_volume, path, target, sizeof(target), &length);
+    if (status != INFS_STATUS_OK)
+        return neg_status(status);
+    size_t copy = length < size - 1u ? length : size - 1u;
+    memcpy(buffer, target, copy);
+    buffer[copy] = '\0';
+    return 0;
 }
 
 static int infs_create_cb(const char *path, mode_t mode, struct fuse_file_info *fi)
@@ -767,6 +798,8 @@ static const struct fuse_operations infs_ops = {
     .getattr = infs_getattr_cb,
     .readdir = infs_readdir_cb,
     .mkdir = infs_mkdir_cb,
+    .symlink = infs_symlink_cb,
+    .readlink = infs_readlink_cb,
     .create = infs_create_cb,
     .open = infs_open_cb,
     .read = infs_read_cb,

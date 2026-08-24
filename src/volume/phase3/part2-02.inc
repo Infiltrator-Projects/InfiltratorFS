@@ -58,6 +58,11 @@ static struct infs_attributes_disk *object_attributes(uint8_t block[INFS_BLOCK_S
             (struct infs_file_payload_disk *)(block + sizeof(*hdr));
         return &p->attributes;
     }
+    if (type == INFS_OBJECT_SYMLINK) {
+        struct infs_symlink_payload_disk *p =
+            (struct infs_symlink_payload_disk *)(block + sizeof(*hdr));
+        return &p->attributes;
+    }
     return NULL;
 }
 
@@ -74,6 +79,11 @@ static struct infs_posix_compat_disk *object_posix(
     if (type == INFS_OBJECT_FILE) {
         struct infs_file_payload_disk *p =
             (struct infs_file_payload_disk *)(block + sizeof(*hdr));
+        return &p->posix;
+    }
+    if (type == INFS_OBJECT_SYMLINK) {
+        struct infs_symlink_payload_disk *p =
+            (struct infs_symlink_payload_disk *)(block + sizeof(*hdr));
         return &p->posix;
     }
     return NULL;

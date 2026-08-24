@@ -50,7 +50,7 @@ static int dir_validate(uint8_t block[INFS_BLOCK_SIZE],
         if (rec < sizeof(*e) || rec > remaining || (rec & 7u) != 0 ||
             name_len == 0 || name_len > INFS_NAME_MAX ||
             sizeof(*e) + name_len > rec ||
-            (type != INFS_OBJECT_DIRECTORY && type != INFS_OBJECT_FILE) ||
+            !namespace_object_type(type) ||
             infs_le16_to_cpu(e->flags) != 0 || id_is_zero(e->object_id) ||
             memchr(name, '\0', name_len) != NULL || memchr(name, '/', name_len) != NULL)
             return INFS_STATUS_CORRUPT;
@@ -70,6 +70,31 @@ static int dir_validate(uint8_t block[INFS_BLOCK_SIZE],
         return INFS_STATUS_CORRUPT;
     if (payload_out)
         *payload_out = payload;
+    return INFS_STATUS_OK;
+}
+
+static int symlink_validate(
+    struct infs_volume *vol, uint8_t block[INFS_BLOCK_SIZE],
+    struct infs_symlink_payload_disk **payload_out,
+    const uint8_t **target_out)
+{
+    struct infs_object_header_disk *header =
+        (struct infs_object_header_disk *)block;
+    if (!symbolic_links_enabled(vol) || !infs_validate_object_block(block) ||
+        infs_le16_to_cpu(header->object_type) != INFS_OBJECT_SYMLINK ||
+        infs_le16_to_cpu(header->object_version) !=
+            INFS_OBJECT_VERSION_CLASSIC)
+        return INFS_STATUS_CORRUPT;
+    struct infs_symlink_payload_disk *payload =
+        (struct infs_symlink_payload_disk *)(header + 1);
+    if (validate_common_metadata(&payload->attributes, &payload->posix) !=
+            INFS_STATUS_OK ||
+        infs_le64_to_cpu(payload->attributes.link_count) != 1u)
+        return INFS_STATUS_CORRUPT;
+    if (payload_out)
+        *payload_out = payload;
+    if (target_out)
+        *target_out = (const uint8_t *)(payload + 1);
     return INFS_STATUS_OK;
 }
 
@@ -129,7 +154,8 @@ static int dir_add(uint8_t block[INFS_BLOCK_SIZE], const char *name,
     size_t name_len = strlen(name);
     if (name_len == 0 || name_len > INFS_NAME_MAX || strchr(name, '/') ||
         strcmp(name, ".") == 0 || strcmp(name, "..") == 0 ||
-        id_is_zero(object_id) || !infs_utf8_validate(name, name_len))
+        id_is_zero(object_id) || !infs_utf8_validate(name, name_len) ||
+        !namespace_object_type(type))
         return INFS_STATUS_INVALID_ARGUMENT;
     if (dir_find(payload, name, name_len, NULL))
         return INFS_STATUS_ALREADY_EXISTS;
