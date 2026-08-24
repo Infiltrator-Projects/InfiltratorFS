@@ -24,6 +24,8 @@ The canonical core path form currently uses UTF-8 components separated by `/`. S
 
 The Linux FUSE adapter assigns each opened file a stable in-memory handle containing its persistent object ID and current retained path. Rename updates matching handle paths, including descendants of a renamed directory. Unlink and atomic replacement move an open object into an adapter-owned hidden, system-marked directory until its final descriptor closes. Writable mount startup reclaims stale retention directories left by interruption. These are ordinary transactional Format 0.8 namespace operations, so the lifetime policy adds no adapter state to the disk format.
 
+Linux standard-utility integration remains outside the portable core. `mount.infiltratorfs` adapts the util-linux mount-helper contract to the FUSE process, and `fsck.infiltratorfs` maps the portable read-only scrub result to standard fsck status bits. Neither helper introduces persistent state or a second filesystem implementation.
+
 ## 3. Persistent object model
 
 Files, directories, checksum records and future metadata classes are persistent objects identified by 128-bit IDs. A pathname is a namespace mapping, not object identity.

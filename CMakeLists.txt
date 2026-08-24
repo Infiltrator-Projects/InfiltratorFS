@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.20)
-project(InfiltratorFS VERSION 0.12.0 LANGUAGES C)
+project(InfiltratorFS VERSION 0.13.0 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -219,6 +219,8 @@ if(UNIX)
         COMMAND bash -n ${CMAKE_SOURCE_DIR}/tools/infiltratorfs-manager-helper)
     add_test(NAME infilfs-manager-partition-discovery
         COMMAND bash ${CMAKE_SOURCE_DIR}/tests/manager-partition-discovery.sh)
+    add_test(NAME infilfs-system-utilities
+        COMMAND bash ${CMAKE_SOURCE_DIR}/tests/system-utilities.sh)
 
     find_package(PkgConfig QUIET)
     if(PkgConfig_FOUND)
@@ -248,6 +250,8 @@ if(UNIX)
     install(PROGRAMS tools/infiltratorfs-manager DESTINATION bin)
     install(PROGRAMS tools/infiltratorfs-manager-helper
             DESTINATION lib/infiltratorfs)
+    install(PROGRAMS tools/mount.infiltratorfs tools/fsck.infiltratorfs
+            DESTINATION sbin)
     install(FILES packaging/infiltratorfs-manager.desktop
             DESTINATION share/applications)
 endif()

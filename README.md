@@ -6,12 +6,12 @@
 
 InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem started in 2026. The persistent format and core engine are written in portable C; Linux and Windows are adapters over the same on-disk structures rather than separate filesystem implementations.
 
-**Current implementation:** 0.12.0<br>
+**Current implementation:** 0.13.0<br>
 **On-disk format:** 0.8<br>
 **Shared foundation:** Infiltratr Common 1.11.0<br>
 **Licence:** GPL-3.0-or-later
 
-Format 0.8 is unchanged by the 0.9.x releases and implementations 0.10.0–0.12.0. Media created by earlier Format 0.8 builds does not need to be reformatted.
+Format 0.8 is unchanged by the 0.9.x releases and implementations 0.10.0–0.13.0. Media created by earlier Format 0.8 builds does not need to be reformatted.
 
 ## Capabilities
 
@@ -33,7 +33,7 @@ Format 0.8 currently provides:
 - explicit read-only scrub/verify; and
 - callback-based storage, durability, randomness and clock services.
 
-Implementation 0.12.0 adds persistent Linux FUSE file handles without changing Format 0.8. Open descriptors continue to identify the same file across direct or parent-directory rename, unlink and atomic replacement of an open destination. Unlinked objects are retained transactionally in a hidden system-marked adapter namespace until their final descriptor closes; stale retained objects left by an interrupted mount are reclaimed on the next writable mount. Implementation 0.11.0's portable read-only forensic scanner remains available through `infilfs-forensic` and the Linux Manager. The native `.run` remains a self-extracting Bash installer containing the complete release source tree and pinned Common submodule.
+Implementation 0.13.0 adds standard Linux `mount.infiltratorfs` and `fsck.infiltratorfs` entry points without changing Format 0.8. The mount helper translates the normal `mount -t infiltratorfs` invocation into the FUSE adapter while preserving read-only and comma-separated mount options. The fsck helper performs a complete read-only scrub and maps clean, corrupt, operational-failure and usage results to standard fsck exit codes. Implementation 0.12.0's persistent FUSE descriptor lifetime and implementation 0.11.0's forensic scanner remain available. The native `.run` remains a self-extracting Bash installer containing the complete release source tree and pinned Common submodule.
 
 ## Architecture
 
@@ -91,13 +91,20 @@ mkdir -p /tmp/infilfs-mnt
 ./build/infilfs-fuse infilfs.img /tmp/infilfs-mnt -f
 ```
 
+After installation, use the standard Linux helpers:
+
+```bash
+mount -t infiltratorfs infilfs.img /mnt/infiltratorfs -o rw
+fsck.infiltratorfs -n infilfs.img
+```
+
 GitHub Actions runs Linux, Clang, sanitizer and static-analyzer suites, cross-platform image qualification, native Windows builds/tests and Linux package construction.
 
 ## Desktop and Windows tools
 
 The Linux Debian package installs **InfiltratorFS Manager**, which can create/format images, select non-system disk partitions including fixed, USB, SD and other removable media, inspect, scrub, run forensic raw-metadata scans, mount through FUSE, open in Nemo and unmount safely. Whole disks and storage backing the active system partitions remain excluded.
 
-The Windows release contains a versioned executable such as `InfiltratorFS-Windows-0.12.0.exe`. Run it elevated when accessing raw media. It can discover physical partitions, list the root directory, copy files/folders and run a full scrub while bounding raw I/O to the selected partition.
+The Windows release contains a versioned executable such as `InfiltratorFS-Windows-0.13.0.exe`. Run it elevated when accessing raw media. It can discover physical partitions, list the root directory, copy files/folders and run a full scrub while bounding raw I/O to the selected partition.
 
 ## Release assets
 
@@ -115,8 +122,8 @@ GitHub provides the standard source-code ZIP and tarball automatically from the 
 To inspect the native Linux build before allowing it to install anything:
 
 ```bash
-chmod +x infiltratorfs-0.12.0-linux-native.run
-./infiltratorfs-0.12.0-linux-native.run --dry-run
+chmod +x infiltratorfs-0.13.0-linux-native.run
+./infiltratorfs-0.13.0-linux-native.run --dry-run
 ```
 
 Run the same file without `--dry-run` to compile, test and install InfiltratorFS natively. If required packages are missing, it displays the exact `apt-get` commands and asks before installing them.

@@ -199,6 +199,17 @@
 - [x] Add mounted rename, replacement, unlink, read, write, truncate and fsync lifetime coverage.
 - [x] Keep on-disk Format 0.8 unchanged.
 
+## Phase 4.13 — implementation 0.13.0 standard Linux utilities — complete
+
+- [x] Install a `mount.infiltratorfs` helper for normal `mount -t infiltratorfs` operation.
+- [x] Preserve read-only/read-write selection and comma-separated FUSE mount options.
+- [x] Reject unsupported helper options instead of silently changing mount semantics.
+- [x] Install a read-only `fsck.infiltratorfs` front end to the complete scrub engine.
+- [x] Map clean, uncorrected-corruption, operational-failure and usage results to standard fsck exit codes.
+- [x] Add argument, quoting, option-forwarding and status-mapping conformance coverage.
+- [x] Include both helpers in native and Debian installations.
+- [x] Keep on-disk Format 0.8 unchanged.
+
 ## Phase 4 — modern storage features
 
 - [x] Sparse extents.
@@ -247,7 +258,7 @@
 - [x] FUSE3 reference adapter.
 - [x] Persistent FUSE inode/open-file handles with unlink/rename lifetime conformance tests.
 - [ ] Native Linux kernel driver.
-- [ ] `mount.infilfs` and standard utilities.
+- [x] `mount.infiltratorfs`, `fsck.infiltratorfs` and standard utilities.
 - [x] Debian/Ubuntu/Linux Mint packaging with an application-menu manager.
 
 ### Windows

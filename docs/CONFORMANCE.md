@@ -134,6 +134,8 @@ GitHub Actions builds and tests the full Linux implementation, separately builds
 
 Implementation 0.12.0 additionally requires mounted conformance for descriptor lifetime across direct rename, parent-directory rename, unlink and atomic replacement of an open destination. The test continues reading, writing, truncating and syncing through the original descriptor after its pathname changes or disappears. Retained objects use an adapter-owned hidden, system-marked directory built from ordinary Format 0.8 namespace objects; final close and the next writable mount both verify reclamation without a disk-format extension.
 
+Implementation 0.13.0 requires the installed `mount.infiltratorfs` helper to preserve source and mountpoint arguments exactly, translate `-r`, `-w` and `-o` options deterministically, ignore only mount-owned verbose/no-mtab flags and reject unknown options. `fsck.infiltratorfs` is a complete read-only scrub front end: clean media returns 0, detected but uncorrected corruption returns 4, operational failure returns 8 and invalid invocation returns 16. Utility conformance verifies paths containing spaces, option forwarding and all status mappings.
+
 The high-level FUSE adapter deliberately uses libfuse's documented offsetless `readdir` mode: it ignores the incoming directory offset and passes zero offsets to the filler so libfuse consumes the complete directory in one operation. Synthetic resumable cookies are not part of the current adapter contract.
 
 ## Compatibility rule

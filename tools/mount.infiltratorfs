@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+set -euo pipefail
+
+usage() {
+    echo "Usage: mount.infiltratorfs <image-or-device> <mountpoint> [-r|-w] [-o options]" >&2
+}
+
+if (( $# < 2 )); then
+    usage
+    exit 2
+fi
+
+source_path="$1"
+mountpoint="$2"
+shift 2
+declare -a fuse_arguments=("$source_path" "$mountpoint")
+fake_mount=0
+
+while (( $# > 0 )); do
+    case "$1" in
+        -o)
+            (( $# >= 2 )) || { usage; exit 2; }
+            fuse_arguments+=("-o" "$2")
+            shift 2
+            ;;
+        -o?*)
+            fuse_arguments+=("-o" "${1#-o}")
+            shift
+            ;;
+        -r)
+            fuse_arguments+=("-o" "ro")
+            shift
+            ;;
+        -w)
+            fuse_arguments+=("-o" "rw")
+            shift
+            ;;
+        -v|-n)
+            # mount(8) may pass its own verbose or no-mtab flags. libfuse
+            # manages the actual mount table entry, so neither is forwarded.
+            shift
+            ;;
+        -f)
+            fake_mount=1
+            shift
+            ;;
+        --)
+            shift
+            (( $# == 0 )) || { usage; exit 2; }
+            ;;
+        *)
+            echo "mount.infiltratorfs: unsupported option: $1" >&2
+            usage
+            exit 2
+            ;;
+    esac
+done
+
+if (( fake_mount )); then
+    exit 0
+fi
+
+fuse_program="${INFILFS_FUSE:-/usr/bin/infilfs-fuse}"
+if [[ ! -x "$fuse_program" ]]; then
+    echo "mount.infiltratorfs: FUSE adapter is unavailable: $fuse_program" >&2
+    exit 1
+fi
+exec "$fuse_program" "${fuse_arguments[@]}"

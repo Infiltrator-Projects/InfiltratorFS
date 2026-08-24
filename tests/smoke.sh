@@ -6,7 +6,9 @@ build_dir="${1:-build}"
 mkfs="$build_dir/mkfs.infilfs"
 inspect="$build_dir/infilfs-inspect"
 tool="$build_dir/infilfs-tool"
+scrub="$build_dir/infilfs-scrub"
 api_test="$build_dir/infilfs-phase1-api"
+fsck_helper="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/tools/fsck.infiltratorfs"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -18,8 +20,9 @@ mkfs_output="$tmp/mkfs-output.txt"
 
 truncate -s 64M "$image"
 "$mkfs" -L SmokeTest "$image" >"$mkfs_output"
-grep -Fq 'Implementation: 0.12.0' "$mkfs_output"
+grep -Fq 'Implementation: 0.13.0' "$mkfs_output"
 "$inspect" "$image" >/dev/null
+INFILFS_SCRUB="$scrub" "$fsck_helper" -n "$image" >/dev/null
 "$api_test" "$image" >/dev/null
 
 # Reformat and exercise the command-line persistence path independently.

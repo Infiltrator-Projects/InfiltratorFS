@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+set -u
+
+usage() {
+    echo "Usage: fsck.infiltratorfs [-afnp] <image-or-device>" >&2
+}
+
+declare -a targets=()
+while (( $# > 0 )); do
+    case "$1" in
+        -[afnp]*)
+            # Scrub is always a complete read-only check.
+            flags="${1#-}"
+            if [[ "$flags" == *[^afnp]* ]]; then
+                echo "fsck.infiltratorfs: unsupported option: $1" >&2
+                usage
+                exit 16
+            fi
+            shift
+            ;;
+        --)
+            shift
+            while (( $# > 0 )); do
+                targets+=("$1")
+                shift
+            done
+            ;;
+        -*)
+            echo "fsck.infiltratorfs: unsupported option: $1" >&2
+            usage
+            exit 16
+            ;;
+        *)
+            targets+=("$1")
+            shift
+            ;;
+    esac
+done
+
+if (( ${#targets[@]} != 1 )); then
+    usage
+    exit 16
+fi
+
+scrub_program="${INFILFS_SCRUB:-/usr/bin/infilfs-scrub}"
+if [[ ! -x "$scrub_program" ]]; then
+    echo "fsck.infiltratorfs: scrub utility is unavailable: $scrub_program" >&2
+    exit 8
+fi
+
+"$scrub_program" "${targets[0]}"
+status=$?
+case "$status" in
+    0) exit 0 ;;
+    2) exit 4 ;;
+    *) exit 8 ;;
+esac
