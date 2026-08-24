@@ -152,13 +152,15 @@ Ordinary rename replacement is a single filesystem transaction. A file may repla
 
 `infilfs-open-hardening`, `infilfs-063-hardening`, `infilfs-posix-locking` and `infilfs-sparse-files` retain the existing geometry, recovery, locking and crash-atomicity regression gates.
 
-GitHub Actions builds and tests the full Linux implementation, separately builds the portable core and native transfer application with Microsoft Visual C, and opens a Linux-created Format 0.11 image through the Win32 backend. The hardening matrix also runs Clang, AddressSanitizer/UndefinedBehaviorSanitizer and GCC `-fanalyzer`. When `/dev/fuse` is available, `infilfs-mint-fuse` performs mounted copy, rename, permission, symbolic-link, hard-link, sparse, punch, unmount and remount verification.
+GitHub Actions builds and tests the full Linux implementation, separately builds the portable core and native transfer application with Microsoft Visual C, and opens a Linux-created Format 0.11 image through the Win32 backend. The hardening matrix also runs Clang, AddressSanitizer/UndefinedBehaviorSanitizer and GCC `-fanalyzer`. When `/dev/fuse` is available, `infilfs-mint-fuse` performs mounted copy, rename, permission, symbolic-link, hard-link, persistent xattr, FIFO, Unix-socket, normal-fallocate, sparse, punch, unmount and remount verification.
 
 Implementation 0.16.0 requires named read-only snapshot roots through the portable API and direct-image tool. Conformance verifies immutable historical data and namespace state, nested generation retention, full remount, scrub of retained data, feature gating, deletion and final block reclamation.
 
 Implementation 0.16.1 removes pre-1.0 backward-format acceptance. Conformance requires both earlier and future development format minors to be rejected.
 
 Implementation 0.16.2 requires physically separate data and metadata allocation directions. A sequential file written across 192 separate durable calls must complete, retain no more than two extents on the deterministic test volume, pass full data scrub and remain byte-exact after reopen. This crosses all 161 inline extent slots and reproduces the write-cycle pattern behind the former approximately 40 MiB direct-copy `EFBIG` failure.
+
+Implementation 0.16.3 requires the Linux FUSE adapter to preserve `user.*` extended attributes across adapter operations, create and report FIFO and Unix-domain socket nodes with their correct POSIX types, accept normal `fallocate` without changing pre-existing bytes, return stable inode identity and link counts for hard links, and provide nonzero file-capacity values through `statvfs`. These are Linux adapter semantics stored using hidden system-marked ordinary Format 0.11 objects and do not alter the portable on-disk format.
 
 Implementation 0.15.0 requires regular-file hard links through both the portable API and Linux FUSE. Mounted conformance verifies shared inode identity, reference count, byte identity and remount persistence. Offline conformance additionally verifies write-through coherence, cross-directory rename, unlink survival, atomic replacement of one linked destination and rejection of a validly checksummed but incorrect reference count.
 

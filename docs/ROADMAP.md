@@ -252,6 +252,16 @@ Pre-1.0 development is current-format-only. A new development format supersedes 
 - [x] Verify 192 durable sequential writes, compact extent mapping, full scrub and reopen.
 - [x] Keep on-disk Format 0.11 unchanged.
 
+## Phase 4.18 — implementation 0.16.3 Linux desktop compatibility — complete
+
+- [x] Persist Linux extended attributes through adapter-owned hidden system metadata.
+- [x] Represent FIFO, Unix-domain socket, character-device and block-device node metadata through the Linux adapter.
+- [x] Support normal `fallocate` ranges while preserving existing file bytes.
+- [x] Report stable hard-link inode identity and current link counts through FUSE.
+- [x] Report nonzero inode-capacity statistics to desktop and POSIX callers.
+- [x] Add mounted xattr, FIFO, Unix-socket and normal-fallocate regression coverage.
+- [x] Keep on-disk Format 0.11 unchanged; native cross-platform xattr/security objects remain future format work.
+
 ## Phase 4 — modern storage features
 
 - [x] Sparse extents.
