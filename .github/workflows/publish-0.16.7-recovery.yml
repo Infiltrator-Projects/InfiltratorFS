@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-name: Recover 0.16.7 release
+name: Recover 0.16.8 release
 
 on:
   push:
@@ -13,18 +13,18 @@ permissions:
 
 concurrency:
   group: recover-infiltratorfs-0.16.7
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 env:
-  RELEASE_SHA: 056c5859b6cca804506fed44f2dc3ab18f3b9ba3
-  VERSION: 0.16.7
+  RELEASE_SHA: c30c47b9fa1df00b292a36b0d2fafbafa4b99bfb
+  VERSION: 0.16.8
 
 jobs:
   linux:
-    name: Requalify Linux and build 0.16.7 assets
+    name: Requalify Linux and build 0.16.8 assets
     runs-on: ubuntu-24.04
     steps:
-      - name: Check out exact 0.16.7 release source
+      - name: Check out exact 0.16.8 release source
         uses: actions/checkout@v6
         with:
           ref: ${{ env.RELEASE_SHA }}
@@ -79,7 +79,7 @@ jobs:
       - name: Upload Linux release inputs
         uses: actions/upload-artifact@v4
         with:
-          name: recover-0.16.7-linux
+          name: recover-0.16.8-linux
           path: |
             dist/infiltratorfs_${{ env.VERSION }}_amd64.deb
             dist/infiltratorfs-${{ env.VERSION }}-linux-native.run
@@ -88,11 +88,11 @@ jobs:
           retention-days: 7
 
   windows:
-    name: Requalify Windows and build 0.16.7 executable
+    name: Requalify Windows and build 0.16.8 executable
     needs: linux
     runs-on: windows-latest
     steps:
-      - name: Check out exact 0.16.7 release source
+      - name: Check out exact 0.16.8 release source
         uses: actions/checkout@v6
         with:
           ref: ${{ env.RELEASE_SHA }}
@@ -101,7 +101,7 @@ jobs:
       - name: Download Linux qualification image
         uses: actions/download-artifact@v4
         with:
-          name: recover-0.16.7-linux
+          name: recover-0.16.8-linux
           path: recovered
       - name: Configure, build and run Windows conformance
         shell: pwsh
@@ -122,19 +122,19 @@ jobs:
       - name: Upload Windows release asset
         uses: actions/upload-artifact@v4
         with:
-          name: recover-0.16.7-windows
+          name: recover-0.16.8-windows
           path: build/Release/InfiltratorFS-Windows-${{ env.VERSION }}.exe
           if-no-files-found: error
           retention-days: 7
 
   publish:
-    name: Publish immutable 0.16.7 release
+    name: Publish immutable 0.16.8 release
     needs: [linux, windows]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
-      - name: Check out exact 0.16.7 release source
+      - name: Check out exact 0.16.8 release source
         uses: actions/checkout@v6
         with:
           ref: ${{ env.RELEASE_SHA }}
@@ -143,10 +143,10 @@ jobs:
       - name: Download verified release assets
         uses: actions/download-artifact@v4
         with:
-          pattern: recover-0.16.7-*
+          pattern: recover-0.16.8-*
           path: release-assets
           merge-multiple: true
-      - name: Publish exact historical commit as v0.16.7
+      - name: Publish exact historical commit as v0.16.8
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
