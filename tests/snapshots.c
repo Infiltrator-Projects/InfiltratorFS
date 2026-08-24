@@ -153,47 +153,8 @@ static uint64_t current_snapshot_catalog_block(struct infs_volume *volume,
     return 0;
 }
 
-static void check_format_010_compatibility(void)
-{
-    struct memory_image image = {
-        .bytes = calloc(1, TEST_SIZE),
-        .size = TEST_SIZE,
-        .random_state = UINT64_C(0x243f6a8885a308d3),
-    };
-    expect(image.bytes != NULL, "allocate Format 0.10 image");
-    struct infs_storage storage = make_storage(&image);
-    expect(infs_format_storage(&storage, "format-0.10") == INFS_STATUS_OK,
-           "format compatibility image");
-
-    const uint64_t checkpoints[INFS_CHECKPOINT_COUNT] = {
-        0, TEST_BLOCKS / 2u, TEST_BLOCKS - 1u
-    };
-    for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i) {
-        uint8_t *raw = image.bytes + checkpoints[i] * INFS_BLOCK_SIZE;
-        struct infs_superblock_disk sb;
-        expect(infs_decode_superblock(raw, &sb) == INFS_STATUS_OK,
-               "decode compatibility checkpoint");
-        sb.format_minor = infs_cpu_to_le16(10u);
-        sb.incompat_flags = infs_cpu_to_le64(
-            infs_le64_to_cpu(sb.incompat_flags) & ~INFS_INCOMPAT_SNAPSHOTS);
-        expect(infs_encode_superblock(raw, &sb) == INFS_STATUS_OK,
-               "encode Format 0.10 checkpoint");
-    }
-
-    struct infs_volume volume;
-    storage = make_storage(&image);
-    expect(infs_volume_open_storage(&volume, &storage, 1) == INFS_STATUS_OK,
-           "Format 0.10 remains writable");
-    expect(infs_snapshot_create(&volume, "unsupported") ==
-               INFS_STATUS_NOT_SUPPORTED,
-           "Format 0.10 rejects snapshot creation");
-    infs_volume_close(&volume);
-    free(image.bytes);
-}
-
 int main(void)
 {
-    check_format_010_compatibility();
     struct memory_image image = {
         .bytes = calloc(1, TEST_SIZE),
         .size = TEST_SIZE,

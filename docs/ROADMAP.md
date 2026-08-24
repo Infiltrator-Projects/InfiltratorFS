@@ -1,6 +1,8 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # InfiltratorFS Roadmap
 
+Pre-1.0 development is current-format-only. A new development format supersedes earlier formats without requiring backward readers or migration code. Backward compatibility begins with the first stable release.
+
 ## Phase 0 — format skeleton — complete
 
 - [x] Three physically separated checkpoints.
@@ -146,7 +148,7 @@
 - [x] Promote inline files transactionally to ordinary CoW extents when growth crosses 3,840 bytes.
 - [x] Fold extent-backed files back inline when truncate shrinks them to 3,840 bytes or less.
 - [x] Reclaim external data and checksum blocks when folding a file inline.
-- [x] Keep Format 0.6 readable and permit extent-only Format 0.7 volumes with the inline-data bit clear.
+- [x] Permit extent-only current-format test volumes with the inline-data bit clear.
 - [x] Add portable threshold, promotion, folding, punch, scrub and remount conformance coverage.
 
 ## Phase 4.8 — implementation 0.8.0 shared extents — complete
@@ -217,7 +219,7 @@
 - [x] Create, read, rename, replace, unlink and scrub symbolic links through the portable core.
 - [x] Expose standard `symlink(2)` and `readlink(2)` behavior through Linux FUSE.
 - [x] Add offline `symlink` and `readlink` commands and forensic classification.
-- [x] Keep Format 0.6–0.8 volumes readable and reject the new feature under older versions.
+- [x] Gate symbolic-link objects through their incompatible feature bit.
 - [x] Add portable, mounted-FUSE, remount, corruption-boundary and Windows interoperability coverage.
 
 ## Phase 4.15 — implementation 0.15.0 regular-file hard links — complete
@@ -228,7 +230,7 @@
 - [x] Preserve linked files across cross-directory rename, writes, scrub and remount.
 - [x] Expose hard links through the portable API, `infilfs-tool` and Linux FUSE.
 - [x] Reject hard links to directories and symbolic links.
-- [x] Keep Format 0.6–0.9 volumes readable and reject the new feature under older versions.
+- [x] Gate hard-link semantics through their incompatible feature bit.
 - [x] Add portable, mounted-FUSE, corruption-boundary and Windows interoperability coverage.
 
 ## Phase 4.16 — implementation 0.16.0 snapshot roots — complete
@@ -239,7 +241,7 @@
 - [x] List and browse read-only historical paths through the portable API and `infilfs-tool`.
 - [x] Delete snapshots transactionally and reclaim blocks after the final historical reference.
 - [x] Validate nested historical graphs and scrub retained file data.
-- [x] Keep Format 0.6–0.10 volumes readable and reject snapshots under older versions.
+- [x] Gate snapshot catalogs through their incompatible feature bit.
 - [x] Add remount, corruption, nested-retention, CLI and reclamation coverage.
 
 ## Phase 4 — modern storage features

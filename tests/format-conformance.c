@@ -135,7 +135,7 @@ static void make_golden_superblock(struct infs_superblock_disk *sb)
     sb->incompat_flags = infs_cpu_to_le64(
         INFS_INCOMPAT_UTF8_NAMES | INFS_INCOMPAT_SPARSE_EXTENTS |
         INFS_INCOMPAT_INLINE_DATA);
-    memcpy(sb->label, "Golden-0.8", 10);
+    memcpy(sb->label, "Golden-0.11", 11);
 }
 
 static void make_expected_superblock(uint8_t block[INFS_BLOCK_SIZE])
@@ -166,7 +166,7 @@ static void make_expected_superblock(uint8_t block[INFS_BLOCK_SIZE])
     put_le64(block, 148,
              INFS_INCOMPAT_UTF8_NAMES | INFS_INCOMPAT_SPARSE_EXTENTS |
                  INFS_INCOMPAT_INLINE_DATA);
-    memcpy(block + 156, "Golden-0.8", 10);
+    memcpy(block + 156, "Golden-0.11", 11);
     refresh_crc(block, 220);
 }
 
@@ -200,10 +200,10 @@ static void check_superblock_encoding(void)
     expect(infs_validate_superblock_block(encoded), "validate golden checkpoint");
 
     expect_superblock_rejected(encoded, 8, 1, 2, "reject foreign major version");
+    expect_superblock_rejected(encoded, 10, INFS_FORMAT_MINOR - 1u, 2,
+                               "reject previous development format");
     expect_superblock_rejected(encoded, 10, INFS_FORMAT_MINOR + 1u, 2,
                                "reject future minor version");
-    expect_superblock_rejected(encoded, 10, 6u, 2,
-                               "reject inline feature under Format 0.6");
     expect_superblock_rejected(encoded, 12, 251, 2, "reject header-size drift");
     expect_superblock_rejected(encoded, 14, 11, 2, "reject block-size drift");
     expect_superblock_rejected(encoded, 16, INFS_CHECKSUM_SHA256, 4,
@@ -218,59 +218,6 @@ static void check_superblock_encoding(void)
                                    INFS_INCOMPAT_INLINE_DATA |
                                    (UINT64_C(1) << 63),
                                8, "reject unknown incompatible feature");
-
-    uint8_t pre_paged[INFS_BLOCK_SIZE];
-    memcpy(pre_paged, encoded, sizeof(pre_paged));
-    put_le16(pre_paged, 10, 7u);
-    put_le64(pre_paged, 148,
-             INFS_INCOMPAT_UTF8_NAMES | INFS_INCOMPAT_SPARSE_EXTENTS |
-                 INFS_INCOMPAT_INLINE_DATA | INFS_INCOMPAT_PAGED_METADATA);
-    refresh_crc(pre_paged, 220);
-    expect(!infs_validate_superblock_block(pre_paged),
-           "reject paged metadata feature before Format 0.8");
-
-    uint8_t pre_symlink[INFS_BLOCK_SIZE];
-    memcpy(pre_symlink, encoded, sizeof(pre_symlink));
-    put_le16(pre_symlink, 10, 8u);
-    put_le64(pre_symlink, 148,
-             INFS_INCOMPAT_UTF8_NAMES | INFS_INCOMPAT_SPARSE_EXTENTS |
-                 INFS_INCOMPAT_INLINE_DATA | INFS_INCOMPAT_PAGED_METADATA |
-                 INFS_INCOMPAT_SYMBOLIC_LINKS);
-    refresh_crc(pre_symlink, 220);
-    expect(!infs_validate_superblock_block(pre_symlink),
-           "reject symbolic-link feature before Format 0.9");
-
-    uint8_t pre_hard_link[INFS_BLOCK_SIZE];
-    memcpy(pre_hard_link, encoded, sizeof(pre_hard_link));
-    put_le16(pre_hard_link, 10, 9u);
-    put_le64(pre_hard_link, 148,
-             INFS_INCOMPAT_UTF8_NAMES | INFS_INCOMPAT_SPARSE_EXTENTS |
-                 INFS_INCOMPAT_INLINE_DATA | INFS_INCOMPAT_PAGED_METADATA |
-                 INFS_INCOMPAT_SYMBOLIC_LINKS | INFS_INCOMPAT_HARD_LINKS);
-    refresh_crc(pre_hard_link, 220);
-    expect(!infs_validate_superblock_block(pre_hard_link),
-           "reject hard-link feature before Format 0.10");
-
-    uint8_t pre_snapshot[INFS_BLOCK_SIZE];
-    memcpy(pre_snapshot, encoded, sizeof(pre_snapshot));
-    put_le16(pre_snapshot, 10, 10u);
-    put_le64(pre_snapshot, 148,
-             INFS_INCOMPAT_UTF8_NAMES | INFS_INCOMPAT_SPARSE_EXTENTS |
-                 INFS_INCOMPAT_INLINE_DATA | INFS_INCOMPAT_PAGED_METADATA |
-                 INFS_INCOMPAT_SYMBOLIC_LINKS | INFS_INCOMPAT_HARD_LINKS |
-                 INFS_INCOMPAT_SNAPSHOTS);
-    refresh_crc(pre_snapshot, 220);
-    expect(!infs_validate_superblock_block(pre_snapshot),
-           "reject snapshot feature before Format 0.11");
-
-    uint8_t extent_only[INFS_BLOCK_SIZE];
-    memcpy(extent_only, encoded, sizeof(extent_only));
-    put_le16(extent_only, 10, 7u);
-    put_le64(extent_only, 148,
-             INFS_INCOMPAT_UTF8_NAMES | INFS_INCOMPAT_SPARSE_EXTENTS);
-    refresh_crc(extent_only, 220);
-    expect(infs_validate_superblock_block(extent_only),
-           "accept Format 0.7 extent-only volume");
 
     encoded[4000] ^= 0x80u;
     expect(!infs_validate_superblock_block(encoded), "reject checksum mismatch");

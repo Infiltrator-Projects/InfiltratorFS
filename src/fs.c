@@ -160,8 +160,7 @@ int infs_validate_superblock_block(const uint8_t block[INFS_BLOCK_SIZE])
         return 0;
     if (infs_le16_to_cpu(sb->format_major) != INFS_FORMAT_MAJOR)
         return 0;
-    uint16_t format_minor = infs_le16_to_cpu(sb->format_minor);
-    if (format_minor > INFS_FORMAT_MINOR)
+    if (infs_le16_to_cpu(sb->format_minor) != INFS_FORMAT_MINOR)
         return 0;
     if (infs_le16_to_cpu(sb->header_size) != sizeof(*sb))
         return 0;
@@ -177,23 +176,10 @@ int infs_validate_superblock_block(const uint8_t block[INFS_BLOCK_SIZE])
     if (!superblock_label_valid(sb->label))
         return 0;
     uint64_t incompat_flags = infs_le64_to_cpu(sb->incompat_flags);
-    uint64_t required_flags = INFS_INCOMPAT_UTF8_NAMES;
-    if (format_minor >= 6u)
-        required_flags |= INFS_INCOMPAT_SPARSE_EXTENTS;
+    const uint64_t required_flags =
+        INFS_INCOMPAT_UTF8_NAMES | INFS_INCOMPAT_SPARSE_EXTENTS;
     if ((incompat_flags & ~INFS_KNOWN_INCOMPAT_FLAGS) != 0 ||
-        (incompat_flags & required_flags) != required_flags ||
-        (format_minor < 6u &&
-         (incompat_flags & INFS_INCOMPAT_SPARSE_EXTENTS) != 0) ||
-        (format_minor < 7u &&
-         (incompat_flags & INFS_INCOMPAT_INLINE_DATA) != 0) ||
-        (format_minor < 8u &&
-         (incompat_flags & INFS_INCOMPAT_PAGED_METADATA) != 0) ||
-        (format_minor < 9u &&
-         (incompat_flags & INFS_INCOMPAT_SYMBOLIC_LINKS) != 0) ||
-        (format_minor < 10u &&
-         (incompat_flags & INFS_INCOMPAT_HARD_LINKS) != 0) ||
-        (format_minor < 11u &&
-         (incompat_flags & INFS_INCOMPAT_SNAPSHOTS) != 0))
+        (incompat_flags & required_flags) != required_flags)
         return 0;
 
     const size_t off = offsetof(struct infs_superblock_disk, checksum);

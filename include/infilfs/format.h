@@ -11,6 +11,10 @@
 #define INFS_OBJECT_MAGIC "INFOBJ01"
 #define INFS_DIRECTORY_PAGE_MAGIC "INFSDP01"
 #define INFS_INDEX_PAGE_MAGIC "INFSIP01"
+
+/* Before the first stable release, readers deliberately accept only this
+ * exact development format. A format revision replaces its predecessor; it
+ * does not add an older-format reader or migration path. */
 #define INFS_FORMAT_MAJOR 0u
 #define INFS_FORMAT_MINOR 11u
 #define INFS_CHECKPOINT_COUNT 3u

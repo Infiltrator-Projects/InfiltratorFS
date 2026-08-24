@@ -20,7 +20,7 @@ mkfs_output="$tmp/mkfs-output.txt"
 
 truncate -s 64M "$image"
 "$mkfs" -L SmokeTest "$image" >"$mkfs_output"
-grep -Fq 'Implementation: 0.16.0' "$mkfs_output"
+grep -Fq 'Implementation: 0.16.1' "$mkfs_output"
 "$inspect" "$image" >/dev/null
 INFILFS_SCRUB="$scrub" "$fsck_helper" -n "$image" >/dev/null
 "$api_test" "$image" >/dev/null

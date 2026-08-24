@@ -106,8 +106,7 @@ static infs_status load_checkpoint_graph(
     discard_candidate_state(vol);
     vol->sb = *candidate;
 
-    uint16_t format_minor = infs_le16_to_cpu(vol->sb.format_minor);
-    if (format_minor < 6u || format_minor > INFS_FORMAT_MINOR)
+    if (infs_le16_to_cpu(vol->sb.format_minor) != INFS_FORMAT_MINOR)
         return INFS_STATUS_NOT_SUPPORTED;
     if (vol->writable &&
         (infs_le64_to_cpu(vol->sb.ro_compat_flags) &

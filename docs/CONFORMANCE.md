@@ -1,26 +1,27 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # Format 0.11 Conformance
 
-Format 0.11 retains Format 0.10 regular-file hard links while adding feature-gated named snapshot roots and retained historical generations. Format 0.6 through 0.10 volumes remain readable. New Format 0.11 volumes enable UTF-8 names, sparse extents, inline data, shared extents, paged metadata, symbolic links, hard links and snapshots.
+Format 0.11 includes regular-file hard links, named snapshot roots and retained historical generations. Pre-1.0 development builds accept exactly current Format 0.11 and do not open earlier development formats. Newly formatted volumes enable UTF-8 names, sparse extents, inline data, shared extents, paged metadata, symbolic links, hard links and snapshots.
 
 ## Required representation
 
 A conforming implementation must preserve:
 
 - 4096-byte filesystem blocks;
+- exact Format 0.11 major/minor identity; all other development revisions are rejected;
 - fixed-width integer fields encoded little-endian;
 - the exact packed field offsets and sizes declared in `include/infilfs/format.h`;
 - three checkpoint locations at block zero, the volume midpoint and the final block;
 - CRC64-ECMA checkpoint and metadata checksums;
 - SHA-256 logical-data checksums;
 - mandatory `INFS_INCOMPAT_UTF8_NAMES` support;
-- mandatory `INFS_INCOMPAT_SPARSE_EXTENTS` support for Format 0.6 and later;
-- `INFS_INCOMPAT_INLINE_DATA` accepted only for Format 0.7 and later;
+- mandatory `INFS_INCOMPAT_SPARSE_EXTENTS` support;
+- `INFS_INCOMPAT_INLINE_DATA` governing inline file-payload interpretation;
 - `INFS_INCOMPAT_SHARED_EXTENTS` governing duplicate normal-data ownership;
-- mandatory `INFS_INCOMPAT_PAGED_METADATA` for newly formatted Format 0.8 volumes;
-- mandatory `INFS_INCOMPAT_SYMBOLIC_LINKS` for newly formatted Format 0.9 volumes;
-- mandatory `INFS_INCOMPAT_HARD_LINKS` for newly formatted Format 0.10 volumes;
-- mandatory `INFS_INCOMPAT_SNAPSHOTS` for newly formatted Format 0.11 volumes;
+- `INFS_INCOMPAT_PAGED_METADATA` governing version-2 directory/index heads;
+- `INFS_INCOMPAT_SYMBOLIC_LINKS` governing symbolic-link objects;
+- `INFS_INCOMPAT_HARD_LINKS` governing multiple regular-file namespace references;
+- `INFS_INCOMPAT_SNAPSHOTS` governing snapshot-catalog objects;
 - object version 1 for classic objects and version 2 for paged directory/index heads;
 - owner-identified, generation-matched, CRC64-protected directory and index pages;
 - nonzero 128-bit filesystem and object identities;
@@ -71,15 +72,17 @@ A reflink creates a distinct file object with its own identity, attributes and c
 
 When `INFS_INCOMPAT_PAGED_METADATA` is set, the root directory and object-index head use object version 2. Their payloads contain little-endian physical pointers to metadata pages rather than inline entries. Every page has the correct directory/index magic, owner ID, generation, entry count, byte count, reserved-zero field and CRC64. Page pointers must be nonzero, allocated, in range, unique and reachable only from their owning head. Entry totals in the head must equal the combined page totals. A mismatch between the paged feature bit and either required head version is corruption.
 
-## Feature-flag compatibility
+## Development format and feature flags
 
-Format 0.11 uses the conventional three feature classes deliberately:
+Before the first stable release, a development build accepts only its exact current format major/minor. A later development format replaces the earlier format; no compatibility reader or migration path is required.
+
+Within current Format 0.11, the conventional three feature classes remain defined for the stable compatibility policy:
 
 - unknown `incompat_flags` require refusal to open;
 - unknown `ro_compat_flags` may be opened read-only but must not be opened writable;
 - unknown `compat_flags` may be ignored because they do not change required read/write interpretation.
 
-`INFS_INCOMPAT_UTF8_NAMES`, `INFS_INCOMPAT_SPARSE_EXTENTS`, `INFS_INCOMPAT_PAGED_METADATA`, `INFS_INCOMPAT_SYMBOLIC_LINKS`, `INFS_INCOMPAT_HARD_LINKS` and `INFS_INCOMPAT_SNAPSHOTS` are required on newly formatted Format 0.11 volumes. `INFS_INCOMPAT_INLINE_DATA` changes file-payload interpretation and is invalid before Format 0.7. `INFS_INCOMPAT_SHARED_EXTENTS` changes normal-data ownership rules. `INFS_INCOMPAT_PAGED_METADATA` is invalid before Format 0.8, `INFS_INCOMPAT_SYMBOLIC_LINKS` is invalid before Format 0.9, `INFS_INCOMPAT_HARD_LINKS` is invalid before Format 0.10, and `INFS_INCOMPAT_SNAPSHOTS` is invalid before Format 0.11. Format 0.11 defines no compatible or read-only-compatible bits.
+`INFS_INCOMPAT_UTF8_NAMES` and `INFS_INCOMPAT_SPARSE_EXTENTS` are required for Format 0.11. The remaining known incompatible bits select representations understood by this format, and the current formatter enables all of them. Format 0.11 defines no compatible or read-only-compatible bits for newly created volumes.
 
 ## Symbolic-link acceptance
 
@@ -123,7 +126,7 @@ Ordinary rename replacement is a single filesystem transaction. A file may repla
 
 ## Automated checks
 
-`infilfs-format-conformance` checks exact structure sizes and offsets, independently constructs expected checkpoint bytes, proves version-gated features cannot appear under an older minor version, accepts compatible legacy checkpoints, rejects unsupported incompatible features and verifies UTF-8/checksum rules. `infilfs-namespace-links` covers symbolic-link targets plus hard-link identity, shared writes, cross-directory rename, replacement, unlink, reference-count corruption, scrub and remount. `infilfs-snapshots` covers Format 0.10 compatibility, immutable names/data, nested retained generations, remount, historical scrub, corruption detection, deletion and final reclamation.
+`infilfs-format-conformance` checks exact structure sizes and offsets, independently constructs expected checkpoint bytes, rejects both earlier and future development formats, rejects unsupported incompatible features and verifies UTF-8/checksum rules. `infilfs-namespace-links` covers symbolic-link targets plus hard-link identity, shared writes, cross-directory rename, replacement, unlink, reference-count corruption, scrub and remount. `infilfs-snapshots` covers immutable names/data, nested retained generations, remount, historical scrub, corruption detection, deletion and final reclamation.
 
 `infilfs-inline-files` constructs a deterministic inline-enabled volume in memory and verifies:
 
@@ -145,17 +148,19 @@ Ordinary rename replacement is a single filesystem transaction. A file may repla
 
 `infilfs-forensic-scan` creates multiple CoW generations, finds current and orphaned authenticated metadata, proves a damaged stale object is excluded, and erases all three checkpoints to verify raw object discovery continues with unknown allocation state.
 
-`infilfs-hardening-conformance` covers checkpoint-label termination, canonical padding/reserved fields, object versions, read-only-compatible feature semantics, exact block ownership, namespace uniqueness/reachability/parentage, checksum-object reachability, read-status propagation, POSIX rename replacement, post-commit checkpoint-replica failure, explicit replica healing and mandatory reopen after an indeterminate first-checkpoint flush. Its legacy fixtures retain ordinary extent behavior without inline or paged representations.
+`infilfs-hardening-conformance` covers checkpoint-label termination, canonical padding/reserved fields, object versions, read-only-compatible feature semantics, exact block ownership, namespace uniqueness/reachability/parentage, checksum-object reachability, read-status propagation, POSIX rename replacement, post-commit checkpoint-replica failure, explicit replica healing and mandatory reopen after an indeterminate first-checkpoint flush. Its minimal current-format fixtures retain ordinary extent behavior without inline or paged representations.
 
 `infilfs-open-hardening`, `infilfs-063-hardening`, `infilfs-posix-locking` and `infilfs-sparse-files` retain the existing geometry, recovery, locking and crash-atomicity regression gates.
 
 GitHub Actions builds and tests the full Linux implementation, separately builds the portable core and native transfer application with Microsoft Visual C, and opens a Linux-created Format 0.11 image through the Win32 backend. The hardening matrix also runs Clang, AddressSanitizer/UndefinedBehaviorSanitizer and GCC `-fanalyzer`. When `/dev/fuse` is available, `infilfs-mint-fuse` performs mounted copy, rename, permission, symbolic-link, hard-link, sparse, punch, unmount and remount verification.
 
-Implementation 0.16.0 requires named read-only snapshot roots through the portable API and direct-image tool. Conformance verifies immutable historical data and namespace state, nested generation retention, full remount, scrub of retained data, version gating, deletion and final block reclamation.
+Implementation 0.16.0 requires named read-only snapshot roots through the portable API and direct-image tool. Conformance verifies immutable historical data and namespace state, nested generation retention, full remount, scrub of retained data, feature gating, deletion and final block reclamation.
+
+Implementation 0.16.1 removes pre-1.0 backward-format acceptance. Conformance requires both earlier and future development format minors to be rejected.
 
 Implementation 0.15.0 requires regular-file hard links through both the portable API and Linux FUSE. Mounted conformance verifies shared inode identity, reference count, byte identity and remount persistence. Offline conformance additionally verifies write-through coherence, cross-directory rename, unlink survival, atomic replacement of one linked destination and rejection of a validly checksummed but incorrect reference count.
 
-Implementation 0.14.0 requires native relative and absolute symbolic links through both the portable API and Linux FUSE. Mounted conformance verifies `ln -s`, `readlink`, target traversal and persistence across remount. Offline conformance verifies exact target bytes and metadata, namespace mutations, scrub, feature-version gating and invalid target rejection.
+Implementation 0.14.0 requires native relative and absolute symbolic links through both the portable API and Linux FUSE. Mounted conformance verifies `ln -s`, `readlink`, target traversal and persistence across remount. Offline conformance verifies exact target bytes and metadata, namespace mutations, scrub, feature gating and invalid target rejection.
 
 Implementation 0.12.0 additionally requires mounted conformance for descriptor lifetime across direct rename, parent-directory rename, unlink and atomic replacement of an open destination. The test continues reading, writing, truncating and syncing through the original descriptor after its pathname changes or disappears. Retained objects use an adapter-owned hidden, system-marked directory built from ordinary Format 0.8 namespace objects; final close and the next writable mount both verify reclamation without a disk-format extension.
 
@@ -165,4 +170,4 @@ The high-level FUSE adapter deliberately uses libfuse's documented offsetless `r
 
 ## Compatibility rule
 
-A future change that alters golden checkpoint bytes, packed offsets, extent or inline semantics, namespace representation, or the interpretation required by existing compatibility feature bits requires an explicit format revision or a newly defined compatibility feature bit as appropriate. Tightening rejection of metadata already defined as reserved, unreachable, multiply owned, structurally inconsistent or geometrically impossible is implementation hardening and does not by itself create a new disk format.
+Until the first stable release, a change that alters golden checkpoint bytes, packed offsets or interpretation increments the development format and replaces its predecessor without a compatibility reader or migration requirement. From the first stable release onward, such changes require a compatible feature extension or a defined migration policy. Tightening rejection of metadata already defined as reserved, unreachable, multiply owned, structurally inconsistent or geometrically impossible remains implementation hardening.
