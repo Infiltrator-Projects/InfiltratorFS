@@ -6,12 +6,12 @@
 
 InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem started in 2026. The persistent format and core engine are written in portable C; Linux and Windows are adapters over the same on-disk structures rather than separate filesystem implementations.
 
-**Current implementation:** 0.9.12  
-**On-disk format:** 0.8  
-**Shared foundation:** Infiltratr Common 1.11.0  
+**Current implementation:** 0.9.13<br>
+**On-disk format:** 0.8<br>
+**Shared foundation:** Infiltratr Common 1.11.0<br>
 **Licence:** GPL-3.0-or-later
 
-Format 0.8 is unchanged by the 0.9.x implementation releases. Media created by earlier Format 0.8 builds does not need to be reformatted to use implementation 0.9.12.
+Format 0.8 is unchanged by the 0.9.x implementation releases. Media created by earlier Format 0.8 builds does not need to be reformatted to use implementation 0.9.13.
 
 ## Capabilities
 
@@ -33,7 +33,7 @@ Format 0.8 currently provides:
 - explicit read-only scrub/verify; and
 - callback-based storage, durability, randomness and clock services.
 
-Implementation 0.9.12 retains the Format 0.8 filesystem behaviour from 0.9.11 and rebuilds the Linux release path so the `.run` asset is a genuine self-extracting Bash installer containing the complete release source tree, including the pinned Common submodule. Release construction now verifies the Bash header and embedded compressed source payload before the installer is accepted for publication.
+Implementation 0.9.13 retains the Format 0.8 filesystem behaviour from 0.9.12 and repairs the native Linux release path. The `.run` is a genuine self-extracting Bash installer containing the complete release source tree and pinned Common submodule. It verifies its own header, payload and executable bootstrap, supports a non-mutating `--dry-run`, reports the exact packages and commands needed, and performs the real compilation on the target Linux machine.
 
 ## Architecture
 
@@ -95,7 +95,7 @@ GitHub Actions runs Linux, Clang, sanitizer and static-analyzer suites, cross-pl
 
 The Linux Debian package installs **InfiltratorFS Manager**, which can create/format images, select removable partitions, inspect/scrub, mount through FUSE, open in Nemo and unmount safely.
 
-The Windows release contains a versioned executable such as `InfiltratorFS-Windows-0.9.12.exe`. Run it elevated when accessing raw media. It can discover physical partitions, list the root directory, copy files/folders and run a full scrub while bounding raw I/O to the selected partition.
+The Windows release contains a versioned executable such as `InfiltratorFS-Windows-0.9.13.exe`. Run it elevated when accessing raw media. It can discover physical partitions, list the root directory, copy files/folders and run a full scrub while bounding raw I/O to the selected partition.
 
 ## Release assets
 
@@ -108,6 +108,15 @@ A numbered release publishes:
 | `InfiltratorFS-Windows-<version>.exe` | Native Windows transfer/raw-volume application. |
 | `InfiltratorFS-<version>-source.zip` | Exact tested source archive. |
 | `SHA256SUMS.txt` | SHA-256 checksums for all published project artifacts. |
+
+To inspect the native Linux build before allowing it to install anything:
+
+```bash
+chmod +x infiltratorfs-0.9.13-linux-native.run
+./infiltratorfs-0.9.13-linux-native.run --dry-run
+```
+
+Run the same file without `--dry-run` to compile, test and install InfiltratorFS natively. If required packages are missing, it displays the exact `apt-get` commands and asks before installing them.
 
 ## Repository and release policy
 

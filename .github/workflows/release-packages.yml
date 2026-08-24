@@ -115,6 +115,14 @@ jobs:
           test -f "dist/$deb"
           test -x "dist/$installer"
           test "$(dpkg-deb --field "dist/$deb" Version)" = "$VERSION"
+          "dist/$installer" --verify
+          "dist/$installer" --dry-run | tee dist/native-installer-dry-run.txt
+          grep -Fq 'Dry run only; no packages will be installed' dist/native-installer-dry-run.txt
+          grep -Fq 'Native build commands:' dist/native-installer-dry-run.txt
+          rm -f dist/native-installer-dry-run.txt
+          for dependency in fuse3 libfuse3-3 policykit-1 util-linux xdg-utils zenity; do
+            dpkg-deb --field "dist/$deb" Depends | grep -Eq "(^|, )${dependency}([ ,]|$)"
+          done
 
           staging="$RUNNER_TEMP/InfiltratorFS-${VERSION}"
           mkdir -p "$staging"
@@ -125,6 +133,8 @@ jobs:
             ./ "$staging/"
           (cd "$RUNNER_TEMP" && zip -qry "$GITHUB_WORKSPACE/dist/$source" "InfiltratorFS-${VERSION}")
           unzip -tq "dist/$source"
+          unzip -Z1 "dist/$source" | grep -Fqx \
+            "InfiltratorFS-${VERSION}/src/infiltratr-common/CMakeLists.txt"
 
       - name: Preserve Linux and source release assets
         uses: actions/upload-artifact@v4

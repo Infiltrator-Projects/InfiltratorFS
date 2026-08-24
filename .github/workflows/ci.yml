@@ -186,6 +186,9 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: recursive
       - name: Install package build dependencies
         run: |
           sudo apt-get update
@@ -196,6 +199,21 @@ jobs:
         run: cmake --build build --parallel
       - name: Build Linux release packages
         run: bash packaging/build-linux-packages.sh build dist
+      - name: Validate native installer and Debian metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(sed -nE 's/^project\(InfiltratorFS VERSION ([0-9]+\.[0-9]+\.[0-9]+) LANGUAGES C\)$/\1/p' CMakeLists.txt)"
+          installer="dist/infiltratorfs-${version}-linux-native.run"
+          deb="dist/infiltratorfs_${version}_amd64.deb"
+          "$installer" --verify
+          "$installer" --dry-run | tee dist/native-installer-dry-run.txt
+          grep -Fq 'Dry run only; no packages will be installed' dist/native-installer-dry-run.txt
+          grep -Fq 'Native build commands:' dist/native-installer-dry-run.txt
+          for dependency in fuse3 libfuse3-3 policykit-1 util-linux xdg-utils zenity; do
+            dpkg-deb --field "$deb" Depends | grep -Eq "(^|, )${dependency}([ ,]|$)"
+          done
+          rm -f dist/native-installer-dry-run.txt
       - name: Upload Linux installers
         uses: actions/upload-artifact@v4
         with:
