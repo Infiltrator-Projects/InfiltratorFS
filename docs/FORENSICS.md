@@ -8,7 +8,7 @@ infilfs-forensic volume.img
 infilfs-forensic --jsonl /dev/sdb1 > evidence.jsonl
 ```
 
-The scanner authenticates each recognized record independently using the checks already defined by Format 0.10, including native symbolic-link objects and hard-link reference accounting:
+The scanner authenticates each recognized record independently using the checks already defined by Format 0.11, including native symbolic-link, hard-link and snapshot-catalog objects:
 
 - checkpoint structure, geometry-independent fields and CRC64;
 - object magic, type/version, identity, payload shape, canonical padding and CRC64;
@@ -21,7 +21,7 @@ Arbitrary data that merely contains a magic string is not reported. A candidate 
 
 When a valid checkpoint and readable bitmap survive, the scanner reports:
 
-- `current` for metadata allocated by the selected live generation and checkpoint replicas matching that generation;
+- `current` for metadata allocated by the selected live generation or a retained snapshot graph, and checkpoint replicas matching the selected generation;
 - `stale` for an independently valid older checkpoint replica; and
 - `orphaned` for an authenticated object or page that is no longer allocated by the live bitmap, commonly a superseded CoW record.
 

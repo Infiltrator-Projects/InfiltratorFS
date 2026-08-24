@@ -95,6 +95,12 @@ struct infs_volume {
     uint64_t allocation_cursor;
     struct infs_object_cache_entry *object_cache;
     size_t object_cache_slots;
+
+    /* Internal recursion contexts shared by ephemeral read-only snapshot
+     * views. They prevent repeated traversal of the same retained generation
+     * in the bounded catalog DAG and are never persistent. */
+    void *snapshot_validation_context;
+    void *snapshot_scrub_context;
 };
 
 struct infs_lookup {
@@ -114,6 +120,12 @@ struct infs_dir_item {
     char name[INFS_NAME_MAX + 1u];
     uint8_t object_id[16];
     uint16_t type;
+};
+
+struct infs_snapshot_info {
+    char name[INFS_SNAPSHOT_NAME_MAX + 1u];
+    uint64_t generation;
+    int64_t created_time_ns;
 };
 
 infs_status infs_volume_open_storage(struct infs_volume *vol,
@@ -170,6 +182,31 @@ infs_status infs_punch_hole(struct infs_volume *vol, const char *path,
                             uint64_t offset, uint64_t length);
 infs_status infs_reflink_file(struct infs_volume *vol, const char *source_path,
                               const char *destination_path);
+
+infs_status infs_snapshot_create(struct infs_volume *vol, const char *name);
+infs_status infs_snapshot_delete(struct infs_volume *vol, const char *name);
+infs_status infs_snapshot_list(struct infs_volume *vol,
+                               struct infs_snapshot_info **snapshots,
+                               size_t *count);
+void infs_free_snapshot_infos(struct infs_snapshot_info *snapshots);
+infs_status infs_snapshot_lookup_path(struct infs_volume *vol,
+                                      const char *snapshot, const char *path,
+                                      struct infs_lookup *out);
+infs_status infs_snapshot_get_attributes(struct infs_volume *vol,
+                                          const char *snapshot,
+                                          const char *path,
+                                          struct infs_attributes *attributes);
+infs_status infs_snapshot_list_dir(struct infs_volume *vol,
+                                   const char *snapshot, const char *path,
+                                   struct infs_dir_item **items,
+                                   size_t *count);
+int64_t infs_snapshot_read_file(struct infs_volume *vol,
+                                const char *snapshot, const char *path,
+                                void *buf, size_t size, uint64_t offset);
+infs_status infs_snapshot_read_symlink(struct infs_volume *vol,
+                                       const char *snapshot,
+                                       const char *path, char *target,
+                                       size_t capacity, size_t *length_out);
 
 infs_status infs_set_posix_compat(struct infs_volume *vol, const char *path,
                                   uint32_t mask, uint32_t permissions,

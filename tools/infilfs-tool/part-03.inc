@@ -47,6 +47,98 @@ static int command_readlink(struct infs_volume *vol, const char *path)
     return 0;
 }
 
+static int command_snapshot_list(struct infs_volume *vol)
+{
+    struct infs_snapshot_info *snapshots = NULL;
+    size_t count = 0;
+    infs_status status = infs_snapshot_list(vol, &snapshots, &count);
+    if (status != INFS_STATUS_OK)
+        return die_status("snapshot-list", status);
+    for (size_t i = 0; i < count; ++i)
+        printf("%s generation=%" PRIu64 " created_ns=%" PRId64 "\n",
+               snapshots[i].name, snapshots[i].generation,
+               snapshots[i].created_time_ns);
+    infs_free_snapshot_infos(snapshots);
+    return 0;
+}
+
+static int command_snapshot_ls(struct infs_volume *vol, const char *snapshot,
+                               const char *path)
+{
+    struct infs_dir_item *items = NULL;
+    size_t count = 0;
+    infs_status status = infs_snapshot_list_dir(
+        vol, snapshot, path, &items, &count);
+    if (status != INFS_STATUS_OK)
+        return die_status("snapshot-ls", status);
+    for (size_t i = 0; i < count; ++i)
+        printf("%c %s\n",
+               items[i].type == INFS_OBJECT_DIRECTORY ? 'd' :
+               items[i].type == INFS_OBJECT_SYMLINK ? 'l' : '-',
+               items[i].name);
+    infs_free_dir_items(items);
+    return 0;
+}
+
+static int command_snapshot_stat(struct infs_volume *vol,
+                                 const char *snapshot, const char *path)
+{
+    struct infs_attributes attributes;
+    infs_status status = infs_snapshot_get_attributes(
+        vol, snapshot, path, &attributes);
+    if (status != INFS_STATUS_OK)
+        return die_status("snapshot-stat", status);
+    printf("type=%u mode=%#o uid=%u gid=%u links=%" PRIu64
+           " size=%" PRIu64 " allocated=%" PRIu64 "\n",
+           attributes.object_type, attributes.posix_permissions,
+           attributes.posix_uid, attributes.posix_gid,
+           attributes.link_count, attributes.logical_size,
+           attributes.allocated_size);
+    return 0;
+}
+
+static int command_snapshot_cat(struct infs_volume *vol,
+                                const char *snapshot, const char *path)
+{
+    struct infs_attributes attributes;
+    infs_status status = infs_snapshot_get_attributes(
+        vol, snapshot, path, &attributes);
+    if (status != INFS_STATUS_OK)
+        return die_status("snapshot-cat", status);
+    if (attributes.object_type != INFS_OBJECT_FILE)
+        return die_status("snapshot-cat", INFS_STATUS_IS_DIRECTORY);
+    uint8_t buf[256 * 1024];
+    uint64_t off = 0;
+    while (off < attributes.logical_size) {
+        size_t want = sizeof(buf);
+        if ((uint64_t)want > attributes.logical_size - off)
+            want = (size_t)(attributes.logical_size - off);
+        int64_t n = infs_snapshot_read_file(
+            vol, snapshot, path, buf, want, off);
+        if (n <= 0)
+            return die_status("snapshot-cat",
+                              n < 0 ? (infs_status)n : INFS_STATUS_IO_ERROR);
+        if (fwrite(buf, 1, (size_t)n, stdout) != (size_t)n)
+            return die_errno("stdout");
+        off += (uint64_t)n;
+    }
+    return 0;
+}
+
+static int command_snapshot_readlink(struct infs_volume *vol,
+                                     const char *snapshot, const char *path)
+{
+    char target[INFS_SYMLINK_TARGET_MAX + 1u];
+    size_t length = 0;
+    infs_status status = infs_snapshot_read_symlink(
+        vol, snapshot, path, target, sizeof(target), &length);
+    if (status != INFS_STATUS_OK)
+        return die_status("snapshot-readlink", status);
+    if (fwrite(target, 1, length, stdout) != length || putchar('\n') == EOF)
+        return die_errno("stdout");
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 3) {
@@ -57,7 +149,11 @@ int main(int argc, char **argv)
     const char *cmd = argv[2];
     int writable = strcmp(cmd, "ls") != 0 && strcmp(cmd, "stat") != 0 &&
         strcmp(cmd, "cat") != 0 && strcmp(cmd, "map") != 0 &&
-        strcmp(cmd, "readlink") != 0;
+        strcmp(cmd, "readlink") != 0 && strcmp(cmd, "snapshot-list") != 0 &&
+        strcmp(cmd, "snapshot-ls") != 0 &&
+        strcmp(cmd, "snapshot-stat") != 0 &&
+        strcmp(cmd, "snapshot-cat") != 0 &&
+        strcmp(cmd, "snapshot-readlink") != 0;
 
     struct infs_volume vol;
     infs_status status = infs_posix_volume_open(&vol, image, writable);
@@ -112,6 +208,23 @@ int main(int argc, char **argv)
     } else if (strcmp(cmd, "rmdir") == 0 && argc == 4) {
         status = infs_rmdir(&vol, argv[3]);
         if (status != INFS_STATUS_OK) rc = die_status("rmdir", status);
+    } else if (strcmp(cmd, "snapshot-create") == 0 && argc == 4) {
+        status = infs_snapshot_create(&vol, argv[3]);
+        if (status != INFS_STATUS_OK) rc = die_status("snapshot-create", status);
+    } else if (strcmp(cmd, "snapshot-list") == 0 && argc == 3) {
+        rc = command_snapshot_list(&vol);
+    } else if (strcmp(cmd, "snapshot-delete") == 0 && argc == 4) {
+        status = infs_snapshot_delete(&vol, argv[3]);
+        if (status != INFS_STATUS_OK) rc = die_status("snapshot-delete", status);
+    } else if (strcmp(cmd, "snapshot-ls") == 0 &&
+               (argc == 4 || argc == 5)) {
+        rc = command_snapshot_ls(&vol, argv[3], argc == 5 ? argv[4] : "/");
+    } else if (strcmp(cmd, "snapshot-stat") == 0 && argc == 5) {
+        rc = command_snapshot_stat(&vol, argv[3], argv[4]);
+    } else if (strcmp(cmd, "snapshot-cat") == 0 && argc == 5) {
+        rc = command_snapshot_cat(&vol, argv[3], argv[4]);
+    } else if (strcmp(cmd, "snapshot-readlink") == 0 && argc == 5) {
+        rc = command_snapshot_readlink(&vol, argv[3], argv[4]);
     } else {
         usage(argv[0]);
         rc = 2;

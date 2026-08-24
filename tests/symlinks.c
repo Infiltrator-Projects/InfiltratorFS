@@ -145,14 +145,17 @@ int main(void)
     storage = make_storage(&image);
     expect(infs_volume_open_storage(&volume, &storage, 1) == INFS_STATUS_OK,
            "open writable volume");
-    expect(infs_le16_to_cpu(volume.sb.format_minor) == 10u,
-           "Format minor is 0.10");
+    expect(infs_le16_to_cpu(volume.sb.format_minor) == 11u,
+           "Format minor is 0.11");
     expect((infs_le64_to_cpu(volume.sb.incompat_flags) &
             INFS_INCOMPAT_SYMBOLIC_LINKS) != 0,
            "symbolic-link feature enabled");
     expect((infs_le64_to_cpu(volume.sb.incompat_flags) &
             INFS_INCOMPAT_HARD_LINKS) != 0,
            "hard-link feature enabled");
+    expect((infs_le64_to_cpu(volume.sb.incompat_flags) &
+            INFS_INCOMPAT_SNAPSHOTS) != 0,
+           "snapshot feature enabled");
 
     const struct infs_create_options options = {
         .posix_permissions = 0777,

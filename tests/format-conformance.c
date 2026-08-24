@@ -99,6 +99,12 @@ static void check_layout(void)
            "symbolic-link payload size");
     expect(INFS_SYMLINK_TARGET_MAX == 3888u,
            "symbolic-link target capacity");
+    expect(sizeof(struct infs_snapshot_catalog_payload_disk) == 8u,
+           "snapshot catalog payload size");
+    expect(sizeof(struct infs_snapshot_record_disk) == 144u,
+           "snapshot record size");
+    expect(INFS_SNAPSHOTS_PER_CATALOG == 27u,
+           "snapshot catalog capacity");
 }
 
 static void make_golden_superblock(struct infs_superblock_disk *sb)
@@ -244,6 +250,18 @@ static void check_superblock_encoding(void)
     refresh_crc(pre_hard_link, 220);
     expect(!infs_validate_superblock_block(pre_hard_link),
            "reject hard-link feature before Format 0.10");
+
+    uint8_t pre_snapshot[INFS_BLOCK_SIZE];
+    memcpy(pre_snapshot, encoded, sizeof(pre_snapshot));
+    put_le16(pre_snapshot, 10, 10u);
+    put_le64(pre_snapshot, 148,
+             INFS_INCOMPAT_UTF8_NAMES | INFS_INCOMPAT_SPARSE_EXTENTS |
+                 INFS_INCOMPAT_INLINE_DATA | INFS_INCOMPAT_PAGED_METADATA |
+                 INFS_INCOMPAT_SYMBOLIC_LINKS | INFS_INCOMPAT_HARD_LINKS |
+                 INFS_INCOMPAT_SNAPSHOTS);
+    refresh_crc(pre_snapshot, 220);
+    expect(!infs_validate_superblock_block(pre_snapshot),
+           "reject snapshot feature before Format 0.11");
 
     uint8_t extent_only[INFS_BLOCK_SIZE];
     memcpy(extent_only, encoded, sizeof(extent_only));

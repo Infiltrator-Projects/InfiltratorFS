@@ -53,8 +53,15 @@ infs_status infs_volume_sync(struct infs_volume *vol)
     if (status != INFS_STATUS_OK)
         return status;
 
-    if (vol->tx_error != INFS_STATUS_OK)
+    uint8_t *snapshot_union = NULL;
+    status = snapshot_union_bitmap(vol, &snapshot_union);
+    if (status != INFS_STATUS_OK)
+        return status;
+
+    if (vol->tx_error != INFS_STATUS_OK) {
+        free(snapshot_union);
         return vol->tx_error;
+    }
 
     /* Deferred frees remain reserved until every new metadata/data write is on
      * stable storage. They become reusable only in the new bitmap image. Keep
@@ -66,11 +73,14 @@ infs_status infs_volume_sync(struct infs_volume *vol)
         uint64_t start = vol->tx_deferred[i].start;
         uint64_t count = vol->tx_deferred[i].count;
         for (uint64_t b = start; b < start + count && b < total; ++b) {
-            if (!bitmap_get(vol->bitmap, b))
+            if (!bitmap_get(vol->bitmap, b) ||
+                bitmap_get(snapshot_union, b))
                 continue;
             bitmap_set(vol->bitmap, b, 0);
-            if (free_blocks == UINT64_MAX)
+            if (free_blocks == UINT64_MAX) {
+                free(snapshot_union);
                 return INFS_STATUS_OVERFLOW;
+            }
             ++free_blocks;
         }
     }
@@ -81,6 +91,7 @@ infs_status infs_volume_sync(struct infs_volume *vol)
                    infs_le64_to_cpu(vol->sb.checkpoint_block[i]), 1);
     for (uint64_t b = total; b < (uint64_t)vol->bitmap_bytes * 8u; ++b)
         bitmap_set(vol->bitmap, b, 1);
+    free(snapshot_union);
 
     vol->sb.bitmap_start_block = infs_cpu_to_le64(new_bitmap_start);
     vol->sb.generation = infs_cpu_to_le64(next_generation);

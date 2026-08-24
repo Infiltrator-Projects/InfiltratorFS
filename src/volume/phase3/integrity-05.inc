@@ -77,15 +77,13 @@ static int claim_directory_metadata_pages(struct infs_volume *vol,
     return INFS_STATUS_OK;
 }
 
-static int validate_bitmap_ownership(struct infs_volume *vol,
-                                     const struct infs_index_entry_disk *entries,
-                                     uint32_t count)
+static int build_live_ownership_bitmap(
+    struct infs_volume *vol, const struct infs_index_entry_disk *entries,
+    uint32_t count, uint8_t *owners)
 {
     uint64_t total = infs_le64_to_cpu(vol->sb.total_blocks);
-    uint8_t *owners = calloc(1, vol->bitmap_bytes);
     uint8_t *data_owners = calloc(1, vol->bitmap_bytes);
     if (!owners || !data_owners) {
-        free(owners);
         free(data_owners);
         return INFS_STATUS_NO_MEMORY;
     }
@@ -160,15 +158,41 @@ static int validate_bitmap_ownership(struct infs_volume *vol,
         }
     }
 
+out:
+    free(data_owners);
+    return status;
+}
+
+static int validate_bitmap_ownership(struct infs_volume *vol,
+                                     const struct infs_index_entry_disk *entries,
+                                     uint32_t count)
+{
+    uint64_t total = infs_le64_to_cpu(vol->sb.total_blocks);
+    uint8_t *owners = calloc(1, vol->bitmap_bytes);
+    if (!owners)
+        return INFS_STATUS_NO_MEMORY;
+    int status = build_live_ownership_bitmap(vol, entries, count, owners);
+    if (status != INFS_STATUS_OK) {
+        free(owners);
+        return status;
+    }
+
+    uint8_t *snapshot_union = NULL;
+    status = snapshot_union_bitmap(vol, &snapshot_union);
+    if (status != INFS_STATUS_OK) {
+        free(owners);
+        return status;
+    }
+    for (size_t i = 0; i < vol->bitmap_bytes; ++i)
+        owners[i] |= snapshot_union[i];
+    free(snapshot_union);
+
     for (uint64_t b = 0; b < total; ++b) {
         if (bitmap_get(owners, b) != bitmap_get(vol->bitmap, b)) {
             status = INFS_STATUS_CORRUPT;
-            goto out;
+            break;
         }
     }
-
-out:
-    free(data_owners);
     free(owners);
     return status;
 }
@@ -303,6 +327,15 @@ static int validate_integrity_metadata(struct infs_volume *vol)
             if (status != INFS_STATUS_OK)
                 goto out;
             status = symlink_validate(vol, object, NULL, NULL);
+            if (status != INFS_STATUS_OK)
+                goto out;
+        } else if (type == INFS_OBJECT_SNAPSHOT_CATALOG) {
+            if (!snapshots_enabled(vol) ||
+                memcmp(entries[i].object_id, snapshot_catalog_id, 16) != 0) {
+                status = INFS_STATUS_CORRUPT;
+                goto out;
+            }
+            status = snapshot_validate_catalog_graphs(vol);
             if (status != INFS_STATUS_OK)
                 goto out;
         }

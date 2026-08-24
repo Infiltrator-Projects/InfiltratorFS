@@ -59,10 +59,10 @@ jobs:
         run: |
           truncate -s 64M build/linux-format08.img
           build/mkfs.infilfs -L LinuxCrossPlatform build/linux-format08.img
-          printf 'linux-to-windows-format-0.10\n' > build/linux-cross-platform.txt
+          printf 'linux-to-windows-format-0.11\n' > build/linux-cross-platform.txt
           build/infilfs-tool build/linux-format08.img put build/linux-cross-platform.txt /linux-cross-platform.txt
           build/infilfs-scrub build/linux-format08.img
-      - name: Upload Linux-created Format 0.10 image
+      - name: Upload Linux-created Format 0.11 image
         uses: actions/upload-artifact@v4
         with:
           name: InfiltratorFS-Linux-Format010-TestImage
@@ -131,7 +131,7 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v6
-      - name: Download Linux-created Format 0.10 image
+      - name: Download Linux-created Format 0.11 image
         uses: actions/download-artifact@v4
         with:
           name: InfiltratorFS-Linux-Format010-TestImage
@@ -142,7 +142,7 @@ jobs:
         run: cmake --build build --config Release --parallel
       - name: Run Windows conformance tests
         run: ctest --test-dir build -C Release --output-on-failure
-      - name: Open Linux-created Format 0.10 image on Windows
+      - name: Open Linux-created Format 0.11 image on Windows
         shell: pwsh
         run: '& .\build\Release\infilfs-win32-storage.exe .\cross-platform\linux-format08.img'
       - name: Verify Windows storage and transfer policy are compiled

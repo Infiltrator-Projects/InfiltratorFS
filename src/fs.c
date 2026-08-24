@@ -52,7 +52,8 @@ static int object_type_valid(uint16_t type)
 {
     return type == INFS_OBJECT_DIRECTORY || type == INFS_OBJECT_FILE ||
            type == INFS_OBJECT_INDEX || type == INFS_OBJECT_CHECKSUM ||
-           type == INFS_OBJECT_SYMLINK;
+           type == INFS_OBJECT_SYMLINK ||
+           type == INFS_OBJECT_SNAPSHOT_CATALOG;
 }
 
 static int object_version_valid(uint16_t type, uint16_t version)
@@ -116,6 +117,22 @@ static int symlink_payload_shape_valid(const uint8_t block[INFS_BLOCK_SIZE],
         infs_utf8_validate(target, length);
 }
 
+static int snapshot_catalog_payload_shape_valid(
+    const uint8_t block[INFS_BLOCK_SIZE], uint32_t payload_size)
+{
+    if (payload_size < sizeof(struct infs_snapshot_catalog_payload_disk))
+        return 0;
+    const struct infs_snapshot_catalog_payload_disk *payload =
+        (const struct infs_snapshot_catalog_payload_disk *)(
+            block + sizeof(struct infs_object_header_disk));
+    uint32_t count = infs_le32_to_cpu(payload->snapshot_count);
+    if (infs_le32_to_cpu(payload->reserved) != 0 ||
+        count > INFS_SNAPSHOTS_PER_CATALOG)
+        return 0;
+    return payload_size == sizeof(*payload) +
+        (size_t)count * sizeof(struct infs_snapshot_record_disk);
+}
+
 infs_status infs_encode_superblock(uint8_t block[INFS_BLOCK_SIZE],
                                    const struct infs_superblock_disk *sb)
 {
@@ -174,7 +191,9 @@ int infs_validate_superblock_block(const uint8_t block[INFS_BLOCK_SIZE])
         (format_minor < 9u &&
          (incompat_flags & INFS_INCOMPAT_SYMBOLIC_LINKS) != 0) ||
         (format_minor < 10u &&
-         (incompat_flags & INFS_INCOMPAT_HARD_LINKS) != 0))
+         (incompat_flags & INFS_INCOMPAT_HARD_LINKS) != 0) ||
+        (format_minor < 11u &&
+         (incompat_flags & INFS_INCOMPAT_SNAPSHOTS) != 0))
         return 0;
 
     const size_t off = offsetof(struct infs_superblock_disk, checksum);
@@ -247,7 +266,9 @@ infs_status infs_object_finalize(uint8_t block[INFS_BLOCK_SIZE])
         (object_type == INFS_OBJECT_INDEX &&
          !index_payload_shape_valid(block, payload_size, object_version)) ||
         (object_type == INFS_OBJECT_SYMLINK &&
-         !symlink_payload_shape_valid(block, payload_size))) {
+         !symlink_payload_shape_valid(block, payload_size)) ||
+        (object_type == INFS_OBJECT_SNAPSHOT_CATALOG &&
+         !snapshot_catalog_payload_shape_valid(block, payload_size))) {
         return INFS_STATUS_INVALID_ARGUMENT;
     }
 

@@ -1,9 +1,9 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-# InfiltratorFS On-Disk Format 0.10
+# InfiltratorFS On-Disk Format 0.11
 
-Status: experimental writable prototype. Format 0.10 extends Format 0.9 with feature-gated regular-file hard links and transactional reference accounting. Formats 0.1 through 0.5 remain incompatible; Format 0.6 through 0.9 volumes remain readable.
+Status: experimental writable prototype. Format 0.11 extends Format 0.10 with feature-gated named snapshot roots and retained historical generations. Formats 0.1 through 0.5 remain incompatible; Format 0.6 through 0.10 volumes remain readable.
 
-Implementation 0.6.0 introduced sparse extents, sparse checksum indexing and hole punching. Implementation 0.7.0 defined `INFS_INCOMPAT_INLINE_DATA`. Implementation 0.8.0 added `INFS_INCOMPAT_SHARED_EXTENTS`; Format 0.8 added `INFS_INCOMPAT_PAGED_METADATA` and version-2 metadata heads. Format 0.9 added `INFS_INCOMPAT_SYMBOLIC_LINKS` and object type 5. Format 0.10 adds `INFS_INCOMPAT_HARD_LINKS` without changing packed object layouts. The normative acceptance rules are summarized in `CONFORMANCE.md`.
+Implementation 0.6.0 introduced sparse extents, sparse checksum indexing and hole punching. Implementation 0.7.0 defined `INFS_INCOMPAT_INLINE_DATA`. Implementation 0.8.0 added `INFS_INCOMPAT_SHARED_EXTENTS`; Format 0.8 added `INFS_INCOMPAT_PAGED_METADATA` and version-2 metadata heads. Format 0.9 added `INFS_INCOMPAT_SYMBOLIC_LINKS` and object type 5. Format 0.10 added `INFS_INCOMPAT_HARD_LINKS`. Format 0.11 adds `INFS_INCOMPAT_SNAPSHOTS`, snapshot-catalog object type 6 and fixed-size generation-root records. The normative acceptance rules are summarized in `CONFORMANCE.md`.
 
 ## 1. Encoding
 
@@ -35,7 +35,7 @@ The bitmap contains one bit per filesystem block. Bits beyond the volume end are
 
 ```text
 magic                       8 bytes: "INFS2026"
-format major/minor          0.10
+format major/minor          0.11
 header size                 structure-size guard
 block shift                 12
 checksum algorithm          CRC64-ECMA
@@ -54,11 +54,11 @@ checksum field              32 bytes reserved
 
 Generation, filesystem UUID and root object ID are nonzero.
 
-Format 0.10 requires `INFS_INCOMPAT_UTF8_NAMES` and `INFS_INCOMPAT_SPARSE_EXTENTS`. New volumes also enable `INFS_INCOMPAT_INLINE_DATA`, `INFS_INCOMPAT_SHARED_EXTENTS`, `INFS_INCOMPAT_PAGED_METADATA`, `INFS_INCOMPAT_SYMBOLIC_LINKS` and `INFS_INCOMPAT_HARD_LINKS`. When the paged feature is set, it requires version-2 directory and object-index heads; disagreement between the feature bit and either required head version is corruption. Symbolic-link objects and directory/index entries declaring them are valid only when their feature bit is present. Multiple directory references to one regular-file object are valid only when the hard-link feature bit is present. Readers reject a missing required bit or any unknown incompatible feature flag.
+Format 0.11 requires `INFS_INCOMPAT_UTF8_NAMES` and `INFS_INCOMPAT_SPARSE_EXTENTS`. New volumes also enable `INFS_INCOMPAT_INLINE_DATA`, `INFS_INCOMPAT_SHARED_EXTENTS`, `INFS_INCOMPAT_PAGED_METADATA`, `INFS_INCOMPAT_SYMBOLIC_LINKS`, `INFS_INCOMPAT_HARD_LINKS` and `INFS_INCOMPAT_SNAPSHOTS`. When the paged feature is set, it requires version-2 directory and object-index heads; disagreement between the feature bit and either required head version is corruption. Symbolic-link, hard-link and snapshot-catalog representations are accepted only with their corresponding feature bits. Readers reject a missing required bit or any unknown incompatible feature flag.
 
-Compatibility remains feature-driven. Inline data is invalid before Format 0.7. Shared extents are understood only when their incompatible feature bit is present. Paged metadata is invalid before Format 0.8. Symbolic links are invalid before Format 0.9. Multiple file references are invalid before Format 0.10.
+Compatibility remains feature-driven. Inline data is invalid before Format 0.7. Shared extents are understood only when their incompatible feature bit is present. Paged metadata is invalid before Format 0.8. Symbolic links are invalid before Format 0.9. Multiple file references are invalid before Format 0.10. Snapshot catalogs are invalid before Format 0.11.
 
-Feature classes have distinct compatibility semantics. Unknown incompatible bits prevent any open. Unknown read-only-compatible bits may be opened read-only but prevent writable open. Unknown compatible bits may be ignored. Format 0.10 defines no compatible or read-only-compatible bits for newly created volumes.
+Feature classes have distinct compatibility semantics. Unknown incompatible bits prevent any open. Unknown read-only-compatible bits may be opened read-only but prevent writable open. Unknown compatible bits may be ignored. Format 0.11 defines no compatible or read-only-compatible bits for newly created volumes.
 
 CRC64 occupies the first eight checksum bytes. The remaining checksum bytes are zero. The complete checksum field is zero during calculation. A physical checkpoint copy first passes its own magic, format, size, block geometry, checksum, volume size, feature flags, canonical padding and expected checkpoint-position checks. The implementation then validates the complete graph referenced by surviving checkpoint candidates in descending generation order. The newest candidate with a structurally valid committed graph wins; a corrupt newer graph may fall back to an older valid committed graph. External I/O, memory or unsupported-feature failures are not treated as graph corruption and therefore do not silently trigger fallback.
 
@@ -66,7 +66,7 @@ CRC64 occupies the first eight checksum bytes. The remaining checksum bytes are 
 
 Bit `b` describes block `b`: zero means free; one means allocated or unavailable. The bitmap is authoritative. Before any bitmap bit is traversed, the reader proves that the declared bitmap contains enough bits to represent every block in `total_blocks`. Open then recounts free blocks and rejects disagreement with the committed checkpoint.
 
-The implementation reconstructs ownership from the committed roots. Every allocated in-volume block must be owned by a checkpoint, current bitmap image, current object-index head/page, directory page, indexed metadata object or normal file extent. Metadata ownership overlap and allocated-but-unreachable blocks are corruption. Normal data blocks may have multiple file owners only when `INFS_INCOMPAT_SHARED_EXTENTS` is set. Inline bytes remain owned by their file metadata object.
+The implementation reconstructs ownership from the committed roots. Every allocated in-volume block must be owned by a checkpoint, current bitmap image, current object-index head/page, directory page, indexed metadata object, normal file extent or retained snapshot graph. The active bitmap is the exact union of the live graph and each catalogued snapshot bitmap. Metadata ownership overlap within one generation and allocated-but-unreachable blocks are corruption. Reuse across historical generations is expected. Normal data blocks may have multiple file owners within one generation only when `INFS_INCOMPAT_SHARED_EXTENTS` is set. Inline bytes remain owned by their file metadata object.
 
 ## 5. Object header
 
@@ -74,7 +74,7 @@ Every metadata object begins with `struct infs_object_header_disk`:
 
 ```text
 magic                       8 bytes: "INFOBJ01"
-object type                 directory, file, index or checksum
+object type                 directory, file, index, checksum, symlink or snapshot catalog
 object version              type-specific version
 generation                  most recent update generation
 object ID                   128-bit persistent identity
@@ -120,7 +120,7 @@ A Format 0.8 directory head contains common attributes, POSIX compatibility data
 
 Each record contains its aligned record size, name length, target object type, flags, 128-bit target ID and name bytes. Names must be well-formed UTF-8, contain 1–255 bytes, and contain neither NUL nor `/`. Records are padded to eight-byte alignment. Current record flags and padding are zero.
 
-Lookup in Format 0.10 is case-sensitive and byte-exact. `.` and `..` are synthesized navigation components and are never stored. Pathnames ending in `/` retain directory semantics in namespace operations; rename does not silently strip a trailing slash from a non-directory source or nonexistent destination.
+Lookup in Format 0.11 is case-sensitive and byte-exact. `.` and `..` are synthesized navigation components and are never stored. Pathnames ending in `/` retain directory semantics in namespace operations; rename does not silently strip a trailing slash from a non-directory source or nonexistent destination.
 
 With `INFS_INCOMPAT_HARD_LINKS`, a regular file may be referenced by one or more directory entries while retaining one indexed object, one data/checksum representation and one persistent object ID. Its stored link count equals its exact incoming directory-reference count. Creating the second name clears the file object's parent ID to zero because no single containing directory is authoritative; that zero remains valid if later unlink reduces the count to one. A file that has never been multiply linked may retain its sole containing directory ID. Directory and symbolic-link objects remain single-parent and singly referenced. Directory link count remains 2 plus its direct child-directory count. Hard links to directories or symbolic links are unsupported. Every namespace object remains root-reachable, every dirent type and identity must match the index, and names within each directory remain unique.
 
@@ -173,7 +173,19 @@ With `INFS_INCOMPAT_SHARED_EXTENTS`, two or more regular files may refer to the 
 
 Extent-backed checksums cover the complete physical 4096-byte data block, including zero-filled bytes beyond logical EOF. Reads verify normal data before returning it and synthesize zeros directly for holes. Shrink zeroes the retained normal final-block tail so later growth cannot expose truncated bytes.
 
-## 10. Transaction publication and recovery
+## 10. Snapshot catalog and retained generations
+
+`INFS_INCOMPAT_SNAPSHOTS` permits exactly one snapshot-catalog object in the active object index. Its reserved 16-byte object ID is the byte string `INFS-SNAP-CAT-01`. The catalog uses classic object version 1, has a zero parent ID and stores a count followed by at most 27 fixed-size `infs_snapshot_record_disk` records. Snapshot names contain 1–63 well-formed UTF-8 bytes, contain neither NUL nor `/`, have canonical zero padding and are unique within the catalog.
+
+Each record stores a generation strictly older than the catalog's containing generation, creation time, immutable bitmap start/count and free-block count, object-index block, root-object block and root object ID. The dedicated bitmap has the same geometry as the active bitmap, owns its own bitmap blocks and describes the complete captured generation graph. A captured graph may contain an older snapshot catalog; generation ordering therefore forms a strictly descending acyclic history.
+
+Snapshot creation first publishes pending mutations, copies the stable generation bitmap to new immutable blocks, substitutes those new bitmap blocks for the superseded active bitmap blocks in the historical image, and adds the generation-root record in one CoW transaction. Normal later transactions consult the active catalog before releasing deferred blocks. A block remains allocated while any retained snapshot bitmap contains it.
+
+Snapshot deletion removes the selected record and computes the union of the active graph and remaining snapshot bitmaps. Blocks unique to the deleted history are deferred until the new catalog, index, bitmap and checkpoint publish atomically. A newer snapshot may retain the graph of an older snapshot that existed when it was captured; deleting the visible older name therefore does not reclaim those dependencies until the newer snapshot is also deleted.
+
+Snapshot views are read-only. Lookup, directory listing, attributes, symbolic-link targets and file reads use the captured root/index/bitmap rather than the active roots. Full graph validation and scrub recursively validate catalogued generation roots and verify retained file data. Rollback and undelete are not defined by Format 0.11.
+
+## 11. Transaction publication and recovery
 
 A writable storage backend must provide positioned write, durable flush, secure-random and current-time services in addition to read and size services. A mutation does not silently substitute a zero timestamp when the clock service fails.
 
@@ -196,28 +208,29 @@ Once the first generation-N+1 checkpoint has been durably flushed, the mutation 
 
 Committed extent-backed file-data blocks are replaced through CoW. Inline file updates are committed through replacement of the file metadata object under the same CoW generation rules. Extent mappings, checksum metadata and inline/extent representation transitions publish atomically with the corresponding replacement data. Ordinary rename, including replacement of an existing file or empty directory, is one transaction and publishes no intermediate namespace.
 
-## 11. Formatting safety and publication
+## 12. Formatting safety and publication
 
 `mkfs.infilfs` refuses a real block device without `--force`. It also refuses a mounted target, a whole-disk target with a mounted child partition, or a target/child held by another Linux block layer. If active-use status cannot be established safely, formatting a real block device fails closed.
 
 The formatter reopens the exact block target with Linux `O_EXCL` after advisory mount/holder preflight, verifies that the device identity and geometry are unchanged, and retains that exclusive descriptor through the destructive write sequence. Failure to obtain exclusivity aborts formatting before the first write. Failure of the initial realtime-clock query is also a formatter error rather than silently creating zero initial timestamps. The formatter additionally takes the same nonblocking exclusive advisory lock used by writable POSIX volume openers, coordinating both image files and block targets with the formatter.
 
-Formatting first invalidates the three candidate checkpoint locations and flushes that invalidation. It then writes the bitmap, initial paged index and root, durably flushes those referenced structures, and only then publishes the three valid generation-1 checkpoints. Therefore an interrupted format is unmountable rather than presenting a valid checkpoint that references incomplete initial metadata. Implementation 0.15.0 creates Format 0.10 checkpoints with inline data, shared extents, paged metadata, symbolic links and hard links enabled.
+Formatting first invalidates the three candidate checkpoint locations and flushes that invalidation. It then writes the bitmap, initial paged index and root, durably flushes those referenced structures, and only then publishes the three valid generation-1 checkpoints. Therefore an interrupted format is unmountable rather than presenting a valid checkpoint that references incomplete initial metadata. Implementation 0.16.0 creates Format 0.11 checkpoints with inline data, shared extents, paged metadata, symbolic links, hard links and snapshots enabled.
 
-## 12. Corruption rejection
+## 13. Corruption rejection
 
-The opener rejects invalid checkpoint checksums or geometry, an allocation bitmap too small for the declared volume, unsupported feature usage, inconsistent allocation accounting, noncanonical reserved data, invalid identities/generations, malformed object payloads, invalid UTF-8 names, stored navigation entries, duplicate names or index identities, dangling or multiply referenced namespace objects, wrong parent/type relationships, unreachable namespace objects, incorrect link counts, physical-block ownership overlap, allocated-but-unreachable blocks, logical extent gaps/overlaps, unknown extent flags, holes with physical storage, normal extents without physical storage, malformed/unsorted/shared/orphaned checksum chains, malformed inline payloads, inline data on a volume without the inline feature bit, mismatched inline SHA-256 digests and extent-backed data checksum mismatches.
+The opener rejects invalid checkpoint checksums or geometry, an allocation bitmap too small for the declared volume, unsupported feature usage, inconsistent allocation accounting, noncanonical reserved data, invalid identities/generations, malformed object payloads, invalid UTF-8 names, stored navigation entries, duplicate names or index identities, dangling or multiply referenced namespace objects, wrong parent/type relationships, unreachable namespace objects, incorrect link counts, invalid snapshot names or generation ordering, malformed historical bitmap geometry/accounting, corrupt retained roots, physical-block ownership overlap within one generation, allocated-but-unreachable blocks, logical extent gaps/overlaps, unknown extent flags, holes with physical storage, normal extents without physical storage, malformed/unsorted/shared/orphaned checksum chains, malformed inline payloads, inline data on a volume without the inline feature bit, mismatched inline SHA-256 digests and extent-backed data checksum mismatches.
 
 A corrupt newest checkpoint graph is not automatically fatal when an older independently valid committed checkpoint graph survives. Structural missing/cyclic internal references are treated as graph corruption for candidate selection. Storage I/O failures, memory exhaustion and unsupported format/feature semantics are preserved as their actual failures and are not hidden by fallback.
 
 The policy is to fail closed when committed state cannot be trusted while retaining a known-good older committed generation when the distributed checkpoint set proves one is available.
 
-## 13. Prototype limits
+## 14. Prototype limits
 
 - bounded one-level object-index and directory page arrays rather than trees;
 - at most 161 extents in one file metadata object;
-- no hard links or symbolic links;
-- no compression or snapshots;
+- at most 27 named snapshots in the bounded catalog;
+- no snapshot rollback or native undelete policy;
+- no compression;
 - security and extended-attribute object references are reserved but not implemented;
 - POSIX compatibility metadata exists; Windows security mapping is not implemented;
 - metadata uses CRC64 while file data uses SHA-256;

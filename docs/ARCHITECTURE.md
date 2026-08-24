@@ -101,13 +101,13 @@ Format 0.8 permits shared normal extents. A reflink creates a new file object an
 
 ## 8. Integrity and recovery
 
-Metadata blocks are self-identifying, versioned and checksummed. Format 0.10 uses CRC64-ECMA for object heads and metadata pages and SHA-256 for logical file data.
+Metadata blocks are self-identifying, versioned and checksummed. Format 0.11 uses CRC64-ECMA for object heads and metadata pages and SHA-256 for logical file data.
 
 Every allocated extent-backed logical data block has a separate checksum entry stored in checksummed CoW metadata. Hole extents need no data checksum. Checksum objects form a sorted sparse chain, so a high-offset write allocates checksum metadata for its own segment rather than every preceding hole.
 
 Inline data has no external checksum object. Its file object stores one SHA-256 digest immediately before the inline bytes. The digest authenticates the inline bytes followed by zeros to a complete 4096-byte logical block, while the object's CRC64 independently authenticates the full metadata block including that digest and the inline data itself.
 
-Normal reads verify data before returning it. `infilfs-scrub` verifies every currently allocated regular-file block and each non-empty inline logical data block. Repair is deferred until trustworthy redundant data placement exists.
+Normal reads verify data before returning it. `infilfs-scrub` verifies every live and snapshot-retained regular-file block and each non-empty inline logical data block. Repair is deferred until trustworthy redundant data placement exists.
 
 The portable forensic scanner reads raw storage one complete block at a time and independently authenticates recognizable checkpoints, object heads, directory pages and index pages. When a valid current checkpoint and bitmap survive, it distinguishes current allocation from stale checkpoints and orphaned CoW metadata; if no checkpoint survives, it continues discovery with allocation state reported as unknown. It never modifies the target or treats discovered historical metadata as authoritative live state. Data-block reconstruction and automated repair remain future work.
 
@@ -115,7 +115,9 @@ The portable forensic scanner reads raw storage one complete block at a time and
 
 Reflinks and shared extents are implemented. Shared-block lifetime is reconstructed from the committed object graph and remains transactional across CoW replacement and reclamation.
 
-Snapshot roots, retained historical generations, rollback and undelete policy remain future work.
+Format 0.11 adds a feature-gated snapshot-catalog object. Each named record captures an immutable generation number, root object, object-index root and dedicated bitmap image. The live allocation bitmap is the union of the active graph and every retained snapshot graph. CoW superseded blocks therefore remain unavailable while any snapshot references them, and deleting the last relevant snapshot reclaims them transactionally.
+
+Snapshots are read-only and use the ordinary portable lookup, attribute, directory, symlink and file-read paths through an isolated historical view. Catalog names are unique, well-formed UTF-8 and limited to 63 bytes; the current bounded catalog stores at most 27 records. Rollback and native undelete policy remain future work.
 
 ## 10. Media, protection, compression and encryption
 

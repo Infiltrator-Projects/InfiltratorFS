@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-# Format 0.10 Conformance
+# Format 0.11 Conformance
 
-Format 0.10 retains Format 0.9 symbolic links while adding feature-gated regular-file hard links. Format 0.6 through 0.9 volumes remain readable. New Format 0.10 volumes enable UTF-8 names, sparse extents, inline data, shared extents, paged metadata, symbolic links and hard links.
+Format 0.11 retains Format 0.10 regular-file hard links while adding feature-gated named snapshot roots and retained historical generations. Format 0.6 through 0.10 volumes remain readable. New Format 0.11 volumes enable UTF-8 names, sparse extents, inline data, shared extents, paged metadata, symbolic links, hard links and snapshots.
 
 ## Required representation
 
@@ -20,6 +20,7 @@ A conforming implementation must preserve:
 - mandatory `INFS_INCOMPAT_PAGED_METADATA` for newly formatted Format 0.8 volumes;
 - mandatory `INFS_INCOMPAT_SYMBOLIC_LINKS` for newly formatted Format 0.9 volumes;
 - mandatory `INFS_INCOMPAT_HARD_LINKS` for newly formatted Format 0.10 volumes;
+- mandatory `INFS_INCOMPAT_SNAPSHOTS` for newly formatted Format 0.11 volumes;
 - object version 1 for classic objects and version 2 for paged directory/index heads;
 - owner-identified, generation-matched, CRC64-protected directory and index pages;
 - nonzero 128-bit filesystem and object identities;
@@ -29,10 +30,10 @@ A conforming implementation must preserve:
 - strict rejection of overlong UTF-8, surrogate code points, truncated sequences and values above U+10FFFF;
 - byte-exact, case-sensitive namespace comparison;
 - no stored `.` or `..` directory entries;
-- exactly one namespace reference to each non-root file/directory because hard links are not yet defined;
+- exactly one namespace reference to each non-root directory or symbolic link and one or more references to each regular file;
 - exact parent-ID agreement between a namespace entry and its child object;
 - root-to-leaf reachability of every indexed file/directory, with the root unreferenced and parentless;
-- file link count 1 and directory link count `2 + direct child-directory count`;
+- file link count equal to its exact incoming directory-reference count and directory link count `2 + direct child-directory count`;
 - common attributes and isolated POSIX compatibility metadata;
 - only currently defined portable attribute flags; future security/xattr object references remain zero until their feature is defined;
 - normal extents with nonzero physical locations and hole extents with physical location zero;
@@ -41,7 +42,7 @@ A conforming implementation must preserve:
 - SHA-256 entries for every allocated extent-backed data block, addressed by sorted sparse checksum chains;
 - every indexed checksum object reachable exactly once from its owning file's checksum head, with matching owner/parent identities and strictly increasing aligned segment starts;
 - an allocation bitmap large enough to represent every committed volume block before any bitmap bit is read; and
-- exact ownership of every allocated in-volume block by a checkpoint, the current bitmap, the current object-index head/page, a directory page, an indexed metadata object or a normal data extent, with duplicate normal-data ownership permitted only for shared extents.
+- exact ownership of every allocated in-volume block by the live graph or a retained snapshot graph, with duplicate normal-data ownership within one generation permitted only for shared extents.
 
 Metadata ownership overlap and unreachable allocated blocks are corruption. Inline bytes do not own extra bitmap blocks because they reside within the already-owned file metadata object. Multiple files may own the same normal data block only when `INFS_INCOMPAT_SHARED_EXTENTS` is enabled.
 
@@ -72,13 +73,13 @@ When `INFS_INCOMPAT_PAGED_METADATA` is set, the root directory and object-index 
 
 ## Feature-flag compatibility
 
-Format 0.10 uses the conventional three feature classes deliberately:
+Format 0.11 uses the conventional three feature classes deliberately:
 
 - unknown `incompat_flags` require refusal to open;
 - unknown `ro_compat_flags` may be opened read-only but must not be opened writable;
 - unknown `compat_flags` may be ignored because they do not change required read/write interpretation.
 
-`INFS_INCOMPAT_UTF8_NAMES`, `INFS_INCOMPAT_SPARSE_EXTENTS`, `INFS_INCOMPAT_PAGED_METADATA`, `INFS_INCOMPAT_SYMBOLIC_LINKS` and `INFS_INCOMPAT_HARD_LINKS` are required on newly formatted Format 0.10 volumes. `INFS_INCOMPAT_INLINE_DATA` changes file-payload interpretation and is invalid before Format 0.7. `INFS_INCOMPAT_SHARED_EXTENTS` changes normal-data ownership rules. `INFS_INCOMPAT_PAGED_METADATA` is invalid before Format 0.8, `INFS_INCOMPAT_SYMBOLIC_LINKS` is invalid before Format 0.9, and `INFS_INCOMPAT_HARD_LINKS` is invalid before Format 0.10. Format 0.10 defines no compatible or read-only-compatible bits.
+`INFS_INCOMPAT_UTF8_NAMES`, `INFS_INCOMPAT_SPARSE_EXTENTS`, `INFS_INCOMPAT_PAGED_METADATA`, `INFS_INCOMPAT_SYMBOLIC_LINKS`, `INFS_INCOMPAT_HARD_LINKS` and `INFS_INCOMPAT_SNAPSHOTS` are required on newly formatted Format 0.11 volumes. `INFS_INCOMPAT_INLINE_DATA` changes file-payload interpretation and is invalid before Format 0.7. `INFS_INCOMPAT_SHARED_EXTENTS` changes normal-data ownership rules. `INFS_INCOMPAT_PAGED_METADATA` is invalid before Format 0.8, `INFS_INCOMPAT_SYMBOLIC_LINKS` is invalid before Format 0.9, `INFS_INCOMPAT_HARD_LINKS` is invalid before Format 0.10, and `INFS_INCOMPAT_SNAPSHOTS` is invalid before Format 0.11. Format 0.11 defines no compatible or read-only-compatible bits.
 
 ## Symbolic-link acceptance
 
@@ -87,6 +88,14 @@ A symbolic-link object is accepted only when the symbolic-link incompatible feat
 ## Hard-link acceptance
 
 Hard links are restricted to regular files. All names share one indexed object ID, file payload, extent/checksum chain, attributes and content. The stored link count must equal the exact number of reachable directory entries. A multiply linked file must have a zero parent ID; a singly linked file may retain its containing parent or zero after having previously been multiply linked. Creating a link, unlinking one name and replacing one linked destination update the directory graph and file reference count in the same transaction. Directory and symbolic-link multiple references remain corruption.
+
+## Snapshot acceptance
+
+The snapshot feature permits one classic snapshot-catalog object whose reserved 16-byte ID is `INFS-SNAP-CAT-01` and whose parent ID is zero. Its payload contains zero to 27 fixed-size records. Names are unique, contain 1–63 well-formed UTF-8 bytes, exclude NUL and `/`, and have canonical zero padding. Record flags and reserved fields are zero.
+
+Every record identifies a generation strictly older than its containing generation, a bitmap image with the same geometry as the active volume, exact free-block accounting, a valid object-index root, a valid namespace root and matching root object ID. Snapshot bitmaps own their own bitmap blocks and may include prior snapshot graphs. Recursively referenced catalog generations must strictly decrease.
+
+The active allocation bitmap equals the union of the live graph and all directly catalogued snapshot bitmaps. Snapshot creation captures a stable published generation and commits its immutable bitmap/catalog reference atomically. Ordinary CoW reclamation must preserve every snapshot-owned block. Deletion removes the name and reclaims only blocks absent from both the live graph and every remaining snapshot graph. Snapshot lookup, list, stat, read and readlink operations are read-only.
 
 ## Portable result contract
 
@@ -114,7 +123,7 @@ Ordinary rename replacement is a single filesystem transaction. A file may repla
 
 ## Automated checks
 
-`infilfs-format-conformance` checks exact structure sizes and offsets, independently constructs expected checkpoint bytes, proves version-gated features cannot appear under an older minor version, accepts compatible legacy checkpoints, rejects unsupported incompatible features and verifies UTF-8/checksum rules. `infilfs-namespace-links` covers symbolic-link targets plus hard-link identity, shared writes, cross-directory rename, replacement, unlink, reference-count corruption, scrub and remount.
+`infilfs-format-conformance` checks exact structure sizes and offsets, independently constructs expected checkpoint bytes, proves version-gated features cannot appear under an older minor version, accepts compatible legacy checkpoints, rejects unsupported incompatible features and verifies UTF-8/checksum rules. `infilfs-namespace-links` covers symbolic-link targets plus hard-link identity, shared writes, cross-directory rename, replacement, unlink, reference-count corruption, scrub and remount. `infilfs-snapshots` covers Format 0.10 compatibility, immutable names/data, nested retained generations, remount, historical scrub, corruption detection, deletion and final reclamation.
 
 `infilfs-inline-files` constructs a deterministic inline-enabled volume in memory and verifies:
 
@@ -140,7 +149,9 @@ Ordinary rename replacement is a single filesystem transaction. A file may repla
 
 `infilfs-open-hardening`, `infilfs-063-hardening`, `infilfs-posix-locking` and `infilfs-sparse-files` retain the existing geometry, recovery, locking and crash-atomicity regression gates.
 
-GitHub Actions builds and tests the full Linux implementation, separately builds the portable core and native transfer application with Microsoft Visual C, and opens a Linux-created Format 0.10 image through the Win32 backend. The hardening matrix also runs Clang, AddressSanitizer/UndefinedBehaviorSanitizer and GCC `-fanalyzer`. When `/dev/fuse` is available, `infilfs-mint-fuse` performs mounted copy, rename, permission, symbolic-link, hard-link, sparse, punch, unmount and remount verification.
+GitHub Actions builds and tests the full Linux implementation, separately builds the portable core and native transfer application with Microsoft Visual C, and opens a Linux-created Format 0.11 image through the Win32 backend. The hardening matrix also runs Clang, AddressSanitizer/UndefinedBehaviorSanitizer and GCC `-fanalyzer`. When `/dev/fuse` is available, `infilfs-mint-fuse` performs mounted copy, rename, permission, symbolic-link, hard-link, sparse, punch, unmount and remount verification.
+
+Implementation 0.16.0 requires named read-only snapshot roots through the portable API and direct-image tool. Conformance verifies immutable historical data and namespace state, nested generation retention, full remount, scrub of retained data, version gating, deletion and final block reclamation.
 
 Implementation 0.15.0 requires regular-file hard links through both the portable API and Linux FUSE. Mounted conformance verifies shared inode identity, reference count, byte identity and remount persistence. Offline conformance additionally verifies write-through coherence, cross-directory rename, unlink survival, atomic replacement of one linked destination and rejection of a validly checksummed but incorrect reference count.
 

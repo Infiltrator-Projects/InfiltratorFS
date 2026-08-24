@@ -6,16 +6,16 @@
 
 InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem started in 2026. The persistent format and core engine are written in portable C; Linux and Windows are adapters over the same on-disk structures rather than separate filesystem implementations.
 
-**Current implementation:** 0.15.0<br>
-**On-disk format:** 0.10<br>
+**Current implementation:** 0.16.0<br>
+**On-disk format:** 0.11<br>
 **Shared foundation:** Infiltratr Common 1.11.0<br>
 **Licence:** GPL-3.0-or-later
 
-Format 0.10 adds feature-gated regular-file hard links with transactional reference accounting. Format 0.6–0.9 media remains readable and does not need to be reformatted.
+Format 0.11 adds named read-only snapshot roots and retained historical generations. Format 0.6–0.10 media remains readable and does not need to be reformatted.
 
 ## Capabilities
 
-Format 0.10 currently provides:
+Format 0.11 currently provides:
 
 - 4096-byte little-endian blocks;
 - nonzero 128-bit persistent filesystem and object identities;
@@ -28,6 +28,8 @@ Format 0.10 currently provides:
 - shared extents/reflinks with CoW on later writes;
 - first-class relative and absolute UTF-8 symbolic links;
 - regular-file hard links with shared persistent identity;
+- named read-only snapshots with immutable root, index and bitmap images;
+- transactional retention and reclamation of historical metadata and data;
 - CRC64-ECMA metadata integrity and SHA-256 file-data integrity;
 - portable timestamps/attributes plus optional POSIX compatibility metadata;
 - mandatory well-formed UTF-8 namespace components;
@@ -35,18 +37,18 @@ Format 0.10 currently provides:
 - explicit read-only scrub/verify; and
 - callback-based storage, durability, randomness and clock services.
 
-Implementation 0.15.0 adds native regular-file hard links. Every name resolves to the same object ID and content, link counts are updated transactionally across create, unlink and rename replacement, and Linux FUSE exposes standard `link(2)` behavior. Direct-image `link` support and corruption/remount coverage are included. Symbolic links, standard Linux utilities, persistent FUSE descriptor lifetime and forensic scanning remain available.
+Implementation 0.16.0 adds native named snapshots. Each snapshot records a complete immutable generation root and can be listed, browsed, read, scrubbed and deleted through the portable API or direct-image tool. CoW reclamation preserves blocks referenced by any retained generation and releases them after the final reference is deleted. Format 0.10 hard links and all earlier features remain available.
 
 ## Architecture
 
 | Layer | Status |
 | --- | --- |
-| On-disk format | Platform-neutral Format 0.10; Format 0.6–0.9 remains readable. |
+| On-disk format | Platform-neutral Format 0.11; Format 0.6–0.10 remains readable. |
 | Core filesystem engine | Portable C17; no Linux fd/VFS or Win32 handle types. |
 | Shared foundations | Infiltratr Common 1.11.0. |
 | Storage interface | Callback-based POSIX, Win32 and in-memory backends. |
 | Linux userspace adapter | Implemented through POSIX I/O and FUSE3. |
-| Windows transfer/raw-volume adapter | Implemented for direct Format 0.6–0.10 partition access. |
+| Windows transfer/raw-volume adapter | Implemented for direct Format 0.6–0.11 partition access. |
 | Native Linux kernel driver | Future work. |
 | Native Windows filesystem driver / Explorer mount | Future work. |
 
@@ -86,6 +88,9 @@ Exercise the filesystem without mounting:
 ./build/infilfs-tool infilfs.img symlink README.md /docs/current
 ./build/infilfs-tool infilfs.img readlink /docs/current
 ./build/infilfs-tool infilfs.img link /docs/README.md /docs/README-hardlink.md
+./build/infilfs-tool infilfs.img snapshot-create before-edit
+./build/infilfs-tool infilfs.img snapshot-list
+./build/infilfs-tool infilfs.img snapshot-cat before-edit /docs/README.md
 ./build/infilfs-tool infilfs.img cat /docs/README.md
 ```
 
@@ -109,7 +114,7 @@ GitHub Actions runs Linux, Clang, sanitizer and static-analyzer suites, cross-pl
 
 The Linux Debian package installs **InfiltratorFS Manager**, which can create/format images, select non-system disk partitions including fixed, USB, SD and other removable media, inspect, scrub, run forensic raw-metadata scans, mount through FUSE, open in Nemo and unmount safely. Whole disks and storage backing the active system partitions remain excluded.
 
-The Windows release contains a versioned executable such as `InfiltratorFS-Windows-0.15.0.exe`. Run it elevated when accessing raw media. It can discover physical partitions, list the root directory, copy files/folders and run a full scrub while bounding raw I/O to the selected partition.
+The Windows release contains a versioned executable such as `InfiltratorFS-Windows-0.16.0.exe`. Run it elevated when accessing raw media. It can discover physical partitions, list the root directory, copy files/folders and run a full scrub while bounding raw I/O to the selected partition.
 
 ## Release assets
 
@@ -127,8 +132,8 @@ GitHub provides the standard source-code ZIP and tarball automatically from the 
 To inspect the native Linux build before allowing it to install anything:
 
 ```bash
-chmod +x infiltratorfs-0.15.0-linux-native.run
-./infiltratorfs-0.15.0-linux-native.run --dry-run
+chmod +x infiltratorfs-0.16.0-linux-native.run
+./infiltratorfs-0.16.0-linux-native.run --dry-run
 ```
 
 Run the same file without `--dry-run` to compile, test and install InfiltratorFS natively. If required packages are missing, it displays the exact `apt-get` commands and asks before installing them.

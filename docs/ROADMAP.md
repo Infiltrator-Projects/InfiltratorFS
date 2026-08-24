@@ -231,12 +231,23 @@
 - [x] Keep Format 0.6–0.9 volumes readable and reject the new feature under older versions.
 - [x] Add portable, mounted-FUSE, corruption-boundary and Windows interoperability coverage.
 
+## Phase 4.16 — implementation 0.16.0 snapshot roots — complete
+
+- [x] Publish feature-gated Format 0.11 with snapshot-catalog object type 6.
+- [x] Capture named immutable generation, root, object-index and bitmap images.
+- [x] Preserve superseded metadata and data while any retained generation owns it.
+- [x] List and browse read-only historical paths through the portable API and `infilfs-tool`.
+- [x] Delete snapshots transactionally and reclaim blocks after the final historical reference.
+- [x] Validate nested historical graphs and scrub retained file data.
+- [x] Keep Format 0.6–0.10 volumes readable and reject snapshots under older versions.
+- [x] Add remount, corruption, nested-retention, CLI and reclamation coverage.
+
 ## Phase 4 — modern storage features
 
 - [x] Sparse extents.
 - [x] Inline small files.
 - [x] Reflinks and shared extents.
-- [ ] Snapshot roots and retained generations.
+- [x] Snapshot roots and retained generations.
 - [ ] Native historical undelete policy.
 - [ ] Per-extent compression.
 - [ ] Workload-aware allocation.
@@ -290,7 +301,7 @@
 - [ ] Windows attribute, security and filename adapter.
 - [ ] Native Windows filesystem driver.
 - [x] Windows formatter, root transfer/listing and scrub application.
-- [x] Shared Linux/Windows Format 0.10 volume interoperability tests.
+- [x] Shared Linux/Windows Format 0.11 volume interoperability tests.
 
 ## Deliberately deferred
 

@@ -12,18 +12,20 @@
 #define INFS_DIRECTORY_PAGE_MAGIC "INFSDP01"
 #define INFS_INDEX_PAGE_MAGIC "INFSIP01"
 #define INFS_FORMAT_MAJOR 0u
-#define INFS_FORMAT_MINOR 10u
+#define INFS_FORMAT_MINOR 11u
 #define INFS_CHECKPOINT_COUNT 3u
 #define INFS_CHECKSUM_CRC64_ECMA 1u
 #define INFS_CHECKSUM_SHA256     2u
 #define INFS_LABEL_MAX 64u
 #define INFS_NAME_MAX 255u
+#define INFS_SNAPSHOT_CATALOG_ID "INFS-SNAP-CAT-01"
 
 #define INFS_OBJECT_DIRECTORY  1u
 #define INFS_OBJECT_FILE       2u
 #define INFS_OBJECT_INDEX      3u
 #define INFS_OBJECT_CHECKSUM   4u
 #define INFS_OBJECT_SYMLINK    5u
+#define INFS_OBJECT_SNAPSHOT_CATALOG 6u
 
 #define INFS_OBJECT_VERSION_CLASSIC 1u
 #define INFS_OBJECT_VERSION_PAGED   2u
@@ -38,13 +40,14 @@
 #define INFS_INCOMPAT_PAGED_METADATA UINT64_C(0x0000000000000010)
 #define INFS_INCOMPAT_SYMBOLIC_LINKS UINT64_C(0x0000000000000020)
 #define INFS_INCOMPAT_HARD_LINKS UINT64_C(0x0000000000000040)
+#define INFS_INCOMPAT_SNAPSHOTS UINT64_C(0x0000000000000080)
 #define INFS_KNOWN_COMPAT_FLAGS UINT64_C(0)
 #define INFS_KNOWN_RO_COMPAT_FLAGS UINT64_C(0)
 #define INFS_KNOWN_INCOMPAT_FLAGS \
     (INFS_INCOMPAT_UTF8_NAMES | INFS_INCOMPAT_SPARSE_EXTENTS | \
      INFS_INCOMPAT_INLINE_DATA | INFS_INCOMPAT_SHARED_EXTENTS | \
      INFS_INCOMPAT_PAGED_METADATA | INFS_INCOMPAT_SYMBOLIC_LINKS | \
-     INFS_INCOMPAT_HARD_LINKS)
+     INFS_INCOMPAT_HARD_LINKS | INFS_INCOMPAT_SNAPSHOTS)
 
 #define INFS_ATTR_READ_ONLY           UINT64_C(0x0000000000000001)
 #define INFS_ATTR_HIDDEN              UINT64_C(0x0000000000000002)
@@ -231,6 +234,37 @@ struct INFS_PACKED infs_index_entry_disk {
     uint32_t reserved;
 };
 
+#define INFS_SNAPSHOT_NAME_MAX 63u
+
+/* A snapshot catalog is an ordinary checksummed CoW object in the current
+ * object index. Each record is a complete read-only generation root. Its
+ * immutable bitmap image describes that generation's graph, including any
+ * snapshots that already existed when the generation was captured. */
+struct INFS_PACKED infs_snapshot_catalog_payload_disk {
+    uint32_t snapshot_count;
+    uint32_t reserved;
+};
+
+struct INFS_PACKED infs_snapshot_record_disk {
+    uint64_t generation;
+    uint64_t created_time_ns;
+    uint64_t bitmap_start_block;
+    uint64_t bitmap_block_count;
+    uint64_t free_blocks;
+    uint64_t object_index_block;
+    uint64_t root_object_block;
+    uint8_t  root_object_id[16];
+    uint16_t name_length;
+    uint16_t flags;
+    uint32_t reserved;
+    uint8_t  name[INFS_SNAPSHOT_NAME_MAX + 1u];
+};
+
+#define INFS_SNAPSHOTS_PER_CATALOG \
+    ((INFS_BLOCK_SIZE - sizeof(struct infs_object_header_disk) - \
+      sizeof(struct infs_snapshot_catalog_payload_disk)) / \
+     sizeof(struct infs_snapshot_record_disk))
+
 #define INFS_METADATA_PAGE_DATA_SIZE \
     (INFS_BLOCK_SIZE - sizeof(struct infs_metadata_page_disk))
 #define INFS_INDEX_ENTRIES_PER_PAGE \
@@ -270,6 +304,14 @@ _Static_assert(sizeof(struct infs_index_payload_disk) == 8,
                "index payload layout changed");
 _Static_assert(sizeof(struct infs_index_entry_disk) == 32,
                "object index entry layout changed");
+_Static_assert(sizeof(struct infs_snapshot_catalog_payload_disk) == 8,
+               "snapshot catalog payload layout changed");
+_Static_assert(sizeof(struct infs_snapshot_record_disk) == 144,
+               "snapshot record layout changed");
+_Static_assert(sizeof(INFS_SNAPSHOT_CATALOG_ID) == 17u,
+               "snapshot catalog ID must contain exactly 16 bytes");
+_Static_assert(INFS_SNAPSHOTS_PER_CATALOG == 27u,
+               "snapshot catalog capacity unexpectedly changed");
 _Static_assert(INFS_CHECKSUMS_PER_OBJECT >= 120,
                "checksum object capacity unexpectedly small");
 _Static_assert(INFS_INLINE_DATA_MAX == 3840u,

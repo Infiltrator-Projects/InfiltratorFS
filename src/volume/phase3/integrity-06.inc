@@ -101,5 +101,58 @@ infs_status infs_scrub(struct infs_volume *vol,
         }
     }
     free(entries);
+
+    if (snapshots_enabled(vol)) {
+        int owns_context = vol->snapshot_scrub_context == NULL;
+        struct snapshot_visit_context *visit = vol->snapshot_scrub_context;
+        if (owns_context) {
+            visit = calloc(1, sizeof(*visit));
+            if (!visit)
+                return INFS_STATUS_NO_MEMORY;
+            vol->snapshot_scrub_context = visit;
+        }
+        uint8_t catalog[INFS_BLOCK_SIZE];
+        struct infs_snapshot_catalog_payload_disk *payload;
+        status = snapshot_catalog_load(vol, catalog, &payload, NULL);
+        int have_catalog = status == INFS_STATUS_OK;
+        if (status == INFS_STATUS_NOT_FOUND)
+            status = INFS_STATUS_OK;
+        if (status == INFS_STATUS_OK && have_catalog) {
+            uint32_t count = infs_le32_to_cpu(payload->snapshot_count);
+            struct infs_snapshot_record_disk *records =
+                (struct infs_snapshot_record_disk *)(payload + 1);
+            for (uint32_t i = 0; i < count; ++i) {
+                int first_visit = 0;
+                status = snapshot_visit_once(
+                    visit, &records[i], &first_visit);
+                if (status != INFS_STATUS_OK)
+                    break;
+                if (!first_visit)
+                    continue;
+                char name[INFS_SNAPSHOT_NAME_MAX + 1u] = {0};
+                uint16_t length = infs_le16_to_cpu(records[i].name_length);
+                memcpy(name, records[i].name, length);
+                struct infs_volume view;
+                status = snapshot_open_view(vol, name, &view);
+                if (status != INFS_STATUS_OK)
+                    break;
+                struct infs_scrub_report historical;
+                status = infs_scrub(&view, &historical);
+                snapshot_close_view(&view);
+                if (status != INFS_STATUS_OK)
+                    break;
+                report->files_checked += historical.files_checked;
+                report->data_blocks_checked += historical.data_blocks_checked;
+                report->checksum_errors += historical.checksum_errors;
+                report->metadata_errors += historical.metadata_errors;
+            }
+        }
+        if (owns_context) {
+            vol->snapshot_scrub_context = NULL;
+            snapshot_visit_context_destroy(visit);
+        }
+        if (status != INFS_STATUS_OK)
+            return status;
+    }
     return INFS_STATUS_OK;
 }

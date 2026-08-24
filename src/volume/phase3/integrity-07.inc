@@ -31,6 +31,8 @@ static infs_status generate_unique_object_id(struct infs_volume *vol,
             return status;
         if (id_is_zero(id))
             continue;
+        if (memcmp(id, snapshot_catalog_id, sizeof(snapshot_catalog_id)) == 0)
+            continue;
         struct infs_lookup lookup;
         status = index_find(vol, id, &lookup);
         if (status == INFS_STATUS_NOT_FOUND)

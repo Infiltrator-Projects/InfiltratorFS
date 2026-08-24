@@ -14,6 +14,8 @@
 
 #define INFS_DIRENT_ALIGN 8u
 
+static const uint8_t snapshot_catalog_id[16] = INFS_SNAPSHOT_CATALOG_ID;
+
 static infs_status transaction_next_generation(const struct infs_volume *vol,
                                                uint64_t *generation)
 {
@@ -43,6 +45,11 @@ static infs_status file_read_small_content(
 static infs_status file_store_inline(
     struct infs_volume *vol, uint8_t object[INFS_BLOCK_SIZE],
     const uint8_t *data, size_t size);
+static infs_status snapshot_union_bitmap(struct infs_volume *vol,
+                                         uint8_t **union_out);
+static int build_live_ownership_bitmap(
+    struct infs_volume *vol, const struct infs_index_entry_disk *entries,
+    uint32_t count, uint8_t *owners);
 
 static int namespace_object_type(uint16_t type)
 {
@@ -62,6 +69,13 @@ static int hard_links_enabled(const struct infs_volume *vol)
     return vol &&
         (infs_le64_to_cpu(vol->sb.incompat_flags) &
          INFS_INCOMPAT_HARD_LINKS) != 0;
+}
+
+static int snapshots_enabled(const struct infs_volume *vol)
+{
+    return vol &&
+        (infs_le64_to_cpu(vol->sb.incompat_flags) &
+         INFS_INCOMPAT_SNAPSHOTS) != 0;
 }
 
 /* Format 0.8 paged-index dispatch targets. part1 owns the classic index
@@ -85,6 +99,7 @@ static int paged_index_remove(struct infs_volume *vol, const uint8_t id[16]);
 #include "volume/phase3/part3-03.inc"
 #include "volume/phase3/part3-04.inc"
 #include "volume/phase3/part3-05.inc"
+#include "volume/phase3/part4-snapshot.inc"
 #include "volume/integrity.inc"
 #include "volume/phase3/part4-reflink.inc"
 #include "volume/phase3/part4-inline.inc"
