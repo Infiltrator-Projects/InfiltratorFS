@@ -129,7 +129,7 @@ static infs_status file_promote_inline(
     memcpy(data, file_inline_bytes(file), (size_t)size);
 
     uint64_t physical = 0, got = 0;
-    status = alloc_run(vol, 1, &physical, &got);
+    status = alloc_data_run(vol, 1, &physical, &got);
     if (status != INFS_STATUS_OK)
         return status;
     if (got != 1)

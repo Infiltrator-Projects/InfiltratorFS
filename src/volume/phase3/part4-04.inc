@@ -142,7 +142,7 @@ static int truncate_file_tx(struct infs_volume *vol, const char *path, uint64_t 
             size_t tail = (size_t)(size % INFS_BLOCK_SIZE);
             memset(data + tail, 0, INFS_BLOCK_SIZE - tail);
             uint64_t replacement = 0, got = 0;
-            status = alloc_run(vol, 1, &replacement, &got);
+            status = alloc_data_run(vol, 1, &replacement, &got);
             if (status != INFS_STATUS_OK)
                 return status;
             if (got != 1)

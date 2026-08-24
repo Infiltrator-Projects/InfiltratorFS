@@ -244,6 +244,14 @@ Pre-1.0 development is current-format-only. A new development format supersedes 
 - [x] Gate snapshot catalogs through their incompatible feature bit.
 - [x] Add remount, corruption, nested-retention, CLI and reclamation coverage.
 
+## Phase 4.17 — implementation 0.16.2 large sequential files — complete
+
+- [x] Allocate file data and CoW/checksum metadata from opposite directions.
+- [x] Prevent ordinary copy-sized writes from consuming one extent per publish.
+- [x] Reproduce the former approximately 40 MiB direct-copy extent exhaustion.
+- [x] Verify 192 durable sequential writes, compact extent mapping, full scrub and reopen.
+- [x] Keep on-disk Format 0.11 unchanged.
+
 ## Phase 4 — modern storage features
 
 - [x] Sparse extents.

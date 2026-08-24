@@ -158,6 +158,8 @@ Implementation 0.16.0 requires named read-only snapshot roots through the portab
 
 Implementation 0.16.1 removes pre-1.0 backward-format acceptance. Conformance requires both earlier and future development format minors to be rejected.
 
+Implementation 0.16.2 requires physically separate data and metadata allocation directions. A sequential file written across 192 separate durable calls must complete, retain no more than two extents on the deterministic test volume, pass full data scrub and remain byte-exact after reopen. This crosses all 161 inline extent slots and reproduces the write-cycle pattern behind the former approximately 40 MiB direct-copy `EFBIG` failure.
+
 Implementation 0.15.0 requires regular-file hard links through both the portable API and Linux FUSE. Mounted conformance verifies shared inode identity, reference count, byte identity and remount persistence. Offline conformance additionally verifies write-through coherence, cross-directory rename, unlink survival, atomic replacement of one linked destination and rejection of a validly checksummed but incorrect reference count.
 
 Implementation 0.14.0 requires native relative and absolute symbolic links through both the portable API and Linux FUSE. Mounted conformance verifies `ln -s`, `readlink`, target traversal and persistence across remount. Offline conformance verifies exact target bytes and metadata, namespace mutations, scrub, feature gating and invalid target rejection.

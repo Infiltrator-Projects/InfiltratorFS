@@ -89,10 +89,12 @@ struct infs_volume {
     uint64_t tx_pending_bytes;
 
     /* Runtime-only performance hints. These never appear on disk and are
-     * shared by every adapter. allocation_cursor makes allocation next-fit
-     * instead of restarting at block 1, while object_cache accelerates stable
-     * object-id to block lookups for the paged index. */
-    uint64_t allocation_cursor;
+     * shared by every adapter. File data grows upward while metadata grows
+     * downward, preventing checksum/CoW bookkeeping from fragmenting an
+     * otherwise sequential file. object_cache accelerates stable object-id
+     * to block lookups for the paged index. */
+    uint64_t data_allocation_cursor;
+    uint64_t metadata_allocation_cursor;
     struct infs_object_cache_entry *object_cache;
     size_t object_cache_slots;
 

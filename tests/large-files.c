@@ -1,0 +1,215 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#include "infilfs/endian.h"
+#include "infilfs/format.h"
+#include "infilfs/format_volume.h"
+#include "infilfs/fs.h"
+#include "infilfs/storage.h"
+#include "infilfs/volume.h"
+
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define TEST_BLOCKS UINT64_C(4096)
+#define TEST_SIZE ((size_t)(TEST_BLOCKS * INFS_BLOCK_SIZE))
+#define COPY_CHUNK_SIZE INFS_BLOCK_SIZE
+#define TEST_FILE_SIZE (UINT64_C(192) * COPY_CHUNK_SIZE)
+
+struct memory_image {
+    uint8_t *bytes;
+    size_t size;
+    uint64_t random_state;
+};
+
+static void fail(const char *message)
+{
+    fprintf(stderr, "large-files: %s\n", message);
+    exit(1);
+}
+
+static void expect(int condition, const char *message)
+{
+    if (!condition)
+        fail(message);
+}
+
+static infs_status memory_read(void *context, uint64_t offset,
+                               void *buffer, size_t size)
+{
+    struct memory_image *image = context;
+    if (offset > image->size || size > image->size - (size_t)offset)
+        return INFS_STATUS_IO_ERROR;
+    memcpy(buffer, image->bytes + (size_t)offset, size);
+    return INFS_STATUS_OK;
+}
+
+static infs_status memory_write(void *context, uint64_t offset,
+                                const void *buffer, size_t size)
+{
+    struct memory_image *image = context;
+    if (offset > image->size || size > image->size - (size_t)offset)
+        return INFS_STATUS_IO_ERROR;
+    memcpy(image->bytes + (size_t)offset, buffer, size);
+    return INFS_STATUS_OK;
+}
+
+static infs_status memory_flush(void *context)
+{
+    (void)context;
+    return INFS_STATUS_OK;
+}
+
+static infs_status memory_size(void *context, uint64_t *size_bytes,
+                               int *is_device)
+{
+    struct memory_image *image = context;
+    *size_bytes = image->size;
+    *is_device = 0;
+    return INFS_STATUS_OK;
+}
+
+static infs_status memory_random(void *context, void *buffer, size_t size)
+{
+    struct memory_image *image = context;
+    uint8_t *out = buffer;
+    for (size_t i = 0; i < size; ++i) {
+        image->random_state ^= image->random_state << 13;
+        image->random_state ^= image->random_state >> 7;
+        image->random_state ^= image->random_state << 17;
+        out[i] = (uint8_t)image->random_state;
+    }
+    return INFS_STATUS_OK;
+}
+
+static infs_status memory_time(void *context, int64_t *time_ns)
+{
+    (void)context;
+    *time_ns = INT64_C(1787547600000000000);
+    return INFS_STATUS_OK;
+}
+
+static void memory_close(void *context)
+{
+    (void)context;
+}
+
+static const struct infs_storage_ops memory_ops = {
+    .read_at = memory_read,
+    .write_at = memory_write,
+    .flush = memory_flush,
+    .get_size = memory_size,
+    .random_bytes = memory_random,
+    .current_time_ns = memory_time,
+    .close = memory_close,
+};
+
+static struct infs_storage make_storage(struct memory_image *image)
+{
+    struct infs_storage storage = {
+        .ops = &memory_ops,
+        .context = image,
+    };
+    return storage;
+}
+
+static uint8_t expected_byte(uint64_t offset)
+{
+    uint64_t mixed = offset * UINT64_C(0x9e3779b97f4a7c15);
+    mixed ^= mixed >> 29;
+    mixed ^= offset >> 7;
+    return (uint8_t)mixed;
+}
+
+static void fill_pattern(uint8_t *buffer, size_t size, uint64_t offset)
+{
+    for (size_t i = 0; i < size; ++i)
+        buffer[i] = expected_byte(offset + i);
+}
+
+static void verify_range(struct infs_volume *volume, uint64_t offset)
+{
+    uint8_t actual[INFS_BLOCK_SIZE];
+    uint8_t expected[INFS_BLOCK_SIZE];
+    fill_pattern(expected, sizeof(expected), offset);
+    expect(infs_read_file(volume, "/movie.bin", actual, sizeof(actual),
+                          offset) == (int64_t)sizeof(actual),
+           "read large-file probe");
+    expect(memcmp(actual, expected, sizeof(actual)) == 0,
+           "large-file probe data");
+}
+
+int main(void)
+{
+    struct memory_image image = {
+        .bytes = calloc(1, TEST_SIZE),
+        .size = TEST_SIZE,
+        .random_state = UINT64_C(0x6a09e667f3bcc909),
+    };
+    expect(image.bytes != NULL, "allocate image");
+
+    struct infs_storage storage = make_storage(&image);
+    expect(infs_format_storage(&storage, "large-file-test") ==
+               INFS_STATUS_OK,
+           "format large-file volume");
+
+    struct infs_volume volume;
+    storage = make_storage(&image);
+    expect(infs_volume_open_storage(&volume, &storage, 1) == INFS_STATUS_OK,
+           "open writable volume");
+    expect(infs_create_file(&volume, "/movie.bin", NULL) == INFS_STATUS_OK,
+           "create large file");
+
+    uint8_t *chunk = malloc(COPY_CHUNK_SIZE);
+    expect(chunk != NULL, "allocate copy buffer");
+    for (uint64_t offset = 0; offset < TEST_FILE_SIZE;
+         offset += COPY_CHUNK_SIZE) {
+        fill_pattern(chunk, COPY_CHUNK_SIZE, offset);
+        expect(infs_write_file(&volume, "/movie.bin", chunk,
+                               COPY_CHUNK_SIZE, offset) ==
+                   (int64_t)COPY_CHUNK_SIZE,
+               "durable sequential copy write");
+    }
+    free(chunk);
+
+    struct infs_attributes attributes;
+    expect(infs_get_attributes(&volume, "/movie.bin", &attributes) ==
+               INFS_STATUS_OK &&
+               attributes.logical_size == TEST_FILE_SIZE &&
+               attributes.allocated_size == TEST_FILE_SIZE,
+           "large-file size and allocation accounting");
+
+    struct infs_lookup lookup;
+    expect(infs_lookup_path(&volume, "/movie.bin", &lookup) == INFS_STATUS_OK,
+           "lookup large file");
+    uint8_t *object = image.bytes + lookup.block * INFS_BLOCK_SIZE;
+    expect(infs_validate_object_block(object), "validate large-file object");
+    struct infs_file_payload_disk *file =
+        (struct infs_file_payload_disk *)(object +
+            sizeof(struct infs_object_header_disk));
+    expect(infs_le32_to_cpu(file->extent_count) <= 2u,
+           "sequential copy remains physically compact");
+
+    verify_range(&volume, 0);
+    verify_range(&volume, TEST_FILE_SIZE / 2u);
+    verify_range(&volume, TEST_FILE_SIZE - INFS_BLOCK_SIZE);
+
+    struct infs_scrub_report report;
+    expect(infs_scrub(&volume, &report) == INFS_STATUS_OK &&
+               report.files_checked == 1u &&
+               report.data_blocks_checked ==
+                   TEST_FILE_SIZE / INFS_BLOCK_SIZE &&
+               report.checksum_errors == 0 && report.metadata_errors == 0,
+           "scrub complete large file");
+    infs_volume_close(&volume);
+
+    storage = make_storage(&image);
+    expect(infs_volume_open_storage(&volume, &storage, 0) == INFS_STATUS_OK,
+           "reopen large-file volume");
+    verify_range(&volume, TEST_FILE_SIZE - INFS_BLOCK_SIZE);
+    infs_volume_close(&volume);
+
+    free(image.bytes);
+    puts("large-file sequential-copy conformance: ok");
+    return 0;
+}

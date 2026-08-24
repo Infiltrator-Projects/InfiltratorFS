@@ -25,7 +25,7 @@ static int punch_partial_block(struct infs_volume *vol,
     memset(data + within, 0, length);
 
     uint64_t replacement = 0, got = 0;
-    status = alloc_run(vol, 1, &replacement, &got);
+    status = alloc_data_run(vol, 1, &replacement, &got);
     if (status != INFS_STATUS_OK)
         return status;
     if (got != 1)

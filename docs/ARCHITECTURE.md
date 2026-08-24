@@ -97,7 +97,7 @@ Extent-backed file data uses normal extents, which map logical blocks to physica
 
 Format 0.8 retains inline storage for non-empty files up to 3,840 bytes inside their existing file metadata object. Inline data consumes no separate data/checksum blocks. Crossing the threshold promotes the file to ordinary extents; shrinking back to the threshold or below can fold it inline and reclaim the external blocks. Inline storage is deliberately a file representation, not a new extent type.
 
-Format 0.8 permits shared normal extents. A reflink creates a new file object and checksum chain that refer to the source data blocks; later writes, truncate, hole punching, rename replacement and unlink preserve shared blocks until their final reference disappears. Compression, integrity placement and other future data states require explicitly versioned representations. The allocator does not yet classify archive, sequential-growing, streaming, random-write, temporary or VM/disk-image workloads.
+Format 0.11 permits shared normal extents. A reflink creates a new file object and checksum chain that refer to the source data blocks; later writes, truncate, hole punching, rename replacement and unlink preserve shared blocks until their final reference disappears. Runtime data allocation advances upward and metadata allocation advances downward so ordinary sequential copies remain physically compact across CoW publication boundaries. Compression, integrity placement and other future data states require explicitly versioned representations. The allocator does not yet classify archive, sequential-growing, streaming, random-write, temporary or VM/disk-image workloads.
 
 ## 8. Integrity and recovery
 

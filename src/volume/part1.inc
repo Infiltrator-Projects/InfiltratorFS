@@ -295,8 +295,25 @@ static int alloc_scan_segment(struct infs_volume *vol, uint64_t wanted,
     return 0;
 }
 
-static int alloc_run(struct infs_volume *vol, uint64_t wanted,
-                     uint64_t *start_out, uint64_t *count_out)
+static infs_status allocate_selected_run(struct infs_volume *vol,
+                                         uint64_t start, uint64_t count)
+{
+    for (uint64_t b = start; b < start + count; ++b)
+        bitmap_set(vol->bitmap, b, 1);
+    vol->sb.free_blocks = infs_cpu_to_le64(
+        infs_le64_to_cpu(vol->sb.free_blocks) - count);
+    infs_status status = zero_blocks(vol, start, count);
+    if (status != INFS_STATUS_OK) {
+        for (uint64_t b = start; b < start + count; ++b)
+            bitmap_set(vol->bitmap, b, 0);
+        vol->sb.free_blocks = infs_cpu_to_le64(
+            infs_le64_to_cpu(vol->sb.free_blocks) + count);
+    }
+    return status;
+}
+
+static int alloc_data_run(struct infs_volume *vol, uint64_t wanted,
+                          uint64_t *start_out, uint64_t *count_out)
 {
     if (!vol || !start_out || !count_out)
         return INFS_STATUS_INVALID_ARGUMENT;
@@ -307,7 +324,7 @@ static int alloc_run(struct infs_volume *vol, uint64_t wanted,
         return INFS_STATUS_NO_SPACE;
 
     uint64_t total = infs_le64_to_cpu(vol->sb.total_blocks);
-    uint64_t cursor = vol->allocation_cursor;
+    uint64_t cursor = vol->data_allocation_cursor;
     if (cursor < 1u || cursor >= total)
         cursor = 1u;
     uint64_t best_start = 0;
@@ -331,46 +348,90 @@ static int alloc_run(struct infs_volume *vol, uint64_t wanted,
     if (best_count == 0)
         return INFS_STATUS_NO_SPACE;
 
-    for (uint64_t b = best_start; b < best_start + best_count; ++b)
-        bitmap_set(vol->bitmap, b, 1);
-    vol->sb.free_blocks = infs_cpu_to_le64(
-        infs_le64_to_cpu(vol->sb.free_blocks) - best_count);
-    status = zero_blocks(vol, best_start, best_count);
-    if (status != INFS_STATUS_OK) {
-        for (uint64_t b = best_start; b < best_start + best_count; ++b)
-            bitmap_set(vol->bitmap, b, 0);
-        vol->sb.free_blocks = infs_cpu_to_le64(
-            infs_le64_to_cpu(vol->sb.free_blocks) + best_count);
+    status = allocate_selected_run(vol, best_start, best_count);
+    if (status != INFS_STATUS_OK)
         return status;
-    }
 
-    vol->allocation_cursor = best_start + best_count;
-    if (vol->allocation_cursor >= total)
-        vol->allocation_cursor = 1u;
+    vol->data_allocation_cursor = best_start + best_count;
+    if (vol->data_allocation_cursor >= total)
+        vol->data_allocation_cursor = 1u;
     *start_out = best_start;
     *count_out = best_count;
     return INFS_STATUS_OK;
 }
 
-static int alloc_exact_scan_segment(struct infs_volume *vol, uint64_t wanted,
-                                    uint64_t begin, uint64_t end,
-                                    uint64_t *start_out)
+static int alloc_scan_segment_reverse(struct infs_volume *vol,
+                                      uint64_t wanted, uint64_t begin,
+                                      uint64_t end, uint64_t *best_start,
+                                      uint64_t *best_count)
 {
-    for (uint64_t start = begin; start < end; ) {
-        while (start < end && bitmap_get(vol->bitmap, start))
-            ++start;
-        if (start >= end || wanted > end - start)
+    uint64_t b = end;
+    while (b > begin) {
+        while (b > begin && bitmap_get(vol->bitmap, b - 1u))
+            --b;
+        if (b == begin)
             break;
-        uint64_t n = 0;
-        while (n < wanted && !bitmap_get(vol->bitmap, start + n))
-            ++n;
-        if (n == wanted) {
-            *start_out = start;
-            return 1;
+        uint64_t run_end = b;
+        while (b > begin && !bitmap_get(vol->bitmap, b - 1u) &&
+               run_end - b < wanted)
+            --b;
+        uint64_t len = run_end - b;
+        if (len > *best_count) {
+            *best_start = b;
+            *best_count = len;
         }
-        start += n ? n : 1u;
+        if (len == wanted)
+            return 1;
+        while (b > begin && !bitmap_get(vol->bitmap, b - 1u))
+            --b;
     }
     return 0;
+}
+
+/* Metadata deliberately grows from the opposite end of the volume from file
+ * data. A sequential file can therefore retain one long physical extent even
+ * when every adapter write publishes CoW objects, checksum pages and bitmap
+ * images between data writes. */
+static int alloc_run(struct infs_volume *vol, uint64_t wanted,
+                     uint64_t *start_out, uint64_t *count_out)
+{
+    if (!vol || !start_out || !count_out)
+        return INFS_STATUS_INVALID_ARGUMENT;
+    infs_status status = tx_begin(vol);
+    if (status != INFS_STATUS_OK)
+        return status;
+    if (wanted == 0 || infs_le64_to_cpu(vol->sb.free_blocks) == 0)
+        return INFS_STATUS_NO_SPACE;
+
+    uint64_t total = infs_le64_to_cpu(vol->sb.total_blocks);
+    uint64_t cursor = vol->metadata_allocation_cursor;
+    if (cursor <= 1u || cursor > total)
+        cursor = total;
+    uint64_t best_start = 0;
+    uint64_t best_count = 0;
+    int found = alloc_scan_segment_reverse(vol, wanted, 1u, cursor,
+                                           &best_start, &best_count);
+    if (!found && cursor < total)
+        found = alloc_scan_segment_reverse(vol, wanted, cursor, total,
+                                           &best_start, &best_count);
+    if (!found && cursor < total && best_count < wanted) {
+        best_start = 0;
+        best_count = 0;
+        (void)alloc_scan_segment_reverse(vol, wanted, 1u, total,
+                                         &best_start, &best_count);
+    }
+    if (best_count == 0)
+        return INFS_STATUS_NO_SPACE;
+
+    status = allocate_selected_run(vol, best_start, best_count);
+    if (status != INFS_STATUS_OK)
+        return status;
+    vol->metadata_allocation_cursor = best_start;
+    if (vol->metadata_allocation_cursor <= 1u)
+        vol->metadata_allocation_cursor = total;
+    *start_out = best_start;
+    *count_out = best_count;
+    return INFS_STATUS_OK;
 }
 
 static int alloc_exact_run(struct infs_volume *vol, uint64_t wanted,
@@ -382,34 +443,35 @@ static int alloc_exact_run(struct infs_volume *vol, uint64_t wanted,
     if (status != INFS_STATUS_OK)
         return status;
     uint64_t total = infs_le64_to_cpu(vol->sb.total_blocks);
-    uint64_t cursor = vol->allocation_cursor;
-    if (cursor < 1u || cursor >= total)
-        cursor = 1u;
+    uint64_t cursor = vol->metadata_allocation_cursor;
+    if (cursor <= 1u || cursor > total)
+        cursor = total;
 
     uint64_t start = 0;
-    int found = alloc_exact_scan_segment(vol, wanted, cursor, total, &start);
-    if (!found && cursor > 1u)
-        found = alloc_exact_scan_segment(vol, wanted, 1u, cursor, &start);
-    if (!found && cursor > 1u)
-        found = alloc_exact_scan_segment(vol, wanted, 1u, total, &start);
+    uint64_t count = 0;
+    int found = alloc_scan_segment_reverse(vol, wanted, 1u, cursor,
+                                           &start, &count);
+    if (!found && cursor < total) {
+        start = 0;
+        count = 0;
+        found = alloc_scan_segment_reverse(vol, wanted, cursor, total,
+                                           &start, &count);
+    }
+    if (!found && cursor < total) {
+        start = 0;
+        count = 0;
+        found = alloc_scan_segment_reverse(vol, wanted, 1u, total,
+                                           &start, &count);
+    }
     if (!found)
         return INFS_STATUS_NO_SPACE;
 
-    for (uint64_t i = 0; i < wanted; ++i)
-        bitmap_set(vol->bitmap, start + i, 1);
-    vol->sb.free_blocks = infs_cpu_to_le64(
-        infs_le64_to_cpu(vol->sb.free_blocks) - wanted);
-    status = zero_blocks(vol, start, wanted);
-    if (status != INFS_STATUS_OK) {
-        for (uint64_t i = 0; i < wanted; ++i)
-            bitmap_set(vol->bitmap, start + i, 0);
-        vol->sb.free_blocks = infs_cpu_to_le64(
-            infs_le64_to_cpu(vol->sb.free_blocks) + wanted);
+    status = allocate_selected_run(vol, start, wanted);
+    if (status != INFS_STATUS_OK)
         return status;
-    }
-    vol->allocation_cursor = start + wanted;
-    if (vol->allocation_cursor >= total)
-        vol->allocation_cursor = 1u;
+    vol->metadata_allocation_cursor = start;
+    if (vol->metadata_allocation_cursor <= 1u)
+        vol->metadata_allocation_cursor = total;
     *start_out = start;
     return INFS_STATUS_OK;
 }

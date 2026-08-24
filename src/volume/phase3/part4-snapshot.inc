@@ -293,7 +293,9 @@ static infs_status snapshot_open_view(
     view->sb = vol->sb;
     view->bitmap = bitmap;
     view->bitmap_bytes = vol->bitmap_bytes;
-    view->allocation_cursor = 1u;
+    view->data_allocation_cursor = 1u;
+    view->metadata_allocation_cursor =
+        infs_le64_to_cpu(view->sb.total_blocks);
     view->snapshot_validation_context = vol->snapshot_validation_context;
     view->snapshot_scrub_context = vol->snapshot_scrub_context;
     view->sb.generation = record.generation;

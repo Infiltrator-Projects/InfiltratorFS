@@ -128,7 +128,7 @@ static int64_t write_file_tx(struct infs_volume *vol, const char *path,
         if (flags == INFS_EXTENT_HOLE ||
             bitmap_get(vol->tx_base_bitmap, physical)) {
             uint64_t replacement = 0, got = 0;
-            status = alloc_run(vol, 1, &replacement, &got);
+            status = alloc_data_run(vol, 1, &replacement, &got);
             if (status != INFS_STATUS_OK)
                 return status;
             if (got != 1)
