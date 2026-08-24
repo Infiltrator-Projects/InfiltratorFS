@@ -312,8 +312,21 @@ static infs_status allocate_selected_run(struct infs_volume *vol,
     return status;
 }
 
-static int alloc_data_run(struct infs_volume *vol, uint64_t wanted,
-                          uint64_t *start_out, uint64_t *count_out)
+static infs_status allocate_selected_run_uninitialized(
+    struct infs_volume *vol, uint64_t start, uint64_t count)
+{
+    /* The caller must completely overwrite this transaction-private
+     * storage before any checkpoint can reference it. */
+    for (uint64_t b = start; b < start + count; ++b)
+        bitmap_set(vol->bitmap, b, 1);
+    vol->sb.free_blocks = infs_cpu_to_le64(
+        infs_le64_to_cpu(vol->sb.free_blocks) - count);
+    return INFS_STATUS_OK;
+}
+
+static int alloc_data_run_impl(struct infs_volume *vol, uint64_t wanted,
+                       uint64_t *start_out, uint64_t *count_out,
+                       int zero_fill)
 {
     if (!vol || !start_out || !count_out)
         return INFS_STATUS_INVALID_ARGUMENT;
@@ -348,7 +361,9 @@ static int alloc_data_run(struct infs_volume *vol, uint64_t wanted,
     if (best_count == 0)
         return INFS_STATUS_NO_SPACE;
 
-    status = allocate_selected_run(vol, best_start, best_count);
+    status = zero_fill ?
+        allocate_selected_run(vol, best_start, best_count) :
+        allocate_selected_run_uninitialized(vol, best_start, best_count);
     if (status != INFS_STATUS_OK)
         return status;
 
@@ -358,6 +373,20 @@ static int alloc_data_run(struct infs_volume *vol, uint64_t wanted,
     *start_out = best_start;
     *count_out = best_count;
     return INFS_STATUS_OK;
+}
+
+static int alloc_data_run(struct infs_volume *vol, uint64_t wanted,
+                  uint64_t *start_out, uint64_t *count_out)
+{
+    return alloc_data_run_impl(vol, wanted, start_out, count_out, 1);
+}
+
+static int alloc_data_run_uninitialized(struct infs_volume *vol,
+                                         uint64_t wanted,
+                                         uint64_t *start_out,
+                                         uint64_t *count_out)
+{
+    return alloc_data_run_impl(vol, wanted, start_out, count_out, 0);
 }
 
 static int alloc_scan_segment_reverse(struct infs_volume *vol,
@@ -434,8 +463,8 @@ static int alloc_run(struct infs_volume *vol, uint64_t wanted,
     return INFS_STATUS_OK;
 }
 
-static int alloc_exact_run(struct infs_volume *vol, uint64_t wanted,
-                           uint64_t *start_out)
+static int alloc_exact_run_impl(struct infs_volume *vol, uint64_t wanted,
+                        uint64_t *start_out, int zero_fill)
 {
     if (!wanted || !start_out)
         return INFS_STATUS_INVALID_ARGUMENT;
@@ -466,7 +495,9 @@ static int alloc_exact_run(struct infs_volume *vol, uint64_t wanted,
     if (!found)
         return INFS_STATUS_NO_SPACE;
 
-    status = allocate_selected_run(vol, start, wanted);
+    status = zero_fill ?
+        allocate_selected_run(vol, start, wanted) :
+        allocate_selected_run_uninitialized(vol, start, wanted);
     if (status != INFS_STATUS_OK)
         return status;
     vol->metadata_allocation_cursor = start;
@@ -474,6 +505,19 @@ static int alloc_exact_run(struct infs_volume *vol, uint64_t wanted,
         vol->metadata_allocation_cursor = total;
     *start_out = start;
     return INFS_STATUS_OK;
+}
+
+static int alloc_exact_run(struct infs_volume *vol, uint64_t wanted,
+                   uint64_t *start_out)
+{
+    return alloc_exact_run_impl(vol, wanted, start_out, 1);
+}
+
+static int alloc_exact_run_uninitialized(struct infs_volume *vol,
+                                         uint64_t wanted,
+                                         uint64_t *start_out)
+{
+    return alloc_exact_run_impl(vol, wanted, start_out, 0);
 }
 
 static void free_run(struct infs_volume *vol, uint64_t start, uint64_t count)

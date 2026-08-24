@@ -30,6 +30,7 @@ readback="$tmp/readback.bin"
 zero_block="$tmp/zero.bin"
 ordinary_source="$tmp/ordinary-source.bin"
 ordinary_readback="$tmp/ordinary-readback.bin"
+sequential_source="$tmp/sequential-source.bin"
 fuse_log="$tmp/fuse.log"
 fuse_pid=""
 holder_pid=""
@@ -120,6 +121,7 @@ truncate -s 256M "$image"
 head -c 4096 /dev/zero | tr '\000' 'S' > "$source_block"
 head -c 4096 /dev/zero > "$zero_block"
 head -c 98765 /dev/urandom > "$ordinary_source"
+head -c $((8 * 1024 * 1024)) /dev/urandom > "$sequential_source"
 
 step 'mounting the freshly formatted image'
 mount_image
@@ -143,6 +145,12 @@ mv "$mount_dir/tree/subdirectory/original.bin" \
     "$mount_dir/tree/subdirectory/renamed.bin"
 cmp "$ordinary_source" "$mount_dir/tree/subdirectory/renamed.bin"
 [[ "$(stat -c '%a' "$mount_dir/tree/subdirectory/renamed.bin")" == 640 ]]
+step 'writing and verifying an aligned 8 MiB sequential file'
+dd if="$sequential_source" of="$mount_dir/sequential.bin" bs=1M status=none
+sync
+cmp "$sequential_source" "$mount_dir/sequential.bin"
+rm "$mount_dir/sequential.bin"
+sync
 step 'creating and resolving native symbolic links'
 ln -s renamed.bin "$mount_dir/tree/subdirectory/relative-link"
 ln -s /tree/subdirectory/renamed.bin "$mount_dir/absolute-link"

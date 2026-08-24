@@ -334,3 +334,14 @@ Pre-1.0 development is current-format-only. A new development format supersedes 
 ## Deliberately deferred
 
 Global synchronous deduplication, distributed/network filesystem semantics and application-visible transactions are not first-generation requirements.
+
+
+## Phase 4.20 — implementation 0.16.5 sequential write performance — complete
+
+- [x] Batch aligned hole/new-file writes into contiguous physical runs.
+- [x] Skip redundant zero writes only for transaction-private storage that is completely overwritten before publication.
+- [x] Skip pre-zeroing newly allocated bitmap storage before the complete bitmap image write.
+- [x] Scale Linux FUSE deferred publication from 16 MiB up to a bounded 256 MiB.
+- [x] Preserve explicit `fsync()`/`sync()` as immediate durability boundaries.
+- [x] Add mounted sequential write, sync and byte-compare regression coverage.
+- [x] Keep Format 0.11 unchanged.

@@ -177,3 +177,6 @@ The high-level FUSE adapter deliberately uses libfuse's documented offsetless `r
 ## Compatibility rule
 
 Until the first stable release, a change that alters golden checkpoint bytes, packed offsets or interpretation increments the development format and replaces its predecessor without a compatibility reader or migration requirement. From the first stable release onward, such changes require a compatible feature extension or a defined migration policy. Tightening rejection of metadata already defined as reserved, unreachable, multiply owned, structurally inconsistent or geometrically impossible remains implementation hardening.
+
+
+Implementation 0.16.5 permits transaction-private full-overwrite allocations to skip pre-zeroing only when the complete data or bitmap image is written before checkpoint publication. Mounted conformance verifies an aligned sequential write through FUSE, explicit sync, and byte-identical readback. Linux automatic publication may use a bounded volume-adaptive threshold; explicit fsync/sync remains immediate. Format 0.11 is unchanged.

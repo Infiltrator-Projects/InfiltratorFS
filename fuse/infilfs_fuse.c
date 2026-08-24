@@ -1460,7 +1460,15 @@ int main(int argc, char **argv)
             infs_volume_close(&g_volume);
             return 1;
         }
-        status = infs_volume_set_deferred_publish(&g_volume, 1, 0);
+        uint64_t publish_threshold = g_volume.size_bytes / 64u;
+        const uint64_t min_publish = UINT64_C(16) * 1024u * 1024u;
+        const uint64_t max_publish = UINT64_C(256) * 1024u * 1024u;
+        if (publish_threshold < min_publish)
+            publish_threshold = min_publish;
+        if (publish_threshold > max_publish)
+            publish_threshold = max_publish;
+        status = infs_volume_set_deferred_publish(
+            &g_volume, 1, publish_threshold);
         if (status != INFS_STATUS_OK) {
             fprintf(stderr, "Cannot enable InfiltratorFS deferred publication: %s\n",
                     infs_status_string(status));

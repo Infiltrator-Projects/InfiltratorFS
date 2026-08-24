@@ -107,6 +107,84 @@ static int64_t write_file_tx(struct infs_volume *vol, const char *path,
         if (status != INFS_STATUS_OK)
             return status;
 
+        if (within == 0 && flags == INFS_EXTENT_HOLE &&
+    size - done >= INFS_BLOCK_SIZE) {
+    uint64_t wanted = (uint64_t)((size - done) / INFS_BLOCK_SIZE);
+    uint64_t hole_blocks = 0;
+    uint32_t extent_count = infs_le32_to_cpu(p->extent_count);
+    for (uint32_t i = 0; i < extent_count; ++i) {
+        uint64_t extent_logical = infs_le64_to_cpu(ext[i].logical_block);
+        uint64_t extent_blocks = infs_le32_to_cpu(ext[i].block_count);
+        if (logical >= extent_logical &&
+            logical < extent_logical + extent_blocks) {
+            if (infs_le32_to_cpu(ext[i].flags) != INFS_EXTENT_HOLE)
+                return INFS_STATUS_CORRUPT;
+            hole_blocks = extent_logical + extent_blocks - logical;
+            break;
+        }
+    }
+    if (hole_blocks == 0)
+        return INFS_STATUS_CORRUPT;
+    if (wanted > hole_blocks)
+        wanted = hole_blocks;
+    if (wanted > UINT32_MAX)
+        wanted = UINT32_MAX;
+
+    if (pending_count != 0) {
+        status = checksum_set_range(vol, p, file_hdr->object_id,
+                                    pending_start, pending_digests,
+                                    pending_count);
+        if (status != INFS_STATUS_OK)
+            return status;
+        pending_count = 0;
+    }
+
+    uint64_t replacement = 0, got = 0;
+    status = alloc_data_run_uninitialized(
+        vol, wanted, &replacement, &got);
+    if (status != INFS_STATUS_OK)
+        return status;
+    if (got == 0 || got > wanted)
+        return INFS_STATUS_CORRUPT;
+
+    size_t batch_bytes = (size_t)got * INFS_BLOCK_SIZE;
+    status = infs_storage_write(
+        &vol->storage, replacement * INFS_BLOCK_SIZE,
+        (const uint8_t *)buf + done, batch_bytes);
+    if (status != INFS_STATUS_OK)
+        return status;
+    status = file_replace_range(vol, object, logical, got,
+                                replacement, INFS_EXTENT_NORMAL);
+    if (status != INFS_STATUS_OK)
+        return status;
+
+    uint64_t digest_logical = logical;
+    size_t digest_bytes = 0;
+    uint64_t digest_blocks_left = got;
+    while (digest_blocks_left != 0) {
+        uint32_t digest_count = digest_blocks_left >
+            INFS_CHECKSUMS_PER_OBJECT ?
+            INFS_CHECKSUMS_PER_OBJECT :
+            (uint32_t)digest_blocks_left;
+        for (uint32_t i = 0; i < digest_count; ++i)
+            data_block_checksum(
+                (const uint8_t *)buf + done + digest_bytes +
+                    (size_t)i * INFS_BLOCK_SIZE,
+                &pending_digests[i]);
+        status = checksum_set_range(
+            vol, p, file_hdr->object_id, digest_logical,
+            pending_digests, digest_count);
+        if (status != INFS_STATUS_OK)
+            return status;
+        digest_logical += digest_count;
+        digest_blocks_left -= digest_count;
+        digest_bytes += (size_t)digest_count * INFS_BLOCK_SIZE;
+    }
+
+    done += batch_bytes;
+    continue;
+}
+
         int full_overwrite = within == 0 && chunk == INFS_BLOCK_SIZE;
         if (flags == INFS_EXTENT_HOLE || full_overwrite) {
             memset(data, 0, sizeof(data));

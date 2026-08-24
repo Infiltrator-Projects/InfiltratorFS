@@ -49,7 +49,8 @@ infs_status infs_volume_sync(struct infs_volume *vol)
         return status;
 
     uint64_t new_bitmap_start = 0;
-    status = alloc_exact_run(vol, bitmap_blocks, &new_bitmap_start);
+    status = alloc_exact_run_uninitialized(
+        vol, bitmap_blocks, &new_bitmap_start);
     if (status != INFS_STATUS_OK)
         return status;
 
