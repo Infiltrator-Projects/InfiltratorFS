@@ -135,17 +135,17 @@ jobs:
 
       - name: Build Linux-created cross-platform image
         run: |
-          truncate -s 64M build/linux-format08.img
-          build/mkfs.infilfs -L LinuxCrossPlatform build/linux-format08.img
-          printf 'linux-to-windows-format-0.11\n' > build/linux-cross-platform.txt
-          build/infilfs-tool build/linux-format08.img put build/linux-cross-platform.txt /linux-cross-platform.txt
-          build/infilfs-scrub build/linux-format08.img
+          truncate -s 64M build/linux-cross-platform.img
+          build/mkfs.infilfs -L LinuxCrossPlatform build/linux-cross-platform.img
+          printf 'linux-to-windows-cross-platform\n' > build/linux-cross-platform.txt
+          build/infilfs-tool build/linux-cross-platform.img put build/linux-cross-platform.txt /linux-cross-platform.txt
+          build/infilfs-scrub build/linux-cross-platform.img
 
       - name: Preserve cross-platform test image
         uses: actions/upload-artifact@v4
         with:
           name: InfiltratorFS-release-test-image
-          path: build/linux-format08.img
+          path: build/linux-cross-platform.img
           if-no-files-found: error
           retention-days: 1
 
@@ -172,7 +172,7 @@ jobs:
           if ($head -ne $env:EXPECTED_SHA) { throw "Release checkout $head does not match approved source $env:EXPECTED_SHA." }
           if ($main -ne $env:EXPECTED_SHA) { throw 'Current main moved after release verification; publication stops.' }
 
-      - name: Download Linux-created Format 0.11 image
+      - name: Download Linux-created cross-platform image
         uses: actions/download-artifact@v4
         with:
           name: InfiltratorFS-release-test-image
@@ -184,7 +184,7 @@ jobs:
           cmake -S . -B build -A x64
           cmake --build build --config Release --parallel
           ctest --test-dir build -C Release --output-on-failure
-          & .\build\Release\infilfs-win32-storage.exe .\cross-platform\linux-format08.img
+          & .\build\Release\infilfs-win32-storage.exe .\cross-platform\linux-cross-platform.img
 
       - name: Verify Windows executable and version metadata
         shell: pwsh

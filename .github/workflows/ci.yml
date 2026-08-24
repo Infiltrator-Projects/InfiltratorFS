@@ -57,16 +57,16 @@ jobs:
         run: ctest --test-dir build --output-on-failure
       - name: Build Linux-created cross-platform image
         run: |
-          truncate -s 64M build/linux-format011.img
-          build/mkfs.infilfs -L LinuxCrossPlatform build/linux-format011.img
-          printf 'linux-to-windows-format-0.11\n' > build/linux-cross-platform.txt
-          build/infilfs-tool build/linux-format011.img put build/linux-cross-platform.txt /linux-cross-platform.txt
-          build/infilfs-scrub build/linux-format011.img
-      - name: Upload Linux-created Format 0.11 image
+          truncate -s 64M build/linux-cross-platform.img
+          build/mkfs.infilfs -L LinuxCrossPlatform build/linux-cross-platform.img
+          printf 'linux-to-windows-cross-platform\n' > build/linux-cross-platform.txt
+          build/infilfs-tool build/linux-cross-platform.img put build/linux-cross-platform.txt /linux-cross-platform.txt
+          build/infilfs-scrub build/linux-cross-platform.img
+      - name: Upload Linux-created cross-platform image
         uses: actions/upload-artifact@v4
         with:
-          name: InfiltratorFS-Linux-Format011-TestImage
-          path: build/linux-format011.img
+          name: InfiltratorFS-Linux-CrossPlatform-TestImage
+          path: build/linux-cross-platform.img
           if-no-files-found: error
 
   clang:
@@ -131,10 +131,10 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v6
-      - name: Download Linux-created Format 0.11 image
+      - name: Download Linux-created cross-platform image
         uses: actions/download-artifact@v4
         with:
-          name: InfiltratorFS-Linux-Format011-TestImage
+          name: InfiltratorFS-Linux-CrossPlatform-TestImage
           path: cross-platform
       - name: Configure MSVC
         run: cmake -S . -B build -A x64
@@ -142,9 +142,9 @@ jobs:
         run: cmake --build build --config Release --parallel
       - name: Run Windows conformance tests
         run: ctest --test-dir build -C Release --output-on-failure
-      - name: Open Linux-created Format 0.11 image on Windows
+      - name: Open Linux-created cross-platform image on Windows
         shell: pwsh
-        run: '& .\build\Release\infilfs-win32-storage.exe .\cross-platform\linux-format011.img'
+        run: '& .\build\Release\infilfs-win32-storage.exe .\cross-platform\linux-cross-platform.img'
       - name: Verify Windows storage and transfer policy are compiled
         shell: pwsh
         run: |
