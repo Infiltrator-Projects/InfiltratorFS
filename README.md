@@ -6,12 +6,12 @@
 
 InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem started in 2026. The persistent format and core engine are written in portable C; Linux and Windows are adapters over the same on-disk structures rather than separate filesystem implementations.
 
-**Current implementation:** 0.9.11  
+**Current implementation:** 0.9.12  
 **On-disk format:** 0.8  
 **Shared foundation:** Infiltratr Common 1.11.0  
 **Licence:** GPL-3.0-or-later
 
-Format 0.8 is unchanged by the 0.9.x implementation releases. Media created by earlier Format 0.8 builds does not need to be reformatted to use implementation 0.9.11.
+Format 0.8 is unchanged by the 0.9.x implementation releases. Media created by earlier Format 0.8 builds does not need to be reformatted to use implementation 0.9.12.
 
 ## Capabilities
 
@@ -33,7 +33,7 @@ Format 0.8 currently provides:
 - explicit read-only scrub/verify; and
 - callback-based storage, durability, randomness and clock services.
 
-Implementation 0.9.11 focuses on portability reuse, recovery safety and real-device I/O behaviour, including complete graph validation before checkpoint healing, generation-wrap rejection, Windows raw-partition single-writer exclusion and bounded deferred publication for bulk Windows transfers.
+Implementation 0.9.12 retains the Format 0.8 filesystem behaviour from 0.9.11 and rebuilds the Linux release path so the `.run` asset is a genuine self-extracting Bash installer containing the complete release source tree, including the pinned Common submodule. Release construction now verifies the Bash header and embedded compressed source payload before the installer is accepted for publication.
 
 ## Architecture
 
@@ -95,7 +95,7 @@ GitHub Actions runs Linux, Clang, sanitizer and static-analyzer suites, cross-pl
 
 The Linux Debian package installs **InfiltratorFS Manager**, which can create/format images, select removable partitions, inspect/scrub, mount through FUSE, open in Nemo and unmount safely.
 
-The Windows release contains a versioned executable such as `InfiltratorFS-Windows-0.9.11.exe`. Run it elevated when accessing raw media. It can discover physical partitions, list the root directory, copy files/folders and run a full scrub while bounding raw I/O to the selected partition.
+The Windows release contains a versioned executable such as `InfiltratorFS-Windows-0.9.12.exe`. Run it elevated when accessing raw media. It can discover physical partitions, list the root directory, copy files/folders and run a full scrub while bounding raw I/O to the selected partition.
 
 ## Release assets
 

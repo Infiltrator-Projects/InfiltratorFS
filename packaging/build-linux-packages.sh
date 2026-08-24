@@ -49,10 +49,16 @@ test "$(dpkg-deb --field "$dist_dir/$deb_name" Version)" = "$version"
 rm "$dist_dir/package-contents.txt"
 sha256sum "$dist_dir/$deb_name" > "$dist_dir/$deb_name.sha256"
 
-# The .run package carries the exact release source and compiles it natively
-# on the destination Linux system. This keeps the portable core and the Linux
-# adapter in one package without assuming the build host ABI.
-git archive --format=tar HEAD | gzip -9 > "$payload"
+# The .run package is a genuine self-extracting Bash installer. Its payload is
+# the complete checked-out release tree, including the pinned Common submodule,
+# so the destination machine performs the actual native Linux compilation.
+tar \
+    --exclude='./.git' \
+    --exclude='*/.git' \
+    --exclude='./build' \
+    --exclude='./dist' \
+    -czf "$payload" .
+
 run_name="infiltratorfs-${version}-linux-native.run"
 cat > "$dist_dir/$run_name" <<'RUN_HEADER'
 #!/usr/bin/env bash
@@ -61,10 +67,29 @@ set -euo pipefail
 
 self="$0"
 marker='__INFILTRATORFS_PAYLOAD_BELOW__'
-line="$(awk -v marker="$marker" '$0 == marker { print NR + 1; exit }' "$self")"
-if [[ -z "$line" ]]; then
+payload_start="$(awk -v marker="$marker" '$0 == marker { print NR + 1; exit }' "$self")"
+if [[ -z "$payload_start" ]]; then
     echo "Installer payload marker not found." >&2
     exit 1
+fi
+
+verify_installer() {
+    local header_tmp
+    if [[ "$(head -n 1 "$self")" != '#!/usr/bin/env bash' ]]; then
+        echo "Installer does not start with the expected Bash shebang." >&2
+        return 1
+    fi
+    header_tmp="$(mktemp)"
+    head -n "$((payload_start - 1))" "$self" > "$header_tmp"
+    bash -n "$header_tmp"
+    rm -f "$header_tmp"
+    tail -n +"$payload_start" "$self" | gzip -t
+}
+
+verify_installer
+if [[ "${1:-}" == "--verify" ]]; then
+    echo "InfiltratorFS native Linux installer verified: Bash header and embedded source payload are intact."
+    exit 0
 fi
 
 for command in cmake cc pkg-config tar gzip pkexec zenity; do
@@ -84,7 +109,7 @@ work="$(mktemp -d)"
 cleanup() { rm -rf "$work"; }
 trap cleanup EXIT
 mkdir -p "$work/source"
-tail -n +"$line" "$self" | gzip -dc | tar -xf - -C "$work/source"
+tail -n +"$payload_start" "$self" | gzip -dc | tar -xf - -C "$work/source"
 cmake -S "$work/source" -B "$work/build" -DCMAKE_BUILD_TYPE=Release
 cmake --build "$work/build" --parallel
 ctest --test-dir "$work/build" --output-on-failure
@@ -99,6 +124,11 @@ __INFILTRATORFS_PAYLOAD_BELOW__
 RUN_HEADER
 cat "$payload" >> "$dist_dir/$run_name"
 chmod 0755 "$dist_dir/$run_name"
+
+# Release construction must prove that the .run is actually a valid shell
+# installer and that the embedded native-build source payload survived intact.
+test "$(head -n 1 "$dist_dir/$run_name")" = '#!/usr/bin/env bash'
+"$dist_dir/$run_name" --verify
 sha256sum "$dist_dir/$run_name" > "$dist_dir/$run_name.sha256"
 
 printf 'Built Linux release packages:\n  %s\n  %s\n' "$deb_name" "$run_name"
