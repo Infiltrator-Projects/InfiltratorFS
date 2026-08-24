@@ -73,6 +73,9 @@ int main(int argc, char **argv)
         rc = command_cat(&vol, argv[3]);
     } else if (strcmp(cmd, "map") == 0 && argc == 5) {
         rc = command_map(&vol, argv[3], argv[4]);
+    } else if (strcmp(cmd, "reflink") == 0 && argc == 5) {
+        status = infs_reflink_file(&vol, argv[3], argv[4]);
+        if (status != INFS_STATUS_OK) rc = die_status("reflink", status);
     } else if (strcmp(cmd, "mv") == 0 && argc == 5) {
         status = infs_rename(&vol, argv[3], argv[4]);
         if (status != INFS_STATUS_OK) rc = die_status("mv", status);

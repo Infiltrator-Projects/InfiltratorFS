@@ -27,6 +27,10 @@ head -c 98765 /dev/urandom > "$source_file"
 "$tool" "$image" put "$source_file" /docs/test.bin
 "$tool" "$image" cat /docs/test.bin > "$out_file"
 cmp "$source_file" "$out_file"
+"$tool" "$image" reflink /docs/test.bin /docs/test-clone.bin
+"$tool" "$image" cat /docs/test-clone.bin > "$out_file"
+cmp "$source_file" "$out_file"
+"$tool" "$image" rm /docs/test-clone.bin
 "$tool" "$image" mv /docs/test.bin /docs/renamed.bin
 "$tool" "$image" mkdir /archive
 "$tool" "$image" mv /docs/renamed.bin /archive/moved.bin

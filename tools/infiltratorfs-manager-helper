@@ -13,50 +13,17 @@ require_root()
     (( EUID == 0 )) || fail "administrator authorization is required"
 }
 
-is_sd_mmc_parent()
-{
-    local parent="$1"
-    parent="${parent##*/}"
-    [[ "$parent" =~ ^mmcblk[0-9]+$ ]] || return 1
-
-    local type_file="/sys/class/block/$parent/device/type"
-    [[ -r "$type_file" ]] || return 1
-
-    local card_type=""
-    read -r card_type < "$type_file" || return 1
-    [[ "$card_type" == "SD" || "$card_type" == "SDIO" ||
-       "$card_type" == "SDcombo" ]]
-}
-
-is_supported_removable_partition()
+is_supported_partition()
 {
     local target="$1"
     [[ -b "$target" ]] || return 1
     [[ "$(lsblk -ndo TYPE "$target" | head -n1)" == "part" ]] || return 1
-
-    local removable parent parent_path transport
-    removable="$(lsblk -ndo RM "$target" | head -n1)"
-    parent="$(lsblk -ndo PKNAME "$target" | head -n1)"
-    parent="${parent##*/}"
-    parent_path="/dev/$parent"
-    transport=""
-    if [[ -n "$parent" && -b "$parent_path" ]]; then
-        transport="$(lsblk -ndo TRAN "$parent_path" | head -n1 || true)"
-        if [[ "$removable" != "1" ]]; then
-            removable="$(lsblk -ndo RM "$parent_path" | head -n1 || true)"
-        fi
-    fi
-
-    [[ "$removable" == "1" ]] && return 0
-    [[ "$transport" == "usb" ]] && return 0
-    is_sd_mmc_parent "$parent" && return 0
-    return 1
 }
 
 reject_system_partition()
 {
     local target="$1"
-    local mount_point source resolved
+    local mount_point source resolved ancestor ancestor_resolved
     resolved="$(readlink -f -- "$target")"
 
     for mount_point in / /boot /boot/efi; do
@@ -65,17 +32,22 @@ reject_system_partition()
         source="$(readlink -f -- "$source" 2>/dev/null || printf '%s' "$source")"
         [[ "$resolved" != "$source" ]] ||
             fail "refusing to use the active system partition: $target"
+        while read -r ancestor; do
+            [[ -n "$ancestor" ]] || continue
+            ancestor_resolved="$(readlink -f -- "$ancestor" 2>/dev/null || printf '%s' "$ancestor")"
+            [[ "$resolved" != "$ancestor_resolved" ]] ||
+                fail "refusing to use storage backing $mount_point: $target"
+        done < <(lsblk -srnpo NAME "$source" 2>/dev/null || true)
     done
 }
 
-validate_removable_partition()
+validate_partition()
 {
     local target="$1"
     [[ -b "$target" ]] || fail "target is not a block device: $target"
     [[ "$(lsblk -ndo TYPE "$target" | head -n1)" == "part" ]] ||
         fail "only a partition may be selected"
-    is_supported_removable_partition "$target" ||
-        fail "only a removable, USB, or SD-card partition may be selected"
+    is_supported_partition "$target" || fail "only a partition may be selected"
     reject_system_partition "$target"
 }
 
@@ -94,18 +66,18 @@ shift
 case "$operation" in
     format-block)
         (( $# == 2 )) || fail "format-block requires a target and label"
-        validate_removable_partition "$1"
+        validate_partition "$1"
         [[ -z "$(findmnt -rn -S "$1")" ]] || fail "the partition is mounted"
         exec /usr/bin/mkfs.infilfs --force -L "$2" "$1"
         ;;
     inspect-block)
         (( $# == 1 )) || fail "inspect-block requires a target"
-        validate_removable_partition "$1"
+        validate_partition "$1"
         exec /usr/bin/infilfs-inspect "$1"
         ;;
     scrub-block)
         (( $# == 1 )) || fail "scrub-block requires a target"
-        validate_removable_partition "$1"
+        validate_partition "$1"
         exec /usr/bin/infilfs-scrub "$1"
         ;;
     mount-block)
@@ -114,7 +86,7 @@ case "$operation" in
         user_id="$2"
         group_id="$3"
         mount_point="$4"
-        validate_removable_partition "$block_target"
+        validate_partition "$block_target"
         [[ "$group_id" =~ ^[0-9]+$ ]] || fail "invalid group identifier"
         username=$(username_for_uid "$user_id")
         [[ -n "$username" ]] || fail "unknown user identifier"

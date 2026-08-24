@@ -3,7 +3,7 @@
 
 ## 1. Identity and scope
 
-InfiltratorFS is a clean-sheet, platform-neutral local filesystem. Linux is the first development and test host, while Windows is an intended future host. Operating-system APIs are adapters around the filesystem rather than properties of its disk format.
+InfiltratorFS is a clean-sheet, platform-neutral local filesystem. Linux is the primary mounted development host; Windows has a native storage and transfer adapter but not yet an Explorer filesystem driver. Operating-system APIs are adapters around the filesystem rather than properties of its disk format.
 
 The same formatted volume must be usable by Linux and Windows implementations without translating the filesystem or changing its on-disk identity.
 
@@ -16,7 +16,7 @@ InfiltratorFS is divided into four layers:
 1. **On-disk format** — fixed-width little-endian records, object identities, allocation, transactions and integrity.
 2. **Portable core engine** — namespace, inline data, extents, checksums, CoW and recovery logic written in C17.
 3. **Platform services** — callbacks for positioned read/write, durable flush, target size, secure randomness, wall-clock time and close.
-4. **Operating-system adapters** — Linux FUSE/POSIX today; native Linux and Windows drivers later.
+4. **Operating-system adapters** — Linux FUSE/POSIX plus Win32 image/raw-partition access today; native Linux and Windows filesystem drivers later.
 
 The core does not store or expose a Linux file descriptor. It does not depend on FUSE, a Linux VFS inode, `struct stat`, `off_t`, UID/GID types, `errno` or a Windows handle. Adapters translate those concepts at the boundary. Core and storage operations use stable negative `infs_status` values; byte-count APIs return either a non-negative count or one of those values.
 
@@ -28,7 +28,7 @@ Files, directories, checksum records and future metadata classes are persistent 
 
 Directories map UTF-8 names to object IDs. Renaming or physically relocating an object does not change its ID. Linux may derive a stable inode number from the ID; Windows may expose the full value as a file ID. Neither projection is stored as the canonical identity.
 
-Format 0.7 uses a persistent object index mapping object IDs to current metadata blocks. The root object block is also present in each checkpoint as a bootstrap and recovery anchor. The current one-block index and directories are prototype limits.
+Format 0.8 uses checksummed metadata pages for the persistent object index and directories. The index head stores physical pointers to index pages; directory heads store pointers to pages of variable-length entries. The root object block is also present in each checkpoint as a bootstrap and recovery anchor. These are bounded one-level page arrays rather than the future generation-aware trees.
 
 ## 4. Platform-neutral attributes
 
@@ -52,7 +52,7 @@ POSIX permission bits and numeric UID/GID values are retained in a separate comp
 
 ## 5. Namespace rules
 
-Format 0.7 names are well-formed UTF-8 and are limited to 255 bytes per component. NUL and `/` are invalid. `.` and `..` are adapter/core navigation syntax and are not stored.
+Format 0.8 names are well-formed UTF-8 and are limited to 255 bytes per component. NUL and `/` are invalid. `.` and `..` are adapter/core navigation syntax and are not stored.
 
 Current directory lookup is case-sensitive and compares encoded UTF-8 bytes exactly. Unicode normalization and case-folded directory policies must be explicitly versioned before they are enabled. An adapter must not silently create a second definition of filename equality.
 
@@ -87,13 +87,13 @@ One bitmap bit describes one 4096-byte block. The bitmap is the authoritative fr
 
 Extent-backed file data uses normal extents, which map logical blocks to physical storage, and hole extents, which map logical ranges to zeros without allocating data blocks. Truncate growth creates holes, writes allocate only touched blocks, and full-block hole punching reclaims storage while preserving logical size.
 
-Format 0.7 additionally permits inline-enabled volumes to store non-empty files up to 3,840 bytes inside their existing file metadata object. Inline data consumes no separate data/checksum blocks. Crossing the threshold promotes the file to ordinary extents; shrinking back to the threshold or below can fold it inline and reclaim the external blocks. Inline storage is deliberately a file representation, not a new extent type.
+Format 0.8 retains inline storage for non-empty files up to 3,840 bytes inside their existing file metadata object. Inline data consumes no separate data/checksum blocks. Crossing the threshold promotes the file to ordinary extents; shrinking back to the threshold or below can fold it inline and reclaim the external blocks. Inline storage is deliberately a file representation, not a new extent type.
 
-Compression, shared extents, integrity placement and other future data states will use explicitly versioned representations. The allocator will eventually distinguish archive, sequential-growing, streaming, random-write, temporary and VM/disk-image workloads. Policy may alter extent size, locality, CoW, compression, aggregation and protection without changing ordinary file semantics.
+Format 0.8 permits shared normal extents. A reflink creates a new file object and checksum chain that refer to the source data blocks; later writes, truncate, hole punching, rename replacement and unlink preserve shared blocks until their final reference disappears. Compression, integrity placement and other future data states require explicitly versioned representations. The allocator does not yet classify archive, sequential-growing, streaming, random-write, temporary or VM/disk-image workloads.
 
 ## 8. Integrity and recovery
 
-Metadata blocks are self-identifying, versioned and checksummed. Format 0.7 retains CRC64-ECMA for metadata and SHA-256 for logical file data.
+Metadata blocks are self-identifying, versioned and checksummed. Format 0.8 uses CRC64-ECMA for object heads and metadata pages and SHA-256 for logical file data.
 
 Every allocated extent-backed logical data block has a separate checksum entry stored in checksummed CoW metadata. Hole extents need no data checksum. Checksum objects form a sorted sparse chain, so a high-offset write allocates checksum metadata for its own segment rather than every preceding hole.
 
@@ -103,11 +103,11 @@ Normal reads verify data before returning it. `infilfs-scrub` verifies every cur
 
 Future forensic tooling will scan raw storage for recognizable checkpoint, object, directory, extent and checksum records. Redundant hints may aid reconstruction, but one representation remains authoritative during normal operation.
 
-## 9. Snapshots, reflinks and history
+## 9. Reflinks, snapshots and history
 
-A snapshot is a retained committed root generation. Two objects may later share immutable extents; writes then replace only the changed ranges. Reference accounting must remain transactional and recoverable.
+Reflinks and shared extents are implemented. Shared-block lifetime is reconstructed from the committed object graph and remains transactional across CoW replacement and reclamation.
 
-Retained generations naturally support snapshot, rollback and undelete policies without relying on raw-sector guessing.
+Snapshot roots, retained historical generations, rollback and undelete policy remain future work.
 
 ## 10. Media, protection, compression and encryption
 

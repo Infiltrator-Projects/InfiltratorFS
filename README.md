@@ -6,12 +6,12 @@
 
 InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem started in 2026. The persistent format and core engine are written in portable C; Linux and Windows are adapters over the same on-disk structures rather than separate filesystem implementations.
 
-**Current implementation:** 0.9.13<br>
+**Current implementation:** 0.10.0<br>
 **On-disk format:** 0.8<br>
 **Shared foundation:** Infiltratr Common 1.11.0<br>
 **Licence:** GPL-3.0-or-later
 
-Format 0.8 is unchanged by the 0.9.x implementation releases. Media created by earlier Format 0.8 builds does not need to be reformatted to use implementation 0.9.13.
+Format 0.8 is unchanged by the 0.9.x releases and implementation 0.10.0. Media created by earlier Format 0.8 builds does not need to be reformatted.
 
 ## Capabilities
 
@@ -33,7 +33,7 @@ Format 0.8 currently provides:
 - explicit read-only scrub/verify; and
 - callback-based storage, durability, randomness and clock services.
 
-Implementation 0.9.13 retains the Format 0.8 filesystem behaviour from 0.9.12 and repairs the native Linux release path. The `.run` is a genuine self-extracting Bash installer containing the complete release source tree and pinned Common submodule. It verifies its own header, payload and executable bootstrap, supports a non-mutating `--dry-run`, reports the exact packages and commands needed, and performs the real compilation on the target Linux machine.
+Implementation 0.10.0 keeps Format 0.8 unchanged while making existing filesystem functionality accessible and testable: the Linux Manager can select fixed non-system partitions as well as removable media, the direct-image tool exposes reflink creation, and the automated suite includes a real mounted-FUSE persistence test whenever `/dev/fuse` is available. The native `.run` remains a self-extracting Bash installer containing the complete release source tree and pinned Common submodule.
 
 ## Architecture
 
@@ -79,6 +79,7 @@ Exercise the filesystem without mounting:
 ```bash
 ./build/infilfs-tool infilfs.img mkdir /docs
 ./build/infilfs-tool infilfs.img put README.md /docs/README.md
+./build/infilfs-tool infilfs.img reflink /docs/README.md /docs/README-copy.md
 ./build/infilfs-tool infilfs.img cat /docs/README.md
 ```
 
@@ -93,9 +94,9 @@ GitHub Actions runs Linux, Clang, sanitizer and static-analyzer suites, cross-pl
 
 ## Desktop and Windows tools
 
-The Linux Debian package installs **InfiltratorFS Manager**, which can create/format images, select removable partitions, inspect/scrub, mount through FUSE, open in Nemo and unmount safely.
+The Linux Debian package installs **InfiltratorFS Manager**, which can create/format images, select non-system disk partitions including fixed, USB, SD and other removable media, inspect/scrub, mount through FUSE, open in Nemo and unmount safely. Whole disks and storage backing the active system partitions remain excluded.
 
-The Windows release contains a versioned executable such as `InfiltratorFS-Windows-0.9.13.exe`. Run it elevated when accessing raw media. It can discover physical partitions, list the root directory, copy files/folders and run a full scrub while bounding raw I/O to the selected partition.
+The Windows release contains a versioned executable such as `InfiltratorFS-Windows-0.10.0.exe`. Run it elevated when accessing raw media. It can discover physical partitions, list the root directory, copy files/folders and run a full scrub while bounding raw I/O to the selected partition.
 
 ## Release assets
 
@@ -113,8 +114,8 @@ GitHub provides the standard source-code ZIP and tarball automatically from the 
 To inspect the native Linux build before allowing it to install anything:
 
 ```bash
-chmod +x infiltratorfs-0.9.13-linux-native.run
-./infiltratorfs-0.9.13-linux-native.run --dry-run
+chmod +x infiltratorfs-0.10.0-linux-native.run
+./infiltratorfs-0.10.0-linux-native.run --dry-run
 ```
 
 Run the same file without `--dry-run` to compile, test and install InfiltratorFS natively. If required packages are missing, it displays the exact `apt-get` commands and asks before installing them.

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.20)
-project(InfiltratorFS VERSION 0.9.13 LANGUAGES C)
+project(InfiltratorFS VERSION 0.10.0 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -215,6 +215,12 @@ if(UNIX)
         target_link_libraries(infilfs-fuse PRIVATE infilfs_posix PkgConfig::FUSE3)
         target_compile_definitions(infilfs-fuse PRIVATE _GNU_SOURCE)
         infilfs_enable_warnings(infilfs-fuse)
+        add_test(NAME infilfs-mint-fuse
+            COMMAND bash ${CMAKE_SOURCE_DIR}/tests/mint-sparse-fuse.sh
+                         ${CMAKE_BINARY_DIR})
+        set_tests_properties(infilfs-mint-fuse PROPERTIES
+            SKIP_RETURN_CODE 77
+            TIMEOUT 120)
     else()
         message(STATUS "libfuse3 development files not found; Linux FUSE adapter will not be built")
     endif()

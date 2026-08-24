@@ -103,7 +103,7 @@ is_sd_mmc_parent()
 is_system_partition()
 {
     local candidate="$1"
-    local candidate_real mount_point source source_real
+    local candidate_real mount_point source source_real ancestor ancestor_real
     candidate_real="$(readlink -f -- "$candidate" 2>/dev/null || printf '%s' "$candidate")"
 
     for mount_point in / /boot /boot/efi; do
@@ -111,6 +111,11 @@ is_system_partition()
         [[ -n "$source" ]] || continue
         source_real="$(readlink -f -- "$source" 2>/dev/null || printf '%s' "$source")"
         [[ "$candidate_real" != "$source_real" ]] || return 0
+        while read -r ancestor; do
+            [[ -n "$ancestor" ]] || continue
+            ancestor_real="$(readlink -f -- "$ancestor" 2>/dev/null || printf '%s' "$ancestor")"
+            [[ "$candidate_real" != "$ancestor_real" ]] || return 0
+        done < <(lsblk -srnpo NAME "$source_real" 2>/dev/null || true)
     done
     return 1
 }
@@ -135,7 +140,8 @@ partition_candidate_kind()
         printf 'SD card\n'
         return 0
     fi
-    return 1
+    printf 'Fixed disk\n'
+    return 0
 }
 
 select_partition()
@@ -151,12 +157,12 @@ select_partition()
     done < <(lsblk -prno NAME,SIZE,TYPE,RM,PKNAME,TRAN)
 
     if (( ${#rows[@]} == 0 )); then
-        show_error "No removable, USB, or SD-card partitions were found. If the card has no partition yet, create one in Mint Disks and try again."
+        show_error "No non-system partitions were found. Create the intended partition in Mint Disks and try again."
         return
     fi
 
     selection=$(zenity --list --radiolist --title="$APP_NAME" --width=700 --height=400 \
-        --text="Select the SD/removable partition to use. Formatting will destroy its existing data." \
+        --text="Select a non-system partition to use. Formatting will destroy its existing data." \
         --column="Select" --column="Device" --column="Size" --column="Detected as" --print-column=2 \
         "${rows[@]}") || return
 
@@ -170,11 +176,11 @@ select_target()
     choice=$(zenity --list --radiolist --title="$APP_NAME" --width=560 --height=280 \
         --text="What would you like to use?" \
         --column="Select" --column="Target type" --print-column=2 \
-        TRUE "Image file" FALSE "Removable / SD partition") || return
+        TRUE "Image file" FALSE "Disk partition") || return
 
     case "$choice" in
         "Image file") select_image ;;
-        "Removable / SD partition") select_partition ;;
+        "Disk partition") select_partition ;;
     esac
 }
 
@@ -319,7 +325,7 @@ while true; do
         --text="Current target: $current_target" --hide-header \
         --column="Action" --column="Description" --print-column=1 \
         "Create image" "Create and format a safe image file" \
-        "Select target" "Choose an existing image or removable/SD partition" \
+        "Select target" "Choose an existing image or non-system partition" \
         "Format" "Format the selected target as InfiltratorFS" \
         "Inspect" "Display filesystem identity and geometry" \
         "Scrub" "Run a read-only integrity check" \

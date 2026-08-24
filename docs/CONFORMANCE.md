@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-# Format 0.7 Conformance
+# Format 0.8 Conformance
 
-Implementation 0.7.0 defines the portable contract of on-disk Format 0.7. Format 0.7 preserves the existing packed structure sizes and offsets from Format 0.6 while defining the new `INFS_INCOMPAT_INLINE_DATA` feature and the corresponding inline regular-file payload shape. Format 0.6 volumes remain readable. A Format 0.7 volume may be extent-only when the inline-data bit is clear; new volumes formatted by implementation 0.7.0 enable inline data by default.
+Format 0.8 retains Format 0.7 inline files and feature-gated shared extents while adding version-2 directory/index heads and independently checksummed metadata pages. Format 0.6 and 0.7 volumes remain readable. New Format 0.8 volumes enable UTF-8 names, sparse extents, inline data, shared extents and paged metadata.
 
 ## Required representation
 
@@ -16,7 +16,10 @@ A conforming implementation must preserve:
 - mandatory `INFS_INCOMPAT_UTF8_NAMES` support;
 - mandatory `INFS_INCOMPAT_SPARSE_EXTENTS` support for Format 0.6 and later;
 - `INFS_INCOMPAT_INLINE_DATA` accepted only for Format 0.7 and later;
-- metadata object version 1 for current object classes;
+- `INFS_INCOMPAT_SHARED_EXTENTS` governing duplicate normal-data ownership;
+- mandatory `INFS_INCOMPAT_PAGED_METADATA` for newly formatted Format 0.8 volumes;
+- object version 1 for classic objects and version 2 for paged directory/index heads;
+- owner-identified, generation-matched, CRC64-protected directory and index pages;
 - nonzero 128-bit filesystem and object identities;
 - nonzero committed generations;
 - a NUL-terminated, well-formed UTF-8 checkpoint label with canonical zero padding;
@@ -36,9 +39,9 @@ A conforming implementation must preserve:
 - SHA-256 entries for every allocated extent-backed data block, addressed by sorted sparse checksum chains;
 - every indexed checksum object reachable exactly once from its owning file's checksum head, with matching owner/parent identities and strictly increasing aligned segment starts;
 - an allocation bitmap large enough to represent every committed volume block before any bitmap bit is read; and
-- exact ownership of every allocated in-volume block by a checkpoint, the current bitmap, the current object-index root, an indexed metadata object or a normal data extent.
+- exact ownership of every allocated in-volume block by a checkpoint, the current bitmap, the current object-index head/page, a directory page, an indexed metadata object or a normal data extent, with duplicate normal-data ownership permitted only for shared extents.
 
-Physical ownership overlap and unreachable allocated blocks are corruption. Inline bytes do not own extra bitmap blocks because they reside within the already-owned file metadata object.
+Metadata ownership overlap and unreachable allocated blocks are corruption. Inline bytes do not own extra bitmap blocks because they reside within the already-owned file metadata object. Multiple files may own the same normal data block only when `INFS_INCOMPAT_SHARED_EXTENTS` is enabled.
 
 ## Inline-file contract
 
@@ -57,21 +60,29 @@ A non-empty `extent_count == 0` file is corruption when inline data is not enabl
 
 Growth beyond the inline threshold must preserve the existing bytes while transactionally publishing an extent-backed replacement. Shrink to the inline threshold or below on an inline-enabled volume may fold an extent-backed file inline and must reclaim its superseded data/checksum blocks under the normal deferred-reclamation rules. Inline sparse gaps and inline hole punching are stored as literal zero bytes while logical size is preserved.
 
+## Shared-extent contract
+
+A reflink creates a distinct file object with its own identity, attributes and checksum chain while reusing the source file's normal physical data blocks. Inline files are copied inline rather than made to share their metadata object. Later writes replace only the changed blocks through CoW. Truncate, hole punching, inline folding, rename replacement and unlink must not reclaim a normal block while any other committed file extent still refers to it. Scrub accepts duplicate normal-data ownership only when the shared-extents feature is present and continues to reject all metadata overlap.
+
+## Paged-metadata contract
+
+When `INFS_INCOMPAT_PAGED_METADATA` is set, the root directory and object-index head use object version 2. Their payloads contain little-endian physical pointers to metadata pages rather than inline entries. Every page has the correct directory/index magic, owner ID, generation, entry count, byte count, reserved-zero field and CRC64. Page pointers must be nonzero, allocated, in range, unique and reachable only from their owning head. Entry totals in the head must equal the combined page totals. A mismatch between the paged feature bit and either required head version is corruption.
+
 ## Feature-flag compatibility
 
-Format 0.7 uses the conventional three feature classes deliberately:
+Format 0.8 uses the conventional three feature classes deliberately:
 
 - unknown `incompat_flags` require refusal to open;
 - unknown `ro_compat_flags` may be opened read-only but must not be opened writable;
 - unknown `compat_flags` may be ignored because they do not change required read/write interpretation.
 
-`INFS_INCOMPAT_UTF8_NAMES` and `INFS_INCOMPAT_SPARSE_EXTENTS` are required by Format 0.7. `INFS_INCOMPAT_INLINE_DATA` is optional for a specific Format 0.7 volume but, when present, changes required file-payload interpretation and therefore is incompatible. It is invalid on a pre-0.7 checkpoint. Implementation 0.7.0 defines no compatible or read-only-compatible feature bits.
+`INFS_INCOMPAT_UTF8_NAMES`, `INFS_INCOMPAT_SPARSE_EXTENTS` and `INFS_INCOMPAT_PAGED_METADATA` are required on newly formatted Format 0.8 volumes. `INFS_INCOMPAT_INLINE_DATA` changes file-payload interpretation and is invalid before Format 0.7. `INFS_INCOMPAT_SHARED_EXTENTS` changes normal-data ownership rules. `INFS_INCOMPAT_PAGED_METADATA` is invalid before Format 0.8. Format 0.8 defines no compatible or read-only-compatible bits.
 
 ## Portable result contract
 
 The core and storage-service boundary return `infs_status` values. Successful operations return `INFS_STATUS_OK`; failures return a stable negative value such as `INFS_STATUS_CORRUPT`, `INFS_STATUS_NOT_FOUND`, `INFS_STATUS_NO_MEMORY`, `INFS_STATUS_IO_ERROR` or `INFS_STATUS_NO_SPACE`. Byte-count APIs return a non-negative count or a negative `infs_status`. Internal helpers preserve the concrete originating status unless they have positively identified a more specific filesystem condition.
 
-Operating-system adapters perform native translation. The current POSIX adapter maps between `infs_status` and `errno`. A future Windows adapter can map the same values to Win32 errors or NTSTATUS without changing the core or disk format.
+Operating-system adapters perform native translation. The POSIX adapter maps between `infs_status` and `errno`; the Win32 storage and transfer adapter maps the same core results without changing the disk format.
 
 A writable storage backend must provide positioned write, durable flush, random-byte and current-time services in addition to the read/size services required for read-only access. A mutation fails if its required clock service fails; the filesystem does not silently substitute a zero timestamp. The formatter follows the same fail-closed clock policy for the initial root timestamps.
 
@@ -93,9 +104,9 @@ Ordinary rename replacement is a single filesystem transaction. A file may repla
 
 ## Automated checks
 
-`infilfs-format-conformance` checks exact structure sizes and offsets, independently constructs expected Format 0.7 checkpoint bytes, proves the inline feature cannot appear under an older minor version, accepts an extent-only Format 0.7 checkpoint, rejects unsupported incompatible features and verifies UTF-8/checksum rules.
+`infilfs-format-conformance` checks exact structure sizes and offsets, independently constructs expected Format 0.8 checkpoint bytes, proves version-gated features cannot appear under an older minor version, accepts compatible legacy checkpoints, rejects unsupported incompatible features and verifies UTF-8/checksum rules.
 
-`infilfs-inline-files` constructs a deterministic Format 0.7 volume in memory and verifies:
+`infilfs-inline-files` constructs a deterministic inline-enabled volume in memory and verifies:
 
 - an empty file begins without external storage;
 - small writes remain inline;
@@ -109,15 +120,18 @@ Ordinary rename replacement is a single filesystem transaction. A file may repla
 
 `infilfs-volume-conformance` verifies the complete in-memory volume graph and sparse-file behavior, including a 1 TiB logical sparse file in a small image, out-of-order sparse checksum segments, zero-filled reads, punching, reclamation, scrub and malformed extent rejection.
 
-`infilfs-hardening-conformance` covers checkpoint-label termination, canonical padding/reserved fields, object versions, read-only-compatible feature semantics, exact block ownership, namespace uniqueness/reachability/parentage, checksum-object reachability, read-status propagation, POSIX rename replacement, post-commit checkpoint-replica failure, explicit replica healing and mandatory reopen after an indeterminate first-checkpoint flush. Its extent-only fixtures also verify that a Format 0.7 volume with the inline feature bit clear retains ordinary extent behavior.
+`infilfs-reflink` verifies shared physical blocks, independent checksums, CoW separation, safe truncate/unlink reclamation, inline cloning, scrub and remount persistence.
+
+`infilfs-paged-metadata` creates entries beyond the classic one-block limits, exercises lookup/list/rename/remove, verifies deferred buffered publication, scrubs the complete page graph and reopens it read-only.
+
+`infilfs-hardening-conformance` covers checkpoint-label termination, canonical padding/reserved fields, object versions, read-only-compatible feature semantics, exact block ownership, namespace uniqueness/reachability/parentage, checksum-object reachability, read-status propagation, POSIX rename replacement, post-commit checkpoint-replica failure, explicit replica healing and mandatory reopen after an indeterminate first-checkpoint flush. Its legacy fixtures retain ordinary extent behavior without inline or paged representations.
 
 `infilfs-open-hardening`, `infilfs-063-hardening`, `infilfs-posix-locking` and `infilfs-sparse-files` retain the existing geometry, recovery, locking and crash-atomicity regression gates.
 
-GitHub Actions builds and tests the full Linux implementation, including the FUSE adapter, and separately builds the portable core with Microsoft Visual C on Windows. The hardening matrix also runs Clang, AddressSanitizer/UndefinedBehaviorSanitizer and GCC `-fanalyzer`.
+GitHub Actions builds and tests the full Linux implementation, separately builds the portable core and native transfer application with Microsoft Visual C, and opens a Linux-created Format 0.8 image through the Win32 backend. The hardening matrix also runs Clang, AddressSanitizer/UndefinedBehaviorSanitizer and GCC `-fanalyzer`. When `/dev/fuse` is available, `infilfs-mint-fuse` performs mounted copy, rename, permission, sparse, punch, unmount and remount verification.
 
 The high-level FUSE adapter deliberately uses libfuse's documented offsetless `readdir` mode: it ignores the incoming directory offset and passes zero offsets to the filler so libfuse consumes the complete directory in one operation. Synthetic resumable cookies are not part of the current adapter contract.
 
 ## Compatibility rule
 
 A future change that alters golden checkpoint bytes, packed offsets, extent or inline semantics, namespace representation, or the interpretation required by existing compatibility feature bits requires an explicit format revision or a newly defined compatibility feature bit as appropriate. Tightening rejection of metadata already defined as reserved, unreachable, multiply owned, structurally inconsistent or geometrically impossible is implementation hardening and does not by itself create a new disk format.
-

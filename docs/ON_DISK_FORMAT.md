@@ -1,13 +1,13 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-# InfiltratorFS On-Disk Format 0.7
+# InfiltratorFS On-Disk Format 0.8
 
-Status: experimental writable prototype. Format 0.7 extends Format 0.6 with explicitly feature-gated inline small-file storage. Formats 0.1 through 0.5 remain incompatible; Format 0.6 volumes remain readable.
+Status: experimental writable prototype. Format 0.8 extends Format 0.7 with feature-gated paged object-index and directory metadata. Formats 0.1 through 0.5 remain incompatible; Format 0.6 and 0.7 volumes remain readable.
 
-Implementation 0.6.0 introduced sparse extents, sparse checksum indexing and hole punching. Implementations 0.6.1 through 0.6.5 hardened validation, recovery, commit/concurrency safety and Linux Mint packaging without changing the Format 0.6 packed layout. Implementation 0.7.0 defines `INFS_INCOMPAT_INLINE_DATA` and an inline-file payload representation without changing any existing packed structure size or field offset. The normative acceptance rules are summarized in `CONFORMANCE.md`.
+Implementation 0.6.0 introduced sparse extents, sparse checksum indexing and hole punching. Implementation 0.7.0 defined `INFS_INCOMPAT_INLINE_DATA`. Implementation 0.8.0 added `INFS_INCOMPAT_SHARED_EXTENTS` while preserving the existing extent records. Format 0.8 adds `INFS_INCOMPAT_PAGED_METADATA`, metadata-page headers and version-2 directory/index heads. The normative acceptance rules are summarized in `CONFORMANCE.md`.
 
 ## 1. Encoding
 
-All integer fields are little-endian. The filesystem block size is 4096 bytes and the checkpoint records a block shift of 12. Metadata objects occupy one block in this prototype. Extent-backed file data is described by extents of 4096-byte blocks; inline file data occupies otherwise unused bytes in the file metadata object.
+All integer fields are little-endian. The filesystem block size is 4096 bytes and the checkpoint records a block shift of 12. Persistent objects occupy one block; Format 0.8 directory and index heads may own additional checksummed metadata pages. Extent-backed file data is described by extents of 4096-byte blocks; inline file data occupies otherwise unused bytes in the file metadata object.
 
 Structures in `include/infilfs/format.h` describe the exact packed record order and are guarded by compile-time size assertions. The byte format, not a compiler's native ABI, is authoritative. Current reserved fields, metadata block tails and record padding are canonical zero. A reader must reject a CRC-valid object that uses current reserved space without a feature/version definition permitting it.
 
@@ -18,9 +18,10 @@ For a volume of `N` blocks:
 ```text
 block 0                 checkpoint A
 block 1 .. B            allocation bitmap
-block B+1               object-index object
-block B+2               root-directory object
-...                      metadata and extent-backed file data
+block B+1               object-index head
+block B+2               first object-index metadata page
+block B+3               root-directory head
+...                      directory/index pages, objects and file data
 block floor(N/2)        checkpoint B
 ...                      metadata and extent-backed file data
 block N-1               checkpoint C
@@ -34,7 +35,7 @@ The bitmap contains one bit per filesystem block. Bits beyond the volume end are
 
 ```text
 magic                       8 bytes: "INFS2026"
-format major/minor          0.7
+format major/minor          0.8
 header size                 structure-size guard
 block shift                 12
 checksum algorithm          CRC64-ECMA
@@ -53,11 +54,11 @@ checksum field              32 bytes reserved
 
 Generation, filesystem UUID and root object ID are nonzero.
 
-Format 0.7 requires `INFS_INCOMPAT_UTF8_NAMES` and `INFS_INCOMPAT_SPARSE_EXTENTS`. It defines the optional incompatible feature bit `INFS_INCOMPAT_INLINE_DATA`. A Format 0.7 checkpoint with that bit clear is extent-only and remains valid; a checkpoint with the bit set permits the inline-file representation specified below. `INFS_INCOMPAT_INLINE_DATA` on a pre-0.7 checkpoint is invalid. Readers reject a missing required bit or any unknown incompatible feature flag.
+Format 0.8 requires `INFS_INCOMPAT_UTF8_NAMES` and `INFS_INCOMPAT_SPARSE_EXTENTS`. New volumes also enable `INFS_INCOMPAT_INLINE_DATA`, `INFS_INCOMPAT_SHARED_EXTENTS` and `INFS_INCOMPAT_PAGED_METADATA`. When the paged feature is set, it requires version-2 directory and object-index heads; disagreement between the feature bit and either required head version is corruption. Readers reject a missing required bit or any unknown incompatible feature flag.
 
-New volumes created by implementation 0.7.0 enable all three currently defined incompatible features: UTF-8 names, sparse extents and inline data.
+Format 0.6 and 0.7 compatibility remains feature-driven. Inline data is invalid before Format 0.7. Shared extents are understood only when their incompatible feature bit is present. Paged metadata is invalid before Format 0.8.
 
-Feature classes have distinct compatibility semantics. Unknown incompatible bits prevent any open. Unknown read-only-compatible bits may be opened read-only but prevent writable open. Unknown compatible bits may be ignored. Implementation 0.7.0 defines no compatible or read-only-compatible bits for newly created volumes.
+Feature classes have distinct compatibility semantics. Unknown incompatible bits prevent any open. Unknown read-only-compatible bits may be opened read-only but prevent writable open. Unknown compatible bits may be ignored. Format 0.8 defines no compatible or read-only-compatible bits for newly created volumes.
 
 CRC64 occupies the first eight checksum bytes. The remaining checksum bytes are zero. The complete checksum field is zero during calculation. A physical checkpoint copy first passes its own magic, format, size, block geometry, checksum, volume size, feature flags, canonical padding and expected checkpoint-position checks. The implementation then validates the complete graph referenced by surviving checkpoint candidates in descending generation order. The newest candidate with a structurally valid committed graph wins; a corrupt newer graph may fall back to an older valid committed graph. External I/O, memory or unsupported-feature failures are not treated as graph corruption and therefore do not silently trigger fallback.
 
@@ -65,7 +66,7 @@ CRC64 occupies the first eight checksum bytes. The remaining checksum bytes are 
 
 Bit `b` describes block `b`: zero means free; one means allocated or unavailable. The bitmap is authoritative. Before any bitmap bit is traversed, the reader proves that the declared bitmap contains enough bits to represent every block in `total_blocks`. Open then recounts free blocks and rejects disagreement with the committed checkpoint.
 
-The implementation reconstructs ownership from the committed roots. Every allocated in-volume block must be owned exactly once by a checkpoint, current bitmap image, current object-index root, indexed metadata object or normal file extent. An overlap or an allocated-but-unreachable block is corruption. Inline file bytes are owned by their file metadata object and do not create separate block ownership. Future shared/reflink extents require an explicit format feature and reference-accounting rules before duplicate data ownership can become valid.
+The implementation reconstructs ownership from the committed roots. Every allocated in-volume block must be owned by a checkpoint, current bitmap image, current object-index head/page, directory page, indexed metadata object or normal file extent. Metadata ownership overlap and allocated-but-unreachable blocks are corruption. Normal data blocks may have multiple file owners only when `INFS_INCOMPAT_SHARED_EXTENTS` is set. Inline bytes remain owned by their file metadata object.
 
 ## 5. Object header
 
@@ -83,13 +84,13 @@ checksum algorithm          CRC64-ECMA
 checksum                    32-byte reserved field
 ```
 
-Format 0.7 metadata objects continue to use object version 1, nonzero object IDs and nonzero generations. The entire metadata block is checksummed with the checksum field zeroed. Bytes after the declared payload and unused checksum-field bytes are canonical zero. This metadata CRC protects inline file bytes as part of the object block in addition to the independent SHA-256 inline-data digest described below.
+Classic metadata objects use object version 1. Format 0.8 directory and object-index heads use object version 2 and reference versioned `infs_metadata_page_disk` blocks carrying their own magic, owner identity, generation, entry count and CRC64. All object IDs and generations are nonzero. Bytes after declared payloads and unused checksum-field bytes are canonical zero.
 
 ## 6. Object index
 
 The index maps a persistent object ID to a physical metadata block and object type. Directory entries contain IDs rather than physical addresses, so relocation changes the index without rewriting every namespace reference.
 
-Format 0.7 stores the index in one block. Entries are validated for nonzero and duplicate IDs, bounds, allocation state, zero reserved flags, object identity, type and checksum. The index object's parent ID and reserved payload field are zero. The root must appear exactly once and match the checkpoint.
+Format 0.8 stores an array of physical index-page pointers in the version-2 index head. Each page contains fixed-size ID-to-block entries and is independently owner/generation/checksum validated. Entries are validated for nonzero and duplicate IDs, bounds, allocation state, zero reserved flags, object identity, type and checksum. The root must appear exactly once and match the checkpoint. The current head is a bounded one-level page array, not a tree.
 
 ## 7. Common attributes
 
@@ -115,17 +116,17 @@ Only the portable attribute flags currently defined in `format.h` are accepted. 
 
 ## 8. Directories and names
 
-A directory payload contains common attributes, POSIX compatibility data, an entry count and the byte count occupied by variable-length records.
+A Format 0.8 directory head contains common attributes, POSIX compatibility data, a total entry count and physical pointers to independently checksummed directory pages. Each page stores variable-length records.
 
 Each record contains its aligned record size, name length, target object type, flags, 128-bit target ID and name bytes. Names must be well-formed UTF-8, contain 1–255 bytes, and contain neither NUL nor `/`. Records are padded to eight-byte alignment. Current record flags and padding are zero.
 
-Lookup in Format 0.7 is case-sensitive and byte-exact. `.` and `..` are synthesized navigation components and are never stored. Pathnames ending in `/` retain directory semantics in namespace operations; rename does not silently strip a trailing slash from a regular-file source or nonexistent destination.
+Lookup in Format 0.8 is case-sensitive and byte-exact. `.` and `..` are synthesized navigation components and are never stored. Pathnames ending in `/` retain directory semantics in namespace operations; rename does not silently strip a trailing slash from a regular-file source or nonexistent destination.
 
-Format 0.7 has no hard links. Therefore every non-root file or directory must be referenced by exactly one directory entry. Every directory entry must resolve to an indexed object of the declared type, and the child's stored parent ID must identify the containing directory. Names within a directory are unique. Every file/directory must be reachable from the root; the root itself has no parent and no incoming namespace entry. File link count is 1; directory link count is 2 plus its direct child-directory count. These rules also make disconnected directory cycles invalid committed state.
+Format 0.8 has no hard links. Therefore every non-root file or directory must be referenced by exactly one directory entry. Every directory entry must resolve to an indexed object of the declared type, and the child's stored parent ID must identify the containing directory. Names within a directory are unique. Every file/directory must be reachable from the root; the root itself has no parent and no incoming namespace entry. File link count is 1; directory link count is 2 plus its direct child-directory count. These rules also make disconnected directory cycles invalid committed state.
 
 ## 9. Files, extents, inline data and checksums
 
-A regular-file payload begins with common attributes, POSIX compatibility data, extent count, data-checksum algorithm and checksum-chain head. Format 0.7 then permits one of three shapes.
+A regular-file payload begins with common attributes, POSIX compatibility data, extent count, data-checksum algorithm and checksum-chain head. Format 0.8 retains the three Format 0.7 file shapes.
 
 ### Empty file
 
@@ -153,7 +154,7 @@ A write or truncate that grows an inline file beyond 3,840 bytes promotes it tra
 
 A non-empty extent-backed file has one or more ordered 24-byte extent records after the fixed file payload. Each extent records a logical start block, physical start block, 32-bit block count and flags. Extents are ordered and must cover logical blocks contiguously from zero through `ceil(logical_size / 4096)`. A zero block count, logical gap, logical overlap or unknown flag is corruption. Extent counts are bounded by the one-block metadata capacity before multiplication or pointer derivation.
 
-Format 0.7 retains the Format 0.6 extent types:
+Format 0.8 retains the Format 0.6 extent types:
 
 - `INFS_EXTENT_NORMAL` (`flags == 0`): `physical_block` is nonzero and maps `block_count` allocated data blocks;
 - `INFS_EXTENT_HOLE` (`flags == 1`): `physical_block` is zero and the logical range reads as zeros without data-block allocation.
@@ -163,6 +164,8 @@ Truncate growth beyond the inline representation appends or extends hole extents
 Each allocated normal logical block has one 32-byte SHA-256 slot in a hidden checksum object. Hole blocks require no checksum and are never verified as stored data. Checksum objects identify their owner and an aligned logical segment. Their linked list is sorted by strictly increasing segment start, but segments containing only holes may be absent. This permits one high-offset write without allocating checksum metadata for all preceding holes. Inactive checksum slots or objects may remain while the same file still owns other allocated blocks; the complete chain is reclaimed when the file has no allocated extent data.
 
 Every indexed checksum object must be reachable exactly once from its owning extent-backed file's checksum head. Checksum owner ID and metadata parent ID must both identify that file. Shared, cyclic, duplicate or orphaned checksum objects are corruption. An inline or empty file has a zero checksum head.
+
+With `INFS_INCOMPAT_SHARED_EXTENTS`, two or more regular files may refer to the same normal physical data blocks. Each file retains its own checksum chain. Writes replace only the changed logical blocks through CoW; truncate, hole punching, rename replacement and unlink reclaim a shared block only after no other committed file extent refers to it.
 
 Extent-backed checksums cover the complete physical 4096-byte data block, including zero-filled bytes beyond logical EOF. Reads verify normal data before returning it and synthesize zeros directly for holes. Shrink zeroes the retained normal final-block tail so later growth cannot expose truncated bytes.
 
@@ -195,7 +198,7 @@ Committed extent-backed file-data blocks are replaced through CoW. Inline file u
 
 The formatter reopens the exact block target with Linux `O_EXCL` after advisory mount/holder preflight, verifies that the device identity and geometry are unchanged, and retains that exclusive descriptor through the destructive write sequence. Failure to obtain exclusivity aborts formatting before the first write. Failure of the initial realtime-clock query is also a formatter error rather than silently creating zero initial timestamps. The formatter additionally takes the same nonblocking exclusive advisory lock used by writable POSIX volume openers, coordinating both image files and block targets with the formatter.
 
-Formatting first invalidates the three candidate checkpoint locations and flushes that invalidation. It then writes the bitmap, initial index and root, durably flushes those referenced structures, and only then publishes the three valid generation-1 checkpoints. Therefore an interrupted format should be unmountable rather than presenting a valid checkpoint that references incomplete initial metadata. Implementation 0.7.0 creates Format 0.7 checkpoints with inline data enabled by default.
+Formatting first invalidates the three candidate checkpoint locations and flushes that invalidation. It then writes the bitmap, initial paged index and root, durably flushes those referenced structures, and only then publishes the three valid generation-1 checkpoints. Therefore an interrupted format is unmountable rather than presenting a valid checkpoint that references incomplete initial metadata. Implementation 0.10.0 creates Format 0.8 checkpoints with inline data, shared extents and paged metadata enabled.
 
 ## 12. Corruption rejection
 
@@ -207,13 +210,12 @@ The policy is to fail closed when committed state cannot be trusted while retain
 
 ## 13. Prototype limits
 
-- one-block object index;
-- one-block directories;
+- bounded one-level object-index and directory page arrays rather than trees;
+- at most 161 extents in one file metadata object;
 - no hard links or symbolic links;
-- no compression, reflinks or snapshots;
+- no compression or snapshots;
 - security and extended-attribute object references are reserved but not implemented;
 - POSIX compatibility metadata exists; Windows security mapping is not implemented;
 - metadata uses CRC64 while file data uses SHA-256;
 - scrub detects but cannot yet repair corruption;
 - one writable core instance at a time.
-

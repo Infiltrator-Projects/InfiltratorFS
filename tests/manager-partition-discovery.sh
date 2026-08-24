@@ -18,5 +18,14 @@ fi
 # partitions cannot silently disappear from a future selector rewrite.
 grep -Fq 'TYPE' "${manager}"
 grep -Eq 'part|partition' "${manager}"
+grep -Fq "printf 'Fixed disk\\n'" "${manager}"
+grep -Fq 'TRUE "Image file" FALSE "Disk partition"' "${manager}"
+
+helper="${repo_root}/tools/infiltratorfs-manager-helper"
+grep -Fq 'validate_partition()' "${helper}"
+if grep -Fq 'only a removable, USB, or SD-card partition may be selected' "${helper}"; then
+    echo "manager-partition-discovery: fixed-partition rejection remains" >&2
+    exit 1
+fi
 
 echo "manager-partition-discovery: PASS"

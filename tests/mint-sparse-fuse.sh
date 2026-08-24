@@ -8,6 +8,12 @@ tool="$build_dir/infilfs-tool"
 scrub="$build_dir/infilfs-scrub"
 fuse="$build_dir/infilfs-fuse"
 
+if [[ ! -r /dev/fuse || ! -w /dev/fuse ]] ||
+   ! command -v fusermount3 >/dev/null 2>&1; then
+    echo 'mint-sparse-fuse: SKIP (/dev/fuse access or fusermount3 unavailable)'
+    exit 77
+fi
+
 for program in "$mkfs" "$tool" "$scrub" "$fuse"; do
     if [[ ! -x "$program" ]]; then
         echo "mint-sparse-fuse: missing executable: $program" >&2
@@ -21,6 +27,8 @@ mount_dir="$tmp/mnt"
 source_block="$tmp/source.bin"
 readback="$tmp/readback.bin"
 zero_block="$tmp/zero.bin"
+ordinary_source="$tmp/ordinary-source.bin"
+ordinary_readback="$tmp/ordinary-readback.bin"
 fuse_pid=""
 
 cleanup() {
@@ -62,8 +70,16 @@ truncate -s 256M "$image"
 "$mkfs" -L Mint-Sparse-FUSE "$image" >/dev/null
 head -c 4096 /dev/zero | tr '\000' 'S' > "$source_block"
 head -c 4096 /dev/zero > "$zero_block"
+head -c 98765 /dev/urandom > "$ordinary_source"
 
 mount_image
+mkdir -p "$mount_dir/tree/subdirectory"
+cp "$ordinary_source" "$mount_dir/tree/subdirectory/original.bin"
+chmod 0640 "$mount_dir/tree/subdirectory/original.bin"
+mv "$mount_dir/tree/subdirectory/original.bin" \
+    "$mount_dir/tree/subdirectory/renamed.bin"
+cmp "$ordinary_source" "$mount_dir/tree/subdirectory/renamed.bin"
+[[ "$(stat -c '%a' "$mount_dir/tree/subdirectory/renamed.bin")" == 640 ]]
 truncate -s "$logical_size" "$mount_dir/sparse.bin"
 read -r size blocks < <(stat -c '%s %b' "$mount_dir/sparse.bin")
 [[ "$size" == "$logical_size" && "$blocks" == 0 ]]
@@ -91,6 +107,9 @@ unmount_image
 "$scrub" "$image" | grep -Fq 'Data blocks checked: 0'
 
 mount_image
+cp "$mount_dir/tree/subdirectory/renamed.bin" "$ordinary_readback"
+cmp "$ordinary_source" "$ordinary_readback"
+[[ "$(stat -c '%a' "$mount_dir/tree/subdirectory/renamed.bin")" == 640 ]]
 read -r size blocks < <(stat -c '%s %b' "$mount_dir/sparse.bin")
 [[ "$size" == "$logical_size" && "$blocks" == 0 ]]
 dd if="$mount_dir/sparse.bin" of="$readback" bs=4096 \

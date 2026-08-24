@@ -25,10 +25,12 @@ static void usage(const char *prog)
         "  %s <image> punch <path> <offset> <length>\n"
         "  %s <image> cat <path>\n"
         "  %s <image> map <path> <logical-block>\n"
+        "  %s <image> reflink <source-path> <destination-path>\n"
         "  %s <image> mv <old-path> <new-path>\n"
         "  %s <image> rm <path>\n"
         "  %s <image> rmdir <path>\n",
-        prog, prog, prog, prog, prog, prog, prog, prog, prog, prog, prog);
+        prog, prog, prog, prog, prog, prog, prog, prog, prog, prog, prog,
+        prog);
 }
 
 static int die_errno(const char *what)

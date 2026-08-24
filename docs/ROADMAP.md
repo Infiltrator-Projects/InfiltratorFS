@@ -149,11 +149,39 @@
 - [x] Keep Format 0.6 readable and permit extent-only Format 0.7 volumes with the inline-data bit clear.
 - [x] Add portable threshold, promotion, folding, punch, scrub and remount conformance coverage.
 
+## Phase 4.8 — implementation 0.8.0 shared extents — complete
+
+- [x] Define the `INFS_INCOMPAT_SHARED_EXTENTS` feature bit.
+- [x] Create file reflinks that share ordinary extent data blocks.
+- [x] Preserve independent checksum chains for reflinked files.
+- [x] Break sharing through CoW on later writes.
+- [x] Preserve shared blocks across truncate, hole punching, inline folding, rename replacement and unlink.
+- [x] Validate shared physical ownership only when the feature is enabled.
+- [x] Add deterministic portable reflink, reclamation, scrub and remount coverage.
+
+## Phase 4.9 — Format 0.8 paged metadata — complete
+
+- [x] Define version-2 directory/index heads and checksummed metadata pages.
+- [x] Publish incompatible Format 0.8 with `INFS_INCOMPAT_PAGED_METADATA`.
+- [x] Store directory entries and object-index entries across bounded page arrays.
+- [x] Validate page ownership, generations, entry counts, checksums and graph reachability.
+- [x] Add next-fit allocation, object-ID caching and batched checksum updates.
+- [x] Add bounded deferred transaction publication for Linux FUSE and Windows transfer writes.
+- [x] Add paged metadata, buffered-write and Linux-to-Windows interoperability coverage.
+
+## Phase 4.10 — implementation 0.10.0 operational completeness — complete
+
+- [x] Expose Format 0.8 reflink creation through `infilfs-tool`.
+- [x] Permit Linux Manager selection of fixed non-system partitions while retaining whole-disk and active-system exclusion.
+- [x] Register real mounted-FUSE copy, rename, permission, sparse, punch and remount coverage when `/dev/fuse` is available.
+- [x] Align architecture, format, conformance and roadmap documentation with Format 0.8.
+- [x] Keep on-disk Format 0.8 unchanged.
+
 ## Phase 4 — modern storage features
 
 - [x] Sparse extents.
 - [x] Inline small files.
-- [ ] Reflinks and shared extents.
+- [x] Reflinks and shared extents.
 - [ ] Snapshot roots and retained generations.
 - [ ] Native historical undelete policy.
 - [ ] Per-extent compression.
@@ -202,14 +230,13 @@
 
 ### Windows
 
-- [ ] Win32 image/device storage backend.
-- [ ] Windows userspace conformance harness.
+- [x] Win32 image/device and bounded raw-partition storage backend.
+- [x] Windows userspace storage/partition conformance harness.
 - [ ] Windows attribute, security and filename adapter.
 - [ ] Native Windows filesystem driver.
-- [ ] Windows formatter, inspector and scrub utilities.
-- [ ] Shared Linux/Windows volume interoperability tests.
+- [x] Windows formatter, root transfer/listing and scrub application.
+- [x] Shared Linux/Windows Format 0.8 volume interoperability tests.
 
 ## Deliberately deferred
 
 Global synchronous deduplication, distributed/network filesystem semantics and application-visible transactions are not first-generation requirements.
-
