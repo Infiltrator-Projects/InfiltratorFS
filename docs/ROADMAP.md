@@ -36,7 +36,7 @@
 - [x] Multi-object checksum chains.
 - [ ] Duplicate metadata/data recovery.
 - [x] Validate a checkpoint's referenced generation graph during recovery and fall back to an older valid committed generation when the newest candidate graph is corrupt.
-- [ ] Forensic raw-object scanner.
+- [x] Forensic raw-object scanner.
 - [ ] Snapshot-coordinated online scrub.
 
 ## Phase 3.5 — platform-neutral foundation — complete
@@ -175,6 +175,17 @@
 - [x] Permit Linux Manager selection of fixed non-system partitions while retaining whole-disk and active-system exclusion.
 - [x] Register real mounted-FUSE copy, rename, permission, sparse, punch and remount coverage when `/dev/fuse` is available.
 - [x] Align architecture, format, conformance and roadmap documentation with Format 0.8.
+- [x] Keep on-disk Format 0.8 unchanged.
+
+## Phase 4.11 — implementation 0.11.0 forensic metadata discovery — complete
+
+- [x] Scan every complete physical block through the portable storage interface.
+- [x] Independently authenticate checkpoints, object heads, directory pages and index pages.
+- [x] Classify current, stale and orphaned metadata when the live allocation map survives.
+- [x] Continue raw discovery with unknown allocation state when all checkpoints are damaged.
+- [x] Provide stable human-readable TSV and JSON Lines output.
+- [x] Expose read-only forensic scanning through the Linux Mint Manager.
+- [x] Reject damaged candidate records and add deterministic CoW-orphan/checkpoint-loss coverage.
 - [x] Keep on-disk Format 0.8 unchanged.
 
 ## Phase 4 — modern storage features

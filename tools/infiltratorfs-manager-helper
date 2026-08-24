@@ -80,6 +80,11 @@ case "$operation" in
         validate_partition "$1"
         exec /usr/bin/infilfs-scrub "$1"
         ;;
+    forensic-block)
+        (( $# == 1 )) || fail "forensic-block requires a target"
+        validate_partition "$1"
+        exec /usr/bin/infilfs-forensic "$1"
+        ;;
     mount-block)
         (( $# == 4 )) || fail "mount-block requires target, uid, gid and mount point"
         block_target="$1"

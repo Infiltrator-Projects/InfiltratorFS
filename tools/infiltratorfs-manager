@@ -246,6 +246,18 @@ scrub_target()
     fi
 }
 
+forensic_target()
+{
+    require_target || return
+    if [[ "$target_kind" == "block" ]]; then
+        show_command_output "InfiltratorFS forensic scan" \
+            pkexec "$HELPER" forensic-block "$target"
+    else
+        show_command_output "InfiltratorFS forensic scan" \
+            /usr/bin/infilfs-forensic "$target"
+    fi
+}
+
 mount_point_for_target()
 {
     if [[ "$target_kind" == "block" ]]; then
@@ -329,6 +341,7 @@ while true; do
         "Format" "Format the selected target as InfiltratorFS" \
         "Inspect" "Display filesystem identity and geometry" \
         "Scrub" "Run a read-only integrity check" \
+        "Forensic scan" "Find current and orphaned raw metadata records" \
         "Mount and open" "Mount the filesystem and open it in Nemo" \
         "Unmount" "Safely unmount the selected target" \
         "Quit" "Close the manager") || break
@@ -339,6 +352,7 @@ while true; do
         "Format") format_target ;;
         "Inspect") inspect_target ;;
         "Scrub") scrub_target ;;
+        "Forensic scan") forensic_target ;;
         "Mount and open") mount_and_open ;;
         "Unmount") unmount_target ;;
         "Quit") break ;;

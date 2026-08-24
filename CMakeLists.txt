@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.20)
-project(InfiltratorFS VERSION 0.10.0 LANGUAGES C)
+project(InfiltratorFS VERSION 0.11.0 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -54,6 +54,7 @@ add_library(infilfs_core STATIC
     src/storage.c
     src/utf8.c
     src/fs.c
+    src/forensic.c
     src/volume.c
     src/format_volume.c
 )
@@ -105,6 +106,10 @@ add_executable(infilfs-device-open tests/device-open.c)
 target_link_libraries(infilfs-device-open PRIVATE infilfs_core)
 infilfs_enable_warnings(infilfs-device-open)
 
+add_executable(infilfs-forensic-api tests/forensic-api.c)
+target_link_libraries(infilfs-forensic-api PRIVATE infilfs_core)
+infilfs_enable_warnings(infilfs-forensic-api)
+
 enable_testing()
 add_test(NAME infilfs-checksum-known-answer COMMAND infilfs-checksum-test)
 add_test(NAME infilfs-format-conformance COMMAND infilfs-format-conformance)
@@ -116,6 +121,7 @@ add_test(NAME infilfs-inline-files COMMAND infilfs-inline-files)
 add_test(NAME infilfs-reflink COMMAND infilfs-reflink)
 add_test(NAME infilfs-paged-metadata COMMAND infilfs-paged-metadata)
 add_test(NAME infilfs-device-open COMMAND infilfs-device-open)
+add_test(NAME infilfs-forensic-api COMMAND infilfs-forensic-api)
 
 if(WIN32)
     add_library(infilfs_win32 STATIC
@@ -170,9 +176,10 @@ if(UNIX)
     add_executable(infilfs-inspect tools/infilfs-inspect.c)
     add_executable(infilfs-tool tools/infilfs-tool.c)
     add_executable(infilfs-scrub tools/infilfs-scrub.c)
+    add_executable(infilfs-forensic tools/infilfs-forensic.c)
     target_compile_definitions(mkfs.infilfs PRIVATE
         INFILFS_IMPLEMENTATION_VERSION=\"${PROJECT_VERSION}\")
-    foreach(tool_target IN ITEMS mkfs.infilfs infilfs-inspect infilfs-tool infilfs-scrub)
+    foreach(tool_target IN ITEMS mkfs.infilfs infilfs-inspect infilfs-tool infilfs-scrub infilfs-forensic)
         target_link_libraries(${tool_target} PRIVATE infilfs_posix)
         target_compile_definitions(${tool_target} PRIVATE _GNU_SOURCE)
         infilfs_enable_warnings(${tool_target})
@@ -200,6 +207,8 @@ if(UNIX)
         COMMAND bash ${CMAKE_SOURCE_DIR}/tests/phase3-integrity.sh ${CMAKE_BINARY_DIR})
     add_test(NAME infilfs-sparse-files
         COMMAND bash ${CMAKE_SOURCE_DIR}/tests/sparse-files.sh ${CMAKE_BINARY_DIR})
+    add_test(NAME infilfs-forensic-scan
+        COMMAND bash ${CMAKE_SOURCE_DIR}/tests/forensic-scan.sh ${CMAKE_BINARY_DIR})
     add_test(NAME infilfs-manager-shell-syntax
         COMMAND bash -n ${CMAKE_SOURCE_DIR}/tools/infiltratorfs-manager)
     add_test(NAME infilfs-manager-helper-shell-syntax
@@ -227,7 +236,7 @@ if(UNIX)
         message(STATUS "libfuse3 development files not found; Linux FUSE adapter will not be built")
     endif()
 
-    install(TARGETS mkfs.infilfs infilfs-inspect infilfs-tool infilfs-scrub
+    install(TARGETS mkfs.infilfs infilfs-inspect infilfs-tool infilfs-scrub infilfs-forensic
             RUNTIME DESTINATION bin)
     if(TARGET infilfs-fuse)
         install(TARGETS infilfs-fuse RUNTIME DESTINATION bin)

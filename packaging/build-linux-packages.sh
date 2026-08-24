@@ -47,14 +47,15 @@ Depends: fuse3, libfuse3-3, policykit-1, util-linux, xdg-utils, zenity
 Installed-Size: ${installed_size}
 Homepage: https://github.com/The-First-Infiltrator/InfiltratorFS
 Description: platform-neutral experimental filesystem tools
- InfiltratorFS formatter, inspector, scrubber, direct-image utility,
- Linux FUSE adapter and Linux Mint desktop manager.
+ InfiltratorFS formatter, inspector, scrubber, forensic scanner,
+ direct-image utility, Linux FUSE adapter and Linux Mint desktop manager.
  Use only with image files or disposable or backed-up media.
 EOF
 
 dpkg-deb --root-owner-group --build "$package_root" "$dist_dir/$deb_name"
 dpkg-deb --contents "$dist_dir/$deb_name" > "$dist_dir/package-contents.txt"
 grep -q 'usr/bin/infiltratorfs-manager$' "$dist_dir/package-contents.txt"
+grep -q 'usr/bin/infilfs-forensic$' "$dist_dir/package-contents.txt"
 grep -q 'usr/lib/infiltratorfs/infiltratorfs-manager-helper$' "$dist_dir/package-contents.txt"
 grep -q 'usr/share/applications/infiltratorfs-manager.desktop$' "$dist_dir/package-contents.txt"
 test "$(dpkg-deb --field "$dist_dir/$deb_name" Version)" = "$version"

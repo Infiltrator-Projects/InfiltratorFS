@@ -101,7 +101,7 @@ Inline data has no external checksum object. Its file object stores one SHA-256 
 
 Normal reads verify data before returning it. `infilfs-scrub` verifies every currently allocated regular-file block and each non-empty inline logical data block. Repair is deferred until trustworthy redundant data placement exists.
 
-Future forensic tooling will scan raw storage for recognizable checkpoint, object, directory, extent and checksum records. Redundant hints may aid reconstruction, but one representation remains authoritative during normal operation.
+The portable forensic scanner reads raw storage one complete block at a time and independently authenticates recognizable checkpoints, object heads, directory pages and index pages. When a valid current checkpoint and bitmap survive, it distinguishes current allocation from stale checkpoints and orphaned CoW metadata; if no checkpoint survives, it continues discovery with allocation state reported as unknown. It never modifies the target or treats discovered historical metadata as authoritative live state. Data-block reconstruction and automated repair remain future work.
 
 ## 9. Reflinks, snapshots and history
 

@@ -124,6 +124,8 @@ Ordinary rename replacement is a single filesystem transaction. A file may repla
 
 `infilfs-paged-metadata` creates entries beyond the classic one-block limits, exercises lookup/list/rename/remove, verifies deferred buffered publication, scrubs the complete page graph and reopens it read-only.
 
+`infilfs-forensic-scan` creates multiple CoW generations, finds current and orphaned authenticated metadata, proves a damaged stale object is excluded, and erases all three checkpoints to verify raw object discovery continues with unknown allocation state.
+
 `infilfs-hardening-conformance` covers checkpoint-label termination, canonical padding/reserved fields, object versions, read-only-compatible feature semantics, exact block ownership, namespace uniqueness/reachability/parentage, checksum-object reachability, read-status propagation, POSIX rename replacement, post-commit checkpoint-replica failure, explicit replica healing and mandatory reopen after an indeterminate first-checkpoint flush. Its legacy fixtures retain ordinary extent behavior without inline or paged representations.
 
 `infilfs-open-hardening`, `infilfs-063-hardening`, `infilfs-posix-locking` and `infilfs-sparse-files` retain the existing geometry, recovery, locking and crash-atomicity regression gates.
