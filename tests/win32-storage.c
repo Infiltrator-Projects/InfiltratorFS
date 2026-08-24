@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #ifdef _WIN32
 #include "infilfs/endian.h"
+#include "infilfs/format.h"
 #include "infilfs/format_volume.h"
 #include "infilfs/volume.h"
 #include "infilfs/win32_io.h"
@@ -39,14 +40,14 @@ static int verify_linux_image(const char *utf8_path)
         return fail("open Linux-created InfiltratorFS image", status);
     }
 
-    if (infs_le16_to_cpu(volume.sb.format_major) != 0u ||
-        infs_le16_to_cpu(volume.sb.format_minor) != 11u) {
+    if (infs_le16_to_cpu(volume.sb.format_major) != INFS_FORMAT_MAJOR ||
+        infs_le16_to_cpu(volume.sb.format_minor) != INFS_FORMAT_MINOR) {
         infs_volume_close(&volume);
-        fprintf(stderr, "Linux-created image is not Format 0.11\n");
+        fprintf(stderr, "Linux-created image does not match the current InfiltratorFS format\n");
         return 1;
     }
 
-    static const char expected[] = "linux-to-windows-format-0.11\n";
+    static const char expected[] = "linux-to-windows-cross-platform\n";
     char buffer[sizeof(expected)] = {0};
     int64_t read_count = infs_read_file(&volume, "/linux-cross-platform.txt",
                                        buffer, sizeof(expected) - 1u, 0u);
@@ -58,7 +59,7 @@ static int verify_linux_image(const char *utf8_path)
     }
 
     infs_volume_close(&volume);
-    puts("Linux-created Format 0.11 image opened successfully on Windows");
+    puts("Linux-created current-format image opened successfully on Windows");
     return 0;
 }
 
