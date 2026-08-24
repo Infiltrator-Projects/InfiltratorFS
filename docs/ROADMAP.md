@@ -345,3 +345,12 @@ Global synchronous deduplication, distributed/network filesystem semantics and a
 - [x] Preserve explicit `fsync()`/`sync()` as immediate durability boundaries.
 - [x] Add mounted sequential write, sync and byte-compare regression coverage.
 - [x] Keep Format 0.11 unchanged.
+
+
+## Phase 4.21 — implementation 0.16.6 CPU hot-path performance — complete
+
+- [x] Make sequential checksum-object lookup linear with a validated runtime cursor.
+- [x] Fall back safely to the persistent checksum head if a runtime cursor becomes stale.
+- [x] Replace bit-at-a-time CRC64-ECMA with an on-disk-identical table-driven implementation.
+- [x] Add CRC64 known-answer and algorithmic traversal regressions.
+- [x] Preserve Format 0.11 and explicit durability semantics.

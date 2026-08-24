@@ -72,6 +72,7 @@ static int checksum_destroy_chain(struct infs_volume *vol,
     if (!vol || !file || !owner_id)
         return INFS_STATUS_INVALID_ARGUMENT;
 
+    checksum_cursor_clear_owner(vol, owner_id);
     uint8_t current[16];
     memcpy(current, file->checksum_head_id, 16);
     for (uint64_t guard = 0; !id_is_zero(current) && guard < 1048576u; ++guard) {

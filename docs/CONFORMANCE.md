@@ -180,3 +180,6 @@ Until the first stable release, a change that alters golden checkpoint bytes, pa
 
 
 Implementation 0.16.5 permits transaction-private full-overwrite allocations to skip pre-zeroing only when the complete data or bitmap image is written before checkpoint publication. Mounted conformance verifies an aligned sequential write through FUSE, explicit sync, and byte-identical readback. Linux automatic publication may use a bounded volume-adaptive threshold; explicit fsync/sync remains immediate. Format 0.11 is unchanged.
+
+
+Implementation 0.16.6 changes only runtime lookup/checksum execution. CRC64-ECMA results remain byte-identical to Format 0.11. A runtime checksum-chain cursor may skip already traversed checksum objects for monotonically forward access, but is not persistent and falls back to the persistent head when invalid or stale.

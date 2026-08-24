@@ -26,6 +26,12 @@ static int check(const char *input, const char *expected)
 
 int main(void)
 {
+    static const char crc_input[] = "123456789";
+    if (infs_crc64_ecma(crc_input, sizeof(crc_input) - 1u) !=
+        UINT64_C(0x6C40DF5F0B497347)) {
+        fputs("checksum-test: CRC64-ECMA known-answer failure\n", stderr);
+        return 1;
+    }
     if (check("", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855") != 0 ||
         check("abc", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") != 0) {
         fputs("checksum-test: SHA-256 known-answer failure\n", stderr);

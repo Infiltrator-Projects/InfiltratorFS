@@ -171,6 +171,10 @@ int main(void)
                "durable sequential copy write");
     }
     free(chunk);
+    expect(volume.checksum_cursor_hits > 180u,
+           "sequential checksum cursor used");
+    expect(volume.checksum_chain_steps <= 200u,
+           "sequential checksum traversal remains linear");
 
     struct infs_attributes attributes;
     expect(infs_get_attributes(&volume, "/movie.bin", &attributes) ==

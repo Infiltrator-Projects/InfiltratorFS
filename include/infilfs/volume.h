@@ -98,6 +98,15 @@ struct infs_volume {
     struct infs_object_cache_entry *object_cache;
     size_t object_cache_slots;
 
+    /* Runtime-only checksum-chain cursor. Sequential growth must not restart
+     * lookup from the persistent chain head for every checksum group. */
+    uint8_t checksum_cursor_owner_id[16];
+    uint8_t checksum_cursor_object_id[16];
+    uint64_t checksum_cursor_start;
+    int checksum_cursor_valid;
+    uint64_t checksum_cursor_hits;
+    uint64_t checksum_chain_steps;
+
     /* Internal recursion contexts shared by ephemeral read-only snapshot
      * views. They prevent repeated traversal of the same retained generation
      * in the bounded catalog DAG and are never persistent. */

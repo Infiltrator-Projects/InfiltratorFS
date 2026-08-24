@@ -200,6 +200,7 @@ static void tx_abort(struct infs_volume *vol)
     vol->tx_error = INFS_STATUS_OK;
     vol->tx_active = 0;
     object_cache_clear(vol);
+    vol->checksum_cursor_valid = 0;
 }
 
 static int tx_defer_range(struct infs_volume *vol, uint64_t start, uint64_t count)
