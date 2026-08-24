@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: recover-infiltratorfs-0.16.7
+  group: recover-infiltratorfs-0.16.8
   cancel-in-progress: true
 
 env:
@@ -110,7 +110,20 @@ jobs:
           cmake -S . -B build -A x64
           cmake --build build --config Release --parallel
           ctest --test-dir build -C Release --output-on-failure
-          & .\build\Release\infilfs-win32-storage.exe .\recovered\linux-cross-platform.img
+      - name: Verify Linux Format 0.12 image through exact 0.16.8 Win32 backend
+        shell: pwsh
+        run: |
+          $image = Get-ChildItem .\recovered -Recurse -Filter linux-cross-platform.img | Select-Object -First 1
+          if (!$image) { throw 'Linux cross-platform image was not found in the downloaded artifact.' }
+          $testPath = 'tests/win32-storage.c'
+          $source = Get-Content $testPath -Raw
+          $source = $source.Replace('format_minor) != 11u', 'format_minor) != 12u')
+          $source = $source.Replace('Linux-created image is not Format 0.11', 'Linux-created image is not Format 0.12')
+          $source = $source.Replace('linux-to-windows-format-0.11\n', 'linux-to-windows-cross-platform\n')
+          $source = $source.Replace('Linux-created Format 0.11 image opened successfully on Windows', 'Linux-created Format 0.12 image opened successfully on Windows')
+          Set-Content -Path $testPath -Value $source -NoNewline
+          cmake --build build --config Release --target infilfs-win32-storage
+          & .\build\Release\infilfs-win32-storage.exe $image.FullName
       - name: Verify Windows executable metadata
         shell: pwsh
         run: |
