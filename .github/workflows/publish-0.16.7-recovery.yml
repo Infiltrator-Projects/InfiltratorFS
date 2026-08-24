@@ -86,15 +86,11 @@ jobs:
             sha256sum "$deb" "$installer" "$windows" > SHA256SUMS.txt
           )
 
-          git tag "$tag" "$RELEASE_SHA"
-          git push origin "$tag"
-
           gh release create "$tag" \
             "release-assets/$deb" \
             "release-assets/$installer" \
             "release-assets/$windows" \
             "release-assets/SHA256SUMS.txt" \
-            --verify-tag \
             --target "$RELEASE_SHA" \
             --title "InfiltratorFS $VERSION" \
             --generate-notes \
