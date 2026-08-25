@@ -3,7 +3,7 @@
 
 This directory contains the native Linux VFS adapter for InfiltratorFS. It is an out-of-tree kernel module built against installed kernel headers and packaged through DKMS; Linux itself does not need to be rebuilt.
 
-Implementation 0.17.0 is the normal Linux filesystem path. The old userspace FUSE adapter has been removed from the source tree and survives only in Git history.
+Implementation 0.17.1 is the normal Linux filesystem path. The old userspace FUSE adapter has been removed from the source tree and survives only in Git history.
 
 The module:
 
@@ -58,4 +58,4 @@ The release publisher adds an installed-package gate: it installs the generated 
 
 ## Current development scope
 
-The native driver is now the product path, but 0.17.0 remains pre-1.0 development code. Further kernel work includes broader VFS namespace coverage, page-cache/readahead/mmap integration, performance tuning, wider stress coverage and continued locking/concurrency hardening. The portable core remains the canonical on-disk transaction and validation model shared by Linux and Windows tooling.
+The native driver is now the product path, but 0.17.1 remains pre-1.0 development code. Further kernel work includes broader VFS namespace coverage, page-cache/readahead/mmap integration, performance tuning, wider stress coverage and continued locking/concurrency hardening. The portable core remains the canonical on-disk transaction and validation model shared by Linux and Windows tooling.
