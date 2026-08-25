@@ -27,13 +27,14 @@ install -d "$package_root/usr/share/doc/infiltratorfs"
 install -m 0644 LICENSE "$package_root/usr/share/doc/infiltratorfs/copyright"
 install -m 0644 README.md "$package_root/usr/share/doc/infiltratorfs/README.md"
 
-# DKMS source must be self-contained. All three RW composition files are
-# required; omitting either implementation include makes host-side DKMS builds
-# fail even though the repository build itself succeeds.
+# DKMS source must be self-contained. Every RW composition file is required;
+# omitting an implementation include makes host-side DKMS builds fail even
+# though the repository build itself succeeds.
 dkms_root="$package_root/usr/src/infiltratorfs-$version"
 install -d "$dkms_root"
 for file in Makefile infiltratorfs.c infiltratorfs_format.h infiltratorfs_rw.inc \
-            infiltratorfs_rw_legacy.inc infiltratorfs_rw_data.inc; do
+            infiltratorfs_rw_legacy.inc infiltratorfs_rw_data.inc \
+            infiltratorfs_rw_namespace.inc; do
     install -m 0644 "kernel/$file" "$dkms_root/$file"
 done
 cat > "$dkms_root/dkms.conf" <<EOF
@@ -171,7 +172,8 @@ for required in \
     "usr/src/infiltratorfs-${version}/infiltratorfs_format.h$" \
     "usr/src/infiltratorfs-${version}/infiltratorfs_rw.inc$" \
     "usr/src/infiltratorfs-${version}/infiltratorfs_rw_legacy.inc$" \
-    "usr/src/infiltratorfs-${version}/infiltratorfs_rw_data.inc$"; do
+    "usr/src/infiltratorfs-${version}/infiltratorfs_rw_data.inc$" \
+    "usr/src/infiltratorfs-${version}/infiltratorfs_rw_namespace.inc$"; do
     grep -q "$required" "$contents"
 done
 if grep -q 'usr/bin/infilfs-fuse$' "$contents"; then
@@ -216,7 +218,8 @@ verify_installer() {
     for required in CMakeLists.txt README.md support/installer/bootstrap.sh \
         src/infiltratr-common/CMakeLists.txt kernel/Makefile kernel/infiltratorfs.c \
         kernel/infiltratorfs_format.h kernel/infiltratorfs_rw.inc \
-        kernel/infiltratorfs_rw_legacy.inc kernel/infiltratorfs_rw_data.inc; do
+        kernel/infiltratorfs_rw_legacy.inc kernel/infiltratorfs_rw_data.inc \
+        kernel/infiltratorfs_rw_namespace.inc; do
         test -f "$verify_root/$required"
     done
     test -x "$verify_root/support/installer/bootstrap.sh"
