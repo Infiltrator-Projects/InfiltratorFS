@@ -84,8 +84,14 @@ if command -v dkms >/dev/null 2>&1; then
         dkms add -m "\$module" -v "\$version"
     fi
     if [ -f "/lib/modules/\$kernel/build/Makefile" ]; then
-        dkms build -m "\$module" -v "\$version" -k "\$kernel"
-        dkms install -m "\$module" -v "\$version" -k "\$kernel" --force
+        if dkms build -m "\$module" -v "\$version" -k "\$kernel" && \
+           dkms install -m "\$module" -v "\$version" -k "\$kernel" --force; then
+            :
+        else
+            echo "InfiltratorFS: WARNING: native kernel module build failed for \$kernel." >&2
+            echo "The userspace tools and FUSE adapter are installed and remain usable." >&2
+            echo "After installing compatible headers/source, retry: sudo dkms autoinstall" >&2
+        fi
     else
         echo "InfiltratorFS: kernel headers for \$kernel are not installed." >&2
         echo "Install linux-headers-\$kernel, then run: sudo dkms autoinstall" >&2

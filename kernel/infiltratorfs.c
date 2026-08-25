@@ -3,6 +3,7 @@
 #include <linux/buffer_head.h>
 #include <linux/dirent.h>
 #include <linux/fs.h>
+#include <linux/fs_context.h>
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/string.h>
@@ -938,7 +939,7 @@ static void infilfs_put_super(struct super_block *sb)
 
 static const struct super_operations infilfs_super_operations = {
     .statfs = simple_statfs,
-    .drop_inode = generic_delete_inode,
+    .drop_inode = inode_just_drop,
     .evict_inode = infilfs_evict_inode,
     .put_super = infilfs_put_super,
 };
@@ -963,15 +964,14 @@ static const struct file_operations infilfs_file_operations = {
     .read_iter = infilfs_file_read_iter,
 };
 
-static int infilfs_fill_super(struct super_block *sb, void *data, int silent)
+static int infilfs_fill_super(struct super_block *sb, struct fs_context *fc)
 {
     struct infilfs_sb_info *sbi;
     struct inode *root_inode;
     u64 bytes;
     int ret;
 
-    (void)data;
-    (void)silent;
+    (void)fc;
 
     if (!(sb->s_flags & SB_RDONLY))
         return -EROFS;
@@ -1023,17 +1023,29 @@ fail:
     return ret;
 }
 
-static struct dentry *infilfs_mount(struct file_system_type *fs_type,
-                                    int flags, const char *dev_name,
-                                    void *data)
+static int infilfs_get_tree(struct fs_context *fc)
 {
-    return mount_bdev(fs_type, flags, dev_name, data, infilfs_fill_super);
+    /* The native adapter is intentionally read-only. Reject writable mounts
+     * before get_tree_bdev() attempts to open the block device for writing. */
+    if (!(fc->sb_flags & SB_RDONLY))
+        return -EROFS;
+    return get_tree_bdev(fc, infilfs_fill_super);
+}
+
+static const struct fs_context_operations infilfs_context_operations = {
+    .get_tree = infilfs_get_tree,
+};
+
+static int infilfs_init_fs_context(struct fs_context *fc)
+{
+    fc->ops = &infilfs_context_operations;
+    return 0;
 }
 
 static struct file_system_type infilfs_type = {
     .owner = THIS_MODULE,
     .name = INFILTRATORFS_NAME,
-    .mount = infilfs_mount,
+    .init_fs_context = infilfs_init_fs_context,
     .kill_sb = kill_block_super,
     .fs_flags = FS_REQUIRES_DEV,
 };

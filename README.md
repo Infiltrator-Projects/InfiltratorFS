@@ -6,7 +6,7 @@
 
 InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem started in 2026. The persistent format and core engine are written in portable C; Linux and Windows are adapters over the same on-disk structures rather than separate filesystem implementations.
 
-**Current implementation:** 0.16.10<br>
+**Current implementation:** 0.16.11<br>
 **On-disk format:** 0.12<br>
 **Shared foundation:** Infiltratr Common 1.11.0<br>
 **Licence:** GPL-3.0-or-later
@@ -116,7 +116,7 @@ GitHub Actions runs Linux, Clang, sanitizer and static-analyzer suites, cross-pl
 
 The Linux Debian package installs **InfiltratorFS Manager**, which can create/format images, select non-system disk partitions including fixed, USB, SD and other removable media, inspect, scrub, run forensic raw-metadata scans, mount through FUSE, open in Nemo and unmount safely. Whole disks and storage backing the active system partitions remain excluded. The same package now installs the read-only native Linux module as DKMS source, so the host builds `infiltratorfs.ko` against its own installed kernel headers rather than receiving a kernel-specific binary.
 
-The Windows release contains a versioned executable such as `InfiltratorFS-Windows-0.16.10.exe`. Run it elevated when accessing raw media. It can discover physical partitions, list the root directory, copy files/folders and run a full scrub while bounding raw I/O to the selected partition.
+The Windows release contains a versioned executable such as `InfiltratorFS-Windows-0.16.11.exe`. Run it elevated when accessing raw media. It can discover physical partitions, list the root directory, copy files/folders and run a full scrub while bounding raw I/O to the selected partition.
 
 ## Release assets
 
@@ -134,8 +134,8 @@ GitHub provides the standard source-code ZIP and tarball automatically from the 
 To inspect the native Linux build before allowing it to install anything:
 
 ```bash
-chmod +x infiltratorfs-0.16.10-linux-native.run
-./infiltratorfs-0.16.10-linux-native.run --dry-run
+chmod +x infiltratorfs-0.16.11-linux-native.run
+./infiltratorfs-0.16.11-linux-native.run --dry-run
 ```
 
 Run the same file without `--dry-run` to compile, test and install InfiltratorFS natively. If required packages or the running kernel's headers are missing, it displays the exact `apt-get` commands and asks before installing them.
@@ -193,3 +193,5 @@ Implementation 0.16.9 hardens scattered writes to paged-extent files. Non-tail r
 
 
 Implementation 0.16.10 introduces the first packaged native Linux VFS path. The out-of-tree `infiltratorfs.ko` driver can mount current Format 0.12 block devices read-only, traverse classic/paged indexes and directories, preserve hard-link inode identity, expose symlinks, and read inline, sparse, classic-extent and paged-extent files. Linux packages install the module source through DKMS. Native mounts are exercised explicitly with `mount -i` while the standard mount helper remains on the mature FUSE path during bring-up. Format 0.12 is unchanged.
+
+Implementation 0.16.11 ports the packaged native Linux read-only module to the current fs_context/get_tree_bdev VFS mount API used by Linux 7.0, replaces the removed generic_delete_inode drop hook with inode_just_drop, and makes a DKMS build failure non-fatal to installation of the userspace/FUSE tools. Format 0.12 is unchanged.

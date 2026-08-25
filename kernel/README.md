@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # Native Linux kernel module
 
-This directory contains the native Linux VFS adapter for InfiltratorFS. It is an out-of-tree kernel module: Linux itself does not need to be rebuilt. The module is built against installed kernel headers. Release 0.16.10 packages the source through DKMS so normal kernel upgrades rebuild only `infiltratorfs.ko` for kernels whose matching headers are installed.
+This directory contains the native Linux VFS adapter for InfiltratorFS. It is an out-of-tree kernel module: Linux itself does not need to be rebuilt. The module is built against installed kernel headers. Release 0.16.11 packages the source through DKMS so normal kernel upgrades rebuild only `infiltratorfs.ko` for kernels whose matching headers are installed.
 
 The current milestone is a genuine read-only filesystem implementation rather than the earlier empty-root bootstrap. The module now:
 
