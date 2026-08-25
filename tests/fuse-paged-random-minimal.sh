@@ -24,19 +24,32 @@ cleanup() {
 }
 trap cleanup EXIT
 
+mount_image() {
+    : >"$log"
+    "$fuse" "$image" "$mnt" -f >"$log" 2>&1 &
+    pid=$!
+    for _ in $(seq 1 100); do
+        mountpoint -q "$mnt" && return 0
+        kill -0 "$pid" 2>/dev/null || { cat "$log" >&2; return 1; }
+        sleep 0.1
+    done
+    return 1
+}
+
+unmount_image() {
+    fusermount3 -u "$mnt"
+    wait "$pid" 2>/dev/null || true
+    pid=""
+}
+
 truncate -s 1G "$image"
 "$mkfs" -L MinimalPagedPromotion "$image" >/dev/null
 mkdir -p "$mnt"
-"$fuse" "$image" "$mnt" -f >"$log" 2>&1 &
-pid=$!
-for _ in $(seq 1 100); do
-    mountpoint -q "$mnt" && break
-    kill -0 "$pid" 2>/dev/null || { cat "$log" >&2; exit 1; }
-    sleep 0.1
-done
-mountpoint -q "$mnt"
+mount_image
 
-set +e
+# Phase A: execute exactly writes 0..80. Write 80 is the first operation whose
+# extent vector exceeds the 161 classic entries and therefore promotes the
+# file to Format 0.12 paged extents. Publish that state deliberately.
 python3 - "$mnt" <<'PY'
 import os, random, sys
 path = os.path.join(sys.argv[1], 'random-update.bin')
@@ -47,38 +60,76 @@ rng = random.Random(0x1F11F5)
 fd = os.open(path, os.O_RDWR)
 try:
     block = bytearray(4096)
-    for i in range(100):
+    for i in range(81):
         logical = rng.randrange(0, size // 4096)
         off = logical * 4096
         block[0:8] = i.to_bytes(8, 'little')
-        try:
-            n = os.pwrite(fd, block, off)
-        except OSError as exc:
-            print(f'MINIMAL_PWRITE_FAIL i={i} logical={logical} offset={off} errno={exc.errno}',
-                  file=sys.stderr, flush=True)
-            raise
+        n = os.pwrite(fd, block, off)
         if n != 4096:
             raise RuntimeError(f'short pwrite {n} at i={i}')
-        if i in (79, 80, 81, 82):
-            print(f'MINIMAL_PWRITE_OK i={i} logical={logical}', flush=True)
+        if i in (79, 80):
+            print(f'PROMOTION_PWRITE_OK i={i} logical={logical}', flush=True)
+    os.fsync(fd)
+    print('PROMOTION_FSYNC_OK i=80', flush=True)
 finally:
     os.close(fd)
 PY
-rc=$?
-set -e
+unmount_image
 
-fusermount3 -u "$mnt"
-wait "$pid" 2>/dev/null || true
-pid=""
-
-"$inspect" "$image" || true
+echo 'PROMOTION_OFFLINE_CHECK'
+"$inspect" "$image"
 if ! "$scrub" "$image"; then
-    echo 'MINIMAL_COMMITTED_GENERATION_CORRUPT' >&2
+    echo 'PROMOTION_GENERATION_CORRUPT' >&2
     exit 1
 fi
-if [[ "$rc" -ne 0 ]]; then
-    echo "minimal random write failed rc=$rc but committed generation survived" >&2
-    exit "$rc"
+echo 'PROMOTION_GENERATION_CLEAN'
+
+# Phase B: remount the known-clean promoted generation and execute only the next
+# RNG write. If this fails, unmount without a follow-up sync and prove whether
+# that failed COW operation damaged the already-published generation.
+mount_image
+set +e
+python3 - "$mnt" <<'PY'
+import os, random, sys
+path = os.path.join(sys.argv[1], 'random-update.bin')
+rng = random.Random(0x1F11F5)
+logical = None
+for i in range(82):
+    logical = rng.randrange(0, (512 * 1024 * 1024) // 4096)
+assert logical is not None
+fd = os.open(path, os.O_RDWR)
+try:
+    block = bytearray(4096)
+    block[0:8] = (81).to_bytes(8, 'little')
+    off = logical * 4096
+    try:
+        n = os.pwrite(fd, block, off)
+    except OSError as exc:
+        print(f'FOLLOWUP_PWRITE_FAIL i=81 logical={logical} offset={off} errno={exc.errno}',
+              file=sys.stderr, flush=True)
+        raise
+    if n != 4096:
+        raise RuntimeError(f'short pwrite {n} at i=81')
+    print(f'FOLLOWUP_PWRITE_OK i=81 logical={logical}', flush=True)
+finally:
+    os.close(fd)
+PY
+followup_rc=$?
+set -e
+
+# Deliberately avoid fsync here. A failed transaction is not allowed to change
+# any bytes reachable from the published promotion checkpoint.
+unmount_image
+
+echo 'FOLLOWUP_OFFLINE_CHECK'
+"$inspect" "$image" || true
+if ! "$scrub" "$image"; then
+    echo 'FOLLOWUP_DAMAGED_PUBLISHED_GENERATION' >&2
+    exit 1
+fi
+if [[ "$followup_rc" -ne 0 ]]; then
+    echo "follow-up write failed rc=$followup_rc but published generation survived" >&2
+    exit "$followup_rc"
 fi
 
 echo 'fuse-paged-random-minimal: PASS'
