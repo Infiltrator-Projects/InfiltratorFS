@@ -106,6 +106,7 @@ static int build_live_ownership_bitmap(
     struct infs_volume *vol, const struct infs_index_entry_disk *entries,
     uint32_t count, uint8_t *owners)
 {
+    const int trace = getenv("INFS_TEST_GRAPH_TRACE") != NULL;
     uint64_t total = infs_le64_to_cpu(vol->sb.total_blocks);
     uint8_t *data_owners = calloc(1, vol->bitmap_bytes);
     if (!owners || !data_owners) {
@@ -118,67 +119,108 @@ static int build_live_ownership_bitmap(
 
     int status = INFS_STATUS_OK;
     for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i) {
-        status = ownership_claim(
-            owners, total, infs_le64_to_cpu(vol->sb.checkpoint_block[i]));
-        if (status != INFS_STATUS_OK)
+        uint64_t block = infs_le64_to_cpu(vol->sb.checkpoint_block[i]);
+        status = ownership_claim(owners, total, block);
+        if (status != INFS_STATUS_OK) {
+            if (trace)
+                fprintf(stderr, "INFS_OWNERSHIP_TRACE checkpoint i=%u block=%llu status=%d\n",
+                        i, (unsigned long long)block, status);
             goto out;
+        }
     }
 
     uint64_t bitmap_start = infs_le64_to_cpu(vol->sb.bitmap_start_block);
     uint64_t bitmap_blocks = infs_le64_to_cpu(vol->sb.bitmap_block_count);
     for (uint64_t i = 0; i < bitmap_blocks; ++i) {
         status = ownership_claim(owners, total, bitmap_start + i);
-        if (status != INFS_STATUS_OK)
+        if (status != INFS_STATUS_OK) {
+            if (trace)
+                fprintf(stderr, "INFS_OWNERSHIP_TRACE bitmap i=%llu block=%llu status=%d\n",
+                        (unsigned long long)i,
+                        (unsigned long long)(bitmap_start + i), status);
             goto out;
+        }
     }
 
-    status = ownership_claim(
-        owners, total, infs_le64_to_cpu(vol->sb.object_index_block));
-    if (status != INFS_STATUS_OK)
+    uint64_t index_block = infs_le64_to_cpu(vol->sb.object_index_block);
+    status = ownership_claim(owners, total, index_block);
+    if (status != INFS_STATUS_OK) {
+        if (trace)
+            fprintf(stderr, "INFS_OWNERSHIP_TRACE index_head block=%llu status=%d\n",
+                    (unsigned long long)index_block, status);
         goto out;
+    }
     status = claim_index_metadata_pages(vol, owners, total);
-    if (status != INFS_STATUS_OK)
+    if (status != INFS_STATUS_OK) {
+        if (trace)
+            fprintf(stderr, "INFS_OWNERSHIP_TRACE index_pages status=%d\n", status);
         goto out;
+    }
 
     for (uint32_t i = 0; i < count; ++i) {
         uint64_t object_block = infs_le64_to_cpu(entries[i].object_block);
-        status = ownership_claim(owners, total, object_block);
-        if (status != INFS_STATUS_OK)
-            goto out;
-
         uint16_t object_type = infs_le16_to_cpu(entries[i].object_type);
+        status = ownership_claim(owners, total, object_block);
+        if (status != INFS_STATUS_OK) {
+            if (trace)
+                fprintf(stderr, "INFS_OWNERSHIP_TRACE object i=%u type=%u block=%llu status=%d\n",
+                        i, (unsigned)object_type,
+                        (unsigned long long)object_block, status);
+            goto out;
+        }
+
         if (object_type == INFS_OBJECT_DIRECTORY) {
             status = claim_directory_metadata_pages(vol, owners, total,
                                                     object_block);
-            if (status != INFS_STATUS_OK)
+            if (status != INFS_STATUS_OK) {
+                if (trace)
+                    fprintf(stderr, "INFS_OWNERSHIP_TRACE dir_pages i=%u block=%llu status=%d\n",
+                            i, (unsigned long long)object_block, status);
                 goto out;
+            }
             continue;
         }
         if (object_type != INFS_OBJECT_FILE)
             continue;
         status = claim_file_extent_metadata_pages(vol, owners, total,
                                                   object_block);
-        if (status != INFS_STATUS_OK)
+        if (status != INFS_STATUS_OK) {
+            if (trace)
+                fprintf(stderr, "INFS_OWNERSHIP_TRACE extent_pages i=%u block=%llu status=%d\n",
+                        i, (unsigned long long)object_block, status);
             goto out;
+        }
 
         uint8_t object[INFS_BLOCK_SIZE];
         status = read_object(vol, object_block, object);
-        if (status != INFS_STATUS_OK)
+        if (status != INFS_STATUS_OK) {
+            if (trace)
+                fprintf(stderr, "INFS_OWNERSHIP_TRACE file_read i=%u block=%llu status=%d\n",
+                        i, (unsigned long long)object_block, status);
             goto out;
+        }
 
         struct infs_file_payload_disk *file;
         struct infs_extent_disk *ext;
         status = file_validate_volume(vol, object, &file, &ext);
-        if (status != INFS_STATUS_OK)
+        if (status != INFS_STATUS_OK) {
+            if (trace)
+                fprintf(stderr, "INFS_OWNERSHIP_TRACE file_validate i=%u block=%llu status=%d\n",
+                        i, (unsigned long long)object_block, status);
             goto out;
+        }
 
         struct infs_extent_disk *all = NULL;
         uint32_t extent_count = 0;
         int owned = 0;
         status = file_extent_snapshot(vol, object, file, ext,
                                       &all, &extent_count, &owned);
-        if (status != INFS_STATUS_OK)
+        if (status != INFS_STATUS_OK) {
+            if (trace)
+                fprintf(stderr, "INFS_OWNERSHIP_TRACE extent_snapshot i=%u block=%llu status=%d\n",
+                        i, (unsigned long long)object_block, status);
             goto out;
+        }
         for (uint32_t j = 0; j < extent_count; ++j) {
             if (infs_le32_to_cpu(all[j].flags) != INFS_EXTENT_NORMAL)
                 continue;
@@ -188,6 +230,10 @@ static int build_live_ownership_bitmap(
                 status = ownership_claim_data(
                     owners, data_owners, total, physical + k, allow_shared);
                 if (status != INFS_STATUS_OK) {
+                    if (trace)
+                        fprintf(stderr, "INFS_OWNERSHIP_TRACE data i=%u extent=%u offset=%u block=%llu status=%d\n",
+                                i, j, k,
+                                (unsigned long long)(physical + k), status);
                     if (owned) free(all);
                     goto out;
                 }
@@ -205,12 +251,15 @@ static int validate_bitmap_ownership(struct infs_volume *vol,
                                      const struct infs_index_entry_disk *entries,
                                      uint32_t count)
 {
+    const int trace = getenv("INFS_TEST_GRAPH_TRACE") != NULL;
     uint64_t total = infs_le64_to_cpu(vol->sb.total_blocks);
     uint8_t *owners = calloc(1, vol->bitmap_bytes);
     if (!owners)
         return INFS_STATUS_NO_MEMORY;
     int status = build_live_ownership_bitmap(vol, entries, count, owners);
     if (status != INFS_STATUS_OK) {
+        if (trace)
+            fprintf(stderr, "INFS_OWNERSHIP_TRACE live_build status=%d\n", status);
         free(owners);
         return status;
     }
@@ -218,6 +267,8 @@ static int validate_bitmap_ownership(struct infs_volume *vol,
     uint8_t *snapshot_union = NULL;
     status = snapshot_union_bitmap(vol, &snapshot_union);
     if (status != INFS_STATUS_OK) {
+        if (trace)
+            fprintf(stderr, "INFS_OWNERSHIP_TRACE snapshot_union status=%d\n", status);
         free(owners);
         return status;
     }
@@ -226,7 +277,12 @@ static int validate_bitmap_ownership(struct infs_volume *vol,
     free(snapshot_union);
 
     for (uint64_t b = 0; b < total; ++b) {
-        if (bitmap_get(owners, b) != bitmap_get(vol->bitmap, b)) {
+        int owner_bit = bitmap_get(owners, b);
+        int bitmap_bit = bitmap_get(vol->bitmap, b);
+        if (owner_bit != bitmap_bit) {
+            if (trace)
+                fprintf(stderr, "INFS_OWNERSHIP_TRACE bitmap_mismatch block=%llu owner=%d bitmap=%d\n",
+                        (unsigned long long)b, owner_bit, bitmap_bit);
             status = INFS_STATUS_CORRUPT;
             break;
         }
