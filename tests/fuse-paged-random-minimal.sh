@@ -87,9 +87,6 @@ paged = [r for r in files if r.get('object_version') == 2]
 if not paged:
     print('DIAG_NO_PAGED_FILE_RECORD')
     raise SystemExit(0)
-# Highest-generation paged file is the promoted head. The scanner marks state
-# unknown when strict open fails, so allocation state is established directly
-# from the published bitmap below rather than from forensic classification.
 r = max(paged, key=lambda x: (int(x['generation']), int(x['block'])))
 file_block = int(r['block'])
 with open(image, 'rb') as f:
@@ -159,7 +156,7 @@ PY
 
 python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/raw-ownership-diagnose.py" "$image"
 
-if "$scrub" "$image"; then
+if INFS_TEST_GRAPH_TRACE=1 "$scrub" "$image"; then
     echo 'PROMOTION_GENERATION_CLEAN_UNEXPECTEDLY'
     exit 0
 fi
