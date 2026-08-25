@@ -19,6 +19,25 @@ add_missing_package() {
     missing_packages+=("$candidate")
 }
 
+detect_kernel_compiler() {
+    local compiler_name=""
+    local compiler_path=""
+
+    # Kbuild warns when the module compiler executable differs from the one
+    # recorded in the running kernel even when both are the same GCC release.
+    # Prefer the exact recorded cross-prefixed compiler when it is installed.
+    compiler_name="$(grep -oE '[[:alnum:]_.+-]+-gcc-[0-9]+' /proc/version 2>/dev/null | head -n1 || true)"
+    if [[ -n "$compiler_name" ]]; then
+        compiler_path="$(command -v "$compiler_name" 2>/dev/null || true)"
+    fi
+    if [[ -z "$compiler_path" ]]; then
+        compiler_path="$(command -v cc 2>/dev/null || true)"
+    fi
+    printf '%s\n' "$compiler_path"
+}
+
+KERNEL_CC="$(detect_kernel_compiler)"
+
 check_requirements() {
     command -v cc >/dev/null 2>&1 || add_missing_package build-essential
     command -v make >/dev/null 2>&1 || add_missing_package build-essential
@@ -34,10 +53,12 @@ check_requirements() {
     command -v dkms >/dev/null 2>&1 || add_missing_package dkms
     command -v modprobe >/dev/null 2>&1 || add_missing_package kmod
     command -v depmod >/dev/null 2>&1 || add_missing_package kmod
+    command -v pahole >/dev/null 2>&1 || add_missing_package dwarves
     command -v udevadm >/dev/null 2>&1 || add_missing_package udev
     command -v udisksctl >/dev/null 2>&1 || add_missing_package udisks2
     command -v update-desktop-database >/dev/null 2>&1 || add_missing_package desktop-file-utils
     [[ -f "/lib/modules/${KERNEL_RELEASE}/build/Makefile" ]] || add_missing_package "linux-headers-${KERNEL_RELEASE}"
+    [[ -n "$KERNEL_CC" ]] || add_missing_package build-essential
 }
 
 print_package_commands() {
@@ -49,7 +70,7 @@ print_package_commands() {
 
 print_build_commands() {
     printf 'Native build commands:\n'
-    printf '  cmake -S %q -B %q -DCMAKE_BUILD_TYPE=Release -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=TRUE\n' "$ROOT" "$BUILD_DIR"
+    printf '  cmake -S %q -B %q -DCMAKE_BUILD_TYPE=Release\n' "$ROOT" "$BUILD_DIR"
     printf '  cmake --build %q --parallel\n' "$BUILD_DIR"
     printf '  ctest --test-dir %q --output-on-failure\n' "$BUILD_DIR"
     printf '  sudo cmake --install %q --prefix /usr\n' "$BUILD_DIR"
@@ -57,7 +78,7 @@ print_build_commands() {
 
 print_kernel_commands() {
     printf 'Native kernel module commands:\n'
-    printf '  make -C %q KDIR=%q\n' "$ROOT/kernel" "/lib/modules/${KERNEL_RELEASE}/build"
+    printf '  make -C %q KDIR=%q CC=%q\n' "$ROOT/kernel" "/lib/modules/${KERNEL_RELEASE}/build" "$KERNEL_CC"
     printf '  sudo dkms add -m infiltratorfs -v %q\n' "$VERSION"
     printf '  sudo dkms build -m infiltratorfs -v %q -k %q\n' "$VERSION" "$KERNEL_RELEASE"
     printf '  sudo dkms install -m infiltratorfs -v %q -k %q --force\n' "$VERSION" "$KERNEL_RELEASE"
@@ -113,11 +134,11 @@ PACKAGE_VERSION="${VERSION}"
 BUILT_MODULE_NAME[0]="infiltratorfs"
 DEST_MODULE_LOCATION[0]="/updates/dkms"
 AUTOINSTALL="yes"
-MAKE[0]="make KDIR=/lib/modules/\${kernelver}/build"
+MAKE[0]="make CC=${KERNEL_CC} KDIR=/lib/modules/\${kernelver}/build"
 CLEAN="make KDIR=/lib/modules/\${kernelver}/build clean"
 EOF
 
-    make -C "$ROOT/kernel" KDIR="/lib/modules/${KERNEL_RELEASE}/build"
+    make -C "$ROOT/kernel" KDIR="/lib/modules/${KERNEL_RELEASE}/build" CC="$KERNEL_CC"
     if dkms status -m infiltratorfs -v "$VERSION" 2>/dev/null | grep -q .; then
         run_as_root dkms remove -m infiltratorfs -v "$VERSION" --all || true
     fi
@@ -184,7 +205,7 @@ if (( ${#missing_packages[@]} > 0 )); then
 fi
 
 printf 'InfiltratorFS %s native kernel installation\n' "$VERSION"
-cmake -S "$ROOT" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=TRUE
+cmake -S "$ROOT" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release
 cmake --build "$BUILD_DIR" --parallel
 ctest --test-dir "$BUILD_DIR" --output-on-failure
 run_as_root cmake --install "$BUILD_DIR" --prefix /usr
