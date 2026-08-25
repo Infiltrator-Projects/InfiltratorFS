@@ -8,6 +8,8 @@
  * while native parity is expanded operation by operation.
  */
 
+#include <linux/statfs.h>
+
 #define infilfs_rw_tx_begin infilfs_rw_tx_begin_legacy
 #define infilfs_file_write_iter infilfs_file_write_iter_legacy
 #define infilfs_file_fsync infilfs_file_fsync_legacy
