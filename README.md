@@ -6,7 +6,7 @@
 
 InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem started in 2026. The persistent format and core engine are portable C; operating-system integrations sit over the same Format 0.12 structures.
 
-**Current implementation:** 0.17.0  
+**Current implementation:** 0.17.1  
 **On-disk format:** 0.12  
 **Shared foundation:** Infiltratr Common 1.11.0  
 **Licence:** GPL-3.0-or-later
@@ -93,8 +93,8 @@ A release includes `infiltratorfs-<version>-linux-native.run`. It contains the t
 Preview without changing the system:
 
 ```bash
-chmod +x infiltratorfs-0.17.0-linux-native.run
-./infiltratorfs-0.17.0-linux-native.run --dry-run
+chmod +x infiltratorfs-0.17.1-linux-native.run
+./infiltratorfs-0.17.1-linux-native.run --dry-run
 ```
 
 The installer refuses to upgrade while an InfiltratorFS volume is mounted. This prevents replacing a live filesystem driver underneath active media.
