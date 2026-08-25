@@ -126,7 +126,7 @@ expected_unsupported() {
     local err
     err="$(tr '\n' ' ' </tmp/infiltratorfs-probe.err)"
     case "$err" in
-        *"Operation not supported"*|*"Function not implemented"*|*"Invalid argument"*|*"Read-only file system"*)
+        *"Operation not supported"*|*"Function not implemented"*|*"Invalid argument"*|*"Read-only file system"*|*"Operation not permitted"*|*"Permission denied"*|*"File too large"*)
             known "$label: ${err:-operation rejected}"
             ;;
         *)
@@ -144,9 +144,9 @@ printf 'Kernel:       %s\n' "$(uname -r)"
 printf 'Started:      %s\n' "$(date --iso-8601=seconds)"
 
 for cmd in \
-    awk blockdev cmp cp cut date dd df findmnt grep head lsblk mkdir mkfs.infilfs \
-    modinfo modprobe mount mountpoint od readlink rm sha256sum stat sync tail touch \
-    truncate umount uname wc; do
+    awk blockdev cat chmod cmp cp cut date dd df find findmnt grep head ln lsblk \
+    mkdir mkfs.infilfs modinfo modprobe mount mountpoint mv od readlink rm rmdir \
+    seq sha256sum sleep stat sync tail touch tr truncate umount uname wc; do
     require_cmd "$cmd"
 done
 
