@@ -18,8 +18,20 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake kmod linux-headers-$(uname -r)
-      - name: Build module and tools
+      - name: Patch candidate and build module and tools
+        shell: bash
         run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('kernel/infiltratorfs.c')
+          s = p.read_text()
+          old = '''        u32 target_len = le32_to_cpu(payload->target_length);\n        const u8 *target = (const u8 *)(payload + 1);\n\n        if (target_len == 0'''
+          new = '''        u32 target_len = le32_to_cpu(payload->target_length);\n        const u8 *target = (const u8 *)(payload + 1);\n\n        attributes = &payload->attributes;\n        posix = &payload->posix;\n        if (target_len == 0'''
+          if old not in s:
+              raise SystemExit('symlink payload marker not found')
+          p.write_text(s.replace(old, new, 1))
+          PY
+          git diff --check
           make -C kernel KDIR="/lib/modules/$(uname -r)/build"
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build --parallel --target mkfs.infilfs infilfs-tool infilfs-scrub
@@ -56,8 +68,7 @@ jobs:
           build/infilfs-tool "$image" put "$inline_src" /docs/inline.txt
           build/infilfs-tool "$image" put "$extent_src" /docs/extent.bin
           build/infilfs-tool "$image" symlink docs/inline.txt /current
-          echo '=== portable symlink before mount ==='
-          build/infilfs-tool "$image" readlink /current
+          test "$(build/infilfs-tool "$image" readlink /current)" = 'docs/inline.txt'
 
           sudo insmod kernel/infiltratorfs.ko
           loaded=1
@@ -79,9 +90,10 @@ jobs:
           echo '=== native symlink diagnostics ==='
           ls -lan "$mountpoint" || true
           stat -c 'type=%F mode=%f ino=%i uid=%u gid=%g size=%s' "$mountpoint/current" || true
-          timeout 2 readlink -v "$mountpoint/current" || true
-          sudo dmesg | tail -n 40 || true
-          echo 'CONTINUE past symlink diagnostics'
+          link="$(timeout 2 readlink "$mountpoint/current" || true)"
+          printf 'native readlink=<%s>\n' "$link"
+          test "$link" = 'docs/inline.txt'
+          echo 'PASS preexisting symlink read'
 
           sudo mkdir "$mountpoint/native-rw"
           echo 'PASS mkdir'
