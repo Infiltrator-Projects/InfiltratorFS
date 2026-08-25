@@ -22,9 +22,18 @@ static int file_replace_range(struct infs_volume *vol,
         (new_flags == INFS_EXTENT_HOLE && new_physical != 0) ||
         (new_flags == INFS_EXTENT_NORMAL && new_physical == 0))
         return INFS_STATUS_INVALID_ARGUMENT;
+
+    /* Random overwrites can repeatedly split non-tail extent pages inside one
+     * deferred transaction.  Rebuilding from the complete ordered snapshot is
+     * deliberately used here until the single-page fast path can prove the
+     * same transaction/savepoint invariants.  The full rebuild is copy-on-
+     * write and keeps every prior published page untouched until the new file
+     * head is safely written, so a failed operation cannot poison the last
+     * committed generation. */
     if (file_has_paged_extents(object))
-        return paged_extent_replace(vol, object, p, logical_start, block_count,
-                                    new_physical, new_flags);
+        return paged_extent_replace_rebuild(
+            vol, object, p, logical_start, block_count,
+            new_physical, new_flags);
 
     struct infs_extent_disk *ext = (struct infs_extent_disk *)(p + 1);
     uint32_t old_count = infs_le32_to_cpu(p->extent_count);
