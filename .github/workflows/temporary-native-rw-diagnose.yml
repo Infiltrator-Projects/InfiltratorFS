@@ -1,0 +1,113 @@
+name: Temporary native RW diagnosis
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/temporary-native-rw-diagnose.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake kmod linux-headers-$(uname -r)
+      - name: Build module and tools
+        run: |
+          make -C kernel KDIR="/lib/modules/$(uname -r)/build"
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel --target mkfs.infilfs infilfs-tool infilfs-scrub
+      - name: Trace native RW transaction
+        shell: bash
+        run: |
+          set -euxo pipefail
+          image="$RUNNER_TEMP/infiltratorfs-rw-diag.img"
+          mountpoint="$RUNNER_TEMP/infiltratorfs-rw-diag-mnt"
+          inline_src="$RUNNER_TEMP/infiltratorfs-inline.txt"
+          extent_src="$RUNNER_TEMP/infiltratorfs-extent.bin"
+          loopdev=""
+          mounted=0
+          loaded=0
+          cleanup() {
+            set +e
+            echo '=== cleanup diagnostics ==='
+            findmnt -T "$mountpoint" || true
+            sudo fuser -vm "$mountpoint" || true
+            if [[ "$mounted" = 1 ]]; then sudo umount -l "$mountpoint" || true; fi
+            if [[ -n "$loopdev" ]]; then sudo losetup -d "$loopdev" || true; fi
+            if [[ "$loaded" = 1 ]]; then sudo rmmod infiltratorfs || true; fi
+          }
+          trap cleanup EXIT
+
+          truncate -s 64M "$image"
+          build/mkfs.infilfs -L NativeKernelDiag "$image" >/dev/null
+          printf 'native-kernel-inline\n' > "$inline_src"
+          python3 - "$extent_src" <<'PY'
+          import sys
+          with open(sys.argv[1], 'wb') as f:
+              f.write(bytes((i * 37 + 11) & 0xff for i in range(32768)))
+          PY
+          build/infilfs-tool "$image" mkdir /docs
+          build/infilfs-tool "$image" put "$inline_src" /docs/inline.txt
+          build/infilfs-tool "$image" put "$extent_src" /docs/extent.bin
+          build/infilfs-tool "$image" symlink docs/inline.txt /current
+
+          sudo insmod kernel/infiltratorfs.ko
+          loaded=1
+          loopdev="$(sudo losetup --find --show "$image")"
+          mkdir -p "$mountpoint"
+          sudo mount -t infiltratorfs -o rw "$loopdev" "$mountpoint"
+          mounted=1
+
+          echo 'CHECK mount type'
+          findmnt -T "$mountpoint"
+          test "$(findmnt -n -o FSTYPE -T "$mountpoint")" = infiltratorfs
+          echo 'PASS mount type'
+          findmnt -n -o OPTIONS -T "$mountpoint" | grep -Eq '(^|,)rw(,|$)'
+          echo 'PASS mount rw option'
+          cmp "$inline_src" "$mountpoint/docs/inline.txt"
+          echo 'PASS preexisting inline read'
+          cmp "$extent_src" "$mountpoint/docs/extent.bin"
+          echo 'PASS preexisting extent read'
+          test "$(readlink "$mountpoint/current")" = 'docs/inline.txt'
+          echo 'PASS preexisting symlink read'
+
+          sudo mkdir "$mountpoint/native-rw"
+          echo 'PASS mkdir'
+          printf 'native-kernel-rw\n' | sudo tee "$mountpoint/native-rw/created.txt" >/dev/null
+          echo 'PASS create/write'
+          cat "$mountpoint/native-rw/created.txt"
+          test "$(cat "$mountpoint/native-rw/created.txt")" = 'native-kernel-rw'
+          echo 'PASS first readback'
+
+          sudo sh -c "printf 'rewritten-through-vfs\\n' > '$mountpoint/native-rw/created.txt'"
+          echo 'PASS rewrite'
+          cat "$mountpoint/native-rw/created.txt"
+          test "$(cat "$mountpoint/native-rw/created.txt")" = 'rewritten-through-vfs'
+          echo 'PASS rewrite readback'
+          sudo truncate -s 8 "$mountpoint/native-rw/created.txt"
+          echo 'PASS truncate'
+          cat "$mountpoint/native-rw/created.txt"
+          test "$(cat "$mountpoint/native-rw/created.txt")" = 'rewritte'
+          echo 'PASS truncate readback'
+          sync
+
+          sudo umount "$mountpoint"
+          mounted=0
+          echo 'PASS unmount'
+          build/infilfs-tool "$image" cat /native-rw/created.txt
+          test "$(build/infilfs-tool "$image" cat /native-rw/created.txt)" = 'rewritte'
+          echo 'PASS portable readback'
+          build/infilfs-scrub "$image" | tee "$RUNNER_TEMP/native-rw-scrub.txt"
+          grep -Fq 'Result:              CLEAN' "$RUNNER_TEMP/native-rw-scrub.txt"
+          echo 'PASS scrub'
+          sudo mount -t infiltratorfs -o ro "$loopdev" "$mountpoint"
+          mounted=1
+          test "$(cat "$mountpoint/native-rw/created.txt")" = 'rewritte'
+          echo 'PASS native remount/readback'
