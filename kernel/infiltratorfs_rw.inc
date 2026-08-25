@@ -1574,7 +1574,11 @@ static int infilfs_rw_create(struct user_namespace *idmap, struct inode *dir,
     return 0;
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
+static struct dentry *infilfs_rw_mkdir(struct mnt_idmap *idmap,
+                                       struct inode *dir,
+                                       struct dentry *dentry, umode_t mode)
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
 static int infilfs_rw_mkdir(struct mnt_idmap *idmap, struct inode *dir,
                             struct dentry *dentry, umode_t mode)
 #else
@@ -1590,14 +1594,28 @@ static int infilfs_rw_mkdir(struct user_namespace *idmap, struct inode *dir,
     (void)idmap;
     ret = infilfs_rw_create_child(dir, dentry, mode, INFILFS_OBJECT_DIRECTORY,
                                   id, &block);
-    if (ret)
+    if (ret) {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
+        return ERR_PTR(ret);
+#else
         return ret;
+#endif
+    }
     inode = infilfs_get_inode(dir->i_sb, block, INFILFS_OBJECT_DIRECTORY, id);
-    if (IS_ERR(inode))
+    if (IS_ERR(inode)) {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
+        return ERR_PTR(PTR_ERR(inode));
+#else
         return PTR_ERR(inode);
+#endif
+    }
     d_instantiate(dentry, inode);
     inc_nlink(dir);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
+    return NULL;
+#else
     return 0;
+#endif
 }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
