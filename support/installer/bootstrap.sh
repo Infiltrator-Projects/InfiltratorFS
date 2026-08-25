@@ -102,6 +102,17 @@ remove_stale_dkms_versions() {
     done < <(dkms status -m infiltratorfs 2>/dev/null || true)
 }
 
+remove_conflicting_debian_package() {
+    local status version
+    command -v dpkg-query >/dev/null 2>&1 || return 0
+    status="$(dpkg-query -W -f='${db:Status-Abbrev} ${Version}\n' infiltratorfs 2>/dev/null || true)"
+    [[ "$status" == ii\ * ]] || return 0
+    version="${status#ii }"
+    printf 'Removing Debian package record for InfiltratorFS %s before native .run installation.\n' "$version"
+    printf 'The .run installation is native/unmanaged; use the .deb when dpkg ownership is desired.\n'
+    run_as_root dpkg --purge infiltratorfs
+}
+
 install_kernel_module() {
     local dkms_conf="$BUILD_DIR/infiltratorfs-dkms.conf"
 
@@ -127,6 +138,7 @@ EOF
     run_as_root install -m 0644 "$ROOT/kernel/Makefile" "$DKMS_SOURCE/Makefile"
     run_as_root install -m 0644 "$ROOT/kernel/infiltratorfs.c" "$DKMS_SOURCE/infiltratorfs.c"
     run_as_root install -m 0644 "$ROOT/kernel/infiltratorfs_format.h" "$DKMS_SOURCE/infiltratorfs_format.h"
+    run_as_root install -m 0644 "$ROOT/kernel/infiltratorfs_rw.inc" "$DKMS_SOURCE/infiltratorfs_rw.inc"
     run_as_root install -m 0644 "$dkms_conf" "$DKMS_SOURCE/dkms.conf"
 
     run_as_root dkms add -m infiltratorfs -v "$VERSION"
@@ -141,6 +153,7 @@ if [[ "${1:-}" == '--dry-run' ]]; then
     printf 'InfiltratorFS native build installer\n'
     printf 'Dry run only; no packages will be installed and no files will be changed.\n'
     printf 'Older InfiltratorFS DKMS registrations would be removed before any package/header installation.\n'
+    printf 'An installed InfiltratorFS .deb would be purged before this unmanaged native install.\n'
     if (( ${#missing_packages[@]} > 0 )); then
         printf 'Missing build or runtime requirements:\n'
         printf '  %s\n' "${missing_packages[@]}"
@@ -160,6 +173,7 @@ if (( $# > 0 )); then
 fi
 
 remove_stale_dkms_versions
+remove_conflicting_debian_package
 
 printf 'InfiltratorFS native build installer\n'
 printf 'Source: %s\n' "$ROOT"

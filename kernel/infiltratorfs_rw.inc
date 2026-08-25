@@ -1067,11 +1067,14 @@ static int infilfs_rw_rebuild_directory(struct infilfs_rw_tx *tx,
         ret = -EEXIST;
         goto out;
     }
-    grown = kvrealloc(all, bytes + rec, GFP_NOFS);
+    grown = kvmalloc(bytes + rec, GFP_NOFS);
     if (!grown) {
         ret = -ENOMEM;
         goto out;
     }
+    if (bytes)
+        memcpy(grown, all, bytes);
+    kvfree(all);
     all = grown;
     memset(all + bytes, 0, rec);
     {
@@ -1222,8 +1225,8 @@ static void infilfs_rw_fill_common_attributes(
     umode_t mode, u64 links)
 {
     u64 now = ktime_get_real_ns();
-    u32 uid = from_kuid(&init_user_ns, current_fsuid());
-    u32 gid = from_kgid(&init_user_ns, current_fsgid());
+    u32 uid = 0;
+    u32 gid = 0;
 
     memset(attributes, 0, sizeof(*attributes));
     memset(posix, 0, sizeof(*posix));

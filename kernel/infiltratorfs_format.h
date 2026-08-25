@@ -184,6 +184,11 @@ struct infilfs_index_entry_disk {
     __le32 reserved;
 } __packed;
 
+struct infilfs_snapshot_catalog_payload_disk {
+    __le32 snapshot_count;
+    __le32 reserved;
+} __packed;
+
 #define INFILFS_METADATA_PAGE_DATA_SIZE \
     (INFILFS_DISK_BLOCK_SIZE - sizeof(struct infilfs_metadata_page_disk))
 #define INFILFS_INDEX_ENTRIES_PER_PAGE \
@@ -218,6 +223,7 @@ static_assert(sizeof(struct infilfs_extent_head_disk) == 8);
 static_assert(sizeof(struct infilfs_extent_disk) == 24);
 static_assert(sizeof(struct infilfs_index_payload_disk) == 8);
 static_assert(sizeof(struct infilfs_index_entry_disk) == 32);
+static_assert(sizeof(struct infilfs_snapshot_catalog_payload_disk) == 8);
 static_assert(INFILFS_INDEX_ENTRIES_PER_PAGE == 125u);
 static_assert(INFILFS_EXTENTS_PER_PAGE == 167u);
 static_assert(INFILFS_INLINE_DATA_MAX == 3840u);

@@ -42,6 +42,7 @@ install -d "$dkms_root"
 install -m 0644 kernel/Makefile "$dkms_root/Makefile"
 install -m 0644 kernel/infiltratorfs.c "$dkms_root/infiltratorfs.c"
 install -m 0644 kernel/infiltratorfs_format.h "$dkms_root/infiltratorfs_format.h"
+install -m 0644 kernel/infiltratorfs_rw.inc "$dkms_root/infiltratorfs_rw.inc"
 cat > "$dkms_root/dkms.conf" <<EOF
 PACKAGE_NAME="infiltratorfs"
 PACKAGE_VERSION="${version}"
@@ -68,7 +69,7 @@ Homepage: https://github.com/The-First-Infiltrator/InfiltratorFS
 Description: platform-neutral experimental filesystem tools
  InfiltratorFS formatter, inspector, scrubber, forensic scanner,
  standard mount/fsck helpers, direct-image utility, Linux FUSE adapter,
- native read-only Linux kernel module via DKMS and Linux Mint desktop manager.
+ native Linux kernel module via DKMS with initial read-write support and Linux Mint desktop manager.
  Use only with image files or disposable or backed-up media.
 EOF
 
@@ -163,6 +164,7 @@ grep -q 'usr/share/applications/infiltratorfs-manager.desktop$' "$dist_dir/packa
 grep -q "usr/src/infiltratorfs-${version}/dkms.conf$" "$dist_dir/package-contents.txt"
 grep -q "usr/src/infiltratorfs-${version}/infiltratorfs.c$" "$dist_dir/package-contents.txt"
 grep -q "usr/src/infiltratorfs-${version}/infiltratorfs_format.h$" "$dist_dir/package-contents.txt"
+grep -q "usr/src/infiltratorfs-${version}/infiltratorfs_rw.inc$" "$dist_dir/package-contents.txt"
 test "$(dpkg-deb --field "$dist_dir/$deb_name" Version)" = "$version"
 dpkg-deb --ctrl-tarfile "$dist_dir/$deb_name" | tar -xOf - ./preinst | \
     grep -Fq 'removing stale DKMS registration'

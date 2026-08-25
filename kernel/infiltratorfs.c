@@ -4,6 +4,15 @@
 #include <linux/dirent.h>
 #include <linux/fs.h>
 #include <linux/fs_context.h>
+#include <linux/cred.h>
+#include <linux/kernel.h>
+#include <linux/mutex.h>
+#include <linux/random.h>
+#include <linux/sched.h>
+#include <linux/timekeeping.h>
+#include <linux/uidgid.h>
+#include <linux/user_namespace.h>
+#include <linux/vmalloc.h>
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/string.h>
@@ -34,6 +43,11 @@ static const u8 infilfs_extent_page_magic[8] = {
 struct infilfs_sb_info {
     struct infilfs_superblock_disk disk;
     u64 device_blocks;
+    struct mutex write_lock;
+    u8 *bitmap;
+    size_t bitmap_bytes;
+    bool rw_enabled;
+    bool write_poisoned;
 };
 
 struct infilfs_inode_info {
@@ -58,6 +72,7 @@ struct infilfs_dir_emit_state {
 
 static const struct inode_operations infilfs_dir_inode_operations;
 static const struct inode_operations infilfs_symlink_inode_operations;
+static const struct inode_operations infilfs_file_inode_operations;
 static const struct file_operations infilfs_dir_operations;
 static const struct file_operations infilfs_file_operations;
 
@@ -482,7 +497,11 @@ static int infilfs_for_each_dirent(struct inode *inode,
         u32 page_count = le32_to_cpu(payload->bytes_used);
         u32 p;
 
-        if (page_count == 0 || page_count > INFILFS_DIRECTORY_PAGE_POINTERS) {
+        if (page_count == 0) {
+            ret = le32_to_cpu(payload->entry_count) == 0 ? 0 : -EFSCORRUPTED;
+            goto out;
+        }
+        if (page_count > INFILFS_DIRECTORY_PAGE_POINTERS) {
             ret = -EFSCORRUPTED;
             goto out;
         }
@@ -809,6 +828,7 @@ static int infilfs_populate_inode(struct inode *inode, u64 object_block,
         posix = &payload->posix;
         permissions = le32_to_cpu(posix->permissions) & 07777;
         inode->i_mode = S_IFREG | (permissions ? permissions : 0444);
+        inode->i_op = &infilfs_file_inode_operations;
         inode->i_fop = &infilfs_file_operations;
         links = le64_to_cpu(attributes->link_count);
         set_nlink(inode, links ? links : 1);
@@ -839,8 +859,12 @@ static int infilfs_populate_inode(struct inode *inode, u64 object_block,
         goto fail_private;
     }
 
-    inode->i_uid = GLOBAL_ROOT_UID;
-    inode->i_gid = GLOBAL_ROOT_GID;
+    {
+        kuid_t uid = make_kuid(&init_user_ns, le32_to_cpu(posix->uid));
+        kgid_t gid = make_kgid(&init_user_ns, le32_to_cpu(posix->gid));
+        inode->i_uid = uid_valid(uid) ? uid : GLOBAL_ROOT_UID;
+        inode->i_gid = gid_valid(gid) ? gid : GLOBAL_ROOT_GID;
+    }
     ret = 0;
     goto out;
 
@@ -928,6 +952,8 @@ static int infilfs_iterate_shared(struct file *file, struct dir_context *ctx)
     return ret < 0 ? ret : 0;
 }
 
+#include "infiltratorfs_rw.inc"
+
 static void infilfs_evict_inode(struct inode *inode)
 {
     struct infilfs_inode_info *ii = INFILFS_I(inode);
@@ -943,6 +969,7 @@ static void infilfs_evict_inode(struct inode *inode)
 
 static void infilfs_put_super(struct super_block *sb)
 {
+    infilfs_rw_mount_destroy(sb);
     kfree(sb->s_fs_info);
     sb->s_fs_info = NULL;
 }
@@ -955,6 +982,12 @@ static const struct super_operations infilfs_super_operations = {
 
 static const struct inode_operations infilfs_dir_inode_operations = {
     .lookup = infilfs_lookup,
+    .create = infilfs_rw_create,
+    .mkdir = infilfs_rw_mkdir,
+};
+
+static const struct inode_operations infilfs_file_inode_operations = {
+    .setattr = infilfs_rw_setattr,
 };
 
 static const struct inode_operations infilfs_symlink_inode_operations = {
@@ -971,6 +1004,8 @@ static const struct file_operations infilfs_file_operations = {
     .owner = THIS_MODULE,
     .llseek = generic_file_llseek,
     .read_iter = infilfs_file_read_iter,
+    .write_iter = infilfs_file_write_iter,
+    .fsync = infilfs_file_fsync,
 };
 
 static int infilfs_fill_super(struct super_block *sb, struct fs_context *fc)
@@ -982,8 +1017,6 @@ static int infilfs_fill_super(struct super_block *sb, struct fs_context *fc)
 
     (void)fc;
 
-    if (!(sb->s_flags & SB_RDONLY))
-        return -EROFS;
     if (!sb_set_blocksize(sb, INFILFS_DISK_BLOCK_SIZE))
         return -EINVAL;
 
@@ -996,9 +1029,13 @@ static int infilfs_fill_super(struct super_block *sb, struct fs_context *fc)
     if (!sbi)
         return -ENOMEM;
     sbi->device_blocks = bytes >> INFILFS_DISK_BLOCK_SHIFT;
+    mutex_init(&sbi->write_lock);
     sb->s_fs_info = sbi;
 
     ret = infilfs_select_checkpoint(sb, &sbi->disk);
+    if (ret)
+        goto fail;
+    ret = infilfs_rw_mount_init(sb);
     if (ret)
         goto fail;
 
@@ -1021,12 +1058,14 @@ static int infilfs_fill_super(struct super_block *sb, struct fs_context *fc)
         goto fail;
     }
 
-    pr_info("InfiltratorFS: native read-only mount Format %u.%u generation %llu\n",
+    pr_info("InfiltratorFS: native %s mount Format %u.%u generation %llu\n",
+            sb_rdonly(sb) ? "read-only" : "read-write",
             INFILFS_FORMAT_MAJOR, INFILFS_FORMAT_MINOR,
             (unsigned long long)le64_to_cpu(sbi->disk.generation));
     return 0;
 
 fail:
+    infilfs_rw_mount_destroy(sb);
     kfree(sbi);
     sb->s_fs_info = NULL;
     return ret;
@@ -1034,10 +1073,6 @@ fail:
 
 static int infilfs_get_tree(struct fs_context *fc)
 {
-    /* The native adapter is intentionally read-only. Reject writable mounts
-     * before get_tree_bdev() attempts to open the block device for writing. */
-    if (!(fc->sb_flags & SB_RDONLY))
-        return -EROFS;
     return get_tree_bdev(fc, infilfs_fill_super);
 }
 
@@ -1064,7 +1099,7 @@ static int __init infilfs_init(void)
     int status = register_filesystem(&infilfs_type);
 
     if (status == 0)
-        pr_info("InfiltratorFS: native Linux read-only VFS registered\n");
+        pr_info("InfiltratorFS: native Linux VFS registered with initial RW support\n");
     return status;
 }
 
@@ -1077,7 +1112,7 @@ static void __exit infilfs_exit(void)
 module_init(infilfs_init);
 module_exit(infilfs_exit);
 
-MODULE_DESCRIPTION("InfiltratorFS native Linux read-only VFS driver");
+MODULE_DESCRIPTION("InfiltratorFS native Linux VFS driver with initial RW support");
 MODULE_AUTHOR("The First Infiltrator");
 MODULE_LICENSE("GPL");
 MODULE_ALIAS_FS(INFILTRATORFS_NAME);
