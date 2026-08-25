@@ -1,12 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-static int extent_emit(struct infs_extent_disk *out, uint32_t *count,
-                       uint64_t logical, uint64_t physical, uint32_t blocks,
-                       uint32_t flags)
-{
-    return extent_emit_capacity(out, count, INFS_MAX_FILE_EXTENTS,
-                                logical, physical, blocks, flags);
-}
-
 static int file_replace_range(struct infs_volume *vol,
                               uint8_t object[INFS_BLOCK_SIZE],
                               uint64_t logical_start, uint64_t block_count,
