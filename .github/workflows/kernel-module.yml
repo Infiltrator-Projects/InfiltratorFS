@@ -53,6 +53,19 @@ jobs:
           KDIR: ${{ steps.headers.outputs.generic_kdir }}
         run: make -C kernel KDIR="$KDIR"
 
+      - name: Reproduce DKMS source-root invocation
+        shell: bash
+        env:
+          KDIR: ${{ steps.headers.outputs.generic_kdir }}
+        run: |
+          set -euo pipefail
+          dkms_src="$(mktemp -d)"
+          trap 'rm -rf "$dkms_src"' EXIT
+          cp kernel/Makefile kernel/infiltratorfs.c kernel/infiltratorfs_format.h "$dkms_src/"
+          release="$(make -sC "$KDIR" kernelrelease)"
+          KERNELRELEASE="$release" make -C "$dkms_src" KDIR="$KDIR"
+          test -s "$dkms_src/infiltratorfs.ko"
+
       - name: Verify module metadata
         shell: bash
         run: |
