@@ -33,7 +33,7 @@ The result is `kernel/infiltratorfs.ko`. Loading it is a normal module operation
 
 The Debian package installs the module sources under `/usr/src/infiltratorfs-<version>` and registers/builds them through DKMS. The native `.run` installer likewise installs the tested source through DKMS after completing the userspace build. If the running kernel's headers are unavailable, install `linux-headers-$(uname -r)` and run `sudo dkms autoinstall`.
 
-For a read-only block-device mount, the installed `mount.infiltratorfs` helper now prefers the native module when it is available and falls back to FUSE otherwise. Writable mounts continue to use FUSE because the kernel adapter intentionally has no write path yet.
+The traditional `mount.infiltratorfs` helper deliberately remains on the mature FUSE path during this bring-up. To exercise the native read-only module without invoking the helper recursively, load it with `modprobe infiltratorfs` and use `mount -i -t infiltratorfs -o ro <block-device> <mountpoint>`.
 
 The dedicated kernel-module GitHub Actions workflow always compiles the module against Ubuntu generic kernel headers and checks its module metadata. When the hosted runner also exposes headers matching its running kernel, the workflow additionally builds the userspace formatter/tools, creates a real Format 0.12 image containing directories, an inline file, an extent-backed file and a symbolic link, loads `infiltratorfs.ko`, mounts the image through a loop block device, and byte-compares files through the native kernel mount.
 
