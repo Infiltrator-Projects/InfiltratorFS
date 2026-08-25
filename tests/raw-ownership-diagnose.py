@@ -46,9 +46,21 @@ def main(path):
         def allocated(n):
             return 0 <= n < total and ((bitmap[n >> 3] >> (n & 7)) & 1) != 0
 
-        owners = set(checkpoints)
-        owners.update(range(bitmap_start, bitmap_start + bitmap_blocks))
-        owners.add(index_block)
+        owner_sources = {}
+        duplicate_claims = []
+
+        def claim(block, source):
+            previous = owner_sources.get(block)
+            if previous is not None:
+                duplicate_claims.append((block, previous, source))
+            else:
+                owner_sources[block] = source
+
+        for i, block in enumerate(checkpoints):
+            claim(block, f'checkpoint[{i}]')
+        for block in range(bitmap_start, bitmap_start + bitmap_blocks):
+            claim(block, 'bitmap')
+        claim(index_block, 'index-head')
 
         index = read_block(index_block)
         index_version = u16(index, 10)
@@ -58,7 +70,7 @@ def main(path):
         if index_version == VERSION_PAGED:
             for pi in range(index_pages):
                 pb = u64(index, OBJ_HDR + 8 + 8*pi)
-                owners.add(pb)
+                claim(pb, f'index-page[{pi}]')
                 page = read_block(pb)
                 count = u32(page, 32)
                 for i in range(count):
@@ -74,15 +86,16 @@ def main(path):
         print(f'DIAG_INDEX entries_declared={index_count} entries_parsed={len(entries)} pages={index_pages}')
         type_counts = {}
         file_details = []
-        for oid, ob, typ in entries:
-            owners.add(ob)
+        for ei, (oid, ob, typ) in enumerate(entries):
+            claim(ob, f'object[{ei}]-type{typ}-{idtext(oid)}')
             type_counts[typ] = type_counts.get(typ, 0) + 1
             obj = read_block(ob)
             version = u16(obj, 10)
             if typ == TYPE_DIR and version == VERSION_PAGED:
                 page_count = u32(obj, OBJ_HDR + 108)
                 for pi in range(page_count):
-                    owners.add(u64(obj, OBJ_HDR + 112 + 8*pi))
+                    claim(u64(obj, OBJ_HDR + 112 + 8*pi),
+                          f'dir-page[{ei}:{pi}]-{idtext(oid)}')
             elif typ == TYPE_FILE:
                 extent_count = u32(obj, OBJ_HDR + 104)
                 checksum_head = obj[OBJ_HDR + 112:OBJ_HDR + 128]
@@ -92,7 +105,7 @@ def main(path):
                         page_count = u32(obj, OBJ_HDR + 128)
                         for pi in range(page_count):
                             pb = u64(obj, OBJ_HDR + 136 + 8*pi)
-                            owners.add(pb)
+                            claim(pb, f'extent-page[{ei}:{pi}]-{idtext(oid)}')
                             page = read_block(pb)
                             count = u32(page, 32)
                             extent_vectors.extend(
@@ -103,20 +116,24 @@ def main(path):
                             struct.unpack_from('<QQII', obj, OBJ_HDR + 128 + i*24)
                             for i in range(extent_count)
                         ]
-                for logical, physical, blocks, flags in extent_vectors:
+                for xi, (logical, physical, blocks, flags) in enumerate(extent_vectors):
                     if flags == EXTENT_NORMAL:
-                        owners.update(range(physical, physical + blocks))
+                        for block in range(physical, physical + blocks):
+                            claim(block, f'data[{ei}:{xi}]-logical{logical}-{idtext(oid)}')
                 file_details.append((oid, ob, checksum_head, extent_vectors))
 
+        owners = set(owner_sources)
         allocated_set = {b for b in range(total) if allocated(b)}
         missing = sorted(owners - allocated_set)
         extra = sorted(allocated_set - owners)
         print('DIAG_INDEX_TYPES ' + ' '.join(f'type{t}={n}' for t, n in sorted(type_counts.items())))
-        print(f'DIAG_OWNERSHIP allocated={len(allocated_set)} claimed={len(owners)} missing={len(missing)} extra={len(extra)}')
+        print(f'DIAG_OWNERSHIP allocated={len(allocated_set)} claimed={len(owners)} missing={len(missing)} extra={len(extra)} duplicates={len(duplicate_claims)}')
         if missing:
             print('DIAG_OWNERSHIP_MISSING ' + ' '.join(map(str, missing[:32])))
         if extra:
             print('DIAG_OWNERSHIP_EXTRA ' + ' '.join(map(str, extra[:64])))
+        for block, first, second in duplicate_claims[:32]:
+            print(f'DIAG_OWNERSHIP_DUPLICATE block={block} first={first} second={second}')
 
         index_by_id = {oid: (ob, typ) for oid, ob, typ in entries}
         indexed_checksum_ids = {oid for oid, _, typ in entries if typ == TYPE_CHECKSUM}
