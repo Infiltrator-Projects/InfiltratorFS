@@ -1,0 +1,101 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: One-shot DKMS entry repair
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/repair-dkms-entry.yml
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Repair packaged DKMS invocation and release 0.16.12
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cat > kernel/Makefile <<'EOF'
+          # SPDX-License-Identifier: GPL-3.0-or-later
+
+          # Keep the Kbuild declaration unconditional. DKMS exports
+          # KERNELRELEASE before invoking this Makefile; conditioning all normal
+          # targets on KERNELRELEASE therefore leaves the initial DKMS make with
+          # no target at all ("make: *** No targets. Stop."). Kbuild ignores the
+          # helper targets below when it includes this file for the recursive
+          # external-module build.
+          obj-m += infiltratorfs.o
+
+          KDIR ?= /lib/modules/$(shell uname -r)/build
+
+          .PHONY: all clean
+
+          all:
+          	$(MAKE) -C $(KDIR) M=$(CURDIR) modules
+
+          clean:
+          	$(MAKE) -C $(KDIR) M=$(CURDIR) clean
+          EOF
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('CMakeLists.txt')
+          s = p.read_text()
+          old = 'project(InfiltratorFS VERSION 0.16.11 LANGUAGES C)'
+          if s.count(old) != 1:
+              raise SystemExit('expected current CMake version exactly once')
+          p.write_text(s.replace(old, 'project(InfiltratorFS VERSION 0.16.12 LANGUAGES C)', 1))
+
+          p = Path('README.md')
+          s = p.read_text()
+          old = '**Current implementation:** 0.16.11'
+          if s.count(old) != 1:
+              raise SystemExit('expected README implementation version exactly once')
+          s = s.replace(old, '**Current implementation:** 0.16.12', 1)
+          s = s.replace('infiltratorfs-0.16.11-linux-native.run', 'infiltratorfs-0.16.12-linux-native.run')
+          note = ('\n\nImplementation 0.16.12 fixes the packaged DKMS build entry used on hosts such as '
+                  'Linux Mint with Linux 7.0. DKMS exports KERNELRELEASE before its initial make; '
+                  'the kernel Makefile now keeps its external-module build targets available in that '
+                  'environment instead of terminating with `make: *** No targets. Stop.`. The native '
+                  'kernel CI now reproduces the DKMS source-root invocation explicitly. Format 0.12 is unchanged.\n')
+          if 'Implementation 0.16.12 fixes the packaged DKMS build entry' not in s:
+              s = s.rstrip() + note
+          p.write_text(s)
+
+          p = Path('kernel/README.md')
+          s = p.read_text()
+          s = s.replace('Release 0.16.11 packages the source through DKMS',
+                        'Release 0.16.12 packages the source through DKMS')
+          s = s.replace('mounts an InfiltratorFS block device read-only through `mount_bdev`;',
+                        'mounts an InfiltratorFS block device read-only through the current `fs_context`/`get_tree_bdev` VFS path;')
+          p.write_text(s)
+
+          p = Path('.github/workflows/kernel-module.yml')
+          s = p.read_text()
+          needle = '''      - name: Verify module metadata\n        shell: bash\n        run: |\n'''
+          if s.count(needle) != 1:
+              raise SystemExit('expected module metadata step exactly once')
+          step = '''      - name: Reproduce DKMS source-root invocation\n        shell: bash\n        env:\n          KDIR: ${{ steps.headers.outputs.generic_kdir }}\n        run: |\n          set -euo pipefail\n          dkms_src="$(mktemp -d)"\n          trap 'rm -rf "$dkms_src"' EXIT\n          cp kernel/Makefile kernel/infiltratorfs.c kernel/infiltratorfs_format.h "$dkms_src/"\n          release="$(make -sC "$KDIR" kernelrelease)"\n          KERNELRELEASE="$release" make -C "$dkms_src" KDIR="$KDIR"\n          test -s "$dkms_src/infiltratorfs.ko"\n\n'''
+          s = s.replace(needle, step + needle, 1)
+          p.write_text(s)
+          PY
+
+          rm .github/workflows/repair-dkms-entry.yml
+
+          git config user.name "Shannon Smith"
+          git config user.email "infiltratr@yandex.com"
+          git add kernel/Makefile CMakeLists.txt README.md kernel/README.md .github/workflows/kernel-module.yml .github/workflows/repair-dkms-entry.yml
+          git diff --cached --check
+          git commit -m "Release 0.16.12: fix DKMS top-level build entry"
+          git push origin HEAD:main
