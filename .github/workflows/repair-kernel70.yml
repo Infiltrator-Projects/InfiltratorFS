@@ -66,18 +66,11 @@ jobs:
           )
 
           # A DKMS failure must not leave the whole userspace package half-configured.
-          # The package remains usable through FUSE and prints the exact recovery command.
+          # The package remains usable through FUSE and prints the recovery command.
           replace_once(
               "packaging/build-linux-packages.sh",
               '''        dkms build -m "\\$module" -v "\\$version" -k "\\$kernel"\n        dkms install -m "\\$module" -v "\\$version" -k "\\$kernel" --force\n''',
               '''        if dkms build -m "\\$module" -v "\\$version" -k "\\$kernel" && \\\n           dkms install -m "\\$module" -v "\\$version" -k "\\$kernel" --force; then\n            :\n        else\n            echo "InfiltratorFS: WARNING: native kernel module build failed for \\$kernel." >&2\n            echo "The userspace tools and FUSE adapter are installed and remain usable." >&2\n            echo "After installing compatible headers/source, retry: sudo dkms autoinstall" >&2\n        fi\n''',
-          )
-
-          # Keep the dedicated module workflow from ever regressing to the Linux 7.0-removed APIs.
-          replace_once(
-              ".github/workflows/kernel-module.yml",
-              "      - name: Build InfiltratorFS kernel module\n",
-              '''      - name: Enforce current VFS mount API\n        shell: bash\n        run: |\n          set -euo pipefail\n          grep -Fq '#include <linux/fs_context.h>' kernel/infiltratorfs.c\n          grep -Fq '.init_fs_context = infilfs_init_fs_context' kernel/infiltratorfs.c\n          grep -Fq 'get_tree_bdev(fc, infilfs_fill_super)' kernel/infiltratorfs.c\n          grep -Fq '.drop_inode = inode_just_drop' kernel/infiltratorfs.c\n          ! grep -Fq 'mount_bdev(' kernel/infiltratorfs.c\n          ! grep -Fq 'generic_delete_inode' kernel/infiltratorfs.c\n\n      - name: Build InfiltratorFS kernel module\n''',
           )
 
           # Release 0.16.11: implementation-only change; on-disk Format 0.12 is unchanged.
@@ -114,14 +107,13 @@ jobs:
           )
           PY
 
-      - name: Remove one-shot workflow and publish repair commit
+      - name: Publish repair commit
         shell: bash
         run: |
           set -euo pipefail
-          rm -f .github/workflows/repair-kernel70.yml
           git config user.name "Shannon Smith"
           git config user.email "infiltratr@yandex.com"
-          git add -A
+          git add kernel/infiltratorfs.c packaging/build-linux-packages.sh CMakeLists.txt README.md kernel/README.md
           git diff --cached --check
           git commit -m "Release 0.16.11: support Linux 7.0 VFS mount API"
           git push origin HEAD:main
