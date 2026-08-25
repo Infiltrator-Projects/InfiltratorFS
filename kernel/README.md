@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # Native Linux kernel module
 
-This directory contains the native Linux VFS adapter for InfiltratorFS. It is an out-of-tree kernel module: Linux itself does not need to be rebuilt. The module is built against installed kernel headers. Release 0.16.12 packages the source through DKMS so normal kernel upgrades rebuild only `infiltratorfs.ko` for kernels whose matching headers are installed.
+This directory contains the native Linux VFS adapter for InfiltratorFS. It is an out-of-tree kernel module: Linux itself does not need to be rebuilt. The module is built against installed kernel headers. Release 0.16.13 packages the source through DKMS so normal kernel upgrades rebuild only `infiltratorfs.ko` for kernels whose matching headers are installed.
 
 The current milestone is a genuine read-only filesystem implementation rather than the earlier empty-root bootstrap. The module now:
 
@@ -29,7 +29,7 @@ Or build against an explicit kernel-header tree:
 make -C kernel KDIR=/usr/src/linux-headers-$(uname -r)
 ```
 
-The result is `kernel/infiltratorfs.ko`. Loading it is a normal module operation (`insmod`/`modprobe`), not a kernel rebuild.
+The result is `kernel/infiltratorfs.ko`. Loading it is a normal module operation (`insmod`/`modprobe`), not a kernel rebuild. The adapter uses the Linux 7.0 inode-state accessor when building against 7.0+ headers, while retaining the older scalar state path for earlier supported kernels.
 
 The Debian package installs the module sources under `/usr/src/infiltratorfs-<version>` and registers/builds them through DKMS. The native `.run` installer likewise installs the tested source through DKMS after completing the userspace build. If the running kernel's headers are unavailable, install `linux-headers-$(uname -r)` and run `sudo dkms autoinstall`.
 

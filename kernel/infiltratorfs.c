@@ -8,6 +8,7 @@
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/uio.h>
+#include <linux/version.h>
 
 #include "infiltratorfs_format.h"
 
@@ -68,6 +69,15 @@ static struct infilfs_sb_info *INFILFS_SB(struct super_block *sb)
 static struct infilfs_inode_info *INFILFS_I(struct inode *inode)
 {
     return inode->i_private;
+}
+
+static bool infilfs_inode_is_new(struct inode *inode)
+{
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
+    return (inode_state_read_once(inode) & I_NEW) != 0;
+#else
+    return (READ_ONCE(inode->i_state) & I_NEW) != 0;
+#endif
 }
 
 static int infilfs_read_block(struct super_block *sb, u64 block, void *out)
@@ -854,7 +864,7 @@ static struct inode *infilfs_get_inode(struct super_block *sb, u64 object_block,
     inode = iget_locked(sb, ino);
     if (!inode)
         return ERR_PTR(-ENOMEM);
-    if (!(inode->i_state & I_NEW))
+    if (!infilfs_inode_is_new(inode))
         return inode;
 
     ret = infilfs_populate_inode(inode, object_block, expected_type, expected_id);
