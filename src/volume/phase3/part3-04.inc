@@ -216,16 +216,30 @@ static infs_status load_checkpoint_graph(
     if (!full_verify)
         return INFS_STATUS_OK;
 
+    const int trace = getenv("INFS_TEST_GRAPH_TRACE") != NULL;
     status = validate_index_entries(vol);
+    if (trace)
+        fprintf(stderr, "INFS_GRAPH_TRACE validate_index_entries=%d\n",
+                (int)status);
     if (status != INFS_STATUS_OK)
         return checkpoint_graph_status(status);
     status = validate_integrity_metadata(vol);
+    if (trace)
+        fprintf(stderr, "INFS_GRAPH_TRACE validate_integrity_metadata=%d\n",
+                (int)status);
     if (status != INFS_STATUS_OK)
         return checkpoint_graph_status(status);
     status = validate_namespace_graph(vol);
+    if (trace)
+        fprintf(stderr, "INFS_GRAPH_TRACE validate_namespace_graph=%d\n",
+                (int)status);
     if (status != INFS_STATUS_OK)
         return checkpoint_graph_status(status);
-    return checkpoint_graph_status(validate_checksum_graph(vol));
+    status = validate_checksum_graph(vol);
+    if (trace)
+        fprintf(stderr, "INFS_GRAPH_TRACE validate_checksum_graph=%d\n",
+                (int)status);
+    return checkpoint_graph_status(status);
 }
 
 infs_status infs_volume_open_storage(struct infs_volume *vol,
