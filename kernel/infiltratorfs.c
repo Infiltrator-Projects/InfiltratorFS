@@ -839,6 +839,8 @@ static int infilfs_populate_inode(struct inode *inode, u64 object_block,
         u32 target_len = le32_to_cpu(payload->target_length);
         const u8 *target = (const u8 *)(payload + 1);
 
+        attributes = &payload->attributes;
+        posix = &payload->posix;
         if (target_len == 0 || target_len > INFILFS_DISK_BLOCK_SIZE -
             sizeof(*header) - sizeof(*payload) ||
             sizeof(*payload) + target_len > le32_to_cpu(header->payload_size)) {

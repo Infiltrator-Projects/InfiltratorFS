@@ -1309,7 +1309,6 @@ static int infilfs_rw_create_child(struct inode *dir, struct dentry *dentry,
     u8 object_id[16];
     u64 object_block;
     u64 new_dir_block;
-    bool root_parent;
     int ret;
 
     if (!dentry->d_name.len || dentry->d_name.len > INFILFS_NAME_MAX ||
@@ -1333,10 +1332,9 @@ static int infilfs_rw_create_child(struct inode *dir, struct dentry *dentry,
                                        object_id, type, &new_dir_block);
     if (ret)
         goto abort;
-    root_parent = memcmp(dir_ii->object_id, sbi->disk.root_object_id, 16) == 0;
     ret = infilfs_rw_rebuild_index(&tx,
-        root_parent ? NULL : dir_ii->object_id, new_dir_block,
-        INFILFS_OBJECT_DIRECTORY, object_id, object_block, type);
+        dir_ii->object_id, new_dir_block, INFILFS_OBJECT_DIRECTORY,
+        object_id, object_block, type);
     if (ret)
         goto abort;
     ret = infilfs_rw_tx_commit(&tx);
