@@ -2,7 +2,22 @@
 #ifndef _INFILTRATORFS_KERNEL_FORMAT_H
 #define _INFILTRATORFS_KERNEL_FORMAT_H
 
+#include <linux/errno.h>
 #include <linux/types.h>
+
+/* Linux uses current as a task-pointer macro. The on-disk reader has one
+ * temporary checkpoint variable with that natural name, so remove the macro
+ * after all kernel headers have been included by the translation unit. */
+#ifdef current
+#undef current
+#endif
+
+/* EFSCORRUPTED is not available on every supported distro kernel header set.
+ * EUCLEAN is the conventional portable kernel errno for corrupt filesystem
+ * metadata and carries the same meaning at this adapter boundary. */
+#ifndef EFSCORRUPTED
+#define EFSCORRUPTED EUCLEAN
+#endif
 
 #define INFILFS_DISK_BLOCK_SIZE 4096u
 #define INFILFS_DISK_BLOCK_SHIFT 12u
