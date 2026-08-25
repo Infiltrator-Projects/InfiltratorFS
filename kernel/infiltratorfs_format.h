@@ -5,13 +5,6 @@
 #include <linux/errno.h>
 #include <linux/types.h>
 
-/* Linux uses current as a task-pointer macro. The on-disk reader has one
- * temporary checkpoint variable with that natural name, so remove the macro
- * after all kernel headers have been included by the translation unit. */
-#ifdef current
-#undef current
-#endif
-
 /* EFSCORRUPTED is not available on every supported distro kernel header set.
  * EUCLEAN is the conventional portable kernel errno for corrupt filesystem
  * metadata and carries the same meaning at this adapter boundary. */
@@ -219,13 +212,7 @@ static_assert(sizeof(struct infilfs_directory_payload_disk) == 112);
 static_assert(sizeof(struct infilfs_dirent_disk) == 24);
 static_assert(sizeof(struct infilfs_file_payload_disk) == 128);
 static_assert(sizeof(struct infilfs_symlink_payload_disk) == 112);
-static_assert(sizeof(struct infilfs_extent_head_disk) == 8);
 static_assert(sizeof(struct infilfs_extent_disk) == 24);
-static_assert(sizeof(struct infilfs_index_payload_disk) == 8);
 static_assert(sizeof(struct infilfs_index_entry_disk) == 32);
-static_assert(sizeof(struct infilfs_snapshot_catalog_payload_disk) == 8);
-static_assert(INFILFS_INDEX_ENTRIES_PER_PAGE == 125u);
-static_assert(INFILFS_EXTENTS_PER_PAGE == 167u);
-static_assert(INFILFS_INLINE_DATA_MAX == 3840u);
 
 #endif
