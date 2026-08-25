@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Native Linux kernel module
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  kernel-module:
+    name: Build out-of-tree VFS module
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Install kernel build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential kmod linux-headers-generic
+
+      - name: Resolve generic kernel header tree
+        id: headers
+        shell: bash
+        run: |
+          set -euo pipefail
+          kdir="$(find /usr/src -maxdepth 1 -type d -name 'linux-headers-*-generic' -print | sort -V | tail -n 1)"
+          test -n "$kdir"
+          test -f "$kdir/Makefile"
+          printf 'kdir=%s\n' "$kdir" >> "$GITHUB_OUTPUT"
+          printf 'Building against %s\n' "$kdir"
+
+      - name: Build InfiltratorFS kernel module
+        env:
+          KDIR: ${{ steps.headers.outputs.kdir }}
+        run: make -C kernel KDIR="$KDIR"
+
+      - name: Verify module metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s kernel/infiltratorfs.ko
+          test "$(modinfo -F name kernel/infiltratorfs.ko)" = infiltratorfs
+          test "$(modinfo -F license kernel/infiltratorfs.ko)" = GPL
+          modinfo kernel/infiltratorfs.ko
