@@ -8,7 +8,10 @@ inspect="$build_dir/infilfs-inspect"
 tool="$build_dir/infilfs-tool"
 scrub="$build_dir/infilfs-scrub"
 api_test="$build_dir/infilfs-phase1-api"
-fsck_helper="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/tools/fsck.infiltratorfs"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+fsck_helper="$repo_root/tools/fsck.infiltratorfs"
+expected_version="$(sed -nE 's/^project\(InfiltratorFS VERSION ([0-9]+\.[0-9]+\.[0-9]+) LANGUAGES C\)$/\1/p' "$repo_root/CMakeLists.txt")"
+test -n "$expected_version"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -20,7 +23,7 @@ mkfs_output="$tmp/mkfs-output.txt"
 
 truncate -s 64M "$image"
 "$mkfs" -L SmokeTest "$image" >"$mkfs_output"
-grep -Fq 'Implementation: 0.16.8' "$mkfs_output"
+grep -Fq "Implementation: $expected_version" "$mkfs_output"
 "$inspect" "$image" >/dev/null
 INFILFS_SCRUB="$scrub" "$fsck_helper" -n "$image" >/dev/null
 "$api_test" "$image" >/dev/null
