@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # Native Linux kernel module
 
-This directory contains the native Linux VFS adapter for InfiltratorFS. It is an out-of-tree kernel module: Linux itself does not need to be rebuilt. The module is built against installed kernel headers. Release 0.16.13 packages the source through DKMS so normal kernel upgrades rebuild only `infiltratorfs.ko` for kernels whose matching headers are installed.
+This directory contains the native Linux VFS adapter for InfiltratorFS. It is an out-of-tree kernel module: Linux itself does not need to be rebuilt. The module is built against installed kernel headers. Release 0.16.14 packages the source through DKMS so normal kernel upgrades rebuild only `infiltratorfs.ko` for kernels whose matching headers are installed.
 
 The current milestone is a genuine read-only filesystem implementation rather than the earlier empty-root bootstrap. The module now:
 
@@ -32,6 +32,8 @@ make -C kernel KDIR=/usr/src/linux-headers-$(uname -r)
 The result is `kernel/infiltratorfs.ko`. Loading it is a normal module operation (`insmod`/`modprobe`), not a kernel rebuild. The adapter uses the Linux 7.0 inode-state accessor when building against 7.0+ headers, while retaining the older scalar state path for earlier supported kernels.
 
 The Debian package installs the module sources under `/usr/src/infiltratorfs-<version>` and registers/builds them through DKMS. The native `.run` installer likewise installs the tested source through DKMS after completing the userspace build. If the running kernel's headers are unavailable, install `linux-headers-$(uname -r)` and run `sudo dkms autoinstall`.
+
+Before the native installer invokes APT for missing headers or other requirements, it removes registered older InfiltratorFS DKMS versions and their stale source/build directories. The Debian package performs the same older-version cleanup from `preinst`. This prevents a broken obsolete DKMS source tree from aborting a later kernel-header package post-install hook before the current module can be installed.
 
 The traditional `mount.infiltratorfs` helper deliberately remains on the mature FUSE path during this bring-up. To exercise the native read-only module without invoking the helper recursively, load it with `modprobe infiltratorfs` and use `mount -i -t infiltratorfs -o ro <block-device> <mountpoint>`.
 
