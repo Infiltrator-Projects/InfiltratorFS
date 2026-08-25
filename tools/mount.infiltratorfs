@@ -15,30 +15,51 @@ source_path="$1"
 mountpoint="$2"
 shift 2
 declare -a fuse_arguments=("$source_path" "$mountpoint")
+declare -a native_options=()
 fake_mount=0
+read_only=0
+
+append_native_options() {
+    local options="$1"
+    local option
+    IFS=',' read -r -a split_options <<< "$options"
+    for option in "${split_options[@]}"; do
+        [[ -n "$option" ]] || continue
+        native_options+=("$option")
+        [[ "$option" == ro ]] && read_only=1
+        [[ "$option" == rw ]] && read_only=0
+    done
+}
 
 while (( $# > 0 )); do
     case "$1" in
         -o)
             (( $# >= 2 )) || { usage; exit 2; }
             fuse_arguments+=("-o" "$2")
+            append_native_options "$2"
             shift 2
             ;;
         -o?*)
             fuse_arguments+=("-o" "${1#-o}")
+            append_native_options "${1#-o}"
             shift
             ;;
         -r)
             fuse_arguments+=("-o" "ro")
+            native_options+=("ro")
+            read_only=1
             shift
             ;;
         -w)
             fuse_arguments+=("-o" "rw")
+            native_options+=("rw")
+            read_only=0
             shift
             ;;
         -v|-n)
             # mount(8) may pass its own verbose or no-mtab flags. libfuse
-            # manages the actual mount table entry, so neither is forwarded.
+            # manages the FUSE mount-table entry, while a native mount is
+            # performed internally by mount(8) below.
             shift
             ;;
         -f)
@@ -61,9 +82,28 @@ if (( fake_mount )); then
     exit 0
 fi
 
+# The native kernel adapter is intentionally read-only at this milestone.
+# Prefer it for read-only block-device mounts when the module is installed.
+# `mount -i` is critical here: it bypasses mount.<type> helpers and therefore
+# avoids recursively invoking this script.
+if (( read_only )) && [[ -b "$source_path" ]] && command -v mount >/dev/null 2>&1; then
+    if command -v modprobe >/dev/null 2>&1; then
+        modprobe infiltratorfs >/dev/null 2>&1 || true
+    fi
+    if grep -qw infiltratorfs /proc/filesystems 2>/dev/null; then
+        option_text="ro"
+        if (( ${#native_options[@]} > 0 )); then
+            option_text="$(IFS=,; printf '%s' "${native_options[*]}")"
+        fi
+        exec mount -i -t infiltratorfs -o "$option_text" "$source_path" "$mountpoint"
+    fi
+fi
+
+# Writable mounts, ordinary image-file mounts and hosts without the native
+# module continue to use the mature userspace FUSE adapter.
 fuse_program="${INFILFS_FUSE:-/usr/bin/infilfs-fuse}"
 if [[ ! -x "$fuse_program" ]]; then
-    echo "mount.infiltratorfs: FUSE adapter is unavailable: $fuse_program" >&2
+    echo "mount.infiltratorfs: native read-only mount unavailable and FUSE adapter is unavailable: $fuse_program" >&2
     exit 1
 fi
 exec "$fuse_program" "${fuse_arguments[@]}"
