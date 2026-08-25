@@ -939,7 +939,6 @@ static void infilfs_put_super(struct super_block *sb)
 
 static const struct super_operations infilfs_super_operations = {
     .statfs = simple_statfs,
-    .drop_inode = inode_just_drop,
     .evict_inode = infilfs_evict_inode,
     .put_super = infilfs_put_super,
 };
