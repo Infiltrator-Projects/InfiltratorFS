@@ -157,6 +157,8 @@ for pi in range(page_count):
           f'hole_blocks={hole_blocks} missing_allocated_blocks={missing}')
 PY
 
+python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/raw-ownership-diagnose.py" "$image"
+
 if "$scrub" "$image"; then
     echo 'PROMOTION_GENERATION_CLEAN_UNEXPECTEDLY'
     exit 0
