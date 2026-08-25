@@ -144,7 +144,6 @@ EOF
     fi
     run_as_root rm -rf "$DKMS_SOURCE"
     run_as_root install -d "$DKMS_SOURCE"
-    for file in Makefile infiltratorfs.c infiltratorfs_format.h infiltrarorfs_rw.inc; do :; done
     for file in Makefile infiltratorfs.c infiltratorfs_format.h infiltratorfs_rw.inc \
                 infiltratorfs_rw_legacy.inc infiltratorfs_rw_data.inc \
                 infiltratorfs_rw_namespace.inc; do
