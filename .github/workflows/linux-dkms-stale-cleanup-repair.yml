@@ -1,0 +1,172 @@
+name: One-shot stale DKMS cleanup repair
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/linux-dkms-stale-cleanup-repair.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Repair stale DKMS upgrade handling and bump release
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          bootstrap = Path('support/installer/bootstrap.sh')
+          text = bootstrap.read_text()
+          marker = 'install_kernel_module() {\n'
+          helper = r'''remove_stale_dkms_versions() {
+              local line head old_version
+              declare -A seen=()
+
+              command -v dkms >/dev/null 2>&1 || return 0
+              while IFS= read -r line; do
+                  [[ "$line" == infiltratorfs/* ]] || continue
+                  head="${line%%,*}"
+                  head="${head%%:*}"
+                  old_version="${head#infiltratorfs/}"
+                  [[ -n "$old_version" && "$old_version" != "$VERSION" ]] || continue
+                  [[ -z "${seen[$old_version]:-}" ]] || continue
+                  seen[$old_version]=1
+
+                  printf 'Removing stale InfiltratorFS DKMS registration %s before package/header changes.\n' "$old_version"
+                  run_as_root dkms remove -m infiltratorfs -v "$old_version" --all || true
+                  run_as_root rm -rf "/usr/src/infiltratorfs-${old_version}" \
+                      "/var/lib/dkms/infiltratorfs/${old_version}" || true
+              done < <(dkms status -m infiltratorfs 2>/dev/null || true)
+          }
+
+          '''
+          if 'remove_stale_dkms_versions()' not in text:
+              if marker not in text:
+                  raise SystemExit('bootstrap install_kernel_module marker not found')
+              text = text.replace(marker, helper + marker, 1)
+
+          dry_marker = "    printf 'Dry run only; no packages will be installed and no files will be changed.\\n'\n"
+          dry_note = "    printf 'Older InfiltratorFS DKMS registrations would be removed before any package/header installation.\\n'\n"
+          if dry_note not in text:
+              if dry_marker not in text:
+                  raise SystemExit('bootstrap dry-run marker not found')
+              text = text.replace(dry_marker, dry_marker + dry_note, 1)
+
+          normal_marker = "printf 'InfiltratorFS native build installer\\n'\nprintf 'Source: %s\\n' \"$ROOT\"\n"
+          cleanup_call = "remove_stale_dkms_versions\n\nprintf 'InfiltratorFS native build installer\\n'\nprintf 'Source: %s\\n' \"$ROOT\"\n"
+          if cleanup_call not in text:
+              if normal_marker not in text:
+                  raise SystemExit('bootstrap normal-run marker not found')
+              text = text.replace(normal_marker, cleanup_call, 1)
+          bootstrap.write_text(text)
+
+          packaging = Path('packaging/build-linux-packages.sh')
+          text = packaging.read_text()
+          postinst_marker = 'cat > "$package_root/DEBIAN/postinst" <<EOF\n'
+          preinst = r'''cat > "$package_root/DEBIAN/preinst" <<EOF
+#!/bin/sh
+set -e
+module='infiltratorfs'
+version='${version}'
+
+# Remove older registrations before this package is unpacked/configured. A
+# broken old DKMS source must not poison future kernel-header postinst hooks.
+if command -v dkms >/dev/null 2>&1; then
+    dkms status -m "\$module" 2>/dev/null | while IFS= read -r line; do
+        case "\$line" in
+            "\$module"/*) ;;
+            *) continue ;;
+        esac
+        head="\${line%%,*}"
+        head="\${head%%:*}"
+        old_version="\${head#\${module}/}"
+        if [ -n "\$old_version" ] && [ "\$old_version" != "\$version" ]; then
+            echo "InfiltratorFS: removing stale DKMS registration \$old_version before upgrade."
+            dkms remove -m "\$module" -v "\$old_version" --all || true
+            rm -rf "/usr/src/\$module-\$old_version" "/var/lib/dkms/\$module/\$old_version" || true
+        fi
+    done
+fi
+exit 0
+EOF
+chmod 0755 "$package_root/DEBIAN/preinst"
+
+'''
+          if 'DEBIAN/preinst' not in text:
+              if postinst_marker not in text:
+                  raise SystemExit('packaging postinst marker not found')
+              text = text.replace(postinst_marker, preinst + postinst_marker, 1)
+
+          validation_marker = 'test "$(dpkg-deb --field "$dist_dir/$deb_name" Version)" = "$version"\n'
+          validation = r'''test "$(dpkg-deb --field "$dist_dir/$deb_name" Version)" = "$version"
+dpkg-deb --ctrl-tarfile "$dist_dir/$deb_name" | tar -xOf - ./preinst | \
+    grep -Fq 'removing stale DKMS registration'
+'''
+          if "grep -Fq 'removing stale DKMS registration'" not in text:
+              if validation_marker not in text:
+                  raise SystemExit('package validation marker not found')
+              text = text.replace(validation_marker, validation, 1)
+          packaging.write_text(text)
+
+          cmake = Path('CMakeLists.txt')
+          text = cmake.read_text()
+          old = 'project(InfiltratorFS VERSION 0.16.13 LANGUAGES C)'
+          new = 'project(InfiltratorFS VERSION 0.16.14 LANGUAGES C)'
+          if old not in text and new not in text:
+              raise SystemExit('CMake version marker not found')
+          cmake.write_text(text.replace(old, new, 1))
+
+          readme = Path('README.md')
+          text = readme.read_text()
+          text = text.replace('**Current implementation:** 0.16.13<br>',
+                              '**Current implementation:** 0.16.14<br>', 1)
+          text = text.replace('InfiltratorFS-Windows-0.16.13.exe',
+                              'InfiltratorFS-Windows-0.16.14.exe', 1)
+          text = text.replace('chmod +x infiltratorfs-0.16.13-linux-native.run',
+                              'chmod +x infiltratorfs-0.16.14-linux-native.run', 1)
+          text = text.replace('./infiltratorfs-0.16.13-linux-native.run --dry-run',
+                              './infiltratorfs-0.16.14-linux-native.run --dry-run', 1)
+          note = ('\n\nImplementation 0.16.14 hardens Linux DKMS upgrades. The native `.run` installer now '
+                  'removes stale older InfiltratorFS DKMS registrations before it asks APT to '
+                  'install kernel headers or other requirements, preventing an obsolete broken '
+                  'module from aborting a new kernel-header post-install hook. The Debian package '
+                  'also removes older registrations in `preinst` before registering the current '
+                  'module. Format 0.12 is unchanged.')
+          if 'Implementation 0.16.14 hardens Linux DKMS upgrades.' not in text:
+              text = text.rstrip() + note + '\n'
+          readme.write_text(text)
+
+          kernel_readme = Path('kernel/README.md')
+          text = kernel_readme.read_text()
+          text = text.replace('Release 0.16.13 packages the source through DKMS',
+                              'Release 0.16.14 packages the source through DKMS', 1)
+          cleanup_note = ('\n\nThe native installer removes stale older `infiltratorfs` DKMS registrations '
+                          'before invoking APT for missing headers. This prevents an obsolete '
+                          'failed module build from breaking a later kernel-header package postinst.')
+          if 'The native installer removes stale older `infiltratorfs` DKMS registrations' not in text:
+              text = text.rstrip() + cleanup_note + '\n'
+          kernel_readme.write_text(text)
+          PY
+
+          bash -n support/installer/bootstrap.sh
+          bash -n packaging/build-linux-packages.sh
+          git diff --check
+          grep -Fq 'remove_stale_dkms_versions' support/installer/bootstrap.sh
+          grep -Fq 'DEBIAN/preinst' packaging/build-linux-packages.sh
+
+          git config user.name 'Shannon Smith'
+          git config user.email 'infiltratr@yandex.com'
+          git add support/installer/bootstrap.sh packaging/build-linux-packages.sh CMakeLists.txt README.md kernel/README.md
+          git commit -m 'Release 0.16.14: clean stale DKMS before header install'
+          git push origin HEAD:main
