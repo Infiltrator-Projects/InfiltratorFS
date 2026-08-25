@@ -94,14 +94,25 @@ static int paged_index_add(struct infs_volume *vol, const uint8_t id[16],
 static int paged_index_remove(struct infs_volume *vol, const uint8_t id[16]);
 
 /* These narrowly-scoped helpers are retained for planned cache/extent fast
- * paths but are deliberately dormant in Format 0.12.  Mark only those known
- * symbols rather than disabling -Wunused-function for the translation unit,
- * so newly orphaned code still produces a build warning. */
+ * paths but are deliberately dormant in Format 0.12.  Apply the unused
+ * attribute to their declarations (rather than rewriting their identifiers
+ * with macros), so GCC/Clang attach it reliably to the actual functions while
+ * newly orphaned helpers still produce diagnostics. */
 #if defined(__GNUC__) || defined(__clang__)
-#define object_cache_lookup_page __attribute__((unused)) object_cache_lookup_page
-#define bitmap_free_count __attribute__((unused)) bitmap_free_count
-#define metadata_head_page_pointers __attribute__((unused)) metadata_head_page_pointers
-#define paged_extent_replace __attribute__((unused)) paged_extent_replace
+static int object_cache_lookup_page(struct infs_volume *vol,
+                                    const uint8_t id[16],
+                                    uint32_t *page_out)
+    __attribute__((unused));
+static uint64_t bitmap_free_count(const struct infs_volume *vol)
+    __attribute__((unused));
+static uint64_t *metadata_head_page_pointers(void *payload)
+    __attribute__((unused));
+static int paged_extent_replace(struct infs_volume *vol,
+                                uint8_t object[INFS_BLOCK_SIZE],
+                                struct infs_file_payload_disk *file,
+                                uint64_t logical_start, uint64_t block_count,
+                                uint64_t new_physical, uint32_t new_flags)
+    __attribute__((unused));
 #endif
 
 #include "volume/part1.inc"
@@ -139,10 +150,3 @@ static int paged_index_remove(struct infs_volume *vol, const uint8_t id[16]);
 #include "volume/phase3/part5-01.inc"
 #include "volume/phase3/part5-02.inc"
 #include "volume/phase3/part5-03.inc"
-
-#if defined(__GNUC__) || defined(__clang__)
-#undef object_cache_lookup_page
-#undef bitmap_free_count
-#undef metadata_head_page_pointers
-#undef paged_extent_replace
-#endif
