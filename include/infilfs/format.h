@@ -9,9 +9,15 @@
 #define INFS_BLOCK_SHIFT 12u
 #define INFS_MAGIC "INFS2026"
 #define INFS_OBJECT_MAGIC "INFOBJ01"
-#define INFS_DIRECTORY_PAGE_MAGIC "INFSDP01"
-#define INFS_INDEX_PAGE_MAGIC "INFSIP01"
-#define INFS_EXTENT_PAGE_MAGIC "INFSEP01"
+static const uint8_t INFS_DIRECTORY_PAGE_MAGIC[8] = {
+    'I', 'N', 'F', 'S', 'D', 'P', '0', '1'
+};
+static const uint8_t INFS_INDEX_PAGE_MAGIC[8] = {
+    'I', 'N', 'F', 'S', 'I', 'P', '0', '1'
+};
+static const uint8_t INFS_EXTENT_PAGE_MAGIC[8] = {
+    'I', 'N', 'F', 'S', 'E', 'P', '0', '1'
+};
 
 /* Before the first stable release, readers deliberately accept only this
  * exact development format. A format revision replaces its predecessor; it
@@ -189,7 +195,6 @@ struct INFS_PACKED infs_symlink_payload_disk {
 #define INFS_SYMLINK_TARGET_MAX \
     (INFS_BLOCK_SIZE - sizeof(struct infs_object_header_disk) - \
      sizeof(struct infs_symlink_payload_disk))
-
 
 /* Format 0.12 version-2 file objects keep the fixed file payload and then
  * store this extent-head followed by little-endian uint64 physical pointers
