@@ -5,6 +5,22 @@
 #include <linux/errno.h>
 #include <linux/types.h>
 
+/*
+ * Linux defines current as a task-pointer macro.  The native reader has a
+ * checkpoint candidate variable with that natural name, so keep the original
+ * translation-unit isolation.  Credential acquisition added by the POSIX
+ * metadata bridge must still work after that isolation; get_task_cred() can be
+ * given the architecture's get_current() result without expanding the current
+ * macro.
+ */
+#ifdef current
+#undef current
+#endif
+#ifdef get_current_cred
+#undef get_current_cred
+#endif
+#define get_current_cred() get_task_cred(get_current())
+
 /* EFSCORRUPTED is not available on every supported distro kernel header set.
  * EUCLEAN is the conventional portable kernel errno for corrupt filesystem
  * metadata and carries the same meaning at this adapter boundary. */
