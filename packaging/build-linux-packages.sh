@@ -72,6 +72,34 @@ Description: platform-neutral experimental filesystem tools
  Use only with image files or disposable or backed-up media.
 EOF
 
+cat > "$package_root/DEBIAN/preinst" <<EOF
+#!/bin/sh
+set -e
+module='infiltratorfs'
+version='${version}'
+
+# Remove older registrations before this package is unpacked/configured. A
+# broken old DKMS source must not poison future kernel-header postinst hooks.
+if command -v dkms >/dev/null 2>&1; then
+    dkms status -m "\$module" 2>/dev/null | while IFS= read -r line; do
+        case "\$line" in
+            "\$module"/*) ;;
+            *) continue ;;
+        esac
+        head="\${line%%,*}"
+        head="\${head%%:*}"
+        old_version="\${head#\${module}/}"
+        if [ -n "\$old_version" ] && [ "\$old_version" != "\$version" ]; then
+            echo "InfiltratorFS: removing stale DKMS registration \$old_version before upgrade."
+            dkms remove -m "\$module" -v "\$old_version" --all || true
+            rm -rf "/usr/src/\$module-\$old_version" "/var/lib/dkms/\$module/\$old_version" || true
+        fi
+    done
+fi
+exit 0
+EOF
+chmod 0755 "$package_root/DEBIAN/preinst"
+
 cat > "$package_root/DEBIAN/postinst" <<EOF
 #!/bin/sh
 set -e
@@ -136,6 +164,8 @@ grep -q "usr/src/infiltratorfs-${version}/dkms.conf$" "$dist_dir/package-content
 grep -q "usr/src/infiltratorfs-${version}/infiltratorfs.c$" "$dist_dir/package-contents.txt"
 grep -q "usr/src/infiltratorfs-${version}/infiltratorfs_format.h$" "$dist_dir/package-contents.txt"
 test "$(dpkg-deb --field "$dist_dir/$deb_name" Version)" = "$version"
+dpkg-deb --ctrl-tarfile "$dist_dir/$deb_name" | tar -xOf - ./preinst | \
+    grep -Fq 'removing stale DKMS registration'
 for dependency in dkms kmod fuse3 libfuse3-3 policykit-1 util-linux xdg-utils zenity; do
     dpkg-deb --field "$dist_dir/$deb_name" Depends |
         grep -Eq "(^|, )${dependency}([ ,]|$)"
@@ -267,6 +297,8 @@ test "$(head -n 1 "$dist_dir/$run_name")" = '#!/usr/bin/env bash'
 "$dist_dir/$run_name" --verify
 "$dist_dir/$run_name" --dry-run > "$dist_dir/native-installer-dry-run.txt"
 grep -Fq 'Dry run only; no packages will be installed' \
+    "$dist_dir/native-installer-dry-run.txt"
+grep -Fq 'Older InfiltratorFS DKMS registrations would be removed' \
     "$dist_dir/native-installer-dry-run.txt"
 grep -Fq 'Native build commands:' "$dist_dir/native-installer-dry-run.txt"
 grep -Fq 'Native kernel module commands:' "$dist_dir/native-installer-dry-run.txt"
