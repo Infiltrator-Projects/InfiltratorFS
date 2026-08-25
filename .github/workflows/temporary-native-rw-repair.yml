@@ -21,7 +21,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential cmake pkg-config libfuse3-dev fuse3 dkms kmod linux-headers-generic
       - name: Patch native RW integration
-        run: python3 .github/native-rw-patch.py
+        shell: bash
+        run: |
+          python3 .github/native-rw-patch.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('kernel/infiltratorfs.c')
+          s = p.read_text()
+          marker = '#include <linux/random.h>\n'
+          addition = marker + '#include <linux/sched.h>\n'
+          if '#include <linux/sched.h>' not in s:
+              if marker not in s:
+                  raise SystemExit('random include marker not found')
+              s = s.replace(marker, addition, 1)
+          p.write_text(s)
+          PY
       - name: Validate source edits
         run: |
           bash -n support/installer/bootstrap.sh
