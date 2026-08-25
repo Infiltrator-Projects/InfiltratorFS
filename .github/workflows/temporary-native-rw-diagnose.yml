@@ -38,7 +38,6 @@ jobs:
             set +e
             echo '=== cleanup diagnostics ==='
             findmnt -T "$mountpoint" || true
-            sudo fuser -vm "$mountpoint" || true
             if [[ "$mounted" = 1 ]]; then sudo umount -l "$mountpoint" || true; fi
             if [[ -n "$loopdev" ]]; then sudo losetup -d "$loopdev" || true; fi
             if [[ "$loaded" = 1 ]]; then sudo rmmod infiltratorfs || true; fi
@@ -67,7 +66,6 @@ jobs:
           sudo mount -t infiltratorfs -o rw "$loopdev" "$mountpoint"
           mounted=1
 
-          echo 'CHECK mount type'
           findmnt -T "$mountpoint"
           test "$(findmnt -n -o FSTYPE -T "$mountpoint")" = infiltratorfs
           echo 'PASS mount type'
@@ -79,31 +77,25 @@ jobs:
           echo 'PASS preexisting extent read'
 
           echo '=== native symlink diagnostics ==='
-          ls -la "$mountpoint" || true
-          stat "$mountpoint/current" || true
-          stat -L "$mountpoint/current" || true
-          readlink -v "$mountpoint/current" || true
-          readlink "$mountpoint/current" || true
-          cat "$mountpoint/current" || true
-          sudo dmesg | tail -n 80 || true
+          ls -lan "$mountpoint" || true
+          stat -c 'type=%F mode=%f ino=%i uid=%u gid=%g size=%s' "$mountpoint/current" || true
+          timeout 2 readlink -v "$mountpoint/current" || true
+          sudo dmesg | tail -n 40 || true
           echo 'CONTINUE past symlink diagnostics'
 
           sudo mkdir "$mountpoint/native-rw"
           echo 'PASS mkdir'
           printf 'native-kernel-rw\n' | sudo tee "$mountpoint/native-rw/created.txt" >/dev/null
           echo 'PASS create/write'
-          cat "$mountpoint/native-rw/created.txt"
           test "$(cat "$mountpoint/native-rw/created.txt")" = 'native-kernel-rw'
           echo 'PASS first readback'
 
           sudo sh -c "printf 'rewritten-through-vfs\\n' > '$mountpoint/native-rw/created.txt'"
           echo 'PASS rewrite'
-          cat "$mountpoint/native-rw/created.txt"
           test "$(cat "$mountpoint/native-rw/created.txt")" = 'rewritten-through-vfs'
           echo 'PASS rewrite readback'
           sudo truncate -s 8 "$mountpoint/native-rw/created.txt"
           echo 'PASS truncate'
-          cat "$mountpoint/native-rw/created.txt"
           test "$(cat "$mountpoint/native-rw/created.txt")" = 'rewritte'
           echo 'PASS truncate readback'
           sync
@@ -111,7 +103,6 @@ jobs:
           sudo umount "$mountpoint"
           mounted=0
           echo 'PASS unmount'
-          build/infilfs-tool "$image" cat /native-rw/created.txt
           test "$(build/infilfs-tool "$image" cat /native-rw/created.txt)" = 'rewritte'
           echo 'PASS portable readback'
           build/infilfs-scrub "$image" | tee "$RUNNER_TEMP/native-rw-scrub.txt"
