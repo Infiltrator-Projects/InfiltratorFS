@@ -81,43 +81,23 @@ static int claim_file_extent_metadata_pages(struct infs_volume *vol,
                                             uint8_t *owners, uint64_t total,
                                             uint64_t object_block)
 {
-    const int trace = getenv("INFS_TEST_GRAPH_TRACE") != NULL;
     uint8_t object[INFS_BLOCK_SIZE];
     infs_status status = read_object(vol, object_block, object);
-    if (status != INFS_STATUS_OK) {
-        if (trace)
-            fprintf(stderr, "INFS_OWNERSHIP_TRACE extent_helper_read block=%llu status=%d\n",
-                    (unsigned long long)object_block, status);
+    if (status != INFS_STATUS_OK)
         return status;
-    }
     struct infs_file_payload_disk *file;
     status = file_validate_volume(vol, object, &file, NULL);
-    if (status != INFS_STATUS_OK) {
-        if (trace)
-            fprintf(stderr, "INFS_OWNERSHIP_TRACE extent_helper_validate block=%llu status=%d\n",
-                    (unsigned long long)object_block, status);
+    if (status != INFS_STATUS_OK)
         return status;
-    }
     if (!file_has_paged_extents(object))
         return INFS_STATUS_OK;
     struct infs_extent_head_disk *head = file_extent_head(file);
     uint32_t pages = infs_le32_to_cpu(head->page_count);
     uint64_t *ptr = file_extent_page_pointers(file);
-    if (trace)
-        fprintf(stderr, "INFS_OWNERSHIP_TRACE extent_helper block=%llu pages=%u\n",
-                (unsigned long long)object_block, pages);
     for (uint32_t i = 0; i < pages; ++i) {
-        uint64_t page_block = infs_le64_to_cpu(ptr[i]);
-        status = ownership_claim(owners, total, page_block);
-        if (status != INFS_STATUS_OK) {
-            if (trace)
-                fprintf(stderr, "INFS_OWNERSHIP_TRACE extent_helper_claim file=%llu page_index=%u page=%llu already_owned=%d status=%d\n",
-                        (unsigned long long)object_block, i,
-                        (unsigned long long)page_block,
-                        page_block < total ? bitmap_get(owners, page_block) : -1,
-                        status);
+        status = ownership_claim(owners, total, infs_le64_to_cpu(ptr[i]));
+        if (status != INFS_STATUS_OK)
             return status;
-        }
     }
     return INFS_STATUS_OK;
 }
@@ -126,7 +106,6 @@ static int build_live_ownership_bitmap(
     struct infs_volume *vol, const struct infs_index_entry_disk *entries,
     uint32_t count, uint8_t *owners)
 {
-    const int trace = getenv("INFS_TEST_GRAPH_TRACE") != NULL;
     uint64_t total = infs_le64_to_cpu(vol->sb.total_blocks);
     uint8_t *data_owners = calloc(1, vol->bitmap_bytes);
     if (!owners || !data_owners) {
@@ -139,108 +118,67 @@ static int build_live_ownership_bitmap(
 
     int status = INFS_STATUS_OK;
     for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i) {
-        uint64_t block = infs_le64_to_cpu(vol->sb.checkpoint_block[i]);
-        status = ownership_claim(owners, total, block);
-        if (status != INFS_STATUS_OK) {
-            if (trace)
-                fprintf(stderr, "INFS_OWNERSHIP_TRACE checkpoint i=%u block=%llu status=%d\n",
-                        i, (unsigned long long)block, status);
+        status = ownership_claim(
+            owners, total, infs_le64_to_cpu(vol->sb.checkpoint_block[i]));
+        if (status != INFS_STATUS_OK)
             goto out;
-        }
     }
 
     uint64_t bitmap_start = infs_le64_to_cpu(vol->sb.bitmap_start_block);
     uint64_t bitmap_blocks = infs_le64_to_cpu(vol->sb.bitmap_block_count);
     for (uint64_t i = 0; i < bitmap_blocks; ++i) {
         status = ownership_claim(owners, total, bitmap_start + i);
-        if (status != INFS_STATUS_OK) {
-            if (trace)
-                fprintf(stderr, "INFS_OWNERSHIP_TRACE bitmap i=%llu block=%llu status=%d\n",
-                        (unsigned long long)i,
-                        (unsigned long long)(bitmap_start + i), status);
+        if (status != INFS_STATUS_OK)
             goto out;
-        }
     }
 
-    uint64_t index_block = infs_le64_to_cpu(vol->sb.object_index_block);
-    status = ownership_claim(owners, total, index_block);
-    if (status != INFS_STATUS_OK) {
-        if (trace)
-            fprintf(stderr, "INFS_OWNERSHIP_TRACE index_head block=%llu status=%d\n",
-                    (unsigned long long)index_block, status);
+    status = ownership_claim(
+        owners, total, infs_le64_to_cpu(vol->sb.object_index_block));
+    if (status != INFS_STATUS_OK)
         goto out;
-    }
     status = claim_index_metadata_pages(vol, owners, total);
-    if (status != INFS_STATUS_OK) {
-        if (trace)
-            fprintf(stderr, "INFS_OWNERSHIP_TRACE index_pages status=%d\n", status);
+    if (status != INFS_STATUS_OK)
         goto out;
-    }
 
     for (uint32_t i = 0; i < count; ++i) {
         uint64_t object_block = infs_le64_to_cpu(entries[i].object_block);
-        uint16_t object_type = infs_le16_to_cpu(entries[i].object_type);
         status = ownership_claim(owners, total, object_block);
-        if (status != INFS_STATUS_OK) {
-            if (trace)
-                fprintf(stderr, "INFS_OWNERSHIP_TRACE object i=%u type=%u block=%llu status=%d\n",
-                        i, (unsigned)object_type,
-                        (unsigned long long)object_block, status);
+        if (status != INFS_STATUS_OK)
             goto out;
-        }
 
+        uint16_t object_type = infs_le16_to_cpu(entries[i].object_type);
         if (object_type == INFS_OBJECT_DIRECTORY) {
             status = claim_directory_metadata_pages(vol, owners, total,
                                                     object_block);
-            if (status != INFS_STATUS_OK) {
-                if (trace)
-                    fprintf(stderr, "INFS_OWNERSHIP_TRACE dir_pages i=%u block=%llu status=%d\n",
-                            i, (unsigned long long)object_block, status);
+            if (status != INFS_STATUS_OK)
                 goto out;
-            }
             continue;
         }
         if (object_type != INFS_OBJECT_FILE)
             continue;
         status = claim_file_extent_metadata_pages(vol, owners, total,
                                                   object_block);
-        if (status != INFS_STATUS_OK) {
-            if (trace)
-                fprintf(stderr, "INFS_OWNERSHIP_TRACE extent_pages i=%u block=%llu status=%d\n",
-                        i, (unsigned long long)object_block, status);
+        if (status != INFS_STATUS_OK)
             goto out;
-        }
 
         uint8_t object[INFS_BLOCK_SIZE];
         status = read_object(vol, object_block, object);
-        if (status != INFS_STATUS_OK) {
-            if (trace)
-                fprintf(stderr, "INFS_OWNERSHIP_TRACE file_read i=%u block=%llu status=%d\n",
-                        i, (unsigned long long)object_block, status);
+        if (status != INFS_STATUS_OK)
             goto out;
-        }
 
         struct infs_file_payload_disk *file;
         struct infs_extent_disk *ext;
         status = file_validate_volume(vol, object, &file, &ext);
-        if (status != INFS_STATUS_OK) {
-            if (trace)
-                fprintf(stderr, "INFS_OWNERSHIP_TRACE file_validate i=%u block=%llu status=%d\n",
-                        i, (unsigned long long)object_block, status);
+        if (status != INFS_STATUS_OK)
             goto out;
-        }
 
         struct infs_extent_disk *all = NULL;
         uint32_t extent_count = 0;
         int owned = 0;
         status = file_extent_snapshot(vol, object, file, ext,
                                       &all, &extent_count, &owned);
-        if (status != INFS_STATUS_OK) {
-            if (trace)
-                fprintf(stderr, "INFS_OWNERSHIP_TRACE extent_snapshot i=%u block=%llu status=%d\n",
-                        i, (unsigned long long)object_block, status);
+        if (status != INFS_STATUS_OK)
             goto out;
-        }
         for (uint32_t j = 0; j < extent_count; ++j) {
             if (infs_le32_to_cpu(all[j].flags) != INFS_EXTENT_NORMAL)
                 continue;
@@ -250,10 +188,6 @@ static int build_live_ownership_bitmap(
                 status = ownership_claim_data(
                     owners, data_owners, total, physical + k, allow_shared);
                 if (status != INFS_STATUS_OK) {
-                    if (trace)
-                        fprintf(stderr, "INFS_OWNERSHIP_TRACE data i=%u extent=%u offset=%u block=%llu status=%d\n",
-                                i, j, k,
-                                (unsigned long long)(physical + k), status);
                     if (owned) free(all);
                     goto out;
                 }
@@ -271,15 +205,12 @@ static int validate_bitmap_ownership(struct infs_volume *vol,
                                      const struct infs_index_entry_disk *entries,
                                      uint32_t count)
 {
-    const int trace = getenv("INFS_TEST_GRAPH_TRACE") != NULL;
     uint64_t total = infs_le64_to_cpu(vol->sb.total_blocks);
     uint8_t *owners = calloc(1, vol->bitmap_bytes);
     if (!owners)
         return INFS_STATUS_NO_MEMORY;
     int status = build_live_ownership_bitmap(vol, entries, count, owners);
     if (status != INFS_STATUS_OK) {
-        if (trace)
-            fprintf(stderr, "INFS_OWNERSHIP_TRACE live_build status=%d\n", status);
         free(owners);
         return status;
     }
@@ -287,8 +218,6 @@ static int validate_bitmap_ownership(struct infs_volume *vol,
     uint8_t *snapshot_union = NULL;
     status = snapshot_union_bitmap(vol, &snapshot_union);
     if (status != INFS_STATUS_OK) {
-        if (trace)
-            fprintf(stderr, "INFS_OWNERSHIP_TRACE snapshot_union status=%d\n", status);
         free(owners);
         return status;
     }
@@ -297,12 +226,7 @@ static int validate_bitmap_ownership(struct infs_volume *vol,
     free(snapshot_union);
 
     for (uint64_t b = 0; b < total; ++b) {
-        int owner_bit = bitmap_get(owners, b);
-        int bitmap_bit = bitmap_get(vol->bitmap, b);
-        if (owner_bit != bitmap_bit) {
-            if (trace)
-                fprintf(stderr, "INFS_OWNERSHIP_TRACE bitmap_mismatch block=%llu owner=%d bitmap=%d\n",
-                        (unsigned long long)b, owner_bit, bitmap_bit);
+        if (bitmap_get(owners, b) != bitmap_get(vol->bitmap, b)) {
             status = INFS_STATUS_CORRUPT;
             break;
         }
@@ -313,58 +237,37 @@ static int validate_bitmap_ownership(struct infs_volume *vol,
 
 static int validate_integrity_metadata(struct infs_volume *vol)
 {
-    const int trace = getenv("INFS_TEST_GRAPH_TRACE") != NULL;
     struct infs_index_entry_disk *entries = NULL;
     uint32_t count = 0;
     int status = index_snapshot(vol, &entries, &count);
-    if (status != INFS_STATUS_OK) {
-        if (trace)
-            fprintf(stderr, "INFS_INTEGRITY_TRACE index_snapshot=%d\n", status);
+    if (status != INFS_STATUS_OK)
         return status;
-    }
 
     status = validate_bitmap_ownership(vol, entries, count);
-    if (trace)
-        fprintf(stderr, "INFS_INTEGRITY_TRACE bitmap_ownership=%d count=%u\n",
-                status, count);
     if (status != INFS_STATUS_OK)
         goto out;
 
     for (uint32_t i = 0; i < count; ++i) {
         uint16_t type = infs_le16_to_cpu(entries[i].object_type);
-        uint64_t object_block = infs_le64_to_cpu(entries[i].object_block);
         if (type == INFS_OBJECT_CHECKSUM) {
             uint8_t block[INFS_BLOCK_SIZE];
-            status = read_object(vol, object_block, block);
-            if (status != INFS_STATUS_OK) {
-                if (trace)
-                    fprintf(stderr, "INFS_INTEGRITY_TRACE checksum_read i=%u block=%llu status=%d\n",
-                            i, (unsigned long long)object_block, status);
+            status = read_object(
+                vol, infs_le64_to_cpu(entries[i].object_block), block);
+            if (status != INFS_STATUS_OK)
                 goto out;
-            }
             struct infs_object_header_disk *hdr =
                 (struct infs_object_header_disk *)block;
             struct infs_checksum_payload_disk *cp;
-            int checksum_status = checksum_validate(block, NULL, &cp, NULL);
-            if (checksum_status != 0 ||
+            if (checksum_validate(block, NULL, &cp, NULL) != 0 ||
                 memcmp(hdr->parent_id, cp->owner_object_id, 16) != 0 ||
                 (infs_le64_to_cpu(cp->start_logical_block) %
                  INFS_CHECKSUMS_PER_OBJECT) != 0) {
-                if (trace)
-                    fprintf(stderr, "INFS_INTEGRITY_TRACE checksum_shape i=%u block=%llu checksum=%d parent_match=%d start=%llu\n",
-                            i, (unsigned long long)object_block, checksum_status,
-                            memcmp(hdr->parent_id, cp->owner_object_id, 16) == 0,
-                            (unsigned long long)infs_le64_to_cpu(cp->start_logical_block));
                 status = INFS_STATUS_CORRUPT;
                 goto out;
             }
             struct infs_lookup owner;
             status = index_find(vol, cp->owner_object_id, &owner);
             if (status != INFS_STATUS_OK || owner.type != INFS_OBJECT_FILE) {
-                if (trace)
-                    fprintf(stderr, "INFS_INTEGRITY_TRACE checksum_owner i=%u block=%llu status=%d owner_type=%u\n",
-                            i, (unsigned long long)object_block, status,
-                            status == INFS_STATUS_OK ? owner.type : 0u);
                 status = INFS_STATUS_CORRUPT;
                 goto out;
             }
@@ -375,74 +278,39 @@ static int validate_integrity_metadata(struct infs_volume *vol)
                 status = index_find(vol, cp->next_object_id, &next);
                 if (status != INFS_STATUS_OK ||
                     next.type != INFS_OBJECT_CHECKSUM) {
-                    if (trace)
-                        fprintf(stderr, "INFS_INTEGRITY_TRACE checksum_next_index i=%u block=%llu status=%d next_type=%u\n",
-                                i, (unsigned long long)object_block, status,
-                                status == INFS_STATUS_OK ? next.type : 0u);
                     status = INFS_STATUS_CORRUPT;
                     goto out;
                 }
                 status = read_object(vol, next.block, next_block);
-                if (status != INFS_STATUS_OK) {
-                    if (trace)
-                        fprintf(stderr, "INFS_INTEGRITY_TRACE checksum_next_read i=%u block=%llu next=%llu status=%d\n",
-                                i, (unsigned long long)object_block,
-                                (unsigned long long)next.block, status);
+                if (status != INFS_STATUS_OK)
                     goto out;
-                }
-                int next_status = checksum_validate(
-                    next_block, cp->owner_object_id, &next_cp, NULL);
-                if (next_status != 0 ||
+                if (checksum_validate(next_block, cp->owner_object_id,
+                                      &next_cp, NULL) != 0 ||
                     infs_le64_to_cpu(next_cp->start_logical_block) <=
                         infs_le64_to_cpu(cp->start_logical_block)) {
-                    if (trace)
-                        fprintf(stderr, "INFS_INTEGRITY_TRACE checksum_next_shape i=%u block=%llu next=%llu checksum=%d start=%llu next_start=%llu\n",
-                                i, (unsigned long long)object_block,
-                                (unsigned long long)next.block, next_status,
-                                (unsigned long long)infs_le64_to_cpu(cp->start_logical_block),
-                                (unsigned long long)infs_le64_to_cpu(next_cp->start_logical_block));
                     status = INFS_STATUS_CORRUPT;
                     goto out;
                 }
             }
         } else if (type == INFS_OBJECT_FILE) {
             uint8_t object[INFS_BLOCK_SIZE];
-            status = read_object(vol, object_block, object);
-            if (status != INFS_STATUS_OK) {
-                if (trace)
-                    fprintf(stderr, "INFS_INTEGRITY_TRACE file_read i=%u block=%llu status=%d\n",
-                            i, (unsigned long long)object_block, status);
+            status = read_object(
+                vol, infs_le64_to_cpu(entries[i].object_block), object);
+            if (status != INFS_STATUS_OK)
                 goto out;
-            }
             struct infs_object_header_disk *hdr =
                 (struct infs_object_header_disk *)object;
             struct infs_file_payload_disk *file;
             struct infs_extent_disk *ext;
             status = file_validate_volume(vol, object, &file, &ext);
-            if (status != INFS_STATUS_OK) {
-                if (trace)
-                    fprintf(stderr, "INFS_INTEGRITY_TRACE file_validate i=%u block=%llu version=%u payload=%u extents=%u status=%d\n",
-                            i, (unsigned long long)object_block,
-                            (unsigned)infs_le16_to_cpu(hdr->object_version),
-                            infs_le32_to_cpu(hdr->payload_size),
-                            infs_le32_to_cpu(((struct infs_file_payload_disk *)(hdr + 1))->extent_count),
-                            status);
+            if (status != INFS_STATUS_OK)
                 goto out;
-            }
             uint64_t allocated = 0;
             status = file_allocated_blocks_volume(
                 vol, object, file, ext, &allocated);
-            if (status != INFS_STATUS_OK) {
-                if (trace)
-                    fprintf(stderr, "INFS_INTEGRITY_TRACE file_allocated i=%u block=%llu status=%d\n",
-                            i, (unsigned long long)object_block, status);
+            if (status != INFS_STATUS_OK)
                 goto out;
-            }
             if (allocated && id_is_zero(file->checksum_head_id)) {
-                if (trace)
-                    fprintf(stderr, "INFS_INTEGRITY_TRACE file_missing_checksum i=%u block=%llu allocated=%llu\n",
-                            i, (unsigned long long)object_block,
-                            (unsigned long long)allocated);
                 status = INFS_STATUS_CORRUPT;
                 goto out;
             }
@@ -451,12 +319,8 @@ static int validate_integrity_metadata(struct infs_volume *vol)
             int owned = 0;
             status = file_extent_snapshot(vol, object, file, ext,
                                           &all, &extent_count, &owned);
-            if (status != INFS_STATUS_OK) {
-                if (trace)
-                    fprintf(stderr, "INFS_INTEGRITY_TRACE file_extent_snapshot i=%u block=%llu status=%d\n",
-                            i, (unsigned long long)object_block, status);
+            if (status != INFS_STATUS_OK)
                 goto out;
-            }
             for (uint32_t j = 0; j < extent_count; ++j) {
                 if (infs_le32_to_cpu(all[j].flags) != INFS_EXTENT_NORMAL)
                     continue;
@@ -468,19 +332,10 @@ static int validate_integrity_metadata(struct infs_volume *vol)
                     if (chunk > remaining)
                         chunk = remaining;
                     struct infs_data_checksum_disk digest;
-                    uint64_t wanted = logical + chunk - 1u;
                     status = checksum_get(vol, file, hdr->object_id,
-                                          wanted, &digest);
-                    if (status != INFS_STATUS_OK) {
-                        if (trace)
-                            fprintf(stderr, "INFS_INTEGRITY_TRACE file_checksum_get i=%u block=%llu extent=%u logical=%llu status=%d\n",
-                                    i, (unsigned long long)object_block, j,
-                                    (unsigned long long)wanted, status);
-                        if (owned) free(all);
-                        all = NULL;
-                        owned = 0;
+                                          logical + chunk - 1u, &digest);
+                    if (status != INFS_STATUS_OK)
                         goto out;
-                    }
                     logical += chunk;
                     remaining -= chunk;
                 }
@@ -488,21 +343,14 @@ static int validate_integrity_metadata(struct infs_volume *vol)
             if (owned) free(all);
         } else if (type == INFS_OBJECT_DIRECTORY) {
             uint8_t object[INFS_BLOCK_SIZE];
-            status = read_object(vol, object_block, object);
-            if (status != INFS_STATUS_OK) {
-                if (trace)
-                    fprintf(stderr, "INFS_INTEGRITY_TRACE dir_read i=%u block=%llu status=%d\n",
-                            i, (unsigned long long)object_block, status);
+            status = read_object(
+                vol, infs_le64_to_cpu(entries[i].object_block), object);
+            if (status != INFS_STATUS_OK)
                 goto out;
-            }
             struct infs_directory_payload_disk *dir;
             status = dir_validate(object, &dir);
-            if (status != INFS_STATUS_OK) {
-                if (trace)
-                    fprintf(stderr, "INFS_INTEGRITY_TRACE dir_validate i=%u block=%llu status=%d\n",
-                            i, (unsigned long long)object_block, status);
+            if (status != INFS_STATUS_OK)
                 goto out;
-            }
             struct infs_object_header_disk *header =
                 (struct infs_object_header_disk *)object;
             if (infs_le16_to_cpu(header->object_version) ==
@@ -515,10 +363,6 @@ static int validate_integrity_metadata(struct infs_volume *vol)
                 free(snapshot);
                 if (status != INFS_STATUS_OK ||
                     entries_count != infs_le32_to_cpu(dir->entry_count)) {
-                    if (trace)
-                        fprintf(stderr, "INFS_INTEGRITY_TRACE dir_snapshot i=%u block=%llu status=%d entries=%u expected=%u\n",
-                                i, (unsigned long long)object_block, status,
-                                entries_count, infs_le32_to_cpu(dir->entry_count));
                     if (status == INFS_STATUS_OK)
                         status = INFS_STATUS_CORRUPT;
                     goto out;
@@ -527,7 +371,8 @@ static int validate_integrity_metadata(struct infs_volume *vol)
             }
         } else if (type == INFS_OBJECT_SYMLINK) {
             uint8_t object[INFS_BLOCK_SIZE];
-            status = read_object(vol, object_block, object);
+            status = read_object(
+                vol, infs_le64_to_cpu(entries[i].object_block), object);
             if (status != INFS_STATUS_OK)
                 goto out;
             status = symlink_validate(vol, object, NULL, NULL);

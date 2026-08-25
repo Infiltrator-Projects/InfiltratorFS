@@ -137,56 +137,16 @@ static int file_validate_volume(struct infs_volume *vol,
                                 struct infs_file_payload_disk **payload_out,
                                 struct infs_extent_disk **extents_out)
 {
-    const int trace = getenv("INFS_TEST_GRAPH_TRACE") != NULL;
     struct infs_file_payload_disk *p;
     struct infs_extent_disk *ext;
     int status = file_validate(block, &p, &ext);
-    if (status != INFS_STATUS_OK) {
-        if (trace) {
-            struct infs_object_header_disk *hdr =
-                (struct infs_object_header_disk *)block;
-            struct infs_file_payload_disk *raw =
-                (struct infs_file_payload_disk *)(hdr + 1);
-            fprintf(stderr,
-                    "INFS_FILE_TRACE base status=%d version=%u payload=%u logical=%llu extents=%u checksum_type=%u\n",
-                    status, (unsigned)infs_le16_to_cpu(hdr->object_version),
-                    infs_le32_to_cpu(hdr->payload_size),
-                    (unsigned long long)infs_le64_to_cpu(raw->attributes.logical_size),
-                    infs_le32_to_cpu(raw->extent_count),
-                    infs_le32_to_cpu(raw->data_checksum_type));
-        }
+    if (status != INFS_STATUS_OK)
         return status;
-    }
     if (file_is_inline(block, p) &&
         (infs_le64_to_cpu(vol->sb.incompat_flags) & INFS_INCOMPAT_INLINE_DATA) == 0)
         return INFS_STATUS_CORRUPT;
     if (file_has_paged_extents(block)) {
         status = paged_extent_head_validate(vol, block, p);
-        if (status != INFS_STATUS_OK && trace) {
-            struct infs_object_header_disk *hdr =
-                (struct infs_object_header_disk *)block;
-            struct infs_extent_head_disk *head = file_extent_head(p);
-            uint32_t pages = infs_le32_to_cpu(head->page_count);
-            uint64_t *ptr = file_extent_page_pointers(p);
-            fprintf(stderr,
-                    "INFS_FILE_TRACE paged_head status=%d incompat=%llx pages=%u reserved=%u extents=%u payload=%u need=%zu\n",
-                    status,
-                    (unsigned long long)infs_le64_to_cpu(vol->sb.incompat_flags),
-                    pages, infs_le32_to_cpu(head->reserved),
-                    infs_le32_to_cpu(p->extent_count),
-                    infs_le32_to_cpu(hdr->payload_size),
-                    sizeof(*p) + sizeof(*head) +
-                        (size_t)pages * sizeof(uint64_t));
-            for (uint32_t i = 0; i < pages && i < 8u; ++i) {
-                uint64_t page = infs_le64_to_cpu(ptr[i]);
-                fprintf(stderr,
-                        "INFS_FILE_TRACE paged_ptr i=%u block=%llu in_range=%d allocated=%d\n",
-                        i, (unsigned long long)page,
-                        page > 0 && page < infs_le64_to_cpu(vol->sb.total_blocks),
-                        page < infs_le64_to_cpu(vol->sb.total_blocks) ?
-                            bitmap_get(vol->bitmap, page) : -1);
-            }
-        }
         if (status != INFS_STATUS_OK)
             return status;
         if (payload_out)
