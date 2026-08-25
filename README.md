@@ -6,7 +6,7 @@
 
 InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem started in 2026. The persistent format and core engine are written in portable C; Linux and Windows are adapters over the same on-disk structures rather than separate filesystem implementations.
 
-**Current implementation:** 0.16.9<br>
+**Current implementation:** 0.16.10<br>
 **On-disk format:** 0.12<br>
 **Shared foundation:** Infiltratr Common 1.11.0<br>
 **Licence:** GPL-3.0-or-later
@@ -48,8 +48,8 @@ Implementation 0.16.0 added native named snapshots. Each snapshot records a comp
 | Shared foundations | Infiltratr Common 1.11.0. |
 | Storage interface | Callback-based POSIX, Win32 and in-memory backends. |
 | Linux userspace adapter | Implemented through POSIX I/O and FUSE3. |
+| Native Linux kernel driver | Read-only VFS implementation; packaged through DKMS in 0.16.10. |
 | Windows transfer/raw-volume adapter | Implemented for direct current-Format partition access. |
-| Native Linux kernel driver | Future work. |
 | Native Windows filesystem driver / Explorer mount | Future work. |
 
 Filesystem-specific transaction, allocation, namespace, checksum and on-disk-format rules remain in InfiltratorFS. Common owns only generally reusable primitives such as endian conversion, UTF-8 validation, exact POSIX positioned I/O and checked arithmetic.
@@ -61,12 +61,13 @@ The Windows transfer application is not a Windows kernel filesystem driver. It c
 On Linux Mint, Ubuntu or another supported Debian-family development host:
 
 ```bash
-sudo apt install build-essential cmake pkg-config libfuse3-dev fuse3
+sudo apt install build-essential cmake pkg-config libfuse3-dev fuse3 dkms kmod linux-headers-$(uname -r)
 git clone --recurse-submodules https://github.com/The-First-Infiltrator/InfiltratorFS.git
 cd InfiltratorFS
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
+make -C kernel
 ```
 
 Create and inspect an image:
@@ -101,20 +102,21 @@ mkdir -p /tmp/infilfs-mnt
 ./build/infilfs-fuse infilfs.img /tmp/infilfs-mnt -f
 ```
 
-After installation, use the standard Linux helpers:
+After installation, the standard mount helper prefers the native kernel module for read-only block-device mounts and falls back to FUSE when the module is unavailable. Writable mounts remain on FUSE while the kernel adapter is read-only:
 
 ```bash
-mount -t infiltratorfs infilfs.img /mnt/infiltratorfs -o rw
+sudo mount -t infiltratorfs -o ro /dev/loop0 /mnt/infiltratorfs
+sudo mount -t infiltratorfs -o rw /dev/loop0 /mnt/infiltratorfs
 fsck.infiltratorfs -n infilfs.img
 ```
 
-GitHub Actions runs Linux, Clang, sanitizer and static-analyzer suites, cross-platform image qualification, native Windows builds/tests and Linux package construction.
+GitHub Actions runs Linux, Clang, sanitizer and static-analyzer suites, cross-platform image qualification, native Windows builds/tests, native Linux kernel-module compilation and Linux package construction.
 
 ## Desktop and Windows tools
 
-The Linux Debian package installs **InfiltratorFS Manager**, which can create/format images, select non-system disk partitions including fixed, USB, SD and other removable media, inspect, scrub, run forensic raw-metadata scans, mount through FUSE, open in Nemo and unmount safely. Whole disks and storage backing the active system partitions remain excluded.
+The Linux Debian package installs **InfiltratorFS Manager**, which can create/format images, select non-system disk partitions including fixed, USB, SD and other removable media, inspect, scrub, run forensic raw-metadata scans, mount through FUSE, open in Nemo and unmount safely. Whole disks and storage backing the active system partitions remain excluded. The same package now installs the read-only native Linux module as DKMS source, so the host builds `infiltratorfs.ko` against its own installed kernel headers rather than receiving a kernel-specific binary.
 
-The Windows release contains a versioned executable such as `InfiltratorFS-Windows-0.16.9.exe`. Run it elevated when accessing raw media. It can discover physical partitions, list the root directory, copy files/folders and run a full scrub while bounding raw I/O to the selected partition.
+The Windows release contains a versioned executable such as `InfiltratorFS-Windows-0.16.10.exe`. Run it elevated when accessing raw media. It can discover physical partitions, list the root directory, copy files/folders and run a full scrub while bounding raw I/O to the selected partition.
 
 ## Release assets
 
@@ -122,8 +124,8 @@ A numbered release publishes:
 
 | File | Purpose |
 | --- | --- |
-| `infiltratorfs_<version>_amd64.deb` | Generic Linux amd64 Debian package. |
-| `infiltratorfs-<version>-linux-native.run` | Native local Linux build/install program. |
+| `infiltratorfs_<version>_amd64.deb` | Generic Linux amd64 Debian package, including DKMS source for the native read-only kernel module. |
+| `infiltratorfs-<version>-linux-native.run` | Native local Linux build/install program, including DKMS module installation. |
 | `InfiltratorFS-Windows-<version>.exe` | Native Windows transfer/raw-volume application. |
 | `SHA256SUMS.txt` | SHA-256 checksums for all published project artifacts. |
 
@@ -132,11 +134,11 @@ GitHub provides the standard source-code ZIP and tarball automatically from the 
 To inspect the native Linux build before allowing it to install anything:
 
 ```bash
-chmod +x infiltratorfs-0.16.9-linux-native.run
-./infiltratorfs-0.16.9-linux-native.run --dry-run
+chmod +x infiltratorfs-0.16.10-linux-native.run
+./infiltratorfs-0.16.10-linux-native.run --dry-run
 ```
 
-Run the same file without `--dry-run` to compile, test and install InfiltratorFS natively. If required packages are missing, it displays the exact `apt-get` commands and asks before installing them.
+Run the same file without `--dry-run` to compile, test and install InfiltratorFS natively. If required packages or the running kernel's headers are missing, it displays the exact `apt-get` commands and asks before installing them.
 
 ## Repository and release policy
 
@@ -154,7 +156,7 @@ A healthy block-device open validates the checkpoints, bitmap and essential root
 
 If a writable open sees missing or disagreeing checkpoint replicas, each candidate is fully graph-validated before any healing occurs. A corrupt newer graph may fall back to an older valid committed generation; an unreadable checkpoint location remains a hard writable-open error because it might contain the only durable newer generation.
 
-InfiltratorFS remains experimental. Keep verified backups and use disposable/test media during development. The current FUSE adapter is deliberately single-threaded while the core remains single-writer. Persistent file-handle lifetime across unlink and rename is implemented in the adapter; parallel operation and the final native kernel-filesystem model remain future work.
+InfiltratorFS remains experimental. Keep verified backups and use disposable/test media during development. The FUSE adapter remains the authoritative writable Linux path while the native kernel adapter is intentionally read-only and is brought up incrementally against the same Format 0.12 media.
 
 ## Repository layout
 
@@ -163,8 +165,9 @@ include/infilfs/          public format/storage/filesystem interfaces
 src/                      portable filesystem core
 src/infiltratr-common/    pinned Infiltratr Common submodule
 src/platform/             POSIX and Win32 storage adapters
-tools/                    formatter, inspector, scrubber and transfer tools
+kernel/                   native Linux read-only VFS adapter and DKMS source
 fuse/                     Linux FUSE3 adapter
+tools/                    formatter, inspector, scrubber and transfer tools
 tests/                    conformance, recovery, crash and platform tests
 docs/                     architecture and on-disk-format documentation
 ```
@@ -187,3 +190,6 @@ Implementation 0.16.8 adds snapshot-coordinated online scrub. The core can scrub
 
 
 Implementation 0.16.9 hardens scattered writes to paged-extent files. Non-tail random overwrites now rebuild the complete ordered extent-page set with copy-on-write publication instead of relying on the former single-page replacement path. Conformance includes a fresh 512 MiB sparse file with deterministic scattered 4 KiB writes, durability sync, scrub, continued writes and reopen verification. Format 0.12 is unchanged.
+
+
+Implementation 0.16.10 introduces the first packaged native Linux VFS path. The out-of-tree `infiltratorfs.ko` driver can mount current Format 0.12 block devices read-only, traverse classic/paged indexes and directories, preserve hard-link inode identity, expose symlinks, and read inline, sparse, classic-extent and paged-extent files. Linux packages install the module source through DKMS, and the standard mount helper prefers the native driver for read-only block-device mounts while retaining FUSE for writable operation. Format 0.12 is unchanged.
