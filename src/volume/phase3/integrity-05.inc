@@ -81,23 +81,43 @@ static int claim_file_extent_metadata_pages(struct infs_volume *vol,
                                             uint8_t *owners, uint64_t total,
                                             uint64_t object_block)
 {
+    const int trace = getenv("INFS_TEST_GRAPH_TRACE") != NULL;
     uint8_t object[INFS_BLOCK_SIZE];
     infs_status status = read_object(vol, object_block, object);
-    if (status != INFS_STATUS_OK)
+    if (status != INFS_STATUS_OK) {
+        if (trace)
+            fprintf(stderr, "INFS_OWNERSHIP_TRACE extent_helper_read block=%llu status=%d\n",
+                    (unsigned long long)object_block, status);
         return status;
+    }
     struct infs_file_payload_disk *file;
     status = file_validate_volume(vol, object, &file, NULL);
-    if (status != INFS_STATUS_OK)
+    if (status != INFS_STATUS_OK) {
+        if (trace)
+            fprintf(stderr, "INFS_OWNERSHIP_TRACE extent_helper_validate block=%llu status=%d\n",
+                    (unsigned long long)object_block, status);
         return status;
+    }
     if (!file_has_paged_extents(object))
         return INFS_STATUS_OK;
     struct infs_extent_head_disk *head = file_extent_head(file);
     uint32_t pages = infs_le32_to_cpu(head->page_count);
     uint64_t *ptr = file_extent_page_pointers(file);
+    if (trace)
+        fprintf(stderr, "INFS_OWNERSHIP_TRACE extent_helper block=%llu pages=%u\n",
+                (unsigned long long)object_block, pages);
     for (uint32_t i = 0; i < pages; ++i) {
-        status = ownership_claim(owners, total, infs_le64_to_cpu(ptr[i]));
-        if (status != INFS_STATUS_OK)
+        uint64_t page_block = infs_le64_to_cpu(ptr[i]);
+        status = ownership_claim(owners, total, page_block);
+        if (status != INFS_STATUS_OK) {
+            if (trace)
+                fprintf(stderr, "INFS_OWNERSHIP_TRACE extent_helper_claim file=%llu page_index=%u page=%llu already_owned=%d status=%d\n",
+                        (unsigned long long)object_block, i,
+                        (unsigned long long)page_block,
+                        page_block < total ? bitmap_get(owners, page_block) : -1,
+                        status);
             return status;
+        }
     }
     return INFS_STATUS_OK;
 }
