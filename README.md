@@ -6,7 +6,7 @@
 
 InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem started in 2026. The persistent format and core engine are written in portable C; Linux and Windows are adapters over the same on-disk structures rather than separate filesystem implementations.
 
-**Current implementation:** 0.16.11<br>
+**Current implementation:** 0.16.12<br>
 **On-disk format:** 0.12<br>
 **Shared foundation:** Infiltratr Common 1.11.0<br>
 **Licence:** GPL-3.0-or-later
@@ -48,7 +48,7 @@ Implementation 0.16.0 added native named snapshots. Each snapshot records a comp
 | Shared foundations | Infiltratr Common 1.11.0. |
 | Storage interface | Callback-based POSIX, Win32 and in-memory backends. |
 | Linux userspace adapter | Implemented through POSIX I/O and FUSE3. |
-| Native Linux kernel driver | Read-only VFS implementation; packaged through DKMS in 0.16.10. |
+| Native Linux kernel driver | Read-only VFS implementation; packaged through DKMS since 0.16.10. |
 | Windows transfer/raw-volume adapter | Implemented for direct current-Format partition access. |
 | Native Windows filesystem driver / Explorer mount | Future work. |
 
@@ -110,13 +110,13 @@ sudo mount -i -t infiltratorfs -o ro /dev/loop0 /mnt/infiltratorfs
 fsck.infiltratorfs -n infilfs.img
 ```
 
-GitHub Actions runs Linux, Clang, sanitizer and static-analyzer suites, cross-platform image qualification, native Windows builds/tests, native Linux kernel-module compilation and Linux package construction.
+GitHub Actions runs Linux, Clang, sanitizer and static-analyzer suites, cross-platform image qualification, native Windows builds/tests, native Linux kernel-module compilation and Linux package construction. The native module workflow also reproduces the DKMS source-root build with `KERNELRELEASE` already exported, matching the packaging environment that exposed the 0.16.11 installation failure.
 
 ## Desktop and Windows tools
 
 The Linux Debian package installs **InfiltratorFS Manager**, which can create/format images, select non-system disk partitions including fixed, USB, SD and other removable media, inspect, scrub, run forensic raw-metadata scans, mount through FUSE, open in Nemo and unmount safely. Whole disks and storage backing the active system partitions remain excluded. The same package now installs the read-only native Linux module as DKMS source, so the host builds `infiltratorfs.ko` against its own installed kernel headers rather than receiving a kernel-specific binary.
 
-The Windows release contains a versioned executable such as `InfiltratorFS-Windows-0.16.11.exe`. Run it elevated when accessing raw media. It can discover physical partitions, list the root directory, copy files/folders and run a full scrub while bounding raw I/O to the selected partition.
+The Windows release contains a versioned executable such as `InfiltratorFS-Windows-0.16.12.exe`. Run it elevated when accessing raw media. It can discover physical partitions, list the root directory, copy files/folders and run a full scrub while bounding raw I/O to the selected partition.
 
 ## Release assets
 
@@ -134,8 +134,8 @@ GitHub provides the standard source-code ZIP and tarball automatically from the 
 To inspect the native Linux build before allowing it to install anything:
 
 ```bash
-chmod +x infiltratorfs-0.16.11-linux-native.run
-./infiltratorfs-0.16.11-linux-native.run --dry-run
+chmod +x infiltratorfs-0.16.12-linux-native.run
+./infiltratorfs-0.16.12-linux-native.run --dry-run
 ```
 
 Run the same file without `--dry-run` to compile, test and install InfiltratorFS natively. If required packages or the running kernel's headers are missing, it displays the exact `apt-get` commands and asks before installing them.
@@ -195,3 +195,5 @@ Implementation 0.16.9 hardens scattered writes to paged-extent files. Non-tail r
 Implementation 0.16.10 introduces the first packaged native Linux VFS path. The out-of-tree `infiltratorfs.ko` driver can mount current Format 0.12 block devices read-only, traverse classic/paged indexes and directories, preserve hard-link inode identity, expose symlinks, and read inline, sparse, classic-extent and paged-extent files. Linux packages install the module source through DKMS. Native mounts are exercised explicitly with `mount -i` while the standard mount helper remains on the mature FUSE path during bring-up. Format 0.12 is unchanged.
 
 Implementation 0.16.11 ports the packaged native Linux read-only module to the current fs_context/get_tree_bdev VFS mount API used by Linux 7.0, relies on the VFS default inode-drop policy for compatibility across supported kernel generations, and makes a DKMS build failure non-fatal to installation of the userspace/FUSE tools. Format 0.12 is unchanged.
+
+Implementation 0.16.12 fixes the packaged DKMS build entry. DKMS exports `KERNELRELEASE` before its initial make, and the previous conditional Makefile therefore exposed no top-level target and terminated with `make: *** No targets. Stop.`. The kernel Makefile now keeps its external-module build targets available in that environment, and CI permanently reproduces that exact DKMS-style source-root invocation. Format 0.12 is unchanged.
