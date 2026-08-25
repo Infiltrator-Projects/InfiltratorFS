@@ -102,11 +102,11 @@ mkdir -p /tmp/infilfs-mnt
 ./build/infilfs-fuse infilfs.img /tmp/infilfs-mnt -f
 ```
 
-After installation, the standard mount helper prefers the native kernel module for read-only block-device mounts and falls back to FUSE when the module is unavailable. Writable mounts remain on FUSE while the kernel adapter is read-only:
+The traditional `mount.infiltratorfs` helper remains on the mature FUSE path during native-kernel bring-up. To exercise the packaged native read-only module after installation, bypass the helper with util-linux `mount -i`:
 
 ```bash
-sudo mount -t infiltratorfs -o ro /dev/loop0 /mnt/infiltratorfs
-sudo mount -t infiltratorfs -o rw /dev/loop0 /mnt/infiltratorfs
+sudo modprobe infiltratorfs
+sudo mount -i -t infiltratorfs -o ro /dev/loop0 /mnt/infiltratorfs
 fsck.infiltratorfs -n infilfs.img
 ```
 
@@ -192,4 +192,4 @@ Implementation 0.16.8 adds snapshot-coordinated online scrub. The core can scrub
 Implementation 0.16.9 hardens scattered writes to paged-extent files. Non-tail random overwrites now rebuild the complete ordered extent-page set with copy-on-write publication instead of relying on the former single-page replacement path. Conformance includes a fresh 512 MiB sparse file with deterministic scattered 4 KiB writes, durability sync, scrub, continued writes and reopen verification. Format 0.12 is unchanged.
 
 
-Implementation 0.16.10 introduces the first packaged native Linux VFS path. The out-of-tree `infiltratorfs.ko` driver can mount current Format 0.12 block devices read-only, traverse classic/paged indexes and directories, preserve hard-link inode identity, expose symlinks, and read inline, sparse, classic-extent and paged-extent files. Linux packages install the module source through DKMS, and the standard mount helper prefers the native driver for read-only block-device mounts while retaining FUSE for writable operation. Format 0.12 is unchanged.
+Implementation 0.16.10 introduces the first packaged native Linux VFS path. The out-of-tree `infiltratorfs.ko` driver can mount current Format 0.12 block devices read-only, traverse classic/paged indexes and directories, preserve hard-link inode identity, expose symlinks, and read inline, sparse, classic-extent and paged-extent files. Linux packages install the module source through DKMS. Native mounts are exercised explicitly with `mount -i` while the standard mount helper remains on the mature FUSE path during bring-up. Format 0.12 is unchanged.
