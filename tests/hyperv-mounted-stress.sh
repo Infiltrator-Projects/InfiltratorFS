@@ -117,7 +117,7 @@ path = os.path.join(sys.argv[1], 'fsync-4k.bin')
 fd = os.open(path, os.O_CREAT | os.O_TRUNC | os.O_WRONLY, 0o644)
 try:
     block = b'F' * 4096
-    for i in range(200):
+    for _ in range(200):
         os.write(fd, block)
         os.fsync(fd)
 finally:
@@ -128,17 +128,20 @@ step 'writing and publishing the 1 GiB sequential file'
 dd if=/dev/zero of="$mount_dir/large-zero.bin" bs=4M count=256 conv=fsync status=none
 sync
 
-# This is the critical discriminator. If it fails, generation damage predates
-# the random workload. If it passes and the later transaction breaks the same
-# generation, operation-level COW isolation is at fault.
-step 'strictly validating the committed generation before random writes'
+# The POSIX backend deliberately holds an exclusive advisory lock for the
+# writable FUSE mount. Strict inspection/scrub therefore has to happen across
+# an unmount boundary rather than by opening the image concurrently.
+step 'unmounting to validate the committed generation before random writes'
+unmount_image
 strict_committed_check 'before-random'
+step 'remounting for random overwrite workload'
+mount_image
 
 step 'creating 512 MiB sparse file and replaying exact RNG overwrite sequence'
 set +e
-python3 - "$mount_dir" "$image" "$scrub" <<'PY'
-import os, random, subprocess, sys
-root, image, scrub = sys.argv[1:4]
+python3 - "$mount_dir" <<'PY'
+import os, random, sys
+root = sys.argv[1]
 path = os.path.join(root, 'random-update.bin')
 size = 512 * 1024 * 1024
 with open(path, 'wb') as f:
@@ -164,9 +167,6 @@ try:
         if i and i % 256 == 0:
             print(f'RANDOM_FSYNC i={i} logical={logical}', flush=True)
             os.fsync(fd)
-            # Every explicitly published random-write generation must be
-            # independently openable and scrub-clean while FUSE remains up.
-            subprocess.run([scrub, image], check=True)
     os.fsync(fd)
 finally:
     os.close(fd)
@@ -176,9 +176,9 @@ set -e
 
 if [[ "$random_rc" -ne 0 ]]; then
     echo "hyperv-mounted-stress: random phase failed rc=$random_rc" >&2
-    step 'unmounting WITHOUT another sync after random failure'
+    step 'unmounting without an extra explicit sync after random failure'
     unmount_image
-    step 'inspecting last committed checkpoint after failed transaction abort'
+    step 'inspecting last committed checkpoint after failed transaction'
     "$inspect" "$image" || true
     if "$scrub" "$image"; then
         echo 'hyperv-mounted-stress: committed generation survived failed random transaction' >&2
