@@ -93,10 +93,31 @@ static int paged_index_add(struct infs_volume *vol, const uint8_t id[16],
                            uint64_t object_block, uint16_t type);
 static int paged_index_remove(struct infs_volume *vol, const uint8_t id[16]);
 
+/* These narrowly-scoped helpers are retained for planned cache/extent fast
+ * paths but are deliberately dormant in Format 0.12.  Mark only those known
+ * symbols rather than disabling -Wunused-function for the translation unit,
+ * so newly orphaned code still produces a build warning. */
+#if defined(__GNUC__) || defined(__clang__)
+#define object_cache_lookup_page __attribute__((unused)) object_cache_lookup_page
+#define bitmap_free_count __attribute__((unused)) bitmap_free_count
+#define metadata_head_page_pointers __attribute__((unused)) metadata_head_page_pointers
+#define paged_extent_replace __attribute__((unused)) paged_extent_replace
+#endif
+
 #include "volume/part1.inc"
 #include "volume/phase3/runtime-cache.inc"
 #include "volume/phase3/paged-metadata.inc"
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+/* total_count is uint32_t.  The overflow guard in paged-extents is required
+ * for 32-bit size_t builds and is provably false on 64-bit GCC; retain the
+ * portable guard without accepting unrelated -Wtype-limits diagnostics. */
+#pragma GCC diagnostic ignored "-Wtype-limits"
+#endif
 #include "volume/phase3/paged-extents.inc"
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 #include "volume/phase3/part2-01.inc"
 #include "volume/phase3/part2-02.inc"
 #include "volume/phase3/part2-03.inc"
@@ -118,3 +139,10 @@ static int paged_index_remove(struct infs_volume *vol, const uint8_t id[16]);
 #include "volume/phase3/part5-01.inc"
 #include "volume/phase3/part5-02.inc"
 #include "volume/phase3/part5-03.inc"
+
+#if defined(__GNUC__) || defined(__clang__)
+#undef object_cache_lookup_page
+#undef bitmap_free_count
+#undef metadata_head_page_pointers
+#undef paged_extent_replace
+#endif
