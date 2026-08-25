@@ -86,7 +86,7 @@ jobs:
           needle = '''      - name: Verify module metadata\n        shell: bash\n        run: |\n'''
           if s.count(needle) != 1:
               raise SystemExit('expected module metadata step exactly once')
-          step = '''      - name: Reproduce DKMS source-root invocation\n        shell: bash\n        env:\n          KDIR: ${{ steps.headers.outputs.generic_kdir }}\n        run: |\n          set -euo pipefail\n          dkms_src="$(mktemp -d)"\n          trap 'rm -rf "$dkms_src"' EXIT\n          cp kernel/Makefile kernel/infiltratorfs.c kernel/infiltratorfs_format.h "$dkms_src/"\n          release="$(make -sC "$KDIR" kernelrelease)"\n          KERNELRELEASE="$release" make -C "$dkms_src" KDIR="$KDIR"\n          test -s "$dkms_src/infiltratorfs.ko"\n\n'''
+          step = '''      - name: Reproduce DKMS source-root invocation\n        shell: bash\n        run: |\n          set -euo pipefail\n          dkms_src="$(mktemp -d)"\n          trap 'rm -rf "$dkms_src"' EXIT\n          cp kernel/Makefile kernel/infiltratorfs.c kernel/infiltratorfs_format.h "$dkms_src/"\n          KDIR="$(find /usr/src -maxdepth 1 -type d -name 'linux-headers-*-generic' -print | sort -V | tail -n 1)"\n          test -f "$KDIR/Makefile"\n          release="$(make -sC "$KDIR" kernelrelease)"\n          KERNELRELEASE="$release" make -C "$dkms_src" KDIR="$KDIR"\n          test -s "$dkms_src/infiltratorfs.ko"\n\n'''
           s = s.replace(needle, step + needle, 1)
           p.write_text(s)
           PY
