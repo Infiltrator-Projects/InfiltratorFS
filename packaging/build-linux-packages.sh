@@ -34,6 +34,24 @@ install -d "$package_root/usr/share/doc/infiltratorfs"
 install -m 0644 LICENSE "$package_root/usr/share/doc/infiltratorfs/copyright"
 install -m 0644 README.md "$package_root/usr/share/doc/infiltratorfs/README.md"
 
+# Ship the native read-only kernel adapter as DKMS source rather than as a
+# kernel-version-specific binary. The installed host therefore builds only the
+# out-of-tree module against its own kernel headers; Linux itself is untouched.
+dkms_root="$package_root/usr/src/infiltratorfs-$version"
+install -d "$dkms_root"
+install -m 0644 kernel/Makefile "$dkms_root/Makefile"
+install -m 0644 kernel/infiltratorfs.c "$dkms_root/infiltratorfs.c"
+install -m 0644 kernel/infiltratorfs_format.h "$dkms_root/infiltratorfs_format.h"
+cat > "$dkms_root/dkms.conf" <<EOF
+PACKAGE_NAME="infiltratorfs"
+PACKAGE_VERSION="${version}"
+BUILT_MODULE_NAME[0]="infiltratorfs"
+DEST_MODULE_LOCATION[0]="/updates/dkms"
+AUTOINSTALL="yes"
+MAKE[0]="make KDIR=/lib/modules/\${kernelver}/build"
+CLEAN="make KDIR=/lib/modules/\${kernelver}/build clean"
+EOF
+
 install -d "$package_root/DEBIAN"
 installed_size="$(du -sk "$package_root/usr" | cut -f1)"
 cat > "$package_root/DEBIAN/control" <<EOF
@@ -43,15 +61,62 @@ Section: utils
 Priority: optional
 Architecture: ${architecture}
 Maintainer: The First Infiltrator
-Depends: fuse3, libfuse3-3, policykit-1, util-linux, xdg-utils, zenity
+Depends: dkms, kmod, fuse3, libfuse3-3, policykit-1, util-linux, xdg-utils, zenity
+Recommends: linux-headers-generic
 Installed-Size: ${installed_size}
 Homepage: https://github.com/The-First-Infiltrator/InfiltratorFS
 Description: platform-neutral experimental filesystem tools
  InfiltratorFS formatter, inspector, scrubber, forensic scanner,
- standard mount/fsck helpers, direct-image utility, Linux FUSE adapter
- and Linux Mint desktop manager.
+ standard mount/fsck helpers, direct-image utility, Linux FUSE adapter,
+ native read-only Linux kernel module via DKMS and Linux Mint desktop manager.
  Use only with image files or disposable or backed-up media.
 EOF
+
+cat > "$package_root/DEBIAN/postinst" <<EOF
+#!/bin/sh
+set -e
+module='infiltratorfs'
+version='${version}'
+kernel="\$(uname -r)"
+
+if command -v dkms >/dev/null 2>&1; then
+    if ! dkms status -m "\$module" -v "\$version" 2>/dev/null | grep -q .; then
+        dkms add -m "\$module" -v "\$version"
+    fi
+    if [ -f "/lib/modules/\$kernel/build/Makefile" ]; then
+        dkms build -m "\$module" -v "\$version" -k "\$kernel"
+        dkms install -m "\$module" -v "\$version" -k "\$kernel" --force
+    else
+        echo "InfiltratorFS: kernel headers for \$kernel are not installed." >&2
+        echo "Install linux-headers-\$kernel, then run: sudo dkms autoinstall" >&2
+    fi
+fi
+if command -v depmod >/dev/null 2>&1; then
+    depmod -a || true
+fi
+exit 0
+EOF
+chmod 0755 "$package_root/DEBIAN/postinst"
+
+cat > "$package_root/DEBIAN/prerm" <<EOF
+#!/bin/sh
+set -e
+if [ "\${1:-}" = remove ] && command -v dkms >/dev/null 2>&1; then
+    dkms remove -m infiltratorfs -v '${version}' --all || true
+fi
+exit 0
+EOF
+chmod 0755 "$package_root/DEBIAN/prerm"
+
+cat > "$package_root/DEBIAN/postrm" <<'EOF'
+#!/bin/sh
+set -e
+if command -v depmod >/dev/null 2>&1; then
+    depmod -a || true
+fi
+exit 0
+EOF
+chmod 0755 "$package_root/DEBIAN/postrm"
 
 dpkg-deb --root-owner-group --build "$package_root" "$dist_dir/$deb_name"
 dpkg-deb --contents "$dist_dir/$deb_name" > "$dist_dir/package-contents.txt"
@@ -61,8 +126,11 @@ grep -q 'usr/sbin/mount.infiltratorfs$' "$dist_dir/package-contents.txt"
 grep -q 'usr/sbin/fsck.infiltratorfs$' "$dist_dir/package-contents.txt"
 grep -q 'usr/lib/infiltratorfs/infiltratorfs-manager-helper$' "$dist_dir/package-contents.txt"
 grep -q 'usr/share/applications/infiltratorfs-manager.desktop$' "$dist_dir/package-contents.txt"
+grep -q "usr/src/infiltratorfs-${version}/dkms.conf$" "$dist_dir/package-contents.txt"
+grep -q "usr/src/infiltratorfs-${version}/infiltratorfs.c$" "$dist_dir/package-contents.txt"
+grep -q "usr/src/infiltratorfs-${version}/infiltratorfs_format.h$" "$dist_dir/package-contents.txt"
 test "$(dpkg-deb --field "$dist_dir/$deb_name" Version)" = "$version"
-for dependency in fuse3 libfuse3-3 policykit-1 util-linux xdg-utils zenity; do
+for dependency in dkms kmod fuse3 libfuse3-3 policykit-1 util-linux xdg-utils zenity; do
     dpkg-deb --field "$dist_dir/$deb_name" Depends |
         grep -Eq "(^|, )${dependency}([ ,]|$)"
 done
@@ -125,7 +193,8 @@ verify_installer() {
         verify_ok=0
     fi
     for required in CMakeLists.txt README.md support/installer/bootstrap.sh \
-        src/infiltratr-common/CMakeLists.txt; do
+        src/infiltratr-common/CMakeLists.txt kernel/Makefile \
+        kernel/infiltratorfs.c kernel/infiltratorfs_format.h; do
         if [[ ! -f "$verify_root/$required" ]]; then
             echo "Embedded source payload is missing $required." >&2
             verify_ok=0
@@ -194,6 +263,7 @@ test "$(head -n 1 "$dist_dir/$run_name")" = '#!/usr/bin/env bash'
 grep -Fq 'Dry run only; no packages will be installed' \
     "$dist_dir/native-installer-dry-run.txt"
 grep -Fq 'Native build commands:' "$dist_dir/native-installer-dry-run.txt"
+grep -Fq 'Native kernel module commands:' "$dist_dir/native-installer-dry-run.txt"
 rm -f "$dist_dir/native-installer-dry-run.txt"
 
 (
