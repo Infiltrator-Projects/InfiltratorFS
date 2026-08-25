@@ -23,12 +23,22 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
+
           p = Path('kernel/infiltratorfs.c')
           s = p.read_text()
           old = '''        u32 target_len = le32_to_cpu(payload->target_length);\n        const u8 *target = (const u8 *)(payload + 1);\n\n        if (target_len == 0'''
           new = '''        u32 target_len = le32_to_cpu(payload->target_length);\n        const u8 *target = (const u8 *)(payload + 1);\n\n        attributes = &payload->attributes;\n        posix = &payload->posix;\n        if (target_len == 0'''
           if old not in s:
               raise SystemExit('symlink payload marker not found')
+          p.write_text(s.replace(old, new, 1))
+
+          p = Path('kernel/infiltratorfs_rw.inc')
+          s = p.read_text()
+          s = s.replace('    bool root_parent;\n', '', 1)
+          old = '''    root_parent = memcmp(dir_ii->object_id, sbi->disk.root_object_id, 16) == 0;\n    ret = infilfs_rw_rebuild_index(&tx,\n        root_parent ? NULL : dir_ii->object_id, new_dir_block,\n        INFILFS_OBJECT_DIRECTORY, object_id, object_block, type);\n'''
+          new = '''    ret = infilfs_rw_rebuild_index(&tx,\n        dir_ii->object_id, new_dir_block, INFILFS_OBJECT_DIRECTORY,\n        object_id, object_block, type);\n'''
+          if old not in s:
+              raise SystemExit('root index repoint marker not found')
           p.write_text(s.replace(old, new, 1))
           PY
           git diff --check
@@ -87,9 +97,6 @@ jobs:
           cmp "$extent_src" "$mountpoint/docs/extent.bin"
           echo 'PASS preexisting extent read'
 
-          echo '=== native symlink diagnostics ==='
-          ls -lan "$mountpoint" || true
-          stat -c 'type=%F mode=%f ino=%i uid=%u gid=%g size=%s' "$mountpoint/current" || true
           link="$(timeout 2 readlink "$mountpoint/current" || true)"
           printf 'native readlink=<%s>\n' "$link"
           test "$link" = 'docs/inline.txt'
