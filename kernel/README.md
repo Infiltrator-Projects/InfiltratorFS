@@ -1,12 +1,12 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # Native Linux kernel module
 
-This directory contains the native Linux VFS adapter for InfiltratorFS. It is an out-of-tree kernel module: Linux itself does not need to be rebuilt. The module is built against installed kernel headers. Release 0.16.11 packages the source through DKMS so normal kernel upgrades rebuild only `infiltratorfs.ko` for kernels whose matching headers are installed.
+This directory contains the native Linux VFS adapter for InfiltratorFS. It is an out-of-tree kernel module: Linux itself does not need to be rebuilt. The module is built against installed kernel headers. Release 0.16.12 packages the source through DKMS so normal kernel upgrades rebuild only `infiltratorfs.ko` for kernels whose matching headers are installed.
 
 The current milestone is a genuine read-only filesystem implementation rather than the earlier empty-root bootstrap. The module now:
 
 - registers the `infiltratorfs` filesystem type with Linux VFS;
-- mounts an InfiltratorFS block device read-only through `mount_bdev`;
+- mounts an InfiltratorFS block device read-only through the current `fs_context`/`get_tree_bdev` VFS path;
 - selects the highest-generation structurally valid checkpoint from the three physical checkpoint locations;
 - requires current Format 0.12 and rejects unknown incompatible feature bits;
 - opens the real persistent root object;
@@ -35,7 +35,7 @@ The Debian package installs the module sources under `/usr/src/infiltratorfs-<ve
 
 The traditional `mount.infiltratorfs` helper deliberately remains on the mature FUSE path during this bring-up. To exercise the native read-only module without invoking the helper recursively, load it with `modprobe infiltratorfs` and use `mount -i -t infiltratorfs -o ro <block-device> <mountpoint>`.
 
-The dedicated kernel-module GitHub Actions workflow always compiles the module against Ubuntu generic kernel headers and checks its module metadata. When the hosted runner also exposes headers matching its running kernel, the workflow additionally builds the userspace formatter/tools, creates a real Format 0.12 image containing directories, an inline file, an extent-backed file and a symbolic link, loads `infiltratorfs.ko`, mounts the image through a loop block device, and byte-compares files through the native kernel mount.
+The dedicated kernel-module GitHub Actions workflow always compiles the module against Ubuntu generic kernel headers and checks its module metadata. It also copies exactly the source files shipped to the DKMS source root and invokes make with `KERNELRELEASE` already exported, reproducing the packaging environment that exposed the 0.16.11 `make: *** No targets. Stop.` failure. When the hosted runner also exposes headers matching its running kernel, the workflow additionally builds the userspace formatter/tools, creates a real Format 0.12 image containing directories, an inline file, an extent-backed file and a symbolic link, loads `infiltratorfs.ko`, mounts the image through a loop block device, and byte-compares files through the native kernel mount.
 
 ## Deliberate limitations of this milestone
 
