@@ -82,6 +82,26 @@ run_as_root() {
     fi
 }
 
+remove_stale_dkms_versions() {
+    local line head old_version
+    declare -A seen=()
+
+    command -v dkms >/dev/null 2>&1 || return 0
+    while IFS= read -r line; do
+        [[ "$line" == infiltratorfs/* ]] || continue
+        head="${line%%,*}"
+        head="${head%%:*}"
+        old_version="${head#infiltratorfs/}"
+        [[ -n "$old_version" && "$old_version" != "$VERSION" ]] || continue
+        [[ -z "${seen[$old_version]:-}" ]] || continue
+        seen[$old_version]=1
+
+        printf 'Removing stale InfiltratorFS DKMS registration %s before package/header changes.\n' "$old_version"
+        run_as_root dkms remove -m infiltratorfs -v "$old_version" --all || true
+        run_as_root rm -rf "/usr/src/infiltratorfs-${old_version}" "/var/lib/dkms/infiltratorfs/${old_version}" || true
+    done < <(dkms status -m infiltratorfs 2>/dev/null || true)
+}
+
 install_kernel_module() {
     local dkms_conf="$BUILD_DIR/infiltratorfs-dkms.conf"
 
@@ -120,6 +140,7 @@ check_requirements
 if [[ "${1:-}" == '--dry-run' ]]; then
     printf 'InfiltratorFS native build installer\n'
     printf 'Dry run only; no packages will be installed and no files will be changed.\n'
+    printf 'Older InfiltratorFS DKMS registrations would be removed before any package/header installation.\n'
     if (( ${#missing_packages[@]} > 0 )); then
         printf 'Missing build or runtime requirements:\n'
         printf '  %s\n' "${missing_packages[@]}"
@@ -137,6 +158,8 @@ if (( $# > 0 )); then
     echo "Usage: bootstrap.sh [--dry-run]" >&2
     exit 2
 fi
+
+remove_stale_dkms_versions
 
 printf 'InfiltratorFS native build installer\n'
 printf 'Source: %s\n' "$ROOT"
