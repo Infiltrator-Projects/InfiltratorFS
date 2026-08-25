@@ -67,6 +67,7 @@ jobs:
              kernel/infiltratorfs_rw.inc \
              kernel/infiltratorfs_rw_legacy.inc \
              kernel/infiltratorfs_rw_data.inc \
+             kernel/infiltratorfs_rw_namespace.inc \
              "$dkms_src/"
           release="$(make -sC "$KDIR" kernelrelease)"
           KERNELRELEASE="$release" make -C "$dkms_src" KDIR="$KDIR"
@@ -164,6 +165,26 @@ jobs:
           sudo truncate -s 8 "$mountpoint/native-rw/created.txt"
           test "$(cat "$mountpoint/native-rw/created.txt")" = 'rewritte'
 
+          # Qualify native namespace mutation before the large data workload.
+          sudo mv "$mountpoint/native-rw/created.txt" "$mountpoint/native-rw/renamed.txt"
+          test "$(cat "$mountpoint/native-rw/renamed.txt")" = 'rewritte'
+          sudo ln "$mountpoint/native-rw/renamed.txt" "$mountpoint/native-rw/hard.txt"
+          test "$(stat -c '%i' "$mountpoint/native-rw/renamed.txt")" = \
+               "$(stat -c '%i' "$mountpoint/native-rw/hard.txt")"
+          sudo rm "$mountpoint/native-rw/renamed.txt"
+          test "$(cat "$mountpoint/native-rw/hard.txt")" = 'rewritte'
+          sudo mv "$mountpoint/native-rw/hard.txt" "$mountpoint/native-rw/created.txt"
+          sudo ln -s created.txt "$mountpoint/native-rw/current-link"
+          test "$(readlink "$mountpoint/native-rw/current-link")" = 'created.txt'
+          test "$(cat "$mountpoint/native-rw/current-link")" = 'rewritte'
+          sudo rm "$mountpoint/native-rw/current-link"
+          sudo mkdir "$mountpoint/native-rw/source-dir" "$mountpoint/native-rw/dest-dir"
+          printf 'cross-directory-rename\n' | sudo tee "$mountpoint/native-rw/source-dir/item" >/dev/null
+          sudo mv "$mountpoint/native-rw/source-dir/item" "$mountpoint/native-rw/dest-dir/item"
+          test "$(cat "$mountpoint/native-rw/dest-dir/item")" = 'cross-directory-rename'
+          sudo rm "$mountpoint/native-rw/dest-dir/item"
+          sudo rmdir "$mountpoint/native-rw/source-dir" "$mountpoint/native-rw/dest-dir"
+
           # Use deterministic non-zero data and 4 MiB write syscalls. This
           # exercises the native extent path directly without GNU cp sparse-file
           # heuristics obscuring whether write_iter itself is healthy.
@@ -184,6 +205,10 @@ jobs:
           PY
           printf 'Verifying live native readback...\n'
           cmp "$large_src" "$mountpoint/native-rw/large.bin"
+          sudo ln "$mountpoint/native-rw/large.bin" "$mountpoint/native-rw/large-hard.bin"
+          sudo rm "$mountpoint/native-rw/large.bin"
+          cmp "$large_src" "$mountpoint/native-rw/large-hard.bin"
+          sudo mv "$mountpoint/native-rw/large-hard.bin" "$mountpoint/native-rw/large.bin"
 
           printf 'Publishing durability barrier...\n'
           sync_start="$(date +%s%N)"
@@ -210,7 +235,7 @@ jobs:
           mounted=1
           test "$(cat "$mountpoint/native-rw/created.txt")" = 'rewritte'
           cmp "$large_src" "$mountpoint/native-rw/large.bin"
-          printf 'Native kernel RW extent/remount/scrub qualification passed on %s\n' "$(uname -r)"
+          printf 'Native kernel RW namespace/extent/remount/scrub qualification passed on %s\n' "$(uname -r)"
 
       - name: Report runtime mount test availability
         if: steps.headers.outputs.runtime_kdir == ''
