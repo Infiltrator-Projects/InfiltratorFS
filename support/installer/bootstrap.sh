@@ -4,8 +4,16 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BUILD_DIR="${ROOT}/build-native"
+VERSION="$(sed -n 's/^project(InfiltratorFS VERSION \([^ ]*\) LANGUAGES C)$/\1/p' "$ROOT/CMakeLists.txt")"
+KERNEL_RELEASE="$(uname -r)"
+DKMS_SOURCE="/usr/src/infiltratorfs-${VERSION}"
 
 declare -a missing_packages=()
+
+if [[ -z "$VERSION" ]]; then
+    echo "Could not determine InfiltratorFS version from CMakeLists.txt" >&2
+    exit 1
+fi
 
 add_missing_package() {
     local candidate existing
@@ -28,11 +36,17 @@ check_requirements() {
     command -v mountpoint >/dev/null 2>&1 || add_missing_package util-linux
     command -v xdg-open >/dev/null 2>&1 || add_missing_package xdg-utils
     command -v zenity >/dev/null 2>&1 || add_missing_package zenity
+    command -v dkms >/dev/null 2>&1 || add_missing_package dkms
+    command -v modprobe >/dev/null 2>&1 || add_missing_package kmod
+    command -v depmod >/dev/null 2>&1 || add_missing_package kmod
     command -v update-desktop-database >/dev/null 2>&1 ||
         add_missing_package desktop-file-utils
     if ! command -v pkg-config >/dev/null 2>&1 ||
         ! pkg-config --exists fuse3; then
         add_missing_package libfuse3-dev
+    fi
+    if [[ ! -f "/lib/modules/${KERNEL_RELEASE}/build/Makefile" ]]; then
+        add_missing_package "linux-headers-${KERNEL_RELEASE}"
     fi
 }
 
@@ -51,6 +65,56 @@ print_build_commands() {
     printf '  sudo cmake --install %q --prefix /usr\n' "$BUILD_DIR"
 }
 
+print_kernel_commands() {
+    printf 'Native kernel module commands:\n'
+    printf '  make -C %q KDIR=%q\n' "$ROOT/kernel" "/lib/modules/${KERNEL_RELEASE}/build"
+    printf '  sudo install DKMS source under %q\n' "$DKMS_SOURCE"
+    printf '  sudo dkms add -m infiltratorfs -v %q\n' "$VERSION"
+    printf '  sudo dkms build -m infiltratorfs -v %q -k %q\n' "$VERSION" "$KERNEL_RELEASE"
+    printf '  sudo dkms install -m infiltratorfs -v %q -k %q --force\n' "$VERSION" "$KERNEL_RELEASE"
+}
+
+run_as_root() {
+    if (( EUID == 0 )); then
+        "$@"
+    else
+        sudo "$@"
+    fi
+}
+
+install_kernel_module() {
+    local dkms_conf="$BUILD_DIR/infiltratorfs-dkms.conf"
+
+    mkdir -p "$BUILD_DIR"
+    cat > "$dkms_conf" <<EOF
+PACKAGE_NAME="infiltratorfs"
+PACKAGE_VERSION="${VERSION}"
+BUILT_MODULE_NAME[0]="infiltratorfs"
+DEST_MODULE_LOCATION[0]="/updates/dkms"
+AUTOINSTALL="yes"
+MAKE[0]="make KDIR=/lib/modules/\${kernelver}/build"
+CLEAN="make KDIR=/lib/modules/\${kernelver}/build clean"
+EOF
+
+    make -C "$ROOT/kernel" KDIR="/lib/modules/${KERNEL_RELEASE}/build"
+
+    if dkms status -m infiltratorfs -v "$VERSION" 2>/dev/null | grep -q .; then
+        run_as_root dkms remove -m infiltratorfs -v "$VERSION" --all || true
+    fi
+
+    run_as_root rm -rf "$DKMS_SOURCE"
+    run_as_root install -d "$DKMS_SOURCE"
+    run_as_root install -m 0644 "$ROOT/kernel/Makefile" "$DKMS_SOURCE/Makefile"
+    run_as_root install -m 0644 "$ROOT/kernel/infiltratorfs.c" "$DKMS_SOURCE/infiltratorfs.c"
+    run_as_root install -m 0644 "$ROOT/kernel/infiltratorfs_format.h" "$DKMS_SOURCE/infiltratorfs_format.h"
+    run_as_root install -m 0644 "$dkms_conf" "$DKMS_SOURCE/dkms.conf"
+
+    run_as_root dkms add -m infiltratorfs -v "$VERSION"
+    run_as_root dkms build -m infiltratorfs -v "$VERSION" -k "$KERNEL_RELEASE"
+    run_as_root dkms install -m infiltratorfs -v "$VERSION" -k "$KERNEL_RELEASE" --force
+    run_as_root depmod -a
+}
+
 check_requirements
 
 if [[ "${1:-}" == '--dry-run' ]]; then
@@ -65,6 +129,7 @@ if [[ "${1:-}" == '--dry-run' ]]; then
         printf 'All required build and runtime packages are already available.\n'
     fi
     print_build_commands
+    print_kernel_commands
     exit 0
 fi
 
@@ -137,5 +202,8 @@ else
     fi
 fi
 
+install_kernel_module
+
 printf '\nInfiltratorFS native compilation and installation complete.\n'
+printf 'The read-only native Linux module is installed through DKMS for kernel %s.\n' "$KERNEL_RELEASE"
 printf 'Launch "InfiltratorFS Manager" from the application menu.\n'
