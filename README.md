@@ -6,7 +6,7 @@
 
 InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem started in 2026. The persistent format and core engine are written in portable C; Linux and Windows are adapters over the same on-disk structures rather than separate filesystem implementations.
 
-**Current implementation:** 0.16.8<br>
+**Current implementation:** 0.16.9<br>
 **On-disk format:** 0.12<br>
 **Shared foundation:** Infiltratr Common 1.11.0<br>
 **Licence:** GPL-3.0-or-later
@@ -114,7 +114,7 @@ GitHub Actions runs Linux, Clang, sanitizer and static-analyzer suites, cross-pl
 
 The Linux Debian package installs **InfiltratorFS Manager**, which can create/format images, select non-system disk partitions including fixed, USB, SD and other removable media, inspect, scrub, run forensic raw-metadata scans, mount through FUSE, open in Nemo and unmount safely. Whole disks and storage backing the active system partitions remain excluded.
 
-The Windows release contains a versioned executable such as `InfiltratorFS-Windows-0.16.8.exe`. Run it elevated when accessing raw media. It can discover physical partitions, list the root directory, copy files/folders and run a full scrub while bounding raw I/O to the selected partition.
+The Windows release contains a versioned executable such as `InfiltratorFS-Windows-0.16.9.exe`. Run it elevated when accessing raw media. It can discover physical partitions, list the root directory, copy files/folders and run a full scrub while bounding raw I/O to the selected partition.
 
 ## Release assets
 
@@ -132,8 +132,8 @@ GitHub provides the standard source-code ZIP and tarball automatically from the 
 To inspect the native Linux build before allowing it to install anything:
 
 ```bash
-chmod +x infiltratorfs-0.16.8-linux-native.run
-./infiltratorfs-0.16.8-linux-native.run --dry-run
+chmod +x infiltratorfs-0.16.9-linux-native.run
+./infiltratorfs-0.16.9-linux-native.run --dry-run
 ```
 
 Run the same file without `--dry-run` to compile, test and install InfiltratorFS natively. If required packages are missing, it displays the exact `apt-get` commands and asks before installing them.
@@ -184,3 +184,6 @@ Implementation 0.16.7 / Format 0.12 adds operation-level transaction savepoints,
 
 
 Implementation 0.16.8 adds snapshot-coordinated online scrub. The core can scrub an explicitly named immutable generation or automatically pin the current committed generation with a temporary retained snapshot, verify that stable view, report the exact generation checked, and remove the temporary retention record afterward. Format 0.12 is unchanged.
+
+
+Implementation 0.16.9 hardens scattered writes to paged-extent files. Non-tail random overwrites now rebuild the complete ordered extent-page set with copy-on-write publication instead of relying on the former single-page replacement path. Conformance includes a fresh 512 MiB sparse file with deterministic scattered 4 KiB writes, durability sync, scrub, continued writes and reopen verification. Format 0.12 is unchanged.
