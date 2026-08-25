@@ -46,6 +46,7 @@ static int infilfs_rw_tx_begin(struct super_block *sb,
 }
 
 #include "infiltratorfs_rw_data.inc"
+#include "infiltratorfs_rw_namespace.inc"
 
 /*
  * Native VFS metadata bridge.
@@ -169,12 +170,18 @@ static int infilfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 /*
  * infiltratorfs.c declares the operation tables immediately after including
  * this composition file.  Keep the table source compact while supplying the
- * native metadata callbacks here beside the rest of the RW adapter.  Each
- * macro expands one existing initializer value plus the additional designated
- * initializer; the function token in its own replacement list is deliberately
- * not recursively expanded by the C preprocessor.
+ * native callbacks here beside the rest of the RW adapter.  Each macro expands
+ * one existing initializer value plus the additional designated initializers;
+ * the function token in its own replacement list is deliberately not
+ * recursively expanded by the C preprocessor.
  */
 #define simple_statfs infilfs_statfs
-#define infilfs_rw_mkdir infilfs_rw_mkdir, .getattr = infilfs_getattr
+#define infilfs_rw_mkdir infilfs_rw_mkdir, \
+    .unlink = infilfs_ns_unlink, \
+    .rmdir = infilfs_ns_rmdir, \
+    .link = infilfs_ns_link, \
+    .symlink = infilfs_ns_symlink, \
+    .rename = infilfs_ns_rename, \
+    .getattr = infilfs_getattr
 #define infilfs_rw_setattr infilfs_rw_setattr, .getattr = infilfs_getattr
 #define infilfs_get_link infilfs_get_link, .getattr = infilfs_getattr
