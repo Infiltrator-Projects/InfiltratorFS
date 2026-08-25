@@ -41,20 +41,22 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v6
-      - name: Install Linux adapter dependencies
-        run: sudo apt-get update && sudo apt-get install -y desktop-file-utils libfuse3-dev fuse3
+      - name: Install Linux native adapter dependencies
+        run: sudo apt-get update && sudo apt-get install -y desktop-file-utils
       - name: Validate Mint desktop integration
         run: desktop-file-validate packaging/infiltratorfs-manager.desktop
       - name: Validate Manager partition enumeration
         run: |
           grep -Fq 'lsblk -prno NAME,SIZE,TYPE,RM,PKNAME,TRAN' tools/infiltratorfs-manager
           ! grep -Fq 'lsblk -prndo NAME,SIZE,TYPE,RM,PKNAME,TRAN' tools/infiltratorfs-manager
-      - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Configure native-only userspace
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=TRUE
       - name: Build
         run: cmake --build build --parallel
       - name: Test
         run: ctest --test-dir build --output-on-failure
+      - name: Reject FUSE build artifacts
+        run: test ! -e build/infilfs-fuse
       - name: Build Linux-created cross-platform image
         run: |
           truncate -s 64M build/linux-cross-platform.img
@@ -77,14 +79,14 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v6
-      - name: Install Linux adapter dependencies
-        run: sudo apt-get update && sudo apt-get install -y libfuse3-dev fuse3
-      - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+      - name: Configure native-only userspace
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=TRUE
       - name: Build
         run: cmake --build build --parallel
       - name: Test
         run: ctest --test-dir build --output-on-failure
+      - name: Reject FUSE build artifacts
+        run: test ! -e build/infilfs-fuse
 
   sanitizers:
     name: ASan and UBSan
@@ -95,17 +97,18 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v6
-      - name: Install Linux adapter dependencies
-        run: sudo apt-get update && sudo apt-get install -y libfuse3-dev fuse3
       - name: Configure sanitizers
         run: >-
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=TRUE
           -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
       - name: Build
         run: cmake --build build --parallel
       - name: Test
         run: ctest --test-dir build --output-on-failure
+      - name: Reject FUSE build artifacts
+        run: test ! -e build/infilfs-fuse
 
   analyzer:
     name: GCC static analyzer
@@ -113,16 +116,17 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v6
-      - name: Install Linux adapter dependencies
-        run: sudo apt-get update && sudo apt-get install -y libfuse3-dev fuse3
       - name: Configure analyzer
         run: >-
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=TRUE
           -DCMAKE_C_FLAGS="-fanalyzer"
       - name: Build
         run: cmake --build build --parallel
       - name: Test
         run: ctest --test-dir build --output-on-failure
+      - name: Reject FUSE build artifacts
+        run: test ! -e build/infilfs-fuse
 
   windows:
     name: Windows native app and portable core
@@ -162,16 +166,10 @@ jobs:
           }
           $version = $Matches[1]
           $exe = "build\Release\InfiltratorFS-Windows-$version.exe"
-          if (!(Test-Path $exe)) {
-            throw "Versioned Windows executable was not built: $exe"
-          }
+          if (!(Test-Path $exe)) { throw "Versioned Windows executable was not built: $exe" }
           $info = (Get-Item $exe).VersionInfo
-          if (!$info.FileVersion.StartsWith($version)) {
-            throw "FileVersion '$($info.FileVersion)' does not match $version"
-          }
-          if (!$info.ProductVersion.StartsWith($version)) {
-            throw "ProductVersion '$($info.ProductVersion)' does not match $version"
-          }
+          if (!$info.FileVersion.StartsWith($version)) { throw "FileVersion '$($info.FileVersion)' does not match $version" }
+          if (!$info.ProductVersion.StartsWith($version)) { throw "ProductVersion '$($info.ProductVersion)' does not match $version" }
       - name: Upload Windows transfer app
         uses: actions/upload-artifact@v4
         with:
@@ -180,7 +178,7 @@ jobs:
           if-no-files-found: error
 
   linux-packages:
-    name: Linux GUI packages
+    name: Native Linux packages
     needs: [linux]
     runs-on: ubuntu-24.04
     steps:
@@ -192,11 +190,13 @@ jobs:
       - name: Install package build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake desktop-file-utils fuse3 libfuse3-dev pkg-config zenity policykit-1 xdg-utils
-      - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          sudo apt-get install -y build-essential cmake desktop-file-utils zenity policykit-1 xdg-utils
+      - name: Configure native-only userspace
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=TRUE
       - name: Build
         run: cmake --build build --parallel
+      - name: Reject FUSE build artifacts
+        run: test ! -e build/infilfs-fuse
       - name: Build Linux release packages
         run: bash packaging/build-linux-packages.sh build dist
       - name: Validate native installer and Debian metadata
@@ -210,9 +210,14 @@ jobs:
           "$installer" --dry-run | tee dist/native-installer-dry-run.txt
           grep -Fq 'Dry run only; no packages will be installed' dist/native-installer-dry-run.txt
           grep -Fq 'Native build commands:' dist/native-installer-dry-run.txt
-          for dependency in fuse3 libfuse3-3 policykit-1 util-linux xdg-utils zenity; do
-            dpkg-deb --field "$deb" Depends | grep -Eq "(^|, )${dependency}([ ,]|$)"
+          grep -Fq 'Native kernel module commands:' dist/native-installer-dry-run.txt
+          test ! -e build/infilfs-fuse
+          ! dpkg-deb --contents "$deb" | grep -q 'usr/bin/infilfs-fuse$'
+          depends="$(dpkg-deb --field "$deb" Depends)"
+          for dependency in dkms kmod policykit-1 util-linux xdg-utils zenity; do
+            grep -Eq "(^|, )${dependency}([ ,]|$)" <<<"$depends"
           done
+          ! grep -Eqi '(^|[, ])(fuse3|libfuse3-3)([, ]|$)' <<<"$depends"
           rm -f dist/native-installer-dry-run.txt
       - name: Upload Linux installers
         uses: actions/upload-artifact@v4

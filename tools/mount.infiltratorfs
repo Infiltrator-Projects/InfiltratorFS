@@ -14,31 +14,35 @@ fi
 source_path="$1"
 mountpoint="$2"
 shift 2
-declare -a fuse_arguments=("$source_path" "$mountpoint")
 fake_mount=0
+verbose=0
+readonly_mode=""
+declare -a option_parts=()
 
 while (( $# > 0 )); do
     case "$1" in
         -o)
             (( $# >= 2 )) || { usage; exit 2; }
-            fuse_arguments+=("-o" "$2")
+            option_parts+=("$2")
             shift 2
             ;;
         -o?*)
-            fuse_arguments+=("-o" "${1#-o}")
+            option_parts+=("${1#-o}")
             shift
             ;;
         -r)
-            fuse_arguments+=("-o" "ro")
+            readonly_mode="ro"
             shift
             ;;
         -w)
-            fuse_arguments+=("-o" "rw")
+            readonly_mode="rw"
             shift
             ;;
-        -v|-n)
-            # mount(8) may pass its own verbose or no-mtab flags. libfuse
-            # manages the actual mount table entry, so neither is forwarded.
+        -v)
+            verbose=1
+            shift
+            ;;
+        -n)
             shift
             ;;
         -f)
@@ -61,9 +65,35 @@ if (( fake_mount )); then
     exit 0
 fi
 
-fuse_program="${INFILFS_FUSE:-/usr/bin/infilfs-fuse}"
-if [[ ! -x "$fuse_program" ]]; then
-    echo "mount.infiltratorfs: FUSE adapter is unavailable: $fuse_program" >&2
+mount_program="${INFILFS_MOUNT:-/bin/mount}"
+modprobe_program="${INFILFS_MODPROBE:-/sbin/modprobe}"
+if [[ ! -x "$mount_program" ]]; then
+    echo "mount.infiltratorfs: mount utility is unavailable: $mount_program" >&2
     exit 1
 fi
-exec "$fuse_program" "${fuse_arguments[@]}"
+if [[ ! -x "$modprobe_program" ]]; then
+    echo "mount.infiltratorfs: modprobe is unavailable: $modprobe_program" >&2
+    exit 1
+fi
+
+"$modprobe_program" infiltratorfs
+
+# Keep loop first for regular images so the command line is deterministic and
+# matches util-linux's conventional loop,rw/loop,ro ordering.
+if [[ -f "$source_path" && ! -b "$source_path" ]]; then
+    option_parts+=("loop")
+fi
+if [[ -n "$readonly_mode" ]]; then
+    option_parts+=("$readonly_mode")
+fi
+
+options=""
+if (( ${#option_parts[@]} > 0 )); then
+    options="$(IFS=,; echo "${option_parts[*]}")"
+fi
+
+declare -a args=(-i -t infiltratorfs)
+(( verbose )) && args+=(-v)
+[[ -n "$options" ]] && args+=(-o "$options")
+args+=("$source_path" "$mountpoint")
+exec "$mount_program" "${args[@]}"

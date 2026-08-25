@@ -58,6 +58,60 @@ username_for_uid()
     getent passwd "$uid" | cut -d: -f1
 }
 
+home_for_uid()
+{
+    local uid="$1"
+    getent passwd "$uid" | cut -d: -f6
+}
+
+validate_image()
+{
+    local target="$1"
+    local uid="$2"
+    local resolved owner
+    [[ -f "$target" ]] || fail "target is not a regular image file: $target"
+    [[ ! -L "$target" ]] || fail "symbolic-link image paths are not accepted"
+    resolved="$(readlink -f -- "$target")"
+    [[ -n "$resolved" && -f "$resolved" ]] || fail "could not resolve image path"
+    owner="$(stat -c '%u' -- "$resolved")"
+    [[ "$owner" == "$uid" ]] || fail "the selected image is not owned by the requesting user"
+}
+
+load_native_module()
+{
+    local modprobe_bin
+    modprobe_bin="$(command -v modprobe || true)"
+    [[ -n "$modprobe_bin" ]] || fail "modprobe is unavailable"
+    "$modprobe_bin" infiltratorfs || fail "native InfiltratorFS kernel module could not be loaded"
+    grep -qw infiltratorfs /proc/filesystems || fail "native InfiltratorFS filesystem is not registered"
+}
+
+verify_native_mount()
+{
+    local mount_point="$1"
+    local fstype
+    /usr/bin/mountpoint -q "$mount_point" || fail "mount failed"
+    fstype="$(findmnt -nro FSTYPE -T "$mount_point" 2>/dev/null || true)"
+    if [[ "$fstype" != "infiltratorfs" ]]; then
+        /bin/umount "$mount_point" >/dev/null 2>&1 || true
+        fail "refusing non-native mount type: ${fstype:-unknown}"
+    fi
+}
+
+prepare_user_mountpoint()
+{
+    local mount_point="$1" user_id="$2" group_id="$3"
+    /usr/bin/install -d -m 0755 -o "$user_id" -g "$group_id" "$mount_point"
+}
+
+finish_user_mount()
+{
+    local mount_point="$1" user_id="$2" group_id="$3"
+    verify_native_mount "$mount_point"
+    /bin/chown "$user_id:$group_id" "$mount_point"
+    /bin/chmod 0755 "$mount_point"
+}
+
 require_root
 (( $# >= 1 )) || fail "missing operation"
 operation="$1"
@@ -98,20 +152,45 @@ case "$operation" in
         expected_mount_point="/media/$username/InfiltratorFS"
         [[ "$mount_point" == "$expected_mount_point" ]] || fail "invalid mount point"
         [[ -z "$(findmnt -rn -S "$block_target")" ]] || fail "the partition is already mounted"
-        /usr/bin/install -d -m 0755 -o "$user_id" -g "$group_id" "$mount_point"
-        /usr/bin/infilfs-fuse "$block_target" "$mount_point" -o allow_other
-        /usr/bin/mountpoint -q "$mount_point" || fail "mount failed"
-        /bin/chown "$user_id:$group_id" "$mount_point"
+        prepare_user_mountpoint "$mount_point" "$user_id" "$group_id"
+        load_native_module
+        /bin/mount -i -t infiltratorfs -o rw,nodev,nosuid "$block_target" "$mount_point"
+        finish_user_mount "$mount_point" "$user_id" "$group_id"
         ;;
-    unmount-block)
-        (( $# == 2 )) || fail "unmount-block requires uid and mount point"
+    mount-image)
+        (( $# == 4 )) || fail "mount-image requires target, uid, gid and mount point"
+        image_target="$1"
+        user_id="$2"
+        group_id="$3"
+        mount_point="$4"
+        [[ "$group_id" =~ ^[0-9]+$ ]] || fail "invalid group identifier"
+        username=$(username_for_uid "$user_id")
+        home=$(home_for_uid "$user_id")
+        [[ -n "$username" && -n "$home" ]] || fail "unknown user identifier"
+        [[ "$mount_point" == "$home/InfiltratorFS" ]] || fail "invalid image mount point"
+        validate_image "$image_target" "$user_id"
+        [[ -z "$(findmnt -rn -S "$image_target")" ]] || fail "the image is already mounted"
+        prepare_user_mountpoint "$mount_point" "$user_id" "$group_id"
+        load_native_module
+        /bin/mount -i -t infiltratorfs -o loop,rw,nodev,nosuid "$image_target" "$mount_point"
+        finish_user_mount "$mount_point" "$user_id" "$group_id"
+        ;;
+    unmount-block|unmount-image)
+        (( $# == 2 )) || fail "$operation requires uid and mount point"
         user_id="$1"
         mount_point="$2"
         username=$(username_for_uid "$user_id")
+        home=$(home_for_uid "$user_id")
         [[ -n "$username" ]] || fail "unknown user identifier"
-        [[ "$mount_point" == "/media/$username/InfiltratorFS" ]] || fail "invalid mount point"
+        if [[ "$operation" == "unmount-block" ]]; then
+            [[ "$mount_point" == "/media/$username/InfiltratorFS" ]] || fail "invalid mount point"
+        else
+            [[ "$mount_point" == "$home/InfiltratorFS" ]] || fail "invalid mount point"
+        fi
         /usr/bin/mountpoint -q "$mount_point" || fail "mount point is not active"
-        exec /usr/bin/fusermount3 -u "$mount_point"
+        [[ "$(findmnt -nro FSTYPE -T "$mount_point" 2>/dev/null || true)" == "infiltratorfs" ]] ||
+            fail "refusing to unmount a non-native filesystem"
+        exec /bin/umount "$mount_point"
         ;;
     *)
         fail "unsupported operation: $operation"

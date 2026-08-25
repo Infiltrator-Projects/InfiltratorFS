@@ -38,8 +38,23 @@ static int file_ensure_logical_blocks(struct infs_volume *vol,
                 continue;
             }
         }
-        if (count >= max_extents)
-            return INFS_STATUS_FILE_TOO_LARGE;
+
+        /* Format 0.12 has scalable extent pages, so a classic file reaching
+         * its inline vector limit during EOF growth is not a large-file
+         * boundary. Promote the complete vector transactionally and continue
+         * the growth through the paged representation. The old code returned
+         * FILE_TOO_LARGE here, which made ordinary multi-gigabyte sequential
+         * copies fail once allocation fragmentation consumed 161 extents. */
+        if (count >= max_extents) {
+            status = paged_extent_rewrite_all(
+                vol, block, p, ext, count, 1);
+            if (status != INFS_STATUS_OK)
+                return status;
+            p = (struct infs_file_payload_disk *)(
+                block + sizeof(struct infs_object_header_disk));
+            return paged_extent_ensure(vol, block, p, needed);
+        }
+
         uint32_t chunk = remaining > UINT32_MAX ?
             UINT32_MAX : (uint32_t)remaining;
         ext[count].logical_block = infs_cpu_to_le64(have);

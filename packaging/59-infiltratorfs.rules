@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Teach the normal Linux storage stack about InfiltratorFS volumes.  The
+# portable inspector performs a bounded read-only probe and exports the same
+# ID_FS_* properties that blkid normally supplies for established filesystems.
+# Running before the persistent-storage rules also allows normal by-label and
+# by-uuid links to be created from those properties.
+
+ACTION=="add|change", SUBSYSTEM=="block", ENV{DEVTYPE}=="partition", IMPORT{program}="/usr/bin/infilfs-inspect --udev /dev/%k"
+ACTION=="add|change", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", IMPORT{program}="/usr/bin/infilfs-inspect --udev /dev/%k"
+
+# Keep the kernel filesystem registered before desktop mount requests are
+# validated by UDisks.  Failure is harmless: the FUSE userspace path remains
+# available through mount.infiltratorfs.
+ENV{ID_FS_TYPE}=="infiltratorfs", RUN+="/sbin/modprobe -q infiltratorfs"
+
+# UDisks applies these only to devices that the probe identified as
+# InfiltratorFS.  The set deliberately sticks to generic VFS-safe options.
+ENV{ID_FS_TYPE}=="infiltratorfs", ENV{UDISKS_MOUNT_OPTIONS_DEFAULTS}="nodev,nosuid"
+ENV{ID_FS_TYPE}=="infiltratorfs", ENV{UDISKS_MOUNT_OPTIONS_ALLOW}="exec,noexec,nodev,nosuid,atime,noatime,nodiratime,relatime,strictatime,lazytime,ro,rw,sync,dirsync,nosymfollow"

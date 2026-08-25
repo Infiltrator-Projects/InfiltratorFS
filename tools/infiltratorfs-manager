@@ -274,6 +274,10 @@ mount_and_open()
     mount_point=$(mount_point_for_target)
 
     if mountpoint -q "$mount_point" 2>/dev/null; then
+        if [[ "$(findmnt -nro FSTYPE -T "$mount_point" 2>/dev/null || true)" != "infiltratorfs" ]]; then
+            show_error "$mount_point is occupied by a non-native filesystem mount."
+            return
+        fi
         xdg-open "$mount_point" >/dev/null 2>&1 &
         return
     fi
@@ -282,19 +286,16 @@ mount_and_open()
         run_and_show_error pkexec "$HELPER" mount-block "$target" \
             "$(id -u)" "$(id -g)" "$mount_point" || return
     else
-        mkdir -p -- "$mount_point" || {
-            show_error "Could not create $mount_point"
-            return
-        }
-        if [[ -n "$(find "$mount_point" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
-            show_error "$mount_point must be empty before mounting."
-            return
-        fi
-        run_and_show_error /usr/bin/infilfs-fuse "$target" "$mount_point" || return
+        run_and_show_error pkexec "$HELPER" mount-image "$target" \
+            "$(id -u)" "$(id -g)" "$mount_point" || return
     fi
 
     if ! mountpoint -q "$mount_point"; then
         show_error "The filesystem did not appear at $mount_point."
+        return
+    fi
+    if [[ "$(findmnt -nro FSTYPE -T "$mount_point" 2>/dev/null || true)" != "infiltratorfs" ]]; then
+        show_error "The target did not mount through the native InfiltratorFS kernel driver."
         return
     fi
     xdg-open "$mount_point" >/dev/null 2>&1 &
@@ -302,7 +303,7 @@ mount_and_open()
 
 unmount_target()
 {
-    local mount_point
+    local mount_point operation
     require_target || return
     mount_point=$(mount_point_for_target)
 
@@ -310,14 +311,19 @@ unmount_target()
         show_error "$mount_point is not mounted."
         return
     fi
+    if [[ "$(findmnt -nro FSTYPE -T "$mount_point" 2>/dev/null || true)" != "infiltratorfs" ]]; then
+        show_error "Refusing to unmount a non-native filesystem at $mount_point."
+        return
+    fi
 
     if [[ "$target_kind" == "block" ]]; then
-        run_and_show_error pkexec "$HELPER" unmount-block \
-            "$(id -u)" "$mount_point" || return
+        operation="unmount-block"
     else
-        run_and_show_error fusermount3 -u "$mount_point" || return
+        operation="unmount-image"
     fi
-    show_info "The filesystem was unmounted safely."
+    run_and_show_error pkexec "$HELPER" "$operation" \
+        "$(id -u)" "$mount_point" || return
+    show_info "The native InfiltratorFS filesystem was unmounted safely."
 }
 
 for required_command in zenity lsblk mountpoint pkexec xdg-open findmnt readlink; do
@@ -342,7 +348,7 @@ while true; do
         "Inspect" "Display filesystem identity and geometry" \
         "Scrub" "Run a read-only integrity check" \
         "Forensic scan" "Find current and orphaned raw metadata records" \
-        "Mount and open" "Mount the filesystem and open it in Nemo" \
+        "Mount and open" "Mount natively and open the filesystem in Nemo" \
         "Unmount" "Safely unmount the selected target" \
         "Quit" "Close the manager") || break
 

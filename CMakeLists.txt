@@ -118,6 +118,10 @@ add_executable(infilfs-large-files tests/large-files.c)
 target_link_libraries(infilfs-large-files PRIVATE infilfs_core)
 infilfs_enable_warnings(infilfs-large-files)
 
+add_executable(infilfs-eof-extent-promotion tests/eof-extent-promotion.c)
+target_link_libraries(infilfs-eof-extent-promotion PRIVATE infilfs_core)
+infilfs_enable_warnings(infilfs-eof-extent-promotion)
+
 add_executable(infilfs-device-open tests/device-open.c)
 target_link_libraries(infilfs-device-open PRIVATE infilfs_core)
 infilfs_enable_warnings(infilfs-device-open)
@@ -140,6 +144,7 @@ add_test(NAME infilfs-namespace-links COMMAND infilfs-namespace-links)
 add_test(NAME infilfs-snapshots COMMAND infilfs-snapshots)
 add_test(NAME infilfs-online-scrub COMMAND infilfs-online-scrub)
 add_test(NAME infilfs-large-files COMMAND infilfs-large-files)
+add_test(NAME infilfs-eof-extent-promotion COMMAND infilfs-eof-extent-promotion)
 add_test(NAME infilfs-device-open COMMAND infilfs-device-open)
 add_test(NAME infilfs-forensic-api COMMAND infilfs-forensic-api)
 
@@ -183,7 +188,8 @@ if(WIN32)
 endif()
 
 # Linux/POSIX is the first adapter and test host. The core library and disk
-# format do not depend on this adapter.
+# format do not depend on this adapter. Linux mounting is performed solely by
+# the native kernel VFS driver from 0.17.0 onward.
 if(UNIX)
     add_library(infilfs_posix STATIC src/platform/posix_io.c)
     target_include_directories(infilfs_posix PUBLIC include)
@@ -215,10 +221,6 @@ if(UNIX)
     target_compile_definitions(infilfs-posix-locking PRIVATE _GNU_SOURCE)
     infilfs_enable_warnings(infilfs-posix-locking)
 
-    add_executable(infilfs-fuse-open-handles tests/fuse-open-handles.c)
-    target_compile_definitions(infilfs-fuse-open-handles PRIVATE _GNU_SOURCE)
-    infilfs_enable_warnings(infilfs-fuse-open-handles)
-
     add_test(NAME infilfs-posix-locking COMMAND infilfs-posix-locking)
 
     add_test(NAME infilfs-smoke
@@ -241,32 +243,12 @@ if(UNIX)
         COMMAND bash ${CMAKE_SOURCE_DIR}/tests/manager-partition-discovery.sh)
     add_test(NAME infilfs-system-utilities
         COMMAND bash ${CMAKE_SOURCE_DIR}/tests/system-utilities.sh)
-
-    find_package(PkgConfig QUIET)
-    if(PkgConfig_FOUND)
-        pkg_check_modules(FUSE3 QUIET IMPORTED_TARGET fuse3)
-    endif()
-
-    if(FUSE3_FOUND)
-        add_executable(infilfs-fuse fuse/infilfs_fuse.c)
-        target_link_libraries(infilfs-fuse PRIVATE infilfs_posix PkgConfig::FUSE3)
-        target_compile_definitions(infilfs-fuse PRIVATE _GNU_SOURCE)
-        infilfs_enable_warnings(infilfs-fuse)
-        add_test(NAME infilfs-mint-fuse
-            COMMAND bash ${CMAKE_SOURCE_DIR}/tests/mint-sparse-fuse.sh
-                         ${CMAKE_BINARY_DIR})
-        set_tests_properties(infilfs-mint-fuse PROPERTIES
-            SKIP_RETURN_CODE 77
-            TIMEOUT 120)
-    else()
-        message(STATUS "libfuse3 development files not found; Linux FUSE adapter will not be built")
-    endif()
+    add_test(NAME infilfs-desktop-integration
+        COMMAND bash ${CMAKE_SOURCE_DIR}/tests/desktop-integration.sh
+                     ${CMAKE_BINARY_DIR})
 
     install(TARGETS mkfs.infilfs infilfs-inspect infilfs-tool infilfs-scrub infilfs-forensic
             RUNTIME DESTINATION bin)
-    if(TARGET infilfs-fuse)
-        install(TARGETS infilfs-fuse RUNTIME DESTINATION bin)
-    endif()
     install(PROGRAMS tools/infiltratorfs-manager DESTINATION bin)
     install(PROGRAMS tools/infiltratorfs-manager-helper
             DESTINATION lib/infiltratorfs)
@@ -274,4 +256,6 @@ if(UNIX)
             DESTINATION sbin)
     install(FILES packaging/infiltratorfs-manager.desktop
             DESTINATION share/applications)
+    install(FILES packaging/59-infiltratorfs.rules
+            DESTINATION lib/udev/rules.d)
 endif()

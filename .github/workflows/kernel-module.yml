@@ -61,7 +61,13 @@ jobs:
           set -euo pipefail
           dkms_src="$(mktemp -d)"
           trap 'rm -rf "$dkms_src"' EXIT
-          cp kernel/Makefile kernel/infiltratorfs.c kernel/infiltratorfs_format.h kernel/infiltratorfs_rw.inc "$dkms_src/"
+          cp kernel/Makefile \
+             kernel/infiltratorfs.c \
+             kernel/infiltratorfs_format.h \
+             kernel/infiltratorfs_rw.inc \
+             kernel/infiltratorfs_rw_legacy.inc \
+             kernel/infiltratorfs_rw_data.inc \
+             "$dkms_src/"
           release="$(make -sC "$KDIR" kernelrelease)"
           KERNELRELEASE="$release" make -C "$dkms_src" KDIR="$KDIR"
           test -s "$dkms_src/infiltratorfs.ko"
@@ -93,6 +99,7 @@ jobs:
 
       - name: Native read-write mount transaction and scrub qualification
         if: steps.headers.outputs.runtime_kdir != ''
+        timeout-minutes: 6
         shell: bash
         run: |
           set -euo pipefail
@@ -100,25 +107,36 @@ jobs:
           mountpoint="$RUNNER_TEMP/infiltratorfs-kernel-mnt"
           inline_src="$RUNNER_TEMP/infiltratorfs-inline.txt"
           extent_src="$RUNNER_TEMP/infiltratorfs-extent.bin"
+          large_src="$RUNNER_TEMP/infiltratorfs-native-large.bin"
           loopdev=""
           mounted=0
           loaded=0
           cleanup() {
             set +e
-            if [[ "$mounted" = 1 ]]; then sudo umount "$mountpoint"; fi
-            if [[ -n "$loopdev" ]]; then sudo losetup -d "$loopdev"; fi
-            if [[ "$loaded" = 1 ]]; then sudo rmmod infiltratorfs; fi
+            if [[ "$mounted" = 1 ]]; then timeout 10s sudo umount -l "$mountpoint" || true; fi
+            if [[ -n "$loopdev" ]]; then timeout 10s sudo losetup -d "$loopdev" || true; fi
+            if [[ "$loaded" = 1 ]]; then timeout 10s sudo rmmod infiltratorfs || true; fi
+          }
+          diagnostics() {
+            set +e
+            printf '\n--- native qualification diagnostics ---\n' >&2
+            findmnt -T "$mountpoint" >&2 || true
+            sudo dmesg | tail -n 120 >&2 || true
           }
           trap cleanup EXIT
 
-          truncate -s 64M "$image"
+          truncate -s 128M "$image"
           build/mkfs.infilfs -L NativeKernelCI "$image" >/dev/null
           printf 'native-kernel-inline\n' > "$inline_src"
-          python3 - "$extent_src" <<'PY'
+          python3 - "$extent_src" "$large_src" <<'PY'
           import sys
-          path = sys.argv[1]
-          with open(path, 'wb') as f:
+          extent_path, large_path = sys.argv[1:]
+          with open(extent_path, 'wb') as f:
               f.write(bytes((i * 37 + 11) & 0xff for i in range(32768)))
+          pattern = bytes((i * 73 + 19) & 0xff for i in range(1024 * 1024))
+          with open(large_path, 'wb') as f:
+              for _ in range(32):
+                  f.write(pattern)
           PY
           build/infilfs-tool "$image" mkdir /docs
           build/infilfs-tool "$image" put "$inline_src" /docs/inline.txt
@@ -141,23 +159,58 @@ jobs:
           sudo mkdir "$mountpoint/native-rw"
           printf 'native-kernel-rw\n' | sudo tee "$mountpoint/native-rw/created.txt" >/dev/null
           test "$(cat "$mountpoint/native-rw/created.txt")" = 'native-kernel-rw'
-
           sudo sh -c "printf 'rewritten-through-vfs\\n' > '$mountpoint/native-rw/created.txt'"
           test "$(cat "$mountpoint/native-rw/created.txt")" = 'rewritten-through-vfs'
           sudo truncate -s 8 "$mountpoint/native-rw/created.txt"
           test "$(cat "$mountpoint/native-rw/created.txt")" = 'rewritte'
-          sync
 
+          # Use deterministic non-zero data and 4 MiB write syscalls. This
+          # exercises the native extent path directly without GNU cp sparse-file
+          # heuristics obscuring whether write_iter itself is healthy.
+          printf 'Starting native 32 MiB extent write...\n'
+          write_start="$(date +%s%N)"
+          if ! sudo timeout --signal=TERM --kill-after=10s 180s \
+              dd if="$large_src" of="$mountpoint/native-rw/large.bin" \
+                 bs=4M status=none; then
+            diagnostics
+            exit 1
+          fi
+          write_end="$(date +%s%N)"
+          python3 - "$write_start" "$write_end" <<'PY'
+          import sys
+          elapsed = (int(sys.argv[2]) - int(sys.argv[1])) / 1_000_000_000
+          mib = 32.0
+          print(f"Native 32 MiB mounted write: {elapsed:.3f} s ({mib/elapsed:.2f} MiB/s)")
+          PY
+          printf 'Verifying live native readback...\n'
+          cmp "$large_src" "$mountpoint/native-rw/large.bin"
+
+          printf 'Publishing durability barrier...\n'
+          sync_start="$(date +%s%N)"
+          if ! timeout --signal=TERM --kill-after=10s 120s sync; then
+            diagnostics
+            exit 1
+          fi
+          sync_end="$(date +%s%N)"
+          python3 - "$sync_start" "$sync_end" <<'PY'
+          import sys
+          elapsed = (int(sys.argv[2]) - int(sys.argv[1])) / 1_000_000_000
+          print(f"Native durability sync: {elapsed:.3f} s")
+          PY
+
+          printf 'Unmounting and scrubbing native result...\n'
           sudo umount "$mountpoint"
           mounted=0
           test "$(build/infilfs-tool "$image" cat /native-rw/created.txt)" = 'rewritte'
           build/infilfs-scrub "$image" | tee "$RUNNER_TEMP/native-rw-scrub.txt"
           grep -Fq 'Result:              CLEAN' "$RUNNER_TEMP/native-rw-scrub.txt"
 
+          printf 'Remounting read-only for final byte comparison...\n'
           sudo mount -t infiltratorfs -o ro "$loopdev" "$mountpoint"
           mounted=1
           test "$(cat "$mountpoint/native-rw/created.txt")" = 'rewritte'
-          printf 'Native kernel RW transaction/remount/scrub qualification passed on %s\n' "$(uname -r)"
+          cmp "$large_src" "$mountpoint/native-rw/large.bin"
+          printf 'Native kernel RW extent/remount/scrub qualification passed on %s\n' "$(uname -r)"
 
       - name: Report runtime mount test availability
         if: steps.headers.outputs.runtime_kdir == ''

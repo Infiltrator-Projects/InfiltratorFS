@@ -9,17 +9,44 @@
 #include <stdio.h>
 #include <string.h>
 
+static void print_udev_label(const uint8_t label[INFS_LABEL_MAX])
+{
+    char clean[INFS_LABEL_MAX + 1u];
+    size_t used = 0;
+
+    for (size_t i = 0; i < INFS_LABEL_MAX && label[i] != 0; ++i) {
+        unsigned char c = label[i];
+        if (c < 0x20u || c == 0x7fu || c == '=' || c == '\\')
+            c = '_';
+        clean[used++] = (char)c;
+    }
+    clean[used] = '\0';
+    if (used)
+        printf("ID_FS_LABEL=%s\n", clean);
+}
+
 int main(int argc, char **argv)
 {
-    if (argc != 2) {
-        fprintf(stderr, "Usage: %s <image-or-block-device>\n", argv[0]);
+    int udev_mode = 0;
+    const char *target = NULL;
+
+    if (argc == 2) {
+        target = argv[1];
+    } else if (argc == 3 && strcmp(argv[1], "--udev") == 0) {
+        udev_mode = 1;
+        target = argv[2];
+    } else {
+        fprintf(stderr,
+                "Usage: %s [--udev] <image-or-block-device>\n",
+                argv[0]);
         return 2;
     }
 
     struct infs_storage storage = {0};
-    infs_status status = infs_posix_storage_open(&storage, argv[1], 0);
+    infs_status status = infs_posix_storage_open(&storage, target, 0);
     if (status != INFS_STATUS_OK) {
-        fprintf(stderr, "open: %s\n", infs_status_string(status));
+        if (!udev_mode)
+            fprintf(stderr, "open: %s\n", infs_status_string(status));
         return 1;
     }
 
@@ -27,7 +54,8 @@ int main(int argc, char **argv)
     int is_block = 0;
     status = infs_storage_get_size(&storage, &size_bytes, &is_block);
     if (status != INFS_STATUS_OK) {
-        fprintf(stderr, "size: %s\n", infs_status_string(status));
+        if (!udev_mode)
+            fprintf(stderr, "size: %s\n", infs_status_string(status));
         infs_storage_close(&storage);
         return 1;
     }
@@ -36,9 +64,27 @@ int main(int argc, char **argv)
     struct infs_superblock_disk sb;
     unsigned valid = 0;
     if (infs_read_best_superblock(&storage, size_bytes, &sb, &valid) != 0) {
-        fprintf(stderr, "No valid InfiltratorFS checkpoint found.\n");
+        if (!udev_mode)
+            fprintf(stderr, "No valid InfiltratorFS checkpoint found.\n");
         infs_storage_close(&storage);
         return 1;
+    }
+
+    char uuid_text[37];
+    infs_uuid_to_string(sb.filesystem_uuid, uuid_text);
+
+    if (udev_mode) {
+        printf("ID_FS_USAGE=filesystem\n");
+        printf("ID_FS_TYPE=infiltratorfs\n");
+        printf("ID_FS_VERSION=%u.%u\n",
+               infs_le16_to_cpu(sb.format_major),
+               infs_le16_to_cpu(sb.format_minor));
+        printf("ID_FS_UUID=%s\n", uuid_text);
+        print_udev_label(sb.label);
+        printf("ID_FS_BLOCK_SIZE=%u\n",
+               1u << infs_le16_to_cpu(sb.block_shift));
+        infs_storage_close(&storage);
+        return 0;
     }
 
     uint8_t root[INFS_BLOCK_SIZE], index[INFS_BLOCK_SIZE];
@@ -50,9 +96,6 @@ int main(int argc, char **argv)
     int index_ok = infs_storage_read(&storage, index_no * INFS_BLOCK_SIZE,
                                      index, sizeof(index)) == 0 &&
                    infs_validate_object_block(index);
-
-    char uuid_text[37];
-    infs_uuid_to_string(sb.filesystem_uuid, uuid_text);
 
     printf("InfiltratorFS\n");
     printf("  Format:          %u.%u\n",

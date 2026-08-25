@@ -76,6 +76,26 @@ static const struct inode_operations infilfs_file_inode_operations;
 static const struct file_operations infilfs_dir_operations;
 static const struct file_operations infilfs_file_operations;
 
+
+static u64 infilfs_rw_crc64_zeroed(const u8 *data, size_t length,
+                                    size_t zero_offset, size_t zero_length);
+
+static bool infilfs_crc64_block_valid(const u8 block[INFILFS_DISK_BLOCK_SIZE],
+                                      size_t checksum_offset,
+                                      size_t checksum_size)
+{
+    __le64 stored;
+    size_t i;
+    if (checksum_size < sizeof(stored) || checksum_offset > INFILFS_DISK_BLOCK_SIZE - checksum_size)
+        return false;
+    memcpy(&stored, block + checksum_offset, sizeof(stored));
+    for (i = sizeof(stored); i < checksum_size; ++i)
+        if (block[checksum_offset + i] != 0)
+            return false;
+    return le64_to_cpu(stored) == infilfs_rw_crc64_zeroed(
+        block, INFILFS_DISK_BLOCK_SIZE, checksum_offset, checksum_size);
+}
+
 static struct infilfs_sb_info *INFILFS_SB(struct super_block *sb)
 {
     return sb->s_fs_info;
@@ -183,6 +203,10 @@ static int infilfs_select_checkpoint(struct super_block *sb,
     for (i = 0; i < INFILFS_CHECKPOINT_COUNT; ++i) {
         if (infilfs_read_block(sb, candidates[i], raw) != 0)
             continue;
+        if (!infilfs_crc64_block_valid(raw,
+                offsetof(struct infilfs_superblock_disk, checksum),
+                sizeof(((struct infilfs_superblock_disk *)raw)->checksum)))
+            continue;
         memcpy(&current, raw, sizeof(current));
         if (!infilfs_checkpoint_basic_valid(&current, blocks))
             continue;
@@ -210,6 +234,10 @@ static bool infilfs_object_basic_valid(struct super_block *sb,
 
     if (memcmp(header->magic, infilfs_object_magic,
                sizeof(infilfs_object_magic)) != 0)
+        return false;
+    if (!infilfs_crc64_block_valid(block,
+            offsetof(struct infilfs_object_header_disk, checksum),
+            sizeof(header->checksum)))
         return false;
     if (le32_to_cpu(header->header_size) != sizeof(*header) ||
         le32_to_cpu(header->checksum_type) != INFILFS_CHECKSUM_CRC64_ECMA)
@@ -259,6 +287,10 @@ static bool infilfs_metadata_page_valid(struct super_block *sb,
 
     if (memcmp(page->magic, magic, 8) != 0 ||
         memcmp(page->owner_object_id, owner_id, 16) != 0)
+        return false;
+    if (!infilfs_crc64_block_valid(block,
+            offsetof(struct infilfs_metadata_page_disk, checksum),
+            sizeof(page->checksum)))
         return false;
     if (le64_to_cpu(page->generation) == 0 ||
         le64_to_cpu(page->generation) > le64_to_cpu(sbi->disk.generation))
@@ -667,7 +699,7 @@ paged_out:
     return -EFSCORRUPTED;
 }
 
-static ssize_t infilfs_file_read_iter(struct kiocb *iocb, struct iov_iter *to)
+static __maybe_unused ssize_t infilfs_file_read_iter(struct kiocb *iocb, struct iov_iter *to)
 {
     struct file *filep = iocb->ki_filp;
     struct inode *inode = file_inode(filep);
@@ -978,6 +1010,7 @@ static void infilfs_put_super(struct super_block *sb)
 
 static const struct super_operations infilfs_super_operations = {
     .statfs = simple_statfs,
+    .sync_fs = infilfs_sync_fs,
     .evict_inode = infilfs_evict_inode,
     .put_super = infilfs_put_super,
 };

@@ -1,56 +1,61 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # Native Linux kernel module
 
-This directory contains the native Linux VFS adapter for InfiltratorFS. It is an out-of-tree kernel module: Linux itself does not need to be rebuilt. The module is built against installed kernel headers. Release 0.16.14 packages the source through DKMS so normal kernel upgrades rebuild only `infiltratorfs.ko` for kernels whose matching headers are installed.
+This directory contains the native Linux VFS adapter for InfiltratorFS. It is an out-of-tree kernel module built against installed kernel headers and packaged through DKMS; Linux itself does not need to be rebuilt.
 
-The current milestone is a genuine read-only filesystem implementation rather than the earlier empty-root bootstrap. The module now:
+Implementation 0.17.0 is the normal Linux filesystem path. The old userspace FUSE adapter has been removed from the source tree and survives only in Git history.
+
+The module:
 
 - registers the `infiltratorfs` filesystem type with Linux VFS;
-- mounts an InfiltratorFS block device read-only through the current `fs_context`/`get_tree_bdev` VFS path;
+- mounts current Format 0.12 block devices read-only or read-write;
 - selects the highest-generation structurally valid checkpoint from the three physical checkpoint locations;
 - requires current Format 0.12 and rejects unknown incompatible feature bits;
-- opens the real persistent root object;
-- resolves object IDs through both classic and paged object indexes;
-- enumerates and looks up entries from classic and paged directories;
-- creates stable Linux inodes from persistent InfiltratorFS object IDs, preserving regular-file hard-link identity;
+- resolves classic and paged object indexes and directories;
+- creates stable Linux inode identities from persistent InfiltratorFS object IDs;
 - exposes regular files, directories and symbolic links through native VFS objects;
-- reads inline files, ordinary extents, sparse holes and paged extents directly from the block device; and
-- remains strictly read-only, rejecting writable mounts.
+- reads inline data, ordinary extents, sparse holes and paged extents directly from the block device;
+- performs native create, mkdir, write, setattr and durability publication operations through the Format 0.12 transaction path;
+- supports extent-backed native writes rather than the earlier inline-only bring-up path;
+- validates metadata integrity and file-data checksums on native reads; and
+- publishes pending transactions at `fsync`, `syncfs` and global sync durability boundaries.
 
 Build against the running kernel when matching headers are installed:
 
 ```bash
-make -C kernel
+make -C kernel KDIR=/lib/modules/$(uname -r)/build
 ```
 
-Or build against an explicit kernel-header tree:
+The result is `kernel/infiltratorfs.ko`. Loading it is a normal module operation:
 
 ```bash
-make -C kernel KDIR=/usr/src/linux-headers-$(uname -r)
+sudo modprobe infiltratorfs
 ```
 
-The result is `kernel/infiltratorfs.ko`. Loading it is a normal module operation (`insmod`/`modprobe`), not a kernel rebuild. The adapter uses the Linux 7.0 inode-state accessor when building against 7.0+ headers, while retaining the older scalar state path for earlier supported kernels.
+A direct native mount is then:
 
-The Debian package installs the module sources under `/usr/src/infiltratorfs-<version>` and registers/builds them through DKMS. The native `.run` installer likewise installs the tested source through DKMS after completing the userspace build. If the running kernel's headers are unavailable, install `linux-headers-$(uname -r)` and run `sudo dkms autoinstall`.
+```bash
+sudo mount -i -t infiltratorfs -o rw /dev/<partition> /mnt/infiltratorfs
+findmnt -T /mnt/infiltratorfs -o SOURCE,FSTYPE,OPTIONS
+```
 
-Before the native installer invokes APT for missing headers or other requirements, it removes registered older InfiltratorFS DKMS versions and their stale source/build directories. The Debian package performs the same older-version cleanup from `preinst`. This prevents a broken obsolete DKMS source tree from aborting a later kernel-header package post-install hook before the current module can be installed.
+`FSTYPE` must report `infiltratorfs`.
 
-The traditional `mount.infiltratorfs` helper deliberately remains on the mature FUSE path during this bring-up. To exercise the native read-only module without invoking the helper recursively, load it with `modprobe infiltratorfs` and use `mount -i -t infiltratorfs -o ro <block-device> <mountpoint>`.
+The Debian package installs the module source under `/usr/src/infiltratorfs-<version>` and registers/builds it through DKMS. The native `.run` installer does the same after its userspace build and conformance tests. Matching headers for the running kernel are mandatory; installation fails rather than falling back to another filesystem implementation.
 
-The dedicated kernel-module GitHub Actions workflow always compiles the module against Ubuntu generic kernel headers and checks its module metadata. It also copies exactly the source files shipped to the DKMS source root and invokes make with `KERNELRELEASE` already exported, reproducing the packaging environment that exposed the 0.16.11 `make: *** No targets. Stop.` failure. When the hosted runner also exposes headers matching its running kernel, the workflow additionally builds the userspace formatter/tools, creates a real Format 0.12 image containing directories, an inline file, an extent-backed file and a symbolic link, loads `infiltratorfs.ko`, mounts the image through a loop block device, and byte-compares files through the native kernel mount.
+The DKMS source root is deliberately self-contained and includes:
 
-## Deliberate limitations of this milestone
+- `Makefile`
+- `infiltratorfs.c`
+- `infiltratorfs_format.h`
+- `infiltratorfs_rw.inc`
+- `infiltratorfs_rw_legacy.inc`
+- `infiltratorfs_rw_data.inc`
 
-This adapter is not yet a replacement for FUSE in normal writable use. The userspace portable core remains the authoritative, fully validated implementation while the kernel path is brought up incrementally.
+The dedicated `Native Linux kernel module` GitHub Actions workflow compiles the module against Ubuntu kernel headers, reproduces the DKMS source-root build, checks module metadata and, when matching running-kernel headers are available, loads the module and performs a real loop-device native read/write transaction followed by userspace scrub qualification.
 
-Still pending are:
+The release publisher adds an installed-package gate: it installs the generated `.deb`, verifies `/proc/filesystems` and `modinfo`, mounts a real Format 0.12 image as `infiltratorfs`, writes and byte-compares non-zero data, syncs, unmounts, requires scrub to report CLEAN and rejects any legacy FUSE executable or process.
 
-- CRC64 verification of checkpoints, objects and metadata pages in the kernel path;
-- SHA-256 verification of file-data blocks and checksum-chain traversal;
-- full graph/ownership validation and recovery selection equivalent to the portable core;
-- Linux uid/gid/time/xattr mapping beyond the basic read-only inode metadata;
-- page-cache, readahead and mmap integration;
-- all writable VFS operations and transaction publication; and
-- concurrency/locking hardening.
+## Current development scope
 
-The first target is a trustworthy native read-only mount of the same Format 0.12 media used by FUSE and the Windows adapter. FUSE remains the comparison/reference Linux adapter until the native path reaches equivalent correctness coverage.
+The native driver is now the product path, but 0.17.0 remains pre-1.0 development code. Further kernel work includes broader VFS namespace coverage, page-cache/readahead/mmap integration, performance tuning, wider stress coverage and continued locking/concurrency hardening. The portable core remains the canonical on-disk transaction and validation model shared by Linux and Windows tooling.
