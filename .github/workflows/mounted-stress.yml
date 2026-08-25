@@ -23,5 +23,7 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
       - name: Build
         run: cmake --build build --parallel
+      - name: Isolate classic-to-paged random overwrite
+        run: bash tests/fuse-paged-random-minimal.sh build
       - name: Reproduce installed Hyper-V workload
         run: bash tests/hyperv-mounted-stress.sh build
