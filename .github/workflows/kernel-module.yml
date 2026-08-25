@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   kernel-module:
-    name: Build out-of-tree VFS module
+    name: Build and qualify out-of-tree VFS module
     runs-on: ubuntu-24.04
     steps:
       - name: Check out source
@@ -20,22 +20,37 @@ jobs:
       - name: Install kernel build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential kmod linux-headers-generic
+          sudo apt-get install -y build-essential cmake kmod linux-headers-generic
 
-      - name: Resolve generic kernel header tree
+      - name: Resolve kernel header trees
         id: headers
         shell: bash
         run: |
           set -euo pipefail
-          kdir="$(find /usr/src -maxdepth 1 -type d -name 'linux-headers-*-generic' -print | sort -V | tail -n 1)"
-          test -n "$kdir"
-          test -f "$kdir/Makefile"
-          printf 'kdir=%s\n' "$kdir" >> "$GITHUB_OUTPUT"
-          printf 'Building against %s\n' "$kdir"
+          generic_kdir="$(find /usr/src -maxdepth 1 -type d -name 'linux-headers-*-generic' -print | sort -V | tail -n 1)"
+          test -n "$generic_kdir"
+          test -f "$generic_kdir/Makefile"
+          printf 'generic_kdir=%s\n' "$generic_kdir" >> "$GITHUB_OUTPUT"
+          printf 'Generic module build: %s\n' "$generic_kdir"
+
+          runtime_release="$(uname -r)"
+          runtime_kdir="/lib/modules/${runtime_release}/build"
+          if [[ ! -f "$runtime_kdir/Makefile" ]]; then
+            if sudo apt-get install -y "linux-headers-${runtime_release}"; then
+              :
+            fi
+          fi
+          if [[ -f "$runtime_kdir/Makefile" ]]; then
+            printf 'runtime_kdir=%s\n' "$runtime_kdir" >> "$GITHUB_OUTPUT"
+            printf 'Runtime mount qualification available: %s\n' "$runtime_kdir"
+          else
+            printf 'runtime_kdir=\n' >> "$GITHUB_OUTPUT"
+            printf 'Runtime headers for %s are unavailable; load/mount test will be skipped.\n' "$runtime_release"
+          fi
 
       - name: Build InfiltratorFS kernel module
         env:
-          KDIR: ${{ steps.headers.outputs.kdir }}
+          KDIR: ${{ steps.headers.outputs.generic_kdir }}
         run: make -C kernel KDIR="$KDIR"
 
       - name: Verify module metadata
@@ -46,3 +61,71 @@ jobs:
           test "$(modinfo -F name kernel/infiltratorfs.ko)" = infiltratorfs
           test "$(modinfo -F license kernel/infiltratorfs.ko)" = GPL
           modinfo kernel/infiltratorfs.ko
+          cp kernel/infiltratorfs.ko kernel/infiltratorfs-generic.ko
+
+      - name: Build userspace image tools for native mount test
+        if: steps.headers.outputs.runtime_kdir != ''
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel --target mkfs.infilfs infilfs-tool
+
+      - name: Build module for the running kernel
+        if: steps.headers.outputs.runtime_kdir != ''
+        env:
+          KDIR: ${{ steps.headers.outputs.runtime_kdir }}
+        run: |
+          make -C kernel clean KDIR="$KDIR"
+          make -C kernel KDIR="$KDIR"
+          test "$(modinfo -F vermagic kernel/infiltratorfs.ko | awk '{print $1}')" = "$(uname -r)"
+
+      - name: Native read-only mount and file-read qualification
+        if: steps.headers.outputs.runtime_kdir != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="$RUNNER_TEMP/infiltratorfs-kernel-test.img"
+          mountpoint="$RUNNER_TEMP/infiltratorfs-kernel-mnt"
+          inline_src="$RUNNER_TEMP/infiltratorfs-inline.txt"
+          extent_src="$RUNNER_TEMP/infiltratorfs-extent.bin"
+          loopdev=""
+          mounted=0
+          loaded=0
+          cleanup() {
+            set +e
+            if [[ "$mounted" = 1 ]]; then sudo umount "$mountpoint"; fi
+            if [[ -n "$loopdev" ]]; then sudo losetup -d "$loopdev"; fi
+            if [[ "$loaded" = 1 ]]; then sudo rmmod infiltratorfs; fi
+          }
+          trap cleanup EXIT
+
+          truncate -s 64M "$image"
+          build/mkfs.infilfs -L NativeKernelCI "$image" >/dev/null
+          printf 'native-kernel-inline\n' > "$inline_src"
+          python3 - "$extent_src" <<'PY'
+          import sys
+          path = sys.argv[1]
+          with open(path, 'wb') as f:
+              f.write(bytes((i * 37 + 11) & 0xff for i in range(32768)))
+          PY
+          build/infilfs-tool "$image" mkdir /docs
+          build/infilfs-tool "$image" put "$inline_src" /docs/inline.txt
+          build/infilfs-tool "$image" put "$extent_src" /docs/extent.bin
+          build/infilfs-tool "$image" symlink docs/inline.txt /current
+
+          sudo insmod kernel/infiltratorfs.ko
+          loaded=1
+          loopdev="$(sudo losetup --find --show "$image")"
+          mkdir -p "$mountpoint"
+          sudo mount -t infiltratorfs -o ro "$loopdev" "$mountpoint"
+          mounted=1
+
+          test -d "$mountpoint/docs"
+          cmp "$inline_src" "$mountpoint/docs/inline.txt"
+          cmp "$extent_src" "$mountpoint/docs/extent.bin"
+          test "$(readlink "$mountpoint/current")" = 'docs/inline.txt'
+          test -r "$mountpoint/docs/extent.bin"
+          printf 'Native kernel mount/read qualification passed on %s\n' "$(uname -r)"
+
+      - name: Report runtime mount test availability
+        if: steps.headers.outputs.runtime_kdir == ''
+        run: echo 'Native module compiled successfully; runtime load/mount skipped because matching hosted-runner kernel headers were unavailable.'
