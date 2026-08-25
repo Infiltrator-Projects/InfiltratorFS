@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # Native Linux kernel module
 
-This directory contains the native Linux VFS adapter for InfiltratorFS. It is an out-of-tree kernel module: Linux itself does not need to be rebuilt. The module is built against installed kernel headers and will later be packaged through DKMS so normal kernel upgrades rebuild only `infiltratorfs.ko`.
+This directory contains the native Linux VFS adapter for InfiltratorFS. It is an out-of-tree kernel module: Linux itself does not need to be rebuilt. The module is built against installed kernel headers. Release 0.16.10 packages the source through DKMS so normal kernel upgrades rebuild only `infiltratorfs.ko` for kernels whose matching headers are installed.
 
 The current milestone is a genuine read-only filesystem implementation rather than the earlier empty-root bootstrap. The module now:
 
@@ -31,11 +31,15 @@ make -C kernel KDIR=/usr/src/linux-headers-$(uname -r)
 
 The result is `kernel/infiltratorfs.ko`. Loading it is a normal module operation (`insmod`/`modprobe`), not a kernel rebuild.
 
+The Debian package installs the module sources under `/usr/src/infiltratorfs-<version>` and registers/builds them through DKMS. The native `.run` installer likewise installs the tested source through DKMS after completing the userspace build. If the running kernel's headers are unavailable, install `linux-headers-$(uname -r)` and run `sudo dkms autoinstall`.
+
+For a read-only block-device mount, the installed `mount.infiltratorfs` helper now prefers the native module when it is available and falls back to FUSE otherwise. Writable mounts continue to use FUSE because the kernel adapter intentionally has no write path yet.
+
 The dedicated kernel-module GitHub Actions workflow always compiles the module against Ubuntu generic kernel headers and checks its module metadata. When the hosted runner also exposes headers matching its running kernel, the workflow additionally builds the userspace formatter/tools, creates a real Format 0.12 image containing directories, an inline file, an extent-backed file and a symbolic link, loads `infiltratorfs.ko`, mounts the image through a loop block device, and byte-compares files through the native kernel mount.
 
 ## Deliberate limitations of this milestone
 
-This adapter is not yet a replacement for FUSE in normal use. The userspace portable core remains the authoritative, fully validated implementation while the kernel path is brought up incrementally.
+This adapter is not yet a replacement for FUSE in normal writable use. The userspace portable core remains the authoritative, fully validated implementation while the kernel path is brought up incrementally.
 
 Still pending are:
 
@@ -44,8 +48,7 @@ Still pending are:
 - full graph/ownership validation and recovery selection equivalent to the portable core;
 - Linux uid/gid/time/xattr mapping beyond the basic read-only inode metadata;
 - page-cache, readahead and mmap integration;
-- all writable VFS operations and transaction publication;
-- concurrency/locking hardening; and
-- DKMS and distribution packaging.
+- all writable VFS operations and transaction publication; and
+- concurrency/locking hardening.
 
 The first target is a trustworthy native read-only mount of the same Format 0.12 media used by FUSE and the Windows adapter. FUSE remains the comparison/reference Linux adapter until the native path reaches equivalent correctness coverage.
