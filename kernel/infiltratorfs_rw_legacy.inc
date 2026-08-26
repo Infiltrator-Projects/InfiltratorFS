@@ -12,6 +12,7 @@
 
 #define INFILFS_RW_BITMAP_MAX_BYTES (64UL * 1024UL * 1024UL)
 #define INFILFS_RW_FREE_RANGES_INITIAL 32u
+#define INFILFS_RW_ALLOC_RANGES_INITIAL 64u
 
 struct infilfs_rw_free_range {
     u64 start;
@@ -29,6 +30,15 @@ struct infilfs_rw_tx {
     struct infilfs_rw_free_range *deferred;
     size_t deferred_count;
     size_t deferred_capacity;
+    /*
+     * Allocation journal for operation-level rollback. Native transactions
+     * only mark free blocks allocated during an operation; frees remain
+     * deferred until publication. Recording those new runs is sufficient to
+     * undo a failed syscall without cloning the whole allocation bitmap.
+     */
+    struct infilfs_rw_free_range *allocated;
+    size_t allocated_count;
+    size_t allocated_capacity;
 };
 
 struct infilfs_rw_sha256_ctx {
@@ -603,6 +613,8 @@ static int infilfs_rw_mount_init(struct super_block *sb)
     ret = infilfs_rw_snapshot_union(sb, snapshots);
     if (ret)
         goto fail;
+    sbi->data_alloc_hint = 1;
+    sbi->metadata_alloc_hint = total > 1 ? total - 1u : 1u;
     sbi->rw_enabled = true;
     return 0;
 fail:
@@ -667,6 +679,7 @@ static void infilfs_rw_tx_abort(struct infilfs_rw_tx *tx)
 {
     kvfree(tx->bitmap);
     kfree(tx->deferred);
+    kfree(tx->allocated);
     memset(tx, 0, sizeof(*tx));
 }
 
@@ -702,19 +715,70 @@ static int infilfs_rw_tx_defer_free(struct infilfs_rw_tx *tx,
     return 0;
 }
 
+static int infilfs_rw_tx_record_alloc(struct infilfs_rw_tx *tx,
+                                      u64 start, u64 count)
+{
+    struct infilfs_rw_free_range *grown;
+    size_t next;
+    u64 i;
+
+    if (!count || start >= tx->sbi->device_blocks ||
+        count > tx->sbi->device_blocks - start ||
+        count > tx->free_blocks)
+        return -ENOSPC;
+    for (i = 0; i < count; ++i)
+        if (infilfs_rw_bitmap_get(tx->bitmap, start + i))
+            return -EEXIST;
+
+    if (tx->allocated_count == tx->allocated_capacity) {
+        next = tx->allocated_capacity ?
+            tx->allocated_capacity * 2u : INFILFS_RW_ALLOC_RANGES_INITIAL;
+        if (next < tx->allocated_capacity ||
+            next > SIZE_MAX / sizeof(*grown))
+            return -EOVERFLOW;
+        grown = krealloc(tx->allocated, next * sizeof(*grown), GFP_NOFS);
+        if (!grown)
+            return -ENOMEM;
+        tx->allocated = grown;
+        tx->allocated_capacity = next;
+    }
+
+    tx->allocated[tx->allocated_count].start = start;
+    tx->allocated[tx->allocated_count].count = count;
+    tx->allocated_count++;
+    for (i = 0; i < count; ++i)
+        infilfs_rw_bitmap_set(tx->bitmap, start + i, true);
+    tx->free_blocks -= count;
+    return 0;
+}
+
 static int infilfs_rw_tx_alloc(struct infilfs_rw_tx *tx, u64 count,
                                u64 *start_out)
 {
-    u64 total = tx->sbi->device_blocks;
-    u64 b = total;
+    struct infilfs_sb_info *sbi = tx->sbi;
+    u64 total = sbi->device_blocks;
+    u64 hint;
+    u64 candidate;
+    u64 scanned;
     u64 run = 0;
     u64 start = 0;
-    u64 i;
+    int ret;
 
-    if (!count || count > tx->free_blocks)
+    if (!count || count > tx->free_blocks || total <= 1)
         return -ENOSPC;
-    while (b > 1) {
-        u64 candidate = --b;
+
+    /*
+     * Continue metadata allocation from the previous search position instead
+     * of rescanning from the end of the whole device for every CoW block.
+     * The cursor is volatile and may move across rollback without affecting
+     * the allocation bitmap's authority.
+     */
+    hint = sbi->metadata_alloc_hint;
+    if (hint < 1 || hint >= total)
+        hint = total - 1u;
+    candidate = hint;
+
+    for (scanned = 0; scanned < total - 1u; ++scanned) {
         if (!infilfs_rw_bitmap_get(tx->bitmap, candidate)) {
             run++;
             if (run == count) {
@@ -724,12 +788,21 @@ static int infilfs_rw_tx_alloc(struct infilfs_rw_tx *tx, u64 count,
         } else {
             run = 0;
         }
+
+        if (candidate == 1) {
+            candidate = total - 1u;
+            run = 0;
+        } else {
+            candidate--;
+        }
     }
     if (run != count)
         return -ENOSPC;
-    for (i = 0; i < count; ++i)
-        infilfs_rw_bitmap_set(tx->bitmap, start + i, true);
-    tx->free_blocks -= count;
+
+    ret = infilfs_rw_tx_record_alloc(tx, start, count);
+    if (ret)
+        return ret;
+    sbi->metadata_alloc_hint = start > 1 ? start - 1u : total - 1u;
     *start_out = start;
     return 0;
 }
@@ -843,6 +916,10 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
     tx->deferred = NULL;
     tx->deferred_count = 0;
     tx->deferred_capacity = 0;
+    kfree(tx->allocated);
+    tx->allocated = NULL;
+    tx->allocated_count = 0;
+    tx->allocated_capacity = 0;
     return 0;
 }
 
