@@ -1,0 +1,115 @@
+# Temporary one-shot source transformation. It removes itself in the commit it creates.
+name: Temporary namespace batching transform
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/temp-namespace-batching.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Apply deferred namespace publication
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('kernel/infiltratorfs_rw_namespace.inc')
+          s = p.read_text()
+          old = '''static int infilfs_ns_finish(struct infilfs_native_pending *pending, int ret)
+          {
+              struct infilfs_sb_info *sbi = INFILFS_SB(pending->sb);
+              int rollback_ret = 0;
+
+              if (ret) {
+                  rollback_ret = infilfs_native_operation_rollback(pending);
+                  mutex_unlock(&sbi->write_lock);
+                  return rollback_ret ? rollback_ret : ret;
+              }
+              infilfs_native_operation_commit(pending);
+              ret = infilfs_native_pending_commit_locked(pending);
+              if (!ret)
+                  infilfs_native_checksum_cache_invalidate_sb(pending->sb);
+              mutex_unlock(&sbi->write_lock);
+              return ret;
+          }
+          '''
+          new = '''/*
+           * Namespace syscalls are transaction boundaries, not implicit fsyncs.
+           * Keep each operation atomic through the existing operation snapshot,
+           * but publish a burst of successful mutations together.  Explicit
+           * fsync/syncfs, the one-second idle timer, unmount, or the bounded
+           * metadata charge below remains a durability boundary.
+           *
+           * The synthetic 1 MiB charge bounds metadata-only bursts even when a
+           * transaction-private directory/index block can be reused without a
+           * corresponding free-block delta.  This prevents an unbounded pending
+           * transaction while avoiding a full four-flush checkpoint publication
+           * for every create/rename/unlink-style mutation.
+           */
+          #define INFILFS_NATIVE_METADATA_PUBLISH_CHARGE (1ULL * 1024ULL * 1024ULL)
+
+          static int infilfs_ns_finish(struct infilfs_native_pending *pending, int ret)
+          {
+              struct infilfs_sb_info *sbi = INFILFS_SB(pending->sb);
+              int rollback_ret = 0;
+
+              if (ret) {
+                  rollback_ret = infilfs_native_operation_rollback(pending);
+                  mutex_unlock(&sbi->write_lock);
+                  return rollback_ret ? rollback_ret : ret;
+              }
+
+              infilfs_native_operation_commit(pending);
+              infilfs_native_checksum_cache_invalidate_sb(pending->sb);
+              pending->pending_bytes += INFILFS_NATIVE_METADATA_PUBLISH_CHARGE;
+
+              if (pending->pending_bytes >= pending->publish_threshold) {
+                  ret = infilfs_native_pending_commit_locked(pending);
+              } else if (pending->active && !pending->commit_failed) {
+                  mod_delayed_work(system_wq, &pending->idle_work,
+                                   INFILFS_NATIVE_IDLE_DELAY);
+              }
+              mutex_unlock(&sbi->write_lock);
+              return ret;
+          }
+          '''
+          if old not in s:
+              raise SystemExit('namespace finish anchor not found; refusing blind edit')
+          s = s.replace(old, new, 1)
+          old_header = ''' * Namespace mutations are forced durability boundaries.  They join any
+           * already-open deferred data transaction, take an operation savepoint, and
+           * publish atomically on success.  The implementation deliberately rebuilds
+           * directory/index metadata instead of editing committed metadata in place.
+          '''
+          new_header = ''' * Namespace mutations join the mount's deferred native transaction and take an
+           * operation savepoint, so each syscall is atomic and rollback-safe without
+           * forcing a device-wide durability flush.  Publication is shared with the
+           * data path: explicit fsync/syncfs, idle timeout, bounded transaction size,
+           * or unmount.  Directory/index metadata is still rebuilt copy-on-write.
+          '''
+          if old_header not in s:
+              raise SystemExit('namespace header anchor not found')
+          s = s.replace(old_header, new_header, 1)
+          p.write_text(s)
+          PY
+          rm .github/workflows/temp-namespace-batching.yml
+          git diff --check
+          git diff --exit-code --quiet && { echo 'No changes produced'; exit 1; }
+          git config user.name 'Shannon Smith'
+          git config user.email 'infiltratr@yandex.com'
+          git add kernel/infiltratorfs_rw_namespace.inc .github/workflows/temp-namespace-batching.yml
+          git commit -m 'Batch native namespace transaction publication'
+          git push origin HEAD:main
