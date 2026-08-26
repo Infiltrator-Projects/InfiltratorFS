@@ -25,7 +25,7 @@ grep -Fxq 'ID_FS_TYPE=infiltratorfs' "$probe"
 grep -Fxq 'ID_FS_VERSION=0.12' "$probe"
 grep -Fxq 'ID_FS_LABEL=Desktop Test' "$probe"
 grep -Fxq 'ID_FS_BLOCK_SIZE=4096' "$probe"
-grep -Eq '^ID_FS_UUID=[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' "$probe" || grep -Eq '^ID_FS_UUID=[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' "$probe"
+grep -Eq '^ID_FS_UUID=[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' "$probe"
 
 truncate -s 64M "$plain"
 if "$inspect" --udev "$plain" > "$tmp/plain-probe.txt" 2>/dev/null; then
