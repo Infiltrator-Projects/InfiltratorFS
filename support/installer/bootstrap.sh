@@ -172,6 +172,10 @@ refresh_desktop_storage() {
     command -v udevadm >/dev/null 2>&1 || return 0
     run_as_root udevadm control --reload-rules || true
     run_as_root udevadm trigger --subsystem-match=block --action=change || true
+    # The InfiltratorFS udev rule runs a read-only inspector for each triggered
+    # block event. Wait for those probes to release their shared storage locks
+    # before the installer returns to callers that may immediately format.
+    run_as_root udevadm settle --timeout=30 || true
 }
 
 check_requirements
