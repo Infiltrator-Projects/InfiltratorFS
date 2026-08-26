@@ -52,15 +52,20 @@ static int infilfs_rw_tx_begin(struct super_block *sb,
  * transaction before entering the original synchronous metadata path.  Keep
  * those qualified wrappers available under private names so the final POSIX
  * layer can add ownership and general setattr semantics without duplicating
- * the data-path ordering rules.
+ * the data-path ordering rules.  The data-layer setattr wrapper and its old
+ * checksum-tail walker are retained only as qualified implementation history;
+ * mark them unused until that layer is retired rather than generating kernel
+ * build warnings for intentionally unreachable helpers.
  */
 #define infilfs_rw_create infilfs_rw_create_data
 #define infilfs_rw_mkdir infilfs_rw_mkdir_data
-#define infilfs_rw_setattr infilfs_rw_setattr_data
+#define infilfs_rw_setattr __maybe_unused infilfs_rw_setattr_data
+#define infilfs_native_checksum_tail __maybe_unused infilfs_native_checksum_tail
 #include "infiltratorfs_rw_data.inc"
 #undef infilfs_rw_create
 #undef infilfs_rw_mkdir
 #undef infilfs_rw_setattr
+#undef infilfs_native_checksum_tail
 
 /*
  * The verified extent reader in the data layer uses a checksum cursor while a
@@ -420,14 +425,18 @@ static int infilfs_native_truncate(struct inode *inode, u64 new_size)
 
     /* Promote an inline file only when growth crosses the inline boundary. */
     if (was_inline && new_size <= INFILFS_INLINE_DATA_MAX) {
-        u8 inline_data[INFILFS_INLINE_DATA_MAX] = {0};
         size_t old_size = min_t(u64,
             le64_to_cpu(old_file->attributes.logical_size),
             INFILFS_INLINE_DATA_MAX);
         size_t loaded_size = 0;
         struct infilfs_data_checksum_disk *digest;
 
-        ret = infilfs_rw_load_inline(inode, inline_data, &loaded_size);
+        data = kzalloc(INFILFS_INLINE_DATA_MAX, GFP_NOFS);
+        if (!data) {
+            ret = -ENOMEM;
+            goto finish;
+        }
+        ret = infilfs_rw_load_inline(inode, data, &loaded_size);
         if (ret)
             goto finish;
         if (loaded_size != old_size) {
@@ -448,11 +457,11 @@ static int infilfs_native_truncate(struct inode *inode, u64 new_size)
         memset(old_file->checksum_head_id, 0, sizeof(old_file->checksum_head_id));
         if (new_size) {
             digest = (struct infilfs_data_checksum_disk *)(old_file + 1);
-            ret = infilfs_rw_inline_digest(inline_data, (size_t)new_size,
+            ret = infilfs_rw_inline_digest(data, (size_t)new_size,
                                            digest->bytes);
             if (ret)
                 goto finish;
-            memcpy(digest + 1, inline_data, (size_t)new_size);
+            memcpy(digest + 1, data, (size_t)new_size);
             old_header->payload_size = cpu_to_le32(
                 sizeof(*old_file) + sizeof(*digest) + (size_t)new_size);
         } else {
@@ -720,6 +729,7 @@ static int infilfs_native_punch_hole(struct inode *inode,
     struct infilfs_file_payload_disk working_file;
     u8 *old_object = NULL;
     u8 *new_object = NULL;
+    u8 *inline_data = NULL;
     u32 change_count = 0, change_capacity = 0;
     u32 old_extent_count = 0, extent_count = 0;
     u64 old_blocks = 0;
@@ -754,9 +764,13 @@ static int infilfs_native_punch_hole(struct inode *inode,
 
     if (was_inline) {
         struct infilfs_data_checksum_disk *digest;
-        u8 inline_data[INFILFS_INLINE_DATA_MAX] = {0};
         size_t loaded_size = 0;
 
+        inline_data = kzalloc(INFILFS_INLINE_DATA_MAX, GFP_NOFS);
+        if (!inline_data) {
+            ret = -ENOMEM;
+            goto finish;
+        }
         ret = infilfs_rw_load_inline(inode, inline_data, &loaded_size);
         if (ret)
             goto finish;
@@ -878,6 +892,7 @@ finish:
             extents, extent_count) * (INFILFS_DISK_BLOCK_SIZE >> 9);
         infilfs_native_checksum_cache_invalidate_sb(inode->i_sb);
     }
+    kfree(inline_data);
     kvfree(changes);
     kvfree(extents);
     kvfree(old_extents);
