@@ -1372,8 +1372,6 @@ static int infilfs_posix_mkdir(struct user_namespace *idmap,
 #endif
 }
 
-#endif
-
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
 static int infilfs_posix_symlink(struct mnt_idmap *idmap, struct inode *dir,
                                  struct dentry *dentry, const char *target)
