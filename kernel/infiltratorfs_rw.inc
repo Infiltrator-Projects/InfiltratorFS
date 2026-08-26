@@ -869,8 +869,8 @@ finish:
     return ret;
 }
 
-static int infilfs_file_fallocate(struct file *file, int mode,
-                                  loff_t offset, loff_t length)
+static long infilfs_file_fallocate(struct file *file, int mode,
+                                   loff_t offset, loff_t length)
 {
     const int punch = FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE;
     struct inode *inode = file_inode(file);

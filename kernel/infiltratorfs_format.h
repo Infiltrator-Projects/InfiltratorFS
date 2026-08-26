@@ -198,6 +198,23 @@ struct infilfs_snapshot_catalog_payload_disk {
     __le32 reserved;
 } __packed;
 
+#define INFILFS_SNAPSHOT_NAME_MAX 63u
+
+struct infilfs_snapshot_record_disk {
+    __le64 generation;
+    __le64 created_time_ns;
+    __le64 bitmap_start_block;
+    __le64 bitmap_block_count;
+    __le64 free_blocks;
+    __le64 object_index_block;
+    __le64 root_object_block;
+    __u8 root_object_id[16];
+    __le16 name_length;
+    __le16 flags;
+    __le32 reserved;
+    __u8 name[INFILFS_SNAPSHOT_NAME_MAX + 1u];
+} __packed;
+
 #define INFILFS_METADATA_PAGE_DATA_SIZE \
     (INFILFS_DISK_BLOCK_SIZE - sizeof(struct infilfs_metadata_page_disk))
 #define INFILFS_INDEX_ENTRIES_PER_PAGE \
@@ -230,5 +247,7 @@ static_assert(sizeof(struct infilfs_file_payload_disk) == 128);
 static_assert(sizeof(struct infilfs_symlink_payload_disk) == 112);
 static_assert(sizeof(struct infilfs_extent_disk) == 24);
 static_assert(sizeof(struct infilfs_index_entry_disk) == 32);
+static_assert(sizeof(struct infilfs_snapshot_catalog_payload_disk) == 8);
+static_assert(sizeof(struct infilfs_snapshot_record_disk) == 144);
 
 #endif

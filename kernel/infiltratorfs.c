@@ -2,6 +2,7 @@
 #include <linux/blkdev.h>
 #include <linux/buffer_head.h>
 #include <linux/dirent.h>
+#include <linux/falloc.h>
 #include <linux/fs.h>
 #include <linux/fs_context.h>
 #include <linux/cred.h>
