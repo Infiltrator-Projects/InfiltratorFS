@@ -96,10 +96,12 @@ Native Linux qualification requires:
 - create/mkdir/mknod, link/symlink, rename/unlink/rmdir and persistent setattr;
 - sequential and random extent writes, large sparse growth/truncate, `fallocate` and hole punching;
 - correct logical versus allocated-size reporting for ordinary sparse and metadata-bearing objects;
-- persistent Linux `user.*` xattrs and FIFO/socket/character/block node identity;
+- persistent standard Linux xattr namespaces (`user.*`, `trusted.*`,
+  `security.*`, `system.*`) and FIFO/socket/character/block node identity;
 - verified page-cache faults, readahead and shared writable `mmap` writeback;
 - writable live namespace/data changes while retained snapshots preserve older generations;
-- crash-safe open-unlink/replacement lifetime and mount-time orphan recovery;
+- crash-safe open-unlink/replacement lifetime, mount-time orphan recovery and
+  correct directory/symlink allocated-block reporting;
 - extent-backed non-zero writes and byte-identical live/remount readback;
 - metadata CRC64 and file-data SHA-256 validation on native reads;
 - transaction publication through `fsync`/`syncfs`/sync durability boundaries;
@@ -130,6 +132,6 @@ Installation fails if matching running-kernel headers are unavailable or if the 
 
 The main Build and conformance workflow runs the portable/core suite under GCC, Clang, ASan/UBSan and GCC `-fanalyzer`, validates desktop/Manager behavior, checks cross-platform Linux-created media on Windows, builds release packages and rejects any FUSE build artifact or package dependency.
 
-The Native Linux kernel module workflow builds the out-of-tree driver, reproduces the DKMS source-root invocation, validates module metadata and performs mounted snapshot, xattr, special-node, mmap, namespace, sparse/random-write, allocation, remount and scrub qualification when the hosted runner exposes matching running-kernel headers.
+The Native Linux kernel module workflow builds the out-of-tree driver, reproduces the DKMS source-root invocation, validates module metadata and performs mounted snapshot, all-namespace xattr, special-node, mmap, namespace, allocation-reporting, 4,000-write random I/O, repeated-fsync, crash-orphan recovery, checkpoint fallback/healing, remount and scrub qualification when the hosted runner exposes matching running-kernel headers.
 
 The release publisher runs only after a successful `Release <version>` commit on current `main`. It rebuilds assets from that exact commit, installs the generated `.deb`, verifies the native filesystem registration, mounts a real Format 0.12 loop image with `FSTYPE=infiltratorfs`, writes and byte-compares non-zero data, syncs, unmounts, requires a CLEAN scrub and rejects any legacy FUSE executable/process before creating the tag and release.

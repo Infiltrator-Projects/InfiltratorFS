@@ -38,7 +38,8 @@ Pre-1.0 development is current-format-only. A new development format may superse
 - [x] Random writes, sparse growth, high-offset writes, truncate and `fallocate`.
 - [x] Hole punching and logical/allocated block reporting.
 - [x] Crash-safe open-unlink/replacement lifetime and mount-time orphan recovery.
-- [x] Persistent Linux `user.*` xattrs and FIFO/socket/character/block node identity.
+- [x] Persistent Linux `user.*`, `trusted.*`, `security.*` and `system.*`
+  xattr handlers, plus FIFO/socket/character/block node identity.
 - [x] Page-cache, readahead and shared writable `mmap` integration.
 - [x] Writable live generations while named snapshots retain older generations.
 - [x] Native transaction publication at durability boundaries.
@@ -48,22 +49,25 @@ Pre-1.0 development is current-format-only. A new development format may superse
 - [x] udev/UDisks filesystem identification and desktop visibility.
 - [x] Native-only Debian and `.run` packaging with no FUSE runtime dependency.
 - [x] Removal of the legacy FUSE implementation from the current source/product path.
-- [x] Mounted remount/scrub qualification for the migrated native surface.
+- [x] Mounted remount/scrub qualification for the complete migrated native surface.
 - [x] Release gate that installs the generated `.deb`, mounts `FSTYPE=infiltratorfs`, writes/reads non-zero data, syncs, unmounts and requires a clean scrub.
 
 ## Linux next work
 
-- [ ] Broaden dirty-checkpoint and interrupted-publication recovery qualification on mounted images.
-- [ ] Broaden xattr semantics and error-path qualification beyond the current Linux `user.*` surface.
-- [ ] Complete directory/symlink/special-object allocation-reporting qualification.
-- [ ] Preserve explicit regression coverage for every formerly mounted semantic path.
+- [x] Dirty-checkpoint fallback and writable checkpoint-replica healing on mounted images.
+- [x] Standard Linux xattr namespaces and policy-aware error-path qualification.
+- [x] Directory/symlink/special-object allocation-reporting qualification.
+- [x] Explicit mounted regression coverage for every formerly mounted semantic path,
+  including crash-orphan recovery, open-handle rename/replace, 4,000 random
+  overwrites and repeated fsync publication.
 - [ ] Broader locking/concurrency qualification.
 - [ ] Millions-of-files and large-volume mounted stress tests.
 - [ ] Wider near-full, fragmentation and long-running mixed-workload tests.
 - [ ] Native fragmentation/optimisation metrics and online defragmentation.
 - [ ] Upstream/libblockdev formatter integration so stock GNOME Disks can offer InfiltratorFS directly in its format menu.
 
-The first four items above describe active follow-on qualification work and must not be treated as complete until the corresponding code and tests are present on `main`.
+The completed items above are enforced by native mounted CI and the partition-22
+destructive qualification harness.
 
 ## Scale and performance
 

@@ -377,6 +377,7 @@ static int infilfs_linux_meta_delete_file(struct inode *dir,
     ret = infilfs_ns_finish(pending, ret);
     if (!ret) {
         dir_ii->object_block = new_dir_block;
+        infilfs_refresh_inode_blocks_after_commit(dir);
         if (retained) {
             file_ii->object_block = retained_block;
             drop_nlink(file);
@@ -542,23 +543,26 @@ static int infilfs_linux_meta_set_special(struct inode *inode,
     return ret;
 }
 
-static int infilfs_linux_xattr_name(const char *name, char **full_out)
+static int infilfs_linux_xattr_name(const struct xattr_handler *handler,
+                                    const char *name, char **full_out)
 {
+    size_t prefix;
     size_t suffix;
     char *full;
 
     *full_out = NULL;
-    if (!name)
+    if (!handler || !handler->prefix || !name)
         return -EINVAL;
+    prefix = strlen(handler->prefix);
     suffix = strnlen(name, U16_MAX);
     if (!suffix || suffix >= U16_MAX ||
-        suffix > U16_MAX - XATTR_USER_PREFIX_LEN)
+        prefix >= U16_MAX || suffix > U16_MAX - prefix)
         return -EINVAL;
-    full = kmalloc(XATTR_USER_PREFIX_LEN + suffix + 1u, GFP_NOFS);
+    full = kmalloc(prefix + suffix + 1u, GFP_NOFS);
     if (!full)
         return -ENOMEM;
-    memcpy(full, XATTR_USER_PREFIX, XATTR_USER_PREFIX_LEN);
-    memcpy(full + XATTR_USER_PREFIX_LEN, name, suffix + 1u);
+    memcpy(full, handler->prefix, prefix);
+    memcpy(full + prefix, name, suffix + 1u);
     *full_out = full;
     return 0;
 }
@@ -575,9 +579,8 @@ static int infilfs_linux_xattr_get(
     size_t value_length = 0;
     int ret;
 
-    (void)handler;
     (void)dentry;
-    ret = infilfs_linux_xattr_name(name, &full);
+    ret = infilfs_linux_xattr_name(handler, name, &full);
     if (ret)
         return ret;
     ret = infilfs_linux_meta_load(inode->i_sb, ii->object_id,
@@ -632,10 +635,9 @@ static int infilfs_linux_xattr_set(
     bool exists;
     int ret;
 
-    (void)handler;
     (void)idmap;
     (void)dentry;
-    ret = infilfs_linux_xattr_name(name, &full);
+    ret = infilfs_linux_xattr_name(handler, name, &full);
     if (ret)
         return ret;
     if (value_size > U32_MAX) {
@@ -734,7 +736,11 @@ static ssize_t infilfs_linux_listxattr(struct dentry *dentry,
         size_t name_length = le16_to_cpu(record->name_length);
         size_t value_length = le32_to_cpu(record->value_length);
 
-        needed += name_length + 1u;
+        if (name_length < XATTR_TRUSTED_PREFIX_LEN ||
+            memcmp(blob + offset + sizeof(*record), XATTR_TRUSTED_PREFIX,
+                   XATTR_TRUSTED_PREFIX_LEN) != 0 ||
+            capable(CAP_SYS_ADMIN))
+            needed += name_length + 1u;
         offset += sizeof(*record) + name_length + value_length;
     }
     if (!list) {
@@ -753,9 +759,14 @@ static ssize_t infilfs_linux_listxattr(struct dentry *dentry,
         size_t name_length = le16_to_cpu(record->name_length);
         size_t value_length = le32_to_cpu(record->value_length);
 
-        memcpy(list + needed, blob + offset + sizeof(*record), name_length);
-        list[needed + name_length] = '\0';
-        needed += name_length + 1u;
+        if (name_length < XATTR_TRUSTED_PREFIX_LEN ||
+            memcmp(blob + offset + sizeof(*record), XATTR_TRUSTED_PREFIX,
+                   XATTR_TRUSTED_PREFIX_LEN) != 0 ||
+            capable(CAP_SYS_ADMIN)) {
+            memcpy(list + needed, blob + offset + sizeof(*record), name_length);
+            list[needed + name_length] = '\0';
+            needed += name_length + 1u;
+        }
         offset += sizeof(*record) + name_length + value_length;
     }
     ret = needed;
@@ -770,8 +781,29 @@ static const struct xattr_handler infilfs_linux_user_xattr_handler = {
     .set = infilfs_linux_xattr_set,
 };
 
+static const struct xattr_handler infilfs_linux_trusted_xattr_handler = {
+    .prefix = XATTR_TRUSTED_PREFIX,
+    .get = infilfs_linux_xattr_get,
+    .set = infilfs_linux_xattr_set,
+};
+
+static const struct xattr_handler infilfs_linux_security_xattr_handler = {
+    .prefix = XATTR_SECURITY_PREFIX,
+    .get = infilfs_linux_xattr_get,
+    .set = infilfs_linux_xattr_set,
+};
+
+static const struct xattr_handler infilfs_linux_system_xattr_handler = {
+    .prefix = XATTR_SYSTEM_PREFIX,
+    .get = infilfs_linux_xattr_get,
+    .set = infilfs_linux_xattr_set,
+};
+
 static const struct xattr_handler * const infilfs_xattr_handlers[] = {
     &infilfs_linux_user_xattr_handler,
+    &infilfs_linux_trusted_xattr_handler,
+    &infilfs_linux_security_xattr_handler,
+    &infilfs_linux_system_xattr_handler,
     NULL,
 };
 

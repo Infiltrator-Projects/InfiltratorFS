@@ -1206,6 +1206,7 @@ static int infilfs_ns_unlink(struct inode *dir, struct dentry *dentry)
     ret = infilfs_ns_finish(pending, ret);
     if (!ret) {
         dir_ii->object_block = new_dir_block;
+        infilfs_refresh_inode_blocks_after_commit(dir);
         if (retained) {
             ii->object_block = retained_block;
             drop_nlink(inode);
@@ -1248,6 +1249,7 @@ static int infilfs_ns_rmdir(struct inode *dir, struct dentry *dentry)
     ret = infilfs_ns_finish(pending, ret);
     if (!ret) {
         dir_ii->object_block = new_dir_block;
+        infilfs_refresh_inode_blocks_after_commit(dir);
         drop_nlink(dir);
         clear_nlink(inode);
     }
@@ -1299,6 +1301,7 @@ static int infilfs_ns_link(struct dentry *old_dentry, struct inode *dir,
     if (!ret) {
         ii->object_block = new_file_block;
         dir_ii->object_block = new_dir_block;
+        infilfs_refresh_inode_blocks_after_commit(dir);
         inc_nlink(inode);
         ihold(inode);
         d_instantiate(dentry, inode);
@@ -1355,6 +1358,7 @@ static int infilfs_ns_symlink(struct user_namespace *idmap, struct inode *dir,
     if (ret)
         return ret;
     dir_ii->object_block = new_dir_block;
+    infilfs_refresh_inode_blocks_after_commit(dir);
     inode = infilfs_get_inode(dir->i_sb, object_block,
                               INFILFS_OBJECT_SYMLINK, object_id);
     if (IS_ERR(inode))
@@ -1496,8 +1500,11 @@ finish2:
     if (!ret) {
         source_ii->object_block = source_block;
         old_dir_ii->object_block = old_dir_block;
+        infilfs_refresh_inode_blocks_after_commit(old_dir);
         if (!same_parent)
             new_dir_ii->object_block = new_dir_block;
+        if (!same_parent)
+            infilfs_refresh_inode_blocks_after_commit(new_dir);
         if (destination) {
             if (retained_destination) {
                 destination_ii->object_block = retained_destination_block;

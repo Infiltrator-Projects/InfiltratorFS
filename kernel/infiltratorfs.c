@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include <linux/blkdev.h>
 #include <linux/buffer_head.h>
+#include <linux/capability.h>
 #include <linux/dirent.h>
 #include <linux/falloc.h>
 #include <linux/fs.h>
@@ -55,6 +56,7 @@ struct infilfs_sb_info {
     u8 *snapshot_bitmap;
     bool rw_enabled;
     bool write_poisoned;
+    bool checkpoint_repair_needed;
 };
 
 struct infilfs_inode_info {
@@ -99,6 +101,7 @@ static const struct address_space_operations infilfs_aops;
 
 static u64 infilfs_rw_crc64_zeroed(const u8 *data, size_t length,
                                     size_t zero_offset, size_t zero_length);
+static bool infilfs_rw_utf8_valid(const u8 *s, size_t len);
 
 static bool infilfs_crc64_block_valid(const u8 block[INFILFS_DISK_BLOCK_SIZE],
                                       size_t checksum_offset,
@@ -154,6 +157,7 @@ static int infilfs_read_block(struct super_block *sb, u64 block, void *out)
 static bool infilfs_checkpoint_basic_valid(
     const struct infilfs_superblock_disk *disk, u64 device_blocks)
 {
+    const u8 *label_end;
     u64 total;
     u64 incompat;
     u64 expected[INFILFS_CHECKPOINT_COUNT];
@@ -197,21 +201,37 @@ static bool infilfs_checkpoint_basic_valid(
     if (le64_to_cpu(disk->compat_flags) != 0 ||
         le64_to_cpu(disk->ro_compat_flags) != 0)
         return false;
+    if (!memchr_inv(disk->filesystem_uuid, 0, sizeof(disk->filesystem_uuid)) ||
+        !memchr_inv(disk->root_object_id, 0, sizeof(disk->root_object_id)))
+        return false;
+    label_end = memchr(disk->label, 0, sizeof(disk->label));
+    if (!label_end ||
+        memchr_inv(label_end, 0,
+                   sizeof(disk->label) - (size_t)(label_end - disk->label)) ||
+        !infilfs_rw_utf8_valid(disk->label,
+                               (size_t)(label_end - disk->label)))
+        return false;
 
     return true;
 }
 
-static int infilfs_select_checkpoint(struct super_block *sb,
-                                     struct infilfs_superblock_disk *selected)
+struct infilfs_checkpoint_candidates {
+    struct infilfs_superblock_disk disks[INFILFS_CHECKPOINT_COUNT];
+    bool valid[INFILFS_CHECKPOINT_COUNT];
+    int first_read_error;
+};
+
+static int infilfs_read_checkpoint_candidates(
+    struct super_block *sb, struct infilfs_checkpoint_candidates *set)
 {
     u64 blocks = INFILFS_SB(sb)->device_blocks;
     u64 candidates[INFILFS_CHECKPOINT_COUNT];
     struct infilfs_superblock_disk current;
-    u64 best_generation = 0;
-    bool found = false;
+    unsigned int found = 0;
     unsigned int i;
     u8 *raw;
 
+    memset(set, 0, sizeof(*set));
     candidates[0] = 0;
     candidates[1] = blocks / 2;
     candidates[2] = blocks - 1;
@@ -221,24 +241,37 @@ static int infilfs_select_checkpoint(struct super_block *sb,
         return -ENOMEM;
 
     for (i = 0; i < INFILFS_CHECKPOINT_COUNT; ++i) {
-        if (infilfs_read_block(sb, candidates[i], raw) != 0)
+        int ret = infilfs_read_block(sb, candidates[i], raw);
+
+        if (ret) {
+            if (!set->first_read_error)
+                set->first_read_error = ret;
             continue;
+        }
         if (!infilfs_crc64_block_valid(raw,
                 offsetof(struct infilfs_superblock_disk, checksum),
                 sizeof(((struct infilfs_superblock_disk *)raw)->checksum)))
             continue;
+        if (memchr_inv(raw + sizeof(current), 0,
+                       INFILFS_DISK_BLOCK_SIZE - sizeof(current)))
+            continue;
         memcpy(&current, raw, sizeof(current));
         if (!infilfs_checkpoint_basic_valid(&current, blocks))
             continue;
-        if (!found || le64_to_cpu(current.generation) > best_generation) {
-            *selected = current;
-            best_generation = le64_to_cpu(current.generation);
-            found = true;
-        }
+        set->disks[i] = current;
+        set->valid[i] = true;
+        found++;
     }
 
     kfree(raw);
-    return found ? 0 : -EINVAL;
+    /* A writable mount must never heal over an unreadable checkpoint: that
+     * location may contain the only durable newer generation after a crash
+     * between primary publication and replica refresh. */
+    if (set->first_read_error && !sb_rdonly(sb))
+        return set->first_read_error;
+    if (found)
+        return 0;
+    return set->first_read_error ? set->first_read_error : -EFSCORRUPTED;
 }
 
 static bool infilfs_object_basic_valid(struct super_block *sb,
@@ -354,8 +387,10 @@ static unsigned int infilfs_dtype(u16 type)
     }
 }
 
-static int infilfs_index_lookup(struct super_block *sb, const u8 object_id[16],
-                                u64 *object_block_out, u16 *type_out)
+static int infilfs_index_lookup_indexed(struct super_block *sb,
+                                        const u8 object_id[16],
+                                        u64 *object_block_out,
+                                        u16 *type_out)
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
     const struct infilfs_object_header_disk *header;
@@ -367,12 +402,6 @@ static int infilfs_index_lookup(struct super_block *sb, const u8 object_id[16],
     u8 *page_block;
     int ret = -ENOENT;
     u32 i;
-
-    if (memcmp(object_id, sbi->disk.root_object_id, 16) == 0) {
-        *object_block_out = le64_to_cpu(sbi->disk.root_object_block);
-        *type_out = INFILFS_OBJECT_DIRECTORY;
-        return 0;
-    }
 
     head = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_KERNEL);
     page_block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_KERNEL);
@@ -388,6 +417,10 @@ static int infilfs_index_lookup(struct super_block *sb, const u8 object_id[16],
 
     header = (const struct infilfs_object_header_disk *)head;
     payload = (const struct infilfs_index_payload_disk *)(header + 1);
+    if (le32_to_cpu(header->payload_size) < sizeof(*payload)) {
+        ret = -EFSCORRUPTED;
+        goto out;
+    }
     total_entries = le32_to_cpu(payload->entry_count);
     version = le16_to_cpu(header->object_version);
 
@@ -419,7 +452,10 @@ static int infilfs_index_lookup(struct super_block *sb, const u8 object_id[16],
         u32 seen = 0;
         u32 p;
 
-        if (page_count == 0 || page_count > INFILFS_INDEX_PAGE_POINTERS) {
+        if ((total_entries && page_count == 0) ||
+            page_count > INFILFS_INDEX_PAGE_POINTERS ||
+            sizeof(*payload) + (size_t)page_count * sizeof(*pages) >
+                le32_to_cpu(header->payload_size)) {
             ret = -EFSCORRUPTED;
             goto out;
         }
@@ -464,6 +500,206 @@ static int infilfs_index_lookup(struct super_block *sb, const u8 object_id[16],
 out:
     kfree(page_block);
     kfree(head);
+    return ret;
+}
+
+static int infilfs_index_lookup(struct super_block *sb, const u8 object_id[16],
+                                u64 *object_block_out, u16 *type_out)
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
+
+    if (memcmp(object_id, sbi->disk.root_object_id, 16) == 0) {
+        *object_block_out = le64_to_cpu(sbi->disk.root_object_block);
+        *type_out = INFILFS_OBJECT_DIRECTORY;
+        return 0;
+    }
+    return infilfs_index_lookup_indexed(sb, object_id, object_block_out,
+                                        type_out);
+}
+
+static bool infilfs_checkpoint_bitmap_get(const u8 *bitmap, u64 block)
+{
+    return (bitmap[block >> 3] & (u8)(1u << (block & 7u))) != 0;
+}
+
+static int infilfs_validate_checkpoint_graph(
+    struct super_block *sb, const struct infilfs_superblock_disk *candidate)
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
+    const struct infilfs_object_header_disk *root_header;
+    const struct infilfs_object_header_disk *index_header;
+    const struct infilfs_directory_payload_disk *root_payload;
+    u64 bitmap_start = le64_to_cpu(candidate->bitmap_start_block);
+    u64 bitmap_blocks = le64_to_cpu(candidate->bitmap_block_count);
+    u64 total = le64_to_cpu(candidate->total_blocks);
+    u64 minimum_bitmap_blocks = DIV_ROUND_UP_ULL(
+        total, (u64)INFILFS_DISK_BLOCK_SIZE * 8u);
+    u64 critical[INFILFS_CHECKPOINT_COUNT + 2u];
+    u64 free_count = 0;
+    u64 indexed_root;
+    u16 indexed_type;
+    size_t bitmap_bytes;
+    u8 *bitmap = NULL;
+    u8 *root = NULL;
+    u8 *index = NULL;
+    bool paged_feature;
+    bool root_paged;
+    bool index_paged;
+    u64 i;
+    int ret = 0;
+
+    sbi->disk = *candidate;
+    if (!bitmap_start || !bitmap_blocks || bitmap_start >= total ||
+        bitmap_blocks > total - bitmap_start ||
+        bitmap_blocks < minimum_bitmap_blocks ||
+        bitmap_blocks > SIZE_MAX / INFILFS_DISK_BLOCK_SIZE)
+        return -EFSCORRUPTED;
+    bitmap_bytes = (size_t)bitmap_blocks * INFILFS_DISK_BLOCK_SIZE;
+    bitmap = kvmalloc(bitmap_bytes, GFP_KERNEL);
+    root = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_KERNEL);
+    index = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_KERNEL);
+    if (!bitmap || !root || !index) {
+        ret = -ENOMEM;
+        goto out;
+    }
+    for (i = 0; i < bitmap_blocks; ++i) {
+        ret = infilfs_read_block(sb, bitmap_start + i,
+            bitmap + (size_t)i * INFILFS_DISK_BLOCK_SIZE);
+        if (ret)
+            goto out;
+    }
+    for (i = 0; i < total; ++i)
+        if (!infilfs_checkpoint_bitmap_get(bitmap, i))
+            free_count++;
+    if (free_count != le64_to_cpu(candidate->free_blocks)) {
+        ret = -EFSCORRUPTED;
+        goto out;
+    }
+    for (i = total; i < (u64)bitmap_bytes * 8u; ++i) {
+        if (!infilfs_checkpoint_bitmap_get(bitmap, i)) {
+            ret = -EFSCORRUPTED;
+            goto out;
+        }
+    }
+    for (i = bitmap_start; i < bitmap_start + bitmap_blocks; ++i) {
+        if (!infilfs_checkpoint_bitmap_get(bitmap, i)) {
+            ret = -EFSCORRUPTED;
+            goto out;
+        }
+    }
+
+    for (i = 0; i < INFILFS_CHECKPOINT_COUNT; ++i)
+        critical[i] = le64_to_cpu(candidate->checkpoint_block[i]);
+    critical[INFILFS_CHECKPOINT_COUNT] =
+        le64_to_cpu(candidate->object_index_block);
+    critical[INFILFS_CHECKPOINT_COUNT + 1u] =
+        le64_to_cpu(candidate->root_object_block);
+    for (i = 0; i < ARRAY_SIZE(critical); ++i) {
+        if (critical[i] >= total ||
+            !infilfs_checkpoint_bitmap_get(bitmap, critical[i])) {
+            ret = -EFSCORRUPTED;
+            goto out;
+        }
+    }
+
+    ret = infilfs_read_object(sb, le64_to_cpu(candidate->root_object_block),
+                              INFILFS_OBJECT_DIRECTORY,
+                              candidate->root_object_id, root);
+    if (ret)
+        goto out;
+    root_header = (const struct infilfs_object_header_disk *)root;
+    root_payload = (const struct infilfs_directory_payload_disk *)(root_header + 1);
+    if (memchr_inv(root_header->parent_id, 0, sizeof(root_header->parent_id)) ||
+        le32_to_cpu(root_header->payload_size) < sizeof(*root_payload)) {
+        ret = -EFSCORRUPTED;
+        goto out;
+    }
+
+    ret = infilfs_read_object(sb, le64_to_cpu(candidate->object_index_block),
+                              INFILFS_OBJECT_INDEX, NULL, index);
+    if (ret)
+        goto out;
+    index_header = (const struct infilfs_object_header_disk *)index;
+    paged_feature = (le64_to_cpu(candidate->incompat_flags) &
+                     INFILFS_INCOMPAT_PAGED_METADATA) != 0;
+    root_paged = le16_to_cpu(root_header->object_version) ==
+        INFILFS_OBJECT_VERSION_PAGED;
+    index_paged = le16_to_cpu(index_header->object_version) ==
+        INFILFS_OBJECT_VERSION_PAGED;
+    if (paged_feature != root_paged || paged_feature != index_paged) {
+        ret = -EFSCORRUPTED;
+        goto out;
+    }
+
+    ret = infilfs_index_lookup_indexed(sb, candidate->root_object_id,
+                                       &indexed_root, &indexed_type);
+    if (ret == -ENOENT)
+        ret = -EFSCORRUPTED;
+    if (!ret && (indexed_root != le64_to_cpu(candidate->root_object_block) ||
+                 indexed_type != INFILFS_OBJECT_DIRECTORY))
+        ret = -EFSCORRUPTED;
+out:
+    kfree(index);
+    kfree(root);
+    kvfree(bitmap);
+    return ret;
+}
+
+static int infilfs_select_checkpoint(struct super_block *sb,
+                                     struct infilfs_superblock_disk *selected)
+{
+    struct infilfs_checkpoint_candidates *set;
+    bool tried[INFILFS_CHECKPOINT_COUNT] = { false };
+    int ret;
+    unsigned int attempt;
+
+    set = kzalloc(sizeof(*set), GFP_KERNEL);
+    if (!set)
+        return -ENOMEM;
+    ret = infilfs_read_checkpoint_candidates(sb, set);
+    if (ret)
+        goto out;
+    for (attempt = 0; attempt < INFILFS_CHECKPOINT_COUNT; ++attempt) {
+        int best = -1;
+        u64 best_generation = 0;
+        unsigned int i;
+
+        for (i = 0; i < INFILFS_CHECKPOINT_COUNT; ++i) {
+            u64 generation;
+
+            if (!set->valid[i] || tried[i])
+                continue;
+            generation = le64_to_cpu(set->disks[i].generation);
+            if (best < 0 || generation > best_generation) {
+                best = (int)i;
+                best_generation = generation;
+            }
+        }
+        if (best < 0)
+            break;
+        tried[best] = true;
+        ret = infilfs_validate_checkpoint_graph(sb, &set->disks[best]);
+        if (!ret) {
+            unsigned int i;
+
+            *selected = set->disks[best];
+            INFILFS_SB(sb)->disk = *selected;
+            INFILFS_SB(sb)->checkpoint_repair_needed = false;
+            for (i = 0; i < INFILFS_CHECKPOINT_COUNT; ++i) {
+                if (!set->valid[i] ||
+                    memcmp(&set->disks[i], selected, sizeof(*selected)) != 0) {
+                    INFILFS_SB(sb)->checkpoint_repair_needed = true;
+                    break;
+                }
+            }
+            goto out;
+        }
+        if (ret != -EFSCORRUPTED)
+            goto out;
+    }
+    ret = -EFSCORRUPTED;
+out:
+    kfree(set);
     return ret;
 }
 
@@ -939,6 +1175,72 @@ static int infilfs_file_allocated_blocks(
     return 0;
 }
 
+static int infilfs_metadata_allocated_blocks(
+    const u8 object[INFILFS_DISK_BLOCK_SIZE], u64 *allocated_out)
+{
+    const struct infilfs_object_header_disk *header =
+        (const struct infilfs_object_header_disk *)object;
+    u16 type = le16_to_cpu(header->object_type);
+    u16 version = le16_to_cpu(header->object_version);
+
+    if (type == INFILFS_OBJECT_SYMLINK) {
+        *allocated_out = 1;
+        return 0;
+    }
+    if (type != INFILFS_OBJECT_DIRECTORY)
+        return -EINVAL;
+    if (version == INFILFS_OBJECT_VERSION_CLASSIC) {
+        *allocated_out = 1;
+        return 0;
+    }
+    if (version == INFILFS_OBJECT_VERSION_PAGED) {
+        const struct infilfs_directory_payload_disk *payload =
+            (const struct infilfs_directory_payload_disk *)(header + 1);
+        u32 page_count = le32_to_cpu(payload->bytes_used);
+        size_t needed = sizeof(*payload) +
+            (size_t)page_count * sizeof(__le64);
+
+        if (page_count > INFILFS_DIRECTORY_PAGE_POINTERS ||
+            needed > le32_to_cpu(header->payload_size))
+            return -EFSCORRUPTED;
+        *allocated_out = 1u + page_count;
+        return 0;
+    }
+    return -EFSCORRUPTED;
+}
+
+static int infilfs_refresh_inode_blocks(struct inode *inode)
+{
+    struct infilfs_inode_info *ii = INFILFS_I(inode);
+    u8 *object;
+    u64 allocated;
+    int ret;
+
+    if (!ii || (ii->object_type != INFILFS_OBJECT_DIRECTORY &&
+                ii->object_type != INFILFS_OBJECT_SYMLINK))
+        return 0;
+    object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+    if (!object)
+        return -ENOMEM;
+    ret = infilfs_read_object(inode->i_sb, ii->object_block,
+                              ii->object_type, ii->object_id, object);
+    if (!ret)
+        ret = infilfs_metadata_allocated_blocks(object, &allocated);
+    if (!ret)
+        inode->i_blocks = allocated * (INFILFS_DISK_BLOCK_SIZE >> 9);
+    kfree(object);
+    return ret;
+}
+
+static void infilfs_refresh_inode_blocks_after_commit(struct inode *inode)
+{
+    int ret = infilfs_refresh_inode_blocks(inode);
+
+    if (ret)
+        pr_err("InfiltratorFS: could not refresh allocation accounting for inode %lu: %d\n",
+               inode->i_ino, ret);
+}
+
 static int infilfs_populate_inode(struct inode *inode, u64 object_block,
                                   u16 expected_type, const u8 expected_id[16])
 {
@@ -982,6 +1284,10 @@ static int infilfs_populate_inode(struct inode *inode, u64 object_block,
         links = le64_to_cpu(attributes->link_count);
         set_nlink(inode, links >= 2 ? links : 2);
         i_size_write(inode, le64_to_cpu(attributes->logical_size));
+        ret = infilfs_metadata_allocated_blocks(object, &links);
+        if (ret)
+            goto fail_private;
+        inode->i_blocks = links * (INFILFS_DISK_BLOCK_SIZE >> 9);
     } else if (ii->object_type == INFILFS_OBJECT_FILE) {
         const struct infilfs_file_payload_disk *payload =
             (const struct infilfs_file_payload_disk *)(header + 1);
@@ -1049,6 +1355,7 @@ static int infilfs_populate_inode(struct inode *inode, u64 object_block,
         inode->i_op = &infilfs_symlink_inode_operations;
         set_nlink(inode, 1);
         i_size_write(inode, target_len);
+        inode->i_blocks = INFILFS_DISK_BLOCK_SIZE >> 9;
     } else {
         ret = -EOPNOTSUPP;
         goto fail_private;
@@ -1262,6 +1569,9 @@ static int infilfs_fill_super(struct super_block *sb, struct fs_context *fc)
     if (ret)
         goto fail;
     ret = infilfs_rw_mount_init(sb);
+    if (ret)
+        goto fail;
+    ret = infilfs_rw_heal_checkpoints(sb);
     if (ret)
         goto fail;
 

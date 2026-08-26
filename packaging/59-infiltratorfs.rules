@@ -10,8 +10,8 @@ ACTION=="add|change", SUBSYSTEM=="block", ENV{DEVTYPE}=="partition", IMPORT{prog
 ACTION=="add|change", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", IMPORT{program}="/usr/bin/infilfs-inspect --udev /dev/%k"
 
 # Keep the kernel filesystem registered before desktop mount requests are
-# validated by UDisks.  Failure is harmless: the FUSE userspace path remains
-# available through mount.infiltratorfs.
+# validated by UDisks.  mount.infiltratorfs uses this native filesystem only;
+# a modprobe failure therefore remains visible to the desktop mount request.
 ENV{ID_FS_TYPE}=="infiltratorfs", RUN+="/sbin/modprobe -q infiltratorfs"
 
 # UDisks applies these only to devices that the probe identified as

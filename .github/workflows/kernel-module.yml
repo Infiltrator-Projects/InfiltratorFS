@@ -103,7 +103,7 @@ jobs:
 
       - name: Native read-write mount transaction and scrub qualification
         if: steps.headers.outputs.runtime_kdir != ''
-        timeout-minutes: 10
+        timeout-minutes: 30
         shell: bash
         run: |
           set -euo pipefail
@@ -112,11 +112,25 @@ jobs:
           inline_src="$RUNNER_TEMP/infiltratorfs-inline.txt"
           extent_src="$RUNNER_TEMP/infiltratorfs-extent.bin"
           large_src="$RUNNER_TEMP/infiltratorfs-native-large.bin"
+          crash_image="$RUNNER_TEMP/infiltratorfs-crash-recovery.img"
+          crash_mount="$RUNNER_TEMP/infiltratorfs-crash-mnt"
+          checkpoint_image="$RUNNER_TEMP/infiltratorfs-checkpoint-recovery.img"
+          checkpoint_mount="$RUNNER_TEMP/infiltratorfs-checkpoint-mnt"
           loopdev=""
+          crash_loopdev=""
+          checkpoint_loopdev=""
+          holder_pid=""
           mounted=0
+          crash_mounted=0
+          checkpoint_mounted=0
           loaded=0
           cleanup() {
             set +e
+            if [[ -n "$holder_pid" ]]; then sudo kill -KILL "$holder_pid" 2>/dev/null || true; fi
+            if [[ "$checkpoint_mounted" = 1 ]]; then timeout 10s sudo umount -l "$checkpoint_mount" || true; fi
+            if [[ -n "$checkpoint_loopdev" ]]; then timeout 10s sudo losetup -d "$checkpoint_loopdev" || true; fi
+            if [[ "$crash_mounted" = 1 ]]; then timeout 10s sudo umount -l "$crash_mount" || true; fi
+            if [[ -n "$crash_loopdev" ]]; then timeout 10s sudo losetup -d "$crash_loopdev" || true; fi
             if [[ "$mounted" = 1 ]]; then timeout 10s sudo umount -l "$mountpoint" || true; fi
             if [[ -n "$loopdev" ]]; then timeout 10s sudo losetup -d "$loopdev" || true; fi
             if [[ "$loaded" = 1 ]]; then timeout 10s sudo rmmod infiltratorfs || true; fi
@@ -214,6 +228,35 @@ jobs:
           assert 'user.infiltratorfs-remove' not in os.listxattr(path)
           os.setxattr(os.path.dirname(path), b'user.infiltratorfs-dir', b'directory')
           PY
+          sudo python3 - "$mountpoint/user-owned/file.txt" <<'PY'
+          import errno
+          import os
+          import sys
+
+          path = sys.argv[1]
+          os.setxattr(path, b'trusted.infiltratorfs-ci', b'trusted')
+          assert os.getxattr(path, b'trusted.infiltratorfs-ci') == b'trusted'
+          assert 'trusted.infiltratorfs-ci' in os.listxattr(path)
+          # security.* and system.* authorization is owned by the active LSM
+          # and VFS ACL layer.  When the host permits a custom name, prove the
+          # native handler persists it; policy rejections are not filesystem
+          # failures.
+          for name in (b'security.infiltratorfs-ci', b'system.infiltratorfs-ci'):
+              try:
+                  os.setxattr(path, name, b'native')
+              except OSError as exc:
+                  if exc.errno not in (errno.EPERM, errno.EACCES,
+                                       errno.EINVAL, errno.EOPNOTSUPP):
+                      raise
+              else:
+                  assert os.getxattr(path, name) == b'native'
+                  assert os.fsdecode(name) in os.listxattr(path)
+          PY
+          python3 - "$mountpoint/user-owned/file.txt" <<'PY'
+          import os
+          import sys
+          assert 'trusted.infiltratorfs-ci' not in os.listxattr(sys.argv[1])
+          PY
 
           sudo mkdir "$mountpoint/native-rw"
           printf 'native-kernel-rw\n' | sudo tee "$mountpoint/native-rw/created.txt" >/dev/null
@@ -235,7 +278,32 @@ jobs:
           sudo ln -s created.txt "$mountpoint/native-rw/current-link"
           test "$(readlink "$mountpoint/native-rw/current-link")" = 'created.txt'
           test "$(cat "$mountpoint/native-rw/current-link")" = 'rewritte'
+          test "$(stat -c '%b' "$mountpoint/native-rw/current-link")" -eq 8
           sudo rm "$mountpoint/native-rw/current-link"
+
+          # Directories and symlinks consume metadata blocks even when they
+          # contain no file data.  Grow a directory beyond one metadata page,
+          # then shrink it again to prove i_blocks follows each committed COW.
+          sudo mkdir "$mountpoint/native-rw/allocation-dir"
+          test "$(stat -c '%b' "$mountpoint/native-rw/allocation-dir")" -eq 8
+          sudo python3 - "$mountpoint/native-rw/allocation-dir" <<'PY'
+          import os
+          import sys
+          directory = sys.argv[1]
+          for index in range(180):
+              fd = os.open(os.path.join(directory, f'entry-{index:03d}'),
+                           os.O_CREAT | os.O_WRONLY | os.O_EXCL, 0o600)
+              os.close(fd)
+          PY
+          test "$(stat -c '%b' "$mountpoint/native-rw/allocation-dir")" -gt 8
+          sudo find "$mountpoint/native-rw/allocation-dir" -mindepth 1 -maxdepth 1 \
+            -type f -delete
+          test "$(stat -c '%b' "$mountpoint/native-rw/allocation-dir")" -eq 8
+          sudo rmdir "$mountpoint/native-rw/allocation-dir"
+          sudo mkdir "$mountpoint/native-rw/allocation-persist"
+          sudo ln -s created.txt "$mountpoint/native-rw/allocation-link"
+          test "$(stat -c '%b' "$mountpoint/native-rw/allocation-persist")" -eq 8
+          test "$(stat -c '%b' "$mountpoint/native-rw/allocation-link")" -eq 8
 
           # POSIX requires an unlinked file to remain fully usable through an
           # already-open descriptor until the final close.  Exercise both read
@@ -266,6 +334,105 @@ jobs:
             "$mountpoint/native-rw/post-unlink.txt" >/dev/null
           test "$(cat "$mountpoint/native-rw/post-unlink.txt")" = \
             'post-unlink-allocation'
+
+          # Restore the complete mounted open-handle matrix from the former
+          # FUSE regression: open rename, replacement of an open destination,
+          # truncate after unlink, and parent-directory rename.
+          sudo python3 - "$mountpoint/native-rw" <<'PY'
+          import os
+          import sys
+
+          root = sys.argv[1]
+          original = os.path.join(root, 'open-rename-source')
+          renamed = os.path.join(root, 'open-rename-target')
+          fd = os.open(original, os.O_CREAT | os.O_RDWR | os.O_EXCL, 0o600)
+          os.write(fd, b'open-before-rename')
+          os.fsync(fd)
+          os.rename(original, renamed)
+          os.lseek(fd, 0, os.SEEK_END)
+          os.write(fd, b'-after')
+          os.fsync(fd)
+          os.lseek(fd, 0, os.SEEK_SET)
+          assert os.read(fd, 64) == b'open-before-rename-after'
+          os.close(fd)
+          with open(renamed, 'rb') as stream:
+              assert stream.read() == b'open-before-rename-after'
+
+          source = os.path.join(root, 'replace-source')
+          destination = os.path.join(root, 'replace-destination')
+          with open(source, 'wb') as stream:
+              stream.write(b'new-destination')
+              stream.flush()
+              os.fsync(stream.fileno())
+          old_fd = os.open(destination, os.O_CREAT | os.O_RDWR | os.O_EXCL, 0o600)
+          os.write(old_fd, b'old-open-destination')
+          os.fsync(old_fd)
+          os.rename(source, destination)
+          os.lseek(old_fd, 0, os.SEEK_SET)
+          assert os.read(old_fd, 64) == b'old-open-destination'
+          os.ftruncate(old_fd, 7)
+          os.fsync(old_fd)
+          os.close(old_fd)
+          with open(destination, 'rb') as stream:
+              assert stream.read() == b'new-destination'
+
+          parent = os.path.join(root, 'open-parent')
+          moved_parent = os.path.join(root, 'open-parent-moved')
+          os.mkdir(parent)
+          child = os.path.join(parent, 'child')
+          child_fd = os.open(child, os.O_CREAT | os.O_RDWR | os.O_EXCL, 0o600)
+          os.write(child_fd, b'before-parent-rename')
+          os.fsync(child_fd)
+          os.rename(parent, moved_parent)
+          os.lseek(child_fd, 0, os.SEEK_END)
+          os.write(child_fd, b'-after')
+          os.fsync(child_fd)
+          os.unlink(os.path.join(moved_parent, 'child'))
+          os.lseek(child_fd, 0, os.SEEK_SET)
+          assert os.read(child_fd, 64) == b'before-parent-rename-after'
+          os.close(child_fd)
+          os.rmdir(moved_parent)
+          PY
+
+          # Capture a power-loss image while an unlinked descriptor is still
+          # open.  The clone contains the durable zero-link indexed object but
+          # never observes final close/eviction; its later writable mount must
+          # recover that orphan before scrub.
+          orphan_ready="$RUNNER_TEMP/infiltratorfs-orphan-ready"
+          sudo python3 - "$mountpoint/native-rw/crash-held-unlinked" \
+            "$orphan_ready" <<'PY' &
+          import os
+          import sys
+          import time
+
+          path, ready = sys.argv[1:]
+          fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_EXCL, 0o600)
+          os.write(fd, b'durable-open-orphan')
+          os.fsync(fd)
+          os.unlink(path)
+          directory_fd = os.open(os.path.dirname(path), os.O_RDONLY)
+          os.fsync(directory_fd)
+          os.close(directory_fd)
+          with open(ready, 'w', encoding='ascii') as marker:
+              marker.write('ready\n')
+              marker.flush()
+              os.fsync(marker.fileno())
+          while True:
+              time.sleep(60)
+          PY
+          holder_pid="$!"
+          for _ in $(seq 1 200); do
+            [[ -f "$orphan_ready" ]] && break
+            sleep 0.1
+          done
+          test -f "$orphan_ready"
+          sync
+          sudo blockdev --flushbufs "$loopdev"
+          cp --reflink=auto --sparse=always "$image" "$crash_image"
+          sudo kill -KILL "$holder_pid"
+          wait "$holder_pid" 2>/dev/null || true
+          holder_pid=""
+          sync
 
           sudo mkdir "$mountpoint/native-rw/source-dir" "$mountpoint/native-rw/dest-dir"
           printf 'cross-directory-rename\n' | sudo tee "$mountpoint/native-rw/source-dir/item" >/dev/null
@@ -396,6 +563,61 @@ jobs:
           test "$(sha256sum "$mountpoint/native-rw/large.bin" | awk '{print $1}')" = \
                "$large_source_sha"
 
+          # Reinstate the former 4,000-write mounted stress workload with
+          # deterministic 4 KiB overwrites and periodic durability barriers.
+          sudo python3 - "$large_src" "$mountpoint/native-rw/large.bin" <<'PY'
+          import os
+          import random
+          import sys
+
+          expected_path, mounted_path = sys.argv[1:]
+          size = os.path.getsize(expected_path)
+          rng = random.Random(0x1F51A7E)
+          expected_fd = os.open(expected_path, os.O_RDWR)
+          mounted_fd = os.open(mounted_path, os.O_RDWR)
+          try:
+              for iteration in range(4000):
+                  offset = rng.randrange(size // 4096) * 4096
+                  payload = bytes(((iteration * 17 + i * 31 + 9) & 0xff)
+                                  for i in range(4096))
+                  assert os.pwrite(expected_fd, payload, offset) == len(payload)
+                  assert os.pwrite(mounted_fd, payload, offset) == len(payload)
+                  if iteration % 50 == 49:
+                      os.fsync(mounted_fd)
+              os.fsync(expected_fd)
+              os.fsync(mounted_fd)
+              assert os.fstat(mounted_fd).st_size == size
+          finally:
+              os.close(mounted_fd)
+              os.close(expected_fd)
+          PY
+          large_source_sha="$(sha256sum "$large_src" | awk '{print $1}')"
+          test "$(sha256sum "$mountpoint/native-rw/large.bin" | awk '{print $1}')" = \
+               "$large_source_sha"
+
+          # Hyper-V qualification formerly published 200 explicit fsync
+          # generations.  Preserve that exact mounted durability pressure.
+          sudo python3 - "$mountpoint/native-rw/fsync-publications.bin" <<'PY'
+          import os
+          import sys
+
+          path = sys.argv[1]
+          fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_EXCL, 0o600)
+          expected = bytearray(200 * 4096)
+          try:
+              for iteration in range(200):
+                  payload = bytes(((iteration * 23 + i * 7 + 3) & 0xff)
+                                  for i in range(4096))
+                  offset = iteration * 4096
+                  assert os.pwrite(fd, payload, offset) == len(payload)
+                  expected[offset:offset + 4096] = payload
+                  os.fsync(fd)
+              os.lseek(fd, 0, os.SEEK_SET)
+              assert os.read(fd, len(expected)) == expected
+          finally:
+              os.close(fd)
+          PY
+
           # Native parity: sparse high-offset growth, extent truncate,
           # preallocation and hole punching must survive the offline scrub.
           sudo truncate -s 1T "$mountpoint/native-rw/sparse-1t.bin"
@@ -454,6 +676,86 @@ jobs:
           build/infilfs-scrub "$image" | tee "$RUNNER_TEMP/native-rw-scrub.txt"
           grep -Fq 'Result:              CLEAN' "$RUNNER_TEMP/native-rw-scrub.txt"
 
+          printf 'Recovering the crash-cloned open-file orphan...\n'
+          mkdir -p "$crash_mount"
+          crash_loopdev="$(sudo losetup --find --show "$crash_image")"
+          sudo mount -t infiltratorfs -o rw "$crash_loopdev" "$crash_mount"
+          crash_mounted=1
+          test ! -e "$crash_mount/native-rw/crash-held-unlinked"
+          printf 'post-crash-recovery\n' | sudo tee \
+            "$crash_mount/native-rw/post-crash-recovery" >/dev/null
+          sudo umount "$crash_mount"
+          crash_mounted=0
+          sudo losetup -d "$crash_loopdev"
+          crash_loopdev=""
+          build/infilfs-scrub "$crash_image" | \
+            tee "$RUNNER_TEMP/native-crash-recovery-scrub.txt"
+          grep -Fq 'Result:              CLEAN' \
+            "$RUNNER_TEMP/native-crash-recovery-scrub.txt"
+
+          # Manufacture a structurally valid, higher-generation checkpoint
+          # whose declared root points at the checkpoint block itself.  The
+          # native mount must reject that graph, select an older good replica,
+          # and heal all three checkpoint locations byte-for-byte.
+          cp --reflink=auto --sparse=always "$image" "$checkpoint_image"
+          python3 - "$checkpoint_image" <<'PY'
+          import struct
+          import sys
+
+          path = sys.argv[1]
+          block_size = 4096
+          checksum_offset = 220
+          checksum_size = 32
+          polynomial = 0x42F0E1EBA9EA3693
+
+          with open(path, 'r+b', buffering=0) as image:
+              block = bytearray(image.read(block_size))
+              generation = struct.unpack_from('<Q', block, 20)[0]
+              struct.pack_into('<Q', block, 20, generation + 1)
+              struct.pack_into('<Q', block, 68, 0)
+              block[checksum_offset:checksum_offset + checksum_size] = bytes(checksum_size)
+              crc = 0
+              for byte in block:
+                  crc ^= byte << 56
+                  for _ in range(8):
+                      crc = ((crc << 1) ^ polynomial) & 0xffffffffffffffff \
+                          if crc & (1 << 63) else (crc << 1) & 0xffffffffffffffff
+              struct.pack_into('<Q', block, checksum_offset, crc)
+              image.seek(0)
+              image.write(block)
+              image.flush()
+          PY
+          mkdir -p "$checkpoint_mount"
+          checkpoint_loopdev="$(sudo losetup --find --show "$checkpoint_image")"
+          sudo mount -t infiltratorfs -o rw "$checkpoint_loopdev" "$checkpoint_mount"
+          checkpoint_mounted=1
+          test "$(cat "$checkpoint_mount/native-rw/created.txt")" = 'rewritte'
+          sudo umount "$checkpoint_mount"
+          checkpoint_mounted=0
+          sudo losetup -d "$checkpoint_loopdev"
+          checkpoint_loopdev=""
+          python3 - "$checkpoint_image" <<'PY'
+          import os
+          import struct
+          import sys
+
+          path = sys.argv[1]
+          block_size = 4096
+          total_blocks = os.path.getsize(path) // block_size
+          locations = (0, total_blocks // 2, total_blocks - 1)
+          with open(path, 'rb') as image:
+              checkpoints = []
+              for location in locations:
+                  image.seek(location * block_size)
+                  checkpoints.append(image.read(block_size))
+          assert checkpoints[0] == checkpoints[1] == checkpoints[2]
+          assert struct.unpack_from('<Q', checkpoints[0], 68)[0] != 0
+          PY
+          build/infilfs-scrub "$checkpoint_image" | \
+            tee "$RUNNER_TEMP/native-checkpoint-recovery-scrub.txt"
+          grep -Fq 'Result:              CLEAN' \
+            "$RUNNER_TEMP/native-checkpoint-recovery-scrub.txt"
+
           printf 'Remounting read-only for final byte comparison...\n'
           sudo mount -t infiltratorfs -o ro "$loopdev" "$mountpoint"
           mounted=1
@@ -472,6 +774,15 @@ jobs:
           assert 'user.infiltratorfs-ci' in os.listxattr(path)
           assert os.getxattr(os.path.dirname(path), b'user.infiltratorfs-dir') == b'directory'
           PY
+          sudo python3 - "$mountpoint/user-owned/file.txt" <<'PY'
+          import os
+          import sys
+          path = sys.argv[1]
+          assert os.getxattr(path, b'trusted.infiltratorfs-ci') == b'trusted'
+          assert 'trusted.infiltratorfs-ci' in os.listxattr(path)
+          PY
+          test "$(stat -c '%b' "$mountpoint/native-rw/allocation-persist")" -eq 8
+          test "$(stat -c '%b' "$mountpoint/native-rw/allocation-link")" -eq 8
           test -p "$mountpoint/native-rw/native.fifo"
           test -S "$mountpoint/native-rw/native.socket"
           test -c "$mountpoint/native-rw/native.char"
@@ -507,6 +818,19 @@ jobs:
           fi
           remount_read_end="$(date +%s%N)"
           test "$remounted_sha" = "$large_source_sha"
+          sudo python3 - "$mountpoint/native-rw/fsync-publications.bin" <<'PY'
+          import os
+          import sys
+
+          with open(sys.argv[1], 'rb') as stream:
+              data = stream.read()
+          assert len(data) == 200 * 4096
+          for iteration in range(200):
+              expected = bytes(((iteration * 23 + i * 7 + 3) & 0xff)
+                               for i in range(4096))
+              offset = iteration * 4096
+              assert data[offset:offset + 4096] == expected
+          PY
           python3 - "$remount_read_start" "$remount_read_end" <<'PY'
           import sys
           elapsed = (int(sys.argv[2]) - int(sys.argv[1])) / 1_000_000_000

@@ -221,6 +221,33 @@ static int infilfs_rw_encode_superblock(
     return 0;
 }
 
+static int infilfs_rw_heal_checkpoints(struct super_block *sb)
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
+    u8 *block;
+    unsigned int i;
+    int ret = 0;
+
+    if (sb_rdonly(sb) || !sbi->checkpoint_repair_needed)
+        return 0;
+    block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_KERNEL);
+    if (!block)
+        return -ENOMEM;
+    infilfs_rw_encode_superblock(&sbi->disk, block);
+    for (i = 0; i < INFILFS_CHECKPOINT_COUNT; ++i) {
+        ret = infilfs_rw_write_block(
+            sb, le64_to_cpu(sbi->disk.checkpoint_block[i]), block);
+        if (ret)
+            break;
+    }
+    if (!ret)
+        ret = sync_blockdev(sb->s_bdev);
+    if (!ret)
+        sbi->checkpoint_repair_needed = false;
+    kfree(block);
+    return ret;
+}
+
 static inline u32 infilfs_rw_ror32(u32 value, unsigned int shift)
 {
     return (value >> shift) | (value << (32u - shift));
@@ -1497,6 +1524,7 @@ static int infilfs_rw_create_named_child(
     if (ret)
         goto abort;
     dir_ii->object_block = new_dir_block;
+    infilfs_refresh_inode_blocks_after_commit(dir);
     memcpy(object_id_out, object_id, 16);
     *block_out = object_block;
     mutex_unlock(&sbi->write_lock);

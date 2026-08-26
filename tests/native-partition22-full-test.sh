@@ -309,12 +309,18 @@ grep -qx 'line-100:00000000000000000000000000000100' "$MOUNTPOINT/append.txt" &&
 
 section "Directory scaling / paged metadata"
 mkdir "$MOUNTPOINT/many-files"
+[[ "$(stat -c '%b' "$MOUNTPOINT/many-files")" == 8 ]] && \
+    pass "Empty directory reports its allocated metadata block" || \
+    fail "Empty directory allocation reporting is incorrect"
 for i in $(seq -w 1 260); do
     printf 'file-%s\n' "$i" >"$MOUNTPOINT/many-files/file-$i.txt"
 done
 sync
 many_count="$(find "$MOUNTPOINT/many-files" -maxdepth 1 -type f | wc -l)"
 [[ "$many_count" == "260" ]] && pass "260-file directory crosses paged metadata/index boundaries successfully" || fail "Expected 260 files, found $many_count"
+(( $(stat -c '%b' "$MOUNTPOINT/many-files") > 8 )) && \
+    pass "Paged directory reports head and page allocation" || \
+    fail "Paged directory allocation reporting did not grow"
 for i in 001 125 126 250 260; do
     expected="file-$i"
     actual="$(tr -d '\n' <"$MOUNTPOINT/many-files/file-$i.txt")"
@@ -365,6 +371,55 @@ cmp -s "$WORKDIR/overwrite.src" "$MOUNTPOINT/overwrite.bin" && \
     pass "In-place random overwrite preserves surrounding data" || \
     fail "In-place random overwrite content mismatch"
 
+truncate -s 536870912 "$WORKDIR/random-expected.bin"
+python3 - "$WORKDIR/random-expected.bin" "$MOUNTPOINT/large-512m.bin" <<'PY'
+import os
+import random
+import sys
+
+expected_path, mounted_path = sys.argv[1:]
+rng = random.Random(0x1F51A7E)
+expected_fd = os.open(expected_path, os.O_RDWR)
+mounted_fd = os.open(mounted_path, os.O_RDWR)
+try:
+    for iteration in range(4000):
+        offset = rng.randrange(536870912 // 4096) * 4096
+        payload = bytes(((iteration * 17 + i * 31 + 9) & 0xff)
+                        for i in range(4096))
+        assert os.pwrite(expected_fd, payload, offset) == len(payload)
+        assert os.pwrite(mounted_fd, payload, offset) == len(payload)
+        if iteration % 50 == 49:
+            os.fsync(mounted_fd)
+    os.fsync(expected_fd)
+    os.fsync(mounted_fd)
+finally:
+    os.close(mounted_fd)
+    os.close(expected_fd)
+PY
+random_expected_hash="$(sha256sum "$WORKDIR/random-expected.bin" | awk '{print $1}')"
+[[ "$(sha256sum "$MOUNTPOINT/large-512m.bin" | awk '{print $1}')" == \
+   "$random_expected_hash" ]] && \
+    pass "4,000 mounted random 4 KiB overwrites match the reference image" || \
+    fail "4,000-write mounted random-overwrite hash mismatch"
+
+python3 - "$MOUNTPOINT/fsync-publications.bin" <<'PY'
+import os
+import sys
+
+fd = os.open(sys.argv[1], os.O_CREAT | os.O_RDWR | os.O_EXCL, 0o600)
+try:
+    for iteration in range(200):
+        payload = bytes(((iteration * 23 + i * 7 + 3) & 0xff)
+                        for i in range(4096))
+        assert os.pwrite(fd, payload, iteration * 4096) == len(payload)
+        os.fsync(fd)
+finally:
+    os.close(fd)
+PY
+[[ "$(stat -c '%s' "$MOUNTPOINT/fsync-publications.bin")" == 819200 ]] && \
+    pass "200 explicit mounted fsync publications complete" || \
+    fail "Repeated fsync publication file has the wrong size"
+
 fallocate -l 16M "$MOUNTPOINT/preallocated.bin"
 before_punch="$(stat -c '%b' "$MOUNTPOINT/preallocated.bin")"
 fallocate -p -o 4M -l 8M "$MOUNTPOINT/preallocated.bin"
@@ -395,10 +450,66 @@ ln "$MOUNTPOINT/hardlink-source.txt" "$MOUNTPOINT/hardlink-copy.txt"
 ln -s "inline.txt" "$MOUNTPOINT/symlink-probe"
 [[ "$(readlink "$MOUNTPOINT/symlink-probe")" == "inline.txt" ]] && \
     pass "Symbolic link creation succeeds" || fail "Symbolic link target mismatch"
+[[ "$(stat -c '%b' "$MOUNTPOINT/symlink-probe")" == 8 ]] && \
+    pass "Symlink reports its allocated metadata block" || \
+    fail "Symlink allocation reporting is incorrect"
 
 chmod 0600 "$MOUNTPOINT/inline.txt"
 [[ "$(stat -c '%a' "$MOUNTPOINT/inline.txt")" == 600 ]] && \
     pass "chmod metadata update succeeds" || fail "chmod mode mismatch"
+
+python3 - "$MOUNTPOINT" <<'PY'
+import os
+import sys
+
+root = sys.argv[1]
+source = os.path.join(root, 'open-rename-source')
+renamed = os.path.join(root, 'open-rename-target')
+fd = os.open(source, os.O_CREAT | os.O_RDWR | os.O_EXCL, 0o600)
+os.write(fd, b'before-rename')
+os.fsync(fd)
+os.rename(source, renamed)
+os.lseek(fd, 0, os.SEEK_END)
+os.write(fd, b'-after')
+os.fsync(fd)
+os.lseek(fd, 0, os.SEEK_SET)
+assert os.read(fd, 64) == b'before-rename-after'
+os.close(fd)
+
+replacement = os.path.join(root, 'replacement-source')
+destination = os.path.join(root, 'replacement-destination')
+with open(replacement, 'wb') as stream:
+    stream.write(b'new-file')
+old_fd = os.open(destination, os.O_CREAT | os.O_RDWR | os.O_EXCL, 0o600)
+os.write(old_fd, b'old-open-file')
+os.fsync(old_fd)
+os.rename(replacement, destination)
+os.lseek(old_fd, 0, os.SEEK_SET)
+assert os.read(old_fd, 64) == b'old-open-file'
+os.ftruncate(old_fd, 3)
+os.fsync(old_fd)
+os.close(old_fd)
+with open(destination, 'rb') as stream:
+    assert stream.read() == b'new-file'
+
+parent = os.path.join(root, 'open-parent')
+moved = os.path.join(root, 'open-parent-moved')
+os.mkdir(parent)
+child = os.path.join(parent, 'child')
+child_fd = os.open(child, os.O_CREAT | os.O_RDWR | os.O_EXCL, 0o600)
+os.write(child_fd, b'parent-before')
+os.fsync(child_fd)
+os.rename(parent, moved)
+os.lseek(child_fd, 0, os.SEEK_END)
+os.write(child_fd, b'-after')
+os.unlink(os.path.join(moved, 'child'))
+os.fsync(child_fd)
+os.lseek(child_fd, 0, os.SEEK_SET)
+assert os.read(child_fd, 64) == b'parent-before-after'
+os.close(child_fd)
+os.rmdir(moved)
+PY
+pass "Open rename/replace/parent-rename descriptor semantics succeed"
 
 section "Linux xattr, special-node and mmap parity"
 python3 - "$MOUNTPOINT/inline.txt" <<'PY'
@@ -409,8 +520,10 @@ path = sys.argv[1]
 os.setxattr(path, b'user.infiltratorfs-test', b'created', os.XATTR_CREATE)
 os.setxattr(path, b'user.infiltratorfs-test', b'replaced', os.XATTR_REPLACE)
 assert os.getxattr(path, b'user.infiltratorfs-test') == b'replaced'
+os.setxattr(path, b'trusted.infiltratorfs-test', b'trusted')
+assert os.getxattr(path, b'trusted.infiltratorfs-test') == b'trusted'
 PY
-pass "Persistent user xattr create/replace/read succeeds"
+pass "Persistent user and trusted xattr create/replace/read succeeds"
 
 mkfifo "$MOUNTPOINT/native.fifo"
 python3 - "$MOUNTPOINT/native.socket" <<'PY'
@@ -493,7 +606,7 @@ ro_opts="$(findmnt -rn -T "$MOUNTPOINT" -o OPTIONS)"
 
 cmp -s "$WORKDIR/inline.src" "$MOUNTPOINT/inline.txt" && pass "Inline data survives unmount/remount" || fail "Inline data changed across remount"
 [[ "$(sha256sum "$MOUNTPOINT/extent-8m.bin" | awk '{print $1}')" == "$src_hash" ]] && pass "Extent-backed data survives unmount/remount" || fail "Extent-backed data changed across remount"
-[[ "$(sha256sum "$MOUNTPOINT/large-512m.bin" | awk '{print $1}')" == "$expected_zero_hash" ]] && pass "512 MiB file survives unmount/remount" || fail "512 MiB file changed across remount"
+[[ "$(sha256sum "$MOUNTPOINT/large-512m.bin" | awk '{print $1}')" == "$random_expected_hash" ]] && pass "512 MiB random-write result survives unmount/remount" || fail "512 MiB file changed across remount"
 [[ "$(stat -c '%W' "$MOUNTPOINT/timestamp-test.txt")" == "$birth_epoch" ]] && pass "Birth time survives unmount/remount" || fail "Birth time changed/lost across remount"
 [[ "$(find "$MOUNTPOINT/many-files" -maxdepth 1 -type f | wc -l)" == "260" ]] && pass "Paged directory survives unmount/remount" || fail "Paged directory lost entries across remount"
 xattr_after_remount="$(python3 -c \
@@ -501,6 +614,19 @@ xattr_after_remount="$(python3 -c \
     "$MOUNTPOINT/inline.txt")"
 [[ "$xattr_after_remount" == replaced ]] && \
     pass "User xattr survives unmount/remount" || fail "User xattr changed across remount"
+trusted_xattr_after_remount="$(python3 -c \
+    'import os,sys; print(os.getxattr(sys.argv[1], b"trusted.infiltratorfs-test").decode())' \
+    "$MOUNTPOINT/inline.txt")"
+[[ "$trusted_xattr_after_remount" == trusted ]] && \
+    pass "Trusted xattr survives unmount/remount" || \
+    fail "Trusted xattr changed across remount"
+[[ "$(stat -c '%b' "$MOUNTPOINT/many-files")" -gt 8 && \
+   "$(stat -c '%b' "$MOUNTPOINT/symlink-probe")" == 8 ]] && \
+    pass "Directory/symlink allocation reporting survives remount" || \
+    fail "Directory/symlink allocation reporting changed across remount"
+[[ "$(stat -c '%s' "$MOUNTPOINT/fsync-publications.bin")" == 819200 ]] && \
+    pass "Repeated fsync result survives unmount/remount" || \
+    fail "Repeated fsync result changed across remount"
 [[ -p "$MOUNTPOINT/native.fifo" && -S "$MOUNTPOINT/native.socket" && \
    -c "$MOUNTPOINT/native.char" && -b "$MOUNTPOINT/native.block" ]] && \
     pass "Special-node types survive unmount/remount" || \
