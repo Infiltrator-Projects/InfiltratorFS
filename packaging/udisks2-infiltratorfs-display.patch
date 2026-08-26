@@ -2,7 +2,7 @@ From: InfiltratorFS project
 Subject: [PATCH] udisks: add human-readable InfiltratorFS filesystem name
 
 GNOME Disks calls udisks_client_get_id_for_display() for the Contents
-field.  Without an id_type[] entry libudisks2 deliberately falls back to
+field. Without an id_type[] entry libudisks2 deliberately falls back to
 "Unknown (infiltratorfs 0.12)" even when udev identification, mounting,
 capacity accounting, UUID and label handling are all correct.
 
@@ -10,12 +10,15 @@ InfiltratorFS reports its portable on-disk format version through
 ID_FS_VERSION, so call it "format %s" rather than implying that value is the
 installed implementation version.
 
+diff --git a/udisks/udisksclient.c b/udisks/udisksclient.c
 --- a/udisks/udisksclient.c
 +++ b/udisks/udisksclient.c
-@@
+@@ -2041,6 +2041,8 @@ static const struct
+   {"filesystem", "jdb",               "*",     NC_("fs-type", "Journal for Ext"),                   NC_("fs-type", "JDB")},
    {"filesystem", "xfs",               "*",     NC_("fs-type", "XFS (version %s)"),                  NC_("fs-type", "XFS")},
    {"filesystem", "xfs",               NULL,    NC_("fs-type", "XFS"),                               NC_("fs-type", "XFS")},
 +  {"filesystem", "infiltratorfs",     "*",     NC_("fs-type", "InfiltratorFS (format %s)"),         NC_("fs-type", "InfiltratorFS")},
 +  {"filesystem", "infiltratorfs",     NULL,    NC_("fs-type", "InfiltratorFS"),                     NC_("fs-type", "InfiltratorFS")},
    /* TODO: No ID_FS_VERSION yet for btrfs... */
    {"filesystem", "btrfs",             NULL,    NC_("fs-type", "Btrfs"),                             NC_("fs-type", "Btrfs")},
+   {"filesystem", "iso9660",           "*",     NC_("fs-type", "ISO 9660 (version %s)"),             NC_("fs-type", "ISO9660")},
