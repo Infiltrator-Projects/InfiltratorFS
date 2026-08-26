@@ -64,9 +64,12 @@
         close(fd);
         return 1;
     }
+    uint32_t root_uid = 0;
+    uint32_t root_gid = 0;
+    resolve_root_owner(&root_uid, &root_gid);
     if (infs_encode_paged_root_directory(
             block, root_id, 1, 0755u,
-            (uint32_t)getuid(), (uint32_t)getgid(), root_time_ns) !=
+            root_uid, root_gid, root_time_ns) !=
             INFS_STATUS_OK ||
         infs_pwrite_full(fd, block, sizeof(block),
                          (off_t)(root_block * INFS_BLOCK_SIZE)) != 0) {
@@ -113,6 +116,7 @@
     printf("  Format:          %u.%u\n", INFS_FORMAT_MAJOR, INFS_FORMAT_MINOR);
     printf("  UUID:            %s\n", uuid_text);
     printf("  Label:           %s\n", (char *)sb.label);
+    printf("  Root owner:      %" PRIu32 ":%" PRIu32 "\n", root_uid, root_gid);
     printf("  Block size:      %u bytes\n", INFS_BLOCK_SIZE);
     printf("  Total blocks:    %" PRIu64 "\n", total_blocks);
     printf("  Free blocks:     %" PRIu64 "\n", total_blocks - used_blocks);
