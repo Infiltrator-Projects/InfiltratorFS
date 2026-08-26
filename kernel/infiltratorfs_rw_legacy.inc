@@ -438,6 +438,89 @@ static int infilfs_rw_snapshot_count(struct super_block *sb, u32 *count_out)
     return ret;
 }
 
+static int infilfs_rw_snapshot_union(struct super_block *sb, u32 snapshots)
+{
+    static const u8 snapshot_id[16] = {
+        'I','N','F','S','-','S','N','A','P','-','C','A','T','-','0','1'
+    };
+    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
+    struct infilfs_object_header_disk *header;
+    struct infilfs_snapshot_catalog_payload_disk *payload;
+    struct infilfs_snapshot_record_disk *records;
+    u8 *object = NULL;
+    u8 *bitmap_block = NULL;
+    u64 catalog_block;
+    u16 type;
+    u32 i;
+    int ret;
+
+    if (!snapshots)
+        return 0;
+    object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_KERNEL);
+    bitmap_block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_KERNEL);
+    sbi->snapshot_bitmap = kvzalloc(sbi->bitmap_bytes, GFP_KERNEL);
+    if (!object || !bitmap_block || !sbi->snapshot_bitmap) {
+        ret = -ENOMEM;
+        goto out;
+    }
+    ret = infilfs_index_lookup(sb, snapshot_id, &catalog_block, &type);
+    if (ret)
+        goto out;
+    if (type != INFILFS_OBJECT_SNAPSHOT_CATALOG) {
+        ret = -EFSCORRUPTED;
+        goto out;
+    }
+    ret = infilfs_read_object(sb, catalog_block,
+                              INFILFS_OBJECT_SNAPSHOT_CATALOG,
+                              snapshot_id, object);
+    if (ret)
+        goto out;
+    header = (struct infilfs_object_header_disk *)object;
+    payload = (struct infilfs_snapshot_catalog_payload_disk *)(header + 1);
+    records = (struct infilfs_snapshot_record_disk *)(payload + 1);
+    if (le32_to_cpu(payload->snapshot_count) != snapshots ||
+        sizeof(*payload) + (size_t)snapshots * sizeof(*records) !=
+            le32_to_cpu(header->payload_size)) {
+        ret = -EFSCORRUPTED;
+        goto out;
+    }
+
+    for (i = 0; i < snapshots; ++i) {
+        u64 start = le64_to_cpu(records[i].bitmap_start_block);
+        u64 blocks = le64_to_cpu(records[i].bitmap_block_count);
+        u64 b;
+
+        if (blocks != le64_to_cpu(sbi->disk.bitmap_block_count) ||
+            !start || start >= sbi->device_blocks ||
+            blocks > sbi->device_blocks - start) {
+            ret = -EFSCORRUPTED;
+            goto out;
+        }
+        for (b = 0; b < blocks; ++b) {
+            size_t offset = (size_t)b * INFILFS_DISK_BLOCK_SIZE;
+            size_t n;
+            size_t j;
+
+            ret = infilfs_read_block(sb, start + b, bitmap_block);
+            if (ret)
+                goto out;
+            n = min_t(size_t, INFILFS_DISK_BLOCK_SIZE,
+                      sbi->bitmap_bytes - offset);
+            for (j = 0; j < n; ++j)
+                sbi->snapshot_bitmap[offset + j] |= bitmap_block[j];
+        }
+    }
+    ret = 0;
+out:
+    if (ret) {
+        kvfree(sbi->snapshot_bitmap);
+        sbi->snapshot_bitmap = NULL;
+    }
+    kfree(bitmap_block);
+    kfree(object);
+    return ret;
+}
+
 static int infilfs_rw_mount_init(struct super_block *sb)
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
@@ -458,12 +541,6 @@ static int infilfs_rw_mount_init(struct super_block *sb)
     ret = infilfs_rw_snapshot_count(sb, &snapshots);
     if (ret)
         return ret;
-    if (snapshots) {
-        pr_warn("InfiltratorFS: native writable mount rejected: %u retained snapshot(s) require snapshot-aware ownership\n",
-                snapshots);
-        return -EOPNOTSUPP;
-    }
-
     if (!bitmap_blocks || bitmap_blocks > SIZE_MAX / INFILFS_DISK_BLOCK_SIZE)
         return -EFSCORRUPTED;
     bytes = (size_t)bitmap_blocks * INFILFS_DISK_BLOCK_SIZE;
@@ -498,12 +575,17 @@ static int infilfs_rw_mount_init(struct super_block *sb)
             goto fail;
         }
     }
+    ret = infilfs_rw_snapshot_union(sb, snapshots);
+    if (ret)
+        goto fail;
     sbi->rw_enabled = true;
     return 0;
 fail:
     kvfree(sbi->bitmap);
     sbi->bitmap = NULL;
     sbi->bitmap_bytes = 0;
+    kvfree(sbi->snapshot_bitmap);
+    sbi->snapshot_bitmap = NULL;
     return ret;
 }
 
@@ -516,6 +598,8 @@ static void infilfs_rw_mount_destroy(struct super_block *sb)
     kvfree(sbi->bitmap);
     sbi->bitmap = NULL;
     sbi->bitmap_bytes = 0;
+    kvfree(sbi->snapshot_bitmap);
+    sbi->snapshot_bitmap = NULL;
     sbi->rw_enabled = false;
 }
 
@@ -641,7 +725,9 @@ static int infilfs_rw_tx_apply_deferred(struct infilfs_rw_tx *tx)
             for (c = 0; c < INFILFS_CHECKPOINT_COUNT; ++c)
                 if (block == le64_to_cpu(tx->next_sb.checkpoint_block[c]))
                     checkpoint = true;
-            if (checkpoint || !infilfs_rw_bitmap_get(tx->bitmap, block))
+            if (checkpoint || !infilfs_rw_bitmap_get(tx->bitmap, block) ||
+                (tx->sbi->snapshot_bitmap &&
+                 infilfs_rw_bitmap_get(tx->sbi->snapshot_bitmap, block)))
                 continue;
             infilfs_rw_bitmap_set(tx->bitmap, block, false);
             tx->free_blocks++;

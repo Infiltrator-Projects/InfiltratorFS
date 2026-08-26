@@ -288,6 +288,59 @@ jobs:
           print(f"Native 512 MiB verified read: {elapsed:.3f} s ({mib/elapsed:.2f} MiB/s)")
           PY
           cmp "$large_src" "$mountpoint/native-rw/large.bin"
+
+          # Native parity: extent-backed files must permit bounded random
+          # overwrite without changing their length or invalidating checksums.
+          python3 - "$large_src" "$mountpoint/native-rw/large.bin" <<'PY'
+          import os
+          import sys
+
+          expected, mounted = sys.argv[1:]
+          patches = (
+              (3 * 1024 * 1024 + 137, bytes((i * 29 + 7) & 0xff for i in range(1024 * 1024))),
+              (477 * 1024 * 1024 + 19, bytes((i * 43 + 5) & 0xff for i in range(512 * 1024))),
+          )
+          for path in (expected, mounted):
+              fd = os.open(path, os.O_RDWR)
+              try:
+                  before = os.fstat(fd).st_size
+                  for offset, payload in patches:
+                      assert os.pwrite(fd, payload, offset) == len(payload)
+                  os.fsync(fd)
+                  assert os.fstat(fd).st_size == before
+              finally:
+                  os.close(fd)
+          PY
+          large_source_sha="$(sha256sum "$large_src" | awk '{print $1}')"
+          test "$(sha256sum "$mountpoint/native-rw/large.bin" | awk '{print $1}')" = \
+               "$large_source_sha"
+
+          # Native parity: sparse high-offset growth, extent truncate,
+          # preallocation and hole punching must survive the offline scrub.
+          sudo truncate -s 1T "$mountpoint/native-rw/sparse-1t.bin"
+          test "$(stat -c '%s' "$mountpoint/native-rw/sparse-1t.bin")" = \
+               1099511627776
+          test "$(stat -c '%b' "$mountpoint/native-rw/sparse-1t.bin")" -eq 0
+          printf 'sparse-tail\n' | sudo dd \
+              of="$mountpoint/native-rw/sparse-1t.bin" bs=1 seek=1099511623680 \
+              conv=notrunc status=none
+          test "$(sudo dd if="$mountpoint/native-rw/sparse-1t.bin" bs=1 \
+              skip=1099511623680 count=12 status=none)" = 'sparse-tail'
+          sudo truncate -s 134217728 "$mountpoint/native-rw/sparse-1t.bin"
+          test "$(stat -c '%s' "$mountpoint/native-rw/sparse-1t.bin")" = 134217728
+
+          sudo fallocate -l 16M "$mountpoint/native-rw/preallocated.bin"
+          preallocated_blocks="$(stat -c '%b' "$mountpoint/native-rw/preallocated.bin")"
+          test "$preallocated_blocks" -ge 32768
+          sudo fallocate -p -o 4M -l 8M \
+              "$mountpoint/native-rw/preallocated.bin"
+          punched_blocks="$(stat -c '%b' "$mountpoint/native-rw/preallocated.bin")"
+          test "$punched_blocks" -lt "$preallocated_blocks"
+          test "$(sudo dd if="$mountpoint/native-rw/preallocated.bin" bs=1M \
+              skip=4 count=8 status=none | tr -d '\0' | wc -c)" -eq 0
+
+          chmod 000 "$mountpoint/native-rw/post-unlink.txt"
+          test "$(stat -c '%a' "$mountpoint/native-rw/post-unlink.txt")" = 0
           sudo ln "$mountpoint/native-rw/large.bin" "$mountpoint/native-rw/large-hard.bin"
           sudo rm "$mountpoint/native-rw/large.bin"
           cmp "$large_src" "$mountpoint/native-rw/large-hard.bin"
@@ -317,6 +370,7 @@ jobs:
           sudo mount -t infiltratorfs -o ro "$loopdev" "$mountpoint"
           mounted=1
           test "$(cat "$mountpoint/native-rw/created.txt")" = 'rewritte'
+          test "$(stat -c '%a' "$mountpoint/native-rw/post-unlink.txt")" = 0
 
           # Unmount invalidates the checksum cache.  Time a second hash after a
           # fresh read-only mount to prove the fix does not depend on the writer

@@ -46,6 +46,7 @@ struct infilfs_sb_info {
     struct mutex write_lock;
     u8 *bitmap;
     size_t bitmap_bytes;
+    u8 *snapshot_bitmap;
     bool rw_enabled;
     bool write_poisoned;
 };
@@ -810,6 +811,92 @@ static const char *infilfs_get_link(struct dentry *dentry, struct inode *inode,
     return ii->symlink_target;
 }
 
+static int infilfs_file_allocated_blocks(
+    struct inode *inode, const u8 object[INFILFS_DISK_BLOCK_SIZE],
+    u64 *allocated_out)
+{
+    const struct infilfs_object_header_disk *header =
+        (const struct infilfs_object_header_disk *)object;
+    const struct infilfs_file_payload_disk *file =
+        (const struct infilfs_file_payload_disk *)(header + 1);
+    u32 extent_count = le32_to_cpu(file->extent_count);
+    u64 allocated = 0;
+    u32 copied = 0;
+    int ret = 0;
+
+    if (!extent_count) {
+        *allocated_out = 0;
+        return 0;
+    }
+    if (le16_to_cpu(header->object_version) == INFILFS_OBJECT_VERSION_CLASSIC) {
+        const struct infilfs_extent_disk *extents =
+            (const struct infilfs_extent_disk *)(file + 1);
+        u32 i;
+
+        if (sizeof(*file) + (size_t)extent_count * sizeof(*extents) !=
+            le32_to_cpu(header->payload_size))
+            return -EFSCORRUPTED;
+        for (i = 0; i < extent_count; ++i)
+            if (le32_to_cpu(extents[i].flags) == INFILFS_EXTENT_NORMAL)
+                allocated += le32_to_cpu(extents[i].block_count);
+    } else if (le16_to_cpu(header->object_version) ==
+               INFILFS_OBJECT_VERSION_PAGED) {
+        const struct infilfs_extent_head_disk *head =
+            (const struct infilfs_extent_head_disk *)(file + 1);
+        const __le64 *pages = (const __le64 *)(head + 1);
+        u32 page_count = le32_to_cpu(head->page_count);
+        u8 *page_block;
+        u32 p;
+
+        if (!page_count || page_count > INFILFS_EXTENT_PAGE_POINTERS ||
+            le32_to_cpu(head->reserved) != 0)
+            return -EFSCORRUPTED;
+        page_block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_KERNEL);
+        if (!page_block)
+            return -ENOMEM;
+        for (p = 0; p < page_count; ++p) {
+            const struct infilfs_metadata_page_disk *page;
+            const struct infilfs_extent_disk *extents;
+            u32 count;
+            u32 i;
+
+            ret = infilfs_read_block(inode->i_sb,
+                                     le64_to_cpu(pages[p]), page_block);
+            if (ret)
+                break;
+            if (!infilfs_metadata_page_valid(inode->i_sb, page_block,
+                                             infilfs_extent_page_magic,
+                                             header->object_id)) {
+                ret = -EFSCORRUPTED;
+                break;
+            }
+            page = (const struct infilfs_metadata_page_disk *)page_block;
+            count = le32_to_cpu(page->entry_count);
+            if (!count || count > INFILFS_EXTENTS_PER_PAGE ||
+                copied > extent_count || count > extent_count - copied ||
+                le32_to_cpu(page->bytes_used) !=
+                    count * sizeof(*extents)) {
+                ret = -EFSCORRUPTED;
+                break;
+            }
+            extents = (const struct infilfs_extent_disk *)(page + 1);
+            for (i = 0; i < count; ++i)
+                if (le32_to_cpu(extents[i].flags) == INFILFS_EXTENT_NORMAL)
+                    allocated += le32_to_cpu(extents[i].block_count);
+            copied += count;
+        }
+        kfree(page_block);
+        if (ret)
+            return ret;
+        if (copied != extent_count)
+            return -EFSCORRUPTED;
+    } else {
+        return -EFSCORRUPTED;
+    }
+    *allocated_out = allocated;
+    return 0;
+}
+
 static int infilfs_populate_inode(struct inode *inode, u64 object_block,
                                   u16 expected_type, const u8 expected_id[16])
 {
@@ -847,7 +934,7 @@ static int infilfs_populate_inode(struct inode *inode, u64 object_block,
         attributes = &payload->attributes;
         posix = &payload->posix;
         permissions = le32_to_cpu(posix->permissions) & 07777;
-        inode->i_mode = S_IFDIR | (permissions ? permissions : 0555);
+        inode->i_mode = S_IFDIR | permissions;
         inode->i_op = &infilfs_dir_inode_operations;
         inode->i_fop = &infilfs_dir_operations;
         links = le64_to_cpu(attributes->link_count);
@@ -859,12 +946,21 @@ static int infilfs_populate_inode(struct inode *inode, u64 object_block,
         attributes = &payload->attributes;
         posix = &payload->posix;
         permissions = le32_to_cpu(posix->permissions) & 07777;
-        inode->i_mode = S_IFREG | (permissions ? permissions : 0444);
+        inode->i_mode = S_IFREG | permissions;
         inode->i_op = &infilfs_file_inode_operations;
         inode->i_fop = &infilfs_file_operations;
         links = le64_to_cpu(attributes->link_count);
         set_nlink(inode, links ? links : 1);
         i_size_write(inode, le64_to_cpu(attributes->logical_size));
+        {
+            u64 allocated;
+
+            ret = infilfs_file_allocated_blocks(inode, object, &allocated);
+            if (ret)
+                goto fail_private;
+            inode->i_blocks = allocated *
+                (INFILFS_DISK_BLOCK_SIZE >> 9);
+        }
     } else if (ii->object_type == INFILFS_OBJECT_SYMLINK) {
         const struct infilfs_symlink_payload_disk *payload =
             (const struct infilfs_symlink_payload_disk *)(header + 1);
@@ -1045,6 +1141,7 @@ static const struct file_operations infilfs_file_operations = {
     .llseek = generic_file_llseek,
     .read_iter = infilfs_file_read_iter,
     .write_iter = infilfs_file_write_iter,
+    .fallocate = infilfs_file_fallocate,
     .fsync = infilfs_file_fsync,
 };
 
@@ -1097,6 +1194,9 @@ static int infilfs_fill_super(struct super_block *sb, struct fs_context *fc)
         ret = -ENOMEM;
         goto fail;
     }
+    ret = infilfs_native_recover_unlinked_files(sb);
+    if (ret)
+        goto fail;
 
     pr_info("InfiltratorFS: native %s mount Format %u.%u generation %llu\n",
             sb_rdonly(sb) ? "read-only" : "read-write",
@@ -1105,6 +1205,10 @@ static int infilfs_fill_super(struct super_block *sb, struct fs_context *fc)
     return 0;
 
 fail:
+    if (sb->s_root) {
+        dput(sb->s_root);
+        sb->s_root = NULL;
+    }
     infilfs_rw_mount_destroy(sb);
     kfree(sbi);
     sb->s_fs_info = NULL;

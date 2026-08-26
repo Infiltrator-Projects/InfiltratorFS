@@ -84,11 +84,25 @@ struct infilfs_native_checksum_cache_entry {
     bool valid;
 };
 
+struct infilfs_native_checksum_node {
+    u8 object_id[16];
+    u64 object_block;
+    u64 start_logical;
+    u32 checksum_count;
+    bool new_node;
+    bool dirty;
+};
+
 static LIST_HEAD(infilfs_native_pending_list);
 static DEFINE_MUTEX(infilfs_native_pending_list_lock);
 static DEFINE_SPINLOCK(infilfs_native_checksum_cache_lock);
 static struct infilfs_native_checksum_cache_entry
     infilfs_native_checksum_cache[INFILFS_NATIVE_CHECKSUM_CACHE_SLOTS];
+
+/* Implemented by the namespace layer after this data layer is composed. */
+static int infilfs_ns_free_unshared_run(
+    struct infilfs_native_pending *pending, const u8 owner_id[16],
+    u64 start, u64 count);
 
 static u32 infilfs_native_id_hash(const u8 id[16])
 {
@@ -704,6 +718,7 @@ static int infilfs_native_extent_append(struct infilfs_extent_disk *out,
 static int infilfs_native_replace_extent_range(
     const struct infilfs_extent_disk *old, u32 old_count, u64 old_blocks,
     u64 replace_start, u64 replace_count, u64 replacement_physical,
+    u32 replacement_flags,
     struct infilfs_extent_disk **new_out, u32 *new_count_out)
 {
     struct infilfs_extent_disk *out;
@@ -743,7 +758,7 @@ static int infilfs_native_replace_extent_range(
             goto fail;
     }
     ret = infilfs_native_extent_append(out, capacity, &count, replace_start,
-        replacement_physical, (u32)replace_count, INFILFS_EXTENT_NORMAL);
+        replacement_physical, (u32)replace_count, replacement_flags);
     if (ret)
         goto fail;
 
@@ -771,6 +786,41 @@ static int infilfs_native_replace_extent_range(
 fail:
     kvfree(out);
     return ret;
+}
+
+static int infilfs_native_release_replaced_extents(
+    struct infilfs_native_pending *pending, const u8 owner_id[16],
+    const struct infilfs_extent_disk *extents, u32 extent_count,
+    u64 replace_start, u64 replace_count)
+{
+    u64 replace_end;
+    u32 i;
+
+    if (!replace_count)
+        return 0;
+    if (replace_start > U64_MAX - replace_count)
+        return -EOVERFLOW;
+    replace_end = replace_start + replace_count;
+    for (i = 0; i < extent_count; ++i) {
+        u64 logical = le64_to_cpu(extents[i].logical_block);
+        u64 extent_end = logical + le32_to_cpu(extents[i].block_count);
+        u64 first;
+        u64 last;
+        u64 physical;
+        int ret;
+
+        if (le32_to_cpu(extents[i].flags) != INFILFS_EXTENT_NORMAL ||
+            extent_end <= replace_start || logical >= replace_end)
+            continue;
+        first = max_t(u64, logical, replace_start);
+        last = min_t(u64, extent_end, replace_end);
+        physical = le64_to_cpu(extents[i].physical_block) + first - logical;
+        ret = infilfs_ns_free_unshared_run(pending, owner_id, physical,
+                                           last - first);
+        if (ret)
+            return ret;
+    }
+    return 0;
 }
 
 static int infilfs_native_random_id(u8 id[16])
@@ -952,7 +1002,139 @@ static int infilfs_native_init_checksum_object(
     return infilfs_rw_finalize_object(block);
 }
 
-static int infilfs_native_checksum_append(
+static int infilfs_native_checksum_collect(
+    struct infilfs_native_pending *pending, const u8 owner_id[16],
+    const u8 head_id[16], struct infilfs_native_checksum_node **nodes_out,
+    u32 *count_out)
+{
+    struct infilfs_native_checksum_node *nodes = NULL;
+    u32 count = 0;
+    u32 capacity = 0;
+    u8 current_id[16];
+    u64 previous_start = 0;
+    bool have_previous = false;
+    unsigned int guard;
+    int ret = 0;
+
+    *nodes_out = NULL;
+    *count_out = 0;
+    memcpy(current_id, head_id, sizeof(current_id));
+    for (guard = 0; memchr_inv(current_id, 0, sizeof(current_id)) &&
+         guard < 1048576u; ++guard) {
+        struct infilfs_native_checksum_payload_disk *payload;
+        struct infilfs_native_checksum_node *grown;
+        u8 *object;
+        u8 next_id[16];
+        u64 block;
+        u64 start;
+        u32 checksum_count;
+        u16 type;
+
+        ret = infilfs_index_lookup(pending->sb, current_id, &block, &type);
+        if (ret)
+            goto out;
+        if (type != INFILFS_OBJECT_CHECKSUM) {
+            ret = -EFSCORRUPTED;
+            goto out;
+        }
+        object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+        if (!object) {
+            ret = -ENOMEM;
+            goto out;
+        }
+        ret = infilfs_native_checksum_decode(pending->sb, owner_id,
+                                             current_id, block, object,
+                                             &payload);
+        if (!ret) {
+            start = le64_to_cpu(payload->start_logical_block);
+            checksum_count = le32_to_cpu(payload->checksum_count);
+            memcpy(next_id, payload->next_object_id, sizeof(next_id));
+            if ((start % INFILFS_NATIVE_CHECKSUMS_PER_OBJECT) != 0 ||
+                (have_previous && start <= previous_start) ||
+                !checksum_count)
+                ret = -EFSCORRUPTED;
+        }
+        kfree(object);
+        if (ret)
+            goto out;
+
+        if (count == capacity) {
+            u32 new_capacity = capacity ? capacity * 2u : 16u;
+
+            grown = kvmalloc_array(new_capacity, sizeof(*grown), GFP_NOFS);
+            if (!grown) {
+                ret = -ENOMEM;
+                goto out;
+            }
+            if (count)
+                memcpy(grown, nodes, (size_t)count * sizeof(*grown));
+            kvfree(nodes);
+            nodes = grown;
+            capacity = new_capacity;
+        }
+        memset(&nodes[count], 0, sizeof(nodes[count]));
+        memcpy(nodes[count].object_id, current_id, 16);
+        nodes[count].object_block = block;
+        nodes[count].start_logical = start;
+        nodes[count].checksum_count = checksum_count;
+        count++;
+        previous_start = start;
+        have_previous = true;
+        memcpy(current_id, next_id, sizeof(current_id));
+    }
+    if (memchr_inv(current_id, 0, sizeof(current_id))) {
+        ret = -ELOOP;
+        goto out;
+    }
+    *nodes_out = nodes;
+    *count_out = count;
+    return 0;
+out:
+    kvfree(nodes);
+    return ret;
+}
+
+static int infilfs_native_checksum_insert_node(
+    struct infilfs_native_checksum_node **nodes_inout, u32 *count_inout,
+    u32 index, u64 start)
+{
+    struct infilfs_native_checksum_node *old = *nodes_inout;
+    struct infilfs_native_checksum_node *grown;
+    u32 count = *count_inout;
+    int ret;
+
+    grown = kvmalloc_array((size_t)count + 1u, sizeof(*grown), GFP_NOFS);
+    if (!grown)
+        return -ENOMEM;
+    if (index)
+        memcpy(grown, old, (size_t)index * sizeof(*grown));
+    if (index < count)
+        memcpy(grown + index + 1u, old + index,
+               (size_t)(count - index) * sizeof(*grown));
+    memset(&grown[index], 0, sizeof(grown[index]));
+    ret = infilfs_native_random_id(grown[index].object_id);
+    if (ret) {
+        kvfree(grown);
+        return ret;
+    }
+    grown[index].start_logical = start;
+    grown[index].new_node = true;
+    grown[index].dirty = true;
+    if (index)
+        grown[index - 1u].dirty = true;
+    kvfree(old);
+    *nodes_inout = grown;
+    *count_inout = count + 1u;
+    return 0;
+}
+
+/*
+ * Apply checksum changes to any logical range, not merely to the current tail.
+ * The chain is ordered by checksum group.  Existing affected objects are
+ * copy-on-written, missing sparse groups are inserted in order, and the one
+ * predecessor whose next pointer changes is rewritten in the same operation.
+ */
+static int infilfs_native_checksum_set_range(
     struct infilfs_native_pending *pending,
     struct infilfs_file_payload_disk *file, const u8 owner_id[16],
     u64 touched_start, u64 touched_count,
@@ -962,164 +1144,153 @@ static int infilfs_native_checksum_append(
     u64 *final_tail_start)
 {
     const u64 per = INFILFS_NATIVE_CHECKSUMS_PER_OBJECT;
-    u64 first_group = (touched_start / per) * per;
-    u64 last_logical = touched_start + touched_count - 1u;
-    u64 last_group = (last_logical / per) * per;
-    u8 tail_id[16] = {0};
-    u8 *tail_object = NULL;
-    struct infilfs_native_checksum_payload_disk *tail_payload = NULL;
-    u64 tail_block = 0;
-    u64 tail_start = 0;
-    bool have_tail = false;
+    struct infilfs_native_checksum_node *nodes = NULL;
+    u8 *object = NULL;
+    u64 first_group;
+    u64 last_group;
     u64 group;
-    u32 new_groups = 0;
-    u8 (*new_ids)[16] = NULL;
-    u64 *new_blocks = NULL;
-    u32 g;
-    int ret;
+    u32 node_count = 0;
+    u32 i;
+    int ret = 0;
 
-    if (touched_count == 0)
+    if (!touched_count || touched_start > U64_MAX - touched_count)
         return -EINVAL;
-    tail_object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
-    if (!tail_object)
-        return -ENOMEM;
-    if (memcmp(file->checksum_head_id, (u8[16]){0}, 16) != 0) {
-        ret = infilfs_native_checksum_tail(pending->sb, owner_id,
-                                           file->checksum_head_id,
-                                           tail_id, &tail_block, &tail_start,
-                                           tail_object);
-        if (ret)
-            goto out;
-        ret = infilfs_native_checksum_decode(pending->sb, owner_id, tail_id,
-                                             tail_block, tail_object,
-                                             &tail_payload);
-        if (ret)
-            goto out;
-        have_tail = true;
-        if (first_group < tail_start) {
-            ret = -EOPNOTSUPP;
-            goto out;
-        }
-    }
+    first_group = (touched_start / per) * per;
+    last_group = ((touched_start + touched_count - 1u) / per) * per;
 
-    if (!have_tail || last_group > tail_start) {
-        u64 new_first = have_tail ?
-            max_t(u64, first_group, tail_start + per) : first_group;
-        if (new_first <= last_group)
-            new_groups = (u32)((last_group - new_first) / per + 1u);
-    }
+    ret = infilfs_native_checksum_collect(pending, owner_id,
+                                          file->checksum_head_id,
+                                          &nodes, &node_count);
+    if (ret)
+        return ret;
 
-    if (new_groups) {
-        new_ids = kvmalloc_array(new_groups, sizeof(*new_ids), GFP_NOFS);
-        new_blocks = kvmalloc_array(new_groups, sizeof(*new_blocks), GFP_NOFS);
-        if (!new_ids || !new_blocks) {
-            ret = -ENOMEM;
-            goto out;
-        }
-        for (g = 0; g < new_groups; ++g) {
-            ret = infilfs_native_random_id(new_ids[g]);
+    for (group = first_group; ; group += per) {
+        u32 at = 0;
+
+        while (at < node_count && nodes[at].start_logical < group)
+            ++at;
+        if (at == node_count || nodes[at].start_logical != group) {
+            ret = infilfs_native_checksum_insert_node(&nodes, &node_count,
+                                                      at, group);
             if (ret)
                 goto out;
         }
+        nodes[at].dirty = true;
+        if (group == last_group)
+            break;
+        if (group > U64_MAX - per) {
+            ret = -EOVERFLOW;
+            goto out;
+        }
     }
 
-    if (have_tail && (first_group == tail_start || new_groups)) {
-        struct infilfs_data_checksum_disk *values =
-            (struct infilfs_data_checksum_disk *)(tail_payload + 1);
-        u32 old_count = le32_to_cpu(tail_payload->checksum_count);
-        u32 needed = old_count;
-        u64 first = max_t(u64, touched_start, tail_start);
-        u64 last = min_t(u64, touched_start + touched_count,
-                         tail_start + per);
-        u64 replacement;
-
-        if (last > first) {
-            memcpy(values + (first - tail_start),
-                   digests + (first - touched_start),
-                   (size_t)(last - first) * sizeof(*values));
-            needed = max_t(u32, needed, (u32)(last - tail_start));
-        }
-        if (new_groups)
-            memcpy(tail_payload->next_object_id, new_ids[0], 16);
-        tail_payload->checksum_count = cpu_to_le32(needed);
-        ((struct infilfs_object_header_disk *)tail_object)->payload_size =
-            cpu_to_le32(sizeof(*tail_payload) +
-                (size_t)needed * sizeof(*values));
-        ((struct infilfs_object_header_disk *)tail_object)->generation =
-            cpu_to_le64(pending->tx.generation);
-        ret = infilfs_rw_finalize_object(tail_object);
-        if (ret)
-            goto out;
-        ret = infilfs_native_store_private_or_cow(pending, tail_block,
-                                                  tail_object, &replacement);
-        if (ret)
-            goto out;
-        if (replacement != tail_block) {
-            if (*change_count >= change_capacity) {
-                ret = -ENOSPC;
-                goto out;
-            }
-            memcpy(changes[*change_count].object_id, tail_id, 16);
-            changes[*change_count].object_block = replacement;
-            changes[*change_count].object_type = INFILFS_OBJECT_CHECKSUM;
-            changes[*change_count].add = false;
-            (*change_count)++;
-        }
-        tail_block = replacement;
+    object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+    if (!object) {
+        ret = -ENOMEM;
+        goto out;
     }
 
-    if (new_groups) {
-        u64 new_first = have_tail ?
-            max_t(u64, first_group, tail_start + per) : first_group;
+    for (i = 0; i < node_count; ++i) {
+        struct infilfs_native_checksum_payload_disk *payload;
+        struct infilfs_data_checksum_disk *values;
+        const u8 *next_id = i + 1u < node_count ?
+            nodes[i + 1u].object_id : NULL;
+        u64 group_start = nodes[i].start_logical;
+        u64 first = max_t(u64, group_start, touched_start);
+        u64 last = min_t(u64, group_start + per,
+                         touched_start + touched_count);
+        u64 stored_block;
+        u32 needed = nodes[i].checksum_count;
 
-        for (g = 0; g < new_groups; ++g) {
-            const u8 *next = g + 1u < new_groups ? new_ids[g + 1u] : NULL;
-            u64 block;
-
-            group = new_first + (u64)g * per;
+        if (!nodes[i].dirty)
+            continue;
+        if (nodes[i].new_node) {
+            needed = (u32)(last - group_start);
+            memset(object, 0, INFILFS_DISK_BLOCK_SIZE);
             ret = infilfs_native_init_checksum_object(
-                pending, owner_id, new_ids[g], next, group, digests,
-                touched_start, touched_count, tail_object);
+                pending, owner_id, nodes[i].object_id, next_id, group_start,
+                digests, touched_start, touched_count, object);
             if (ret)
                 goto out;
-            ret = infilfs_rw_tx_alloc(&pending->tx, 1, &block);
+            ret = infilfs_rw_tx_alloc(&pending->tx, 1, &stored_block);
             if (ret)
                 goto out;
-            ret = infilfs_native_stage_block(pending->sb, block, tail_object);
+            ret = infilfs_native_stage_block(pending->sb, stored_block,
+                                             object);
             if (ret)
                 goto out;
-            new_blocks[g] = block;
-            if (*change_count >= change_capacity) {
-                ret = -ENOSPC;
+        } else {
+            ret = infilfs_native_checksum_decode(
+                pending->sb, owner_id, nodes[i].object_id,
+                nodes[i].object_block, object, &payload);
+            if (ret)
                 goto out;
+            values = (struct infilfs_data_checksum_disk *)(payload + 1);
+            if (last > first) {
+                memcpy(values + (first - group_start),
+                       digests + (first - touched_start),
+                       (size_t)(last - first) * sizeof(*values));
+                needed = max_t(u32, needed,
+                               (u32)(last - group_start));
             }
-            memcpy(changes[*change_count].object_id, new_ids[g], 16);
-            changes[*change_count].object_block = block;
-            changes[*change_count].object_type = INFILFS_OBJECT_CHECKSUM;
-            changes[*change_count].add = true;
-            (*change_count)++;
+            memset(payload->next_object_id, 0,
+                   sizeof(payload->next_object_id));
+            if (next_id)
+                memcpy(payload->next_object_id, next_id, 16);
+            payload->checksum_count = cpu_to_le32(needed);
+            ((struct infilfs_object_header_disk *)object)->payload_size =
+                cpu_to_le32(sizeof(*payload) +
+                    (size_t)needed * sizeof(*values));
+            ((struct infilfs_object_header_disk *)object)->generation =
+                cpu_to_le64(pending->tx.generation);
+            ret = infilfs_rw_finalize_object(object);
+            if (ret)
+                goto out;
+            ret = infilfs_native_store_private_or_cow(
+                pending, nodes[i].object_block, object, &stored_block);
+            if (ret)
+                goto out;
         }
-        if (!have_tail)
-            memcpy(file->checksum_head_id, new_ids[0], 16);
-        memcpy(tail_id, new_ids[new_groups - 1u], 16);
-        tail_block = new_blocks[new_groups - 1u];
-        tail_start = new_first + (u64)(new_groups - 1u) * per;
-        have_tail = true;
+        if (*change_count >= change_capacity) {
+            ret = -ENOSPC;
+            goto out;
+        }
+        memcpy(changes[*change_count].object_id, nodes[i].object_id, 16);
+        changes[*change_count].object_block = stored_block;
+        changes[*change_count].object_type = INFILFS_OBJECT_CHECKSUM;
+        changes[*change_count].add = nodes[i].new_node;
+        (*change_count)++;
+        nodes[i].object_block = stored_block;
+        nodes[i].checksum_count = needed;
     }
 
-    if (!have_tail) {
+    if (!node_count) {
         ret = -EFSCORRUPTED;
         goto out;
     }
-    memcpy(final_tail_id, tail_id, 16);
-    *final_tail_block = tail_block;
-    *final_tail_start = tail_start;
-    ret = 0;
+    memcpy(file->checksum_head_id, nodes[0].object_id, 16);
+    memcpy(final_tail_id, nodes[node_count - 1u].object_id, 16);
+    *final_tail_block = nodes[node_count - 1u].object_block;
+    *final_tail_start = nodes[node_count - 1u].start_logical;
 out:
-    kfree(tail_object);
-    kvfree(new_blocks);
-    kvfree(new_ids);
+    kfree(object);
+    kvfree(nodes);
     return ret;
+}
+
+static __maybe_unused int infilfs_native_checksum_append(
+    struct infilfs_native_pending *pending,
+    struct infilfs_file_payload_disk *file, const u8 owner_id[16],
+    u64 touched_start, u64 touched_count,
+    const struct infilfs_data_checksum_disk *digests,
+    struct infilfs_native_index_change *changes, u32 change_capacity,
+    u32 *change_count, u8 final_tail_id[16], u64 *final_tail_block,
+    u64 *final_tail_start)
+{
+    return infilfs_native_checksum_set_range(
+        pending, file, owner_id, touched_start, touched_count, digests,
+        changes, change_capacity, change_count, final_tail_id,
+        final_tail_block, final_tail_start);
 }
 
 static int infilfs_native_index_update_classic(
@@ -1377,8 +1548,8 @@ static int infilfs_native_build_file_object(
         sizeof(struct infilfs_object_header_disk) -
         sizeof(struct infilfs_file_payload_disk)) /
         sizeof(struct infilfs_extent_disk);
-    bool paged = extent_count > classic_max ||
-        le16_to_cpu(old_header->object_version) == INFILFS_OBJECT_VERSION_PAGED;
+    bool paged = extent_count && (extent_count > classic_max ||
+        le16_to_cpu(old_header->object_version) == INFILFS_OBJECT_VERSION_PAGED);
     u64 stored_block;
     int ret;
 
@@ -1471,7 +1642,7 @@ static int infilfs_native_build_file_object(
 static int infilfs_native_append_chunk_locked(
     struct infilfs_native_pending *pending, struct inode *inode,
     struct iov_iter *from, u64 pos, size_t bytes, size_t *consumed_out,
-    u64 *new_file_block_out, u64 *new_size_out,
+    u64 *new_file_block_out, u64 *new_size_out, u64 *allocated_blocks_out,
     u8 final_tail_id[16], u64 *final_tail_block, u64 *final_tail_start)
 {
     struct infilfs_inode_info *ii = INFILFS_I(inode);
@@ -1492,6 +1663,7 @@ static int infilfs_native_append_chunk_locked(
     u64 old_blocks = 0;
     bool was_inline = false;
     u64 old_size;
+    u64 request_end;
     u64 new_size;
     u64 start_block;
     u64 end_block;
@@ -1518,17 +1690,14 @@ static int infilfs_native_append_chunk_locked(
     old_header = (struct infilfs_object_header_disk *)old_object;
     old_file = (struct infilfs_file_payload_disk *)(old_header + 1);
     old_size = le64_to_cpu(old_file->attributes.logical_size);
-    if (pos != old_size) {
-        ret = -EOPNOTSUPP;
-        goto out;
-    }
     if (bytes > U64_MAX - pos) {
         ret = -EOVERFLOW;
         goto out;
     }
-    new_size = pos + bytes;
+    request_end = pos + bytes;
+    new_size = max_t(u64, old_size, request_end);
     start_block = pos >> INFILFS_DISK_BLOCK_SHIFT;
-    end_block = (new_size - 1u) >> INFILFS_DISK_BLOCK_SHIFT;
+    end_block = (request_end - 1u) >> INFILFS_DISK_BLOCK_SHIFT;
     touched_blocks = end_block - start_block + 1u;
     if (touched_blocks > U32_MAX) {
         ret = -EFBIG;
@@ -1560,7 +1729,7 @@ static int infilfs_native_append_chunk_locked(
     for (logical = start_block; logical <= end_block; ++logical) {
         u64 block_begin = logical << INFILFS_DISK_BLOCK_SHIFT;
         u64 write_begin = max_t(u64, pos, block_begin);
-        u64 write_end = min_t(u64, new_size,
+        u64 write_end = min_t(u64, request_end,
                               block_begin + INFILFS_DISK_BLOCK_SIZE);
         size_t offset = (size_t)(write_begin - block_begin);
         size_t take = (size_t)(write_end - write_begin);
@@ -1597,7 +1766,13 @@ static int infilfs_native_append_chunk_locked(
 
     ret = infilfs_native_replace_extent_range(
         old_extents, old_extent_count, old_blocks, start_block,
-        touched_blocks, data_start, &new_extents, &new_extent_count);
+        touched_blocks, data_start, INFILFS_EXTENT_NORMAL,
+        &new_extents, &new_extent_count);
+    if (ret)
+        goto out;
+    ret = infilfs_native_release_replaced_extents(
+        pending, ii->object_id, old_extents, old_extent_count, start_block,
+        touched_blocks);
     if (ret)
         goto out;
 
@@ -1632,6 +1807,11 @@ static int infilfs_native_append_chunk_locked(
         goto out;
     pending->tx.next_sb.generation = cpu_to_le64(pending->tx.generation);
     *new_size_out = new_size;
+    *allocated_blocks_out = 0;
+    for (logical = 0; logical < new_extent_count; ++logical)
+        if (le32_to_cpu(new_extents[logical].flags) == INFILFS_EXTENT_NORMAL)
+            *allocated_blocks_out +=
+                le32_to_cpu(new_extents[logical].block_count);
     ret = 0;
 out:
     if (ret && consumed)
@@ -1674,7 +1854,9 @@ static ssize_t infilfs_file_write_iter(struct kiocb *iocb,
         if (ret)
             return ret;
         iocb->ki_pos = pos;
-        return infilfs_file_write_iter_legacy(iocb, from);
+        ret = infilfs_file_write_iter_legacy(iocb, from);
+        if (ret != -EOPNOTSUPP)
+            return ret;
     }
 
     pending = infilfs_native_pending_get(inode->i_sb, true);
@@ -1692,6 +1874,7 @@ static ssize_t infilfs_file_write_iter(struct kiocb *iocb,
         size_t consumed = 0;
         u64 new_file_block = 0;
         u64 new_size = 0;
+        u64 allocated_blocks = 0;
         u8 tail_id[16];
         u64 tail_block = 0;
         u64 tail_start = 0;
@@ -1701,7 +1884,8 @@ static ssize_t infilfs_file_write_iter(struct kiocb *iocb,
             break;
         ret = infilfs_native_append_chunk_locked(
             pending, inode, from, (u64)pos + done, chunk, &consumed,
-            &new_file_block, &new_size, tail_id, &tail_block, &tail_start);
+            &new_file_block, &new_size, &allocated_blocks, tail_id,
+            &tail_block, &tail_start);
         if (ret) {
             int rollback = infilfs_native_operation_rollback(pending);
             if (rollback && !ret)
@@ -1711,6 +1895,8 @@ static ssize_t infilfs_file_write_iter(struct kiocb *iocb,
         infilfs_native_operation_commit(pending);
         ii->object_block = new_file_block;
         i_size_write(inode, new_size);
+        inode->i_blocks = allocated_blocks *
+            (INFILFS_DISK_BLOCK_SIZE >> 9);
         pending->tx.next_sb.generation = cpu_to_le64(pending->tx.generation);
         sbi->disk = pending->tx.next_sb;
         infilfs_native_checksum_cache_store(

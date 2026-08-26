@@ -371,17 +371,29 @@ else
 fi
 
 section "Sparse/truncate and random-overwrite capability probes"
-# Current native VFS may not yet support large truncate or non-append overwrite.
-# Probe them because they matter to real applications, but report EOPNOTSUPP as
-# an implementation gap rather than confusing it with silent corruption.
-expected_unsupported "large truncate/sparse-file growth" \
-    truncate -s 134217728 "$MOUNTPOINT/sparse-128m.bin"
+truncate -s 134217728 "$MOUNTPOINT/sparse-128m.bin"
+[[ "$(stat -c '%s' "$MOUNTPOINT/sparse-128m.bin")" == 134217728 ]] && \
+    pass "Large truncate/sparse-file growth works" || \
+    fail "Large truncate/sparse-file growth returned the wrong size"
+(( $(stat -c '%b' "$MOUNTPOINT/sparse-128m.bin") == 0 )) && \
+    pass "Sparse growth consumes no data blocks" || \
+    fail "Sparse growth unexpectedly allocated data blocks"
 
 dd if=/dev/urandom of="$WORKDIR/overwrite.src" bs=1M count=8 status=none
 cp "$WORKDIR/overwrite.src" "$MOUNTPOINT/overwrite.bin"
 dd if=/dev/urandom of="$WORKDIR/patch.bin" bs=1M count=1 status=none
-expected_unsupported "in-place random overwrite" \
-    dd if="$WORKDIR/patch.bin" of="$MOUNTPOINT/overwrite.bin" bs=1M seek=3 count=1 conv=notrunc status=none
+dd if="$WORKDIR/patch.bin" of="$MOUNTPOINT/overwrite.bin" bs=1M seek=3 count=1 conv=notrunc status=none
+dd if="$WORKDIR/patch.bin" of="$WORKDIR/overwrite.src" bs=1M seek=3 count=1 conv=notrunc status=none
+cmp -s "$WORKDIR/overwrite.src" "$MOUNTPOINT/overwrite.bin" && \
+    pass "In-place random overwrite preserves surrounding data" || \
+    fail "In-place random overwrite content mismatch"
+
+fallocate -l 16M "$MOUNTPOINT/preallocated.bin"
+before_punch="$(stat -c '%b' "$MOUNTPOINT/preallocated.bin")"
+fallocate -p -o 4M -l 8M "$MOUNTPOINT/preallocated.bin"
+after_punch="$(stat -c '%b' "$MOUNTPOINT/preallocated.bin")"
+(( before_punch >= 32768 )) && pass "Normal fallocate allocates blocks" || fail "Normal fallocate did not allocate the requested space"
+(( after_punch < before_punch )) && pass "Hole punching releases data blocks" || fail "Hole punching did not release data blocks"
 
 section "Namespace mutation capability probes"
 printf 'rename probe\n' >"$MOUNTPOINT/rename-source.txt"
