@@ -1,0 +1,46 @@
+name: Temporary native create syntax correction
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/temp-fix-native-create-endif.yml]
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('kernel/infiltratorfs_rw.inc')
+          s=p.read_text()
+          old='''#endif
+          }
+
+          #endif
+
+          #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
+          static int infilfs_posix_symlink'''
+          new='''#endif
+          }
+
+          #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
+          static int infilfs_posix_symlink'''
+          if old not in s:
+              raise SystemExit('stray endif anchor not found')
+          p.write_text(s.replace(old,new,1))
+          PY
+          rm .github/workflows/temp-fix-native-create-endif.yml
+          git diff --check
+          git config user.name 'Shannon Smith'
+          git config user.email 'infiltratr@yandex.com'
+          git add kernel/infiltratorfs_rw.inc .github/workflows/temp-fix-native-create-endif.yml
+          git commit -m 'Fix native create wrapper preprocessing'
+          git push origin HEAD:main
