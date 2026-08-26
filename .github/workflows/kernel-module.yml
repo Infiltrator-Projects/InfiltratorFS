@@ -210,6 +210,37 @@ jobs:
           test "$(readlink "$mountpoint/native-rw/current-link")" = 'created.txt'
           test "$(cat "$mountpoint/native-rw/current-link")" = 'rewritte'
           sudo rm "$mountpoint/native-rw/current-link"
+
+          # POSIX requires an unlinked file to remain fully usable through an
+          # already-open descriptor until the final close.  Exercise both read
+          # and write after unlink; subsequent allocation then helps expose any
+          # premature extent reuse.
+          sudo python3 - "$mountpoint/native-rw/open-unlink.txt" <<'PY'
+          import os
+          import sys
+
+          path = sys.argv[1]
+          fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_EXCL, 0o600)
+          try:
+              os.write(fd, b"before-unlink\n")
+              os.fsync(fd)
+              os.unlink(path)
+              os.lseek(fd, 0, os.SEEK_SET)
+              assert os.read(fd, 14) == b"before-unlink\n"
+              os.lseek(fd, 0, os.SEEK_END)
+              os.write(fd, b"after-unlink\n")
+              os.fsync(fd)
+              os.lseek(fd, 0, os.SEEK_SET)
+              assert os.read(fd, 27) == b"before-unlink\nafter-unlink\n"
+          finally:
+              os.close(fd)
+          assert not os.path.exists(path)
+          PY
+          printf 'post-unlink-allocation\n' | sudo tee \
+            "$mountpoint/native-rw/post-unlink.txt" >/dev/null
+          test "$(cat "$mountpoint/native-rw/post-unlink.txt")" = \
+            'post-unlink-allocation'
+
           sudo mkdir "$mountpoint/native-rw/source-dir" "$mountpoint/native-rw/dest-dir"
           printf 'cross-directory-rename\n' | sudo tee "$mountpoint/native-rw/source-dir/item" >/dev/null
           sudo mv "$mountpoint/native-rw/source-dir/item" "$mountpoint/native-rw/dest-dir/item"

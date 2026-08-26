@@ -1015,7 +1015,15 @@ static int infilfs_ns_delete_object(
         kfree(object);
         if (!links)
             return -EFSCORRUPTED;
-        if (links > 1u) {
+        /*
+         * Keep the object indexed even when this is its final directory link.
+         * Linux may still have open struct file references after unlink (or
+         * after rename replaces a destination).  Persisting link_count == 0
+         * here lets those handles continue to address stable CoW data.  The
+         * final object/checksum/extent reclamation is performed from
+         * ->evict_inode after the VFS releases the last reference.
+         */
+        if (links >= 1u) {
             ret = infilfs_ns_cow_object(pending, inode, NULL, -1, true,
                                         retained_block_out);
             if (ret)
@@ -1025,8 +1033,6 @@ static int infilfs_ns_delete_object(
                 changes, change_count, change_capacity, ii->object_id,
                 INFILFS_NS_REPOINT, *retained_block_out, INFILFS_OBJECT_FILE);
         }
-        return infilfs_ns_delete_file_resources(
-            pending, inode, changes, change_count, change_capacity);
     }
     if (ii->object_type == INFILFS_OBJECT_DIRECTORY) {
         ret = infilfs_ns_defer_directory_pages(pending, inode);
@@ -1042,6 +1048,32 @@ static int infilfs_ns_delete_object(
     return infilfs_ns_changes_append(
         changes, change_count, change_capacity, ii->object_id,
         INFILFS_NS_REMOVE, 0, ii->object_type);
+}
+
+/* Reclaim an unlinked regular file only after its final VFS reference dies. */
+static int infilfs_ns_evict_unlinked_file(struct inode *inode)
+{
+    struct infilfs_inode_info *ii = INFILFS_I(inode);
+    struct infilfs_native_pending *pending;
+    struct infilfs_ns_index_change *changes = NULL;
+    u32 change_count = 0;
+    u32 change_capacity = 0;
+    int ret;
+
+    if (!ii || ii->object_type != INFILFS_OBJECT_FILE || inode->i_nlink != 0 ||
+        sb_rdonly(inode->i_sb))
+        return 0;
+
+    ret = infilfs_ns_begin(inode->i_sb, &pending);
+    if (ret)
+        return ret;
+    ret = infilfs_ns_delete_file_resources(
+        pending, inode, &changes, &change_count, &change_capacity);
+    if (!ret)
+        ret = infilfs_ns_rebuild_index(pending, changes, change_count);
+    ret = infilfs_ns_finish(pending, ret);
+    kvfree(changes);
+    return ret;
 }
 
 static int infilfs_ns_create_symlink_object(

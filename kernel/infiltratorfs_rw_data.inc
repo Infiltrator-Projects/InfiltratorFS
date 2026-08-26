@@ -434,6 +434,13 @@ static void infilfs_native_pending_destroy(struct super_block *sb)
     if (pending)
         list_del_init(&pending->node);
     mutex_unlock(&infilfs_native_pending_list_lock);
+
+    /*
+     * Read-only mounts never allocate a pending writer, but verified reads can
+     * still populate the checksum cursor cache.  Invalidate before the early
+     * return so no entry can retain a dead super_block pointer across unmount.
+     */
+    infilfs_native_checksum_cache_invalidate_sb(sb);
     if (!pending)
         return;
 
@@ -448,7 +455,6 @@ static void infilfs_native_pending_destroy(struct super_block *sb)
     if (pending->active)
         infilfs_rw_tx_abort(&pending->tx);
     kvfree(pending->operation_bitmap);
-    infilfs_native_checksum_cache_invalidate_sb(sb);
     kfree(pending);
 }
 
@@ -833,10 +839,29 @@ static int infilfs_native_checksum_tail(
         return -ENOENT;
 
     if (infilfs_native_checksum_cache_lookup(sb, owner_id, &cached)) {
+        u64 indexed_block = 0;
+        u16 indexed_type = 0;
+
         memcpy(current_id, cached.object_id, 16);
         block = cached.object_block;
-        ret = infilfs_native_checksum_decode(sb, owner_id, current_id, block,
-                                              tail_object, &payload);
+        /*
+         * Readers and appenders deliberately share this bounded cache.  A
+         * reader that started before a checksum-tail CoW may publish the old
+         * physical block after the writer has cached the replacement.  The
+         * old block remains structurally valid, so decoding it alone is not a
+         * sufficient freshness check.  Require the live object index to map
+         * the cached object ID to the same block before the append path trusts
+         * it; otherwise restart from the authoritative checksum head.
+         */
+        ret = infilfs_index_lookup(sb, current_id, &indexed_block,
+                                   &indexed_type);
+        if (!ret && (indexed_type != INFILFS_OBJECT_CHECKSUM ||
+                     indexed_block != block))
+            ret = -ESTALE;
+        if (!ret)
+            ret = infilfs_native_checksum_decode(sb, owner_id, current_id,
+                                                  block, tail_object,
+                                                  &payload);
         if (ret) {
             memcpy(current_id, head_id, 16);
             block = 0;
@@ -1866,7 +1891,7 @@ static int infilfs_native_read_expected_digest(
     return -ELOOP;
 }
 
-static ssize_t infilfs_file_read_iter_verified(struct kiocb *iocb,
+static __maybe_unused ssize_t infilfs_file_read_iter_verified(struct kiocb *iocb,
                                                 struct iov_iter *to)
 {
     struct file *filep = iocb->ki_filp;

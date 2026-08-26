@@ -991,8 +991,13 @@ static int infilfs_iterate_shared(struct file *file, struct dir_context *ctx)
 static void infilfs_evict_inode(struct inode *inode)
 {
     struct infilfs_inode_info *ii = INFILFS_I(inode);
+    int ret;
 
     truncate_inode_pages_final(&inode->i_data);
+    ret = infilfs_ns_evict_unlinked_file(inode);
+    if (ret)
+        pr_err("InfiltratorFS: could not reclaim unlinked inode %lu: %d\n",
+               inode->i_ino, ret);
     clear_inode(inode);
     if (ii) {
         kfree(ii->symlink_target);
