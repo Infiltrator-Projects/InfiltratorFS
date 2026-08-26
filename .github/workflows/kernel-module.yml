@@ -127,7 +127,10 @@ jobs:
           trap cleanup EXIT
 
           truncate -s 128M "$image"
-          build/mkfs.infilfs -L NativeKernelCI "$image" >/dev/null
+          # Real block formatting is normally elevated.  Explicitly model sudo
+          # here and verify mkfs preserves the invoking desktop identity.
+          sudo env SUDO_UID="$(id -u)" SUDO_GID="$(id -g)" \
+              build/mkfs.infilfs -L NativeKernelCI "$image" >/dev/null
           printf 'native-kernel-inline\n' > "$inline_src"
           python3 - "$extent_src" "$large_src" <<'PY'
           import sys
@@ -153,9 +156,33 @@ jobs:
 
           test "$(findmnt -n -o FSTYPE -T "$mountpoint")" = infiltratorfs
           findmnt -n -o OPTIONS -T "$mountpoint" | grep -Eq '(^|,)rw(,|$)'
+          test "$(stat -c '%u:%g' "$mountpoint")" = "$(id -u):$(id -g)"
           cmp "$inline_src" "$mountpoint/docs/inline.txt"
           cmp "$extent_src" "$mountpoint/docs/extent.bin"
           test "$(readlink "$mountpoint/current")" = 'docs/inline.txt'
+
+          # Exercise the exact desktop failure that exposed the POSIX bridge
+          # bug: an ordinary user must be able to create at the filesystem root,
+          # and creator ownership must not be silently rewritten to root.
+          mkdir "$mountpoint/user-owned"
+          printf 'ordinary-user-write\n' > "$mountpoint/user-owned/file.txt"
+          test "$(stat -c '%u:%g' "$mountpoint/user-owned")" = "$(id -u):$(id -g)"
+          test "$(stat -c '%u:%g' "$mountpoint/user-owned/file.txt")" = "$(id -u):$(id -g)"
+          chmod 0640 "$mountpoint/user-owned/file.txt"
+          test "$(stat -c '%a' "$mountpoint/user-owned/file.txt")" = 640
+          touch -m -d '2026-01-02 03:04:05 UTC' "$mountpoint/user-owned/file.txt"
+          test "$(stat -c '%Y' "$mountpoint/user-owned/file.txt")" = 1767323045
+          cp -p "$mountpoint/user-owned/file.txt" "$mountpoint/user-owned/preserved.txt"
+          test "$(stat -c '%u:%g' "$mountpoint/user-owned/preserved.txt")" = "$(id -u):$(id -g)"
+          test "$(stat -c '%a' "$mountpoint/user-owned/preserved.txt")" = 640
+          test "$(stat -c '%Y' "$mountpoint/user-owned/preserved.txt")" = 1767323045
+          sudo chown 0:0 "$mountpoint/user-owned/preserved.txt"
+          test "$(stat -c '%u:%g' "$mountpoint/user-owned/preserved.txt")" = 0:0
+          sudo chown "$(id -u):$(id -g)" "$mountpoint/user-owned/preserved.txt"
+          test "$(stat -c '%u:%g' "$mountpoint/user-owned/preserved.txt")" = "$(id -u):$(id -g)"
+          chmod 0700 "$mountpoint"
+          test "$(stat -c '%a' "$mountpoint")" = 700
+          chmod 0755 "$mountpoint"
 
           sudo mkdir "$mountpoint/native-rw"
           printf 'native-kernel-rw\n' | sudo tee "$mountpoint/native-rw/created.txt" >/dev/null
@@ -235,7 +262,10 @@ jobs:
           mounted=1
           test "$(cat "$mountpoint/native-rw/created.txt")" = 'rewritte'
           cmp "$large_src" "$mountpoint/native-rw/large.bin"
-          printf 'Native kernel RW namespace/extent/remount/scrub qualification passed on %s\n' "$(uname -r)"
+          test "$(stat -c '%u:%g' "$mountpoint/user-owned/file.txt")" = "$(id -u):$(id -g)"
+          test "$(stat -c '%a' "$mountpoint/user-owned/file.txt")" = 640
+          test "$(stat -c '%Y' "$mountpoint/user-owned/file.txt")" = 1767323045
+          printf 'Native kernel RW POSIX/namespace/extent/remount/scrub qualification passed on %s\n' "$(uname -r)"
 
       - name: Report runtime mount test availability
         if: steps.headers.outputs.runtime_kdir == ''
