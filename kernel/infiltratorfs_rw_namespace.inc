@@ -1,10 +1,11 @@
 /*
  * Transactional native namespace operations.
  *
- * Namespace mutations are forced durability boundaries.  They join any
- * already-open deferred data transaction, take an operation savepoint, and
- * publish atomically on success.  The implementation deliberately rebuilds
- * directory/index metadata instead of editing committed metadata in place.
+ * Namespace mutations join the mount's deferred native transaction and take an
+ * operation savepoint, so each syscall is atomic and rollback-safe without
+ * forcing a device-wide durability flush.  Publication is shared with the
+ * data path: explicit fsync/syncfs, idle timeout, bounded transaction size,
+ * or unmount.  Directory/index metadata is still rebuilt copy-on-write.
  */
 
 struct infilfs_ns_index_change {
@@ -78,6 +79,21 @@ static int infilfs_ns_begin(struct super_block *sb,
     return 0;
 }
 
+/*
+ * Namespace syscalls are transaction boundaries, not implicit fsyncs.
+ * Keep each operation atomic through the existing operation snapshot,
+ * but publish a burst of successful mutations together.  Explicit
+ * fsync/syncfs, the one-second idle timer, unmount, or the bounded
+ * metadata charge below remains a durability boundary.
+ *
+ * The synthetic 1 MiB charge bounds metadata-only bursts even when a
+ * transaction-private directory/index block can be reused without a
+ * corresponding free-block delta.  This prevents an unbounded pending
+ * transaction while avoiding a full four-flush checkpoint publication
+ * for every create/rename/unlink-style mutation.
+ */
+#define INFILFS_NATIVE_METADATA_PUBLISH_CHARGE (1ULL * 1024ULL * 1024ULL)
+
 static int infilfs_ns_finish(struct infilfs_native_pending *pending, int ret)
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(pending->sb);
@@ -88,10 +104,17 @@ static int infilfs_ns_finish(struct infilfs_native_pending *pending, int ret)
         mutex_unlock(&sbi->write_lock);
         return rollback_ret ? rollback_ret : ret;
     }
+
     infilfs_native_operation_commit(pending);
-    ret = infilfs_native_pending_commit_locked(pending);
-    if (!ret)
-        infilfs_native_checksum_cache_invalidate_sb(pending->sb);
+    infilfs_native_checksum_cache_invalidate_sb(pending->sb);
+    pending->pending_bytes += INFILFS_NATIVE_METADATA_PUBLISH_CHARGE;
+
+    if (pending->pending_bytes >= pending->publish_threshold) {
+        ret = infilfs_native_pending_commit_locked(pending);
+    } else if (pending->active && !pending->commit_failed) {
+        mod_delayed_work(system_wq, &pending->idle_work,
+                         INFILFS_NATIVE_IDLE_DELAY);
+    }
     mutex_unlock(&sbi->write_lock);
     return ret;
 }
