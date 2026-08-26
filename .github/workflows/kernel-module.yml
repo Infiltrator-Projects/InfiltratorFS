@@ -291,7 +291,7 @@ jobs:
 
           # Native parity: extent-backed files must permit bounded random
           # overwrite without changing their length or invalidating checksums.
-          python3 - "$large_src" "$mountpoint/native-rw/large.bin" <<'PY'
+          sudo python3 - "$large_src" "$mountpoint/native-rw/large.bin" <<'PY'
           import os
           import sys
 
