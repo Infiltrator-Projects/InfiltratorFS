@@ -339,7 +339,7 @@ jobs:
           test "$(sudo dd if="$mountpoint/native-rw/preallocated.bin" bs=1M \
               skip=4 count=8 status=none | tr -d '\0' | wc -c)" -eq 0
 
-          chmod 000 "$mountpoint/native-rw/post-unlink.txt"
+          sudo chmod 000 "$mountpoint/native-rw/post-unlink.txt"
           test "$(stat -c '%a' "$mountpoint/native-rw/post-unlink.txt")" = 0
           sudo ln "$mountpoint/native-rw/large.bin" "$mountpoint/native-rw/large-hard.bin"
           sudo rm "$mountpoint/native-rw/large.bin"
