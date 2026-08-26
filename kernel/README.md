@@ -3,7 +3,7 @@
 
 This directory contains the native Linux VFS adapter for InfiltratorFS. It is an out-of-tree kernel module built against installed kernel headers and packaged through DKMS; Linux itself does not need to be rebuilt.
 
-Release 0.18.5 is the current normal Linux filesystem path. The old userspace FUSE adapter has been removed from the source tree and survives only in Git history.
+Release 0.18.6 is the current normal Linux filesystem path. The old userspace FUSE adapter has been removed from the source tree and survives only in Git history.
 
 The module:
 
@@ -18,7 +18,7 @@ The module:
 - performs create/mkdir/mknod, link/symlink, rename/unlink/rmdir and persistent setattr through the native transaction path;
 - supports sequential/random extent writes, large sparse growth, high-offset writes, truncate, `fallocate` and hole punching;
 - preserves open-unlinked files until final inode eviction and performs mount-time orphan recovery;
-- persists Linux `user.*` xattrs and adapter-specific special-node metadata;
+- persists standard Linux xattr namespaces and adapter-specific special-node metadata;
 - integrates page-cache faults, readahead and shared writable `mmap` writeback;
 - preserves retained snapshot generations while live namespace/data updates continue;
 - reports logical and allocated blocks for native objects;

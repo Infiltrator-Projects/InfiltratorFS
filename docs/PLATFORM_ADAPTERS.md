@@ -59,7 +59,7 @@ The adapter must not redefine the persistent format merely to mirror one platfor
 
 ## Linux
 
-Linux is currently the most complete mounted adapter. Release 0.18.4 uses `infiltratorfs.ko` and exposes current Format 0.12 through Linux VFS with native namespace mutation, random/sparse writes, truncate, `fallocate`, hole punching, open-unlink lifetime, xattrs, special nodes, page-cache/readahead/shared-`mmap` integration and snapshot-preserving live writes.
+Linux is currently the most complete mounted adapter. Release 0.18.6 uses `infiltratorfs.ko` and exposes current Format 0.12 through Linux VFS with native namespace mutation, random/sparse writes, truncate, `fallocate`, hole punching, crash-safe open-unlink lifetime, standard xattr namespaces, special nodes, page-cache/readahead/shared-`mmap` integration, snapshot-preserving live writes, and checkpoint fallback/replica healing.
 
 These Linux implementation details are not requirements that another adapter copy line-for-line. For example, Linux `fallocate` flags are Linux API vocabulary; the underlying portable concepts are preallocation, sparse ranges and hole punching.
 
