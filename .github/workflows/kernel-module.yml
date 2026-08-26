@@ -68,6 +68,7 @@ jobs:
              kernel/infiltratorfs_rw_legacy.inc \
              kernel/infiltratorfs_rw_data.inc \
              kernel/infiltratorfs_rw_namespace.inc \
+             kernel/infiltratorfs_rw_read_cache.inc \
              "$dkms_src/"
           release="$(make -sC "$KDIR" kernelrelease)"
           KERNELRELEASE="$release" make -C "$dkms_src" KDIR="$KDIR"
@@ -100,7 +101,7 @@ jobs:
 
       - name: Native read-write mount transaction and scrub qualification
         if: steps.headers.outputs.runtime_kdir != ''
-        timeout-minutes: 6
+        timeout-minutes: 10
         shell: bash
         run: |
           set -euo pipefail
@@ -126,7 +127,10 @@ jobs:
           }
           trap cleanup EXIT
 
-          truncate -s 128M "$image"
+          # Use enough checksum-chain depth to reproduce the real sha256sum
+          # regression: before the cursor cache, a 1 GiB read on Hyper-V spent
+          # minutes repeatedly walking the checksum-chain prefix from block 0.
+          truncate -s 1G "$image"
           # Real block formatting is normally elevated.  Explicitly model sudo
           # here and verify mkfs preserves the invoking desktop identity.
           sudo env SUDO_UID="$(id -u)" SUDO_GID="$(id -g)" \
@@ -139,9 +143,10 @@ jobs:
               f.write(bytes((i * 37 + 11) & 0xff for i in range(32768)))
           pattern = bytes((i * 73 + 19) & 0xff for i in range(1024 * 1024))
           with open(large_path, 'wb') as f:
-              for _ in range(32):
+              for _ in range(512):
                   f.write(pattern)
           PY
+          large_source_sha="$(sha256sum "$large_src" | awk '{print $1}')"
           build/infilfs-tool "$image" mkdir /docs
           build/infilfs-tool "$image" put "$inline_src" /docs/inline.txt
           build/infilfs-tool "$image" put "$extent_src" /docs/extent.bin
@@ -215,9 +220,9 @@ jobs:
           # Use deterministic non-zero data and 4 MiB write syscalls. This
           # exercises the native extent path directly without GNU cp sparse-file
           # heuristics obscuring whether write_iter itself is healthy.
-          printf 'Starting native 32 MiB extent write...\n'
+          printf 'Starting native 512 MiB extent write...\n'
           write_start="$(date +%s%N)"
-          if ! sudo timeout --signal=TERM --kill-after=10s 180s \
+          if ! sudo timeout --signal=TERM --kill-after=10s 240s \
               dd if="$large_src" of="$mountpoint/native-rw/large.bin" \
                  bs=4M status=none; then
             diagnostics
@@ -227,10 +232,30 @@ jobs:
           python3 - "$write_start" "$write_end" <<'PY'
           import sys
           elapsed = (int(sys.argv[2]) - int(sys.argv[1])) / 1_000_000_000
-          mib = 32.0
-          print(f"Native 32 MiB mounted write: {elapsed:.3f} s ({mib/elapsed:.2f} MiB/s)")
+          mib = 512.0
+          print(f"Native 512 MiB mounted write: {elapsed:.3f} s ({mib/elapsed:.2f} MiB/s)")
           PY
-          printf 'Verifying live native readback...\n'
+
+          # Reproduce the user-observed workload exactly: many sequential
+          # read() syscalls from sha256sum.  The old implementation reset its
+          # checksum cursor per syscall and degraded toward quadratic chain
+          # walking.  Keep this bounded so that regression can never hide as a
+          # merely 'slow' successful build.
+          printf 'Timing live native 512 MiB verified sha256 read...\n'
+          read_start="$(date +%s%N)"
+          if ! mounted_sha="$(sudo timeout --signal=TERM --kill-after=10s 90s \
+              sha256sum "$mountpoint/native-rw/large.bin" | awk '{print $1}')"; then
+            diagnostics
+            exit 1
+          fi
+          read_end="$(date +%s%N)"
+          test "$mounted_sha" = "$large_source_sha"
+          python3 - "$read_start" "$read_end" <<'PY'
+          import sys
+          elapsed = (int(sys.argv[2]) - int(sys.argv[1])) / 1_000_000_000
+          mib = 512.0
+          print(f"Native 512 MiB verified read: {elapsed:.3f} s ({mib/elapsed:.2f} MiB/s)")
+          PY
           cmp "$large_src" "$mountpoint/native-rw/large.bin"
           sudo ln "$mountpoint/native-rw/large.bin" "$mountpoint/native-rw/large-hard.bin"
           sudo rm "$mountpoint/native-rw/large.bin"
@@ -261,11 +286,28 @@ jobs:
           sudo mount -t infiltratorfs -o ro "$loopdev" "$mountpoint"
           mounted=1
           test "$(cat "$mountpoint/native-rw/created.txt")" = 'rewritte'
-          cmp "$large_src" "$mountpoint/native-rw/large.bin"
+
+          # Unmount invalidates the checksum cache.  Time a second hash after a
+          # fresh read-only mount to prove the fix does not depend on the writer
+          # having pre-populated the cache.
+          remount_read_start="$(date +%s%N)"
+          if ! remounted_sha="$(sudo timeout --signal=TERM --kill-after=10s 90s \
+              sha256sum "$mountpoint/native-rw/large.bin" | awk '{print $1}')"; then
+            diagnostics
+            exit 1
+          fi
+          remount_read_end="$(date +%s%N)"
+          test "$remounted_sha" = "$large_source_sha"
+          python3 - "$remount_read_start" "$remount_read_end" <<'PY'
+          import sys
+          elapsed = (int(sys.argv[2]) - int(sys.argv[1])) / 1_000_000_000
+          mib = 512.0
+          print(f"Native 512 MiB cold-cursor remount read: {elapsed:.3f} s ({mib/elapsed:.2f} MiB/s)")
+          PY
           test "$(stat -c '%u:%g' "$mountpoint/user-owned/file.txt")" = "$(id -u):$(id -g)"
           test "$(stat -c '%a' "$mountpoint/user-owned/file.txt")" = 640
           test "$(stat -c '%Y' "$mountpoint/user-owned/file.txt")" = 1767323045
-          printf 'Native kernel RW POSIX/namespace/extent/remount/scrub qualification passed on %s\n' "$(uname -r)"
+          printf 'Native kernel RW POSIX/namespace/extent/read-cache/remount/scrub qualification passed on %s\n' "$(uname -r)"
 
       - name: Report runtime mount test availability
         if: steps.headers.outputs.runtime_kdir == ''
