@@ -54,6 +54,13 @@ struct infilfs_sb_info {
     u8 *bitmap;
     size_t bitmap_bytes;
     u8 *snapshot_bitmap;
+    /*
+     * Volatile next-fit cursors.  These are allocation heuristics only and
+     * deliberately never enter Format 0.12; a rollback or remount may move
+     * them without affecting correctness.
+     */
+    u64 data_alloc_hint;
+    u64 metadata_alloc_hint;
     bool rw_enabled;
     bool write_poisoned;
     bool checkpoint_repair_needed;
