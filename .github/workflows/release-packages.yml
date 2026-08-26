@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: publish-release-${{ github.repository }}
@@ -29,6 +30,41 @@ jobs:
       sha: ${{ steps.source.outputs.sha }}
       version: ${{ steps.source.outputs.version }}
     steps:
+      - name: Require native kernel qualification for the same commit
+        timeout-minutes: 35
+        env:
+          EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          api="repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${EXPECTED_SHA}&event=push&per_page=20"
+          for attempt in $(seq 1 180); do
+            mapfile -t native < <(
+              gh api "$api" --jq '
+                first(.workflow_runs[] |
+                  select(.name == "Native Linux kernel module")) |
+                .status, (.conclusion // ""), .html_url'
+            )
+            status="${native[0]:-}"
+            conclusion="${native[1]:-}"
+            run_url="${native[2]:-}"
+            if [[ "$status" == completed ]]; then
+              if [[ "$conclusion" != success ]]; then
+                printf 'Native qualification failed for %s: %s (%s)\n' \
+                  "$EXPECTED_SHA" "$conclusion" "$run_url" >&2
+                exit 1
+              fi
+              printf 'Native qualification passed for %s: %s\n' \
+                "$EXPECTED_SHA" "$run_url"
+              exit 0
+            fi
+            sleep 10
+          done
+          printf 'Timed out waiting for native qualification of %s.\n' \
+            "$EXPECTED_SHA" >&2
+          exit 1
+
       - name: Check out exact tested main commit
         uses: actions/checkout@v6
         with:

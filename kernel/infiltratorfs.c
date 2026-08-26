@@ -1515,14 +1515,17 @@ static const struct inode_operations infilfs_dir_inode_operations = {
     .lookup = infilfs_lookup,
     .create = infilfs_rw_create,
     .mkdir = infilfs_rw_mkdir,
+    .listxattr = infilfs_linux_listxattr,
 };
 
 static const struct inode_operations infilfs_file_inode_operations = {
     .setattr = infilfs_rw_setattr,
+    .listxattr = infilfs_linux_listxattr,
 };
 
 static const struct inode_operations infilfs_symlink_inode_operations = {
     .get_link = infilfs_get_link,
+    .listxattr = infilfs_linux_listxattr,
 };
 
 static const struct file_operations infilfs_dir_operations = {
