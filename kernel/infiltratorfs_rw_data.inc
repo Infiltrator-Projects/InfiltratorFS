@@ -58,8 +58,7 @@ struct infilfs_native_pending {
     struct infilfs_rw_tx tx;
     struct infilfs_superblock_disk base_disk;
     struct delayed_work idle_work;
-    u8 *operation_bitmap;
-    size_t operation_bitmap_bytes;
+    size_t operation_allocated_count;
     struct infilfs_superblock_disk operation_next_sb;
     u64 operation_free_blocks;
     size_t operation_deferred_count;
@@ -317,18 +316,7 @@ static int infilfs_native_pending_begin_locked(
 static int infilfs_native_operation_snapshot(
     struct infilfs_native_pending *pending)
 {
-    size_t bytes = pending->tx.bitmap_bytes;
-
-    if (pending->operation_bitmap_bytes != bytes) {
-        kvfree(pending->operation_bitmap);
-        pending->operation_bitmap = kvmalloc(bytes, GFP_NOFS);
-        if (!pending->operation_bitmap) {
-            pending->operation_bitmap_bytes = 0;
-            return -ENOMEM;
-        }
-        pending->operation_bitmap_bytes = bytes;
-    }
-    memcpy(pending->operation_bitmap, pending->tx.bitmap, bytes);
+    pending->operation_allocated_count = pending->tx.allocated_count;
     pending->operation_next_sb = pending->tx.next_sb;
     pending->operation_free_blocks = pending->tx.free_blocks;
     pending->operation_deferred_count = pending->tx.deferred_count;
@@ -344,6 +332,7 @@ static int infilfs_native_operation_rollback(
     struct infilfs_native_pending *pending)
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(pending->sb);
+    size_t a;
     unsigned int i;
     int first_error = 0;
 
@@ -354,8 +343,22 @@ static int infilfs_native_operation_rollback(
         if (ret && !first_error)
             first_error = ret;
     }
-    memcpy(pending->tx.bitmap, pending->operation_bitmap,
-           pending->operation_bitmap_bytes);
+
+    /*
+     * All frees are deferred until publication, so an operation can only have
+     * changed the working bitmap by allocating new ranges.  Clear precisely
+     * those ranges instead of copying the complete multi-megabyte bitmap back.
+     */
+    for (a = pending->operation_allocated_count;
+         a < pending->tx.allocated_count; ++a) {
+        u64 start = pending->tx.allocated[a].start;
+        u64 count = pending->tx.allocated[a].count;
+        u64 b;
+
+        for (b = 0; b < count; ++b)
+            infilfs_rw_bitmap_set(pending->tx.bitmap, start + b, false);
+    }
+    pending->tx.allocated_count = pending->operation_allocated_count;
     pending->tx.next_sb = pending->operation_next_sb;
     pending->tx.free_blocks = pending->operation_free_blocks;
     pending->tx.deferred_count = pending->operation_deferred_count;
@@ -466,7 +469,6 @@ static void infilfs_native_pending_destroy(struct super_block *sb)
     }
     if (pending->active)
         infilfs_rw_tx_abort(&pending->tx);
-    kvfree(pending->operation_bitmap);
     kfree(pending);
 }
 
@@ -475,43 +477,69 @@ static int infilfs_native_alloc_data_exact(struct infilfs_native_pending *pendin
                                            u64 *start_out)
 {
     struct infilfs_rw_tx *tx = &pending->tx;
-    u64 total = tx->sbi->device_blocks;
-    u64 start;
-    u64 i;
+    struct infilfs_sb_info *sbi = tx->sbi;
+    u64 total = sbi->device_blocks;
+    u64 hint;
+    u64 candidate;
+    u64 scanned;
+    u64 start = 0;
     u64 run = 0;
+    u64 i;
+    int ret;
 
-    if (!count || count > tx->free_blocks)
+    if (!count || count > tx->free_blocks || total <= 1)
         return -ENOSPC;
+
     if (preferred > 0 && preferred < total && count <= total - preferred) {
         for (i = 0; i < count; ++i)
             if (infilfs_rw_bitmap_get(tx->bitmap, preferred + i))
                 break;
         if (i == count) {
-            for (i = 0; i < count; ++i)
-                infilfs_rw_bitmap_set(tx->bitmap, preferred + i, true);
-            tx->free_blocks -= count;
+            ret = infilfs_rw_tx_record_alloc(tx, preferred, count);
+            if (ret)
+                return ret;
+            sbi->data_alloc_hint = preferred + count < total ?
+                preferred + count : 1u;
             *start_out = preferred;
             return 0;
         }
     }
 
-    start = 1;
-    for (i = 1; i < total; ++i) {
-        if (!infilfs_rw_bitmap_get(tx->bitmap, i)) {
+    /*
+     * The old fallback restarted at block 1 for every random CoW overwrite.
+     * Continue from the previous successful search and wrap once, making
+     * repeated 4 KiB overwrites proportional to nearby occupancy rather than
+     * to all allocations before the first free block.
+     */
+    hint = sbi->data_alloc_hint;
+    if (hint < 1 || hint >= total)
+        hint = 1;
+    candidate = hint;
+
+    for (scanned = 0; scanned < total - 1u; ++scanned) {
+        if (!infilfs_rw_bitmap_get(tx->bitmap, candidate)) {
             if (!run)
-                start = i;
+                start = candidate;
             run++;
             if (run == count)
                 break;
         } else {
             run = 0;
         }
+
+        candidate++;
+        if (candidate >= total) {
+            candidate = 1;
+            run = 0;
+        }
     }
     if (run != count)
         return -ENOSPC;
-    for (i = 0; i < count; ++i)
-        infilfs_rw_bitmap_set(tx->bitmap, start + i, true);
-    tx->free_blocks -= count;
+
+    ret = infilfs_rw_tx_record_alloc(tx, start, count);
+    if (ret)
+        return ret;
+    sbi->data_alloc_hint = start + count < total ? start + count : 1u;
     *start_out = start;
     return 0;
 }
