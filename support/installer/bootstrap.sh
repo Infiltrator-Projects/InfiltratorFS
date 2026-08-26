@@ -127,6 +127,7 @@ remove_conflicting_debian_package() {
 
 install_kernel_module() {
     local dkms_conf="$BUILD_DIR/infiltratorfs-dkms.conf"
+    local source_file
     mkdir -p "$BUILD_DIR"
     cat > "$dkms_conf" <<EOF
 PACKAGE_NAME="infiltratorfs"
@@ -144,10 +145,15 @@ EOF
     fi
     run_as_root rm -rf "$DKMS_SOURCE"
     run_as_root install -d "$DKMS_SOURCE"
-    for file in Makefile infiltratorfs.c infiltratorfs_format.h infiltratorfs_rw.inc \
-                infiltratorfs_rw_legacy.inc infiltratorfs_rw_data.inc \
-                infiltratorfs_rw_namespace.inc infiltratorfs_rw_read_cache.inc; do
-        run_as_root install -m 0644 "$ROOT/kernel/$file" "$DKMS_SOURCE/$file"
+    for source_file in "$ROOT/kernel/Makefile" \
+                       "$ROOT/kernel/infiltratorfs.c" \
+                       "$ROOT/kernel/infiltratorfs_format.h" \
+                       "$ROOT"/kernel/infiltratorfs_*.inc; do
+        [[ -f "$source_file" ]] || {
+            echo "Required DKMS source is missing: $source_file" >&2
+            exit 1
+        }
+        run_as_root install -m 0644 "$source_file" "$DKMS_SOURCE/$(basename "$source_file")"
     done
     run_as_root install -m 0644 "$dkms_conf" "$DKMS_SOURCE/dkms.conf"
     run_as_root dkms add -m infiltratorfs -v "$VERSION"
