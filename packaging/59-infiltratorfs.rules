@@ -14,6 +14,16 @@ ACTION=="add|change", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", IMPORT{program}=
 # a modprobe failure therefore remains visible to the desktop mount request.
 ENV{ID_FS_TYPE}=="infiltratorfs", RUN+="/sbin/modprobe -q infiltratorfs"
 
+# Give UDisks/GVfs a useful presentation name when a volume has no explicit
+# filesystem label.  A real on-disk label remains authoritative and is not
+# overridden.  The long "Contents" filesystem description shown by GNOME
+# Disks is generated inside libudisks2 from its filesystem-name table; see
+# packaging/udisks2-infiltratorfs-display.patch for the corresponding upstream
+# mapping required to replace "Unknown (infiltratorfs 0.12)" there.
+ENV{ID_FS_TYPE}=="infiltratorfs", ENV{ID_FS_LABEL}=="", ENV{UDISKS_NAME}="InfiltratorFS"
+ENV{ID_FS_TYPE}=="infiltratorfs", ENV{UDISKS_ICON_NAME}="drive-harddisk"
+ENV{ID_FS_TYPE}=="infiltratorfs", ENV{UDISKS_SYMBOLIC_ICON_NAME}="drive-harddisk-symbolic"
+
 # UDisks applies these only to devices that the probe identified as
 # InfiltratorFS.  The set deliberately sticks to generic VFS-safe options.
 ENV{ID_FS_TYPE}=="infiltratorfs", ENV{UDISKS_MOUNT_OPTIONS_DEFAULTS}="nodev,nosuid"
