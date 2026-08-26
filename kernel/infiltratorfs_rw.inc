@@ -57,8 +57,8 @@ static int infilfs_rw_tx_begin(struct super_block *sb,
  * mark them unused until that layer is retired rather than generating kernel
  * build warnings for intentionally unreachable helpers.
  */
-#define infilfs_rw_create infilfs_rw_create_data
-#define infilfs_rw_mkdir infilfs_rw_mkdir_data
+#define infilfs_rw_create __maybe_unused infilfs_rw_create_data
+#define infilfs_rw_mkdir __maybe_unused infilfs_rw_mkdir_data
 #define infilfs_rw_setattr __maybe_unused infilfs_rw_setattr_data
 #define infilfs_native_checksum_tail __maybe_unused infilfs_native_checksum_tail
 #include "infiltratorfs_rw_data.inc"
@@ -1127,6 +1127,135 @@ finish:
 }
 
 /*
+ * Build file/directory objects directly inside the shared native transaction.
+ * Creator credentials and setgid-directory inheritance are encoded before the
+ * object is staged, eliminating both the legacy synchronous create commit and
+ * the second ownership-repair transaction that previously followed it.
+ */
+static int infilfs_posix_create_object_native(
+    struct infilfs_native_pending *pending, struct inode *parent,
+    u16 type, umode_t mode, const u8 object_id[16], u64 *block_out)
+{
+    struct infilfs_inode_info *parent_ii = INFILFS_I(parent);
+    struct infilfs_object_header_disk *header;
+    struct infilfs_posix_compat_disk *posix = NULL;
+    u8 *object;
+    u64 block;
+    u32 inherited_gid;
+    int ret;
+
+    object = kzalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+    if (!object)
+        return -ENOMEM;
+    header = (struct infilfs_object_header_disk *)object;
+    memcpy(header->magic, infilfs_object_magic, sizeof(infilfs_object_magic));
+    header->object_type = cpu_to_le16(type);
+    header->object_version = cpu_to_le16(
+        type == INFILFS_OBJECT_DIRECTORY &&
+        (le64_to_cpu(pending->tx.next_sb.incompat_flags) &
+         INFILFS_INCOMPAT_PAGED_METADATA) ?
+        INFILFS_OBJECT_VERSION_PAGED : INFILFS_OBJECT_VERSION_CLASSIC);
+    header->header_size = cpu_to_le32(sizeof(*header));
+    header->generation = cpu_to_le64(pending->tx.generation);
+    memcpy(header->object_id, object_id, 16);
+    memcpy(header->parent_id, parent_ii->object_id, 16);
+    header->checksum_type = cpu_to_le32(INFILFS_CHECKSUM_CRC64_ECMA);
+
+    if (type == INFILFS_OBJECT_FILE) {
+        struct infilfs_file_payload_disk *file =
+            (struct infilfs_file_payload_disk *)(header + 1);
+
+        header->payload_size = cpu_to_le32(sizeof(*file));
+        infilfs_posix_fill_common_attributes(&file->attributes,
+                                              &file->posix, mode, 1);
+        file->data_checksum_type = cpu_to_le32(INFILFS_CHECKSUM_SHA256);
+        posix = &file->posix;
+    } else if (type == INFILFS_OBJECT_DIRECTORY) {
+        struct infilfs_directory_payload_disk *dir =
+            (struct infilfs_directory_payload_disk *)(header + 1);
+
+        if (parent->i_mode & S_ISGID)
+            mode |= S_ISGID;
+        header->payload_size = cpu_to_le32(sizeof(*dir));
+        infilfs_posix_fill_common_attributes(&dir->attributes,
+                                              &dir->posix, mode, 2);
+        posix = &dir->posix;
+    } else {
+        ret = -EINVAL;
+        goto out;
+    }
+
+    if (parent->i_mode & S_ISGID) {
+        ret = infilfs_posix_gid_to_disk(parent->i_gid, &inherited_gid);
+        if (ret)
+            goto out;
+        posix->gid = cpu_to_le32(inherited_gid);
+    }
+
+    ret = infilfs_rw_finalize_object(object);
+    if (ret)
+        goto out;
+    ret = infilfs_rw_tx_alloc(&pending->tx, 1, &block);
+    if (ret)
+        goto out;
+    ret = infilfs_native_stage_block(pending->sb, block, object);
+    if (!ret)
+        *block_out = block;
+out:
+    kfree(object);
+    return ret;
+}
+
+static int infilfs_posix_create_native_child(
+    struct inode *dir, struct dentry *dentry, umode_t mode, u16 type,
+    u8 object_id_out[16], u64 *block_out)
+{
+    struct infilfs_inode_info *dir_ii = INFILFS_I(dir);
+    struct infilfs_native_pending *pending = NULL;
+    struct infilfs_ns_index_change changes[2];
+    u8 object_id[16];
+    u64 object_block = 0;
+    u64 new_dir_block = 0;
+    int ret;
+
+    ret = infilfs_ns_validate_name(&dentry->d_name);
+    if (ret)
+        return ret;
+    ret = infilfs_ns_begin(dir->i_sb, &pending);
+    if (ret)
+        return ret;
+    ret = infilfs_rw_generate_id(dir->i_sb, object_id);
+    if (!ret)
+        ret = infilfs_posix_create_object_native(
+            pending, dir, type, mode, object_id, &object_block);
+    if (!ret)
+        ret = infilfs_ns_rebuild_directory(
+            pending, dir, NULL, NULL, &dentry->d_name, object_id, type,
+            type == INFILFS_OBJECT_DIRECTORY ? 1 : 0, &new_dir_block);
+    if (!ret) {
+        memset(changes, 0, sizeof(changes));
+        memcpy(changes[0].object_id, dir_ii->object_id, 16);
+        changes[0].object_block = new_dir_block;
+        changes[0].object_type = INFILFS_OBJECT_DIRECTORY;
+        changes[0].action = INFILFS_NS_REPOINT;
+        memcpy(changes[1].object_id, object_id, 16);
+        changes[1].object_block = object_block;
+        changes[1].object_type = type;
+        changes[1].action = INFILFS_NS_ADD;
+        ret = infilfs_ns_rebuild_index(pending, changes, 2);
+    }
+    ret = infilfs_ns_finish(pending, ret);
+    if (ret)
+        return ret;
+
+    dir_ii->object_block = new_dir_block;
+    infilfs_refresh_inode_blocks_after_commit(dir);
+    memcpy(object_id_out, object_id, 16);
+    *block_out = object_block;
+    return 0;
+}
+
+/*
  * Finish the ownership semantics that inode_init_owner() would normally apply
  * during VFS creation.  The existing qualified create transaction has already
  * preserved the requested umask-filtered mode; we add the creator uid and the
@@ -1178,11 +1307,22 @@ static int infilfs_posix_create(struct user_namespace *idmap,
                                 umode_t mode, bool excl)
 #endif
 {
-    int ret = infilfs_rw_create_data(idmap, dir, dentry, mode, excl);
+    struct inode *inode;
+    u8 id[16];
+    u64 block;
+    int ret;
 
+    (void)idmap;
+    (void)excl;
+    ret = infilfs_posix_create_native_child(
+        dir, dentry, mode, INFILFS_OBJECT_FILE, id, &block);
     if (ret)
         return ret;
-    return infilfs_posix_fix_created(dir, dentry, false);
+    inode = infilfs_get_inode(dir->i_sb, block, INFILFS_OBJECT_FILE, id);
+    if (IS_ERR(inode))
+        return PTR_ERR(inode);
+    d_instantiate(dentry, inode);
+    return 0;
 }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
@@ -1190,40 +1330,48 @@ static struct dentry *infilfs_posix_mkdir(struct mnt_idmap *idmap,
                                           struct inode *dir,
                                           struct dentry *dentry,
                                           umode_t mode)
-{
-    struct dentry *result = infilfs_rw_mkdir_data(idmap, dir, dentry, mode);
-    struct dentry *created;
-    int ret;
-
-    if (IS_ERR(result))
-        return result;
-    created = result ? result : dentry;
-    ret = infilfs_posix_fix_created(dir, created, true);
-    if (ret)
-        return ERR_PTR(ret);
-    return result;
-}
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
 static int infilfs_posix_mkdir(struct mnt_idmap *idmap, struct inode *dir,
                                struct dentry *dentry, umode_t mode)
-{
-    int ret = infilfs_rw_mkdir_data(idmap, dir, dentry, mode);
-
-    if (ret)
-        return ret;
-    return infilfs_posix_fix_created(dir, dentry, true);
-}
 #else
 static int infilfs_posix_mkdir(struct user_namespace *idmap,
                                struct inode *dir, struct dentry *dentry,
                                umode_t mode)
+#endif
 {
-    int ret = infilfs_rw_mkdir_data(idmap, dir, dentry, mode);
+    struct inode *inode;
+    u8 id[16];
+    u64 block;
+    int ret;
 
-    if (ret)
+    (void)idmap;
+    ret = infilfs_posix_create_native_child(
+        dir, dentry, mode, INFILFS_OBJECT_DIRECTORY, id, &block);
+    if (ret) {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
+        return ERR_PTR(ret);
+#else
         return ret;
-    return infilfs_posix_fix_created(dir, dentry, true);
+#endif
+    }
+    inode = infilfs_get_inode(dir->i_sb, block,
+                              INFILFS_OBJECT_DIRECTORY, id);
+    if (IS_ERR(inode)) {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
+        return ERR_PTR(PTR_ERR(inode));
+#else
+        return PTR_ERR(inode);
+#endif
+    }
+    d_instantiate(dentry, inode);
+    inc_nlink(dir);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
+    return NULL;
+#else
+    return 0;
+#endif
 }
+
 #endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
