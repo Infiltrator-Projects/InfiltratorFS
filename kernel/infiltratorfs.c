@@ -1532,6 +1532,7 @@ static const struct file_operations infilfs_dir_operations = {
     .owner = THIS_MODULE,
     .llseek = generic_file_llseek,
     .iterate_shared = infilfs_iterate_shared,
+    .fsync = infilfs_file_fsync,
 };
 
 static const struct file_operations infilfs_file_operations = {
