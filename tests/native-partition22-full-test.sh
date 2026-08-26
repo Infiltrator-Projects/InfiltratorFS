@@ -8,8 +8,8 @@
 # It is intentionally hard-wired to Shannon's dedicated partition 22 test
 # target. It refuses any other block device, confirms the native kernel VFS
 # rather than FUSE, formats the partition, exercises mounted I/O and metadata,
-# checks integrity after unmount/remount, and records capability gaps separately
-# from regressions.
+# checks integrity after unmount/remount, and treats every migrated FUSE-era
+# capability as required native behaviour.
 #
 # Run:
 #   chmod +x tests/native-partition22-full-test.sh
@@ -34,7 +34,6 @@ CONFIRM_ARG="${1:-}"
 
 PASS=0
 FAIL=0
-KNOWN=0
 WARN=0
 MOUNTED=0
 START_EPOCH="$(date +%s)"
@@ -79,11 +78,6 @@ fail() {
     printf '[FAIL] %s\n' "$*"
 }
 
-known() {
-    KNOWN=$((KNOWN + 1))
-    printf '[NOT IMPLEMENTED] %s\n' "$*"
-}
-
 warn() {
     WARN=$((WARN + 1))
     printf '[WARN] %s\n' "$*"
@@ -112,30 +106,6 @@ timed() {
     return "$rc"
 }
 
-expected_unsupported() {
-    local label="$1"
-    shift
-    set +e
-    "$@" >/tmp/infiltratorfs-probe.out 2>/tmp/infiltratorfs-probe.err
-    local rc=$?
-    set -e
-    if (( rc == 0 )); then
-        pass "$label is implemented and succeeded"
-        return 0
-    fi
-    local err
-    err="$(tr '\n' ' ' </tmp/infiltratorfs-probe.err)"
-    case "$err" in
-        *"Operation not supported"*|*"Function not implemented"*|*"Invalid argument"*|*"Read-only file system"*|*"Operation not permitted"*|*"Permission denied"*|*"File too large"*)
-            known "$label: ${err:-operation rejected}"
-            ;;
-        *)
-            fail "$label failed unexpectedly (rc=$rc): ${err:-no stderr}"
-            ;;
-    esac
-    return 0
-}
-
 section "InfiltratorFS partition 22 destructive native VFS test"
 printf 'Target:       %s\n' "$TARGET"
 printf 'Mount point:  %s\n' "$MOUNTPOINT"
@@ -144,9 +114,10 @@ printf 'Kernel:       %s\n' "$(uname -r)"
 printf 'Started:      %s\n' "$(date --iso-8601=seconds)"
 
 for cmd in \
-    awk blockdev cat chmod cmp cp cut date dd df find findmnt grep head ln lsblk \
-    mkdir mkfs.infilfs modinfo modprobe mount mountpoint mv od readlink rm rmdir \
-    seq sha256sum sleep stat sync tail touch tr truncate umount uname wc; do
+    awk blockdev cat chmod cmp cp cut date dd df fallocate find findmnt grep head \
+    infilfs-tool ln lsblk mkdir mkfifo mkfs.infilfs mknod modinfo modprobe mount \
+    mountpoint mv od python3 readlink rm rmdir seq sha256sum sleep stat sync tail \
+    touch tr truncate umount uname wc; do
     require_cmd "$cmd"
 done
 
@@ -236,6 +207,11 @@ if command -v fsck.infiltratorfs >/dev/null 2>&1; then
     timed "initial fsck.infiltratorfs" fsck.infiltratorfs -n "$TARGET" && pass "Initial fsck wrapper is clean" || fail "Initial fsck wrapper failed"
 fi
 
+printf 'snapshot-before-native\n' >"$WORKDIR/snapshot-before.txt"
+infilfs-tool "$TARGET" put "$WORKDIR/snapshot-before.txt" /snapshot-live.txt
+infilfs-tool "$TARGET" snapshot-create before-native-rw
+pass "Retained snapshot created before native writable mount"
+
 section "Native read-write mount"
 mkdir -p "$MOUNTPOINT"
 timed "native mount" mount -t infiltratorfs -o rw "$TARGET" "$MOUNTPOINT"
@@ -248,6 +224,7 @@ options="$(findmnt -rn -T "$MOUNTPOINT" -o OPTIONS)"
 [[ "$source" == "$TARGET" ]] && pass "Mounted source is exactly partition 22" || fail "Mounted source mismatch: $source"
 [[ ",$options," == *,rw,* ]] && pass "Mount is read-write" || fail "Mount is not read-write: $options"
 [[ "$fstype" != fuse.* ]] && pass "Mount is not FUSE" || fail "Unexpected FUSE filesystem type: $fstype"
+printf 'snapshot-after-native\n' >"$MOUNTPOINT/snapshot-live.txt"
 
 section "statfs / desktop capacity accounting"
 read -r fs_type block_size blocks free_blocks avail_blocks < <(
@@ -397,20 +374,82 @@ after_punch="$(stat -c '%b' "$MOUNTPOINT/preallocated.bin")"
 
 section "Namespace mutation capability probes"
 printf 'rename probe\n' >"$MOUNTPOINT/rename-source.txt"
-expected_unsupported "rename" mv "$MOUNTPOINT/rename-source.txt" "$MOUNTPOINT/rename-destination.txt"
+mv "$MOUNTPOINT/rename-source.txt" "$MOUNTPOINT/rename-destination.txt"
+[[ -f "$MOUNTPOINT/rename-destination.txt" ]] && \
+    pass "Rename succeeds" || fail "Rename lost destination"
 
 printf 'unlink probe\n' >"$MOUNTPOINT/unlink-probe.txt"
-expected_unsupported "unlink/delete file" rm "$MOUNTPOINT/unlink-probe.txt"
+rm "$MOUNTPOINT/unlink-probe.txt"
+[[ ! -e "$MOUNTPOINT/unlink-probe.txt" ]] && pass "Unlink succeeds" || fail "Unlink left source"
 
 mkdir "$MOUNTPOINT/rmdir-probe"
-expected_unsupported "remove directory" rmdir "$MOUNTPOINT/rmdir-probe"
+rmdir "$MOUNTPOINT/rmdir-probe"
+[[ ! -e "$MOUNTPOINT/rmdir-probe" ]] && pass "rmdir succeeds" || fail "rmdir left directory"
 
 printf 'hardlink probe\n' >"$MOUNTPOINT/hardlink-source.txt"
-expected_unsupported "hard link creation" ln "$MOUNTPOINT/hardlink-source.txt" "$MOUNTPOINT/hardlink-copy.txt"
+ln "$MOUNTPOINT/hardlink-source.txt" "$MOUNTPOINT/hardlink-copy.txt"
+[[ "$(stat -c '%i' "$MOUNTPOINT/hardlink-source.txt")" == \
+   "$(stat -c '%i' "$MOUNTPOINT/hardlink-copy.txt")" ]] && \
+    pass "Hard link creation succeeds" || fail "Hard links do not share an inode"
 
-expected_unsupported "symbolic link creation" ln -s "inline.txt" "$MOUNTPOINT/symlink-probe"
+ln -s "inline.txt" "$MOUNTPOINT/symlink-probe"
+[[ "$(readlink "$MOUNTPOINT/symlink-probe")" == "inline.txt" ]] && \
+    pass "Symbolic link creation succeeds" || fail "Symbolic link target mismatch"
 
-expected_unsupported "chmod metadata update" chmod 0600 "$MOUNTPOINT/inline.txt"
+chmod 0600 "$MOUNTPOINT/inline.txt"
+[[ "$(stat -c '%a' "$MOUNTPOINT/inline.txt")" == 600 ]] && \
+    pass "chmod metadata update succeeds" || fail "chmod mode mismatch"
+
+section "Linux xattr, special-node and mmap parity"
+python3 - "$MOUNTPOINT/inline.txt" <<'PY'
+import os
+import sys
+
+path = sys.argv[1]
+os.setxattr(path, b'user.infiltratorfs-test', b'created', os.XATTR_CREATE)
+os.setxattr(path, b'user.infiltratorfs-test', b'replaced', os.XATTR_REPLACE)
+assert os.getxattr(path, b'user.infiltratorfs-test') == b'replaced'
+PY
+pass "Persistent user xattr create/replace/read succeeds"
+
+mkfifo "$MOUNTPOINT/native.fifo"
+python3 - "$MOUNTPOINT/native.socket" <<'PY'
+import socket
+import sys
+
+sock = socket.socket(socket.AF_UNIX)
+try:
+    sock.bind(sys.argv[1])
+finally:
+    sock.close()
+PY
+mknod "$MOUNTPOINT/native.char" c 1 3
+mknod "$MOUNTPOINT/native.block" b 7 0
+[[ -p "$MOUNTPOINT/native.fifo" && -S "$MOUNTPOINT/native.socket" && \
+   -c "$MOUNTPOINT/native.char" && -b "$MOUNTPOINT/native.block" ]] && \
+    pass "FIFO/socket/character/block nodes succeed" || fail "Special-node type mismatch"
+
+python3 - "$MOUNTPOINT/mmap.bin" <<'PY'
+import mmap
+import os
+import sys
+
+path = sys.argv[1]
+expected = bytearray((i * 31 + 9) & 0xff for i in range(2 * 1024 * 1024))
+with open(path, 'wb') as stream:
+    stream.write(expected)
+    stream.flush()
+    os.fsync(stream.fileno())
+with open(path, 'r+b') as stream:
+    with mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_WRITE) as mapped:
+        mapped[12345:12361] = b'native-mmap-pass'
+        expected[12345:12361] = b'native-mmap-pass'
+        mapped.flush()
+    os.fsync(stream.fileno())
+with open(path, 'rb') as stream:
+    assert stream.read() == expected
+PY
+pass "Shared writable mmap persists through verified writeback"
 
 section "Free-space accounting after writes"
 sync
@@ -430,6 +469,15 @@ sync
 timed "unmount after write workload" umount "$MOUNTPOINT"
 MOUNTED=0
 
+[[ "$(infilfs-tool "$TARGET" cat /snapshot-live.txt)" == \
+   "snapshot-after-native" ]] && \
+    pass "Live generation changed while a snapshot was retained" || \
+    fail "Live snapshot test content mismatch"
+[[ "$(infilfs-tool "$TARGET" snapshot-cat before-native-rw \
+    /snapshot-live.txt)" == "snapshot-before-native" ]] && \
+    pass "Retained snapshot preserved its original generation" || \
+    fail "Retained snapshot content changed"
+
 if command -v infilfs-scrub >/dev/null 2>&1; then
     timed "post-write offline scrub" infilfs-scrub "$TARGET" && pass "Post-write scrub is clean" || fail "Post-write scrub found corruption"
 fi
@@ -448,6 +496,24 @@ cmp -s "$WORKDIR/inline.src" "$MOUNTPOINT/inline.txt" && pass "Inline data survi
 [[ "$(sha256sum "$MOUNTPOINT/large-512m.bin" | awk '{print $1}')" == "$expected_zero_hash" ]] && pass "512 MiB file survives unmount/remount" || fail "512 MiB file changed across remount"
 [[ "$(stat -c '%W' "$MOUNTPOINT/timestamp-test.txt")" == "$birth_epoch" ]] && pass "Birth time survives unmount/remount" || fail "Birth time changed/lost across remount"
 [[ "$(find "$MOUNTPOINT/many-files" -maxdepth 1 -type f | wc -l)" == "260" ]] && pass "Paged directory survives unmount/remount" || fail "Paged directory lost entries across remount"
+xattr_after_remount="$(python3 -c \
+    'import os,sys; print(os.getxattr(sys.argv[1], b"user.infiltratorfs-test").decode())' \
+    "$MOUNTPOINT/inline.txt")"
+[[ "$xattr_after_remount" == replaced ]] && \
+    pass "User xattr survives unmount/remount" || fail "User xattr changed across remount"
+[[ -p "$MOUNTPOINT/native.fifo" && -S "$MOUNTPOINT/native.socket" && \
+   -c "$MOUNTPOINT/native.char" && -b "$MOUNTPOINT/native.block" ]] && \
+    pass "Special-node types survive unmount/remount" || \
+    fail "Special-node type changed across remount"
+python3 - "$MOUNTPOINT/mmap.bin" <<'PY'
+import sys
+
+expected = bytearray((i * 31 + 9) & 0xff for i in range(2 * 1024 * 1024))
+expected[12345:12361] = b'native-mmap-pass'
+with open(sys.argv[1], 'rb') as stream:
+    assert stream.read() == expected
+PY
+pass "mmap writeback survives unmount/remount"
 
 set +e
 printf 'must fail\n' >"$MOUNTPOINT/readonly-write-test.txt" 2>"$WORKDIR/ro.err"
@@ -475,7 +541,6 @@ section "Summary"
 elapsed=$(( $(date +%s) - START_EPOCH ))
 printf 'Passed:             %d\n' "$PASS"
 printf 'Failed:             %d\n' "$FAIL"
-printf 'Not implemented:    %d\n' "$KNOWN"
 printf 'Warnings:           %d\n' "$WARN"
 printf 'Elapsed:             %d seconds\n' "$elapsed"
 printf 'Full log:            %s\n' "$LOG"
@@ -487,10 +552,5 @@ if (( FAIL > 0 )); then
     exit 1
 fi
 
-printf '\nRESULT: PASS for implemented native operations.'
-if (( KNOWN > 0 )); then
-    printf ' %d capability probe(s) remain not implemented.\n' "$KNOWN"
-else
-    printf ' All probed capabilities are implemented.\n'
-fi
+printf '\nRESULT: PASS — all migrated native capabilities passed.\n'
 exit 0

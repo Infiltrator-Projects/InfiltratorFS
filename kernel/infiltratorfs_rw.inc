@@ -174,16 +174,28 @@ static int infilfs_native_recover_unlinked_files(struct super_block *sb)
         struct infilfs_object_header_disk *header;
         struct infilfs_file_payload_disk *file;
         struct inode *inode;
+        u64 live_block;
+        u16 live_type;
         u8 *object;
 
         if (le16_to_cpu(entries[i].object_type) != INFILFS_OBJECT_FILE)
             continue;
+        ret = infilfs_index_lookup(sb, entries[i].object_id, &live_block,
+                                   &live_type);
+        if (ret == -ENOENT)
+            continue;
+        if (ret)
+            break;
+        if (live_type != INFILFS_OBJECT_FILE) {
+            ret = -EFSCORRUPTED;
+            break;
+        }
         object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
         if (!object) {
             ret = -ENOMEM;
             break;
         }
-        ret = infilfs_read_object(sb, le64_to_cpu(entries[i].object_block),
+        ret = infilfs_read_object(sb, live_block,
                                   INFILFS_OBJECT_FILE, entries[i].object_id,
                                   object);
         if (ret) {
@@ -198,11 +210,16 @@ static int infilfs_native_recover_unlinked_files(struct super_block *sb)
         }
         kfree(object);
 
-        inode = infilfs_get_inode(sb, le64_to_cpu(entries[i].object_block),
+        inode = infilfs_get_inode(sb, live_block,
                                   INFILFS_OBJECT_FILE,
                                   entries[i].object_id);
         if (IS_ERR(inode)) {
             ret = PTR_ERR(inode);
+            break;
+        }
+        ret = infilfs_linux_meta_remove_object(sb, entries[i].object_id);
+        if (ret) {
+            iput(inode);
             break;
         }
         clear_nlink(inode);
@@ -883,8 +900,15 @@ static long infilfs_file_fallocate(struct file *file, int mode,
         return -EINVAL;
     if ((u64)offset > U64_MAX - (u64)length)
         return -EFBIG;
-    if (mode == punch)
-        return infilfs_native_punch_hole(inode, (u64)offset, (u64)length);
+    ret = file_write_and_wait_range(file, offset, offset + length - 1);
+    if (ret)
+        return ret;
+    if (mode == punch) {
+        ret = infilfs_native_punch_hole(inode, (u64)offset, (u64)length);
+        if (!ret)
+            truncate_pagecache_range(inode, offset, offset + length - 1);
+        return ret;
+    }
     if (mode != 0)
         return -EOPNOTSUPP;
 
@@ -1232,9 +1256,13 @@ static int infilfs_posix_setattr(struct user_namespace *idmap,
             return -EISDIR;
         if (attr->ia_size < 0)
             return -EINVAL;
+        ret = filemap_write_and_wait(inode->i_mapping);
+        if (ret)
+            return ret;
         ret = infilfs_native_truncate(inode, (u64)attr->ia_size);
         if (ret)
             return ret;
+        truncate_pagecache(inode, attr->ia_size);
         metadata.ia_valid &= ~ATTR_SIZE;
     }
 
@@ -1374,13 +1402,18 @@ static int infilfs_statfs(struct dentry *dentry, struct kstatfs *buf)
     return 0;
 }
 
+#include "infiltratorfs_pagecache.inc"
+#include "infiltratorfs_linux_meta.inc"
+
 /*
  * infiltratorfs.c declares the operation tables immediately after including
  * this composition file.  Supply the final native callbacks here while keeping
  * that table compact.
  */
 #define simple_statfs infilfs_statfs
-#define infilfs_rw_create infilfs_posix_create
+#define infilfs_rw_create infilfs_posix_create, \
+    .mknod = infilfs_posix_mknod, \
+    .listxattr = infilfs_linux_listxattr
 #define infilfs_rw_mkdir infilfs_posix_mkdir, \
     .unlink = infilfs_ns_unlink, \
     .rmdir = infilfs_ns_rmdir, \
@@ -1389,7 +1422,10 @@ static int infilfs_statfs(struct dentry *dentry, struct kstatfs *buf)
     .rename = infilfs_ns_rename, \
     .setattr = infilfs_posix_setattr, \
     .getattr = infilfs_getattr
-#define infilfs_rw_setattr infilfs_posix_setattr, .getattr = infilfs_getattr
+#define infilfs_rw_setattr infilfs_posix_setattr, \
+    .getattr = infilfs_getattr, \
+    .listxattr = infilfs_linux_listxattr
 #define infilfs_get_link infilfs_get_link, \
     .setattr = infilfs_posix_setattr, \
-    .getattr = infilfs_getattr
+    .getattr = infilfs_getattr, \
+    .listxattr = infilfs_linux_listxattr

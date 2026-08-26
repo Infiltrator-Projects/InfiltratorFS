@@ -6,9 +6,12 @@
 #include <linux/fs.h>
 #include <linux/fs_context.h>
 #include <linux/cred.h>
+#include <linux/highmem.h>
 #include <linux/kernel.h>
 #include <linux/mutex.h>
 #include <linux/random.h>
+#include <linux/pagevec.h>
+#include <linux/pagemap.h>
 #include <linux/sched.h>
 #include <linux/timekeeping.h>
 #include <linux/uidgid.h>
@@ -19,6 +22,8 @@
 #include <linux/string.h>
 #include <linux/uio.h>
 #include <linux/version.h>
+#include <linux/writeback.h>
+#include <linux/xattr.h>
 
 #include "infiltratorfs_format.h"
 
@@ -69,14 +74,27 @@ struct infilfs_dir_lookup {
 
 struct infilfs_dir_emit_state {
     struct dir_context *ctx;
+    struct inode *dir;
+    bool has_linux_meta;
+    bool hide_linux_meta;
     u64 index;
 };
+
+#define INFILFS_LINUX_META_DIRECTORY ".infilfs-posix-meta"
+
+static int infilfs_linux_meta_get_special(struct super_block *sb,
+                                          const u8 object_id[16],
+                                          umode_t *mode, dev_t *rdev);
+static bool infilfs_linux_meta_directory_is_internal(struct super_block *sb);
+static int infilfs_linux_meta_remove_object(struct super_block *sb,
+                                            const u8 object_id[16]);
 
 static const struct inode_operations infilfs_dir_inode_operations;
 static const struct inode_operations infilfs_symlink_inode_operations;
 static const struct inode_operations infilfs_file_inode_operations;
 static const struct file_operations infilfs_dir_operations;
 static const struct file_operations infilfs_file_operations;
+static const struct address_space_operations infilfs_aops;
 
 
 static u64 infilfs_rw_crc64_zeroed(const u8 *data, size_t length,
@@ -591,6 +609,29 @@ static int infilfs_emit_visitor(const struct infilfs_dirent_disk *entry,
     struct infilfs_dir_emit_state *state = arg;
     u16 name_len = le16_to_cpu(entry->name_length);
     u16 type = le16_to_cpu(entry->object_type);
+    unsigned char dtype = infilfs_dtype(type);
+
+    if (state->hide_linux_meta &&
+        name_len == sizeof(INFILFS_LINUX_META_DIRECTORY) - 1u &&
+        memcmp(name, INFILFS_LINUX_META_DIRECTORY, name_len) == 0)
+        return 0;
+
+    if (type == INFILFS_OBJECT_FILE && state->has_linux_meta) {
+        umode_t special = 0;
+
+        if (!infilfs_linux_meta_get_special(state->dir->i_sb,
+                                             entry->object_id,
+                                             &special, NULL) && special) {
+            if (S_ISFIFO(special))
+                dtype = DT_FIFO;
+            else if (S_ISSOCK(special))
+                dtype = DT_SOCK;
+            else if (S_ISCHR(special))
+                dtype = DT_CHR;
+            else if (S_ISBLK(special))
+                dtype = DT_BLK;
+        }
+    }
 
     if (state->index < state->ctx->pos - 2) {
         state->index++;
@@ -598,7 +639,7 @@ static int infilfs_emit_visitor(const struct infilfs_dirent_disk *entry,
     }
 
     if (!dir_emit(state->ctx, name, name_len,
-                  infilfs_object_ino(entry->object_id), infilfs_dtype(type)))
+                  infilfs_object_ino(entry->object_id), dtype))
         return 1;
     state->index++;
     state->ctx->pos++;
@@ -944,18 +985,41 @@ static int infilfs_populate_inode(struct inode *inode, u64 object_block,
     } else if (ii->object_type == INFILFS_OBJECT_FILE) {
         const struct infilfs_file_payload_disk *payload =
             (const struct infilfs_file_payload_disk *)(header + 1);
+        umode_t special_mode = 0;
+        dev_t special_rdev = 0;
+
         attributes = &payload->attributes;
         posix = &payload->posix;
         permissions = le32_to_cpu(posix->permissions) & 07777;
-        inode->i_mode = S_IFREG | permissions;
         inode->i_op = &infilfs_file_inode_operations;
-        inode->i_fop = &infilfs_file_operations;
         links = le64_to_cpu(attributes->link_count);
         set_nlink(inode, links ? links : 1);
-        i_size_write(inode, le64_to_cpu(attributes->logical_size));
-        {
+        ret = infilfs_linux_meta_get_special(inode->i_sb, ii->object_id,
+                                              &special_mode, &special_rdev);
+        if (ret)
+            goto fail_private;
+        if (special_mode) {
+            if (!S_ISFIFO(special_mode) && !S_ISSOCK(special_mode) &&
+                !S_ISCHR(special_mode) && !S_ISBLK(special_mode)) {
+                ret = -EFSCORRUPTED;
+                goto fail_private;
+            }
+            if (le64_to_cpu(attributes->logical_size) != 0 ||
+                le32_to_cpu(payload->extent_count) != 0) {
+                ret = -EFSCORRUPTED;
+                goto fail_private;
+            }
+            init_special_inode(inode, special_mode | permissions,
+                               special_rdev);
+            i_size_write(inode, 0);
+            inode->i_blocks = 0;
+        } else {
             u64 allocated;
 
+            inode->i_mode = S_IFREG | permissions;
+            inode->i_fop = &infilfs_file_operations;
+            inode->i_mapping->a_ops = &infilfs_aops;
+            i_size_write(inode, le64_to_cpu(attributes->logical_size));
             ret = infilfs_file_allocated_blocks(inode, object, &allocated);
             if (ret)
                 goto fail_private;
@@ -1046,6 +1110,14 @@ static struct dentry *infilfs_lookup(struct inode *dir, struct dentry *dentry,
     (void)flags;
     if (search.name_len == 0 || search.name_len > INFILFS_NAME_MAX)
         return ERR_PTR(-ENAMETOOLONG);
+    if (dir == d_inode(dir->i_sb->s_root) &&
+        search.name_len == sizeof(INFILFS_LINUX_META_DIRECTORY) - 1u &&
+        memcmp(search.name, INFILFS_LINUX_META_DIRECTORY,
+               search.name_len) == 0 &&
+        infilfs_linux_meta_directory_is_internal(dir->i_sb)) {
+        d_add(dentry, NULL);
+        return NULL;
+    }
 
     ret = infilfs_for_each_dirent(dir, infilfs_lookup_visitor, &search);
     if (ret < 0)
@@ -1071,8 +1143,15 @@ static struct dentry *infilfs_lookup(struct inode *dir, struct dentry *dentry,
 
 static int infilfs_iterate_shared(struct file *file, struct dir_context *ctx)
 {
+    bool has_linux_meta =
+        infilfs_linux_meta_directory_is_internal(file_inode(file)->i_sb);
     struct infilfs_dir_emit_state state = {
         .ctx = ctx,
+        .dir = file_inode(file),
+        .has_linux_meta = has_linux_meta,
+        .hide_linux_meta = file_inode(file) ==
+            d_inode(file_inode(file)->i_sb->s_root) &&
+            has_linux_meta,
         .index = 0,
     };
     int ret;
@@ -1091,7 +1170,15 @@ static void infilfs_evict_inode(struct inode *inode)
     int ret;
 
     truncate_inode_pages_final(&inode->i_data);
-    ret = infilfs_ns_evict_unlinked_file(inode);
+    ret = 0;
+    if (ii && inode->i_nlink == 0 && !sb_rdonly(inode->i_sb)) {
+        ret = infilfs_linux_meta_remove_object(inode->i_sb, ii->object_id);
+        if (ret)
+            pr_err("InfiltratorFS: could not remove Linux metadata for inode %lu: %d\n",
+                   inode->i_ino, ret);
+    }
+    if (!ret)
+        ret = infilfs_ns_evict_unlinked_file(inode);
     if (ret)
         pr_err("InfiltratorFS: could not reclaim unlinked inode %lu: %d\n",
                inode->i_ino, ret);
@@ -1142,6 +1229,7 @@ static const struct file_operations infilfs_file_operations = {
     .llseek = generic_file_llseek,
     .read_iter = infilfs_file_read_iter,
     .write_iter = infilfs_file_write_iter,
+    .mmap = generic_file_mmap,
     .fallocate = infilfs_file_fallocate,
     .fsync = infilfs_file_fsync,
 };
@@ -1181,6 +1269,7 @@ static int infilfs_fill_super(struct super_block *sb, struct fs_context *fc)
     sb->s_maxbytes = MAX_LFS_FILESIZE;
     sb->s_time_gran = 1;
     sb->s_op = &infilfs_super_operations;
+    sb->s_xattr = infilfs_xattr_handlers;
 
     root_inode = infilfs_get_inode(sb, le64_to_cpu(sbi->disk.root_object_block),
                                    INFILFS_OBJECT_DIRECTORY,

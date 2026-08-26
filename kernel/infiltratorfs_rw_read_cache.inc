@@ -48,16 +48,15 @@ static void infilfs_native_read_cursor_publish(
                                         cursor->start_logical);
 }
 
-static ssize_t infilfs_file_read_iter_cached(struct kiocb *iocb,
-                                              struct iov_iter *to)
+static ssize_t infilfs_native_read_iter_cached(struct inode *inode,
+                                                loff_t *position,
+                                                struct iov_iter *to)
 {
-    struct file *filep = iocb->ki_filp;
-    struct inode *inode = file_inode(filep);
     struct infilfs_inode_info *ii = INFILFS_I(inode);
     const struct infilfs_object_header_disk *header;
     const struct infilfs_file_payload_disk *file;
     struct infilfs_native_read_checksum_cursor cursor = {0};
-    loff_t pos = iocb->ki_pos;
+    loff_t pos = *position;
     u64 file_size;
     size_t requested, done = 0;
     u8 *object = NULL, *data_block = NULL, *checksum_object = NULL;
@@ -113,7 +112,7 @@ static ssize_t infilfs_file_read_iter_cached(struct kiocb *iocb,
             goto out;
         }
         copied = copy_to_iter(inline_bytes + pos, requested, to);
-        iocb->ki_pos += copied;
+        *position += copied;
         ret = copied;
         goto out;
     }
@@ -168,13 +167,13 @@ static ssize_t infilfs_file_read_iter_cached(struct kiocb *iocb,
         if (copied != chunk)
             break;
     }
-    iocb->ki_pos += done;
+    *position += done;
     ret = done;
     goto out;
 
 partial:
     if (done) {
-        iocb->ki_pos += done;
+        *position += done;
         ret = done;
     }
 out:
@@ -184,4 +183,26 @@ out:
     kfree(data_block);
     kfree(object);
     return ret;
+}
+
+static ssize_t infilfs_file_read_iter_cached(struct kiocb *iocb,
+                                              struct iov_iter *to)
+{
+    struct file *file = iocb->ki_filp;
+    size_t count = iov_iter_count(to);
+    int ret;
+
+    if (count) {
+        loff_t end;
+
+        if (iocb->ki_pos < 0)
+            return -EINVAL;
+        end = count - 1u > LLONG_MAX - iocb->ki_pos ?
+            LLONG_MAX : iocb->ki_pos + count - 1u;
+        ret = file_write_and_wait_range(file, iocb->ki_pos, end);
+        if (ret)
+            return ret;
+    }
+    return infilfs_native_read_iter_cached(file_inode(file),
+                                            &iocb->ki_pos, to);
 }

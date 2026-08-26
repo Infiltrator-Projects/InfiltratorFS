@@ -29,7 +29,7 @@ sudo mount -t infiltratorfs -o rw /dev/<partition> /mnt/infiltratorfs
 findmnt -T /mnt/infiltratorfs -o SOURCE,FSTYPE,OPTIONS
 ```
 
-`FSTYPE` must be `infiltratorfs`. The Linux 0.17 source tree, package and installer contain no FUSE filesystem implementation, no `infilfs-fuse` executable and no FUSE runtime dependency. The old FUSE adapter exists only in Git history.
+`FSTYPE` must be `infiltratorfs`. The current Linux source tree, package and installer contain no FUSE filesystem implementation, no `infilfs-fuse` executable and no FUSE runtime dependency. The old FUSE adapter exists only in Git history.
 
 The standard `mount.infiltratorfs` helper, InfiltratorFS Manager, Nemo/UDisks integration and direct `mount -t infiltratorfs` all target the native kernel filesystem. The helper calls util-linux `mount -i` internally so it cannot recurse back into itself.
 

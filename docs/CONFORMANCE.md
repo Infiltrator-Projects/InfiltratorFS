@@ -80,7 +80,7 @@ The core/storage boundary uses stable `infs_status` values. Byte-count APIs retu
 
 Writable storage backends provide positioned write, durable flush, randomness and current-time services in addition to read/size operations. Required service failures abort mutation rather than substituting unsafe defaults.
 
-## Linux 0.17 native conformance
+## Linux native conformance
 
 Linux mounting is exclusively through the native `infiltratorfs.ko` VFS driver. The current source tree contains no FUSE filesystem implementation and release packages have no FUSE dependency.
 
@@ -93,8 +93,13 @@ Native Linux qualification requires:
 - correct lookup/enumeration of current Format 0.12 directories and object indexes;
 - inline, ordinary-extent, sparse-hole and paged-extent reads;
 - stable inode identity for persistent objects/hard links;
-- native create, mkdir, write and setattr paths currently implemented by the driver;
-- extent-backed non-zero writes and byte-identical readback;
+- create/mkdir/mknod, link/symlink, rename/unlink/rmdir and persistent setattr;
+- sequential and random extent writes, large sparse growth/truncate, fallocate and hole punching;
+- persistent `user.*` xattrs and FIFO/socket/character/block node identity;
+- verified page-cache faults, readahead and shared writable mmap writeback;
+- writable live namespace/data changes while retained snapshots preserve older generations;
+- crash-safe open-unlink/replacement lifetime and mount-time orphan recovery;
+- extent-backed non-zero writes and byte-identical live/remount readback;
 - metadata CRC64 and file-data SHA-256 validation on native reads;
 - transaction publication through `fsync`/`syncfs`/sync durability boundaries;
 - clean unmount followed by userspace scrub; and
@@ -116,6 +121,6 @@ Installation fails if matching running-kernel headers are unavailable or if the 
 
 The main Build and conformance workflow runs the portable/core suite under GCC, Clang, ASan/UBSan and GCC `-fanalyzer`, validates desktop/Manager behavior, checks cross-platform Linux-created media on Windows, builds release packages and rejects any FUSE build artifact or package dependency.
 
-The Native Linux kernel module workflow builds the out-of-tree driver, reproduces the DKMS source-root invocation, validates module metadata and performs a native mounted read/write transaction plus scrub when the hosted runner exposes matching running-kernel headers.
+The Native Linux kernel module workflow builds the out-of-tree driver, reproduces the DKMS source-root invocation, validates module metadata and performs mounted snapshot, xattr, special-node, mmap, namespace, sparse/random-write, remount and scrub qualification when the hosted runner exposes matching running-kernel headers.
 
 The release publisher runs only after a successful `Release <version>` commit on current `main`. It rebuilds assets from that exact commit, installs the generated `.deb`, verifies the native filesystem registration, mounts a real Format 0.12 loop image with `FSTYPE=infiltratorfs`, writes and byte-compares non-zero data, syncs, unmounts, requires a CLEAN scrub and rejects any legacy FUSE executable/process before creating the tag and release.

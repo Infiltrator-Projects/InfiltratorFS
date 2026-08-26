@@ -45,8 +45,12 @@ Pre-1.0 development is current-format-only. A new development format may superse
 
 ## Linux next work
 
-- [ ] Complete the remaining VFS namespace mutation surface.
-- [ ] Page-cache, readahead and mmap integration.
+- [x] Complete FUSE-era native parity for random/sparse writes, truncate and fallocate.
+- [x] Crash-safe open-unlink/replacement lifetime and mount-time orphan recovery.
+- [x] Persistent Linux `user.*` xattrs and FIFO/socket/device nodes.
+- [x] Page-cache, readahead and shared writable mmap integration.
+- [x] Writable live generations while named snapshots retain older generations.
+- [x] Mounted remount/scrub qualification for the complete migrated surface.
 - [ ] Broader locking/concurrency qualification.
 - [ ] Millions-of-files and large-volume mounted stress tests.
 - [ ] Native fragmentation/optimisation metrics and online defragmentation.

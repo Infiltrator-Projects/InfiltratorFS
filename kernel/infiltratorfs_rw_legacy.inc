@@ -2,14 +2,12 @@
 /*
  * Initial native Linux write path for Format 0.12.
  *
- * This deliberately starts with the smallest operation set that can be made
- * crash-safe without duplicating the whole portable core in kernel space:
- * regular-file creation, directory creation, truncate and writes while a file
- * remains inline (<= INFILFS_INLINE_DATA_MAX).  Every mutation is published as
- * a synchronous copy-on-write transaction with a new bitmap image and the
- * same three-checkpoint commit protocol as the portable core.  Volumes with
- * retained snapshots are rejected for writable native mounts until snapshot
- * ownership is taught to this adapter.
+ * This file retains the original synchronous copy-on-write transaction engine
+ * used by the native bring-up.  The composed native layers add extent and
+ * namespace operations over it while preserving the same bitmap and
+ * three-checkpoint commit protocol as the portable core.  Snapshot ownership
+ * is represented by a mount-time union bitmap so retained generations remain
+ * immutable while the live generation advances.
  */
 
 #define INFILFS_RW_BITMAP_MAX_BYTES (64UL * 1024UL * 1024UL)
@@ -1397,7 +1395,8 @@ static void infilfs_rw_fill_common_attributes(
 
 static int infilfs_rw_create_object(struct infilfs_rw_tx *tx,
                                     struct inode *parent, u16 type,
-                                    umode_t mode, const u8 object_id[16],
+                                    umode_t mode, u64 portable_flags,
+                                    const u8 object_id[16],
                                     u64 *block_out)
 {
     struct infilfs_inode_info *parent_ii = INFILFS_I(parent);
@@ -1428,6 +1427,7 @@ static int infilfs_rw_create_object(struct infilfs_rw_tx *tx,
         header->payload_size = cpu_to_le32(sizeof(*file));
         infilfs_rw_fill_common_attributes(&file->attributes, &file->posix,
                                           mode, 1);
+        file->attributes.portable_flags = cpu_to_le64(portable_flags);
         file->data_checksum_type = cpu_to_le32(INFILFS_CHECKSUM_SHA256);
     } else if (type == INFILFS_OBJECT_DIRECTORY) {
         struct infilfs_directory_payload_disk *dir =
@@ -1435,6 +1435,7 @@ static int infilfs_rw_create_object(struct infilfs_rw_tx *tx,
         header->payload_size = cpu_to_le32(sizeof(*dir));
         infilfs_rw_fill_common_attributes(&dir->attributes, &dir->posix,
                                           mode, 2);
+        dir->attributes.portable_flags = cpu_to_le64(portable_flags);
     } else {
         kfree(object);
         return -EINVAL;
@@ -1454,9 +1455,9 @@ out:
     return ret;
 }
 
-static int infilfs_rw_create_child(struct inode *dir, struct dentry *dentry,
-                                   umode_t mode, u16 type,
-                                   u8 object_id_out[16], u64 *block_out)
+static int infilfs_rw_create_named_child(
+    struct inode *dir, const struct qstr *name, umode_t mode, u16 type,
+    u64 portable_flags, u8 object_id_out[16], u64 *block_out)
 {
     struct infilfs_inode_info *dir_ii = INFILFS_I(dir);
     struct infilfs_sb_info *sbi = INFILFS_SB(dir->i_sb);
@@ -1466,11 +1467,10 @@ static int infilfs_rw_create_child(struct inode *dir, struct dentry *dentry,
     u64 new_dir_block;
     int ret;
 
-    if (!dentry->d_name.len || dentry->d_name.len > INFILFS_NAME_MAX ||
-        !infilfs_rw_utf8_valid(dentry->d_name.name, dentry->d_name.len) ||
-        (dentry->d_name.len == 1 && dentry->d_name.name[0] == '.') ||
-        (dentry->d_name.len == 2 && dentry->d_name.name[0] == '.' &&
-         dentry->d_name.name[1] == '.'))
+    if (!name || !name->len || name->len > INFILFS_NAME_MAX ||
+        !infilfs_rw_utf8_valid(name->name, name->len) ||
+        (name->len == 1 && name->name[0] == '.') ||
+        (name->len == 2 && name->name[0] == '.' && name->name[1] == '.'))
         return -EINVAL;
 
     mutex_lock(&sbi->write_lock);
@@ -1480,10 +1480,11 @@ static int infilfs_rw_create_child(struct inode *dir, struct dentry *dentry,
     ret = infilfs_rw_tx_begin(dir->i_sb, &tx);
     if (ret)
         goto unlock;
-    ret = infilfs_rw_create_object(&tx, dir, type, mode, object_id, &object_block);
+    ret = infilfs_rw_create_object(&tx, dir, type, mode, portable_flags,
+                                   object_id, &object_block);
     if (ret)
         goto abort;
-    ret = infilfs_rw_rebuild_directory(&tx, dir, dentry->d_name.name,
+    ret = infilfs_rw_rebuild_directory(&tx, dir, name->name,
                                        object_id, type, &new_dir_block);
     if (ret)
         goto abort;
@@ -1505,6 +1506,14 @@ abort:
 unlock:
     mutex_unlock(&sbi->write_lock);
     return ret;
+}
+
+static int infilfs_rw_create_child(struct inode *dir, struct dentry *dentry,
+                                   umode_t mode, u16 type,
+                                   u8 object_id_out[16], u64 *block_out)
+{
+    return infilfs_rw_create_named_child(dir, &dentry->d_name, mode, type, 0,
+                                         object_id_out, block_out);
 }
 
 static int infilfs_rw_load_inline(struct inode *inode, u8 *data, size_t *size_out)

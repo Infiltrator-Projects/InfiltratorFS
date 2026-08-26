@@ -4,11 +4,9 @@
  *
  * The original RW bring-up deliberately stopped at inline files.  This layer
  * keeps that proven implementation as the small-file path and adds a bounded,
- * deferred native transaction for ordinary extent-backed sequential writes.
- * It is intentionally conservative: committed data blocks are never
- * overwritten in place, retained snapshots remain rejected by the legacy
- * mount gate, and overwritten/shared data is not reclaimed here until native
- * shared-extent ownership accounting is complete.
+ * deferred native transaction for extent-backed sequential and random writes.
+ * Committed data blocks are never overwritten in place; replacement and
+ * reclamation consult both live ownership and the retained-snapshot union.
  *
  * Continuous writers share one transaction per mounted superblock.  The
  * working object-index/root pointers are visible to the live mount while the
@@ -1827,38 +1825,22 @@ out:
     return ret;
 }
 
-static ssize_t infilfs_file_write_iter(struct kiocb *iocb,
-                                       struct iov_iter *from)
+static ssize_t infilfs_native_extent_write_iter(struct inode *inode,
+                                                loff_t *position,
+                                                struct iov_iter *from,
+                                                size_t requested)
 {
-    struct file *filep = iocb->ki_filp;
-    struct inode *inode = file_inode(filep);
     struct infilfs_sb_info *sbi = INFILFS_SB(inode->i_sb);
     struct infilfs_inode_info *ii = INFILFS_I(inode);
     struct infilfs_native_pending *pending;
-    size_t requested = iov_iter_count(from);
     size_t done = 0;
-    loff_t pos = iocb->ki_pos;
+    loff_t pos = *position;
     int ret = 0;
 
     if (pos < 0)
         return -EINVAL;
     if (!requested)
         return 0;
-    if (filep->f_flags & O_APPEND)
-        pos = i_size_read(inode);
-
-    if ((u64)pos <= INFILFS_INLINE_DATA_MAX &&
-        requested <= INFILFS_INLINE_DATA_MAX - (size_t)pos &&
-        i_size_read(inode) <= INFILFS_INLINE_DATA_MAX) {
-        ret = infilfs_native_pending_flush_sb(inode->i_sb);
-        if (ret)
-            return ret;
-        iocb->ki_pos = pos;
-        ret = infilfs_file_write_iter_legacy(iocb, from);
-        if (ret != -EOPNOTSUPP)
-            return ret;
-    }
-
     pending = infilfs_native_pending_get(inode->i_sb, true);
     if (!pending)
         return -ENOMEM;
@@ -1922,7 +1904,7 @@ static ssize_t infilfs_file_write_iter(struct kiocb *iocb,
         mod_delayed_work(system_wq, &pending->idle_work,
                          INFILFS_NATIVE_IDLE_DELAY);
     if (done) {
-        iocb->ki_pos = pos + done;
+        *position = pos + done;
         ret = (ssize_t)done;
     }
 out_unlock:
@@ -1930,12 +1912,72 @@ out_unlock:
     return ret;
 }
 
+static ssize_t infilfs_file_write_iter(struct kiocb *iocb,
+                                       struct iov_iter *from)
+{
+    struct file *filep = iocb->ki_filp;
+    struct inode *inode = file_inode(filep);
+    struct address_space *mapping = inode->i_mapping;
+    size_t requested = iov_iter_count(from);
+    loff_t pos = iocb->ki_pos;
+    loff_t end;
+    ssize_t ret;
+
+    if (pos < 0)
+        return -EINVAL;
+    if (!requested)
+        return 0;
+    if (filep->f_flags & O_APPEND)
+        pos = i_size_read(inode);
+    if (requested - 1u > LLONG_MAX - pos)
+        return -EFBIG;
+    end = pos + requested - 1u;
+
+    /*
+     * mmap uses the page cache while read(2)/write(2) retain the qualified
+     * direct verified path.  Serialize direct writes against faults, publish
+     * dirty mapped data first, then evict the affected cache range so a mapped
+     * reader refaults the newly committed blocks.
+     */
+    filemap_invalidate_lock(mapping);
+    ret = file_write_and_wait_range(filep, pos, end);
+    if (ret)
+        goto out_unlock;
+    unmap_mapping_range(mapping, pos, requested, 0);
+    ret = invalidate_inode_pages2_range(mapping, pos >> PAGE_SHIFT,
+                                        end >> PAGE_SHIFT);
+    if (ret)
+        goto out_unlock;
+
+    if ((u64)pos <= INFILFS_INLINE_DATA_MAX &&
+        requested <= INFILFS_INLINE_DATA_MAX - (size_t)pos &&
+        i_size_read(inode) <= INFILFS_INLINE_DATA_MAX) {
+        ret = infilfs_native_pending_flush_sb(inode->i_sb);
+        if (ret)
+            goto out_unlock;
+        iocb->ki_pos = pos;
+        ret = infilfs_file_write_iter_legacy(iocb, from);
+        if (ret != -EOPNOTSUPP)
+            goto out_unlock;
+    }
+
+    iocb->ki_pos = pos;
+    ret = infilfs_native_extent_write_iter(inode, &iocb->ki_pos, from,
+                                            requested);
+out_unlock:
+    filemap_invalidate_unlock(mapping);
+    return ret;
+}
+
 static int infilfs_file_fsync(struct file *file, loff_t start, loff_t end,
                               int datasync)
 {
-    (void)start;
-    (void)end;
+    int ret;
+
     (void)datasync;
+    ret = file_write_and_wait_range(file, start, end);
+    if (ret)
+        return ret;
     return infilfs_native_pending_flush_sb(file_inode(file)->i_sb);
 }
 

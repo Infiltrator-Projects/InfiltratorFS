@@ -94,7 +94,7 @@ The driver currently provides native Format 0.12 lookup/enumeration/read support
 
 The standard `mount.infiltratorfs` helper invokes util-linux `mount -i -t infiltratorfs`, and InfiltratorFS Manager performs the same native mount through its constrained privileged helper. The package/installer builds and installs the module through DKMS.
 
-Further VFS work remains for broader namespace mutation coverage, page-cache/readahead/mmap integration, performance tuning and wider concurrency/stress qualification.
+The native VFS path includes the former FUSE namespace/data semantics, Linux xattr and special-node sidecars, page-cache/readahead/shared-mmap integration and snapshot-aware live writes. Further VFS work focuses on performance and wider concurrency/stress qualification.
 
 ## 10. Desktop integration
 
