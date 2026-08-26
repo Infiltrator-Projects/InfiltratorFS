@@ -120,12 +120,14 @@ jobs:
           crash_loopdev=""
           checkpoint_loopdev=""
           holder_pid=""
+          holder_child_pid=""
           mounted=0
           crash_mounted=0
           checkpoint_mounted=0
           loaded=0
           cleanup() {
             set +e
+            if [[ -n "$holder_child_pid" ]]; then sudo kill -KILL "$holder_child_pid" 2>/dev/null || true; fi
             if [[ -n "$holder_pid" ]]; then sudo kill -KILL "$holder_pid" 2>/dev/null || true; fi
             if [[ "$checkpoint_mounted" = 1 ]]; then timeout 10s sudo umount -l "$checkpoint_mount" || true; fi
             if [[ -n "$checkpoint_loopdev" ]]; then timeout 10s sudo losetup -d "$checkpoint_loopdev" || true; fi
@@ -399,13 +401,14 @@ jobs:
           # never observes final close/eviction; its later writable mount must
           # recover that orphan before scrub.
           orphan_ready="$RUNNER_TEMP/infiltratorfs-orphan-ready"
+          orphan_pid="$RUNNER_TEMP/infiltratorfs-orphan-pid"
           sudo python3 - "$mountpoint/native-rw/crash-held-unlinked" \
-            "$orphan_ready" <<'PY' &
+            "$orphan_ready" "$orphan_pid" <<'PY' &
           import os
           import sys
           import time
 
-          path, ready = sys.argv[1:]
+          path, ready, pid_path = sys.argv[1:]
           fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_EXCL, 0o600)
           os.write(fd, b'durable-open-orphan')
           os.fsync(fd)
@@ -413,6 +416,10 @@ jobs:
           directory_fd = os.open(os.path.dirname(path), os.O_RDONLY)
           os.fsync(directory_fd)
           os.close(directory_fd)
+          with open(pid_path, 'w', encoding='ascii') as marker:
+              marker.write(f'{os.getpid()}\n')
+              marker.flush()
+              os.fsync(marker.fileno())
           with open(ready, 'w', encoding='ascii') as marker:
               marker.write('ready\n')
               marker.flush()
@@ -426,11 +433,15 @@ jobs:
             sleep 0.1
           done
           test -f "$orphan_ready"
+          test -f "$orphan_pid"
+          holder_child_pid="$(<"$orphan_pid")"
+          [[ "$holder_child_pid" =~ ^[0-9]+$ ]]
           sync
           sudo blockdev --flushbufs "$loopdev"
           cp --reflink=auto --sparse=always "$image" "$crash_image"
-          sudo kill -KILL "$holder_pid"
+          sudo kill -KILL "$holder_child_pid"
           wait "$holder_pid" 2>/dev/null || true
+          holder_child_pid=""
           holder_pid=""
           sync
 
