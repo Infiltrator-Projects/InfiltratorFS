@@ -34,7 +34,7 @@ dkms_root="$package_root/usr/src/infiltratorfs-$version"
 install -d "$dkms_root"
 for file in Makefile infiltratorfs.c infiltratorfs_format.h infiltratorfs_rw.inc \
             infiltratorfs_rw_legacy.inc infiltratorfs_rw_data.inc \
-            infiltratorfs_rw_namespace.inc; do
+            infiltratorfs_rw_namespace.inc infiltratorfs_rw_read_cache.inc; do
     install -m 0644 "kernel/$file" "$dkms_root/$file"
 done
 cat > "$dkms_root/dkms.conf" <<EOF
@@ -173,7 +173,8 @@ for required in \
     "usr/src/infiltratorfs-${version}/infiltratorfs_rw.inc$" \
     "usr/src/infiltratorfs-${version}/infiltratorfs_rw_legacy.inc$" \
     "usr/src/infiltratorfs-${version}/infiltratorfs_rw_data.inc$" \
-    "usr/src/infiltratorfs-${version}/infiltratorfs_rw_namespace.inc$"; do
+    "usr/src/infiltratorfs-${version}/infiltratorfs_rw_namespace.inc$" \
+    "usr/src/infiltratorfs-${version}/infiltratorfs_rw_read_cache.inc$"; do
     grep -q "$required" "$contents"
 done
 if grep -q 'usr/bin/infilfs-fuse$' "$contents"; then
@@ -219,7 +220,7 @@ verify_installer() {
         src/infiltratr-common/CMakeLists.txt kernel/Makefile kernel/infiltratorfs.c \
         kernel/infiltratorfs_format.h kernel/infiltratorfs_rw.inc \
         kernel/infiltratorfs_rw_legacy.inc kernel/infiltratorfs_rw_data.inc \
-        kernel/infiltratorfs_rw_namespace.inc; do
+        kernel/infiltratorfs_rw_namespace.inc kernel/infiltratorfs_rw_read_cache.inc; do
         test -f "$verify_root/$required"
     done
     test -x "$verify_root/support/installer/bootstrap.sh"
