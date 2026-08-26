@@ -3,20 +3,25 @@
 
 This directory contains the native Linux VFS adapter for InfiltratorFS. It is an out-of-tree kernel module built against installed kernel headers and packaged through DKMS; Linux itself does not need to be rebuilt.
 
-Implementation 0.18.3 is the normal Linux filesystem path. The old userspace FUSE adapter has been removed from the source tree and survives only in Git history.
+Release 0.18.4 is the current normal Linux filesystem path. The old userspace FUSE adapter has been removed from the source tree and survives only in Git history.
 
 The module:
 
 - registers the `infiltratorfs` filesystem type with Linux VFS;
 - mounts current Format 0.12 block devices read-only or read-write;
-- selects the highest-generation structurally valid checkpoint from the three physical checkpoint locations;
+- selects the highest-generation structurally valid committed checkpoint graph from the three physical checkpoint locations;
 - requires current Format 0.12 and rejects unknown incompatible feature bits;
-- resolves classic and paged object indexes and directories;
+- resolves classic and paged object indexes/directories;
 - creates stable Linux inode identities from persistent InfiltratorFS object IDs;
-- exposes regular files, directories and symbolic links through native VFS objects;
+- exposes regular files, directories, symbolic links, FIFOs, sockets and character/block special-node identity through native VFS objects;
 - reads inline data, ordinary extents, sparse holes and paged extents directly from the block device;
-- performs native create, mkdir, write, setattr and durability publication operations through the Format 0.12 transaction path;
-- supports extent-backed native writes rather than the earlier inline-only bring-up path;
+- performs create/mkdir/mknod, link/symlink, rename/unlink/rmdir and persistent setattr through the native transaction path;
+- supports sequential/random extent writes, large sparse growth, high-offset writes, truncate, `fallocate` and hole punching;
+- preserves open-unlinked files until final inode eviction and performs mount-time orphan recovery;
+- persists Linux `user.*` xattrs and adapter-specific special-node metadata;
+- integrates page-cache faults, readahead and shared writable `mmap` writeback;
+- preserves retained snapshot generations while live namespace/data updates continue;
+- reports logical and allocated blocks for native objects;
 - validates metadata integrity and file-data checksums on native reads; and
 - publishes pending transactions at `fsync`, `syncfs` and global sync durability boundaries.
 
@@ -56,10 +61,12 @@ The DKMS source root is deliberately self-contained and includes:
 - `infiltratorfs_pagecache.inc`
 - `infiltratorfs_linux_meta.inc`
 
-The dedicated `Native Linux kernel module` GitHub Actions workflow compiles the module against Ubuntu kernel headers, reproduces the DKMS source-root build, checks module metadata and, when matching running-kernel headers are available, loads the module and performs a real loop-device native read/write transaction followed by userspace scrub qualification.
+The dedicated `Native Linux kernel module` GitHub Actions workflow compiles the module against Ubuntu kernel headers, reproduces the DKMS source-root build, checks module metadata and, when matching running-kernel headers are available, loads the module and performs real loop-device native read/write qualification. The mounted suite covers namespace operations, random/sparse writes, high-offset sparse files, truncate, allocation reporting, `fallocate`, hole punching, xattrs, special nodes, page-cache/readahead/mmap behavior, open-unlink lifetime, snapshot-preserving writes, remount readback and offline scrub.
 
 The release publisher adds an installed-package gate: it installs the generated `.deb`, verifies `/proc/filesystems` and `modinfo`, mounts a real Format 0.12 image as `infiltratorfs`, writes and byte-compares non-zero data, syncs, unmounts, requires scrub to report CLEAN and rejects any legacy FUSE executable or process.
 
 ## Current development scope
 
-The native driver is now the product path, but 0.18.3 remains pre-1.0 development code. Native parity includes namespace mutation, random and sparse writes, truncate/fallocate, Linux xattrs and special nodes, shared writable mmap, retained-snapshot writes and mounted remount/scrub coverage. Further kernel work focuses on performance, wider stress coverage and continued locking/concurrency hardening. The portable core remains the canonical on-disk transaction and validation model shared by Linux and Windows tooling.
+The native driver has passed the major migration milestone: the current product path no longer depends on restoration of FUSE-era functionality. Follow-on work is focused on deeper checkpoint-recovery qualification, broader xattr and allocation-reporting semantics, explicit mounted regression coverage, locking/concurrency, scale, fragmentation, near-full behavior and long-running mixed-workload stress.
+
+The portable core remains the canonical on-disk transaction and validation model shared by every operating-system adapter. Linux VFS code is therefore not intended to become the definition that a future Windows, macOS, BSD or Haiku implementation must copy.

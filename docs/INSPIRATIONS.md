@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # InfiltratorFS Design Inspirations
 
-InfiltratorFS does not copy another filesystem's on-disk format. It treats filesystem history as a catalogue of mechanisms that can be accepted, changed or rejected independently.
+InfiltratorFS does not copy another filesystem's on-disk format. It treats filesystem history as a catalogue of mechanisms that can be accepted, changed, generalized or rejected independently.
 
 | Source | Idea retained or reconsidered |
 | --- | --- |
@@ -17,6 +17,7 @@ InfiltratorFS does not copy another filesystem's on-disk format. It treats files
 | F2FS | Storage-media awareness and flash-sensitive allocation policy. |
 | bcachefs | Modern combination of checksums, compression, replication, snapshots and selectable CoW behaviour. |
 | HAMMER/HAMMER2 | Historical/versioned filesystem state and transaction-oriented design. |
+| Haiku BFS | Rich named attributes, indexing/query ideas and metadata-centric desktop integration. |
 | Database engines | Atomic publication, generations, page checksums and rebuildable secondary indexes. |
 
 ## Ideas intentionally rejected as fundamentals
@@ -27,7 +28,8 @@ InfiltratorFS does not copy another filesystem's on-disk format. It treats files
 - trusting a successful read without validating critical metadata;
 - forcing every workload through one data-write policy;
 - making a performance index the only copy of allocation truth;
-- designing recovery only after the normal format is finished.
+- designing recovery only after the normal format is finished; and
+- making one operating system's metadata vocabulary the filesystem's canonical model.
 
 ## New combinations explored by InfiltratorFS
 
@@ -39,9 +41,11 @@ The exact bitmap remains small, simple and reconstructable. A later free-extent 
 
 A 128-bit object ID survives rename and physical relocation. Namespace, physical placement and identity are separate concepts.
 
-### Platform-neutral core with explicit adapters
+### Platform-neutral core with first-class adapters
 
-The disk format and core engine use fixed-width records, UTF-8 names and storage callbacks. Linux/POSIX metadata and I/O live in the current adapter; future Windows attributes, security identifiers and storage services can be mapped without changing a volume's identity or rewriting its data.
+The disk format and portable core use fixed-width records, UTF-8 names and storage callbacks. Equivalent Linux, Windows, macOS, BSD, Haiku or future filesystem concepts map to the same underlying InfiltratorFS meaning rather than forcing one platform to emulate another.
+
+POSIX compatibility metadata and Linux adapter sidecars are deliberately isolated from the long-term portable security/named-metadata model. Future Windows SIDs/security descriptors, macOS metadata, Haiku attributes and other native semantics can be translated or preserved without changing a volume's persistent object identity.
 
 ### Workload-aware data policy
 

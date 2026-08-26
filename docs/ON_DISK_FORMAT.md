@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # InfiltratorFS On-Disk Format 0.12
 
-Status: experimental writable prototype. Format 0.12 includes feature-gated named snapshot roots and retained historical generations. Pre-1.0 development builds accept only their exact current format; this implementation deliberately rejects Formats 0.1 through 0.10.
+Status: experimental writable prototype. Release 0.18.4 accepts exactly Format 0.12. Pre-1.0 development builds do not promise compatibility with any earlier development format, including 0.11.
 
 Implementation 0.6.0 introduced sparse extents, sparse checksum indexing and hole punching. Implementation 0.7.0 defined `INFS_INCOMPAT_INLINE_DATA`. Implementation 0.8.0 added `INFS_INCOMPAT_SHARED_EXTENTS`; Format 0.8 added `INFS_INCOMPAT_PAGED_METADATA` and version-2 metadata heads. Format 0.9 added `INFS_INCOMPAT_SYMBOLIC_LINKS` and object type 5. Format 0.10 added `INFS_INCOMPAT_HARD_LINKS`. Format 0.12 adds `INFS_INCOMPAT_SNAPSHOTS`, snapshot-catalog object type 6 and fixed-size generation-root records. The normative acceptance rules are summarized in `CONFORMANCE.md`.
 
@@ -35,7 +35,7 @@ The bitmap contains one bit per filesystem block. Bits beyond the volume end are
 
 ```text
 magic                       8 bytes: "INFS2026"
-format major/minor          0.11
+format major/minor          0.12
 header size                 structure-size guard
 block shift                 12
 checksum algorithm          CRC64-ECMA
@@ -104,15 +104,17 @@ birth time                      signed nanoseconds since Unix epoch
 access time                     signed nanoseconds since Unix epoch
 modification time               signed nanoseconds since Unix epoch
 metadata-change time            signed nanoseconds since Unix epoch
-security object ID              future security metadata, zero when absent
-extended-attributes object ID   future named metadata, zero when absent
+security object ID              future portable security metadata, zero when absent
+extended-attributes object ID   future portable named metadata, zero when absent
 ```
 
 This record is independent of Linux `struct stat` and Windows file-information structures.
 
-Only the portable attribute flags currently defined in `format.h` are accepted. Security and extended-attribute references remain zero until their object classes and compatibility feature are specified. The current portable flags are persistent cross-platform metadata; mutation-policy semantics for flags such as `READ_ONLY` require a future explicit core API/policy rather than being inferred silently by one adapter.
+Only the portable attribute flags currently defined in `format.h` are accepted. The generic security and extended-attribute references remain zero until their portable object classes and compatibility features are specified. Release 0.18.4 can persist Linux `user.*` xattrs and special-node details through Linux adapter metadata; those adapter sidecars do not consume these reserved portable references and do not make Linux metadata the cross-platform canonical model.
 
-`struct infs_posix_compat_disk` follows the common attributes in current file and directory payloads. It contains permission bits, numeric UID/GID values and reserved flags. Permission bits are limited to `07777`; the current reserved flags field is zero. This is adapter metadata, not persistent object identity or the final cross-platform security model.
+The current portable flags are persistent cross-platform metadata; mutation-policy semantics for flags such as `READ_ONLY` require an explicit core API/policy rather than being inferred silently by one adapter.
+
+`struct infs_posix_compat_disk` follows the common attributes in current file and directory payloads. It contains permission bits, numeric UID/GID values and reserved flags. Permission bits are limited to `07777`; the current reserved flags field is zero. This is adapter compatibility metadata, not persistent object identity or the final cross-platform security model.
 
 ## 8. Directories and names
 
@@ -231,8 +233,9 @@ The policy is to fail closed when committed state cannot be trusted while retain
 - at most 27 named snapshots in the bounded catalog;
 - no snapshot rollback or native undelete policy;
 - no compression;
-- security and extended-attribute object references are reserved but not implemented;
+- portable security and generic named-metadata object references are reserved but not yet standardized;
+- Linux 0.18.4 adapter xattrs/special-node metadata are not the final portable named-metadata/security model;
 - POSIX compatibility metadata exists; Windows security mapping is not implemented;
 - metadata uses CRC64 while file data uses SHA-256;
-- scrub detects but cannot yet repair corruption;
+- scrub detects but cannot yet repair corruption; and
 - one writable core instance at a time.

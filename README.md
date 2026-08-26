@@ -4,22 +4,34 @@
 
 [![Build and conformance](https://github.com/The-First-Infiltrator/InfiltratorFS/actions/workflows/ci.yml/badge.svg)](https://github.com/The-First-Infiltrator/InfiltratorFS/actions/workflows/ci.yml)
 
-InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem started in 2026. The persistent format and core engine are portable C; operating-system integrations sit over the same Format 0.12 structures.
+InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem started in 2026. The persistent format and portable core define the filesystem; operating-system adapters translate native APIs and semantics onto the same on-disk objects, transactions, extents, snapshots and integrity model.
 
-**Current implementation:** 0.17.1  
+**Current release:** 0.18.4  
 **On-disk format:** 0.12  
 **Shared foundation:** Infiltratr Common 1.11.0  
 **Licence:** GPL-3.0-or-later
 
 Pre-1.0 development intentionally does not preserve compatibility with older development formats. Test media may need to be reformatted after an on-disk-format revision.
 
-## Format 0.12 capabilities
+## What exists today
 
-Format 0.12 provides 4096-byte little-endian blocks, 128-bit filesystem/object identities, three physically separated checksummed checkpoints, bitmap allocation, copy-on-write transactions, paged directory/object-index/extent metadata, inline small files, sparse files and hole extents, shared extents/reflinks, symbolic and hard links, retained historical generations and named read-only snapshots, CRC64-ECMA metadata integrity, SHA-256 file-data integrity, POSIX compatibility metadata, UTF-8 namespace validation, scrub/verify, and callback-based storage/durability/randomness/clock services.
+Format 0.12 provides 4096-byte little-endian blocks, 128-bit filesystem/object identities, three physically separated checksummed checkpoints, bitmap allocation, copy-on-write transactions, paged directory/object-index/extent metadata, inline small files, sparse files and hole extents, shared extents/reflinks, symbolic and hard links, retained historical generations and named read-only snapshots, CRC64-ECMA metadata integrity, SHA-256 file-data integrity, portable attributes, isolated POSIX compatibility metadata, UTF-8 namespace validation, scrub/verify and callback-based storage/durability/randomness/clock services.
 
-## Linux architecture from 0.17.0
+Linux is the most complete mounted adapter. Release 0.18.4 uses the native `infiltratorfs.ko` VFS driver and includes native namespace mutation, random and sparse writes, truncate, `fallocate`, hole punching, hard links and symlinks, open-unlink lifetime, mount-time orphan recovery, persistent `user.*` xattrs, FIFO/socket/character/block special-node identity, page-cache and readahead integration, shared writable `mmap`, snapshot-preserving live writes, allocation reporting and native remount/scrub qualification.
 
-Linux uses the native `infiltratorfs.ko` VFS filesystem driver. The Debian package and native `.run` installer install it through DKMS and load it with `modprobe infiltratorfs`.
+Windows currently has Win32 raw image/partition storage and transfer/scrub tooling over the same portable core and Format 0.12 media. It is not yet a Windows kernel filesystem driver and does not yet provide Explorer drive-letter mounting.
+
+## Platform-neutral architecture
+
+InfiltratorFS does not treat Linux semantics as the filesystem definition and does not intend Windows, macOS, BSD, Haiku or another operating system to be compatibility layers over Linux. The common model lives below all adapters.
+
+When operating systems expose the same underlying concept under different names, adapters map that concept to one InfiltratorFS representation. When an operating system has genuinely additional semantics, those semantics are preserved without forcing another adapter to invent support for them or destroy metadata it does not understand.
+
+See [`docs/PLATFORM_ADAPTERS.md`](docs/PLATFORM_ADAPTERS.md) for the adapter contract and [`docs/SECURITY.md`](docs/SECURITY.md) for the planned cross-platform identity/ACL model.
+
+## Linux architecture
+
+Linux mounting is performed solely by the native `infiltratorfs.ko` VFS filesystem driver. The Debian package and native `.run` installer install it through DKMS and load it with `modprobe infiltratorfs`.
 
 Normal Linux mounts are kernel mounts:
 
@@ -37,7 +49,9 @@ The standard `mount.infiltratorfs` helper, InfiltratorFS Manager, Nemo/UDisks in
 
 The native writer uses Format 0.12 transactions and extent-backed data. Native reads validate metadata CRC64 and file SHA-256 data checksums. `fsync`, `syncfs` and global `sync` publish pending transactions through the normal durability boundary.
 
-The dedicated native-kernel workflow builds the out-of-tree module and performs mounted read/write qualification when the hosted runner exposes matching running-kernel headers. Release publication adds a stricter installed-package gate: it installs the generated `.deb`, verifies the native filesystem registration, mounts a real Format 0.12 loop image with `FSTYPE=infiltratorfs`, writes and byte-compares non-zero data, syncs, unmounts and requires a clean userspace scrub. Publication also rejects any FUSE executable, process or package dependency.
+The dedicated native-kernel workflow builds the out-of-tree module, reproduces the DKMS source-root build and performs mounted native qualification. The mounted suite covers namespace operations, sequential/random/sparse writes, high-offset sparse files, truncate, allocation reporting, `fallocate`, hole punching, xattrs, special nodes, page-cache/readahead/mmap behavior, open-unlink lifetime, snapshot-preserving writes, remount readback and offline scrub.
+
+Release publication adds an installed-package gate: it installs the generated `.deb`, verifies native filesystem registration, mounts a real Format 0.12 loop image with `FSTYPE=infiltratorfs`, writes and byte-compares non-zero data, syncs, unmounts and requires a clean userspace scrub. Publication also rejects any FUSE executable, process or package dependency.
 
 ## Linux desktop integration
 
@@ -90,11 +104,11 @@ The direct-image tool can exercise namespace and snapshot operations without mou
 
 A release includes `infiltratorfs-<version>-linux-native.run`. It contains the tested source tree, checks host requirements, builds/tests userspace code, installs the DKMS source, builds the module for the running kernel, loads it, verifies `/proc/filesystems`, refreshes desktop storage rules and removes any obsolete `/usr/bin/infilfs-fuse` left by an older unmanaged installation.
 
-Preview without changing the system:
+For the current release:
 
 ```bash
-chmod +x infiltratorfs-0.17.1-linux-native.run
-./infiltratorfs-0.17.1-linux-native.run --dry-run
+chmod +x infiltratorfs-0.18.4-linux-native.run
+./infiltratorfs-0.18.4-linux-native.run --dry-run
 ```
 
 The installer refuses to upgrade while an InfiltratorFS volume is mounted. This prevents replacing a live filesystem driver underneath active media.
@@ -112,19 +126,15 @@ A numbered release publishes only the project-built artifacts below; GitHub supp
 
 The Linux package has no FUSE runtime dependency. Its `postinst` requires matching running-kernel headers and treats a DKMS build/load failure as an installation failure rather than silently falling back to userspace mounting.
 
-## Windows status
+## Recovery and safety
 
-The Windows executable can discover and access supported InfiltratorFS partitions directly, including partitions without a drive letter, and can copy data and run scrub operations. It is not yet a Windows kernel filesystem driver; Explorer drive-letter mounting remains future work.
+A healthy open validates checkpoint candidates, allocation and the essential committed graph. Full namespace, ownership, checksum and metadata-graph validation belongs to **Scrub / Verify**. Writable recovery only heals from a graph-valid committed generation and fails closed where durable ordering cannot be established safely.
+
+InfiltratorFS remains experimental and pre-1.0. Keep verified backups and use disposable/test media for development qualification.
 
 ## Repository and release policy
 
-Development uses `main` only. Ordinary pushes run CI but do not publish. A release-eligible commit subject begins with `Release <version>`. After Build and conformance succeeds, the publisher verifies that the exact commit is still current `main`, rebuilds Linux and Windows assets, installs and natively mounts the Linux `.deb`, validates the asset set and checksums, creates the immutable tag and publishes the release.
-
-## Recovery and safety
-
-A healthy open validates checkpoints, bitmap and essential root/index state. Full namespace, ownership, checksum and metadata-graph validation belongs to **Scrub / Verify**. Writable recovery only heals from a graph-valid committed generation.
-
-InfiltratorFS remains experimental and pre-1.0. Keep verified backups and use disposable/test media for development qualification.
+Development uses `main` only. Ordinary pushes run CI but do not publish. A release-eligible commit subject begins with `Release <version>`. After Build and conformance succeeds, the publisher verifies that the exact commit is still current `main`, rebuilds Linux and Windows assets, installs and natively mounts the Linux `.deb`, validates the asset set and checksums, creates the exact tag and publishes the release.
 
 ## Repository layout
 
@@ -136,7 +146,7 @@ src/platform/             POSIX and Win32 storage adapters
 kernel/                   native Linux VFS adapter and DKMS source
 tools/                    formatter, inspector, scrubber, manager and transfer tools
 tests/                    conformance, recovery, crash and platform tests
-docs/                     architecture and on-disk-format documentation
+docs/                     architecture, format, security and adapter documentation
 ```
 
 ## Licence

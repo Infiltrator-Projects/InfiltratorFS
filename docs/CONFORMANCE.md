@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # Format 0.12 Conformance
 
-Implementation 0.17.0 accepts exactly current on-disk Format 0.12. Pre-1.0 builds do not promise compatibility with earlier development formats.
+Release 0.18.4 accepts exactly current on-disk Format 0.12. Pre-1.0 builds do not promise compatibility with earlier development formats.
 
 ## Persistent representation
 
@@ -66,7 +66,7 @@ Operation-level savepoints preserve earlier acknowledged buffered mutations when
 
 Each named snapshot identifies an immutable earlier generation, root, object index and retained allocation image. Superseded blocks remain unavailable while any retained generation references them. Deleting a snapshot reclaims only blocks absent from both the live graph and every remaining snapshot graph.
 
-Snapshot lookup, stat, enumeration, read and readlink operations are read-only.
+Snapshot lookup, stat, enumeration, read and readlink operations are read-only. Live writes must not mutate or reclaim blocks still owned by a retained snapshot generation.
 
 ## Scrub and forensic behavior
 
@@ -94,9 +94,10 @@ Native Linux qualification requires:
 - inline, ordinary-extent, sparse-hole and paged-extent reads;
 - stable inode identity for persistent objects/hard links;
 - create/mkdir/mknod, link/symlink, rename/unlink/rmdir and persistent setattr;
-- sequential and random extent writes, large sparse growth/truncate, fallocate and hole punching;
-- persistent `user.*` xattrs and FIFO/socket/character/block node identity;
-- verified page-cache faults, readahead and shared writable mmap writeback;
+- sequential and random extent writes, large sparse growth/truncate, `fallocate` and hole punching;
+- correct logical versus allocated-size reporting for ordinary sparse and metadata-bearing objects;
+- persistent Linux `user.*` xattrs and FIFO/socket/character/block node identity;
+- verified page-cache faults, readahead and shared writable `mmap` writeback;
 - writable live namespace/data changes while retained snapshots preserve older generations;
 - crash-safe open-unlink/replacement lifetime and mount-time orphan recovery;
 - extent-backed non-zero writes and byte-identical live/remount readback;
@@ -105,7 +106,15 @@ Native Linux qualification requires:
 - clean unmount followed by userspace scrub; and
 - refusal to silently substitute a non-native filesystem path.
 
+Release 0.18.4 qualifies this native migrated surface. Additional development qualification is expected to expand recovery, locking/concurrency, scale and stress coverage rather than reintroduce a FUSE runtime path.
+
 `mount.infiltratorfs` and InfiltratorFS Manager must produce `FSTYPE=infiltratorfs`. The Manager privileged helper rejects a mounted result with any other filesystem type.
+
+## Adapter conformance
+
+Operating-system adapters may expose different native APIs, but they must not redefine the persistent meaning of shared filesystem concepts. Equivalent native concepts map to the same portable object/extent/transaction semantics. Adapter-only metadata must remain isolated and must not be silently discarded merely because another adapter cannot expose it.
+
+POSIX UID/GID/mode compatibility metadata is not the final cross-platform security authority. The future security-object model is defined architecturally in `SECURITY.md`; until that format exists, adapters must not claim portable ACL/SID equivalence that is not actually stored.
 
 ## Desktop/package conformance
 
@@ -121,6 +130,6 @@ Installation fails if matching running-kernel headers are unavailable or if the 
 
 The main Build and conformance workflow runs the portable/core suite under GCC, Clang, ASan/UBSan and GCC `-fanalyzer`, validates desktop/Manager behavior, checks cross-platform Linux-created media on Windows, builds release packages and rejects any FUSE build artifact or package dependency.
 
-The Native Linux kernel module workflow builds the out-of-tree driver, reproduces the DKMS source-root invocation, validates module metadata and performs mounted snapshot, xattr, special-node, mmap, namespace, sparse/random-write, remount and scrub qualification when the hosted runner exposes matching running-kernel headers.
+The Native Linux kernel module workflow builds the out-of-tree driver, reproduces the DKMS source-root invocation, validates module metadata and performs mounted snapshot, xattr, special-node, mmap, namespace, sparse/random-write, allocation, remount and scrub qualification when the hosted runner exposes matching running-kernel headers.
 
 The release publisher runs only after a successful `Release <version>` commit on current `main`. It rebuilds assets from that exact commit, installs the generated `.deb`, verifies the native filesystem registration, mounts a real Format 0.12 loop image with `FSTYPE=infiltratorfs`, writes and byte-compares non-zero data, syncs, unmounts, requires a CLEAN scrub and rejects any legacy FUSE executable/process before creating the tag and release.
