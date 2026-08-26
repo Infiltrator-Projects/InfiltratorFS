@@ -10,6 +10,7 @@
 #include <fcntl.h>
 #include <inttypes.h>
 #include <limits.h>
+#include <pwd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,6 +26,58 @@ static void usage(const char *prog)
     fprintf(stderr, "Usage: %s [--force] [-L label] <image-or-block-device>\n", prog);
 }
 
+static int parse_identity_component(const char *text, uint32_t *value)
+{
+    char *end = NULL;
+    unsigned long long parsed;
+
+    if (!text || !*text || !value)
+        return -1;
+    errno = 0;
+    parsed = strtoull(text, &end, 10);
+    if (errno || !end || *end != '\0' || parsed > UINT32_MAX)
+        return -1;
+    *value = (uint32_t)parsed;
+    return 0;
+}
+
+/*
+ * mkfs is commonly elevated with sudo or pkexec because a block device needs
+ * raw write access.  The filesystem root should belong to the desktop user who
+ * requested the format, not to uid 0 merely because the formatter had to be
+ * privileged.  Direct root invocation remains root-owned.
+ */
+static void resolve_root_owner(uint32_t *uid_out, uint32_t *gid_out)
+{
+    uint32_t uid = (uint32_t)getuid();
+    uint32_t gid = (uint32_t)getgid();
+
+    if (geteuid() == 0) {
+        const char *sudo_uid = getenv("SUDO_UID");
+        const char *sudo_gid = getenv("SUDO_GID");
+        const char *pkexec_uid = getenv("PKEXEC_UID");
+        uint32_t elevated_uid;
+
+        if (parse_identity_component(sudo_uid, &elevated_uid) == 0) {
+            uid = elevated_uid;
+            if (parse_identity_component(sudo_gid, &gid) != 0) {
+                struct passwd *pw = getpwuid((uid_t)uid);
+                if (pw)
+                    gid = (uint32_t)pw->pw_gid;
+            }
+        } else if (parse_identity_component(pkexec_uid, &elevated_uid) == 0) {
+            struct passwd *pw;
+            uid = elevated_uid;
+            pw = getpwuid((uid_t)uid);
+            if (pw)
+                gid = (uint32_t)pw->pw_gid;
+        }
+    }
+
+    *uid_out = uid;
+    *gid_out = gid;
+}
+
 static void bitmap_set(uint8_t *bitmap, uint64_t block)
 {
     bitmap[block >> 3] |= (uint8_t)(1u << (block & 7u));
@@ -38,7 +91,7 @@ static int bitmap_get(const uint8_t *bitmap, uint64_t block)
 static int id_is_zero_local(const uint8_t id[16])
 {
     uint8_t combined = 0;
-    for (unsigned i = 0; i < 16; ++i)
+    for (unsigned i = 0; i < 16u; ++i)
         combined |= id[i];
     return combined == 0;
 }
