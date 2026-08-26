@@ -63,6 +63,18 @@ static int infilfs_rw_tx_begin(struct super_block *sb,
 #undef infilfs_rw_setattr
 
 /*
+ * The verified extent reader in the data layer uses a checksum cursor while a
+ * single read_iter() call is active.  Ordinary userspace readers issue many
+ * separate calls, so compose the bounded cross-call cursor cache here and make
+ * it the final VFS read callback.
+ */
+#ifdef infilfs_file_read_iter
+#undef infilfs_file_read_iter
+#endif
+#include "infiltratorfs_rw_read_cache.inc"
+#define infilfs_file_read_iter infilfs_file_read_iter_cached
+
+/*
  * New native objects must carry the credentials of the task that created them.
  * The original bring-up code deliberately used uid/gid zero while write support
  * was root-only.  That made every file created by an ordinary desktop user
