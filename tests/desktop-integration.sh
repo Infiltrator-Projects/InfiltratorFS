@@ -7,6 +7,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 mkfs="$build_dir/mkfs.infilfs"
 inspect="$build_dir/infilfs-inspect"
 rules="$repo_root/packaging/59-infiltratorfs.rules"
+udisks_patch="$repo_root/packaging/udisks2-infiltratorfs-display.patch"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
@@ -35,5 +36,17 @@ fi
 grep -Fq 'ID_FS_TYPE}=="infiltratorfs"' "$rules"
 grep -Fq 'UDISKS_MOUNT_OPTIONS_DEFAULTS' "$rules"
 grep -Fq 'modprobe -q infiltratorfs' "$rules"
+grep -Fq 'ENV{ID_FS_LABEL}=="", ENV{UDISKS_NAME}="InfiltratorFS"' "$rules"
+grep -Fq 'UDISKS_ICON_NAME}="drive-harddisk"' "$rules"
+grep -Fq 'UDISKS_SYMBOLIC_ICON_NAME}="drive-harddisk-symbolic"' "$rules"
+
+# libudisks2 currently owns the long human-readable filesystem description
+# consumed by GNOME Disks.  Keep the minimal upstream mapping in-tree so the
+# project cannot regress into pretending that udev metadata alone controls the
+# "Contents" string.
+test -s "$udisks_patch"
+grep -Fq '"filesystem", "infiltratorfs",     "*"' "$udisks_patch"
+grep -Fq 'InfiltratorFS (format %s)' "$udisks_patch"
+grep -Fq '"filesystem", "infiltratorfs",     NULL' "$udisks_patch"
 
 echo 'desktop-integration: PASS'
