@@ -295,7 +295,7 @@ chmod 0755 "$dist_dir/$run_name"
 "$dist_dir/$run_name" --dry-run > "$dist_dir/native-installer-dry-run.txt"
 grep -Fq 'Dry run only; no packages will be installed' "$dist_dir/native-installer-dry-run.txt"
 grep -Fq 'Native kernel module commands:' "$dist_dir/native-installer-dry-run.txt"
-grep -Fq 'legacy /usr/bin/infilfs-fuse executable would be removed' "$dist_dir/native-installer-dry-run.txt"
+grep -Fq 'The completed installation is Debian-managed as infiltratorfs' "$dist_dir/native-installer-dry-run.txt"
 rm -f "$dist_dir/native-installer-dry-run.txt"
 
 (
