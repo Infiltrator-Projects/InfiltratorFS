@@ -60,12 +60,10 @@ static int infilfs_rw_tx_begin(struct super_block *sb,
 #define infilfs_rw_create __maybe_unused infilfs_rw_create_data
 #define infilfs_rw_mkdir __maybe_unused infilfs_rw_mkdir_data
 #define infilfs_rw_setattr __maybe_unused infilfs_rw_setattr_data
-#define infilfs_native_checksum_tail __maybe_unused infilfs_native_checksum_tail
 #include "infiltratorfs_rw_data.inc"
 #undef infilfs_rw_create
 #undef infilfs_rw_mkdir
 #undef infilfs_rw_setattr
-#undef infilfs_native_checksum_tail
 
 /*
  * The verified extent reader in the data layer uses a checksum cursor while a
