@@ -1589,6 +1589,9 @@ static int infilfs_native_checksum_set_range(
         (*change_count)++;
         nodes[i].object_block = stored_block;
         nodes[i].checksum_count = needed;
+        infilfs_native_checksum_group_cache_store(
+            pending->sb, owner_id, nodes[i].object_id,
+            stored_block, group_start);
     }
 
     if (!node_count) {
