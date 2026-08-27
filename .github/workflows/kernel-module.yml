@@ -578,6 +578,7 @@ jobs:
           # deterministic 4 KiB overwrites and periodic durability barriers.
           # Dump blocked-task/kernel diagnostics immediately if the loop fails
           # so iterator/locking regressions are actionable from CI alone.
+          random_write_start="$(date +%s%N)"
           if ! sudo python3 - "$large_src" "$mountpoint/native-rw/large.bin" <<'PY'
           import os
           import random
@@ -608,12 +609,20 @@ jobs:
             diagnostics
             exit 1
           fi
+          random_write_end="$(date +%s%N)"
+          python3 - "$random_write_start" "$random_write_end" <<'PY'
+          import sys
+          elapsed = (int(sys.argv[2]) - int(sys.argv[1])) / 1_000_000_000
+          print(f"Native 4,000x4KiB random overwrite phase: {elapsed:.3f} s "
+                f"({4000.0/elapsed:.1f} writes/s)")
+          PY
           large_source_sha="$(sha256sum "$large_src" | awk '{print $1}')"
           test "$(sha256sum "$mountpoint/native-rw/large.bin" | awk '{print $1}')" = \
                "$large_source_sha"
 
           # Hyper-V qualification formerly published 200 explicit fsync
           # generations.  Preserve that exact mounted durability pressure.
+          fsync_pressure_start="$(date +%s%N)"
           sudo python3 - "$mountpoint/native-rw/fsync-publications.bin" <<'PY'
           import os
           import sys
@@ -633,6 +642,13 @@ jobs:
               assert os.read(fd, len(expected)) == expected
           finally:
               os.close(fd)
+          PY
+          fsync_pressure_end="$(date +%s%N)"
+          python3 - "$fsync_pressure_start" "$fsync_pressure_end" <<'PY'
+          import sys
+          elapsed = (int(sys.argv[2]) - int(sys.argv[1])) / 1_000_000_000
+          print(f"Native 200-fsync durability phase: {elapsed:.3f} s "
+                f"({200.0/elapsed:.1f} fsyncs/s)")
           PY
 
           # Native parity: sparse high-offset growth, extent truncate,

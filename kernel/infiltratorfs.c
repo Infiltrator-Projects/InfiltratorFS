@@ -1709,7 +1709,7 @@ static int __init infilfs_init(void)
     int status = register_filesystem(&infilfs_type);
 
     if (status == 0)
-        pr_info("InfiltratorFS: native Linux VFS registered with initial RW support\n");
+        pr_info("InfiltratorFS: native Linux VFS registered with read-write support\n");
     return status;
 }
 
@@ -1722,7 +1722,7 @@ static void __exit infilfs_exit(void)
 module_init(infilfs_init);
 module_exit(infilfs_exit);
 
-MODULE_DESCRIPTION("InfiltratorFS native Linux VFS driver with initial RW support");
+MODULE_DESCRIPTION("InfiltratorFS native Linux VFS driver with read-write support");
 MODULE_AUTHOR("The First Infiltrator");
 MODULE_LICENSE("GPL");
 MODULE_ALIAS_FS(INFILTRATORFS_NAME);
