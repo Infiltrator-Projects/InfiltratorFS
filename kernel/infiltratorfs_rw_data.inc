@@ -2578,7 +2578,14 @@ static int infilfs_native_append_chunk_locked(
             final_tail_id, final_tail_block, final_tail_start);
         kfree(fast_data);
         if (!ret) {
-            *consumed_out = INFILFS_DISK_BLOCK_SIZE;
+            /*
+             * The common exit publishes the local consumed count.  Record the
+             * successful fast-path byte count there so the outer write loop
+             * advances exactly once; writing consumed_out directly here would
+             * be overwritten at the common exit and re-enter with an exhausted
+             * iov_iter.
+             */
+            consumed = INFILFS_DISK_BLOCK_SIZE;
             goto out;
         }
         iov_iter_revert(from, INFILFS_DISK_BLOCK_SIZE);
