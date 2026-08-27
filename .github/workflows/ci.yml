@@ -54,6 +54,8 @@ jobs:
           bash -n tests/native-partition22-full-test.sh
           grep -Fq 'TARGET="/dev/mmcblk0p22"' tests/native-partition22-full-test.sh
           grep -Fq 'EXPECTED_PARTNO="22"' tests/native-partition22-full-test.sh
+      - name: Guard native random-write optimizations
+        run: bash tests/native-random-write-optimization-policy.sh .
       - name: Configure native-only userspace
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
       - name: Build
