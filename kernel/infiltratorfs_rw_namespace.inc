@@ -92,7 +92,7 @@ static int infilfs_ns_begin(struct super_block *sb,
  * transaction while avoiding a full four-flush checkpoint publication
  * for every create/rename/unlink-style mutation.
  */
-#define INFILFS_NATIVE_METADATA_PUBLISH_CHARGE (1ULL * 1024ULL * 1024ULL)
+#define INFILFS_NATIVE_METADATA_PUBLISH_CHARGE (64ULL * 1024ULL)
 
 static int infilfs_ns_finish(struct infilfs_native_pending *pending, int ret)
 {
