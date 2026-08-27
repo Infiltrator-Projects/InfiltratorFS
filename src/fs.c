@@ -60,9 +60,11 @@ static int object_version_valid(uint16_t type, uint16_t version)
 {
     if (version == INFS_OBJECT_VERSION_CLASSIC)
         return 1;
-    return version == INFS_OBJECT_VERSION_PAGED &&
-           (type == INFS_OBJECT_DIRECTORY || type == INFS_OBJECT_INDEX ||
-            type == INFS_OBJECT_FILE);
+    if (version == INFS_OBJECT_VERSION_PAGED)
+        return type == INFS_OBJECT_DIRECTORY || type == INFS_OBJECT_INDEX ||
+            type == INFS_OBJECT_FILE;
+    return version == INFS_OBJECT_VERSION_TREE &&
+        type == INFS_OBJECT_INDEX;
 }
 
 static int index_payload_shape_valid(const uint8_t block[INFS_BLOCK_SIZE],
@@ -86,6 +88,15 @@ static int index_payload_shape_valid(const uint8_t block[INFS_BLOCK_SIZE],
         size_t expected = sizeof(*payload) +
             (size_t)count * sizeof(struct infs_index_entry_disk);
         return expected == payload_size;
+    }
+
+    if (object_version == INFS_OBJECT_VERSION_TREE) {
+        if (infs_le32_to_cpu(payload->reserved) != 0 || count == 0 ||
+            payload_size != sizeof(*payload) + sizeof(uint64_t))
+            return 0;
+        uint64_t root_le = 0;
+        memcpy(&root_le, payload + 1, sizeof(root_le));
+        return infs_le64_to_cpu(root_le) != 0;
     }
 
     uint32_t page_count = infs_le32_to_cpu(payload->reserved);
@@ -339,6 +350,7 @@ infs_status infs_metadata_page_finalize(uint8_t block[INFS_BLOCK_SIZE])
     uint32_t bytes_used = infs_le32_to_cpu(page->bytes_used);
     if ((memcmp(page->magic, INFS_DIRECTORY_PAGE_MAGIC, 8) != 0 &&
          memcmp(page->magic, INFS_INDEX_PAGE_MAGIC, 8) != 0 &&
+         memcmp(page->magic, INFS_INDEX_BRANCH_PAGE_MAGIC, 8) != 0 &&
          memcmp(page->magic, INFS_EXTENT_PAGE_MAGIC, 8) != 0) ||
         infs_le64_to_cpu(page->generation) == 0 ||
         !id_is_nonzero(page->owner_object_id) ||

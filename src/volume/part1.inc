@@ -843,6 +843,16 @@ static int index_find(struct infs_volume *vol, const uint8_t id[16],
     struct infs_object_header_disk *header =
         (struct infs_object_header_disk *)block;
     if (infs_le16_to_cpu(header->object_version) ==
+        INFS_OBJECT_VERSION_TREE) {
+        status = tree_index_find(vol, id, &found);
+        if (status == INFS_STATUS_OK) {
+            object_cache_store(vol, id, found.block, found.type);
+            if (out)
+                *out = found;
+        }
+        return status;
+    }
+    if (infs_le16_to_cpu(header->object_version) ==
         INFS_OBJECT_VERSION_PAGED) {
         status = paged_index_find(vol, id, &found);
         if (status == INFS_STATUS_OK) {
@@ -886,6 +896,13 @@ static int index_repoint(struct infs_volume *vol, const uint8_t id[16],
     struct infs_object_header_disk *header =
         (struct infs_object_header_disk *)block;
     if (infs_le16_to_cpu(header->object_version) ==
+        INFS_OBJECT_VERSION_TREE) {
+        status = tree_index_repoint(vol, id, object_block, type);
+        if (status == INFS_STATUS_OK)
+            object_cache_store(vol, id, object_block, type);
+        return status;
+    }
+    if (infs_le16_to_cpu(header->object_version) ==
         INFS_OBJECT_VERSION_PAGED) {
         status = paged_index_repoint(vol, id, object_block, type);
         if (status == INFS_STATUS_OK)
@@ -919,6 +936,13 @@ static int index_add(struct infs_volume *vol, const uint8_t id[16],
         return status;
     struct infs_object_header_disk *head_header =
         (struct infs_object_header_disk *)head;
+    if (infs_le16_to_cpu(head_header->object_version) ==
+        INFS_OBJECT_VERSION_TREE) {
+        status = tree_index_add(vol, id, object_block, type);
+        if (status == INFS_STATUS_OK)
+            object_cache_store(vol, id, object_block, type);
+        return status;
+    }
     if (infs_le16_to_cpu(head_header->object_version) ==
         INFS_OBJECT_VERSION_PAGED) {
         status = paged_index_add(vol, id, object_block, type);
@@ -966,6 +990,13 @@ static int index_remove(struct infs_volume *vol, const uint8_t id[16])
         return status;
     struct infs_object_header_disk *hdr =
         (struct infs_object_header_disk *)block;
+    if (infs_le16_to_cpu(hdr->object_version) ==
+        INFS_OBJECT_VERSION_TREE) {
+        status = tree_index_remove(vol, id);
+        if (status == INFS_STATUS_OK)
+            object_cache_remove(vol, id);
+        return status;
+    }
     if (infs_le16_to_cpu(hdr->object_version) ==
         INFS_OBJECT_VERSION_PAGED) {
         status = paged_index_remove(vol, id);

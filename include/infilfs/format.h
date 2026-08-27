@@ -15,6 +15,9 @@ static const uint8_t INFS_DIRECTORY_PAGE_MAGIC[8] = {
 static const uint8_t INFS_INDEX_PAGE_MAGIC[8] = {
     'I', 'N', 'F', 'S', 'I', 'P', '0', '1'
 };
+static const uint8_t INFS_INDEX_BRANCH_PAGE_MAGIC[8] = {
+    'I', 'N', 'F', 'S', 'I', 'B', '0', '1'
+};
 static const uint8_t INFS_EXTENT_PAGE_MAGIC[8] = {
     'I', 'N', 'F', 'S', 'E', 'P', '0', '1'
 };
@@ -40,6 +43,7 @@ static const uint8_t INFS_EXTENT_PAGE_MAGIC[8] = {
 
 #define INFS_OBJECT_VERSION_CLASSIC 1u
 #define INFS_OBJECT_VERSION_PAGED   2u
+#define INFS_OBJECT_VERSION_TREE    3u
 
 #define INFS_EXTENT_NORMAL     0u
 #define INFS_EXTENT_HOLE       1u
@@ -53,6 +57,7 @@ static const uint8_t INFS_EXTENT_PAGE_MAGIC[8] = {
 #define INFS_INCOMPAT_HARD_LINKS UINT64_C(0x0000000000000040)
 #define INFS_INCOMPAT_SNAPSHOTS UINT64_C(0x0000000000000080)
 #define INFS_INCOMPAT_PAGED_EXTENTS UINT64_C(0x0000000000000100)
+#define INFS_INCOMPAT_INDEX_TREE UINT64_C(0x0000000000000200)
 #define INFS_KNOWN_COMPAT_FLAGS UINT64_C(0)
 #define INFS_KNOWN_RO_COMPAT_FLAGS UINT64_C(0)
 #define INFS_KNOWN_INCOMPAT_FLAGS \
@@ -60,7 +65,7 @@ static const uint8_t INFS_EXTENT_PAGE_MAGIC[8] = {
      INFS_INCOMPAT_INLINE_DATA | INFS_INCOMPAT_SHARED_EXTENTS | \
      INFS_INCOMPAT_PAGED_METADATA | INFS_INCOMPAT_SYMBOLIC_LINKS | \
      INFS_INCOMPAT_HARD_LINKS | INFS_INCOMPAT_SNAPSHOTS | \
-     INFS_INCOMPAT_PAGED_EXTENTS)
+     INFS_INCOMPAT_PAGED_EXTENTS | INFS_INCOMPAT_INDEX_TREE)
 
 #define INFS_ATTR_READ_ONLY           UINT64_C(0x0000000000000001)
 #define INFS_ATTR_HIDDEN              UINT64_C(0x0000000000000002)
@@ -291,6 +296,9 @@ struct INFS_PACKED infs_snapshot_record_disk {
     (INFS_BLOCK_SIZE - sizeof(struct infs_metadata_page_disk))
 #define INFS_INDEX_ENTRIES_PER_PAGE \
     (INFS_METADATA_PAGE_DATA_SIZE / sizeof(struct infs_index_entry_disk))
+#define INFS_INDEX_TREE_FANOUT 256u
+#define INFS_INDEX_TREE_BRANCH_BYTES \
+    (INFS_INDEX_TREE_FANOUT * sizeof(uint64_t))
 #define INFS_EXTENTS_PER_PAGE \
     (INFS_METADATA_PAGE_DATA_SIZE / sizeof(struct infs_extent_disk))
 #define INFS_DIRECTORY_PAGE_POINTERS \
@@ -350,6 +358,8 @@ _Static_assert(INFS_SYMLINK_TARGET_MAX == 3888u,
                "symbolic-link target capacity unexpectedly changed");
 _Static_assert(INFS_INDEX_ENTRIES_PER_PAGE == 125u,
                "index page capacity unexpectedly changed");
+_Static_assert(INFS_INDEX_TREE_BRANCH_BYTES <= INFS_METADATA_PAGE_DATA_SIZE,
+               "index tree branch page does not fit in one metadata block");
 _Static_assert(INFS_EXTENTS_PER_PAGE == 167u,
                "extent page capacity unexpectedly changed");
 _Static_assert(INFS_DIRECTORY_PAGE_POINTERS >= 480u,

@@ -454,6 +454,12 @@ static int index_snapshot(struct infs_volume *vol,
         return INFS_STATUS_NO_MEMORY;
 
     if (infs_le16_to_cpu(header->object_version) ==
+        INFS_OBJECT_VERSION_TREE) {
+        free(snapshot);
+        return tree_index_snapshot(vol, entries_out, count_out);
+    }
+
+    if (infs_le16_to_cpu(header->object_version) ==
         INFS_OBJECT_VERSION_CLASSIC) {
         memcpy(snapshot, payload + 1,
                (size_t)total_count * sizeof(*snapshot));
@@ -508,7 +514,24 @@ static int object_cache_rebuild(struct infs_volume *vol)
         return status;
     struct infs_object_header_disk *header =
         (struct infs_object_header_disk *)head;
-    if (infs_le16_to_cpu(header->object_version) == INFS_OBJECT_VERSION_PAGED) {
+    if (infs_le16_to_cpu(header->object_version) == INFS_OBJECT_VERSION_TREE) {
+        struct infs_index_entry_disk *entries = NULL;
+        uint32_t count = 0;
+        status = tree_index_snapshot(vol, &entries, &count);
+        if (status != INFS_STATUS_OK)
+            goto fail;
+        for (uint32_t i = 0; i < count; ++i) {
+            if (!object_cache_store_page(
+                    vol, entries[i].object_id,
+                    infs_le64_to_cpu(entries[i].object_block),
+                    infs_le16_to_cpu(entries[i].object_type),
+                    INFS_INDEX_PAGE_UNKNOWN)) {
+                free(entries);
+                goto capacity;
+            }
+        }
+        free(entries);
+    } else if (infs_le16_to_cpu(header->object_version) == INFS_OBJECT_VERSION_PAGED) {
         uint32_t page_count = infs_le32_to_cpu(payload->reserved);
         uint64_t *pages = index_page_pointers(payload);
         for (uint32_t p = 0; p < page_count; ++p) {

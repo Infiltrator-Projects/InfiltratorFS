@@ -93,6 +93,18 @@ static int paged_index_add(struct infs_volume *vol, const uint8_t id[16],
                            uint64_t object_block, uint16_t type);
 static int paged_index_remove(struct infs_volume *vol, const uint8_t id[16]);
 
+/* Format 0.13 scalable object-index radix tree. */
+static int tree_index_find(struct infs_volume *vol, const uint8_t id[16],
+                           struct infs_lookup *out);
+static int tree_index_repoint(struct infs_volume *vol, const uint8_t id[16],
+                              uint64_t object_block, uint16_t type);
+static int tree_index_add(struct infs_volume *vol, const uint8_t id[16],
+                          uint64_t object_block, uint16_t type);
+static int tree_index_remove(struct infs_volume *vol, const uint8_t id[16]);
+static int tree_index_snapshot(struct infs_volume *vol,
+                               struct infs_index_entry_disk **entries_out,
+                               uint32_t *count_out);
+
 /* These narrowly-scoped helpers are retained for planned cache/extent fast
  * paths but are deliberately dormant in Format 0.12.  Apply the unused
  * attribute to their declarations (rather than rewriting their identifiers
@@ -118,6 +130,7 @@ static int paged_extent_replace(struct infs_volume *vol,
 #include "volume/part1.inc"
 #include "volume/phase3/runtime-cache.inc"
 #include "volume/phase3/paged-metadata.inc"
+#include "volume/phase3/index-tree.inc"
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic push
 /* total_count is uint32_t.  The overflow guard in paged-extents is required
