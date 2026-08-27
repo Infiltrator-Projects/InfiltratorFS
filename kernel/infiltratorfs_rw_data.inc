@@ -2191,6 +2191,8 @@ static int infilfs_native_index_update_classic(
     u32 i;
     int ret = 0;
 
+    infilfs_native_index_locator_invalidate(pending);
+
     for (i = 0; i < change_count; ++i) {
         if (changes[i].add)
             ret = infilfs_rw_rebuild_index(&pending->tx, NULL, 0, 0,
