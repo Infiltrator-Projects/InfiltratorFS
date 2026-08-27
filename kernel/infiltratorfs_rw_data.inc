@@ -22,7 +22,7 @@
 #include <linux/workqueue.h>
 
 #define INFILFS_NATIVE_WRITE_CHUNK (4u * 1024u * 1024u)
-#define INFILFS_NATIVE_IDLE_DELAY HZ
+#define INFILFS_NATIVE_IDLE_DELAY (5u * HZ)
 #define INFILFS_NATIVE_UNDO_INITIAL 16u
 #define INFILFS_NATIVE_CHECKSUM_CACHE_SLOTS 256u
 #define INFILFS_NATIVE_CHECKSUM_GROUP_CACHE_SLOTS 4096u
@@ -358,7 +358,7 @@ infilfs_native_pending_get(struct super_block *sb, bool create)
         u64 bytes = sbi ? sbi->device_blocks << INFILFS_DISK_BLOCK_SHIFT : 0;
         u64 threshold = bytes / 64u;
         const u64 min_publish = 16ULL * 1024ULL * 1024ULL;
-        const u64 max_publish = 256ULL * 1024ULL * 1024ULL;
+        const u64 max_publish = 512ULL * 1024ULL * 1024ULL;
 
         if (threshold < min_publish)
             threshold = min_publish;
