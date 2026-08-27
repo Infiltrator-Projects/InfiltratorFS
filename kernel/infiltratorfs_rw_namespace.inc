@@ -107,6 +107,7 @@ static int infilfs_ns_finish(struct infilfs_native_pending *pending, int ret)
 
     infilfs_native_operation_commit(pending);
     infilfs_native_checksum_cache_invalidate_sb(pending->sb);
+    infilfs_native_writer_tail_invalidate(pending);
     pending->pending_bytes += INFILFS_NATIVE_METADATA_PUBLISH_CHARGE;
 
     if (pending->pending_bytes >= pending->publish_threshold) {
@@ -320,6 +321,12 @@ static int infilfs_ns_rebuild_index(
     ret = infilfs_ns_update_paged_index(pending, changes, change_count);
     if (ret != -EOPNOTSUPP)
         return ret;
+
+    /*
+     * The fallback rebuild can compact or reorder index entries, so cached
+     * page/slot positions are no longer authoritative.
+     */
+    infilfs_native_index_locator_invalidate(pending);
 
     old_head = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
     new_head = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
