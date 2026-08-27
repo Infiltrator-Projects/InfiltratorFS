@@ -1235,6 +1235,7 @@ static int infilfs_ns_delete_file_resources(
 {
     struct infilfs_inode_info *ii = INFILFS_I(inode);
     u8 *object;
+    struct infilfs_object_header_disk *header;
     struct infilfs_file_payload_disk *file;
     struct infilfs_extent_disk *extents = NULL;
     u32 extent_count = 0, i;
@@ -1252,8 +1253,8 @@ static int infilfs_ns_delete_file_resources(
         goto out;
     (void)old_blocks;
     (void)was_inline;
-    file = (struct infilfs_file_payload_disk *)
-        ((struct infilfs_object_header_disk *)object + 1);
+    header = (struct infilfs_object_header_disk *)object;
+    file = (struct infilfs_file_payload_disk *)(header + 1);
     ret = infilfs_ns_collect_checksum_removals(
         pending, file, ii->object_id, changes, change_count, change_capacity);
     if (ret)
@@ -1268,6 +1269,30 @@ static int infilfs_ns_delete_file_resources(
         if (ret)
             goto out;
     }
+
+    if (le16_to_cpu(header->object_version) ==
+        INFILFS_OBJECT_VERSION_PAGED) {
+        struct infilfs_extent_head_disk *head =
+            (struct infilfs_extent_head_disk *)(file + 1);
+        __le64 *pages = (__le64 *)(head + 1);
+        u32 page_count = le32_to_cpu(head->page_count);
+
+        if (!page_count || page_count > INFILFS_EXTENT_PAGE_POINTERS ||
+            le32_to_cpu(head->reserved) != 0 ||
+            sizeof(*file) + sizeof(*head) +
+                (size_t)page_count * sizeof(__le64) !=
+                    le32_to_cpu(header->payload_size)) {
+            ret = -EFSCORRUPTED;
+            goto out;
+        }
+        for (i = 0; i < page_count; ++i) {
+            ret = infilfs_rw_tx_defer_free(
+                &pending->tx, le64_to_cpu(pages[i]), 1);
+            if (ret)
+                goto out;
+        }
+    }
+
     ret = infilfs_rw_tx_defer_free(&pending->tx, ii->object_block, 1);
     if (ret)
         goto out;
