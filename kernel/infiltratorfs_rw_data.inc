@@ -2757,6 +2757,10 @@ static ssize_t infilfs_native_extent_write_iter(struct inode *inode,
         return -EINVAL;
     if (!requested)
         return 0;
+    if (iov_iter_count(from) != requested)
+        pr_err_ratelimited(
+            "InfiltratorFS: extent-writer iterator mismatch requested=%zu available=%zu pos=%lld\n",
+            requested, iov_iter_count(from), (long long)pos);
     pending = infilfs_native_pending_get(inode->i_sb, true);
     if (!pending)
         return -ENOMEM;
@@ -2780,6 +2784,11 @@ static ssize_t infilfs_native_extent_write_iter(struct inode *inode,
         ret = infilfs_native_operation_snapshot(pending);
         if (ret)
             break;
+        if (iov_iter_count(from) != requested - done)
+            pr_err_ratelimited(
+                "InfiltratorFS: pre-append iterator mismatch remaining=%zu available=%zu done=%zu pos=%lld\n",
+                requested - done, iov_iter_count(from), done,
+                (long long)(pos + done));
         ret = infilfs_native_append_chunk_locked(
             pending, inode, from, (u64)pos + done, chunk, &consumed,
             &new_file_block, &new_size, &allocated_blocks, tail_id,
@@ -2835,6 +2844,8 @@ static ssize_t infilfs_file_write_iter(struct kiocb *iocb,
     struct inode *inode = file_inode(filep);
     struct address_space *mapping = inode->i_mapping;
     size_t requested = iov_iter_count(from);
+    size_t available_after_wait;
+    size_t available_after_invalidate;
     loff_t pos = iocb->ki_pos;
     loff_t end;
     ssize_t ret;
@@ -2859,11 +2870,22 @@ static ssize_t infilfs_file_write_iter(struct kiocb *iocb,
     ret = file_write_and_wait_range(filep, pos, end);
     if (ret)
         goto out_unlock;
+    available_after_wait = iov_iter_count(from);
+    if (available_after_wait != requested)
+        pr_err_ratelimited(
+            "InfiltratorFS: iterator changed by write-and-wait requested=%zu available=%zu pos=%lld\n",
+            requested, available_after_wait, (long long)pos);
     unmap_mapping_range(mapping, pos, requested, 0);
     ret = invalidate_inode_pages2_range(mapping, pos >> PAGE_SHIFT,
                                         end >> PAGE_SHIFT);
     if (ret)
         goto out_unlock;
+    available_after_invalidate = iov_iter_count(from);
+    if (available_after_invalidate != requested)
+        pr_err_ratelimited(
+            "InfiltratorFS: iterator changed by cache invalidation requested=%zu available=%zu after-wait=%zu pos=%lld\n",
+            requested, available_after_invalidate, available_after_wait,
+            (long long)pos);
 
     if ((u64)pos <= INFILFS_INLINE_DATA_MAX &&
         requested <= INFILFS_INLINE_DATA_MAX - (size_t)pos &&
@@ -2878,6 +2900,10 @@ static ssize_t infilfs_file_write_iter(struct kiocb *iocb,
     }
 
     iocb->ki_pos = pos;
+    if (iov_iter_count(from) != requested)
+        pr_err_ratelimited(
+            "InfiltratorFS: pre-extent-call iterator mismatch requested=%zu available=%zu pos=%lld\n",
+            requested, iov_iter_count(from), (long long)pos);
     ret = infilfs_native_extent_write_iter(inode, &iocb->ki_pos, from,
                                             requested);
 out_unlock:
