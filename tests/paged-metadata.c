@@ -143,14 +143,14 @@ int main(void)
     struct infs_storage storage = make_storage(&image);
     expect(infs_format_storage(&storage, "paged-metadata-test") ==
                INFS_STATUS_OK,
-           "format Format 0.12 volume");
+           "format current-format volume");
 
     struct infs_volume volume;
     storage = make_storage(&image);
     expect(infs_volume_open_storage(&volume, &storage, 1) == INFS_STATUS_OK,
            "open paged volume writable");
-    expect(infs_le16_to_cpu(volume.sb.format_minor) == 12u,
-           "Format minor is 0.12");
+    expect(infs_le16_to_cpu(volume.sb.format_minor) == INFS_FORMAT_MINOR,
+           "current Format minor");
     expect((infs_le64_to_cpu(volume.sb.incompat_flags) &
             INFS_INCOMPAT_PAGED_METADATA) != 0,
            "paged metadata feature enabled");
@@ -161,6 +161,30 @@ int main(void)
         expect(infs_create_file(&volume, path, NULL) == INFS_STATUS_OK,
                "create file beyond old directory/index limits");
     }
+
+    /* Crossing one leaf capacity must create a radix branch, proving the
+     * object index is no longer bounded by the old head-pointer array. */
+    expect((infs_le64_to_cpu(volume.sb.incompat_flags) &
+            INFS_INCOMPAT_INDEX_TREE) != 0,
+           "object-index tree feature enabled");
+    uint64_t index_block = infs_le64_to_cpu(volume.sb.object_index_block);
+    uint8_t *index_object = image.bytes + index_block * INFS_BLOCK_SIZE;
+    expect(infs_validate_object_block(index_object), "validate tree index head");
+    struct infs_object_header_disk *index_header =
+        (struct infs_object_header_disk *)index_object;
+    expect(infs_le16_to_cpu(index_header->object_version) ==
+               INFS_OBJECT_VERSION_TREE,
+           "object index uses tree version");
+    struct infs_index_payload_disk *tree_payload =
+        (struct infs_index_payload_disk *)(index_header + 1);
+    uint64_t tree_root_le = 0;
+    memcpy(&tree_root_le, tree_payload + 1, sizeof(tree_root_le));
+    uint64_t tree_root = infs_le64_to_cpu(tree_root_le);
+    expect(tree_root != 0 && tree_root < TEST_SIZE / INFS_BLOCK_SIZE,
+           "tree root pointer is valid");
+    expect(memcmp(image.bytes + tree_root * INFS_BLOCK_SIZE,
+                  INFS_INDEX_BRANCH_PAGE_MAGIC, 8) == 0,
+           "full index leaf split into radix branch");
 
     struct infs_dir_item *items = NULL;
     size_t count = 0;
