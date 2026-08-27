@@ -23,7 +23,7 @@
 
 #define INFILFS_NATIVE_WRITE_CHUNK (4u * 1024u * 1024u)
 #define INFILFS_NATIVE_IDLE_DELAY HZ
-#define INFILFS_NATIVE_UNDO_MAX 16u
+#define INFILFS_NATIVE_UNDO_INITIAL 16u
 #define INFILFS_NATIVE_CHECKSUM_CACHE_SLOTS 256u
 
 struct infilfs_native_checksum_payload_disk {
@@ -64,8 +64,9 @@ struct infilfs_native_pending {
     size_t operation_deferred_count;
     struct infilfs_rw_free_range operation_last_deferred;
     bool operation_had_last;
-    struct infilfs_native_undo undo[INFILFS_NATIVE_UNDO_MAX];
+    struct infilfs_native_undo *undo;
     unsigned int undo_count;
+    unsigned int undo_capacity;
     u64 pending_bytes;
     u64 publish_threshold;
     bool active;
@@ -202,16 +203,34 @@ static bool infilfs_native_block_private(struct infilfs_native_pending *pending,
 static int infilfs_native_undo_capture(struct infilfs_native_pending *pending,
                                        u64 block)
 {
+    struct infilfs_native_undo *grown;
+    unsigned int new_capacity;
     unsigned int i;
     int ret;
 
     for (i = 0; i < pending->undo_count; ++i)
         if (pending->undo[i].block == block)
             return 0;
-    if (pending->undo_count >= INFILFS_NATIVE_UNDO_MAX)
-        return -E2BIG;
+
+    if (pending->undo_count == pending->undo_capacity) {
+        new_capacity = pending->undo_capacity ?
+            pending->undo_capacity * 2u : INFILFS_NATIVE_UNDO_INITIAL;
+        if (new_capacity < pending->undo_capacity ||
+            (size_t)new_capacity > SIZE_MAX / sizeof(*grown))
+            return -EOVERFLOW;
+        grown = kvmalloc_array(new_capacity, sizeof(*grown), GFP_NOFS);
+        if (!grown)
+            return -ENOMEM;
+        if (pending->undo_count)
+            memcpy(grown, pending->undo,
+                   (size_t)pending->undo_count * sizeof(*grown));
+        kvfree(pending->undo);
+        pending->undo = grown;
+        pending->undo_capacity = new_capacity;
+    }
+
     ret = infilfs_read_block(pending->sb, block,
-                             pending->undo[pending->undo_count].data);
+                              pending->undo[pending->undo_count].data);
     if (ret)
         return ret;
     pending->undo[pending->undo_count].block = block;
@@ -469,6 +488,7 @@ static void infilfs_native_pending_destroy(struct super_block *sb)
     }
     if (pending->active)
         infilfs_rw_tx_abort(&pending->tx);
+    kvfree(pending->undo);
     kfree(pending);
 }
 
@@ -1570,21 +1590,6 @@ static int infilfs_native_store_extent_page(
      * failing the write with -E2BIG; the old private page is then reclaimed at
      * transaction publication.
      */
-    if (old_block && infilfs_native_block_private(pending, old_block) &&
-        pending->undo_count >= INFILFS_NATIVE_UNDO_MAX) {
-        ret = infilfs_rw_tx_alloc(&pending->tx, 1, &new_block);
-        if (ret)
-            return ret;
-        ret = infilfs_native_stage_block(pending->sb, new_block, page);
-        if (ret)
-            return ret;
-        ret = infilfs_rw_tx_defer_free(&pending->tx, old_block, 1);
-        if (ret)
-            return ret;
-        *new_block_out = new_block;
-        return 0;
-    }
-
     if (old_block)
         return infilfs_native_store_private_or_cow(
             pending, old_block, page, new_block_out);
