@@ -2118,9 +2118,9 @@ static int infilfs_native_build_extent_page(
  */
 static int infilfs_native_try_single_paged_overwrite(
     struct infilfs_native_pending *pending, struct inode *inode,
-    struct iov_iter *from, u64 pos, size_t bytes,
+    const u8 write_data[INFILFS_DISK_BLOCK_SIZE], u64 pos, size_t bytes,
     const u8 old_object[INFILFS_DISK_BLOCK_SIZE],
-    size_t *consumed_out, u64 *new_file_block_out, u64 *new_size_out,
+    u64 *new_file_block_out, u64 *new_size_out,
     u64 *allocated_blocks_out, u8 final_tail_id[16],
     u64 *final_tail_block, u64 *final_tail_start)
 {
@@ -2141,10 +2141,8 @@ static int infilfs_native_try_single_paged_overwrite(
     struct infilfs_extent_head_disk *new_head;
     __le64 *new_pointers;
     struct infilfs_data_checksum_disk digest;
-    struct iov_iter source;
     u8 *page_block = NULL;
     u8 *new_object = NULL;
-    u8 *data = NULL;
     u64 logical;
     u64 old_size;
     u64 old_page_block = 0;
@@ -2164,13 +2162,11 @@ static int infilfs_native_try_single_paged_overwrite(
     u32 new_extent_total;
     u32 change_count = 0;
     u32 lo, hi;
-    size_t copied = 0;
     bool file_repoint = false;
     bool found_page = false;
     bool found_extent = false;
     int ret = -EOPNOTSUPP;
 
-    *consumed_out = 0;
     if (bytes != INFILFS_DISK_BLOCK_SIZE ||
         (pos & (INFILFS_DISK_BLOCK_SIZE - 1u)) != 0 ||
         le16_to_cpu(old_header->object_version) != INFILFS_OBJECT_VERSION_PAGED)
@@ -2195,30 +2191,10 @@ static int infilfs_native_try_single_paged_overwrite(
 
     page_block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
     new_object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
-    data = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
     local = kvmalloc_array(INFILFS_EXTENTS_PER_PAGE + 2u,
                            sizeof(*local), GFP_NOFS);
-    if (!page_block || !new_object || !data || !local) {
+    if (!page_block || !new_object || !local) {
         ret = -ENOMEM;
-        goto out;
-    }
-
-    /*
-     * Snapshot the caller's iterator and copy the 4 KiB payload before any
-     * transaction mutation or potentially blocking metadata traversal.  The
-     * real iterator advances only after the filesystem operation succeeds.
-     * If this iterator shape cannot provide one full block, leave it untouched
-     * and let the qualified generic path handle the request.
-     */
-    source = *from;
-    if (iov_iter_count(&source) < INFILFS_DISK_BLOCK_SIZE) {
-        ret = -EOPNOTSUPP;
-        goto out;
-    }
-    copied = copy_from_iter(data, INFILFS_DISK_BLOCK_SIZE, &source);
-    if (copied != INFILFS_DISK_BLOCK_SIZE) {
-        copied = 0;
-        ret = -EOPNOTSUPP;
         goto out;
     }
 
@@ -2314,7 +2290,11 @@ static int infilfs_native_try_single_paged_overwrite(
         ret = -EFSCORRUPTED;
         goto out;
     }
-    if (old_flags == INFILFS_EXTENT_NORMAL) {
+    if (old_flags == INFILFS_EXTENT_HOLE) {
+        ret = -EOPNOTSUPP;
+        goto out;
+    }
+    {
         u64 base = le64_to_cpu(entries[extent_index].physical_block);
 
         if (!base) {
@@ -2332,10 +2312,11 @@ static int infilfs_native_try_single_paged_overwrite(
     if (ret)
         goto out;
 
-    ret = infilfs_native_stage_block(inode->i_sb, replacement_block, data);
+    ret = infilfs_native_stage_block(inode->i_sb, replacement_block,
+                                     write_data);
     if (ret)
         goto out;
-    infilfs_native_block_digest(data, &digest);
+    infilfs_native_block_digest(write_data, &digest);
 
     /*
      * Rebuild only the target page in canonical order.  At most two entries
@@ -2398,12 +2379,10 @@ static int infilfs_native_try_single_paged_overwrite(
     if (ret)
         goto out;
 
-    if (old_flags == INFILFS_EXTENT_NORMAL) {
-        ret = infilfs_ns_free_unshared_run(
-            pending, ii->object_id, old_physical, 1);
-        if (ret)
-            goto out;
-    }
+    ret = infilfs_ns_free_unshared_run(
+        pending, ii->object_id, old_physical, 1);
+    if (ret)
+        goto out;
 
     memcpy(new_object, old_object, INFILFS_DISK_BLOCK_SIZE);
     new_header = (struct infilfs_object_header_disk *)new_object;
@@ -2505,15 +2484,9 @@ static int infilfs_native_try_single_paged_overwrite(
     *new_size_out = old_size;
     *allocated_blocks_out =
         inode->i_blocks / (INFILFS_DISK_BLOCK_SIZE >> 9);
-    if (old_flags == INFILFS_EXTENT_HOLE)
-        (*allocated_blocks_out)++;
-    iov_iter_advance(from, INFILFS_DISK_BLOCK_SIZE);
-    *consumed_out = INFILFS_DISK_BLOCK_SIZE;
-    copied = 0;
     ret = 0;
 out:
     kvfree(local);
-    kfree(data);
     kfree(new_object);
     kfree(page_block);
     return ret;
@@ -2567,14 +2540,43 @@ static int infilfs_native_append_chunk_locked(
                               INFILFS_OBJECT_FILE, ii->object_id, old_object);
     if (ret)
         goto out;
-    ret = infilfs_native_try_single_paged_overwrite(
-        pending, inode, from, pos, bytes, old_object, consumed_out,
-        new_file_block_out, new_size_out, allocated_blocks_out,
-        final_tail_id, final_tail_block, final_tail_start);
-    if (!ret)
-        goto out;
-    if (ret != -EOPNOTSUPP)
-        goto out;
+    old_header = (struct infilfs_object_header_disk *)old_object;
+    old_file = (struct infilfs_file_payload_disk *)(old_header + 1);
+    if (bytes == INFILFS_DISK_BLOCK_SIZE &&
+        (pos & (INFILFS_DISK_BLOCK_SIZE - 1u)) == 0 &&
+        le16_to_cpu(old_header->object_version) ==
+            INFILFS_OBJECT_VERSION_PAGED &&
+        pos <= le64_to_cpu(old_file->attributes.logical_size) &&
+        bytes <= le64_to_cpu(old_file->attributes.logical_size) - pos) {
+        u8 *fast_data = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+        size_t fast_copied;
+
+        if (!fast_data) {
+            ret = -ENOMEM;
+            goto out;
+        }
+        fast_copied = copy_from_iter(
+            fast_data, INFILFS_DISK_BLOCK_SIZE, from);
+        if (fast_copied != INFILFS_DISK_BLOCK_SIZE) {
+            if (fast_copied)
+                iov_iter_revert(from, fast_copied);
+            kfree(fast_data);
+            ret = -EFAULT;
+            goto out;
+        }
+        ret = infilfs_native_try_single_paged_overwrite(
+            pending, inode, fast_data, pos, bytes, old_object,
+            new_file_block_out, new_size_out, allocated_blocks_out,
+            final_tail_id, final_tail_block, final_tail_start);
+        kfree(fast_data);
+        if (!ret) {
+            *consumed_out = INFILFS_DISK_BLOCK_SIZE;
+            goto out;
+        }
+        iov_iter_revert(from, INFILFS_DISK_BLOCK_SIZE);
+        if (ret != -EOPNOTSUPP)
+            goto out;
+    }
 
     ret = infilfs_native_collect_extents(pending, inode, old_object,
         &old_extents, &old_extent_count, &old_blocks, &was_inline);
