@@ -352,7 +352,7 @@ static int infilfs_native_index_locator_build(
            (size_t)pending->index_locator_capacity *
                sizeof(*pending->index_locators));
     pending->index_locator_count = 0;
-    pending->index_locator_valid = false;
+    pending->index_locator_valid = true;
 
     page_block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
     if (!page_block)
@@ -741,6 +741,8 @@ static int infilfs_native_operation_rollback(
             pending->operation_last_deferred;
     sbi->disk = pending->operation_next_sb;
     pending->undo_count = 0;
+    infilfs_native_writer_tail_invalidate(pending);
+    infilfs_native_index_locator_invalidate(pending);
     if (first_error) {
         pending->commit_failed = true;
         sbi->write_poisoned = true;
@@ -844,6 +846,7 @@ static void infilfs_native_pending_destroy(struct super_block *sb)
     if (pending->active)
         infilfs_rw_tx_abort(&pending->tx);
     kvfree(pending->undo);
+    kvfree(pending->index_locators);
     kfree(pending);
 }
 
