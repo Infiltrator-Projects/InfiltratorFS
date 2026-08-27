@@ -202,8 +202,12 @@ jobs:
         run: cmake --build build --parallel
       - name: Reject FUSE build artifacts
         run: test ! -e build/infilfs-fuse
-      - name: Build Linux release packages
-        run: bash packaging/build-linux-packages.sh build dist
+      - name: Build Linux release packages from an arbitrary working directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          bash "$GITHUB_WORKSPACE/packaging/build-linux-packages.sh" "$GITHUB_WORKSPACE/build" "$GITHUB_WORKSPACE/dist"
       - name: Validate native installer and Debian metadata
         shell: bash
         run: |
