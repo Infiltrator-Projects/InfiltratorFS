@@ -2083,6 +2083,428 @@ paged_out:
     return 0;
 }
 
+
+static int infilfs_native_build_extent_page(
+    struct infilfs_native_pending *pending, const u8 owner_id[16],
+    const struct infilfs_extent_disk *extents, u32 count,
+    u8 page_block[INFILFS_DISK_BLOCK_SIZE])
+{
+    struct infilfs_metadata_page_disk *page;
+
+    if (!count || count > INFILFS_EXTENTS_PER_PAGE)
+        return -EINVAL;
+    infilfs_rw_init_page(page_block, infilfs_extent_page_magic,
+                         owner_id, pending->tx.generation);
+    page = (struct infilfs_metadata_page_disk *)page_block;
+    page->entry_count = cpu_to_le32(count);
+    page->bytes_used = cpu_to_le32(count * sizeof(*extents));
+    memcpy(page + 1, extents, (size_t)count * sizeof(*extents));
+    return infilfs_rw_finalize_page(page_block);
+}
+
+/*
+ * Fast path for the workload that exposed the mounted random-write scaling
+ * defect: one aligned 4 KiB overwrite inside an existing paged file.
+ *
+ * The generic path remains authoritative for growth, partial-block writes,
+ * inline files, sparse insertion and multi-block updates.  This path avoids
+ * flattening every extent page merely to replace one logical block.  It
+ * binary-searches the paged map, rewrites only the affected extent page
+ * (splitting that page locally when necessary), updates the one checksum
+ * group, and CoWs the file head.
+ */
+static int infilfs_native_try_single_paged_overwrite(
+    struct infilfs_native_pending *pending, struct inode *inode,
+    struct iov_iter *from, u64 pos, size_t bytes,
+    const u8 old_object[INFILFS_DISK_BLOCK_SIZE],
+    size_t *consumed_out, u64 *new_file_block_out, u64 *new_size_out,
+    u64 *allocated_blocks_out, u8 final_tail_id[16],
+    u64 *final_tail_block, u64 *final_tail_start)
+{
+    struct infilfs_inode_info *ii = INFILFS_I(inode);
+    const struct infilfs_object_header_disk *old_header =
+        (const struct infilfs_object_header_disk *)old_object;
+    const struct infilfs_file_payload_disk *old_file =
+        (const struct infilfs_file_payload_disk *)(old_header + 1);
+    const struct infilfs_extent_head_disk *old_head;
+    const __le64 *old_pointers;
+    struct infilfs_native_index_change changes[4] = {0};
+    struct infilfs_file_payload_disk working_file;
+    struct infilfs_extent_disk *local = NULL;
+    struct infilfs_extent_disk *entries;
+    struct infilfs_metadata_page_disk *page;
+    struct infilfs_object_header_disk *new_header;
+    struct infilfs_file_payload_disk *new_file;
+    struct infilfs_extent_head_disk *new_head;
+    __le64 *new_pointers;
+    struct infilfs_data_checksum_disk digest;
+    u8 *page_block = NULL;
+    u8 *new_object = NULL;
+    u8 *data = NULL;
+    u64 logical;
+    u64 old_size;
+    u64 old_page_block = 0;
+    u64 replacement_block = 0;
+    u64 first_page_block = 0;
+    u64 second_page_block = 0;
+    u64 old_physical = 0;
+    u64 extent_start;
+    u64 extent_end;
+    u32 old_flags;
+    u32 old_page_count;
+    u32 old_extent_total;
+    u32 page_index = 0;
+    u32 extent_index = 0;
+    u32 page_entries;
+    u32 local_count = 0;
+    u32 new_extent_total;
+    u32 change_count = 0;
+    u32 lo, hi;
+    size_t copied = 0;
+    bool file_repoint = false;
+    bool found_page = false;
+    bool found_extent = false;
+    int ret = -EOPNOTSUPP;
+
+    *consumed_out = 0;
+    if (bytes != INFILFS_DISK_BLOCK_SIZE ||
+        (pos & (INFILFS_DISK_BLOCK_SIZE - 1u)) != 0 ||
+        le16_to_cpu(old_header->object_version) != INFILFS_OBJECT_VERSION_PAGED)
+        return -EOPNOTSUPP;
+
+    old_size = le64_to_cpu(old_file->attributes.logical_size);
+    if (pos > old_size || bytes > old_size - pos ||
+        !le32_to_cpu(old_file->extent_count))
+        return -EOPNOTSUPP;
+
+    old_head = (const struct infilfs_extent_head_disk *)(old_file + 1);
+    old_page_count = le32_to_cpu(old_head->page_count);
+    old_extent_total = le32_to_cpu(old_file->extent_count);
+    if (!old_page_count || old_page_count > INFILFS_EXTENT_PAGE_POINTERS ||
+        le32_to_cpu(old_head->reserved) != 0 ||
+        sizeof(*old_file) + sizeof(*old_head) +
+            (size_t)old_page_count * sizeof(__le64) !=
+                le32_to_cpu(old_header->payload_size))
+        return -EFSCORRUPTED;
+    old_pointers = (const __le64 *)(old_head + 1);
+    logical = pos >> INFILFS_DISK_BLOCK_SHIFT;
+
+    page_block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+    new_object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+    data = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+    local = kvmalloc_array(INFILFS_EXTENTS_PER_PAGE + 2u,
+                           sizeof(*local), GFP_NOFS);
+    if (!page_block || !new_object || !data || !local) {
+        ret = -ENOMEM;
+        goto out;
+    }
+
+    /*
+     * Every extent page covers one continuous logical interval.  Binary
+     * search those intervals instead of walking all pages and materialising
+     * the complete map.
+     */
+    lo = 0;
+    hi = old_page_count;
+    while (lo < hi) {
+        u32 mid = lo + (hi - lo) / 2u;
+        u64 block = le64_to_cpu(old_pointers[mid]);
+        u64 first_logical;
+        u64 last_logical;
+        u32 n;
+
+        ret = infilfs_read_block(inode->i_sb, block, page_block);
+        if (ret)
+            goto out;
+        if (!infilfs_metadata_page_valid(inode->i_sb, page_block,
+                                         infilfs_extent_page_magic,
+                                         ii->object_id)) {
+            ret = -EFSCORRUPTED;
+            goto out;
+        }
+        page = (struct infilfs_metadata_page_disk *)page_block;
+        n = le32_to_cpu(page->entry_count);
+        if (!n || n > INFILFS_EXTENTS_PER_PAGE ||
+            le32_to_cpu(page->bytes_used) != n * sizeof(*local)) {
+            ret = -EFSCORRUPTED;
+            goto out;
+        }
+        entries = (struct infilfs_extent_disk *)(page + 1);
+        first_logical = le64_to_cpu(entries[0].logical_block);
+        last_logical = le64_to_cpu(entries[n - 1u].logical_block) +
+            le32_to_cpu(entries[n - 1u].block_count);
+        if (last_logical <= first_logical) {
+            ret = -EFSCORRUPTED;
+            goto out;
+        }
+        if (logical < first_logical) {
+            hi = mid;
+        } else if (logical >= last_logical) {
+            lo = mid + 1u;
+        } else {
+            page_index = mid;
+            old_page_block = block;
+            page_entries = n;
+            found_page = true;
+            break;
+        }
+    }
+    if (!found_page) {
+        ret = -EFSCORRUPTED;
+        goto out;
+    }
+
+    page = (struct infilfs_metadata_page_disk *)page_block;
+    entries = (struct infilfs_extent_disk *)(page + 1);
+    lo = 0;
+    hi = page_entries;
+    while (lo < hi) {
+        u32 mid = lo + (hi - lo) / 2u;
+        u64 start = le64_to_cpu(entries[mid].logical_block);
+        u64 end = start + le32_to_cpu(entries[mid].block_count);
+
+        if (end <= start) {
+            ret = -EFSCORRUPTED;
+            goto out;
+        }
+        if (logical < start)
+            hi = mid;
+        else if (logical >= end)
+            lo = mid + 1u;
+        else {
+            extent_index = mid;
+            found_extent = true;
+            break;
+        }
+    }
+    if (!found_extent) {
+        ret = -EFSCORRUPTED;
+        goto out;
+    }
+
+    extent_start = le64_to_cpu(entries[extent_index].logical_block);
+    extent_end = extent_start +
+        le32_to_cpu(entries[extent_index].block_count);
+    old_flags = le32_to_cpu(entries[extent_index].flags);
+    if (old_flags != INFILFS_EXTENT_NORMAL &&
+        old_flags != INFILFS_EXTENT_HOLE) {
+        ret = -EFSCORRUPTED;
+        goto out;
+    }
+    if (old_flags == INFILFS_EXTENT_NORMAL) {
+        u64 base = le64_to_cpu(entries[extent_index].physical_block);
+
+        if (!base) {
+            ret = -EFSCORRUPTED;
+            goto out;
+        }
+        old_physical = base + logical - extent_start;
+    }
+
+    ret = infilfs_native_alloc_data_exact(
+        pending, 1,
+        old_physical && old_physical + 1u < pending->tx.sbi->device_blocks ?
+            old_physical + 1u : 1u,
+        &replacement_block);
+    if (ret)
+        goto out;
+
+    copied = copy_from_iter(data, INFILFS_DISK_BLOCK_SIZE, from);
+    if (copied != INFILFS_DISK_BLOCK_SIZE) {
+        if (copied)
+            iov_iter_revert(from, copied);
+        copied = 0;
+        ret = -EFAULT;
+        goto out;
+    }
+    ret = infilfs_native_stage_block(inode->i_sb, replacement_block, data);
+    if (ret)
+        goto out;
+    infilfs_native_block_digest(data, &digest);
+
+    /*
+     * Rebuild only the target page in canonical order.  At most two entries
+     * are added by replacing one block in the middle of an existing extent.
+     */
+    for (lo = 0; lo < page_entries; ++lo) {
+        u64 start = le64_to_cpu(entries[lo].logical_block);
+        u64 physical = le64_to_cpu(entries[lo].physical_block);
+        u32 count = le32_to_cpu(entries[lo].block_count);
+        u32 flags = le32_to_cpu(entries[lo].flags);
+
+        if (lo != extent_index) {
+            ret = infilfs_native_extent_append(
+                local, INFILFS_EXTENTS_PER_PAGE + 2u, &local_count,
+                start, physical, count, flags);
+            if (ret)
+                goto out;
+            continue;
+        }
+
+        if (logical > extent_start) {
+            ret = infilfs_native_extent_append(
+                local, INFILFS_EXTENTS_PER_PAGE + 2u, &local_count,
+                extent_start,
+                old_flags == INFILFS_EXTENT_NORMAL ?
+                    le64_to_cpu(entries[lo].physical_block) : 0,
+                (u32)(logical - extent_start), old_flags);
+            if (ret)
+                goto out;
+        }
+        ret = infilfs_native_extent_append(
+            local, INFILFS_EXTENTS_PER_PAGE + 2u, &local_count,
+            logical, replacement_block, 1, INFILFS_EXTENT_NORMAL);
+        if (ret)
+            goto out;
+        if (logical + 1u < extent_end) {
+            ret = infilfs_native_extent_append(
+                local, INFILFS_EXTENTS_PER_PAGE + 2u, &local_count,
+                logical + 1u,
+                old_flags == INFILFS_EXTENT_NORMAL ?
+                    le64_to_cpu(entries[lo].physical_block) +
+                        (logical + 1u - extent_start) : 0,
+                (u32)(extent_end - logical - 1u), old_flags);
+            if (ret)
+                goto out;
+        }
+    }
+
+    if (old_extent_total < page_entries) {
+        ret = -EFSCORRUPTED;
+        goto out;
+    }
+    new_extent_total = old_extent_total - page_entries + local_count;
+
+    memcpy(&working_file, old_file, sizeof(working_file));
+    ret = infilfs_native_checksum_update_existing_group(
+        pending, &working_file, ii->object_id, logical, 1, &digest,
+        changes, ARRAY_SIZE(changes), &change_count,
+        final_tail_id, final_tail_block, final_tail_start);
+    if (ret)
+        goto out;
+
+    if (old_flags == INFILFS_EXTENT_NORMAL) {
+        ret = infilfs_ns_free_unshared_run(
+            pending, ii->object_id, old_physical, 1);
+        if (ret)
+            goto out;
+    }
+
+    memcpy(new_object, old_object, INFILFS_DISK_BLOCK_SIZE);
+    new_header = (struct infilfs_object_header_disk *)new_object;
+    new_file = (struct infilfs_file_payload_disk *)(new_header + 1);
+    new_head = (struct infilfs_extent_head_disk *)(new_file + 1);
+    new_pointers = (__le64 *)(new_head + 1);
+
+    if (local_count <= INFILFS_EXTENTS_PER_PAGE) {
+        ret = infilfs_native_build_extent_page(
+            pending, ii->object_id, local, local_count, page_block);
+        if (ret)
+            goto out;
+        ret = infilfs_native_store_extent_page(
+            pending, old_page_block, page_block, &first_page_block);
+        if (ret)
+            goto out;
+        new_pointers[page_index] = cpu_to_le64(first_page_block);
+    } else {
+        u32 first_count;
+        u32 second_count;
+
+        if (old_page_count >= INFILFS_EXTENT_PAGE_POINTERS) {
+            ret = -EFBIG;
+            goto out;
+        }
+        first_count = local_count / 2u;
+        second_count = local_count - first_count;
+        if (!first_count || first_count > INFILFS_EXTENTS_PER_PAGE ||
+            !second_count || second_count > INFILFS_EXTENTS_PER_PAGE) {
+            ret = -EFSCORRUPTED;
+            goto out;
+        }
+
+        ret = infilfs_native_build_extent_page(
+            pending, ii->object_id, local, first_count, page_block);
+        if (ret)
+            goto out;
+        ret = infilfs_native_store_extent_page(
+            pending, old_page_block, page_block, &first_page_block);
+        if (ret)
+            goto out;
+
+        ret = infilfs_native_build_extent_page(
+            pending, ii->object_id, local + first_count,
+            second_count, page_block);
+        if (ret)
+            goto out;
+        ret = infilfs_native_store_extent_page(
+            pending, 0, page_block, &second_page_block);
+        if (ret)
+            goto out;
+
+        memmove(&new_pointers[page_index + 2u],
+                &new_pointers[page_index + 1u],
+                (size_t)(old_page_count - page_index - 1u) *
+                    sizeof(*new_pointers));
+        new_pointers[page_index] = cpu_to_le64(first_page_block);
+        new_pointers[page_index + 1u] = cpu_to_le64(second_page_block);
+        old_page_count++;
+        new_head->page_count = cpu_to_le32(old_page_count);
+        new_header->payload_size = cpu_to_le32(
+            sizeof(*new_file) + sizeof(*new_head) +
+            (size_t)old_page_count * sizeof(*new_pointers));
+    }
+
+    memcpy(new_file->checksum_head_id, working_file.checksum_head_id, 16);
+    new_file->extent_count = cpu_to_le32(new_extent_total);
+    new_file->data_checksum_type = cpu_to_le32(INFILFS_CHECKSUM_SHA256);
+    new_file->attributes.modification_time_ns = cpu_to_le64(ktime_get_real_ns());
+    new_file->attributes.change_time_ns =
+        new_file->attributes.modification_time_ns;
+    new_header->generation = cpu_to_le64(pending->tx.generation);
+
+    ret = infilfs_rw_finalize_object(new_object);
+    if (ret)
+        goto out;
+    ret = infilfs_native_store_private_or_cow(
+        pending, ii->object_block, new_object,
+        new_file_block_out);
+    if (ret)
+        goto out;
+    file_repoint = *new_file_block_out != ii->object_block;
+    if (file_repoint) {
+        if (change_count >= ARRAY_SIZE(changes)) {
+            ret = -ENOSPC;
+            goto out;
+        }
+        memcpy(changes[change_count].object_id, ii->object_id, 16);
+        changes[change_count].object_block = *new_file_block_out;
+        changes[change_count].object_type = INFILFS_OBJECT_FILE;
+        changes[change_count].add = false;
+        change_count++;
+    }
+
+    ret = infilfs_native_index_update(pending, changes, change_count);
+    if (ret)
+        goto out;
+    pending->tx.next_sb.generation = cpu_to_le64(pending->tx.generation);
+    *new_size_out = old_size;
+    *allocated_blocks_out =
+        inode->i_blocks / (INFILFS_DISK_BLOCK_SIZE >> 9);
+    if (old_flags == INFILFS_EXTENT_HOLE)
+        (*allocated_blocks_out)++;
+    *consumed_out = INFILFS_DISK_BLOCK_SIZE;
+    copied = 0;
+    ret = 0;
+out:
+    if (ret && copied)
+        iov_iter_revert(from, copied);
+    kvfree(local);
+    kfree(data);
+    kfree(new_object);
+    kfree(page_block);
+    return ret;
+}
+
 static int infilfs_native_append_chunk_locked(
     struct infilfs_native_pending *pending, struct inode *inode,
     struct iov_iter *from, u64 pos, size_t bytes, size_t *consumed_out,
@@ -2127,6 +2549,19 @@ static int infilfs_native_append_chunk_locked(
         ret = -ENOMEM;
         goto out;
     }
+    ret = infilfs_read_object(inode->i_sb, ii->object_block,
+                              INFILFS_OBJECT_FILE, ii->object_id, old_object);
+    if (ret)
+        goto out;
+    ret = infilfs_native_try_single_paged_overwrite(
+        pending, inode, from, pos, bytes, old_object, consumed_out,
+        new_file_block_out, new_size_out, allocated_blocks_out,
+        final_tail_id, final_tail_block, final_tail_start);
+    if (!ret)
+        goto out;
+    if (ret != -EOPNOTSUPP)
+        goto out;
+
     ret = infilfs_native_collect_extents(pending, inode, old_object,
         &old_extents, &old_extent_count, &old_blocks, &was_inline);
     if (ret)
