@@ -2555,8 +2555,17 @@ static int infilfs_native_append_chunk_locked(
             ret = -ENOMEM;
             goto out;
         }
-        fast_copied = copy_from_iter(
-            fast_data, INFILFS_DISK_BLOCK_SIZE, from);
+        {
+            size_t fast_available = iov_iter_count(from);
+
+            fast_copied = copy_from_iter(
+                fast_data, INFILFS_DISK_BLOCK_SIZE, from);
+            if (fast_copied != INFILFS_DISK_BLOCK_SIZE)
+                pr_err_ratelimited(
+                    "InfiltratorFS: paged fast-copy short available=%zu copied=%zu requested=%u\n",
+                    fast_available, fast_copied,
+                    INFILFS_DISK_BLOCK_SIZE);
+        }
         if (fast_copied != INFILFS_DISK_BLOCK_SIZE) {
             if (fast_copied)
                 iov_iter_revert(from, fast_copied);
@@ -2645,9 +2654,19 @@ generic_extent_write:
             if (ret)
                 goto out;
         }
-        if (copy_from_iter(data_block + offset, take, from) != take) {
-            ret = -EFAULT;
-            goto out;
+        {
+            size_t available = iov_iter_count(from);
+            size_t copied_now =
+                copy_from_iter(data_block + offset, take, from);
+
+            if (copied_now != take) {
+                pr_err_ratelimited(
+                    "InfiltratorFS: generic extent copy short available=%zu copied=%zu requested=%zu logical=%llu\n",
+                    available, copied_now, take,
+                    (unsigned long long)logical);
+                ret = -EFAULT;
+                goto out;
+            }
         }
         consumed += take;
         ret = infilfs_native_stage_block(inode->i_sb,
