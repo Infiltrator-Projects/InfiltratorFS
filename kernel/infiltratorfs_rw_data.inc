@@ -25,6 +25,7 @@
 #define INFILFS_NATIVE_IDLE_DELAY HZ
 #define INFILFS_NATIVE_UNDO_INITIAL 16u
 #define INFILFS_NATIVE_CHECKSUM_CACHE_SLOTS 256u
+#define INFILFS_NATIVE_CHECKSUM_GROUP_CACHE_SLOTS 4096u
 
 struct infilfs_native_checksum_payload_disk {
     u8 owner_object_id[16];
@@ -96,6 +97,9 @@ static DEFINE_MUTEX(infilfs_native_pending_list_lock);
 static DEFINE_SPINLOCK(infilfs_native_checksum_cache_lock);
 static struct infilfs_native_checksum_cache_entry
     infilfs_native_checksum_cache[INFILFS_NATIVE_CHECKSUM_CACHE_SLOTS];
+static struct infilfs_native_checksum_cache_entry
+    infilfs_native_checksum_group_cache[
+        INFILFS_NATIVE_CHECKSUM_GROUP_CACHE_SLOTS];
 
 /* Implemented by the namespace layer after this data layer is composed. */
 static int infilfs_ns_free_unshared_run(
@@ -124,6 +128,10 @@ static void infilfs_native_checksum_cache_invalidate_sb(struct super_block *sb)
         if (infilfs_native_checksum_cache[i].valid &&
             infilfs_native_checksum_cache[i].sb == sb)
             infilfs_native_checksum_cache[i].valid = false;
+    for (i = 0; i < INFILFS_NATIVE_CHECKSUM_GROUP_CACHE_SLOTS; ++i)
+        if (infilfs_native_checksum_group_cache[i].valid &&
+            infilfs_native_checksum_group_cache[i].sb == sb)
+            infilfs_native_checksum_group_cache[i].valid = false;
     spin_unlock_irqrestore(&infilfs_native_checksum_cache_lock, flags);
 }
 
@@ -160,6 +168,61 @@ static void infilfs_native_checksum_cache_store(
 
     spin_lock_irqsave(&infilfs_native_checksum_cache_lock, flags);
     entry = &infilfs_native_checksum_cache[slot];
+    memset(entry, 0, sizeof(*entry));
+    entry->sb = sb;
+    memcpy(entry->owner_id, owner_id, 16);
+    memcpy(entry->object_id, object_id, 16);
+    entry->object_block = object_block;
+    entry->start_logical = start_logical;
+    entry->valid = true;
+    spin_unlock_irqrestore(&infilfs_native_checksum_cache_lock, flags);
+}
+
+static u32 infilfs_native_checksum_group_slot(const u8 owner_id[16],
+                                              u64 start_logical)
+{
+    u32 h = infilfs_native_id_hash(owner_id);
+
+    h ^= (u32)start_logical;
+    h *= 16777619u;
+    h ^= (u32)(start_logical >> 32);
+    h *= 16777619u;
+    return h & (INFILFS_NATIVE_CHECKSUM_GROUP_CACHE_SLOTS - 1u);
+}
+
+static bool infilfs_native_checksum_group_cache_lookup(
+    struct super_block *sb, const u8 owner_id[16], u64 start_logical,
+    struct infilfs_native_checksum_cache_entry *out)
+{
+    unsigned long flags;
+    u32 slot = infilfs_native_checksum_group_slot(owner_id, start_logical);
+    bool found = false;
+
+    spin_lock_irqsave(&infilfs_native_checksum_cache_lock, flags);
+    if (infilfs_native_checksum_group_cache[slot].valid &&
+        infilfs_native_checksum_group_cache[slot].sb == sb &&
+        infilfs_native_checksum_group_cache[slot].start_logical ==
+            start_logical &&
+        memcmp(infilfs_native_checksum_group_cache[slot].owner_id,
+               owner_id, 16) == 0) {
+        if (out)
+            *out = infilfs_native_checksum_group_cache[slot];
+        found = true;
+    }
+    spin_unlock_irqrestore(&infilfs_native_checksum_cache_lock, flags);
+    return found;
+}
+
+static void infilfs_native_checksum_group_cache_store(
+    struct super_block *sb, const u8 owner_id[16], const u8 object_id[16],
+    u64 object_block, u64 start_logical)
+{
+    unsigned long flags;
+    u32 slot = infilfs_native_checksum_group_slot(owner_id, start_logical);
+    struct infilfs_native_checksum_cache_entry *entry;
+
+    spin_lock_irqsave(&infilfs_native_checksum_cache_lock, flags);
+    entry = &infilfs_native_checksum_group_cache[slot];
     memset(entry, 0, sizeof(*entry));
     entry->sb = sb;
     memcpy(entry->owner_id, owner_id, 16);
@@ -917,6 +980,106 @@ static int infilfs_native_checksum_decode(
     return 0;
 }
 
+static int infilfs_native_checksum_find_group(
+    struct super_block *sb, const u8 owner_id[16], const u8 head_id[16],
+    u64 group_start, struct infilfs_native_checksum_cache_entry *out)
+{
+    struct infilfs_native_checksum_cache_entry cached;
+    struct infilfs_native_checksum_payload_disk *payload;
+    u8 current_id[16];
+    u8 *object;
+    u64 previous_start = 0;
+    bool have_previous = false;
+    unsigned int guard;
+    int ret;
+
+    if (!memchr_inv(head_id, 0, 16))
+        return -ENOENT;
+
+    object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+    if (!object)
+        return -ENOMEM;
+
+    if (infilfs_native_checksum_group_cache_lookup(
+            sb, owner_id, group_start, &cached)) {
+        u64 indexed_block = 0;
+        u16 indexed_type = 0;
+
+        ret = infilfs_index_lookup(sb, cached.object_id, &indexed_block,
+                                   &indexed_type);
+        if (!ret && indexed_type == INFILFS_OBJECT_CHECKSUM &&
+            indexed_block == cached.object_block) {
+            ret = infilfs_native_checksum_decode(
+                sb, owner_id, cached.object_id, cached.object_block,
+                object, &payload);
+            if (!ret &&
+                le64_to_cpu(payload->start_logical_block) == group_start) {
+                if (out)
+                    *out = cached;
+                kfree(object);
+                return 0;
+            }
+        }
+    }
+
+    memcpy(current_id, head_id, sizeof(current_id));
+    for (guard = 0; guard < 1048576u &&
+         memchr_inv(current_id, 0, sizeof(current_id)); ++guard) {
+        struct infilfs_native_checksum_cache_entry found;
+        u8 next_id[16];
+        u64 block;
+        u64 start;
+        u16 type;
+
+        ret = infilfs_index_lookup(sb, current_id, &block, &type);
+        if (ret)
+            goto out;
+        if (type != INFILFS_OBJECT_CHECKSUM) {
+            ret = -EFSCORRUPTED;
+            goto out;
+        }
+        ret = infilfs_native_checksum_decode(
+            sb, owner_id, current_id, block, object, &payload);
+        if (ret)
+            goto out;
+        start = le64_to_cpu(payload->start_logical_block);
+        if ((start % INFILFS_NATIVE_CHECKSUMS_PER_OBJECT) != 0 ||
+            (have_previous && start <= previous_start)) {
+            ret = -EFSCORRUPTED;
+            goto out;
+        }
+
+        infilfs_native_checksum_group_cache_store(
+            sb, owner_id, current_id, block, start);
+        if (start == group_start) {
+            memset(&found, 0, sizeof(found));
+            found.sb = sb;
+            memcpy(found.owner_id, owner_id, 16);
+            memcpy(found.object_id, current_id, 16);
+            found.object_block = block;
+            found.start_logical = start;
+            found.valid = true;
+            if (out)
+                *out = found;
+            ret = 0;
+            goto out;
+        }
+        if (start > group_start) {
+            ret = -ENOENT;
+            goto out;
+        }
+
+        memcpy(next_id, payload->next_object_id, sizeof(next_id));
+        previous_start = start;
+        have_previous = true;
+        memcpy(current_id, next_id, sizeof(current_id));
+    }
+    ret = -ENOENT;
+out:
+    kfree(object);
+    return ret;
+}
+
 static int infilfs_native_checksum_tail(
     struct super_block *sb, const u8 owner_id[16], const u8 head_id[16],
     u8 tail_id[16], u64 *tail_block_out, u64 *tail_start_out,
@@ -1180,6 +1343,116 @@ static int infilfs_native_checksum_insert_node(
  * copy-on-written, missing sparse groups are inserted in order, and the one
  * predecessor whose next pointer changes is rewritten in the same operation.
  */
+static int infilfs_native_checksum_update_existing_group(
+    struct infilfs_native_pending *pending,
+    struct infilfs_file_payload_disk *file, const u8 owner_id[16],
+    u64 touched_start, u64 touched_count,
+    const struct infilfs_data_checksum_disk *digests,
+    struct infilfs_native_index_change *changes, u32 change_capacity,
+    u32 *change_count, u8 final_tail_id[16], u64 *final_tail_block,
+    u64 *final_tail_start)
+{
+    const u64 per = INFILFS_NATIVE_CHECKSUMS_PER_OBJECT;
+    struct infilfs_native_checksum_cache_entry target;
+    struct infilfs_native_checksum_payload_disk *payload;
+    struct infilfs_data_checksum_disk *values;
+    u8 tail_id[16];
+    u8 *tail_object = NULL;
+    u8 *object = NULL;
+    u64 tail_block = 0;
+    u64 tail_start = 0;
+    u64 group_start;
+    u64 first;
+    u64 last;
+    u64 stored_block;
+    u32 needed;
+    int ret;
+
+    if (!touched_count || touched_start > U64_MAX - touched_count)
+        return -EINVAL;
+    group_start = (touched_start / per) * per;
+    if (((touched_start + touched_count - 1u) / per) * per != group_start)
+        return -ENOENT;
+    if (*change_count >= change_capacity)
+        return -ENOSPC;
+
+    /*
+     * Preserve the authoritative tail before changing a checksum object.
+     * In the steady state this is one validated cache lookup; if the cache was
+     * lost, the general tail walker repopulates it once.
+     */
+    tail_object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+    object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+    if (!tail_object || !object) {
+        ret = -ENOMEM;
+        goto out;
+    }
+    ret = infilfs_native_checksum_tail(
+        pending->sb, owner_id, file->checksum_head_id,
+        tail_id, &tail_block, &tail_start, tail_object);
+    if (ret)
+        goto out;
+
+    ret = infilfs_native_checksum_find_group(
+        pending->sb, owner_id, file->checksum_head_id,
+        group_start, &target);
+    if (ret)
+        goto out;
+
+    ret = infilfs_native_checksum_decode(
+        pending->sb, owner_id, target.object_id,
+        target.object_block, object, &payload);
+    if (ret)
+        goto out;
+    if (le64_to_cpu(payload->start_logical_block) != group_start) {
+        ret = -EFSCORRUPTED;
+        goto out;
+    }
+
+    first = touched_start - group_start;
+    last = first + touched_count;
+    if (last > per) {
+        ret = -EOVERFLOW;
+        goto out;
+    }
+    needed = max_t(u32, le32_to_cpu(payload->checksum_count), (u32)last);
+    values = (struct infilfs_data_checksum_disk *)(payload + 1);
+    memcpy(values + first, digests,
+           (size_t)touched_count * sizeof(*values));
+    payload->checksum_count = cpu_to_le32(needed);
+    ((struct infilfs_object_header_disk *)object)->payload_size =
+        cpu_to_le32(sizeof(*payload) + (size_t)needed * sizeof(*values));
+    ((struct infilfs_object_header_disk *)object)->generation =
+        cpu_to_le64(pending->tx.generation);
+    ret = infilfs_rw_finalize_object(object);
+    if (ret)
+        goto out;
+
+    ret = infilfs_native_store_private_or_cow(
+        pending, target.object_block, object, &stored_block);
+    if (ret)
+        goto out;
+
+    memcpy(changes[*change_count].object_id, target.object_id, 16);
+    changes[*change_count].object_block = stored_block;
+    changes[*change_count].object_type = INFILFS_OBJECT_CHECKSUM;
+    changes[*change_count].add = false;
+    (*change_count)++;
+
+    infilfs_native_checksum_group_cache_store(
+        pending->sb, owner_id, target.object_id, stored_block, group_start);
+    if (memcmp(tail_id, target.object_id, 16) == 0)
+        tail_block = stored_block;
+    memcpy(final_tail_id, tail_id, 16);
+    *final_tail_block = tail_block;
+    *final_tail_start = tail_start;
+    ret = 0;
+out:
+    kfree(object);
+    kfree(tail_object);
+    return ret;
+}
+
 static int infilfs_native_checksum_set_range(
     struct infilfs_native_pending *pending,
     struct infilfs_file_payload_disk *file, const u8 owner_id[16],
@@ -1203,6 +1476,17 @@ static int infilfs_native_checksum_set_range(
         return -EINVAL;
     first_group = (touched_start / per) * per;
     last_group = ((touched_start + touched_count - 1u) / per) * per;
+
+    if (first_group == last_group) {
+        ret = infilfs_native_checksum_update_existing_group(
+            pending, file, owner_id, touched_start, touched_count, digests,
+            changes, change_capacity, change_count, final_tail_id,
+            final_tail_block, final_tail_start);
+        if (!ret)
+            return 0;
+        if (ret != -ENOENT)
+            return ret;
+    }
 
     ret = infilfs_native_checksum_collect(pending, owner_id,
                                           file->checksum_head_id,
