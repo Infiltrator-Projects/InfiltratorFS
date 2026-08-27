@@ -6,6 +6,23 @@ build_dir="${1:-build}"
 dist_dir="${2:-dist}"
 version="$(sed -n 's/^project(InfiltratorFS VERSION \([^ ]*\) LANGUAGES C)$/\1/p' CMakeLists.txt)"
 [[ -n "$version" ]] || { echo "Could not determine InfiltratorFS version from CMakeLists.txt" >&2; exit 1; }
+
+package_version="${INFILTRATORFS_PACKAGE_VERSION:-$version}"
+build_identity="${INFILTRATORFS_BUILD_IDENTITY:-generic-apt}"
+emit_run="${INFILTRATORFS_EMIT_RUN:-1}"
+
+[[ "$package_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\+native[0-9]+)?$ ]] || {
+    echo "Invalid InfiltratorFS package version: $package_version" >&2
+    exit 1
+}
+case "$build_identity" in
+    generic-apt|native-local) ;;
+    *) echo "Invalid InfiltratorFS build identity: $build_identity" >&2; exit 1 ;;
+esac
+case "$emit_run" in
+    0|1) ;;
+    *) echo "INFILTRATORFS_EMIT_RUN must be 0 or 1." >&2; exit 1 ;;
+esac
 [[ -f src/infiltratr-common/CMakeLists.txt ]] || {
     echo "The pinned Infiltratr Common submodule is not initialised." >&2
     exit 1
@@ -13,7 +30,7 @@ version="$(sed -n 's/^project(InfiltratorFS VERSION \([^ ]*\) LANGUAGES C)$/\1/p
 
 mkdir -p "$dist_dir"
 architecture="$(dpkg --print-architecture)"
-deb_name="infiltratorfs_${version}_${architecture}.deb"
+deb_name="infiltratorfs_${package_version}_${architecture}.deb"
 run_name="infiltratorfs-${version}-linux-native.run"
 package_root="$(mktemp -d)"
 payload="$(mktemp)"
@@ -30,7 +47,7 @@ install -m 0644 README.md "$package_root/usr/share/doc/infiltratorfs/README.md"
 # DKMS source must be self-contained. Every RW composition file is required;
 # omitting an implementation include makes host-side DKMS builds fail even
 # though the repository build itself succeeds.
-dkms_root="$package_root/usr/src/infiltratorfs-$version"
+dkms_root="$package_root/usr/src/infiltratorfs-$package_version"
 install -d "$dkms_root"
 for file in Makefile infiltratorfs.c infiltratorfs_format.h infiltratorfs_rw.inc \
             infiltratorfs_rw_legacy.inc infiltratorfs_rw_data.inc \
@@ -40,7 +57,7 @@ for file in Makefile infiltratorfs.c infiltratorfs_format.h infiltratorfs_rw.inc
 done
 cat > "$dkms_root/dkms.conf" <<EOF
 PACKAGE_NAME="infiltratorfs"
-PACKAGE_VERSION="${version}"
+PACKAGE_VERSION="${package_version}"
 BUILT_MODULE_NAME[0]="infiltratorfs"
 DEST_MODULE_LOCATION[0]="/updates/dkms"
 AUTOINSTALL="yes"
@@ -52,12 +69,12 @@ install -d "$package_root/DEBIAN"
 installed_size="$(du -sk "$package_root/usr" | cut -f1)"
 cat > "$package_root/DEBIAN/control" <<EOF
 Package: infiltratorfs
-Version: ${version}
+Version: ${package_version}
 Section: utils
 Priority: optional
 Architecture: ${architecture}
 Maintainer: The First Infiltrator
-X-InfiltratorFS-Build: generic-apt
+X-InfiltratorFS-Build: ${build_identity}
 Depends: dkms, kmod, policykit-1, util-linux, xdg-utils, zenity
 Recommends: linux-headers-generic, udev, udisks2
 Installed-Size: ${installed_size}
@@ -74,7 +91,7 @@ cat > "$package_root/DEBIAN/preinst" <<EOF
 #!/bin/sh
 set -e
 module='infiltratorfs'
-version='${version}'
+version='${package_version}'
 
 active=''
 if command -v findmnt >/dev/null 2>&1; then
@@ -107,7 +124,7 @@ cat > "$package_root/DEBIAN/postinst" <<EOF
 #!/bin/sh
 set -e
 module='infiltratorfs'
-version='${version}'
+version='${package_version}'
 kernel="\$(uname -r)"
 
 if [ ! -f "/lib/modules/\$kernel/build/Makefile" ]; then
@@ -140,7 +157,7 @@ cat > "$package_root/DEBIAN/prerm" <<EOF
 #!/bin/sh
 set -e
 if [ "\${1:-}" = remove ] && command -v dkms >/dev/null 2>&1; then
-    dkms remove -m infiltratorfs -v '${version}' --all || true
+    dkms remove -m infiltratorfs -v '${package_version}' --all || true
 fi
 exit 0
 EOF
@@ -169,23 +186,23 @@ for required in \
     'usr/lib/infiltratorfs/infiltratorfs-manager-helper$' \
     'usr/lib/udev/rules.d/59-infiltratorfs.rules$' \
     'usr/share/applications/infiltratorfs-manager.desktop$' \
-    "usr/src/infiltratorfs-${version}/dkms.conf$" \
-    "usr/src/infiltratorfs-${version}/infiltratorfs.c$" \
-    "usr/src/infiltratorfs-${version}/infiltratorfs_format.h$" \
-    "usr/src/infiltratorfs-${version}/infiltratorfs_rw.inc$" \
-    "usr/src/infiltratorfs-${version}/infiltratorfs_rw_legacy.inc$" \
-    "usr/src/infiltratorfs-${version}/infiltratorfs_rw_data.inc$" \
-    "usr/src/infiltratorfs-${version}/infiltratorfs_rw_namespace.inc$" \
-    "usr/src/infiltratorfs-${version}/infiltratorfs_rw_read_cache.inc$" \
-    "usr/src/infiltratorfs-${version}/infiltratorfs_pagecache.inc$" \
-    "usr/src/infiltratorfs-${version}/infiltratorfs_linux_meta.inc$"; do
+    "usr/src/infiltratorfs-${package_version}/dkms.conf$" \
+    "usr/src/infiltratorfs-${package_version}/infiltratorfs.c$" \
+    "usr/src/infiltratorfs-${package_version}/infiltratorfs_format.h$" \
+    "usr/src/infiltratorfs-${package_version}/infiltratorfs_rw.inc$" \
+    "usr/src/infiltratorfs-${package_version}/infiltratorfs_rw_legacy.inc$" \
+    "usr/src/infiltratorfs-${package_version}/infiltratorfs_rw_data.inc$" \
+    "usr/src/infiltratorfs-${package_version}/infiltratorfs_rw_namespace.inc$" \
+    "usr/src/infiltratorfs-${package_version}/infiltratorfs_rw_read_cache.inc$" \
+    "usr/src/infiltratorfs-${package_version}/infiltratorfs_pagecache.inc$" \
+    "usr/src/infiltratorfs-${package_version}/infiltratorfs_linux_meta.inc$"; do
     grep -q "$required" "$contents"
 done
 if grep -q 'usr/bin/infilfs-fuse$' "$contents"; then
     echo 'Native release package unexpectedly contains infilfs-fuse.' >&2
     exit 1
 fi
-test "$(dpkg-deb --field "$dist_dir/$deb_name" Version)" = "$version"
+test "$(dpkg-deb --field "$dist_dir/$deb_name" Version)" = "$package_version"
 depends="$(dpkg-deb --field "$dist_dir/$deb_name" Depends)"
 for dependency in dkms kmod policykit-1 util-linux xdg-utils zenity; do
     grep -Eq "(^|, )${dependency}([ ,]|$)" <<<"$depends"
@@ -196,6 +213,11 @@ if grep -Eqi '(^|[, ])(fuse3|libfuse3-3)([, ]|$)' <<<"$depends"; then
 fi
 dpkg-deb --ctrl-tarfile "$dist_dir/$deb_name" | tar -xOf - ./postinst | grep -Fq 'modprobe infiltratorfs'
 rm -f "$contents"
+
+if [[ "$emit_run" = 0 ]]; then
+    printf 'Built InfiltratorFS Debian package:\n  %s\n' "$deb_name"
+    exit 0
+fi
 
 # The .run payload contains source, but its bootstrap deliberately disables the
 # optional PkgConfig/FUSE discovery and removes any legacy infilfs-fuse binary.
@@ -235,9 +257,25 @@ verify_installer() {
 }
 
 case "${1:-}" in
-    --verify) verify_installer; echo 'InfiltratorFS native installer verified.'; exit 0 ;;
-    --dry-run|'') ;;
-    --help|-h) echo 'Usage: infiltratorfs-<version>-linux-native.run [--verify|--dry-run]'; exit 0 ;;
+    --verify)
+        [[ $# -eq 1 ]] || exit 2
+        verify_installer
+        echo 'InfiltratorFS native installer verified.'
+        exit 0
+        ;;
+    --dry-run)
+        [[ $# -eq 1 ]] || exit 2
+        ;;
+    --build-only)
+        [[ $# -eq 2 ]] || { echo 'Usage: infiltratorfs-<version>-linux-native.run --build-only OUTPUT.deb' >&2; exit 2; }
+        ;;
+    '')
+        [[ $# -eq 0 ]] || exit 2
+        ;;
+    --help|-h)
+        echo 'Usage: infiltratorfs-<version>-linux-native.run [--verify|--dry-run|--build-only OUTPUT.deb]'
+        exit 0
+        ;;
     *) exit 2 ;;
 esac
 verify_installer
@@ -245,11 +283,7 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/source"
 tail -n +"$payload_start" "$self" | tar --no-same-owner -xzf - -C "$work/source"
-if [[ "${1:-}" == '--dry-run' ]]; then
-    "$work/source/support/installer/bootstrap.sh" --dry-run
-else
-    "$work/source/support/installer/bootstrap.sh"
-fi
+"$work/source/support/installer/bootstrap.sh" "$@"
 exit 0
 __INFILTRATORFS_NATIVE_PAYLOAD__
 RUN_HEADER

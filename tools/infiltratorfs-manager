@@ -25,12 +25,17 @@ show_about()
     local delivery="Source / local installation"
 
     if command -v dpkg-query >/dev/null 2>&1; then
-        local installed
+        local installed build_field
         installed="$(dpkg-query -W -f='${Version}' infiltratorfs 2>/dev/null || true)"
+        build_field="$(dpkg-query -W -f='${X-InfiltratorFS-Build}' infiltratorfs 2>/dev/null || true)"
         if [[ -n "$installed" ]]; then
             version="$installed"
-            build="Generic / APT package"
             delivery="APT / Debian package"
+            case "$build_field" in
+                native-local) build="Native / local machine compile" ;;
+                generic-apt|"") build="Generic / APT package" ;;
+                *) build="$build_field" ;;
+            esac
         fi
     fi
 

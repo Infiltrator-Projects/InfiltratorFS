@@ -163,8 +163,15 @@ jobs:
           "dist/$installer" --verify
           "dist/$installer" --dry-run | tee dist/native-installer-dry-run.txt
           grep -Fq 'Native kernel module commands:' dist/native-installer-dry-run.txt
-          grep -Fq 'legacy /usr/bin/infilfs-fuse executable would be removed' dist/native-installer-dry-run.txt
-          rm -f dist/native-installer-dry-run.txt
+          grep -Fq 'Native package version:' dist/native-installer-dry-run.txt
+          native_deb="$RUNNER_TEMP/infiltratorfs_${VERSION}+native1_amd64.deb"
+          "dist/$installer" --build-only "$native_deb"
+          test "$(dpkg-deb --field "$native_deb" Package)" = infiltratorfs
+          test "$(dpkg-deb --field "$native_deb" Version)" = "${VERSION}+native1"
+          test "$(dpkg-deb --field "$native_deb" X-InfiltratorFS-Build)" = native-local
+          dpkg --compare-versions "${VERSION}+native1" gt "${VERSION}"
+          test "$(dpkg-deb --field "dist/$deb" X-InfiltratorFS-Build)" = generic-apt
+          rm -f dist/native-installer-dry-run.txt "$native_deb"
 
       - name: Install package and prove native kernel mounting
         env:

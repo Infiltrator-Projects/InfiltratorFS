@@ -223,6 +223,9 @@ jobs:
             grep -Eq "(^|, )${dependency}([ ,]|$)" <<<"$depends"
           done
           ! grep -Eqi '(^|[, ])(fuse3|libfuse3-3)([, ]|$)' <<<"$depends"
+          test "$(dpkg-deb --field "$deb" X-InfiltratorFS-Build)" = generic-apt
+          grep -Fq '+native1' support/installer/bootstrap.sh
+          grep -Fq 'INFILTRATORFS_BUILD_IDENTITY=native-local' support/installer/bootstrap.sh
           rm -f dist/native-installer-dry-run.txt
       - name: Upload Linux installers
         uses: actions/upload-artifact@v4
