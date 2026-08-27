@@ -352,11 +352,12 @@ static int infilfs_native_index_locator_build(
            (size_t)pending->index_locator_capacity *
                sizeof(*pending->index_locators));
     pending->index_locator_count = 0;
-    pending->index_locator_valid = true;
+    pending->index_locator_valid = false;
 
     page_block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
     if (!page_block)
         return -ENOMEM;
+    pending->index_locator_valid = true;
 
     for (p = 0; p < page_count; ++p) {
         struct infilfs_metadata_page_disk *page;
