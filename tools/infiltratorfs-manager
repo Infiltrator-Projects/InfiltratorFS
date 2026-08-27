@@ -18,6 +18,30 @@ show_info()
     zenity --info --title="$APP_NAME" --width=520 --text="$1"
 }
 
+show_about()
+{
+    local version="source/development"
+    local delivery="Source / local installation"
+
+    if command -v dpkg-query >/dev/null 2>&1; then
+        local installed
+        installed="$(dpkg-query -W -f='${Version}' infiltratorfs 2>/dev/null || true)"
+        if [[ -n "$installed" ]]; then
+            version="$installed"
+            delivery="APT / Debian package"
+        fi
+    fi
+
+    zenity --info --title="About $APP_NAME" --width=560 \
+        --text="InfiltratorFS Manager
+
+Version: $version
+Build: Native / Linux kernel filesystem
+Delivery: $delivery
+
+The Linux implementation uses the native VFS/DKMS kernel driver. FUSE is not the product path."
+}
+
 run_and_show_error()
 {
     local output rc
@@ -350,6 +374,7 @@ while true; do
         "Forensic scan" "Find current and orphaned raw metadata records" \
         "Mount and open" "Mount natively and open the filesystem in Nemo" \
         "Unmount" "Safely unmount the selected target" \
+        "About" "Show version, build and delivery identity" \
         "Quit" "Close the manager") || break
 
     case "$action" in
@@ -361,6 +386,7 @@ while true; do
         "Forensic scan") forensic_target ;;
         "Mount and open") mount_and_open ;;
         "Unmount") unmount_target ;;
+        "About") show_about ;;
         "Quit") break ;;
     esac
 done

@@ -57,6 +57,7 @@ Section: utils
 Priority: optional
 Architecture: ${architecture}
 Maintainer: The First Infiltrator
+X-InfiltratorFS-Build: native-linux
 Depends: dkms, kmod, policykit-1, util-linux, xdg-utils, zenity
 Recommends: linux-headers-generic, udev, udisks2
 Installed-Size: ${installed_size}
