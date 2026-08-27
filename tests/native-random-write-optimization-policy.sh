@@ -17,6 +17,8 @@ grep -Fq 'operation_allocated_count' "$data"
 ! grep -Fq 'memcpy(pending->operation_bitmap' "$data"
 grep -Fq 'infilfs_native_store_extent_page' "$data"
 grep -Fq 'old_page_count' "$data"
+grep -Fq 'INFILFS_NATIVE_CHECKSUM_GROUP_CACHE_SLOTS' "$data"
+grep -Fq 'infilfs_native_checksum_update_existing_group' "$data"
 grep -Fq 'memcmp(old_page + 1, extents + copied' "$data"
 grep -Fq 'Reclaim paged extent metadata' "$ns" || grep -Fq 'INFILFS_EXTENT_PAGE_POINTERS' "$ns"
 
