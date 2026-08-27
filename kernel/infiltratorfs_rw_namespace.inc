@@ -474,6 +474,118 @@ static bool infilfs_ns_name_matches(const u8 *record, size_t record_len,
 }
 
 /*
+ * Complete volatile exact-name locator for the currently hot directory.
+ *
+ * The first append validates every paged record and builds the hash table.
+ * Pure additions keep it coherent; later appends need only the final metadata
+ * page.  Removes/renames invalidate it before their compacting rebuild.
+ */
+static int infilfs_ns_directory_locator_build(
+    struct infilfs_native_pending *pending,
+    const struct infilfs_object_header_disk *header,
+    const struct infilfs_directory_payload_disk *payload)
+{
+    const __le64 *pages = (const __le64 *)(payload + 1);
+    u32 page_count = le32_to_cpu(payload->bytes_used);
+    u32 directory_entries = le32_to_cpu(payload->entry_count);
+    u8 *page_block = NULL;
+    u32 total_entries = 0;
+    u32 p;
+    int ret;
+
+    infilfs_native_directory_locator_invalidate(pending);
+    ret = infilfs_native_directory_locator_ensure(
+        pending, directory_entries ? directory_entries : 1u);
+    if (ret)
+        return ret;
+    memset(pending->directory_locators, 0,
+           (size_t)pending->directory_locator_capacity *
+               sizeof(*pending->directory_locators));
+    memcpy(pending->directory_locator_owner_id, header->object_id, 16);
+
+    page_block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+    if (!page_block) {
+        ret = -ENOMEM;
+        goto out;
+    }
+
+    for (p = 0; p < page_count; ++p) {
+        struct infilfs_metadata_page_disk *page;
+        u32 used;
+        u32 expected_entries;
+        u32 seen = 0;
+        size_t offset = 0;
+
+        ret = infilfs_read_block(
+            pending->sb, le64_to_cpu(pages[p]), page_block);
+        if (ret)
+            goto out;
+        if (!infilfs_metadata_page_valid(
+                pending->sb, page_block, infilfs_directory_page_magic,
+                header->object_id)) {
+            ret = -EFSCORRUPTED;
+            goto out;
+        }
+        page = (struct infilfs_metadata_page_disk *)page_block;
+        used = le32_to_cpu(page->bytes_used);
+        expected_entries = le32_to_cpu(page->entry_count);
+        if (used > INFILFS_METADATA_PAGE_DATA_SIZE) {
+            ret = -EFSCORRUPTED;
+            goto out;
+        }
+
+        while (offset < used) {
+            struct infilfs_dirent_disk *entry;
+            u16 rec;
+            u16 name_len;
+            const char *entry_name;
+
+            if (used - offset < sizeof(*entry)) {
+                ret = -EFSCORRUPTED;
+                goto out;
+            }
+            entry = (struct infilfs_dirent_disk *)
+                (page_block + sizeof(*page) + offset);
+            rec = le16_to_cpu(entry->record_size);
+            name_len = le16_to_cpu(entry->name_length);
+            if (rec < sizeof(*entry) || rec > used - offset || (rec & 7u) ||
+                !name_len || name_len > INFILFS_NAME_MAX ||
+                sizeof(*entry) + name_len > rec) {
+                ret = -EFSCORRUPTED;
+                goto out;
+            }
+            entry_name = (const char *)entry + sizeof(*entry);
+            ret = infilfs_native_directory_locator_insert(
+                pending, header->object_id, entry_name, name_len);
+            if (ret == -EEXIST)
+                ret = -EFSCORRUPTED;
+            if (ret)
+                goto out;
+            offset += rec;
+            seen++;
+        }
+        if (offset != used || seen != expected_entries ||
+            total_entries > U32_MAX - seen) {
+            ret = -EFSCORRUPTED;
+            goto out;
+        }
+        total_entries += seen;
+    }
+
+    if (total_entries != directory_entries) {
+        ret = -EFSCORRUPTED;
+        goto out;
+    }
+    pending->directory_locator_valid = true;
+    ret = 0;
+out:
+    kfree(page_block);
+    if (ret)
+        infilfs_native_directory_locator_invalidate(pending);
+    return ret;
+}
+
+/*
  * Fast path for pure additions to an already-paged directory.  Directory
  * creation traffic is append-heavy; rebuilding every existing metadata page
  * for each new name turns directory growth into quadratic write amplification.
@@ -496,14 +608,12 @@ static int infilfs_ns_append_paged_directory(
     size_t add_rec;
     u32 page_count;
     u32 directory_entries;
-    u32 total_entries = 0;
     u32 last_entries = 0;
     u32 last_used = 0;
     u64 last_page_no = 0;
     u64 new_page_no;
     u64 replacement;
     u64 new_head_block;
-    u32 p;
     int ret;
 
     ret = infilfs_ns_validate_name(add_name);
@@ -541,75 +651,42 @@ static int infilfs_ns_append_paged_directory(
     pointers = (__le64 *)(payload + 1);
 
     /*
-     * We still scan names because VFS negative dentries are not a persistent
-     * uniqueness index.  The fast path removes the expensive flatten/copy and
-     * rewrite of every directory page, not the correctness check itself.
+     * Build an exact name set once.  A hot directory then performs O(1)
+     * duplicate checks and touches only its final page for each pure append.
      */
-    for (p = 0; p < page_count; ++p) {
-        u64 page_no = le64_to_cpu(pointers[p]);
-        u32 used;
-        u32 expected_entries;
-        u32 seen = 0;
-        size_t offset = 0;
-
-        ret = infilfs_read_block(pending->sb, page_no, page_block);
+    if (!infilfs_native_directory_locator_matches(
+            pending, header->object_id, directory_entries)) {
+        ret = infilfs_ns_directory_locator_build(pending, header, payload);
         if (ret)
             goto out;
-        if (!infilfs_metadata_page_valid(pending->sb, page_block,
-                                         infilfs_directory_page_magic,
-                                         header->object_id)) {
+    }
+    if (infilfs_native_directory_locator_lookup(
+            pending, header->object_id, add_name->name, add_name->len)) {
+        ret = -EEXIST;
+        goto out;
+    }
+
+    if (page_count) {
+        last_page_no = le64_to_cpu(pointers[page_count - 1u]);
+        ret = infilfs_read_block(pending->sb, last_page_no, page_block);
+        if (ret)
+            goto out;
+        if (!infilfs_metadata_page_valid(
+                pending->sb, page_block, infilfs_directory_page_magic,
+                header->object_id)) {
             ret = -EFSCORRUPTED;
             goto out;
         }
         page = (struct infilfs_metadata_page_disk *)page_block;
-        used = le32_to_cpu(page->bytes_used);
-        expected_entries = le32_to_cpu(page->entry_count);
-        if (used > INFILFS_METADATA_PAGE_DATA_SIZE) {
+        last_entries = le32_to_cpu(page->entry_count);
+        last_used = le32_to_cpu(page->bytes_used);
+        if (last_used > INFILFS_METADATA_PAGE_DATA_SIZE ||
+            last_entries > directory_entries) {
             ret = -EFSCORRUPTED;
             goto out;
         }
-        while (offset < used) {
-            struct infilfs_dirent_disk *entry;
-            u16 rec;
-            u16 name_len;
+    }
 
-            if (used - offset < sizeof(*entry)) {
-                ret = -EFSCORRUPTED;
-                goto out;
-            }
-            entry = (struct infilfs_dirent_disk *)
-                (page_block + sizeof(*page) + offset);
-            rec = le16_to_cpu(entry->record_size);
-            name_len = le16_to_cpu(entry->name_length);
-            if (rec < sizeof(*entry) || rec > used - offset || (rec & 7u) ||
-                sizeof(*entry) + name_len > rec) {
-                ret = -EFSCORRUPTED;
-                goto out;
-            }
-            if (infilfs_ns_name_matches((const u8 *)entry, rec,
-                                        add_name->name, add_name->len)) {
-                ret = -EEXIST;
-                goto out;
-            }
-            offset += rec;
-            seen++;
-        }
-        if (offset != used || seen != expected_entries ||
-            total_entries > U32_MAX - seen) {
-            ret = -EFSCORRUPTED;
-            goto out;
-        }
-        total_entries += seen;
-        if (p + 1u == page_count) {
-            last_page_no = page_no;
-            last_entries = expected_entries;
-            last_used = used;
-        }
-    }
-    if (total_entries != directory_entries) {
-        ret = -EFSCORRUPTED;
-        goto out;
-    }
     if (directory_entries == U32_MAX) {
         ret = -EOVERFLOW;
         goto out;
@@ -698,6 +775,13 @@ static int infilfs_ns_append_paged_directory(
         goto out;
     if (memcmp(ii->object_id, tx->sbi->disk.root_object_id, 16) == 0)
         tx->next_sb.root_object_block = cpu_to_le64(new_head_block);
+    ret = infilfs_native_directory_locator_insert(
+        pending, header->object_id, add_name->name, add_name->len);
+    if (ret == -EEXIST)
+        ret = -EFSCORRUPTED;
+    if (ret)
+        goto out;
+    pending->directory_locator_valid = true;
     *new_dir_block_out = new_head_block;
     ret = 0;
 out:
@@ -732,6 +816,9 @@ static int infilfs_ns_rebuild_directory(
         if (ret != -EOPNOTSUPP)
             return ret;
     }
+
+    /* Removes, renames and classic rebuilds invalidate the exact-name view. */
+    infilfs_native_directory_locator_invalidate(pending);
 
     old_head = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
     new_head = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);

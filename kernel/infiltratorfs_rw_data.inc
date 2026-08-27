@@ -11,8 +11,8 @@
  * Continuous writers share one transaction per mounted superblock.  The
  * working object-index/root pointers are visible to the live mount while the
  * committed bitmap remains untouched.  Publication occurs at the same
- * adaptive 16 MiB..256 MiB bound used by the userspace adapter, on fsync, one
- * second after the writer becomes idle, or during unmount.  Transaction-
+ * adaptive 16 MiB..512 MiB bound used by the native writer, on fsync, five
+ * seconds after the writer becomes idle, or during unmount.  Transaction-
  * private metadata blocks are safely reused between syscalls; a small undo log
  * plus a bitmap snapshot gives each write syscall operation-level rollback.
  */
@@ -28,6 +28,7 @@
 #define INFILFS_NATIVE_CHECKSUM_GROUP_CACHE_SLOTS 4096u
 #define INFILFS_NATIVE_WRITER_TAIL_SLOTS 64u
 #define INFILFS_NATIVE_INDEX_LOCATOR_MIN_CAPACITY 64u
+#define INFILFS_NATIVE_DIRECTORY_LOCATOR_MIN_CAPACITY 64u
 
 struct infilfs_native_checksum_payload_disk {
     u8 owner_object_id[16];
@@ -70,6 +71,13 @@ struct infilfs_native_index_locator {
     bool valid;
 };
 
+struct infilfs_native_directory_locator {
+    u32 hash;
+    u16 name_len;
+    bool valid;
+    u8 name[INFILFS_NAME_MAX];
+};
+
 struct infilfs_native_pending {
     struct list_head node;
     struct super_block *sb;
@@ -91,6 +99,11 @@ struct infilfs_native_pending {
     u32 index_locator_capacity;
     u32 index_locator_count;
     bool index_locator_valid;
+    struct infilfs_native_directory_locator *directory_locators;
+    u8 directory_locator_owner_id[16];
+    u32 directory_locator_capacity;
+    u32 directory_locator_count;
+    bool directory_locator_valid;
     u64 pending_bytes;
     u64 publish_threshold;
     bool active;
@@ -183,6 +196,178 @@ static void infilfs_native_index_locator_invalidate(
     struct infilfs_native_pending *pending)
 {
     pending->index_locator_valid = false;
+}
+
+static u32 infilfs_native_name_hash(const char *name, size_t length)
+{
+    u32 h = 2166136261u;
+    size_t i;
+
+    for (i = 0; i < length; ++i) {
+        h ^= (u8)name[i];
+        h *= 16777619u;
+    }
+    return h;
+}
+
+static void infilfs_native_directory_locator_invalidate(
+    struct infilfs_native_pending *pending)
+{
+    pending->directory_locator_valid = false;
+    pending->directory_locator_count = 0;
+    memset(pending->directory_locator_owner_id, 0,
+           sizeof(pending->directory_locator_owner_id));
+}
+
+static int infilfs_native_directory_locator_resize(
+    struct infilfs_native_pending *pending, u32 requested)
+{
+    struct infilfs_native_directory_locator *old = pending->directory_locators;
+    struct infilfs_native_directory_locator *fresh;
+    u32 old_capacity = pending->directory_locator_capacity;
+    u32 capacity = INFILFS_NATIVE_DIRECTORY_LOCATOR_MIN_CAPACITY;
+    u32 i;
+
+    while (capacity < requested) {
+        if (capacity > U32_MAX / 2u)
+            return -EOVERFLOW;
+        capacity <<= 1;
+    }
+    if (capacity == old_capacity)
+        return 0;
+
+    fresh = kvmalloc_array(capacity, sizeof(*fresh), GFP_NOFS | __GFP_ZERO);
+    if (!fresh)
+        return -ENOMEM;
+
+    for (i = 0; i < old_capacity; ++i) {
+        u32 slot;
+        u32 probes;
+
+        if (!old || !old[i].valid)
+            continue;
+        slot = old[i].hash & (capacity - 1u);
+        for (probes = 0; probes < capacity; ++probes) {
+            struct infilfs_native_directory_locator *entry =
+                &fresh[(slot + probes) & (capacity - 1u)];
+
+            if (entry->valid)
+                continue;
+            *entry = old[i];
+            break;
+        }
+        if (probes == capacity) {
+            kvfree(fresh);
+            return -ENOSPC;
+        }
+    }
+
+    kvfree(old);
+    pending->directory_locators = fresh;
+    pending->directory_locator_capacity = capacity;
+    return 0;
+}
+
+static int infilfs_native_directory_locator_ensure(
+    struct infilfs_native_pending *pending, u32 wanted)
+{
+    u64 needed;
+
+    if (wanted < INFILFS_NATIVE_DIRECTORY_LOCATOR_MIN_CAPACITY / 2u)
+        wanted = INFILFS_NATIVE_DIRECTORY_LOCATOR_MIN_CAPACITY / 2u;
+    needed = (u64)wanted * 2u;
+    if (needed > U32_MAX)
+        return -EOVERFLOW;
+    if (pending->directory_locator_capacity >= (u32)needed)
+        return 0;
+    return infilfs_native_directory_locator_resize(pending, (u32)needed);
+}
+
+static bool infilfs_native_directory_locator_matches(
+    struct infilfs_native_pending *pending, const u8 owner_id[16], u32 count)
+{
+    return pending->directory_locator_valid &&
+        pending->directory_locator_count == count &&
+        memcmp(pending->directory_locator_owner_id, owner_id, 16) == 0;
+}
+
+static bool infilfs_native_directory_locator_lookup(
+    struct infilfs_native_pending *pending, const u8 owner_id[16],
+    const char *name, size_t name_len)
+{
+    u32 hash;
+    u32 slot;
+    u32 probes;
+
+    if (!name || name_len > INFILFS_NAME_MAX ||
+        !pending->directory_locator_valid ||
+        memcmp(pending->directory_locator_owner_id, owner_id, 16) != 0 ||
+        !pending->directory_locator_capacity)
+        return false;
+
+    hash = infilfs_native_name_hash(name, name_len);
+    slot = hash & (pending->directory_locator_capacity - 1u);
+    for (probes = 0; probes < pending->directory_locator_capacity; ++probes) {
+        struct infilfs_native_directory_locator *entry =
+            &pending->directory_locators[
+                (slot + probes) & (pending->directory_locator_capacity - 1u)];
+
+        if (!entry->valid)
+            return false;
+        if (entry->hash == hash && entry->name_len == name_len &&
+            memcmp(entry->name, name, name_len) == 0)
+            return true;
+    }
+    return false;
+}
+
+static int infilfs_native_directory_locator_insert(
+    struct infilfs_native_pending *pending, const u8 owner_id[16],
+    const char *name, size_t name_len)
+{
+    struct infilfs_native_directory_locator *entry;
+    u32 hash;
+    u32 slot;
+    u32 probes;
+    int ret;
+
+    if (!name || !name_len || name_len > INFILFS_NAME_MAX)
+        return -EINVAL;
+    if (memcmp(pending->directory_locator_owner_id, owner_id, 16) != 0)
+        return -ESTALE;
+    if (((u64)pending->directory_locator_count + 1u) * 10u >=
+        (u64)pending->directory_locator_capacity * 7u) {
+        ret = infilfs_native_directory_locator_ensure(
+            pending, pending->directory_locator_count + 1u);
+        if (ret)
+            return ret;
+    }
+    if (!pending->directory_locator_capacity) {
+        ret = infilfs_native_directory_locator_ensure(pending, 1u);
+        if (ret)
+            return ret;
+    }
+
+    hash = infilfs_native_name_hash(name, name_len);
+    slot = hash & (pending->directory_locator_capacity - 1u);
+    for (probes = 0; probes < pending->directory_locator_capacity; ++probes) {
+        entry = &pending->directory_locators[
+            (slot + probes) & (pending->directory_locator_capacity - 1u)];
+        if (entry->valid) {
+            if (entry->hash == hash && entry->name_len == name_len &&
+                memcmp(entry->name, name, name_len) == 0)
+                return -EEXIST;
+            continue;
+        }
+        memset(entry, 0, sizeof(*entry));
+        entry->hash = hash;
+        entry->name_len = (u16)name_len;
+        memcpy(entry->name, name, name_len);
+        entry->valid = true;
+        pending->directory_locator_count++;
+        return 0;
+    }
+    return -ENOSPC;
 }
 
 static int infilfs_native_index_locator_resize(
@@ -744,6 +929,7 @@ static int infilfs_native_operation_rollback(
     pending->undo_count = 0;
     infilfs_native_writer_tail_invalidate(pending);
     infilfs_native_index_locator_invalidate(pending);
+    infilfs_native_directory_locator_invalidate(pending);
     if (first_error) {
         pending->commit_failed = true;
         sbi->write_poisoned = true;
@@ -848,6 +1034,7 @@ static void infilfs_native_pending_destroy(struct super_block *sb)
         infilfs_rw_tx_abort(&pending->tx);
     kvfree(pending->undo);
     kvfree(pending->index_locators);
+    kvfree(pending->directory_locators);
     kfree(pending);
 }
 
@@ -3533,6 +3720,150 @@ out_unlock:
     return ret;
 }
 
+/*
+ * Keep inline-file writes inside the shared deferred native transaction.
+ *
+ * The old bridge flushed the pending transaction and entered the synchronous
+ * legacy inline writer for every tiny write.  Create/write loops therefore
+ * paid a full checkpoint/bitmap publication per file.  Transaction-private
+ * inline objects can instead be updated and repointed in the same deferred
+ * transaction as their namespace creation.
+ */
+static ssize_t infilfs_native_inline_write_iter(
+    struct inode *inode, loff_t *position, struct iov_iter *from,
+    size_t requested)
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(inode->i_sb);
+    struct infilfs_inode_info *ii = INFILFS_I(inode);
+    struct infilfs_native_pending *pending;
+    struct infilfs_native_index_change change = {0};
+    struct infilfs_object_header_disk *header;
+    struct infilfs_file_payload_disk *file;
+    struct infilfs_data_checksum_disk *digest;
+    u8 *data = NULL;
+    u8 *old_object = NULL;
+    u8 *new_object = NULL;
+    loff_t pos = *position;
+    size_t old_size = 0;
+    size_t copied = 0;
+    size_t new_size;
+    u64 new_block = 0;
+    int ret;
+    int rollback;
+
+    if (pos < 0 || (u64)pos > INFILFS_INLINE_DATA_MAX ||
+        requested > INFILFS_INLINE_DATA_MAX - (size_t)pos)
+        return -EOPNOTSUPP;
+
+    pending = infilfs_native_pending_get(inode->i_sb, true);
+    if (!pending)
+        return -ENOMEM;
+    data = kzalloc(INFILFS_INLINE_DATA_MAX, GFP_NOFS);
+    old_object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+    new_object = kzalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+    if (!data || !old_object || !new_object) {
+        ret = -ENOMEM;
+        goto out_free;
+    }
+
+    mutex_lock(&sbi->write_lock);
+    ret = infilfs_native_pending_begin_locked(pending);
+    if (ret)
+        goto out_unlock;
+    ret = infilfs_native_operation_snapshot(pending);
+    if (ret)
+        goto out_unlock;
+
+    ret = infilfs_rw_load_inline(inode, data, &old_size);
+    if (ret)
+        goto rollback_operation;
+    ret = infilfs_read_object(inode->i_sb, ii->object_block,
+                              INFILFS_OBJECT_FILE, ii->object_id, old_object);
+    if (ret)
+        goto rollback_operation;
+    header = (struct infilfs_object_header_disk *)old_object;
+    file = (struct infilfs_file_payload_disk *)(header + 1);
+    if (le16_to_cpu(header->object_version) != INFILFS_OBJECT_VERSION_CLASSIC ||
+        le32_to_cpu(file->extent_count) != 0 ||
+        le64_to_cpu(file->attributes.logical_size) != old_size ||
+        old_size > INFILFS_INLINE_DATA_MAX) {
+        ret = -EOPNOTSUPP;
+        goto rollback_operation;
+    }
+
+    copied = copy_from_iter(data + pos, requested, from);
+    if (!copied) {
+        ret = -EFAULT;
+        goto rollback_operation;
+    }
+    new_size = max_t(size_t, old_size, (size_t)pos + copied);
+
+    memcpy(new_object, old_object, sizeof(*header) + sizeof(*file));
+    header = (struct infilfs_object_header_disk *)new_object;
+    file = (struct infilfs_file_payload_disk *)(header + 1);
+    header->generation = cpu_to_le64(pending->tx.generation);
+    header->object_version = cpu_to_le16(INFILFS_OBJECT_VERSION_CLASSIC);
+    file->attributes.logical_size = cpu_to_le64(new_size);
+    file->attributes.modification_time_ns = cpu_to_le64(ktime_get_real_ns());
+    file->attributes.change_time_ns = file->attributes.modification_time_ns;
+    file->extent_count = 0;
+    file->data_checksum_type = cpu_to_le32(INFILFS_CHECKSUM_SHA256);
+    memset(file->checksum_head_id, 0, sizeof(file->checksum_head_id));
+    digest = (struct infilfs_data_checksum_disk *)(file + 1);
+    ret = infilfs_rw_inline_digest(data, new_size, digest->bytes);
+    if (ret)
+        goto rollback_operation;
+    memcpy(digest + 1, data, new_size);
+    header->payload_size = cpu_to_le32(
+        sizeof(*file) + sizeof(*digest) + new_size);
+
+    ret = infilfs_rw_finalize_object(new_object);
+    if (ret)
+        goto rollback_operation;
+    ret = infilfs_native_store_private_or_cow(
+        pending, ii->object_block, new_object, &new_block);
+    if (ret)
+        goto rollback_operation;
+
+    memcpy(change.object_id, ii->object_id, 16);
+    change.object_block = new_block;
+    change.object_type = INFILFS_OBJECT_FILE;
+    ret = infilfs_native_index_update(pending, &change, 1);
+    if (ret)
+        goto rollback_operation;
+
+    infilfs_native_operation_commit(pending);
+    ii->object_block = new_block;
+    i_size_write(inode, new_size);
+    pending->tx.next_sb.generation = cpu_to_le64(pending->tx.generation);
+    sbi->disk = pending->tx.next_sb;
+    pending->pending_bytes += copied;
+
+    if (pending->pending_bytes >= pending->publish_threshold)
+        (void)infilfs_native_pending_commit_locked(pending);
+    if (pending->active && !pending->commit_failed)
+        mod_delayed_work(system_wq, &pending->idle_work,
+                         INFILFS_NATIVE_IDLE_DELAY);
+
+    *position = pos + copied;
+    ret = (ssize_t)copied;
+    goto out_unlock;
+
+rollback_operation:
+    if (copied)
+        iov_iter_revert(from, copied);
+    rollback = infilfs_native_operation_rollback(pending);
+    if (rollback)
+        ret = rollback;
+out_unlock:
+    mutex_unlock(&sbi->write_lock);
+out_free:
+    kfree(new_object);
+    kfree(old_object);
+    kfree(data);
+    return ret;
+}
+
 static ssize_t infilfs_file_write_iter(struct kiocb *iocb,
                                        struct iov_iter *from)
 {
@@ -3573,11 +3904,9 @@ static ssize_t infilfs_file_write_iter(struct kiocb *iocb,
     if ((u64)pos <= INFILFS_INLINE_DATA_MAX &&
         requested <= INFILFS_INLINE_DATA_MAX - (size_t)pos &&
         i_size_read(inode) <= INFILFS_INLINE_DATA_MAX) {
-        ret = infilfs_native_pending_flush_sb(inode->i_sb);
-        if (ret)
-            goto out_unlock;
         iocb->ki_pos = pos;
-        ret = infilfs_file_write_iter_legacy(iocb, from);
+        ret = infilfs_native_inline_write_iter(
+            inode, &iocb->ki_pos, from, requested);
         if (ret != -EOPNOTSUPP)
             goto out_unlock;
     }
