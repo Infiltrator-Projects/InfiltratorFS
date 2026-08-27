@@ -1954,63 +1954,171 @@ static int infilfs_native_index_update_paged(
     struct infilfs_index_payload_disk *payload =
         (struct infilfs_index_payload_disk *)(header + 1);
     __le64 *pages = (__le64 *)(payload + 1);
+    struct infilfs_native_index_locator *located = NULL;
     u32 page_count = le32_to_cpu(payload->reserved);
     u32 total_count = le32_to_cpu(payload->entry_count);
-    u32 p;
     u32 c;
-    u8 *page_block;
+    u8 *page_block = NULL;
     u64 old_head_block = le64_to_cpu(sbi->disk.object_index_block);
     u64 new_head_block;
+    bool rebuilt = false;
     int ret = 0;
 
     if (page_count > INFILFS_INDEX_PAGE_POINTERS)
         return -EFSCORRUPTED;
     page_block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
-    if (!page_block)
-        return -ENOMEM;
+    located = kcalloc(change_count ? change_count : 1u,
+                      sizeof(*located), GFP_NOFS);
+    if (!page_block || !located) {
+        ret = -ENOMEM;
+        goto out;
+    }
 
-    for (p = 0; p < page_count; ++p) {
+locate_again:
+    if (!pending->index_locator_valid) {
+        ret = infilfs_native_index_locator_build(pending, head);
+        if (ret)
+            goto out;
+    }
+    ret = infilfs_native_index_locator_ensure(
+        pending, total_count + change_count + 32u);
+    if (ret)
+        goto out;
+
+    memset(located, 0, (size_t)(change_count ? change_count : 1u) *
+                        sizeof(*located));
+    for (c = 0; c < change_count; ++c) {
+        u32 d;
+
+        changes[c].found = false;
+        if (changes[c].add) {
+            if (infilfs_native_index_locator_lookup(
+                    pending, changes[c].object_id, NULL, NULL)) {
+                ret = -EEXIST;
+                goto out;
+            }
+            for (d = 0; d < c; ++d)
+                if (changes[d].add &&
+                    memcmp(changes[d].object_id,
+                           changes[c].object_id, 16) == 0) {
+                    ret = -EEXIST;
+                    goto out;
+                }
+            continue;
+        }
+
+        if (!infilfs_native_index_locator_lookup(
+                pending, changes[c].object_id,
+                &located[c].page_index, &located[c].entry_index)) {
+            if (!rebuilt) {
+                infilfs_native_index_locator_invalidate(pending);
+                rebuilt = true;
+                goto locate_again;
+            }
+            ret = -ENOENT;
+            goto out;
+        }
+        located[c].valid = true;
+    }
+
+    /*
+     * Validate all cached positions before mutating any page.  A full index
+     * rebuild (for example after a remove) invalidates the locator cache, but
+     * this check also makes stale/corrupt locator state fail closed.
+     */
+    for (c = 0; c < change_count; ++c) {
         struct infilfs_metadata_page_disk *page;
         struct infilfs_index_entry_disk *entries;
         u32 n;
-        bool dirty = false;
-        u64 page_no = le64_to_cpu(pages[p]);
-        u64 replacement;
-        u32 i;
+        u32 p;
 
-        ret = infilfs_read_block(pending->sb, page_no, page_block);
+        if (changes[c].add)
+            continue;
+        p = located[c].page_index;
+        if (p >= page_count) {
+            ret = -ESTALE;
+            goto stale_cache;
+        }
+        ret = infilfs_read_block(
+            pending->sb, le64_to_cpu(pages[p]), page_block);
         if (ret)
             goto out;
-        if (!infilfs_metadata_page_valid(pending->sb, page_block,
-                                         infilfs_index_page_magic,
-                                         header->object_id)) {
+        if (!infilfs_metadata_page_valid(
+                pending->sb, page_block, infilfs_index_page_magic,
+                header->object_id)) {
             ret = -EFSCORRUPTED;
             goto out;
         }
         page = (struct infilfs_metadata_page_disk *)page_block;
         n = le32_to_cpu(page->entry_count);
         if (n > INFILFS_INDEX_ENTRIES_PER_PAGE ||
-            le32_to_cpu(page->bytes_used) != n * sizeof(*entries)) {
+            le32_to_cpu(page->bytes_used) !=
+                n * sizeof(struct infilfs_index_entry_disk) ||
+            located[c].entry_index >= n) {
+            ret = -ESTALE;
+            goto stale_cache;
+        }
+        entries = (struct infilfs_index_entry_disk *)(page + 1);
+        if (memcmp(entries[located[c].entry_index].object_id,
+                   changes[c].object_id, 16) != 0) {
+            ret = -ESTALE;
+            goto stale_cache;
+        }
+    }
+
+    /*
+     * Repoint only the index pages that actually contain changed objects.
+     * Page and slot numbers stay stable under CoW, so the locator remains
+     * valid after the physical metadata page itself moves.
+     */
+    for (c = 0; c < change_count; ++c) {
+        struct infilfs_metadata_page_disk *page;
+        struct infilfs_index_entry_disk *entries;
+        u32 p;
+        u32 d;
+        u64 page_no;
+        u64 replacement;
+        bool dirty = false;
+
+        if (changes[c].add || changes[c].found)
+            continue;
+        p = located[c].page_index;
+        page_no = le64_to_cpu(pages[p]);
+        ret = infilfs_read_block(pending->sb, page_no, page_block);
+        if (ret)
+            goto out;
+        if (!infilfs_metadata_page_valid(
+                pending->sb, page_block, infilfs_index_page_magic,
+                header->object_id)) {
             ret = -EFSCORRUPTED;
             goto out;
         }
+        page = (struct infilfs_metadata_page_disk *)page_block;
         entries = (struct infilfs_index_entry_disk *)(page + 1);
-        for (i = 0; i < n; ++i) {
-            for (c = 0; c < change_count; ++c) {
-                if (memcmp(entries[i].object_id, changes[c].object_id, 16) != 0)
-                    continue;
-                if (changes[c].add) {
-                    ret = -EEXIST;
-                    goto out;
-                }
-                entries[i].object_block = cpu_to_le64(changes[c].object_block);
-                entries[i].object_type = cpu_to_le16(changes[c].object_type);
-                changes[c].found = true;
-                dirty = true;
+
+        for (d = c; d < change_count; ++d) {
+            u32 entry_index;
+
+            if (changes[d].add || changes[d].found ||
+                located[d].page_index != p)
+                continue;
+            entry_index = located[d].entry_index;
+            if (entry_index >= le32_to_cpu(page->entry_count) ||
+                memcmp(entries[entry_index].object_id,
+                       changes[d].object_id, 16) != 0) {
+                ret = -EFSCORRUPTED;
+                goto out;
             }
+            entries[entry_index].object_block =
+                cpu_to_le64(changes[d].object_block);
+            entries[entry_index].object_type =
+                cpu_to_le16(changes[d].object_type);
+            changes[d].found = true;
+            dirty = true;
         }
         if (!dirty)
             continue;
+
         page->generation = cpu_to_le64(pending->tx.generation);
         ret = infilfs_rw_finalize_page(page_block);
         if (ret)
@@ -2022,17 +2130,16 @@ static int infilfs_native_index_update_paged(
         pages[p] = cpu_to_le64(replacement);
     }
 
-    for (c = 0; c < change_count; ++c)
-        if (!changes[c].add && !changes[c].found) {
-            ret = -ENOENT;
-            goto out;
-        }
-
+    /*
+     * New IDs are append-only in the paged index.  The complete in-memory
+     * locator proves they are absent without rereading every prior page.
+     */
     c = 0;
     while (c < change_count) {
         struct infilfs_metadata_page_disk *page;
         struct infilfs_index_entry_disk *entries;
         u32 n = 0;
+        u32 page_index;
         u64 page_no = 0;
         u64 replacement;
 
@@ -2042,23 +2149,27 @@ static int infilfs_native_index_update_paged(
             break;
 
         if (page_count) {
-            page_no = le64_to_cpu(pages[page_count - 1u]);
+            page_index = page_count - 1u;
+            page_no = le64_to_cpu(pages[page_index]);
             ret = infilfs_read_block(pending->sb, page_no, page_block);
             if (ret)
                 goto out;
-            if (!infilfs_metadata_page_valid(pending->sb, page_block,
-                                             infilfs_index_page_magic,
-                                             header->object_id)) {
+            if (!infilfs_metadata_page_valid(
+                    pending->sb, page_block, infilfs_index_page_magic,
+                    header->object_id)) {
                 ret = -EFSCORRUPTED;
                 goto out;
             }
             page = (struct infilfs_metadata_page_disk *)page_block;
             n = le32_to_cpu(page->entry_count);
-            if (n > INFILFS_INDEX_ENTRIES_PER_PAGE) {
+            if (n > INFILFS_INDEX_ENTRIES_PER_PAGE ||
+                le32_to_cpu(page->bytes_used) !=
+                    n * sizeof(struct infilfs_index_entry_disk)) {
                 ret = -EFSCORRUPTED;
                 goto out;
             }
         } else {
+            page_index = 0;
             infilfs_rw_init_page(page_block, infilfs_index_page_magic,
                                  header->object_id, pending->tx.generation);
             page = (struct infilfs_metadata_page_disk *)page_block;
@@ -2069,29 +2180,40 @@ static int infilfs_native_index_update_paged(
                 ret = -ENOSPC;
                 goto out;
             }
+            page_index = page_count;
             infilfs_rw_init_page(page_block, infilfs_index_page_magic,
                                  header->object_id, pending->tx.generation);
             page = (struct infilfs_metadata_page_disk *)page_block;
             n = 0;
             page_no = 0;
         }
+
         entries = (struct infilfs_index_entry_disk *)(page + 1);
         while (c < change_count && n < INFILFS_INDEX_ENTRIES_PER_PAGE) {
+            u32 entry_index;
+
             if (!changes[c].add) {
                 ++c;
                 continue;
             }
+            entry_index = n;
             memset(&entries[n], 0, sizeof(entries[n]));
             memcpy(entries[n].object_id, changes[c].object_id, 16);
             entries[n].object_block = cpu_to_le64(changes[c].object_block);
             entries[n].object_type = cpu_to_le16(changes[c].object_type);
+            ret = infilfs_native_index_locator_insert(
+                pending, changes[c].object_id, page_index, entry_index);
+            if (ret)
+                goto out;
             changes[c].found = true;
             n++;
             total_count++;
             ++c;
         }
+
         page->entry_count = cpu_to_le32(n);
-        page->bytes_used = cpu_to_le32(n * sizeof(*entries));
+        page->bytes_used = cpu_to_le32(
+            n * sizeof(struct infilfs_index_entry_disk));
         page->generation = cpu_to_le64(pending->tx.generation);
         ret = infilfs_rw_finalize_page(page_block);
         if (ret)
@@ -2104,7 +2226,7 @@ static int infilfs_native_index_update_paged(
             pages[page_count++] = cpu_to_le64(replacement);
             payload->reserved = cpu_to_le32(page_count);
         } else {
-            pages[page_count - 1u] = cpu_to_le64(replacement);
+            pages[page_index] = cpu_to_le64(replacement);
         }
     }
 
@@ -2120,7 +2242,20 @@ static int infilfs_native_index_update_paged(
     if (ret)
         goto out;
     pending->tx.next_sb.object_index_block = cpu_to_le64(new_head_block);
+    goto out;
+
+stale_cache:
+    if (!rebuilt) {
+        infilfs_native_index_locator_invalidate(pending);
+        rebuilt = true;
+        goto locate_again;
+    }
+    if (ret == -ESTALE)
+        ret = -EFSCORRUPTED;
 out:
+    if (ret)
+        infilfs_native_index_locator_invalidate(pending);
+    kfree(located);
     kfree(page_block);
     return ret;
 }
