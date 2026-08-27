@@ -148,6 +148,7 @@ rm -f /usr/bin/infilfs-fuse
 if command -v udevadm >/dev/null 2>&1; then
     udevadm control --reload-rules || true
     udevadm trigger --subsystem-match=block --action=change || true
+    udevadm settle --timeout=30 || true
 fi
 exit 0
 EOF

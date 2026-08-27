@@ -85,6 +85,13 @@ require_no_active_infiltratorfs_mounts() {
     fi
 }
 
+refresh_desktop_storage() {
+    command -v udevadm >/dev/null 2>&1 || return 0
+    run_as_root udevadm control --reload-rules || true
+    run_as_root udevadm trigger --subsystem-match=block --action=change || true
+    run_as_root udevadm settle --timeout=30 || true
+}
+
 print_package_commands() {
     printf '  sudo apt-get update\n'
     printf '  sudo apt-get install -y'
@@ -184,6 +191,7 @@ fi
     cd "$PACKAGE_DIR"
     run_as_root apt-get install -y "./$(basename "$PACKAGE")"
 )
+refresh_desktop_storage
 
 installed_version="$(dpkg-query -W -f='${Version}' infiltratorfs 2>/dev/null || true)"
 installed_build="$(dpkg-query -W -f='${X-InfiltratorFS-Build}' infiltratorfs 2>/dev/null || true)"
