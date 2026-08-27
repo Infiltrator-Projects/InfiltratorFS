@@ -576,7 +576,9 @@ jobs:
 
           # Reinstate the former 4,000-write mounted stress workload with
           # deterministic 4 KiB overwrites and periodic durability barriers.
-          sudo python3 - "$large_src" "$mountpoint/native-rw/large.bin" <<'PY'
+          # Dump blocked-task/kernel diagnostics immediately if the loop fails
+          # so iterator/locking regressions are actionable from CI alone.
+          if ! sudo python3 - "$large_src" "$mountpoint/native-rw/large.bin" <<'PY'
           import os
           import random
           import sys
@@ -602,6 +604,10 @@ jobs:
               os.close(mounted_fd)
               os.close(expected_fd)
           PY
+          then
+            diagnostics
+            exit 1
+          fi
           large_source_sha="$(sha256sum "$large_src" | awk '{print $1}')"
           test "$(sha256sum "$mountpoint/native-rw/large.bin" | awk '{print $1}')" = \
                "$large_source_sha"
