@@ -126,7 +126,7 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake desktop-file-utils dkms kmod \
+            build-essential cmake desktop-file-utils dkms dwarves kmod \
             policykit-1 util-linux udev udisks2 xdg-utils zenity \
             linux-headers-generic
           sudo apt-get install -y --no-install-recommends "linux-headers-$(uname -r)"
