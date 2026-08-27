@@ -47,6 +47,7 @@
 
 #define INFILFS_OBJECT_VERSION_CLASSIC 1u
 #define INFILFS_OBJECT_VERSION_PAGED 2u
+#define INFILFS_OBJECT_VERSION_TREE 3u
 
 #define INFILFS_EXTENT_NORMAL 0u
 #define INFILFS_EXTENT_HOLE 1u
@@ -67,12 +68,13 @@
 #define INFILFS_INCOMPAT_HARD_LINKS ((__u64)0x0000000000000040ULL)
 #define INFILFS_INCOMPAT_SNAPSHOTS ((__u64)0x0000000000000080ULL)
 #define INFILFS_INCOMPAT_PAGED_EXTENTS ((__u64)0x0000000000000100ULL)
+#define INFILFS_INCOMPAT_INDEX_TREE ((__u64)0x0000000000000200ULL)
 #define INFILFS_KNOWN_INCOMPAT_FLAGS \
     (INFILFS_INCOMPAT_UTF8_NAMES | INFILFS_INCOMPAT_SPARSE_EXTENTS | \
      INFILFS_INCOMPAT_INLINE_DATA | INFILFS_INCOMPAT_SHARED_EXTENTS | \
      INFILFS_INCOMPAT_PAGED_METADATA | INFILFS_INCOMPAT_SYMBOLIC_LINKS | \
      INFILFS_INCOMPAT_HARD_LINKS | INFILFS_INCOMPAT_SNAPSHOTS | \
-     INFILFS_INCOMPAT_PAGED_EXTENTS)
+     INFILFS_INCOMPAT_PAGED_EXTENTS | INFILFS_INCOMPAT_INDEX_TREE)
 
 struct infilfs_superblock_disk {
     __u8 magic[8];
@@ -226,6 +228,9 @@ struct infilfs_snapshot_record_disk {
     (INFILFS_DISK_BLOCK_SIZE - sizeof(struct infilfs_metadata_page_disk))
 #define INFILFS_INDEX_ENTRIES_PER_PAGE \
     (INFILFS_METADATA_PAGE_DATA_SIZE / sizeof(struct infilfs_index_entry_disk))
+#define INFILFS_INDEX_TREE_FANOUT 256u
+#define INFILFS_INDEX_TREE_BRANCH_BYTES \
+    (INFILFS_INDEX_TREE_FANOUT * sizeof(__le64))
 #define INFILFS_EXTENTS_PER_PAGE \
     (INFILFS_METADATA_PAGE_DATA_SIZE / sizeof(struct infilfs_extent_disk))
 #define INFILFS_DIRECTORY_PAGE_POINTERS \
@@ -254,6 +259,7 @@ static_assert(sizeof(struct infilfs_file_payload_disk) == 128);
 static_assert(sizeof(struct infilfs_symlink_payload_disk) == 112);
 static_assert(sizeof(struct infilfs_extent_disk) == 24);
 static_assert(sizeof(struct infilfs_index_entry_disk) == 32);
+static_assert(INFILFS_INDEX_TREE_BRANCH_BYTES <= INFILFS_METADATA_PAGE_DATA_SIZE);
 static_assert(sizeof(struct infilfs_snapshot_catalog_payload_disk) == 8);
 static_assert(sizeof(struct infilfs_snapshot_record_disk) == 144);
 

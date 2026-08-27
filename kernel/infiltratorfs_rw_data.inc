@@ -48,6 +48,7 @@ struct infilfs_native_index_change {
     u64 object_block;
     u16 object_type;
     bool add;
+    bool remove;
     bool found;
 };
 
@@ -2371,6 +2372,385 @@ static __maybe_unused int infilfs_native_checksum_append(
         final_tail_block, final_tail_start);
 }
 
+enum infilfs_native_tree_mutation {
+    INFILFS_NATIVE_TREE_REPOINT,
+    INFILFS_NATIVE_TREE_ADD,
+    INFILFS_NATIVE_TREE_REMOVE
+};
+
+static int infilfs_native_tree_build_subtree(
+    struct infilfs_native_pending *pending, const u8 owner_id[16],
+    const struct infilfs_index_entry_disk *entries, u32 count,
+    unsigned int depth, u64 *root_out)
+{
+    u8 *block;
+    int ret;
+
+    if (!count || !root_out)
+        return -EINVAL;
+    block = kzalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+    if (!block)
+        return -ENOMEM;
+
+    if (count <= INFILFS_INDEX_ENTRIES_PER_PAGE) {
+        struct infilfs_metadata_page_disk *page;
+        u64 leaf;
+
+        infilfs_rw_init_page(
+            block, infilfs_index_page_magic, owner_id,
+            pending->tx.generation);
+        page = (struct infilfs_metadata_page_disk *)block;
+        page->entry_count = cpu_to_le32(count);
+        page->bytes_used = cpu_to_le32(
+            count * sizeof(struct infilfs_index_entry_disk));
+        memcpy(page + 1, entries, (size_t)count * sizeof(*entries));
+        ret = infilfs_rw_finalize_page(block);
+        if (!ret)
+            ret = infilfs_rw_tx_alloc(&pending->tx, 1, &leaf);
+        if (!ret)
+            ret = infilfs_native_stage_block(pending->sb, leaf, block);
+        if (!ret)
+            *root_out = leaf;
+        kfree(block);
+        return ret;
+    }
+    if (depth >= 16u) {
+        kfree(block);
+        return -EFSCORRUPTED;
+    }
+
+    {
+        struct infilfs_metadata_page_disk *page;
+        __le64 *children;
+        struct infilfs_index_entry_disk *group;
+        u32 child_count = 0;
+        u32 slot;
+        u64 branch;
+
+        infilfs_rw_init_page(
+            block, infilfs_index_branch_page_magic, owner_id,
+            pending->tx.generation);
+        page = (struct infilfs_metadata_page_disk *)block;
+        children = (__le64 *)(page + 1);
+        group = kvmalloc_array(count, sizeof(*group), GFP_NOFS);
+        if (!group) {
+            kfree(block);
+            return -ENOMEM;
+        }
+
+        ret = 0;
+        for (slot = 0; slot < INFILFS_INDEX_TREE_FANOUT; ++slot) {
+            u32 i;
+            u32 n = 0;
+            u64 child = 0;
+
+            for (i = 0; i < count; ++i)
+                if (entries[i].object_id[depth] == (u8)slot)
+                    group[n++] = entries[i];
+            if (!n)
+                continue;
+            ret = infilfs_native_tree_build_subtree(
+                pending, owner_id, group, n, depth + 1u, &child);
+            if (ret)
+                break;
+            children[slot] = cpu_to_le64(child);
+            child_count++;
+        }
+        kvfree(group);
+        if (ret) {
+            kfree(block);
+            return ret;
+        }
+
+        page->entry_count = cpu_to_le32(child_count);
+        page->bytes_used = cpu_to_le32(INFILFS_INDEX_TREE_BRANCH_BYTES);
+        ret = infilfs_rw_finalize_page(block);
+        if (!ret)
+            ret = infilfs_rw_tx_alloc(&pending->tx, 1, &branch);
+        if (!ret)
+            ret = infilfs_native_stage_block(pending->sb, branch, block);
+        if (!ret)
+            *root_out = branch;
+    }
+    kfree(block);
+    return ret;
+}
+
+static int infilfs_native_tree_mutate_node(
+    struct infilfs_native_pending *pending, const u8 owner_id[16], u64 node,
+    const struct infilfs_native_index_change *change, unsigned int depth,
+    enum infilfs_native_tree_mutation mutation, u64 *replacement_out)
+{
+    u8 *block;
+    int ret;
+
+    if (!node || depth > 16u)
+        return -EFSCORRUPTED;
+    block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+    if (!block)
+        return -ENOMEM;
+    ret = infilfs_read_block(pending->sb, node, block);
+    if (ret)
+        goto out;
+
+    if (memcmp(block, infilfs_index_page_magic, 8) == 0) {
+        struct infilfs_metadata_page_disk *page;
+        struct infilfs_index_entry_disk *entries;
+        u32 count;
+        u32 found;
+        u32 i;
+
+        if (!infilfs_metadata_page_valid(
+                pending->sb, block, infilfs_index_page_magic, owner_id)) {
+            ret = -EFSCORRUPTED;
+            goto out;
+        }
+        page = (struct infilfs_metadata_page_disk *)block;
+        count = le32_to_cpu(page->entry_count);
+        if (count > INFILFS_INDEX_ENTRIES_PER_PAGE ||
+            le32_to_cpu(page->bytes_used) !=
+                count * sizeof(struct infilfs_index_entry_disk)) {
+            ret = -EFSCORRUPTED;
+            goto out;
+        }
+        entries = (struct infilfs_index_entry_disk *)(page + 1);
+        found = count;
+        for (i = 0; i < count; ++i)
+            if (memcmp(entries[i].object_id, change->object_id, 16) == 0) {
+                found = i;
+                break;
+            }
+
+        if (mutation == INFILFS_NATIVE_TREE_ADD) {
+            if (found != count) {
+                ret = -EEXIST;
+                goto out;
+            }
+            if (count < INFILFS_INDEX_ENTRIES_PER_PAGE) {
+                memset(&entries[count], 0, sizeof(entries[count]));
+                memcpy(entries[count].object_id, change->object_id, 16);
+                entries[count].object_block =
+                    cpu_to_le64(change->object_block);
+                entries[count].object_type =
+                    cpu_to_le16(change->object_type);
+                page->entry_count = cpu_to_le32(count + 1u);
+                page->bytes_used = cpu_to_le32(
+                    (count + 1u) * sizeof(*entries));
+                page->generation = cpu_to_le64(pending->tx.generation);
+                ret = infilfs_rw_finalize_page(block);
+                if (!ret)
+                    ret = infilfs_native_store_private_or_cow(
+                        pending, node, block, replacement_out);
+                goto out;
+            }
+
+            {
+                struct infilfs_index_entry_disk *grown;
+
+                grown = kvmalloc_array(
+                    (size_t)count + 1u, sizeof(*grown), GFP_NOFS);
+                if (!grown) {
+                    ret = -ENOMEM;
+                    goto out;
+                }
+                memcpy(grown, entries, (size_t)count * sizeof(*grown));
+                memset(&grown[count], 0, sizeof(grown[count]));
+                memcpy(grown[count].object_id, change->object_id, 16);
+                grown[count].object_block =
+                    cpu_to_le64(change->object_block);
+                grown[count].object_type =
+                    cpu_to_le16(change->object_type);
+                ret = infilfs_native_tree_build_subtree(
+                    pending, owner_id, grown, count + 1u, depth,
+                    replacement_out);
+                kvfree(grown);
+                if (!ret)
+                    ret = infilfs_rw_tx_defer_free(
+                        &pending->tx, node, 1);
+                goto out;
+            }
+        }
+
+        if (found == count) {
+            ret = -ENOENT;
+            goto out;
+        }
+        if (mutation == INFILFS_NATIVE_TREE_REPOINT) {
+            entries[found].object_block = cpu_to_le64(change->object_block);
+            entries[found].object_type = cpu_to_le16(change->object_type);
+            page->generation = cpu_to_le64(pending->tx.generation);
+            ret = infilfs_rw_finalize_page(block);
+            if (!ret)
+                ret = infilfs_native_store_private_or_cow(
+                    pending, node, block, replacement_out);
+            goto out;
+        }
+
+        if (count == 1u) {
+            ret = infilfs_rw_tx_defer_free(&pending->tx, node, 1);
+            if (!ret)
+                *replacement_out = 0;
+            goto out;
+        }
+        if (found + 1u < count)
+            memmove(&entries[found], &entries[found + 1u],
+                    (size_t)(count - found - 1u) * sizeof(*entries));
+        memset(&entries[count - 1u], 0, sizeof(*entries));
+        page->entry_count = cpu_to_le32(count - 1u);
+        page->bytes_used = cpu_to_le32(
+            (count - 1u) * sizeof(*entries));
+        page->generation = cpu_to_le64(pending->tx.generation);
+        ret = infilfs_rw_finalize_page(block);
+        if (!ret)
+            ret = infilfs_native_store_private_or_cow(
+                pending, node, block, replacement_out);
+        goto out;
+    }
+
+    if (depth >= 16u) {
+        ret = -EFSCORRUPTED;
+        goto out;
+    }
+
+    {
+        const __le64 *read_children;
+        __le64 *children;
+        struct infilfs_metadata_page_disk *page;
+        u32 child_count;
+        u32 slot = change->object_id[depth];
+        u64 child;
+        u64 replacement = 0;
+
+        if (!infilfs_index_tree_branch_valid(
+                pending->sb, block, owner_id,
+                &read_children, &child_count)) {
+            ret = -EFSCORRUPTED;
+            goto out;
+        }
+        children = (__le64 *)(page = (struct infilfs_metadata_page_disk *)block,
+                              page + 1);
+        child = le64_to_cpu(read_children[slot]);
+
+        if (!child) {
+            struct infilfs_index_entry_disk entry;
+
+            if (mutation != INFILFS_NATIVE_TREE_ADD) {
+                ret = -ENOENT;
+                goto out;
+            }
+            memset(&entry, 0, sizeof(entry));
+            memcpy(entry.object_id, change->object_id, 16);
+            entry.object_block = cpu_to_le64(change->object_block);
+            entry.object_type = cpu_to_le16(change->object_type);
+            ret = infilfs_native_tree_build_subtree(
+                pending, owner_id, &entry, 1u, depth + 1u,
+                &replacement);
+            if (ret)
+                goto out;
+            child_count++;
+        } else {
+            ret = infilfs_native_tree_mutate_node(
+                pending, owner_id, child, change, depth + 1u,
+                mutation, &replacement);
+            if (ret)
+                goto out;
+            if (!replacement)
+                child_count--;
+        }
+
+        if (!child_count) {
+            ret = infilfs_rw_tx_defer_free(&pending->tx, node, 1);
+            if (!ret)
+                *replacement_out = 0;
+            goto out;
+        }
+        children[slot] = cpu_to_le64(replacement);
+        page->entry_count = cpu_to_le32(child_count);
+        page->generation = cpu_to_le64(pending->tx.generation);
+        ret = infilfs_rw_finalize_page(block);
+        if (!ret)
+            ret = infilfs_native_store_private_or_cow(
+                pending, node, block, replacement_out);
+    }
+out:
+    kfree(block);
+    return ret;
+}
+
+static int infilfs_native_index_update_tree(
+    struct infilfs_native_pending *pending,
+    struct infilfs_native_index_change *changes, u32 change_count,
+    u8 head[INFILFS_DISK_BLOCK_SIZE])
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(pending->sb);
+    struct infilfs_object_header_disk *header =
+        (struct infilfs_object_header_disk *)head;
+    struct infilfs_index_payload_disk *payload =
+        (struct infilfs_index_payload_disk *)(header + 1);
+    __le64 *root_ptr = (__le64 *)(payload + 1);
+    u64 old_head_block = le64_to_cpu(sbi->disk.object_index_block);
+    u64 root;
+    u64 new_head_block;
+    u32 total_count;
+    u32 c;
+    int ret = 0;
+
+    if (le32_to_cpu(payload->reserved) != 0 ||
+        le32_to_cpu(header->payload_size) !=
+            sizeof(*payload) + sizeof(*root_ptr))
+        return -EFSCORRUPTED;
+    total_count = le32_to_cpu(payload->entry_count);
+    root = le64_to_cpu(*root_ptr);
+    if (!total_count || !root)
+        return -EFSCORRUPTED;
+
+    infilfs_native_index_locator_invalidate(pending);
+    for (c = 0; c < change_count; ++c) {
+        enum infilfs_native_tree_mutation mutation;
+        u64 replacement = 0;
+
+        if (changes[c].add && changes[c].remove)
+            return -EINVAL;
+        mutation = changes[c].add ? INFILFS_NATIVE_TREE_ADD :
+            (changes[c].remove ? INFILFS_NATIVE_TREE_REMOVE :
+                                 INFILFS_NATIVE_TREE_REPOINT);
+        ret = infilfs_native_tree_mutate_node(
+            pending, header->object_id, root, &changes[c], 0u,
+            mutation, &replacement);
+        if (ret)
+            return ret;
+        if (!replacement)
+            return -EFSCORRUPTED;
+        root = replacement;
+        if (mutation == INFILFS_NATIVE_TREE_ADD) {
+            if (total_count == U32_MAX)
+                return -EOVERFLOW;
+            total_count++;
+        } else if (mutation == INFILFS_NATIVE_TREE_REMOVE) {
+            if (total_count <= 1u)
+                return -EFSCORRUPTED;
+            total_count--;
+        }
+        changes[c].found = true;
+    }
+
+    payload->entry_count = cpu_to_le32(total_count);
+    payload->reserved = 0;
+    *root_ptr = cpu_to_le64(root);
+    header->generation = cpu_to_le64(pending->tx.generation);
+    header->payload_size = cpu_to_le32(sizeof(*payload) + sizeof(*root_ptr));
+    ret = infilfs_rw_finalize_object(head);
+    if (ret)
+        return ret;
+    ret = infilfs_native_store_private_or_cow(
+        pending, old_head_block, head, &new_head_block);
+    if (ret)
+        return ret;
+    pending->tx.next_sb.object_index_block = cpu_to_le64(new_head_block);
+    sbi->disk = pending->tx.next_sb;
+    return 0;
+}
+
 static int infilfs_native_index_update_classic(
     struct infilfs_native_pending *pending,
     struct infilfs_native_index_change *changes, u32 change_count)
@@ -2382,6 +2762,8 @@ static int infilfs_native_index_update_classic(
     infilfs_native_index_locator_invalidate(pending);
 
     for (i = 0; i < change_count; ++i) {
+        if (changes[i].remove)
+            return -EOPNOTSUPP;
         if (changes[i].add)
             ret = infilfs_rw_rebuild_index(&pending->tx, NULL, 0, 0,
                 changes[i].object_id, changes[i].object_block,
@@ -2421,6 +2803,9 @@ static int infilfs_native_index_update_paged(
 
     if (page_count > INFILFS_INDEX_PAGE_POINTERS)
         return -EFSCORRUPTED;
+    for (c = 0; c < change_count; ++c)
+        if (changes[c].remove)
+            return -EOPNOTSUPP;
     page_block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
     located = kcalloc(change_count ? change_count : 1u,
                       sizeof(*located), GFP_NOFS);
@@ -2735,12 +3120,16 @@ static int infilfs_native_index_update(
     if (ret)
         goto out;
     header = (struct infilfs_object_header_disk *)head;
-    if (le16_to_cpu(header->object_version) == INFILFS_OBJECT_VERSION_PAGED)
-        ret = infilfs_native_index_update_paged(pending, changes,
-                                                change_count, head);
+    if (le16_to_cpu(header->object_version) == INFILFS_OBJECT_VERSION_TREE)
+        ret = infilfs_native_index_update_tree(
+            pending, changes, change_count, head);
+    else if (le16_to_cpu(header->object_version) ==
+             INFILFS_OBJECT_VERSION_PAGED)
+        ret = infilfs_native_index_update_paged(
+            pending, changes, change_count, head);
     else
-        ret = infilfs_native_index_update_classic(pending, changes,
-                                                  change_count);
+        ret = infilfs_native_index_update_classic(
+            pending, changes, change_count);
 out:
     kfree(head);
     return ret;

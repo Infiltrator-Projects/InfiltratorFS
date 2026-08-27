@@ -43,6 +43,9 @@ static const u8 infilfs_directory_page_magic[8] = {
 static const u8 infilfs_index_page_magic[8] = {
     'I', 'N', 'F', 'S', 'I', 'P', '0', '1'
 };
+static const u8 infilfs_index_branch_page_magic[8] = {
+    'I', 'N', 'F', 'S', 'I', 'B', '0', '1'
+};
 static const u8 infilfs_extent_page_magic[8] = {
     'I', 'N', 'F', 'S', 'E', 'P', '0', '1'
 };
@@ -313,7 +316,9 @@ static bool infilfs_object_basic_valid(struct super_block *sb,
 
     version = le16_to_cpu(header->object_version);
     if (version != INFILFS_OBJECT_VERSION_CLASSIC &&
-        version != INFILFS_OBJECT_VERSION_PAGED)
+        version != INFILFS_OBJECT_VERSION_PAGED &&
+        !(version == INFILFS_OBJECT_VERSION_TREE &&
+          le16_to_cpu(header->object_type) == INFILFS_OBJECT_INDEX))
         return false;
 
     payload = le32_to_cpu(header->payload_size);
@@ -364,6 +369,8 @@ static bool infilfs_metadata_page_valid(struct super_block *sb,
         return false;
     return true;
 }
+
+#include "infiltratorfs_index_tree.inc"
 
 static u64 infilfs_object_ino(const u8 id[16])
 {
@@ -450,6 +457,12 @@ static int infilfs_index_lookup_indexed(struct super_block *sb,
             goto out;
         }
         ret = -ENOENT;
+        goto out;
+    }
+
+    if (version == INFILFS_OBJECT_VERSION_TREE) {
+        ret = infilfs_index_tree_lookup_head(
+            sb, head, object_id, object_block_out, type_out);
         goto out;
     }
 
@@ -550,8 +563,10 @@ static int infilfs_validate_checkpoint_graph(
     u8 *root = NULL;
     u8 *index = NULL;
     bool paged_feature;
+    bool index_tree_feature;
     bool root_paged;
     bool index_paged;
+    bool index_tree;
     u64 i;
     int ret = 0;
 
@@ -629,11 +644,17 @@ static int infilfs_validate_checkpoint_graph(
     index_header = (const struct infilfs_object_header_disk *)index;
     paged_feature = (le64_to_cpu(candidate->incompat_flags) &
                      INFILFS_INCOMPAT_PAGED_METADATA) != 0;
+    index_tree_feature = (le64_to_cpu(candidate->incompat_flags) &
+                          INFILFS_INCOMPAT_INDEX_TREE) != 0;
     root_paged = le16_to_cpu(root_header->object_version) ==
         INFILFS_OBJECT_VERSION_PAGED;
     index_paged = le16_to_cpu(index_header->object_version) ==
         INFILFS_OBJECT_VERSION_PAGED;
-    if (paged_feature != root_paged || paged_feature != index_paged) {
+    index_tree = le16_to_cpu(index_header->object_version) ==
+        INFILFS_OBJECT_VERSION_TREE;
+    if (paged_feature != root_paged ||
+        index_tree_feature != index_tree ||
+        (!index_tree_feature && paged_feature != index_paged)) {
         ret = -EFSCORRUPTED;
         goto out;
     }

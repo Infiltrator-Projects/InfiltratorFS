@@ -60,6 +60,8 @@ jobs:
         run: bash tests/native-sequential-write-scaling-policy.sh .
       - name: Guard native small-file scaling
         run: bash tests/native-small-file-scaling-policy.sh .
+      - name: Guard native object-index tree
+        run: bash tests/native-index-tree-policy.sh .
       - name: Configure native-only userspace
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
       - name: Build
