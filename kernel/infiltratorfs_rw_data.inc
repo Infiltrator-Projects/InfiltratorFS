@@ -26,6 +26,8 @@
 #define INFILFS_NATIVE_UNDO_INITIAL 16u
 #define INFILFS_NATIVE_CHECKSUM_CACHE_SLOTS 256u
 #define INFILFS_NATIVE_CHECKSUM_GROUP_CACHE_SLOTS 4096u
+#define INFILFS_NATIVE_WRITER_TAIL_SLOTS 64u
+#define INFILFS_NATIVE_INDEX_LOCATOR_MIN_CAPACITY 64u
 
 struct infilfs_native_checksum_payload_disk {
     u8 owner_object_id[16];
@@ -53,6 +55,21 @@ struct infilfs_native_undo {
     u8 data[INFILFS_DISK_BLOCK_SIZE];
 };
 
+struct infilfs_native_writer_tail {
+    u8 owner_id[16];
+    u8 object_id[16];
+    u64 object_block;
+    u64 start_logical;
+    bool valid;
+};
+
+struct infilfs_native_index_locator {
+    u8 object_id[16];
+    u32 page_index;
+    u32 entry_index;
+    bool valid;
+};
+
 struct infilfs_native_pending {
     struct list_head node;
     struct super_block *sb;
@@ -68,6 +85,12 @@ struct infilfs_native_pending {
     struct infilfs_native_undo *undo;
     unsigned int undo_count;
     unsigned int undo_capacity;
+    struct infilfs_native_writer_tail
+        writer_tail[INFILFS_NATIVE_WRITER_TAIL_SLOTS];
+    struct infilfs_native_index_locator *index_locators;
+    u32 index_locator_capacity;
+    u32 index_locator_count;
+    bool index_locator_valid;
     u64 pending_bytes;
     u64 publish_threshold;
     bool active;
@@ -116,6 +139,275 @@ static u32 infilfs_native_id_hash(const u8 id[16])
         h *= 16777619u;
     }
     return h;
+}
+
+
+static void infilfs_native_writer_tail_invalidate(
+    struct infilfs_native_pending *pending)
+{
+    memset(pending->writer_tail, 0, sizeof(pending->writer_tail));
+}
+
+static bool infilfs_native_writer_tail_lookup(
+    struct infilfs_native_pending *pending, const u8 owner_id[16],
+    struct infilfs_native_writer_tail *out)
+{
+    u32 slot = infilfs_native_id_hash(owner_id) &
+        (INFILFS_NATIVE_WRITER_TAIL_SLOTS - 1u);
+    struct infilfs_native_writer_tail *entry = &pending->writer_tail[slot];
+
+    if (!entry->valid || memcmp(entry->owner_id, owner_id, 16) != 0)
+        return false;
+    if (out)
+        *out = *entry;
+    return true;
+}
+
+static void infilfs_native_writer_tail_store(
+    struct infilfs_native_pending *pending, const u8 owner_id[16],
+    const u8 object_id[16], u64 object_block, u64 start_logical)
+{
+    u32 slot = infilfs_native_id_hash(owner_id) &
+        (INFILFS_NATIVE_WRITER_TAIL_SLOTS - 1u);
+    struct infilfs_native_writer_tail *entry = &pending->writer_tail[slot];
+
+    memset(entry, 0, sizeof(*entry));
+    memcpy(entry->owner_id, owner_id, 16);
+    memcpy(entry->object_id, object_id, 16);
+    entry->object_block = object_block;
+    entry->start_logical = start_logical;
+    entry->valid = true;
+}
+
+static void infilfs_native_index_locator_invalidate(
+    struct infilfs_native_pending *pending)
+{
+    pending->index_locator_valid = false;
+}
+
+static int infilfs_native_index_locator_resize(
+    struct infilfs_native_pending *pending, u32 requested)
+{
+    struct infilfs_native_index_locator *old = pending->index_locators;
+    struct infilfs_native_index_locator *fresh;
+    u32 old_capacity = pending->index_locator_capacity;
+    u32 capacity = INFILFS_NATIVE_INDEX_LOCATOR_MIN_CAPACITY;
+    u32 i;
+
+    while (capacity < requested) {
+        if (capacity > U32_MAX / 2u)
+            return -EOVERFLOW;
+        capacity <<= 1;
+    }
+    if (capacity == old_capacity)
+        return 0;
+
+    fresh = kvmalloc_array(capacity, sizeof(*fresh), GFP_NOFS | __GFP_ZERO);
+    if (!fresh)
+        return -ENOMEM;
+
+    for (i = 0; i < old_capacity; ++i) {
+        u32 slot;
+        u32 probes;
+
+        if (!old || !old[i].valid)
+            continue;
+        slot = infilfs_native_id_hash(old[i].object_id) & (capacity - 1u);
+        for (probes = 0; probes < capacity; ++probes) {
+            struct infilfs_native_index_locator *entry =
+                &fresh[(slot + probes) & (capacity - 1u)];
+
+            if (entry->valid)
+                continue;
+            *entry = old[i];
+            break;
+        }
+        if (probes == capacity) {
+            kvfree(fresh);
+            return -ENOSPC;
+        }
+    }
+
+    kvfree(old);
+    pending->index_locators = fresh;
+    pending->index_locator_capacity = capacity;
+    return 0;
+}
+
+static int infilfs_native_index_locator_ensure(
+    struct infilfs_native_pending *pending, u32 wanted)
+{
+    u64 needed;
+
+    if (wanted < INFILFS_NATIVE_INDEX_LOCATOR_MIN_CAPACITY / 2u)
+        wanted = INFILFS_NATIVE_INDEX_LOCATOR_MIN_CAPACITY / 2u;
+    needed = (u64)wanted * 2u;
+    if (needed > U32_MAX)
+        return -EOVERFLOW;
+    if (pending->index_locator_capacity >= (u32)needed)
+        return 0;
+    return infilfs_native_index_locator_resize(pending, (u32)needed);
+}
+
+static int infilfs_native_index_locator_insert(
+    struct infilfs_native_pending *pending, const u8 object_id[16],
+    u32 page_index, u32 entry_index)
+{
+    struct infilfs_native_index_locator *entry;
+    u32 slot;
+    u32 probes;
+    int ret;
+
+    if ((u64)(pending->index_locator_count + 1u) * 10u >=
+        (u64)pending->index_locator_capacity * 7u) {
+        ret = infilfs_native_index_locator_ensure(
+            pending, pending->index_locator_count + 1u);
+        if (ret)
+            return ret;
+    }
+    if (!pending->index_locator_capacity) {
+        ret = infilfs_native_index_locator_ensure(pending, 1u);
+        if (ret)
+            return ret;
+    }
+
+    slot = infilfs_native_id_hash(object_id) &
+        (pending->index_locator_capacity - 1u);
+    for (probes = 0; probes < pending->index_locator_capacity; ++probes) {
+        entry = &pending->index_locators[
+            (slot + probes) & (pending->index_locator_capacity - 1u)];
+        if (entry->valid) {
+            if (memcmp(entry->object_id, object_id, 16) != 0)
+                continue;
+            entry->page_index = page_index;
+            entry->entry_index = entry_index;
+            return 0;
+        }
+        memset(entry, 0, sizeof(*entry));
+        memcpy(entry->object_id, object_id, 16);
+        entry->page_index = page_index;
+        entry->entry_index = entry_index;
+        entry->valid = true;
+        pending->index_locator_count++;
+        return 0;
+    }
+    return -ENOSPC;
+}
+
+static bool infilfs_native_index_locator_lookup(
+    struct infilfs_native_pending *pending, const u8 object_id[16],
+    u32 *page_index, u32 *entry_index)
+{
+    u32 slot;
+    u32 probes;
+
+    if (!pending->index_locator_valid || !pending->index_locator_capacity)
+        return false;
+    slot = infilfs_native_id_hash(object_id) &
+        (pending->index_locator_capacity - 1u);
+    for (probes = 0; probes < pending->index_locator_capacity; ++probes) {
+        struct infilfs_native_index_locator *entry =
+            &pending->index_locators[
+                (slot + probes) & (pending->index_locator_capacity - 1u)];
+
+        if (!entry->valid)
+            return false;
+        if (memcmp(entry->object_id, object_id, 16) != 0)
+            continue;
+        if (page_index)
+            *page_index = entry->page_index;
+        if (entry_index)
+            *entry_index = entry->entry_index;
+        return true;
+    }
+    return false;
+}
+
+static int infilfs_native_index_locator_build(
+    struct infilfs_native_pending *pending,
+    const u8 head[INFILFS_DISK_BLOCK_SIZE])
+{
+    const struct infilfs_object_header_disk *header =
+        (const struct infilfs_object_header_disk *)head;
+    const struct infilfs_index_payload_disk *payload =
+        (const struct infilfs_index_payload_disk *)(header + 1);
+    const __le64 *pages = (const __le64 *)(payload + 1);
+    u32 page_count = le32_to_cpu(payload->reserved);
+    u32 total_count = le32_to_cpu(payload->entry_count);
+    u8 *page_block = NULL;
+    u32 seen = 0;
+    u32 p;
+    int ret;
+
+    if (le16_to_cpu(header->object_version) != INFILFS_OBJECT_VERSION_PAGED)
+        return -EOPNOTSUPP;
+    if ((total_count && !page_count) ||
+        page_count > INFILFS_INDEX_PAGE_POINTERS)
+        return -EFSCORRUPTED;
+
+    ret = infilfs_native_index_locator_ensure(pending, total_count + 32u);
+    if (ret)
+        return ret;
+    memset(pending->index_locators, 0,
+           (size_t)pending->index_locator_capacity *
+               sizeof(*pending->index_locators));
+    pending->index_locator_count = 0;
+    pending->index_locator_valid = false;
+
+    page_block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+    if (!page_block)
+        return -ENOMEM;
+
+    for (p = 0; p < page_count; ++p) {
+        struct infilfs_metadata_page_disk *page;
+        struct infilfs_index_entry_disk *entries;
+        u32 count;
+        u32 i;
+
+        ret = infilfs_read_block(
+            pending->sb, le64_to_cpu(pages[p]), page_block);
+        if (ret)
+            goto out;
+        if (!infilfs_metadata_page_valid(
+                pending->sb, page_block, infilfs_index_page_magic,
+                header->object_id)) {
+            ret = -EFSCORRUPTED;
+            goto out;
+        }
+        page = (struct infilfs_metadata_page_disk *)page_block;
+        count = le32_to_cpu(page->entry_count);
+        if (count > INFILFS_INDEX_ENTRIES_PER_PAGE ||
+            le32_to_cpu(page->bytes_used) !=
+                count * sizeof(struct infilfs_index_entry_disk) ||
+            seen > total_count || count > total_count - seen) {
+            ret = -EFSCORRUPTED;
+            goto out;
+        }
+        entries = (struct infilfs_index_entry_disk *)(page + 1);
+        for (i = 0; i < count; ++i) {
+            if (infilfs_native_index_locator_lookup(
+                    pending, entries[i].object_id, NULL, NULL)) {
+                ret = -EFSCORRUPTED;
+                goto out;
+            }
+            ret = infilfs_native_index_locator_insert(
+                pending, entries[i].object_id, p, i);
+            if (ret)
+                goto out;
+        }
+        seen += count;
+    }
+    if (seen != total_count) {
+        ret = -EFSCORRUPTED;
+        goto out;
+    }
+    pending->index_locator_valid = true;
+    ret = 0;
+out:
+    kfree(page_block);
+    if (ret)
+        pending->index_locator_valid = false;
+    return ret;
 }
 
 static void infilfs_native_checksum_cache_invalidate_sb(struct super_block *sb)
