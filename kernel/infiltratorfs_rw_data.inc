@@ -1745,6 +1745,271 @@ out:
     return ret;
 }
 
+static int infilfs_native_checksum_append_tail(
+    struct infilfs_native_pending *pending,
+    struct infilfs_file_payload_disk *file, const u8 owner_id[16],
+    u64 touched_start, u64 touched_count,
+    const struct infilfs_data_checksum_disk *digests,
+    struct infilfs_native_index_change *changes, u32 change_capacity,
+    u32 *change_count, u8 final_tail_id[16], u64 *final_tail_block,
+    u64 *final_tail_start)
+{
+    const u64 per = INFILFS_NATIVE_CHECKSUMS_PER_OBJECT;
+    struct infilfs_native_checksum_node *new_nodes = NULL;
+    struct infilfs_native_writer_tail cached_tail;
+    struct infilfs_native_checksum_payload_disk *tail_payload = NULL;
+    struct infilfs_data_checksum_disk *tail_values;
+    u8 *tail_object = NULL;
+    u64 touched_end;
+    u64 tail_block = 0;
+    u64 tail_start = 0;
+    u32 tail_count = 0;
+    u32 fill = 0;
+    u32 new_count = 0;
+    u32 i;
+    int ret = 0;
+
+    if (!touched_count || touched_start > U64_MAX - touched_count)
+        return -EINVAL;
+    touched_end = touched_start + touched_count;
+
+    /*
+     * Empty files are the simplest append case: create a short forward chain
+     * containing only the checksum groups covered by this write.
+     */
+    if (!memchr_inv(file->checksum_head_id, 0,
+                    sizeof(file->checksum_head_id))) {
+        u64 group;
+
+        if (touched_start != 0)
+            return -EOPNOTSUPP;
+        new_count = (u32)DIV_ROUND_UP_ULL(touched_count, per);
+        if (!new_count || *change_count > change_capacity ||
+            new_count > change_capacity - *change_count)
+            return -ENOSPC;
+        new_nodes = kvmalloc_array(new_count, sizeof(*new_nodes), GFP_NOFS);
+        tail_object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+        if (!new_nodes || !tail_object) {
+            ret = -ENOMEM;
+            goto out;
+        }
+        memset(new_nodes, 0, (size_t)new_count * sizeof(*new_nodes));
+        group = 0;
+        for (i = 0; i < new_count; ++i) {
+            ret = infilfs_native_random_id(new_nodes[i].object_id);
+            if (ret)
+                goto out;
+            new_nodes[i].start_logical = group;
+            if (group > U64_MAX - per && i + 1u < new_count) {
+                ret = -EOVERFLOW;
+                goto out;
+            }
+            group += per;
+        }
+        for (i = 0; i < new_count; ++i) {
+            const u8 *next_id = i + 1u < new_count ?
+                new_nodes[i + 1u].object_id : NULL;
+            u64 stored_block;
+
+            ret = infilfs_native_init_checksum_object(
+                pending, owner_id, new_nodes[i].object_id, next_id,
+                new_nodes[i].start_logical, digests, touched_start,
+                touched_count, tail_object);
+            if (ret)
+                goto out;
+            ret = infilfs_rw_tx_alloc(&pending->tx, 1, &stored_block);
+            if (ret)
+                goto out;
+            ret = infilfs_native_stage_block(
+                pending->sb, stored_block, tail_object);
+            if (ret)
+                goto out;
+
+            memcpy(changes[*change_count].object_id,
+                   new_nodes[i].object_id, 16);
+            changes[*change_count].object_block = stored_block;
+            changes[*change_count].object_type = INFILFS_OBJECT_CHECKSUM;
+            changes[*change_count].add = true;
+            (*change_count)++;
+            new_nodes[i].object_block = stored_block;
+            infilfs_native_checksum_group_cache_store(
+                pending->sb, owner_id, new_nodes[i].object_id,
+                stored_block, new_nodes[i].start_logical);
+        }
+        memcpy(file->checksum_head_id, new_nodes[0].object_id, 16);
+        memcpy(final_tail_id, new_nodes[new_count - 1u].object_id, 16);
+        *final_tail_block = new_nodes[new_count - 1u].object_block;
+        *final_tail_start = new_nodes[new_count - 1u].start_logical;
+        ret = 0;
+        goto out;
+    }
+
+    tail_object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+    if (!tail_object)
+        return -ENOMEM;
+
+    /*
+     * The writer-only tail cache is authoritative while write_lock is held:
+     * readers never publish into it, namespace mutations invalidate it, and
+     * rollback clears it.  A cache miss pays the historical walk once, then
+     * all subsequent sequential appends stay at the tail.
+     */
+    if (infilfs_native_writer_tail_lookup(
+            pending, owner_id, &cached_tail)) {
+        ret = infilfs_native_checksum_decode(
+            pending->sb, owner_id, cached_tail.object_id,
+            cached_tail.object_block, tail_object, &tail_payload);
+        if (!ret &&
+            le64_to_cpu(tail_payload->start_logical_block) ==
+                cached_tail.start_logical &&
+            !memchr_inv(tail_payload->next_object_id, 0,
+                        sizeof(tail_payload->next_object_id))) {
+            memcpy(final_tail_id, cached_tail.object_id, 16);
+            tail_block = cached_tail.object_block;
+            tail_start = cached_tail.start_logical;
+        } else {
+            infilfs_native_writer_tail_invalidate(pending);
+            tail_payload = NULL;
+        }
+    }
+
+    if (!tail_payload) {
+        ret = infilfs_native_checksum_tail(
+            pending->sb, owner_id, file->checksum_head_id,
+            final_tail_id, &tail_block, &tail_start, tail_object);
+        if (ret)
+            goto out;
+        ret = infilfs_native_checksum_decode(
+            pending->sb, owner_id, final_tail_id, tail_block,
+            tail_object, &tail_payload);
+        if (ret)
+            goto out;
+        infilfs_native_writer_tail_store(
+            pending, owner_id, final_tail_id, tail_block, tail_start);
+    }
+
+    tail_count = le32_to_cpu(tail_payload->checksum_count);
+    if (!tail_count || tail_count > per ||
+        touched_start != tail_start + tail_count ||
+        touched_end <= touched_start) {
+        ret = -EOPNOTSUPP;
+        goto out;
+    }
+
+    fill = min_t(u64, touched_count, per - tail_count);
+    if (touched_count > fill)
+        new_count = (u32)DIV_ROUND_UP_ULL(touched_count - fill, per);
+    if (*change_count > change_capacity ||
+        1u + new_count > change_capacity - *change_count) {
+        ret = -ENOSPC;
+        goto out;
+    }
+
+    if (new_count) {
+        u64 group = tail_start + per;
+
+        new_nodes = kvmalloc_array(new_count, sizeof(*new_nodes), GFP_NOFS);
+        if (!new_nodes) {
+            ret = -ENOMEM;
+            goto out;
+        }
+        memset(new_nodes, 0, (size_t)new_count * sizeof(*new_nodes));
+        for (i = 0; i < new_count; ++i) {
+            ret = infilfs_native_random_id(new_nodes[i].object_id);
+            if (ret)
+                goto out;
+            new_nodes[i].start_logical = group;
+            if (group > U64_MAX - per && i + 1u < new_count) {
+                ret = -EOVERFLOW;
+                goto out;
+            }
+            group += per;
+        }
+    }
+
+    tail_values = (struct infilfs_data_checksum_disk *)(tail_payload + 1);
+    if (fill) {
+        memcpy(tail_values + tail_count, digests,
+               (size_t)fill * sizeof(*tail_values));
+        tail_count += fill;
+        tail_payload->checksum_count = cpu_to_le32(tail_count);
+    }
+    memset(tail_payload->next_object_id, 0,
+           sizeof(tail_payload->next_object_id));
+    if (new_count)
+        memcpy(tail_payload->next_object_id, new_nodes[0].object_id, 16);
+    ((struct infilfs_object_header_disk *)tail_object)->payload_size =
+        cpu_to_le32(sizeof(*tail_payload) +
+                    (size_t)tail_count * sizeof(*tail_values));
+    ((struct infilfs_object_header_disk *)tail_object)->generation =
+        cpu_to_le64(pending->tx.generation);
+    ret = infilfs_rw_finalize_object(tail_object);
+    if (ret)
+        goto out;
+
+    {
+        u64 stored_block;
+
+        ret = infilfs_native_store_private_or_cow(
+            pending, tail_block, tail_object, &stored_block);
+        if (ret)
+            goto out;
+        memcpy(changes[*change_count].object_id, final_tail_id, 16);
+        changes[*change_count].object_block = stored_block;
+        changes[*change_count].object_type = INFILFS_OBJECT_CHECKSUM;
+        changes[*change_count].add = false;
+        (*change_count)++;
+        tail_block = stored_block;
+        infilfs_native_checksum_group_cache_store(
+            pending->sb, owner_id, final_tail_id, stored_block, tail_start);
+    }
+
+    for (i = 0; i < new_count; ++i) {
+        const u8 *next_id = i + 1u < new_count ?
+            new_nodes[i + 1u].object_id : NULL;
+        u64 stored_block;
+
+        ret = infilfs_native_init_checksum_object(
+            pending, owner_id, new_nodes[i].object_id, next_id,
+            new_nodes[i].start_logical, digests, touched_start,
+            touched_count, tail_object);
+        if (ret)
+            goto out;
+        ret = infilfs_rw_tx_alloc(&pending->tx, 1, &stored_block);
+        if (ret)
+            goto out;
+        ret = infilfs_native_stage_block(
+            pending->sb, stored_block, tail_object);
+        if (ret)
+            goto out;
+
+        memcpy(changes[*change_count].object_id,
+               new_nodes[i].object_id, 16);
+        changes[*change_count].object_block = stored_block;
+        changes[*change_count].object_type = INFILFS_OBJECT_CHECKSUM;
+        changes[*change_count].add = true;
+        (*change_count)++;
+        new_nodes[i].object_block = stored_block;
+        infilfs_native_checksum_group_cache_store(
+            pending->sb, owner_id, new_nodes[i].object_id,
+            stored_block, new_nodes[i].start_logical);
+    }
+
+    if (new_count) {
+        memcpy(final_tail_id, new_nodes[new_count - 1u].object_id, 16);
+        *final_tail_block = new_nodes[new_count - 1u].object_block;
+        *final_tail_start = new_nodes[new_count - 1u].start_logical;
+    } else {
+        *final_tail_block = tail_block;
+        *final_tail_start = tail_start;
+    }
+    ret = 0;
+out:
+    kvfree(new_nodes);
+    kfree(tail_object);
+    return ret;
+}
+
 static int infilfs_native_checksum_set_range(
     struct infilfs_native_pending *pending,
     struct infilfs_file_payload_disk *file, const u8 owner_id[16],
@@ -3109,10 +3374,27 @@ generic_extent_write:
         goto out;
 
     memcpy(&working_file, old_file, sizeof(working_file));
-    ret = infilfs_native_checksum_append(
-        pending, &working_file, ii->object_id, start_block, touched_blocks,
-        digests, changes, change_capacity, &change_count,
-        final_tail_id, final_tail_block, final_tail_start);
+    if (pos == old_size &&
+        (pos & (INFILFS_DISK_BLOCK_SIZE - 1u)) == 0 &&
+        start_block == old_blocks) {
+        ret = infilfs_native_checksum_append_tail(
+            pending, &working_file, ii->object_id,
+            start_block, touched_blocks, digests,
+            changes, change_capacity, &change_count,
+            final_tail_id, final_tail_block, final_tail_start);
+        if (ret == -EOPNOTSUPP)
+            ret = infilfs_native_checksum_append(
+                pending, &working_file, ii->object_id,
+                start_block, touched_blocks, digests,
+                changes, change_capacity, &change_count,
+                final_tail_id, final_tail_block, final_tail_start);
+    } else {
+        ret = infilfs_native_checksum_append(
+            pending, &working_file, ii->object_id,
+            start_block, touched_blocks, digests,
+            changes, change_capacity, &change_count,
+            final_tail_id, final_tail_block, final_tail_start);
+    }
     if (ret)
         goto out;
 
@@ -3217,6 +3499,8 @@ static ssize_t infilfs_native_extent_write_iter(struct inode *inode,
         sbi->disk = pending->tx.next_sb;
         infilfs_native_checksum_cache_store(
             inode->i_sb, ii->object_id, tail_id, tail_block, tail_start);
+        infilfs_native_writer_tail_store(
+            pending, ii->object_id, tail_id, tail_block, tail_start);
         done += consumed;
         pending->pending_bytes += consumed;
 
