@@ -1557,6 +1557,48 @@ out:
     return ret;
 }
 
+static int infilfs_native_store_extent_page(
+    struct infilfs_native_pending *pending, u64 old_block,
+    const u8 page[INFILFS_DISK_BLOCK_SIZE], u64 *new_block_out)
+{
+    u64 new_block;
+    int ret;
+
+    /*
+     * Reuse transaction-private pages when the per-operation undo journal has
+     * room.  If it is already full, replace the private page instead of
+     * failing the write with -E2BIG; the old private page is then reclaimed at
+     * transaction publication.
+     */
+    if (old_block && infilfs_native_block_private(pending, old_block) &&
+        pending->undo_count >= INFILFS_NATIVE_UNDO_MAX) {
+        ret = infilfs_rw_tx_alloc(&pending->tx, 1, &new_block);
+        if (ret)
+            return ret;
+        ret = infilfs_native_stage_block(pending->sb, new_block, page);
+        if (ret)
+            return ret;
+        ret = infilfs_rw_tx_defer_free(&pending->tx, old_block, 1);
+        if (ret)
+            return ret;
+        *new_block_out = new_block;
+        return 0;
+    }
+
+    if (old_block)
+        return infilfs_native_store_private_or_cow(
+            pending, old_block, page, new_block_out);
+
+    ret = infilfs_rw_tx_alloc(&pending->tx, 1, &new_block);
+    if (ret)
+        return ret;
+    ret = infilfs_native_stage_block(pending->sb, new_block, page);
+    if (ret)
+        return ret;
+    *new_block_out = new_block;
+    return 0;
+}
+
 static int infilfs_native_build_file_object(
     struct infilfs_native_pending *pending, struct inode *inode,
     const u8 old_object[INFILFS_DISK_BLOCK_SIZE],
@@ -1568,6 +1610,10 @@ static int infilfs_native_build_file_object(
     struct infilfs_inode_info *ii = INFILFS_I(inode);
     const struct infilfs_object_header_disk *old_header =
         (const struct infilfs_object_header_disk *)old_object;
+    const struct infilfs_file_payload_disk *old_file =
+        (const struct infilfs_file_payload_disk *)(old_header + 1);
+    const __le64 *old_pointers = NULL;
+    u32 old_page_count = 0;
     struct infilfs_object_header_disk *header;
     struct infilfs_file_payload_disk *file;
     const u32 classic_max = (INFILFS_DISK_BLOCK_SIZE -
@@ -1578,6 +1624,24 @@ static int infilfs_native_build_file_object(
         le16_to_cpu(old_header->object_version) == INFILFS_OBJECT_VERSION_PAGED);
     u64 stored_block;
     int ret;
+
+    if (le16_to_cpu(old_header->object_version) ==
+        INFILFS_OBJECT_VERSION_PAGED) {
+        const struct infilfs_extent_head_disk *old_head =
+            (const struct infilfs_extent_head_disk *)(old_file + 1);
+        size_t expected;
+
+        old_page_count = le32_to_cpu(old_head->page_count);
+        if (!old_page_count ||
+            old_page_count > INFILFS_EXTENT_PAGE_POINTERS ||
+            le32_to_cpu(old_head->reserved) != 0)
+            return -EFSCORRUPTED;
+        expected = sizeof(*old_file) + sizeof(*old_head) +
+            (size_t)old_page_count * sizeof(__le64);
+        if (expected != le32_to_cpu(old_header->payload_size))
+            return -EFSCORRUPTED;
+        old_pointers = (const __le64 *)(old_head + 1);
+    }
 
     memset(new_object, 0, INFILFS_DISK_BLOCK_SIZE);
     memcpy(new_object, old_object,
@@ -1607,22 +1671,32 @@ static int infilfs_native_build_file_object(
         u32 copied = 0;
         u32 p;
         u8 *page_block;
+        u8 *old_page_block;
 
         if (!(le64_to_cpu(pending->tx.next_sb.incompat_flags) &
               INFILFS_INCOMPAT_PAGED_EXTENTS) ||
             !pages || pages > INFILFS_EXTENT_PAGE_POINTERS)
             return -EFBIG;
         page_block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
-        if (!page_block)
+        old_page_block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+        if (!page_block || !old_page_block) {
+            kfree(old_page_block);
+            kfree(page_block);
             return -ENOMEM;
+        }
+
         header->object_version = cpu_to_le16(INFILFS_OBJECT_VERSION_PAGED);
         head->page_count = cpu_to_le32(pages);
         head->reserved = 0;
+
         for (p = 0; p < pages; ++p) {
             struct infilfs_metadata_page_disk *page;
             u32 n = min_t(u32, INFILFS_EXTENTS_PER_PAGE,
                           extent_count - copied);
+            u64 old_page_no = p < old_page_count ?
+                le64_to_cpu(old_pointers[p]) : 0;
             u64 block;
+            bool unchanged = false;
 
             infilfs_rw_init_page(page_block, infilfs_extent_page_magic,
                                  ii->object_id, pending->tx.generation);
@@ -1630,27 +1704,70 @@ static int infilfs_native_build_file_object(
             page->entry_count = cpu_to_le32(n);
             page->bytes_used = cpu_to_le32(n * sizeof(*extents));
             memcpy(page + 1, extents + copied, (size_t)n * sizeof(*extents));
+
+            if (old_page_no) {
+                struct infilfs_metadata_page_disk *old_page;
+                u32 old_n;
+
+                ret = infilfs_read_block(pending->sb, old_page_no,
+                                         old_page_block);
+                if (ret)
+                    goto paged_out;
+                if (!infilfs_metadata_page_valid(
+                        pending->sb, old_page_block,
+                        infilfs_extent_page_magic, ii->object_id)) {
+                    ret = -EFSCORRUPTED;
+                    goto paged_out;
+                }
+                old_page =
+                    (struct infilfs_metadata_page_disk *)old_page_block;
+                old_n = le32_to_cpu(old_page->entry_count);
+                if (old_n == n &&
+                    le32_to_cpu(old_page->bytes_used) ==
+                        n * sizeof(*extents) &&
+                    memcmp(old_page + 1, extents + copied,
+                           (size_t)n * sizeof(*extents)) == 0)
+                    unchanged = true;
+            }
+
+            if (unchanged) {
+                pointers[p] = cpu_to_le64(old_page_no);
+                copied += n;
+                continue;
+            }
+
             ret = infilfs_rw_finalize_page(page_block);
-            if (ret) {
-                kfree(page_block);
-                return ret;
-            }
-            ret = infilfs_rw_tx_alloc(&pending->tx, 1, &block);
-            if (ret) {
-                kfree(page_block);
-                return ret;
-            }
-            ret = infilfs_native_stage_block(pending->sb, block, page_block);
-            if (ret) {
-                kfree(page_block);
-                return ret;
-            }
+            if (ret)
+                goto paged_out;
+            ret = infilfs_native_store_extent_page(
+                pending, old_page_no, page_block, &block);
+            if (ret)
+                goto paged_out;
             pointers[p] = cpu_to_le64(block);
             copied += n;
         }
-        kfree(page_block);
+
+        /*
+         * A shrinking paged extent map may use fewer pages than the previous
+         * file object.  Those metadata pages are no longer reachable from the
+         * live object and must participate in the same deferred/snapshot-aware
+         * reclamation as every other CoW metadata block.
+         */
+        for (p = pages; p < old_page_count; ++p) {
+            ret = infilfs_rw_tx_defer_free(
+                &pending->tx, le64_to_cpu(old_pointers[p]), 1);
+            if (ret)
+                goto paged_out;
+        }
+
         header->payload_size = cpu_to_le32(sizeof(*file) + sizeof(*head) +
             (size_t)pages * sizeof(__le64));
+        ret = 0;
+paged_out:
+        kfree(old_page_block);
+        kfree(page_block);
+        if (ret)
+            return ret;
     }
 
     ret = infilfs_rw_finalize_object(new_object);
