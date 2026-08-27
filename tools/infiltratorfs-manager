@@ -21,6 +21,7 @@ show_info()
 show_about()
 {
     local version="source/development"
+    local build="Native / local machine compile"
     local delivery="Source / local installation"
 
     if command -v dpkg-query >/dev/null 2>&1; then
@@ -28,6 +29,7 @@ show_about()
         installed="$(dpkg-query -W -f='${Version}' infiltratorfs 2>/dev/null || true)"
         if [[ -n "$installed" ]]; then
             version="$installed"
+            build="Generic / APT package"
             delivery="APT / Debian package"
         fi
     fi
@@ -36,7 +38,8 @@ show_about()
         --text="InfiltratorFS Manager
 
 Version: $version
-Build: Native / Linux kernel filesystem
+Build: $build
+Driver: Native Linux VFS / DKMS
 Delivery: $delivery
 
 The Linux implementation uses the native VFS/DKMS kernel driver. FUSE is not the product path."
