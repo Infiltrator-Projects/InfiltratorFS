@@ -83,14 +83,14 @@ static int infilfs_ns_begin(struct super_block *sb,
  * Namespace syscalls are transaction boundaries, not implicit fsyncs.
  * Keep each operation atomic through the existing operation snapshot,
  * but publish a burst of successful mutations together.  Explicit
- * fsync/syncfs, the one-second idle timer, unmount, or the bounded
+ * fsync/syncfs, the five-second idle timer, unmount, or the bounded
  * metadata charge below remains a durability boundary.
  *
- * The synthetic 1 MiB charge bounds metadata-only bursts even when a
+ * The synthetic 64 KiB charge bounds metadata-only bursts even when a
  * transaction-private directory/index block can be reused without a
  * corresponding free-block delta.  This prevents an unbounded pending
- * transaction while avoiding a full four-flush checkpoint publication
- * for every create/rename/unlink-style mutation.
+ * transaction while avoiding repeated full checkpoint/bitmap publication
+ * during ordinary desktop namespace traffic.
  */
 #define INFILFS_NATIVE_METADATA_PUBLISH_CHARGE (64ULL * 1024ULL)
 
