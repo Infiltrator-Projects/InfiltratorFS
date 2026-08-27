@@ -496,6 +496,36 @@ infs_status infs_encode_paged_object_index(uint8_t block[INFS_BLOCK_SIZE],
         block, object_id, generation, INFS_OBJECT_VERSION_PAGED);
 }
 
+infs_status infs_encode_tree_object_index(uint8_t block[INFS_BLOCK_SIZE],
+                                          const uint8_t object_id[16],
+                                          uint64_t generation,
+                                          uint64_t root_node_block,
+                                          uint32_t entry_count)
+{
+    if (!block || !object_id || !root_node_block || !entry_count)
+        return INFS_STATUS_INVALID_ARGUMENT;
+
+    infs_status status = infs_object_init(
+        block, INFS_OBJECT_INDEX, object_id, NULL, generation,
+        (uint32_t)(sizeof(struct infs_index_payload_disk) + sizeof(uint64_t)));
+    if (status != INFS_STATUS_OK)
+        return status;
+
+    struct infs_object_header_disk *header =
+        (struct infs_object_header_disk *)block;
+    struct infs_index_payload_disk *payload =
+        (struct infs_index_payload_disk *)(header + 1);
+    uint64_t root_le = infs_cpu_to_le64(root_node_block);
+
+    header->object_version = infs_cpu_to_le16(INFS_OBJECT_VERSION_TREE);
+    payload->entry_count = infs_cpu_to_le32(entry_count);
+    payload->reserved = infs_cpu_to_le32(0);
+    memcpy(payload + 1, &root_le, sizeof(root_le));
+    header->payload_size = infs_cpu_to_le32(
+        (uint32_t)(sizeof(*payload) + sizeof(root_le)));
+    return infs_object_finalize(block);
+}
+
 infs_status infs_read_best_superblock(const struct infs_storage *storage,
                                       uint64_t size_bytes,
                                       struct infs_superblock_disk *out,

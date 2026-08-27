@@ -192,11 +192,18 @@ static infs_status load_checkpoint_graph(
     int paged_feature =
         (infs_le64_to_cpu(vol->sb.incompat_flags) &
          INFS_INCOMPAT_PAGED_METADATA) != 0;
+    int index_tree_feature =
+        (infs_le64_to_cpu(vol->sb.incompat_flags) &
+         INFS_INCOMPAT_INDEX_TREE) != 0;
     int root_paged =
         infs_le16_to_cpu(root_hdr->object_version) == INFS_OBJECT_VERSION_PAGED;
     int index_paged =
         infs_le16_to_cpu(index_hdr->object_version) == INFS_OBJECT_VERSION_PAGED;
-    if (paged_feature != root_paged || paged_feature != index_paged)
+    int index_tree =
+        infs_le16_to_cpu(index_hdr->object_version) == INFS_OBJECT_VERSION_TREE;
+    if (paged_feature != root_paged ||
+        index_tree_feature != index_tree ||
+        (!index_tree_feature && paged_feature != index_paged))
         return INFS_STATUS_CORRUPT;
 
     /* A real mounted device should not perform an fsck-equivalent graph walk

@@ -26,7 +26,7 @@ static const uint8_t INFS_EXTENT_PAGE_MAGIC[8] = {
  * exact development format. A format revision replaces its predecessor; it
  * does not add an older-format reader or migration path. */
 #define INFS_FORMAT_MAJOR 0u
-#define INFS_FORMAT_MINOR 12u
+#define INFS_FORMAT_MINOR 13u
 #define INFS_CHECKPOINT_COUNT 3u
 #define INFS_CHECKSUM_CRC64_ECMA 1u
 #define INFS_CHECKSUM_SHA256     2u
@@ -246,8 +246,12 @@ struct INFS_PACKED infs_data_checksum_disk {
 
 /* Version 1 index objects store entries immediately after this payload and
  * reserved is zero. Version 2 index heads store little-endian uint64 physical
- * index-page pointers after this payload; reserved is the page count and
- * entry_count is the total entry count across all pages. */
+ * index-page pointers after this payload; reserved is the page count. Format
+ * 0.13 version 3 index heads store exactly one little-endian uint64 root-node
+ * pointer after this payload and keep reserved zero. Tree branch pages select
+ * children by successive bytes of the persistent 128-bit object ID, while
+ * leaves retain the ordinary checksummed index-entry page representation.
+ * entry_count is always the total number of indexed objects. */
 struct INFS_PACKED infs_index_payload_disk {
     uint32_t entry_count;
     uint32_t reserved;

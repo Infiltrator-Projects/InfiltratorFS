@@ -149,7 +149,7 @@ infs_status infs_format_storage(struct infs_storage *storage, const char *label)
         INFS_INCOMPAT_INLINE_DATA | INFS_INCOMPAT_SHARED_EXTENTS |
         INFS_INCOMPAT_PAGED_METADATA | INFS_INCOMPAT_SYMBOLIC_LINKS |
         INFS_INCOMPAT_HARD_LINKS | INFS_INCOMPAT_SNAPSHOTS |
-        INFS_INCOMPAT_PAGED_EXTENTS);
+        INFS_INCOMPAT_PAGED_EXTENTS | INFS_INCOMPAT_INDEX_TREE);
     memcpy(sb.label, label, label_length);
 
     uint8_t block[INFS_BLOCK_SIZE] = {0};
@@ -189,20 +189,8 @@ infs_status infs_format_storage(struct infs_storage *storage, const char *label)
     if (status != INFS_STATUS_OK)
         goto done;
 
-    status = infs_encode_paged_object_index(block, index_id, 1u);
-    if (status != INFS_STATUS_OK)
-        goto done;
-    struct infs_object_header_disk *index_header =
-        (struct infs_object_header_disk *)block;
-    struct infs_index_payload_disk *index_payload =
-        (struct infs_index_payload_disk *)(block + sizeof(*index_header));
-    uint64_t *page_pointer = (uint64_t *)(index_payload + 1);
-    index_payload->entry_count = infs_cpu_to_le32(1u);
-    index_payload->reserved = infs_cpu_to_le32(1u);
-    page_pointer[0] = infs_cpu_to_le64(index_page_block);
-    index_header->payload_size = infs_cpu_to_le32(
-        (uint32_t)(sizeof(*index_payload) + sizeof(*page_pointer)));
-    status = infs_object_finalize(block);
+    status = infs_encode_tree_object_index(
+        block, index_id, 1u, index_page_block, 1u);
     if (status != INFS_STATUS_OK)
         goto done;
     status = infs_storage_write(storage, index_block * INFS_BLOCK_SIZE,

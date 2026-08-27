@@ -50,6 +50,11 @@ infs_status infs_encode_paged_root_directory(uint8_t block[INFS_BLOCK_SIZE],
 infs_status infs_encode_paged_object_index(uint8_t block[INFS_BLOCK_SIZE],
                                            const uint8_t object_id[16],
                                            uint64_t generation);
+infs_status infs_encode_tree_object_index(uint8_t block[INFS_BLOCK_SIZE],
+                                          const uint8_t object_id[16],
+                                          uint64_t generation,
+                                          uint64_t root_node_block,
+                                          uint32_t entry_count);
 
 infs_status infs_read_best_superblock(const struct infs_storage *storage,
                                       uint64_t size_bytes,
