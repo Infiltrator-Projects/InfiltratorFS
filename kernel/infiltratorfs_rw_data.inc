@@ -2561,8 +2561,7 @@ static int infilfs_native_append_chunk_locked(
             if (fast_copied)
                 iov_iter_revert(from, fast_copied);
             kfree(fast_data);
-            ret = -EFAULT;
-            goto out;
+            goto generic_extent_write;
         }
         ret = infilfs_native_try_single_paged_overwrite(
             pending, inode, fast_data, pos, bytes, old_object,
@@ -2578,6 +2577,7 @@ static int infilfs_native_append_chunk_locked(
             goto out;
     }
 
+generic_extent_write:
     ret = infilfs_native_collect_extents(pending, inode, old_object,
         &old_extents, &old_extent_count, &old_blocks, &was_inline);
     if (ret)
