@@ -52,7 +52,8 @@ install -m 0644 README.md "$package_root/usr/share/doc/infiltratorfs/README.md"
 # though the repository build itself succeeds.
 dkms_root="$package_root/usr/src/infiltratorfs-$package_version"
 install -d "$dkms_root"
-for file in Makefile infiltratorfs.c infiltratorfs_format.h infiltratorfs_rw.inc \
+for file in Makefile infiltratorfs.c infiltratorfs_format.h \
+            infiltratorfs_index_tree.inc infiltratorfs_rw.inc \
             infiltratorfs_rw_legacy.inc infiltratorfs_rw_data.inc \
             infiltratorfs_rw_namespace.inc infiltratorfs_rw_read_cache.inc \
             infiltratorfs_pagecache.inc infiltratorfs_linux_meta.inc; do
