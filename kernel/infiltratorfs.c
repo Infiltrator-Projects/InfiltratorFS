@@ -930,22 +930,35 @@ static int infilfs_map_file_block(struct inode *inode, const u8 *object,
         const __le64 *pages = (const __le64 *)(head + 1);
         u32 page_count = le32_to_cpu(head->page_count);
         u8 *page_block;
-        u32 p;
+        u32 lo = 0, hi = page_count;
         int ret = -EFSCORRUPTED;
 
-        if (page_count == 0 || page_count > INFILFS_EXTENT_PAGE_POINTERS)
+        if (page_count == 0 || page_count > INFILFS_EXTENT_PAGE_POINTERS ||
+            le32_to_cpu(head->reserved) != 0 ||
+            sizeof(*file) + sizeof(*head) +
+                (size_t)page_count * sizeof(__le64) !=
+                    le32_to_cpu(header->payload_size))
             return -EFSCORRUPTED;
         page_block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_KERNEL);
         if (!page_block)
             return -ENOMEM;
 
-        for (p = 0; p < page_count; ++p) {
+        /*
+         * Extent pages are stored in logical order.  The original native
+         * mapper restarted at page zero for every 4 KiB data block, making a
+         * sequential read of a fragmented file O(data_blocks * extent_pages).
+         * Locate the one candidate page with a binary search instead.
+         */
+        while (lo < hi) {
             const struct infilfs_metadata_page_disk *page;
             const struct infilfs_extent_disk *ext;
             u32 count;
+            u32 mid = lo + (hi - lo) / 2u;
+            u64 first;
+            u64 last;
 
-            ret = infilfs_read_block(inode->i_sb, le64_to_cpu(pages[p]),
-                                     page_block);
+            ret = infilfs_read_block(inode->i_sb,
+                                     le64_to_cpu(pages[mid]), page_block);
             if (ret)
                 break;
             if (!infilfs_metadata_page_valid(inode->i_sb, page_block,
@@ -963,19 +976,61 @@ static int infilfs_map_file_block(struct inode *inode, const u8 *object,
                 break;
             }
             ext = (const struct infilfs_extent_disk *)(page + 1);
-            for (i = 0; i < count; ++i) {
-                u64 start = le64_to_cpu(ext[i].logical_block);
-                u32 blocks = le32_to_cpu(ext[i].block_count);
-                u32 flags = le32_to_cpu(ext[i].flags);
-
-                if (!blocks || logical < start || logical >= start + blocks)
-                    continue;
-                *flags_out = flags;
-                *physical_out = flags == INFILFS_EXTENT_HOLE ? 0 :
-                    le64_to_cpu(ext[i].physical_block) + (logical - start);
-                ret = 0;
-                goto paged_out;
+            first = le64_to_cpu(ext[0].logical_block);
+            last = le64_to_cpu(ext[count - 1u].logical_block) +
+                le32_to_cpu(ext[count - 1u].block_count);
+            if (last <= first) {
+                ret = -EFSCORRUPTED;
+                break;
             }
+            if (logical < first) {
+                hi = mid;
+                continue;
+            }
+            if (logical >= last) {
+                lo = mid + 1u;
+                continue;
+            }
+
+            /* The target is inside this page; binary-search its extents. */
+            {
+                u32 elo = 0, ehi = count;
+
+                while (elo < ehi) {
+                    u32 emid = elo + (ehi - elo) / 2u;
+                    u64 start = le64_to_cpu(ext[emid].logical_block);
+                    u32 blocks = le32_to_cpu(ext[emid].block_count);
+                    u32 flags = le32_to_cpu(ext[emid].flags);
+                    u64 end_logical;
+
+                    if (!blocks || start > U64_MAX - blocks) {
+                        ret = -EFSCORRUPTED;
+                        goto paged_out;
+                    }
+                    end_logical = start + blocks;
+                    if (logical < start) {
+                        ehi = emid;
+                        continue;
+                    }
+                    if (logical >= end_logical) {
+                        elo = emid + 1u;
+                        continue;
+                    }
+                    if (flags != INFILFS_EXTENT_NORMAL &&
+                        flags != INFILFS_EXTENT_HOLE) {
+                        ret = -EFSCORRUPTED;
+                        goto paged_out;
+                    }
+                    *flags_out = flags;
+                    *physical_out = flags == INFILFS_EXTENT_HOLE ? 0 :
+                        le64_to_cpu(ext[emid].physical_block) +
+                            (logical - start);
+                    ret = 0;
+                    goto paged_out;
+                }
+            }
+            ret = -EFSCORRUPTED;
+            break;
         }
 paged_out:
         kfree(page_block);
