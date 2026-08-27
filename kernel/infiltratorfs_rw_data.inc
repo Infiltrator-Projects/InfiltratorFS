@@ -2141,6 +2141,7 @@ static int infilfs_native_try_single_paged_overwrite(
     struct infilfs_extent_head_disk *new_head;
     __le64 *new_pointers;
     struct infilfs_data_checksum_disk digest;
+    struct iov_iter source;
     u8 *page_block = NULL;
     u8 *new_object = NULL;
     u8 *data = NULL;
@@ -2199,6 +2200,25 @@ static int infilfs_native_try_single_paged_overwrite(
                            sizeof(*local), GFP_NOFS);
     if (!page_block || !new_object || !data || !local) {
         ret = -ENOMEM;
+        goto out;
+    }
+
+    /*
+     * Snapshot the caller's iterator and copy the 4 KiB payload before any
+     * transaction mutation or potentially blocking metadata traversal.  The
+     * real iterator advances only after the filesystem operation succeeds.
+     * If this iterator shape cannot provide one full block, leave it untouched
+     * and let the qualified generic path handle the request.
+     */
+    source = *from;
+    if (iov_iter_count(&source) < INFILFS_DISK_BLOCK_SIZE) {
+        ret = -EOPNOTSUPP;
+        goto out;
+    }
+    copied = copy_from_iter(data, INFILFS_DISK_BLOCK_SIZE, &source);
+    if (copied != INFILFS_DISK_BLOCK_SIZE) {
+        copied = 0;
+        ret = -EOPNOTSUPP;
         goto out;
     }
 
@@ -2312,14 +2332,6 @@ static int infilfs_native_try_single_paged_overwrite(
     if (ret)
         goto out;
 
-    copied = copy_from_iter(data, INFILFS_DISK_BLOCK_SIZE, from);
-    if (copied != INFILFS_DISK_BLOCK_SIZE) {
-        if (copied)
-            iov_iter_revert(from, copied);
-        copied = 0;
-        ret = -EFAULT;
-        goto out;
-    }
     ret = infilfs_native_stage_block(inode->i_sb, replacement_block, data);
     if (ret)
         goto out;
@@ -2495,12 +2507,11 @@ static int infilfs_native_try_single_paged_overwrite(
         inode->i_blocks / (INFILFS_DISK_BLOCK_SIZE >> 9);
     if (old_flags == INFILFS_EXTENT_HOLE)
         (*allocated_blocks_out)++;
+    iov_iter_advance(from, INFILFS_DISK_BLOCK_SIZE);
     *consumed_out = INFILFS_DISK_BLOCK_SIZE;
     copied = 0;
     ret = 0;
 out:
-    if (ret && copied)
-        iov_iter_revert(from, copied);
     kvfree(local);
     kfree(data);
     kfree(new_object);
