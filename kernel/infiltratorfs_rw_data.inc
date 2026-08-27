@@ -728,9 +728,6 @@ static int infilfs_native_collect_extents(
             }
             memcpy(extents + copied, page + 1, (size_t)n * sizeof(*extents));
             copied += n;
-            ret = infilfs_rw_tx_defer_free(&pending->tx, block, 1);
-            if (ret)
-                break;
         }
         kfree(page_block);
         if (ret)
@@ -1947,11 +1944,26 @@ static int infilfs_native_build_file_object(
     header->generation = cpu_to_le64(pending->tx.generation);
 
     if (!paged) {
+        u32 p;
+
         header->object_version = cpu_to_le16(INFILFS_OBJECT_VERSION_CLASSIC);
         header->payload_size = cpu_to_le32(sizeof(*file) +
             (size_t)extent_count * sizeof(*extents));
         if (extent_count)
             memcpy(file + 1, extents, (size_t)extent_count * sizeof(*extents));
+
+        /*
+         * collect_extents() is read-only with respect to metadata ownership.
+         * When a paged file collapses back to the classic representation,
+         * reclaim its former extent pages here, at the point where they
+         * actually become unreachable.
+         */
+        for (p = 0; p < old_page_count; ++p) {
+            ret = infilfs_rw_tx_defer_free(
+                &pending->tx, le64_to_cpu(old_pointers[p]), 1);
+            if (ret)
+                return ret;
+        }
     } else {
         struct infilfs_extent_head_disk *head =
             (struct infilfs_extent_head_disk *)(file + 1);
