@@ -77,12 +77,18 @@ static int directory_entries_snapshot(
         (struct infs_object_header_disk *)directory;
     uint32_t count = infs_le32_to_cpu(payload->entry_count);
     if (infs_le16_to_cpu(header->object_version) ==
-        INFS_OBJECT_VERSION_PAGED) {
+            INFS_OBJECT_VERSION_TREE ||
+        infs_le16_to_cpu(header->object_version) ==
+            INFS_OBJECT_VERSION_PAGED) {
         uint8_t *snapshot = NULL;
         size_t bytes = 0;
         uint32_t snapshot_count = 0;
-        status = paged_dir_snapshot(vol, directory, &snapshot, &bytes,
-                                    &snapshot_count);
+        status = infs_le16_to_cpu(header->object_version) ==
+                INFS_OBJECT_VERSION_TREE ?
+            tree_dir_snapshot(vol, directory, &snapshot, &bytes,
+                              &snapshot_count) :
+            paged_dir_snapshot(vol, directory, &snapshot, &bytes,
+                               &snapshot_count);
         if (status != INFS_STATUS_OK)
             return status;
         if (snapshot_count != count) {

@@ -476,12 +476,18 @@ static int validate_integrity_metadata(struct infs_volume *vol)
             struct infs_object_header_disk *header =
                 (struct infs_object_header_disk *)object;
             if (infs_le16_to_cpu(header->object_version) ==
-                INFS_OBJECT_VERSION_PAGED) {
+                    INFS_OBJECT_VERSION_TREE ||
+                infs_le16_to_cpu(header->object_version) ==
+                    INFS_OBJECT_VERSION_PAGED) {
                 uint8_t *snapshot = NULL;
                 size_t bytes = 0;
                 uint32_t entries_count = 0;
-                status = paged_dir_snapshot(vol, object, &snapshot, &bytes,
-                                            &entries_count);
+                status = infs_le16_to_cpu(header->object_version) ==
+                        INFS_OBJECT_VERSION_TREE ?
+                    tree_dir_snapshot(vol, object, &snapshot, &bytes,
+                                      &entries_count) :
+                    paged_dir_snapshot(vol, object, &snapshot, &bytes,
+                                       &entries_count);
                 free(snapshot);
                 if (status != INFS_STATUS_OK ||
                     entries_count != infs_le32_to_cpu(dir->entry_count)) {
