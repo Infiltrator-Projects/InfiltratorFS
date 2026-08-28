@@ -1016,6 +1016,12 @@ static int infilfs_validate_checkpoint_graph(
     bool index_tree;
     int ret = 0;
 
+    /* Object/page validators use sbi->disk as their generation and feature
+     * context. Install each candidate before walking its graph exactly as the
+     * pre-Format-0.17 validator did; a later candidate overwrites this context
+     * if the current one is rejected. */
+    sbi->disk = *candidate;
+
     ret = infilfs_allocation_map_load(
         sb, candidate, &bitmap, &bitmap_bytes, NULL);
     if (ret)
