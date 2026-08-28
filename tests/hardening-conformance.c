@@ -25,6 +25,8 @@ struct memory_image {
     uint64_t fail_flush_after_block;
     int fail_flushes;
     int flush_failure_pending;
+    uint64_t flush_calls;
+    uint64_t fail_flush_call;
 };
 
 static void fail(const char *message)
@@ -68,6 +70,10 @@ static infs_status memory_write(void *context, uint64_t offset,
 static infs_status memory_flush(void *context)
 {
     struct memory_image *image = context;
+    ++image->flush_calls;
+    if (image->fail_flush_call &&
+        image->flush_calls == image->fail_flush_call)
+        return INFS_STATUS_IO_ERROR;
     if (image->flush_failure_pending && image->fail_flushes) {
         image->flush_failure_pending = 0;
         --image->fail_flushes;
@@ -169,6 +175,8 @@ static void build_valid_image(struct memory_image *image)
     image->fail_flush_after_block = UINT64_MAX;
     image->fail_flushes = 0;
     image->flush_failure_pending = 0;
+    image->flush_calls = 0;
+    image->fail_flush_call = 0;
 
     const uint64_t initial_objects[] = { UINT64_C(2), UINT64_C(3) };
     test_write_single_leaf_allocation_tree(
@@ -711,6 +719,61 @@ static void check_post_commit_replica_failure(struct memory_image *image)
     infs_volume_close(&volume);
 }
 
+static void check_precheckpoint_flush_failure_aborts(
+    struct memory_image *image)
+{
+    build_valid_image(image);
+    struct infs_volume volume;
+    struct infs_lookup lookup;
+    expect(open_image(image, 1, &volume) == INFS_STATUS_OK,
+           "open writable pre-checkpoint-flush image");
+    expect(infs_volume_set_deferred_publish(
+               &volume, 1, UINT64_MAX) == INFS_STATUS_OK,
+           "enable deferred publish for pre-checkpoint failure");
+
+    uint64_t base_generation = infs_le64_to_cpu(volume.sb.generation);
+    uint64_t base_free = infs_le64_to_cpu(volume.sb.free_blocks);
+    expect(infs_create_file(&volume, "/staged", &file_options) ==
+               INFS_STATUS_OK && volume.tx_active,
+           "stage transaction before forced flush failure");
+
+    /*
+     * infs_volume_sync() performs one durability flush before publishing the
+     * allocation tree and one after writing its replacement pages. Fail the
+     * latter: no checkpoint has yet been attempted, so rollback is certain.
+     */
+    image->fail_flush_call = image->flush_calls + 2u;
+    expect(infs_volume_sync(&volume) == INFS_STATUS_IO_ERROR,
+           "surface post-allocation-map pre-checkpoint flush failure");
+    expect(!volume.tx_active && volume.tx_error == INFS_STATUS_OK,
+           "abort failed pre-checkpoint transaction");
+    expect(infs_le64_to_cpu(volume.sb.generation) == base_generation,
+           "restore committed generation after pre-checkpoint failure");
+    expect(infs_le64_to_cpu(volume.sb.free_blocks) == base_free,
+           "restore committed free-block accounting after pre-checkpoint failure");
+    expect(infs_lookup_path(&volume, "/staged", &lookup) ==
+               INFS_STATUS_NOT_FOUND,
+           "discard staged namespace after pre-checkpoint failure");
+
+    image->fail_flush_call = 0;
+    expect(infs_create_file(&volume, "/after-failure", &file_options) ==
+               INFS_STATUS_OK,
+           "permit clean transaction after pre-checkpoint rollback");
+    expect(infs_volume_sync(&volume) == INFS_STATUS_OK,
+           "commit clean transaction after pre-checkpoint rollback");
+    infs_volume_close(&volume);
+
+    expect(open_image(image, 0, &volume) == INFS_STATUS_OK,
+           "reopen image after pre-checkpoint rollback");
+    expect(infs_lookup_path(&volume, "/staged", &lookup) ==
+               INFS_STATUS_NOT_FOUND,
+           "staged file absent after reopen");
+    expect(infs_lookup_path(&volume, "/after-failure", &lookup) ==
+               INFS_STATUS_OK,
+           "later committed file survives reopen");
+    infs_volume_close(&volume);
+}
+
 static void check_indeterminate_commit_requires_reopen(
     struct memory_image *image)
 {
@@ -777,6 +840,7 @@ int main(void)
     check_checksum_reachability(&image);
     check_rename_replacement(&image);
     check_post_commit_replica_failure(&image);
+    check_precheckpoint_flush_failure_aborts(&image);
     check_indeterminate_commit_requires_reopen(&image);
 
     free(image.bytes);

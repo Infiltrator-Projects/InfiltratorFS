@@ -1,4 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+static infs_status abort_precheckpoint_transaction(
+    struct infs_volume *vol, infs_status status)
+{
+    /*
+     * No checkpoint has been attempted yet, so the committed generation is
+     * still authoritative. Discard transaction-private allocations/deferred
+     * frees immediately instead of leaving a half-published allocation map in
+     * the live transaction for a later retry.
+     */
+    tx_abort(vol);
+    vol->tx_pending_bytes = 0;
+    return status == INFS_STATUS_OK ? INFS_STATUS_IO_ERROR : status;
+}
+
 static infs_status require_checkpoint_recovery(struct infs_volume *vol,
                                                infs_status status)
 {
@@ -48,21 +62,21 @@ infs_status infs_volume_sync(struct infs_volume *vol)
      */
     status = infs_storage_flush(&vol->storage);
     if (status != INFS_STATUS_OK)
-        return status;
+        return abort_precheckpoint_transaction(vol, status);
     phase2_failpoint("before-bitmap");
 
     status = allocation_map_publish(vol, next_generation);
     if (status != INFS_STATUS_OK)
-        return status;
+        return abort_precheckpoint_transaction(vol, status);
     status = infs_storage_flush(&vol->storage);
     if (status != INFS_STATUS_OK)
-        return status;
+        return abort_precheckpoint_transaction(vol, status);
     phase2_failpoint("after-bitmap");
 
     uint8_t sb_block[INFS_BLOCK_SIZE];
     status = infs_encode_superblock(sb_block, &vol->sb);
     if (status != INFS_STATUS_OK)
-        return status;
+        return abort_precheckpoint_transaction(vol, status);
     uint64_t generation = infs_le64_to_cpu(vol->sb.generation);
     unsigned first = (unsigned)(generation % INFS_CHECKPOINT_COUNT);
     uint64_t first_block =
