@@ -716,6 +716,84 @@ jobs:
           cmp "$large_src" "$mountpoint/native-rw/large-hard.bin"
           sudo mv "$mountpoint/native-rw/large-hard.bin" "$mountpoint/native-rw/large.bin"
 
+          # Drive the allocator close to a bounded free-space floor, punch
+          # alternating 4 MiB holes into that population, then refill with
+          # smaller extents. This qualifies split/merge/reuse behaviour under
+          # realistic mounted fragmentation without risking an intentional
+          # ENOSPC against the CI image.
+          sudo mkdir "$mountpoint/native-rw/allocator-stress"
+          sudo python3 - "$mountpoint/native-rw/allocator-stress" <<'PY'
+          import os
+          import sys
+
+          root = sys.argv[1]
+          reserve = 128 * 1024 * 1024
+          coarse_size = 4 * 1024 * 1024
+          refill_size = 2 * 1024 * 1024
+          payload = bytes((index * 47 + 13) & 0xff
+                          for index in range(1024 * 1024))
+
+          def free_bytes():
+              stat = os.statvfs(root)
+              return stat.f_bavail * stat.f_frsize
+
+          def write_file(path, size):
+              fd = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_EXCL, 0o600)
+              try:
+                  left = size
+                  while left:
+                      chunk = payload if left >= len(payload) else payload[:left]
+                      written = os.write(fd, chunk)
+                      assert written == len(chunk)
+                      left -= written
+              finally:
+                  os.close(fd)
+
+          coarse = []
+          for index in range(128):
+              if free_bytes() <= reserve + coarse_size:
+                  break
+              path = os.path.join(root, f'coarse-{index:03d}.bin')
+              write_file(path, coarse_size)
+              coarse.append(path)
+          assert len(coarse) >= 8
+          os.sync()
+
+          # Free alternating allocations so the free-space cache must split,
+          # merge and select among many physical runs.
+          for path in coarse[::2]:
+              os.unlink(path)
+          os.sync()
+
+          refill = []
+          for index in range(256):
+              if free_bytes() <= reserve + refill_size:
+                  break
+              path = os.path.join(root, f'refill-{index:03d}.bin')
+              write_file(path, refill_size)
+              refill.append(path)
+          assert refill
+          os.sync()
+
+          # Leave one deterministic extent alive through offline scrub and the
+          # final read-only remount; remove the churn population first so those
+          # frees are also committed and reusable.
+          proof = os.path.join(root, 'proof.bin')
+          write_file(proof, 8 * 1024 * 1024)
+          os.sync()
+          for path in coarse:
+              if os.path.exists(path):
+                  os.unlink(path)
+          for path in refill:
+              os.unlink(path)
+          os.sync()
+
+          print(f'allocator stress: coarse={len(coarse)} refill={len(refill)} '
+                f'free_after_cleanup={free_bytes()}')
+          PY
+          allocator_stress_sha="$(sudo sha256sum               "$mountpoint/native-rw/allocator-stress/proof.bin" | awk '{print $1}')"
+          test -n "$allocator_stress_sha"
+
           printf 'Publishing durability barrier...\n'
           sync_start="$(date +%s%N)"
           if ! timeout --signal=TERM --kill-after=10s 120s sync; then
@@ -893,6 +971,7 @@ jobs:
           test "$(stat -c '%b' "$mountpoint/native-rw/allocation-link")" -eq 8
           test "$(find "$mountpoint/native-rw/tree-persist" -mindepth 1 \
               -maxdepth 1 -type f | wc -l)" -eq 180
+          test "$(sudo sha256sum               "$mountpoint/native-rw/allocator-stress/proof.bin" | awk '{print $1}')" =               "$allocator_stress_sha"
           test -p "$mountpoint/native-rw/native.fifo"
           test -S "$mountpoint/native-rw/native.socket"
           test -c "$mountpoint/native-rw/native.char"
