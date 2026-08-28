@@ -57,6 +57,8 @@ struct infs_deferred_range {
     uint64_t count;
 };
 
+struct infs_free_extent;
+
 struct infs_volume {
     struct infs_storage storage;
     int writable;
@@ -107,6 +109,15 @@ struct infs_volume {
      * to block lookups for the paged index. */
     uint64_t data_allocation_cursor;
     uint64_t metadata_allocation_cursor;
+    /*
+     * Rebuildable runtime index of maximal free runs. The allocation bitmap
+     * remains authoritative on disk and in memory; this cache exists only to
+     * avoid rescanning the whole volume for every allocation.
+     */
+    struct infs_free_extent *free_extents;
+    size_t free_extent_count;
+    size_t free_extent_capacity;
+    int free_extent_index_valid;
     struct infs_object_cache_entry *object_cache;
     size_t object_cache_slots;
     int object_cache_complete;

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 static void discard_candidate_state(struct infs_volume *vol)
 {
+    free_extent_index_destroy(vol);
     directory_cache_destroy(vol);
     object_cache_destroy(vol);
     free(vol->bitmap);
@@ -323,6 +324,10 @@ infs_status infs_volume_open_storage(struct infs_volume *vol,
         if (status != INFS_STATUS_OK)
             goto fail;
     }
+
+    /* The bitmap is authoritative. Build the free-run index from it once;
+     * allocation remains correct if memory pressure disables this cache. */
+    (void)free_extent_index_rebuild(vol);
 
     /* Runtime caches are deliberately best-effort: failure to allocate a
      * cache must never make an otherwise valid filesystem unmountable. */

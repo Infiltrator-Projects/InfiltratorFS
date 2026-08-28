@@ -26,6 +26,272 @@ static void bitmap_set(uint8_t *bitmap, uint64_t block, int allocated)
         bitmap[block >> 3] &= (uint8_t)~mask;
 }
 
+struct infs_free_extent {
+    uint64_t start;
+    uint64_t count;
+};
+
+static void free_extent_index_destroy(struct infs_volume *vol)
+{
+    if (!vol)
+        return;
+    free(vol->free_extents);
+    vol->free_extents = NULL;
+    vol->free_extent_count = 0;
+    vol->free_extent_capacity = 0;
+    vol->free_extent_index_valid = 0;
+}
+
+static int free_extent_index_reserve(struct infs_volume *vol, size_t needed)
+{
+    if (needed <= vol->free_extent_capacity)
+        return 1;
+    size_t next = vol->free_extent_capacity ? vol->free_extent_capacity : 64u;
+    while (next < needed) {
+        if (next > SIZE_MAX / 2u)
+            return 0;
+        next *= 2u;
+    }
+    if (next > SIZE_MAX / sizeof(*vol->free_extents))
+        return 0;
+    struct infs_free_extent *grown = realloc(
+        vol->free_extents, next * sizeof(*grown));
+    if (!grown)
+        return 0;
+    vol->free_extents = grown;
+    vol->free_extent_capacity = next;
+    return 1;
+}
+
+static int free_extent_index_rebuild(struct infs_volume *vol)
+{
+    if (!vol || !vol->bitmap)
+        return 0;
+    uint64_t total = infs_le64_to_cpu(vol->sb.total_blocks);
+    size_t count = 0;
+    uint64_t b = 0;
+
+    while (b < total) {
+        while (b < total && bitmap_get(vol->bitmap, b))
+            ++b;
+        if (b == total)
+            break;
+        ++count;
+        while (b < total && !bitmap_get(vol->bitmap, b))
+            ++b;
+    }
+    if (!free_extent_index_reserve(vol, count ? count : 1u)) {
+        vol->free_extent_index_valid = 0;
+        return 0;
+    }
+
+    b = 0;
+    count = 0;
+    while (b < total) {
+        while (b < total && bitmap_get(vol->bitmap, b))
+            ++b;
+        if (b == total)
+            break;
+        uint64_t start = b;
+        while (b < total && !bitmap_get(vol->bitmap, b))
+            ++b;
+        vol->free_extents[count].start = start;
+        vol->free_extents[count].count = b - start;
+        ++count;
+    }
+    vol->free_extent_count = count;
+    vol->free_extent_index_valid = 1;
+    return 1;
+}
+
+static void free_extent_index_invalidate(struct infs_volume *vol)
+{
+    if (vol)
+        vol->free_extent_index_valid = 0;
+}
+
+static int free_extent_index_remove(struct infs_volume *vol,
+                                    uint64_t start, uint64_t count)
+{
+    if (!vol || !vol->free_extent_index_valid || !count)
+        return 0;
+    if (start > UINT64_MAX - count)
+        return 0;
+    uint64_t end = start + count;
+
+    for (size_t i = 0; i < vol->free_extent_count; ++i) {
+        uint64_t e_start = vol->free_extents[i].start;
+        uint64_t e_end = e_start + vol->free_extents[i].count;
+        if (start < e_start || end > e_end)
+            continue;
+
+        if (start == e_start && end == e_end) {
+            memmove(&vol->free_extents[i], &vol->free_extents[i + 1u],
+                    (vol->free_extent_count - i - 1u) *
+                        sizeof(*vol->free_extents));
+            --vol->free_extent_count;
+            return 1;
+        }
+        if (start == e_start) {
+            vol->free_extents[i].start = end;
+            vol->free_extents[i].count = e_end - end;
+            return 1;
+        }
+        if (end == e_end) {
+            vol->free_extents[i].count = start - e_start;
+            return 1;
+        }
+
+        if (!free_extent_index_reserve(vol, vol->free_extent_count + 1u))
+            return 0;
+        memmove(&vol->free_extents[i + 2u], &vol->free_extents[i + 1u],
+                (vol->free_extent_count - i - 1u) *
+                    sizeof(*vol->free_extents));
+        vol->free_extents[i].count = start - e_start;
+        vol->free_extents[i + 1u].start = end;
+        vol->free_extents[i + 1u].count = e_end - end;
+        ++vol->free_extent_count;
+        return 1;
+    }
+    return 0;
+}
+
+static int free_extent_index_add(struct infs_volume *vol,
+                                 uint64_t start, uint64_t count)
+{
+    if (!vol || !vol->free_extent_index_valid || !count)
+        return 0;
+    if (start > UINT64_MAX - count)
+        return 0;
+    uint64_t end = start + count;
+    size_t i = 0;
+
+    while (i < vol->free_extent_count &&
+           vol->free_extents[i].start + vol->free_extents[i].count < start)
+        ++i;
+
+    if (i > 0) {
+        uint64_t prev_end = vol->free_extents[i - 1u].start +
+            vol->free_extents[i - 1u].count;
+        if (prev_end >= start) {
+            i--;
+            start = vol->free_extents[i].start;
+            if (prev_end > end)
+                end = prev_end;
+        }
+    }
+
+    size_t first = i;
+    while (i < vol->free_extent_count &&
+           vol->free_extents[i].start <= end) {
+        uint64_t e_end = vol->free_extents[i].start +
+            vol->free_extents[i].count;
+        if (e_end > end)
+            end = e_end;
+        ++i;
+    }
+
+    if (first < i) {
+        vol->free_extents[first].start = start;
+        vol->free_extents[first].count = end - start;
+        if (i > first + 1u) {
+            memmove(&vol->free_extents[first + 1u], &vol->free_extents[i],
+                    (vol->free_extent_count - i) *
+                        sizeof(*vol->free_extents));
+            vol->free_extent_count -= i - first - 1u;
+        }
+        return 1;
+    }
+
+    if (!free_extent_index_reserve(vol, vol->free_extent_count + 1u))
+        return 0;
+    memmove(&vol->free_extents[first + 1u], &vol->free_extents[first],
+            (vol->free_extent_count - first) * sizeof(*vol->free_extents));
+    vol->free_extents[first].start = start;
+    vol->free_extents[first].count = end - start;
+    ++vol->free_extent_count;
+    return 1;
+}
+
+static int free_extent_index_choose_forward(
+    const struct infs_volume *vol, uint64_t wanted, uint64_t cursor,
+    uint64_t *start_out, uint64_t *count_out)
+{
+    if (!vol || !vol->free_extent_index_valid || !wanted ||
+        !vol->free_extent_count)
+        return 0;
+    uint64_t best_start = 0;
+    uint64_t best_count = 0;
+
+    for (unsigned pass = 0; pass < 2u; ++pass) {
+        for (size_t i = 0; i < vol->free_extent_count; ++i) {
+            uint64_t start = vol->free_extents[i].start;
+            uint64_t end = start + vol->free_extents[i].count;
+            if ((!pass && end <= cursor) || (pass && end > cursor))
+                continue;
+            uint64_t candidate = !pass && start < cursor ? cursor : start;
+            if (candidate >= end)
+                continue;
+            uint64_t available = end - candidate;
+            uint64_t take = available < wanted ? available : wanted;
+            if (take > best_count) {
+                best_start = candidate;
+                best_count = take;
+            }
+            if (take == wanted) {
+                *start_out = candidate;
+                *count_out = wanted;
+                return 1;
+            }
+        }
+    }
+    if (!best_count)
+        return 0;
+    *start_out = best_start;
+    *count_out = best_count;
+    return 1;
+}
+
+static int free_extent_index_choose_reverse(
+    const struct infs_volume *vol, uint64_t wanted, uint64_t cursor,
+    int exact, uint64_t *start_out, uint64_t *count_out)
+{
+    if (!vol || !vol->free_extent_index_valid || !wanted ||
+        !vol->free_extent_count)
+        return 0;
+    uint64_t best_start = 0;
+    uint64_t best_count = 0;
+
+    for (unsigned pass = 0; pass < 2u; ++pass) {
+        for (size_t n = vol->free_extent_count; n > 0; --n) {
+            const struct infs_free_extent *extent = &vol->free_extents[n - 1u];
+            uint64_t start = extent->start;
+            uint64_t end = start + extent->count;
+            if ((!pass && start >= cursor) || (pass && start < cursor))
+                continue;
+            uint64_t candidate_end = !pass && end > cursor ? cursor : end;
+            if (candidate_end <= start)
+                continue;
+            uint64_t available = candidate_end - start;
+            uint64_t take = available < wanted ? available : wanted;
+            if (take > best_count) {
+                best_count = take;
+                best_start = candidate_end - take;
+            }
+            if (take == wanted) {
+                *start_out = candidate_end - wanted;
+                *count_out = wanted;
+                return 1;
+            }
+        }
+    }
+    if (exact || !best_count)
+        return 0;
+    *start_out = best_start;
+    *count_out = best_count;
+    return 1;
+}
+
 #define INFS_OBJECT_CACHE_SLOTS 65536u
 #define INFS_INDEX_PAGE_UNKNOWN UINT32_MAX
 
@@ -328,6 +594,7 @@ static void tx_operation_abort(struct infs_volume *vol)
     object_cache_clear(vol);
     directory_cache_clear(vol);
     vol->checksum_cursor_valid = 0;
+    (void)free_extent_index_rebuild(vol);
     (void)object_cache_rebuild(vol);
 }
 
@@ -374,6 +641,7 @@ static void tx_abort(struct infs_volume *vol)
     vol->tx_active = 0;
     object_cache_clear(vol);
     vol->checksum_cursor_valid = 0;
+    (void)free_extent_index_rebuild(vol);
 }
 
 static int tx_defer_range(struct infs_volume *vol, uint64_t start, uint64_t count)
@@ -472,6 +740,9 @@ static int alloc_scan_segment(struct infs_volume *vol, uint64_t wanted,
 static infs_status allocate_selected_run(struct infs_volume *vol,
                                          uint64_t start, uint64_t count)
 {
+    if (vol->free_extent_index_valid &&
+        !free_extent_index_remove(vol, start, count))
+        free_extent_index_invalidate(vol);
     for (uint64_t b = start; b < start + count; ++b)
         bitmap_set(vol->bitmap, b, 1);
     vol->sb.free_blocks = infs_cpu_to_le64(
@@ -482,6 +753,11 @@ static infs_status allocate_selected_run(struct infs_volume *vol,
             bitmap_set(vol->bitmap, b, 0);
         vol->sb.free_blocks = infs_cpu_to_le64(
             infs_le64_to_cpu(vol->sb.free_blocks) + count);
+        if (vol->free_extent_index_valid &&
+            !free_extent_index_add(vol, start, count))
+            free_extent_index_invalidate(vol);
+        else if (!vol->free_extent_index_valid)
+            (void)free_extent_index_rebuild(vol);
     }
     return status;
 }
@@ -491,6 +767,9 @@ static infs_status allocate_selected_run_uninitialized(
 {
     /* The caller must completely overwrite this transaction-private
      * storage before any checkpoint can reference it. */
+    if (vol->free_extent_index_valid &&
+        !free_extent_index_remove(vol, start, count))
+        free_extent_index_invalidate(vol);
     for (uint64_t b = start; b < start + count; ++b)
         bitmap_set(vol->bitmap, b, 1);
     vol->sb.free_blocks = infs_cpu_to_le64(
@@ -516,16 +795,22 @@ static int alloc_data_run_impl(struct infs_volume *vol, uint64_t wanted,
         cursor = 1u;
     uint64_t best_start = 0;
     uint64_t best_count = 0;
-    int found = alloc_scan_segment(vol, wanted, cursor, total,
+    int found = 0;
+    if (vol->free_extent_index_valid)
+        found = free_extent_index_choose_forward(
+            vol, wanted, cursor, &best_start, &best_count);
+    if (!vol->free_extent_index_valid)
+        found = alloc_scan_segment(vol, wanted, cursor, total,
                                    &best_start, &best_count);
-    if (!found && cursor > 1u)
+    if (!vol->free_extent_index_valid && !found && cursor > 1u)
         found = alloc_scan_segment(vol, wanted, 1u, cursor,
                                    &best_start, &best_count);
 
     /* Splitting the circular search at the cursor can bisect a physically
      * contiguous free run. Only fragmented/no-full-run cases pay for this
      * correctness fallback; the common one-block path stops immediately. */
-    if (!found && cursor > 1u && best_count < wanted) {
+    if (!vol->free_extent_index_valid &&
+        !found && cursor > 1u && best_count < wanted) {
         best_start = 0;
         best_count = 0;
         (void)alloc_scan_segment(vol, wanted, 1u, total,
@@ -612,12 +897,18 @@ static int alloc_run(struct infs_volume *vol, uint64_t wanted,
         cursor = total;
     uint64_t best_start = 0;
     uint64_t best_count = 0;
-    int found = alloc_scan_segment_reverse(vol, wanted, 1u, cursor,
+    int found = 0;
+    if (vol->free_extent_index_valid)
+        found = free_extent_index_choose_reverse(
+            vol, wanted, cursor, 0, &best_start, &best_count);
+    if (!vol->free_extent_index_valid)
+        found = alloc_scan_segment_reverse(vol, wanted, 1u, cursor,
                                            &best_start, &best_count);
-    if (!found && cursor < total)
+    if (!vol->free_extent_index_valid && !found && cursor < total)
         found = alloc_scan_segment_reverse(vol, wanted, cursor, total,
                                            &best_start, &best_count);
-    if (!found && cursor < total && best_count < wanted) {
+    if (!vol->free_extent_index_valid &&
+        !found && cursor < total && best_count < wanted) {
         best_start = 0;
         best_count = 0;
         (void)alloc_scan_segment_reverse(vol, wanted, 1u, total,
@@ -652,15 +943,20 @@ static int alloc_exact_run_impl(struct infs_volume *vol, uint64_t wanted,
 
     uint64_t start = 0;
     uint64_t count = 0;
-    int found = alloc_scan_segment_reverse(vol, wanted, 1u, cursor,
+    int found = 0;
+    if (vol->free_extent_index_valid)
+        found = free_extent_index_choose_reverse(
+            vol, wanted, cursor, 1, &start, &count);
+    if (!vol->free_extent_index_valid)
+        found = alloc_scan_segment_reverse(vol, wanted, 1u, cursor,
                                            &start, &count);
-    if (!found && cursor < total) {
+    if (!vol->free_extent_index_valid && !found && cursor < total) {
         start = 0;
         count = 0;
         found = alloc_scan_segment_reverse(vol, wanted, cursor, total,
                                            &start, &count);
     }
-    if (!found && cursor < total) {
+    if (!vol->free_extent_index_valid && !found && cursor < total) {
         start = 0;
         count = 0;
         found = alloc_scan_segment_reverse(vol, wanted, 1u, total,
@@ -719,6 +1015,9 @@ static void free_run(struct infs_volume *vol, uint64_t start, uint64_t count)
             bitmap_set(vol->bitmap, b, 0);
             vol->sb.free_blocks = infs_cpu_to_le64(
                 infs_le64_to_cpu(vol->sb.free_blocks) + 1u);
+            if (vol->free_extent_index_valid &&
+                !free_extent_index_add(vol, b, 1))
+                free_extent_index_invalidate(vol);
             ++b;
             continue;
         }

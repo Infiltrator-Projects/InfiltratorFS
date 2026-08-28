@@ -78,6 +78,9 @@ infs_status infs_volume_sync(struct infs_volume *vol)
                 bitmap_get(snapshot_union, b))
                 continue;
             bitmap_set(vol->bitmap, b, 0);
+            if (vol->free_extent_index_valid &&
+                !free_extent_index_add(vol, b, 1))
+                free_extent_index_invalidate(vol);
             if (free_blocks == UINT64_MAX) {
                 free(snapshot_union);
                 return INFS_STATUS_OVERFLOW;
