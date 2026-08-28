@@ -27,6 +27,10 @@ struct memory_image {
     int flush_failure_pending;
     uint64_t flush_calls;
     uint64_t fail_flush_call;
+    uint64_t watched_blocks[32];
+    size_t watched_block_count;
+    uint64_t watched_reads;
+    int watch_reads;
 };
 
 static void fail(const char *message)
@@ -47,6 +51,16 @@ static infs_status memory_read(void *context, uint64_t offset,
     struct memory_image *image = context;
     if (offset > image->size || size > image->size - (size_t)offset)
         return INFS_STATUS_IO_ERROR;
+    if (image->watch_reads && size == INFS_BLOCK_SIZE &&
+        (offset % INFS_BLOCK_SIZE) == 0) {
+        uint64_t block = offset / INFS_BLOCK_SIZE;
+        for (size_t i = 0; i < image->watched_block_count; ++i) {
+            if (image->watched_blocks[i] == block) {
+                ++image->watched_reads;
+                break;
+            }
+        }
+    }
     memcpy(buffer, image->bytes + (size_t)offset, size);
     return INFS_STATUS_OK;
 }
@@ -177,6 +191,9 @@ static void build_valid_image(struct memory_image *image)
     image->flush_failure_pending = 0;
     image->flush_calls = 0;
     image->fail_flush_call = 0;
+    image->watched_block_count = 0;
+    image->watched_reads = 0;
+    image->watch_reads = 0;
 
     const uint64_t initial_objects[] = { UINT64_C(2), UINT64_C(3) };
     test_write_single_leaf_allocation_tree(
@@ -719,6 +736,59 @@ static void check_post_commit_replica_failure(struct memory_image *image)
     infs_volume_close(&volume);
 }
 
+static void check_allocation_layout_cache_avoids_reload(
+    struct memory_image *image)
+{
+    build_valid_image(image);
+    struct infs_volume volume;
+    struct infs_lookup lookup;
+    expect(open_image(image, 1, &volume) == INFS_STATUS_OK,
+           "open writable allocation-layout-cache image");
+    expect(volume.allocation_leaf_count != 0 &&
+           volume.allocation_branch_count != 0,
+           "mount caches committed allocation layout");
+
+    size_t total_pages =
+        volume.allocation_leaf_count + volume.allocation_branch_count;
+    expect(total_pages <=
+               sizeof(image->watched_blocks) /
+               sizeof(image->watched_blocks[0]),
+           "allocation-layout cache fixture fits watch list");
+    image->watched_block_count = 0;
+    for (size_t i = 0; i < volume.allocation_leaf_count; ++i)
+        image->watched_blocks[image->watched_block_count++] =
+            volume.allocation_leaf_blocks[i];
+    for (size_t i = 0; i < volume.allocation_branch_count; ++i)
+        image->watched_blocks[image->watched_block_count++] =
+            volume.allocation_branch_blocks[i];
+
+    uint64_t old_root = infs_le64_to_cpu(volume.sb.allocation_root_block);
+    image->watched_reads = 0;
+    image->watch_reads = 1;
+    expect(infs_create_file(&volume, "/cache-proof", &file_options) ==
+               INFS_STATUS_OK,
+           "commit while watching old allocation pages");
+    image->watch_reads = 0;
+    expect(image->watched_reads == 0,
+           "normal commit does not reread committed allocation tree");
+    expect(infs_le64_to_cpu(volume.sb.allocation_root_block) != old_root,
+           "commit publishes replacement allocation root");
+    expect(volume.allocation_branch_blocks[0] ==
+               infs_le64_to_cpu(volume.sb.allocation_root_block),
+           "runtime allocation cache follows durable checkpoint root");
+    expect(infs_lookup_path(&volume, "/cache-proof", &lookup) ==
+               INFS_STATUS_OK,
+           "cached-layout commit remains visible");
+    infs_volume_close(&volume);
+
+    expect(open_image(image, 0, &volume) == INFS_STATUS_OK,
+           "reopen cached-layout commit");
+    expect(infs_lookup_path(&volume, "/cache-proof", &lookup) ==
+               INFS_STATUS_OK,
+           "cached-layout commit survives reopen validation");
+    infs_volume_close(&volume);
+}
+
 static void check_precheckpoint_flush_failure_aborts(
     struct memory_image *image)
 {
@@ -840,6 +910,7 @@ int main(void)
     check_checksum_reachability(&image);
     check_rename_replacement(&image);
     check_post_commit_replica_failure(&image);
+    check_allocation_layout_cache_avoids_reload(&image);
     check_precheckpoint_flush_failure_aborts(&image);
     check_indeterminate_commit_requires_reopen(&image);
 
