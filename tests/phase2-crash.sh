@@ -32,7 +32,7 @@ contains_name() {
 truncate -s 64M "$image"
 "$mkfs" -L CrashTest "$image" >/dev/null
 
-# Before the bitmap is published, no durable pointer reaches the new metadata.
+# Before the allocation map is published, no durable pointer reaches the new metadata.
 expect_crash before-bitmap "$tool" "$image" mkdir /before_bitmap
 "$inspect" "$image" | grep -Fq 'Generation:      1'
 if contains_name before_bitmap; then
@@ -40,7 +40,7 @@ if contains_name before_bitmap; then
     exit 1
 fi
 
-# A durable but unpublished bitmap is still unreachable from generation 1.
+# A durable but unpublished allocation map is still unreachable from generation 1.
 expect_crash after-bitmap "$tool" "$image" mkdir /after_bitmap
 "$inspect" "$image" | grep -Fq 'Generation:      1'
 if contains_name after_bitmap; then
@@ -108,21 +108,21 @@ if [[ "$free_before" != "$free_after" ]]; then
 fi
 
 
-# A successful metadata transaction must move metadata and bitmap roots rather
-# than overwrite their committed physical blocks in place.
+# A successful metadata transaction must move metadata and the allocation root
+# rather than overwrite their committed physical blocks in place.
 cow_image="$tmp/cow.img"
 truncate -s 64M "$cow_image"
 "$mkfs" -L CowTest "$cow_image" >/dev/null
 before="$($inspect "$cow_image")"
-before_bitmap="$(sed -n 's/.*Bitmap:          block \([0-9][0-9]*\),.*/\1/p' <<<"$before")"
+before_allocation="$(sed -n 's/.*Allocation root: block \([0-9][0-9]*\).*/\1/p' <<<"$before")"
 before_index="$(sed -n 's/.*Object index:    block \([0-9][0-9]*\).*/\1/p' <<<"$before")"
 before_root="$(sed -n 's/.*Root object:     block \([0-9][0-9]*\).*/\1/p' <<<"$before")"
 "$tool" "$cow_image" mkdir /cow
 After="$($inspect "$cow_image")"
-after_bitmap="$(sed -n 's/.*Bitmap:          block \([0-9][0-9]*\),.*/\1/p' <<<"$After")"
+after_allocation="$(sed -n 's/.*Allocation root: block \([0-9][0-9]*\).*/\1/p' <<<"$After")"
 after_index="$(sed -n 's/.*Object index:    block \([0-9][0-9]*\).*/\1/p' <<<"$After")"
 after_root="$(sed -n 's/.*Root object:     block \([0-9][0-9]*\).*/\1/p' <<<"$After")"
-[[ "$before_bitmap" != "$after_bitmap" ]]
+[[ "$before_allocation" != "$after_allocation" ]]
 [[ "$before_index" != "$after_index" ]]
 [[ "$before_root" != "$after_root" ]]
 
