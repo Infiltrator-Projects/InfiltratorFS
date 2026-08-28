@@ -64,7 +64,7 @@ static int object_version_valid(uint16_t type, uint16_t version)
         return type == INFS_OBJECT_DIRECTORY || type == INFS_OBJECT_INDEX ||
             type == INFS_OBJECT_FILE;
     return version == INFS_OBJECT_VERSION_TREE &&
-        type == INFS_OBJECT_INDEX;
+        (type == INFS_OBJECT_INDEX || type == INFS_OBJECT_DIRECTORY);
 }
 
 static int index_payload_shape_valid(const uint8_t block[INFS_BLOCK_SIZE],
@@ -349,6 +349,7 @@ infs_status infs_metadata_page_finalize(uint8_t block[INFS_BLOCK_SIZE])
         (struct infs_metadata_page_disk *)block;
     uint32_t bytes_used = infs_le32_to_cpu(page->bytes_used);
     if ((memcmp(page->magic, INFS_DIRECTORY_PAGE_MAGIC, 8) != 0 &&
+         memcmp(page->magic, INFS_DIRECTORY_BRANCH_PAGE_MAGIC, 8) != 0 &&
          memcmp(page->magic, INFS_INDEX_PAGE_MAGIC, 8) != 0 &&
          memcmp(page->magic, INFS_INDEX_BRANCH_PAGE_MAGIC, 8) != 0 &&
          memcmp(page->magic, INFS_EXTENT_PAGE_MAGIC, 8) != 0) ||
