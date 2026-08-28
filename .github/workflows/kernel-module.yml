@@ -228,7 +228,7 @@ jobs:
           chmod 0755 "$mountpoint"
 
           # Persist the FUSE-era Linux metadata surface through the native VFS.
-          python3 - "$mountpoint/user-owned/file.txt" <<'PY'
+          if ! python3 - "$mountpoint/user-owned/file.txt" <<'PY'
           import os
           import sys
 
@@ -242,6 +242,10 @@ jobs:
           assert 'user.infiltratorfs-remove' not in os.listxattr(path)
           os.setxattr(os.path.dirname(path), b'user.infiltratorfs-dir', b'directory')
           PY
+          then
+            diagnostics
+            exit 1
+          fi
           sudo python3 - "$mountpoint/user-owned/file.txt" <<'PY'
           import errno
           import os

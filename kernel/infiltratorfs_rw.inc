@@ -1142,7 +1142,8 @@ finish:
  */
 static int infilfs_posix_create_object_native(
     struct infilfs_native_pending *pending, struct inode *parent,
-    u16 type, umode_t mode, const u8 object_id[16], u64 *block_out)
+    u16 type, umode_t mode, u64 portable_flags,
+    const u8 object_id[16], u64 *block_out)
 {
     struct infilfs_inode_info *parent_ii = INFILFS_I(parent);
     struct infilfs_object_header_disk *header;
@@ -1181,6 +1182,7 @@ static int infilfs_posix_create_object_native(
         header->payload_size = cpu_to_le32(sizeof(*file));
         infilfs_posix_fill_common_attributes(&file->attributes,
                                               &file->posix, mode, 1);
+        file->attributes.portable_flags = cpu_to_le64(portable_flags);
         file->data_checksum_type = cpu_to_le32(INFILFS_CHECKSUM_SHA256);
         posix = &file->posix;
     } else if (type == INFILFS_OBJECT_DIRECTORY) {
@@ -1195,6 +1197,7 @@ static int infilfs_posix_create_object_native(
              sizeof(__le64) : 0u));
         infilfs_posix_fill_common_attributes(&dir->attributes,
                                               &dir->posix, mode, 2);
+        dir->attributes.portable_flags = cpu_to_le64(portable_flags);
         posix = &dir->posix;
     } else {
         ret = -EINVAL;
@@ -1222,9 +1225,9 @@ out:
     return ret;
 }
 
-static int infilfs_posix_create_native_child(
-    struct inode *dir, struct dentry *dentry, umode_t mode, u16 type,
-    u8 object_id_out[16], u64 *block_out)
+static int infilfs_posix_create_native_named_child(
+    struct inode *dir, const struct qstr *name, umode_t mode, u16 type,
+    u64 portable_flags, u8 object_id_out[16], u64 *block_out)
 {
     struct infilfs_inode_info *dir_ii = INFILFS_I(dir);
     struct infilfs_native_pending *pending = NULL;
@@ -1234,7 +1237,7 @@ static int infilfs_posix_create_native_child(
     u64 new_dir_block = 0;
     int ret;
 
-    ret = infilfs_ns_validate_name(&dentry->d_name);
+    ret = infilfs_ns_validate_name(name);
     if (ret)
         return ret;
     ret = infilfs_ns_begin(dir->i_sb, &pending);
@@ -1243,10 +1246,11 @@ static int infilfs_posix_create_native_child(
     ret = infilfs_rw_generate_id(dir->i_sb, object_id);
     if (!ret)
         ret = infilfs_posix_create_object_native(
-            pending, dir, type, mode, object_id, &object_block);
+            pending, dir, type, mode, portable_flags,
+            object_id, &object_block);
     if (!ret)
         ret = infilfs_ns_rebuild_directory(
-            pending, dir, NULL, NULL, &dentry->d_name, object_id, type,
+            pending, dir, NULL, NULL, name, object_id, type,
             type == INFILFS_OBJECT_DIRECTORY ? 1 : 0, &new_dir_block);
     if (!ret) {
         memset(changes, 0, sizeof(changes));
@@ -1269,6 +1273,15 @@ static int infilfs_posix_create_native_child(
     memcpy(object_id_out, object_id, 16);
     *block_out = object_block;
     return 0;
+}
+
+static int infilfs_posix_create_native_child(
+    struct inode *dir, struct dentry *dentry, umode_t mode, u16 type,
+    u8 object_id_out[16], u64 *block_out)
+{
+    return infilfs_posix_create_native_named_child(
+        dir, &dentry->d_name, mode, type, 0,
+        object_id_out, block_out);
 }
 
 /*

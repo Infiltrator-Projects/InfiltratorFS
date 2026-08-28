@@ -140,7 +140,7 @@ static int infilfs_linux_meta_get_dir(struct super_block *sb, bool create,
         ret = infilfs_native_pending_flush_sb(sb);
         if (ret)
             return ret;
-        ret = infilfs_rw_create_named_child(
+        ret = infilfs_posix_create_native_named_child(
             root, &name, 0700, INFILFS_OBJECT_DIRECTORY,
             INFILFS_ATTR_HIDDEN | INFILFS_ATTR_SYSTEM, id, &block);
         if (!ret) {
@@ -203,7 +203,7 @@ static int infilfs_linux_meta_get_file(
         name.name = name_out;
         name.len = 36;
         name.hash = 0;
-        ret = infilfs_rw_create_named_child(
+        ret = infilfs_posix_create_native_named_child(
             dir, &name, 0600, INFILFS_OBJECT_FILE,
             INFILFS_ATTR_HIDDEN | INFILFS_ATTR_SYSTEM, id, &block);
         if (!ret) {
