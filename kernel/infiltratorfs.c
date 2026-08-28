@@ -40,6 +40,9 @@ static const u8 infilfs_object_magic[8] = {
 static const u8 infilfs_directory_page_magic[8] = {
     'I', 'N', 'F', 'S', 'D', 'P', '0', '1'
 };
+static const u8 infilfs_directory_branch_page_magic[8] = {
+    'I', 'N', 'F', 'S', 'D', 'B', '0', '1'
+};
 static const u8 infilfs_index_page_magic[8] = {
     'I', 'N', 'F', 'S', 'I', 'P', '0', '1'
 };
@@ -100,6 +103,14 @@ static int infilfs_linux_meta_get_special(struct super_block *sb,
 static bool infilfs_linux_meta_directory_is_internal(struct super_block *sb);
 static int infilfs_linux_meta_remove_object(struct super_block *sb,
                                             const u8 object_id[16]);
+
+static int infilfs_tree_dir_lookup_name(
+    struct inode *dir, const u8 *name, u16 name_len,
+    struct infilfs_dir_lookup *search);
+static int infilfs_tree_dir_for_each(
+    struct inode *inode,
+    int (*visitor)(const struct infilfs_dirent_disk *, const u8 *, void *),
+    void *arg);
 
 static const struct inode_operations infilfs_dir_inode_operations;
 static const struct inode_operations infilfs_symlink_inode_operations;
@@ -318,7 +329,8 @@ static bool infilfs_object_basic_valid(struct super_block *sb,
     if (version != INFILFS_OBJECT_VERSION_CLASSIC &&
         version != INFILFS_OBJECT_VERSION_PAGED &&
         !(version == INFILFS_OBJECT_VERSION_TREE &&
-          le16_to_cpu(header->object_type) == INFILFS_OBJECT_INDEX))
+          (le16_to_cpu(header->object_type) == INFILFS_OBJECT_INDEX ||
+           le16_to_cpu(header->object_type) == INFILFS_OBJECT_DIRECTORY)))
         return false;
 
     payload = le32_to_cpu(header->payload_size);
@@ -463,6 +475,11 @@ static int infilfs_index_lookup_indexed(struct super_block *sb,
     if (version == INFILFS_OBJECT_VERSION_TREE) {
         ret = infilfs_index_tree_lookup_head(
             sb, head, object_id, object_block_out, type_out);
+        goto out;
+    }
+
+    if (version == INFILFS_OBJECT_VERSION_TREE) {
+        ret = infilfs_tree_dir_for_each(inode, visitor, arg);
         goto out;
     }
 
@@ -1509,7 +1526,10 @@ static struct dentry *infilfs_lookup(struct inode *dir, struct dentry *dentry,
         return NULL;
     }
 
-    ret = infilfs_for_each_dirent(dir, infilfs_lookup_visitor, &search);
+    ret = infilfs_tree_dir_lookup_name(
+        dir, search.name, (u16)search.name_len, &search);
+    if (ret == -EOPNOTSUPP)
+        ret = infilfs_for_each_dirent(dir, infilfs_lookup_visitor, &search);
     if (ret < 0)
         return ERR_PTR(ret);
     if (!search.found) {

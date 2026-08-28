@@ -66,6 +66,12 @@ static int infilfs_rw_tx_begin(struct super_block *sb,
 #undef infilfs_rw_setattr
 
 /*
+ * Format 0.14 directory-tree code is composed here: legacy SHA-256 helpers
+ * and the native CoW transaction primitives are both available at this point.
+ */
+#include "infiltratorfs_directory_tree.inc"
+
+/*
  * The verified extent reader in the data layer uses a checksum cursor while a
  * single read_iter() call is active.  Ordinary userspace readers issue many
  * separate calls, so compose the bounded cross-call cursor cache here and make
