@@ -887,6 +887,15 @@ static int infilfs_rw_tx_begin(struct super_block *sb, struct infilfs_rw_tx *tx)
 
 static void infilfs_rw_tx_abort(struct infilfs_rw_tx *tx)
 {
+    if (tx->sbi && tx->generation) {
+        /*
+         * The final native wrapper temporarily exposes the working generation
+         * through sbi->disk so transaction-private metadata can be read back.
+         * No checkpoint means no generation advance: restore the committed
+         * generation before exposing the live bitmap again.
+         */
+        tx->sbi->disk.generation = cpu_to_le64(tx->generation - 1u);
+    }
     if (tx->sbi && tx->bitmap == tx->sbi->bitmap) {
         size_t r;
         for (r = 0; r < tx->allocated_count; ++r) {
@@ -1116,6 +1125,15 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
     if (!ret)
         ret = sync_blockdev(tx->sb->s_bdev);
     if (ret) {
+        /*
+         * Once the primary checkpoint write has been attempted, an error
+         * cannot prove the newer generation is absent from stable storage.
+         * Freeze all later mutation until remount checkpoint selection decides
+         * which generation actually committed.
+         */
+        sbi->write_poisoned = true;
+        sbi->checkpoint_repair_needed = true;
+        pr_warn("InfiltratorFS: primary checkpoint durability indeterminate; further writes disabled until remount\n");
         kfree(sb_block);
         return ret;
     }
@@ -1140,7 +1158,10 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
 
     if (replica_error) {
         sbi->write_poisoned = true;
+        sbi->checkpoint_repair_needed = true;
         pr_warn("InfiltratorFS: native RW checkpoint committed but replica refresh failed; further writes disabled until remount\n");
+    } else {
+        sbi->checkpoint_repair_needed = false;
     }
     kfree(tx->deferred);
     tx->deferred = NULL;

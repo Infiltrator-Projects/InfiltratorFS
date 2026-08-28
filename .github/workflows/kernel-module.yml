@@ -53,6 +53,8 @@ jobs:
 
       - name: Guard Format 0.17 sharded allocation tree
         run: bash tests/allocation-tree-format-policy.sh .
+      - name: Guard native transaction durability
+        run: bash tests/native-transaction-durability-policy.sh .
 
       - name: Build InfiltratorFS kernel module
         env:
