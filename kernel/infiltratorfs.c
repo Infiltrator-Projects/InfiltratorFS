@@ -478,11 +478,6 @@ static int infilfs_index_lookup_indexed(struct super_block *sb,
         goto out;
     }
 
-    if (version == INFILFS_OBJECT_VERSION_TREE) {
-        ret = infilfs_tree_dir_for_each(inode, visitor, arg);
-        goto out;
-    }
-
     if (version == INFILFS_OBJECT_VERSION_PAGED) {
         const __le64 *pages = (const __le64 *)(payload + 1);
         u32 page_count = le32_to_cpu(payload->reserved);
@@ -822,6 +817,11 @@ static int infilfs_for_each_dirent(struct inode *inode,
         }
         ret = infilfs_walk_dir_buffer((const u8 *)(payload + 1), bytes,
                                       visitor, arg);
+        goto out;
+    }
+
+    if (version == INFILFS_OBJECT_VERSION_TREE) {
+        ret = infilfs_tree_dir_for_each(inode, visitor, arg);
         goto out;
     }
 
