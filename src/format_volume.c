@@ -149,7 +149,8 @@ infs_status infs_format_storage(struct infs_storage *storage, const char *label)
         INFS_INCOMPAT_INLINE_DATA | INFS_INCOMPAT_SHARED_EXTENTS |
         INFS_INCOMPAT_PAGED_METADATA | INFS_INCOMPAT_SYMBOLIC_LINKS |
         INFS_INCOMPAT_HARD_LINKS | INFS_INCOMPAT_SNAPSHOTS |
-        INFS_INCOMPAT_PAGED_EXTENTS | INFS_INCOMPAT_INDEX_TREE);
+        INFS_INCOMPAT_PAGED_EXTENTS | INFS_INCOMPAT_INDEX_TREE |
+        INFS_INCOMPAT_DIRECTORY_TREE);
     memcpy(sb.label, label, label_length);
 
     uint8_t block[INFS_BLOCK_SIZE] = {0};
@@ -198,7 +199,7 @@ infs_status infs_format_storage(struct infs_storage *storage, const char *label)
     if (status != INFS_STATUS_OK)
         goto done;
 
-    status = infs_encode_paged_root_directory(
+    status = infs_encode_tree_root_directory(
         block, root_id, 1u, 0755u, 0u, 0u, root_time_ns);
     if (status != INFS_STATUS_OK)
         goto done;

@@ -462,6 +462,33 @@ infs_status infs_encode_paged_root_directory(uint8_t block[INFS_BLOCK_SIZE],
         INFS_OBJECT_VERSION_PAGED);
 }
 
+infs_status infs_encode_tree_root_directory(uint8_t block[INFS_BLOCK_SIZE],
+                                            const uint8_t object_id[16],
+                                            uint64_t generation,
+                                            uint32_t permissions,
+                                            uint32_t uid, uint32_t gid,
+                                            int64_t now_ns)
+{
+    infs_status status = encode_root_directory_version(
+        block, object_id, generation, permissions, uid, gid, now_ns,
+        INFS_OBJECT_VERSION_TREE);
+    if (status != INFS_STATUS_OK)
+        return status;
+
+    struct infs_object_header_disk *header =
+        (struct infs_object_header_disk *)block;
+    struct infs_directory_payload_disk *payload =
+        (struct infs_directory_payload_disk *)(header + 1);
+    uint64_t root_le = infs_cpu_to_le64(0);
+
+    payload->entry_count = infs_cpu_to_le32(0);
+    payload->bytes_used = infs_cpu_to_le32(0);
+    memcpy(payload + 1, &root_le, sizeof(root_le));
+    header->payload_size = infs_cpu_to_le32(
+        (uint32_t)(sizeof(*payload) + sizeof(root_le)));
+    return infs_object_finalize(block);
+}
+
 static infs_status encode_object_index_version(
     uint8_t block[INFS_BLOCK_SIZE], const uint8_t object_id[16],
     uint64_t generation, uint16_t object_version)

@@ -29,7 +29,7 @@ static const uint8_t INFS_EXTENT_PAGE_MAGIC[8] = {
  * exact development format. A format revision replaces its predecessor; it
  * does not add an older-format reader or migration path. */
 #define INFS_FORMAT_MAJOR 0u
-#define INFS_FORMAT_MINOR 13u
+#define INFS_FORMAT_MINOR 14u
 #define INFS_CHECKPOINT_COUNT 3u
 #define INFS_CHECKSUM_CRC64_ECMA 1u
 #define INFS_CHECKSUM_SHA256     2u
