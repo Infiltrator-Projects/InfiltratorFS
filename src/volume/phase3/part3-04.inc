@@ -195,13 +195,19 @@ static infs_status load_checkpoint_graph(
     int index_tree_feature =
         (infs_le64_to_cpu(vol->sb.incompat_flags) &
          INFS_INCOMPAT_INDEX_TREE) != 0;
+    int directory_tree_feature =
+        (infs_le64_to_cpu(vol->sb.incompat_flags) &
+         INFS_INCOMPAT_DIRECTORY_TREE) != 0;
     int root_paged =
         infs_le16_to_cpu(root_hdr->object_version) == INFS_OBJECT_VERSION_PAGED;
+    int root_tree =
+        infs_le16_to_cpu(root_hdr->object_version) == INFS_OBJECT_VERSION_TREE;
     int index_paged =
         infs_le16_to_cpu(index_hdr->object_version) == INFS_OBJECT_VERSION_PAGED;
     int index_tree =
         infs_le16_to_cpu(index_hdr->object_version) == INFS_OBJECT_VERSION_TREE;
-    if (paged_feature != root_paged ||
+    if (directory_tree_feature != root_tree ||
+        (!directory_tree_feature && paged_feature != root_paged) ||
         index_tree_feature != index_tree ||
         (!index_tree_feature && paged_feature != index_paged))
         return INFS_STATUS_CORRUPT;

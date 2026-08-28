@@ -69,8 +69,13 @@ static int create_object(struct infs_volume *vol, const char *path,
 
     uint8_t object[INFS_BLOCK_SIZE];
     uint32_t payload_size;
+    int directory_tree =
+        type == INFS_OBJECT_DIRECTORY &&
+        (infs_le64_to_cpu(vol->sb.incompat_flags) &
+         INFS_INCOMPAT_DIRECTORY_TREE) != 0;
     if (type == INFS_OBJECT_DIRECTORY)
-        payload_size = sizeof(struct infs_directory_payload_disk);
+        payload_size = (uint32_t)(sizeof(struct infs_directory_payload_disk) +
+            (directory_tree ? sizeof(uint64_t) : 0u));
     else if (type == INFS_OBJECT_FILE)
         payload_size = sizeof(struct infs_file_payload_disk);
     else
@@ -83,13 +88,16 @@ static int create_object(struct infs_volume *vol, const char *path,
         free_run(vol, object_block, 1);
         return status;
     }
-    if (type == INFS_OBJECT_DIRECTORY &&
-        (infs_le64_to_cpu(vol->sb.incompat_flags) &
-         INFS_INCOMPAT_PAGED_METADATA) != 0) {
+    if (type == INFS_OBJECT_DIRECTORY) {
         struct infs_object_header_disk *header =
             (struct infs_object_header_disk *)object;
-        header->object_version =
-            infs_cpu_to_le16(INFS_OBJECT_VERSION_PAGED);
+        if (directory_tree)
+            header->object_version =
+                infs_cpu_to_le16(INFS_OBJECT_VERSION_TREE);
+        else if ((infs_le64_to_cpu(vol->sb.incompat_flags) &
+                  INFS_INCOMPAT_PAGED_METADATA) != 0)
+            header->object_version =
+                infs_cpu_to_le16(INFS_OBJECT_VERSION_PAGED);
     }
 
     struct infs_attributes_disk *attributes;
