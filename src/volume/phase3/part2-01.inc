@@ -17,6 +17,20 @@ static int dir_validate(uint8_t block[INFS_BLOCK_SIZE],
 
     uint32_t count = infs_le32_to_cpu(payload->entry_count);
     uint16_t version = infs_le16_to_cpu(hdr->object_version);
+    if (version == INFS_OBJECT_VERSION_TREE) {
+        uint64_t root_le = 0;
+        if (infs_le32_to_cpu(hdr->payload_size) !=
+                sizeof(*payload) + sizeof(root_le) ||
+            infs_le32_to_cpu(payload->bytes_used) != 0)
+            return INFS_STATUS_CORRUPT;
+        memcpy(&root_le, payload + 1, sizeof(root_le));
+        uint64_t root = infs_le64_to_cpu(root_le);
+        if ((count == 0) != (root == 0))
+            return INFS_STATUS_CORRUPT;
+        if (payload_out)
+            *payload_out = payload;
+        return INFS_STATUS_OK;
+    }
     if (version == INFS_OBJECT_VERSION_PAGED) {
         uint32_t page_count = infs_le32_to_cpu(payload->bytes_used);
         size_t expected = sizeof(*payload) +
@@ -136,6 +150,9 @@ static int dir_lookup_volume(struct infs_volume *vol,
     if (directory_cache_complete(vol, header->object_id))
         return INFS_STATUS_NOT_FOUND;
     if (infs_le16_to_cpu(header->object_version) ==
+        INFS_OBJECT_VERSION_TREE)
+        return tree_dir_lookup(vol, block, name, entry_out);
+    if (infs_le16_to_cpu(header->object_version) ==
         INFS_OBJECT_VERSION_PAGED)
         return paged_dir_lookup(vol, block, name, entry_out);
 
@@ -220,12 +237,16 @@ static int dir_add_volume(struct infs_volume *vol,
     struct infs_object_header_disk *header =
         (struct infs_object_header_disk *)block;
     if (infs_le16_to_cpu(header->object_version) ==
-        INFS_OBJECT_VERSION_PAGED)
+        INFS_OBJECT_VERSION_TREE)
+        status = tree_dir_add(vol, block, name, object_id, type);
+    else if (infs_le16_to_cpu(header->object_version) ==
+             INFS_OBJECT_VERSION_PAGED)
         status = paged_dir_add(vol, block, name, object_id, type);
     else
         status = dir_add(block, name, object_id, type);
     if (status == INFS_STATUS_OK &&
-        infs_le16_to_cpu(header->object_version) != INFS_OBJECT_VERSION_PAGED)
+        infs_le16_to_cpu(header->object_version) != INFS_OBJECT_VERSION_PAGED &&
+        infs_le16_to_cpu(header->object_version) != INFS_OBJECT_VERSION_TREE)
         (void)directory_cache_store(vol, header->object_id, name, object_id,
                                     type, INFS_DIRECTORY_PAGE_UNKNOWN);
     return status;

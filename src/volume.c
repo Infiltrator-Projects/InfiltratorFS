@@ -131,6 +131,7 @@ static int paged_extent_replace(struct infs_volume *vol,
 #include "volume/phase3/runtime-cache.inc"
 #include "volume/phase3/paged-metadata.inc"
 #include "volume/phase3/index-tree.inc"
+#include "volume/phase3/directory-tree.inc"
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic push
 /* total_count is uint32_t.  The overflow guard in paged-extents is required

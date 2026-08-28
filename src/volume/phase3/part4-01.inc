@@ -106,7 +106,47 @@ infs_status infs_list_dir(struct infs_volume *vol, const char *path,
     struct infs_object_header_disk *header =
         (struct infs_object_header_disk *)block;
     if (infs_le16_to_cpu(header->object_version) ==
-        INFS_OBJECT_VERSION_PAGED) {
+        INFS_OBJECT_VERSION_TREE) {
+        uint8_t *snapshot = NULL;
+        size_t bytes = 0;
+        uint32_t snapshot_count = 0;
+        status = tree_dir_snapshot(vol, block, &snapshot, &bytes,
+                                   &snapshot_count);
+        if (status != INFS_STATUS_OK) {
+            free(list);
+            return status;
+        }
+        if (snapshot_count != count) {
+            free(snapshot);
+            free(list);
+            return INFS_STATUS_CORRUPT;
+        }
+        size_t offset = 0;
+        for (uint32_t i = 0; i < count; ++i) {
+            if (offset >= bytes) {
+                free(snapshot);
+                free(list);
+                return INFS_STATUS_CORRUPT;
+            }
+            struct infs_dirent_disk *entry =
+                (struct infs_dirent_disk *)(snapshot + offset);
+            uint16_t record_size = infs_le16_to_cpu(entry->record_size);
+            uint16_t name_length = infs_le16_to_cpu(entry->name_length);
+            memcpy(list[i].name, snapshot + offset + sizeof(*entry),
+                   name_length);
+            list[i].name[name_length] = '\0';
+            memcpy(list[i].object_id, entry->object_id, 16);
+            list[i].type = infs_le16_to_cpu(entry->object_type);
+            offset += record_size;
+        }
+        if (offset != bytes) {
+            free(snapshot);
+            free(list);
+            return INFS_STATUS_CORRUPT;
+        }
+        free(snapshot);
+    } else if (infs_le16_to_cpu(header->object_version) ==
+               INFS_OBJECT_VERSION_PAGED) {
         uint8_t *snapshot = NULL;
         size_t bytes = 0;
         uint32_t snapshot_count = 0;

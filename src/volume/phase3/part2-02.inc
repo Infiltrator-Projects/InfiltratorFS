@@ -39,12 +39,16 @@ static int dir_remove_volume(struct infs_volume *vol,
     struct infs_object_header_disk *header =
         (struct infs_object_header_disk *)block;
     if (infs_le16_to_cpu(header->object_version) ==
-        INFS_OBJECT_VERSION_PAGED)
+        INFS_OBJECT_VERSION_TREE)
+        status = tree_dir_remove(vol, block, name, removed_copy);
+    else if (infs_le16_to_cpu(header->object_version) ==
+             INFS_OBJECT_VERSION_PAGED)
         status = paged_dir_remove(vol, block, name, removed_copy);
     else
         status = dir_remove(block, name, removed_copy);
     if (status == INFS_STATUS_OK &&
-        infs_le16_to_cpu(header->object_version) != INFS_OBJECT_VERSION_PAGED)
+        infs_le16_to_cpu(header->object_version) != INFS_OBJECT_VERSION_PAGED &&
+        infs_le16_to_cpu(header->object_version) != INFS_OBJECT_VERSION_TREE)
         directory_cache_remove(vol, header->object_id, name);
     return status;
 }

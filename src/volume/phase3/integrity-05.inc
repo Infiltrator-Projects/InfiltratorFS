@@ -113,6 +113,51 @@ static int claim_index_metadata_pages(struct infs_volume *vol,
     return INFS_STATUS_OK;
 }
 
+static int claim_directory_tree_node(
+    struct infs_volume *vol, uint8_t *owners, uint64_t total,
+    const uint8_t owner_id[16], uint64_t block_no, unsigned depth)
+{
+    if (!block_no || depth > INFS_DIRECTORY_TREE_DEPTH)
+        return INFS_STATUS_CORRUPT;
+    int status = ownership_claim(owners, total, block_no);
+    if (status != INFS_STATUS_OK)
+        return status;
+    uint8_t block[INFS_BLOCK_SIZE];
+    status = read_block(vol, block_no, block);
+    if (status != INFS_STATUS_OK)
+        return status;
+    if (memcmp(block, INFS_DIRECTORY_PAGE_MAGIC, 8) == 0)
+        return directory_page_validate(vol, block, owner_id, NULL, NULL, NULL);
+    if (depth >= INFS_DIRECTORY_TREE_DEPTH ||
+        memcmp(block, INFS_DIRECTORY_BRANCH_PAGE_MAGIC, 8) != 0 ||
+        !infs_validate_metadata_page(
+            block, INFS_DIRECTORY_BRANCH_PAGE_MAGIC, owner_id) ||
+        !metadata_page_generation_valid(vol, block))
+        return INFS_STATUS_CORRUPT;
+    const struct infs_metadata_page_disk *page =
+        (const struct infs_metadata_page_disk *)block;
+    if (infs_le32_to_cpu(page->bytes_used) !=
+            INFS_DIRECTORY_TREE_BRANCH_BYTES ||
+        infs_le32_to_cpu(page->entry_count) > INFS_DIRECTORY_TREE_FANOUT)
+        return INFS_STATUS_CORRUPT;
+    const uint64_t *children = (const uint64_t *)(page + 1);
+    uint32_t seen = 0;
+    for (uint32_t i = 0; i < INFS_DIRECTORY_TREE_FANOUT; ++i) {
+        uint64_t child = infs_le64_to_cpu(children[i]);
+        if (!child)
+            continue;
+        ++seen;
+        if (child >= total || !bitmap_get(vol->bitmap, child))
+            return INFS_STATUS_CORRUPT;
+        status = claim_directory_tree_node(
+            vol, owners, total, owner_id, child, depth + 1u);
+        if (status != INFS_STATUS_OK)
+            return status;
+    }
+    return seen == infs_le32_to_cpu(page->entry_count) ?
+        INFS_STATUS_OK : INFS_STATUS_CORRUPT;
+}
+
 static int claim_directory_metadata_pages(struct infs_volume *vol,
                                           uint8_t *owners, uint64_t total,
                                           uint64_t object_block)
@@ -127,6 +172,18 @@ static int claim_directory_metadata_pages(struct infs_volume *vol,
         return status;
     struct infs_object_header_disk *header =
         (struct infs_object_header_disk *)object;
+    if (infs_le16_to_cpu(header->object_version) ==
+        INFS_OBJECT_VERSION_TREE) {
+        uint64_t root_le = 0;
+        memcpy(&root_le, payload + 1, sizeof(root_le));
+        uint64_t root = infs_le64_to_cpu(root_le);
+        if (infs_le32_to_cpu(payload->entry_count) == 0)
+            return root == 0 ? INFS_STATUS_OK : INFS_STATUS_CORRUPT;
+        if (!root || root >= total || !bitmap_get(vol->bitmap, root))
+            return INFS_STATUS_CORRUPT;
+        return claim_directory_tree_node(
+            vol, owners, total, header->object_id, root, 0u);
+    }
     if (infs_le16_to_cpu(header->object_version) !=
         INFS_OBJECT_VERSION_PAGED)
         return INFS_STATUS_OK;
