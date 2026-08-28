@@ -374,3 +374,21 @@ jobs:
           expected_assets=$(printf '%s\n%s\n%s\n%s\n' "$deb" "$installer" "$windows" SHA256SUMS.txt | sort)
           published_assets=$(gh release view "$tag" --json assets --jq '.assets[].name' | sort)
           test "$published_assets" = "$expected_assets"
+
+      - name: Refresh complete Infiltrator APT repository
+        env:
+          DISPATCH_TOKEN: ${{ secrets.APT_REPOSITORY_DISPATCH_TOKEN }}
+          RELEASE_SHA: ${{ needs.source.outputs.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$DISPATCH_TOKEN"
+          payload="$(jq -nc --arg repository "$GITHUB_REPOSITORY" --arg sha "$RELEASE_SHA" \
+            '{event_type:"application-release",client_payload:{repository:$repository,sha:$sha}}')"
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer $DISPATCH_TOKEN" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            --data "$payload" \
+            https://api.github.com/repos/The-First-Infiltrator/Infiltrator-Repository/dispatches
