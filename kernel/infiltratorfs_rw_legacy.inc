@@ -783,6 +783,7 @@ out:
 static int infilfs_rw_mount_init(struct super_block *sb)
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
+    struct infilfs_allocation_layout committed_layout = {0};
     u64 total = sbi->device_blocks;
     u32 snapshots = 0;
     int ret;
@@ -792,9 +793,11 @@ static int infilfs_rw_mount_init(struct super_block *sb)
         return -EOPNOTSUPP;
 
     ret = infilfs_allocation_map_load(
-        sb, &sbi->disk, &sbi->bitmap, &sbi->bitmap_bytes, NULL);
+        sb, &sbi->disk, &sbi->bitmap, &sbi->bitmap_bytes,
+        &committed_layout);
     if (ret)
         goto fail;
+    infilfs_allocation_cache_replace(sbi, &committed_layout);
 
     write_lock(&sbi->bitmap_lock);
     sbi->visible_bitmap = sbi->bitmap;
@@ -824,6 +827,8 @@ fail:
     sbi->bitmap_bytes = 0;
     kvfree(sbi->snapshot_bitmap);
     sbi->snapshot_bitmap = NULL;
+    infilfs_allocation_layout_destroy(&committed_layout);
+    infilfs_allocation_cache_destroy(sbi);
     return ret;
 }
 
@@ -844,6 +849,7 @@ static void infilfs_rw_mount_destroy(struct super_block *sb)
     sbi->bitmap_bytes = 0;
     kvfree(sbi->snapshot_bitmap);
     sbi->snapshot_bitmap = NULL;
+    infilfs_allocation_cache_destroy(sbi);
     sbi->rw_enabled = false;
 }
 
@@ -1094,11 +1100,14 @@ static int infilfs_rw_tx_apply_deferred(struct infilfs_rw_tx *tx)
     return 0;
 }
 
-static int infilfs_rw_allocation_map_publish(struct infilfs_rw_tx *tx);
+static int infilfs_rw_allocation_map_publish(
+    struct infilfs_rw_tx *tx,
+    struct infilfs_allocation_layout *next_layout);
 
 static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
 {
     struct infilfs_sb_info *sbi = tx->sbi;
+    struct infilfs_allocation_layout next_allocation = {0};
     u8 *sb_block;
     unsigned int first;
     unsigned int n;
@@ -1108,16 +1117,22 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
     ret = sync_blockdev(tx->sb->s_bdev);
     if (ret)
         return ret;
-    ret = infilfs_rw_allocation_map_publish(tx);
-    if (ret)
+    ret = infilfs_rw_allocation_map_publish(tx, &next_allocation);
+    if (ret) {
+        infilfs_allocation_layout_destroy(&next_allocation);
         return ret;
+    }
     ret = sync_blockdev(tx->sb->s_bdev);
-    if (ret)
+    if (ret) {
+        infilfs_allocation_layout_destroy(&next_allocation);
         return ret;
+    }
 
     sb_block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
-    if (!sb_block)
+    if (!sb_block) {
+        infilfs_allocation_layout_destroy(&next_allocation);
         return -ENOMEM;
+    }
     infilfs_rw_encode_superblock(&tx->next_sb, sb_block);
     first = (unsigned int)(tx->generation % INFILFS_CHECKPOINT_COUNT);
     ret = infilfs_rw_write_block(tx->sb,
@@ -1134,10 +1149,12 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
         sbi->write_poisoned = true;
         sbi->checkpoint_repair_needed = true;
         pr_warn("InfiltratorFS: primary checkpoint durability indeterminate; further writes disabled until remount\n");
+        infilfs_allocation_layout_destroy(&next_allocation);
         kfree(sb_block);
         return ret;
     }
 
+    infilfs_allocation_cache_replace(sbi, &next_allocation);
     sbi->disk = tx->next_sb;
     write_lock(&sbi->bitmap_lock);
     sbi->visible_bitmap = sbi->bitmap;

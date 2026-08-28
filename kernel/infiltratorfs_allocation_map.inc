@@ -19,6 +19,70 @@ static void infilfs_allocation_layout_destroy(
     memset(layout, 0, sizeof(*layout));
 }
 
+static void infilfs_allocation_cache_destroy(struct infilfs_sb_info *sbi)
+{
+    if (!sbi)
+        return;
+    kvfree(sbi->allocation_leaf_blocks);
+    kvfree(sbi->allocation_branch_blocks);
+    sbi->allocation_leaf_blocks = NULL;
+    sbi->allocation_branch_blocks = NULL;
+    sbi->allocation_leaf_count = 0;
+    sbi->allocation_branch_count = 0;
+    sbi->allocation_level1_count = 0;
+    sbi->allocation_level2_count = 0;
+}
+
+static void infilfs_allocation_cache_replace(
+    struct infilfs_sb_info *sbi, struct infilfs_allocation_layout *layout)
+{
+    if (!sbi || !layout)
+        return;
+    infilfs_allocation_cache_destroy(sbi);
+    sbi->allocation_leaf_blocks = layout->leaf_blocks;
+    sbi->allocation_branch_blocks = layout->branch_blocks;
+    sbi->allocation_leaf_count = layout->leaf_count;
+    sbi->allocation_branch_count = layout->branch_count;
+    sbi->allocation_level1_count = layout->level1_count;
+    sbi->allocation_level2_count = layout->level2_count;
+    memset(layout, 0, sizeof(*layout));
+}
+
+/* Borrow the layout validated for the currently committed checkpoint. */
+static int infilfs_allocation_cache_view(
+    struct infilfs_sb_info *sbi,
+    const struct infilfs_superblock_disk *disk,
+    struct infilfs_allocation_layout *layout)
+{
+    size_t leaves = 0, level1 = 0, level2 = 0, branches = 0;
+    int ret;
+
+    if (!sbi || !disk || !layout)
+        return -EINVAL;
+    ret = infilfs_allocation_counts(
+        le64_to_cpu(disk->total_blocks),
+        &leaves, &level1, &level2, &branches);
+    if (ret)
+        return ret;
+    if (!sbi->allocation_leaf_blocks || !sbi->allocation_branch_blocks ||
+        sbi->allocation_leaf_count != leaves ||
+        sbi->allocation_branch_count != branches ||
+        sbi->allocation_level1_count != level1 ||
+        sbi->allocation_level2_count != level2 ||
+        le64_to_cpu(disk->allocation_leaf_count) != leaves ||
+        sbi->allocation_branch_blocks[0] !=
+            le64_to_cpu(disk->allocation_root_block))
+        return -EFSCORRUPTED;
+
+    layout->leaf_blocks = sbi->allocation_leaf_blocks;
+    layout->branch_blocks = sbi->allocation_branch_blocks;
+    layout->leaf_count = leaves;
+    layout->branch_count = branches;
+    layout->level1_count = level1;
+    layout->level2_count = level2;
+    return 0;
+}
+
 static int infilfs_allocation_counts(
     u64 total, size_t *leaves_out, size_t *level1_out,
     size_t *level2_out, size_t *branches_out)

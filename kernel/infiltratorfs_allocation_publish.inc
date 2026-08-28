@@ -178,7 +178,9 @@ static int infilfs_rw_allocation_write_page(
     return ret;
 }
 
-static int infilfs_rw_allocation_map_publish(struct infilfs_rw_tx *tx)
+static int infilfs_rw_allocation_map_publish(
+    struct infilfs_rw_tx *tx,
+    struct infilfs_allocation_layout *next_layout)
 {
     struct infilfs_allocation_layout old = {0};
     struct super_block *sb = tx->sb;
@@ -196,8 +198,9 @@ static int infilfs_rw_allocation_map_publish(struct infilfs_rw_tx *tx)
     size_t i, r;
     int ret;
 
-    ret = infilfs_allocation_map_load(
-        sb, &tx->next_sb, NULL, NULL, &old);
+    if (!next_layout)
+        return -EINVAL;
+    ret = infilfs_allocation_cache_view(sbi, &tx->next_sb, &old);
     if (ret)
         return ret;
     if (old.leaf_count > SIZE_MAX - old.branch_count) {
@@ -422,6 +425,17 @@ static int infilfs_rw_allocation_map_publish(struct infilfs_rw_tx *tx)
             (u32)old.level2_count * sizeof(__le64));
     }
 
+    if (!ret) {
+        next_layout->leaf_blocks = new_leaves;
+        next_layout->branch_blocks = new_branches;
+        next_layout->leaf_count = old.leaf_count;
+        next_layout->branch_count = old.branch_count;
+        next_layout->level1_count = old.level1_count;
+        next_layout->level2_count = old.level2_count;
+        new_leaves = NULL;
+        new_branches = NULL;
+    }
+
 out:
     kvfree(new_branches);
     kvfree(new_leaves);
@@ -429,6 +443,5 @@ out:
     kvfree(dirty_level2);
     kvfree(dirty_level1);
     kvfree(dirty_leaves);
-    infilfs_allocation_layout_destroy(&old);
     return ret;
 }

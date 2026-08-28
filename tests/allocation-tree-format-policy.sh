@@ -35,6 +35,8 @@ grep -Fq 'if (!dirty_level1[i])' "$kpublish"
 grep -Fq 'if (!dirty_level2[i])' "$kpublish"
 grep -Fq 'infilfs_rw_allocation_map_publish' "$kpublish"
 grep -Fq 'infilfs_allocation_map_load' "$kmap"
+grep -Fq 'infilfs_allocation_cache_view' "$kmap"
+grep -Fq 'infilfs_allocation_cache_replace' "$kmap"
 grep -Fq 'tx_allocated' "$volume"
 
 ! grep -Fq 'tx_base_bitmap' "$volume"

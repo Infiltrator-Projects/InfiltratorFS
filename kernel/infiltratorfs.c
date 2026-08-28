@@ -62,6 +62,12 @@ struct infilfs_sb_info {
     rwlock_t bitmap_lock;
     u8 *bitmap;
     size_t bitmap_bytes;
+    u64 *allocation_leaf_blocks;
+    u64 *allocation_branch_blocks;
+    size_t allocation_leaf_count;
+    size_t allocation_branch_count;
+    size_t allocation_level1_count;
+    size_t allocation_level2_count;
     const u8 *visible_bitmap;
     size_t visible_bitmap_bytes;
     const u8 *validation_bitmap;
