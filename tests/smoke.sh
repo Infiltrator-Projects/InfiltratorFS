@@ -36,8 +36,8 @@ head -c 98765 /dev/urandom > "$source_file"
 "$tool" "$image" cat /docs/test.bin > "$out_file"
 cmp "$source_file" "$out_file"
 
-# Format 0.16 doubles the portable component-name boundary from 255 to 510
-# UTF-8 bytes. Exercise the production path parser and directory-tree writer.
+# Format 0.16 raises the portable component-name boundary to 1023 UTF-8
+# bytes. Exercise the production path parser and directory-tree writer.
 name1023="$(head -c 1023 </dev/zero | tr '\0' n)"
 name1024="${name1023}n"
 "$tool" "$image" put "$source_file" "/docs/$name1023"
