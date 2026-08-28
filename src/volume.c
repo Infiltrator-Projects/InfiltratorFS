@@ -164,3 +164,47 @@ static int paged_extent_replace(struct infs_volume *vol,
 #include "volume/phase3/part5-01.inc"
 #include "volume/phase3/part5-02.inc"
 #include "volume/phase3/part5-03.inc"
+
+/*
+ * Private regression hooks for the allocator index. They are intentionally
+ * absent from the installed public headers; tests link against the production
+ * core and exercise the exact implementation used by every userspace adapter.
+ */
+int infs_internal_test_free_extent_rebuild(struct infs_volume *vol)
+{
+    return free_extent_index_rebuild(vol);
+}
+
+void infs_internal_test_free_extent_destroy(struct infs_volume *vol)
+{
+    free_extent_index_destroy(vol);
+}
+
+int infs_internal_test_free_extent_remove(struct infs_volume *vol,
+                                          uint64_t start, uint64_t count)
+{
+    return free_extent_index_remove(vol, start, count);
+}
+
+int infs_internal_test_free_extent_add(struct infs_volume *vol,
+                                       uint64_t start, uint64_t count)
+{
+    return free_extent_index_add(vol, start, count);
+}
+
+int infs_internal_test_free_extent_choose_forward(
+    const struct infs_volume *vol, uint64_t wanted, uint64_t cursor,
+    uint64_t *start_out, uint64_t *count_out)
+{
+    return free_extent_index_choose_forward(
+        vol, wanted, cursor, start_out, count_out);
+}
+
+int infs_internal_test_free_extent_choose_reverse(
+    const struct infs_volume *vol, uint64_t wanted, uint64_t cursor,
+    int exact, uint64_t *start_out, uint64_t *count_out)
+{
+    return free_extent_index_choose_reverse(
+        vol, wanted, cursor, exact, start_out, count_out);
+}
+

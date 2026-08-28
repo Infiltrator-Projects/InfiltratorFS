@@ -245,6 +245,28 @@ static int free_extent_index_choose_forward(
             }
         }
     }
+
+    /*
+     * The allocation cursor is a locality hint, not a hard boundary. A
+     * maximal free extent can straddle it, leaving each directional pass with
+     * only a fragment even though the whole extent satisfies the request.
+     * Reconsider complete extents before accepting a partial result so the
+     * index preserves the authoritative bitmap scanner's allocation semantics.
+     */
+    for (size_t i = 0; i < vol->free_extent_count; ++i) {
+        const struct infs_free_extent *extent = &vol->free_extents[i];
+        uint64_t take = extent->count < wanted ? extent->count : wanted;
+        if (take > best_count) {
+            best_start = extent->start;
+            best_count = take;
+        }
+        if (take == wanted) {
+            *start_out = extent->start;
+            *count_out = wanted;
+            return 1;
+        }
+    }
+
     if (!best_count)
         return 0;
     *start_out = best_start;
@@ -285,6 +307,27 @@ static int free_extent_index_choose_reverse(
             }
         }
     }
+
+    /*
+     * As with forward allocation, the cursor may bisect one maximal free run.
+     * Fall back to whole extents before reporting ENOSPC or a partial run.
+     * Metadata keeps its reverse-growth preference by taking from the high end
+     * of the selected extent.
+     */
+    for (size_t n = vol->free_extent_count; n > 0; --n) {
+        const struct infs_free_extent *extent = &vol->free_extents[n - 1u];
+        uint64_t take = extent->count < wanted ? extent->count : wanted;
+        if (take > best_count) {
+            best_count = take;
+            best_start = extent->start + extent->count - take;
+        }
+        if (take == wanted) {
+            *start_out = extent->start + extent->count - wanted;
+            *count_out = wanted;
+            return 1;
+        }
+    }
+
     if (exact || !best_count)
         return 0;
     *start_out = best_start;

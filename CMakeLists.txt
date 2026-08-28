@@ -130,6 +130,10 @@ add_executable(infilfs-forensic-api tests/forensic-api.c)
 target_link_libraries(infilfs-forensic-api PRIVATE infilfs_core)
 infilfs_enable_warnings(infilfs-forensic-api)
 
+add_executable(infilfs-free-extent-index tests/free-extent-index.c)
+target_link_libraries(infilfs-free-extent-index PRIVATE infilfs_core)
+infilfs_enable_warnings(infilfs-free-extent-index)
+
 enable_testing()
 add_test(NAME infilfs-checksum-known-answer COMMAND infilfs-checksum-test)
 add_test(NAME infilfs-format-conformance COMMAND infilfs-format-conformance)
@@ -147,6 +151,7 @@ add_test(NAME infilfs-large-files COMMAND infilfs-large-files)
 add_test(NAME infilfs-eof-extent-promotion COMMAND infilfs-eof-extent-promotion)
 add_test(NAME infilfs-device-open COMMAND infilfs-device-open)
 add_test(NAME infilfs-forensic-api COMMAND infilfs-forensic-api)
+add_test(NAME infilfs-free-extent-index COMMAND infilfs-free-extent-index)
 
 if(WIN32)
     add_library(infilfs_win32 STATIC
