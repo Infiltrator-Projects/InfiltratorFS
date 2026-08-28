@@ -39,6 +39,16 @@ struct infilfs_rw_tx {
     struct infilfs_rw_free_range *allocated;
     size_t allocated_count;
     size_t allocated_capacity;
+
+    /*
+     * Rebuildable transaction-local index of maximal free runs. The copied
+     * transaction bitmap remains authoritative; this cache only avoids
+     * rescanning the whole device for every allocation.
+     */
+    struct infilfs_rw_free_range *free_extents;
+    size_t free_extent_count;
+    size_t free_extent_capacity;
+    bool free_extent_index_valid;
 };
 
 struct infilfs_rw_sha256_ctx {
@@ -61,6 +71,221 @@ static void infilfs_rw_bitmap_set(u8 *bitmap, u64 block, bool used)
         bitmap[block >> 3] |= mask;
     else
         bitmap[block >> 3] &= (u8)~mask;
+}
+
+static void infilfs_rw_free_extent_index_invalidate(struct infilfs_rw_tx *tx)
+{
+    if (tx)
+        tx->free_extent_index_valid = false;
+}
+
+static int infilfs_rw_free_extent_index_reserve(struct infilfs_rw_tx *tx,
+                                                 size_t needed)
+{
+    struct infilfs_rw_free_range *grown;
+    size_t next;
+
+    if (needed <= tx->free_extent_capacity)
+        return 0;
+    next = tx->free_extent_capacity ? tx->free_extent_capacity : 64u;
+    while (next < needed) {
+        if (next > SIZE_MAX / 2u)
+            return -EOVERFLOW;
+        next *= 2u;
+    }
+    if (next > SIZE_MAX / sizeof(*grown))
+        return -EOVERFLOW;
+    grown = krealloc(tx->free_extents, next * sizeof(*grown), GFP_NOFS);
+    if (!grown)
+        return -ENOMEM;
+    tx->free_extents = grown;
+    tx->free_extent_capacity = next;
+    return 0;
+}
+
+static int infilfs_rw_free_extent_index_rebuild(struct infilfs_rw_tx *tx)
+{
+    u64 total;
+    u64 block = 0;
+    size_t count = 0;
+    int ret;
+
+    if (!tx || !tx->bitmap || !tx->sbi)
+        return -EINVAL;
+    total = tx->sbi->device_blocks;
+
+    while (block < total) {
+        while (block < total && infilfs_rw_bitmap_get(tx->bitmap, block))
+            block++;
+        if (block == total)
+            break;
+        count++;
+        while (block < total && !infilfs_rw_bitmap_get(tx->bitmap, block))
+            block++;
+    }
+
+    ret = infilfs_rw_free_extent_index_reserve(tx, count ? count : 1u);
+    if (ret) {
+        infilfs_rw_free_extent_index_invalidate(tx);
+        return ret;
+    }
+
+    block = 0;
+    count = 0;
+    while (block < total) {
+        u64 start;
+
+        while (block < total && infilfs_rw_bitmap_get(tx->bitmap, block))
+            block++;
+        if (block == total)
+            break;
+        start = block;
+        while (block < total && !infilfs_rw_bitmap_get(tx->bitmap, block))
+            block++;
+        tx->free_extents[count].start = start;
+        tx->free_extents[count].count = block - start;
+        count++;
+    }
+
+    tx->free_extent_count = count;
+    tx->free_extent_index_valid = true;
+    return 0;
+}
+
+static int infilfs_rw_free_extent_index_remove(struct infilfs_rw_tx *tx,
+                                                u64 start, u64 count)
+{
+    u64 end;
+    size_t i;
+    int ret;
+
+    if (!tx || !tx->free_extent_index_valid || !count)
+        return -EINVAL;
+    if (start > U64_MAX - count)
+        return -EOVERFLOW;
+    end = start + count;
+
+    for (i = 0; i < tx->free_extent_count; ++i) {
+        u64 extent_start = tx->free_extents[i].start;
+        u64 extent_end;
+
+        if (extent_start > U64_MAX - tx->free_extents[i].count)
+            return -EFSCORRUPTED;
+        extent_end = extent_start + tx->free_extents[i].count;
+        if (start < extent_start || end > extent_end)
+            continue;
+
+        if (start == extent_start && end == extent_end) {
+            memmove(&tx->free_extents[i], &tx->free_extents[i + 1u],
+                    (tx->free_extent_count - i - 1u) *
+                        sizeof(*tx->free_extents));
+            tx->free_extent_count--;
+            return 0;
+        }
+        if (start == extent_start) {
+            tx->free_extents[i].start = end;
+            tx->free_extents[i].count = extent_end - end;
+            return 0;
+        }
+        if (end == extent_end) {
+            tx->free_extents[i].count = start - extent_start;
+            return 0;
+        }
+
+        ret = infilfs_rw_free_extent_index_reserve(
+            tx, tx->free_extent_count + 1u);
+        if (ret)
+            return ret;
+        memmove(&tx->free_extents[i + 2u], &tx->free_extents[i + 1u],
+                (tx->free_extent_count - i - 1u) *
+                    sizeof(*tx->free_extents));
+        tx->free_extents[i].count = start - extent_start;
+        tx->free_extents[i + 1u].start = end;
+        tx->free_extents[i + 1u].count = extent_end - end;
+        tx->free_extent_count++;
+        return 0;
+    }
+    return -ENOENT;
+}
+
+static bool infilfs_rw_free_extent_choose_forward(
+    const struct infilfs_rw_tx *tx, u64 wanted, u64 cursor, u64 *start_out)
+{
+    unsigned int pass;
+    size_t i;
+
+    if (!tx || !tx->free_extent_index_valid || !wanted ||
+        !tx->free_extent_count)
+        return false;
+
+    for (pass = 0; pass < 2u; ++pass) {
+        for (i = 0; i < tx->free_extent_count; ++i) {
+            u64 start = tx->free_extents[i].start;
+            u64 end = start + tx->free_extents[i].count;
+            u64 candidate;
+
+            if ((!pass && end <= cursor) || (pass && end > cursor))
+                continue;
+            candidate = !pass && start < cursor ? cursor : start;
+            if (candidate < end && wanted <= end - candidate) {
+                *start_out = candidate;
+                return true;
+            }
+        }
+    }
+
+    /*
+     * A locality cursor can bisect one maximal free run. Reconsider whole
+     * extents before falling back to the authoritative bitmap scanner.
+     */
+    for (i = 0; i < tx->free_extent_count; ++i) {
+        if (tx->free_extents[i].count >= wanted) {
+            *start_out = tx->free_extents[i].start;
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool infilfs_rw_free_extent_choose_reverse(
+    const struct infilfs_rw_tx *tx, u64 wanted, u64 cursor, u64 *start_out)
+{
+    unsigned int pass;
+    size_t n;
+
+    if (!tx || !tx->free_extent_index_valid || !wanted ||
+        !tx->free_extent_count)
+        return false;
+
+    for (pass = 0; pass < 2u; ++pass) {
+        for (n = tx->free_extent_count; n > 0; --n) {
+            const struct infilfs_rw_free_range *extent =
+                &tx->free_extents[n - 1u];
+            u64 start = extent->start;
+            u64 end = start + extent->count;
+            u64 candidate_end;
+
+            if ((!pass && start > cursor) || (pass && start <= cursor))
+                continue;
+            candidate_end = !pass && end > cursor + 1u ?
+                cursor + 1u : end;
+            if (candidate_end > start &&
+                wanted <= candidate_end - start) {
+                *start_out = candidate_end - wanted;
+                return true;
+            }
+        }
+    }
+
+    for (n = tx->free_extent_count; n > 0; --n) {
+        const struct infilfs_rw_free_range *extent =
+            &tx->free_extents[n - 1u];
+        if (extent->count >= wanted) {
+            *start_out = extent->start + extent->count - wanted;
+            return true;
+        }
+    }
+    return false;
 }
 
 static int infilfs_rw_write_block(struct super_block *sb, u64 block,
@@ -687,6 +912,7 @@ static int infilfs_rw_tx_begin(struct super_block *sb, struct infilfs_rw_tx *tx)
     tx->next_sb = sbi->disk;
     tx->generation = generation + 1u;
     tx->free_blocks = le64_to_cpu(sbi->disk.free_blocks);
+    (void)infilfs_rw_free_extent_index_rebuild(tx);
     return 0;
 }
 
@@ -703,6 +929,7 @@ static void infilfs_rw_tx_abort(struct infilfs_rw_tx *tx)
     kvfree(tx->bitmap);
     kfree(tx->deferred);
     kfree(tx->allocated);
+    kfree(tx->free_extents);
     memset(tx, 0, sizeof(*tx));
 }
 
@@ -766,6 +993,10 @@ static int infilfs_rw_tx_record_alloc(struct infilfs_rw_tx *tx,
         tx->allocated_capacity = next;
     }
 
+    if (tx->free_extent_index_valid &&
+        infilfs_rw_free_extent_index_remove(tx, start, count) != 0)
+        infilfs_rw_free_extent_index_invalidate(tx);
+
     tx->allocated[tx->allocated_count].start = start;
     tx->allocated[tx->allocated_count].count = count;
     tx->allocated_count++;
@@ -801,22 +1032,27 @@ static int infilfs_rw_tx_alloc(struct infilfs_rw_tx *tx, u64 count,
         hint = total - 1u;
     candidate = hint;
 
-    for (scanned = 0; scanned < total - 1u; ++scanned) {
-        if (!infilfs_rw_bitmap_get(tx->bitmap, candidate)) {
-            run++;
-            if (run == count) {
-                start = candidate;
-                break;
+    if (tx->free_extent_index_valid &&
+        infilfs_rw_free_extent_choose_reverse(tx, count, hint, &start)) {
+        run = count;
+    } else {
+        for (scanned = 0; scanned < total - 1u; ++scanned) {
+            if (!infilfs_rw_bitmap_get(tx->bitmap, candidate)) {
+                run++;
+                if (run == count) {
+                    start = candidate;
+                    break;
+                }
+            } else {
+                run = 0;
             }
-        } else {
-            run = 0;
-        }
 
-        if (candidate == 1) {
-            candidate = total - 1u;
-            run = 0;
-        } else {
-            candidate--;
+            if (candidate == 1) {
+                candidate = total - 1u;
+                run = 0;
+            } else {
+                candidate--;
+            }
         }
     }
     if (run != count)
@@ -949,6 +1185,11 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
     tx->allocated = NULL;
     tx->allocated_count = 0;
     tx->allocated_capacity = 0;
+    kfree(tx->free_extents);
+    tx->free_extents = NULL;
+    tx->free_extent_count = 0;
+    tx->free_extent_capacity = 0;
+    tx->free_extent_index_valid = false;
     return 0;
 }
 

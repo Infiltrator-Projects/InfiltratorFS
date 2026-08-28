@@ -922,6 +922,7 @@ static int infilfs_native_operation_rollback(
     pending->tx.allocated_count = pending->operation_allocated_count;
     pending->tx.next_sb = pending->operation_next_sb;
     pending->tx.free_blocks = pending->operation_free_blocks;
+    (void)infilfs_rw_free_extent_index_rebuild(&pending->tx);
     pending->tx.deferred_count = pending->operation_deferred_count;
     if (pending->operation_had_last && pending->tx.deferred_count)
         pending->tx.deferred[pending->tx.deferred_count - 1u] =
@@ -1083,21 +1084,26 @@ static int infilfs_native_alloc_data_exact(struct infilfs_native_pending *pendin
         hint = 1;
     candidate = hint;
 
-    for (scanned = 0; scanned < total - 1u; ++scanned) {
-        if (!infilfs_rw_bitmap_get(tx->bitmap, candidate)) {
-            if (!run)
-                start = candidate;
-            run++;
-            if (run == count)
-                break;
-        } else {
-            run = 0;
-        }
+    if (tx->free_extent_index_valid &&
+        infilfs_rw_free_extent_choose_forward(tx, count, hint, &start)) {
+        run = count;
+    } else {
+        for (scanned = 0; scanned < total - 1u; ++scanned) {
+            if (!infilfs_rw_bitmap_get(tx->bitmap, candidate)) {
+                if (!run)
+                    start = candidate;
+                run++;
+                if (run == count)
+                    break;
+            } else {
+                run = 0;
+            }
 
-        candidate++;
-        if (candidate >= total) {
-            candidate = 1;
-            run = 0;
+            candidate++;
+            if (candidate >= total) {
+                candidate = 1;
+                run = 0;
+            }
         }
     }
     if (run != count)
