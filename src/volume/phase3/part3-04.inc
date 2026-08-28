@@ -322,7 +322,14 @@ infs_status infs_volume_open_storage(struct infs_volume *vol,
      * cache must never make an otherwise valid filesystem unmountable. */
     object_cache_init(vol);
     directory_cache_init(vol);
-    (void)object_cache_rebuild(vol);
+    /*
+     * A raw block-device mount must not become an implicit object-index walk.
+     * The cache is only an accelerator: the tree supplies bounded lookup
+     * without pre-population, and individual successful lookups fill it
+     * naturally. Offline/image workflows retain eager cache population.
+     */
+    if (!is_block)
+        (void)object_cache_rebuild(vol);
     vol->data_allocation_cursor = 1u;
     vol->metadata_allocation_cursor =
         infs_le64_to_cpu(vol->sb.total_blocks);

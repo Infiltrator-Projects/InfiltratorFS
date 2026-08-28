@@ -2,6 +2,7 @@
 #include "infilfs/endian.h"
 #include "infilfs/format.h"
 #include "infilfs/format_volume.h"
+#include "infilfs/fs.h"
 #include "infilfs/storage.h"
 #include "infilfs/volume.h"
 

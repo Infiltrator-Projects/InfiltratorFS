@@ -145,8 +145,8 @@ int main(void)
     storage = make_storage(&image);
     expect(infs_volume_open_storage(&volume, &storage, 1) == INFS_STATUS_OK,
            "open writable volume");
-    expect(infs_le16_to_cpu(volume.sb.format_minor) == 12u,
-           "Format minor is 0.12");
+    expect(infs_le16_to_cpu(volume.sb.format_minor) == INFS_FORMAT_MINOR,
+           "current Format minor");
     expect((infs_le64_to_cpu(volume.sb.incompat_flags) &
             INFS_INCOMPAT_SYMBOLIC_LINKS) != 0,
            "symbolic-link feature enabled");

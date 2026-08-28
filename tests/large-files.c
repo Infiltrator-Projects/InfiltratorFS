@@ -213,8 +213,8 @@ int main(void)
     storage = make_storage(&image);
     expect(infs_volume_open_storage(&volume, &storage, 1) == INFS_STATUS_OK,
            "open writable volume");
-    expect(infs_le16_to_cpu(volume.sb.format_minor) == 12u,
-           "Format minor is 0.12");
+    expect(infs_le16_to_cpu(volume.sb.format_minor) == INFS_FORMAT_MINOR,
+           "current Format minor");
     expect((infs_le64_to_cpu(volume.sb.incompat_flags) &
             INFS_INCOMPAT_PAGED_EXTENTS) != 0,
            "paged extent feature enabled");
@@ -261,7 +261,7 @@ int main(void)
 
     /* Force more than the old single-object extent ceiling. Alternating data
      * and holes creates over 161 logical extents while retaining only 100
-     * allocated data blocks. Format 0.12 must promote the extent vector to
+     * allocated data blocks. Current format must promote the extent vector to
      * checksummed paged metadata and preserve it through scrub/remount. */
     expect(infs_create_file(&volume, "/fragmented.bin", NULL) == INFS_STATUS_OK,
            "create fragmented file");
