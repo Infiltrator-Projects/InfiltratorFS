@@ -357,9 +357,11 @@ void infs_volume_close(struct infs_volume *vol)
     if (!vol)
         return;
     tx_abort(vol);
-    free(vol->tx_base_bitmap);
-    vol->tx_base_bitmap = NULL;
     tx_operation_discard(vol);
+    free(vol->tx_allocated);
+    vol->tx_allocated = NULL;
+    vol->tx_allocated_count = 0;
+    vol->tx_allocated_capacity = 0;
     free(vol->tx_deferred);
     vol->tx_deferred = NULL;
     vol->tx_deferred_count = 0;

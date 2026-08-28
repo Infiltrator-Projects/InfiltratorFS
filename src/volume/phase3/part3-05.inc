@@ -143,8 +143,7 @@ infs_status infs_volume_sync(struct infs_volume *vol)
      * while replicating secondary checkpoints must not be reported to callers
      * as if the namespace/data mutation itself failed. Track the degraded
      * redundancy state and let fsync/sync heal it explicitly. */
-    free(vol->tx_base_bitmap);
-    vol->tx_base_bitmap = NULL;
+    vol->tx_allocated_count = 0;
     vol->tx_deferred_count = 0;
     vol->tx_error = INFS_STATUS_OK;
     vol->tx_active = 0;

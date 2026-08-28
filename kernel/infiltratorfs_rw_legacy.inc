@@ -41,7 +41,7 @@ struct infilfs_rw_tx {
     size_t allocated_capacity;
 
     /*
-     * Rebuildable transaction-local index of maximal free runs. The copied
+     * Rebuildable transaction-local index of maximal free runs. The live
      * transaction bitmap remains authoritative; this cache only avoids
      * rescanning the whole device for every allocation.
      */
@@ -894,15 +894,17 @@ static int infilfs_rw_tx_begin(struct super_block *sb, struct infilfs_rw_tx *tx)
     if (generation == U64_MAX)
         return -EOVERFLOW;
 
-    tx->bitmap = kvmalloc(sbi->bitmap_bytes, GFP_NOFS);
-    if (!tx->bitmap)
-        return -ENOMEM;
-    memcpy(tx->bitmap, sbi->bitmap, sbi->bitmap_bytes);
+    /*
+     * Transactions borrow the live in-memory allocation image. All native
+     * mutation is serialized by write_lock, allocations are journalled below,
+     * and frees remain deferred until publication. Rollback therefore clears
+     * only journalled allocations instead of cloning the whole bitmap.
+     */
+    tx->bitmap = sbi->bitmap;
     tx->deferred_capacity = INFILFS_RW_FREE_RANGES_INITIAL;
     tx->deferred = kcalloc(tx->deferred_capacity, sizeof(*tx->deferred),
                            GFP_NOFS);
     if (!tx->deferred) {
-        kvfree(tx->bitmap);
         tx->bitmap = NULL;
         return -ENOMEM;
     }
@@ -918,15 +920,20 @@ static int infilfs_rw_tx_begin(struct super_block *sb, struct infilfs_rw_tx *tx)
 
 static void infilfs_rw_tx_abort(struct infilfs_rw_tx *tx)
 {
-    if (tx->sbi) {
-        write_lock(&tx->sbi->bitmap_lock);
-        if (tx->sbi->visible_bitmap == tx->bitmap) {
-            tx->sbi->visible_bitmap = tx->sbi->bitmap;
-            tx->sbi->visible_bitmap_bytes = tx->sbi->bitmap_bytes;
+    if (tx->sbi && tx->bitmap == tx->sbi->bitmap) {
+        size_t r;
+        for (r = 0; r < tx->allocated_count; ++r) {
+            u64 i;
+            for (i = 0; i < tx->allocated[r].count; ++i)
+                infilfs_rw_bitmap_set(tx->bitmap,
+                    tx->allocated[r].start + i, false);
         }
+        write_lock(&tx->sbi->bitmap_lock);
+        tx->sbi->visible_bitmap = tx->sbi->bitmap;
+        tx->sbi->visible_bitmap_bytes = tx->sbi->bitmap_bytes;
         write_unlock(&tx->sbi->bitmap_lock);
     }
-    kvfree(tx->bitmap);
+    tx->bitmap = NULL;
     kfree(tx->deferred);
     kfree(tx->allocated);
     kfree(tx->free_extents);
@@ -1096,7 +1103,6 @@ static int infilfs_rw_tx_apply_deferred(struct infilfs_rw_tx *tx)
 static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
 {
     struct infilfs_sb_info *sbi = tx->sbi;
-    u8 *old_live_bitmap;
     u64 bitmap_blocks = le64_to_cpu(tx->next_sb.bitmap_block_count);
     u64 old_bitmap_start = le64_to_cpu(tx->next_sb.bitmap_start_block);
     u64 new_bitmap;
@@ -1147,19 +1153,14 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
         return ret;
     }
 
-    /* Commit point reached.  Update the live mount before replica writes so
-     * reads observe the generation that is now durable even if redundancy
-     * repair later fails. */
+    /* Commit point reached. The transaction mutated the serialized live
+     * allocation image in place under write_lock; no whole-bitmap swap or
+     * copy is required. */
     sbi->disk = tx->next_sb;
     write_lock(&sbi->bitmap_lock);
-    old_live_bitmap = sbi->bitmap;
-    sbi->bitmap = tx->bitmap;
-    tx->bitmap = NULL;
-    sbi->bitmap_bytes = tx->bitmap_bytes;
     sbi->visible_bitmap = sbi->bitmap;
     sbi->visible_bitmap_bytes = sbi->bitmap_bytes;
     write_unlock(&sbi->bitmap_lock);
-    kvfree(old_live_bitmap);
 
     for (n = 1; n < INFILFS_CHECKPOINT_COUNT; ++n) {
         unsigned int idx = (first + n) % INFILFS_CHECKPOINT_COUNT;

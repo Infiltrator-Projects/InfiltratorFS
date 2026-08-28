@@ -77,19 +77,25 @@ struct infs_volume {
     int tx_active;
     infs_status tx_error;
     struct infs_superblock_disk tx_base_sb;
-    uint8_t *tx_base_bitmap;
     struct infs_deferred_range *tx_deferred;
     size_t tx_deferred_count;
     size_t tx_deferred_capacity;
+    /* Allocation journal replaces the former full-volume bitmap clone.
+     * Frees remain deferred until publication, so rollback only needs to
+     * clear blocks allocated since the transaction/savepoint began. */
+    struct infs_deferred_range *tx_allocated;
+    size_t tx_allocated_count;
+    size_t tx_allocated_capacity;
 
     /* Savepoint for one externally visible mutation inside a deferred
      * transaction. Earlier successful syscalls remain intact if this one
      * fails. */
     int tx_operation_active;
     struct infs_superblock_disk tx_operation_sb;
-    uint8_t *tx_operation_bitmap;
-    struct infs_deferred_range *tx_operation_deferred;
+    size_t tx_operation_allocated_count;
     size_t tx_operation_deferred_count;
+    int tx_operation_had_last_deferred;
+    struct infs_deferred_range tx_operation_last_deferred;
     uint64_t tx_operation_pending_bytes;
     uint64_t tx_operation_data_cursor;
     uint64_t tx_operation_metadata_cursor;

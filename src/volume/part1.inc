@@ -546,43 +546,72 @@ static int tx_begin(struct infs_volume *vol)
         next_generation == 0)
         return INFS_STATUS_OVERFLOW;
 
-    vol->tx_base_bitmap = malloc(vol->bitmap_bytes);
-    if (!vol->tx_base_bitmap)
-        return INFS_STATUS_NO_MEMORY;
-    memcpy(vol->tx_base_bitmap, vol->bitmap, vol->bitmap_bytes);
     memcpy(&vol->tx_base_sb, &vol->sb, sizeof(vol->sb));
     vol->tx_deferred_count = 0;
+    vol->tx_allocated_count = 0;
     vol->tx_error = INFS_STATUS_OK;
     vol->tx_active = 1;
     return INFS_STATUS_OK;
 }
 
-static const uint8_t *tx_cow_base_bitmap(const struct infs_volume *vol)
+static int tx_record_allocated(struct infs_volume *vol,
+                               uint64_t start, uint64_t count)
 {
-    return vol && vol->tx_operation_active && vol->tx_operation_bitmap ?
-        vol->tx_operation_bitmap : (vol ? vol->tx_base_bitmap : NULL);
+    if (!vol || !vol->tx_active || !count ||
+        start > UINT64_MAX - count)
+        return INFS_STATUS_INVALID_ARGUMENT;
+    if (vol->tx_allocated_count == vol->tx_allocated_capacity) {
+        size_t next = vol->tx_allocated_capacity ?
+            vol->tx_allocated_capacity * 2u : 32u;
+        if (next < vol->tx_allocated_capacity ||
+            next > SIZE_MAX / sizeof(*vol->tx_allocated))
+            return INFS_STATUS_NO_MEMORY;
+        struct infs_deferred_range *grown = realloc(
+            vol->tx_allocated, next * sizeof(*grown));
+        if (!grown)
+            return INFS_STATUS_NO_MEMORY;
+        vol->tx_allocated = grown;
+        vol->tx_allocated_capacity = next;
+    }
+    vol->tx_allocated[vol->tx_allocated_count].start = start;
+    vol->tx_allocated[vol->tx_allocated_count].count = count;
+    ++vol->tx_allocated_count;
+    return INFS_STATUS_OK;
+}
+
+static int tx_block_private_since(const struct infs_volume *vol,
+                                  uint64_t block, size_t first)
+{
+    if (!vol || !vol->tx_active)
+        return 0;
+    if (first > vol->tx_allocated_count)
+        first = vol->tx_allocated_count;
+    for (size_t i = first; i < vol->tx_allocated_count; ++i) {
+        uint64_t start = vol->tx_allocated[i].start;
+        uint64_t count = vol->tx_allocated[i].count;
+        if (block >= start && block - start < count)
+            return 1;
+    }
+    return 0;
+}
+
+static int tx_block_private(const struct infs_volume *vol, uint64_t block)
+{
+    size_t first = vol && vol->tx_operation_active ?
+        vol->tx_operation_allocated_count : 0u;
+    return tx_block_private_since(vol, block, first);
 }
 
 static infs_status tx_operation_begin(struct infs_volume *vol)
 {
     if (!vol || !vol->tx_active || vol->tx_operation_active)
         return INFS_STATUS_INVALID_ARGUMENT;
-    vol->tx_operation_bitmap = malloc(vol->bitmap_bytes);
-    if (!vol->tx_operation_bitmap)
-        return INFS_STATUS_NO_MEMORY;
-    memcpy(vol->tx_operation_bitmap, vol->bitmap, vol->bitmap_bytes);
-    if (vol->tx_deferred_count) {
-        vol->tx_operation_deferred = malloc(
-            vol->tx_deferred_count * sizeof(*vol->tx_operation_deferred));
-        if (!vol->tx_operation_deferred) {
-            free(vol->tx_operation_bitmap);
-            vol->tx_operation_bitmap = NULL;
-            return INFS_STATUS_NO_MEMORY;
-        }
-        memcpy(vol->tx_operation_deferred, vol->tx_deferred,
-               vol->tx_deferred_count * sizeof(*vol->tx_operation_deferred));
-    }
+    vol->tx_operation_allocated_count = vol->tx_allocated_count;
     vol->tx_operation_deferred_count = vol->tx_deferred_count;
+    vol->tx_operation_had_last_deferred = vol->tx_deferred_count != 0;
+    if (vol->tx_operation_had_last_deferred)
+        vol->tx_operation_last_deferred =
+            vol->tx_deferred[vol->tx_deferred_count - 1u];
     vol->tx_operation_sb = vol->sb;
     vol->tx_operation_pending_bytes = vol->tx_pending_bytes;
     vol->tx_operation_data_cursor = vol->data_allocation_cursor;
@@ -595,11 +624,11 @@ static void tx_operation_discard(struct infs_volume *vol)
 {
     if (!vol)
         return;
-    free(vol->tx_operation_bitmap);
-    vol->tx_operation_bitmap = NULL;
-    free(vol->tx_operation_deferred);
-    vol->tx_operation_deferred = NULL;
+    vol->tx_operation_allocated_count = 0;
     vol->tx_operation_deferred_count = 0;
+    vol->tx_operation_had_last_deferred = 0;
+    memset(&vol->tx_operation_last_deferred, 0,
+           sizeof(vol->tx_operation_last_deferred));
     vol->tx_operation_active = 0;
 }
 
@@ -612,25 +641,20 @@ static void tx_operation_abort(struct infs_volume *vol)
 {
     if (!vol || !vol->tx_operation_active)
         return;
-    vol->sb = vol->tx_operation_sb;
-    memcpy(vol->bitmap, vol->tx_operation_bitmap, vol->bitmap_bytes);
-    if (vol->tx_operation_deferred_count) {
-        if (vol->tx_deferred_capacity < vol->tx_operation_deferred_count) {
-            struct infs_deferred_range *grown = realloc(
-                vol->tx_deferred, vol->tx_operation_deferred_count *
-                sizeof(*vol->tx_deferred));
-            if (!grown) {
-                tx_operation_discard(vol);
-                tx_abort(vol);
-                return;
-            }
-            vol->tx_deferred = grown;
-            vol->tx_deferred_capacity = vol->tx_operation_deferred_count;
-        }
-        memcpy(vol->tx_deferred, vol->tx_operation_deferred,
-               vol->tx_operation_deferred_count * sizeof(*vol->tx_deferred));
+    for (size_t i = vol->tx_operation_allocated_count;
+         i < vol->tx_allocated_count; ++i) {
+        uint64_t start = vol->tx_allocated[i].start;
+        uint64_t count = vol->tx_allocated[i].count;
+        for (uint64_t b = 0; b < count; ++b)
+            bitmap_set(vol->bitmap, start + b, 0);
     }
+    vol->tx_allocated_count = vol->tx_operation_allocated_count;
+    vol->sb = vol->tx_operation_sb;
     vol->tx_deferred_count = vol->tx_operation_deferred_count;
+    if (vol->tx_operation_had_last_deferred &&
+        vol->tx_deferred_count)
+        vol->tx_deferred[vol->tx_deferred_count - 1u] =
+            vol->tx_operation_last_deferred;
     vol->tx_pending_bytes = vol->tx_operation_pending_bytes;
     vol->data_allocation_cursor = vol->tx_operation_data_cursor;
     vol->metadata_allocation_cursor = vol->tx_operation_metadata_cursor;
@@ -677,10 +701,14 @@ static void tx_abort(struct infs_volume *vol)
         return;
     if (vol->tx_operation_active)
         tx_operation_discard(vol);
+    for (size_t i = 0; i < vol->tx_allocated_count; ++i) {
+        uint64_t start = vol->tx_allocated[i].start;
+        uint64_t count = vol->tx_allocated[i].count;
+        for (uint64_t b = 0; b < count; ++b)
+            bitmap_set(vol->bitmap, start + b, 0);
+    }
     memcpy(&vol->sb, &vol->tx_base_sb, sizeof(vol->sb));
-    memcpy(vol->bitmap, vol->tx_base_bitmap, vol->bitmap_bytes);
-    free(vol->tx_base_bitmap);
-    vol->tx_base_bitmap = NULL;
+    vol->tx_allocated_count = 0;
     vol->tx_deferred_count = 0;
     vol->tx_error = INFS_STATUS_OK;
     vol->tx_active = 0;
@@ -785,17 +813,15 @@ static int alloc_scan_segment(struct infs_volume *vol, uint64_t wanted,
 static infs_status allocate_selected_run(struct infs_volume *vol,
                                          uint64_t start, uint64_t count)
 {
-    if (vol->free_extent_index_valid &&
-        !free_extent_index_remove(vol, start, count))
-        free_extent_index_invalidate(vol);
-    for (uint64_t b = start; b < start + count; ++b)
-        bitmap_set(vol->bitmap, b, 1);
-    vol->sb.free_blocks = infs_cpu_to_le64(
-        infs_le64_to_cpu(vol->sb.free_blocks) - count);
-    infs_status status = zero_blocks(vol, start, count);
+    infs_status status = allocate_selected_run_uninitialized(vol, start, count);
+    if (status != INFS_STATUS_OK)
+        return status;
+    status = zero_blocks(vol, start, count);
     if (status != INFS_STATUS_OK) {
         for (uint64_t b = start; b < start + count; ++b)
             bitmap_set(vol->bitmap, b, 0);
+        if (vol->tx_allocated_count)
+            --vol->tx_allocated_count;
         vol->sb.free_blocks = infs_cpu_to_le64(
             infs_le64_to_cpu(vol->sb.free_blocks) + count);
         if (vol->free_extent_index_valid &&
@@ -812,9 +838,15 @@ static infs_status allocate_selected_run_uninitialized(
 {
     /* The caller must completely overwrite this transaction-private
      * storage before any checkpoint can reference it. */
+    infs_status status = tx_record_allocated(vol, start, count);
+    if (status != INFS_STATUS_OK)
+        return status;
     if (vol->free_extent_index_valid &&
-        !free_extent_index_remove(vol, start, count))
+        !free_extent_index_remove(vol, start, count)) {
+        --vol->tx_allocated_count;
         free_extent_index_invalidate(vol);
+        return INFS_STATUS_CORRUPT;
+    }
     for (uint64_t b = start; b < start + count; ++b)
         bitmap_set(vol->bitmap, b, 1);
     vol->sb.free_blocks = infs_cpu_to_le64(
@@ -923,8 +955,8 @@ static int alloc_scan_segment_reverse(struct infs_volume *vol,
 
 /* Metadata deliberately grows from the opposite end of the volume from file
  * data. A sequential file can therefore retain one long physical extent even
- * when every adapter write publishes CoW objects, checksum pages and bitmap
- * images between data writes. */
+ * when every adapter write publishes CoW objects and checksum metadata
+ * between data writes. */
 static int alloc_run(struct infs_volume *vol, uint64_t wanted,
                      uint64_t *start_out, uint64_t *count_out)
 {
@@ -1056,7 +1088,7 @@ static void free_run(struct infs_volume *vol, uint64_t start, uint64_t count)
             ++b;
             continue;
         }
-        if (!bitmap_get(tx_cow_base_bitmap(vol), b)) {
+        if (tx_block_private(vol, b)) {
             bitmap_set(vol->bitmap, b, 0);
             vol->sb.free_blocks = infs_cpu_to_le64(
                 infs_le64_to_cpu(vol->sb.free_blocks) + 1u);
@@ -1069,7 +1101,7 @@ static void free_run(struct infs_volume *vol, uint64_t start, uint64_t count)
 
         uint64_t run = b;
         while (b < end && bitmap_get(vol->bitmap, b) &&
-               bitmap_get(tx_cow_base_bitmap(vol), b))
+               !tx_block_private(vol, b))
             ++b;
         status = tx_defer_range(vol, run, b - run);
         if (status != INFS_STATUS_OK)
@@ -1103,7 +1135,7 @@ static int write_object(struct infs_volume *vol, uint64_t block_no,
      * private block avoids another allocation, index-page rewrite and free for
      * every buffered FUSE write to the same file. */
     if (block_no < infs_le64_to_cpu(vol->sb.total_blocks) &&
-        !bitmap_get(tx_cow_base_bitmap(vol), block_no)) {
+        tx_block_private(vol, block_no)) {
         status = write_block(vol, block_no, block);
         if (status != INFS_STATUS_OK)
             return status;
