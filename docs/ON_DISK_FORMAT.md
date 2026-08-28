@@ -1,9 +1,9 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # InfiltratorFS On-Disk Format 0.15
 
-Status: experimental writable prototype. Development 0.18.18 accepts exactly Format 0.15. Release 0.18.16 remains the last Format 0.12 release. Pre-1.0 development builds do not promise compatibility with earlier development formats.
+Status: experimental writable prototype. Development 0.18.18 accepts exactly Format 0.15. Release 0.18.17 is the last Format 0.14 release. Pre-1.0 development builds do not promise compatibility with earlier development formats.
 
-Implementation 0.6.0 introduced sparse extents, sparse checksum indexing and hole punching. Implementation 0.7.0 defined `INFS_INCOMPAT_INLINE_DATA`. Implementation 0.8.0 added `INFS_INCOMPAT_SHARED_EXTENTS`; Format 0.8 added `INFS_INCOMPAT_PAGED_METADATA` and version-2 metadata heads. Format 0.9 added `INFS_INCOMPAT_SYMBOLIC_LINKS` and object type 5. Format 0.10 added `INFS_INCOMPAT_HARD_LINKS`. Format 0.12 added `INFS_INCOMPAT_SNAPSHOTS`, snapshot-catalog object type 6 and fixed-size generation-root records. Format 0.13 added `INFS_INCOMPAT_INDEX_TREE`, version-3 object-index heads and radix branch pages. Format 0.15 adds `INFS_INCOMPAT_DIRECTORY_TREE`, version-3 directory heads and hashed directory branch pages. The normative acceptance rules are summarized in `CONFORMANCE.md`.
+Implementation 0.6.0 introduced sparse extents, sparse checksum indexing and hole punching. Implementation 0.7.0 defined `INFS_INCOMPAT_INLINE_DATA`. Implementation 0.8.0 added `INFS_INCOMPAT_SHARED_EXTENTS`; Format 0.8 added `INFS_INCOMPAT_PAGED_METADATA` and version-2 metadata heads. Format 0.9 added `INFS_INCOMPAT_SYMBOLIC_LINKS` and object type 5. Format 0.10 added `INFS_INCOMPAT_HARD_LINKS`. Format 0.12 added `INFS_INCOMPAT_SNAPSHOTS`, snapshot-catalog object type 6 and fixed-size generation-root records. Format 0.13 added `INFS_INCOMPAT_INDEX_TREE`, version-3 object-index heads and radix branch pages. Format 0.14 added `INFS_INCOMPAT_DIRECTORY_TREE`, version-3 directory heads and hashed directory branch pages. Format 0.15 doubles the maximum UTF-8 component length from 255 to 510 bytes without changing the variable-length directory-record layout. The normative acceptance rules are summarized in `CONFORMANCE.md`.
 
 ## 1. Encoding
 
@@ -35,7 +35,7 @@ The bitmap contains one bit per filesystem block. Bits beyond the volume end are
 
 ```text
 magic                       8 bytes: "INFS2026"
-format major/minor          0.14
+format major/minor          0.15
 header size                 structure-size guard
 block shift                 12
 checksum algorithm          CRC64-ECMA

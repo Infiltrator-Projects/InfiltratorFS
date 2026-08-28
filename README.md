@@ -19,7 +19,7 @@ Format 0.15 provides 4096-byte little-endian blocks, 128-bit filesystem/object i
 
 Linux is the most complete mounted adapter. Development 0.18.18 uses the native `infiltratorfs.ko` VFS driver and includes native namespace mutation, random and sparse writes, truncate, `fallocate`, hole punching, hard links and symlinks, crash-safe open-unlink lifetime, mount-time orphan recovery, persistent standard Linux xattr namespaces, FIFO/socket/character/block special-node identity, page-cache and readahead integration, shared writable `mmap`, snapshot-preserving live writes, checkpoint fallback and replica healing, complete allocation reporting, and native remount/scrub qualification. Sustained native writes use a writer-tail checksum path and persistent tree indexes so multi-gigabyte sequential appends no longer rescan historical checksum/index metadata. Mounted CI also exercises the former FUSE regression surface, including 4,000 random overwrites and repeated durability publication.
 
-Windows currently has Win32 raw image/partition storage and transfer/scrub tooling over the same portable core and Format 0.14 media. It is not yet a Windows kernel filesystem driver and does not yet provide Explorer drive-letter mounting.
+Windows currently has Win32 raw image/partition storage and transfer/scrub tooling over the same portable core and Format 0.15 media. It is not yet a Windows kernel filesystem driver and does not yet provide Explorer drive-letter mounting.
 
 ## Platform-neutral architecture
 
@@ -47,11 +47,11 @@ The standard `mount.infiltratorfs` helper, InfiltratorFS Manager, Nemo/UDisks in
 
 ## Native durability and integrity
 
-The native writer uses Format 0.14 transactions and extent-backed data. Native reads validate metadata CRC64 and file SHA-256 data checksums. `fsync`, `syncfs` and global `sync` publish pending transactions through the normal durability boundary.
+The native writer uses Format 0.15 transactions and extent-backed data. Native reads validate metadata CRC64 and file SHA-256 data checksums. `fsync`, `syncfs` and global `sync` publish pending transactions through the normal durability boundary.
 
 The dedicated native-kernel workflow builds the out-of-tree module, reproduces the DKMS source-root build and performs mounted native qualification. The mounted suite covers namespace operations, sequential/random/sparse writes, high-offset sparse files, truncate, allocation reporting, `fallocate`, hole punching, xattrs, special nodes, page-cache/readahead/mmap behavior, open-unlink lifetime, snapshot-preserving writes, bounded near-full fragmentation/refill allocation, remount readback and offline scrub.
 
-Release publication adds an installed-package gate: it installs the generated `.deb`, verifies native filesystem registration, mounts a real Format 0.14 loop image with `FSTYPE=infiltratorfs`, writes and byte-compares non-zero data, syncs, unmounts and requires a clean userspace scrub. Publication also rejects any FUSE executable, process or package dependency.
+Release publication adds an installed-package gate: it installs the generated `.deb`, verifies native filesystem registration, mounts a real Format 0.15 loop image with `FSTYPE=infiltratorfs`, writes and byte-compares non-zero data, syncs, unmounts and requires a clean userspace scrub. Publication also rejects any FUSE executable, process or package dependency.
 
 ## Linux desktop integration
 
