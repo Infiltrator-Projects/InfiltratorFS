@@ -87,7 +87,7 @@ static void check_layout(void)
     expect(INFS_ALLOCATION_BITS_PER_LEAF == 32192u,
            "allocation leaf bit capacity");
     expect(INFS_NAME_MAX == 1023u,
-           "Format 0.16 component-name capacity");
+           "current component-name capacity");
     expect(INFS_DIRENT_MAX_RECORD_SIZE <= INFS_METADATA_PAGE_DATA_SIZE,
            "maximum component fits one directory leaf record");
     expect(offsetof(struct infs_attributes_disk, birth_time_ns) == 24,

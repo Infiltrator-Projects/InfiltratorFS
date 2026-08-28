@@ -1,32 +1,34 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # Forensic metadata scanning
 
-`infilfs-forensic` is a read-only physical-block scanner introduced in implementation 0.11.0 and carried forward into current Format 0.16 media. It does not require the current namespace graph to open and does not modify, repair, mount or replay the target.
+`infilfs-forensic` is a read-only physical-block scanner introduced in implementation 0.11.0 and carried forward into current Format 0.17 media. It does not require the current namespace graph to open and does not modify, repair, mount or replay the target.
 
 ```bash
 infilfs-forensic volume.img
 infilfs-forensic --jsonl /dev/sdb1 > evidence.jsonl
 ```
 
-The scanner authenticates each recognized current-format record independently using the validation rules defined by Format 0.16, including symbolic-link, hard-link and snapshot-catalog objects:
+The scanner authenticates each recognized current-format record independently using the validation rules defined by Format 0.17, including symbolic-link, hard-link and snapshot-catalog objects:
 
 - checkpoint structure, geometry-independent fields and CRC64;
 - object magic, type/version, identity, payload shape, canonical padding and CRC64;
 - directory leaf/branch-page ownership, generation, bounds, canonical padding and CRC64;
 - index leaf/branch-page ownership, generation, bounds, canonical padding and CRC64; and
-- extent-page ownership, generation, bounds, canonical padding and CRC64.
+- extent-page ownership, generation, bounds, canonical padding and CRC64;
+- allocation branch-page generation, logical index, level, child-count/payload shape and CRC64; and
+- allocation leaf-page generation, logical index, valid-bit count/payload shape and CRC64.
 
 Arbitrary data that merely contains a magic string is not reported. A candidate must satisfy its complete block-level validation contract.
 
 ## Record state
 
-When a valid checkpoint and readable bitmap survive, the scanner reports:
+When a valid checkpoint and allocation tree survive full graph validation, the scanner reconstructs the authoritative allocation bitset and reports:
 
 - `current` for metadata allocated by the selected live generation or a retained snapshot graph, and checkpoint replicas matching the selected generation;
 - `stale` for an independently valid older checkpoint replica; and
-- `orphaned` for an authenticated object or page that is no longer allocated by the live bitmap, commonly a superseded CoW record.
+- `orphaned` for an authenticated object or page that is no longer allocated by the live allocation bitset, commonly a superseded CoW record.
 
-When no trustworthy current checkpoint/bitmap pair is available, authenticated raw records are still reported with state `unknown`. This is deliberate: raw discovery remains possible without claiming that a record belongs to an authoritative namespace.
+When no trustworthy current checkpoint/allocation-tree pair is available, authenticated raw records are still reported with state `unknown`. This is deliberate: raw discovery remains possible without claiming that a record belongs to an authoritative namespace.
 
 ## Relationship to recovery and scrub
 
@@ -36,6 +38,6 @@ A forensic hit therefore proves that a block satisfies the record-level authenti
 
 ## Output contract
 
-The default output is tab-separated and ends with a summary row. `--jsonl` emits one JSON object per discovered record followed by a summary object. Each metadata row includes its physical block, classification, kind, generation, object type/version, object and parent identities, payload size, entry count and bytes used where those fields apply.
+The default output is tab-separated and ends with a summary row. `--jsonl` emits one JSON object per discovered record followed by a summary object. Each metadata row includes its physical block, classification, kind, generation, object type/version, object and parent identities, payload size, entry count and bytes used where those fields apply. Allocation pages additionally expose logical index and tree level.
 
 The scanner discovers metadata only. It does not yet reconstruct paths from historical directory/index combinations, recover file payloads, resolve competing historical graphs or write repaired structures.

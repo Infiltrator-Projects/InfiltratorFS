@@ -119,6 +119,19 @@ int main(void)
             0755, 0, 0, 1) != INFS_STATUS_OK)
         return fail("could not encode current objects");
 
+    uint8_t *allocation = memory.bytes + 6u * INFS_BLOCK_SIZE;
+    if (infs_allocation_page_init(
+            allocation, INFS_ALLOCATION_LEAF_PAGE_MAGIC, 4u, 0u, 0u) !=
+        INFS_STATUS_OK)
+        return fail("could not initialize forensic allocation leaf");
+    struct infs_allocation_page_disk *allocation_page =
+        (struct infs_allocation_page_disk *)allocation;
+    allocation_page->entry_count = infs_cpu_to_le32(TEST_BLOCKS);
+    allocation_page->bytes_used = infs_cpu_to_le32(1u);
+    ((uint8_t *)(allocation_page + 1))[0] = UINT8_C(0x9f);
+    if (infs_allocation_page_finalize(allocation) != INFS_STATUS_OK)
+        return fail("could not finalize forensic allocation leaf");
+
     uint8_t *orphan = memory.bytes + 5u * INFS_BLOCK_SIZE;
     if (infs_metadata_page_init(
             orphan, (const uint8_t *)INFS_INDEX_PAGE_MAGIC, index_id, 4) !=
@@ -132,8 +145,10 @@ int main(void)
         INFS_STATUS_OK)
         return fail("scan failed");
     if (summary.allocation_map_available || summary.current_generation != 0 ||
-        summary.records_found != 6 || observed.current != 0 ||
-        observed.orphaned != 0 || observed.unknown != 6)
+        summary.records_found != 7 ||
+        summary.allocation_leaf_pages_found != 1 ||
+        observed.current != 0 || observed.orphaned != 0 ||
+        observed.unknown != 7)
         return fail("unverified graph was trusted for classification");
 
     memset(memory.bytes, 0, INFS_BLOCK_SIZE);
@@ -144,7 +159,9 @@ int main(void)
         INFS_STATUS_OK)
         return fail("checkpointless scan failed");
     if (summary.allocation_map_available || summary.current_generation != 0 ||
-        summary.records_found != 3 || observed.unknown != 3)
+        summary.records_found != 4 ||
+        summary.allocation_leaf_pages_found != 1 ||
+        observed.unknown != 4)
         return fail("checkpointless discovery mismatch");
 
     puts("forensic-api: PASS");

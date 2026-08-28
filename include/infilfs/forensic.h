@@ -14,6 +14,8 @@
 #define INFS_FORENSIC_DIRECTORY_BRANCH_PAGE UINT32_C(5)
 #define INFS_FORENSIC_INDEX_BRANCH_PAGE     UINT32_C(6)
 #define INFS_FORENSIC_EXTENT_PAGE           UINT32_C(7)
+#define INFS_FORENSIC_ALLOCATION_BRANCH_PAGE UINT32_C(8)
+#define INFS_FORENSIC_ALLOCATION_LEAF_PAGE   UINT32_C(9)
 
 #define INFS_FORENSIC_STATE_UNKNOWN  UINT32_C(0)
 #define INFS_FORENSIC_STATE_CURRENT  UINT32_C(1)
@@ -30,6 +32,8 @@ struct infs_forensic_record {
     uint32_t payload_size;
     uint32_t entry_count;
     uint32_t bytes_used;
+    uint64_t logical_index;
+    uint32_t level;
     uint8_t object_id[16];
     uint8_t parent_id[16];
 };
@@ -49,6 +53,8 @@ struct infs_forensic_summary {
     uint64_t directory_branch_pages_found;
     uint64_t index_branch_pages_found;
     uint64_t extent_pages_found;
+    uint64_t allocation_branch_pages_found;
+    uint64_t allocation_leaf_pages_found;
     uint64_t current_generation;
     int allocation_map_available;
 };
@@ -57,8 +63,9 @@ typedef infs_status (*infs_forensic_record_callback)(
     const struct infs_forensic_record *record, void *context);
 
 /* Scan every complete physical block without requiring the current namespace
- * graph to open. A valid current checkpoint and bitmap improve classification,
- * but their absence does not prevent raw record discovery. */
+ * graph to open. A validated current checkpoint/allocation tree improves
+ * classification through its reconstructed authoritative bitset, but its
+ * absence does not prevent raw record discovery. */
 infs_status infs_forensic_scan(
     const struct infs_storage *storage,
     infs_forensic_record_callback callback,

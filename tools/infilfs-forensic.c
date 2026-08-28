@@ -23,6 +23,10 @@ static const char *kind_name(uint32_t kind)
         return "directory-branch-page";
     case INFS_FORENSIC_INDEX_BRANCH_PAGE: return "index-branch-page";
     case INFS_FORENSIC_EXTENT_PAGE: return "extent-page";
+    case INFS_FORENSIC_ALLOCATION_BRANCH_PAGE:
+        return "allocation-branch-page";
+    case INFS_FORENSIC_ALLOCATION_LEAF_PAGE:
+        return "allocation-leaf-page";
     default: return "unknown";
     }
 }
@@ -66,21 +70,24 @@ static infs_status print_record(const struct infs_forensic_record *record,
                ",\"object_type\":\"%s\",\"object_version\":%u"
                ",\"object_id\":\"%s\",\"parent_id\":\"%s\""
                ",\"payload_size\":%u,\"entry_count\":%u"
-               ",\"bytes_used\":%u}\n",
+               ",\"bytes_used\":%u,\"logical_index\":%" PRIu64
+               ",\"level\":%u}\n",
                record->block, state_name(record->state),
                kind_name(record->kind), record->generation,
                object_type_name(record->object_type),
                (unsigned)record->object_version, object_id, parent_id,
                record->payload_size, record->entry_count,
-               record->bytes_used);
+               record->bytes_used, record->logical_index,
+               record->level);
     } else {
-        printf("%" PRIu64 "\t%s\t%s\t%" PRIu64 "\t%s\t%u\t%s\t%s\t%u\t%u\t%u\n",
+        printf("%" PRIu64 "\t%s\t%s\t%" PRIu64 "\t%s\t%u\t%s\t%s\t%u\t%u\t%u\t%" PRIu64 "\t%u\n",
                record->block, state_name(record->state),
                kind_name(record->kind), record->generation,
                object_type_name(record->object_type),
                (unsigned)record->object_version, object_id, parent_id,
                record->payload_size, record->entry_count,
-               record->bytes_used);
+               record->bytes_used, record->logical_index,
+               record->level);
     }
     return ferror(stdout) ? INFS_STATUS_IO_ERROR : INFS_STATUS_OK;
 }
@@ -103,6 +110,8 @@ static void print_summary(const struct infs_forensic_summary *summary,
                ",\"directory_branch_pages\":%" PRIu64
                ",\"index_branch_pages\":%" PRIu64
                ",\"extent_pages\":%" PRIu64
+               ",\"allocation_branch_pages\":%" PRIu64
+               ",\"allocation_leaf_pages\":%" PRIu64
                ",\"current_generation\":%" PRIu64
                ",\"allocation_map_available\":%s}\n",
                summary->total_blocks, summary->scanned_blocks,
@@ -113,7 +122,10 @@ static void print_summary(const struct infs_forensic_summary *summary,
                summary->index_pages_found,
                summary->directory_branch_pages_found,
                summary->index_branch_pages_found,
-               summary->extent_pages_found, summary->current_generation,
+               summary->extent_pages_found,
+               summary->allocation_branch_pages_found,
+               summary->allocation_leaf_pages_found,
+               summary->current_generation,
                summary->allocation_map_available ? "true" : "false");
     } else {
         printf("summary\tblocks=%" PRIu64 "\trecords=%" PRIu64
@@ -155,7 +167,7 @@ int main(int argc, char **argv)
     }
 
     if (!jsonl)
-        puts("block\tstate\tkind\tgeneration\tobject-type\tversion\tobject-id\tparent-id\tpayload-size\tentries\tbytes");
+        puts("block\tstate\tkind\tgeneration\tobject-type\tversion\tobject-id\tparent-id\tpayload-size\tentries\tbytes\tlogical-index\tlevel");
     struct output_context context = { .jsonl = jsonl };
     struct infs_forensic_summary summary;
     status = infs_forensic_scan(&storage, print_record, &context, &summary);

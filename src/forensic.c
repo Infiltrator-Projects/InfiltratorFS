@@ -28,7 +28,7 @@ static infs_status borrowed_size(void *opaque, uint64_t *size_bytes,
     (void)source_is_device;
     /* Force the read-only opener through complete graph validation even when
      * the source is a block device. Raw classification must never trust an
-     * allocation bitmap that has not passed full ownership validation. */
+     * allocation map that has not passed full ownership validation. */
     *is_device = 0;
     return status;
 }
@@ -100,6 +100,37 @@ static int decode_record(const uint8_t block[INFS_BLOCK_SIZE],
         return 1;
     }
 
+    const struct infs_allocation_page_disk *allocation =
+        (const struct infs_allocation_page_disk *)block;
+    const uint8_t *allocation_magic = NULL;
+    uint32_t allocation_kind = 0;
+    if (memcmp(allocation->magic, INFS_ALLOCATION_BRANCH_PAGE_MAGIC, 8) == 0) {
+        allocation_magic = (const uint8_t *)INFS_ALLOCATION_BRANCH_PAGE_MAGIC;
+        allocation_kind = INFS_FORENSIC_ALLOCATION_BRANCH_PAGE;
+    } else if (memcmp(allocation->magic,
+                      INFS_ALLOCATION_LEAF_PAGE_MAGIC, 8) == 0) {
+        allocation_magic = (const uint8_t *)INFS_ALLOCATION_LEAF_PAGE_MAGIC;
+        allocation_kind = INFS_FORENSIC_ALLOCATION_LEAF_PAGE;
+    }
+    if (allocation_magic) {
+        uint64_t generation = infs_le64_to_cpu(allocation->generation);
+        uint64_t logical_index =
+            infs_le64_to_cpu(allocation->logical_index);
+        uint32_t level = infs_le32_to_cpu(allocation->level);
+        if (infs_validate_allocation_page(
+                block, allocation_magic, generation, logical_index, level)) {
+            record->kind = allocation_kind;
+            record->generation = generation;
+            record->logical_index = logical_index;
+            record->level = level;
+            record->entry_count =
+                infs_le32_to_cpu(allocation->entry_count);
+            record->bytes_used =
+                infs_le32_to_cpu(allocation->bytes_used);
+            return 1;
+        }
+    }
+
     const struct infs_metadata_page_disk *page =
         (const struct infs_metadata_page_disk *)block;
     const uint8_t *magic = NULL;
@@ -158,6 +189,12 @@ static void count_record(struct infs_forensic_summary *summary,
         ++summary->index_branch_pages_found;
         break;
     case INFS_FORENSIC_EXTENT_PAGE: ++summary->extent_pages_found; break;
+    case INFS_FORENSIC_ALLOCATION_BRANCH_PAGE:
+        ++summary->allocation_branch_pages_found;
+        break;
+    case INFS_FORENSIC_ALLOCATION_LEAF_PAGE:
+        ++summary->allocation_leaf_pages_found;
+        break;
     default: break;
     }
 }
