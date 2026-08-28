@@ -138,7 +138,6 @@ static int infilfs_allocation_map_load(
     u8 **bitmap_out, size_t *bitmap_bytes_out,
     struct infilfs_allocation_layout *layout_out)
 {
-    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
     struct infilfs_allocation_layout local = {0};
     struct infilfs_allocation_layout *layout =
         layout_out ? layout_out : &local;

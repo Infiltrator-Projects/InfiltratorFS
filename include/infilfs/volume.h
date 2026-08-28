@@ -146,6 +146,13 @@ struct infs_volume {
      * in the bounded catalog DAG and are never persistent. */
     void *snapshot_validation_context;
     void *snapshot_scrub_context;
+
+    /* Ephemeral ownership context for a retained-generation view. Snapshot
+     * records keep a flat immutable ownership image even though the live
+     * generation uses the Format 0.17 allocation tree. */
+    int snapshot_view;
+    uint64_t snapshot_bitmap_start_block;
+    uint64_t snapshot_bitmap_block_count;
 };
 
 struct infs_lookup {
