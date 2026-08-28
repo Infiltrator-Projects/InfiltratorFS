@@ -9,6 +9,10 @@ struct infilfs_allocation_layout {
     size_t level2_count;
 };
 
+static int infilfs_allocation_counts(
+    u64 total, size_t *leaves_out, size_t *level1_out,
+    size_t *level2_out, size_t *branches_out);
+
 static void infilfs_allocation_layout_destroy(
     struct infilfs_allocation_layout *layout)
 {

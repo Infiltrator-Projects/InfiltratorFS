@@ -9,6 +9,11 @@ struct infs_allocation_layout {
     size_t level2_count;
 };
 
+static infs_status allocation_map_counts(
+    uint64_t total_blocks, size_t *leaf_count_out,
+    size_t *level1_count_out, size_t *level2_count_out,
+    size_t *branch_count_out);
+
 static void allocation_map_layout_destroy(struct infs_allocation_layout *layout)
 {
     if (!layout)
