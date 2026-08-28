@@ -184,8 +184,10 @@ static int free_extent_index_add(struct infs_volume *vol,
     size_t first = i;
     while (i < vol->free_extent_count &&
            vol->free_extents[i].start <= end) {
-        uint64_t e_end = vol->free_extents[i].start +
-            vol->free_extents[i].count;
+        uint64_t e_start = vol->free_extents[i].start;
+        uint64_t e_end = e_start + vol->free_extents[i].count;
+        if (e_start < start)
+            start = e_start;
         if (e_end > end)
             end = e_end;
         ++i;
