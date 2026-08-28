@@ -860,9 +860,9 @@ static int infilfs_rw_tx_apply_deferred(struct infilfs_rw_tx *tx)
 static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
 {
     struct infilfs_sb_info *sbi = tx->sbi;
-    u8 *old_bitmap;
+    u8 *old_live_bitmap;
     u64 bitmap_blocks = le64_to_cpu(tx->next_sb.bitmap_block_count);
-    u64 old_bitmap = le64_to_cpu(tx->next_sb.bitmap_start_block);
+    u64 old_bitmap_start = le64_to_cpu(tx->next_sb.bitmap_start_block);
     u64 new_bitmap;
     u8 *sb_block;
     unsigned int first;
@@ -873,7 +873,7 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
     ret = infilfs_rw_tx_alloc(tx, bitmap_blocks, &new_bitmap);
     if (ret)
         return ret;
-    ret = infilfs_rw_tx_defer_free(tx, old_bitmap, bitmap_blocks);
+    ret = infilfs_rw_tx_defer_free(tx, old_bitmap_start, bitmap_blocks);
     if (ret)
         return ret;
     ret = infilfs_rw_tx_apply_deferred(tx);
@@ -915,15 +915,15 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
      * reads observe the generation that is now durable even if redundancy
      * repair later fails. */
     sbi->disk = tx->next_sb;
-    old_bitmap = sbi->bitmap;
     write_lock(&sbi->bitmap_lock);
+    old_live_bitmap = sbi->bitmap;
     sbi->bitmap = tx->bitmap;
     tx->bitmap = NULL;
     sbi->bitmap_bytes = tx->bitmap_bytes;
     sbi->visible_bitmap = sbi->bitmap;
     sbi->visible_bitmap_bytes = sbi->bitmap_bytes;
     write_unlock(&sbi->bitmap_lock);
-    kvfree(old_bitmap);
+    kvfree(old_live_bitmap);
 
     for (n = 1; n < INFILFS_CHECKPOINT_COUNT; ++n) {
         unsigned int idx = (first + n) % INFILFS_CHECKPOINT_COUNT;
