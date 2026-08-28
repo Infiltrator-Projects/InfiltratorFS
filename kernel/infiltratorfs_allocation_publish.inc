@@ -43,31 +43,89 @@ static void infilfs_rw_allocation_mark_tx(
 }
 
 static void infilfs_rw_allocation_close_dirty(
-    const struct infilfs_allocation_layout *old, u8 *dirty, u64 total)
+    const struct infilfs_allocation_layout *old,
+    u8 *dirty_leaves, u8 *dirty_level1, u8 *dirty_level2, u64 total)
 {
     size_t i;
     bool changed;
-
-    for (i = 0; i < old->branch_count; ++i) {
-        u64 block = old->branch_blocks[i];
-        if (block < total)
-            dirty[infilfs_rw_allocation_leaf_index(block)] = 1;
-    }
+    size_t level1_base = 1u + old->level2_count;
 
     do {
         changed = false;
-        for (i = 0; i < old->leaf_count; ++i) {
-            size_t owner;
-            u64 block;
 
-            if (!dirty[i])
+        for (i = 0; i < old->leaf_count; ++i) {
+            size_t l1;
+
+            if (!dirty_leaves[i])
+                continue;
+            l1 = i / INFILFS_ALLOCATION_TREE_FANOUT;
+            if (l1 < old->level1_count && !dirty_level1[l1]) {
+                dirty_level1[l1] = 1;
+                changed = true;
+            }
+        }
+        for (i = 0; i < old->level1_count; ++i) {
+            size_t l2;
+
+            if (!dirty_level1[i])
+                continue;
+            l2 = i / INFILFS_ALLOCATION_TREE_FANOUT;
+            if (l2 < old->level2_count && !dirty_level2[l2]) {
+                dirty_level2[l2] = 1;
+                changed = true;
+            }
+        }
+
+        {
+            u64 block = old->branch_blocks[0];
+            size_t owner = infilfs_rw_allocation_leaf_index(block);
+
+            if (block < total && owner < old->leaf_count &&
+                !dirty_leaves[owner]) {
+                dirty_leaves[owner] = 1;
+                changed = true;
+            }
+        }
+        for (i = 0; i < old->level2_count; ++i) {
+            u64 block;
+            size_t owner;
+
+            if (!dirty_level2[i])
+                continue;
+            block = old->branch_blocks[1u + i];
+            owner = infilfs_rw_allocation_leaf_index(block);
+            if (block < total && owner < old->leaf_count &&
+                !dirty_leaves[owner]) {
+                dirty_leaves[owner] = 1;
+                changed = true;
+            }
+        }
+        for (i = 0; i < old->level1_count; ++i) {
+            u64 block;
+            size_t owner;
+
+            if (!dirty_level1[i])
+                continue;
+            block = old->branch_blocks[level1_base + i];
+            owner = infilfs_rw_allocation_leaf_index(block);
+            if (block < total && owner < old->leaf_count &&
+                !dirty_leaves[owner]) {
+                dirty_leaves[owner] = 1;
+                changed = true;
+            }
+        }
+        for (i = 0; i < old->leaf_count; ++i) {
+            u64 block;
+            size_t owner;
+
+            if (!dirty_leaves[i])
                 continue;
             block = old->leaf_blocks[i];
             if (block >= total)
                 continue;
             owner = infilfs_rw_allocation_leaf_index(block);
-            if (owner < old->leaf_count && !dirty[owner]) {
-                dirty[owner] = 1;
+            if (owner < old->leaf_count && !dirty_leaves[owner]) {
+                dirty_leaves[owner] = 1;
                 changed = true;
             }
         }
@@ -129,10 +187,12 @@ static int infilfs_rw_allocation_map_publish(struct infilfs_rw_tx *tx)
     u64 *reserved = NULL;
     u64 *new_leaves = NULL;
     u64 *new_branches = NULL;
-    u8 *dirty = NULL;
+    u8 *dirty_leaves = NULL;
+    u8 *dirty_level1 = NULL;
+    u8 *dirty_level2 = NULL;
     size_t reserved_count = 0;
     size_t max_reserved;
-    size_t dirty_count;
+    size_t needed = 0;
     size_t i, r;
     int ret;
 
@@ -145,32 +205,43 @@ static int infilfs_rw_allocation_map_publish(struct infilfs_rw_tx *tx)
         goto out;
     }
     max_reserved = old.leaf_count + old.branch_count;
-    dirty = kvzalloc(old.leaf_count, GFP_NOFS);
+    dirty_leaves = kvzalloc(old.leaf_count, GFP_NOFS);
+    dirty_level1 = kvzalloc(old.level1_count, GFP_NOFS);
+    dirty_level2 = kvzalloc(old.level2_count, GFP_NOFS);
     reserved = kvmalloc_array(max_reserved, sizeof(*reserved), GFP_NOFS);
     new_leaves = kvmalloc_array(old.leaf_count, sizeof(*new_leaves), GFP_NOFS);
     new_branches = kvmalloc_array(old.branch_count, sizeof(*new_branches),
                                   GFP_NOFS);
-    if (!dirty || !reserved || !new_leaves || !new_branches) {
+    if (!dirty_leaves || !dirty_level1 || !dirty_level2 ||
+        !reserved || !new_leaves || !new_branches) {
         ret = -ENOMEM;
         goto out;
     }
 
-    infilfs_rw_allocation_mark_tx(tx, dirty, old.leaf_count);
-    infilfs_rw_allocation_close_dirty(&old, dirty, total);
+    infilfs_rw_allocation_mark_tx(tx, dirty_leaves, old.leaf_count);
+    infilfs_rw_allocation_close_dirty(
+        &old, dirty_leaves, dirty_level1, dirty_level2, total);
 
     for (;;) {
+        size_t dirty_leaf_count =
+            infilfs_rw_allocation_dirty_count(dirty_leaves, old.leaf_count);
+        size_t dirty_l1_count =
+            infilfs_rw_allocation_dirty_count(dirty_level1, old.level1_count);
+        size_t dirty_l2_count =
+            infilfs_rw_allocation_dirty_count(dirty_level2, old.level2_count);
         size_t before;
-        size_t needed;
+        size_t after;
 
-        dirty_count = infilfs_rw_allocation_dirty_count(
-            dirty, old.leaf_count);
-        if (dirty_count > SIZE_MAX - old.branch_count) {
+        if (dirty_leaf_count > SIZE_MAX - dirty_l1_count ||
+            dirty_leaf_count + dirty_l1_count > SIZE_MAX - dirty_l2_count ||
+            dirty_leaf_count + dirty_l1_count + dirty_l2_count >
+                SIZE_MAX - 1u) {
             ret = -EOVERFLOW;
             goto out;
         }
-        needed = dirty_count + old.branch_count;
+        needed = dirty_leaf_count + dirty_l1_count + dirty_l2_count + 1u;
         if (needed > max_reserved) {
-            ret = -EOVERFLOW;
+            ret = -EFSCORRUPTED;
             goto out;
         }
         while (reserved_count < needed) {
@@ -180,108 +251,156 @@ static int infilfs_rw_allocation_map_publish(struct infilfs_rw_tx *tx)
             ++reserved_count;
         }
 
-        before = dirty_count;
-        infilfs_rw_allocation_mark_tx(tx, dirty, old.leaf_count);
-        infilfs_rw_allocation_close_dirty(&old, dirty, total);
-        dirty_count = infilfs_rw_allocation_dirty_count(
-            dirty, old.leaf_count);
-        if (dirty_count == before &&
-            reserved_count >= dirty_count + old.branch_count)
+        before = needed;
+        infilfs_rw_allocation_mark_tx(tx, dirty_leaves, old.leaf_count);
+        infilfs_rw_allocation_close_dirty(
+            &old, dirty_leaves, dirty_level1, dirty_level2, total);
+
+        dirty_leaf_count =
+            infilfs_rw_allocation_dirty_count(dirty_leaves, old.leaf_count);
+        dirty_l1_count =
+            infilfs_rw_allocation_dirty_count(dirty_level1, old.level1_count);
+        dirty_l2_count =
+            infilfs_rw_allocation_dirty_count(dirty_level2, old.level2_count);
+        if (dirty_leaf_count > SIZE_MAX - dirty_l1_count ||
+            dirty_leaf_count + dirty_l1_count > SIZE_MAX - dirty_l2_count ||
+            dirty_leaf_count + dirty_l1_count + dirty_l2_count >
+                SIZE_MAX - 1u) {
+            ret = -EOVERFLOW;
+            goto out;
+        }
+        after = dirty_leaf_count + dirty_l1_count + dirty_l2_count + 1u;
+        if (after == before && reserved_count >= after) {
+            needed = after;
             break;
+        }
     }
 
     memcpy(new_leaves, old.leaf_blocks,
            old.leaf_count * sizeof(*new_leaves));
+    memcpy(new_branches, old.branch_blocks,
+           old.branch_count * sizeof(*new_branches));
+
     r = 0;
     for (i = 0; i < old.leaf_count; ++i)
-        if (dirty[i])
+        if (dirty_leaves[i])
             new_leaves[i] = reserved[r++];
-    for (i = 0; i < old.branch_count; ++i)
-        new_branches[i] = reserved[r++];
-    if (r != dirty_count + old.branch_count || r > reserved_count) {
-        ret = -EFSCORRUPTED;
-        goto out;
-    }
 
-    for (i = 0; i < old.branch_count; ++i) {
-        ret = infilfs_rw_tx_defer_free(tx, old.branch_blocks[i], 1u);
-        if (ret)
-            goto out;
-    }
-    for (i = 0; i < old.leaf_count; ++i) {
-        if (!dirty[i])
-            continue;
-        ret = infilfs_rw_tx_defer_free(tx, old.leaf_blocks[i], 1u);
-        if (ret)
-            goto out;
-    }
+    new_branches[0] = reserved[r++];
+    for (i = 0; i < old.level2_count; ++i)
+        if (dirty_level2[i])
+            new_branches[1u + i] = reserved[r++];
 
-    ret = infilfs_rw_tx_apply_deferred(tx);
-    if (ret)
-        goto out;
+    {
+        size_t level1_base = 1u + old.level2_count;
 
-    tx->next_sb.allocation_root_block = cpu_to_le64(new_branches[0]);
-    tx->next_sb.allocation_leaf_count = cpu_to_le64(old.leaf_count);
-    tx->next_sb.generation = cpu_to_le64(tx->generation);
-    tx->next_sb.free_blocks = cpu_to_le64(tx->free_blocks);
+        for (i = 0; i < old.level1_count; ++i)
+            if (dirty_level1[i])
+                new_branches[level1_base + i] = reserved[r++];
 
-    for (i = 0; i < old.leaf_count; ++i) {
-        u64 first, remaining;
-        u32 valid, bytes;
-        size_t offset;
-
-        if (!dirty[i])
-            continue;
-        first = (u64)i * INFILFS_ALLOCATION_BITS_PER_LEAF;
-        remaining = total - first;
-        valid = (u32)min_t(u64,
-            INFILFS_ALLOCATION_BITS_PER_LEAF, remaining);
-        bytes = DIV_ROUND_UP(valid, 8u);
-        offset = i * (size_t)INFILFS_ALLOCATION_PAGE_DATA_SIZE;
-        if (offset > tx->bitmap_bytes ||
-            bytes > tx->bitmap_bytes - offset) {
+        if (r != needed || r > reserved_count) {
             ret = -EFSCORRUPTED;
             goto out;
         }
-        ret = infilfs_rw_allocation_write_page(
-            sb, new_leaves[i], (const u8 *)"INFSAL01",
-            tx->generation, i, 0u, valid, tx->bitmap + offset, bytes);
+
+        ret = infilfs_rw_tx_defer_free(tx, old.branch_blocks[0], 1u);
         if (ret)
             goto out;
-    }
+        for (i = 0; i < old.level2_count; ++i) {
+            if (!dirty_level2[i])
+                continue;
+            ret = infilfs_rw_tx_defer_free(
+                tx, old.branch_blocks[1u + i], 1u);
+            if (ret)
+                goto out;
+        }
+        for (i = 0; i < old.level1_count; ++i) {
+            if (!dirty_level1[i])
+                continue;
+            ret = infilfs_rw_tx_defer_free(
+                tx, old.branch_blocks[level1_base + i], 1u);
+            if (ret)
+                goto out;
+        }
+        for (i = 0; i < old.leaf_count; ++i) {
+            if (!dirty_leaves[i])
+                continue;
+            ret = infilfs_rw_tx_defer_free(tx, old.leaf_blocks[i], 1u);
+            if (ret)
+                goto out;
+        }
 
-    {
-        size_t l1_base = 1u + old.level2_count;
+        ret = infilfs_rw_tx_apply_deferred(tx);
+        if (ret)
+            goto out;
+
+        tx->next_sb.allocation_root_block = cpu_to_le64(new_branches[0]);
+        tx->next_sb.allocation_leaf_count = cpu_to_le64(old.leaf_count);
+        tx->next_sb.generation = cpu_to_le64(tx->generation);
+        tx->next_sb.free_blocks = cpu_to_le64(tx->free_blocks);
+
+        for (i = 0; i < old.leaf_count; ++i) {
+            u64 first, remaining;
+            u32 valid, bytes;
+            size_t offset;
+
+            if (!dirty_leaves[i])
+                continue;
+            first = (u64)i * INFILFS_ALLOCATION_BITS_PER_LEAF;
+            remaining = total - first;
+            valid = (u32)min_t(u64,
+                INFILFS_ALLOCATION_BITS_PER_LEAF, remaining);
+            bytes = DIV_ROUND_UP(valid, 8u);
+            offset = i * (size_t)INFILFS_ALLOCATION_PAGE_DATA_SIZE;
+            if (offset > tx->bitmap_bytes ||
+                bytes > tx->bitmap_bytes - offset) {
+                ret = -EFSCORRUPTED;
+                goto out;
+            }
+            ret = infilfs_rw_allocation_write_page(
+                sb, new_leaves[i], (const u8 *)"INFSAL01",
+                tx->generation, i, 0u, valid, tx->bitmap + offset, bytes);
+            if (ret)
+                goto out;
+        }
 
         for (i = 0; i < old.level1_count; ++i) {
-            size_t first = i * INFILFS_ALLOCATION_TREE_FANOUT;
-            u32 entries = (u32)min_t(size_t,
-                INFILFS_ALLOCATION_TREE_FANOUT,
-                old.leaf_count - first);
+            size_t first;
+            u32 entries;
             __le64 pointers[INFILFS_ALLOCATION_TREE_FANOUT];
             u32 j;
 
+            if (!dirty_level1[i])
+                continue;
+            first = i * INFILFS_ALLOCATION_TREE_FANOUT;
+            entries = (u32)min_t(size_t,
+                INFILFS_ALLOCATION_TREE_FANOUT,
+                old.leaf_count - first);
             for (j = 0; j < entries; ++j)
                 pointers[j] = cpu_to_le64(new_leaves[first + j]);
             ret = infilfs_rw_allocation_write_page(
-                sb, new_branches[l1_base + i], (const u8 *)"INFSAB01",
-                tx->generation, i, 1u, entries, pointers,
-                entries * sizeof(__le64));
+                sb, new_branches[level1_base + i],
+                (const u8 *)"INFSAB01", tx->generation,
+                i, 1u, entries, pointers, entries * sizeof(__le64));
             if (ret)
                 goto out;
         }
 
         for (i = 0; i < old.level2_count; ++i) {
-            size_t first = i * INFILFS_ALLOCATION_TREE_FANOUT;
-            u32 entries = (u32)min_t(size_t,
-                INFILFS_ALLOCATION_TREE_FANOUT,
-                old.level1_count - first);
+            size_t first;
+            u32 entries;
             __le64 pointers[INFILFS_ALLOCATION_TREE_FANOUT];
             u32 j;
 
+            if (!dirty_level2[i])
+                continue;
+            first = i * INFILFS_ALLOCATION_TREE_FANOUT;
+            entries = (u32)min_t(size_t,
+                INFILFS_ALLOCATION_TREE_FANOUT,
+                old.level1_count - first);
             for (j = 0; j < entries; ++j)
                 pointers[j] = cpu_to_le64(
-                    new_branches[l1_base + first + j]);
+                    new_branches[level1_base + first + j]);
             ret = infilfs_rw_allocation_write_page(
                 sb, new_branches[1u + i], (const u8 *)"INFSAB01",
                 tx->generation, i, 2u, entries, pointers,
@@ -289,25 +408,27 @@ static int infilfs_rw_allocation_map_publish(struct infilfs_rw_tx *tx)
             if (ret)
                 goto out;
         }
+    }
 
-        {
-            __le64 pointers[INFILFS_ALLOCATION_TREE_FANOUT];
+    {
+        __le64 pointers[INFILFS_ALLOCATION_TREE_FANOUT];
 
-            for (i = 0; i < old.level2_count; ++i)
-                pointers[i] = cpu_to_le64(new_branches[1u + i]);
-            ret = infilfs_rw_allocation_write_page(
-                sb, new_branches[0], (const u8 *)"INFSAB01",
-                tx->generation, 0u, INFILFS_ALLOCATION_TREE_ROOT_LEVEL,
-                (u32)old.level2_count, pointers,
-                (u32)old.level2_count * sizeof(__le64));
-        }
+        for (i = 0; i < old.level2_count; ++i)
+            pointers[i] = cpu_to_le64(new_branches[1u + i]);
+        ret = infilfs_rw_allocation_write_page(
+            sb, new_branches[0], (const u8 *)"INFSAB01",
+            tx->generation, 0u, INFILFS_ALLOCATION_TREE_ROOT_LEVEL,
+            (u32)old.level2_count, pointers,
+            (u32)old.level2_count * sizeof(__le64));
     }
 
 out:
     kvfree(new_branches);
     kvfree(new_leaves);
     kvfree(reserved);
-    kvfree(dirty);
+    kvfree(dirty_level2);
+    kvfree(dirty_level1);
+    kvfree(dirty_leaves);
     infilfs_allocation_layout_destroy(&old);
     return ret;
 }

@@ -15,7 +15,7 @@ Structures in `include/infilfs/format.h` describe the exact packed record order 
 
 For a volume of `N` blocks, three fixed physical checkpoint locations remain at block 0, block `floor(N/2)` and block `N-1`. The checkpoint references the current allocation-map root, object-index head and namespace root. Allocation pages, directory/index pages, objects, extent metadata and file data otherwise occupy ordinary allocated blocks and may move between generations.
 
-A newly formatted volume initially places the allocation root and its branch/leaf pages near the start of the volume followed by the initial object index and root directory, but those physical positions are formatter policy rather than permanent format addresses. Subsequent transactions copy on write only the allocation leaves whose bit payload changes and the small branch spine needed to publish a new root.
+A newly formatted volume initially places the allocation root and its branch/leaf pages near the start of the volume followed by the initial object index and root directory, but those physical positions are formatter policy rather than permanent format addresses. Subsequent transactions copy on write only the allocation leaves whose bit payload changes and only affected branch paths plus the root needed to publish a new root.
 
 The allocation map still contains exactly one authoritative bit per filesystem block. Bits beyond the volume end in the final in-memory byte are treated as unavailable. Inline bytes are part of an already allocated metadata object and therefore require no additional allocation ownership.
 
@@ -62,7 +62,7 @@ The packed allocation-page header is 72 bytes. A 4096-byte page therefore has 40
 
 Allocation pages are bootstrap metadata rather than persistent objects and have no object IDs. Their generation may be older than the selected checkpoint because unchanged leaves are shared between committed generations. A page is valid only when its generation is nonzero and no newer than the checkpoint that references it, its logical index/level/entry count match its tree position, its reserved bytes are canonical zero and its CRC64 validates.
 
-A transaction maintains the authoritative bitset in memory plus the rebuildable free-extent accelerator. It records allocated/deferred ranges rather than cloning the complete bitmap for rollback. At publication it computes the affected leaf set, closes that set over allocation-map pages whose own allocation state changes, reserves replacement pages before releasing old pages, writes only changed leaves, writes a replacement branch spine and finally publishes the new allocation root in the checkpoint. This removes volume-size-proportional bitmap rewrite and transaction-clone costs while preserving the existing CoW crash boundary.
+A transaction maintains the authoritative bitset in memory plus the rebuildable free-extent accelerator. It records allocated/deferred ranges rather than cloning the complete bitmap for rollback. At publication it computes the affected leaf set, closes that set over allocation-map pages whose own allocation state changes, reserves replacement pages before releasing old pages, writes only changed leaves, writes a replacement branch paths plus the root and finally publishes the new allocation root in the checkpoint. This removes volume-size-proportional bitmap rewrite and transaction-clone costs while preserving the existing CoW crash boundary.
 
 The implementation reconstructs ownership from the committed roots. Every allocated in-volume block must be owned by a checkpoint, a current allocation-map page, current object-index head/page, directory page, indexed metadata object, normal file extent or retained snapshot graph. Metadata ownership overlap within one generation and allocated-but-unreachable blocks are corruption. Reuse across historical generations is expected. Normal data blocks may have multiple file owners within one generation only when `INFS_INCOMPAT_SHARED_EXTENTS` is set. Inline bytes remain owned by their file metadata object.
 
@@ -194,7 +194,7 @@ Commit ordering is:
 ```text
 write new unreachable metadata and data
 durable flush
-write changed allocation leaves and replacement branch spine
+write changed allocation leaves and replacement branch paths plus the root
 durable flush
 write one generation N+1 checkpoint
 durable flush                 <- atomic publication point

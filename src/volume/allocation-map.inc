@@ -372,29 +372,86 @@ static void allocation_map_mark_tx_changes(
 
 static void allocation_map_close_dirty_set(
     const struct infs_allocation_layout *old,
-    uint8_t *dirty, uint64_t total)
+    uint8_t *dirty_leaves, uint8_t *dirty_level1,
+    uint8_t *dirty_level2, uint64_t total)
 {
-    if (!old || !dirty)
+    if (!old || !dirty_leaves || !dirty_level1 || !dirty_level2)
         return;
 
-    for (size_t i = 0; i < old->branch_count; ++i) {
-        uint64_t block = old->branch_blocks[i];
-        if (block < total)
-            dirty[allocation_map_leaf_index(block)] = 1;
-    }
-
     int changed;
+    const size_t level1_base = 1u + old->level2_count;
     do {
         changed = 0;
+
+        /* A changed leaf requires its complete pointer path to the root. */
         for (size_t i = 0; i < old->leaf_count; ++i) {
-            if (!dirty[i])
+            if (!dirty_leaves[i])
                 continue;
-            uint64_t block = old->leaf_blocks[i];
+            size_t l1 = i / INFS_ALLOCATION_TREE_FANOUT;
+            if (l1 < old->level1_count && !dirty_level1[l1]) {
+                dirty_level1[l1] = 1;
+                changed = 1;
+            }
+        }
+        for (size_t i = 0; i < old->level1_count; ++i) {
+            if (!dirty_level1[i])
+                continue;
+            size_t l2 = i / INFS_ALLOCATION_TREE_FANOUT;
+            if (l2 < old->level2_count && !dirty_level2[l2]) {
+                dirty_level2[l2] = 1;
+                changed = 1;
+            }
+        }
+
+        /*
+         * Replacing an allocation-map page changes the allocation bit for its
+         * old physical block. Close that self-hosting dependency over leaves.
+         * The root is always replaced because the checkpoint publishes a new
+         * allocation root for the transaction.
+         */
+        uint64_t block = old->branch_blocks[0];
+        if (block < total) {
+            size_t owner = allocation_map_leaf_index(block);
+            if (owner < old->leaf_count && !dirty_leaves[owner]) {
+                dirty_leaves[owner] = 1;
+                changed = 1;
+            }
+        }
+        for (size_t i = 0; i < old->level2_count; ++i) {
+            if (!dirty_level2[i])
+                continue;
+            block = old->branch_blocks[1u + i];
+            if (block < total) {
+                size_t owner = allocation_map_leaf_index(block);
+                if (owner < old->leaf_count && !dirty_leaves[owner]) {
+                    dirty_leaves[owner] = 1;
+                    changed = 1;
+                }
+            }
+        }
+        for (size_t i = 0; i < old->level1_count; ++i) {
+            if (!dirty_level1[i])
+                continue;
+            block = old->branch_blocks[level1_base + i];
+            if (block < total) {
+                size_t owner = allocation_map_leaf_index(block);
+                if (owner < old->leaf_count && !dirty_leaves[owner]) {
+                    dirty_leaves[owner] = 1;
+                    changed = 1;
+                }
+            }
+        }
+
+        /* A replaced leaf also frees its old physical page. */
+        for (size_t i = 0; i < old->leaf_count; ++i) {
+            if (!dirty_leaves[i])
+                continue;
+            block = old->leaf_blocks[i];
             if (block >= total)
                 continue;
             size_t owner = allocation_map_leaf_index(block);
-            if (owner < old->leaf_count && !dirty[owner]) {
-                dirty[owner] = 1;
+            if (owner < old->leaf_count && !dirty_leaves[owner]) {
+                dirty_leaves[owner] = 1;
                 changed = 1;
             }
         }
@@ -445,33 +502,45 @@ static infs_status allocation_map_publish(
         return status;
 
     uint64_t total = infs_le64_to_cpu(vol->sb.total_blocks);
-    uint8_t *dirty = calloc(old.leaf_count, 1u);
+    uint8_t *dirty_leaves = calloc(old.leaf_count, 1u);
+    uint8_t *dirty_level1 = calloc(old.level1_count, 1u);
+    uint8_t *dirty_level2 = calloc(old.level2_count, 1u);
     uint64_t *reserved = NULL;
     size_t reserved_count = 0;
     size_t reserved_capacity = 0;
     uint64_t *new_leaves = NULL;
     uint64_t *new_branches = NULL;
     uint8_t *snapshot_union = NULL;
-    if (!dirty) {
+    if (!dirty_leaves || !dirty_level1 || !dirty_level2) {
         status = INFS_STATUS_NO_MEMORY;
         goto out;
     }
 
-    /*
-     * Dirty allocation leaves are closed over the physical blocks occupied by
-     * the old map itself. Replacing a leaf frees its old physical page, which
-     * can make the leaf describing that physical block dirty too.
-     */
-    allocation_map_mark_tx_changes(vol, dirty, old.leaf_count);
-    allocation_map_close_dirty_set(&old, dirty, total);
+    allocation_map_mark_tx_changes(vol, dirty_leaves, old.leaf_count);
+    allocation_map_close_dirty_set(
+        &old, dirty_leaves, dirty_level1, dirty_level2, total);
 
+    size_t needed = 0;
     for (;;) {
-        size_t dirty_count = allocation_map_dirty_count(dirty, old.leaf_count);
-        if (dirty_count > SIZE_MAX - old.branch_count) {
+        size_t dirty_leaf_count =
+            allocation_map_dirty_count(dirty_leaves, old.leaf_count);
+        size_t dirty_l1_count =
+            allocation_map_dirty_count(dirty_level1, old.level1_count);
+        size_t dirty_l2_count =
+            allocation_map_dirty_count(dirty_level2, old.level2_count);
+        if (dirty_leaf_count > SIZE_MAX - dirty_l1_count ||
+            dirty_leaf_count + dirty_l1_count > SIZE_MAX - dirty_l2_count ||
+            dirty_leaf_count + dirty_l1_count + dirty_l2_count >
+                SIZE_MAX - 1u) {
             status = INFS_STATUS_OVERFLOW;
             goto out;
         }
-        size_t needed = dirty_count + old.branch_count;
+        needed = dirty_leaf_count + dirty_l1_count + dirty_l2_count + 1u;
+        if (needed > old.leaf_count + old.branch_count) {
+            status = INFS_STATUS_CORRUPT;
+            goto out;
+        }
+
         while (reserved_count < needed) {
             if (reserved_count == reserved_capacity) {
                 size_t next = reserved_capacity ? reserved_capacity * 2u : 32u;
@@ -496,15 +565,32 @@ static infs_status allocation_map_publish(
             reserved[reserved_count++] = block;
         }
 
-        size_t before = dirty_count;
-        allocation_map_mark_tx_changes(vol, dirty, old.leaf_count);
-        allocation_map_close_dirty_set(&old, dirty, total);
-        size_t after = allocation_map_dirty_count(dirty, old.leaf_count);
-        if (after == before && reserved_count >= after + old.branch_count)
+        size_t before = needed;
+        allocation_map_mark_tx_changes(vol, dirty_leaves, old.leaf_count);
+        allocation_map_close_dirty_set(
+            &old, dirty_leaves, dirty_level1, dirty_level2, total);
+
+        dirty_leaf_count =
+            allocation_map_dirty_count(dirty_leaves, old.leaf_count);
+        dirty_l1_count =
+            allocation_map_dirty_count(dirty_level1, old.level1_count);
+        dirty_l2_count =
+            allocation_map_dirty_count(dirty_level2, old.level2_count);
+        if (dirty_leaf_count > SIZE_MAX - dirty_l1_count ||
+            dirty_leaf_count + dirty_l1_count > SIZE_MAX - dirty_l2_count ||
+            dirty_leaf_count + dirty_l1_count + dirty_l2_count >
+                SIZE_MAX - 1u) {
+            status = INFS_STATUS_OVERFLOW;
+            goto out;
+        }
+        size_t after =
+            dirty_leaf_count + dirty_l1_count + dirty_l2_count + 1u;
+        if (after == before && reserved_count >= after) {
+            needed = after;
             break;
+        }
     }
 
-    size_t dirty_count = allocation_map_dirty_count(dirty, old.leaf_count);
     new_leaves = malloc(old.leaf_count * sizeof(*new_leaves));
     new_branches = malloc(old.branch_count * sizeof(*new_branches));
     if (!new_leaves || !new_branches) {
@@ -513,29 +599,53 @@ static infs_status allocation_map_publish(
     }
     memcpy(new_leaves, old.leaf_blocks,
            old.leaf_count * sizeof(*new_leaves));
+    memcpy(new_branches, old.branch_blocks,
+           old.branch_count * sizeof(*new_branches));
 
     size_t r = 0;
-    for (size_t i = 0; i < old.leaf_count; ++i) {
-        if (dirty[i])
+    for (size_t i = 0; i < old.leaf_count; ++i)
+        if (dirty_leaves[i])
             new_leaves[i] = reserved[r++];
-    }
-    for (size_t i = 0; i < old.branch_count; ++i)
-        new_branches[i] = reserved[r++];
-    if (r != dirty_count + old.branch_count || r > reserved_count) {
+
+    new_branches[0] = reserved[r++];
+    for (size_t i = 0; i < old.level2_count; ++i)
+        if (dirty_level2[i])
+            new_branches[1u + i] = reserved[r++];
+
+    const size_t level1_base = 1u + old.level2_count;
+    for (size_t i = 0; i < old.level1_count; ++i)
+        if (dirty_level1[i])
+            new_branches[level1_base + i] = reserved[r++];
+
+    if (r != needed || r > reserved_count) {
         status = INFS_STATUS_CORRUPT;
         goto out;
     }
 
-    /* Old branches are always replaced; old leaves are replaced only when
-     * their bit payload changed. They remain allocated until all replacement
-     * pages have already been reserved, preventing same-transaction reuse. */
-    for (size_t i = 0; i < old.branch_count; ++i) {
-        status = tx_defer_range(vol, old.branch_blocks[i], 1u);
+    /*
+     * Defer only pages actually replaced. Unchanged branches and leaves remain
+     * valid shared metadata and may carry an older generation number.
+     */
+    status = tx_defer_range(vol, old.branch_blocks[0], 1u);
+    if (status != INFS_STATUS_OK)
+        goto out;
+    for (size_t i = 0; i < old.level2_count; ++i) {
+        if (!dirty_level2[i])
+            continue;
+        status = tx_defer_range(vol, old.branch_blocks[1u + i], 1u);
+        if (status != INFS_STATUS_OK)
+            goto out;
+    }
+    for (size_t i = 0; i < old.level1_count; ++i) {
+        if (!dirty_level1[i])
+            continue;
+        status = tx_defer_range(
+            vol, old.branch_blocks[level1_base + i], 1u);
         if (status != INFS_STATUS_OK)
             goto out;
     }
     for (size_t i = 0; i < old.leaf_count; ++i) {
-        if (!dirty[i])
+        if (!dirty_leaves[i])
             continue;
         status = tx_defer_range(vol, old.leaf_blocks[i], 1u);
         if (status != INFS_STATUS_OK)
@@ -579,7 +689,7 @@ static infs_status allocation_map_publish(
     vol->sb.generation = infs_cpu_to_le64(generation);
 
     for (size_t i = 0; i < old.leaf_count; ++i) {
-        if (!dirty[i])
+        if (!dirty_leaves[i])
             continue;
         uint64_t first_bit =
             (uint64_t)i * INFS_ALLOCATION_BITS_PER_LEAF;
@@ -601,8 +711,9 @@ static infs_status allocation_map_publish(
             goto out;
     }
 
-    size_t l1_base = 1u + old.level2_count;
     for (size_t i = 0; i < old.level1_count; ++i) {
+        if (!dirty_level1[i])
+            continue;
         size_t first = i * INFS_ALLOCATION_TREE_FANOUT;
         uint32_t entries = (uint32_t)(
             old.leaf_count - first > INFS_ALLOCATION_TREE_FANOUT ?
@@ -611,7 +722,7 @@ static infs_status allocation_map_publish(
         for (uint32_t j = 0; j < entries; ++j)
             pointers[j] = infs_cpu_to_le64(new_leaves[first + j]);
         status = allocation_map_write_page(
-            vol, new_branches[l1_base + i],
+            vol, new_branches[level1_base + i],
             INFS_ALLOCATION_BRANCH_PAGE_MAGIC, generation,
             i, 1u, entries, pointers, entries * sizeof(uint64_t));
         if (status != INFS_STATUS_OK)
@@ -619,6 +730,8 @@ static infs_status allocation_map_publish(
     }
 
     for (size_t i = 0; i < old.level2_count; ++i) {
+        if (!dirty_level2[i])
+            continue;
         size_t first = i * INFS_ALLOCATION_TREE_FANOUT;
         uint32_t entries = (uint32_t)(
             old.level1_count - first > INFS_ALLOCATION_TREE_FANOUT ?
@@ -626,7 +739,7 @@ static infs_status allocation_map_publish(
         uint64_t pointers[INFS_ALLOCATION_TREE_FANOUT];
         for (uint32_t j = 0; j < entries; ++j)
             pointers[j] = infs_cpu_to_le64(
-                new_branches[l1_base + first + j]);
+                new_branches[level1_base + first + j]);
         status = allocation_map_write_page(
             vol, new_branches[1u + i],
             INFS_ALLOCATION_BRANCH_PAGE_MAGIC, generation,
@@ -651,7 +764,9 @@ out:
     free(new_branches);
     free(new_leaves);
     free(reserved);
-    free(dirty);
+    free(dirty_level2);
+    free(dirty_level1);
+    free(dirty_leaves);
     allocation_map_layout_destroy(&old);
     return status;
 }

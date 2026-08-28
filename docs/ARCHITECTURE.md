@@ -50,7 +50,7 @@ Committed critical metadata is never overwritten as its only valid copy. A trans
 2. reserves replacement blocks;
 3. writes new data and metadata to unreachable blocks;
 4. updates the object/namespace graph through copy-on-write;
-5. rewrites only affected allocation leaves and the small allocation-tree branch spine;
+5. rewrites only affected allocation leaves and only affected allocation-tree branch paths plus the root;
 6. issues the required durable flushes;
 7. publishes a generation `N+1` checkpoint containing the new allocation root as the atomic commit point;
 8. replicates that checkpoint to the other physical checkpoint locations; and
