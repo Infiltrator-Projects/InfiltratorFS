@@ -293,6 +293,9 @@ static int infilfs_linux_meta_load(struct super_block *sb,
     *size_out = 0;
     ret = infilfs_linux_meta_get_file(sb, object_id, false,
                                       &dir, &file, name);
+    if (ret != 0 && ret != -ENOENT)
+        pr_err_ratelimited("InfiltratorFS: Linux metadata lookup failed for %*phN: %d\n",
+                           16, object_id, ret);
     if (ret == -ENOENT) {
         blob = kvzalloc(sizeof(*header), GFP_NOFS);
         if (!blob)
@@ -321,11 +324,15 @@ static int infilfs_linux_meta_load(struct super_block *sb,
     got = infilfs_native_read_iter_cached(file, &position, &iter);
     if (got != size) {
         ret = got < 0 ? (int)got : -EIO;
+        pr_err_ratelimited("InfiltratorFS: Linux metadata data read failed for %*phN: got=%zd size=%zu ret=%d\n",
+                           16, object_id, got, size, ret);
         kvfree(blob);
         goto out;
     }
     ret = infilfs_linux_meta_validate_blob(blob, size);
     if (ret) {
+        pr_err_ratelimited("InfiltratorFS: Linux metadata blob validation failed for %*phN: %d\n",
+                           16, object_id, ret);
         kvfree(blob);
         goto out;
     }

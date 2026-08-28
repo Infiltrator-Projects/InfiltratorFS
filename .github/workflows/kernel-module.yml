@@ -862,7 +862,7 @@ jobs:
           cmp "$extent_src" "$mountpoint/docs/extent-moved.bin"
           test ! -e "$mountpoint/docs/extent.bin"
           test ! -e "$mountpoint/current"
-          python3 - "$mountpoint/user-owned/file.txt" <<'PY'
+          if ! python3 - "$mountpoint/user-owned/file.txt" <<'PY'
           import os
           import sys
 
@@ -871,6 +871,10 @@ jobs:
           assert 'user.infiltratorfs-ci' in os.listxattr(path)
           assert os.getxattr(os.path.dirname(path), b'user.infiltratorfs-dir') == b'directory'
           PY
+          then
+            diagnostics
+            exit 1
+          fi
           sudo python3 - "$mountpoint/user-owned/file.txt" <<'PY'
           import os
           import sys
