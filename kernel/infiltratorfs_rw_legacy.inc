@@ -928,6 +928,24 @@ static void infilfs_rw_tx_abort(struct infilfs_rw_tx *tx)
                 infilfs_rw_bitmap_set(tx->bitmap,
                     tx->allocated[r].start + i, false);
         }
+        for (r = 0; r < tx->deferred_count; ++r) {
+            u64 i;
+            for (i = 0; i < tx->deferred[r].count; ++i) {
+                u64 block = tx->deferred[r].start + i;
+                size_t a;
+                bool private = false;
+                for (a = 0; a < tx->allocated_count; ++a) {
+                    u64 start = tx->allocated[a].start;
+                    u64 count = tx->allocated[a].count;
+                    if (block >= start && block - start < count) {
+                        private = true;
+                        break;
+                    }
+                }
+                if (!private)
+                    infilfs_rw_bitmap_set(tx->bitmap, block, true);
+            }
+        }
         write_lock(&tx->sbi->bitmap_lock);
         tx->sbi->visible_bitmap = tx->sbi->bitmap;
         tx->sbi->visible_bitmap_bytes = tx->sbi->bitmap_bytes;

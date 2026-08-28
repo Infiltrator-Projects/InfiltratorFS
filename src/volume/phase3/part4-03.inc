@@ -231,7 +231,7 @@ static int64_t write_file_tx(struct infs_volume *vol, const char *path,
          * allocated earlier in this same transaction are already unreachable
          * from N and may be filled in place before publication. */
         if (flags == INFS_EXTENT_HOLE ||
-            bitmap_get(tx_cow_base_bitmap(vol), physical)) {
+            !tx_block_private(vol, physical)) {
             uint64_t replacement = 0, got = 0;
             status = alloc_data_run(vol, 1, &replacement, &got);
             if (status != INFS_STATUS_OK)

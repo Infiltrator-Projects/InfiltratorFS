@@ -479,19 +479,22 @@ infs_status infs_snapshot_create(struct infs_volume *vol, const char *name)
     status = tx_begin(vol);
     if (status != INFS_STATUS_OK)
         return status;
-    uint64_t bitmap_blocks =
-        infs_le64_to_cpu(vol->tx_base_sb.bitmap_block_count);
-    uint64_t bitmap_start = 0;
-    status = alloc_exact_run(vol, bitmap_blocks, &bitmap_start);
-    if (status != INFS_STATUS_OK)
-        goto fail;
 
     uint8_t *snapshot_bitmap = malloc(vol->bitmap_bytes);
     if (!snapshot_bitmap) {
         status = INFS_STATUS_NO_MEMORY;
         goto fail;
     }
-    memcpy(snapshot_bitmap, vol->tx_base_bitmap, vol->bitmap_bytes);
+    memcpy(snapshot_bitmap, vol->bitmap, vol->bitmap_bytes);
+
+    uint64_t bitmap_blocks =
+        infs_le64_to_cpu(vol->tx_base_sb.bitmap_block_count);
+    uint64_t bitmap_start = 0;
+    status = alloc_exact_run(vol, bitmap_blocks, &bitmap_start);
+    if (status != INFS_STATUS_OK) {
+        free(snapshot_bitmap);
+        goto fail;
+    }
     uint64_t old_bitmap =
         infs_le64_to_cpu(vol->tx_base_sb.bitmap_start_block);
     for (uint64_t i = 0; i < bitmap_blocks; ++i) {

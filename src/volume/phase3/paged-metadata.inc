@@ -156,7 +156,7 @@ static int metadata_page_store(struct infs_volume *vol, uint64_t old_block,
         return status;
 
     if (old_block != 0 && old_block < infs_le64_to_cpu(vol->sb.total_blocks) &&
-        !bitmap_get(tx_cow_base_bitmap(vol), old_block)) {
+        tx_block_private(vol, old_block)) {
         status = write_block(vol, old_block, block);
         if (status != INFS_STATUS_OK)
             return status;

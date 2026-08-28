@@ -525,6 +525,8 @@ static int read_object(struct infs_volume *vol, uint64_t block_no,
 
 static int alloc_run(struct infs_volume *vol, uint64_t wanted,
                      uint64_t *start_out, uint64_t *count_out);
+static infs_status allocate_selected_run_uninitialized(
+    struct infs_volume *vol, uint64_t start, uint64_t count);
 static void free_run(struct infs_volume *vol, uint64_t start, uint64_t count);
 static int index_repoint(struct infs_volume *vol, const uint8_t id[16],
                          uint64_t object_block, uint16_t type);
@@ -707,6 +709,15 @@ static void tx_abort(struct infs_volume *vol)
         for (uint64_t b = 0; b < count; ++b)
             bitmap_set(vol->bitmap, start + b, 0);
     }
+    for (size_t i = 0; i < vol->tx_deferred_count; ++i) {
+        uint64_t start = vol->tx_deferred[i].start;
+        uint64_t count = vol->tx_deferred[i].count;
+        for (uint64_t b = 0; b < count; ++b) {
+            uint64_t block = start + b;
+            if (!tx_block_private_since(vol, block, 0u))
+                bitmap_set(vol->bitmap, block, 1);
+        }
+    }
     memcpy(&vol->sb, &vol->tx_base_sb, sizeof(vol->sb));
     vol->tx_allocated_count = 0;
     vol->tx_deferred_count = 0;
@@ -842,11 +853,8 @@ static infs_status allocate_selected_run_uninitialized(
     if (status != INFS_STATUS_OK)
         return status;
     if (vol->free_extent_index_valid &&
-        !free_extent_index_remove(vol, start, count)) {
-        --vol->tx_allocated_count;
+        !free_extent_index_remove(vol, start, count))
         free_extent_index_invalidate(vol);
-        return INFS_STATUS_CORRUPT;
-    }
     for (uint64_t b = start; b < start + count; ++b)
         bitmap_set(vol->bitmap, b, 1);
     vol->sb.free_blocks = infs_cpu_to_le64(
