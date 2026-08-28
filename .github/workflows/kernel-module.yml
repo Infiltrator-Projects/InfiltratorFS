@@ -65,6 +65,7 @@ jobs:
              kernel/infiltratorfs.c \
              kernel/infiltratorfs_format.h \
              kernel/infiltratorfs_index_tree.inc \
+             kernel/infiltratorfs_directory_tree.inc \
              kernel/infiltratorfs_rw.inc \
              kernel/infiltratorfs_rw_legacy.inc \
              kernel/infiltratorfs_rw_data.inc \

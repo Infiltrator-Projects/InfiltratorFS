@@ -878,6 +878,12 @@ static int infilfs_ns_rebuild_directory(
     u64 new_head_block;
     int ret;
 
+    ret = infilfs_native_tree_directory_update(
+        pending, dir, remove_a, remove_b, add_name, add_id, add_type,
+        link_delta, new_dir_block_out);
+    if (ret != -EOPNOTSUPP)
+        return ret;
+
     if (!remove_a && !remove_b && add_name) {
         ret = infilfs_ns_append_paged_directory(
             pending, dir, add_name, add_id, add_type, link_delta,
