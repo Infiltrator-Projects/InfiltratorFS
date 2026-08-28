@@ -107,8 +107,10 @@ int main(int argc, char **argv)
     printf("  Block size:      %u bytes\n", 1u << infs_le16_to_cpu(sb.block_shift));
     printf("  Total blocks:    %" PRIu64 "\n", infs_le64_to_cpu(sb.total_blocks));
     printf("  Free blocks:     %" PRIu64 "\n", infs_le64_to_cpu(sb.free_blocks));
-    printf("  Bitmap:          block %" PRIu64 ", %" PRIu64 " blocks\n",
-           infs_le64_to_cpu(sb.bitmap_start_block), infs_le64_to_cpu(sb.bitmap_block_count));
+    printf("  Allocation root: block %" PRIu64 "\n",
+           infs_le64_to_cpu(sb.allocation_root_block));
+    printf("  Allocation leaves: %" PRIu64 "\n",
+           infs_le64_to_cpu(sb.allocation_leaf_count));
     printf("  Object index:    block %" PRIu64 " (%s)\n",
            index_no, index_ok ? "valid" : "INVALID");
     printf("  Root object:     block %" PRIu64 " (%s)\n",
