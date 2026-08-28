@@ -1,14 +1,14 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-# Format 0.12 Conformance
+# Format 0.14 Conformance
 
-Release 0.18.11 accepts exactly current on-disk Format 0.12. Pre-1.0 builds do not promise compatibility with earlier development formats.
+Development 0.18.17 accepts exactly current on-disk Format 0.14. Pre-1.0 builds do not promise compatibility with earlier development formats.
 
 ## Persistent representation
 
 A conforming implementation preserves:
 
 - 4096-byte little-endian filesystem blocks;
-- exact Format 0.12 major/minor identity;
+- exact Format 0.14 major/minor identity;
 - the packed structure sizes and offsets declared by the public format headers;
 - three physical checkpoint locations;
 - CRC64-ECMA protection for checkpoints and metadata;
@@ -22,13 +22,13 @@ A conforming implementation preserves:
 - exact link counts and parent/reference rules;
 - ordinary extents, sparse hole extents and shared normal extents;
 - inline small-file representation;
-- paged directory/object-index/extent metadata;
+- generation-aware object-index and directory trees plus paged extent metadata;
 - symbolic-link objects;
 - regular-file hard links;
 - snapshot-catalog objects and retained historical generations; and
 - common portable attributes plus isolated POSIX compatibility metadata.
 
-Unknown incompatible feature bits are rejected. Unknown read-only-compatible bits may be accepted only read-only. Newly created Format 0.12 volumes enable the currently required known feature set.
+Unknown incompatible feature bits are rejected. Unknown read-only-compatible bits may be accepted only read-only. Newly created Format 0.14 volumes enable the currently required known feature set.
 
 ## Namespace and object rules
 
@@ -90,7 +90,7 @@ Native Linux qualification requires:
 - successful DKMS-style source-root build;
 - registration of filesystem type `infiltratorfs`;
 - native read-only and read-write mount behavior;
-- correct lookup/enumeration of current Format 0.12 directories and object indexes;
+- correct lookup/enumeration of current Format 0.14 directories and object indexes;
 - inline, ordinary-extent, sparse-hole and paged-extent reads;
 - stable inode identity for persistent objects/hard links;
 - create/mkdir/mknod, link/symlink, rename/unlink/rmdir and persistent setattr;
@@ -108,7 +108,7 @@ Native Linux qualification requires:
 - clean unmount followed by userspace scrub; and
 - refusal to silently substitute a non-native filesystem path.
 
-Release 0.18.11 qualifies this native migrated surface. Additional development qualification is expected to expand locking/concurrency, scale and stress coverage rather than reintroduce a FUSE runtime path.
+Development 0.18.17 qualifies this native migrated surface. Additional development qualification is expected to expand locking/concurrency, scale and stress coverage rather than reintroduce a FUSE runtime path.
 
 `mount.infiltratorfs` and InfiltratorFS Manager must produce `FSTYPE=infiltratorfs`. The Manager privileged helper rejects a mounted result with any other filesystem type.
 
@@ -126,7 +126,7 @@ The package must depend on the native build/runtime requirements (`dkms`, `kmod`
 
 Installation fails if matching running-kernel headers are unavailable or if the native module cannot build/load/register. There is no userspace fallback.
 
-`infilfs-inspect --udev` must identify a valid Format 0.12 volume with filesystem type, UUID, label/version and block-size properties and must remain silent for non-InfiltratorFS input.
+`infilfs-inspect --udev` must identify a valid Format 0.14 volume with filesystem type, UUID, label/version and block-size properties and must remain silent for non-InfiltratorFS input.
 
 ## Automated gates
 
@@ -134,4 +134,4 @@ The main Build and conformance workflow runs the portable/core suite under GCC, 
 
 The Native Linux kernel module workflow builds the out-of-tree driver, reproduces the DKMS source-root invocation, validates module metadata and performs mounted snapshot, all-namespace xattr, special-node, mmap, namespace, allocation-reporting, 4,000-write random I/O, repeated-fsync, crash-orphan recovery, checkpoint fallback/healing, remount and scrub qualification when the hosted runner exposes matching running-kernel headers.
 
-The release publisher runs only after a successful `Release <version>` commit on current `main`. It rebuilds assets from that exact commit, installs the generated `.deb`, verifies the native filesystem registration, mounts a real Format 0.12 loop image with `FSTYPE=infiltratorfs`, writes and byte-compares non-zero data, syncs, unmounts, requires a CLEAN scrub and rejects any legacy FUSE executable/process before creating the tag and release.
+The release publisher runs only after a successful `Release <version>` commit on current `main`. It rebuilds assets from that exact commit, installs the generated `.deb`, verifies the native filesystem registration, mounts a real Format 0.14 loop image with `FSTYPE=infiltratorfs`, writes and byte-compares non-zero data, syncs, unmounts, requires a CLEAN scrub and rejects any legacy FUSE executable/process before creating the tag and release.

@@ -92,7 +92,7 @@ jobs:
         if: steps.headers.outputs.runtime_kdir != ''
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --parallel --target mkfs.infilfs infilfs-tool infilfs-scrub
+          cmake --build build --parallel --target mkfs.infilfs infilfs-tool infilfs-scrub infilfs-forensic
 
       - name: Build module for the running kernel
         if: steps.headers.outputs.runtime_kdir != ''
@@ -155,6 +155,13 @@ jobs:
           # here and verify mkfs preserves the invoking desktop identity.
           sudo env SUDO_UID="$(id -u)" SUDO_GID="$(id -g)" \
               build/mkfs.infilfs -L NativeKernelCI "$image" >/dev/null
+          build/infilfs-forensic "$image" > "$RUNNER_TEMP/native-format-records.tsv"
+          awk -F '\t' '$2 == "current" && $3 == "object" &&
+              $5 == "index" && $6 == 3 { found = 1 } END { exit !found }' \
+              "$RUNNER_TEMP/native-format-records.tsv"
+          awk -F '\t' '$2 == "current" && $3 == "object" &&
+              $5 == "directory" && $6 == 3 { found = 1 } END { exit !found }' \
+              "$RUNNER_TEMP/native-format-records.tsv"
           printf 'native-kernel-inline\n' > "$inline_src"
           python3 - "$extent_src" "$large_src" <<'PY'
           import sys
@@ -308,6 +315,21 @@ jobs:
           sudo ln -s created.txt "$mountpoint/native-rw/allocation-link"
           test "$(stat -c '%b' "$mountpoint/native-rw/allocation-persist")" -eq 8
           test "$(stat -c '%b' "$mountpoint/native-rw/allocation-link")" -eq 8
+
+          # Keep a branched directory live through scrub/remount so the mounted
+          # test proves both current persistent tree implementations are used.
+          sudo mkdir "$mountpoint/native-rw/tree-persist"
+          sudo python3 - "$mountpoint/native-rw/tree-persist" <<'PY'
+          import os
+          import sys
+          directory = sys.argv[1]
+          for index in range(180):
+              path = os.path.join(directory, f'persistent-tree-entry-{index:03d}')
+              fd = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_EXCL, 0o600)
+              os.close(fd)
+          PY
+          test "$(find "$mountpoint/native-rw/tree-persist" -mindepth 1 \
+              -maxdepth 1 -type f | wc -l)" -eq 180
 
           # POSIX requires an unlinked file to remain fully usable through an
           # already-open descriptor until the final close.  Exercise both read
@@ -710,6 +732,11 @@ jobs:
               before-native-rw /docs/extent.bin)
           build/infilfs-scrub "$image" | tee "$RUNNER_TEMP/native-rw-scrub.txt"
           grep -Fq 'Result:              CLEAN' "$RUNNER_TEMP/native-rw-scrub.txt"
+          build/infilfs-forensic "$image" > "$RUNNER_TEMP/native-tree-records.tsv"
+          grep -Fq $'current\tindex-branch-page' \
+              "$RUNNER_TEMP/native-tree-records.tsv"
+          grep -Fq $'current\tdirectory-branch-page' \
+              "$RUNNER_TEMP/native-tree-records.tsv"
 
           printf 'Recovering the crash-cloned open-file orphan...\n'
           mkdir -p "$crash_mount"
@@ -791,6 +818,38 @@ jobs:
           grep -Fq 'Result:              CLEAN' \
             "$RUNNER_TEMP/native-checkpoint-recovery-scrub.txt"
 
+          # A higher candidate can pass checkpoint/root validation while one
+          # non-root index leaf is marked free.  Candidate selection must walk
+          # the complete tree, fall back, and heal before exposing a RW mount.
+          python3 tests/native-checkpoint-free-child.py "$checkpoint_image"
+          checkpoint_loopdev="$(sudo losetup --find --show "$checkpoint_image")"
+          sudo mount -t infiltratorfs -o rw "$checkpoint_loopdev" "$checkpoint_mount"
+          checkpoint_mounted=1
+          test "$(cat "$checkpoint_mount/native-rw/created.txt")" = 'rewritte'
+          sudo umount "$checkpoint_mount"
+          checkpoint_mounted=0
+          sudo losetup -d "$checkpoint_loopdev"
+          checkpoint_loopdev=""
+          python3 - "$checkpoint_image" <<'PY'
+          import os
+          import sys
+
+          path = sys.argv[1]
+          block_size = 4096
+          total_blocks = os.path.getsize(path) // block_size
+          locations = (0, total_blocks // 2, total_blocks - 1)
+          with open(path, 'rb') as image:
+              checkpoints = []
+              for location in locations:
+                  image.seek(location * block_size)
+                  checkpoints.append(image.read(block_size))
+          assert checkpoints[0] == checkpoints[1] == checkpoints[2]
+          PY
+          build/infilfs-scrub "$checkpoint_image" | \
+            tee "$RUNNER_TEMP/native-deep-checkpoint-recovery-scrub.txt"
+          grep -Fq 'Result:              CLEAN' \
+            "$RUNNER_TEMP/native-deep-checkpoint-recovery-scrub.txt"
+
           printf 'Remounting read-only for final byte comparison...\n'
           sudo mount -t infiltratorfs -o ro "$loopdev" "$mountpoint"
           mounted=1
@@ -818,6 +877,8 @@ jobs:
           PY
           test "$(stat -c '%b' "$mountpoint/native-rw/allocation-persist")" -eq 8
           test "$(stat -c '%b' "$mountpoint/native-rw/allocation-link")" -eq 8
+          test "$(find "$mountpoint/native-rw/tree-persist" -mindepth 1 \
+              -maxdepth 1 -type f | wc -l)" -eq 180
           test -p "$mountpoint/native-rw/native.fifo"
           test -S "$mountpoint/native-rw/native.socket"
           test -c "$mountpoint/native-rw/native.char"

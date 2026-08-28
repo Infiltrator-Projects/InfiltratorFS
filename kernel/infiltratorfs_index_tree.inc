@@ -24,7 +24,6 @@ static bool infilfs_index_tree_branch_valid(
     const struct infilfs_metadata_page_disk *page =
         (const struct infilfs_metadata_page_disk *)block;
     const __le64 *children;
-    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
     u32 expected;
     u32 seen = 0;
     u32 i;
@@ -43,7 +42,7 @@ static bool infilfs_index_tree_branch_valid(
 
         if (!child)
             continue;
-        if (!sbi || child >= sbi->device_blocks)
+        if (!infilfs_block_allocated(sb, child))
             return false;
         seen++;
     }
@@ -64,7 +63,7 @@ static int infilfs_index_tree_lookup_node(
     u8 *block;
     int ret;
 
-    if (!node || depth > 16u)
+    if (!node || depth > 16u || !infilfs_block_allocated(sb, node))
         return -EFSCORRUPTED;
     block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_KERNEL);
     if (!block)
@@ -77,7 +76,7 @@ static int infilfs_index_tree_lookup_node(
         u32 count;
         u32 i;
 
-        ret = infilfs_read_block(sb, node, block);
+        ret = infilfs_read_allocated_block(sb, node, block);
         if (ret)
             break;
 
@@ -103,8 +102,7 @@ static int infilfs_index_tree_lookup_node(
                 if (memcmp(entries[i].object_id, object_id, 16) != 0)
                     continue;
                 object_block = le64_to_cpu(entries[i].object_block);
-                if (!INFILFS_SB(sb) ||
-                    object_block >= INFILFS_SB(sb)->device_blocks) {
+                if (!infilfs_block_allocated(sb, object_block)) {
                     ret = -EFSCORRUPTED;
                     break;
                 }
@@ -125,6 +123,10 @@ static int infilfs_index_tree_lookup_node(
         node = le64_to_cpu(children[object_id[depth++]]);
         if (!node) {
             ret = -ENOENT;
+            break;
+        }
+        if (!infilfs_block_allocated(sb, node)) {
+            ret = -EFSCORRUPTED;
             break;
         }
     }
@@ -165,12 +167,12 @@ static int infilfs_index_tree_snapshot_node(
     u8 *block;
     int ret;
 
-    if (!node || depth > 16u)
+    if (!node || depth > 16u || !infilfs_block_allocated(sb, node))
         return -EFSCORRUPTED;
     block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
     if (!block)
         return -ENOMEM;
-    ret = infilfs_read_block(sb, node, block);
+    ret = infilfs_read_allocated_block(sb, node, block);
     if (ret)
         goto out;
 
@@ -197,7 +199,17 @@ static int infilfs_index_tree_snapshot_node(
         }
         entries = (const struct infilfs_index_entry_disk *)(page + 1);
         for (i = 0; i < count; ++i) {
-            if (memcmp(entries[i].object_id, prefix, depth) != 0) {
+            u16 type = le16_to_cpu(entries[i].object_type);
+
+            if (memcmp(entries[i].object_id, prefix, depth) != 0 ||
+                !memchr_inv(entries[i].object_id, 0, 16) ||
+                type < INFILFS_OBJECT_DIRECTORY ||
+                type > INFILFS_OBJECT_SNAPSHOT_CATALOG ||
+                type == INFILFS_OBJECT_INDEX ||
+                le16_to_cpu(entries[i].flags) != 0 ||
+                le32_to_cpu(entries[i].reserved) != 0 ||
+                !infilfs_block_allocated(
+                    sb, le64_to_cpu(entries[i].object_block))) {
                 ret = -EFSCORRUPTED;
                 goto out;
             }
@@ -267,7 +279,8 @@ static int infilfs_index_tree_snapshot(
             sizeof(*payload) + sizeof(__le64))
         return -EFSCORRUPTED;
     count = le32_to_cpu(payload->entry_count);
-    if (!count || !infilfs_index_tree_root(payload))
+    if (!count || count > INFILFS_SB(sb)->device_blocks ||
+        !infilfs_index_tree_root(payload))
         return -EFSCORRUPTED;
 
     entries = kvmalloc_array(count, sizeof(*entries), GFP_NOFS);

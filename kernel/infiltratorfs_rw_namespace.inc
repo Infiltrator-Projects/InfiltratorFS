@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 /*
  * Transactional native namespace operations.
  *
@@ -184,7 +185,8 @@ static int infilfs_ns_index_snapshot(
         for (p = 0; p < page_count; ++p) {
             struct infilfs_metadata_page_disk *page;
             u32 n;
-            ret = infilfs_read_block(sb, le64_to_cpu(pages[p]), page_block);
+            ret = infilfs_read_allocated_block(
+                sb, le64_to_cpu(pages[p]), page_block);
             if (ret)
                 goto out;
             if (!infilfs_metadata_page_valid(sb, page_block,
@@ -585,7 +587,7 @@ static int infilfs_ns_directory_locator_build(
         u32 seen = 0;
         size_t offset = 0;
 
-        ret = infilfs_read_block(
+        ret = infilfs_read_allocated_block(
             pending->sb, le64_to_cpu(pages[p]), page_block);
         if (ret)
             goto out;
@@ -737,7 +739,8 @@ static int infilfs_ns_append_paged_directory(
 
     if (page_count) {
         last_page_no = le64_to_cpu(pointers[page_count - 1u]);
-        ret = infilfs_read_block(pending->sb, last_page_no, page_block);
+        ret = infilfs_read_allocated_block(
+            pending->sb, last_page_no, page_block);
         if (ret)
             goto out;
         if (!infilfs_metadata_page_valid(
@@ -1199,7 +1202,8 @@ static int infilfs_ns_read_file_extents(
         for (p = 0; p < page_count; ++p) {
             struct infilfs_metadata_page_disk *page;
             u32 n;
-            ret = infilfs_read_block(sb, le64_to_cpu(pages[p]), page_block);
+            ret = infilfs_read_allocated_block(
+                sb, le64_to_cpu(pages[p]), page_block);
             if (ret)
                 goto out;
             if (!infilfs_metadata_page_valid(sb, page_block,

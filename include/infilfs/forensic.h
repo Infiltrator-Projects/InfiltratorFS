@@ -11,6 +11,9 @@
 #define INFS_FORENSIC_OBJECT         UINT32_C(2)
 #define INFS_FORENSIC_DIRECTORY_PAGE UINT32_C(3)
 #define INFS_FORENSIC_INDEX_PAGE     UINT32_C(4)
+#define INFS_FORENSIC_DIRECTORY_BRANCH_PAGE UINT32_C(5)
+#define INFS_FORENSIC_INDEX_BRANCH_PAGE     UINT32_C(6)
+#define INFS_FORENSIC_EXTENT_PAGE           UINT32_C(7)
 
 #define INFS_FORENSIC_STATE_UNKNOWN  UINT32_C(0)
 #define INFS_FORENSIC_STATE_CURRENT  UINT32_C(1)
@@ -43,6 +46,9 @@ struct infs_forensic_summary {
     uint64_t objects_found;
     uint64_t directory_pages_found;
     uint64_t index_pages_found;
+    uint64_t directory_branch_pages_found;
+    uint64_t index_branch_pages_found;
+    uint64_t extent_pages_found;
     uint64_t current_generation;
     int allocation_map_available;
 };

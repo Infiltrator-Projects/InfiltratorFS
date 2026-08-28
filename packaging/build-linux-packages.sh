@@ -38,6 +38,7 @@ run_name="infiltratorfs-${version}-linux-native.run"
 package_root="$(mktemp -d)"
 payload="$(mktemp)"
 trap 'rm -rf "$package_root" "$payload"' EXIT
+chmod 0755 "$package_root"
 
 cmake --install "$build_dir" --prefix "$package_root/usr"
 # Native Linux is the product path from 0.17.0 onward. Never allow an
@@ -184,6 +185,10 @@ chmod 0755 "$package_root/DEBIAN/postrm"
 dpkg-deb --root-owner-group --build "$package_root" "$dist_dir/$deb_name"
 contents="$dist_dir/package-contents.txt"
 dpkg-deb --contents "$dist_dir/$deb_name" > "$contents"
+[[ "$(awk 'NR == 1 { print $1 }' "$contents")" == "drwxr-xr-x" ]] || {
+    echo "Debian archive root must be mode 0755." >&2
+    exit 1
+}
 for required in \
     'usr/bin/infiltratorfs-manager$' \
     'usr/bin/infilfs-forensic$' \

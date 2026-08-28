@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Same-card ext4/XFS/Btrfs/InfiltratorFS benchmark.
 # Does NOT format partitions. It creates then removes temporary test data.
 set -Eeuo pipefail

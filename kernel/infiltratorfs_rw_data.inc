@@ -551,7 +551,7 @@ static int infilfs_native_index_locator_build(
         u32 count;
         u32 i;
 
-        ret = infilfs_read_block(
+        ret = infilfs_read_allocated_block(
             pending->sb, le64_to_cpu(pages[p]), page_block);
         if (ret)
             goto out;
@@ -771,7 +771,7 @@ static int infilfs_native_undo_capture(struct infilfs_native_pending *pending,
         pending->undo_capacity = new_capacity;
     }
 
-    ret = infilfs_read_block(pending->sb, block,
+    ret = infilfs_read_allocated_block(pending->sb, block,
                               pending->undo[pending->undo_count].data);
     if (ret)
         return ret;
@@ -1193,7 +1193,7 @@ static int infilfs_native_collect_extents(
             u32 n;
             u64 block = le64_to_cpu(pages[p]);
 
-            ret = infilfs_read_block(inode->i_sb, block, page_block);
+            ret = infilfs_read_allocated_block(inode->i_sb, block, page_block);
             if (ret)
                 break;
             if (!infilfs_metadata_page_valid(inode->i_sb, page_block,
@@ -2489,7 +2489,7 @@ static int infilfs_native_tree_mutate_node(
     block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
     if (!block)
         return -ENOMEM;
-    ret = infilfs_read_block(pending->sb, node, block);
+    ret = infilfs_read_allocated_block(pending->sb, node, block);
     if (ret)
         goto out;
 
@@ -2879,7 +2879,7 @@ locate_again:
             ret = -ESTALE;
             goto stale_cache;
         }
-        ret = infilfs_read_block(
+        ret = infilfs_read_allocated_block(
             pending->sb, le64_to_cpu(pages[p]), page_block);
         if (ret)
             goto out;
@@ -2924,7 +2924,7 @@ locate_again:
             continue;
         p = located[c].page_index;
         page_no = le64_to_cpu(pages[p]);
-        ret = infilfs_read_block(pending->sb, page_no, page_block);
+        ret = infilfs_read_allocated_block(pending->sb, page_no, page_block);
         if (ret)
             goto out;
         if (!infilfs_metadata_page_valid(
@@ -2991,7 +2991,7 @@ locate_again:
         if (page_count) {
             page_index = page_count - 1u;
             page_no = le64_to_cpu(pages[page_index]);
-            ret = infilfs_read_block(pending->sb, page_no, page_block);
+            ret = infilfs_read_allocated_block(pending->sb, page_no, page_block);
             if (ret)
                 goto out;
             if (!infilfs_metadata_page_valid(
@@ -3287,7 +3287,7 @@ static int infilfs_native_build_file_object(
                 struct infilfs_metadata_page_disk *old_page;
                 u32 old_n;
 
-                ret = infilfs_read_block(pending->sb, old_page_no,
+                ret = infilfs_read_allocated_block(pending->sb, old_page_no,
                                          old_page_block);
                 if (ret)
                     goto paged_out;
@@ -3486,7 +3486,7 @@ static int infilfs_native_try_single_paged_overwrite(
         u64 last_logical;
         u32 n;
 
-        ret = infilfs_read_block(inode->i_sb, block, page_block);
+        ret = infilfs_read_allocated_block(inode->i_sb, block, page_block);
         if (ret)
             goto out;
         if (!infilfs_metadata_page_valid(inode->i_sb, page_block,
@@ -3922,7 +3922,8 @@ generic_extent_write:
                                              logical, &old_physical,
                                              &old_flags) == 0 &&
                    old_flags == INFILFS_EXTENT_NORMAL) {
-            ret = infilfs_read_block(inode->i_sb, old_physical, data_block);
+            ret = infilfs_read_allocated_block(
+                inode->i_sb, old_physical, data_block);
             if (ret)
                 goto out;
         }
@@ -4541,7 +4542,8 @@ static __maybe_unused ssize_t infilfs_file_read_iter_verified(struct kiocb *iocb
             memset(data_block, 0, INFILFS_DISK_BLOCK_SIZE);
         } else if (flags == INFILFS_EXTENT_NORMAL) {
             struct infilfs_data_checksum_disk expected, actual;
-            ret = infilfs_read_block(inode->i_sb, physical, data_block);
+            ret = infilfs_read_allocated_block(
+                inode->i_sb, physical, data_block);
             if (ret)
                 goto partial;
             ret = infilfs_native_read_expected_digest(inode->i_sb, ii->object_id,

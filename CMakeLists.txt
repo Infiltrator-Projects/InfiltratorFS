@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.20)
-project(InfiltratorFS VERSION 0.18.16 LANGUAGES C)
+project(InfiltratorFS VERSION 0.18.17 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -235,6 +235,8 @@ if(UNIX)
         COMMAND bash ${CMAKE_SOURCE_DIR}/tests/sparse-files.sh ${CMAKE_BINARY_DIR})
     add_test(NAME infilfs-forensic-scan
         COMMAND bash ${CMAKE_SOURCE_DIR}/tests/forensic-scan.sh ${CMAKE_BINARY_DIR})
+    add_test(NAME infilfs-current-format-tree
+        COMMAND bash ${CMAKE_SOURCE_DIR}/tests/current-format-tree.sh ${CMAKE_BINARY_DIR})
     add_test(NAME infilfs-manager-shell-syntax
         COMMAND bash -n ${CMAKE_SOURCE_DIR}/tools/infiltratorfs-manager)
     add_test(NAME infilfs-manager-helper-shell-syntax

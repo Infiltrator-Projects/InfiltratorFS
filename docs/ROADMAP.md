@@ -13,13 +13,13 @@ Pre-1.0 development is current-format-only. A new development format may superse
 - [x] Stable `infs_status` error contract and platform-neutral packed format.
 - [x] Exact-format conformance, malformed-image rejection and crash testing.
 
-## Completed Format 0.12 storage features
+## Completed Format 0.14 storage features
 
 - [x] UTF-8 namespace and portable/POSIX metadata split.
 - [x] Inline small files.
 - [x] Sparse files and hole punching.
 - [x] Shared extents and reflinks.
-- [x] Paged directories, object indexes and fragmented extent metadata.
+- [x] Generation-aware object-index and directory trees plus paged extent metadata.
 - [x] Symbolic links and regular-file hard links.
 - [x] Named read-only snapshots and retained historical generations.
 - [x] Online snapshot-coordinated scrub.
@@ -28,11 +28,11 @@ Pre-1.0 development is current-format-only. A new development format may superse
 - [x] Runtime hashed metadata indexes.
 - [x] Sequential allocation and checksum hot-path performance work.
 
-## Completed native Linux filesystem surface through 0.18.11
+## Completed native Linux filesystem surface through development 0.18.17
 
 - [x] Native out-of-tree Linux VFS filesystem driver `infiltratorfs.ko`.
 - [x] DKMS packaging and host-kernel rebuild/install path.
-- [x] Native Format 0.12 read-only lookup, enumeration and file reads.
+- [x] Native Format 0.14 read-only lookup, enumeration and file reads.
 - [x] Native read-write create, mkdir, mknod, setattr and extent-backed writes.
 - [x] Link/symlink, rename/unlink/rmdir and persistent metadata changes.
 - [x] Random writes, sparse growth, high-offset writes, truncate and `fallocate`.
@@ -71,8 +71,8 @@ destructive qualification harness.
 
 ## Scale and performance
 
-- [ ] Scalable generation-aware object-index tree.
-- [ ] Scalable directory trees.
+- [x] Scalable generation-aware object-index tree.
+- [x] Scalable directory trees.
 - [ ] Rebuildable free-extent index.
 - [ ] Parallel allocation model.
 - [ ] Locality scoring and workload-aware placement.
@@ -108,7 +108,7 @@ See `SECURITY.md` for the intended cross-platform model. Current POSIX compatibi
 - [x] Win32 image/device and bounded raw-partition storage backend.
 - [x] Windows storage/partition conformance harness.
 - [x] Windows formatter, root transfer/listing and scrub application.
-- [x] Shared Linux/Windows Format 0.12 interoperability tests.
+- [x] Shared Linux/Windows Format 0.14 interoperability tests.
 - [ ] Windows attribute/security/filename adapter completion.
 - [ ] Native Windows filesystem driver and Explorer drive-letter mounting.
 - [ ] macOS native adapter investigation/implementation.

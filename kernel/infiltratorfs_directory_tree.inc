@@ -41,7 +41,6 @@ static bool infilfs_tree_dir_branch_valid(
     const struct infilfs_metadata_page_disk *page =
         (const struct infilfs_metadata_page_disk *)block;
     const __le64 *children;
-    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
     u32 expected;
     u32 seen = 0;
     u32 i;
@@ -60,7 +59,7 @@ static bool infilfs_tree_dir_branch_valid(
 
         if (!child)
             continue;
-        if (!sbi || child >= sbi->device_blocks)
+        if (!infilfs_block_allocated(sb, child))
             return false;
         seen++;
     }
@@ -169,7 +168,11 @@ static int infilfs_tree_dir_lookup_name(
     for (;;) {
         const __le64 *children;
 
-        ret = infilfs_read_block(dir->i_sb, node, block);
+        if (!infilfs_block_allocated(dir->i_sb, node)) {
+            ret = -EFSCORRUPTED;
+            goto out;
+        }
+        ret = infilfs_read_allocated_block(dir->i_sb, node, block);
         if (ret)
             goto out;
         if (!memcmp(block, infilfs_directory_page_magic, 8)) {
@@ -206,12 +209,13 @@ static int infilfs_tree_dir_for_each_node(
     u8 *block;
     int ret;
 
-    if (!node || depth > INFILFS_DIRECTORY_TREE_DEPTH)
+    if (!node || depth > INFILFS_DIRECTORY_TREE_DEPTH ||
+        !infilfs_block_allocated(inode->i_sb, node))
         return -EFSCORRUPTED;
     block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_KERNEL);
     if (!block)
         return -ENOMEM;
-    ret = infilfs_read_block(inode->i_sb, node, block);
+    ret = infilfs_read_allocated_block(inode->i_sb, node, block);
     if (ret)
         goto out;
     if (!memcmp(block, infilfs_directory_page_magic, 8)) {
@@ -490,12 +494,13 @@ static int infilfs_native_tree_dir_mutate(
     u8 *block;
     int ret;
 
-    if (!node || depth > INFILFS_DIRECTORY_TREE_DEPTH)
+    if (!node || depth > INFILFS_DIRECTORY_TREE_DEPTH ||
+        !infilfs_block_allocated(pending->sb, node))
         return -EFSCORRUPTED;
     block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
     if (!block)
         return -ENOMEM;
-    ret = infilfs_read_block(pending->sb, node, block);
+    ret = infilfs_read_allocated_block(pending->sb, node, block);
     if (ret)
         goto out;
 

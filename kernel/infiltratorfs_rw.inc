@@ -44,6 +44,10 @@ static int infilfs_rw_tx_begin(struct super_block *sb,
         return ret;
     tx->next_sb.generation = cpu_to_le64(tx->generation);
     sbi->disk.generation = cpu_to_le64(tx->generation);
+    write_lock(&sbi->bitmap_lock);
+    sbi->visible_bitmap = tx->bitmap;
+    sbi->visible_bitmap_bytes = tx->bitmap_bytes;
+    write_unlock(&sbi->bitmap_lock);
     return 0;
 }
 
@@ -560,7 +564,7 @@ static int infilfs_native_truncate(struct inode *inode, u64 new_size)
                     goto finish;
                 }
             }
-            ret = infilfs_read_block(inode->i_sb, physical, data);
+            ret = infilfs_read_allocated_block(inode->i_sb, physical, data);
             if (!ret)
                 ret = infilfs_native_verify_data_block(inode, old_file,
                                                        logical, data);
@@ -677,7 +681,7 @@ static int infilfs_native_punch_partial_locked(
     data = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
     if (!data)
         return -ENOMEM;
-    ret = infilfs_read_block(inode->i_sb, physical, data);
+    ret = infilfs_read_allocated_block(inode->i_sb, physical, data);
     if (!ret)
         ret = infilfs_native_verify_data_block(inode, working_file,
                                                logical, data);

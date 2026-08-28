@@ -19,6 +19,10 @@ static const char *kind_name(uint32_t kind)
     case INFS_FORENSIC_OBJECT: return "object";
     case INFS_FORENSIC_DIRECTORY_PAGE: return "directory-page";
     case INFS_FORENSIC_INDEX_PAGE: return "index-page";
+    case INFS_FORENSIC_DIRECTORY_BRANCH_PAGE:
+        return "directory-branch-page";
+    case INFS_FORENSIC_INDEX_BRANCH_PAGE: return "index-branch-page";
+    case INFS_FORENSIC_EXTENT_PAGE: return "extent-page";
     default: return "unknown";
     }
 }
@@ -96,6 +100,9 @@ static void print_summary(const struct infs_forensic_summary *summary,
                ",\"objects\":%" PRIu64
                ",\"directory_pages\":%" PRIu64
                ",\"index_pages\":%" PRIu64
+               ",\"directory_branch_pages\":%" PRIu64
+               ",\"index_branch_pages\":%" PRIu64
+               ",\"extent_pages\":%" PRIu64
                ",\"current_generation\":%" PRIu64
                ",\"allocation_map_available\":%s}\n",
                summary->total_blocks, summary->scanned_blocks,
@@ -103,7 +110,10 @@ static void print_summary(const struct infs_forensic_summary *summary,
                summary->stale_records, summary->orphaned_records,
                summary->unknown_records, summary->checkpoints_found,
                summary->objects_found, summary->directory_pages_found,
-               summary->index_pages_found, summary->current_generation,
+               summary->index_pages_found,
+               summary->directory_branch_pages_found,
+               summary->index_branch_pages_found,
+               summary->extent_pages_found, summary->current_generation,
                summary->allocation_map_available ? "true" : "false");
     } else {
         printf("summary\tblocks=%" PRIu64 "\trecords=%" PRIu64

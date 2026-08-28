@@ -109,7 +109,7 @@ static int infilfs_native_map_file_block_cached(
             u64 first;
             u64 last;
 
-            ret = infilfs_read_block(
+            ret = infilfs_read_allocated_block(
                 inode->i_sb, le64_to_cpu(pages[mid]), extent_page);
             if (ret)
                 return ret;
@@ -283,7 +283,8 @@ static ssize_t infilfs_native_read_iter_cached(struct inode *inode,
         } else if (flags == INFILFS_EXTENT_NORMAL) {
             struct infilfs_data_checksum_disk expected, actual;
 
-            ret = infilfs_read_block(inode->i_sb, physical, data_block);
+            ret = infilfs_read_allocated_block(
+                inode->i_sb, physical, data_block);
             if (ret)
                 goto partial;
             ret = infilfs_native_read_expected_digest(

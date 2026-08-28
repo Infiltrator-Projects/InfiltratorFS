@@ -106,7 +106,7 @@ static int tree_index_snapshot(struct infs_volume *vol,
                                uint32_t *count_out);
 
 /* These narrowly-scoped helpers are retained for planned cache/extent fast
- * paths but are deliberately dormant in Format 0.12.  Apply the unused
+ * paths but are deliberately dormant in Format 0.14.  Apply the unused
  * attribute to their declarations (rather than rewriting their identifiers
  * with macros), so GCC/Clang attach it reliably to the actual functions while
  * newly orphaned helpers still produce diagnostics. */

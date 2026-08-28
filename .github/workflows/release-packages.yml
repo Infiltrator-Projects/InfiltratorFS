@@ -361,7 +361,11 @@ jobs:
           ! dpkg-deb --field "release-assets/$deb" Depends | grep -Eqi '(^|[, ])(fuse3|libfuse3-3)([, ]|$)'
 
           (cd release-assets && sha256sum "$deb" "$installer" "$windows" > SHA256SUMS.txt)
-          git tag "$tag" "$EXPECTED_SHA"
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git tag --annotate "$tag" "$EXPECTED_SHA" \
+            --message "InfiltratorFS $VERSION"
+          test "$(git cat-file -t "refs/tags/${tag}")" = tag
           git push origin "$tag"
           gh release create "$tag" \
             "release-assets/$deb" \

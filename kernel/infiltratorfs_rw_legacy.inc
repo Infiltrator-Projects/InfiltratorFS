@@ -536,7 +536,7 @@ static int infilfs_rw_snapshot_union(struct super_block *sb, u32 snapshots)
             size_t n;
             size_t j;
 
-            ret = infilfs_read_block(sb, start + b, bitmap_block);
+            ret = infilfs_read_allocated_block(sb, start + b, bitmap_block);
             if (ret)
                 goto out;
             n = min_t(size_t, INFILFS_DISK_BLOCK_SIZE,
@@ -568,18 +568,14 @@ static int infilfs_rw_mount_init(struct super_block *sb)
     u64 i;
     int ret;
 
-    if (sb_rdonly(sb))
-        return 0;
-    if (!(le64_to_cpu(sbi->disk.incompat_flags) & INFILFS_INCOMPAT_INLINE_DATA))
+    if (!sb_rdonly(sb) &&
+        !(le64_to_cpu(sbi->disk.incompat_flags) & INFILFS_INCOMPAT_INLINE_DATA))
         return -EOPNOTSUPP;
 
-    ret = infilfs_rw_snapshot_count(sb, &snapshots);
-    if (ret)
-        return ret;
     if (!bitmap_blocks || bitmap_blocks > SIZE_MAX / INFILFS_DISK_BLOCK_SIZE)
         return -EFSCORRUPTED;
     bytes = (size_t)bitmap_blocks * INFILFS_DISK_BLOCK_SIZE;
-    if (bytes > INFILFS_RW_BITMAP_MAX_BYTES) {
+    if (!sb_rdonly(sb) && bytes > INFILFS_RW_BITMAP_MAX_BYTES) {
         pr_warn("InfiltratorFS: native writable bitmap %zu bytes exceeds initial RW limit\n",
                 bytes);
         return -EFBIG;
@@ -610,6 +606,15 @@ static int infilfs_rw_mount_init(struct super_block *sb)
             goto fail;
         }
     }
+    write_lock(&sbi->bitmap_lock);
+    sbi->visible_bitmap = sbi->bitmap;
+    sbi->visible_bitmap_bytes = sbi->bitmap_bytes;
+    write_unlock(&sbi->bitmap_lock);
+    if (sb_rdonly(sb))
+        return 0;
+    ret = infilfs_rw_snapshot_count(sb, &snapshots);
+    if (ret)
+        goto fail;
     ret = infilfs_rw_snapshot_union(sb, snapshots);
     if (ret)
         goto fail;
@@ -618,6 +623,10 @@ static int infilfs_rw_mount_init(struct super_block *sb)
     sbi->rw_enabled = true;
     return 0;
 fail:
+    write_lock(&sbi->bitmap_lock);
+    sbi->visible_bitmap = NULL;
+    sbi->visible_bitmap_bytes = 0;
+    write_unlock(&sbi->bitmap_lock);
     kvfree(sbi->bitmap);
     sbi->bitmap = NULL;
     sbi->bitmap_bytes = 0;
@@ -632,6 +641,12 @@ static void infilfs_rw_mount_destroy(struct super_block *sb)
 
     if (!sbi)
         return;
+    write_lock(&sbi->bitmap_lock);
+    sbi->visible_bitmap = NULL;
+    sbi->visible_bitmap_bytes = 0;
+    sbi->validation_bitmap = NULL;
+    sbi->validation_bitmap_bytes = 0;
+    write_unlock(&sbi->bitmap_lock);
     kvfree(sbi->bitmap);
     sbi->bitmap = NULL;
     sbi->bitmap_bytes = 0;
@@ -677,6 +692,14 @@ static int infilfs_rw_tx_begin(struct super_block *sb, struct infilfs_rw_tx *tx)
 
 static void infilfs_rw_tx_abort(struct infilfs_rw_tx *tx)
 {
+    if (tx->sbi) {
+        write_lock(&tx->sbi->bitmap_lock);
+        if (tx->sbi->visible_bitmap == tx->bitmap) {
+            tx->sbi->visible_bitmap = tx->sbi->bitmap;
+            tx->sbi->visible_bitmap_bytes = tx->sbi->bitmap_bytes;
+        }
+        write_unlock(&tx->sbi->bitmap_lock);
+    }
     kvfree(tx->bitmap);
     kfree(tx->deferred);
     kfree(tx->allocated);
@@ -837,6 +860,7 @@ static int infilfs_rw_tx_apply_deferred(struct infilfs_rw_tx *tx)
 static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
 {
     struct infilfs_sb_info *sbi = tx->sbi;
+    u8 *old_bitmap;
     u64 bitmap_blocks = le64_to_cpu(tx->next_sb.bitmap_block_count);
     u64 old_bitmap = le64_to_cpu(tx->next_sb.bitmap_start_block);
     u64 new_bitmap;
@@ -891,10 +915,15 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
      * reads observe the generation that is now durable even if redundancy
      * repair later fails. */
     sbi->disk = tx->next_sb;
-    kvfree(sbi->bitmap);
+    old_bitmap = sbi->bitmap;
+    write_lock(&sbi->bitmap_lock);
     sbi->bitmap = tx->bitmap;
     tx->bitmap = NULL;
     sbi->bitmap_bytes = tx->bitmap_bytes;
+    sbi->visible_bitmap = sbi->bitmap;
+    sbi->visible_bitmap_bytes = sbi->bitmap_bytes;
+    write_unlock(&sbi->bitmap_lock);
+    kvfree(old_bitmap);
 
     for (n = 1; n < INFILFS_CHECKPOINT_COUNT; ++n) {
         unsigned int idx = (first + n) % INFILFS_CHECKPOINT_COUNT;
@@ -990,7 +1019,7 @@ static int infilfs_rw_collect_index(struct infilfs_rw_tx *tx,
             u32 page_entries;
             u64 block = le64_to_cpu(pages[p]);
 
-            ret = infilfs_read_block(tx->sb, block, page_block);
+            ret = infilfs_read_allocated_block(tx->sb, block, page_block);
             if (ret)
                 break;
             if (!infilfs_metadata_page_valid(tx->sb, page_block,
@@ -1228,7 +1257,7 @@ static int infilfs_rw_collect_directory(struct infilfs_rw_tx *tx,
             u32 used;
             u64 block = le64_to_cpu(pages[p]);
 
-            ret = infilfs_read_block(tx->sb, block, page_block);
+            ret = infilfs_read_allocated_block(tx->sb, block, page_block);
             if (ret)
                 break;
             if (!infilfs_metadata_page_valid(tx->sb, page_block,

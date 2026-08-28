@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Static regression guard for the native metadata batching policy.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"

@@ -65,7 +65,7 @@ static uint32_t classify_record(
             return INFS_FORENSIC_STATE_CURRENT;
         return INFS_FORENSIC_STATE_STALE;
     }
-    if (!allocation_map_available)
+    if (!allocation_map_available || !bitmap)
         return INFS_FORENSIC_STATE_UNKNOWN;
     return bitmap_get(bitmap, record->block) ?
         INFS_FORENSIC_STATE_CURRENT : INFS_FORENSIC_STATE_ORPHANED;
@@ -107,9 +107,20 @@ static int decode_record(const uint8_t block[INFS_BLOCK_SIZE],
     if (memcmp(page->magic, INFS_DIRECTORY_PAGE_MAGIC, 8) == 0) {
         magic = (const uint8_t *)INFS_DIRECTORY_PAGE_MAGIC;
         kind = INFS_FORENSIC_DIRECTORY_PAGE;
+    } else if (memcmp(page->magic,
+                      INFS_DIRECTORY_BRANCH_PAGE_MAGIC, 8) == 0) {
+        magic = (const uint8_t *)INFS_DIRECTORY_BRANCH_PAGE_MAGIC;
+        kind = INFS_FORENSIC_DIRECTORY_BRANCH_PAGE;
     } else if (memcmp(page->magic, INFS_INDEX_PAGE_MAGIC, 8) == 0) {
         magic = (const uint8_t *)INFS_INDEX_PAGE_MAGIC;
         kind = INFS_FORENSIC_INDEX_PAGE;
+    } else if (memcmp(page->magic,
+                      INFS_INDEX_BRANCH_PAGE_MAGIC, 8) == 0) {
+        magic = (const uint8_t *)INFS_INDEX_BRANCH_PAGE_MAGIC;
+        kind = INFS_FORENSIC_INDEX_BRANCH_PAGE;
+    } else if (memcmp(page->magic, INFS_EXTENT_PAGE_MAGIC, 8) == 0) {
+        magic = (const uint8_t *)INFS_EXTENT_PAGE_MAGIC;
+        kind = INFS_FORENSIC_EXTENT_PAGE;
     }
     if (magic && infs_validate_metadata_page(
             block, magic, page->owner_object_id)) {
@@ -140,6 +151,13 @@ static void count_record(struct infs_forensic_summary *summary,
         ++summary->directory_pages_found;
         break;
     case INFS_FORENSIC_INDEX_PAGE: ++summary->index_pages_found; break;
+    case INFS_FORENSIC_DIRECTORY_BRANCH_PAGE:
+        ++summary->directory_branch_pages_found;
+        break;
+    case INFS_FORENSIC_INDEX_BRANCH_PAGE:
+        ++summary->index_branch_pages_found;
+        break;
+    case INFS_FORENSIC_EXTENT_PAGE: ++summary->extent_pages_found; break;
     default: break;
     }
 }

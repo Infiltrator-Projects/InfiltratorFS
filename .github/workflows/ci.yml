@@ -26,6 +26,7 @@ jobs:
           grep -Fq "startsWith(github.event.workflow_run.head_commit.message, 'Release ')" "$release"
           grep -Fq "github.event.workflow_run.head_branch == 'main'" "$release"
           grep -Fq 'published releases are immutable' "$release"
+          grep -Fq 'git tag --annotate' "$release"
           if grep -Eq '^  workflow_dispatch:|^  pull_request:|^  schedule:' "$release"; then
             echo "Release publication must be automatic from tested main only." >&2
             exit 1
@@ -62,7 +63,7 @@ jobs:
         run: bash tests/native-small-file-scaling-policy.sh .
       - name: Guard native object-index tree
         run: bash tests/native-index-tree-policy.sh .
-      - name: Guard Format 0.13 object-index tree
+      - name: Guard Format 0.14 object-index tree
         run: bash tests/index-tree-format-policy.sh .
       - name: Guard portable directory tree core
         run: bash tests/directory-tree-policy.sh .
