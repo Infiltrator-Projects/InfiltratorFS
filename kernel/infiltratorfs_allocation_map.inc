@@ -149,7 +149,6 @@ static int infilfs_allocation_map_load(
     u8 *bitmap = NULL;
     u8 *page = NULL;
     u64 *all_pages = NULL;
-    size_t branch_pos = 1;
     size_t global_l1 = 0;
     size_t global_leaf = 0;
     int ret;
@@ -209,11 +208,13 @@ static int infilfs_allocation_map_load(
                 INFILFS_ALLOCATION_TREE_FANOUT, level1 - global_l1);
             __le64 l1_ptrs[INFILFS_ALLOCATION_TREE_FANOUT];
 
-            if (branch_pos >= branches) {
+            size_t l2_slot = 1u + i;
+
+            if (l2_slot >= branches) {
                 ret = -EFSCORRUPTED;
                 goto fail;
             }
-            layout->branch_blocks[branch_pos++] = l2_block;
+            layout->branch_blocks[l2_slot] = l2_block;
             ret = infilfs_allocation_read_page(
                 sb, l2_block, (const u8 *)"INFSAB01", generation,
                 i, 2u, l2_entries, page);
@@ -230,11 +231,13 @@ static int infilfs_allocation_map_load(
                     leaves - global_leaf);
                 __le64 leaf_ptrs[INFILFS_ALLOCATION_TREE_FANOUT];
 
-                if (branch_pos >= branches) {
+                size_t l1_slot = 1u + level2 + global_l1;
+
+                if (l1_slot >= branches) {
                     ret = -EFSCORRUPTED;
                     goto fail;
                 }
-                layout->branch_blocks[branch_pos++] = l1_block;
+                layout->branch_blocks[l1_slot] = l1_block;
                 ret = infilfs_allocation_read_page(
                     sb, l1_block, (const u8 *)"INFSAB01", generation,
                     global_l1, 1u, l1_entries, page);
@@ -278,8 +281,7 @@ static int infilfs_allocation_map_load(
         }
     }
 
-    if (branch_pos != branches || global_l1 != level1 ||
-        global_leaf != leaves) {
+    if (global_l1 != level1 || global_leaf != leaves) {
         ret = -EFSCORRUPTED;
         goto fail;
     }

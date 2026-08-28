@@ -161,7 +161,6 @@ static infs_status allocation_map_load(
     const uint64_t *root_children =
         (const uint64_t *)(page + sizeof(struct infs_allocation_page_disk));
 
-    size_t branch_pos = 1;
     size_t global_level1 = 0;
     size_t global_leaf = 0;
     for (size_t i = 0; i < level2; ++i) {
@@ -169,11 +168,12 @@ static infs_status allocation_map_load(
         uint32_t l2_entries = (uint32_t)(
             level1 - global_level1 > INFS_ALLOCATION_TREE_FANOUT ?
             INFS_ALLOCATION_TREE_FANOUT : level1 - global_level1);
-        if (branch_pos >= branches) {
+        size_t l2_slot = 1u + i;
+        if (l2_slot >= branches) {
             status = INFS_STATUS_CORRUPT;
             goto fail;
         }
-        layout->branch_blocks[branch_pos++] = l2_block;
+        layout->branch_blocks[l2_slot] = l2_block;
         status = allocation_map_read_page(
             vol, l2_block, INFS_ALLOCATION_BRANCH_PAGE_MAGIC, generation,
             i, 2u, l2_entries, page);
@@ -190,11 +190,12 @@ static infs_status allocation_map_load(
             uint32_t l1_entries = (uint32_t)(
                 leaves - global_leaf > INFS_ALLOCATION_TREE_FANOUT ?
                 INFS_ALLOCATION_TREE_FANOUT : leaves - global_leaf);
-            if (branch_pos >= branches) {
+            size_t l1_slot = 1u + level2 + global_level1;
+            if (l1_slot >= branches) {
                 status = INFS_STATUS_CORRUPT;
                 goto fail;
             }
-            layout->branch_blocks[branch_pos++] = l1_block;
+            layout->branch_blocks[l1_slot] = l1_block;
             status = allocation_map_read_page(
                 vol, l1_block, INFS_ALLOCATION_BRANCH_PAGE_MAGIC, generation,
                 global_level1, 1u, l1_entries, page);
@@ -238,8 +239,7 @@ static infs_status allocation_map_load(
             }
         }
     }
-    if (branch_pos != branches || global_level1 != level1 ||
-        global_leaf != leaves) {
+    if (global_level1 != level1 || global_leaf != leaves) {
         status = INFS_STATUS_CORRUPT;
         goto fail;
     }
