@@ -36,18 +36,18 @@ head -c 98765 /dev/urandom > "$source_file"
 "$tool" "$image" cat /docs/test.bin > "$out_file"
 cmp "$source_file" "$out_file"
 
-# Format 0.15 doubles the portable component-name boundary from 255 to 510
+# Format 0.16 doubles the portable component-name boundary from 255 to 510
 # UTF-8 bytes. Exercise the production path parser and directory-tree writer.
-name510="$(head -c 510 </dev/zero | tr '\0' n)"
-name511="${name510}n"
-"$tool" "$image" put "$source_file" "/docs/$name510"
-"$tool" "$image" cat "/docs/$name510" > "$out_file"
+name1023="$(head -c 1023 </dev/zero | tr '\0' n)"
+name1024="${name1023}n"
+"$tool" "$image" put "$source_file" "/docs/$name1023"
+"$tool" "$image" cat "/docs/$name1023" > "$out_file"
 cmp "$source_file" "$out_file"
-if "$tool" "$image" put "$source_file" "/docs/$name511" >/dev/null 2>&1; then
-    echo "511-byte filename unexpectedly succeeded" >&2
+if "$tool" "$image" put "$source_file" "/docs/$name1024" >/dev/null 2>&1; then
+    echo "1024-byte filename unexpectedly succeeded" >&2
     exit 1
 fi
-"$tool" "$image" rm "/docs/$name510"
+"$tool" "$image" rm "/docs/$name1023"
 "$tool" "$image" reflink /docs/test.bin /docs/test-clone.bin
 "$tool" "$image" cat /docs/test-clone.bin > "$out_file"
 cmp "$source_file" "$out_file"

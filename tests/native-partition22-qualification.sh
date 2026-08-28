@@ -157,7 +157,7 @@ fs_type="$(stat -f -c '%T' "$MOUNTPOINT")"
 read -r block_size blocks free_blocks avail_blocks < <(stat -f -c '%S %b %f %a' "$MOUNTPOINT")
 printf 'statfs type=%s block_size=%s blocks=%s free=%s avail=%s\n' "$fs_type" "$block_size" "$blocks" "$free_blocks" "$avail_blocks"
 name_limit="$(stat -f -c '%l' "$MOUNTPOINT")"
-[[ "$name_limit" == 510 ]] && pass "statfs advertises 510-byte filename components" || fail "statfs filename limit is $name_limit, expected 510"
+[[ "$name_limit" == 1023 ]] && pass "statfs advertises 1023-byte filename components" || fail "statfs filename limit is $name_limit, expected 1023"
 df -hT "$MOUNTPOINT"
 if (( block_size == 4096 && blocks > 0 && free_blocks > 0 && free_blocks <= blocks )); then pass "statfs reports usable 4096-byte total/free block accounting"; else fail "statfs capacity accounting is invalid"; fi
 device_bytes="$(blockdev --getsize64 "$TARGET")"
@@ -240,15 +240,15 @@ unicode_dir="$MOUNTPOINT/Unicode-Ä-Ж-漢字-🙂"
 mkdir "$unicode_dir"
 printf 'UTF-8 payload\n' >"$unicode_dir/naïve-文件-🙂.txt"
 [[ -f "$unicode_dir/naïve-文件-🙂.txt" ]] && pass "UTF-8 directory and filename round-trip" || fail "UTF-8 namespace round-trip failed"
-long510="$(head -c 510 < /dev/zero | tr '\0' a)"
-printf 'long-name\n' >"$MOUNTPOINT/$long510"
-[[ -f "$MOUNTPOINT/$long510" ]] && pass "510-byte filename succeeds" || fail "510-byte filename failed"
-long511="${long510}b"
+long1023="$(head -c 1023 < /dev/zero | tr '\0' a)"
+printf 'long-name\n' >"$MOUNTPOINT/$long1023"
+[[ -f "$MOUNTPOINT/$long1023" ]] && pass "1023-byte filename succeeds" || fail "1023-byte filename failed"
+long1024="${long1023}b"
 set +e
-printf 'too-long\n' >"$MOUNTPOINT/$long511" 2>"$WORKDIR/long511.err"
+printf 'too-long\n' >"$MOUNTPOINT/$long1024" 2>"$WORKDIR/long1024.err"
 rc=$?
 set -e
-(( rc != 0 )) && pass "511-byte filename is correctly rejected" || fail "511-byte filename unexpectedly succeeded"
+(( rc != 0 )) && pass "1024-byte filename is correctly rejected" || fail "1024-byte filename unexpectedly succeeded"
 
 section "Sparse/truncate and random-overwrite capability probes"
 truncate -s 134217728 "$MOUNTPOINT/sparse-128m.bin"

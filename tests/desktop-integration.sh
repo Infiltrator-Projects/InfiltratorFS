@@ -22,7 +22,7 @@ truncate -s 64M "$image"
 
 grep -Fxq 'ID_FS_USAGE=filesystem' "$probe"
 grep -Fxq 'ID_FS_TYPE=infiltratorfs' "$probe"
-grep -Fxq 'ID_FS_VERSION=0.15' "$probe"
+grep -Fxq 'ID_FS_VERSION=0.16' "$probe"
 grep -Fxq 'ID_FS_LABEL=Desktop Test' "$probe"
 grep -Fxq 'ID_FS_BLOCK_SIZE=4096' "$probe"
 grep -Eq '^ID_FS_UUID=[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' "$probe"

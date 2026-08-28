@@ -80,8 +80,8 @@ static void check_layout(void)
     expect(sizeof(struct infs_attributes_disk) == 88, "attributes size");
     expect(sizeof(struct infs_dirent_disk) == 24u,
            "directory entry header size");
-    expect(INFS_NAME_MAX == 510u,
-           "Format 0.15 component-name capacity");
+    expect(INFS_NAME_MAX == 1023u,
+           "Format 0.16 component-name capacity");
     expect(INFS_DIRENT_MAX_RECORD_SIZE <= INFS_METADATA_PAGE_DATA_SIZE,
            "maximum component fits one directory leaf record");
     expect(offsetof(struct infs_attributes_disk, birth_time_ns) == 24,

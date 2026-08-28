@@ -29,12 +29,12 @@ static const uint8_t INFS_EXTENT_PAGE_MAGIC[8] = {
  * exact development format. A format revision replaces its predecessor; it
  * does not add an older-format reader or migration path. */
 #define INFS_FORMAT_MAJOR 0u
-#define INFS_FORMAT_MINOR 15u
+#define INFS_FORMAT_MINOR 16u
 #define INFS_CHECKPOINT_COUNT 3u
 #define INFS_CHECKSUM_CRC64_ECMA 1u
 #define INFS_CHECKSUM_SHA256     2u
 #define INFS_LABEL_MAX 64u
-#define INFS_NAME_MAX 510u
+#define INFS_NAME_MAX 1023u
 #define INFS_SNAPSHOT_CATALOG_ID "INFS-SNAP-CAT-01"
 
 #define INFS_OBJECT_DIRECTORY  1u
