@@ -65,7 +65,7 @@ jobs:
         run: bash tests/native-free-extent-index-policy.sh .
       - name: Guard native object-index tree
         run: bash tests/native-index-tree-policy.sh .
-      - name: Guard Format 0.14 object-index tree
+      - name: Guard Format 0.15 object-index tree
         run: bash tests/index-tree-format-policy.sh .
       - name: Guard portable directory tree core
         run: bash tests/directory-tree-policy.sh .

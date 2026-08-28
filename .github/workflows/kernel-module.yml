@@ -195,7 +195,38 @@ jobs:
 
           test "$(findmnt -n -o FSTYPE -T "$mountpoint")" = infiltratorfs
           findmnt -n -o OPTIONS -T "$mountpoint" | grep -Eq '(^|,)rw(,|$)'
+          test "$(stat -f -c '%l' "$mountpoint")" = 510
           test "$(stat -c '%u:%g' "$mountpoint")" = "$(id -u):$(id -g)"
+
+          # Format 0.15 namespace boundary: native VFS must match the portable
+          # 510-byte component limit and reject byte 511 with ENAMETOOLONG.
+          python3 - "$mountpoint" <<'PY'
+          import errno
+          import os
+          import sys
+
+          root = sys.argv[1]
+          name510 = "n" * 510
+          name511 = name510 + "n"
+          path510 = os.path.join(root, name510)
+          with open(path510, "wb") as f:
+              f.write(b"510-byte-name\n")
+              f.flush()
+              os.fsync(f.fileno())
+          with open(path510, "rb") as f:
+              assert f.read() == b"510-byte-name\n"
+          assert name510 in os.listdir(root)
+          try:
+              fd = os.open(os.path.join(root, name511),
+                           os.O_CREAT | os.O_WRONLY | os.O_EXCL, 0o600)
+          except OSError as exc:
+              assert exc.errno == errno.ENAMETOOLONG, exc
+          else:
+              os.close(fd)
+              raise AssertionError("511-byte filename unexpectedly succeeded")
+          os.unlink(path510)
+          PY
+
           cmp "$inline_src" "$mountpoint/docs/inline.txt"
           cmp "$extent_src" "$mountpoint/docs/extent.bin"
           test "$(readlink "$mountpoint/current")" = 'docs/inline.txt'

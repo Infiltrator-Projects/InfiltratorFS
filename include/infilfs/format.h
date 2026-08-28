@@ -29,12 +29,12 @@ static const uint8_t INFS_EXTENT_PAGE_MAGIC[8] = {
  * exact development format. A format revision replaces its predecessor; it
  * does not add an older-format reader or migration path. */
 #define INFS_FORMAT_MAJOR 0u
-#define INFS_FORMAT_MINOR 14u
+#define INFS_FORMAT_MINOR 15u
 #define INFS_CHECKPOINT_COUNT 3u
 #define INFS_CHECKSUM_CRC64_ECMA 1u
 #define INFS_CHECKSUM_SHA256     2u
 #define INFS_LABEL_MAX 64u
-#define INFS_NAME_MAX 255u
+#define INFS_NAME_MAX 510u
 #define INFS_SNAPSHOT_CATALOG_ID "INFS-SNAP-CAT-01"
 
 #define INFS_OBJECT_DIRECTORY  1u
@@ -303,6 +303,8 @@ struct INFS_PACKED infs_snapshot_record_disk {
 
 #define INFS_METADATA_PAGE_DATA_SIZE \
     (INFS_BLOCK_SIZE - sizeof(struct infs_metadata_page_disk))
+#define INFS_DIRENT_MAX_RECORD_SIZE \
+    ((sizeof(struct infs_dirent_disk) + INFS_NAME_MAX + 7u) & ~(size_t)7u)
 #define INFS_INDEX_ENTRIES_PER_PAGE \
     (INFS_METADATA_PAGE_DATA_SIZE / sizeof(struct infs_index_entry_disk))
 #define INFS_INDEX_TREE_FANOUT 256u
@@ -339,6 +341,8 @@ _Static_assert(sizeof(struct infs_directory_payload_disk) == 112,
                "directory payload layout changed");
 _Static_assert(sizeof(struct infs_dirent_disk) == 24,
                "directory entry header layout changed");
+_Static_assert(INFS_DIRENT_MAX_RECORD_SIZE <= INFS_METADATA_PAGE_DATA_SIZE,
+               "maximum filename no longer fits one directory leaf record");
 _Static_assert(sizeof(struct infs_file_payload_disk) == 128,
                "file payload layout changed");
 _Static_assert(sizeof(struct infs_symlink_payload_disk) == 112,

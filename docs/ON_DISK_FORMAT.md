@@ -1,9 +1,9 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-# InfiltratorFS On-Disk Format 0.14
+# InfiltratorFS On-Disk Format 0.15
 
-Status: experimental writable prototype. Development 0.18.17 accepts exactly Format 0.14. Release 0.18.16 remains the last Format 0.12 release. Pre-1.0 development builds do not promise compatibility with earlier development formats.
+Status: experimental writable prototype. Development 0.18.18 accepts exactly Format 0.15. Release 0.18.16 remains the last Format 0.12 release. Pre-1.0 development builds do not promise compatibility with earlier development formats.
 
-Implementation 0.6.0 introduced sparse extents, sparse checksum indexing and hole punching. Implementation 0.7.0 defined `INFS_INCOMPAT_INLINE_DATA`. Implementation 0.8.0 added `INFS_INCOMPAT_SHARED_EXTENTS`; Format 0.8 added `INFS_INCOMPAT_PAGED_METADATA` and version-2 metadata heads. Format 0.9 added `INFS_INCOMPAT_SYMBOLIC_LINKS` and object type 5. Format 0.10 added `INFS_INCOMPAT_HARD_LINKS`. Format 0.12 added `INFS_INCOMPAT_SNAPSHOTS`, snapshot-catalog object type 6 and fixed-size generation-root records. Format 0.13 added `INFS_INCOMPAT_INDEX_TREE`, version-3 object-index heads and radix branch pages. Format 0.14 adds `INFS_INCOMPAT_DIRECTORY_TREE`, version-3 directory heads and hashed directory branch pages. The normative acceptance rules are summarized in `CONFORMANCE.md`.
+Implementation 0.6.0 introduced sparse extents, sparse checksum indexing and hole punching. Implementation 0.7.0 defined `INFS_INCOMPAT_INLINE_DATA`. Implementation 0.8.0 added `INFS_INCOMPAT_SHARED_EXTENTS`; Format 0.8 added `INFS_INCOMPAT_PAGED_METADATA` and version-2 metadata heads. Format 0.9 added `INFS_INCOMPAT_SYMBOLIC_LINKS` and object type 5. Format 0.10 added `INFS_INCOMPAT_HARD_LINKS`. Format 0.12 added `INFS_INCOMPAT_SNAPSHOTS`, snapshot-catalog object type 6 and fixed-size generation-root records. Format 0.13 added `INFS_INCOMPAT_INDEX_TREE`, version-3 object-index heads and radix branch pages. Format 0.15 adds `INFS_INCOMPAT_DIRECTORY_TREE`, version-3 directory heads and hashed directory branch pages. The normative acceptance rules are summarized in `CONFORMANCE.md`.
 
 ## 1. Encoding
 
@@ -54,11 +54,11 @@ checksum field              32 bytes reserved
 
 Generation, filesystem UUID and root object ID are nonzero.
 
-Format 0.14 requires `INFS_INCOMPAT_UTF8_NAMES` and `INFS_INCOMPAT_SPARSE_EXTENTS`. Newly formatted volumes enable the complete known set: `INFS_INCOMPAT_INLINE_DATA`, `INFS_INCOMPAT_SHARED_EXTENTS`, `INFS_INCOMPAT_PAGED_METADATA`, `INFS_INCOMPAT_SYMBOLIC_LINKS`, `INFS_INCOMPAT_HARD_LINKS`, `INFS_INCOMPAT_SNAPSHOTS`, `INFS_INCOMPAT_PAGED_EXTENTS`, `INFS_INCOMPAT_INDEX_TREE` and `INFS_INCOMPAT_DIRECTORY_TREE`. The tree feature bits require matching version-3 object-index and directory heads. Without a tree bit, the corresponding classic or paged representation remains valid when its own feature contract agrees. Disagreement between a feature bit and the selected head version is corruption. Symbolic-link, hard-link and snapshot-catalog representations are accepted only with their corresponding feature bits. Readers reject a missing required bit or any unknown incompatible feature flag.
+Format 0.15 requires `INFS_INCOMPAT_UTF8_NAMES` and `INFS_INCOMPAT_SPARSE_EXTENTS`. Newly formatted volumes enable the complete known set: `INFS_INCOMPAT_INLINE_DATA`, `INFS_INCOMPAT_SHARED_EXTENTS`, `INFS_INCOMPAT_PAGED_METADATA`, `INFS_INCOMPAT_SYMBOLIC_LINKS`, `INFS_INCOMPAT_HARD_LINKS`, `INFS_INCOMPAT_SNAPSHOTS`, `INFS_INCOMPAT_PAGED_EXTENTS`, `INFS_INCOMPAT_INDEX_TREE` and `INFS_INCOMPAT_DIRECTORY_TREE`. The tree feature bits require matching version-3 object-index and directory heads. Without a tree bit, the corresponding classic or paged representation remains valid when its own feature contract agrees. Disagreement between a feature bit and the selected head version is corruption. Symbolic-link, hard-link and snapshot-catalog representations are accepted only with their corresponding feature bits. Readers reject a missing required bit or any unknown incompatible feature flag.
 
-Format selection is exact during development: only Format 0.14 is accepted. Within that format, shared extents, inline data, paged extents, symbolic links, hard links and snapshot catalogs are interpreted only when their incompatible feature bits are present.
+Format selection is exact during development: only Format 0.15 is accepted. Within that format, shared extents, inline data, paged extents, symbolic links, hard links and snapshot catalogs are interpreted only when their incompatible feature bits are present.
 
-Feature classes have distinct compatibility semantics. Unknown incompatible bits prevent any open. Unknown read-only-compatible bits may be opened read-only but prevent writable open. Unknown compatible bits may be ignored. Format 0.14 defines no compatible or read-only-compatible bits for newly created volumes.
+Feature classes have distinct compatibility semantics. Unknown incompatible bits prevent any open. Unknown read-only-compatible bits may be opened read-only but prevent writable open. Unknown compatible bits may be ignored. Format 0.15 defines no compatible or read-only-compatible bits for newly created volumes.
 
 CRC64 occupies the first eight checksum bytes. The remaining checksum bytes are zero. The complete checksum field is zero during calculation. A physical checkpoint copy first passes its own magic, format, size, block geometry, checksum, volume size, feature flags, canonical padding and expected checkpoint-position checks. The implementation then validates the complete graph referenced by surviving checkpoint candidates in descending generation order. The newest candidate with a structurally valid committed graph wins; a corrupt newer graph may fall back to an older valid committed graph. External I/O, memory or unsupported-feature failures are not treated as graph corruption and therefore do not silently trigger fallback.
 
@@ -84,13 +84,13 @@ checksum algorithm          CRC64-ECMA
 checksum                    32-byte reserved field
 ```
 
-Classic metadata objects use object version 1. Format 0.8 directory and object-index heads used object version 2. Current Format 0.14 directory and object-index heads use object version 3 and reference tree pages. Versioned `infs_metadata_page_disk` blocks carry their own magic, owner identity, generation, entry count and CRC64. All object IDs and generations are nonzero. Bytes after declared payloads and unused checksum-field bytes are canonical zero.
+Classic metadata objects use object version 1. Format 0.8 directory and object-index heads used object version 2. Current Format 0.15 directory and object-index heads use object version 3 and reference tree pages. Versioned `infs_metadata_page_disk` blocks carry their own magic, owner identity, generation, entry count and CRC64. All object IDs and generations are nonzero. Bytes after declared payloads and unused checksum-field bytes are canonical zero.
 
 ## 6. Object index
 
 The index maps a persistent object ID to a physical metadata block and object type. Directory entries contain IDs rather than physical addresses, so relocation changes the index without rewriting every namespace reference.
 
-Format 0.14 stores the total entry count and one physical tree-root pointer in the version-3 index head. Each object-ID byte selects one slot in a 256-way branch page. Leaves reuse fixed-size ID-to-block index entries. Branch and leaf pages are independently allocation/owner/generation/checksum validated; branch pages store exactly 256 physical child pointers and their entry count equals the number of nonzero pointers. An index entry must follow the branch prefix selected by its object ID. Entries are validated for nonzero and duplicate IDs, bounds, allocation state, zero reserved flags, object identity, type and checksum. The root must appear exactly once and match the checkpoint.
+Format 0.15 stores the total entry count and one physical tree-root pointer in the version-3 index head. Each object-ID byte selects one slot in a 256-way branch page. Leaves reuse fixed-size ID-to-block index entries. Branch and leaf pages are independently allocation/owner/generation/checksum validated; branch pages store exactly 256 physical child pointers and their entry count equals the number of nonzero pointers. An index entry must follow the branch prefix selected by its object ID. Entries are validated for nonzero and duplicate IDs, bounds, allocation state, zero reserved flags, object identity, type and checksum. The root must appear exactly once and match the checkpoint.
 
 ## 7. Common attributes
 
@@ -110,7 +110,7 @@ extended-attributes object ID   future portable named metadata, zero when absent
 
 This record is independent of Linux `struct stat` and Windows file-information structures.
 
-Only the portable attribute flags currently defined in `format.h` are accepted. The generic security and extended-attribute references remain zero until their portable object classes and compatibility features are specified. Development 0.18.17 can persist standard Linux xattr namespaces and special-node details through Linux adapter metadata; those adapter sidecars do not consume these reserved portable references and do not make Linux metadata the cross-platform canonical model.
+Only the portable attribute flags currently defined in `format.h` are accepted. The generic security and extended-attribute references remain zero until their portable object classes and compatibility features are specified. Development 0.18.18 can persist standard Linux xattr namespaces and special-node details through Linux adapter metadata; those adapter sidecars do not consume these reserved portable references and do not make Linux metadata the cross-platform canonical model.
 
 The current portable flags are persistent cross-platform metadata; mutation-policy semantics for flags such as `READ_ONLY` require an explicit core API/policy rather than being inferred silently by one adapter.
 
@@ -118,11 +118,11 @@ The current portable flags are persistent cross-platform metadata; mutation-poli
 
 ## 8. Directories and names
 
-A Format 0.14 directory head contains common attributes, POSIX compatibility data, a total entry count, zero `bytes_used` and one physical tree-root pointer. The root pointer is zero exactly when the directory is empty. SHA-256 of the exact name bytes routes lookup through one byte per 256-way branch depth, with a maximum depth of 32. Leaves contain the ordinary variable-length directory records. Hashes select storage paths only; the exact UTF-8 name remains namespace identity and is compared byte-for-byte. Every branch and leaf page is allocation/owner/generation/checksum validated.
+A Format 0.15 directory head contains common attributes, POSIX compatibility data, a total entry count, zero `bytes_used` and one physical tree-root pointer. The root pointer is zero exactly when the directory is empty. SHA-256 of the exact name bytes routes lookup through one byte per 256-way branch depth, with a maximum depth of 32. Leaves contain the ordinary variable-length directory records. Hashes select storage paths only; the exact UTF-8 name remains namespace identity and is compared byte-for-byte. Every branch and leaf page is allocation/owner/generation/checksum validated.
 
-Each record contains its aligned record size, name length, target object type, flags, 128-bit target ID and name bytes. Names must be well-formed UTF-8, contain 1–255 bytes, and contain neither NUL nor `/`. Records are padded to eight-byte alignment. Current record flags and padding are zero.
+Each record contains its aligned record size, name length, target object type, flags, 128-bit target ID and name bytes. Names must be well-formed UTF-8, contain 1–510 bytes, and contain neither NUL nor `/`. Records are padded to eight-byte alignment. Current record flags and padding are zero.
 
-Lookup in Format 0.14 is case-sensitive and byte-exact. `.` and `..` are synthesized navigation components and are never stored. Pathnames ending in `/` retain directory semantics in namespace operations; rename does not silently strip a trailing slash from a non-directory source or nonexistent destination.
+Lookup in Format 0.15 is case-sensitive and byte-exact. `.` and `..` are synthesized navigation components and are never stored. Pathnames ending in `/` retain directory semantics in namespace operations; rename does not silently strip a trailing slash from a non-directory source or nonexistent destination.
 
 With `INFS_INCOMPAT_HARD_LINKS`, a regular file may be referenced by one or more directory entries while retaining one indexed object, one data/checksum representation and one persistent object ID. Its stored link count equals its exact incoming directory-reference count. Creating the second name clears the file object's parent ID to zero because no single containing directory is authoritative; that zero remains valid if later unlink reduces the count to one. A file that has never been multiply linked may retain its sole containing directory ID. Directory and symbolic-link objects remain single-parent and singly referenced. Directory link count remains 2 plus its direct child-directory count. Hard links to directories or symbolic links are unsupported. Every namespace object remains root-reachable, every dirent type and identity must match the index, and names within each directory remain unique.
 
@@ -185,7 +185,7 @@ Snapshot creation first publishes pending mutations, copies the stable generatio
 
 Snapshot deletion removes the selected record and computes the union of the active graph and remaining snapshot bitmaps. Blocks unique to the deleted history are deferred until the new catalog, index, bitmap and checkpoint publish atomically. A newer snapshot may retain the graph of an older snapshot that existed when it was captured; deleting the visible older name therefore does not reclaim those dependencies until the newer snapshot is also deleted.
 
-Snapshot views are read-only. Lookup, directory listing, attributes, symbolic-link targets and file reads use the captured root/index/bitmap rather than the active roots. Full graph validation and scrub recursively validate catalogued generation roots and verify retained file data. Rollback and undelete are not defined by Format 0.14.
+Snapshot views are read-only. Lookup, directory listing, attributes, symbolic-link targets and file reads use the captured root/index/bitmap rather than the active roots. Full graph validation and scrub recursively validate catalogued generation roots and verify retained file data. Rollback and undelete are not defined by Format 0.15.
 
 ## 11. Transaction publication and recovery
 
@@ -216,7 +216,7 @@ Committed extent-backed file-data blocks are replaced through CoW. Inline file u
 
 The formatter reopens the exact block target with Linux `O_EXCL` after advisory mount/holder preflight, verifies that the device identity and geometry are unchanged, and retains that exclusive descriptor through the destructive write sequence. Failure to obtain exclusivity aborts formatting before the first write. Failure of the initial realtime-clock query is also a formatter error rather than silently creating zero initial timestamps. The formatter additionally takes the same nonblocking exclusive advisory lock used by writable POSIX volume openers, coordinating both image files and block targets with the formatter.
 
-Formatting first invalidates the three candidate checkpoint locations and flushes that invalidation. It then writes the bitmap, initial tree index and tree root directory, durably flushes those referenced structures, and only then publishes the three valid generation-1 checkpoints. Therefore an interrupted format is unmountable rather than presenting a valid checkpoint that references incomplete initial metadata. Development 0.18.17 creates Format 0.14 checkpoints with the complete current incompatible-feature set enabled.
+Formatting first invalidates the three candidate checkpoint locations and flushes that invalidation. It then writes the bitmap, initial tree index and tree root directory, durably flushes those referenced structures, and only then publishes the three valid generation-1 checkpoints. Therefore an interrupted format is unmountable rather than presenting a valid checkpoint that references incomplete initial metadata. Development 0.18.18 creates Format 0.15 checkpoints with the complete current incompatible-feature set enabled.
 
 ## 13. Corruption rejection
 
@@ -234,7 +234,7 @@ The policy is to fail closed when committed state cannot be trusted while retain
 - no snapshot rollback or native undelete policy;
 - no compression;
 - portable security and generic named-metadata object references are reserved but not yet standardized;
-- Linux 0.18.17 development adapter xattrs/special-node metadata are not the final portable named-metadata/security model;
+- Linux 0.18.18 development adapter xattrs/special-node metadata are not the final portable named-metadata/security model;
 - POSIX compatibility metadata exists; Windows security mapping is not implemented;
 - metadata uses CRC64 while file data uses SHA-256;
 - scrub detects but cannot yet repair corruption; and

@@ -31,9 +31,9 @@
 #define INFILFS_DISK_BLOCK_SIZE 4096u
 #define INFILFS_DISK_BLOCK_SHIFT 12u
 #define INFILFS_FORMAT_MAJOR 0u
-#define INFILFS_FORMAT_MINOR 14u
+#define INFILFS_FORMAT_MINOR 15u
 #define INFILFS_CHECKPOINT_COUNT 3u
-#define INFILFS_NAME_MAX 255u
+#define INFILFS_NAME_MAX 510u
 
 #define INFILFS_CHECKSUM_CRC64_ECMA 1u
 #define INFILFS_CHECKSUM_SHA256 2u
@@ -228,6 +228,8 @@ struct infilfs_snapshot_record_disk {
 
 #define INFILFS_METADATA_PAGE_DATA_SIZE \
     (INFILFS_DISK_BLOCK_SIZE - sizeof(struct infilfs_metadata_page_disk))
+#define INFILFS_DIRENT_MAX_RECORD_SIZE \
+    ALIGN(sizeof(struct infilfs_dirent_disk) + INFILFS_NAME_MAX, 8u)
 #define INFILFS_INDEX_ENTRIES_PER_PAGE \
     (INFILFS_METADATA_PAGE_DATA_SIZE / sizeof(struct infilfs_index_entry_disk))
 #define INFILFS_INDEX_TREE_FANOUT 256u
@@ -254,6 +256,8 @@ struct infilfs_snapshot_record_disk {
      sizeof(struct infilfs_file_payload_disk) - \
      sizeof(struct infilfs_data_checksum_disk))
 
+static_assert(INFILFS_DIRENT_MAX_RECORD_SIZE <=
+              INFILFS_METADATA_PAGE_DATA_SIZE);
 static_assert(sizeof(struct infilfs_superblock_disk) == 252);
 static_assert(sizeof(struct infilfs_object_header_disk) == 96);
 static_assert(sizeof(struct infilfs_metadata_page_disk) == 80);
