@@ -18,6 +18,66 @@ static void allocation_map_layout_destroy(struct infs_allocation_layout *layout)
     memset(layout, 0, sizeof(*layout));
 }
 
+static void allocation_map_cache_destroy(struct infs_volume *vol)
+{
+    if (!vol)
+        return;
+    free(vol->allocation_leaf_blocks);
+    free(vol->allocation_branch_blocks);
+    vol->allocation_leaf_blocks = NULL;
+    vol->allocation_branch_blocks = NULL;
+    vol->allocation_leaf_count = 0;
+    vol->allocation_branch_count = 0;
+    vol->allocation_level1_count = 0;
+    vol->allocation_level2_count = 0;
+}
+
+static void allocation_map_cache_replace(
+    struct infs_volume *vol, struct infs_allocation_layout *layout)
+{
+    if (!vol || !layout)
+        return;
+    allocation_map_cache_destroy(vol);
+    vol->allocation_leaf_blocks = layout->leaf_blocks;
+    vol->allocation_branch_blocks = layout->branch_blocks;
+    vol->allocation_leaf_count = layout->leaf_count;
+    vol->allocation_branch_count = layout->branch_count;
+    vol->allocation_level1_count = layout->level1_count;
+    vol->allocation_level2_count = layout->level2_count;
+    memset(layout, 0, sizeof(*layout));
+}
+
+/* Return a borrowed view of the committed in-memory layout. */
+static infs_status allocation_map_cache_view(
+    struct infs_volume *vol, const struct infs_superblock_disk *sb,
+    struct infs_allocation_layout *layout)
+{
+    size_t leaves = 0, level1 = 0, level2 = 0, branches = 0;
+    if (!vol || !sb || !layout)
+        return INFS_STATUS_INVALID_ARGUMENT;
+    infs_status status = allocation_map_counts(
+        infs_le64_to_cpu(sb->total_blocks),
+        &leaves, &level1, &level2, &branches);
+    if (status != INFS_STATUS_OK)
+        return status;
+    if (!vol->allocation_leaf_blocks || !vol->allocation_branch_blocks ||
+        vol->allocation_leaf_count != leaves ||
+        vol->allocation_branch_count != branches ||
+        vol->allocation_level1_count != level1 ||
+        vol->allocation_level2_count != level2 ||
+        infs_le64_to_cpu(sb->allocation_leaf_count) != leaves ||
+        vol->allocation_branch_blocks[0] !=
+            infs_le64_to_cpu(sb->allocation_root_block))
+        return INFS_STATUS_CORRUPT;
+    layout->leaf_blocks = vol->allocation_leaf_blocks;
+    layout->branch_blocks = vol->allocation_branch_blocks;
+    layout->leaf_count = leaves;
+    layout->branch_count = branches;
+    layout->level1_count = level1;
+    layout->level2_count = level2;
+    return INFS_STATUS_OK;
+}
+
 static infs_status allocation_map_counts(uint64_t total_blocks,
                                          size_t *leaf_count_out,
                                          size_t *level1_count_out,
@@ -490,14 +550,15 @@ static infs_status allocation_map_write_page(
 }
 
 static infs_status allocation_map_publish(
-    struct infs_volume *vol, uint64_t generation)
+    struct infs_volume *vol, uint64_t generation,
+    struct infs_allocation_layout *next_layout)
 {
-    if (!vol || !vol->tx_active || generation == 0)
+    if (!vol || !vol->tx_active || generation == 0 || !next_layout)
         return INFS_STATUS_INVALID_ARGUMENT;
 
     struct infs_allocation_layout old = {0};
-    infs_status status = allocation_map_load(
-        vol, &vol->tx_base_sb, NULL, NULL, &old);
+    infs_status status = allocation_map_cache_view(
+        vol, &vol->tx_base_sb, &old);
     if (status != INFS_STATUS_OK)
         return status;
 
@@ -759,6 +820,17 @@ static infs_status allocation_map_publish(
             (uint32_t)old.level2_count * sizeof(uint64_t));
     }
 
+    if (status == INFS_STATUS_OK) {
+        next_layout->leaf_blocks = new_leaves;
+        next_layout->branch_blocks = new_branches;
+        next_layout->leaf_count = old.leaf_count;
+        next_layout->branch_count = old.branch_count;
+        next_layout->level1_count = old.level1_count;
+        next_layout->level2_count = old.level2_count;
+        new_leaves = NULL;
+        new_branches = NULL;
+    }
+
 out:
     free(snapshot_union);
     free(new_branches);
@@ -767,6 +839,5 @@ out:
     free(dirty_level2);
     free(dirty_level1);
     free(dirty_leaves);
-    allocation_map_layout_destroy(&old);
     return status;
 }

@@ -20,6 +20,7 @@ A conforming implementation preserves:
 - authoritative one-bit-per-block allocation ownership persisted through the Format 0.17 allocation tree;
 - independently CRC64-protected allocation branch/leaf pages with exact logical index, level and entry-count validation;
 - transaction allocation/deferred-range journals rather than whole-volume bitmap rollback clones;
+- committed allocation-layout caching with replacement only after the primary checkpoint durability boundary;
 - exact root/object-index/directory/checksum graph reachability;
 - exact link counts and parent/reference rules;
 - ordinary extents, sparse hole extents and shared normal extents;

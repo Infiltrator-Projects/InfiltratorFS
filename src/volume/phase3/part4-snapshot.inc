@@ -492,8 +492,7 @@ infs_status infs_snapshot_create(struct infs_volume *vol, const char *name)
     memcpy(snapshot_bitmap, vol->bitmap, vol->bitmap_bytes);
 
     struct infs_allocation_layout live_map = {0};
-    status = allocation_map_load(
-        vol, &vol->tx_base_sb, NULL, NULL, &live_map);
+    status = allocation_map_cache_view(vol, &vol->tx_base_sb, &live_map);
     if (status != INFS_STATUS_OK) {
         free(snapshot_bitmap);
         goto fail;
@@ -502,7 +501,6 @@ infs_status infs_snapshot_create(struct infs_volume *vol, const char *name)
         bitmap_set(snapshot_bitmap, live_map.leaf_blocks[i], 0);
     for (size_t i = 0; i < live_map.branch_count; ++i)
         bitmap_set(snapshot_bitmap, live_map.branch_blocks[i], 0);
-    allocation_map_layout_destroy(&live_map);
 
     uint64_t bitmap_blocks =
         (uint64_t)(vol->bitmap_bytes / INFS_BLOCK_SIZE);

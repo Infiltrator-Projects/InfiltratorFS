@@ -50,6 +50,7 @@ infs_status infs_volume_sync(struct infs_volume *vol)
         return vol->tx_error;
 
     uint64_t next_generation = 0;
+    struct infs_allocation_layout next_allocation = {0};
     infs_status status = transaction_next_generation(vol, &next_generation);
     if (status != INFS_STATUS_OK)
         return status;
@@ -65,28 +66,41 @@ infs_status infs_volume_sync(struct infs_volume *vol)
         return abort_precheckpoint_transaction(vol, status);
     phase2_failpoint("before-bitmap");
 
-    status = allocation_map_publish(vol, next_generation);
-    if (status != INFS_STATUS_OK)
+    status = allocation_map_publish(
+        vol, next_generation, &next_allocation);
+    if (status != INFS_STATUS_OK) {
+        allocation_map_layout_destroy(&next_allocation);
         return abort_precheckpoint_transaction(vol, status);
+    }
     status = infs_storage_flush(&vol->storage);
-    if (status != INFS_STATUS_OK)
+    if (status != INFS_STATUS_OK) {
+        allocation_map_layout_destroy(&next_allocation);
         return abort_precheckpoint_transaction(vol, status);
+    }
     phase2_failpoint("after-bitmap");
 
     uint8_t sb_block[INFS_BLOCK_SIZE];
     status = infs_encode_superblock(sb_block, &vol->sb);
-    if (status != INFS_STATUS_OK)
+    if (status != INFS_STATUS_OK) {
+        allocation_map_layout_destroy(&next_allocation);
         return abort_precheckpoint_transaction(vol, status);
+    }
     uint64_t generation = infs_le64_to_cpu(vol->sb.generation);
     unsigned first = (unsigned)(generation % INFS_CHECKPOINT_COUNT);
     uint64_t first_block =
         infs_le64_to_cpu(vol->sb.checkpoint_block[first]);
     status = write_block(vol, first_block, sb_block);
-    if (status != INFS_STATUS_OK)
+    if (status != INFS_STATUS_OK) {
+        allocation_map_layout_destroy(&next_allocation);
         return require_checkpoint_recovery(vol, status);
+    }
     status = infs_storage_flush(&vol->storage);
-    if (status != INFS_STATUS_OK)
+    if (status != INFS_STATUS_OK) {
+        allocation_map_layout_destroy(&next_allocation);
         return require_checkpoint_recovery(vol, status);
+    }
+
+    allocation_map_cache_replace(vol, &next_allocation);
 
     /* The transaction is durably committed from this point onward. A failure
      * while replicating secondary checkpoints must not be reported to callers

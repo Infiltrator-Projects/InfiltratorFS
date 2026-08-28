@@ -7,6 +7,7 @@ static void discard_candidate_state(struct infs_volume *vol)
     free(vol->bitmap);
     vol->bitmap = NULL;
     vol->bitmap_bytes = 0;
+    allocation_map_cache_destroy(vol);
     vol->data_allocation_cursor = 1u;
     vol->metadata_allocation_cursor = 0;
 }
@@ -116,10 +117,12 @@ static infs_status load_checkpoint_graph(
          ~INFS_KNOWN_RO_COMPAT_FLAGS) != 0)
         return INFS_STATUS_NOT_SUPPORTED;
 
+    struct infs_allocation_layout committed_layout = {0};
     infs_status status = allocation_map_load(
-        vol, candidate, &vol->bitmap, &vol->bitmap_bytes, NULL);
+        vol, candidate, &vol->bitmap, &vol->bitmap_bytes, &committed_layout);
     if (status != INFS_STATUS_OK)
         return status;
+    allocation_map_cache_replace(vol, &committed_layout);
 
     uint8_t object[INFS_BLOCK_SIZE];
     status = read_object(vol, infs_le64_to_cpu(vol->sb.root_object_block), object);
