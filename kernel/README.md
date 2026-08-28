@@ -3,7 +3,7 @@
 
 This directory contains the native Linux VFS adapter for InfiltratorFS. It is an out-of-tree kernel module built against installed kernel headers and packaged through DKMS; Linux itself does not need to be rebuilt.
 
-Development 0.18.19 is the current normal Linux filesystem path. The old userspace FUSE adapter has been removed from the source tree and survives only in Git history.
+Release 0.18.19 is the current normal Linux filesystem path. The old userspace FUSE adapter has been removed from the source tree and survives only in Git history.
 
 The module:
 
@@ -67,7 +67,7 @@ The dedicated `Native Linux kernel module` GitHub Actions workflow compiles the 
 
 The release publisher adds an installed-package gate: it installs the generated `.deb`, verifies `/proc/filesystems` and `modinfo`, mounts a real Format 0.16 image as `infiltratorfs`, writes and byte-compares non-zero data, syncs, unmounts, requires scrub to report CLEAN and rejects any legacy FUSE executable or process.
 
-## Current development scope
+## Current release scope
 
 The native driver has passed the major migration milestone: the current product path no longer depends on restoration of FUSE-era functionality. Follow-on work is focused on deeper checkpoint-recovery qualification, broader xattr and allocation-reporting semantics, explicit mounted regression coverage, locking/concurrency, scale, fragmentation, near-full behavior and long-running mixed-workload stress.
 

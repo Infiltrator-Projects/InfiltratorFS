@@ -28,7 +28,7 @@ Pre-1.0 development is current-format-only. A new development format may superse
 - [x] Runtime hashed metadata indexes.
 - [x] Sequential allocation and checksum hot-path performance work.
 
-## Completed native Linux filesystem surface through development 0.18.19
+## Completed native Linux filesystem surface through release 0.18.19
 
 - [x] Native out-of-tree Linux VFS filesystem driver `infiltratorfs.ko`.
 - [x] DKMS packaging and host-kernel rebuild/install path.

@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # Format 0.16 Conformance
 
-Development 0.18.19 accepts exactly current on-disk Format 0.16. Pre-1.0 builds do not promise compatibility with earlier development formats.
+Release 0.18.19 accepts exactly current on-disk Format 0.16. Pre-1.0 builds do not promise compatibility with earlier development formats.
 
 ## Persistent representation
 
@@ -108,7 +108,7 @@ Native Linux qualification requires:
 - clean unmount followed by userspace scrub; and
 - refusal to silently substitute a non-native filesystem path.
 
-Development 0.18.19 qualifies this native migrated surface. Additional development qualification is expected to expand locking/concurrency, scale and stress coverage rather than reintroduce a FUSE runtime path.
+Release 0.18.19 qualifies this native migrated surface. Additional development qualification is expected to expand locking/concurrency, scale and stress coverage rather than reintroduce a FUSE runtime path.
 
 `mount.infiltratorfs` and InfiltratorFS Manager must produce `FSTYPE=infiltratorfs`. The Manager privileged helper rejects a mounted result with any other filesystem type.
 
