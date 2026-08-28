@@ -1154,11 +1154,16 @@ static int infilfs_posix_create_object_native(
     header = (struct infilfs_object_header_disk *)object;
     memcpy(header->magic, infilfs_object_magic, sizeof(infilfs_object_magic));
     header->object_type = cpu_to_le16(type);
-    header->object_version = cpu_to_le16(
-        type == INFILFS_OBJECT_DIRECTORY &&
+    if (type == INFILFS_OBJECT_DIRECTORY &&
         (le64_to_cpu(pending->tx.next_sb.incompat_flags) &
-         INFILFS_INCOMPAT_PAGED_METADATA) ?
-        INFILFS_OBJECT_VERSION_PAGED : INFILFS_OBJECT_VERSION_CLASSIC);
+         INFILFS_INCOMPAT_DIRECTORY_TREE))
+        header->object_version = cpu_to_le16(INFILFS_OBJECT_VERSION_TREE);
+    else if (type == INFILFS_OBJECT_DIRECTORY &&
+             (le64_to_cpu(pending->tx.next_sb.incompat_flags) &
+              INFILFS_INCOMPAT_PAGED_METADATA))
+        header->object_version = cpu_to_le16(INFILFS_OBJECT_VERSION_PAGED);
+    else
+        header->object_version = cpu_to_le16(INFILFS_OBJECT_VERSION_CLASSIC);
     header->header_size = cpu_to_le32(sizeof(*header));
     header->generation = cpu_to_le64(pending->tx.generation);
     memcpy(header->object_id, object_id, 16);
@@ -1180,7 +1185,10 @@ static int infilfs_posix_create_object_native(
 
         if (parent->i_mode & S_ISGID)
             mode |= S_ISGID;
-        header->payload_size = cpu_to_le32(sizeof(*dir));
+        header->payload_size = cpu_to_le32(
+            sizeof(*dir) +
+            (le16_to_cpu(header->object_version) == INFILFS_OBJECT_VERSION_TREE ?
+             sizeof(__le64) : 0u));
         infilfs_posix_fill_common_attributes(&dir->attributes,
                                               &dir->posix, mode, 2);
         posix = &dir->posix;

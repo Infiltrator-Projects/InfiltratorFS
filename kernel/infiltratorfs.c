@@ -576,7 +576,9 @@ static int infilfs_validate_checkpoint_graph(
     u8 *index = NULL;
     bool paged_feature;
     bool index_tree_feature;
+    bool directory_tree_feature;
     bool root_paged;
+    bool root_tree;
     bool index_paged;
     bool index_tree;
     u64 i;
@@ -658,13 +660,18 @@ static int infilfs_validate_checkpoint_graph(
                      INFILFS_INCOMPAT_PAGED_METADATA) != 0;
     index_tree_feature = (le64_to_cpu(candidate->incompat_flags) &
                           INFILFS_INCOMPAT_INDEX_TREE) != 0;
+    directory_tree_feature = (le64_to_cpu(candidate->incompat_flags) &
+                              INFILFS_INCOMPAT_DIRECTORY_TREE) != 0;
     root_paged = le16_to_cpu(root_header->object_version) ==
         INFILFS_OBJECT_VERSION_PAGED;
+    root_tree = le16_to_cpu(root_header->object_version) ==
+        INFILFS_OBJECT_VERSION_TREE;
     index_paged = le16_to_cpu(index_header->object_version) ==
         INFILFS_OBJECT_VERSION_PAGED;
     index_tree = le16_to_cpu(index_header->object_version) ==
         INFILFS_OBJECT_VERSION_TREE;
-    if (paged_feature != root_paged ||
+    if (directory_tree_feature != root_tree ||
+        (!directory_tree_feature && paged_feature != root_paged) ||
         index_tree_feature != index_tree ||
         (!index_tree_feature && paged_feature != index_paged)) {
         ret = -EFSCORRUPTED;
