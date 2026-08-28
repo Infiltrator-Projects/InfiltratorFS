@@ -1,10 +1,74 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-    if (infs_pwrite_full(fd, bitmap, bitmap_alloc,
-                         (off_t)(bitmap_start * INFS_BLOCK_SIZE)) != 0) {
-        perror("write bitmap");
-        free(bitmap);
-        close(fd);
-        return 1;
+    for (uint64_t i = 0; i < leaf_count; ++i) {
+        uint64_t first_bit = i * INFS_ALLOCATION_BITS_PER_LEAF;
+        uint64_t remaining = total_blocks - first_bit;
+        uint32_t valid_bits = (uint32_t)(
+            remaining > INFS_ALLOCATION_BITS_PER_LEAF ?
+            INFS_ALLOCATION_BITS_PER_LEAF : remaining);
+        uint32_t bytes = (valid_bits + 7u) / 8u;
+        size_t offset = (size_t)i * INFS_ALLOCATION_PAGE_DATA_SIZE;
+        if (write_allocation_page_fd(
+                fd, leaf_start + i, INFS_ALLOCATION_LEAF_PAGE_MAGIC,
+                i, 0u, valid_bits, bitmap + offset, bytes) != 0) {
+            perror("write allocation leaf");
+            free(bitmap);
+            close(fd);
+            return 1;
+        }
+    }
+
+    for (uint64_t i = 0; i < level1_count; ++i) {
+        uint64_t first_leaf = i * INFS_ALLOCATION_TREE_FANOUT;
+        uint32_t entries = (uint32_t)(
+            leaf_count - first_leaf > INFS_ALLOCATION_TREE_FANOUT ?
+            INFS_ALLOCATION_TREE_FANOUT : leaf_count - first_leaf);
+        uint64_t pointers[INFS_ALLOCATION_TREE_FANOUT];
+        for (uint32_t j = 0; j < entries; ++j)
+            pointers[j] = infs_cpu_to_le64(leaf_start + first_leaf + j);
+        if (write_allocation_page_fd(
+                fd, level1_start + i, INFS_ALLOCATION_BRANCH_PAGE_MAGIC,
+                i, 1u, entries, pointers,
+                entries * sizeof(uint64_t)) != 0) {
+            perror("write allocation level-1 branch");
+            free(bitmap);
+            close(fd);
+            return 1;
+        }
+    }
+
+    for (uint64_t i = 0; i < level2_count; ++i) {
+        uint64_t first_l1 = i * INFS_ALLOCATION_TREE_FANOUT;
+        uint32_t entries = (uint32_t)(
+            level1_count - first_l1 > INFS_ALLOCATION_TREE_FANOUT ?
+            INFS_ALLOCATION_TREE_FANOUT : level1_count - first_l1);
+        uint64_t pointers[INFS_ALLOCATION_TREE_FANOUT];
+        for (uint32_t j = 0; j < entries; ++j)
+            pointers[j] = infs_cpu_to_le64(level1_start + first_l1 + j);
+        if (write_allocation_page_fd(
+                fd, level2_start + i, INFS_ALLOCATION_BRANCH_PAGE_MAGIC,
+                i, 2u, entries, pointers,
+                entries * sizeof(uint64_t)) != 0) {
+            perror("write allocation level-2 branch");
+            free(bitmap);
+            close(fd);
+            return 1;
+        }
+    }
+
+    {
+        uint64_t pointers[INFS_ALLOCATION_TREE_FANOUT];
+        for (uint32_t i = 0; i < (uint32_t)level2_count; ++i)
+            pointers[i] = infs_cpu_to_le64(level2_start + i);
+        if (write_allocation_page_fd(
+                fd, allocation_root, INFS_ALLOCATION_BRANCH_PAGE_MAGIC,
+                0u, INFS_ALLOCATION_TREE_ROOT_LEVEL,
+                (uint32_t)level2_count, pointers,
+                (uint32_t)level2_count * sizeof(uint64_t)) != 0) {
+            perror("write allocation root");
+            free(bitmap);
+            close(fd);
+            return 1;
+        }
     }
 
     if (infs_metadata_page_init(block, INFS_INDEX_PAGE_MAGIC, index_id, 1) !=
@@ -112,7 +176,8 @@
     printf("  Block size:      %u bytes\n", INFS_BLOCK_SIZE);
     printf("  Total blocks:    %" PRIu64 "\n", total_blocks);
     printf("  Free blocks:     %" PRIu64 "\n", total_blocks - used_blocks);
-    printf("  Bitmap blocks:   %" PRIu64 "\n", bitmap_blocks);
+    printf("  Allocation root: block %" PRIu64 "\n", allocation_root);
+    printf("  Allocation leaves: %" PRIu64 "\n", leaf_count);
     printf("  Object index:    block %" PRIu64 "\n", index_block);
     printf("  Index tree root: block %" PRIu64 "\n", index_page_block);
     printf("  Root block:      block %" PRIu64 "\n", root_block);

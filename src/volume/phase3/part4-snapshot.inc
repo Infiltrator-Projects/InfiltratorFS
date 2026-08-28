@@ -86,7 +86,7 @@ static int snapshot_record_valid(
     uint64_t bitmap_start = infs_le64_to_cpu(record->bitmap_start_block);
     uint64_t bitmap_blocks = infs_le64_to_cpu(record->bitmap_block_count);
     uint64_t expected_bitmap_blocks =
-        infs_le64_to_cpu(vol->sb.bitmap_block_count);
+        (uint64_t)(vol->bitmap_bytes / INFS_BLOCK_SIZE);
     uint64_t index = infs_le64_to_cpu(record->object_index_block);
     uint64_t root = infs_le64_to_cpu(record->root_object_block);
     uint16_t name_length = infs_le16_to_cpu(record->name_length);
@@ -298,9 +298,12 @@ static infs_status snapshot_open_view(
         infs_le64_to_cpu(view->sb.total_blocks);
     view->snapshot_validation_context = vol->snapshot_validation_context;
     view->snapshot_scrub_context = vol->snapshot_scrub_context;
+    view->snapshot_view = 1;
+    view->snapshot_bitmap_start_block =
+        infs_le64_to_cpu(record.bitmap_start_block);
+    view->snapshot_bitmap_block_count =
+        infs_le64_to_cpu(record.bitmap_block_count);
     view->sb.generation = record.generation;
-    view->sb.bitmap_start_block = record.bitmap_start_block;
-    view->sb.bitmap_block_count = record.bitmap_block_count;
     view->sb.free_blocks = record.free_blocks;
     view->sb.object_index_block = record.object_index_block;
     view->sb.root_object_block = record.root_object_block;
@@ -416,7 +419,8 @@ static int snapshot_catalog_append(
     record->created_time_ns = (int64_t)infs_cpu_to_le64(
         (uint64_t)created_time_ns);
     record->bitmap_start_block = infs_cpu_to_le64(bitmap_start);
-    record->bitmap_block_count = vol->tx_base_sb.bitmap_block_count;
+    record->bitmap_block_count = infs_cpu_to_le64(
+        (uint64_t)(vol->bitmap_bytes / INFS_BLOCK_SIZE));
     uint64_t free_count = 0;
     uint64_t total = infs_le64_to_cpu(vol->tx_base_sb.total_blocks);
     for (uint64_t b = 0; b < total; ++b) {
@@ -487,20 +491,29 @@ infs_status infs_snapshot_create(struct infs_volume *vol, const char *name)
     }
     memcpy(snapshot_bitmap, vol->bitmap, vol->bitmap_bytes);
 
+    struct infs_allocation_layout live_map = {0};
+    status = allocation_map_load(
+        vol, &vol->tx_base_sb, NULL, NULL, &live_map);
+    if (status != INFS_STATUS_OK) {
+        free(snapshot_bitmap);
+        goto fail;
+    }
+    for (size_t i = 0; i < live_map.leaf_count; ++i)
+        bitmap_set(snapshot_bitmap, live_map.leaf_blocks[i], 0);
+    for (size_t i = 0; i < live_map.branch_count; ++i)
+        bitmap_set(snapshot_bitmap, live_map.branch_blocks[i], 0);
+    allocation_map_layout_destroy(&live_map);
+
     uint64_t bitmap_blocks =
-        infs_le64_to_cpu(vol->tx_base_sb.bitmap_block_count);
+        (uint64_t)(vol->bitmap_bytes / INFS_BLOCK_SIZE);
     uint64_t bitmap_start = 0;
     status = alloc_exact_run(vol, bitmap_blocks, &bitmap_start);
     if (status != INFS_STATUS_OK) {
         free(snapshot_bitmap);
         goto fail;
     }
-    uint64_t old_bitmap =
-        infs_le64_to_cpu(vol->tx_base_sb.bitmap_start_block);
-    for (uint64_t i = 0; i < bitmap_blocks; ++i) {
-        bitmap_set(snapshot_bitmap, old_bitmap + i, 0);
+    for (uint64_t i = 0; i < bitmap_blocks; ++i)
         bitmap_set(snapshot_bitmap, bitmap_start + i, 1);
-    }
     status = infs_storage_write(&vol->storage,
         bitmap_start * INFS_BLOCK_SIZE, snapshot_bitmap, vol->bitmap_bytes);
     if (status != INFS_STATUS_OK) {

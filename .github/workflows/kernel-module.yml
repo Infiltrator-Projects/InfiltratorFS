@@ -51,6 +51,9 @@ jobs:
       - name: Guard native free-extent index
         run: bash tests/native-free-extent-index-policy.sh .
 
+      - name: Guard Format 0.17 sharded allocation tree
+        run: bash tests/allocation-tree-format-policy.sh .
+
       - name: Build InfiltratorFS kernel module
         env:
           KDIR: ${{ steps.headers.outputs.generic_kdir }}
@@ -67,6 +70,8 @@ jobs:
           cp kernel/Makefile \
              kernel/infiltratorfs.c \
              kernel/infiltratorfs_format.h \
+             kernel/infiltratorfs_allocation_map.inc \
+             kernel/infiltratorfs_allocation_publish.inc \
              kernel/infiltratorfs_index_tree.inc \
              kernel/infiltratorfs_directory_tree.inc \
              kernel/infiltratorfs_rw.inc \
@@ -198,7 +203,7 @@ jobs:
           test "$(stat -f -c '%l' "$mountpoint")" = 1023
           test "$(stat -c '%u:%g' "$mountpoint")" = "$(id -u):$(id -g)"
 
-          # Format 0.16 namespace boundary: native VFS must match the portable
+          # Format 0.17 namespace boundary: native VFS must match the portable
           # 1023-byte component limit and reject byte 1024 with ENAMETOOLONG.
           python3 - "$mountpoint" <<'PY'
           import errno

@@ -24,12 +24,18 @@ static const uint8_t INFS_INDEX_BRANCH_PAGE_MAGIC[8] = {
 static const uint8_t INFS_EXTENT_PAGE_MAGIC[8] = {
     'I', 'N', 'F', 'S', 'E', 'P', '0', '1'
 };
+static const uint8_t INFS_ALLOCATION_BRANCH_PAGE_MAGIC[8] = {
+    'I', 'N', 'F', 'S', 'A', 'B', '0', '1'
+};
+static const uint8_t INFS_ALLOCATION_LEAF_PAGE_MAGIC[8] = {
+    'I', 'N', 'F', 'S', 'A', 'L', '0', '1'
+};
 
 /* Before the first stable release, readers deliberately accept only this
  * exact development format. A format revision replaces its predecessor; it
  * does not add an older-format reader or migration path. */
 #define INFS_FORMAT_MAJOR 0u
-#define INFS_FORMAT_MINOR 16u
+#define INFS_FORMAT_MINOR 17u
 #define INFS_CHECKPOINT_COUNT 3u
 #define INFS_CHECKSUM_CRC64_ECMA 1u
 #define INFS_CHECKSUM_SHA256     2u
@@ -62,6 +68,7 @@ static const uint8_t INFS_EXTENT_PAGE_MAGIC[8] = {
 #define INFS_INCOMPAT_PAGED_EXTENTS UINT64_C(0x0000000000000100)
 #define INFS_INCOMPAT_INDEX_TREE UINT64_C(0x0000000000000200)
 #define INFS_INCOMPAT_DIRECTORY_TREE UINT64_C(0x0000000000000400)
+#define INFS_INCOMPAT_ALLOCATION_TREE UINT64_C(0x0000000000000800)
 #define INFS_KNOWN_COMPAT_FLAGS UINT64_C(0)
 #define INFS_KNOWN_RO_COMPAT_FLAGS UINT64_C(0)
 #define INFS_KNOWN_INCOMPAT_FLAGS \
@@ -70,7 +77,7 @@ static const uint8_t INFS_EXTENT_PAGE_MAGIC[8] = {
      INFS_INCOMPAT_PAGED_METADATA | INFS_INCOMPAT_SYMBOLIC_LINKS | \
      INFS_INCOMPAT_HARD_LINKS | INFS_INCOMPAT_SNAPSHOTS | \
      INFS_INCOMPAT_PAGED_EXTENTS | INFS_INCOMPAT_INDEX_TREE | \
-     INFS_INCOMPAT_DIRECTORY_TREE)
+     INFS_INCOMPAT_DIRECTORY_TREE | INFS_INCOMPAT_ALLOCATION_TREE)
 
 #define INFS_ATTR_READ_ONLY           UINT64_C(0x0000000000000001)
 #define INFS_ATTR_HIDDEN              UINT64_C(0x0000000000000002)
@@ -99,8 +106,8 @@ struct INFS_PACKED infs_superblock_disk {
     uint64_t generation;
     uint64_t total_blocks;
     uint64_t free_blocks;
-    uint64_t bitmap_start_block;
-    uint64_t bitmap_block_count;
+    uint64_t allocation_root_block;
+    uint64_t allocation_leaf_count;
     uint64_t object_index_block;
     uint64_t root_object_block;
     uint64_t checkpoint_block[INFS_CHECKPOINT_COUNT];
@@ -139,6 +146,17 @@ struct INFS_PACKED infs_metadata_page_disk {
     uint32_t bytes_used;
     uint32_t checksum_type;
     uint32_t reserved;
+    uint8_t  checksum[32];
+};
+
+struct INFS_PACKED infs_allocation_page_disk {
+    uint8_t  magic[8];
+    uint64_t generation;
+    uint64_t logical_index;
+    uint32_t level;
+    uint32_t entry_count;
+    uint32_t bytes_used;
+    uint32_t checksum_type;
     uint8_t  checksum[32];
 };
 
@@ -303,6 +321,19 @@ struct INFS_PACKED infs_snapshot_record_disk {
 
 #define INFS_METADATA_PAGE_DATA_SIZE \
     (INFS_BLOCK_SIZE - sizeof(struct infs_metadata_page_disk))
+#define INFS_ALLOCATION_PAGE_DATA_SIZE \
+    (INFS_BLOCK_SIZE - sizeof(struct infs_allocation_page_disk))
+#define INFS_ALLOCATION_TREE_FANOUT \
+    (INFS_ALLOCATION_PAGE_DATA_SIZE / sizeof(uint64_t))
+#define INFS_ALLOCATION_TREE_ROOT_LEVEL 3u
+#define INFS_ALLOCATION_BITS_PER_LEAF \
+    ((uint64_t)INFS_ALLOCATION_PAGE_DATA_SIZE * UINT64_C(8))
+#define INFS_ALLOCATION_TREE_MAX_LEAVES \
+    ((uint64_t)INFS_ALLOCATION_TREE_FANOUT * \
+     (uint64_t)INFS_ALLOCATION_TREE_FANOUT * \
+     (uint64_t)INFS_ALLOCATION_TREE_FANOUT)
+#define INFS_ALLOCATION_TREE_MAX_BLOCKS \
+    (INFS_ALLOCATION_TREE_MAX_LEAVES * INFS_ALLOCATION_BITS_PER_LEAF)
 #define INFS_DIRENT_MAX_RECORD_SIZE \
     ((sizeof(struct infs_dirent_disk) + INFS_NAME_MAX + 7u) & ~(size_t)7u)
 #define INFS_INDEX_ENTRIES_PER_PAGE \
@@ -333,6 +364,12 @@ _Static_assert(sizeof(struct infs_object_header_disk) == 96,
                "object header layout changed");
 _Static_assert(sizeof(struct infs_metadata_page_disk) == 80,
                "metadata page header layout changed");
+_Static_assert(sizeof(struct infs_allocation_page_disk) == 72,
+               "allocation page header layout changed");
+_Static_assert(INFS_ALLOCATION_TREE_FANOUT == 503u,
+               "allocation tree fanout unexpectedly changed");
+_Static_assert(INFS_ALLOCATION_BITS_PER_LEAF == UINT64_C(32192),
+               "allocation leaf coverage unexpectedly changed");
 _Static_assert(sizeof(struct infs_attributes_disk) == 88,
                "common attributes layout changed");
 _Static_assert(sizeof(struct infs_posix_compat_disk) == 16,

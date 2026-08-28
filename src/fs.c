@@ -401,6 +401,113 @@ int infs_validate_metadata_page(const uint8_t block[INFS_BLOCK_SIZE],
     return stored == actual;
 }
 
+infs_status infs_allocation_page_init(uint8_t block[INFS_BLOCK_SIZE],
+                                      const uint8_t magic[8],
+                                      uint64_t generation,
+                                      uint64_t logical_index,
+                                      uint32_t level)
+{
+    if (!block || !magic || generation == 0 ||
+        level > INFS_ALLOCATION_TREE_ROOT_LEVEL ||
+        (level == 0 &&
+         memcmp(magic, INFS_ALLOCATION_LEAF_PAGE_MAGIC, 8) != 0) ||
+        (level != 0 &&
+         memcmp(magic, INFS_ALLOCATION_BRANCH_PAGE_MAGIC, 8) != 0))
+        return INFS_STATUS_INVALID_ARGUMENT;
+    memset(block, 0, INFS_BLOCK_SIZE);
+    struct infs_allocation_page_disk *page =
+        (struct infs_allocation_page_disk *)block;
+    memcpy(page->magic, magic, 8);
+    page->generation = infs_cpu_to_le64(generation);
+    page->logical_index = infs_cpu_to_le64(logical_index);
+    page->level = infs_cpu_to_le32(level);
+    page->checksum_type = infs_cpu_to_le32(INFS_CHECKSUM_CRC64_ECMA);
+    return INFS_STATUS_OK;
+}
+
+infs_status infs_allocation_page_finalize(uint8_t block[INFS_BLOCK_SIZE])
+{
+    if (!block)
+        return INFS_STATUS_INVALID_ARGUMENT;
+    struct infs_allocation_page_disk *page =
+        (struct infs_allocation_page_disk *)block;
+    uint32_t level = infs_le32_to_cpu(page->level);
+    uint32_t entries = infs_le32_to_cpu(page->entry_count);
+    uint32_t bytes = infs_le32_to_cpu(page->bytes_used);
+    int leaf = level == 0;
+
+    if (infs_le64_to_cpu(page->generation) == 0 ||
+        level > INFS_ALLOCATION_TREE_ROOT_LEVEL ||
+        (leaf && memcmp(page->magic, INFS_ALLOCATION_LEAF_PAGE_MAGIC, 8) != 0) ||
+        (!leaf && memcmp(page->magic, INFS_ALLOCATION_BRANCH_PAGE_MAGIC, 8) != 0) ||
+        infs_le32_to_cpu(page->checksum_type) != INFS_CHECKSUM_CRC64_ECMA)
+        return INFS_STATUS_INVALID_ARGUMENT;
+    if (leaf) {
+        if (entries == 0 || entries > INFS_ALLOCATION_BITS_PER_LEAF ||
+            bytes != (entries + 7u) / 8u)
+            return INFS_STATUS_INVALID_ARGUMENT;
+    } else if (entries == 0 || entries > INFS_ALLOCATION_TREE_FANOUT ||
+               bytes != entries * sizeof(uint64_t)) {
+        return INFS_STATUS_INVALID_ARGUMENT;
+    }
+    if (bytes > INFS_ALLOCATION_PAGE_DATA_SIZE)
+        return INFS_STATUS_INVALID_ARGUMENT;
+
+    memset(block + sizeof(*page) + bytes, 0,
+           INFS_BLOCK_SIZE - sizeof(*page) - bytes);
+    const size_t off = offsetof(struct infs_allocation_page_disk, checksum);
+    memset(block + off, 0, sizeof(page->checksum));
+    uint64_t crc = infs_cpu_to_le64(block_crc_with_zeroed_checksum(
+        block, off, sizeof(page->checksum)));
+    memcpy(block + off, &crc, sizeof(crc));
+    return INFS_STATUS_OK;
+}
+
+int infs_validate_allocation_page(const uint8_t block[INFS_BLOCK_SIZE],
+                                  const uint8_t magic[8],
+                                  uint64_t max_generation,
+                                  uint64_t logical_index,
+                                  uint32_t level)
+{
+    if (!block || !magic || max_generation == 0 ||
+        level > INFS_ALLOCATION_TREE_ROOT_LEVEL)
+        return 0;
+    const struct infs_allocation_page_disk *page =
+        (const struct infs_allocation_page_disk *)block;
+    uint64_t generation = infs_le64_to_cpu(page->generation);
+    uint32_t entries = infs_le32_to_cpu(page->entry_count);
+    uint32_t bytes = infs_le32_to_cpu(page->bytes_used);
+    int leaf = level == 0;
+
+    if (memcmp(page->magic, magic, 8) != 0 ||
+        generation == 0 || generation > max_generation ||
+        infs_le64_to_cpu(page->logical_index) != logical_index ||
+        infs_le32_to_cpu(page->level) != level ||
+        infs_le32_to_cpu(page->checksum_type) != INFS_CHECKSUM_CRC64_ECMA)
+        return 0;
+    if (leaf) {
+        if (entries == 0 || entries > INFS_ALLOCATION_BITS_PER_LEAF ||
+            bytes != (entries + 7u) / 8u)
+            return 0;
+    } else if (entries == 0 || entries > INFS_ALLOCATION_TREE_FANOUT ||
+               bytes != entries * sizeof(uint64_t)) {
+        return 0;
+    }
+    if (bytes > INFS_ALLOCATION_PAGE_DATA_SIZE ||
+        !bytes_are_zero(page->checksum + sizeof(uint64_t),
+                        sizeof(page->checksum) - sizeof(uint64_t)) ||
+        !bytes_are_zero(block + sizeof(*page) + bytes,
+                        INFS_BLOCK_SIZE - sizeof(*page) - bytes))
+        return 0;
+    const size_t off = offsetof(struct infs_allocation_page_disk, checksum);
+    uint64_t stored_le;
+    memcpy(&stored_le, block + off, sizeof(stored_le));
+    uint64_t stored = infs_le64_to_cpu(stored_le);
+    uint64_t actual = block_crc_with_zeroed_checksum(
+        block, off, sizeof(page->checksum));
+    return stored == actual;
+}
+
 static void fill_attributes(struct infs_attributes_disk *attributes,
                             uint64_t link_count, int64_t now_ns)
 {

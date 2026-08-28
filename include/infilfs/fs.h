@@ -28,6 +28,17 @@ infs_status infs_metadata_page_finalize(uint8_t block[INFS_BLOCK_SIZE]);
 int infs_validate_metadata_page(const uint8_t block[INFS_BLOCK_SIZE],
                                 const uint8_t magic[8],
                                 const uint8_t owner_object_id[16]);
+infs_status infs_allocation_page_init(uint8_t block[INFS_BLOCK_SIZE],
+                                      const uint8_t magic[8],
+                                      uint64_t generation,
+                                      uint64_t logical_index,
+                                      uint32_t level);
+infs_status infs_allocation_page_finalize(uint8_t block[INFS_BLOCK_SIZE]);
+int infs_validate_allocation_page(const uint8_t block[INFS_BLOCK_SIZE],
+                                  const uint8_t magic[8],
+                                  uint64_t max_generation,
+                                  uint64_t logical_index,
+                                  uint32_t level);
 
 /* The original encoders intentionally remain classic single-block encoders so
  * older conformance fixtures and callers keep their established semantics.

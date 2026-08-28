@@ -246,10 +246,27 @@ static int build_live_ownership_bitmap(
             goto out;
     }
 
-    uint64_t bitmap_start = infs_le64_to_cpu(vol->sb.bitmap_start_block);
-    uint64_t bitmap_blocks = infs_le64_to_cpu(vol->sb.bitmap_block_count);
-    for (uint64_t i = 0; i < bitmap_blocks; ++i) {
-        status = ownership_claim(owners, total, bitmap_start + i);
+    if (vol->snapshot_view) {
+        for (uint64_t i = 0; i < vol->snapshot_bitmap_block_count; ++i) {
+            status = ownership_claim(
+                owners, total, vol->snapshot_bitmap_start_block + i);
+            if (status != INFS_STATUS_OK)
+                goto out;
+        }
+    } else {
+        struct infs_allocation_layout map = {0};
+        status = allocation_map_load(vol, &vol->sb, NULL, NULL, &map);
+        if (status != INFS_STATUS_OK)
+            goto out;
+        for (size_t i = 0; i < map.leaf_count; ++i) {
+            status = ownership_claim(owners, total, map.leaf_blocks[i]);
+            if (status != INFS_STATUS_OK)
+                break;
+        }
+        for (size_t i = 0; status == INFS_STATUS_OK &&
+             i < map.branch_count; ++i)
+            status = ownership_claim(owners, total, map.branch_blocks[i]);
+        allocation_map_layout_destroy(&map);
         if (status != INFS_STATUS_OK)
             goto out;
     }

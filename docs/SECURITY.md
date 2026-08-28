@@ -3,7 +3,7 @@
 
 ## Status
 
-This document defines the intended cross-platform security architecture. Release 0.18.19 does **not** yet implement the final portable security-object format. Current POSIX mode/UID/GID compatibility metadata and Linux adapter metadata must therefore not be mistaken for the future canonical cross-platform identity model.
+This document defines the intended cross-platform security architecture. Release 0.18.20 does **not** yet implement the final portable security-object format. Current POSIX mode/UID/GID compatibility metadata and Linux adapter metadata must therefore not be mistaken for the future canonical cross-platform identity model.
 
 ## Design rule
 
@@ -82,7 +82,7 @@ Linux adapters may expose:
 
 `chmod`, `chown` and POSIX ACL changes require defined update rules against the portable security object. They must not blindly replace a richer ACL with only the information Linux can display.
 
-Release 0.18.19 stores POSIX mode and numeric UID/GID compatibility metadata and supports standard Linux xattr namespaces. Those facilities are useful today but are not yet the final portable principal/ACL store.
+Release 0.18.20 stores POSIX mode and numeric UID/GID compatibility metadata and supports standard Linux xattr namespaces. Those facilities are useful today but are not yet the final portable principal/ACL store.
 
 ## Windows mapping
 
@@ -100,7 +100,7 @@ The same approach applies to adjacent metadata classes such as named attributes,
 
 ## On-disk direction
 
-Format 0.16 already reserves a `security object ID` in common attributes. That reference remains zero in the current portable format because the security-object record class and feature/version contract have not yet been standardized.
+Format 0.17 already reserves a `security object ID` in common attributes. That reference remains zero in the current portable format because the security-object record class and feature/version contract have not yet been standardized.
 
 A future format revision should define:
 

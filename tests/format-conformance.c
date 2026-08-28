@@ -80,6 +80,12 @@ static void check_layout(void)
     expect(sizeof(struct infs_attributes_disk) == 88, "attributes size");
     expect(sizeof(struct infs_dirent_disk) == 24u,
            "directory entry header size");
+    expect(sizeof(struct infs_allocation_page_disk) == 72u,
+           "allocation page header size");
+    expect(INFS_ALLOCATION_TREE_FANOUT == 503u,
+           "allocation tree fanout");
+    expect(INFS_ALLOCATION_BITS_PER_LEAF == 32192u,
+           "allocation leaf bit capacity");
     expect(INFS_NAME_MAX == 1023u,
            "Format 0.16 component-name capacity");
     expect(INFS_DIRENT_MAX_RECORD_SIZE <= INFS_METADATA_PAGE_DATA_SIZE,
@@ -125,8 +131,8 @@ static void make_golden_superblock(struct infs_superblock_disk *sb)
     sb->generation = infs_cpu_to_le64(UINT64_C(0x0102030405060708));
     sb->total_blocks = infs_cpu_to_le64(UINT64_C(0x1112131415161718));
     sb->free_blocks = infs_cpu_to_le64(UINT64_C(0x2122232425262728));
-    sb->bitmap_start_block = infs_cpu_to_le64(UINT64_C(0x3132333435363738));
-    sb->bitmap_block_count = infs_cpu_to_le64(UINT64_C(0x4142434445464748));
+    sb->allocation_root_block = infs_cpu_to_le64(UINT64_C(0x3132333435363738));
+    sb->allocation_leaf_count = infs_cpu_to_le64(UINT64_C(0x4142434445464748));
     sb->object_index_block = infs_cpu_to_le64(UINT64_C(0x5152535455565758));
     sb->root_object_block = infs_cpu_to_le64(UINT64_C(0x6162636465666768));
     sb->checkpoint_block[0] = infs_cpu_to_le64(UINT64_C(0x7172737475767778));
@@ -279,6 +285,50 @@ static void check_utf8(void)
            "reject bad UTF-8 continuation");
 }
 
+static void check_allocation_page_encoding(void)
+{
+    uint8_t block[INFS_BLOCK_SIZE];
+    struct infs_allocation_page_disk *page;
+    uint64_t child = infs_cpu_to_le64(UINT64_C(12345));
+
+    expect(infs_allocation_page_init(
+               block, INFS_ALLOCATION_LEAF_PAGE_MAGIC, 7u, 3u, 0u) ==
+               INFS_STATUS_OK,
+           "allocation leaf init");
+    page = (struct infs_allocation_page_disk *)block;
+    page->entry_count = infs_cpu_to_le32(17u);
+    page->bytes_used = infs_cpu_to_le32(3u);
+    ((uint8_t *)(page + 1))[0] = 0xa5u;
+    ((uint8_t *)(page + 1))[1] = 0x5au;
+    ((uint8_t *)(page + 1))[2] = 0x01u;
+    expect(infs_allocation_page_finalize(block) == INFS_STATUS_OK,
+           "allocation leaf finalize");
+    expect(infs_validate_allocation_page(
+               block, INFS_ALLOCATION_LEAF_PAGE_MAGIC, 7u, 3u, 0u),
+           "allocation leaf validate");
+    block[sizeof(*page)] ^= 0x01u;
+    expect(!infs_validate_allocation_page(
+               block, INFS_ALLOCATION_LEAF_PAGE_MAGIC, 7u, 3u, 0u),
+           "allocation leaf checksum rejection");
+
+    expect(infs_allocation_page_init(
+               block, INFS_ALLOCATION_BRANCH_PAGE_MAGIC, 9u, 1u, 1u) ==
+               INFS_STATUS_OK,
+           "allocation branch init");
+    page = (struct infs_allocation_page_disk *)block;
+    page->entry_count = infs_cpu_to_le32(1u);
+    page->bytes_used = infs_cpu_to_le32(sizeof(child));
+    memcpy(page + 1, &child, sizeof(child));
+    expect(infs_allocation_page_finalize(block) == INFS_STATUS_OK,
+           "allocation branch finalize");
+    expect(infs_validate_allocation_page(
+               block, INFS_ALLOCATION_BRANCH_PAGE_MAGIC, 9u, 1u, 1u),
+           "allocation branch validate");
+    expect(!infs_validate_allocation_page(
+               block, INFS_ALLOCATION_BRANCH_PAGE_MAGIC, 8u, 1u, 1u),
+           "allocation generation ceiling");
+}
+
 static void check_status_mapping(void)
 {
     expect(INFS_STATUS_NOT_FOUND < INFS_STATUS_OK,
@@ -299,6 +349,7 @@ int main(void)
     check_superblock_encoding();
     check_object_encoding();
     check_utf8();
+    check_allocation_page_encoding();
     check_status_mapping();
     puts("format-conformance: PASS");
     return 0;

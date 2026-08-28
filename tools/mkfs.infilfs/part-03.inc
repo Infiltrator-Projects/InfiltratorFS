@@ -3,7 +3,7 @@
     bitmap_set(bitmap, checkpoints[0]);
     bitmap_set(bitmap, checkpoints[1]);
     bitmap_set(bitmap, checkpoints[2]);
-    for (uint64_t b = bitmap_start; b < bitmap_start + bitmap_blocks; ++b)
+    for (uint64_t b = allocation_root; b < leaf_start + leaf_count; ++b)
         bitmap_set(bitmap, b);
     bitmap_set(bitmap, index_block);
     bitmap_set(bitmap, root_block);
@@ -40,8 +40,8 @@
     sb.generation = infs_cpu_to_le64(1);
     sb.total_blocks = infs_cpu_to_le64(total_blocks);
     sb.free_blocks = infs_cpu_to_le64(total_blocks - used_blocks);
-    sb.bitmap_start_block = infs_cpu_to_le64(bitmap_start);
-    sb.bitmap_block_count = infs_cpu_to_le64(bitmap_blocks);
+    sb.allocation_root_block = infs_cpu_to_le64(allocation_root);
+    sb.allocation_leaf_count = infs_cpu_to_le64(leaf_count);
     sb.object_index_block = infs_cpu_to_le64(index_block);
     sb.root_object_block = infs_cpu_to_le64(root_block);
     for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i)
@@ -56,7 +56,7 @@
         INFS_INCOMPAT_PAGED_METADATA | INFS_INCOMPAT_SYMBOLIC_LINKS |
         INFS_INCOMPAT_HARD_LINKS | INFS_INCOMPAT_SNAPSHOTS |
         INFS_INCOMPAT_PAGED_EXTENTS | INFS_INCOMPAT_INDEX_TREE |
-        INFS_INCOMPAT_DIRECTORY_TREE);
+        INFS_INCOMPAT_DIRECTORY_TREE | INFS_INCOMPAT_ALLOCATION_TREE);
     memcpy(sb.label, label, strlen(label));
 
     /* Invalidate any previous InfiltratorFS checkpoints before constructing

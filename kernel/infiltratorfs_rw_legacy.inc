@@ -10,7 +10,6 @@
  * immutable while the live generation advances.
  */
 
-#define INFILFS_RW_BITMAP_MAX_BYTES (64UL * 1024UL * 1024UL)
 #define INFILFS_RW_FREE_RANGES_INITIAL 32u
 #define INFILFS_RW_ALLOC_RANGES_INITIAL 64u
 
@@ -750,7 +749,7 @@ static int infilfs_rw_snapshot_union(struct super_block *sb, u32 snapshots)
         u64 blocks = le64_to_cpu(records[i].bitmap_block_count);
         u64 b;
 
-        if (blocks != le64_to_cpu(sbi->disk.bitmap_block_count) ||
+        if (blocks != sbi->bitmap_bytes / INFILFS_DISK_BLOCK_SIZE ||
             !start || start >= sbi->device_blocks ||
             blocks > sbi->device_blocks - start) {
             ret = -EFSCORRUPTED;
@@ -784,59 +783,26 @@ out:
 static int infilfs_rw_mount_init(struct super_block *sb)
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
-    u64 bitmap_start = le64_to_cpu(sbi->disk.bitmap_start_block);
-    u64 bitmap_blocks = le64_to_cpu(sbi->disk.bitmap_block_count);
     u64 total = sbi->device_blocks;
-    u64 free_count = 0;
     u32 snapshots = 0;
-    size_t bytes;
-    u64 i;
     int ret;
 
     if (!sb_rdonly(sb) &&
         !(le64_to_cpu(sbi->disk.incompat_flags) & INFILFS_INCOMPAT_INLINE_DATA))
         return -EOPNOTSUPP;
 
-    if (!bitmap_blocks || bitmap_blocks > SIZE_MAX / INFILFS_DISK_BLOCK_SIZE)
-        return -EFSCORRUPTED;
-    bytes = (size_t)bitmap_blocks * INFILFS_DISK_BLOCK_SIZE;
-    if (!sb_rdonly(sb) && bytes > INFILFS_RW_BITMAP_MAX_BYTES) {
-        pr_warn("InfiltratorFS: native writable bitmap %zu bytes exceeds initial RW limit\n",
-                bytes);
-        return -EFBIG;
-    }
-    if (bitmap_start >= total || bitmap_blocks > total - bitmap_start)
-        return -EFSCORRUPTED;
-
-    sbi->bitmap = kvmalloc(bytes, GFP_KERNEL);
-    if (!sbi->bitmap)
-        return -ENOMEM;
-    sbi->bitmap_bytes = bytes;
-    for (i = 0; i < bitmap_blocks; ++i) {
-        ret = infilfs_read_block(sb, bitmap_start + i,
-                                 sbi->bitmap + i * INFILFS_DISK_BLOCK_SIZE);
-        if (ret)
-            goto fail;
-    }
-    for (i = 0; i < total; ++i)
-        if (!infilfs_rw_bitmap_get(sbi->bitmap, i))
-            ++free_count;
-    if (free_count != le64_to_cpu(sbi->disk.free_blocks)) {
-        ret = -EFSCORRUPTED;
+    ret = infilfs_allocation_map_load(
+        sb, &sbi->disk, &sbi->bitmap, &sbi->bitmap_bytes, NULL);
+    if (ret)
         goto fail;
-    }
-    for (i = total; i < (u64)bytes * 8u; ++i) {
-        if (!infilfs_rw_bitmap_get(sbi->bitmap, i)) {
-            ret = -EFSCORRUPTED;
-            goto fail;
-        }
-    }
+
     write_lock(&sbi->bitmap_lock);
     sbi->visible_bitmap = sbi->bitmap;
     sbi->visible_bitmap_bytes = sbi->bitmap_bytes;
     write_unlock(&sbi->bitmap_lock);
     if (sb_rdonly(sb))
         return 0;
+
     ret = infilfs_rw_snapshot_count(sb, &snapshots);
     if (ret)
         goto fail;
@@ -847,6 +813,7 @@ static int infilfs_rw_mount_init(struct super_block *sb)
     sbi->metadata_alloc_hint = total > 1 ? total - 1u : 1u;
     sbi->rw_enabled = true;
     return 0;
+
 fail:
     write_lock(&sbi->bitmap_lock);
     sbi->visible_bitmap = NULL;
@@ -1118,41 +1085,23 @@ static int infilfs_rw_tx_apply_deferred(struct infilfs_rw_tx *tx)
     return 0;
 }
 
+static int infilfs_rw_allocation_map_publish(struct infilfs_rw_tx *tx);
+
 static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
 {
     struct infilfs_sb_info *sbi = tx->sbi;
-    u64 bitmap_blocks = le64_to_cpu(tx->next_sb.bitmap_block_count);
-    u64 old_bitmap_start = le64_to_cpu(tx->next_sb.bitmap_start_block);
-    u64 new_bitmap;
     u8 *sb_block;
     unsigned int first;
     unsigned int n;
     int ret;
     int replica_error = 0;
 
-    ret = infilfs_rw_tx_alloc(tx, bitmap_blocks, &new_bitmap);
-    if (ret)
-        return ret;
-    ret = infilfs_rw_tx_defer_free(tx, old_bitmap_start, bitmap_blocks);
-    if (ret)
-        return ret;
-    ret = infilfs_rw_tx_apply_deferred(tx);
-    if (ret)
-        return ret;
-
-    tx->next_sb.bitmap_start_block = cpu_to_le64(new_bitmap);
-    tx->next_sb.generation = cpu_to_le64(tx->generation);
-    tx->next_sb.free_blocks = cpu_to_le64(tx->free_blocks);
-
     ret = sync_blockdev(tx->sb->s_bdev);
     if (ret)
         return ret;
-    for (n = 0; n < bitmap_blocks; ++n) {
-        ret = infilfs_rw_write_block(tx->sb, new_bitmap + n,
-            tx->bitmap + (size_t)n * INFILFS_DISK_BLOCK_SIZE);
-        if (ret)
-            return ret;
-    }
+    ret = infilfs_rw_allocation_map_publish(tx);
+    if (ret)
+        return ret;
     ret = sync_blockdev(tx->sb->s_bdev);
     if (ret)
         return ret;
@@ -1171,9 +1120,6 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
         return ret;
     }
 
-    /* Commit point reached. The transaction mutated the serialized live
-     * allocation image in place under write_lock; no whole-bitmap swap or
-     * copy is required. */
     sbi->disk = tx->next_sb;
     write_lock(&sbi->bitmap_lock);
     sbi->visible_bitmap = sbi->bitmap;
@@ -1209,643 +1155,8 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
     tx->free_extent_count = 0;
     tx->free_extent_capacity = 0;
     tx->free_extent_index_valid = false;
+    tx->bitmap = NULL;
     return 0;
-}
-
-static void infilfs_rw_init_page(u8 *block, const u8 magic[8],
-                                 const u8 owner[16], u64 generation)
-{
-    struct infilfs_metadata_page_disk *page;
-
-    memset(block, 0, INFILFS_DISK_BLOCK_SIZE);
-    page = (struct infilfs_metadata_page_disk *)block;
-    memcpy(page->magic, magic, 8);
-    page->generation = cpu_to_le64(generation);
-    memcpy(page->owner_object_id, owner, 16);
-    page->checksum_type = cpu_to_le32(INFILFS_CHECKSUM_CRC64_ECMA);
-}
-
-static int infilfs_rw_collect_index(struct infilfs_rw_tx *tx,
-                                    u8 old_head[INFILFS_DISK_BLOCK_SIZE],
-                                    struct infilfs_index_entry_disk **entries_out,
-                                    u32 *count_out)
-{
-    struct infilfs_object_header_disk *header;
-    struct infilfs_index_payload_disk *payload;
-    struct infilfs_index_entry_disk *entries;
-    u32 count;
-    u16 version;
-    int ret;
-
-    ret = infilfs_read_object(tx->sb,
-        le64_to_cpu(tx->sbi->disk.object_index_block),
-        INFILFS_OBJECT_INDEX, NULL, old_head);
-    if (ret)
-        return ret;
-    header = (struct infilfs_object_header_disk *)old_head;
-    payload = (struct infilfs_index_payload_disk *)(header + 1);
-    count = le32_to_cpu(payload->entry_count);
-    entries = kvmalloc_array((size_t)count + 1u, sizeof(*entries), GFP_NOFS);
-    if (!entries)
-        return -ENOMEM;
-    version = le16_to_cpu(header->object_version);
-
-    if (version == INFILFS_OBJECT_VERSION_CLASSIC) {
-        size_t needed = sizeof(*payload) + (size_t)count * sizeof(*entries);
-        if (le32_to_cpu(payload->reserved) != 0 ||
-            needed > le32_to_cpu(header->payload_size)) {
-            ret = -EFSCORRUPTED;
-            goto fail;
-        }
-        memcpy(entries, payload + 1, (size_t)count * sizeof(*entries));
-    } else if (version == INFILFS_OBJECT_VERSION_PAGED) {
-        const __le64 *pages = (const __le64 *)(payload + 1);
-        u32 page_count = le32_to_cpu(payload->reserved);
-        u32 copied = 0;
-        u32 p;
-        u8 *page_block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
-
-        if (!page_block) {
-            ret = -ENOMEM;
-            goto fail;
-        }
-        if ((count && !page_count) || page_count > INFILFS_INDEX_PAGE_POINTERS) {
-            kfree(page_block);
-            ret = -EFSCORRUPTED;
-            goto fail;
-        }
-        for (p = 0; p < page_count; ++p) {
-            struct infilfs_metadata_page_disk *page;
-            u32 page_entries;
-            u64 block = le64_to_cpu(pages[p]);
-
-            ret = infilfs_read_allocated_block(tx->sb, block, page_block);
-            if (ret)
-                break;
-            if (!infilfs_metadata_page_valid(tx->sb, page_block,
-                                             infilfs_index_page_magic,
-                                             header->object_id)) {
-                ret = -EFSCORRUPTED;
-                break;
-            }
-            page = (struct infilfs_metadata_page_disk *)page_block;
-            page_entries = le32_to_cpu(page->entry_count);
-            if (page_entries > INFILFS_INDEX_ENTRIES_PER_PAGE ||
-                copied > count || page_entries > count - copied ||
-                le32_to_cpu(page->bytes_used) !=
-                    page_entries * sizeof(*entries)) {
-                ret = -EFSCORRUPTED;
-                break;
-            }
-            memcpy(entries + copied, page + 1,
-                   (size_t)page_entries * sizeof(*entries));
-            copied += page_entries;
-            ret = infilfs_rw_tx_defer_free(tx, block, 1);
-            if (ret)
-                break;
-        }
-        kfree(page_block);
-        if (ret)
-            goto fail;
-        if (copied != count) {
-            ret = -EFSCORRUPTED;
-            goto fail;
-        }
-    } else {
-        ret = -EFSCORRUPTED;
-        goto fail;
-    }
-
-    *entries_out = entries;
-    *count_out = count;
-    return 0;
-fail:
-    kvfree(entries);
-    return ret;
-}
-
-static int infilfs_rw_rebuild_index(struct infilfs_rw_tx *tx,
-                                    const u8 *repoint_id, u64 repoint_block,
-                                    u16 repoint_type,
-                                    const u8 *add_id, u64 add_block,
-                                    u16 add_type)
-{
-    u8 *old_head;
-    u8 *new_head;
-    u8 *page_block;
-    struct infilfs_object_header_disk *header;
-    struct infilfs_index_payload_disk *payload;
-    struct infilfs_index_entry_disk *entries = NULL;
-    u32 count = 0;
-    u32 new_count;
-    u32 i;
-    bool found = !repoint_id;
-    int ret;
-    u64 new_head_block;
-    bool paged;
-
-    old_head = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
-    new_head = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
-    page_block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
-    if (!old_head || !new_head || !page_block) {
-        ret = -ENOMEM;
-        goto out;
-    }
-    ret = infilfs_rw_collect_index(tx, old_head, &entries, &count);
-    if (ret)
-        goto out;
-
-    for (i = 0; i < count; ++i) {
-        if (repoint_id && memcmp(entries[i].object_id, repoint_id, 16) == 0) {
-            entries[i].object_block = cpu_to_le64(repoint_block);
-            entries[i].object_type = cpu_to_le16(repoint_type);
-            found = true;
-        }
-        if (add_id && memcmp(entries[i].object_id, add_id, 16) == 0) {
-            ret = -EEXIST;
-            goto out;
-        }
-    }
-    if (!found) {
-        ret = -ENOENT;
-        goto out;
-    }
-    new_count = count;
-    if (add_id) {
-        memset(&entries[new_count], 0, sizeof(entries[new_count]));
-        memcpy(entries[new_count].object_id, add_id, 16);
-        entries[new_count].object_block = cpu_to_le64(add_block);
-        entries[new_count].object_type = cpu_to_le16(add_type);
-        new_count++;
-    }
-
-    header = (struct infilfs_object_header_disk *)old_head;
-    paged = le16_to_cpu(header->object_version) == INFILFS_OBJECT_VERSION_PAGED ||
-        (le64_to_cpu(tx->next_sb.incompat_flags) & INFILFS_INCOMPAT_PAGED_METADATA);
-    memset(new_head, 0, INFILFS_DISK_BLOCK_SIZE);
-    memcpy(new_head, old_head, sizeof(*header) + sizeof(*payload));
-    header = (struct infilfs_object_header_disk *)new_head;
-    payload = (struct infilfs_index_payload_disk *)(header + 1);
-    header->generation = cpu_to_le64(tx->generation);
-    payload->entry_count = cpu_to_le32(new_count);
-
-    if (paged) {
-        __le64 *pointers = (__le64 *)(payload + 1);
-        u32 page_count = DIV_ROUND_UP(new_count, INFILFS_INDEX_ENTRIES_PER_PAGE);
-        u32 copied = 0;
-        u32 p;
-
-        if (page_count > INFILFS_INDEX_PAGE_POINTERS) {
-            ret = -ENOSPC;
-            goto out;
-        }
-        header->object_version = cpu_to_le16(INFILFS_OBJECT_VERSION_PAGED);
-        payload->reserved = cpu_to_le32(page_count);
-        header->payload_size = cpu_to_le32(sizeof(*payload) +
-            (size_t)page_count * sizeof(__le64));
-        for (p = 0; p < page_count; ++p) {
-            u32 n = min_t(u32, INFILFS_INDEX_ENTRIES_PER_PAGE,
-                          new_count - copied);
-            struct infilfs_metadata_page_disk *page;
-            u64 page_block_no;
-
-            ret = infilfs_rw_tx_alloc(tx, 1, &page_block_no);
-            if (ret)
-                goto out;
-            infilfs_rw_init_page(page_block, infilfs_index_page_magic,
-                                 header->object_id, tx->generation);
-            page = (struct infilfs_metadata_page_disk *)page_block;
-            page->entry_count = cpu_to_le32(n);
-            page->bytes_used = cpu_to_le32(n * sizeof(*entries));
-            memcpy(page + 1, entries + copied, (size_t)n * sizeof(*entries));
-            ret = infilfs_rw_finalize_page(page_block);
-            if (ret)
-                goto out;
-            ret = infilfs_rw_write_block(tx->sb, page_block_no, page_block);
-            if (ret)
-                goto out;
-            pointers[p] = cpu_to_le64(page_block_no);
-            copied += n;
-        }
-    } else {
-        size_t payload_size = sizeof(*payload) +
-            (size_t)new_count * sizeof(*entries);
-        if (payload_size > INFILFS_DISK_BLOCK_SIZE - sizeof(*header)) {
-            ret = -ENOSPC;
-            goto out;
-        }
-        header->object_version = cpu_to_le16(INFILFS_OBJECT_VERSION_CLASSIC);
-        payload->reserved = 0;
-        header->payload_size = cpu_to_le32(payload_size);
-        memcpy(payload + 1, entries, (size_t)new_count * sizeof(*entries));
-    }
-
-    ret = infilfs_rw_finalize_object(new_head);
-    if (ret)
-        goto out;
-    ret = infilfs_rw_tx_alloc(tx, 1, &new_head_block);
-    if (ret)
-        goto out;
-    ret = infilfs_rw_write_block(tx->sb, new_head_block, new_head);
-    if (ret)
-        goto out;
-    ret = infilfs_rw_tx_defer_free(tx,
-        le64_to_cpu(tx->sbi->disk.object_index_block), 1);
-    if (ret)
-        goto out;
-    tx->next_sb.object_index_block = cpu_to_le64(new_head_block);
-out:
-    kvfree(entries);
-    kfree(page_block);
-    kfree(new_head);
-    kfree(old_head);
-    return ret;
-}
-
-static int infilfs_rw_collect_directory(struct infilfs_rw_tx *tx,
-                                        struct inode *dir,
-                                        u8 old_head[INFILFS_DISK_BLOCK_SIZE],
-                                        u8 **bytes_out, size_t *bytes_out_len,
-                                        u32 *entry_count_out)
-{
-    struct infilfs_inode_info *ii = INFILFS_I(dir);
-    struct infilfs_object_header_disk *header;
-    struct infilfs_directory_payload_disk *payload;
-    u16 version;
-    u32 count;
-    size_t bytes = 0;
-    u8 *all = NULL;
-    int ret;
-
-    ret = infilfs_read_object(tx->sb, ii->object_block,
-                              INFILFS_OBJECT_DIRECTORY, ii->object_id, old_head);
-    if (ret)
-        return ret;
-    header = (struct infilfs_object_header_disk *)old_head;
-    payload = (struct infilfs_directory_payload_disk *)(header + 1);
-    count = le32_to_cpu(payload->entry_count);
-    version = le16_to_cpu(header->object_version);
-
-    if (version == INFILFS_OBJECT_VERSION_CLASSIC) {
-        bytes = le32_to_cpu(payload->bytes_used);
-        if (sizeof(*payload) + bytes > le32_to_cpu(header->payload_size))
-            return -EFSCORRUPTED;
-        all = kvmalloc(bytes ? bytes : 1u, GFP_NOFS);
-        if (!all)
-            return -ENOMEM;
-        if (bytes)
-            memcpy(all, payload + 1, bytes);
-    } else if (version == INFILFS_OBJECT_VERSION_PAGED) {
-        const __le64 *pages = (const __le64 *)(payload + 1);
-        u32 page_count = le32_to_cpu(payload->bytes_used);
-        u32 p;
-        u8 *page_block;
-
-        if ((count && !page_count) || page_count > INFILFS_DIRECTORY_PAGE_POINTERS)
-            return -EFSCORRUPTED;
-        all = kvmalloc((size_t)page_count * INFILFS_METADATA_PAGE_DATA_SIZE + 1u,
-                       GFP_NOFS);
-        if (!all)
-            return -ENOMEM;
-        page_block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
-        if (!page_block) {
-            kvfree(all);
-            return -ENOMEM;
-        }
-        for (p = 0; p < page_count; ++p) {
-            struct infilfs_metadata_page_disk *page;
-            u32 used;
-            u64 block = le64_to_cpu(pages[p]);
-
-            ret = infilfs_read_allocated_block(tx->sb, block, page_block);
-            if (ret)
-                break;
-            if (!infilfs_metadata_page_valid(tx->sb, page_block,
-                                             infilfs_directory_page_magic,
-                                             header->object_id)) {
-                ret = -EFSCORRUPTED;
-                break;
-            }
-            page = (struct infilfs_metadata_page_disk *)page_block;
-            used = le32_to_cpu(page->bytes_used);
-            memcpy(all + bytes, page + 1, used);
-            bytes += used;
-            ret = infilfs_rw_tx_defer_free(tx, block, 1);
-            if (ret)
-                break;
-        }
-        kfree(page_block);
-        if (ret) {
-            kvfree(all);
-            return ret;
-        }
-    } else {
-        return -EFSCORRUPTED;
-    }
-
-    *bytes_out = all;
-    *bytes_out_len = bytes;
-    *entry_count_out = count;
-    return 0;
-}
-
-static int infilfs_rw_directory_contains(const u8 *bytes, size_t length,
-                                         const char *name, size_t name_len)
-{
-    size_t offset = 0;
-
-    while (offset < length) {
-        const struct infilfs_dirent_disk *entry;
-        u16 rec;
-        u16 n;
-
-        if (length - offset < sizeof(*entry))
-            return -EFSCORRUPTED;
-        entry = (const struct infilfs_dirent_disk *)(bytes + offset);
-        rec = le16_to_cpu(entry->record_size);
-        n = le16_to_cpu(entry->name_length);
-        if (rec < sizeof(*entry) || rec > length - offset || (rec & 7u))
-            return -EFSCORRUPTED;
-        if (n == name_len && sizeof(*entry) + n <= rec &&
-            memcmp(bytes + offset + sizeof(*entry), name, n) == 0)
-            return 1;
-        offset += rec;
-    }
-    return offset == length ? 0 : -EFSCORRUPTED;
-}
-
-static int infilfs_rw_rebuild_directory(struct infilfs_rw_tx *tx,
-                                        struct inode *dir,
-                                        const char *name,
-                                        const u8 child_id[16], u16 child_type,
-                                        u64 *new_dir_block_out)
-{
-    struct infilfs_inode_info *ii = INFILFS_I(dir);
-    u8 *old_head = NULL;
-    u8 *new_head = NULL;
-    u8 *page_block = NULL;
-    u8 *all = NULL;
-    u8 *grown;
-    size_t bytes = 0;
-    size_t name_len = strlen(name);
-    size_t rec = ALIGN(sizeof(struct infilfs_dirent_disk) + name_len, 8);
-    u32 count = 0;
-    struct infilfs_object_header_disk *header;
-    struct infilfs_directory_payload_disk *payload;
-    bool paged;
-    u64 new_head_block;
-    int ret;
-
-    old_head = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
-    new_head = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
-    page_block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
-    if (!old_head || !new_head || !page_block) {
-        ret = -ENOMEM;
-        goto out;
-    }
-    ret = infilfs_rw_collect_directory(tx, dir, old_head, &all, &bytes, &count);
-    if (ret)
-        goto out;
-    ret = infilfs_rw_directory_contains(all, bytes, name, name_len);
-    if (ret < 0)
-        goto out;
-    if (ret > 0) {
-        ret = -EEXIST;
-        goto out;
-    }
-    grown = kvmalloc(bytes + rec, GFP_NOFS);
-    if (!grown) {
-        ret = -ENOMEM;
-        goto out;
-    }
-    if (bytes)
-        memcpy(grown, all, bytes);
-    kvfree(all);
-    all = grown;
-    memset(all + bytes, 0, rec);
-    {
-        struct infilfs_dirent_disk *entry =
-            (struct infilfs_dirent_disk *)(all + bytes);
-        entry->record_size = cpu_to_le16((u16)rec);
-        entry->name_length = cpu_to_le16((u16)name_len);
-        entry->object_type = cpu_to_le16(child_type);
-        memcpy(entry->object_id, child_id, 16);
-        memcpy(all + bytes + sizeof(*entry), name, name_len);
-    }
-    bytes += rec;
-
-    header = (struct infilfs_object_header_disk *)old_head;
-    paged = le16_to_cpu(header->object_version) == INFILFS_OBJECT_VERSION_PAGED ||
-        (le64_to_cpu(tx->next_sb.incompat_flags) & INFILFS_INCOMPAT_PAGED_METADATA);
-    memset(new_head, 0, INFILFS_DISK_BLOCK_SIZE);
-    memcpy(new_head, old_head, sizeof(*header) + sizeof(*payload));
-    header = (struct infilfs_object_header_disk *)new_head;
-    payload = (struct infilfs_directory_payload_disk *)(header + 1);
-    header->generation = cpu_to_le64(tx->generation);
-    payload->entry_count = cpu_to_le32(count + 1u);
-    payload->attributes.modification_time_ns = cpu_to_le64(ktime_get_real_ns());
-    payload->attributes.change_time_ns = payload->attributes.modification_time_ns;
-    if (child_type == INFILFS_OBJECT_DIRECTORY)
-        payload->attributes.link_count = cpu_to_le64(
-            le64_to_cpu(payload->attributes.link_count) + 1u);
-
-    if (paged) {
-        __le64 *pointers = (__le64 *)(payload + 1);
-        size_t offset = 0;
-        u32 page_count = 0;
-
-        header->object_version = cpu_to_le16(INFILFS_OBJECT_VERSION_PAGED);
-        while (offset < bytes) {
-            struct infilfs_metadata_page_disk *page;
-            size_t page_used = 0;
-            u32 page_entries = 0;
-            u64 page_no;
-
-            if (page_count >= INFILFS_DIRECTORY_PAGE_POINTERS) {
-                ret = -ENOSPC;
-                goto out;
-            }
-            infilfs_rw_init_page(page_block, infilfs_directory_page_magic,
-                                 header->object_id, tx->generation);
-            while (offset < bytes) {
-                struct infilfs_dirent_disk *entry =
-                    (struct infilfs_dirent_disk *)(all + offset);
-                u16 record_size = le16_to_cpu(entry->record_size);
-                if (!record_size || record_size > bytes - offset) {
-                    ret = -EFSCORRUPTED;
-                    goto out;
-                }
-                if (page_used && page_used + record_size >
-                    INFILFS_METADATA_PAGE_DATA_SIZE)
-                    break;
-                if (record_size > INFILFS_METADATA_PAGE_DATA_SIZE) {
-                    ret = -ENAMETOOLONG;
-                    goto out;
-                }
-                memcpy(page_block + sizeof(*page) + page_used,
-                       all + offset, record_size);
-                page_used += record_size;
-                offset += record_size;
-                page_entries++;
-            }
-            page = (struct infilfs_metadata_page_disk *)page_block;
-            page->entry_count = cpu_to_le32(page_entries);
-            page->bytes_used = cpu_to_le32(page_used);
-            ret = infilfs_rw_finalize_page(page_block);
-            if (ret)
-                goto out;
-            ret = infilfs_rw_tx_alloc(tx, 1, &page_no);
-            if (ret)
-                goto out;
-            ret = infilfs_rw_write_block(tx->sb, page_no, page_block);
-            if (ret)
-                goto out;
-            pointers[page_count++] = cpu_to_le64(page_no);
-        }
-        payload->bytes_used = cpu_to_le32(page_count);
-        header->payload_size = cpu_to_le32(sizeof(*payload) +
-            (size_t)page_count * sizeof(__le64));
-    } else {
-        if (sizeof(*payload) + bytes > INFILFS_DISK_BLOCK_SIZE - sizeof(*header)) {
-            ret = -ENOSPC;
-            goto out;
-        }
-        header->object_version = cpu_to_le16(INFILFS_OBJECT_VERSION_CLASSIC);
-        payload->bytes_used = cpu_to_le32(bytes);
-        header->payload_size = cpu_to_le32(sizeof(*payload) + bytes);
-        memcpy(payload + 1, all, bytes);
-    }
-
-    ret = infilfs_rw_finalize_object(new_head);
-    if (ret)
-        goto out;
-    ret = infilfs_rw_tx_alloc(tx, 1, &new_head_block);
-    if (ret)
-        goto out;
-    ret = infilfs_rw_write_block(tx->sb, new_head_block, new_head);
-    if (ret)
-        goto out;
-    ret = infilfs_rw_tx_defer_free(tx, ii->object_block, 1);
-    if (ret)
-        goto out;
-    if (memcmp(ii->object_id, tx->sbi->disk.root_object_id, 16) == 0)
-        tx->next_sb.root_object_block = cpu_to_le64(new_head_block);
-    *new_dir_block_out = new_head_block;
-    ret = 0;
-out:
-    kvfree(all);
-    kfree(page_block);
-    kfree(new_head);
-    kfree(old_head);
-    return ret;
-}
-
-static int infilfs_rw_generate_id(struct super_block *sb, u8 id[16])
-{
-    unsigned int attempt;
-
-    for (attempt = 0; attempt < 32; ++attempt) {
-        u64 block;
-        u16 type;
-        u8 combined = 0;
-        unsigned int i;
-        int ret;
-
-        get_random_bytes(id, 16);
-        for (i = 0; i < 16; ++i)
-            combined |= id[i];
-        if (!combined)
-            continue;
-        ret = infilfs_index_lookup(sb, id, &block, &type);
-        if (ret == -ENOENT)
-            return 0;
-        if (ret)
-            return ret;
-    }
-    return -EAGAIN;
-}
-
-static void infilfs_rw_fill_common_attributes(
-    struct infilfs_attributes_disk *attributes,
-    struct infilfs_posix_compat_disk *posix,
-    umode_t mode, u64 links)
-{
-    u64 now = ktime_get_real_ns();
-    u32 uid = 0;
-    u32 gid = 0;
-
-    memset(attributes, 0, sizeof(*attributes));
-    memset(posix, 0, sizeof(*posix));
-    attributes->link_count = cpu_to_le64(links);
-    attributes->birth_time_ns = cpu_to_le64(now);
-    attributes->access_time_ns = cpu_to_le64(now);
-    attributes->modification_time_ns = cpu_to_le64(now);
-    attributes->change_time_ns = cpu_to_le64(now);
-    posix->permissions = cpu_to_le32(mode & 07777);
-    posix->uid = cpu_to_le32(uid);
-    posix->gid = cpu_to_le32(gid);
-}
-
-static int infilfs_rw_create_object(struct infilfs_rw_tx *tx,
-                                    struct inode *parent, u16 type,
-                                    umode_t mode, u64 portable_flags,
-                                    const u8 object_id[16],
-                                    u64 *block_out)
-{
-    struct infilfs_inode_info *parent_ii = INFILFS_I(parent);
-    struct infilfs_object_header_disk *header;
-    u8 *object;
-    u64 block;
-    int ret;
-
-    object = kzalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
-    if (!object)
-        return -ENOMEM;
-    header = (struct infilfs_object_header_disk *)object;
-    memcpy(header->magic, infilfs_object_magic, 8);
-    header->object_type = cpu_to_le16(type);
-    header->object_version = cpu_to_le16(
-        type == INFILFS_OBJECT_DIRECTORY &&
-        (le64_to_cpu(tx->next_sb.incompat_flags) & INFILFS_INCOMPAT_PAGED_METADATA) ?
-        INFILFS_OBJECT_VERSION_PAGED : INFILFS_OBJECT_VERSION_CLASSIC);
-    header->header_size = cpu_to_le32(sizeof(*header));
-    header->generation = cpu_to_le64(tx->generation);
-    memcpy(header->object_id, object_id, 16);
-    memcpy(header->parent_id, parent_ii->object_id, 16);
-    header->checksum_type = cpu_to_le32(INFILFS_CHECKSUM_CRC64_ECMA);
-
-    if (type == INFILFS_OBJECT_FILE) {
-        struct infilfs_file_payload_disk *file =
-            (struct infilfs_file_payload_disk *)(header + 1);
-        header->payload_size = cpu_to_le32(sizeof(*file));
-        infilfs_rw_fill_common_attributes(&file->attributes, &file->posix,
-                                          mode, 1);
-        file->attributes.portable_flags = cpu_to_le64(portable_flags);
-        file->data_checksum_type = cpu_to_le32(INFILFS_CHECKSUM_SHA256);
-    } else if (type == INFILFS_OBJECT_DIRECTORY) {
-        struct infilfs_directory_payload_disk *dir =
-            (struct infilfs_directory_payload_disk *)(header + 1);
-        header->payload_size = cpu_to_le32(sizeof(*dir));
-        infilfs_rw_fill_common_attributes(&dir->attributes, &dir->posix,
-                                          mode, 2);
-        dir->attributes.portable_flags = cpu_to_le64(portable_flags);
-    } else {
-        kfree(object);
-        return -EINVAL;
-    }
-
-    ret = infilfs_rw_finalize_object(object);
-    if (ret)
-        goto out;
-    ret = infilfs_rw_tx_alloc(tx, 1, &block);
-    if (ret)
-        goto out;
-    ret = infilfs_rw_write_block(tx->sb, block, object);
-    if (!ret)
-        *block_out = block;
-out:
-    kfree(object);
-    return ret;
 }
 
 static int infilfs_rw_create_named_child(

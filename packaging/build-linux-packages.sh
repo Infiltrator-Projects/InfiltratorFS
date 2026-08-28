@@ -54,6 +54,7 @@ install -m 0644 README.md "$package_root/usr/share/doc/infiltratorfs/README.md"
 dkms_root="$package_root/usr/src/infiltratorfs-$package_version"
 install -d "$dkms_root"
 for file in Makefile infiltratorfs.c infiltratorfs_format.h \
+            infiltratorfs_allocation_map.inc infiltratorfs_allocation_publish.inc \
             infiltratorfs_index_tree.inc infiltratorfs_directory_tree.inc \
             infiltratorfs_rw.inc \
             infiltratorfs_rw_legacy.inc infiltratorfs_rw_data.inc \
@@ -200,6 +201,8 @@ for required in \
     "usr/src/infiltratorfs-${package_version}/dkms.conf$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs.c$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_format.h$" \
+    "usr/src/infiltratorfs-${package_version}/infiltratorfs_allocation_map.inc$" \
+    "usr/src/infiltratorfs-${package_version}/infiltratorfs_allocation_publish.inc$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_rw.inc$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_rw_legacy.inc$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_rw_data.inc$" \
@@ -255,7 +258,8 @@ verify_installer() {
     tail -n +"$payload_start" "$self" | tar --no-same-owner -xzf - -C "$verify_root"
     for required in CMakeLists.txt README.md support/installer/bootstrap.sh \
         src/infiltratr-common/CMakeLists.txt kernel/Makefile kernel/infiltratorfs.c \
-        kernel/infiltratorfs_format.h kernel/infiltratorfs_rw.inc \
+        kernel/infiltratorfs_format.h kernel/infiltratorfs_allocation_map.inc \
+        kernel/infiltratorfs_allocation_publish.inc kernel/infiltratorfs_rw.inc \
         kernel/infiltratorfs_rw_legacy.inc kernel/infiltratorfs_rw_data.inc \
         kernel/infiltratorfs_rw_namespace.inc kernel/infiltratorfs_rw_read_cache.inc \
         kernel/infiltratorfs_pagecache.inc kernel/infiltratorfs_linux_meta.inc; do

@@ -40,83 +40,18 @@ infs_status infs_volume_sync(struct infs_volume *vol)
     if (status != INFS_STATUS_OK)
         return status;
 
-    const uint64_t old_bitmap_start =
-        infs_le64_to_cpu(vol->tx_base_sb.bitmap_start_block);
-    const uint64_t bitmap_blocks =
-        infs_le64_to_cpu(vol->tx_base_sb.bitmap_block_count);
-    status = tx_defer_range(vol, old_bitmap_start, bitmap_blocks);
-    if (status != INFS_STATUS_OK)
-        return status;
-
-    uint64_t new_bitmap_start = 0;
-    status = alloc_exact_run_uninitialized(
-        vol, bitmap_blocks, &new_bitmap_start);
-    if (status != INFS_STATUS_OK)
-        return status;
-
-    uint8_t *snapshot_union = NULL;
-    status = snapshot_union_bitmap(vol, &snapshot_union);
-    if (status != INFS_STATUS_OK)
-        return status;
-
-    if (vol->tx_error != INFS_STATUS_OK) {
-        free(snapshot_union);
-        return vol->tx_error;
-    }
-
-    /* Deferred frees remain reserved until every new metadata/data write is on
-     * stable storage. They become reusable only in the new bitmap image. Keep
-     * free_blocks incrementally instead of rescanning every block in a large
-     * volume at each commit. */
-    uint64_t free_blocks = infs_le64_to_cpu(vol->sb.free_blocks);
-    uint64_t total = infs_le64_to_cpu(vol->sb.total_blocks);
-    for (size_t i = 0; i < vol->tx_deferred_count; ++i) {
-        uint64_t start = vol->tx_deferred[i].start;
-        uint64_t count = vol->tx_deferred[i].count;
-        for (uint64_t b = start; b < start + count && b < total; ++b) {
-            if (!bitmap_get(vol->bitmap, b) ||
-                bitmap_get(snapshot_union, b))
-                continue;
-            bitmap_set(vol->bitmap, b, 0);
-            if (vol->free_extent_index_valid &&
-                !free_extent_index_add(vol, b, 1))
-                free_extent_index_invalidate(vol);
-            if (free_blocks == UINT64_MAX) {
-                free(snapshot_union);
-                return INFS_STATUS_OVERFLOW;
-            }
-            ++free_blocks;
-        }
-    }
-    for (uint64_t i = 0; i < bitmap_blocks; ++i)
-        bitmap_set(vol->bitmap, new_bitmap_start + i, 1);
-    for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i)
-        bitmap_set(vol->bitmap,
-                   infs_le64_to_cpu(vol->sb.checkpoint_block[i]), 1);
-    for (uint64_t b = total; b < (uint64_t)vol->bitmap_bytes * 8u; ++b)
-        bitmap_set(vol->bitmap, b, 1);
-    free(snapshot_union);
-
-    vol->sb.bitmap_start_block = infs_cpu_to_le64(new_bitmap_start);
-    vol->sb.generation = infs_cpu_to_le64(next_generation);
-    vol->sb.free_blocks = infs_cpu_to_le64(free_blocks);
-
-    /* Ordered transaction protocol:
-     *   1. new metadata/data already written to unreachable blocks;
-     *   2. flush those blocks;
-     *   3. write and flush a new bitmap image;
-     *   4. publish one checksummed checkpoint (commit point);
-     *   5. replicate that checkpoint to the other physical copies.
-     * A crash before step 4 selects the old generation. A crash after step 4
-     * selects the new generation and a writable open heals the other copies. */
+    /*
+     * New data/metadata were written to unreachable blocks above. Flush them
+     * first, then publish only the allocation leaves whose bit payload changed
+     * plus the small branch spine. The checkpoint remains the atomic commit
+     * point exactly as before.
+     */
     status = infs_storage_flush(&vol->storage);
     if (status != INFS_STATUS_OK)
         return status;
     phase2_failpoint("before-bitmap");
 
-    status = infs_storage_write(&vol->storage,
-                                new_bitmap_start * INFS_BLOCK_SIZE,
-                                vol->bitmap, vol->bitmap_bytes);
+    status = allocation_map_publish(vol, next_generation);
     if (status != INFS_STATUS_OK)
         return status;
     status = infs_storage_flush(&vol->storage);

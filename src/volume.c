@@ -128,6 +128,7 @@ static int paged_extent_replace(struct infs_volume *vol,
 #endif
 
 #include "volume/part1.inc"
+#include "volume/allocation-map.inc"
 #include "volume/phase3/runtime-cache.inc"
 #include "volume/phase3/paged-metadata.inc"
 #include "volume/phase3/index-tree.inc"

@@ -116,58 +116,10 @@ static infs_status load_checkpoint_graph(
          ~INFS_KNOWN_RO_COMPAT_FLAGS) != 0)
         return INFS_STATUS_NOT_SUPPORTED;
 
-    uint64_t bitmap_start = infs_le64_to_cpu(vol->sb.bitmap_start_block);
-    uint64_t bitmap_blocks = infs_le64_to_cpu(vol->sb.bitmap_block_count);
-    uint64_t total = infs_le64_to_cpu(vol->sb.total_blocks);
-    const uint64_t bits_per_bitmap_block =
-        (uint64_t)INFS_BLOCK_SIZE * UINT64_C(8);
-    uint64_t minimum_bitmap_blocks = total / bits_per_bitmap_block +
-        ((total % bits_per_bitmap_block) != 0);
-    if (bitmap_start == 0 || bitmap_blocks == 0 || bitmap_start >= total ||
-        bitmap_blocks > total - bitmap_start ||
-        bitmap_blocks < minimum_bitmap_blocks ||
-        bitmap_blocks > SIZE_MAX / INFS_BLOCK_SIZE ||
-        infs_le64_to_cpu(vol->sb.free_blocks) > total)
-        return INFS_STATUS_CORRUPT;
-
-    vol->bitmap_bytes = (size_t)(bitmap_blocks * INFS_BLOCK_SIZE);
-    vol->bitmap = malloc(vol->bitmap_bytes);
-    if (!vol->bitmap)
-        return INFS_STATUS_NO_MEMORY;
-
-    infs_status status = infs_storage_read(
-        &vol->storage, bitmap_start * INFS_BLOCK_SIZE,
-        vol->bitmap, vol->bitmap_bytes);
+    infs_status status = allocation_map_load(
+        vol, candidate, &vol->bitmap, &vol->bitmap_bytes, NULL);
     if (status != INFS_STATUS_OK)
         return status;
-
-    uint64_t free_count = 0;
-    for (uint64_t b = 0; b < total; ++b) {
-        if (!bitmap_get(vol->bitmap, b))
-            ++free_count;
-    }
-    if (free_count != infs_le64_to_cpu(vol->sb.free_blocks))
-        return INFS_STATUS_CORRUPT;
-    for (uint64_t b = total; b < (uint64_t)vol->bitmap_bytes * 8u; ++b) {
-        if (!bitmap_get(vol->bitmap, b))
-            return INFS_STATUS_CORRUPT;
-    }
-    for (uint64_t b = bitmap_start; b < bitmap_start + bitmap_blocks; ++b) {
-        if (!bitmap_get(vol->bitmap, b))
-            return INFS_STATUS_CORRUPT;
-    }
-
-    uint64_t critical[] = {
-        infs_le64_to_cpu(vol->sb.checkpoint_block[0]),
-        infs_le64_to_cpu(vol->sb.checkpoint_block[1]),
-        infs_le64_to_cpu(vol->sb.checkpoint_block[2]),
-        infs_le64_to_cpu(vol->sb.object_index_block),
-        infs_le64_to_cpu(vol->sb.root_object_block)
-    };
-    for (size_t i = 0; i < sizeof(critical) / sizeof(critical[0]); ++i) {
-        if (critical[i] >= total || !bitmap_get(vol->bitmap, critical[i]))
-            return INFS_STATUS_CORRUPT;
-    }
 
     uint8_t object[INFS_BLOCK_SIZE];
     status = read_object(vol, infs_le64_to_cpu(vol->sb.root_object_block), object);

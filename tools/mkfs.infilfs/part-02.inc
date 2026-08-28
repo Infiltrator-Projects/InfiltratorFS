@@ -121,11 +121,25 @@ int main(int argc, char **argv)
     }
 
     const uint64_t total_blocks = size_bytes / INFS_BLOCK_SIZE;
-    const uint64_t bitmap_bytes = (total_blocks + 7u) / 8u;
-    const uint64_t bitmap_blocks =
-        (bitmap_bytes + INFS_BLOCK_SIZE - 1u) / INFS_BLOCK_SIZE;
-    const uint64_t bitmap_start = 1u;
-    const uint64_t index_block = bitmap_start + bitmap_blocks;
+    if (!total_blocks || total_blocks > INFS_ALLOCATION_TREE_MAX_BLOCKS) {
+        fprintf(stderr, "Target exceeds the Format 0.17 allocation-map capacity.\n");
+        close(fd);
+        return 1;
+    }
+    const uint64_t leaf_count =
+        total_blocks / INFS_ALLOCATION_BITS_PER_LEAF +
+        ((total_blocks % INFS_ALLOCATION_BITS_PER_LEAF) != 0);
+    const uint64_t level1_count =
+        leaf_count / INFS_ALLOCATION_TREE_FANOUT +
+        ((leaf_count % INFS_ALLOCATION_TREE_FANOUT) != 0);
+    const uint64_t level2_count =
+        level1_count / INFS_ALLOCATION_TREE_FANOUT +
+        ((level1_count % INFS_ALLOCATION_TREE_FANOUT) != 0);
+    const uint64_t allocation_root = 1u;
+    const uint64_t level2_start = allocation_root + 1u;
+    const uint64_t level1_start = level2_start + level2_count;
+    const uint64_t leaf_start = level1_start + level1_count;
+    const uint64_t index_block = leaf_start + leaf_count;
     const uint64_t root_block = index_block + 1u;
     const uint64_t index_page_block = root_block + 1u;
     const uint64_t checkpoints[INFS_CHECKPOINT_COUNT] = {
@@ -134,17 +148,20 @@ int main(int argc, char **argv)
         total_blocks - 1u
     };
 
-    if (bitmap_blocks > SIZE_MAX / INFS_BLOCK_SIZE) {
-        fprintf(stderr, "Target bitmap is too large for this build.\n");
-        close(fd);
-        return 1;
-    }
     if (index_page_block >= checkpoints[1]) {
-        fprintf(stderr, "Target is too small for the Format 0.11 metadata layout.\n");
+        fprintf(stderr, "Target is too small for the Format 0.17 metadata layout.\n");
         close(fd);
         return 1;
     }
 
+    const uint64_t bitmap_bytes = (total_blocks + 7u) / 8u;
+    const uint64_t bitmap_blocks =
+        (bitmap_bytes + INFS_BLOCK_SIZE - 1u) / INFS_BLOCK_SIZE;
+    if (!bitmap_blocks || bitmap_blocks > SIZE_MAX / INFS_BLOCK_SIZE) {
+        fprintf(stderr, "Target allocation bitmap is too large for this build.\n");
+        close(fd);
+        return 1;
+    }
     size_t bitmap_alloc = (size_t)(bitmap_blocks * INFS_BLOCK_SIZE);
     uint8_t *bitmap = calloc(1, bitmap_alloc);
     if (!bitmap) {

@@ -31,7 +31,7 @@
 #define INFILFS_DISK_BLOCK_SIZE 4096u
 #define INFILFS_DISK_BLOCK_SHIFT 12u
 #define INFILFS_FORMAT_MAJOR 0u
-#define INFILFS_FORMAT_MINOR 16u
+#define INFILFS_FORMAT_MINOR 17u
 #define INFILFS_CHECKPOINT_COUNT 3u
 #define INFILFS_NAME_MAX 1023u
 
@@ -70,13 +70,14 @@
 #define INFILFS_INCOMPAT_PAGED_EXTENTS ((__u64)0x0000000000000100ULL)
 #define INFILFS_INCOMPAT_INDEX_TREE ((__u64)0x0000000000000200ULL)
 #define INFILFS_INCOMPAT_DIRECTORY_TREE ((__u64)0x0000000000000400ULL)
+#define INFILFS_INCOMPAT_ALLOCATION_TREE ((__u64)0x0000000000000800ULL)
 #define INFILFS_KNOWN_INCOMPAT_FLAGS \
     (INFILFS_INCOMPAT_UTF8_NAMES | INFILFS_INCOMPAT_SPARSE_EXTENTS | \
      INFILFS_INCOMPAT_INLINE_DATA | INFILFS_INCOMPAT_SHARED_EXTENTS | \
      INFILFS_INCOMPAT_PAGED_METADATA | INFILFS_INCOMPAT_SYMBOLIC_LINKS | \
      INFILFS_INCOMPAT_HARD_LINKS | INFILFS_INCOMPAT_SNAPSHOTS | \
      INFILFS_INCOMPAT_PAGED_EXTENTS | INFILFS_INCOMPAT_INDEX_TREE | \
-     INFILFS_INCOMPAT_DIRECTORY_TREE)
+     INFILFS_INCOMPAT_DIRECTORY_TREE | INFILFS_INCOMPAT_ALLOCATION_TREE)
 
 struct infilfs_superblock_disk {
     __u8 magic[8];
@@ -88,8 +89,8 @@ struct infilfs_superblock_disk {
     __le64 generation;
     __le64 total_blocks;
     __le64 free_blocks;
-    __le64 bitmap_start_block;
-    __le64 bitmap_block_count;
+    __le64 allocation_root_block;
+    __le64 allocation_leaf_count;
     __le64 object_index_block;
     __le64 root_object_block;
     __le64 checkpoint_block[INFILFS_CHECKPOINT_COUNT];
@@ -123,6 +124,17 @@ struct infilfs_metadata_page_disk {
     __le32 bytes_used;
     __le32 checksum_type;
     __le32 reserved;
+    __u8 checksum[32];
+} __packed;
+
+struct infilfs_allocation_page_disk {
+    __u8 magic[8];
+    __le64 generation;
+    __le64 logical_index;
+    __le32 level;
+    __le32 entry_count;
+    __le32 bytes_used;
+    __le32 checksum_type;
     __u8 checksum[32];
 } __packed;
 
@@ -228,6 +240,19 @@ struct infilfs_snapshot_record_disk {
 
 #define INFILFS_METADATA_PAGE_DATA_SIZE \
     (INFILFS_DISK_BLOCK_SIZE - sizeof(struct infilfs_metadata_page_disk))
+#define INFILFS_ALLOCATION_PAGE_DATA_SIZE \
+    (INFILFS_DISK_BLOCK_SIZE - sizeof(struct infilfs_allocation_page_disk))
+#define INFILFS_ALLOCATION_TREE_FANOUT \
+    (INFILFS_ALLOCATION_PAGE_DATA_SIZE / sizeof(__le64))
+#define INFILFS_ALLOCATION_TREE_ROOT_LEVEL 3u
+#define INFILFS_ALLOCATION_BITS_PER_LEAF \
+    ((__u64)INFILFS_ALLOCATION_PAGE_DATA_SIZE * 8ULL)
+#define INFILFS_ALLOCATION_TREE_MAX_LEAVES \
+    ((__u64)INFILFS_ALLOCATION_TREE_FANOUT * \
+     (__u64)INFILFS_ALLOCATION_TREE_FANOUT * \
+     (__u64)INFILFS_ALLOCATION_TREE_FANOUT)
+#define INFILFS_ALLOCATION_TREE_MAX_BLOCKS \
+    (INFILFS_ALLOCATION_TREE_MAX_LEAVES * INFILFS_ALLOCATION_BITS_PER_LEAF)
 #define INFILFS_DIRENT_MAX_RECORD_SIZE \
     ALIGN(sizeof(struct infilfs_dirent_disk) + INFILFS_NAME_MAX, 8u)
 #define INFILFS_INDEX_ENTRIES_PER_PAGE \
@@ -256,6 +281,9 @@ struct infilfs_snapshot_record_disk {
      sizeof(struct infilfs_file_payload_disk) - \
      sizeof(struct infilfs_data_checksum_disk))
 
+static_assert(sizeof(struct infilfs_allocation_page_disk) == 72);
+static_assert(INFILFS_ALLOCATION_TREE_FANOUT == 503u);
+static_assert(INFILFS_ALLOCATION_BITS_PER_LEAF == 32192ULL);
 static_assert(INFILFS_DIRENT_MAX_RECORD_SIZE <=
               INFILFS_METADATA_PAGE_DATA_SIZE);
 static_assert(sizeof(struct infilfs_superblock_disk) == 252);

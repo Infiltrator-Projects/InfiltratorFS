@@ -11,6 +11,7 @@
 #include <linux/kernel.h>
 #include <linux/mutex.h>
 #include <linux/random.h>
+#include <linux/sort.h>
 #include <linux/spinlock.h>
 #include <linux/pagevec.h>
 #include <linux/pagemap.h>
@@ -213,6 +214,8 @@ static int infilfs_read_allocated_block(struct super_block *sb, u64 block,
     return infilfs_read_block(sb, block, out);
 }
 
+#include "infiltratorfs_allocation_map.inc"
+
 static bool infilfs_checkpoint_basic_valid(
     const struct infilfs_superblock_disk *disk, u64 device_blocks)
 {
@@ -244,18 +247,25 @@ static bool infilfs_checkpoint_basic_valid(
         if (le64_to_cpu(disk->checkpoint_block[i]) != expected[i])
             return false;
 
-    if (le64_to_cpu(disk->bitmap_block_count) == 0 ||
-        le64_to_cpu(disk->bitmap_start_block) >= total ||
-        le64_to_cpu(disk->object_index_block) >= total ||
-        le64_to_cpu(disk->root_object_block) >= total)
-        return false;
+    {
+        size_t leaves = 0;
+        if (infilfs_allocation_counts(total, &leaves, NULL, NULL, NULL) ||
+            le64_to_cpu(disk->allocation_leaf_count) != leaves ||
+            !le64_to_cpu(disk->allocation_root_block) ||
+            le64_to_cpu(disk->allocation_root_block) >= total ||
+            le64_to_cpu(disk->object_index_block) >= total ||
+            le64_to_cpu(disk->root_object_block) >= total)
+            return false;
+    }
 
     incompat = le64_to_cpu(disk->incompat_flags);
     if (incompat & ~INFILFS_KNOWN_INCOMPAT_FLAGS)
         return false;
     if ((incompat & (INFILFS_INCOMPAT_UTF8_NAMES |
-                     INFILFS_INCOMPAT_SPARSE_EXTENTS)) !=
-        (INFILFS_INCOMPAT_UTF8_NAMES | INFILFS_INCOMPAT_SPARSE_EXTENTS))
+                     INFILFS_INCOMPAT_SPARSE_EXTENTS |
+                     INFILFS_INCOMPAT_ALLOCATION_TREE)) !=
+        (INFILFS_INCOMPAT_UTF8_NAMES | INFILFS_INCOMPAT_SPARSE_EXTENTS |
+         INFILFS_INCOMPAT_ALLOCATION_TREE))
         return false;
     if (le64_to_cpu(disk->compat_flags) != 0 ||
         le64_to_cpu(disk->ro_compat_flags) != 0)
@@ -991,16 +1001,9 @@ static int infilfs_validate_checkpoint_graph(
     const struct infilfs_object_header_disk *root_header;
     const struct infilfs_object_header_disk *index_header;
     const struct infilfs_directory_payload_disk *root_payload;
-    u64 bitmap_start = le64_to_cpu(candidate->bitmap_start_block);
-    u64 bitmap_blocks = le64_to_cpu(candidate->bitmap_block_count);
-    u64 total = le64_to_cpu(candidate->total_blocks);
-    u64 minimum_bitmap_blocks = DIV_ROUND_UP_ULL(
-        total, (u64)INFILFS_DISK_BLOCK_SIZE * 8u);
-    u64 critical[INFILFS_CHECKPOINT_COUNT + 2u];
-    u64 free_count = 0;
     u64 indexed_root;
     u16 indexed_type;
-    size_t bitmap_bytes;
+    size_t bitmap_bytes = 0;
     u8 *bitmap = NULL;
     u8 *root = NULL;
     u8 *index = NULL;
@@ -1011,61 +1014,18 @@ static int infilfs_validate_checkpoint_graph(
     bool root_tree;
     bool index_paged;
     bool index_tree;
-    u64 i;
     int ret = 0;
 
-    sbi->disk = *candidate;
-    if (!bitmap_start || !bitmap_blocks || bitmap_start >= total ||
-        bitmap_blocks > total - bitmap_start ||
-        bitmap_blocks < minimum_bitmap_blocks ||
-        bitmap_blocks > SIZE_MAX / INFILFS_DISK_BLOCK_SIZE)
-        return -EFSCORRUPTED;
-    bitmap_bytes = (size_t)bitmap_blocks * INFILFS_DISK_BLOCK_SIZE;
-    bitmap = kvmalloc(bitmap_bytes, GFP_KERNEL);
+    ret = infilfs_allocation_map_load(
+        sb, candidate, &bitmap, &bitmap_bytes, NULL);
+    if (ret)
+        goto out;
+
     root = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_KERNEL);
     index = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_KERNEL);
-    if (!bitmap || !root || !index) {
+    if (!root || !index) {
         ret = -ENOMEM;
         goto out;
-    }
-    for (i = 0; i < bitmap_blocks; ++i) {
-        ret = infilfs_read_block(sb, bitmap_start + i,
-            bitmap + (size_t)i * INFILFS_DISK_BLOCK_SIZE);
-        if (ret)
-            goto out;
-    }
-    for (i = 0; i < total; ++i)
-        if (!infilfs_checkpoint_bitmap_get(bitmap, i))
-            free_count++;
-    if (free_count != le64_to_cpu(candidate->free_blocks)) {
-        ret = -EFSCORRUPTED;
-        goto out;
-    }
-    for (i = total; i < (u64)bitmap_bytes * 8u; ++i) {
-        if (!infilfs_checkpoint_bitmap_get(bitmap, i)) {
-            ret = -EFSCORRUPTED;
-            goto out;
-        }
-    }
-    for (i = bitmap_start; i < bitmap_start + bitmap_blocks; ++i) {
-        if (!infilfs_checkpoint_bitmap_get(bitmap, i)) {
-            ret = -EFSCORRUPTED;
-            goto out;
-        }
-    }
-
-    for (i = 0; i < INFILFS_CHECKPOINT_COUNT; ++i)
-        critical[i] = le64_to_cpu(candidate->checkpoint_block[i]);
-    critical[INFILFS_CHECKPOINT_COUNT] =
-        le64_to_cpu(candidate->object_index_block);
-    critical[INFILFS_CHECKPOINT_COUNT + 1u] =
-        le64_to_cpu(candidate->root_object_block);
-    for (i = 0; i < ARRAY_SIZE(critical); ++i) {
-        if (critical[i] >= total ||
-            !infilfs_checkpoint_bitmap_get(bitmap, critical[i])) {
-            ret = -EFSCORRUPTED;
-            goto out;
-        }
     }
 
     write_lock(&sbi->bitmap_lock);

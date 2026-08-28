@@ -13,7 +13,7 @@ Pre-1.0 development is current-format-only. A new development format may superse
 - [x] Stable `infs_status` error contract and platform-neutral packed format.
 - [x] Exact-format conformance, malformed-image rejection and crash testing.
 
-## Completed Format 0.16 storage features
+## Completed Format 0.17 storage features
 
 - [x] UTF-8 namespace and portable/POSIX metadata split.
 - [x] Inline small files.
@@ -28,11 +28,11 @@ Pre-1.0 development is current-format-only. A new development format may superse
 - [x] Runtime hashed metadata indexes.
 - [x] Sequential allocation and checksum hot-path performance work.
 
-## Completed native Linux filesystem surface through release 0.18.19
+## Completed native Linux filesystem surface through release 0.18.20
 
 - [x] Native out-of-tree Linux VFS filesystem driver `infiltratorfs.ko`.
 - [x] DKMS packaging and host-kernel rebuild/install path.
-- [x] Native Format 0.16 read-only lookup, enumeration and file reads.
+- [x] Native Format 0.17 read-only lookup, enumeration and file reads.
 - [x] Native read-write create, mkdir, mknod, setattr and extent-backed writes.
 - [x] Link/symlink, rename/unlink/rmdir and persistent metadata changes.
 - [x] Random writes, sparse growth, high-offset writes, truncate and `fallocate`.
@@ -109,7 +109,7 @@ See `SECURITY.md` for the intended cross-platform model. Current POSIX compatibi
 - [x] Win32 image/device and bounded raw-partition storage backend.
 - [x] Windows storage/partition conformance harness.
 - [x] Windows formatter, root transfer/listing and scrub application.
-- [x] Shared Linux/Windows Format 0.16 interoperability tests.
+- [x] Shared Linux/Windows Format 0.17 interoperability tests.
 - [ ] Windows attribute/security/filename adapter completion.
 - [ ] Native Windows filesystem driver and Explorer drive-letter mounting.
 - [ ] macOS native adapter investigation/implementation.

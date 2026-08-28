@@ -26,6 +26,8 @@
 #undef infilfs_rw_setattr
 #undef infilfs_rw_mount_destroy
 
+#include "infiltratorfs_allocation_publish.inc"
+
 /*
  * A deferred native transaction must be able to read back the transaction-
  * private metadata it has just staged.  The generic read validators reject

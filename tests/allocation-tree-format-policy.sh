@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+set -euo pipefail
+
+root="${1:-.}"
+fmt="$root/include/infilfs/format.h"
+kfmt="$root/kernel/infiltratorfs_format.h"
+core="$root/src/volume/allocation-map.inc"
+commit="$root/src/volume/phase3/part3-05.inc"
+kmap="$root/kernel/infiltratorfs_allocation_map.inc"
+kpublish="$root/kernel/infiltratorfs_allocation_publish.inc"
+krw="$root/kernel/infiltratorfs_rw_legacy.inc"
+volume="$root/include/infilfs/volume.h"
+
+grep -Fq '#define INFS_FORMAT_MINOR 17u' "$fmt"
+grep -Fq '#define INFILFS_FORMAT_MINOR 17u' "$kfmt"
+grep -Fq 'INFS_INCOMPAT_ALLOCATION_TREE' "$fmt"
+grep -Fq 'INFS_ALLOCATION_BITS_PER_LEAF' "$fmt"
+grep -Fq 'INFS_ALLOCATION_TREE_FANOUT' "$fmt"
+grep -Fq 'struct infs_allocation_page_disk' "$fmt"
+grep -Fq 'allocation_map_publish' "$commit"
+grep -Fq 'allocation_map_load' "$core"
+grep -Fq 'infilfs_rw_allocation_map_publish' "$kpublish"
+grep -Fq 'infilfs_allocation_map_load' "$kmap"
+grep -Fq 'tx_allocated' "$volume"
+
+! grep -Fq 'tx_base_bitmap' "$volume"
+! grep -Fq 'tx_operation_bitmap' "$volume"
+! grep -Fq 'kvmalloc(sbi->bitmap_bytes' "$krw"
+! grep -Fq 'new_bitmap_start * INFS_BLOCK_SIZE' "$commit"
+! grep -Fq 'new_bitmap + n' "$krw"
+
+printf 'Format 0.17 sharded allocation-tree policy guard passed.\n'

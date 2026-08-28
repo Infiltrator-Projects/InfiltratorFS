@@ -5,7 +5,7 @@
 
 InfiltratorFS is a clean-sheet, platform-neutral local filesystem. The filesystem is defined by its on-disk format and portable core semantics, not by any one operating system. Linux is currently the most complete mounted adapter; Windows has native storage/transfer tooling over the same persistent structures but not yet a Windows kernel filesystem driver.
 
-Release 0.18.19 uses on-disk Format 0.16. Pre-1.0 development is current-format-only: a future development format may replace Format 0.16 without a migration requirement.
+Release 0.18.20 uses on-disk Format 0.17. Pre-1.0 development is current-format-only: a future development format may replace Format 0.17 without a migration requirement.
 
 The design assumes power loss is ordinary, storage can return incorrect data, committed metadata must not depend on one physical root copy, and allocation, integrity, security and namespace policy must remain independent of one operating system.
 
@@ -30,29 +30,29 @@ Files, directories, checksum records, snapshots and metadata structures are pers
 
 Directories map UTF-8 names to object IDs. Renaming or relocating an object does not change its persistent identity. Linux derives stable inode identity from the object ID; other adapters can expose the same persistent identity without altering the disk representation.
 
-Format 0.16 uses a generation-aware object-index radix tree, hashed directory trees and checksummed paged metadata for highly fragmented extent maps. Root/checkpoint bootstrap information remains separately replicated.
+Format 0.17 uses a generation-aware object-index radix tree, hashed directory trees, checksummed paged extent metadata and a checkpoint-rooted sharded allocation tree. Root/checkpoint bootstrap information remains separately replicated.
 
 ## 4. Attributes, namespace and adapter metadata
 
 Common attributes contain logical size, link count, portable flags, birth/access/content-modification/metadata-change times and reserved references for future portable security and named-metadata objects. Times are signed nanoseconds since the Unix epoch as a disk encoding; adapters translate them to native platform forms.
 
-POSIX mode and numeric UID/GID compatibility metadata are retained separately from the planned portable security model. Release 0.18.19 also persists standard Linux xattr namespaces and special-node metadata through Linux adapter metadata; this does not make Linux metadata the cross-platform canonical representation. The reserved generic extended-attribute/security object references remain available for the future portable model.
+POSIX mode and numeric UID/GID compatibility metadata are retained separately from the planned portable security model. Release 0.18.20 also persists standard Linux xattr namespaces and special-node metadata through Linux adapter metadata; this does not make Linux metadata the cross-platform canonical representation. The reserved generic extended-attribute/security object references remain available for the future portable model.
 
-Names are well-formed UTF-8, byte-exact and case-sensitive in Format 0.16. NUL and `/` are invalid inside a stored component. `.` and `..` are traversal syntax rather than stored entries. Future adapters may need policy layers such as case folding or normalization without changing object identity.
+Names are well-formed UTF-8, byte-exact and case-sensitive in Format 0.17. NUL and `/` are invalid inside a stored component. `.` and `..` are traversal syntax rather than stored entries. Future adapters may need policy layers such as case folding or normalization without changing object identity.
 
-Format 0.16 supports first-class symbolic links and regular-file hard links. Hard links share one persistent regular-file object and exact reference count. Directories and symbolic links remain single-parent namespace objects.
+Format 0.17 supports first-class symbolic links and regular-file hard links. Hard links share one persistent regular-file object and exact reference count. Directories and symbolic links remain single-parent namespace objects.
 
 ## 5. Transaction model
 
 Committed critical metadata is never overwritten as its only valid copy. A transaction based on generation `N`:
 
-1. snapshots committed allocation state;
+1. records allocation/deferred ranges against the authoritative in-memory bitset rather than cloning the whole bitset;
 2. reserves replacement blocks;
 3. writes new data and metadata to unreachable blocks;
 4. updates the object/namespace graph through copy-on-write;
-5. constructs the authoritative replacement allocation state;
+5. rewrites only affected allocation leaves and the small allocation-tree branch spine;
 6. issues the required durable flushes;
-7. publishes a generation `N+1` checkpoint as the atomic commit point;
+7. publishes a generation `N+1` checkpoint containing the new allocation root as the atomic commit point;
 8. replicates that checkpoint to the other physical checkpoint locations; and
 9. reclaims superseded blocks only when no live or retained snapshot generation still owns them.
 
@@ -62,7 +62,7 @@ Operation-level savepoints prevent one failed mutation from discarding earlier a
 
 ## 6. Allocation and file representations
 
-One bitmap bit describes one 4096-byte block. The bitmap is authoritative free-space state. Portable and native Linux writers rebuild an in-memory index of maximal free extents from that bitmap and maintain it during allocation. The index is an accelerator only: it is never persisted, may be discarded under memory pressure or rollback, and allocator correctness falls back to the authoritative bitmap scan if the cache cannot satisfy a request.
+One allocation bit describes one 4096-byte block and remains authoritative free-space state. Format 0.17 persists the live bitset as independently checksummed 32,192-bit leaves beneath a small CoW radix spine, so commit work scales with changed allocation regions rather than total volume size. Portable and native Linux writers reconstruct the same simple in-memory bitset and rebuild an index of maximal free extents from it. The free-extent index is an accelerator only: it is never persisted, may be discarded under memory pressure or rollback, and allocator correctness falls back to the authoritative allocation-bit scan if the cache cannot satisfy a request.
 
 Regular files may use:
 
@@ -78,7 +78,7 @@ Data allocation and metadata allocation progress from opposite directions to pre
 
 ## 7. Integrity and recovery
 
-Format 0.16 uses CRC64-ECMA for checkpoints and metadata and SHA-256 for logical file data. Extent-backed logical blocks have checksum metadata; inline data carries its digest inside the authenticated file metadata object.
+Format 0.17 uses CRC64-ECMA for checkpoints and metadata and SHA-256 for logical file data. Extent-backed logical blocks have checksum metadata; inline data carries its digest inside the authenticated file metadata object.
 
 Normal reads validate data before returning it. Scrub validates the live graph plus retained snapshot generations. Recovery selects a graph-valid committed checkpoint generation rather than trusting checkpoint checksum validity alone.
 
@@ -88,15 +88,15 @@ The raw forensic scanner independently authenticates recognizable metadata block
 
 Named snapshots retain immutable generation, root, object-index and allocation-state references. CoW superseded blocks remain allocated while any snapshot owns them. Snapshot deletion reclaims only blocks no longer reachable from either the live graph or another retained generation.
 
-Release 0.18.19 qualifies writable live namespace/data changes while retained snapshots continue to expose the older generation. Snapshot browsing remains read-only through the portable core/direct-image interface. Native undelete and rollback policy remain future work.
+Release 0.18.20 qualifies writable live namespace/data changes while retained snapshots continue to expose the older generation. Snapshot browsing remains read-only through the portable core/direct-image interface. Native undelete and rollback policy remain future work.
 
 ## 9. Native Linux VFS
 
-Linux release 0.18.19 mounts through `infiltratorfs.ko` registered as filesystem type `infiltratorfs`.
+Linux release 0.18.20 mounts through `infiltratorfs.ko` registered as filesystem type `infiltratorfs`.
 
-The driver provides native Format 0.16 lookup/enumeration/read support and a broad read-write surface: create/mkdir/mknod, link/symlink, rename/unlink/rmdir, persistent setattr, regular and sparse writes, truncate, `fallocate`, hole punching, hard-link/open-unlink lifetime, mount-time orphan recovery, standard Linux xattr namespaces, FIFO/socket/character/block node identity, page-cache faults, readahead and shared writable `mmap` writeback. It preserves snapshot-owned historical blocks while the live namespace changes.
+The driver provides native Format 0.17 lookup/enumeration/read support and a broad read-write surface: create/mkdir/mknod, link/symlink, rename/unlink/rmdir, persistent setattr, regular and sparse writes, truncate, `fallocate`, hole punching, hard-link/open-unlink lifetime, mount-time orphan recovery, standard Linux xattr namespaces, FIFO/socket/character/block node identity, page-cache faults, readahead and shared writable `mmap` writeback. It preserves snapshot-owned historical blocks while the live namespace changes.
 
-The driver reads inline/extents/sparse/paged data directly from the block device and uses the Format 0.16 transaction/integrity model rather than a userspace mount daemon. Native reads verify metadata and file-data integrity; durability publication occurs through `fsync`, `syncfs` and global sync paths.
+The driver reads inline/extents/sparse/paged data directly from the block device and uses the Format 0.17 transaction/integrity model rather than a userspace mount daemon. Native reads verify metadata and file-data integrity; durability publication occurs through `fsync`, `syncfs` and global sync paths.
 
 The standard `mount.infiltratorfs` helper invokes util-linux `mount -i -t infiltratorfs`, and InfiltratorFS Manager performs the same native mount through its constrained privileged helper. The package/installer builds and installs the module through DKMS.
 
@@ -112,7 +112,7 @@ Stock GNOME Disks may not list InfiltratorFS in its built-in format dropdown unt
 
 ## 11. Windows and additional operating systems
 
-Windows uses the same portable core and Format 0.16 through Win32 image/raw-partition storage. The current Windows application can discover supported partitions, transfer data and scrub them. A Windows kernel filesystem driver remains future work.
+Windows uses the same portable core and Format 0.17 through Win32 image/raw-partition storage. The current Windows application can discover supported partitions, transfer data and scrub them. A Windows kernel filesystem driver remains future work.
 
 The intended design is equal first-class native adapters over the same filesystem model. Linux VFS concepts, Windows I/O/Cache Manager concepts, macOS VFS concepts, BSD vnode semantics and Haiku filesystem APIs are adapter responsibilities. Where concepts are equivalent, they map to one portable InfiltratorFS meaning; where an OS has additional semantics, that metadata is preserved without becoming mandatory for unrelated platforms.
 
@@ -120,10 +120,10 @@ The intended design is equal first-class native adapters over the same filesyste
 
 The long-term security model is independent of POSIX UID/GID and Windows SID representations. Portable security objects will identify stable principals and ACL entries; adapters will map native identities and access masks to those portable principals and rights. Platform-specific security information that cannot be expressed elsewhere must be preserved rather than discarded by another adapter.
 
-Release 0.18.19 does not yet implement the final portable security-object format. Current POSIX compatibility metadata is therefore compatibility state, not the canonical cross-platform identity model. See `SECURITY.md`.
+Release 0.18.20 does not yet implement the final portable security-object format. Current POSIX compatibility metadata is therefore compatibility state, not the canonical cross-platform identity model. See `SECURITY.md`.
 
 ## 13. Non-goals and future directions
 
 InfiltratorFS does not use FAT-style linked allocation, a fixed global inode table, a single irreplaceable superblock, unchecked critical metadata or synchronous global deduplication.
 
-Future work includes rebuildable free-extent indexing, compression, media/workload-aware placement, protection classes, portable security objects/ACL mapping, generic named metadata/streams, encryption domains, broader mounted stress and additional native operating-system drivers.
+Future work includes parallel allocation, compression, media/workload-aware placement, protection classes, portable security objects/ACL mapping, generic named metadata/streams, encryption domains, broader mounted stress and additional native operating-system drivers.

@@ -88,6 +88,27 @@ static int bitmap_get(const uint8_t *bitmap, uint64_t block)
     return (bitmap[block >> 3] >> (block & 7u)) & 1u;
 }
 
+static int write_allocation_page_fd(
+    int fd, uint64_t physical_block, const uint8_t magic[8],
+    uint64_t logical_index, uint32_t level, uint32_t entries,
+    const void *payload, uint32_t bytes)
+{
+    uint8_t block[INFS_BLOCK_SIZE];
+    if (infs_allocation_page_init(block, magic, 1u, logical_index, level) !=
+        INFS_STATUS_OK)
+        return -1;
+    struct infs_allocation_page_disk *page =
+        (struct infs_allocation_page_disk *)block;
+    page->entry_count = infs_cpu_to_le32(entries);
+    page->bytes_used = infs_cpu_to_le32(bytes);
+    if (bytes)
+        memcpy(page + 1, payload, bytes);
+    if (infs_allocation_page_finalize(block) != INFS_STATUS_OK)
+        return -1;
+    return infs_pwrite_full(fd, block, sizeof(block),
+                            (off_t)(physical_block * INFS_BLOCK_SIZE));
+}
+
 static int id_is_zero_local(const uint8_t id[16])
 {
     uint8_t combined = 0;
