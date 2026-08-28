@@ -1734,7 +1734,82 @@ static int infilfs_file_allocated_blocks(
     return 0;
 }
 
+static int infilfs_tree_directory_allocated_node(
+    struct super_block *sb, const u8 owner_id[16], u64 node,
+    unsigned int depth, u64 *blocks)
+{
+    const struct infilfs_metadata_page_disk *page;
+    const __le64 *children;
+    u8 *raw;
+    u32 expected;
+    u32 seen = 0;
+    u32 slot;
+    int ret;
+
+    if (!node || depth > INFILFS_DIRECTORY_TREE_DEPTH ||
+        !infilfs_block_allocated(sb, node))
+        return -EFSCORRUPTED;
+    raw = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+    if (!raw)
+        return -ENOMEM;
+    ret = infilfs_read_allocated_block(sb, node, raw);
+    if (ret)
+        goto out;
+
+    if (!memcmp(raw, infilfs_directory_page_magic, 8)) {
+        if (!infilfs_metadata_page_valid(
+                sb, raw, infilfs_directory_page_magic, owner_id)) {
+            ret = -EFSCORRUPTED;
+            goto out;
+        }
+        if (*blocks == U64_MAX) {
+            ret = -EOVERFLOW;
+            goto out;
+        }
+        (*blocks)++;
+        ret = 0;
+        goto out;
+    }
+
+    if (depth >= INFILFS_DIRECTORY_TREE_DEPTH ||
+        !infilfs_metadata_page_valid(
+            sb, raw, infilfs_directory_branch_page_magic, owner_id)) {
+        ret = -EFSCORRUPTED;
+        goto out;
+    }
+    page = (const struct infilfs_metadata_page_disk *)raw;
+    expected = le32_to_cpu(page->entry_count);
+    if (!expected || expected > INFILFS_DIRECTORY_TREE_FANOUT ||
+        le32_to_cpu(page->bytes_used) !=
+            INFILFS_DIRECTORY_TREE_BRANCH_BYTES) {
+        ret = -EFSCORRUPTED;
+        goto out;
+    }
+    if (*blocks == U64_MAX) {
+        ret = -EOVERFLOW;
+        goto out;
+    }
+    (*blocks)++;
+    children = (const __le64 *)(page + 1);
+    for (slot = 0; slot < INFILFS_DIRECTORY_TREE_FANOUT; ++slot) {
+        u64 child = le64_to_cpu(children[slot]);
+
+        if (!child)
+            continue;
+        seen++;
+        ret = infilfs_tree_directory_allocated_node(
+            sb, owner_id, child, depth + 1u, blocks);
+        if (ret)
+            goto out;
+    }
+    ret = seen == expected ? 0 : -EFSCORRUPTED;
+out:
+    kfree(raw);
+    return ret;
+}
+
 static int infilfs_metadata_allocated_blocks(
+    struct super_block *sb,
     const u8 object[INFILFS_DISK_BLOCK_SIZE], u64 *allocated_out)
 {
     const struct infilfs_object_header_disk *header =
@@ -1765,6 +1840,32 @@ static int infilfs_metadata_allocated_blocks(
         *allocated_out = 1u + page_count;
         return 0;
     }
+    if (version == INFILFS_OBJECT_VERSION_TREE) {
+        const struct infilfs_directory_payload_disk *payload =
+            (const struct infilfs_directory_payload_disk *)(header + 1);
+        __le64 root_le;
+        u64 root;
+        u64 blocks = 1;
+        u32 entries = le32_to_cpu(payload->entry_count);
+        int ret;
+
+        if (le32_to_cpu(payload->bytes_used) != 0 ||
+            le32_to_cpu(header->payload_size) !=
+                sizeof(*payload) + sizeof(root_le))
+            return -EFSCORRUPTED;
+        memcpy(&root_le, payload + 1, sizeof(root_le));
+        root = le64_to_cpu(root_le);
+        if (!entries)
+            return root ? -EFSCORRUPTED : (*allocated_out = 1, 0);
+        if (!root)
+            return -EFSCORRUPTED;
+        ret = infilfs_tree_directory_allocated_node(
+            sb, header->object_id, root, 0u, &blocks);
+        if (ret)
+            return ret;
+        *allocated_out = blocks;
+        return 0;
+    }
     return -EFSCORRUPTED;
 }
 
@@ -1784,7 +1885,7 @@ static int infilfs_refresh_inode_blocks(struct inode *inode)
     ret = infilfs_read_object(inode->i_sb, ii->object_block,
                               ii->object_type, ii->object_id, object);
     if (!ret)
-        ret = infilfs_metadata_allocated_blocks(object, &allocated);
+        ret = infilfs_metadata_allocated_blocks(inode->i_sb, object, &allocated);
     if (!ret)
         inode->i_blocks = allocated * (INFILFS_DISK_BLOCK_SIZE >> 9);
     kfree(object);
@@ -1843,7 +1944,7 @@ static int infilfs_populate_inode(struct inode *inode, u64 object_block,
         links = le64_to_cpu(attributes->link_count);
         set_nlink(inode, links >= 2 ? links : 2);
         i_size_write(inode, le64_to_cpu(attributes->logical_size));
-        ret = infilfs_metadata_allocated_blocks(object, &links);
+        ret = infilfs_metadata_allocated_blocks(inode->i_sb, object, &links);
         if (ret)
             goto fail_private;
         inode->i_blocks = links * (INFILFS_DISK_BLOCK_SIZE >> 9);

@@ -184,7 +184,10 @@ jobs:
           loaded=1
           loopdev="$(sudo losetup --find --show "$image")"
           mkdir -p "$mountpoint"
-          sudo mount -t infiltratorfs -o rw "$loopdev" "$mountpoint"
+          if ! sudo mount -t infiltratorfs -o rw "$loopdev" "$mountpoint"; then
+            diagnostics
+            exit 1
+          fi
           mounted=1
 
           test "$(findmnt -n -o FSTYPE -T "$mountpoint")" = infiltratorfs
