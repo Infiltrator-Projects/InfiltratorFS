@@ -62,7 +62,7 @@ Operation-level savepoints prevent one failed mutation from discarding earlier a
 
 ## 6. Allocation and file representations
 
-One bitmap bit describes one 4096-byte block. The bitmap is authoritative free-space state.
+One bitmap bit describes one 4096-byte block. The bitmap is authoritative free-space state. Portable and native Linux writers rebuild an in-memory index of maximal free extents from that bitmap and maintain it during allocation. The index is an accelerator only: it is never persisted, may be discarded under memory pressure or rollback, and allocator correctness falls back to the authoritative bitmap scan if the cache cannot satisfy a request.
 
 Regular files may use:
 
@@ -74,7 +74,7 @@ Regular files may use:
 
 The current native Linux path supports sequential and random extent writes, sparse growth, high-offset writes, truncate, `fallocate`, hole punching and allocation reporting. Shared extents are broken through CoW when modified.
 
-Data allocation and metadata allocation progress from opposite directions to preserve sequential locality and reduce metadata/data collision pressure. Runtime hashed object and directory indexes accelerate repeated metadata lookup without changing the persistent format.
+Data allocation and metadata allocation progress from opposite directions to preserve sequential locality and reduce metadata/data collision pressure. Their rebuildable free-extent indexes preserve those cursor preferences while reconsidering complete extents when a cursor bisects a free run, preventing false out-of-space results. Runtime hashed object and directory indexes accelerate repeated metadata lookup without changing the persistent format.
 
 ## 7. Integrity and recovery
 

@@ -130,8 +130,8 @@ Installation fails if matching running-kernel headers are unavailable or if the 
 
 ## Automated gates
 
-The main Build and conformance workflow runs the portable/core suite under GCC, Clang, ASan/UBSan and GCC `-fanalyzer`, validates desktop/Manager behavior, checks cross-platform Linux-created media on Windows, builds release packages and rejects any FUSE build artifact or package dependency.
+The main Build and conformance workflow runs the portable/core suite under GCC, Clang, ASan/UBSan and GCC `-fanalyzer`, including deterministic and randomized bitmap-oracle qualification of the rebuildable free-extent index. It validates desktop/Manager behavior, checks cross-platform Linux-created media on Windows, builds release packages and rejects any FUSE build artifact or package dependency.
 
-The Native Linux kernel module workflow builds the out-of-tree driver, reproduces the DKMS source-root invocation, validates module metadata and performs mounted snapshot, all-namespace xattr, special-node, mmap, namespace, allocation-reporting, 4,000-write random I/O, repeated-fsync, crash-orphan recovery, checkpoint fallback/healing, remount and scrub qualification when the hosted runner exposes matching running-kernel headers.
+The Native Linux kernel module workflow builds the out-of-tree driver, reproduces the DKMS source-root invocation, validates module metadata and performs mounted snapshot, all-namespace xattr, special-node, mmap, namespace, allocation-reporting, 4,000-write random I/O, repeated-fsync, bounded near-full fragmentation/refill allocation, crash-orphan recovery, checkpoint fallback/healing, remount and scrub qualification when the hosted runner exposes matching running-kernel headers.
 
 The release publisher runs only after a successful `Release <version>` commit on current `main`. It rebuilds assets from that exact commit, installs the generated `.deb`, verifies the native filesystem registration, mounts a real Format 0.14 loop image with `FSTYPE=infiltratorfs`, writes and byte-compares non-zero data, syncs, unmounts, requires a CLEAN scrub and rejects any legacy FUSE executable/process before creating the tag and release.

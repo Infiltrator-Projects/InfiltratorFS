@@ -73,7 +73,7 @@ destructive qualification harness.
 
 - [x] Scalable generation-aware object-index tree.
 - [x] Scalable directory trees.
-- [ ] Rebuildable free-extent index.
+- [x] Rebuildable free-extent index.
 - [ ] Parallel allocation model.
 - [ ] Locality scoring and workload-aware placement.
 - [ ] Media-aware placement.
