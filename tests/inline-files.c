@@ -4,6 +4,7 @@
 #include "infilfs/fs.h"
 #include "infilfs/storage.h"
 #include "infilfs/volume.h"
+#include "test-allocation-tree.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -145,15 +146,10 @@ static void build_valid_image(struct memory_image *image)
     image->visible_size = TEST_SIZE;
     image->random_state = UINT64_C(0x9e3779b97f4a7c15);
 
-    uint8_t *bitmap = image->bytes + INFS_BLOCK_SIZE;
-    bitmap_set(bitmap, 0);
-    bitmap_set(bitmap, 1);
-    bitmap_set(bitmap, 2);
-    bitmap_set(bitmap, 3);
-    bitmap_set(bitmap, checkpoints[1]);
-    bitmap_set(bitmap, checkpoints[2]);
-    for (uint64_t block = TEST_BLOCKS; block < INFS_BLOCK_SIZE * 8u; ++block)
-        bitmap_set(bitmap, block);
+    const uint64_t initial_objects[] = { UINT64_C(2), UINT64_C(3) };
+    test_write_single_leaf_allocation_tree(
+        image->bytes, TEST_BLOCKS, 1u, checkpoints,
+        initial_objects, sizeof(initial_objects) / sizeof(initial_objects[0]));
 
     uint8_t block[INFS_BLOCK_SIZE];
     expect(infs_encode_object_index(block, index_id, 1) == INFS_STATUS_OK,
@@ -190,9 +186,9 @@ static void build_valid_image(struct memory_image *image)
     sb.checksum_type = infs_cpu_to_le32(INFS_CHECKSUM_CRC64_ECMA);
     sb.generation = infs_cpu_to_le64(1);
     sb.total_blocks = infs_cpu_to_le64(TEST_BLOCKS);
-    sb.free_blocks = infs_cpu_to_le64(TEST_BLOCKS - 6u);
-    sb.bitmap_start_block = infs_cpu_to_le64(1);
-    sb.bitmap_block_count = infs_cpu_to_le64(1);
+    sb.free_blocks = infs_cpu_to_le64(TEST_BLOCKS - 9u);
+    sb.allocation_root_block = infs_cpu_to_le64(TEST_ALLOCATION_ROOT_BLOCK);
+    sb.allocation_leaf_count = infs_cpu_to_le64(1);
     sb.object_index_block = infs_cpu_to_le64(2);
     sb.root_object_block = infs_cpu_to_le64(3);
     for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i)
@@ -201,6 +197,7 @@ static void build_valid_image(struct memory_image *image)
     memcpy(sb.root_object_id, root_id, 16);
     sb.incompat_flags = infs_cpu_to_le64(
         INFS_INCOMPAT_UTF8_NAMES | INFS_INCOMPAT_SPARSE_EXTENTS |
+        INFS_INCOMPAT_ALLOCATION_TREE |
         INFS_INCOMPAT_INLINE_DATA);
     memcpy(sb.label, "Inline test", 11);
     expect(infs_encode_superblock(block, &sb) == INFS_STATUS_OK,

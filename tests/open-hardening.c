@@ -83,9 +83,9 @@ static void build_geometry_checkpoint(struct fake_storage *fake)
     sb.generation = infs_cpu_to_le64(1);
     sb.total_blocks = infs_cpu_to_le64(GEOMETRY_BLOCKS);
     sb.free_blocks = infs_cpu_to_le64(0);
-    sb.bitmap_start_block = infs_cpu_to_le64(1);
-    /* One bitmap block covers exactly 32768 blocks, one fewer than required. */
-    sb.bitmap_block_count = infs_cpu_to_le64(1);
+    sb.allocation_root_block = infs_cpu_to_le64(1);
+    /* Geometry requires two allocation leaves, but the checkpoint declares one. */
+    sb.allocation_leaf_count = infs_cpu_to_le64(1);
     sb.object_index_block = infs_cpu_to_le64(2);
     sb.root_object_block = infs_cpu_to_le64(3);
     sb.checkpoint_block[0] = infs_cpu_to_le64(0);
@@ -94,7 +94,8 @@ static void build_geometry_checkpoint(struct fake_storage *fake)
     memcpy(sb.filesystem_uuid, filesystem_id, sizeof(filesystem_id));
     memcpy(sb.root_object_id, root_id, sizeof(root_id));
     sb.incompat_flags = infs_cpu_to_le64(
-        INFS_INCOMPAT_UTF8_NAMES | INFS_INCOMPAT_SPARSE_EXTENTS);
+        INFS_INCOMPAT_UTF8_NAMES | INFS_INCOMPAT_SPARSE_EXTENTS |
+        INFS_INCOMPAT_ALLOCATION_TREE);
     memcpy(sb.label, "Geometry", 8);
 
     expect(infs_encode_superblock(fake->checkpoint, &sb) == INFS_STATUS_OK,
@@ -115,7 +116,7 @@ static void check_undersized_bitmap(void)
     struct infs_volume volume;
     infs_status status = infs_volume_open_storage(&volume, &storage, 0);
     expect(status == INFS_STATUS_CORRUPT,
-           "reject bitmap too small for total_blocks before bit traversal");
+           "reject allocation tree too small for total_blocks before page traversal");
 }
 
 static void check_writable_backend_requirements(void)

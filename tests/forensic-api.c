@@ -86,8 +86,8 @@ int main(void)
     sb.generation = infs_cpu_to_le64(5);
     sb.total_blocks = infs_cpu_to_le64(TEST_BLOCKS);
     sb.free_blocks = infs_cpu_to_le64(2);
-    sb.bitmap_start_block = infs_cpu_to_le64(1);
-    sb.bitmap_block_count = infs_cpu_to_le64(1);
+    sb.allocation_root_block = infs_cpu_to_le64(1);
+    sb.allocation_leaf_count = infs_cpu_to_le64(1);
     sb.object_index_block = infs_cpu_to_le64(2);
     sb.root_object_block = infs_cpu_to_le64(3);
     sb.checkpoint_block[0] = infs_cpu_to_le64(0);
@@ -98,7 +98,7 @@ int main(void)
     sb.incompat_flags = infs_cpu_to_le64(
         INFS_INCOMPAT_UTF8_NAMES | INFS_INCOMPAT_SPARSE_EXTENTS |
         INFS_INCOMPAT_INLINE_DATA | INFS_INCOMPAT_SHARED_EXTENTS |
-        INFS_INCOMPAT_PAGED_METADATA);
+        INFS_INCOMPAT_PAGED_METADATA | INFS_INCOMPAT_ALLOCATION_TREE);
     memcpy(sb.label, "ForensicAPI", sizeof("ForensicAPI"));
 
     uint8_t checkpoint[INFS_BLOCK_SIZE];
