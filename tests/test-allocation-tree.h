@@ -2,6 +2,12 @@
 #ifndef INFILFS_TEST_ALLOCATION_TREE_H
 #define INFILFS_TEST_ALLOCATION_TREE_H
 
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
 #define TEST_ALLOCATION_ROOT_BLOCK UINT64_C(1)
 #define TEST_ALLOCATION_LEVEL2_BLOCK UINT64_C(4)
 #define TEST_ALLOCATION_LEVEL1_BLOCK UINT64_C(5)
