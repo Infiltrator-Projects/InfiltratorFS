@@ -6,8 +6,7 @@
 
 InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem started in 2026. The persistent format and portable core define the filesystem; operating-system adapters translate native APIs and semantics onto the same on-disk objects, transactions, extents, snapshots and integrity model.
 
-**Current release:** 0.18.17 (Format 0.14)<br>
-**Current development:** 0.18.18 (Format 0.15)<br>
+**Current release:** 0.18.18 (Format 0.15)<br>
 **Shared foundation:** Infiltratr Common 1.11.0  
 **Licence:** GPL-3.0-or-later
 
@@ -17,7 +16,7 @@ Pre-1.0 development intentionally does not preserve compatibility with older dev
 
 Format 0.15 provides 4096-byte little-endian blocks, 128-bit filesystem/object identities, three physically separated checksummed checkpoints, authoritative bitmap allocation with rebuildable runtime free-extent indexes, 510-byte UTF-8 namespace components, copy-on-write transactions, a generation-aware object-index radix tree, hashed directory trees, paged extent metadata, inline small files, sparse files and hole extents, shared extents/reflinks, symbolic and hard links, retained historical generations and named read-only snapshots, CRC64-ECMA metadata integrity, SHA-256 file-data integrity, portable attributes, isolated POSIX compatibility metadata, UTF-8 namespace validation, scrub/verify and callback-based storage/durability/randomness/clock services.
 
-Linux is the most complete mounted adapter. Development 0.18.18 uses the native `infiltratorfs.ko` VFS driver and includes native namespace mutation, random and sparse writes, truncate, `fallocate`, hole punching, hard links and symlinks, crash-safe open-unlink lifetime, mount-time orphan recovery, persistent standard Linux xattr namespaces, FIFO/socket/character/block special-node identity, page-cache and readahead integration, shared writable `mmap`, snapshot-preserving live writes, checkpoint fallback and replica healing, complete allocation reporting, and native remount/scrub qualification. Sustained native writes use a writer-tail checksum path and persistent tree indexes so multi-gigabyte sequential appends no longer rescan historical checksum/index metadata. Mounted CI also exercises the former FUSE regression surface, including 4,000 random overwrites and repeated durability publication.
+Linux is the most complete mounted adapter. Release 0.18.18 uses the native `infiltratorfs.ko` VFS driver and includes native namespace mutation, random and sparse writes, truncate, `fallocate`, hole punching, hard links and symlinks, crash-safe open-unlink lifetime, mount-time orphan recovery, persistent standard Linux xattr namespaces, FIFO/socket/character/block special-node identity, page-cache and readahead integration, shared writable `mmap`, snapshot-preserving live writes, checkpoint fallback and replica healing, complete allocation reporting, and native remount/scrub qualification. Sustained native writes use a writer-tail checksum path and persistent tree indexes so multi-gigabyte sequential appends no longer rescan historical checksum/index metadata. Mounted CI also exercises the former FUSE regression surface, including 4,000 random overwrites and repeated durability publication.
 
 Windows currently has Win32 raw image/partition storage and transfer/scrub tooling over the same portable core and Format 0.15 media. It is not yet a Windows kernel filesystem driver and does not yet provide Explorer drive-letter mounting.
 
