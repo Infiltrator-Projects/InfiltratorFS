@@ -6,8 +6,8 @@
 
 InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem started in 2026. The persistent format and portable core define the filesystem; operating-system adapters translate native APIs and semantics onto the same on-disk objects, transactions, extents, snapshots and integrity model.
 
-**Current release:** 0.18.16 (Format 0.12)<br>
-**Current development:** 0.18.17 (Format 0.14)<br>
+**Current release:** 0.18.17<br>
+**On-disk format:** 0.14  
 **Shared foundation:** Infiltratr Common 1.11.0  
 **Licence:** GPL-3.0-or-later
 
