@@ -468,6 +468,11 @@ jobs:
           os.rmdir(moved_parent)
           PY
 
+          # Exercise the native global write-serialization contract under
+          # real process contention before crash/recovery qualification.
+          sudo python3 tests/native-concurrency-qualification.py \
+            "$mountpoint/native-rw/concurrency"
+
           # Capture a power-loss image while an unlinked descriptor is still
           # open.  The clone contains the durable zero-link indexed object but
           # never observes final close/eviction; its later writable mount must
