@@ -114,6 +114,7 @@ Native Linux qualification requires:
 - mounted scale stress with at least 1,000,000 distinct regular files across a bounded directory fan-out, 100,000 unlink/recreate operations, durable read-only remount verification and a CLEAN offline scrub;
 - mounted large-volume stress on a 1 TiB sparse loop-backed Format 0.17 volume, including non-zero extent I/O, thousands of namespace objects, a 900 GiB sparse high-offset file, read-only remount verification and a CLEAN offline scrub;
 - bounded near-full endurance on a 4 GiB mounted Format 0.17 image with multiple fragmentation/refill size classes, a second free-run fragmentation pass, an explicit hole-punch/refill cycle, and a five-minute concurrent mixed workload combining random 4 KiB overwrites/readback, appends, rename churn, xattrs, sparse truncate/high-offset writes, hard/symbolic links and repeated fsync; durable content hashes and namespace metadata must survive an offline CLEAN scrub, read-only remount verification and a second CLEAN scrub;
+- native per-file fragmentation metrics reporting logical size, allocated blocks, data/hole extent counts, largest physical run, generation and a normalized fragmentation score; and bounded copy-on-write online defragmentation that relocates only logically adjacent normal extents, preserves file identity/content/xattrs/links/timestamps, uses snapshot/reflink-aware old-block release, publishes through the native transaction path and survives CLEAN scrub/remount qualification;
 - rejection of cyclic or multiply aliased checksummed metadata trees without mount hang or pathological repeated traversal;
 - no allocation-map/tree helper may require a multi-kilobyte automatic kernel-stack scratch array;
 - package configuration must complete without loading the module when an explicit administrator `modprobe install ... /bin/false` safety override is active;
@@ -146,7 +147,7 @@ POSIX UID/GID/mode compatibility metadata is not the final cross-platform securi
 
 ## Desktop/package conformance
 
-The Linux package must contain the formatter, inspector, direct-image tool, scrubber, forensic scanner, Manager, constrained helper, standard mount/fsck helpers, udev rule and self-contained DKMS source.
+The Linux package must contain the formatter, inspector, direct-image tool, scrubber, forensic scanner, native fragmentation/optimizer tool, Manager, constrained helper, standard mount/fsck helpers, udev rule and self-contained DKMS source.
 
 The package must depend on the native build/runtime requirements (`dkms`, `kmod`, PolicyKit/util-linux/desktop helpers) and must not depend on `fuse3` or `libfuse3-3`.
 
@@ -165,5 +166,7 @@ The Native Linux kernel module workflow builds the out-of-tree driver, reproduce
 A dedicated scale-stress job runs only after the ordinary native kernel qualification succeeds. It creates one million distinct files, churns 100,000 of them through unlink/recreate, verifies the durable population after a read-only remount, requires a CLEAN scrub, and separately mounts and qualifies a 1 TiB sparse loop-backed volume. The workload emits `[SCALE-PERF]` telemetry so scale regressions are observable rather than reduced to a binary pass/fail.
 
 A dedicated endurance job independently drives a 4 GiB native volume below 15 percent free space while keeping a safety reserve, manufactures multiple physical free-run size classes, runs a five-minute multi-process mixed metadata/data workload, adds an explicit hole-punch/refill cycle, and requires two CLEAN offline scrubs around a read-only durable-manifest verification. It emits `[ENDURANCE-PERF]` telemetry for fragmentation setup, operation rate, fsync latency, free-space floor, sync and scrub timing.
+
+The native optimizer qualification deliberately fragments a mounted extent-backed file through durable 4 KiB CoW overwrites, records pre-optimization metrics, runs `infilfs-optimize --defrag`, requires the data-extent count to fall, verifies byte-identical content, hard-link inode identity, xattr retention and unchanged modification time, and then requires a CLEAN offline scrub plus read-only remount verification.
 
 The release publisher runs only after a successful `Release <version>` commit on current `main`. It rebuilds assets from that exact commit, installs the generated `.deb`, verifies the native filesystem registration, mounts a real Format 0.17 loop image with `FSTYPE=infiltratorfs`, writes and byte-compares non-zero data, syncs, unmounts, requires a CLEAN scrub and rejects any legacy FUSE executable/process before creating the tag and release.
