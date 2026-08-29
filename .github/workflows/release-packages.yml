@@ -386,7 +386,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -n "$DISPATCH_TOKEN"
+          if [[ -z "$DISPATCH_TOKEN" ]]; then
+            echo "::notice::APT_REPOSITORY_DISPATCH_TOKEN is unavailable; the repository's scheduled sync remains the fallback."
+            exit 0
+          fi
           payload="$(jq -nc --arg repository "$GITHUB_REPOSITORY" --arg sha "$RELEASE_SHA" \
             '{event_type:"application-release",client_payload:{repository:$repository,sha:$sha}}')"
           curl --fail-with-body --silent --show-error \
