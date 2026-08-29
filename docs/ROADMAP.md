@@ -74,6 +74,10 @@ Pre-1.0 development is current-format-only. A new development format may superse
   bounded near-full, fragmentation/refill, five-minute mixed-workload,
   read-only remount and double-scrub qualification passes on exact `main`.
 - [ ] Native fragmentation/optimisation metrics and online defragmentation.
+  Implementation is present through the native per-file ioctl ABI and
+  `infilfs-optimize`; this remains unchecked until the mounted fragmentation,
+  online relocation, identity/xattr/timestamp preservation, scrub and remount
+  qualification passes on exact `main`.
 - [ ] Upstream/libblockdev formatter integration so stock GNOME Disks can offer InfiltratorFS directly in its format menu.
 
 The completed items above are enforced by native mounted CI and the partition-22
