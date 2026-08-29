@@ -1141,6 +1141,58 @@ jobs:
       - name: Report runtime mount test availability
         if: steps.headers.outputs.runtime_kdir == ''
         run: echo 'Native module compiled successfully; runtime load/mount skipped because matching hosted-runner kernel headers were unavailable.'
+  native-scale-stress:
+    name: Million-file and 1 TiB mounted stress
+    needs: kernel-module
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+      - name: Install scale qualification dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake kmod
+      - name: Require running-kernel headers
+        id: scale_headers
+        shell: bash
+        run: |
+          set -euo pipefail
+          kdir="/lib/modules/$(uname -r)/build"
+          if [[ ! -f "$kdir/Makefile" ]]; then
+            sudo apt-get install -y "linux-headers-$(uname -r)"
+          fi
+          test -f "$kdir/Makefile"
+          printf 'kdir=%s\n' "$kdir" >> "$GITHUB_OUTPUT"
+      - name: Guard scale qualification contract
+        run: |
+          bash tests/native-scale-policy.sh .
+          bash -n tests/native-scale-qualification.sh
+          python3 -m py_compile tests/native-scale-stress.py
+      - name: Build scale qualification userspace tools
+        run: |
+          cmake -S . -B build-scale -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-scale --parallel --target mkfs.infilfs infilfs-scrub infilfs-inspect
+      - name: Build exact module for running kernel
+        env:
+          KDIR: ${{ steps.scale_headers.outputs.kdir }}
+        run: |
+          make -C kernel clean KDIR="$KDIR"
+          make -C kernel KDIR="$KDIR"
+          test "$(modinfo -F vermagic kernel/infiltratorfs.ko | awk '{print $1}')" = "$(uname -r)"
+      - name: Run full million-file and 1 TiB mounted qualification
+        timeout-minutes: 165
+        shell: bash
+        run: |
+          set -euo pipefail
+          cleanup() {
+            set +e
+            sudo rmmod infiltratorfs 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          sudo insmod kernel/infiltratorfs.ko
+          bash tests/native-scale-qualification.sh build-scale
+
   local-kernel-compile:
     name: Local running-kernel compile qualification
     runs-on: linux-native
