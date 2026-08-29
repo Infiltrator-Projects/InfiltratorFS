@@ -83,6 +83,8 @@ jobs:
              kernel/infiltratorfs_rw_read_cache.inc \
              kernel/infiltratorfs_pagecache.inc \
              kernel/infiltratorfs_linux_meta.inc \
+             kernel/infiltratorfs_defrag.inc \
+             kernel/infiltratorfs_ioctl.h \
              "$dkms_src/"
           release="$(make -sC "$KDIR" kernelrelease)"
           KERNELRELEASE="$release" make -C "$dkms_src" KDIR="$KDIR"
@@ -102,7 +104,7 @@ jobs:
         if: steps.headers.outputs.runtime_kdir != ''
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --parallel --target mkfs.infilfs infilfs-tool infilfs-scrub infilfs-forensic
+          cmake --build build --parallel --target mkfs.infilfs infilfs-tool infilfs-scrub infilfs-forensic infilfs-optimize
 
       - name: Build module for the running kernel
         if: steps.headers.outputs.runtime_kdir != ''
@@ -1137,6 +1139,17 @@ jobs:
           test "$(stat -c '%Y' "$mountpoint/user-owned/file.txt")" = 1767323045
           printf 'Native kernel RW snapshot/xattr/special-node/mmap/'
           printf 'extent/remount/scrub qualification passed on %s\n' "$(uname -r)"
+
+      - name: Native fragmentation metrics and online defragmentation
+        if: steps.headers.outputs.runtime_kdir != ''
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y attr
+          bash tests/native-defrag-policy.sh .
+          bash -n tests/native-defrag-qualification.sh
+          bash tests/native-defrag-qualification.sh build kernel/infiltratorfs.ko
 
       - name: Report runtime mount test availability
         if: steps.headers.outputs.runtime_kdir == ''
