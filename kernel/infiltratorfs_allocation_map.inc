@@ -216,6 +216,9 @@ static int infilfs_allocation_map_load(
     size_t bitmap_bytes = 0;
     u8 *bitmap = NULL;
     u8 *page = NULL;
+    __le64 *l2_ptrs = NULL;
+    __le64 *l1_ptrs = NULL;
+    __le64 *leaf_ptrs = NULL;
     u64 *all_pages = NULL;
     size_t global_l1 = 0;
     size_t global_leaf = 0;
@@ -235,7 +238,14 @@ static int infilfs_allocation_map_load(
     layout->leaf_blocks = kvmalloc_array(leaves, sizeof(u64), GFP_KERNEL);
     layout->branch_blocks = kvmalloc_array(branches, sizeof(u64), GFP_KERNEL);
     page = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_KERNEL);
-    if (!layout->leaf_blocks || !layout->branch_blocks || !page) {
+    l2_ptrs = kvmalloc_array(INFILFS_ALLOCATION_TREE_FANOUT,
+                             sizeof(*l2_ptrs), GFP_KERNEL);
+    l1_ptrs = kvmalloc_array(INFILFS_ALLOCATION_TREE_FANOUT,
+                             sizeof(*l1_ptrs), GFP_KERNEL);
+    leaf_ptrs = kvmalloc_array(INFILFS_ALLOCATION_TREE_FANOUT,
+                               sizeof(*leaf_ptrs), GFP_KERNEL);
+    if (!layout->leaf_blocks || !layout->branch_blocks || !page ||
+        !l2_ptrs || !l1_ptrs || !leaf_ptrs) {
         ret = -ENOMEM;
         goto fail;
     }
@@ -267,14 +277,12 @@ static int infilfs_allocation_map_load(
     {
         const __le64 *root_ptr =
             (const __le64 *)(page + sizeof(struct infilfs_allocation_page_disk));
-        __le64 l2_ptrs[INFILFS_ALLOCATION_TREE_FANOUT];
 
         memcpy(l2_ptrs, root_ptr, level2 * sizeof(__le64));
         for (size_t i = 0; i < level2; ++i) {
             u64 l2_block = le64_to_cpu(l2_ptrs[i]);
             u32 l2_entries = min_t(size_t,
                 INFILFS_ALLOCATION_TREE_FANOUT, level1 - global_l1);
-            __le64 l1_ptrs[INFILFS_ALLOCATION_TREE_FANOUT];
 
             size_t l2_slot = 1u + i;
 
@@ -297,7 +305,6 @@ static int infilfs_allocation_map_load(
                 u32 l1_entries = min_t(size_t,
                     INFILFS_ALLOCATION_TREE_FANOUT,
                     leaves - global_leaf);
-                __le64 leaf_ptrs[INFILFS_ALLOCATION_TREE_FANOUT];
 
                 size_t l1_slot = 1u + level2 + global_l1;
 
@@ -419,6 +426,9 @@ static int infilfs_allocation_map_load(
     }
 
     kvfree(all_pages);
+    kvfree(leaf_ptrs);
+    kvfree(l1_ptrs);
+    kvfree(l2_ptrs);
     kfree(page);
     if (bitmap_out) {
         *bitmap_out = bitmap;
@@ -434,6 +444,9 @@ static int infilfs_allocation_map_load(
 fail:
     kvfree(all_pages);
     kvfree(bitmap);
+    kvfree(leaf_ptrs);
+    kvfree(l1_ptrs);
+    kvfree(l2_ptrs);
     kfree(page);
     infilfs_allocation_layout_destroy(layout);
     return ret;
