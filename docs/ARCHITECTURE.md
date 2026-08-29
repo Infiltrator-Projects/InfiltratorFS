@@ -5,7 +5,7 @@
 
 InfiltratorFS is a clean-sheet, platform-neutral local filesystem. The filesystem is defined by its on-disk format and portable core semantics, not by any one operating system. Linux is currently the most complete mounted adapter; Windows has native storage/transfer tooling over the same persistent structures but not yet a Windows kernel filesystem driver.
 
-Release 0.18.21 uses on-disk Format 0.17. Pre-1.0 development is current-format-only: a future development format may replace Format 0.17 without a migration requirement.
+Release 0.18.22 uses on-disk Format 0.17. Pre-1.0 development is current-format-only: a future development format may replace Format 0.17 without a migration requirement.
 
 The design assumes power loss is ordinary, storage can return incorrect data, committed metadata must not depend on one physical root copy, and allocation, integrity, security and namespace policy must remain independent of one operating system.
 
@@ -36,7 +36,7 @@ Format 0.17 uses a generation-aware object-index radix tree, hashed directory tr
 
 Common attributes contain logical size, link count, portable flags, birth/access/content-modification/metadata-change times and reserved references for future portable security and named-metadata objects. Times are signed nanoseconds since the Unix epoch as a disk encoding; adapters translate them to native platform forms.
 
-POSIX mode and numeric UID/GID compatibility metadata are retained separately from the planned portable security model. Release 0.18.21 also persists standard Linux xattr namespaces and special-node metadata through Linux adapter metadata; this does not make Linux metadata the cross-platform canonical representation. The reserved generic extended-attribute/security object references remain available for the future portable model.
+POSIX mode and numeric UID/GID compatibility metadata are retained separately from the planned portable security model. Release 0.18.22 also persists standard Linux xattr namespaces and special-node metadata through Linux adapter metadata; this does not make Linux metadata the cross-platform canonical representation. The reserved generic extended-attribute/security object references remain available for the future portable model.
 
 Names are well-formed UTF-8, byte-exact and case-sensitive in Format 0.17. NUL and `/` are invalid inside a stored component. `.` and `..` are traversal syntax rather than stored entries. Future adapters may need policy layers such as case folding or normalization without changing object identity.
 
@@ -88,19 +88,19 @@ The raw forensic scanner independently authenticates recognizable metadata block
 
 Named snapshots retain immutable generation, root, object-index and allocation-state references. CoW superseded blocks remain allocated while any snapshot owns them. Snapshot deletion reclaims only blocks no longer reachable from either the live graph or another retained generation.
 
-Release 0.18.21 qualifies writable live namespace/data changes while retained snapshots continue to expose the older generation. Snapshot browsing remains read-only through the portable core/direct-image interface. Native undelete and rollback policy remain future work.
+Release 0.18.22 qualifies writable live namespace/data changes while retained snapshots continue to expose the older generation. Snapshot browsing remains read-only through the portable core/direct-image interface. Native undelete and rollback policy remain future work.
 
 ## 9. Native Linux VFS
 
-Linux release 0.18.21 mounts through `infiltratorfs.ko` registered as filesystem type `infiltratorfs`.
+Linux release 0.18.22 mounts through `infiltratorfs.ko` registered as filesystem type `infiltratorfs`.
 
 The driver provides native Format 0.17 lookup/enumeration/read support and a broad read-write surface: create/mkdir/mknod, link/symlink, rename/unlink/rmdir, persistent setattr, regular and sparse writes, truncate, `fallocate`, hole punching, hard-link/open-unlink lifetime, mount-time orphan recovery, standard Linux xattr namespaces, FIFO/socket/character/block node identity, page-cache faults, readahead and shared writable `mmap` writeback. It preserves snapshot-owned historical blocks while the live namespace changes.
 
-The driver reads inline/extents/sparse/paged data directly from the block device and uses the Format 0.17 transaction/integrity model rather than a userspace mount daemon. Native reads verify metadata and file-data integrity; durability publication occurs through `fsync`, `syncfs` and global sync paths.
+The driver reads inline/extents/sparse/paged data directly from the block device and uses the Format 0.17 transaction/integrity model rather than a userspace mount daemon. Native reads verify metadata and file-data integrity; durability publication occurs through `fsync`, `syncfs` and global sync paths. Filesystem mutations are correctness-first serialized by the native write lock, while compound Linux sidecar metadata mutations and xattr readers share a dedicated metadata mutex so readers cannot observe truncate/rewrite intermediates.
 
 The standard `mount.infiltratorfs` helper invokes util-linux `mount -i -t infiltratorfs`, and InfiltratorFS Manager performs the same native mount through its constrained privileged helper. The package/installer builds and installs the module through DKMS.
 
-Further Linux work is primarily wider recovery, locking/concurrency, scale, stress and performance qualification rather than restoration of the old FUSE-era feature surface.
+Further Linux work is primarily scale, long-running mixed-workload stress and performance qualification rather than restoration of the old FUSE-era feature surface.
 
 ## 10. Desktop integration
 
@@ -120,7 +120,7 @@ The intended design is equal first-class native adapters over the same filesyste
 
 The long-term security model is independent of POSIX UID/GID and Windows SID representations. Portable security objects will identify stable principals and ACL entries; adapters will map native identities and access masks to those portable principals and rights. Platform-specific security information that cannot be expressed elsewhere must be preserved rather than discarded by another adapter.
 
-Release 0.18.21 does not yet implement the final portable security-object format. Current POSIX compatibility metadata is therefore compatibility state, not the canonical cross-platform identity model. See `SECURITY.md`.
+Release 0.18.22 does not yet implement the final portable security-object format. Current POSIX compatibility metadata is therefore compatibility state, not the canonical cross-platform identity model. See `SECURITY.md`.
 
 ## 13. Non-goals and future directions
 

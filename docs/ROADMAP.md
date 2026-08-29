@@ -28,7 +28,7 @@ Pre-1.0 development is current-format-only. A new development format may superse
 - [x] Runtime hashed metadata indexes.
 - [x] Sequential allocation and checksum hot-path performance work.
 
-## Completed native Linux filesystem surface through release 0.18.21
+## Completed native Linux filesystem surface through release 0.18.22
 
 - [x] Native out-of-tree Linux VFS filesystem driver `infiltratorfs.ko`.
 - [x] DKMS packaging and host-kernel rebuild/install path.
@@ -51,6 +51,7 @@ Pre-1.0 development is current-format-only. A new development format may superse
 - [x] Removal of the legacy FUSE implementation from the current source/product path.
 - [x] Mounted remount/scrub qualification for the complete migrated native surface.
 - [x] Release gate that installs the generated `.deb`, mounts `FSTYPE=infiltratorfs`, writes/reads non-zero data, syncs, unmounts and requires a clean scrub.
+- [x] Multi-process locking/concurrency qualification across same-directory namespace mutation, shared-inode writes/fsync, same-inode xattr readers/writers and open-unlink lifetime.
 
 ## Linux next work
 
@@ -60,7 +61,7 @@ Pre-1.0 development is current-format-only. A new development format may superse
 - [x] Explicit mounted regression coverage for every formerly mounted semantic path,
   including crash-orphan recovery, open-handle rename/replace, 4,000 random
   overwrites and repeated fsync publication.
-- [ ] Broader locking/concurrency qualification.
+- [x] Broader locking/concurrency qualification.
 - [ ] Millions-of-files and large-volume mounted stress tests.
 - [ ] Wider near-full, fragmentation and long-running mixed-workload tests.
 - [ ] Native fragmentation/optimisation metrics and online defragmentation.
