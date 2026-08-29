@@ -1237,23 +1237,30 @@ static int infilfs_posix_create_native_named_child(
     u8 object_id[16];
     u64 object_block = 0;
     u64 new_dir_block = 0;
+    const char *failure_stage = "validate-name";
     int ret;
 
     ret = infilfs_ns_validate_name(name);
     if (ret)
         return ret;
+    failure_stage = "begin";
     ret = infilfs_ns_begin(dir->i_sb, &pending);
     if (ret)
         return ret;
+    failure_stage = "generate-id";
     ret = infilfs_rw_generate_id(dir->i_sb, object_id);
-    if (!ret)
+    if (!ret) {
+        failure_stage = "create-object";
         ret = infilfs_posix_create_object_native(
             pending, dir, type, mode, portable_flags,
             object_id, &object_block);
-    if (!ret)
+    }
+    if (!ret) {
+        failure_stage = "directory-update";
         ret = infilfs_ns_rebuild_directory(
             pending, dir, NULL, NULL, name, object_id, type,
             type == INFILFS_OBJECT_DIRECTORY ? 1 : 0, &new_dir_block);
+    }
     if (!ret) {
         memset(changes, 0, sizeof(changes));
         memcpy(changes[0].object_id, dir_ii->object_id, 16);
@@ -1264,8 +1271,16 @@ static int infilfs_posix_create_native_named_child(
         changes[1].object_block = object_block;
         changes[1].object_type = type;
         changes[1].action = INFILFS_NS_ADD;
+        failure_stage = "index-update";
         ret = infilfs_ns_rebuild_index(pending, changes, 2);
     }
+    if (ret)
+        pr_err("InfiltratorFS: native create failed during %s: %d (generation=%llu dir_block=%llu new_dir_block=%llu)\n",
+               failure_stage, ret,
+               pending ? (unsigned long long)pending->tx.generation : 0ULL,
+               (unsigned long long)dir_ii->object_block,
+               (unsigned long long)new_dir_block);
+    failure_stage = "finish";
     ret = infilfs_ns_finish(pending, ret);
     if (ret)
         return ret;
