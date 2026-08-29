@@ -72,6 +72,14 @@ Pre-1.0 development is current-format-only. A new development format may superse
 The completed items above are enforced by native mounted CI and the partition-22
 destructive qualification harness.
 
+On 2026-08-29, all 56 currently checked roadmap entries were requalified at
+source commit `075aed9c737fb38cc408d752736a97773dc2a035` through the complete
+portable/CI suite plus destructive physical `/dev/mmcblk0p22` testing. The
+physical harness passed 69/69 checks, four additional concurrency rounds passed,
+and the final generation-3695 scrub was CLEAN with zero checksum or metadata
+errors. See [QUALIFICATION.md](QUALIFICATION.md) for the evidence record and
+performance telemetry.
+
 ## Scale and performance
 
 - [x] Scalable generation-aware object-index tree.

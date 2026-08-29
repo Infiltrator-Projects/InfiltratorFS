@@ -121,6 +121,20 @@ Release 0.18.24 qualifies this native migrated surface, including the current co
 
 `mount.infiltratorfs` and InfiltratorFS Manager must produce `FSTYPE=infiltratorfs`. The Manager privileged helper rejects a mounted result with any other filesystem type.
 
+## 2026-08-29 checked-roadmap qualification
+
+The 56 roadmap entries marked complete at source commit
+`075aed9c737fb38cc408d752736a97773dc2a035` were subjected to a full
+portable/CI/physical-media audit on 2026-08-29. The maintained physical native
+VFS harness passed 69/69 checks with zero warnings, four additional mounted
+concurrency rounds passed, and the final post-concurrency offline scrub at
+generation 3695 checked 1,446 files and 151,580 data blocks with zero checksum
+or metadata errors. No corruption/lockup-class kernel diagnostic was present
+in the corrected qualification interval.
+
+The full evidence record, performance telemetry and audit-wrapper corrections
+are retained in [QUALIFICATION.md](QUALIFICATION.md).
+
 ## Adapter conformance
 
 Operating-system adapters may expose different native APIs, but they must not redefine the persistent meaning of shared filesystem concepts. Equivalent native concepts map to the same portable object/extent/transaction semantics. Adapter-only metadata must remain isolated and must not be silently discarded merely because another adapter cannot expose it.

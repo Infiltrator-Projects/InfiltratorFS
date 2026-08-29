@@ -52,6 +52,8 @@ The dedicated native-kernel workflow builds the out-of-tree module, reproduces t
 
 Release publication adds an installed-package gate: it installs the generated `.deb`, verifies native filesystem registration, mounts a real Format 0.17 loop image with `FSTYPE=infiltratorfs`, writes and byte-compares non-zero data, syncs, unmounts and requires a clean userspace scrub. Publication also rejects any FUSE executable, process or package dependency.
 
+A full checked-roadmap audit was completed on 2026-08-29 against source commit `075aed9c737fb38cc408d752736a97773dc2a035`: all 56 checked roadmap entries retained current evidence, the destructive physical native-VFS harness passed 69/69 checks, four additional mounted concurrency rounds passed, and the final generation-3695 scrub checked 1,446 files and 151,580 data blocks with zero checksum or metadata errors. Detailed evidence and performance telemetry are recorded in [docs/QUALIFICATION.md](docs/QUALIFICATION.md).
+
 ## Linux desktop integration
 
 The Debian package installs **InfiltratorFS Manager** plus udev/UDisks identification rules. Manager can create/format images, select non-system partitions, inspect, scrub, run forensic scans, mount natively, open in the desktop file manager and unmount safely.
