@@ -71,6 +71,8 @@ The dedicated `Native Linux kernel module` GitHub Actions workflow compiles the 
 
 The same workflow also has a separate hosted scale job. After the ordinary native qualification is green, it runs `tests/native-scale-qualification.sh`: one million distinct files across 1,000 directories, 100,000 unlink/recreate operations, durable read-only remount verification and scrub, followed by a separate 1 TiB sparse loop-backed volume with non-zero data, a 900 GiB sparse high-offset file, remount verification and scrub. The helper emits `[SCALE-PERF]` timings for creation, churn, sync, scrub and large-volume I/O.
 
+A second hosted endurance job runs `tests/native-endurance-qualification.sh` on a 4 GiB native volume. It drives the filesystem below 15 percent free space with multiple allocation-size classes, performs two fragmentation/refill passes plus an explicit hole-punch/refill cycle, then sustains a five-minute mixed metadata/data workload covering random 4 KiB overwrite/readback, append, rename churn, xattrs, sparse truncate/high-offset writes, hard/symbolic links and repeated fsync. A manifest of durable hashes and namespace state must survive an offline CLEAN scrub, read-only remount verification and a second CLEAN scrub. `[ENDURANCE-PERF]` output records workload rate, fsync latency, free-space floor and scrub timing.
+
 The release publisher adds an installed-package gate: it installs the generated `.deb`, verifies `/proc/filesystems` and `modinfo`, mounts a real Format 0.17 image as `infiltratorfs`, writes and byte-compares non-zero data, syncs, unmounts, requires scrub to report CLEAN and rejects any legacy FUSE executable or process.
 
 ## Current release scope
