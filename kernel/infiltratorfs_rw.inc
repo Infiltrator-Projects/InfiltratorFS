@@ -1365,8 +1365,15 @@ static int infilfs_posix_create(struct user_namespace *idmap,
     if (ret)
         return ret;
     inode = infilfs_get_inode(dir->i_sb, block, INFILFS_OBJECT_FILE, id);
-    if (IS_ERR(inode))
-        return PTR_ERR(inode);
+    if (IS_ERR(inode)) {
+        ret = PTR_ERR(inode);
+        pr_err("InfiltratorFS: native create failed while instantiating inode: %d (block=%llu allocated=%u generation=%llu)\n",
+               ret, (unsigned long long)block,
+               infilfs_block_allocated(dir->i_sb, block) ? 1u : 0u,
+               (unsigned long long)le64_to_cpu(
+                   INFILFS_SB(dir->i_sb)->disk.generation));
+        return ret;
+    }
     d_instantiate(dentry, inode);
     return 0;
 }
