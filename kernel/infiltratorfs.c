@@ -110,6 +110,18 @@ struct infilfs_dir_emit_state {
     u64 index;
 };
 
+struct infilfs_dir_snapshot_entry {
+    struct list_head link;
+    u8 object_id[16];
+    u16 object_type;
+    u16 name_len;
+    u8 name[];
+};
+
+struct infilfs_dir_snapshot {
+    struct list_head entries;
+};
+
 #define INFILFS_LINUX_META_DIRECTORY ".infilfs-posix-meta"
 
 static int infilfs_linux_meta_get_special(struct super_block *sb,
@@ -1410,17 +1422,49 @@ static int infilfs_lookup_visitor(const struct infilfs_dirent_disk *entry,
     return 1;
 }
 
-static int infilfs_emit_visitor(const struct infilfs_dirent_disk *entry,
-                                const u8 *name, void *arg)
+static int infilfs_snapshot_visitor(const struct infilfs_dirent_disk *entry,
+                                    const u8 *name, void *arg)
 {
-    struct infilfs_dir_emit_state *state = arg;
+    struct infilfs_dir_snapshot *snapshot = arg;
+    struct infilfs_dir_snapshot_entry *copy;
     u16 name_len = le16_to_cpu(entry->name_length);
-    u16 type = le16_to_cpu(entry->object_type);
+
+    if (!name_len || name_len > INFILFS_NAME_MAX)
+        return -EFSCORRUPTED;
+    copy = kmalloc(sizeof(*copy) + name_len, GFP_NOFS);
+    if (!copy)
+        return -ENOMEM;
+    INIT_LIST_HEAD(&copy->link);
+    memcpy(copy->object_id, entry->object_id, sizeof(copy->object_id));
+    copy->object_type = le16_to_cpu(entry->object_type);
+    copy->name_len = name_len;
+    memcpy(copy->name, name, name_len);
+    list_add_tail(&copy->link, &snapshot->entries);
+    return 0;
+}
+
+static void infilfs_dir_snapshot_destroy(struct infilfs_dir_snapshot *snapshot)
+{
+    struct infilfs_dir_snapshot_entry *entry;
+    struct infilfs_dir_snapshot_entry *next;
+
+    list_for_each_entry_safe(entry, next, &snapshot->entries, link) {
+        list_del(&entry->link);
+        kfree(entry);
+    }
+}
+
+static int infilfs_emit_snapshot_entry(
+    const struct infilfs_dir_snapshot_entry *entry,
+    struct infilfs_dir_emit_state *state)
+{
+    u16 name_len = entry->name_len;
+    u16 type = entry->object_type;
     unsigned char dtype = infilfs_dtype(type);
 
     if (state->hide_linux_meta &&
         name_len == sizeof(INFILFS_LINUX_META_DIRECTORY) - 1u &&
-        memcmp(name, INFILFS_LINUX_META_DIRECTORY, name_len) == 0)
+        memcmp(entry->name, INFILFS_LINUX_META_DIRECTORY, name_len) == 0)
         return 0;
 
     if (type == INFILFS_OBJECT_FILE && state->has_linux_meta) {
@@ -1445,7 +1489,7 @@ static int infilfs_emit_visitor(const struct infilfs_dirent_disk *entry,
         return 0;
     }
 
-    if (!dir_emit(state->ctx, name, name_len,
+    if (!dir_emit(state->ctx, entry->name, name_len,
                   infilfs_object_ino(entry->object_id), dtype))
         return 1;
     state->index++;
@@ -2224,20 +2268,40 @@ static int infilfs_iterate_shared(struct file *file, struct dir_context *ctx)
             has_linux_meta,
         .index = 0,
     };
+    struct infilfs_dir_snapshot snapshot;
+    struct infilfs_dir_snapshot_entry *entry;
     int ret;
 
     if (!dir_emit_dots(file, ctx))
         return 0;
 
+    INIT_LIST_HEAD(&snapshot.entries);
+
     /*
-     * Like lookup, readdir can span several metadata blocks.  Keep the
-     * directory topology stable until the walk has finished so a concurrent
-     * deferred publication cannot reclaim an older child block mid-iteration.
+     * Like lookup, readdir can span several metadata blocks.  Snapshot the
+     * persistent directory entries while holding the writer lock so deferred
+     * publication cannot reclaim a child block during the topology walk.
+     *
+     * Do not keep write_lock while resolving Linux sidecar metadata for d_type:
+     * that resolution performs its own protected sidecar/index lookup and would
+     * recursively acquire write_lock.  Emitting from copied entries after the
+     * lock is released preserves both topology safety and lock ordering.
      */
     mutex_lock(&INFILFS_SB(file_inode(file)->i_sb)->write_lock);
-    ret = infilfs_for_each_dirent(file_inode(file), infilfs_emit_visitor, &state);
+    ret = infilfs_for_each_dirent(file_inode(file),
+                                  infilfs_snapshot_visitor, &snapshot);
     mutex_unlock(&INFILFS_SB(file_inode(file)->i_sb)->write_lock);
-    return ret < 0 ? ret : 0;
+    if (ret < 0)
+        goto out;
+
+    list_for_each_entry(entry, &snapshot.entries, link) {
+        if (infilfs_emit_snapshot_entry(entry, &state))
+            break;
+    }
+    ret = 0;
+out:
+    infilfs_dir_snapshot_destroy(&snapshot);
+    return ret;
 }
 
 #include "infiltratorfs_rw.inc"
