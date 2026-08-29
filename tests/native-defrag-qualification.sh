@@ -10,7 +10,7 @@ fi
 BUILD="$(readlink -f "$1")"
 MODULE="$(readlink -f "$2")"
 
-for path in "$BUILD/mkfs.infilfs" "$BUILD/infilfs-scrub" "$BUILD/infilfs-optimize" "$MODULE"; do
+for path in "$BUILD/mkfs.infilfs" "$BUILD/infilfs-scrub" "$BUILD/infilfs-tool" "$BUILD/infilfs-optimize" "$MODULE"; do
     [[ -e "$path" ]] || { echo "Missing qualification input: $path" >&2; exit 1; }
 done
 
@@ -120,6 +120,19 @@ BEFORE_EXTENTS="$(sed -nE 's/.*extents=([0-9]+).*/\1/p' <<<"$BEFORE" | head -n1)
 [[ "$BEFORE_EXTENTS" =~ ^[0-9]+$ ]]
 (( BEFORE_EXTENTS > 2 ))
 
+# Retain the physically fragmented generation before relocation.  The later
+# snapshot-cat check proves that old data blocks were not reclaimed out from
+# under a retained generation.
+sync
+sudo umount "$MOUNTPOINT"
+MOUNTED=0
+"$BUILD/infilfs-tool" "$IMAGE" snapshot-create before-defrag
+sudo mount -t infiltratorfs -o rw "$LOOPDEV" "$MOUNTPOINT"
+MOUNTED=1
+test "$(sha256sum "$FILE" | awk '{print $1}')" = "$EXPECTED"
+test "$(stat -c '%i' "$FILE")" = "$INO_BEFORE"
+test "$(getfattr --only-values -n user.infiltratorfs-defrag "$FILE")" = preserved
+
 echo "=== Online defrag ==="
 "$BUILD/infilfs-optimize" --defrag --max-mib 64 --passes 64 "$FILE"
 
@@ -148,6 +161,10 @@ MOUNTED=0
 SCRUB="$WORK/scrub.txt"
 "$BUILD/infilfs-scrub" "$IMAGE" | tee "$SCRUB"
 grep -Fq 'Result:              CLEAN' "$SCRUB"
+
+SNAPSHOT_COPY="$WORK/snapshot-before-defrag.bin"
+"$BUILD/infilfs-tool" "$IMAGE" snapshot-cat before-defrag /fragmented.bin > "$SNAPSHOT_COPY"
+test "$(sha256sum "$SNAPSHOT_COPY" | awk '{print $1}')" = "$EXPECTED"
 
 sudo mount -t infiltratorfs -o ro "$LOOPDEV" "$MOUNTPOINT"
 MOUNTED=1
