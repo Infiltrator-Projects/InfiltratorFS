@@ -298,6 +298,31 @@ static int infilfs_defrag_one(
     if (ret)
         goto finish;
 
+    /*
+     * Defragmentation must not look like a content modification.  The shared
+     * file-object builder normally advances mtime/ctime for writes; restore
+     * the original timestamps before publishing the relocated extent map.
+     * The first store already captured operation rollback state when needed.
+     */
+    {
+        struct infilfs_object_header_disk *new_header =
+            (struct infilfs_object_header_disk *)new_object;
+        struct infilfs_file_payload_disk *new_file =
+            (struct infilfs_file_payload_disk *)(new_header + 1);
+
+        new_file->attributes.modification_time_ns =
+            old_file->attributes.modification_time_ns;
+        new_file->attributes.change_time_ns =
+            old_file->attributes.change_time_ns;
+        ret = infilfs_rw_finalize_object(new_object);
+        if (ret)
+            goto finish;
+        ret = infilfs_native_stage_block(
+            pending->sb, new_file_block, new_object);
+        if (ret)
+            goto finish;
+    }
+
     if (file_repoint) {
         memcpy(change.object_id, ii->object_id, 16);
         change.object_block = new_file_block;
