@@ -2380,9 +2380,6 @@ static const struct file_operations infilfs_file_operations = {
     .mmap = generic_file_mmap,
     .fallocate = infilfs_file_fallocate,
     .unlocked_ioctl = infilfs_file_ioctl,
-#ifdef CONFIG_COMPAT
-    .compat_ioctl = compat_ptr_ioctl,
-#endif
     .fsync = infilfs_file_fsync,
 };
 
