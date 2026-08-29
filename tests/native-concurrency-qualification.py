@@ -7,6 +7,7 @@ import multiprocessing as mp
 import os
 import sys
 import traceback
+import subprocess
 
 WORKERS = 6
 FILES_PER_WORKER = 24
@@ -190,6 +191,17 @@ def drain_errors(errors):
             f"[{phase} worker {worker}]\n{trace}"
             for phase, worker, trace in found
         )
+        try:
+            kernel = subprocess.run(
+                ["dmesg", "--level=err,warn"],
+                check=False, text=True, capture_output=True,
+            ).stdout
+            if kernel:
+                print("Kernel diagnostics during concurrency failure:",
+                      file=sys.stderr)
+                print(kernel[-32768:], file=sys.stderr)
+        except OSError:
+            pass
         raise RuntimeError("concurrency worker failure:\n" + details)
 
 
