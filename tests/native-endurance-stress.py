@@ -275,6 +275,24 @@ def worker_loop(root: str, worker: int, seconds: int) -> dict[str, object]:
             proof_hash.update(chunk)
         os.fsync(stream.fileno())
 
+    final_xattr = f"final:{worker}:{iteration}".encode("ascii")
+    os.setxattr(hot, b"user.infiltratorfs-endurance", final_xattr)
+    fd_hot = os.open(hot, os.O_RDONLY | os.O_CLOEXEC)
+    try:
+        os.fsync(fd_hot)
+    finally:
+        os.close(fd_hot)
+
+    final_link = os.path.join(wr, "hot.final.link")
+    final_sym = os.path.join(wr, "hot.final.sym")
+    for path in (final_link, final_sym):
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+    os.link(hot, final_link)
+    os.symlink("hot.bin", final_sym)
+
     hot_hash = hashlib.sha256()
     with open(hot, "rb", buffering=0) as stream:
         while True:
@@ -291,11 +309,17 @@ def worker_loop(root: str, worker: int, seconds: int) -> dict[str, object]:
         "proof_sha256": proof_hash.hexdigest(),
         "hot": os.path.relpath(hot, root),
         "hot_sha256": hot_hash.hexdigest(),
+        "final_xattr": final_xattr.decode("ascii"),
+        "final_link": os.path.relpath(final_link, root),
+        "final_sym": os.path.relpath(final_sym, root),
         "log": os.path.relpath(log_path, root),
         "log_size": os.stat(log_path).st_size,
+        "log_sha256": sha256_file(log_path),
         "sparse": os.path.relpath(sparse, root),
         "sparse_size": os.stat(sparse).st_size,
+        "sparse_tail_sha256": tail_block_digest(sparse),
         "namespace_count": len(os.listdir(ns)),
+        "namespace_sha256": namespace_digest(ns),
         "fsync_mean_ms": (sum(fsync_ms) / len(fsync_ms)) if fsync_ms else 0.0,
         "fsync_max_ms": max(fsync_ms) if fsync_ms else 0.0,
     }
@@ -313,6 +337,29 @@ def sha256_file(path: str) -> str:
     return digest.hexdigest()
 
 
+def namespace_digest(path: str) -> str:
+    digest = hashlib.sha256()
+    for name in sorted(os.listdir(path)):
+        full = os.path.join(path, name)
+        if not os.path.isfile(full):
+            raise AssertionError(f"unexpected namespace entry: {full}")
+        digest.update(name.encode("utf-8"))
+        digest.update(b"\0")
+        with open(full, "rb", buffering=0) as stream:
+            digest.update(stream.read())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def tail_block_digest(path: str) -> str:
+    size = os.stat(path).st_size
+    offset = max(0, size - BLOCK)
+    with open(path, "rb", buffering=0) as stream:
+        stream.seek(offset)
+        data = stream.read(BLOCK)
+    return hashlib.sha256(data).hexdigest()
+
+
 def verify_manifest(root: str, manifest_path: str) -> None:
     with open(manifest_path, encoding="utf-8") as stream:
         manifest = json.load(stream)
@@ -325,13 +372,27 @@ def verify_manifest(root: str, manifest_path: str) -> None:
             raise AssertionError(f"proof hash mismatch: {proof}")
         if sha256_file(hot) != worker["hot_sha256"]:
             raise AssertionError(f"hot hash mismatch: {hot}")
+        if os.getxattr(hot, b"user.infiltratorfs-endurance").decode("ascii") != worker["final_xattr"]:
+            raise AssertionError(f"xattr mismatch: {hot}")
+        link = os.path.join(root, worker["final_link"])
+        sym = os.path.join(root, worker["final_sym"])
+        if os.stat(link).st_ino != os.stat(hot).st_ino:
+            raise AssertionError(f"hard-link inode mismatch: {link}")
+        if os.readlink(sym) != "hot.bin":
+            raise AssertionError(f"symlink target mismatch: {sym}")
         if os.stat(log).st_size != worker["log_size"]:
             raise AssertionError(f"log size mismatch: {log}")
+        if sha256_file(log) != worker["log_sha256"]:
+            raise AssertionError(f"log hash mismatch: {log}")
         if os.stat(sparse).st_size != worker["sparse_size"]:
             raise AssertionError(f"sparse size mismatch: {sparse}")
+        if tail_block_digest(sparse) != worker["sparse_tail_sha256"]:
+            raise AssertionError(f"sparse tail mismatch: {sparse}")
         ns = os.path.join(os.path.dirname(hot), "namespace")
         if len(os.listdir(ns)) != worker["namespace_count"]:
             raise AssertionError(f"namespace count mismatch: {ns}")
+        if namespace_digest(ns) != worker["namespace_sha256"]:
+            raise AssertionError(f"namespace digest mismatch: {ns}")
     print("Native near-full/mixed durable verification: PASS")
 
 
