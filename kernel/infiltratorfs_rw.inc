@@ -1282,8 +1282,13 @@ static int infilfs_posix_create_native_named_child(
                (unsigned long long)new_dir_block);
     failure_stage = "finish";
     ret = infilfs_ns_finish(pending, ret);
-    if (ret)
+    if (ret) {
+        pr_err("InfiltratorFS: native create failed during %s: %d (dir_block=%llu new_dir_block=%llu)\n",
+               failure_stage, ret,
+               (unsigned long long)dir_ii->object_block,
+               (unsigned long long)new_dir_block);
         return ret;
+    }
 
     dir_ii->object_block = new_dir_block;
     infilfs_refresh_inode_blocks_after_commit(dir);
