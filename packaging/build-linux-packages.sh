@@ -150,19 +150,19 @@ depmod -a
 # for emergency blacklisting after a kernel/filesystem fault; package upgrades
 # must still be able to install and configure a fixed DKMS module without
 # defeating that safety policy or failing dpkg configuration.
-load_plan="$(modprobe --dry-run --verbose "$module" 2>/dev/null || true)"
+load_plan="\$(modprobe --dry-run --verbose "\$module" 2>/dev/null || true)"
 load_disabled=0
-case "$load_plan" in
+case "\$load_plan" in
     *"install /bin/false"*|*"install /usr/bin/false"*|*"install false"*)
         load_disabled=1
         ;;
 esac
 
-if [ "$load_disabled" -eq 1 ]; then
+if [ "\$load_disabled" -eq 1 ]; then
     echo 'InfiltratorFS: module loading is administratively disabled; leaving the newly installed DKMS module unloaded.'
 else
-    modprobe -r "$module" 2>/dev/null || true
-    modprobe "$module"
+    modprobe -r "\$module" 2>/dev/null || true
+    modprobe "\$module"
     grep -qw infiltratorfs /proc/filesystems || {
         echo 'InfiltratorFS: native kernel filesystem did not register.' >&2
         exit 1
