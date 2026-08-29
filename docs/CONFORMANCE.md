@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # Format 0.17 Conformance
 
-Release 0.18.22 accepts exactly current on-disk Format 0.17. Pre-1.0 builds do not promise compatibility with earlier development formats.
+Release 0.18.23 accepts exactly current on-disk Format 0.17. Pre-1.0 builds do not promise compatibility with earlier development formats.
 
 ## Persistent representation
 
@@ -111,10 +111,12 @@ Native Linux qualification requires:
 - metadata CRC64 and file-data SHA-256 validation on native reads;
 - transaction publication through `fsync`/`syncfs`/sync durability boundaries;
 - bounded multi-process contention across same-directory create/rename/link/unlink, shared-inode disjoint writes and fsync, same-inode xattr readers/writers, stable concurrent reads and open-unlink writers without transient structural errors;
+- rejection of cyclic or multiply aliased checksummed metadata trees without mount hang or pathological repeated traversal;
+- no allocation-map/tree helper may require a multi-kilobyte automatic kernel-stack scratch array;
 - clean unmount followed by userspace scrub; and
 - refusal to silently substitute a non-native filesystem path.
 
-Release 0.18.22 qualifies this native migrated surface, including the current correctness-first locking model. Additional development qualification is expected to expand scale and long-running mixed-workload stress rather than reintroduce a FUSE runtime path.
+Release 0.18.23 qualifies this native migrated surface, including the current correctness-first locking model. Additional development qualification is expected to expand scale and long-running mixed-workload stress rather than reintroduce a FUSE runtime path.
 
 `mount.infiltratorfs` and InfiltratorFS Manager must produce `FSTYPE=infiltratorfs`. The Manager privileged helper rejects a mounted result with any other filesystem type.
 
@@ -140,6 +142,6 @@ The main Build and conformance workflow runs the portable/core suite under GCC, 
 
 Portable smoke qualification requires a 1023-byte UTF-8 component to succeed and a 1024-byte component to be rejected. Native mounted qualification additionally verifies that `statfs` advertises the 1023-byte boundary and repeats create/read/enumerate/reject through the Linux VFS.
 
-The Native Linux kernel module workflow builds the out-of-tree driver, reproduces the DKMS source-root invocation, validates module metadata and performs mounted snapshot, all-namespace xattr, special-node, mmap, namespace, multi-process locking/concurrency, allocation-reporting, 4,000-write random I/O, repeated-fsync, bounded near-full fragmentation/refill allocation, crash-orphan recovery, checkpoint fallback/healing, remount and scrub qualification when the hosted runner exposes matching running-kernel headers.
+The Native Linux kernel module workflow builds the out-of-tree driver, reproduces the DKMS source-root invocation, validates module metadata and performs mounted snapshot, all-namespace xattr, special-node, mmap, namespace, multi-process locking/concurrency, allocation-reporting, 4,000-write random I/O, repeated-fsync, bounded near-full fragmentation/refill allocation, crash-orphan recovery, checkpoint fallback/healing, malicious metadata-alias rejection with an explicit mount timeout, remount and scrub qualification when the hosted runner exposes matching running-kernel headers.
 
 The release publisher runs only after a successful `Release <version>` commit on current `main`. It rebuilds assets from that exact commit, installs the generated `.deb`, verifies the native filesystem registration, mounts a real Format 0.17 loop image with `FSTYPE=infiltratorfs`, writes and byte-compares non-zero data, syncs, unmounts, requires a CLEAN scrub and rejects any legacy FUSE executable/process before creating the tag and release.
