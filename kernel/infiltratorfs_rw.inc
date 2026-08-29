@@ -1573,7 +1573,7 @@ static int infilfs_statfs(struct dentry *dentry, struct kstatfs *buf)
     if (!sbi)
         return -EIO;
     total = le64_to_cpu(sbi->disk.total_blocks);
-    free_blocks = le64_to_cpu(sbi->disk.free_blocks);
+    free_blocks = infilfs_native_visible_free_blocks(sb);
     if (!total || free_blocks > total)
         return -EFSCORRUPTED;
 
@@ -1583,13 +1583,13 @@ static int infilfs_statfs(struct dentry *dentry, struct kstatfs *buf)
     buf->f_frsize = INFILFS_DISK_BLOCK_SIZE;
     buf->f_blocks = total;
     buf->f_bfree = free_blocks;
-    buf->f_bavail = free_blocks;
+    buf->f_bavail = infilfs_native_available_data_blocks(sb);
     /*
      * Object count has no fixed inode table; these are conservative upper
      * bounds used only for generic VFS reporting.
      */
     buf->f_files = total;
-    buf->f_ffree = free_blocks;
+    buf->f_ffree = buf->f_bavail;
     buf->f_namelen = INFILFS_NAME_MAX;
     return 0;
 }

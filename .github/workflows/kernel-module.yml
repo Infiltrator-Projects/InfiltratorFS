@@ -754,6 +754,33 @@ jobs:
           cmp "$large_src" "$mountpoint/native-rw/large-hard.bin"
           sudo mv "$mountpoint/native-rw/large-hard.bin" "$mountpoint/native-rw/large.bin"
 
+          # statfs must account for the live deferred transaction, not merely
+          # the last committed checkpoint. Keep this probe below the minimum
+          # 16 MiB publication threshold, sample immediately, then clean it up.
+          sudo python3 - "$mountpoint/native-rw" <<'PY'
+          import os
+          import sys
+
+          root = sys.argv[1]
+          path = os.path.join(root, 'statfs-pending-probe.bin')
+          before = os.statvfs(root).f_bavail
+          payload = bytes(1024 * 1024)
+          fd = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_EXCL, 0o600)
+          try:
+              for _ in range(8):
+                  view = memoryview(payload)
+                  while view:
+                      written = os.write(fd, view)
+                      view = view[written:]
+          finally:
+              os.close(fd)
+          after = os.statvfs(root).f_bavail
+          assert after < before, (before, after)
+          assert before - after >= (8 * 1024 * 1024) // 4096, (before, after)
+          os.unlink(path)
+          os.sync()
+          PY
+
           # Drive the allocator close to a bounded free-space floor, punch
           # alternating 4 MiB holes into that population, then refill with
           # smaller extents. This qualifies split/merge/reuse behaviour under

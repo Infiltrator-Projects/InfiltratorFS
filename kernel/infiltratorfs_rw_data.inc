@@ -22,6 +22,8 @@
 #include <linux/workqueue.h>
 
 #define INFILFS_NATIVE_WRITE_CHUNK (4u * 1024u * 1024u)
+#define INFILFS_NATIVE_METADATA_RESERVE_EXTRA_BLOCKS \
+    (INFILFS_NATIVE_WRITE_CHUNK >> INFILFS_DISK_BLOCK_SHIFT)
 #define INFILFS_NATIVE_IDLE_DELAY (5u * HZ)
 #define INFILFS_NATIVE_UNDO_INITIAL 16u
 #define INFILFS_NATIVE_CHECKSUM_CACHE_SLOTS 256u
@@ -823,6 +825,63 @@ infilfs_native_pending_find_locked(struct super_block *sb)
     return NULL;
 }
 
+/*
+ * Keep enough currently free blocks unavailable to ordinary file-data
+ * allocation to guarantee that the current transaction can still publish its
+ * allocation tree and finish bounded metadata CoW work. Internal metadata
+ * allocation uses the ordinary transaction allocator and can consume this
+ * reserve; only user data is prevented from exhausting it.
+ */
+static u64 infilfs_native_metadata_reserve_blocks(
+    const struct infilfs_sb_info *sbi)
+{
+    u64 reserve;
+    u64 total;
+
+    if (!sbi)
+        return 0;
+    total = sbi->device_blocks;
+    reserve = (u64)sbi->allocation_leaf_count +
+        (u64)sbi->allocation_branch_count;
+    if (reserve > U64_MAX - INFILFS_NATIVE_METADATA_RESERVE_EXTRA_BLOCKS)
+        return total;
+    reserve += INFILFS_NATIVE_METADATA_RESERVE_EXTRA_BLOCKS;
+    return min_t(u64, reserve, total);
+}
+
+/*
+ * statfs must describe the active deferred transaction, not just the last
+ * committed checkpoint. The pending-list lock protects object lifetime; the
+ * free-block scalar itself is sampled with READ_ONCE because writers serialize
+ * updates under sbi->write_lock.
+ */
+static u64 infilfs_native_visible_free_blocks(struct super_block *sb)
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
+    struct infilfs_native_pending *pending;
+    u64 free_blocks;
+
+    if (!sbi)
+        return 0;
+    free_blocks = le64_to_cpu(READ_ONCE(sbi->disk.free_blocks));
+
+    mutex_lock(&infilfs_native_pending_list_lock);
+    pending = infilfs_native_pending_find_locked(sb);
+    if (pending && READ_ONCE(pending->active))
+        free_blocks = READ_ONCE(pending->tx.free_blocks);
+    mutex_unlock(&infilfs_native_pending_list_lock);
+    return free_blocks;
+}
+
+static u64 infilfs_native_available_data_blocks(struct super_block *sb)
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
+    u64 free_blocks = infilfs_native_visible_free_blocks(sb);
+    u64 reserve = infilfs_native_metadata_reserve_blocks(sbi);
+
+    return free_blocks > reserve ? free_blocks - reserve : 0;
+}
+
 static void infilfs_native_idle_work(struct work_struct *work);
 
 static struct infilfs_native_pending *
@@ -1057,6 +1116,13 @@ static int infilfs_native_alloc_data_exact(struct infilfs_native_pending *pendin
 
     if (!count || count > tx->free_blocks || total <= 1)
         return -ENOSPC;
+    {
+        u64 reserve = infilfs_native_metadata_reserve_blocks(sbi);
+
+        if (tx->free_blocks <= reserve ||
+            count > tx->free_blocks - reserve)
+            return -ENOSPC;
+    }
 
     if (preferred > 0 && preferred < total && count <= total - preferred) {
         for (i = 0; i < count; ++i)
@@ -4063,19 +4129,62 @@ static ssize_t infilfs_native_extent_write_iter(struct inode *inode,
         u64 tail_block = 0;
         u64 tail_start = 0;
 
-        ret = infilfs_native_operation_snapshot(pending);
+        for (;;) {
+            ret = infilfs_native_operation_snapshot(pending);
+            if (ret)
+                break;
+            ret = infilfs_native_append_chunk_locked(
+                pending, inode, from, (u64)pos + done, chunk, &consumed,
+                &new_file_block, &new_size, &allocated_blocks, tail_id,
+                &tail_block, &tail_start);
+            if (!ret)
+                break;
+
+            {
+                int rollback = infilfs_native_operation_rollback(pending);
+                if (rollback) {
+                    ret = rollback;
+                    break;
+                }
+            }
+
+            /*
+             * Total free space can remain healthy while fragmentation leaves
+             * no run large enough for the preferred write chunk. Retry the
+             * same userspace write with progressively smaller contiguous
+             * pieces. The one-block-boundary floor guarantees we eventually
+             * ask only for one physical filesystem block before reporting a
+             * genuine ENOSPC.
+             */
+            if (ret != -ENOSPC)
+                break;
+            {
+                size_t offset =
+                    ((size_t)((u64)pos + done)) &
+                    (INFILFS_DISK_BLOCK_SIZE - 1u);
+                size_t one_block = INFILFS_DISK_BLOCK_SIZE - offset;
+                size_t next;
+
+                if (chunk <= one_block)
+                    break;
+                next = chunk / 2u;
+                if (next < one_block)
+                    next = one_block;
+                if (next >= chunk)
+                    break;
+                chunk = next;
+                consumed = 0;
+                new_file_block = 0;
+                new_size = 0;
+                allocated_blocks = 0;
+                memset(tail_id, 0, sizeof(tail_id));
+                tail_block = 0;
+                tail_start = 0;
+            }
+        }
         if (ret)
             break;
-        ret = infilfs_native_append_chunk_locked(
-            pending, inode, from, (u64)pos + done, chunk, &consumed,
-            &new_file_block, &new_size, &allocated_blocks, tail_id,
-            &tail_block, &tail_start);
-        if (ret) {
-            int rollback = infilfs_native_operation_rollback(pending);
-            if (rollback && !ret)
-                ret = rollback;
-            break;
-        }
+
         infilfs_native_operation_commit(pending);
         ii->object_block = new_file_block;
         i_size_write(inode, new_size);

@@ -21,6 +21,8 @@ A conforming implementation preserves:
 - independently CRC64-protected allocation branch/leaf pages with exact logical index, level and entry-count validation;
 - transaction allocation/deferred-range journals rather than whole-volume bitmap rollback clones;
 - committed allocation-layout caching in both portable and native implementations, with replacement only after the primary checkpoint durability boundary;
+- native statfs accounting from the active deferred transaction, with internal metadata reserve excluded from f_bavail;
+- adaptive native write-chunk subdivision so fragmented free space is consumed down to one-block runs before ENOSPC is reported;
 - exact root/object-index/directory/checksum graph reachability;
 - exact link counts and parent/reference rules;
 - ordinary extents, sparse hole extents and shared normal extents;
