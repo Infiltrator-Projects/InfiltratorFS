@@ -25,7 +25,9 @@ The module:
 - preserves retained snapshot generations while live namespace/data updates continue;
 - reports logical and allocated blocks for native objects;
 - validates metadata integrity and file-data checksums on native reads; and
-- publishes pending transactions at `fsync`, `syncfs` and global sync durability boundaries using sharded CoW allocation-map leaves rather than a monolithic bitmap image.
+- publishes pending transactions at `fsync`, `syncfs` and global sync durability boundaries using sharded CoW allocation-map leaves rather than a monolithic bitmap image;
+- reports per-file native fragmentation metrics through a bounded ioctl ABI; and
+- performs bounded online copy-on-write file defragmentation while preserving logical content, inode identity, hard links, xattrs and user-visible timestamps and reclaiming old blocks through the existing snapshot/reflink-aware path.
 
 Build against the running kernel when matching headers are installed:
 
@@ -66,12 +68,16 @@ The DKMS source root is deliberately self-contained and includes:
 - `infiltratorfs_directory_tree.inc`
 - `infiltratorfs_pagecache.inc`
 - `infiltratorfs_linux_meta.inc`
+- `infiltratorfs_defrag.inc`
+- `infiltratorfs_ioctl.h`
 
 The dedicated `Native Linux kernel module` GitHub Actions workflow compiles the module against Ubuntu kernel headers, reproduces the DKMS source-root build, checks module metadata and, when matching running-kernel headers are available, loads the module and performs real loop-device native read/write qualification. The mounted suite covers namespace operations, random/sparse writes, high-offset sparse files, truncate, allocation reporting, `fallocate`, hole punching, xattrs, special nodes, page-cache/readahead/mmap behavior, open-unlink lifetime, snapshot-preserving writes, remount readback and offline scrub.
 
 The same workflow also has a separate hosted scale job. After the ordinary native qualification is green, it runs `tests/native-scale-qualification.sh`: one million distinct files across 1,000 directories, 100,000 unlink/recreate operations, durable read-only remount verification and scrub, followed by a separate 1 TiB sparse loop-backed volume with non-zero data, a 900 GiB sparse high-offset file, remount verification and scrub. The helper emits `[SCALE-PERF]` timings for creation, churn, sync, scrub and large-volume I/O.
 
 A second hosted endurance job runs `tests/native-endurance-qualification.sh` on a 4 GiB native volume. It drives the filesystem below 15 percent free space with multiple allocation-size classes, performs two fragmentation/refill passes plus an explicit hole-punch/refill cycle, then sustains a five-minute mixed metadata/data workload covering random 4 KiB overwrite/readback, append, rename churn, xattrs, sparse truncate/high-offset writes, hard/symbolic links and repeated fsync. A manifest of durable hashes and namespace state must survive an offline CLEAN scrub, read-only remount verification and a second CLEAN scrub. `[ENDURANCE-PERF]` output records workload rate, fsync latency, free-space floor and scrub timing.
+
+The mounted optimizer gate deliberately fragments a regular file using committed 4 KiB CoW overwrites, records `infilfs-optimize --metrics`, invokes `infilfs-optimize --defrag`, requires fewer data extents, verifies the file and its hard link remain byte-identical with the same inode/xattr and unchanged modification time, then requires CLEAN scrub and read-only remount verification.
 
 The release publisher adds an installed-package gate: it installs the generated `.deb`, verifies `/proc/filesystems` and `modinfo`, mounts a real Format 0.17 image as `infiltratorfs`, writes and byte-compares non-zero data, syncs, unmounts, requires scrub to report CLEAN and rejects any legacy FUSE executable or process.
 
