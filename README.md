@@ -86,6 +86,16 @@ truncate -s 128M infilfs.img
 ./build/infilfs-inspect infilfs.img
 ./build/infilfs-scrub infilfs.img
 ./build/infilfs-forensic --jsonl infilfs.img
+
+For a mounted native filesystem, `infilfs-optimize` reports per-file extent
+fragmentation and can perform bounded copy-on-write online defragmentation
+without replacing the inode:
+
+```bash
+./build/infilfs-optimize --metrics /media/user/InfiltratorFS/file.bin
+./build/infilfs-optimize --defrag /media/user/InfiltratorFS/file.bin
+./build/infilfs-optimize --defrag --recursive /media/user/InfiltratorFS/tree
+```
 ```
 
 The direct-image tool can exercise namespace and snapshot operations without mounting:
