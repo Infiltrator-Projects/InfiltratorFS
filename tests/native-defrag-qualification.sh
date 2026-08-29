@@ -110,8 +110,8 @@ PY
 setfattr -n user.infiltratorfs-defrag -v preserved "$FILE"
 ln "$FILE" "$LINK"
 INO_BEFORE="$(stat -c '%i' "$FILE")"
-MTIME_BEFORE="$(stat -c '%Y.%N' "$FILE")"
-CTIME_BEFORE="$(stat -c '%Z' "$FILE")"
+MTIME_BEFORE="$(stat -c '%y' "$FILE")"
+CTIME_BEFORE="$(stat -c '%z' "$FILE")"
 
 echo "=== Fragmentation metrics before ==="
 BEFORE="$("$BUILD/infilfs-optimize" --metrics "$FILE")"
@@ -138,7 +138,8 @@ test "$(stat -c '%i' "$LINK")" = "$INO_BEFORE"
 test "$(getfattr --only-values -n user.infiltratorfs-defrag "$FILE")" = preserved
 
 # Defrag is physical optimisation, not user-visible content modification.
-test "$(stat -c '%Y.%N' "$FILE")" = "$MTIME_BEFORE"
+test "$(stat -c '%y' "$FILE")" = "$MTIME_BEFORE"
+test "$(stat -c '%z' "$FILE")" = "$CTIME_BEFORE"
 
 sync
 sudo umount "$MOUNTPOINT"
