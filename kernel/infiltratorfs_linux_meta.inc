@@ -61,25 +61,45 @@ static int infilfs_linux_meta_find_child(
     int ret;
 
     *inode_out = NULL;
+
+    /*
+     * The hidden Linux sidecar namespace shares the global object index with
+     * ordinary files.  Hold the native writer lock while resolving its
+     * directory entry and index block so checkpoint publication cannot reclaim
+     * an older tree path between those reads.  Release before get_inode():
+     * inode population can inspect sidecar metadata recursively.
+     */
+    mutex_lock(&INFILFS_SB(dir->i_sb)->write_lock);
     ret = infilfs_for_each_dirent(dir, infilfs_lookup_visitor, &search);
     if (ret < 0)
-        return ret;
-    if (!search.found)
-        return -ENOENT;
-    if (search.object_type != expected_type)
-        return -EFSCORRUPTED;
+        goto unlock;
+    if (!search.found) {
+        ret = -ENOENT;
+        goto unlock;
+    }
+    if (search.object_type != expected_type) {
+        ret = -EFSCORRUPTED;
+        goto unlock;
+    }
     ret = infilfs_index_lookup(dir->i_sb, search.object_id, &block,
                                &indexed_type);
     if (ret)
-        return ret;
-    if (indexed_type != expected_type)
-        return -EFSCORRUPTED;
+        goto unlock;
+    if (indexed_type != expected_type) {
+        ret = -EFSCORRUPTED;
+        goto unlock;
+    }
+    mutex_unlock(&INFILFS_SB(dir->i_sb)->write_lock);
     inode = infilfs_get_inode(dir->i_sb, block, indexed_type,
                               search.object_id);
     if (IS_ERR(inode))
         return PTR_ERR(inode);
     *inode_out = inode;
     return 0;
+
+unlock:
+    mutex_unlock(&INFILFS_SB(dir->i_sb)->write_lock);
+    return ret;
 }
 
 static int infilfs_linux_meta_validate_internal(struct inode *inode,
