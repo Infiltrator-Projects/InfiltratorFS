@@ -192,6 +192,7 @@ static int infilfs_rw_allocation_map_publish(
     u8 *dirty_leaves = NULL;
     u8 *dirty_level1 = NULL;
     u8 *dirty_level2 = NULL;
+    __le64 *pointers = NULL;
     size_t reserved_count = 0;
     size_t max_reserved;
     size_t needed = 0;
@@ -215,8 +216,10 @@ static int infilfs_rw_allocation_map_publish(
     new_leaves = kvmalloc_array(old.leaf_count, sizeof(*new_leaves), GFP_NOFS);
     new_branches = kvmalloc_array(old.branch_count, sizeof(*new_branches),
                                   GFP_NOFS);
+    pointers = kvmalloc_array(INFILFS_ALLOCATION_TREE_FANOUT,
+                              sizeof(*pointers), GFP_NOFS);
     if (!dirty_leaves || !dirty_level1 || !dirty_level2 ||
-        !reserved || !new_leaves || !new_branches) {
+        !reserved || !new_leaves || !new_branches || !pointers) {
         ret = -ENOMEM;
         goto out;
     }
@@ -370,7 +373,6 @@ static int infilfs_rw_allocation_map_publish(
         for (i = 0; i < old.level1_count; ++i) {
             size_t first;
             u32 entries;
-            __le64 pointers[INFILFS_ALLOCATION_TREE_FANOUT];
             u32 j;
 
             if (!dirty_level1[i])
@@ -392,7 +394,6 @@ static int infilfs_rw_allocation_map_publish(
         for (i = 0; i < old.level2_count; ++i) {
             size_t first;
             u32 entries;
-            __le64 pointers[INFILFS_ALLOCATION_TREE_FANOUT];
             u32 j;
 
             if (!dirty_level2[i])
@@ -414,8 +415,6 @@ static int infilfs_rw_allocation_map_publish(
     }
 
     {
-        __le64 pointers[INFILFS_ALLOCATION_TREE_FANOUT];
-
         for (i = 0; i < old.level2_count; ++i)
             pointers[i] = cpu_to_le64(new_branches[1u + i]);
         ret = infilfs_rw_allocation_write_page(
@@ -437,6 +436,7 @@ static int infilfs_rw_allocation_map_publish(
     }
 
 out:
+    kvfree(pointers);
     kvfree(new_branches);
     kvfree(new_leaves);
     kvfree(reserved);
