@@ -69,6 +69,8 @@ The DKMS source root is deliberately self-contained and includes:
 
 The dedicated `Native Linux kernel module` GitHub Actions workflow compiles the module against Ubuntu kernel headers, reproduces the DKMS source-root build, checks module metadata and, when matching running-kernel headers are available, loads the module and performs real loop-device native read/write qualification. The mounted suite covers namespace operations, random/sparse writes, high-offset sparse files, truncate, allocation reporting, `fallocate`, hole punching, xattrs, special nodes, page-cache/readahead/mmap behavior, open-unlink lifetime, snapshot-preserving writes, remount readback and offline scrub.
 
+The same workflow also has a separate hosted scale job. After the ordinary native qualification is green, it runs `tests/native-scale-qualification.sh`: one million distinct files across 1,000 directories, 100,000 unlink/recreate operations, durable read-only remount verification and scrub, followed by a separate 1 TiB sparse loop-backed volume with non-zero data, a 900 GiB sparse high-offset file, remount verification and scrub. The helper emits `[SCALE-PERF]` timings for creation, churn, sync, scrub and large-volume I/O.
+
 The release publisher adds an installed-package gate: it installs the generated `.deb`, verifies `/proc/filesystems` and `modinfo`, mounts a real Format 0.17 image as `infiltratorfs`, writes and byte-compares non-zero data, syncs, unmounts, requires scrub to report CLEAN and rejects any legacy FUSE executable or process.
 
 ## Current release scope
