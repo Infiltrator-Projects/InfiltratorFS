@@ -69,6 +69,10 @@ Pre-1.0 development is current-format-only. A new development format may superse
   `tests/native-scale-stress.py`; this remains unchecked until the full
   1,000,000-file plus 1 TiB mounted CI qualification passes on exact `main`.
 - [ ] Wider near-full, fragmentation and long-running mixed-workload tests.
+  Implementation is present in `tests/native-endurance-qualification.sh` and
+  `tests/native-endurance-stress.py`; this remains unchecked until the full
+  bounded near-full, fragmentation/refill, five-minute mixed-workload,
+  read-only remount and double-scrub qualification passes on exact `main`.
 - [ ] Native fragmentation/optimisation metrics and online defragmentation.
 - [ ] Upstream/libblockdev formatter integration so stock GNOME Disks can offer InfiltratorFS directly in its format menu.
 
