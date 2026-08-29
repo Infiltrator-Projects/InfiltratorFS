@@ -28,7 +28,7 @@ if(NOT TARGET InfiltratrCommon::Portable)
     else()
         include(FetchContent)
         FetchContent_Declare(infiltratr_common
-            GIT_REPOSITORY https://github.com/The-First-Infiltrator/Infiltrator-Libraries.git
+            GIT_REPOSITORY https://github.com/Infiltrator-Projects/Infiltrator-Libraries.git
             GIT_TAG ${INFILTRATR_COMMON_REQUIRED_COMMIT}
             GIT_SHALLOW FALSE)
         FetchContent_MakeAvailable(infiltratr_common)

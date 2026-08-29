@@ -85,7 +85,7 @@ X-InfiltratorFS-Build: ${build_identity}
 Depends: dkms, kmod, policykit-1, util-linux, xdg-utils, zenity
 Recommends: linux-headers-generic, udev, udisks2
 Installed-Size: ${installed_size}
-Homepage: https://github.com/The-First-Infiltrator/InfiltratorFS
+Homepage: https://github.com/Infiltrator-Projects/InfiltratorFS
 Description: native Linux InfiltratorFS filesystem and tools
  InfiltratorFS formatter, inspector, scrubber, forensic scanner,
  native mount/fsck helpers, direct-image utility, Linux Mint desktop manager,

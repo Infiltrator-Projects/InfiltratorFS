@@ -2,7 +2,7 @@
 
 # InfiltratorFS
 
-[![Build and conformance](https://github.com/The-First-Infiltrator/InfiltratorFS/actions/workflows/ci.yml/badge.svg)](https://github.com/The-First-Infiltrator/InfiltratorFS/actions/workflows/ci.yml)
+[![Build and conformance](https://github.com/Infiltrator-Projects/InfiltratorFS/actions/workflows/ci.yml/badge.svg)](https://github.com/Infiltrator-Projects/InfiltratorFS/actions/workflows/ci.yml)
 
 InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem started in 2026. The persistent format and portable core define the filesystem; operating-system adapters translate native APIs and semantics onto the same on-disk objects, transactions, extents, snapshots and integrity model.
 
@@ -68,7 +68,7 @@ On Linux Mint, Ubuntu or another supported Debian-family host:
 sudo apt install build-essential cmake dkms kmod policykit-1 util-linux \
   xdg-utils zenity udev udisks2 linux-headers-$(uname -r)
 
-git clone --recurse-submodules https://github.com/The-First-Infiltrator/InfiltratorFS.git
+git clone --recurse-submodules https://github.com/Infiltrator-Projects/InfiltratorFS.git
 cd InfiltratorFS
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
