@@ -58,7 +58,7 @@ infs_status infs_volume_sync(struct infs_volume *vol)
     /*
      * New data/metadata were written to unreachable blocks above. Flush them
      * first, then publish only the allocation leaves whose bit payload changed
-     * plus the small branch spine. The checkpoint remains the atomic commit
+     * and the affected branch paths plus replacement root. The checkpoint remains the atomic commit
      * point exactly as before.
      */
     status = infs_storage_flush(&vol->storage);

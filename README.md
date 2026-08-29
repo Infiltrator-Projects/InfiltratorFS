@@ -46,7 +46,7 @@ The standard `mount.infiltratorfs` helper, InfiltratorFS Manager, Nemo/UDisks in
 
 ## Native durability and integrity
 
-The native writer uses Format 0.17 transactions, range-journal rollback and extent-backed data. Allocation commits rewrite only affected allocation leaves plus the small CoW branch spine rather than copying or rewriting the full volume bitmap. Native reads validate metadata CRC64 and file SHA-256 data checksums. `fsync`, `syncfs` and global `sync` publish pending transactions through the normal durability boundary.
+The native writer uses Format 0.17 transactions, range-journal rollback and extent-backed data. Allocation commits rewrite only affected allocation leaves and the corresponding CoW branch paths plus the replacement root, rather than copying or rewriting the full volume bitmap. Native reads validate metadata CRC64 and file SHA-256 data checksums. `fsync`, `syncfs` and global `sync` publish pending transactions through the normal durability boundary.
 
 The dedicated native-kernel workflow builds the out-of-tree module, reproduces the DKMS source-root build and performs mounted native qualification. The mounted suite covers namespace operations, sequential/random/sparse writes, high-offset sparse files, truncate, allocation reporting, `fallocate`, hole punching, xattrs, special nodes, page-cache/readahead/mmap behavior, open-unlink lifetime, snapshot-preserving writes, bounded near-full fragmentation/refill allocation, remount readback and offline scrub.
 
