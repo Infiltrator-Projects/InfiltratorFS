@@ -1193,6 +1193,58 @@ jobs:
           sudo insmod kernel/infiltratorfs.ko
           bash tests/native-scale-qualification.sh build-scale
 
+  native-endurance-stress:
+    name: Near-full fragmentation and mixed-workload endurance
+    needs: kernel-module
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+      - name: Install endurance qualification dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake kmod util-linux
+      - name: Require running-kernel headers
+        id: endurance_headers
+        shell: bash
+        run: |
+          set -euo pipefail
+          kdir="/lib/modules/$(uname -r)/build"
+          if [[ ! -f "$kdir/Makefile" ]]; then
+            sudo apt-get install -y "linux-headers-$(uname -r)"
+          fi
+          test -f "$kdir/Makefile"
+          printf 'kdir=%s\n' "$kdir" >> "$GITHUB_OUTPUT"
+      - name: Guard endurance qualification contract
+        run: |
+          bash tests/native-endurance-policy.sh .
+          bash -n tests/native-endurance-qualification.sh
+          python3 -m py_compile tests/native-endurance-stress.py
+      - name: Build endurance userspace tools
+        run: |
+          cmake -S . -B build-endurance -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-endurance --parallel --target mkfs.infilfs infilfs-scrub infilfs-inspect
+      - name: Build exact module for running kernel
+        env:
+          KDIR: ${{ steps.endurance_headers.outputs.kdir }}
+        run: |
+          make -C kernel clean KDIR="$KDIR"
+          make -C kernel KDIR="$KDIR"
+          test "$(modinfo -F vermagic kernel/infiltratorfs.ko | awk '{print $1}')" = "$(uname -r)"
+      - name: Run full near-full fragmentation endurance qualification
+        timeout-minutes: 60
+        shell: bash
+        run: |
+          set -euo pipefail
+          cleanup() {
+            set +e
+            sudo rmmod infiltratorfs 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          sudo insmod kernel/infiltratorfs.ko
+          bash tests/native-endurance-qualification.sh build-endurance
+
   local-kernel-compile:
     name: Local running-kernel compile qualification
     runs-on: linux-native
