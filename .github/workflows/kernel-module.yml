@@ -476,8 +476,10 @@ jobs:
 
           # Exercise the native global write-serialization contract under
           # real process contention before crash/recovery qualification.
-          sudo python3 tests/native-concurrency-qualification.py \
-            "$mountpoint/native-rw/concurrency"
+          for concurrency_round in 1 2 3 4; do
+            sudo python3 tests/native-concurrency-qualification.py \
+              "$mountpoint/native-rw/concurrency-${concurrency_round}"
+          done
 
           # Capture a power-loss image while an unlinked descriptor is still
           # open.  The clone contains the durable zero-link indexed object but
