@@ -145,12 +145,29 @@ fi
 dkms build -m "\$module" -v "\$version" -k "\$kernel"
 dkms install -m "\$module" -v "\$version" -k "\$kernel" --force
 depmod -a
-modprobe -r infiltratorfs 2>/dev/null || true
-modprobe infiltratorfs
-grep -qw infiltratorfs /proc/filesystems || {
-    echo 'InfiltratorFS: native kernel filesystem did not register.' >&2
-    exit 1
-}
+
+# Respect an administrator's explicit modprobe install override.  This is used
+# for emergency blacklisting after a kernel/filesystem fault; package upgrades
+# must still be able to install and configure a fixed DKMS module without
+# defeating that safety policy or failing dpkg configuration.
+load_plan="$(modprobe --dry-run --verbose "$module" 2>/dev/null || true)"
+load_disabled=0
+case "$load_plan" in
+    *"install /bin/false"*|*"install /usr/bin/false"*|*"install false"*)
+        load_disabled=1
+        ;;
+esac
+
+if [ "$load_disabled" -eq 1 ]; then
+    echo 'InfiltratorFS: module loading is administratively disabled; leaving the newly installed DKMS module unloaded.'
+else
+    modprobe -r "$module" 2>/dev/null || true
+    modprobe "$module"
+    grep -qw infiltratorfs /proc/filesystems || {
+        echo 'InfiltratorFS: native kernel filesystem did not register.' >&2
+        exit 1
+    }
+fi
 rm -f /usr/bin/infilfs-fuse
 if command -v udevadm >/dev/null 2>&1; then
     udevadm control --reload-rules || true
@@ -225,7 +242,10 @@ if grep -Eqi '(^|[, ])(fuse3|libfuse3-3)([, ]|$)' <<<"$depends"; then
     echo 'Native release package unexpectedly depends on FUSE.' >&2
     exit 1
 fi
-dpkg-deb --ctrl-tarfile "$dist_dir/$deb_name" | tar -xOf - ./postinst | grep -Fq 'modprobe infiltratorfs'
+postinst_text="$(dpkg-deb --ctrl-tarfile "$dist_dir/$deb_name" | tar -xOf - ./postinst)"
+grep -Fq 'modprobe "$module"' <<<"$postinst_text"
+grep -Fq 'modprobe --dry-run --verbose "$module"' <<<"$postinst_text"
+grep -Fq 'module loading is administratively disabled' <<<"$postinst_text"
 rm -f "$contents"
 
 if [[ "$emit_run" = 0 ]]; then
