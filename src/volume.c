@@ -83,7 +83,7 @@ static int snapshots_enabled(const struct infs_volume *vol)
          INFS_INCOMPAT_SNAPSHOTS) != 0;
 }
 
-/* Format 0.8 paged-index dispatch targets. part1 owns the classic index
+/* Format 0.17 paged-index dispatch targets. part1 owns the classic index
  * implementation and calls these when it encounters a version-2 index head. */
 static int paged_index_find(struct infs_volume *vol, const uint8_t id[16],
                             struct infs_lookup *out);
@@ -93,7 +93,7 @@ static int paged_index_add(struct infs_volume *vol, const uint8_t id[16],
                            uint64_t object_block, uint16_t type);
 static int paged_index_remove(struct infs_volume *vol, const uint8_t id[16]);
 
-/* Format 0.13 scalable object-index radix tree. */
+/* Format 0.17 scalable object-index radix tree. */
 static int tree_index_find(struct infs_volume *vol, const uint8_t id[16],
                            struct infs_lookup *out);
 static int tree_index_repoint(struct infs_volume *vol, const uint8_t id[16],

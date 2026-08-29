@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /*
- * Initial native Linux write path for Format 0.12.
+ * Initial native Linux write path retained by Format 0.17.
  *
  * This file retains the original synchronous copy-on-write transaction engine
  * used by the native bring-up.  The composed native layers add extent and
- * namespace operations over it while preserving the same bitmap and
+ * namespace operations over it while preserving the same allocation-ownership and
  * three-checkpoint commit protocol as the portable core.  Snapshot ownership
- * is represented by a mount-time union bitmap so retained generations remain
+ * is represented by a mount-time retained-ownership bitset so retained generations remain
  * immutable while the live generation advances.
  */
 

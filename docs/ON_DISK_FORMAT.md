@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # InfiltratorFS On-Disk Format 0.17
 
-Status: experimental writable prototype. Release 0.18.20 accepts exactly Format 0.17. Release 0.18.19 is the last Format 0.16 release. Pre-1.0 development builds do not promise compatibility with earlier development formats.
+Status: experimental writable prototype. Release 0.18.21 accepts exactly Format 0.17. Release 0.18.19 is the last Format 0.16 release. Pre-1.0 development builds do not promise compatibility with earlier development formats.
 
 Implementation 0.6.0 introduced sparse extents, sparse checksum indexing and hole punching. Implementation 0.7.0 defined `INFS_INCOMPAT_INLINE_DATA`. Implementation 0.8.0 added `INFS_INCOMPAT_SHARED_EXTENTS`; Format 0.8 added `INFS_INCOMPAT_PAGED_METADATA` and version-2 metadata heads. Format 0.9 added `INFS_INCOMPAT_SYMBOLIC_LINKS` and object type 5. Format 0.10 added `INFS_INCOMPAT_HARD_LINKS`. Format 0.12 added `INFS_INCOMPAT_SNAPSHOTS`, snapshot-catalog object type 6 and fixed-size generation-root records. Format 0.13 added `INFS_INCOMPAT_INDEX_TREE`, version-3 object-index heads and radix branch pages. Format 0.14 added `INFS_INCOMPAT_DIRECTORY_TREE`, version-3 directory heads and hashed directory branch pages. Format 0.15 doubled the maximum UTF-8 component length from 255 to 510 bytes without changing the variable-length directory-record layout. Format 0.16 raised that limit from 510 to 1023 bytes, again without changing the variable-length directory-record layout. Format 0.17 replaces the monolithic persistent allocation bitmap image with a checkpoint-rooted copy-on-write allocation tree while preserving one authoritative allocation bit per filesystem block. The normative acceptance rules are summarized in `CONFORMANCE.md`.
 
@@ -62,7 +62,7 @@ The packed allocation-page header is 72 bytes. A 4096-byte page therefore has 40
 
 Allocation pages are bootstrap metadata rather than persistent objects and have no object IDs. Their generation may be older than the selected checkpoint because unchanged leaves are shared between committed generations. A page is valid only when its generation is nonzero and no newer than the checkpoint that references it, its logical index/level/entry count match its tree position, its reserved bytes are canonical zero and its CRC64 validates.
 
-A transaction maintains the authoritative bitset in memory plus the rebuildable free-extent accelerator. It records allocated/deferred ranges rather than cloning the complete bitmap for rollback. At publication it computes the affected leaf set, closes that set over allocation-map pages whose own allocation state changes, reserves replacement pages before releasing old pages, writes only changed leaves, writes the affected replacement branch paths plus the root and finally publishes the new allocation root in the checkpoint. This removes volume-size-proportional bitmap rewrite and transaction-clone costs while preserving the existing CoW crash boundary.
+A transaction maintains the authoritative bitset in memory plus the rebuildable free-extent accelerator. It records allocated/deferred ranges rather than cloning the complete bitmap for rollback. At publication it computes the affected leaf set, closes that set over allocation-map pages whose own allocation state changes, reserves replacement pages before releasing old pages, writes only changed leaves, writes the affected replacement internal allocation-tree paths plus the root and finally publishes the new allocation root in the checkpoint. This removes volume-size-proportional bitmap rewrite and transaction-clone costs while preserving the existing CoW crash boundary.
 
 The implementation reconstructs ownership from the committed roots. Every allocated in-volume block must be owned by a checkpoint, a current allocation-map page, current object-index head/page, directory page, indexed metadata object, normal file extent or retained snapshot graph. Metadata ownership overlap within one generation and allocated-but-unreachable blocks are corruption. Reuse across historical generations is expected. Normal data blocks may have multiple file owners within one generation only when `INFS_INCOMPAT_SHARED_EXTENTS` is set. Inline bytes remain owned by their file metadata object.
 
@@ -108,7 +108,7 @@ extended-attributes object ID   future portable named metadata, zero when absent
 
 This record is independent of Linux `struct stat` and Windows file-information structures.
 
-Only the portable attribute flags currently defined in `format.h` are accepted. The generic security and extended-attribute references remain zero until their portable object classes and compatibility features are specified. Release 0.18.20 can persist standard Linux xattr namespaces and special-node details through Linux adapter metadata; those adapter sidecars do not consume these reserved portable references and do not make Linux metadata the cross-platform canonical model.
+Only the portable attribute flags currently defined in `format.h` are accepted. The generic security and extended-attribute references remain zero until their portable object classes and compatibility features are specified. Release 0.18.21 can persist standard Linux xattr namespaces and special-node details through Linux adapter metadata; those adapter sidecars do not consume these reserved portable references and do not make Linux metadata the cross-platform canonical model.
 
 The current portable flags are persistent cross-platform metadata; mutation-policy semantics for flags such as `READ_ONLY` require an explicit core API/policy rather than being inferred silently by one adapter.
 
@@ -194,7 +194,7 @@ Commit ordering is:
 ```text
 write new unreachable metadata and data
 durable flush
-write changed allocation leaves and replacement branch paths plus the root
+write changed allocation leaves and replacement internal allocation-tree paths plus the root
 durable flush
 write one generation N+1 checkpoint
 durable flush                 <- atomic publication point
@@ -214,7 +214,7 @@ Committed extent-backed file-data blocks are replaced through CoW. Inline file u
 
 The formatter reopens the exact block target with Linux `O_EXCL` after advisory mount/holder preflight, verifies that the device identity and geometry are unchanged, and retains that exclusive descriptor through the destructive write sequence. Failure to obtain exclusivity aborts formatting before the first write. Failure of the initial realtime-clock query is also a formatter error rather than silently creating zero initial timestamps. The formatter additionally takes the same nonblocking exclusive advisory lock used by writable POSIX volume openers, coordinating both image files and block targets with the formatter.
 
-Formatting first invalidates the three candidate checkpoint locations and flushes that invalidation. It then writes the initial allocation leaves/branches, tree index and tree root directory, durably flushes those referenced structures, and only then publishes the three valid generation-1 checkpoints. Therefore an interrupted format is unmountable rather than presenting a valid checkpoint that references incomplete initial metadata. Release 0.18.20 creates Format 0.17 checkpoints with the complete current incompatible-feature set enabled.
+Formatting first invalidates the three candidate checkpoint locations and flushes that invalidation. It then writes the initial allocation leaves/branches, tree index and tree root directory, durably flushes those referenced structures, and only then publishes the three valid generation-1 checkpoints. Therefore an interrupted format is unmountable rather than presenting a valid checkpoint that references incomplete initial metadata. Release 0.18.21 creates Format 0.17 checkpoints with the complete current incompatible-feature set enabled.
 
 ## 13. Corruption rejection
 
@@ -232,7 +232,7 @@ The policy is to fail closed when committed state cannot be trusted while retain
 - no snapshot rollback or native undelete policy;
 - no compression;
 - portable security and generic named-metadata object references are reserved but not yet standardized;
-- Linux 0.18.20 development adapter xattrs/special-node metadata are not the final portable named-metadata/security model;
+- Linux 0.18.21 development adapter xattrs/special-node metadata are not the final portable named-metadata/security model;
 - POSIX compatibility metadata exists; Windows security mapping is not implemented;
 - metadata uses CRC64 while file data uses SHA-256;
 - scrub detects but cannot yet repair corruption; and

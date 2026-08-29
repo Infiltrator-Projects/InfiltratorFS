@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /* Format hardening. These checks validate namespace reachability, link counts,
- * checksum ownership and the scalable Format 0.8 metadata representation. */
+ * checksum ownership and the scalable Format 0.17 metadata representation. */
 
 static int validate_common_metadata(
     const struct infs_attributes_disk *attributes,

@@ -2,7 +2,7 @@
 /*
  * Linux-only metadata compatibility.
  *
- * Format 0.12 deliberately keeps portable objects independent of Linux VFS
+ * Format 0.17 deliberately keeps portable objects independent of Linux VFS
  * details.  The final FUSE adapter stored xattrs and special-node type/rdev in
  * hidden, system-marked ordinary files below /.infilfs-posix-meta.  Reuse that
  * exact representation so native mounts preserve existing metadata without

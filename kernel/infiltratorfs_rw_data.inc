@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /*
- * Native Linux extent-backed data path for Format 0.12.
+ * Native Linux extent-backed data path for Format 0.17.
  *
  * The original RW bring-up deliberately stopped at inline files.  This layer
  * keeps that proven implementation as the small-file path and adds a bounded,
@@ -10,11 +10,12 @@
  *
  * Continuous writers share one transaction per mounted superblock.  The
  * working object-index/root pointers are visible to the live mount while the
- * committed bitmap remains untouched.  Publication occurs at the same
+ * committed allocation-map tree state remains untouched.  Publication occurs at the same
  * adaptive 16 MiB..512 MiB bound used by the native writer, on fsync, five
  * seconds after the writer becomes idle, or during unmount.  Transaction-
  * private metadata blocks are safely reused between syscalls; a small undo log
- * plus a bitmap snapshot gives each write syscall operation-level rollback.
+ * plus a transaction-local in-memory allocation-bit snapshot gives each write
+ * syscall operation-level rollback.
  */
 
 #include <linux/list.h>

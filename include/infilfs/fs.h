@@ -42,7 +42,7 @@ int infs_validate_allocation_page(const uint8_t block[INFS_BLOCK_SIZE],
 
 /* The original encoders intentionally remain classic single-block encoders so
  * older conformance fixtures and callers keep their established semantics.
- * Format 0.8 formatters explicitly use the paged variants below. */
+ * Format 0.17 formatters use the paged variants below. */
 infs_status infs_encode_root_directory(uint8_t block[INFS_BLOCK_SIZE],
                                        const uint8_t object_id[16],
                                        uint64_t generation,

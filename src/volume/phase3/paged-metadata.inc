@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-/* Format 0.8 scalable metadata pages.
+/* Format 0.17 scalable metadata pages.
  *
  * Directory and object-index head objects remain normal persistent objects,
  * preserving their stable IDs and the existing transaction model. Their

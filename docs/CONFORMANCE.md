@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # Format 0.17 Conformance
 
-Release 0.18.20 accepts exactly current on-disk Format 0.17. Pre-1.0 builds do not promise compatibility with earlier development formats.
+Release 0.18.21 accepts exactly current on-disk Format 0.17. Pre-1.0 builds do not promise compatibility with earlier development formats.
 
 ## Persistent representation
 
@@ -57,7 +57,7 @@ Highly fragmented files may promote from compact inline extent descriptors to ch
 
 ## Transactions and recovery
 
-Critical committed metadata is copy-on-write. Allocation bits remain authoritative, but the live persistent representation is a sharded allocation tree. A mutation publishes a new generation only after changed allocation leaves, the replacement allocation branch spine, the replacement object/namespace graph and required durability operations are complete.
+Critical committed metadata is copy-on-write. Allocation bits remain authoritative, but the live persistent representation is a sharded allocation tree. A mutation publishes a new generation only after changed allocation leaves, the replacement internal allocation-tree path, the replacement object/namespace graph and required durability operations are complete.
 
 A crash before first-checkpoint publication leaves the previous committed generation authoritative. Once the first new checkpoint is durably published, the new generation is committed even if later replica refresh fails.
 
@@ -113,7 +113,7 @@ Native Linux qualification requires:
 - clean unmount followed by userspace scrub; and
 - refusal to silently substitute a non-native filesystem path.
 
-Release 0.18.20 qualifies this native migrated surface. Additional development qualification is expected to expand locking/concurrency, scale and stress coverage rather than reintroduce a FUSE runtime path.
+Release 0.18.21 qualifies this native migrated surface. Additional development qualification is expected to expand locking/concurrency, scale and stress coverage rather than reintroduce a FUSE runtime path.
 
 `mount.infiltratorfs` and InfiltratorFS Manager must produce `FSTYPE=infiltratorfs`. The Manager privileged helper rejects a mounted result with any other filesystem type.
 
