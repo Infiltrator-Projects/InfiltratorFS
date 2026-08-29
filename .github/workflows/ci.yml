@@ -245,6 +245,7 @@ jobs:
           test "$(dpkg-deb --field "$deb" X-InfiltratorFS-Build)" = generic-apt
           grep -Fq '+native1' support/installer/bootstrap.sh
           grep -Fq 'INFILTRATORFS_BUILD_IDENTITY=native-local' support/installer/bootstrap.sh
+          grep -Fq 'bash "$ROOT/packaging/build-linux-packages.sh"' support/installer/bootstrap.sh
           rm -f dist/native-installer-dry-run.txt
       - name: Upload Linux installers
         uses: actions/upload-artifact@v4

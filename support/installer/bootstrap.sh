@@ -105,7 +105,7 @@ print_build_commands() {
         "$ROOT" "$BUILD_DIR" '-O3 -DNDEBUG -march=native -mtune=native'
     printf '  cmake --build %q --parallel\n' "$BUILD_DIR"
     printf '  ctest --test-dir %q --output-on-failure\n' "$BUILD_DIR"
-    printf '  INFILTRATORFS_PACKAGE_VERSION=%q INFILTRATORFS_BUILD_IDENTITY=native-local INFILTRATORFS_EMIT_RUN=0 %q %q %q\n' \
+    printf '  INFILTRATORFS_PACKAGE_VERSION=%q INFILTRATORFS_BUILD_IDENTITY=native-local INFILTRATORFS_EMIT_RUN=0 bash %q %q %q\n' \
         "$NATIVE_PACKAGE_VERSION" "$ROOT/packaging/build-linux-packages.sh" "$BUILD_DIR" "$PACKAGE_DIR"
 }
 
@@ -171,7 +171,7 @@ rm -rf "$PACKAGE_DIR"
 INFILTRATORFS_PACKAGE_VERSION="$NATIVE_PACKAGE_VERSION" \
 INFILTRATORFS_BUILD_IDENTITY=native-local \
 INFILTRATORFS_EMIT_RUN=0 \
-    "$ROOT/packaging/build-linux-packages.sh" "$BUILD_DIR" "$PACKAGE_DIR"
+    bash "$ROOT/packaging/build-linux-packages.sh" "$BUILD_DIR" "$PACKAGE_DIR"
 
 ARCH="$(dpkg --print-architecture)"
 PACKAGE="$PACKAGE_DIR/infiltratorfs_${NATIVE_PACKAGE_VERSION}_${ARCH}.deb"

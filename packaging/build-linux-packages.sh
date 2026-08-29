@@ -257,6 +257,7 @@ verify_installer() {
     trap 'rm -rf "$verify_root"' RETURN
     tail -n +"$payload_start" "$self" | tar --no-same-owner -xzf - -C "$verify_root"
     for required in CMakeLists.txt README.md support/installer/bootstrap.sh \
+        packaging/build-linux-packages.sh \
         src/infiltratr-common/CMakeLists.txt kernel/Makefile kernel/infiltratorfs.c \
         kernel/infiltratorfs_format.h kernel/infiltratorfs_allocation_map.inc \
         kernel/infiltratorfs_allocation_publish.inc kernel/infiltratorfs_rw.inc \
@@ -267,6 +268,9 @@ verify_installer() {
     done
     test -x "$verify_root/support/installer/bootstrap.sh"
     bash -n "$verify_root/support/installer/bootstrap.sh"
+    bash -n "$verify_root/packaging/build-linux-packages.sh"
+    grep -Fq 'bash "$ROOT/packaging/build-linux-packages.sh"' \
+        "$verify_root/support/installer/bootstrap.sh"
     rm -rf "$verify_root"
     trap - RETURN
 }
