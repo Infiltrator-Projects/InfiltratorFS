@@ -71,6 +71,20 @@ jobs:
         run: bash tests/allocation-tree-format-policy.sh .
       - name: Guard portable directory tree core
         run: bash tests/directory-tree-policy.sh .
+      - name: Guard native million-file/large-volume scale harness
+        run: |
+          bash tests/native-scale-policy.sh .
+          bash -n tests/native-scale-qualification.sh
+          python3 -m py_compile tests/native-scale-stress.py
+      - name: Smoke scale workload generator
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/infiltratorfs-scale-generator-smoke"
+          python3 tests/native-scale-stress.py "$root" \
+            --files 5000 --directories 50 --workers 4 --churn-files 500
+          python3 tests/native-scale-stress.py "$root" \
+            --files 5000 --directories 50 --workers 4 --churn-files 500 --verify-only
       - name: Configure native-only userspace
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
       - name: Build
