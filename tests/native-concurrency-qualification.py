@@ -85,6 +85,36 @@ def shared_file_worker(path, worker, start, errors):
         fail(errors, "shared-file", worker)
 
 
+def xattr_writer_worker(path, worker, start, errors):
+    try:
+        name = f"user.infiltratorfs-rw-{worker}".encode("ascii")
+        start.wait()
+        for iteration in range(128):
+            value = f"writer-{worker}-iteration-{iteration:03d}".encode("ascii")
+            os.setxattr(path, name, value)
+            if os.getxattr(path, name) != value:
+                raise AssertionError("xattr writer readback mismatch")
+    except BaseException:
+        fail(errors, "xattr-writer", worker)
+
+
+def xattr_reader_worker(path, start, errors):
+    try:
+        names = [f"user.infiltratorfs-rw-{worker}" for worker in range(3)]
+        start.wait()
+        for _ in range(256):
+            listed = os.listxattr(path)
+            for worker, name in enumerate(names):
+                if name not in listed:
+                    raise AssertionError(f"missing xattr during read: {name}")
+                value = os.getxattr(path, name.encode("ascii"))
+                prefix = f"writer-{worker}-iteration-".encode("ascii")
+                if not value.startswith(prefix):
+                    raise AssertionError(f"invalid xattr value: {name}")
+    except BaseException:
+        fail(errors, "xattr-reader", os.getpid())
+
+
 def open_unlink_worker(root, worker, start, errors):
     try:
         start.wait()
@@ -231,6 +261,49 @@ def main():
     drain_errors(errors)
     verify_namespace(shared_dir)
 
+    xattr_target = os.path.join(shared_dir, "w00-000.dat")
+    for worker in range(3):
+        os.setxattr(
+            xattr_target,
+            f"user.infiltratorfs-rw-{worker}".encode("ascii"),
+            f"writer-{worker}-iteration-000".encode("ascii"),
+        )
+    xattr_start = ctx.Event()
+    xattr_processes = [
+        ctx.Process(
+            target=xattr_writer_worker,
+            args=(xattr_target, worker, xattr_start, errors),
+            name=f"infiltratorfs-xattr-writer-{worker}",
+        )
+        for worker in range(3)
+    ] + [
+        ctx.Process(
+            target=xattr_reader_worker,
+            args=(xattr_target, xattr_start, errors),
+            name=f"infiltratorfs-xattr-reader-{reader}",
+        )
+        for reader in range(3)
+    ]
+    for process in xattr_processes:
+        process.start()
+    xattr_start.set()
+    for process in xattr_processes:
+        process.join(120)
+        if process.is_alive():
+            process.terminate()
+            process.join(10)
+            raise RuntimeError(f"xattr contention: {process.name} timed out")
+        if process.exitcode != 0:
+            raise RuntimeError(
+                f"xattr contention: {process.name} exited {process.exitcode}")
+    drain_errors(errors)
+    for worker in range(3):
+        expected = f"writer-{worker}-iteration-127".encode("ascii")
+        actual = os.getxattr(
+            xattr_target, f"user.infiltratorfs-rw-{worker}".encode("ascii"))
+        if actual != expected:
+            raise AssertionError(f"final xattr mismatch for writer {worker}")
+
     shared_file = os.path.join(root, "shared-file.bin")
     fd = os.open(shared_file, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
     try:
@@ -268,7 +341,8 @@ def main():
     print(
         "Native concurrency qualification: PASS "
         f"({WORKERS} mutators, {WORKERS * FILES_PER_WORKER} files, "
-        f"{WORKERS} shared-inode writers, {WORKERS} open-unlink writers)")
+        f"{WORKERS} shared-inode writers, 3 xattr writers/readers, "
+        f"{WORKERS} open-unlink writers)")
 
 
 if __name__ == "__main__":
