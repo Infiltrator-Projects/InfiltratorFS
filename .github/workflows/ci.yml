@@ -76,6 +76,21 @@ jobs:
           bash tests/native-scale-policy.sh .
           bash -n tests/native-scale-qualification.sh
           python3 -m py_compile tests/native-scale-stress.py
+      - name: Guard native near-full/endurance harness
+        run: |
+          bash tests/native-endurance-policy.sh .
+          bash -n tests/native-endurance-qualification.sh
+          python3 -m py_compile tests/native-endurance-stress.py
+      - name: Smoke native mixed-workload generator
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/infiltratorfs-endurance-generator-smoke"
+          manifest="$RUNNER_TEMP/infiltratorfs-endurance-generator-smoke.json"
+          python3 tests/native-endurance-stress.py "$root" \
+            --seconds 2 --workers 2 --skip-fill --manifest-out "$manifest"
+          python3 tests/native-endurance-stress.py "$root" \
+            --verify-manifest "$manifest"
       - name: Smoke scale workload generator
         shell: bash
         run: |
