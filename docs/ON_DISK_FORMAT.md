@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # InfiltratorFS On-Disk Format 0.17
 
-Status: experimental writable prototype. Release 0.18.22 accepts exactly Format 0.17. Release 0.18.19 is the last Format 0.16 release. Pre-1.0 development builds do not promise compatibility with earlier development formats.
+Status: experimental writable prototype. Release 0.18.23 accepts exactly Format 0.17. Release 0.18.19 is the last Format 0.16 release. Pre-1.0 development builds do not promise compatibility with earlier development formats.
 
 Implementation 0.6.0 introduced sparse extents, sparse checksum indexing and hole punching. Implementation 0.7.0 defined `INFS_INCOMPAT_INLINE_DATA`. Implementation 0.8.0 added `INFS_INCOMPAT_SHARED_EXTENTS`; Format 0.8 added `INFS_INCOMPAT_PAGED_METADATA` and version-2 metadata heads. Format 0.9 added `INFS_INCOMPAT_SYMBOLIC_LINKS` and object type 5. Format 0.10 added `INFS_INCOMPAT_HARD_LINKS`. Format 0.12 added `INFS_INCOMPAT_SNAPSHOTS`, snapshot-catalog object type 6 and fixed-size generation-root records. Format 0.13 added `INFS_INCOMPAT_INDEX_TREE`, version-3 object-index heads and radix branch pages. Format 0.14 added `INFS_INCOMPAT_DIRECTORY_TREE`, version-3 directory heads and hashed directory branch pages. Format 0.15 doubled the maximum UTF-8 component length from 255 to 510 bytes without changing the variable-length directory-record layout. Format 0.16 raised that limit from 510 to 1023 bytes, again without changing the variable-length directory-record layout. Format 0.17 replaces the monolithic persistent allocation bitmap image with a checkpoint-rooted copy-on-write allocation tree while preserving one authoritative allocation bit per filesystem block. The normative acceptance rules are summarized in `CONFORMANCE.md`.
 
@@ -108,7 +108,7 @@ extended-attributes object ID   future portable named metadata, zero when absent
 
 This record is independent of Linux `struct stat` and Windows file-information structures.
 
-Only the portable attribute flags currently defined in `format.h` are accepted. The generic security and extended-attribute references remain zero until their portable object classes and compatibility features are specified. Release 0.18.22 can persist standard Linux xattr namespaces and special-node details through Linux adapter metadata; those adapter sidecars do not consume these reserved portable references and do not make Linux metadata the cross-platform canonical model.
+Only the portable attribute flags currently defined in `format.h` are accepted. The generic security and extended-attribute references remain zero until their portable object classes and compatibility features are specified. Release 0.18.23 can persist standard Linux xattr namespaces and special-node details through Linux adapter metadata; those adapter sidecars do not consume these reserved portable references and do not make Linux metadata the cross-platform canonical model.
 
 The current portable flags are persistent cross-platform metadata; mutation-policy semantics for flags such as `READ_ONLY` require an explicit core API/policy rather than being inferred silently by one adapter.
 
@@ -214,13 +214,13 @@ Committed extent-backed file-data blocks are replaced through CoW. Inline file u
 
 The formatter reopens the exact block target with Linux `O_EXCL` after advisory mount/holder preflight, verifies that the device identity and geometry are unchanged, and retains that exclusive descriptor through the destructive write sequence. Failure to obtain exclusivity aborts formatting before the first write. Failure of the initial realtime-clock query is also a formatter error rather than silently creating zero initial timestamps. The formatter additionally takes the same nonblocking exclusive advisory lock used by writable POSIX volume openers, coordinating both image files and block targets with the formatter.
 
-Formatting first invalidates the three candidate checkpoint locations and flushes that invalidation. It then writes the initial allocation leaves/branches, tree index and tree root directory, durably flushes those referenced structures, and only then publishes the three valid generation-1 checkpoints. Therefore an interrupted format is unmountable rather than presenting a valid checkpoint that references incomplete initial metadata. Release 0.18.22 creates Format 0.17 checkpoints with the complete current incompatible-feature set enabled.
+Formatting first invalidates the three candidate checkpoint locations and flushes that invalidation. It then writes the initial allocation leaves/branches, tree index and tree root directory, durably flushes those referenced structures, and only then publishes the three valid generation-1 checkpoints. Therefore an interrupted format is unmountable rather than presenting a valid checkpoint that references incomplete initial metadata. Release 0.18.23 creates Format 0.17 checkpoints with the complete current incompatible-feature set enabled.
 
 ## 13. Corruption rejection
 
 The opener rejects invalid checkpoint checksums or geometry, an allocation-tree shape that cannot describe the declared volume, malformed/duplicate/out-of-range allocation pages, unsupported feature usage, inconsistent allocation accounting, noncanonical reserved data, invalid identities/generations, malformed object payloads, invalid UTF-8 names, stored navigation entries, duplicate names or index identities, dangling or multiply referenced namespace objects, wrong parent/type relationships, unreachable namespace objects, incorrect link counts, invalid snapshot names or generation ordering, malformed historical bitmap geometry/accounting, corrupt retained roots, physical-block ownership overlap within one generation, allocated-but-unreachable blocks, logical extent gaps/overlaps, unknown extent flags, holes with physical storage, normal extents without physical storage, malformed/unsorted/shared/orphaned checksum chains, malformed inline payloads, inline data on a volume without the inline feature bit, mismatched inline SHA-256 digests and extent-backed data checksum mismatches.
 
-A corrupt newest checkpoint graph is not automatically fatal when an older independently valid committed checkpoint graph survives. Structural missing/cyclic internal references are treated as graph corruption for candidate selection. Storage I/O failures, memory exhaustion and unsupported format/feature semantics are preserved as their actual failures and are not hidden by fallback.
+A corrupt newest checkpoint graph is not automatically fatal when an older independently valid committed checkpoint graph survives. Structural missing/cyclic internal references and repeated physical metadata-tree blocks are treated as graph corruption for candidate selection; checksummed aliasing does not make a DAG valid when tree semantics require unique ownership. Storage I/O failures, memory exhaustion and unsupported format/feature semantics are preserved as their actual failures and are not hidden by fallback.
 
 The policy is to fail closed when committed state cannot be trusted while retaining a known-good older committed generation when the distributed checkpoint set proves one is available.
 
@@ -232,7 +232,7 @@ The policy is to fail closed when committed state cannot be trusted while retain
 - no snapshot rollback or native undelete policy;
 - no compression;
 - portable security and generic named-metadata object references are reserved but not yet standardized;
-- Linux 0.18.22 development adapter xattrs/special-node metadata are not the final portable named-metadata/security model;
+- Linux 0.18.23 development adapter xattrs/special-node metadata are not the final portable named-metadata/security model;
 - POSIX compatibility metadata exists; Windows security mapping is not implemented;
 - metadata uses CRC64 while file data uses SHA-256;
 - scrub detects but cannot yet repair corruption; and
