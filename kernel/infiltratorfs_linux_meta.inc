@@ -189,11 +189,17 @@ static int infilfs_linux_meta_get_dir(struct super_block *sb, bool create,
 
 static bool infilfs_linux_meta_directory_is_internal(struct super_block *sb)
 {
+    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
     struct inode *dir = NULL;
-    int ret = infilfs_linux_meta_get_dir(sb, false, &dir);
+    int ret;
 
+    if (!sbi)
+        return false;
+    mutex_lock(&sbi->linux_meta_lock);
+    ret = infilfs_linux_meta_get_dir(sb, false, &dir);
     if (!ret)
         iput(dir);
+    mutex_unlock(&sbi->linux_meta_lock);
     return ret == 0;
 }
 
