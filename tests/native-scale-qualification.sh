@@ -77,19 +77,27 @@ timed() {
 }
 
 kernel_failures() {
-    sudo dmesg --since "$START_TIME" 2>/dev/null |         grep -E 'EUCLEAN|Structure needs cleaning|BUG:|Oops:|Kernel panic|hung task|soft lockup|hard LOCKUP|general protection fault' || true
+    sudo dmesg --since "$START_TIME" 2>/dev/null | \
+        grep -E 'EUCLEAN|Structure needs cleaning|BUG:|Oops:|Kernel panic|hung task|soft lockup|hard LOCKUP|general protection fault' || true
 }
 
 echo "=== Million-file mounted stress ==="
 mkdir -p "$FILE_MOUNT"
 truncate -s "$FILE_IMAGE_SIZE" "$FILE_IMAGE"
-timed "million-volume-format" sudo env SUDO_UID="$(id -u)" SUDO_GID="$(id -g)"     "$BUILD/mkfs.infilfs" -L MillionFileScale "$FILE_IMAGE"
-FILE_LOOP="$(sudo losetup --find --show "$FILE_IMAGE")"
+timed "million-volume-format" sudo env SUDO_UID="$(id -u)" SUDO_GID="$(id -g)" \
+    "$BUILD/mkfs.infilfs" -L MillionFileScale "$FILE_IMAGE"
+# The hosted qualification uses a sparse regular file as a synthetic block
+# device. Direct I/O prevents every filesystem block from being cached a
+# second time by the loop backing file, so the million-file test measures the
+# filesystem/VFS working set rather than an artificial double page cache.
+FILE_LOOP="$(sudo losetup --direct-io=on --find --show "$FILE_IMAGE")"
 timed "million-volume-mount-rw" sudo mount -t infiltratorfs -o rw "$FILE_LOOP" "$FILE_MOUNT"
 FILE_MOUNTED=1
 test "$(findmnt -rn -T "$FILE_MOUNT" -o FSTYPE)" = infiltratorfs
 
-timed "million-file-workload" python3 "$STRESS_PY" "$FILE_MOUNT/million-files"     --files "$FILE_COUNT" --directories "$DIRECTORY_COUNT"     --workers "$WORKERS" --churn-files "$CHURN_FILES"
+timed "million-file-workload" python3 "$STRESS_PY" "$FILE_MOUNT/million-files" \
+    --files "$FILE_COUNT" --directories "$DIRECTORY_COUNT" \
+    --workers "$WORKERS" --churn-files "$CHURN_FILES"
 
 sync
 printf 'Million-file image allocation after workload:\n'
@@ -112,7 +120,9 @@ grep -Fq 'Result:              CLEAN' "$million_scrub"
 
 timed "million-volume-mount-ro" sudo mount -t infiltratorfs -o ro "$FILE_LOOP" "$FILE_MOUNT"
 FILE_MOUNTED=1
-timed "million-file-remount-verify" python3 "$STRESS_PY" "$FILE_MOUNT/million-files"     --files "$FILE_COUNT" --directories "$DIRECTORY_COUNT"     --workers "$WORKERS" --churn-files "$CHURN_FILES" --verify-only
+timed "million-file-remount-verify" python3 "$STRESS_PY" "$FILE_MOUNT/million-files" \
+    --files "$FILE_COUNT" --directories "$DIRECTORY_COUNT" \
+    --workers "$WORKERS" --churn-files "$CHURN_FILES" --verify-only
 timed "million-volume-final-unmount" sudo umount "$FILE_MOUNT"
 FILE_MOUNTED=0
 sudo losetup -d "$FILE_LOOP"
@@ -122,9 +132,10 @@ rm -f "$FILE_IMAGE"
 echo "=== 1 TiB mounted large-volume stress ==="
 mkdir -p "$LARGE_MOUNT"
 truncate -s "$LARGE_IMAGE_SIZE" "$LARGE_IMAGE"
-timed "large-volume-format" sudo env SUDO_UID="$(id -u)" SUDO_GID="$(id -g)"     "$BUILD/mkfs.infilfs" -L LargeVolumeScale "$LARGE_IMAGE"
+timed "large-volume-format" sudo env SUDO_UID="$(id -u)" SUDO_GID="$(id -g)" \
+    "$BUILD/mkfs.infilfs" -L LargeVolumeScale "$LARGE_IMAGE"
 "$BUILD/infilfs-inspect" "$LARGE_IMAGE"
-LARGE_LOOP="$(sudo losetup --find --show "$LARGE_IMAGE")"
+LARGE_LOOP="$(sudo losetup --direct-io=on --find --show "$LARGE_IMAGE")"
 timed "large-volume-mount-rw" sudo mount -t infiltratorfs -o rw "$LARGE_LOOP" "$LARGE_MOUNT"
 LARGE_MOUNTED=1
 test "$(findmnt -rn -T "$LARGE_MOUNT" -o FSTYPE)" = infiltratorfs
