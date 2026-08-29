@@ -65,6 +65,9 @@ Pre-1.0 development is current-format-only. A new development format may superse
   overwrites and repeated fsync publication.
 - [x] Broader locking/concurrency qualification.
 - [ ] Millions-of-files and large-volume mounted stress tests.
+  Implementation is present in `tests/native-scale-qualification.sh` and
+  `tests/native-scale-stress.py`; this remains unchecked until the full
+  1,000,000-file plus 1 TiB mounted CI qualification passes on exact `main`.
 - [ ] Wider near-full, fragmentation and long-running mixed-workload tests.
 - [ ] Native fragmentation/optimisation metrics and online defragmentation.
 - [ ] Upstream/libblockdev formatter integration so stock GNOME Disks can offer InfiltratorFS directly in its format menu.
