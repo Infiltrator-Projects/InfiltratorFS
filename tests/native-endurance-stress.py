@@ -43,7 +43,8 @@ def total_bytes(path: str) -> int:
 
 
 def write_extent(path: str, size: int, salt: int) -> None:
-    pattern = bytes(((i * 37 + salt * 19 + 11) & 0xFF) for i in range(MIB))
+    motif = bytes(((i * 37 + salt * 19 + 11) & 0xFF) for i in range(256))
+    pattern = motif * (MIB // len(motif))
     fd = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_EXCL | os.O_CLOEXEC, 0o600)
     try:
         left = size
@@ -138,7 +139,9 @@ def fill_fragmented(root: str, reserve: int, coarse_size: int) -> dict[str, int 
 
 
 def deterministic_block(worker: int, iteration: int) -> bytes:
-    return bytes(((worker * 53 + iteration * 17 + i * 29 + 7) & 0xFF) for i in range(BLOCK))
+    motif = bytes(((worker * 53 + iteration * 17 + i * 29 + 7) & 0xFF)
+                  for i in range(256))
+    return motif * (BLOCK // len(motif))
 
 
 def worker_loop(root: str, worker: int, seconds: int) -> dict[str, object]:
@@ -267,10 +270,11 @@ def worker_loop(root: str, worker: int, seconds: int) -> dict[str, object]:
     proof_hash = hashlib.sha256()
     with open(proof, "xb", buffering=0) as stream:
         for chunk_index in range(2):
-            chunk = bytes(
+            motif = bytes(
                 ((worker * 71 + chunk_index * 31 + i * 13 + 5) & 0xFF)
-                for i in range(MIB)
+                for i in range(256)
             )
+            chunk = motif * (MIB // len(motif))
             stream.write(chunk)
             proof_hash.update(chunk)
         os.fsync(stream.fileno())
