@@ -95,7 +95,7 @@ jobs:
 
   clang:
     name: Clang conformance
-    runs-on: ubuntu-latest
+    runs-on: linux-native
     env:
       CC: clang
     steps:
@@ -112,7 +112,7 @@ jobs:
 
   sanitizers:
     name: ASan and UBSan
-    runs-on: ubuntu-latest
+    runs-on: linux-native
     env:
       ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
       UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
@@ -133,7 +133,7 @@ jobs:
 
   analyzer:
     name: GCC static analyzer
-    runs-on: ubuntu-latest
+    runs-on: linux-native
     steps:
       - name: Check out source
         uses: actions/checkout@v6
@@ -147,6 +147,40 @@ jobs:
         run: ctest --test-dir build --output-on-failure
       - name: Reject FUSE build artifacts
         run: test ! -e build/infilfs-fuse
+
+
+  local-userspace:
+    name: Local Linux userspace qualification
+    runs-on: linux-native
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+      - name: Guard native allocation and transaction policies
+        run: |
+          bash tests/native-random-write-optimization-policy.sh .
+          bash tests/native-sequential-write-scaling-policy.sh .
+          bash tests/native-small-file-scaling-policy.sh .
+          bash tests/native-free-extent-index-policy.sh .
+          bash tests/native-index-tree-policy.sh .
+          bash tests/index-tree-format-policy.sh .
+          bash tests/allocation-tree-format-policy.sh .
+          bash tests/directory-tree-policy.sh .
+      - name: Configure native-only userspace
+        run: cmake -S . -B build-local -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build-local --parallel
+      - name: Test
+        run: ctest --test-dir build-local --output-on-failure
+      - name: Cross-platform image smoke
+        run: |
+          truncate -s 64M build-local/local-cross-platform.img
+          build-local/mkfs.infilfs -L LocalCrossPlatform build-local/local-cross-platform.img
+          printf 'local-linux-cross-platform\n' > build-local/local-cross-platform.txt
+          build-local/infilfs-tool build-local/local-cross-platform.img put build-local/local-cross-platform.txt /local-cross-platform.txt
+          build-local/infilfs-scrub build-local/local-cross-platform.img
+      - name: Reject FUSE build artifacts
+        run: test ! -e build-local/infilfs-fuse
 
   windows:
     name: Windows native app and portable core
