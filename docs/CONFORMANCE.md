@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # Format 0.17 Conformance
 
-Release 0.18.23 accepts exactly current on-disk Format 0.17. Pre-1.0 builds do not promise compatibility with earlier development formats.
+Release 0.18.24 accepts exactly current on-disk Format 0.17. Pre-1.0 builds do not promise compatibility with earlier development formats.
 
 ## Persistent representation
 
@@ -113,10 +113,11 @@ Native Linux qualification requires:
 - bounded multi-process contention across same-directory create/rename/link/unlink, shared-inode disjoint writes and fsync, same-inode xattr readers/writers, stable concurrent reads and open-unlink writers without transient structural errors;
 - rejection of cyclic or multiply aliased checksummed metadata trees without mount hang or pathological repeated traversal;
 - no allocation-map/tree helper may require a multi-kilobyte automatic kernel-stack scratch array;
+- package configuration must complete without loading the module when an explicit administrator `modprobe install ... /bin/false` safety override is active;
 - clean unmount followed by userspace scrub; and
 - refusal to silently substitute a non-native filesystem path.
 
-Release 0.18.23 qualifies this native migrated surface, including the current correctness-first locking model. Additional development qualification is expected to expand scale and long-running mixed-workload stress rather than reintroduce a FUSE runtime path.
+Release 0.18.24 qualifies this native migrated surface, including the current correctness-first locking model. Additional development qualification is expected to expand scale and long-running mixed-workload stress rather than reintroduce a FUSE runtime path.
 
 `mount.infiltratorfs` and InfiltratorFS Manager must produce `FSTYPE=infiltratorfs`. The Manager privileged helper rejects a mounted result with any other filesystem type.
 
