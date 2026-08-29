@@ -189,6 +189,97 @@ static struct infilfs_inode_info *INFILFS_I(struct inode *inode)
     return inode->i_private;
 }
 
+/*
+ * Full metadata-tree walks must never revisit the same physical block.
+ * Checksums authenticate contents, but they do not make a cyclic or heavily
+ * aliased graph safe to traverse.  Keep a compact per-walk hash set so corrupt
+ * media fails with EFSCORRUPTED instead of multiplying recursive work until a
+ * kernel thread appears hung.
+ */
+struct infilfs_visit_set {
+    u64 *slots;
+    size_t capacity;
+    size_t count;
+};
+
+static size_t infilfs_visit_hash(u64 key)
+{
+    key ^= key >> 33;
+    key *= 0xff51afd7ed558ccdULL;
+    key ^= key >> 33;
+    key *= 0xc4ceb9fe1a85ec53ULL;
+    key ^= key >> 33;
+    return (size_t)key;
+}
+
+static int infilfs_visit_grow(struct infilfs_visit_set *set)
+{
+    u64 *grown;
+    size_t next;
+    size_t i;
+
+    if (!set)
+        return -EINVAL;
+    next = set->capacity ? set->capacity * 2u : 64u;
+    if (next < set->capacity || next > SIZE_MAX / sizeof(*grown))
+        return -EOVERFLOW;
+    grown = kvzalloc(next * sizeof(*grown), GFP_NOFS);
+    if (!grown)
+        return -ENOMEM;
+
+    for (i = 0; i < set->capacity; ++i) {
+        u64 key = set->slots[i];
+        size_t slot;
+
+        if (!key)
+            continue;
+        slot = infilfs_visit_hash(key) & (next - 1u);
+        while (grown[slot])
+            slot = (slot + 1u) & (next - 1u);
+        grown[slot] = key;
+    }
+    kvfree(set->slots);
+    set->slots = grown;
+    set->capacity = next;
+    return 0;
+}
+
+static int infilfs_visit_claim(struct infilfs_visit_set *set, u64 block)
+{
+    u64 key;
+    size_t slot;
+    int ret;
+
+    if (!set || block == U64_MAX)
+        return -EFSCORRUPTED;
+    if (!set->capacity || set->count >= set->capacity / 2u) {
+        ret = infilfs_visit_grow(set);
+        if (ret)
+            return ret;
+    }
+
+    key = block + 1u; /* zero is the empty-slot sentinel */
+    slot = infilfs_visit_hash(key) & (set->capacity - 1u);
+    for (;;) {
+        if (!set->slots[slot]) {
+            set->slots[slot] = key;
+            set->count++;
+            return 0;
+        }
+        if (set->slots[slot] == key)
+            return -EFSCORRUPTED;
+        slot = (slot + 1u) & (set->capacity - 1u);
+    }
+}
+
+static void infilfs_visit_destroy(struct infilfs_visit_set *set)
+{
+    if (!set)
+        return;
+    kvfree(set->slots);
+    memset(set, 0, sizeof(*set));
+}
+
 static bool infilfs_inode_is_new(struct inode *inode)
 {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
@@ -630,6 +721,7 @@ static int infilfs_validate_checkpoint_directory_tree(
     const struct infilfs_directory_payload_disk *payload =
         (const struct infilfs_directory_payload_disk *)(header + 1);
     struct infilfs_checkpoint_tree_node *nodes = NULL;
+    struct infilfs_visit_set visited = {0};
     u32 expected_entries = le32_to_cpu(payload->entry_count);
     u64 seen_entries = 0;
     size_t capacity = 0;
@@ -661,6 +753,9 @@ static int infilfs_validate_checkpoint_directory_tree(
         ret = -ENOMEM;
         goto out;
     }
+    ret = infilfs_visit_claim(&visited, root);
+    if (ret)
+        goto out;
     capacity = 64u;
     nodes[node_count++] = (struct infilfs_checkpoint_tree_node) {
         .block = root,
@@ -756,7 +851,6 @@ static int infilfs_validate_checkpoint_directory_tree(
             for (slot = 0; slot < INFILFS_DIRECTORY_TREE_FANOUT; ++slot) {
                 struct infilfs_checkpoint_tree_node *grown;
                 u64 child = le64_to_cpu(children[slot]);
-                size_t i;
 
                 if (!child)
                     continue;
@@ -764,11 +858,9 @@ static int infilfs_validate_checkpoint_directory_tree(
                     ret = -EFSCORRUPTED;
                     goto out;
                 }
-                for (i = 0; i < node_count; ++i)
-                    if (nodes[i].block == child) {
-                        ret = -EFSCORRUPTED;
-                        goto out;
-                    }
+                ret = infilfs_visit_claim(&visited, child);
+                if (ret)
+                    goto out;
                 if (node_count == capacity) {
                     size_t next = capacity * 2u;
 
@@ -803,6 +895,7 @@ static int infilfs_validate_checkpoint_directory_tree(
     if (seen_entries != expected_entries)
         ret = -EFSCORRUPTED;
 out:
+    infilfs_visit_destroy(&visited);
     kvfree(nodes);
     kfree(block);
     return ret;
@@ -1710,7 +1803,8 @@ static int infilfs_file_allocated_blocks(
 
 static int infilfs_tree_directory_allocated_node(
     struct super_block *sb, const u8 owner_id[16], u64 node,
-    unsigned int depth, u64 *blocks)
+    unsigned int depth, u64 *blocks,
+    struct infilfs_visit_set *visited)
 {
     const struct infilfs_metadata_page_disk *page;
     const __le64 *children;
@@ -1723,6 +1817,9 @@ static int infilfs_tree_directory_allocated_node(
     if (!node || depth > INFILFS_DIRECTORY_TREE_DEPTH ||
         !infilfs_block_allocated(sb, node))
         return -EFSCORRUPTED;
+    ret = infilfs_visit_claim(visited, node);
+    if (ret)
+        return ret;
     raw = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
     if (!raw)
         return -ENOMEM;
@@ -1772,7 +1869,7 @@ static int infilfs_tree_directory_allocated_node(
             continue;
         seen++;
         ret = infilfs_tree_directory_allocated_node(
-            sb, owner_id, child, depth + 1u, blocks);
+            sb, owner_id, child, depth + 1u, blocks, visited);
         if (ret)
             goto out;
     }
@@ -1820,6 +1917,7 @@ static int infilfs_metadata_allocated_blocks(
         __le64 root_le;
         u64 root;
         u64 blocks = 1;
+        struct infilfs_visit_set visited = {0};
         u32 entries = le32_to_cpu(payload->entry_count);
         int ret;
 
@@ -1834,7 +1932,8 @@ static int infilfs_metadata_allocated_blocks(
         if (!root)
             return -EFSCORRUPTED;
         ret = infilfs_tree_directory_allocated_node(
-            sb, header->object_id, root, 0u, &blocks);
+            sb, header->object_id, root, 0u, &blocks, &visited);
+        infilfs_visit_destroy(&visited);
         if (ret)
             return ret;
         *allocated_out = blocks;

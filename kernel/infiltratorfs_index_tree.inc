@@ -162,13 +162,17 @@ static int infilfs_index_tree_lookup_head(
 static int infilfs_index_tree_snapshot_node(
     struct super_block *sb, const u8 owner_id[16], u64 node,
     unsigned int depth, u8 prefix[16],
-    struct infilfs_index_entry_disk *out, u32 capacity, u32 *copied)
+    struct infilfs_index_entry_disk *out, u32 capacity, u32 *copied,
+    struct infilfs_visit_set *visited)
 {
     u8 *block;
     int ret;
 
     if (!node || depth > 16u || !infilfs_block_allocated(sb, node))
         return -EFSCORRUPTED;
+    ret = infilfs_visit_claim(visited, node);
+    if (ret)
+        return ret;
     block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
     if (!block)
         return -ENOMEM;
@@ -247,7 +251,7 @@ static int infilfs_index_tree_snapshot_node(
             prefix[depth] = (u8)slot;
             ret = infilfs_index_tree_snapshot_node(
                 sb, owner_id, child, depth + 1u, prefix,
-                out, capacity, copied);
+                out, capacity, copied, visited);
             if (ret)
                 goto out;
         }
@@ -267,6 +271,7 @@ static int infilfs_index_tree_snapshot(
     const struct infilfs_index_payload_disk *payload =
         (const struct infilfs_index_payload_disk *)(header + 1);
     struct infilfs_index_entry_disk *entries;
+    struct infilfs_visit_set visited = {0};
     u8 prefix[16] = { 0 };
     u32 count;
     u32 copied = 0;
@@ -288,7 +293,8 @@ static int infilfs_index_tree_snapshot(
         return -ENOMEM;
     ret = infilfs_index_tree_snapshot_node(
         sb, header->object_id, infilfs_index_tree_root(payload), 0u,
-        prefix, entries, count, &copied);
+        prefix, entries, count, &copied, &visited);
+    infilfs_visit_destroy(&visited);
     if (ret || copied != count) {
         kvfree(entries);
         return ret ? ret : -EFSCORRUPTED;

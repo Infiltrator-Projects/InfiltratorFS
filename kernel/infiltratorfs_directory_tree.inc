@@ -204,7 +204,7 @@ out:
 static int infilfs_tree_dir_for_each_node(
     struct inode *inode, const u8 owner_id[16], u64 node, unsigned int depth,
     int (*visitor)(const struct infilfs_dirent_disk *, const u8 *, void *),
-    void *arg)
+    void *arg, struct infilfs_visit_set *visited)
 {
     u8 *block;
     int ret;
@@ -212,6 +212,9 @@ static int infilfs_tree_dir_for_each_node(
     if (!node || depth > INFILFS_DIRECTORY_TREE_DEPTH ||
         !infilfs_block_allocated(inode->i_sb, node))
         return -EFSCORRUPTED;
+    ret = infilfs_visit_claim(visited, node);
+    if (ret)
+        return ret;
     block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_KERNEL);
     if (!block)
         return -ENOMEM;
@@ -251,7 +254,7 @@ static int infilfs_tree_dir_for_each_node(
             if (!child)
                 continue;
             ret = infilfs_tree_dir_for_each_node(
-                inode, owner_id, child, depth + 1u, visitor, arg);
+                inode, owner_id, child, depth + 1u, visitor, arg, visited);
             if (ret)
                 goto out;
         }
@@ -270,6 +273,7 @@ static int infilfs_tree_dir_for_each(
     struct infilfs_inode_info *ii = INFILFS_I(inode);
     struct infilfs_object_header_disk *header;
     struct infilfs_directory_payload_disk *payload;
+    struct infilfs_visit_set visited = {0};
     u8 *head;
     u64 root;
     u32 count;
@@ -302,8 +306,9 @@ static int infilfs_tree_dir_for_each(
         goto out;
     }
     ret = infilfs_tree_dir_for_each_node(
-        inode, header->object_id, root, 0u, visitor, arg);
+        inode, header->object_id, root, 0u, visitor, arg, &visited);
 out:
+    infilfs_visit_destroy(&visited);
     kfree(head);
     return ret;
 }

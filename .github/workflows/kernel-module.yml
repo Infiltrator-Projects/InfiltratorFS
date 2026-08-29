@@ -128,19 +128,25 @@ jobs:
           crash_mount="$RUNNER_TEMP/infiltratorfs-crash-mnt"
           checkpoint_image="$RUNNER_TEMP/infiltratorfs-checkpoint-recovery.img"
           checkpoint_mount="$RUNNER_TEMP/infiltratorfs-checkpoint-mnt"
+          cycle_image="$RUNNER_TEMP/infiltratorfs-tree-alias-corruption.img"
+          cycle_mount="$RUNNER_TEMP/infiltratorfs-tree-alias-mnt"
           loopdev=""
           crash_loopdev=""
           checkpoint_loopdev=""
+          cycle_loopdev=""
           holder_pid=""
           holder_child_pid=""
           mounted=0
           crash_mounted=0
           checkpoint_mounted=0
+          cycle_mounted=0
           loaded=0
           cleanup() {
             set +e
             if [[ -n "$holder_child_pid" ]]; then sudo kill -KILL "$holder_child_pid" 2>/dev/null || true; fi
             if [[ -n "$holder_pid" ]]; then sudo kill -KILL "$holder_pid" 2>/dev/null || true; fi
+            if [[ "$cycle_mounted" = 1 ]]; then timeout 10s sudo umount -l "$cycle_mount" || true; fi
+            if [[ -n "$cycle_loopdev" ]]; then timeout 10s sudo losetup -d "$cycle_loopdev" || true; fi
             if [[ "$checkpoint_mounted" = 1 ]]; then timeout 10s sudo umount -l "$checkpoint_mount" || true; fi
             if [[ -n "$checkpoint_loopdev" ]]; then timeout 10s sudo losetup -d "$checkpoint_loopdev" || true; fi
             if [[ "$crash_mounted" = 1 ]]; then timeout 10s sudo umount -l "$crash_mount" || true; fi
@@ -1007,6 +1013,34 @@ jobs:
             tee "$RUNNER_TEMP/native-deep-checkpoint-recovery-scrub.txt"
           grep -Fq 'Result:              CLEAN' \
             "$RUNNER_TEMP/native-deep-checkpoint-recovery-scrub.txt"
+
+          # All three checkpoints can agree while a deeper checksummed metadata
+          # graph is still malicious. Manufacture a heavily aliased directory
+          # DAG that used to make full native tree walkers revisit the same
+          # blocks millions of times. The mount must fail quickly with
+          # corruption rather than wedge the kernel.
+          cp --reflink=auto --sparse=always "$image" "$cycle_image"
+          python3 tests/native-tree-alias-corruption.py "$cycle_image"
+          mkdir -p "$cycle_mount"
+          cycle_loopdev="$(sudo losetup --find --show "$cycle_image")"
+          set +e
+          timeout --signal=TERM --kill-after=5s 10s \
+            sudo mount -t infiltratorfs -o ro "$cycle_loopdev" "$cycle_mount"
+          cycle_rc=$?
+          set -e
+          if [[ "$cycle_rc" -eq 0 ]]; then
+            cycle_mounted=1
+            echo 'Aliased directory metadata unexpectedly mounted successfully.' >&2
+            diagnostics
+            exit 1
+          fi
+          if [[ "$cycle_rc" -eq 124 || "$cycle_rc" -eq 137 ]]; then
+            echo 'Aliased directory metadata caused the native mount to hang.' >&2
+            diagnostics
+            exit 1
+          fi
+          sudo losetup -d "$cycle_loopdev"
+          cycle_loopdev=""
 
           printf 'Remounting read-only for final byte comparison...\n'
           sudo mount -t infiltratorfs -o ro "$loopdev" "$mountpoint"
