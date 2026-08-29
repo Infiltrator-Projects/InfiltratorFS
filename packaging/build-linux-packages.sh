@@ -59,7 +59,8 @@ for file in Makefile infiltratorfs.c infiltratorfs_format.h \
             infiltratorfs_rw.inc \
             infiltratorfs_rw_legacy.inc infiltratorfs_rw_data.inc \
             infiltratorfs_rw_namespace.inc infiltratorfs_rw_read_cache.inc \
-            infiltratorfs_pagecache.inc infiltratorfs_linux_meta.inc; do
+            infiltratorfs_pagecache.inc infiltratorfs_linux_meta.inc \
+            infiltratorfs_defrag.inc infiltratorfs_ioctl.h; do
     install -m 0644 "kernel/$file" "$dkms_root/$file"
 done
 cat > "$dkms_root/dkms.conf" <<EOF
@@ -226,7 +227,9 @@ for required in \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_rw_namespace.inc$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_rw_read_cache.inc$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_pagecache.inc$" \
-    "usr/src/infiltratorfs-${package_version}/infiltratorfs_linux_meta.inc$"; do
+    "usr/src/infiltratorfs-${package_version}/infiltratorfs_linux_meta.inc$" \
+    "usr/src/infiltratorfs-${package_version}/infiltratorfs_defrag.inc$" \
+    "usr/src/infiltratorfs-${package_version}/infiltratorfs_ioctl.h$"; do
     grep -q "$required" "$contents"
 done
 if grep -q 'usr/bin/infilfs-fuse$' "$contents"; then
@@ -283,7 +286,8 @@ verify_installer() {
         kernel/infiltratorfs_allocation_publish.inc kernel/infiltratorfs_rw.inc \
         kernel/infiltratorfs_rw_legacy.inc kernel/infiltratorfs_rw_data.inc \
         kernel/infiltratorfs_rw_namespace.inc kernel/infiltratorfs_rw_read_cache.inc \
-        kernel/infiltratorfs_pagecache.inc kernel/infiltratorfs_linux_meta.inc; do
+        kernel/infiltratorfs_pagecache.inc kernel/infiltratorfs_linux_meta.inc \
+        kernel/infiltratorfs_defrag.inc kernel/infiltratorfs_ioctl.h; do
         test -f "$verify_root/$required"
     done
     test -x "$verify_root/support/installer/bootstrap.sh"
