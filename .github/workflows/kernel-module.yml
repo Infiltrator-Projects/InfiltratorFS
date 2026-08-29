@@ -1141,3 +1141,38 @@ jobs:
       - name: Report runtime mount test availability
         if: steps.headers.outputs.runtime_kdir == ''
         run: echo 'Native module compiled successfully; runtime load/mount skipped because matching hosted-runner kernel headers were unavailable.'
+  local-kernel-compile:
+    name: Local running-kernel compile qualification
+    runs-on: linux-native
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+      - name: Resolve local running-kernel headers
+        id: local_headers
+        shell: bash
+        run: |
+          set -euo pipefail
+          kdir="/lib/modules/$(uname -r)/build"
+          test -f "$kdir/Makefile"
+          printf 'kdir=%s\n' "$kdir" >> "$GITHUB_OUTPUT"
+          printf 'Compiling against local running kernel %s\n' "$(uname -r)"
+      - name: Guard native allocation and transaction policies
+        run: |
+          bash tests/native-free-extent-index-policy.sh .
+          bash tests/allocation-tree-format-policy.sh .
+          bash tests/native-transaction-durability-policy.sh .
+      - name: Compile module for local running kernel
+        env:
+          KDIR: ${{ steps.local_headers.outputs.kdir }}
+        run: |
+          make -C kernel clean KDIR="$KDIR"
+          make -C kernel KDIR="$KDIR"
+          test -s kernel/infiltratorfs.ko
+          if command -v modinfo >/dev/null 2>&1; then
+            test "$(modinfo -F name kernel/infiltratorfs.ko)" = infiltratorfs
+            test "$(modinfo -F license kernel/infiltratorfs.ko)" = GPL
+            test "$(modinfo -F vermagic kernel/infiltratorfs.ko | awk '{print $1}')" = "$(uname -r)"
+          fi
+      - name: Do not load the experimental module on the workstation
+        run: echo 'Local qualification is compile-only; load/mount coverage remains on the isolated hosted runner.'
