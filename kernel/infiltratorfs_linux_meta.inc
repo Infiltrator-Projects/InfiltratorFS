@@ -599,6 +599,7 @@ static int infilfs_linux_xattr_get(
     struct inode *inode, const char *name, void *buffer, size_t size)
 {
     struct infilfs_inode_info *ii = INFILFS_I(inode);
+    struct infilfs_sb_info *sbi = INFILFS_SB(inode->i_sb);
     char *full;
     u8 *blob = NULL;
     size_t blob_size = 0;
@@ -610,6 +611,11 @@ static int infilfs_linux_xattr_get(
     ret = infilfs_linux_xattr_name(handler, name, &full);
     if (ret)
         return ret;
+    if (!sbi) {
+        kfree(full);
+        return -EINVAL;
+    }
+    mutex_lock(&sbi->linux_meta_lock);
     ret = infilfs_linux_meta_load(inode->i_sb, ii->object_id,
                                   &blob, &blob_size);
     if (ret)
@@ -632,6 +638,7 @@ static int infilfs_linux_xattr_get(
     ret = (int)value_length;
 out:
     kvfree(blob);
+    mutex_unlock(&sbi->linux_meta_lock);
     kfree(full);
     return ret;
 }
@@ -753,16 +760,20 @@ static ssize_t infilfs_linux_listxattr(struct dentry *dentry,
 {
     struct inode *inode = d_inode(dentry);
     struct infilfs_inode_info *ii = INFILFS_I(inode);
+    struct infilfs_sb_info *sbi = INFILFS_SB(inode->i_sb);
     u8 *blob = NULL;
     size_t blob_size = 0;
     size_t offset;
     size_t needed = 0;
     int ret;
 
+    if (!sbi)
+        return -EINVAL;
+    mutex_lock(&sbi->linux_meta_lock);
     ret = infilfs_linux_meta_load(inode->i_sb, ii->object_id,
                                   &blob, &blob_size);
     if (ret)
-        return ret;
+        goto out;
     offset = sizeof(struct infilfs_linux_meta_header);
     while (offset < blob_size) {
         const struct infilfs_linux_xattr_record *record =
@@ -806,6 +817,7 @@ static ssize_t infilfs_linux_listxattr(struct dentry *dentry,
     ret = needed;
 out:
     kvfree(blob);
+    mutex_unlock(&sbi->linux_meta_lock);
     return ret;
 }
 
