@@ -277,7 +277,7 @@ def worker_loop(root: str, worker: int, seconds: int) -> dict[str, object]:
 
     final_xattr = f"final:{worker}:{iteration}".encode("ascii")
     os.setxattr(hot, b"user.infiltratorfs-endurance", final_xattr)
-    fd_hot = os.open(hot, os.O_RDONLY | os.O_CLOEXEC)
+    fd_hot = os.open(hot, os.O_RDWR | os.O_CLOEXEC)
     try:
         os.fsync(fd_hot)
     finally:
