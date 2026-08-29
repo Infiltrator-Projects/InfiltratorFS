@@ -7,6 +7,7 @@
  * the file extent map is repointed in the same native transaction, and the old
  * blocks are released through the existing snapshot/reflink-aware path.
  */
+#include <linux/math64.h>
 #include <linux/uaccess.h>
 
 #define INFILFS_DEFRAG_DEFAULT_BYTES (64ULL * 1024ULL * 1024ULL)
@@ -257,6 +258,8 @@ static int infilfs_defrag_one(
         ret = infilfs_native_operation_rollback(pending);
         mutex_unlock(&sbi->write_lock);
         pending = NULL;
+        if (!ret)
+            ret = infilfs_native_pending_flush_sb(inode->i_sb);
         if (!ret) {
             request->after_data_extents = before.data_extents;
             request->after_fragmentation_milli =
