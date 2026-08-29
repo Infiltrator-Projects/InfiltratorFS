@@ -2228,7 +2228,15 @@ static int infilfs_iterate_shared(struct file *file, struct dir_context *ctx)
 
     if (!dir_emit_dots(file, ctx))
         return 0;
+
+    /*
+     * Like lookup, readdir can span several metadata blocks.  Keep the
+     * directory topology stable until the walk has finished so a concurrent
+     * deferred publication cannot reclaim an older child block mid-iteration.
+     */
+    mutex_lock(&INFILFS_SB(file_inode(file)->i_sb)->write_lock);
     ret = infilfs_for_each_dirent(file_inode(file), infilfs_emit_visitor, &state);
+    mutex_unlock(&INFILFS_SB(file_inode(file)->i_sb)->write_lock);
     return ret < 0 ? ret : 0;
 }
 
