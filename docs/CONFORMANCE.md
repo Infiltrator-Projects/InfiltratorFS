@@ -111,6 +111,8 @@ Native Linux qualification requires:
 - metadata CRC64 and file-data SHA-256 validation on native reads;
 - transaction publication through `fsync`/`syncfs`/sync durability boundaries;
 - bounded multi-process contention across same-directory create/rename/link/unlink, shared-inode disjoint writes and fsync, same-inode xattr readers/writers, stable concurrent reads and open-unlink writers without transient structural errors;
+- mounted scale stress with at least 1,000,000 distinct regular files across a bounded directory fan-out, 100,000 unlink/recreate operations, durable read-only remount verification and a CLEAN offline scrub;
+- mounted large-volume stress on a 1 TiB sparse loop-backed Format 0.17 volume, including non-zero extent I/O, thousands of namespace objects, a 900 GiB sparse high-offset file, read-only remount verification and a CLEAN offline scrub;
 - rejection of cyclic or multiply aliased checksummed metadata trees without mount hang or pathological repeated traversal;
 - no allocation-map/tree helper may require a multi-kilobyte automatic kernel-stack scratch array;
 - package configuration must complete without loading the module when an explicit administrator `modprobe install ... /bin/false` safety override is active;
@@ -158,5 +160,7 @@ The main Build and conformance workflow runs the portable/core suite under GCC, 
 Portable smoke qualification requires a 1023-byte UTF-8 component to succeed and a 1024-byte component to be rejected. Native mounted qualification additionally verifies that `statfs` advertises the 1023-byte boundary and repeats create/read/enumerate/reject through the Linux VFS.
 
 The Native Linux kernel module workflow builds the out-of-tree driver, reproduces the DKMS source-root invocation, validates module metadata and performs mounted snapshot, all-namespace xattr, special-node, mmap, namespace, multi-process locking/concurrency, allocation-reporting, 4,000-write random I/O, repeated-fsync, bounded near-full fragmentation/refill allocation, crash-orphan recovery, checkpoint fallback/healing, malicious metadata-alias rejection with an explicit mount timeout, remount and scrub qualification when the hosted runner exposes matching running-kernel headers.
+
+A dedicated scale-stress job runs only after the ordinary native kernel qualification succeeds. It creates one million distinct files, churns 100,000 of them through unlink/recreate, verifies the durable population after a read-only remount, requires a CLEAN scrub, and separately mounts and qualifies a 1 TiB sparse loop-backed volume. The workload emits `[SCALE-PERF]` telemetry so scale regressions are observable rather than reduced to a binary pass/fail.
 
 The release publisher runs only after a successful `Release <version>` commit on current `main`. It rebuilds assets from that exact commit, installs the generated `.deb`, verifies the native filesystem registration, mounts a real Format 0.17 loop image with `FSTYPE=infiltratorfs`, writes and byte-compares non-zero data, syncs, unmounts, requires a CLEAN scrub and rejects any legacy FUSE executable/process before creating the tag and release.
