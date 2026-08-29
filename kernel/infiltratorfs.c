@@ -29,6 +29,7 @@
 #include <linux/xattr.h>
 
 #include "infiltratorfs_format.h"
+#include "infiltratorfs_ioctl.h"
 
 #define INFILTRATORFS_NAME "infiltratorfs"
 #define INFILTRATORFS_MAGIC 0x494e4653u
@@ -2305,6 +2306,7 @@ out:
 }
 
 #include "infiltratorfs_rw.inc"
+#include "infiltratorfs_defrag.inc"
 
 static void infilfs_evict_inode(struct inode *inode)
 {
@@ -2377,6 +2379,10 @@ static const struct file_operations infilfs_file_operations = {
     .write_iter = infilfs_file_write_iter,
     .mmap = generic_file_mmap,
     .fallocate = infilfs_file_fallocate,
+    .unlocked_ioctl = infilfs_file_ioctl,
+#ifdef CONFIG_COMPAT
+    .compat_ioctl = compat_ptr_ioctl,
+#endif
     .fsync = infilfs_file_fsync,
 };
 
