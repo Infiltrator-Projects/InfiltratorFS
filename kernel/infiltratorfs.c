@@ -59,6 +59,8 @@ struct infilfs_sb_info {
     struct infilfs_superblock_disk disk;
     u64 device_blocks;
     struct mutex write_lock;
+    /* Serialize compound Linux sidecar metadata mutations (xattr/special). */
+    struct mutex linux_meta_lock;
     rwlock_t bitmap_lock;
     u8 *bitmap;
     size_t bitmap_bytes;
@@ -2202,6 +2204,7 @@ static int infilfs_fill_super(struct super_block *sb, struct fs_context *fc)
         return -ENOMEM;
     sbi->device_blocks = bytes >> INFILFS_DISK_BLOCK_SHIFT;
     mutex_init(&sbi->write_lock);
+    mutex_init(&sbi->linux_meta_lock);
     rwlock_init(&sbi->bitmap_lock);
     sb->s_fs_info = sbi;
 

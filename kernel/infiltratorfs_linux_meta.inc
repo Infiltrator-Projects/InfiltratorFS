@@ -396,8 +396,8 @@ static int infilfs_linux_meta_delete_file(struct inode *dir,
     return ret;
 }
 
-static int infilfs_linux_meta_remove_object(struct super_block *sb,
-                                            const u8 object_id[16])
+static int infilfs_linux_meta_remove_object_locked(struct super_block *sb,
+                                                   const u8 object_id[16])
 {
     struct inode *dir = NULL;
     struct inode *file = NULL;
@@ -413,6 +413,20 @@ static int infilfs_linux_meta_remove_object(struct super_block *sb,
     ret = infilfs_linux_meta_delete_file(dir, file, name);
     iput(file);
     iput(dir);
+    return ret;
+}
+
+static int infilfs_linux_meta_remove_object(struct super_block *sb,
+                                            const u8 object_id[16])
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
+    int ret;
+
+    if (!sbi)
+        return -EINVAL;
+    mutex_lock(&sbi->linux_meta_lock);
+    ret = infilfs_linux_meta_remove_object_locked(sb, object_id);
+    mutex_unlock(&sbi->linux_meta_lock);
     return ret;
 }
 
@@ -438,7 +452,7 @@ static int infilfs_linux_meta_store(struct super_block *sb,
     empty = le32_to_cpu(header->special_mode) == 0 &&
         le32_to_cpu(header->xattr_bytes) == 0;
     if (empty)
-        return infilfs_linux_meta_remove_object(sb, object_id);
+        return infilfs_linux_meta_remove_object_locked(sb, object_id);
 
     ret = infilfs_linux_meta_get_file(sb, object_id, true,
                                       &dir, &file, name);
@@ -534,19 +548,25 @@ static int infilfs_linux_meta_set_special(struct inode *inode,
                                           umode_t mode, dev_t rdev)
 {
     struct infilfs_inode_info *ii = INFILFS_I(inode);
+    struct infilfs_sb_info *sbi = INFILFS_SB(inode->i_sb);
     struct infilfs_linux_meta_header *header;
     u8 *blob = NULL;
     size_t size = 0;
     int ret;
 
+    if (!sbi)
+        return -EINVAL;
+    mutex_lock(&sbi->linux_meta_lock);
     ret = infilfs_linux_meta_load(inode->i_sb, ii->object_id, &blob, &size);
     if (ret)
-        return ret;
+        goto out;
     header = (struct infilfs_linux_meta_header *)blob;
     header->special_mode = cpu_to_le32(mode & S_IFMT);
     header->special_rdev = cpu_to_le64((u64)rdev);
     ret = infilfs_linux_meta_store(inode->i_sb, ii->object_id, blob, size);
+out:
     kvfree(blob);
+    mutex_unlock(&sbi->linux_meta_lock);
     return ret;
 }
 
@@ -627,6 +647,7 @@ static int infilfs_linux_xattr_set(
     const void *value, size_t value_size, int flags)
 {
     struct infilfs_inode_info *ii = INFILFS_I(inode);
+    struct infilfs_sb_info *sbi = INFILFS_SB(inode->i_sb);
     struct infilfs_linux_meta_header *header;
     struct infilfs_linux_xattr_record record = {0};
     char *full;
@@ -648,9 +669,14 @@ static int infilfs_linux_xattr_set(
     if (ret)
         return ret;
     if (value_size > U32_MAX) {
-        ret = -E2BIG;
-        goto out;
+        kfree(full);
+        return -E2BIG;
     }
+    if (!sbi) {
+        kfree(full);
+        return -EINVAL;
+    }
+    mutex_lock(&sbi->linux_meta_lock);
     ret = infilfs_linux_meta_load(inode->i_sb, ii->object_id, &blob, &size);
     if (ret)
         goto out;
@@ -717,6 +743,7 @@ static int infilfs_linux_xattr_set(
 out:
     kvfree(updated);
     kvfree(blob);
+    mutex_unlock(&sbi->linux_meta_lock);
     kfree(full);
     return ret;
 }
