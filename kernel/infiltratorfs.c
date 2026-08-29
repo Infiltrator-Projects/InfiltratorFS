@@ -2159,20 +2159,31 @@ static struct dentry *infilfs_lookup(struct inode *dir, struct dentry *dentry,
         return NULL;
     }
 
+    /*
+     * Deferred writers advance directory/index roots and later reclaim the
+     * superseded metadata at publication.  A lookup must not start from an
+     * older root and then have one of its child blocks reclaimed underneath
+     * it.  Serialize only the persistent topology walk with the native writer;
+     * drop the lock before inode instantiation because that may consult Linux
+     * sidecar metadata and re-enter read-only namespace helpers.
+     */
+    mutex_lock(&INFILFS_SB(dir->i_sb)->write_lock);
     ret = infilfs_tree_dir_lookup_name(
         dir, search.name, (u16)search.name_len, &search);
     if (ret == -EOPNOTSUPP)
         ret = infilfs_for_each_dirent(dir, infilfs_lookup_visitor, &search);
     if (ret < 0) {
         if (ret == -EFSCORRUPTED)
-            pr_err("InfiltratorFS: lookup directory traversal saw transient/corrupt metadata (dir_block=%llu generation=%llu name_len=%u)\n",
+            pr_err("InfiltratorFS: lookup directory traversal saw corrupt metadata (dir_block=%llu generation=%llu name_len=%u)\n",
                    (unsigned long long)INFILFS_I(dir)->object_block,
                    (unsigned long long)le64_to_cpu(
                        INFILFS_SB(dir->i_sb)->disk.generation),
                    search.name_len);
+        mutex_unlock(&INFILFS_SB(dir->i_sb)->write_lock);
         return ERR_PTR(ret);
     }
     if (!search.found) {
+        mutex_unlock(&INFILFS_SB(dir->i_sb)->write_lock);
         d_add(dentry, NULL);
         return NULL;
     }
@@ -2181,13 +2192,17 @@ static struct dentry *infilfs_lookup(struct inode *dir, struct dentry *dentry,
                                &object_block, &indexed_type);
     if (ret) {
         if (ret == -EFSCORRUPTED)
-            pr_err("InfiltratorFS: lookup object-index traversal saw transient/corrupt metadata (generation=%llu)\n",
+            pr_err("InfiltratorFS: lookup object-index traversal saw corrupt metadata (generation=%llu)\n",
                    (unsigned long long)le64_to_cpu(
                        INFILFS_SB(dir->i_sb)->disk.generation));
+        mutex_unlock(&INFILFS_SB(dir->i_sb)->write_lock);
         return ERR_PTR(ret);
     }
-    if (indexed_type != search.object_type)
+    if (indexed_type != search.object_type) {
+        mutex_unlock(&INFILFS_SB(dir->i_sb)->write_lock);
         return ERR_PTR(-EFSCORRUPTED);
+    }
+    mutex_unlock(&INFILFS_SB(dir->i_sb)->write_lock);
 
     inode = infilfs_get_inode(dir->i_sb, object_block, indexed_type,
                               search.object_id);
