@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-#define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
 #include <ftw.h>
@@ -67,9 +66,11 @@ static void print_metrics(const char *path,
     printf("%s: extents=%" PRIu64 " holes=%" PRIu64
            " allocated=%" PRIu64 " blocks largest=%" PRIu64
            " blocks fragmentation=%.1f%% generation=%" PRIu64 "\n",
-           path, m->data_extents, m->hole_extents, m->allocated_blocks,
-           m->largest_data_extent_blocks,
-           (double)m->fragmentation_milli / 10.0, m->generation);
+           path, (uint64_t)m->data_extents, (uint64_t)m->hole_extents,
+           (uint64_t)m->allocated_blocks,
+           (uint64_t)m->largest_data_extent_blocks,
+           (double)m->fragmentation_milli / 10.0,
+           (uint64_t)m->generation);
 }
 
 static int optimize_file(const char *path)
@@ -153,7 +154,8 @@ static int optimize_file(const char *path)
 
     printf("%s: extents %" PRIu64 " -> %" PRIu64
            ", fragmentation %.1f%% -> %.1f%%, moved %.2f MiB\n",
-           path, before.data_extents, after.data_extents,
+           path, (uint64_t)before.data_extents,
+           (uint64_t)after.data_extents,
            (double)before.fragmentation_milli / 10.0,
            (double)after.fragmentation_milli / 10.0,
            (double)moved / (1024.0 * 1024.0));

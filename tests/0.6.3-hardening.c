@@ -134,11 +134,6 @@ static infs_status open_image(struct memory_image *image, int writable,
     return infs_volume_open_storage(volume, &storage, writable);
 }
 
-static void bitmap_set(uint8_t *bitmap, uint64_t block)
-{
-    bitmap[block >> 3] |= (uint8_t)(1u << (block & 7u));
-}
-
 static void build_valid_image(struct memory_image *image)
 {
     static const uint8_t filesystem_id[16] = {

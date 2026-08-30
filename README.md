@@ -78,6 +78,21 @@ ctest --test-dir build --output-on-failure
 make -C kernel KDIR=/lib/modules/$(uname -r)/build
 ```
 
+For the complete destructive regression and performance qualification against
+the dedicated partition 22 test device, use an exact release tag and run:
+
+```bash
+bash tests/native-complete-qualification.sh
+```
+
+The script requires an explicit typed confirmation before erasing
+`/dev/mmcblk0p22`. It tests the installed release, all portable tests and policy
+guards, native packages, the exact running-kernel module, the full physical VFS
+surface, online defragmentation, one million files, a 1 TiB sparse volume,
+near-full mixed-workload endurance, remount persistence, scrubs and conservative
+performance-regression floors. A complete run can take several hours and needs
+at least 20 GiB free in its temporary filesystem.
+
 Create and inspect a regular image without mounting:
 
 ```bash
@@ -86,6 +101,7 @@ truncate -s 128M infilfs.img
 ./build/infilfs-inspect infilfs.img
 ./build/infilfs-scrub infilfs.img
 ./build/infilfs-forensic --jsonl infilfs.img
+```
 
 For a mounted native filesystem, `infilfs-optimize` reports per-file extent
 fragmentation and can perform bounded copy-on-write online defragmentation
@@ -95,7 +111,6 @@ without replacing the inode:
 ./build/infilfs-optimize --metrics /media/user/InfiltratorFS/file.bin
 ./build/infilfs-optimize --defrag /media/user/InfiltratorFS/file.bin
 ./build/infilfs-optimize --defrag --recursive /media/user/InfiltratorFS/tree
-```
 ```
 
 The direct-image tool can exercise namespace and snapshot operations without mounting:

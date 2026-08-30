@@ -3,6 +3,45 @@
 
 This file records significant qualification runs against specific source commits. It is evidence for implemented behavior, not a claim that InfiltratorFS is bug-free.
 
+## 2026-08-30 scale, endurance and online-defragmentation qualification
+
+The next three Linux roadmap items were qualified at exact source commit
+`a40a9a9a8f12b4789c3e582b92abf5678a07e79e` (Format 0.17). Native Linux workflow
+run `33278009197` completed successfully and established:
+
+- one million mounted regular files across bounded directory fan-out, followed
+  by 100,000 unlink/recreate operations, durable read-only remount verification
+  and a CLEAN offline scrub;
+- a separate 1 TiB sparse loop-backed volume with non-zero extent I/O, thousands
+  of namespace objects, a 900 GiB sparse high-offset file, read-only remount
+  verification and a CLEAN offline scrub;
+- a bounded near-full 4 GiB workload with fragmentation/refill size classes,
+  hole-punch/refill, five minutes of concurrent mixed data and metadata I/O,
+  durable-manifest verification across read-only remount and two CLEAN scrubs;
+  and
+- native per-file fragmentation metrics plus bounded copy-on-write online
+  defragmentation preserving file content, inode/hard-link identity, xattrs,
+  timestamps and retained-snapshot data across CLEAN scrub and remount.
+
+The ordinary portable jobs on the same commit passed GCC, Clang, sanitizer,
+static-analyzer, Windows and native-kernel qualification. Its native-package job
+exposed a malformed optimizer manifest edit; the completion change restored the
+canonical package script, retained `infilfs-optimize` and its kernel ABI sources
+in both native package formats, added package-syntax and complete-harness policy
+guards, and passed:
+
+- a strict GCC warnings-as-errors build and all 30 CTest tests;
+- every scale, endurance and online-defragmentation policy guard;
+- bounded userspace scale and mixed-workload generator smoke tests; and
+- `.deb` plus self-extracting `.run` construction, manifest checks, installer
+  verification and SHA-256 verification.
+
+`tests/native-complete-qualification.sh` composes the complete installed-release,
+physical partition-22, portable, package, kernel, online-defrag, million-file,
+1 TiB and near-full endurance suites into one explicitly destructive operator run.
+It also enforces conservative regression floors against the 2026-08-29 physical
+partition baseline.
+
 ## 2026-08-29 full checked-roadmap audit
 
 The 56 roadmap entries marked complete at source commit

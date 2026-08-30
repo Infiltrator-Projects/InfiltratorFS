@@ -113,11 +113,6 @@ static struct infs_storage make_storage(struct memory_image *image)
     return storage;
 }
 
-static void bitmap_set(uint8_t *bitmap, uint64_t block)
-{
-    bitmap[block >> 3] |= (uint8_t)(1u << (block & 7u));
-}
-
 static int id_is_zero_test(const uint8_t id[16])
 {
     uint8_t combined = 0;

@@ -64,20 +64,15 @@ Pre-1.0 development is current-format-only. A new development format may superse
   including crash-orphan recovery, open-handle rename/replace, 4,000 random
   overwrites and repeated fsync publication.
 - [x] Broader locking/concurrency qualification.
-- [ ] Millions-of-files and large-volume mounted stress tests.
-  Implementation is present in `tests/native-scale-qualification.sh` and
-  `tests/native-scale-stress.py`; this remains unchecked until the full
-  1,000,000-file plus 1 TiB mounted CI qualification passes on exact `main`.
-- [ ] Wider near-full, fragmentation and long-running mixed-workload tests.
-  Implementation is present in `tests/native-endurance-qualification.sh` and
-  `tests/native-endurance-stress.py`; this remains unchecked until the full
-  bounded near-full, fragmentation/refill, five-minute mixed-workload,
-  read-only remount and double-scrub qualification passes on exact `main`.
-- [ ] Native fragmentation/optimisation metrics and online defragmentation.
-  Implementation is present through the native per-file ioctl ABI and
-  `infilfs-optimize`; this remains unchecked until the mounted fragmentation,
-  online relocation, identity/xattr/timestamp preservation, scrub and remount
-  qualification passes on exact `main`.
+- [x] Millions-of-files and large-volume mounted stress tests, including
+  1,000,000 files, 100,000 unlink/recreate operations and a separate 1 TiB
+  sparse-volume qualification with durable remount verification and CLEAN scrub.
+- [x] Wider near-full, fragmentation and long-running mixed-workload tests,
+  including bounded near-full/refill cycles, five minutes of concurrent mixed
+  I/O, durable read-only remount verification and two CLEAN scrubs.
+- [x] Native fragmentation/optimisation metrics and online defragmentation
+  through the per-file ioctl ABI and `infilfs-optimize`, with mounted identity,
+  content, xattr, timestamp, hard-link, snapshot, scrub and remount qualification.
 - [ ] Upstream/libblockdev formatter integration so stock GNOME Disks can offer InfiltratorFS directly in its format menu.
 
 The completed items above are enforced by native mounted CI and the partition-22
@@ -90,6 +85,12 @@ physical harness passed 69/69 checks, four additional concurrency rounds passed,
 and the final generation-3695 scrub was CLEAN with zero checksum or metadata
 errors. See [QUALIFICATION.md](QUALIFICATION.md) for the evidence record and
 performance telemetry.
+
+On 2026-08-30, the first three formerly unchecked Linux qualification items
+passed on exact `main` at commit
+`a40a9a9a8f12b4789c3e582b92abf5678a07e79e`. The dedicated million-file/1 TiB
+and near-full/endurance jobs passed, as did mounted native online-defragmentation
+qualification. See [QUALIFICATION.md](QUALIFICATION.md) for the evidence record.
 
 ## Scale and performance
 

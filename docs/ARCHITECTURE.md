@@ -100,7 +100,11 @@ The driver reads inline/extents/sparse/paged data directly from the block device
 
 The standard `mount.infiltratorfs` helper invokes util-linux `mount -i -t infiltratorfs`, and InfiltratorFS Manager performs the same native mount through its constrained privileged helper. The package/installer builds and installs the module through DKMS.
 
-Further Linux work is primarily scale, long-running mixed-workload stress and performance qualification rather than restoration of the old FUSE-era feature surface.
+The migrated native surface is now qualified through million-file/1 TiB scale,
+near-full mixed-workload endurance and online defragmentation. Further Linux
+work focuses on formatter integration, parallel allocation and increasingly
+workload- and media-aware placement rather than restoration of the old FUSE-era
+feature surface.
 
 ## 10. Desktop integration
 
