@@ -219,8 +219,15 @@ jobs:
           sudo dd if="$source_file" of="$mountpoint/native-release.bin" bs=4M status=none
           cmp "$source_file" "$mountpoint/native-release.bin"
           sync
-          sudo umount "$mountpoint"
+
+          # Reinstall the exact package while its filesystem is mounted.  The
+          # Debian preinst must cleanly unmount it by itself before replacing
+          # the live DKMS driver; no forced or lazy detach is permitted.
+          sudo dpkg -i "$deb" | tee "$RUNNER_TEMP/native-release-upgrade.txt"
+          ! findmnt -rn -t infiltratorfs,fuse.infilfs-fuse | grep -q .
+          grep -Fq 'clean automatic unmount complete' "$RUNNER_TEMP/native-release-upgrade.txt"
           mounted=0
+
           /usr/bin/infilfs-scrub "$image" | tee "$RUNNER_TEMP/native-release-scrub.txt"
           grep -Fq 'Result:              CLEAN' "$RUNNER_TEMP/native-release-scrub.txt"
           if pgrep -af infilfs-fuse; then
