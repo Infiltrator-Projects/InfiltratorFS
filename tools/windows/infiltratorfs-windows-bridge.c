@@ -1095,7 +1095,7 @@ static HRESULT CALLBACK bridge_notification(
                 bridge_add_alias(old_relative, destination_file_name);
                 bridge_update_identity_prefix(old_relative,
                                               destination_file_name);
-                operation_parameters->PostRename.NotificationMask =
+                operation_parameters->FileRenamed.NotificationMask =
                     BRIDGE_NOTIFY_PERSIST_MASK;
                 status = infs_volume_sync(g_bridge.volume);
             }
