@@ -239,6 +239,26 @@ jobs:
       - name: Open Linux-created cross-platform image on Windows
         shell: pwsh
         run: '& .\build\Release\infilfs-win32-storage.exe .\cross-platform\linux-cross-platform.img'
+      - name: Qualify driverless Windows Explorer bridge when ProjFS is available
+        shell: pwsh
+        run: |
+          $feature = Get-WindowsOptionalFeature -Online -FeatureName Client-ProjFS -ErrorAction SilentlyContinue
+          if (!$feature -or $feature.State -ne 'Enabled') {
+            Write-Host 'Client-ProjFS is not currently enabled on this hosted Windows image; attempting a no-restart enable.'
+            $dism = Start-Process dism.exe -ArgumentList '/Online','/Enable-Feature','/FeatureName:Client-ProjFS','/NoRestart','/Quiet' -Wait -PassThru -NoNewWindow
+            Write-Host "DISM exit code: $($dism.ExitCode)"
+            $feature = Get-WindowsOptionalFeature -Online -FeatureName Client-ProjFS -ErrorAction SilentlyContinue
+          }
+          $dll = Join-Path $env:SystemRoot 'System32\ProjectedFSLib.dll'
+          if ($feature -and $feature.State -eq 'Enabled' -and (Test-Path $dll)) {
+            Copy-Item .\cross-platform\linux-cross-platform.img .\cross-platform\windows-projfs-bridge.img
+            & .\build\Release\infilfs-win32-projfs-bridge.exe .\cross-platform\windows-projfs-bridge.img
+            if ($LASTEXITCODE -ne 0) {
+              throw "Windows ProjFS bridge integration qualification failed with exit code $LASTEXITCODE"
+            }
+          } else {
+            Write-Host '::notice::Client-ProjFS requires a reboot on this ephemeral runner; runtime bridge qualification is skipped, while compile/conformance coverage remains mandatory.'
+          }
       - name: Verify Windows storage and transfer policy are compiled
         shell: pwsh
         run: |
@@ -246,6 +266,8 @@ jobs:
           Select-String -Path tools/windows/infiltratorfs-windows-entry.c -Pattern 'infs_volume_set_deferred_publish' -SimpleMatch
           Select-String -Path tools/windows/infiltratorfs-windows-entry.c -Pattern 'INFS_WINDOWS_TRANSFER_PUBLISH_BYTES' -SimpleMatch
           Select-String -Path tools/windows/infiltratorfs-windows-bridge.c -Pattern 'PrjStartVirtualizing' -SimpleMatch
+          Select-String -Path tools/windows/infiltratorfs-windows-bridge.c -Pattern 'LoadLibraryW(L"ProjectedFSLib.dll")' -SimpleMatch
+          Select-String -Path tests/win32-projfs-bridge.c -Pattern 'Windows ProjFS bridge cross-platform read/write/rename/' -SimpleMatch
           Select-String -Path tools/windows/infiltratorfs-windows-bridge.c -Pattern 'PrjWriteFileData' -SimpleMatch
           Select-String -Path tools/windows/infiltratorfs-windows-bridge.c -Pattern 'PRJ_NOTIFY_FILE_HANDLE_CLOSED_FILE_MODIFIED' -SimpleMatch
           Select-String -Path tools/windows/infiltratorfs-windows.c -Pattern 'Mount in Explorer' -SimpleMatch
