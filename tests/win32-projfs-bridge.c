@@ -16,6 +16,8 @@
 #include <string.h>
 #include <wchar.h>
 
+static const char windows_payload[] = "windows-projfs-write\n";
+
 static int fail(const wchar_t *message)
 {
     fwprintf(stderr, L"FAIL: %ls (Win32=%lu)\n",
@@ -90,21 +92,19 @@ static int run_windows_client(const wchar_t *root)
 
     wchar_t original[1024];
     wchar_t renamed[1024];
+    wchar_t hardlink[1024];
     _snwprintf_s(original, 1024, _TRUNCATE,
                  L"%lswindows-dir\\created.txt", root);
-    static const char windows_payload[] = "windows-projfs-write\n";
+    _snwprintf_s(renamed, 1024, _TRUNCATE,
+                 L"%lswindows-dir\\renamed.txt", root);
+    _snwprintf_s(hardlink, 1024, _TRUNCATE,
+                 L"%lswindows-dir\\hardlink.txt", root);
+
     if (!write_windows_file(original, windows_payload,
                             (DWORD)(sizeof(windows_payload) - 1u)))
         return fail(L"Create/write file through bridge");
-
-    _snwprintf_s(renamed, 1024, _TRUNCATE,
-                 L"%lswindows-dir\\renamed.txt", root);
     if (!MoveFileW(original, renamed))
         return fail(L"Rename file through bridge");
-
-    wchar_t hardlink[1024];
-    _snwprintf_s(hardlink, 1024, _TRUNCATE,
-                 L"%lswindows-dir\\hardlink.txt", root);
     if (!CreateHardLinkW(hardlink, renamed, NULL))
         return fail(L"Create hard link through bridge");
 
@@ -119,6 +119,7 @@ static int run_windows_client(const wchar_t *root)
                  L"%lstree-renamed", root);
     _snwprintf_s(tree_renamed_child, 1024, _TRUNCATE,
                  L"%lstree-renamed\\child.txt", root);
+
     if (!CreateDirectoryW(tree, NULL) ||
         !write_windows_file(tree_child, "before-rename\n", 14u))
         return fail(L"Create directory tree through bridge");
@@ -145,9 +146,9 @@ static int run_windows_client(const wchar_t *root)
 static int run_external_client(const wchar_t *root)
 {
     wchar_t executable[32768];
-    DWORD length = GetModuleFileNameW(NULL, executable,
-                                     (DWORD)(sizeof(executable) /
-                                             sizeof(executable[0])));
+    DWORD length = GetModuleFileNameW(
+        NULL, executable,
+        (DWORD)(sizeof(executable) / sizeof(executable[0])));
     if (!length || length >= sizeof(executable) / sizeof(executable[0]))
         return fail(L"GetModuleFileName for bridge client");
 
@@ -215,6 +216,7 @@ int wmain(int argc, wchar_t **argv)
                  (int)status);
         return 1;
     }
+
     status = infs_volume_set_deferred_publish(
         &volume, 1, UINT64_C(16) * 1024u * 1024u);
     if (status != INFS_STATUS_OK) {
@@ -232,112 +234,30 @@ int wmain(int argc, wchar_t **argv)
 
     wchar_t root[4] = {drive[0], L':', L'\\', L'\0'};
     int client_status = run_external_client(root);
+    infs_windows_bridge_stop();
     if (client_status != 0) {
-        infs_windows_bridge_stop();
         infs_volume_close(&volume);
         return client_status;
     }
 
-    infs_windows_bridge_stop();
-        infs_volume_close(&volume);
-        return fail(L"Linux-created file was not readable through Explorer bridge");
-    }
-
-    _snwprintf_s(path, 1024, _TRUNCATE, L"%lswindows-dir", root);
-    if (!CreateDirectoryW(path, NULL)) {
-        infs_windows_bridge_stop();
-        infs_volume_close(&volume);
-        return fail(L"CreateDirectory through bridge");
-    }
-
-    wchar_t original[1024];
-    wchar_t renamed[1024];
-    _snwprintf_s(original, 1024, _TRUNCATE,
-                 L"%lswindows-dir\\created.txt", root);
-    static const char windows_payload[] = "windows-projfs-write\n";
-    if (!write_windows_file(original, windows_payload,
-                            (DWORD)(sizeof(windows_payload) - 1u))) {
-        infs_windows_bridge_stop();
-        infs_volume_close(&volume);
-        return fail(L"Create/write file through bridge");
-    }
-
-    _snwprintf_s(renamed, 1024, _TRUNCATE,
-                 L"%lswindows-dir\\renamed.txt", root);
-    if (!MoveFileW(original, renamed)) {
-        infs_windows_bridge_stop();
-        infs_volume_close(&volume);
-        return fail(L"Rename file through bridge");
-    }
-
-    wchar_t hardlink[1024];
-    _snwprintf_s(hardlink, 1024, _TRUNCATE,
-                 L"%lswindows-dir\\hardlink.txt", root);
-    if (!CreateHardLinkW(hardlink, renamed, NULL)) {
-        infs_windows_bridge_stop();
-        infs_volume_close(&volume);
-        return fail(L"Create hard link through bridge");
-    }
-
-    wchar_t tree[1024];
-    wchar_t tree_child[1024];
-    wchar_t tree_renamed[1024];
-    wchar_t tree_renamed_child[1024];
-    _snwprintf_s(tree, 1024, _TRUNCATE, L"%lstree", root);
-    _snwprintf_s(tree_child, 1024, _TRUNCATE,
-                 L"%lstree\\child.txt", root);
-    _snwprintf_s(tree_renamed, 1024, _TRUNCATE,
-                 L"%lstree-renamed", root);
-    _snwprintf_s(tree_renamed_child, 1024, _TRUNCATE,
-                 L"%lstree-renamed\\child.txt", root);
-    if (!CreateDirectoryW(tree, NULL) ||
-        !write_windows_file(tree_child, "before-rename\n", 14u)) {
-        infs_windows_bridge_stop();
-        infs_volume_close(&volume);
-        return fail(L"Create directory tree through bridge");
-    }
-
-    memset(data, 0, sizeof(data));
-    if (!read_windows_file(tree_child, data, sizeof(data) - 1u, &got) ||
-        got != 14u) {
-        infs_windows_bridge_stop();
-        infs_volume_close(&volume);
-        return fail(L"Hydrate child before directory rename");
-    }
-
-    if (!MoveFileW(tree, tree_renamed) ||
-        !write_windows_file(tree_renamed_child, "after-rename\n", 13u)) {
-        infs_windows_bridge_stop();
-        infs_volume_close(&volume);
-        return fail(L"Rename projected directory and rewrite child");
-    }
-
-    wchar_t delete_path[1024];
-    _snwprintf_s(delete_path, 1024, _TRUNCATE,
-                 L"%lsdelete-me.txt", root);
-    if (!write_windows_file(delete_path, "delete\n", 7u) ||
-        !DeleteFileW(delete_path)) {
-        infs_windows_bridge_stop();
-        infs_volume_close(&volume);
-        return fail(L"Create/delete file through bridge");
-    }
-
-    infs_windows_bridge_stop();
-
+    char data[4096];
     int persisted = 1;
     if (!read_portable_file(&volume, "/windows-dir/renamed.txt",
                             data, sizeof(data), windows_payload)) {
-        fwprintf(stderr, L"FAIL: /windows-dir/renamed.txt did not persist expected data.\n");
+        fwprintf(stderr,
+                 L"FAIL: /windows-dir/renamed.txt did not persist expected data.\n");
         persisted = 0;
     }
     if (!read_portable_file(&volume, "/windows-dir/hardlink.txt",
                             data, sizeof(data), windows_payload)) {
-        fwprintf(stderr, L"FAIL: /windows-dir/hardlink.txt did not persist expected data.\n");
+        fwprintf(stderr,
+                 L"FAIL: /windows-dir/hardlink.txt did not persist expected data.\n");
         persisted = 0;
     }
     if (!read_portable_file(&volume, "/tree-renamed/child.txt",
                             data, sizeof(data), "after-rename\n")) {
-        fwprintf(stderr, L"FAIL: /tree-renamed/child.txt did not persist expected data.\n");
+        fwprintf(stderr,
+                 L"FAIL: /tree-renamed/child.txt did not persist expected data.\n");
         persisted = 0;
     }
     if (!persisted) {
