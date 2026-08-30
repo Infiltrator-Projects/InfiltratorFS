@@ -30,6 +30,12 @@ struct bridge_alias {
     struct bridge_alias *next;
 };
 
+struct bridge_identity {
+    uint8_t object_id[16];
+    wchar_t relative_path[INFS_PATH_MAX + 1u];
+    struct bridge_identity *next;
+};
+
 struct bridge_enum {
     GUID id;
     wchar_t relative_path[INFS_PATH_MAX + 1u];
@@ -52,9 +58,121 @@ struct bridge_state {
     int active;
     struct bridge_enum *enums;
     struct bridge_alias *aliases;
+    struct bridge_identity *identities;
 };
 
 static struct bridge_state g_bridge;
+
+static int bridge_alias_prefix_match(PCWSTR path, PCWSTR prefix);
+static int bridge_resolve_relative(PCWSTR relative,
+                                   wchar_t out[INFS_PATH_MAX + 1u]);
+
+static const uint8_t bridge_provider_id[] = {
+    'I','N','F','S','-','P','R','O','J','F','S','-','V','1'
+};
+
+static int bridge_version_is_ours(const PRJ_PLACEHOLDER_VERSION_INFO *version)
+{
+    if (!version)
+        return 0;
+    return memcmp(version->ProviderID, bridge_provider_id,
+                  sizeof(bridge_provider_id)) == 0;
+}
+
+static void bridge_fill_version(const struct infs_attributes *attributes,
+                                PRJ_PLACEHOLDER_VERSION_INFO *version)
+{
+    memset(version, 0, sizeof(*version));
+    memcpy(version->ProviderID, bridge_provider_id,
+           sizeof(bridge_provider_id));
+    memcpy(version->ContentID, attributes->object_id, 16u);
+    memcpy(version->ContentID + 16u, &attributes->change_time_ns,
+           sizeof(attributes->change_time_ns));
+    memcpy(version->ContentID + 24u, &attributes->logical_size,
+           sizeof(attributes->logical_size));
+}
+
+static struct bridge_identity *bridge_find_identity(
+    const uint8_t object_id[16])
+{
+    for (struct bridge_identity *identity = g_bridge.identities;
+         identity; identity = identity->next) {
+        if (memcmp(identity->object_id, object_id, 16u) == 0)
+            return identity;
+    }
+    return NULL;
+}
+
+static void bridge_remember_identity(const uint8_t object_id[16],
+                                     PCWSTR relative_path)
+{
+    if (!relative_path || wcslen(relative_path) > INFS_PATH_MAX)
+        return;
+    struct bridge_identity *identity = bridge_find_identity(object_id);
+    if (!identity) {
+        identity = calloc(1, sizeof(*identity));
+        if (!identity)
+            return;
+        memcpy(identity->object_id, object_id, 16u);
+        identity->next = g_bridge.identities;
+        g_bridge.identities = identity;
+    }
+    wcsncpy_s(identity->relative_path, INFS_PATH_MAX + 1u,
+              relative_path, _TRUNCATE);
+}
+
+static int bridge_identity_relative(
+    const PRJ_CALLBACK_DATA *callback_data,
+    wchar_t out[INFS_PATH_MAX + 1u])
+{
+    if (callback_data && bridge_version_is_ours(callback_data->VersionInfo)) {
+        struct bridge_identity *identity =
+            bridge_find_identity(callback_data->VersionInfo->ContentID);
+        if (identity) {
+            wcsncpy_s(out, INFS_PATH_MAX + 1u,
+                      identity->relative_path, _TRUNCATE);
+            return 1;
+        }
+    }
+    if (!callback_data || !callback_data->FilePathName)
+        return 0;
+    return bridge_resolve_relative(callback_data->FilePathName, out);
+}
+
+static void bridge_update_identity_prefix(PCWSTR old_path, PCWSTR new_path)
+{
+    if (!old_path || !*old_path || !new_path || !*new_path)
+        return;
+    size_t old_length = wcslen(old_path);
+    for (struct bridge_identity *identity = g_bridge.identities;
+         identity; identity = identity->next) {
+        if (!bridge_alias_prefix_match(identity->relative_path, old_path))
+            continue;
+        PCWSTR suffix = identity->relative_path + old_length;
+        wchar_t rewritten[INFS_PATH_MAX + 1u];
+        if (_snwprintf_s(rewritten,
+                         sizeof(rewritten) / sizeof(rewritten[0]),
+                         _TRUNCATE, L"%s%s", new_path, suffix) < 0)
+            continue;
+        wcscpy_s(identity->relative_path, INFS_PATH_MAX + 1u, rewritten);
+    }
+}
+
+static void bridge_forget_identity_prefix(PCWSTR path)
+{
+    if (!path || !*path)
+        return;
+    struct bridge_identity **link = &g_bridge.identities;
+    while (*link) {
+        if (bridge_alias_prefix_match((*link)->relative_path, path)) {
+            struct bridge_identity *victim = *link;
+            *link = victim->next;
+            free(victim);
+            continue;
+        }
+        link = &(*link)->next;
+    }
+}
 
 static INT64 unix_ns_to_filetime(int64_t ns)
 {
@@ -431,6 +549,11 @@ static HRESULT CALLBACK bridge_get_placeholder(
     PRJ_PLACEHOLDER_INFO placeholder;
     memset(&placeholder, 0, sizeof(placeholder));
     attributes_to_basic(&attributes, &placeholder.FileBasicInfo);
+    bridge_fill_version(&attributes, &placeholder.VersionInfo);
+    EnterCriticalSection(&g_bridge.lock);
+    bridge_remember_identity(attributes.object_id,
+                             callback_data->FilePathName);
+    LeaveCriticalSection(&g_bridge.lock);
     return PrjWritePlaceholderInfo(
         callback_data->NamespaceVirtualizationContext,
         callback_data->FilePathName, &placeholder, sizeof(placeholder));
@@ -458,8 +581,16 @@ static int64_t bridge_read_symlink(const char *path, void *buffer,
 static HRESULT CALLBACK bridge_get_file_data(
     const PRJ_CALLBACK_DATA *callback_data, UINT64 byte_offset, UINT32 length)
 {
+    wchar_t current_relative[INFS_PATH_MAX + 1u];
+    EnterCriticalSection(&g_bridge.lock);
+    int have_relative =
+        bridge_identity_relative(callback_data, current_relative);
+    LeaveCriticalSection(&g_bridge.lock);
+    if (!have_relative)
+        return HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
+
     char path[INFS_PATH_MAX + 1u];
-    if (!wide_relative_to_infs(callback_data->FilePathName, path))
+    if (!wide_relative_to_infs(current_relative, path))
         return HRESULT_FROM_WIN32(ERROR_FILENAME_EXCED_RANGE);
 
     struct infs_attributes attributes;
@@ -654,8 +785,18 @@ static HRESULT CALLBACK bridge_notification(
     PRJ_NOTIFICATION_PARAMETERS *operation_parameters)
 {
     (void)operation_parameters;
-    char source[INFS_PATH_MAX + 1u];
-    if (!wide_relative_to_infs(callback_data->FilePathName, source))
+    wchar_t current_relative[INFS_PATH_MAX + 1u];
+    EnterCriticalSection(&g_bridge.lock);
+    int have_current =
+        bridge_identity_relative(callback_data, current_relative);
+    LeaveCriticalSection(&g_bridge.lock);
+    if (!have_current && callback_data->FilePathName &&
+        *callback_data->FilePathName)
+        return HRESULT_FROM_WIN32(ERROR_FILENAME_EXCED_RANGE);
+
+    char source[INFS_PATH_MAX + 1u] = "/";
+    if (have_current &&
+        !wide_relative_to_infs(current_relative, source))
         return HRESULT_FROM_WIN32(ERROR_FILENAME_EXCED_RANGE);
 
     infs_status status = INFS_STATUS_OK;
@@ -669,13 +810,18 @@ static HRESULT CALLBACK bridge_notification(
 
     case PRJ_NOTIFICATION_FILE_HANDLE_CLOSED_FILE_MODIFIED:
         if (!is_directory)
-            status = bridge_sync_local_file(callback_data->FilePathName);
+            status = bridge_sync_local_file(
+                have_current ? current_relative :
+                               callback_data->FilePathName);
         break;
 
     case PRJ_NOTIFICATION_FILE_HANDLE_CLOSED_FILE_DELETED:
         status = bridge_delete_path(source, is_directory ? 1 : 0);
-        if (status == INFS_STATUS_OK)
+        if (status == INFS_STATUS_OK) {
+            if (have_current)
+                bridge_forget_identity_prefix(current_relative);
             status = infs_volume_sync(g_bridge.volume);
+        }
         break;
 
     case PRJ_NOTIFICATION_FILE_RENAMED:
@@ -688,8 +834,11 @@ static HRESULT CALLBACK bridge_notification(
                    callback_data->FilePathName &&
                    *callback_data->FilePathName) {
             status = bridge_delete_path(source, is_directory ? 1 : 0);
-            if (status == INFS_STATUS_OK)
+            if (status == INFS_STATUS_OK) {
+                if (have_current)
+                    bridge_forget_identity_prefix(current_relative);
                 status = infs_volume_sync(g_bridge.volume);
+            }
         } else if (destination_file_name && *destination_file_name) {
             char destination[INFS_PATH_MAX + 1u];
             if (!wide_relative_to_infs(destination_file_name, destination)) {
@@ -698,8 +847,12 @@ static HRESULT CALLBACK bridge_notification(
             }
             status = infs_rename(g_bridge.volume, source, destination);
             if (status == INFS_STATUS_OK) {
-                bridge_add_alias(callback_data->FilePathName,
-                                 destination_file_name);
+                PCWSTR old_relative =
+                    have_current ? current_relative :
+                                   callback_data->FilePathName;
+                bridge_add_alias(old_relative, destination_file_name);
+                bridge_update_identity_prefix(old_relative,
+                                              destination_file_name);
                 status = infs_volume_sync(g_bridge.volume);
             }
         }
@@ -744,6 +897,11 @@ static void bridge_free_enums(void)
         struct bridge_alias *next = g_bridge.aliases->next;
         free(g_bridge.aliases);
         g_bridge.aliases = next;
+    }
+    while (g_bridge.identities) {
+        struct bridge_identity *next = g_bridge.identities->next;
+        free(g_bridge.identities);
+        g_bridge.identities = next;
     }
 }
 
