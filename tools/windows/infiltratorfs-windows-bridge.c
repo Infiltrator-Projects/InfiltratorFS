@@ -5,6 +5,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <projectedfslib.h>
+#include <shellapi.h>
 #include <shlobj.h>
 
 #include "infiltratorfs-windows-bridge.h"
@@ -972,12 +973,29 @@ static infs_status bridge_import_local_tree(PCWSTR relative)
     return status;
 }
 
+static int bridge_trace_enabled(void)
+{
+    wchar_t value[4] = {0};
+    return GetEnvironmentVariableW(
+               L"INFILTRATORFS_BRIDGE_TRACE", value,
+               (DWORD)(sizeof(value) / sizeof(value[0]))) != 0;
+}
+
 static HRESULT CALLBACK bridge_notification(
     const PRJ_CALLBACK_DATA *callback_data, BOOLEAN is_directory,
     PRJ_NOTIFICATION notification, PCWSTR destination_file_name,
     PRJ_NOTIFICATION_PARAMETERS *operation_parameters)
 {
     (void)operation_parameters;
+    if (bridge_trace_enabled()) {
+        fwprintf(stderr,
+                 L"[ProjFS] notification=0x%08lx dir=%d path='%ls' destination='%ls'\n",
+                 (unsigned long)notification, is_directory ? 1 : 0,
+                 callback_data && callback_data->FilePathName ?
+                     callback_data->FilePathName : L"",
+                 destination_file_name ? destination_file_name : L"");
+        fflush(stderr);
+    }
     wchar_t current_relative[INFS_PATH_MAX + 1u];
     EnterCriticalSection(&g_bridge.lock);
     int have_current =
@@ -1075,6 +1093,10 @@ static HRESULT CALLBACK bridge_notification(
         break;
     }
     LeaveCriticalSection(&g_bridge.lock);
+    if (bridge_trace_enabled()) {
+        fwprintf(stderr, L"[ProjFS] notification result=%d\n", (int)status);
+        fflush(stderr);
+    }
     return status_to_hresult(status);
 }
 

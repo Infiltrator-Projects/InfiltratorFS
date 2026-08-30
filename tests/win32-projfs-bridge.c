@@ -85,6 +85,7 @@ int wmain(int argc, wchar_t **argv)
     }
     FreeLibrary(projfs);
     _wputenv_s(L"INFILTRATORFS_BRIDGE_NO_EXPLORER", L"1");
+    _wputenv_s(L"INFILTRATORFS_BRIDGE_TRACE", L"1");
 
     struct infs_storage storage;
     memset(&storage, 0, sizeof(storage));
@@ -216,14 +217,24 @@ int wmain(int argc, wchar_t **argv)
 
     infs_windows_bridge_stop();
 
+    int persisted = 1;
     if (!read_portable_file(&volume, "/windows-dir/renamed.txt",
-                            data, sizeof(data), windows_payload) ||
-        !read_portable_file(&volume, "/windows-dir/hardlink.txt",
-                            data, sizeof(data), windows_payload) ||
-        !read_portable_file(&volume, "/tree-renamed/child.txt",
+                            data, sizeof(data), windows_payload)) {
+        fwprintf(stderr, L"FAIL: /windows-dir/renamed.txt did not persist expected data.\n");
+        persisted = 0;
+    }
+    if (!read_portable_file(&volume, "/windows-dir/hardlink.txt",
+                            data, sizeof(data), windows_payload)) {
+        fwprintf(stderr, L"FAIL: /windows-dir/hardlink.txt did not persist expected data.\n");
+        persisted = 0;
+    }
+    if (!read_portable_file(&volume, "/tree-renamed/child.txt",
                             data, sizeof(data), "after-rename\n")) {
+        fwprintf(stderr, L"FAIL: /tree-renamed/child.txt did not persist expected data.\n");
+        persisted = 0;
+    }
+    if (!persisted) {
         infs_volume_close(&volume);
-        fwprintf(stderr, L"FAIL: Windows writes did not persist to portable core.\n");
         return 1;
     }
 
