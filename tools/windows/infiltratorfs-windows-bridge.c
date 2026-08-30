@@ -1,0 +1,826 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#ifdef _WIN32
+#define UNICODE
+#define _UNICODE
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <projectedfslib.h>
+#include <shlobj.h>
+
+#include "infiltratorfs-windows-bridge.h"
+#include "infilfs/format.h"
+#include "infilfs/status.h"
+
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <wchar.h>
+
+#define BRIDGE_READ_CHUNK (4u * 1024u * 1024u)
+
+struct bridge_dir_entry {
+    wchar_t name[INFS_NAME_MAX + 1u];
+    struct infs_attributes attributes;
+};
+
+struct bridge_enum {
+    GUID id;
+    wchar_t relative_path[INFS_PATH_MAX + 1u];
+    wchar_t search[INFS_NAME_MAX + 1u];
+    struct bridge_dir_entry *entries;
+    size_t count;
+    size_t index;
+    struct bridge_enum *next;
+};
+
+struct bridge_state {
+    struct infs_volume *volume;
+    HWND owner;
+    PRJ_NAMESPACE_VIRTUALIZATION_CONTEXT context;
+    wchar_t root[MAX_PATH * 4u];
+    wchar_t dos_target[MAX_PATH * 4u + 8u];
+    wchar_t drive[3];
+    CRITICAL_SECTION lock;
+    int lock_ready;
+    int active;
+    struct bridge_enum *enums;
+};
+
+static struct bridge_state g_bridge;
+
+static INT64 unix_ns_to_filetime(int64_t ns)
+{
+    const int64_t windows_epoch_seconds = INT64_C(11644473600);
+    int64_t seconds = ns / INT64_C(1000000000);
+    int64_t remainder = ns % INT64_C(1000000000);
+    if (remainder < 0) {
+        remainder += INT64_C(1000000000);
+        --seconds;
+    }
+    if (seconds < -windows_epoch_seconds)
+        return 0;
+    return (seconds + windows_epoch_seconds) * INT64_C(10000000) +
+           remainder / INT64_C(100);
+}
+
+static void attributes_to_basic(const struct infs_attributes *attributes,
+                                PRJ_FILE_BASIC_INFO *basic)
+{
+    memset(basic, 0, sizeof(*basic));
+    basic->IsDirectory =
+        attributes->object_type == INFS_OBJECT_DIRECTORY ? TRUE : FALSE;
+    basic->FileSize =
+        attributes->object_type == INFS_OBJECT_DIRECTORY ? 0 :
+        (INT64)attributes->logical_size;
+    basic->CreationTime.QuadPart = unix_ns_to_filetime(attributes->birth_time_ns);
+    basic->LastAccessTime.QuadPart = unix_ns_to_filetime(attributes->access_time_ns);
+    basic->LastWriteTime.QuadPart =
+        unix_ns_to_filetime(attributes->modification_time_ns);
+    basic->ChangeTime.QuadPart = unix_ns_to_filetime(attributes->change_time_ns);
+    if (attributes->object_type == INFS_OBJECT_DIRECTORY)
+        basic->FileAttributes = FILE_ATTRIBUTE_DIRECTORY;
+    else if (attributes->object_type == INFS_OBJECT_SYMLINK)
+        basic->FileAttributes = FILE_ATTRIBUTE_READONLY;
+    else
+        basic->FileAttributes = FILE_ATTRIBUTE_ARCHIVE;
+}
+
+static int wide_relative_to_infs(PCWSTR relative,
+                                 char out[INFS_PATH_MAX + 1u])
+{
+    if (!relative || !*relative) {
+        strcpy_s(out, INFS_PATH_MAX + 1u, "/");
+        return 1;
+    }
+
+    wchar_t normalized[INFS_PATH_MAX + 1u];
+    size_t length = wcslen(relative);
+    if (length > INFS_PATH_MAX)
+        return 0;
+    normalized[0] = L'/';
+    for (size_t i = 0; i < length; ++i) {
+        wchar_t ch = relative[i] == L'\\' ? L'/' : relative[i];
+        if (ch == L'\0')
+            return 0;
+        normalized[i + 1u] = ch;
+    }
+    normalized[length + 1u] = L'\0';
+
+    int needed = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS,
+                                     normalized, -1, NULL, 0, NULL, NULL);
+    if (needed <= 0 || needed > (int)INFS_PATH_MAX + 1)
+        return 0;
+    return WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS,
+                               normalized, -1, out, INFS_PATH_MAX + 1u,
+                               NULL, NULL) != 0;
+}
+
+static int make_child_infs_path(const char *parent, const char *name,
+                                char out[INFS_PATH_MAX + 1u])
+{
+    int written;
+    if (strcmp(parent, "/") == 0)
+        written = snprintf(out, INFS_PATH_MAX + 1u, "/%s", name);
+    else
+        written = snprintf(out, INFS_PATH_MAX + 1u, "%s/%s", parent, name);
+    return written > 0 && written <= (int)INFS_PATH_MAX;
+}
+
+static int relative_to_local_path(PCWSTR relative,
+                                  wchar_t out[MAX_PATH * 4u])
+{
+    if (!relative || !*relative)
+        return wcscpy_s(out, MAX_PATH * 4u, g_bridge.root) == 0;
+    return _snwprintf_s(out, MAX_PATH * 4u, _TRUNCATE,
+                        L"%s\\%s", g_bridge.root, relative) >= 0;
+}
+
+static HRESULT status_to_hresult(infs_status status)
+{
+    switch (status) {
+    case INFS_STATUS_OK: return S_OK;
+    case INFS_STATUS_NOT_FOUND:
+        return HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
+    case INFS_STATUS_ALREADY_EXISTS:
+        return HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS);
+    case INFS_STATUS_NOT_DIRECTORY:
+        return HRESULT_FROM_WIN32(ERROR_DIRECTORY);
+    case INFS_STATUS_IS_DIRECTORY:
+        return HRESULT_FROM_WIN32(ERROR_DIRECTORY);
+    case INFS_STATUS_NOT_EMPTY:
+        return HRESULT_FROM_WIN32(ERROR_DIR_NOT_EMPTY);
+    case INFS_STATUS_NAME_TOO_LONG:
+        return HRESULT_FROM_WIN32(ERROR_FILENAME_EXCED_RANGE);
+    case INFS_STATUS_READ_ONLY:
+        return HRESULT_FROM_WIN32(ERROR_WRITE_PROTECT);
+    case INFS_STATUS_NO_SPACE:
+        return HRESULT_FROM_WIN32(ERROR_DISK_FULL);
+    case INFS_STATUS_NO_MEMORY:
+        return E_OUTOFMEMORY;
+    case INFS_STATUS_BUSY:
+        return HRESULT_FROM_WIN32(ERROR_BUSY);
+    default:
+        return HRESULT_FROM_WIN32(ERROR_IO_DEVICE);
+    }
+}
+
+static int bridge_entry_compare(const void *left, const void *right)
+{
+    const struct bridge_dir_entry *a = left;
+    const struct bridge_dir_entry *b = right;
+    int result = PrjFileNameCompare(a->name, b->name);
+    return result < 0 ? -1 : result > 0 ? 1 : 0;
+}
+
+static void enum_free_entries(struct bridge_enum *session)
+{
+    free(session->entries);
+    session->entries = NULL;
+    session->count = 0;
+    session->index = 0;
+    session->search[0] = L'\0';
+}
+
+static struct bridge_enum *enum_find(const GUID *id)
+{
+    for (struct bridge_enum *session = g_bridge.enums;
+         session; session = session->next) {
+        if (memcmp(&session->id, id, sizeof(*id)) == 0)
+            return session;
+    }
+    return NULL;
+}
+
+static void enum_remove(const GUID *id)
+{
+    struct bridge_enum **link = &g_bridge.enums;
+    while (*link) {
+        if (memcmp(&(*link)->id, id, sizeof(*id)) == 0) {
+            struct bridge_enum *victim = *link;
+            *link = victim->next;
+            enum_free_entries(victim);
+            free(victim);
+            return;
+        }
+        link = &(*link)->next;
+    }
+}
+
+static HRESULT enum_load(struct bridge_enum *session, PCWSTR search_expression)
+{
+    char path[INFS_PATH_MAX + 1u];
+    if (!wide_relative_to_infs(session->relative_path, path))
+        return HRESULT_FROM_WIN32(ERROR_FILENAME_EXCED_RANGE);
+
+    struct infs_dir_item *items = NULL;
+    size_t count = 0;
+    EnterCriticalSection(&g_bridge.lock);
+    infs_status status = infs_list_dir(g_bridge.volume, path, &items, &count);
+    LeaveCriticalSection(&g_bridge.lock);
+    if (status != INFS_STATUS_OK)
+        return status_to_hresult(status);
+
+    struct bridge_dir_entry *entries = calloc(count ? count : 1u,
+                                               sizeof(*entries));
+    if (!entries) {
+        infs_free_dir_items(items);
+        return E_OUTOFMEMORY;
+    }
+
+    size_t accepted = 0;
+    for (size_t i = 0; i < count; ++i) {
+        wchar_t wide_name[INFS_NAME_MAX + 1u];
+        if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                                 items[i].name, -1, wide_name,
+                                 (int)(sizeof(wide_name) /
+                                       sizeof(wide_name[0]))))
+            continue;
+        if (search_expression && *search_expression &&
+            !PrjFileNameMatch(wide_name, search_expression))
+            continue;
+
+        char child[INFS_PATH_MAX + 1u];
+        if (!make_child_infs_path(path, items[i].name, child))
+            continue;
+        struct infs_attributes attributes;
+        EnterCriticalSection(&g_bridge.lock);
+        status = infs_get_attributes(g_bridge.volume, child, &attributes);
+        LeaveCriticalSection(&g_bridge.lock);
+        if (status != INFS_STATUS_OK)
+            continue;
+
+        wcscpy_s(entries[accepted].name,
+                 sizeof(entries[accepted].name) /
+                     sizeof(entries[accepted].name[0]),
+                 wide_name);
+        entries[accepted].attributes = attributes;
+        ++accepted;
+    }
+    infs_free_dir_items(items);
+
+    qsort(entries, accepted, sizeof(*entries), bridge_entry_compare);
+    enum_free_entries(session);
+    session->entries = entries;
+    session->count = accepted;
+    session->index = 0;
+    if (search_expression)
+        wcsncpy_s(session->search,
+                  sizeof(session->search) / sizeof(session->search[0]),
+                  search_expression, _TRUNCATE);
+    return S_OK;
+}
+
+static HRESULT CALLBACK bridge_start_enum(
+    const PRJ_CALLBACK_DATA *callback_data, const GUID *enumeration_id)
+{
+    struct bridge_enum *session = calloc(1, sizeof(*session));
+    if (!session)
+        return E_OUTOFMEMORY;
+    session->id = *enumeration_id;
+    if (callback_data->FilePathName)
+        wcsncpy_s(session->relative_path,
+                  sizeof(session->relative_path) /
+                      sizeof(session->relative_path[0]),
+                  callback_data->FilePathName, _TRUNCATE);
+
+    EnterCriticalSection(&g_bridge.lock);
+    session->next = g_bridge.enums;
+    g_bridge.enums = session;
+    LeaveCriticalSection(&g_bridge.lock);
+    return S_OK;
+}
+
+static HRESULT CALLBACK bridge_get_enum(
+    const PRJ_CALLBACK_DATA *callback_data, const GUID *enumeration_id,
+    PCWSTR search_expression, PRJ_DIR_ENTRY_BUFFER_HANDLE buffer)
+{
+    EnterCriticalSection(&g_bridge.lock);
+    struct bridge_enum *session = enum_find(enumeration_id);
+    LeaveCriticalSection(&g_bridge.lock);
+    if (!session)
+        return HRESULT_FROM_WIN32(ERROR_INVALID_HANDLE);
+
+    int restart =
+        (callback_data->Flags & PRJ_CB_DATA_FLAG_ENUM_RESTART_SCAN) != 0;
+    int search_changed =
+        (!search_expression && session->search[0]) ||
+        (search_expression &&
+         _wcsicmp(search_expression, session->search) != 0);
+    if (!session->entries || restart || search_changed) {
+        HRESULT hr = enum_load(session, search_expression);
+        if (FAILED(hr))
+            return hr;
+    }
+
+    while (session->index < session->count) {
+        PRJ_FILE_BASIC_INFO basic;
+        attributes_to_basic(&session->entries[session->index].attributes,
+                            &basic);
+        HRESULT hr = PrjFillDirEntryBuffer(
+            session->entries[session->index].name, &basic, buffer);
+        if (hr == HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER))
+            return S_OK;
+        if (FAILED(hr))
+            return hr;
+        ++session->index;
+    }
+    return S_OK;
+}
+
+static HRESULT CALLBACK bridge_end_enum(
+    const PRJ_CALLBACK_DATA *callback_data, const GUID *enumeration_id)
+{
+    (void)callback_data;
+    EnterCriticalSection(&g_bridge.lock);
+    enum_remove(enumeration_id);
+    LeaveCriticalSection(&g_bridge.lock);
+    return S_OK;
+}
+
+static HRESULT CALLBACK bridge_get_placeholder(
+    const PRJ_CALLBACK_DATA *callback_data)
+{
+    char path[INFS_PATH_MAX + 1u];
+    if (!wide_relative_to_infs(callback_data->FilePathName, path))
+        return HRESULT_FROM_WIN32(ERROR_FILENAME_EXCED_RANGE);
+
+    struct infs_attributes attributes;
+    EnterCriticalSection(&g_bridge.lock);
+    infs_status status =
+        infs_get_attributes(g_bridge.volume, path, &attributes);
+    LeaveCriticalSection(&g_bridge.lock);
+    if (status != INFS_STATUS_OK)
+        return status_to_hresult(status);
+
+    PRJ_PLACEHOLDER_INFO placeholder;
+    memset(&placeholder, 0, sizeof(placeholder));
+    attributes_to_basic(&attributes, &placeholder.FileBasicInfo);
+    return PrjWritePlaceholderInfo(
+        callback_data->NamespaceVirtualizationContext,
+        callback_data->FilePathName, &placeholder, sizeof(placeholder));
+}
+
+static int64_t bridge_read_symlink(const char *path, void *buffer,
+                                   size_t size, uint64_t offset)
+{
+    char target[INFS_PATH_MAX + 1u];
+    size_t length = 0;
+    infs_status status =
+        infs_read_symlink(g_bridge.volume, path, target,
+                          sizeof(target), &length);
+    if (status != INFS_STATUS_OK)
+        return status;
+    if (offset >= length)
+        return 0;
+    size_t available = length - (size_t)offset;
+    if (size > available)
+        size = available;
+    memcpy(buffer, target + offset, size);
+    return (int64_t)size;
+}
+
+static HRESULT CALLBACK bridge_get_file_data(
+    const PRJ_CALLBACK_DATA *callback_data, UINT64 byte_offset, UINT32 length)
+{
+    char path[INFS_PATH_MAX + 1u];
+    if (!wide_relative_to_infs(callback_data->FilePathName, path))
+        return HRESULT_FROM_WIN32(ERROR_FILENAME_EXCED_RANGE);
+
+    struct infs_attributes attributes;
+    EnterCriticalSection(&g_bridge.lock);
+    infs_status status =
+        infs_get_attributes(g_bridge.volume, path, &attributes);
+    LeaveCriticalSection(&g_bridge.lock);
+    if (status != INFS_STATUS_OK)
+        return status_to_hresult(status);
+    if (attributes.object_type == INFS_OBJECT_DIRECTORY)
+        return HRESULT_FROM_WIN32(ERROR_DIRECTORY);
+
+    void *buffer = PrjAllocateAlignedBuffer(
+        callback_data->NamespaceVirtualizationContext, length);
+    if (!buffer)
+        return E_OUTOFMEMORY;
+
+    EnterCriticalSection(&g_bridge.lock);
+    int64_t got = attributes.object_type == INFS_OBJECT_SYMLINK ?
+        bridge_read_symlink(path, buffer, length, byte_offset) :
+        infs_read_file(g_bridge.volume, path, buffer, length, byte_offset);
+    LeaveCriticalSection(&g_bridge.lock);
+    if (got < 0) {
+        PrjFreeAlignedBuffer(buffer);
+        return status_to_hresult((infs_status)got);
+    }
+
+    HRESULT hr = PrjWriteFileData(
+        callback_data->NamespaceVirtualizationContext,
+        &callback_data->DataStreamId, buffer, byte_offset, (UINT32)got);
+    PrjFreeAlignedBuffer(buffer);
+    return hr;
+}
+
+static infs_status bridge_create_empty(const char *path, int is_directory)
+{
+    struct infs_create_options options;
+    memset(&options, 0, sizeof(options));
+    options.posix_permissions = is_directory ? 0755u : 0644u;
+    infs_status status = is_directory ?
+        infs_mkdir(g_bridge.volume, path, &options) :
+        infs_create_file(g_bridge.volume, path, &options);
+    if (status == INFS_STATUS_ALREADY_EXISTS)
+        return INFS_STATUS_OK;
+    return status;
+}
+
+static infs_status bridge_sync_local_file(PCWSTR relative)
+{
+    char path[INFS_PATH_MAX + 1u];
+    wchar_t local[MAX_PATH * 4u];
+    if (!wide_relative_to_infs(relative, path) ||
+        !relative_to_local_path(relative, local))
+        return INFS_STATUS_NAME_TOO_LONG;
+
+    HANDLE input = CreateFileW(local, GENERIC_READ,
+                               FILE_SHARE_READ | FILE_SHARE_WRITE |
+                                   FILE_SHARE_DELETE,
+                               NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN,
+                               NULL);
+    if (input == INVALID_HANDLE_VALUE)
+        return INFS_STATUS_IO_ERROR;
+
+    infs_status status = bridge_create_empty(path, 0);
+    if (status == INFS_STATUS_OK)
+        status = infs_truncate_file(g_bridge.volume, path, 0);
+    if (status != INFS_STATUS_OK) {
+        CloseHandle(input);
+        return status;
+    }
+
+    uint8_t *buffer = malloc(BRIDGE_READ_CHUNK);
+    if (!buffer) {
+        CloseHandle(input);
+        return INFS_STATUS_NO_MEMORY;
+    }
+
+    uint64_t offset = 0;
+    for (;;) {
+        DWORD got = 0;
+        if (!ReadFile(input, buffer, BRIDGE_READ_CHUNK, &got, NULL)) {
+            status = INFS_STATUS_IO_ERROR;
+            break;
+        }
+        if (!got)
+            break;
+        int64_t written = infs_write_file_buffered(
+            g_bridge.volume, path, buffer, got, offset);
+        if (written != (int64_t)got) {
+            status = written < 0 ? (infs_status)written :
+                                   INFS_STATUS_IO_ERROR;
+            break;
+        }
+        offset += got;
+    }
+    free(buffer);
+
+    FILETIME creation_time, access_time, write_time;
+    if (status == INFS_STATUS_OK &&
+        GetFileTime(input, &creation_time, &access_time, &write_time)) {
+        ULARGE_INTEGER ft;
+        ft.LowPart = write_time.dwLowDateTime;
+        ft.HighPart = write_time.dwHighDateTime;
+        const uint64_t epoch = UINT64_C(116444736000000000);
+        int64_t mtime_ns = 0;
+        if (ft.QuadPart >= epoch)
+            mtime_ns = (int64_t)((ft.QuadPart - epoch) * UINT64_C(100));
+        struct infs_time_update update;
+        memset(&update, 0, sizeof(update));
+        update.access_action = INFS_TIME_OMIT;
+        update.modification_action = INFS_TIME_SET;
+        update.modification_time_ns = mtime_ns;
+        status = infs_set_times(g_bridge.volume, path, &update);
+    }
+    CloseHandle(input);
+    if (status == INFS_STATUS_OK)
+        status = infs_volume_sync(g_bridge.volume);
+    return status;
+}
+
+static infs_status bridge_delete_path(const char *path, int is_directory)
+{
+    infs_status status = is_directory ?
+        infs_rmdir(g_bridge.volume, path) :
+        infs_unlink(g_bridge.volume, path);
+    return status == INFS_STATUS_NOT_FOUND ? INFS_STATUS_OK : status;
+}
+
+static HRESULT CALLBACK bridge_notification(
+    const PRJ_CALLBACK_DATA *callback_data, BOOLEAN is_directory,
+    PRJ_NOTIFICATION notification, PCWSTR destination_file_name,
+    PRJ_NOTIFICATION_PARAMETERS *operation_parameters)
+{
+    (void)operation_parameters;
+    char source[INFS_PATH_MAX + 1u];
+    if (!wide_relative_to_infs(callback_data->FilePathName, source))
+        return HRESULT_FROM_WIN32(ERROR_FILENAME_EXCED_RANGE);
+
+    infs_status status = INFS_STATUS_OK;
+    EnterCriticalSection(&g_bridge.lock);
+    switch (notification) {
+    case PRJ_NOTIFICATION_NEW_FILE_CREATED:
+        status = bridge_create_empty(source, is_directory ? 1 : 0);
+        if (status == INFS_STATUS_OK)
+            status = infs_volume_sync(g_bridge.volume);
+        break;
+
+    case PRJ_NOTIFICATION_FILE_HANDLE_CLOSED_FILE_MODIFIED:
+        if (!is_directory)
+            status = bridge_sync_local_file(callback_data->FilePathName);
+        break;
+
+    case PRJ_NOTIFICATION_FILE_HANDLE_CLOSED_FILE_DELETED:
+        status = bridge_delete_path(source, is_directory ? 1 : 0);
+        if (status == INFS_STATUS_OK)
+            status = infs_volume_sync(g_bridge.volume);
+        break;
+
+    case PRJ_NOTIFICATION_FILE_RENAMED:
+        if (destination_file_name && *destination_file_name) {
+            char destination[INFS_PATH_MAX + 1u];
+            if (!wide_relative_to_infs(destination_file_name, destination)) {
+                status = INFS_STATUS_NAME_TOO_LONG;
+                break;
+            }
+            status = infs_rename(g_bridge.volume, source, destination);
+            if (status == INFS_STATUS_OK)
+                status = infs_volume_sync(g_bridge.volume);
+        }
+        break;
+
+    case PRJ_NOTIFICATION_HARDLINK_CREATED:
+        if (!is_directory && destination_file_name &&
+            *destination_file_name) {
+            char destination[INFS_PATH_MAX + 1u];
+            if (!wide_relative_to_infs(destination_file_name, destination)) {
+                status = INFS_STATUS_NAME_TOO_LONG;
+                break;
+            }
+            status = infs_link_file(g_bridge.volume, source, destination);
+            if (status == INFS_STATUS_OK)
+                status = infs_volume_sync(g_bridge.volume);
+        }
+        break;
+
+    default:
+        break;
+    }
+    LeaveCriticalSection(&g_bridge.lock);
+    return status_to_hresult(status);
+}
+
+static void bridge_free_enums(void)
+{
+    while (g_bridge.enums) {
+        struct bridge_enum *next = g_bridge.enums->next;
+        enum_free_entries(g_bridge.enums);
+        free(g_bridge.enums);
+        g_bridge.enums = next;
+    }
+}
+
+static int remove_tree(const wchar_t *root)
+{
+    wchar_t pattern[MAX_PATH * 4u];
+    if (_snwprintf_s(pattern, sizeof(pattern) / sizeof(pattern[0]),
+                     _TRUNCATE, L"%s\\*", root) < 0)
+        return 0;
+
+    WIN32_FIND_DATAW data;
+    HANDLE find = FindFirstFileW(pattern, &data);
+    if (find != INVALID_HANDLE_VALUE) {
+        do {
+            if (wcscmp(data.cFileName, L".") == 0 ||
+                wcscmp(data.cFileName, L"..") == 0)
+                continue;
+            wchar_t child[MAX_PATH * 4u];
+            if (_snwprintf_s(child, sizeof(child) / sizeof(child[0]),
+                             _TRUNCATE, L"%s\\%s", root,
+                             data.cFileName) < 0)
+                continue;
+            if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+                remove_tree(child);
+            else {
+                SetFileAttributesW(child, FILE_ATTRIBUTE_NORMAL);
+                DeleteFileW(child);
+            }
+        } while (FindNextFileW(find, &data));
+        FindClose(find);
+    }
+    SetFileAttributesW(root, FILE_ATTRIBUTE_NORMAL);
+    return RemoveDirectoryW(root) != 0 ||
+           GetLastError() == ERROR_FILE_NOT_FOUND;
+}
+
+static int choose_drive_letter(wchar_t out[3])
+{
+    DWORD mask = GetLogicalDrives();
+    const wchar_t *order = L"IJKLMNOPQRSTUVWXYZDEFGH";
+    for (const wchar_t *p = order; *p; ++p) {
+        unsigned bit = (unsigned)(*p - L'A');
+        if ((mask & (1u << bit)) == 0u) {
+            out[0] = *p;
+            out[1] = L':';
+            out[2] = L'\0';
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int create_bridge_root(wchar_t out[MAX_PATH * 4u])
+{
+    wchar_t base[MAX_PATH * 4u];
+    if (SHGetFolderPathW(NULL, CSIDL_LOCAL_APPDATA | CSIDL_FLAG_CREATE,
+                         NULL, SHGFP_TYPE_CURRENT, base) != S_OK)
+        return 0;
+
+    wchar_t parent[MAX_PATH * 4u];
+    if (_snwprintf_s(parent, sizeof(parent) / sizeof(parent[0]),
+                     _TRUNCATE, L"%s\\InfiltratorFS", base) < 0)
+        return 0;
+    CreateDirectoryW(parent, NULL);
+    if (GetLastError() != ERROR_SUCCESS &&
+        GetLastError() != ERROR_ALREADY_EXISTS)
+        return 0;
+
+    if (_snwprintf_s(parent, sizeof(parent) / sizeof(parent[0]),
+                     _TRUNCATE, L"%s\\InfiltratorFS\\Bridge", base) < 0)
+        return 0;
+    CreateDirectoryW(parent, NULL);
+    if (GetLastError() != ERROR_SUCCESS &&
+        GetLastError() != ERROR_ALREADY_EXISTS)
+        return 0;
+
+    GUID guid;
+    if (FAILED(CoCreateGuid(&guid)))
+        return 0;
+    wchar_t guid_text[64];
+    if (!StringFromGUID2(&guid, guid_text,
+                         (int)(sizeof(guid_text) /
+                               sizeof(guid_text[0]))))
+        return 0;
+    for (wchar_t *p = guid_text; *p; ++p) {
+        if (*p == L'{' || *p == L'}')
+            *p = L'_';
+    }
+
+    if (_snwprintf_s(out, MAX_PATH * 4u, _TRUNCATE,
+                     L"%s\\%s", parent, guid_text) < 0)
+        return 0;
+    return CreateDirectoryW(out, NULL) != 0;
+}
+
+static void show_bridge_error(HWND owner, const wchar_t *action, HRESULT hr)
+{
+    wchar_t message[768];
+    if (hr == HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED) ||
+        hr == HRESULT_FROM_WIN32(ERROR_INVALID_FUNCTION)) {
+        _snwprintf_s(message, sizeof(message) / sizeof(message[0]),
+                     _TRUNCATE,
+                     L"%s failed.\n\nWindows Projected File System (ProjFS) "
+                     L"is not enabled. Enable the optional Windows feature "
+                     L"'Windows Projected File System', then try again.\n\n"
+                     L"HRESULT: 0x%08lx",
+                     action, (unsigned long)hr);
+    } else {
+        _snwprintf_s(message, sizeof(message) / sizeof(message[0]),
+                     _TRUNCATE, L"%s failed (HRESULT 0x%08lx).",
+                     action, (unsigned long)hr);
+    }
+    MessageBoxW(owner, message, L"InfiltratorFS Windows Bridge",
+                MB_OK | MB_ICONERROR);
+}
+
+int infs_windows_bridge_start(struct infs_volume *volume, HWND owner,
+                              wchar_t *drive_out, size_t drive_out_count)
+{
+    if (!volume || !volume->writable || g_bridge.active)
+        return 0;
+
+    memset(&g_bridge, 0, sizeof(g_bridge));
+    g_bridge.volume = volume;
+    g_bridge.owner = owner;
+    InitializeCriticalSection(&g_bridge.lock);
+    g_bridge.lock_ready = 1;
+
+    if (!choose_drive_letter(g_bridge.drive) ||
+        !create_bridge_root(g_bridge.root)) {
+        infs_windows_bridge_stop();
+        MessageBoxW(owner,
+                    L"Could not allocate a Windows bridge drive/root.",
+                    L"InfiltratorFS Windows Bridge",
+                    MB_OK | MB_ICONERROR);
+        return 0;
+    }
+
+    GUID instance_id;
+    if (FAILED(CoCreateGuid(&instance_id))) {
+        infs_windows_bridge_stop();
+        return 0;
+    }
+
+    HRESULT hr = PrjMarkDirectoryAsPlaceholder(
+        g_bridge.root, NULL, NULL, &instance_id);
+    if (FAILED(hr)) {
+        show_bridge_error(owner, L"Prepare virtualization root", hr);
+        infs_windows_bridge_stop();
+        return 0;
+    }
+
+    PRJ_CALLBACKS callbacks;
+    memset(&callbacks, 0, sizeof(callbacks));
+    callbacks.StartDirectoryEnumerationCallback = bridge_start_enum;
+    callbacks.EndDirectoryEnumerationCallback = bridge_end_enum;
+    callbacks.GetDirectoryEnumerationCallback = bridge_get_enum;
+    callbacks.GetPlaceholderInfoCallback = bridge_get_placeholder;
+    callbacks.GetFileDataCallback = bridge_get_file_data;
+    callbacks.NotificationCallback = bridge_notification;
+
+    PRJ_NOTIFICATION_MAPPING notification;
+    memset(&notification, 0, sizeof(notification));
+    notification.NotificationRoot = L"";
+    notification.NotificationBitMask =
+        PRJ_NOTIFY_NEW_FILE_CREATED |
+        PRJ_NOTIFY_FILE_HANDLE_CLOSED_FILE_MODIFIED |
+        PRJ_NOTIFY_FILE_HANDLE_CLOSED_FILE_DELETED |
+        PRJ_NOTIFY_FILE_RENAMED |
+        PRJ_NOTIFY_HARDLINK_CREATED;
+
+    PRJ_STARTVIRTUALIZING_OPTIONS options;
+    memset(&options, 0, sizeof(options));
+    options.NotificationMappings = &notification;
+    options.NotificationMappingsCount = 1;
+
+    hr = PrjStartVirtualizing(g_bridge.root, &callbacks, &g_bridge,
+                              &options, &g_bridge.context);
+    if (FAILED(hr)) {
+        show_bridge_error(owner, L"Start Projected File System provider", hr);
+        infs_windows_bridge_stop();
+        return 0;
+    }
+
+    if (_snwprintf_s(g_bridge.dos_target,
+                     sizeof(g_bridge.dos_target) /
+                         sizeof(g_bridge.dos_target[0]),
+                     _TRUNCATE, L"\\??\\%s", g_bridge.root) < 0 ||
+        !DefineDosDeviceW(DDD_RAW_TARGET_PATH, g_bridge.drive,
+                          g_bridge.dos_target)) {
+        DWORD error = GetLastError();
+        infs_windows_bridge_stop();
+        show_bridge_error(owner, L"Assign Windows drive letter",
+                          HRESULT_FROM_WIN32(error));
+        return 0;
+    }
+
+    g_bridge.active = 1;
+    if (drive_out && drive_out_count)
+        wcsncpy_s(drive_out, drive_out_count, g_bridge.drive, _TRUNCATE);
+
+    wchar_t explorer_path[4] = {g_bridge.drive[0], L':', L'\\', L'\0'};
+    ShellExecuteW(owner, L"open", explorer_path, NULL, NULL, SW_SHOWNORMAL);
+    return 1;
+}
+
+void infs_windows_bridge_stop(void)
+{
+    if (g_bridge.drive[0] && g_bridge.dos_target[0]) {
+        DefineDosDeviceW(DDD_REMOVE_DEFINITION |
+                         DDD_EXACT_MATCH_ON_REMOVE |
+                         DDD_RAW_TARGET_PATH,
+                         g_bridge.drive, g_bridge.dos_target);
+    }
+
+    if (g_bridge.context) {
+        PrjStopVirtualizing(g_bridge.context);
+        g_bridge.context = NULL;
+    }
+
+    if (g_bridge.lock_ready) {
+        EnterCriticalSection(&g_bridge.lock);
+        if (g_bridge.volume)
+            (void)infs_volume_sync(g_bridge.volume);
+        bridge_free_enums();
+        LeaveCriticalSection(&g_bridge.lock);
+        DeleteCriticalSection(&g_bridge.lock);
+    }
+
+    if (g_bridge.root[0])
+        remove_tree(g_bridge.root);
+
+    memset(&g_bridge, 0, sizeof(g_bridge));
+}
+
+int infs_windows_bridge_active(void)
+{
+    return g_bridge.active;
+}
+#endif
