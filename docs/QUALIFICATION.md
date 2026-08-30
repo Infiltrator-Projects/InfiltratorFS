@@ -3,6 +3,23 @@
 
 This file records significant qualification runs against specific source commits. It is evidence for implemented behavior, not a claim that InfiltratorFS is bug-free.
 
+## 2026-08-31 driverless Windows Explorer bridge qualification
+
+Release 0.18.26 driverless Windows mounting was qualified against exact source
+commit `eafdbf21658649ad4c8b575de57ff86714873a72`, Build and conformance workflow
+run `33333130961`, Windows job `99315275271`. The Windows runner:
+
+- built the portable core, Win32 raw/image adapter, Explorer bridge and transfer application with MSVC and passed all 19 Windows/portable CTest tests;
+- opened a Linux-created Format 0.17 image successfully on Windows;
+- started the ProjFS provider and exercised it from a separate Windows client process, matching normal Explorer/application access rather than provider-internal I/O;
+- hydrated and byte-verified a Linux-created file through the mapped drive;
+- created and wrote a Windows file, persisted its close-time contents into InfiltratorFS, renamed it and created an InfiltratorFS hard link to it;
+- created a directory tree, hydrated a child, renamed the directory and rewrote the child under its new Windows path while retaining the correct InfiltratorFS object;
+- created and deleted another Windows file and verified it was absent from the portable namespace afterward; and
+- reopened the resulting state through the portable core and verified data equality, shared hard-link object identity/link counts and delete persistence.
+
+The runtime trace showed successful ProjFS new-file, modified-close, rename, hard-link and deleted-close notifications, all returning success. This qualification covers the interim user-mode Explorer bridge; it does not claim native Windows kernel-filesystem, Cache Manager, security-descriptor or boot-volume support.
+
 ## 2026-08-30 scale, endurance and online-defragmentation qualification
 
 The next three Linux roadmap items were qualified at exact source commit

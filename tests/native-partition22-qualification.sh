@@ -305,7 +305,7 @@ after_punch="$(stat -c '%b' "$MOUNTPOINT/preallocated.bin")"
 (( before_punch >= 32768 )) && pass "Normal fallocate allocates blocks" || fail "Normal fallocate did not allocate requested space"
 (( after_punch < before_punch )) && pass "Hole punching releases data blocks" || fail "Hole punching did not release data blocks"
 
-section "0.18.25 online fragmentation metrics / defragmentation"
+section "online fragmentation metrics / defragmentation"
 defrag_file="$MOUNTPOINT/defrag-live.bin"
 defrag_link="$MOUNTPOINT/defrag-live-link.bin"
 python3 - "$defrag_file" <<'PY'

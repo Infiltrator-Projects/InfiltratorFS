@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # Format 0.17 Conformance
 
-Release 0.18.25 accepts exactly current on-disk Format 0.17. Pre-1.0 builds do not promise compatibility with earlier development formats.
+Release 0.18.26 accepts exactly current on-disk Format 0.17. Pre-1.0 builds do not promise compatibility with earlier development formats.
 
 ## Persistent representation
 
@@ -121,7 +121,7 @@ Native Linux qualification requires:
 - clean unmount followed by userspace scrub; and
 - refusal to silently substitute a non-native filesystem path.
 
-Release 0.18.25 qualifies this native migrated surface, including the current correctness-first locking model. Additional development qualification is expected to expand scale and long-running mixed-workload stress rather than reintroduce a FUSE runtime path.
+Release 0.18.26 qualifies this native migrated surface, including the current correctness-first locking model. Additional development qualification is expected to expand scale and long-running mixed-workload stress rather than reintroduce a FUSE runtime path.
 
 `mount.infiltratorfs` and InfiltratorFS Manager must produce `FSTYPE=infiltratorfs`. The Manager privileged helper rejects a mounted result with any other filesystem type.
 
@@ -157,7 +157,7 @@ Installation fails if matching running-kernel headers are unavailable or if the 
 
 ## Automated gates
 
-The main Build and conformance workflow runs the portable/core suite under GCC, Clang, ASan/UBSan and GCC `-fanalyzer`, including deterministic and randomized bitmap-oracle qualification of the rebuildable free-extent index and a policy guard that forbids restoration of monolithic persistent bitmap publication or whole-bitmap transaction clones. It validates desktop/Manager behavior, checks cross-platform Linux-created media on Windows, builds release packages and rejects any FUSE build artifact or package dependency.
+The main Build and conformance workflow runs the portable/core suite under GCC, Clang, ASan/UBSan and GCC `-fanalyzer`, including deterministic and randomized bitmap-oracle qualification of the rebuildable free-extent index and a policy guard that forbids restoration of monolithic persistent bitmap publication or whole-bitmap transaction clones. It validates desktop/Manager behavior, checks cross-platform Linux-created media on Windows, and—when Microsoft's ProjFS component is available on the Windows runner—starts the driverless Explorer provider and requires an external Windows client to read Linux-created data and persist create/write/rename/hard-link/delete operations back through the portable core. It also builds release packages and rejects any FUSE build artifact or package dependency.
 
 Portable smoke qualification requires a 1023-byte UTF-8 component to succeed and a 1024-byte component to be rejected. Native mounted qualification additionally verifies that `statfs` advertises the 1023-byte boundary and repeats create/read/enumerate/reject through the Linux VFS.
 
