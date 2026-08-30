@@ -134,9 +134,12 @@ static int bridge_identity_relative(
             return 1;
         }
     }
-    if (!callback_data || !callback_data->FilePathName)
+    if (!callback_data || !callback_data->FilePathName ||
+        wcslen(callback_data->FilePathName) > INFS_PATH_MAX)
         return 0;
-    return bridge_resolve_relative(callback_data->FilePathName, out);
+    wcsncpy_s(out, INFS_PATH_MAX + 1u,
+              callback_data->FilePathName, _TRUNCATE);
+    return 1;
 }
 
 static void bridge_update_identity_prefix(PCWSTR old_path, PCWSTR new_path)
@@ -276,11 +279,8 @@ static void bridge_add_alias(PCWSTR from, PCWSTR to)
 static int wide_relative_to_infs(PCWSTR relative,
                                  char out[INFS_PATH_MAX + 1u])
 {
-    wchar_t resolved[INFS_PATH_MAX + 1u];
-    if (!bridge_resolve_relative(relative, resolved))
-        return 0;
-    relative = resolved;
-
+    if (!relative)
+        relative = L"";
     if (!*relative) {
         strcpy_s(out, INFS_PATH_MAX + 1u, "/");
         return 1;
@@ -320,13 +320,12 @@ static int make_child_infs_path(const char *parent, const char *name,
 static int relative_to_local_path(PCWSTR relative,
                                   wchar_t out[MAX_PATH * 4u])
 {
-    wchar_t resolved[INFS_PATH_MAX + 1u];
-    if (!bridge_resolve_relative(relative, resolved))
-        return 0;
-    if (!resolved[0])
+    if (!relative || !*relative)
         return wcscpy_s(out, MAX_PATH * 4u, g_bridge.root) == 0;
+    if (wcslen(relative) > INFS_PATH_MAX)
+        return 0;
     return _snwprintf_s(out, MAX_PATH * 4u, _TRUNCATE,
-                        L"%s\\%s", g_bridge.root, resolved) >= 0;
+                        L"%s\\%s", g_bridge.root, relative) >= 0;
 }
 
 static HRESULT status_to_hresult(infs_status status)
@@ -585,6 +584,12 @@ static HRESULT CALLBACK bridge_get_file_data(
     EnterCriticalSection(&g_bridge.lock);
     int have_relative =
         bridge_identity_relative(callback_data, current_relative);
+    if (have_relative &&
+        !bridge_version_is_ours(callback_data->VersionInfo)) {
+        wchar_t resolved[INFS_PATH_MAX + 1u];
+        if (bridge_resolve_relative(current_relative, resolved))
+            wcscpy_s(current_relative, INFS_PATH_MAX + 1u, resolved);
+    }
     LeaveCriticalSection(&g_bridge.lock);
     if (!have_relative)
         return HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
