@@ -383,11 +383,11 @@ jobs:
         env:
           DISPATCH_TOKEN: ${{ secrets.APT_REPOSITORY_DISPATCH_TOKEN }}
           RELEASE_SHA: ${{ needs.source.outputs.sha }}
+          VERSION: ${{ needs.source.outputs.version }}
           APP_ID: infiltratorfs
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="$(tr -d '[:space:]' < VERSION)"
           test -n "$VERSION"
           payload="$(jq -nc --arg repository "$GITHUB_REPOSITORY" --arg sha "$RELEASE_SHA" \
             '{event_type:"application-release",client_payload:{repository:$repository,sha:$sha}}')"

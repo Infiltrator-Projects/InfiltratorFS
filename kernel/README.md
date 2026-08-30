@@ -3,9 +3,9 @@
 
 This directory contains the native Linux VFS adapter for InfiltratorFS. It is an out-of-tree kernel module built against installed kernel headers and packaged through DKMS; Linux itself does not need to be rebuilt.
 
-Release 0.18.24 is the current normal Linux filesystem path. The old userspace FUSE adapter has been removed from the source tree and survives only in Git history.
+Release 0.18.25 is the current normal Linux filesystem path. The old userspace FUSE adapter has been removed from the source tree and survives only in Git history.
 
-Release 0.18.24 rejects repeated physical metadata-tree blocks during full walks, keeps large allocation-tree traversal scratch buffers off the kernel stack, and permits DKMS/package upgrades to complete while an explicit administrator module-disable policy remains active.
+Release 0.18.25 rejects repeated physical metadata-tree blocks during full walks, keeps large allocation-tree traversal scratch buffers off the kernel stack, and permits DKMS/package upgrades to complete while an explicit administrator module-disable policy remains active.
 
 The module:
 
