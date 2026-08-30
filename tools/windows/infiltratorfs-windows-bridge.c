@@ -645,13 +645,13 @@ static HRESULT CALLBACK bridge_start_enum(
     if (!session)
         return E_OUTOFMEMORY;
     session->id = *enumeration_id;
-    if (callback_data->FilePathName)
-        wcsncpy_s(session->relative_path,
-                  sizeof(session->relative_path) /
-                      sizeof(session->relative_path[0]),
-                  callback_data->FilePathName, _TRUNCATE);
 
     EnterCriticalSection(&g_bridge.lock);
+    if (!bridge_identity_relative(callback_data, session->relative_path)) {
+        LeaveCriticalSection(&g_bridge.lock);
+        free(session);
+        return HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
+    }
     session->next = g_bridge.enums;
     g_bridge.enums = session;
     LeaveCriticalSection(&g_bridge.lock);
@@ -708,8 +708,16 @@ static HRESULT CALLBACK bridge_end_enum(
 static HRESULT CALLBACK bridge_get_placeholder(
     const PRJ_CALLBACK_DATA *callback_data)
 {
+    wchar_t current_relative[INFS_PATH_MAX + 1u];
+    EnterCriticalSection(&g_bridge.lock);
+    int have_relative =
+        bridge_identity_relative(callback_data, current_relative);
+    LeaveCriticalSection(&g_bridge.lock);
+    if (!have_relative)
+        return HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
+
     char path[INFS_PATH_MAX + 1u];
-    if (!wide_relative_to_infs(callback_data->FilePathName, path))
+    if (!wide_relative_to_infs(current_relative, path))
         return HRESULT_FROM_WIN32(ERROR_FILENAME_EXCED_RANGE);
 
     struct infs_attributes attributes;
@@ -726,7 +734,7 @@ static HRESULT CALLBACK bridge_get_placeholder(
     EnterCriticalSection(&g_bridge.lock);
     struct bridge_identity *identity =
         bridge_remember_identity(attributes.object_id,
-                                 callback_data->FilePathName);
+                                 current_relative);
     if (identity)
         bridge_fill_version(&attributes, identity->token,
                             &placeholder.VersionInfo);
