@@ -25,7 +25,7 @@ grep -Fq -- '--recursive' "$tool"
 grep -Fq 'add_executable(infilfs-optimize' "$cmake"
 grep -Fq 'infilfs-optimize' "$package"
 bash -n "$package"
-package_entry="    'usr/bin/infilfs-optimize \\"
+package_entry="    'usr/bin/infilfs-optimize\$' \\"
 [[ "$(grep -Fxc "$package_entry" "$package")" -eq 1 ]]
 
 echo 'Native fragmentation metrics/online defrag policy guard passed.'
