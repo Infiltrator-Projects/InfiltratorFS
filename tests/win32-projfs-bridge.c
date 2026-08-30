@@ -72,8 +72,12 @@ static int read_portable_file(struct infs_volume *volume, const char *path,
     return strcmp(buffer, expected) == 0;
 }
 
-static int run_windows_client(const wchar_t *root)
+static int run_windows_client(const wchar_t *root_arg)
 {
+    if (!root_arg || !root_arg[0] || root_arg[1] != L':')
+        return fail(L"Invalid bridge client drive");
+
+    wchar_t root[4] = {root_arg[0], L':', L'\\', L'\0'};
     wchar_t path[1024];
     char data[4096];
     DWORD got = 0;
@@ -153,10 +157,13 @@ static int run_external_client(const wchar_t *root)
         return fail(L"GetModuleFileName for bridge client");
 
     wchar_t command[65536];
+    if (!root || !root[0] || root[1] != L':')
+        return fail(L"Invalid bridge root for external client");
+
     if (_snwprintf_s(command,
                      sizeof(command) / sizeof(command[0]), _TRUNCATE,
-                     L"\"%ls\" --client \"%ls\"",
-                     executable, root) < 0)
+                     L"\"%ls\" --client %lc:",
+                     executable, root[0]) < 0)
         return fail(L"Build bridge client command line");
 
     STARTUPINFOW startup;
