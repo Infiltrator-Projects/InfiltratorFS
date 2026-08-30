@@ -65,9 +65,11 @@ These Linux implementation details are not requirements that another adapter cop
 
 ## Windows
 
-The repository already contains Win32 image/raw-partition storage and direct transfer/scrub tooling over the portable core. This proves the portable storage engine is not Linux-only.
+The repository contains Win32 image/raw-partition storage and direct transfer/scrub tooling over the portable core. It also contains an experimental driverless Explorer bridge built on Microsoft's inbox Projected File System (ProjFS). After the Windows application opens an InfiltratorFS partition, **Mount in Explorer** starts a user-mode provider, assigns a temporary drive letter, hydrates file data from the portable InfiltratorFS core on demand, and commits Windows-created/modified/deleted/renamed files back to the same InfiltratorFS volume. InfiltratorFS ships no Windows kernel driver for this bridge; the kernel component is Microsoft's signed ProjFS filter already supplied by Windows as an optional feature.
 
-A true Windows filesystem driver remains future work. It will need Windows-native integration for I/O Manager, Cache Manager, Memory Manager, security descriptors, file-object/share/delete semantics, reparse/extension behavior and drive-letter mounting.
+The bridge is intended for ordinary cross-platform file work while the native Windows filesystem driver remains future work. It is not equivalent to that future driver: Windows still sees a projected NTFS virtualization root, Windows-incompatible names or metadata may not have a native Explorer representation, and boot/system-volume, Cache Manager, security-descriptor, reparse-point and full native share/delete semantics still belong to the eventual filesystem driver.
+
+A true Windows filesystem driver will need Windows-native integration for I/O Manager, Cache Manager, Memory Manager, security descriptors, file-object/share/delete semantics, reparse/extension behavior and native drive mounting.
 
 Where Windows and Linux express the same underlying operation differently, both adapters should call or reproduce the same portable InfiltratorFS semantic operation. Windows should not emulate Linux syscalls, and Linux should not emulate NTFS.
 

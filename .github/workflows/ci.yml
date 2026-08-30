@@ -245,6 +245,10 @@ jobs:
           Select-String -Path tools/windows/infiltratorfs-windows-entry.c -Pattern 'desired_access == GENERIC_READ' -SimpleMatch
           Select-String -Path tools/windows/infiltratorfs-windows-entry.c -Pattern 'infs_volume_set_deferred_publish' -SimpleMatch
           Select-String -Path tools/windows/infiltratorfs-windows-entry.c -Pattern 'INFS_WINDOWS_TRANSFER_PUBLISH_BYTES' -SimpleMatch
+          Select-String -Path tools/windows/infiltratorfs-windows-bridge.c -Pattern 'PrjStartVirtualizing' -SimpleMatch
+          Select-String -Path tools/windows/infiltratorfs-windows-bridge.c -Pattern 'PrjWriteFileData' -SimpleMatch
+          Select-String -Path tools/windows/infiltratorfs-windows-bridge.c -Pattern 'PRJ_NOTIFY_FILE_HANDLE_CLOSED_FILE_MODIFIED' -SimpleMatch
+          Select-String -Path tools/windows/infiltratorfs-windows.c -Pattern 'Mount in Explorer' -SimpleMatch
           Select-String -Path src/platform/win32_partition_io.c -Pattern 'GLOBALROOT' -SimpleMatch
           Select-String -Path src/platform/win32_partition_io.c -Pattern 'IOCTL_DISK_GET_DRIVE_LAYOUT_EX' -SimpleMatch
       - name: Verify versioned Windows executable and metadata

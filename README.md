@@ -178,3 +178,7 @@ docs/                     architecture, format, security and adapter documentati
 ## Licence
 
 InfiltratorFS is free software licensed under the GNU General Public License version 3 or, at your option, any later version (`GPL-3.0-or-later`).
+
+## Driverless Windows Explorer bridge
+
+The Windows transfer application can expose an opened InfiltratorFS volume as a temporary drive letter using Microsoft's inbox Projected File System (ProjFS). **Mount in Explorer** hydrates files from the portable core on demand and commits ordinary Windows file create/write/delete/rename operations back to InfiltratorFS when handles close. This mode does not ship an InfiltratorFS kernel driver and therefore does not require InfiltratorFS driver signing; Windows' optional Microsoft-signed ProjFS component must be enabled.
