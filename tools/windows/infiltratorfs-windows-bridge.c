@@ -24,6 +24,12 @@ struct bridge_dir_entry {
     struct infs_attributes attributes;
 };
 
+struct bridge_alias {
+    wchar_t from[INFS_PATH_MAX + 1u];
+    wchar_t to[INFS_PATH_MAX + 1u];
+    struct bridge_alias *next;
+};
+
 struct bridge_enum {
     GUID id;
     wchar_t relative_path[INFS_PATH_MAX + 1u];
@@ -45,6 +51,7 @@ struct bridge_state {
     int lock_ready;
     int active;
     struct bridge_enum *enums;
+    struct bridge_alias *aliases;
 };
 
 static struct bridge_state g_bridge;
@@ -86,23 +93,88 @@ static void attributes_to_basic(const struct infs_attributes *attributes,
         basic->FileAttributes = FILE_ATTRIBUTE_ARCHIVE;
 }
 
+static int bridge_alias_prefix_match(PCWSTR path, PCWSTR prefix)
+{
+    size_t prefix_length = wcslen(prefix);
+    if (_wcsnicmp(path, prefix, prefix_length) != 0)
+        return 0;
+    return path[prefix_length] == L'\0' ||
+           path[prefix_length] == L'\\' ||
+           path[prefix_length] == L'/';
+}
+
+static int bridge_resolve_relative(PCWSTR relative,
+                                   wchar_t out[INFS_PATH_MAX + 1u])
+{
+    if (!relative)
+        relative = L"";
+    if (wcslen(relative) > INFS_PATH_MAX)
+        return 0;
+    wcsncpy_s(out, INFS_PATH_MAX + 1u, relative, _TRUNCATE);
+
+    for (unsigned pass = 0; pass < 32u; ++pass) {
+        struct bridge_alias *best = NULL;
+        size_t best_length = 0;
+        for (struct bridge_alias *alias = g_bridge.aliases;
+             alias; alias = alias->next) {
+            size_t length = wcslen(alias->from);
+            if (length > best_length &&
+                bridge_alias_prefix_match(out, alias->from)) {
+                best = alias;
+                best_length = length;
+            }
+        }
+        if (!best)
+            break;
+
+        wchar_t rewritten[INFS_PATH_MAX + 1u];
+        PCWSTR suffix = out + best_length;
+        int written = _snwprintf_s(
+            rewritten, sizeof(rewritten) / sizeof(rewritten[0]), _TRUNCATE,
+            L"%s%s", best->to, suffix);
+        if (written < 0)
+            return 0;
+        if (_wcsicmp(rewritten, out) == 0)
+            break;
+        wcscpy_s(out, INFS_PATH_MAX + 1u, rewritten);
+    }
+    return 1;
+}
+
+static void bridge_add_alias(PCWSTR from, PCWSTR to)
+{
+    if (!from || !*from || !to || !*to ||
+        wcslen(from) > INFS_PATH_MAX || wcslen(to) > INFS_PATH_MAX)
+        return;
+    struct bridge_alias *alias = calloc(1, sizeof(*alias));
+    if (!alias)
+        return;
+    wcsncpy_s(alias->from, INFS_PATH_MAX + 1u, from, _TRUNCATE);
+    wcsncpy_s(alias->to, INFS_PATH_MAX + 1u, to, _TRUNCATE);
+    alias->next = g_bridge.aliases;
+    g_bridge.aliases = alias;
+}
+
 static int wide_relative_to_infs(PCWSTR relative,
                                  char out[INFS_PATH_MAX + 1u])
 {
-    if (!relative || !*relative) {
+    wchar_t resolved[INFS_PATH_MAX + 1u];
+    if (!bridge_resolve_relative(relative, resolved))
+        return 0;
+    relative = resolved;
+
+    if (!*relative) {
         strcpy_s(out, INFS_PATH_MAX + 1u, "/");
         return 1;
     }
 
     wchar_t normalized[INFS_PATH_MAX + 1u];
     size_t length = wcslen(relative);
-    if (length > INFS_PATH_MAX)
+    if (length > INFS_PATH_MAX - 1u)
         return 0;
     normalized[0] = L'/';
     for (size_t i = 0; i < length; ++i) {
         wchar_t ch = relative[i] == L'\\' ? L'/' : relative[i];
-        if (ch == L'\0')
-            return 0;
         normalized[i + 1u] = ch;
     }
     normalized[length + 1u] = L'\0';
@@ -130,10 +202,13 @@ static int make_child_infs_path(const char *parent, const char *name,
 static int relative_to_local_path(PCWSTR relative,
                                   wchar_t out[MAX_PATH * 4u])
 {
-    if (!relative || !*relative)
+    wchar_t resolved[INFS_PATH_MAX + 1u];
+    if (!bridge_resolve_relative(relative, resolved))
+        return 0;
+    if (!resolved[0])
         return wcscpy_s(out, MAX_PATH * 4u, g_bridge.root) == 0;
     return _snwprintf_s(out, MAX_PATH * 4u, _TRUNCATE,
-                        L"%s\\%s", g_bridge.root, relative) >= 0;
+                        L"%s\\%s", g_bridge.root, resolved) >= 0;
 }
 
 static HRESULT status_to_hresult(infs_status status)
@@ -513,6 +588,66 @@ static infs_status bridge_delete_path(const char *path, int is_directory)
     return status == INFS_STATUS_NOT_FOUND ? INFS_STATUS_OK : status;
 }
 
+static infs_status bridge_import_local_tree(PCWSTR relative)
+{
+    wchar_t local[MAX_PATH * 4u];
+    char path[INFS_PATH_MAX + 1u];
+    if (!relative_to_local_path(relative, local) ||
+        !wide_relative_to_infs(relative, path))
+        return INFS_STATUS_NAME_TOO_LONG;
+
+    DWORD attributes = GetFileAttributesW(local);
+    if (attributes == INVALID_FILE_ATTRIBUTES)
+        return INFS_STATUS_NOT_FOUND;
+    if (!(attributes & FILE_ATTRIBUTE_DIRECTORY))
+        return bridge_sync_local_file(relative);
+
+    infs_status status = bridge_create_empty(path, 1);
+    if (status != INFS_STATUS_OK)
+        return status;
+
+    wchar_t pattern[MAX_PATH * 4u];
+    if (_snwprintf_s(pattern, sizeof(pattern) / sizeof(pattern[0]),
+                     _TRUNCATE, L"%s\\*", local) < 0)
+        return INFS_STATUS_NAME_TOO_LONG;
+    WIN32_FIND_DATAW data;
+    HANDLE find = FindFirstFileW(pattern, &data);
+    if (find == INVALID_HANDLE_VALUE)
+        return GetLastError() == ERROR_FILE_NOT_FOUND ?
+               INFS_STATUS_OK : INFS_STATUS_IO_ERROR;
+
+    do {
+        if (wcscmp(data.cFileName, L".") == 0 ||
+            wcscmp(data.cFileName, L"..") == 0)
+            continue;
+        wchar_t child[INFS_PATH_MAX + 1u];
+        if (!relative || !*relative) {
+            if (_snwprintf_s(child,
+                             sizeof(child) / sizeof(child[0]), _TRUNCATE,
+                             L"%s", data.cFileName) < 0) {
+                status = INFS_STATUS_NAME_TOO_LONG;
+                break;
+            }
+        } else if (_snwprintf_s(child,
+                                sizeof(child) / sizeof(child[0]), _TRUNCATE,
+                                L"%s\\%s", relative,
+                                data.cFileName) < 0) {
+            status = INFS_STATUS_NAME_TOO_LONG;
+            break;
+        }
+        status = bridge_import_local_tree(child);
+        if (status != INFS_STATUS_OK)
+            break;
+    } while (FindNextFileW(find, &data));
+    DWORD error = GetLastError();
+    FindClose(find);
+    if (status == INFS_STATUS_OK && error != ERROR_NO_MORE_FILES)
+        status = INFS_STATUS_IO_ERROR;
+    if (status == INFS_STATUS_OK)
+        status = infs_volume_sync(g_bridge.volume);
+    return status;
+}
+
 static HRESULT CALLBACK bridge_notification(
     const PRJ_CALLBACK_DATA *callback_data, BOOLEAN is_directory,
     PRJ_NOTIFICATION notification, PCWSTR destination_file_name,
@@ -544,29 +679,49 @@ static HRESULT CALLBACK bridge_notification(
         break;
 
     case PRJ_NOTIFICATION_FILE_RENAMED:
-        if (destination_file_name && *destination_file_name) {
+        if ((!callback_data->FilePathName ||
+             !*callback_data->FilePathName) &&
+            destination_file_name && *destination_file_name) {
+            status = bridge_import_local_tree(destination_file_name);
+        } else if ((!destination_file_name ||
+                    !*destination_file_name) &&
+                   callback_data->FilePathName &&
+                   *callback_data->FilePathName) {
+            status = bridge_delete_path(source, is_directory ? 1 : 0);
+            if (status == INFS_STATUS_OK)
+                status = infs_volume_sync(g_bridge.volume);
+        } else if (destination_file_name && *destination_file_name) {
             char destination[INFS_PATH_MAX + 1u];
             if (!wide_relative_to_infs(destination_file_name, destination)) {
                 status = INFS_STATUS_NAME_TOO_LONG;
                 break;
             }
             status = infs_rename(g_bridge.volume, source, destination);
-            if (status == INFS_STATUS_OK)
+            if (status == INFS_STATUS_OK) {
+                bridge_add_alias(callback_data->FilePathName,
+                                 destination_file_name);
                 status = infs_volume_sync(g_bridge.volume);
+            }
         }
         break;
 
     case PRJ_NOTIFICATION_HARDLINK_CREATED:
         if (!is_directory && destination_file_name &&
             *destination_file_name) {
-            char destination[INFS_PATH_MAX + 1u];
-            if (!wide_relative_to_infs(destination_file_name, destination)) {
-                status = INFS_STATUS_NAME_TOO_LONG;
-                break;
+            if (!callback_data->FilePathName ||
+                !*callback_data->FilePathName) {
+                status = bridge_sync_local_file(destination_file_name);
+            } else {
+                char destination[INFS_PATH_MAX + 1u];
+                if (!wide_relative_to_infs(destination_file_name,
+                                           destination)) {
+                    status = INFS_STATUS_NAME_TOO_LONG;
+                    break;
+                }
+                status = infs_link_file(g_bridge.volume, source, destination);
+                if (status == INFS_STATUS_OK)
+                    status = infs_volume_sync(g_bridge.volume);
             }
-            status = infs_link_file(g_bridge.volume, source, destination);
-            if (status == INFS_STATUS_OK)
-                status = infs_volume_sync(g_bridge.volume);
         }
         break;
 
@@ -584,6 +739,11 @@ static void bridge_free_enums(void)
         enum_free_entries(g_bridge.enums);
         free(g_bridge.enums);
         g_bridge.enums = next;
+    }
+    while (g_bridge.aliases) {
+        struct bridge_alias *next = g_bridge.aliases->next;
+        free(g_bridge.aliases);
+        g_bridge.aliases = next;
     }
 }
 
@@ -757,6 +917,8 @@ int infs_windows_bridge_start(struct infs_volume *volume, HWND owner,
 
     PRJ_STARTVIRTUALIZING_OPTIONS options;
     memset(&options, 0, sizeof(options));
+    options.PoolThreadCount = 1;
+    options.ConcurrentThreadCount = 1;
     options.NotificationMappings = &notification;
     options.NotificationMappingsCount = 1;
 
