@@ -108,9 +108,26 @@ else
     active="\$(grep -E ' (infiltratorfs|fuse\\.infilfs-fuse) ' /proc/self/mounts 2>/dev/null || true)"
 fi
 if [ -n "\$active" ]; then
-    echo 'InfiltratorFS: unmount all InfiltratorFS volumes before upgrading the driver.' >&2
-    echo "\$active" >&2
-    exit 1
+    echo 'InfiltratorFS: mounted volumes detected; attempting a clean automatic unmount before upgrading the driver.'
+    echo "\$active"
+    sync
+    # Use only a normal util-linux unmount.  Never force or lazily detach a
+    # filesystem during package replacement; if anything is genuinely busy,
+    # leave the old driver active and fail safely below.
+    umount -a -t infiltratorfs,fuse.infilfs-fuse 2>/dev/null || true
+
+    if command -v findmnt >/dev/null 2>&1; then
+        active="\$(findmnt -rn -t infiltratorfs,fuse.infilfs-fuse 2>/dev/null || true)"
+    else
+        active="\$(grep -E ' (infiltratorfs|fuse\\.infilfs-fuse) ' /proc/self/mounts 2>/dev/null || true)"
+    fi
+    if [ -n "\$active" ]; then
+        echo 'InfiltratorFS: clean automatic unmount could not complete because a volume is still busy.' >&2
+        echo "\$active" >&2
+        echo 'Close files, terminals or applications using the volume, then retry the upgrade.' >&2
+        exit 1
+    fi
+    echo 'InfiltratorFS: clean automatic unmount complete; continuing driver upgrade.'
 fi
 
 if command -v dkms >/dev/null 2>&1; then
@@ -244,6 +261,15 @@ for dependency in dkms kmod policykit-1 util-linux xdg-utils zenity; do
 done
 if grep -Eqi '(^|[, ])(fuse3|libfuse3-3)([, ]|$)' <<<"$depends"; then
     echo 'Native release package unexpectedly depends on FUSE.' >&2
+    exit 1
+fi
+preinst_text="$(dpkg-deb --ctrl-tarfile "$dist_dir/$deb_name" | tar -xOf - ./preinst)"
+grep -Fq 'sync' <<<"$preinst_text"
+grep -Fq 'umount -a -t infiltratorfs,fuse.infilfs-fuse' <<<"$preinst_text"
+grep -Fq 'clean automatic unmount complete' <<<"$preinst_text"
+grep -Fq 'volume is still busy' <<<"$preinst_text"
+if grep -Eq 'umount[[:space:]].*(-f|--force|-l|--lazy)' <<<"$preinst_text"; then
+    echo 'Debian preinst must never force or lazily detach mounted InfiltratorFS volumes.' >&2
     exit 1
 fi
 postinst_text="$(dpkg-deb --ctrl-tarfile "$dist_dir/$deb_name" | tar -xOf - ./postinst)"
