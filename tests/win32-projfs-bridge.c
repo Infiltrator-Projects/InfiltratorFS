@@ -17,6 +17,7 @@
 #include <wchar.h>
 
 static const char windows_payload[] = "windows-projfs-write\n";
+static const char edited_linux_payload[] = "windows-edited-linux-file\n";
 
 static int fail(const wchar_t *message)
 {
@@ -89,6 +90,16 @@ static int run_windows_client(const wchar_t *root_arg)
         got != 32u ||
         memcmp(data, "linux-to-windows-cross-platform\n", 32u) != 0)
         return fail(L"Linux-created file was not readable through Explorer bridge");
+
+    /*
+     * This is the core cross-environment use case: modify a file that was
+     * created on Linux, forcing its ProjFS placeholder to become a full local
+     * Windows file, then require the close-time write-through path to replace
+     * the InfiltratorFS contents.
+     */
+    if (!write_windows_file(path, edited_linux_payload,
+                            (DWORD)(sizeof(edited_linux_payload) - 1u)))
+        return fail(L"Edit Linux-created file through Windows bridge");
 
     _snwprintf_s(path, 1024, _TRUNCATE, L"%lswindows-dir", root);
     if (!CreateDirectoryW(path, NULL))
@@ -249,6 +260,12 @@ int wmain(int argc, wchar_t **argv)
 
     char data[4096];
     int persisted = 1;
+    if (!read_portable_file(&volume, "/linux-cross-platform.txt",
+                            data, sizeof(data), edited_linux_payload)) {
+        fwprintf(stderr,
+                 L"FAIL: Windows edit of Linux-created file did not persist.\n");
+        persisted = 0;
+    }
     if (!read_portable_file(&volume, "/windows-dir/renamed.txt",
                             data, sizeof(data), windows_payload)) {
         fwprintf(stderr,
