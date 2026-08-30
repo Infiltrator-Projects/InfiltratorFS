@@ -182,7 +182,7 @@ if(WIN32)
         ${CMAKE_CURRENT_BINARY_DIR}/infiltratorfs-windows-version.rc)
     target_include_directories(infiltratorfs-windows PRIVATE tools/windows)
     target_link_libraries(infiltratorfs-windows PRIVATE
-        infilfs_win32 comdlg32 shell32 ole32 ProjectedFSLib)
+        infilfs_win32 comdlg32 shell32 ole32)
     target_compile_definitions(infiltratorfs-windows PRIVATE
         INFILFS_VERSION_W=L\"${PROJECT_VERSION}\")
     if(MSVC)

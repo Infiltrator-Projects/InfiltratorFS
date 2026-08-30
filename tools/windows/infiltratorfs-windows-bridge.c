@@ -63,6 +63,44 @@ struct bridge_state {
 
 static struct bridge_state g_bridge;
 
+typedef HRESULT (WINAPI *bridge_prj_mark_directory_fn)(
+    PCWSTR, PCWSTR, const PRJ_PLACEHOLDER_VERSION_INFO *, const GUID *);
+typedef HRESULT (WINAPI *bridge_prj_start_fn)(
+    PCWSTR, const PRJ_CALLBACKS *, const void *,
+    const PRJ_STARTVIRTUALIZING_OPTIONS *,
+    PRJ_NAMESPACE_VIRTUALIZATION_CONTEXT *);
+typedef void (WINAPI *bridge_prj_stop_fn)(
+    PRJ_NAMESPACE_VIRTUALIZATION_CONTEXT);
+typedef INT (WINAPI *bridge_prj_name_compare_fn)(PCWSTR, PCWSTR);
+typedef BOOLEAN (WINAPI *bridge_prj_name_match_fn)(PCWSTR, PCWSTR);
+typedef HRESULT (WINAPI *bridge_prj_fill_dir_fn)(
+    PCWSTR, const PRJ_FILE_BASIC_INFO *, PRJ_DIR_ENTRY_BUFFER_HANDLE);
+typedef HRESULT (WINAPI *bridge_prj_write_placeholder_fn)(
+    PRJ_NAMESPACE_VIRTUALIZATION_CONTEXT, PCWSTR,
+    const PRJ_PLACEHOLDER_INFO *, UINT32);
+typedef void *(WINAPI *bridge_prj_alloc_fn)(
+    PRJ_NAMESPACE_VIRTUALIZATION_CONTEXT, size_t);
+typedef void (WINAPI *bridge_prj_free_fn)(void *);
+typedef HRESULT (WINAPI *bridge_prj_write_data_fn)(
+    PRJ_NAMESPACE_VIRTUALIZATION_CONTEXT, const GUID *, const void *,
+    UINT64, UINT32);
+
+struct bridge_projfs_api {
+    HMODULE module;
+    bridge_prj_mark_directory_fn mark_directory;
+    bridge_prj_start_fn start;
+    bridge_prj_stop_fn stop;
+    bridge_prj_name_compare_fn name_compare;
+    bridge_prj_name_match_fn name_match;
+    bridge_prj_fill_dir_fn fill_dir;
+    bridge_prj_write_placeholder_fn write_placeholder;
+    bridge_prj_alloc_fn alloc;
+    bridge_prj_free_fn free_buffer;
+    bridge_prj_write_data_fn write_data;
+};
+
+static struct bridge_projfs_api g_projfs;
+
 static int bridge_alias_prefix_match(PCWSTR path, PCWSTR prefix);
 static int bridge_resolve_relative(PCWSTR relative,
                                    wchar_t out[INFS_PATH_MAX + 1u]);
@@ -70,6 +108,119 @@ static int bridge_resolve_relative(PCWSTR relative,
 static const uint8_t bridge_provider_id[] = {
     'I','N','F','S','-','P','R','O','J','F','S','-','V','1'
 };
+
+static int bridge_load_proc(FARPROC *out, const char *name)
+{
+    *out = GetProcAddress(g_projfs.module, name);
+    return *out != NULL;
+}
+
+static int bridge_load_projfs_api(void)
+{
+    if (g_projfs.module)
+        return 1;
+
+    HMODULE module = LoadLibraryW(L"ProjectedFSLib.dll");
+    if (!module)
+        return 0;
+    memset(&g_projfs, 0, sizeof(g_projfs));
+    g_projfs.module = module;
+
+#define LOAD_PRJ(member, name) do { \
+    FARPROC proc = NULL; \
+    if (!bridge_load_proc(&proc, name)) { \
+        FreeLibrary(g_projfs.module); \
+        memset(&g_projfs, 0, sizeof(g_projfs)); \
+        return 0; \
+    } \
+    memcpy(&g_projfs.member, &proc, sizeof(g_projfs.member)); \
+} while (0)
+
+    LOAD_PRJ(mark_directory, "PrjMarkDirectoryAsPlaceholder");
+    LOAD_PRJ(start, "PrjStartVirtualizing");
+    LOAD_PRJ(stop, "PrjStopVirtualizing");
+    LOAD_PRJ(name_compare, "PrjFileNameCompare");
+    LOAD_PRJ(name_match, "PrjFileNameMatch");
+    LOAD_PRJ(fill_dir, "PrjFillDirEntryBuffer");
+    LOAD_PRJ(write_placeholder, "PrjWritePlaceholderInfo");
+    LOAD_PRJ(alloc, "PrjAllocateAlignedBuffer");
+    LOAD_PRJ(free_buffer, "PrjFreeAlignedBuffer");
+    LOAD_PRJ(write_data, "PrjWriteFileData");
+#undef LOAD_PRJ
+    return 1;
+}
+
+static DWORD bridge_enable_projfs_feature(void)
+{
+    wchar_t command[] =
+        L"dism.exe /Online /Enable-Feature /FeatureName:Client-ProjFS "
+        L"/NoRestart /Quiet";
+    STARTUPINFOW startup;
+    PROCESS_INFORMATION process;
+    memset(&startup, 0, sizeof(startup));
+    memset(&process, 0, sizeof(process));
+    startup.cb = sizeof(startup);
+    startup.dwFlags = STARTF_USESHOWWINDOW;
+    startup.wShowWindow = SW_HIDE;
+
+    if (!CreateProcessW(NULL, command, NULL, NULL, FALSE,
+                        CREATE_NO_WINDOW, NULL, NULL,
+                        &startup, &process))
+        return GetLastError();
+
+    WaitForSingleObject(process.hProcess, INFINITE);
+    DWORD exit_code = ERROR_GEN_FAILURE;
+    if (!GetExitCodeProcess(process.hProcess, &exit_code))
+        exit_code = GetLastError();
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    return exit_code;
+}
+
+static int bridge_require_projfs(HWND owner)
+{
+    if (bridge_load_projfs_api())
+        return 1;
+
+    int answer = MessageBoxW(
+        owner,
+        L"The Microsoft Windows Projected File System (ProjFS) optional "
+        L"component is not enabled.\n\n"
+        L"InfiltratorFS can enable this built-in Microsoft component now. "
+        L"No InfiltratorFS kernel driver or driver signing is involved.\n\n"
+        L"Enable Windows Projected File System?",
+        L"InfiltratorFS Windows Bridge",
+        MB_YESNO | MB_DEFBUTTON1 | MB_ICONINFORMATION);
+    if (answer != IDYES)
+        return 0;
+
+    DWORD result = bridge_enable_projfs_feature();
+    if (result != ERROR_SUCCESS &&
+        result != ERROR_SUCCESS_REBOOT_REQUIRED) {
+        wchar_t message[384];
+        _snwprintf_s(message,
+                     sizeof(message) / sizeof(message[0]), _TRUNCATE,
+                     L"Windows could not enable Client-ProjFS "
+                     L"(DISM exit code %lu).",
+                     (unsigned long)result);
+        MessageBoxW(owner, message, L"InfiltratorFS Windows Bridge",
+                    MB_OK | MB_ICONERROR);
+        return 0;
+    }
+
+    if (result == ERROR_SUCCESS_REBOOT_REQUIRED ||
+        !bridge_load_projfs_api()) {
+        MessageBoxW(
+            owner,
+            L"Windows Projected File System has been enabled, but Windows "
+            L"must be restarted before the InfiltratorFS Explorer bridge "
+            L"can be used.",
+            L"InfiltratorFS Windows Bridge",
+            MB_OK | MB_ICONINFORMATION);
+        return 0;
+    }
+    return 1;
+}
 
 static int bridge_version_is_ours(const PRJ_PLACEHOLDER_VERSION_INFO *version)
 {
@@ -361,7 +512,7 @@ static int bridge_entry_compare(const void *left, const void *right)
 {
     const struct bridge_dir_entry *a = left;
     const struct bridge_dir_entry *b = right;
-    int result = PrjFileNameCompare(a->name, b->name);
+    int result = g_projfs.name_compare(a->name, b->name);
     return result < 0 ? -1 : result > 0 ? 1 : 0;
 }
 
@@ -429,7 +580,7 @@ static HRESULT enum_load(struct bridge_enum *session, PCWSTR search_expression)
                                        sizeof(wide_name[0]))))
             continue;
         if (search_expression && *search_expression &&
-            !PrjFileNameMatch(wide_name, search_expression))
+            !g_projfs.name_match(wide_name, search_expression))
             continue;
 
         char child[INFS_PATH_MAX + 1u];
@@ -509,7 +660,7 @@ static HRESULT CALLBACK bridge_get_enum(
         PRJ_FILE_BASIC_INFO basic;
         attributes_to_basic(&session->entries[session->index].attributes,
                             &basic);
-        HRESULT hr = PrjFillDirEntryBuffer(
+        HRESULT hr = g_projfs.fill_dir(
             session->entries[session->index].name, &basic, buffer);
         if (hr == HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER))
             return S_OK;
@@ -553,7 +704,7 @@ static HRESULT CALLBACK bridge_get_placeholder(
     bridge_remember_identity(attributes.object_id,
                              callback_data->FilePathName);
     LeaveCriticalSection(&g_bridge.lock);
-    return PrjWritePlaceholderInfo(
+    return g_projfs.write_placeholder(
         callback_data->NamespaceVirtualizationContext,
         callback_data->FilePathName, &placeholder, sizeof(placeholder));
 }
@@ -608,7 +759,7 @@ static HRESULT CALLBACK bridge_get_file_data(
     if (attributes.object_type == INFS_OBJECT_DIRECTORY)
         return HRESULT_FROM_WIN32(ERROR_DIRECTORY);
 
-    void *buffer = PrjAllocateAlignedBuffer(
+    void *buffer = g_projfs.alloc(
         callback_data->NamespaceVirtualizationContext, length);
     if (!buffer)
         return E_OUTOFMEMORY;
@@ -619,14 +770,14 @@ static HRESULT CALLBACK bridge_get_file_data(
         infs_read_file(g_bridge.volume, path, buffer, length, byte_offset);
     LeaveCriticalSection(&g_bridge.lock);
     if (got < 0) {
-        PrjFreeAlignedBuffer(buffer);
+        g_projfs.free_buffer(buffer);
         return status_to_hresult((infs_status)got);
     }
 
-    HRESULT hr = PrjWriteFileData(
+    HRESULT hr = g_projfs.write_data(
         callback_data->NamespaceVirtualizationContext,
         &callback_data->DataStreamId, buffer, byte_offset, (UINT32)got);
-    PrjFreeAlignedBuffer(buffer);
+    g_projfs.free_buffer(buffer);
     return hr;
 }
 
@@ -1028,6 +1179,8 @@ int infs_windows_bridge_start(struct infs_volume *volume, HWND owner,
 {
     if (!volume || !volume->writable || g_bridge.active)
         return 0;
+    if (!bridge_require_projfs(owner))
+        return 0;
 
     memset(&g_bridge, 0, sizeof(g_bridge));
     g_bridge.volume = volume;
@@ -1051,7 +1204,7 @@ int infs_windows_bridge_start(struct infs_volume *volume, HWND owner,
         return 0;
     }
 
-    HRESULT hr = PrjMarkDirectoryAsPlaceholder(
+    HRESULT hr = g_projfs.mark_directory(
         g_bridge.root, NULL, NULL, &instance_id);
     if (FAILED(hr)) {
         show_bridge_error(owner, L"Prepare virtualization root", hr);
@@ -1085,7 +1238,7 @@ int infs_windows_bridge_start(struct infs_volume *volume, HWND owner,
     options.NotificationMappings = &notification;
     options.NotificationMappingsCount = 1;
 
-    hr = PrjStartVirtualizing(g_bridge.root, &callbacks, &g_bridge,
+    hr = g_projfs.start(g_bridge.root, &callbacks, &g_bridge,
                               &options, &g_bridge.context);
     if (FAILED(hr)) {
         show_bridge_error(owner, L"Start Projected File System provider", hr);
@@ -1125,7 +1278,7 @@ void infs_windows_bridge_stop(void)
     }
 
     if (g_bridge.context) {
-        PrjStopVirtualizing(g_bridge.context);
+        g_projfs.stop(g_bridge.context);
         g_bridge.context = NULL;
     }
 
