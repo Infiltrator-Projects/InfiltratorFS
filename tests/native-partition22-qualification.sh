@@ -77,7 +77,7 @@ printf 'Target:       %s\nMount point:  %s\nLog:          %s\nKernel:       %s\n
     "$TARGET" "$MOUNTPOINT" "$LOG" "$(uname -r)" "$(date --iso-8601=seconds)"
 
 for cmd in awk blockdev cat chmod cmp cp date dd df fallocate find findmnt grep head \
-    infilfs-tool ln lsblk mkdir mkfifo mkfs.infilfs mknod modinfo modprobe mount \
+    infilfs-optimize infilfs-tool ln lsblk mkdir mkfifo mkfs.infilfs mknod modinfo modprobe mount \
     mv python3 readlink rm rmdir seq sha256sum sleep stat sync touch tr truncate \
     umount uname wc; do
     require_cmd "$cmd"
@@ -305,6 +305,75 @@ after_punch="$(stat -c '%b' "$MOUNTPOINT/preallocated.bin")"
 (( before_punch >= 32768 )) && pass "Normal fallocate allocates blocks" || fail "Normal fallocate did not allocate requested space"
 (( after_punch < before_punch )) && pass "Hole punching releases data blocks" || fail "Hole punching did not release data blocks"
 
+section "0.18.25 online fragmentation metrics / defragmentation"
+defrag_file="$MOUNTPOINT/defrag-live.bin"
+defrag_link="$MOUNTPOINT/defrag-live-link.bin"
+python3 - "$defrag_file" <<'PY'
+import os, sys
+path=sys.argv[1]
+size=32*1024*1024
+motif=bytes((i*17+3)&255 for i in range(256))
+chunk=motif*(1024*1024//len(motif))
+with open(path,'xb',buffering=0) as f:
+    left=size
+    while left:
+        data=chunk if left>=len(chunk) else chunk[:left]
+        f.write(data); left-=len(data)
+    os.fsync(f.fileno())
+fd=os.open(path,os.O_RDWR|os.O_CLOEXEC)
+try:
+    blocks=size//4096
+    for i in range(96):
+        block=32+((i*257)%(blocks-64))
+        payload=bytes(((i*31+j*7+11)&255) for j in range(4096))
+        assert os.pwrite(fd,payload,block*4096)==len(payload)
+        os.fsync(fd)
+finally:
+    os.close(fd)
+PY
+defrag_hash_before="$(sha256sum "$defrag_file" | awk '{print $1}')"
+python3 - "$defrag_file" <<'PY'
+import os,sys
+os.setxattr(sys.argv[1],b'user.infiltratorfs-defrag',b'preserved')
+PY
+ln "$defrag_file" "$defrag_link"
+defrag_ino_before="$(stat -c '%i' "$defrag_file")"
+defrag_mtime_before="$(stat -c '%y' "$defrag_file")"
+defrag_ctime_before="$(stat -c '%z' "$defrag_file")"
+defrag_before="$(infilfs-optimize --metrics "$defrag_file")"
+printf '%s\n' "$defrag_before"
+defrag_before_extents="$(sed -nE 's/.*extents=([0-9]+).*/\1/p' <<<"$defrag_before" | head -n1)"
+if [[ "$defrag_before_extents" =~ ^[0-9]+$ ]] && (( defrag_before_extents > 2 )); then
+    pass "Fragmentation metrics detect a deliberately fragmented file ($defrag_before_extents extents)"
+else
+    fail "Fragmentation metrics did not report the expected fragmented layout: ${defrag_before_extents:-unparsed}"
+fi
+
+# Retain the fragmented generation so live defrag must preserve snapshot-owned
+# blocks while relocating only the current generation.
+sync
+timed "unmount before online-defrag snapshot" umount "$MOUNTPOINT"; MOUNTED=0
+infilfs-tool "$TARGET" snapshot-create before-online-defrag
+timed "remount read-write for online defrag" mount -t infiltratorfs -o rw "$TARGET" "$MOUNTPOINT"; MOUNTED=1
+[[ "$(sha256sum "$defrag_file" | awk '{print $1}')" == "$defrag_hash_before" ]] && pass "Fragmented file survived snapshot boundary" || fail "Fragmented file changed before defrag"
+[[ "$(python3 -c 'import os,sys; print(os.getxattr(sys.argv[1], b"user.infiltratorfs-defrag").decode())' "$defrag_file")" == preserved ]] && pass "Defrag xattr fixture survived snapshot boundary" || fail "Defrag xattr fixture was lost"
+
+timed "installed infilfs-optimize online defrag" infilfs-optimize --defrag --max-mib 64 --passes 64 "$defrag_file"
+defrag_after="$(infilfs-optimize --metrics "$defrag_file")"
+printf '%s\n' "$defrag_after"
+defrag_after_extents="$(sed -nE 's/.*extents=([0-9]+).*/\1/p' <<<"$defrag_after" | head -n1)"
+if [[ "$defrag_after_extents" =~ ^[0-9]+$ ]] && [[ "$defrag_before_extents" =~ ^[0-9]+$ ]] && (( defrag_after_extents < defrag_before_extents )); then
+    pass "Online defrag reduced extent count ($defrag_before_extents -> $defrag_after_extents)"
+else
+    fail "Online defrag did not reduce extent count (${defrag_before_extents:-?} -> ${defrag_after_extents:-?})"
+fi
+[[ "$(sha256sum "$defrag_file" | awk '{print $1}')" == "$defrag_hash_before" ]] && pass "Online defrag preserved file SHA-256" || fail "Online defrag changed file contents"
+[[ "$(sha256sum "$defrag_link" | awk '{print $1}')" == "$defrag_hash_before" ]] && pass "Online defrag preserved hard-link data" || fail "Online defrag changed hard-link data"
+[[ "$(stat -c '%i' "$defrag_file")" == "$defrag_ino_before" && "$(stat -c '%i' "$defrag_link")" == "$defrag_ino_before" ]] && pass "Online defrag preserved inode/hard-link identity" || fail "Online defrag changed inode identity"
+[[ "$(python3 -c 'import os,sys; print(os.getxattr(sys.argv[1], b"user.infiltratorfs-defrag").decode())' "$defrag_file")" == preserved ]] && pass "Online defrag preserved xattrs" || fail "Online defrag lost xattrs"
+[[ "$(stat -c '%y' "$defrag_file")" == "$defrag_mtime_before" ]] && pass "Online defrag preserved mtime" || fail "Online defrag changed mtime"
+[[ "$(stat -c '%z' "$defrag_file")" == "$defrag_ctime_before" ]] && pass "Online defrag preserved ctime" || fail "Online defrag changed ctime"
+
 section "Namespace mutation capability probes"
 printf 'rename probe\n' >"$MOUNTPOINT/rename-source.txt"; mv "$MOUNTPOINT/rename-source.txt" "$MOUNTPOINT/rename-destination.txt"
 [[ -f "$MOUNTPOINT/rename-destination.txt" ]] && pass "Rename succeeds" || fail "Rename lost destination"
@@ -375,6 +444,8 @@ sync
 timed "unmount after write workload" umount "$MOUNTPOINT"; MOUNTED=0
 [[ "$(infilfs-tool "$TARGET" cat /snapshot-live.txt)" == snapshot-after-native ]] && pass "Live generation changed while a snapshot was retained" || fail "Live snapshot test content mismatch"
 [[ "$(infilfs-tool "$TARGET" snapshot-cat before-native-rw /snapshot-live.txt)" == snapshot-before-native ]] && pass "Retained snapshot preserved its original generation" || fail "Retained snapshot content changed"
+infilfs-tool "$TARGET" snapshot-cat before-online-defrag /defrag-live.bin >"$WORKDIR/defrag-snapshot.bin"
+[[ "$(sha256sum "$WORKDIR/defrag-snapshot.bin" | awk '{print $1}')" == "$defrag_hash_before" ]] && pass "Pre-defrag retained snapshot still owns the original file data" || fail "Online defrag damaged retained snapshot data"
 if command -v infilfs-scrub >/dev/null 2>&1; then timed "post-write offline scrub" infilfs-scrub "$TARGET" && pass "Post-write scrub is clean" || fail "Post-write scrub found corruption"; fi
 if command -v fsck.infiltratorfs >/dev/null 2>&1; then timed "post-write fsck.infiltratorfs" fsck.infiltratorfs -n "$TARGET" && pass "Post-write fsck wrapper is clean" || fail "Post-write fsck wrapper failed"; fi
 
@@ -391,6 +462,11 @@ cmp -s "$WORKDIR/inline.src" "$MOUNTPOINT/inline.txt" && pass "Inline data survi
 [[ "$(python3 -c 'import os,sys; print(os.getxattr(sys.argv[1], b"trusted.infiltratorfs-test").decode())' "$MOUNTPOINT/inline.txt")" == trusted ]] && pass "Trusted xattr survives unmount/remount" || fail "Trusted xattr changed across remount"
 [[ "$(stat -c '%b' "$MOUNTPOINT/many-files")" -gt 8 && "$(stat -c '%b' "$MOUNTPOINT/symlink-probe")" == 8 ]] && pass "Directory/symlink allocation reporting survives remount" || fail "Directory/symlink allocation reporting changed across remount"
 [[ "$(stat -c '%s' "$MOUNTPOINT/fsync-publications.bin")" == 819200 ]] && pass "Repeated fsync result survives unmount/remount" || fail "Repeated fsync result changed across remount"
+ro_defrag_metrics="$(infilfs-optimize --metrics "$MOUNTPOINT/defrag-live.bin")"
+printf '%s\n' "$ro_defrag_metrics"
+ro_defrag_extents="$(sed -nE 's/.*extents=([0-9]+).*/\1/p' <<<"$ro_defrag_metrics" | head -n1)"
+[[ "$ro_defrag_extents" == "$defrag_after_extents" ]] && pass "Optimized extent layout survives read-only remount" || fail "Optimized extent layout changed across remount (${defrag_after_extents:-?} -> ${ro_defrag_extents:-?})"
+[[ "$(sha256sum "$MOUNTPOINT/defrag-live.bin" | awk '{print $1}')" == "$defrag_hash_before" ]] && pass "Defragmented file survives read-only remount" || fail "Defragmented file changed across remount"
 [[ -p "$MOUNTPOINT/native.fifo" && -S "$MOUNTPOINT/native.socket" && -c "$MOUNTPOINT/native.char" && -b "$MOUNTPOINT/native.block" ]] && pass "Special-node types survive unmount/remount" || fail "Special-node type changed across remount"
 python3 - "$MOUNTPOINT/mmap.bin" <<'PY'
 import sys
