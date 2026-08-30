@@ -176,15 +176,27 @@ if(WIN32)
         ${CMAKE_CURRENT_BINARY_DIR}/infiltratorfs-windows-version.rc
         @ONLY)
 
+    add_library(infilfs_windows_bridge STATIC
+        tools/windows/infiltratorfs-windows-bridge.c)
+    target_include_directories(infilfs_windows_bridge PUBLIC tools/windows)
+    target_link_libraries(infilfs_windows_bridge PUBLIC
+        infilfs_win32 shell32 ole32)
+    infilfs_enable_warnings(infilfs_windows_bridge)
+
     add_executable(infiltratorfs-windows WIN32
         tools/windows/infiltratorfs-windows-entry.c
-        tools/windows/infiltratorfs-windows-bridge.c
         ${CMAKE_CURRENT_BINARY_DIR}/infiltratorfs-windows-version.rc)
     target_include_directories(infiltratorfs-windows PRIVATE tools/windows)
     target_link_libraries(infiltratorfs-windows PRIVATE
-        infilfs_win32 comdlg32 shell32 ole32)
+        infilfs_windows_bridge comdlg32)
     target_compile_definitions(infiltratorfs-windows PRIVATE
         INFILFS_VERSION_W=L\"${PROJECT_VERSION}\")
+
+    add_executable(infilfs-win32-projfs-bridge
+        tests/win32-projfs-bridge.c)
+    target_link_libraries(infilfs-win32-projfs-bridge PRIVATE
+        infilfs_windows_bridge)
+    infilfs_enable_warnings(infilfs-win32-projfs-bridge)
     if(MSVC)
         target_link_options(infiltratorfs-windows PRIVATE
             "/MANIFESTUAC:\"level='requireAdministrator' uiAccess='false'\"")

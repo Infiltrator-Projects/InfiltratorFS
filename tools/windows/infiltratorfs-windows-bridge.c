@@ -1300,8 +1300,17 @@ int infs_windows_bridge_start(struct infs_volume *volume, HWND owner,
     if (drive_out && drive_out_count)
         wcsncpy_s(drive_out, drive_out_count, g_bridge.drive, _TRUNCATE);
 
-    wchar_t explorer_path[4] = {g_bridge.drive[0], L':', L'\\', L'\0'};
-    ShellExecuteW(owner, L"open", explorer_path, NULL, NULL, SW_SHOWNORMAL);
+    wchar_t no_explorer[8] = {0};
+    DWORD no_explorer_length = GetEnvironmentVariableW(
+        L"INFILTRATORFS_BRIDGE_NO_EXPLORER", no_explorer,
+        (DWORD)(sizeof(no_explorer) / sizeof(no_explorer[0])));
+    if (!no_explorer_length) {
+        wchar_t explorer_path[4] = {
+            g_bridge.drive[0], L':', L'\\', L'\0'
+        };
+        ShellExecuteW(owner, L"open", explorer_path,
+                      NULL, NULL, SW_SHOWNORMAL);
+    }
     return 1;
 }
 
