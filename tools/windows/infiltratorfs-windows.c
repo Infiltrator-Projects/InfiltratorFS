@@ -16,6 +16,7 @@
 #include "infilfs/status.h"
 #include "infilfs/volume.h"
 #include "infilfs/win32_io.h"
+#include "infiltratorfs-windows-bridge.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -37,6 +38,8 @@
 #define IDC_SCRUB        1008
 #define IDC_CONTENTS     1009
 #define IDC_STATUS       1010
+#define IDC_MOUNT_DRIVE  1011
+#define IDC_UNMOUNT_DRIVE 1012
 
 #define IDM_FILE_REFRESH 2001
 #define IDM_FILE_OPEN    2002
@@ -96,6 +99,8 @@ static void set_status_code(const wchar_t *action, infs_status status)
 
 static void close_volume(void)
 {
+    if (infs_windows_bridge_active())
+        infs_windows_bridge_stop();
     if (g_volume_open) {
         infs_volume_close(&g_volume);
         memset(&g_volume, 0, sizeof(g_volume));
@@ -118,11 +123,21 @@ static struct target_volume *selected_target(void)
 static void update_buttons(void)
 {
     int have_target = selected_target() != NULL;
-    EnableWindow(GetDlgItem(g_main_window, IDC_FORMAT), have_target);
-    EnableWindow(GetDlgItem(g_main_window, IDC_OPEN), have_target);
-    EnableWindow(GetDlgItem(g_main_window, IDC_ADD_FILES), g_volume_open);
-    EnableWindow(GetDlgItem(g_main_window, IDC_ADD_FOLDER), g_volume_open);
-    EnableWindow(GetDlgItem(g_main_window, IDC_SCRUB), g_volume_open);
+    int bridge_active = infs_windows_bridge_active();
+    EnableWindow(GetDlgItem(g_main_window, IDC_FORMAT),
+                 have_target && !bridge_active);
+    EnableWindow(GetDlgItem(g_main_window, IDC_OPEN),
+                 have_target && !bridge_active);
+    EnableWindow(GetDlgItem(g_main_window, IDC_ADD_FILES),
+                 g_volume_open && !bridge_active);
+    EnableWindow(GetDlgItem(g_main_window, IDC_ADD_FOLDER),
+                 g_volume_open && !bridge_active);
+    EnableWindow(GetDlgItem(g_main_window, IDC_SCRUB),
+                 g_volume_open && !bridge_active);
+    EnableWindow(GetDlgItem(g_main_window, IDC_MOUNT_DRIVE),
+                 g_volume_open && !bridge_active);
+    EnableWindow(GetDlgItem(g_main_window, IDC_UNMOUNT_DRIVE),
+                 bridge_active);
 }
 
 static void trim_volume_slash(const wchar_t *volume_name,
@@ -990,6 +1005,41 @@ static void add_folder_dialog(void)
     CoTaskMemFree(item);
 }
 
+static void mount_windows_drive(void)
+{
+    if (!g_volume_open || infs_windows_bridge_active())
+        return;
+
+    wchar_t drive[3] = {0};
+    set_status(L"Starting driverless Windows bridge ...");
+    if (!infs_windows_bridge_start(&g_volume, g_main_window,
+                                   drive,
+                                   sizeof(drive) / sizeof(drive[0]))) {
+        update_buttons();
+        return;
+    }
+
+    wchar_t message[256];
+    _snwprintf_s(message, sizeof(message) / sizeof(message[0]), _TRUNCATE,
+                 L"Mounted as %s\\ using the Windows Projected File System. "
+                 L"Files opened in Explorer are read from InfiltratorFS and "
+                 L"changes are committed back on close.",
+                 drive);
+    set_status(message);
+    update_buttons();
+}
+
+static void unmount_windows_drive(void)
+{
+    if (!infs_windows_bridge_active())
+        return;
+    set_status(L"Flushing and unmounting Windows bridge ...");
+    infs_windows_bridge_stop();
+    refresh_contents();
+    set_status(L"Windows bridge unmounted and InfiltratorFS changes flushed.");
+    update_buttons();
+}
+
 static void scrub_volume(void)
 {
     if (!g_volume_open)
@@ -1019,7 +1069,7 @@ static void show_about(void)
     _snwprintf_s(message, sizeof(message) / sizeof(message[0]), _TRUNCATE,
                  L"InfiltratorFS Windows Transfer " INFILFS_VERSION_W
                  L"\n\nInfiltratorFS implementation " INFILFS_VERSION_W
-                 L"\nDisk format: %u.%u\n\nPortable InfiltratorFS core with a native Windows storage/UI adapter.\nWindows discovery includes raw physical partitions that have no drive letter or Windows filesystem driver.\n\nLicence: GPL-3.0-or-later\n\nExperimental filesystem — use backed-up or disposable media while testing.",
+                 L"\nDisk format: %u.%u\n\nPortable InfiltratorFS core with a native Windows storage/UI adapter.\nWindows discovery includes raw physical partitions that have no drive letter or Windows filesystem driver.\n\nDriverless Explorer bridge: Microsoft's inbox Projected File System (ProjFS) exposes an opened InfiltratorFS volume as a Windows drive letter. InfiltratorFS ships no custom Windows kernel driver in this mode.\n\nLicence: GPL-3.0-or-later\n\nExperimental filesystem — use backed-up or disposable media while testing.",
                  (unsigned)INFS_FORMAT_MAJOR,
                  (unsigned)INFS_FORMAT_MINOR);
     MessageBoxW(g_main_window, message, L"About InfiltratorFS",
@@ -1114,11 +1164,18 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message,
         HWND scrub = CreateWindowW(L"BUTTON", L"Scrub / Verify",
                       WS_CHILD | WS_VISIBLE, 18, 548, 125, 30,
                       hwnd, (HMENU)IDC_SCRUB, NULL, NULL);
+        HWND mount_drive = CreateWindowW(L"BUTTON", L"Mount in Explorer",
+                      WS_CHILD | WS_VISIBLE, 155, 548, 145, 30,
+                      hwnd, (HMENU)IDC_MOUNT_DRIVE, NULL, NULL);
+        HWND unmount_drive = CreateWindowW(L"BUTTON", L"Unmount Drive",
+                      WS_CHILD | WS_VISIBLE, 310, 548, 130, 30,
+                      hwnd, (HMENU)IDC_UNMOUNT_DRIVE, NULL, NULL);
         HWND status = CreateWindowW(L"STATIC", L"",
                       WS_CHILD | WS_VISIBLE | SS_LEFT,
-                      155, 553, 740, 44, hwnd, (HMENU)IDC_STATUS, NULL, NULL);
+                      455, 553, 440, 44, hwnd, (HMENU)IDC_STATUS, NULL, NULL);
         HWND controls[] = {combo, refresh, label, format, open,
-                           add_files, add_folder, list, scrub, status};
+                           add_files, add_folder, list, scrub, mount_drive,
+                           unmount_drive, status};
         for (size_t i = 0; i < sizeof(controls) / sizeof(controls[0]); ++i)
             SendMessageW(controls[i], WM_SETFONT, (WPARAM)font, TRUE);
         DragAcceptFiles(hwnd, TRUE);
@@ -1140,6 +1197,8 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message,
         case IDC_ADD_FILES: add_files_dialog(); return 0;
         case IDC_ADD_FOLDER: add_folder_dialog(); return 0;
         case IDC_SCRUB: scrub_volume(); return 0;
+        case IDC_MOUNT_DRIVE: mount_windows_drive(); return 0;
+        case IDC_UNMOUNT_DRIVE: unmount_windows_drive(); return 0;
         case IDM_HELP_ABOUT: show_about(); return 0;
         case IDM_FILE_EXIT: DestroyWindow(hwnd); return 0;
         default: break;
