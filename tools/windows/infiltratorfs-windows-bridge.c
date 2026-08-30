@@ -31,6 +31,7 @@ struct bridge_alias {
 };
 
 struct bridge_identity {
+    uint8_t token[16];
     uint8_t object_id[16];
     wchar_t relative_path[INFS_PATH_MAX + 1u];
     struct bridge_identity *next;
@@ -230,46 +231,69 @@ static int bridge_version_is_ours(const PRJ_PLACEHOLDER_VERSION_INFO *version)
                   sizeof(bridge_provider_id)) == 0;
 }
 
-static void bridge_fill_version(const struct infs_attributes *attributes,
-                                PRJ_PLACEHOLDER_VERSION_INFO *version)
+static void bridge_fill_version(
+    const struct infs_attributes *attributes, const uint8_t token[16],
+    PRJ_PLACEHOLDER_VERSION_INFO *version)
 {
     memset(version, 0, sizeof(*version));
     memcpy(version->ProviderID, bridge_provider_id,
            sizeof(bridge_provider_id));
-    memcpy(version->ContentID, attributes->object_id, 16u);
+    memcpy(version->ContentID, token, 16u);
     memcpy(version->ContentID + 16u, &attributes->change_time_ns,
            sizeof(attributes->change_time_ns));
     memcpy(version->ContentID + 24u, &attributes->logical_size,
            sizeof(attributes->logical_size));
 }
 
-static struct bridge_identity *bridge_find_identity(
-    const uint8_t object_id[16])
+static struct bridge_identity *bridge_find_identity_by_token(
+    const uint8_t token[16])
 {
     for (struct bridge_identity *identity = g_bridge.identities;
          identity; identity = identity->next) {
-        if (memcmp(identity->object_id, object_id, 16u) == 0)
+        if (memcmp(identity->token, token, 16u) == 0)
             return identity;
     }
     return NULL;
 }
 
-static void bridge_remember_identity(const uint8_t object_id[16],
-                                     PCWSTR relative_path)
+static struct bridge_identity *bridge_find_identity_by_path(
+    PCWSTR relative_path)
+{
+    if (!relative_path)
+        return NULL;
+    for (struct bridge_identity *identity = g_bridge.identities;
+         identity; identity = identity->next) {
+        if (_wcsicmp(identity->relative_path, relative_path) == 0)
+            return identity;
+    }
+    return NULL;
+}
+
+static struct bridge_identity *bridge_remember_identity(
+    const uint8_t object_id[16], PCWSTR relative_path)
 {
     if (!relative_path || wcslen(relative_path) > INFS_PATH_MAX)
-        return;
-    struct bridge_identity *identity = bridge_find_identity(object_id);
+        return NULL;
+
+    struct bridge_identity *identity =
+        bridge_find_identity_by_path(relative_path);
     if (!identity) {
         identity = calloc(1, sizeof(*identity));
         if (!identity)
-            return;
-        memcpy(identity->object_id, object_id, 16u);
+            return NULL;
+        GUID token;
+        if (FAILED(CoCreateGuid(&token))) {
+            free(identity);
+            return NULL;
+        }
+        memcpy(identity->token, &token, 16u);
         identity->next = g_bridge.identities;
         g_bridge.identities = identity;
     }
+    memcpy(identity->object_id, object_id, 16u);
     wcsncpy_s(identity->relative_path, INFS_PATH_MAX + 1u,
               relative_path, _TRUNCATE);
+    return identity;
 }
 
 static int bridge_identity_relative(
@@ -278,7 +302,7 @@ static int bridge_identity_relative(
 {
     if (callback_data && bridge_version_is_ours(callback_data->VersionInfo)) {
         struct bridge_identity *identity =
-            bridge_find_identity(callback_data->VersionInfo->ContentID);
+            bridge_find_identity_by_token(callback_data->VersionInfo->ContentID);
         if (identity) {
             wcsncpy_s(out, INFS_PATH_MAX + 1u,
                       identity->relative_path, _TRUNCATE);
@@ -699,11 +723,16 @@ static HRESULT CALLBACK bridge_get_placeholder(
     PRJ_PLACEHOLDER_INFO placeholder;
     memset(&placeholder, 0, sizeof(placeholder));
     attributes_to_basic(&attributes, &placeholder.FileBasicInfo);
-    bridge_fill_version(&attributes, &placeholder.VersionInfo);
     EnterCriticalSection(&g_bridge.lock);
-    bridge_remember_identity(attributes.object_id,
-                             callback_data->FilePathName);
+    struct bridge_identity *identity =
+        bridge_remember_identity(attributes.object_id,
+                                 callback_data->FilePathName);
+    if (identity)
+        bridge_fill_version(&attributes, identity->token,
+                            &placeholder.VersionInfo);
     LeaveCriticalSection(&g_bridge.lock);
+    if (!identity)
+        return E_OUTOFMEMORY;
     return g_projfs.write_placeholder(
         callback_data->NamespaceVirtualizationContext,
         callback_data->FilePathName, &placeholder, sizeof(placeholder));
