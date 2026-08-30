@@ -20,6 +20,17 @@
 
 #define BRIDGE_READ_CHUNK (4u * 1024u * 1024u)
 
+#define BRIDGE_NOTIFY_PERSIST_MASK ( \
+    PRJ_NOTIFY_FILE_OVERWRITTEN | \
+    PRJ_NOTIFY_FILE_HANDLE_CLOSED_FILE_MODIFIED | \
+    PRJ_NOTIFY_FILE_HANDLE_CLOSED_FILE_DELETED | \
+    PRJ_NOTIFY_FILE_RENAMED | \
+    PRJ_NOTIFY_HARDLINK_CREATED | \
+    PRJ_NOTIFY_FILE_PRE_CONVERT_TO_FULL)
+
+#define BRIDGE_NOTIFY_ROOT_MASK ( \
+    PRJ_NOTIFY_NEW_FILE_CREATED | BRIDGE_NOTIFY_PERSIST_MASK)
+
 struct bridge_dir_entry {
     wchar_t name[INFS_NAME_MAX + 1u];
     struct infs_attributes attributes;
@@ -1017,6 +1028,26 @@ static HRESULT CALLBACK bridge_notification(
         status = bridge_create_empty(source, is_directory ? 1 : 0);
         if (status == INFS_STATUS_OK)
             status = infs_volume_sync(g_bridge.volume);
+        operation_parameters->PostCreate.NotificationMask =
+            BRIDGE_NOTIFY_PERSIST_MASK;
+        break;
+
+    case PRJ_NOTIFICATION_FILE_OVERWRITTEN:
+        /*
+         * Do not import here: CREATE_ALWAYS/overwrite notifications arrive
+         * before the writer necessarily closes its handle. Keep receiving the
+         * close notification and commit the completed file there.
+         */
+        operation_parameters->PostCreate.NotificationMask =
+            BRIDGE_NOTIFY_PERSIST_MASK;
+        break;
+
+    case PRJ_NOTIFICATION_FILE_PRE_CONVERT_TO_FULL:
+        /*
+         * A projected file is about to become locally writable. The close
+         * notification below is the durability boundary back to
+         * InfiltratorFS.
+         */
         break;
 
     case PRJ_NOTIFICATION_FILE_HANDLE_CLOSED_FILE_MODIFIED:
@@ -1064,6 +1095,8 @@ static HRESULT CALLBACK bridge_notification(
                 bridge_add_alias(old_relative, destination_file_name);
                 bridge_update_identity_prefix(old_relative,
                                               destination_file_name);
+                operation_parameters->PostRename.NotificationMask =
+                    BRIDGE_NOTIFY_PERSIST_MASK;
                 status = infs_volume_sync(g_bridge.volume);
             }
         }
@@ -1284,11 +1317,7 @@ int infs_windows_bridge_start(struct infs_volume *volume, HWND owner,
     memset(&notification, 0, sizeof(notification));
     notification.NotificationRoot = L"";
     notification.NotificationBitMask =
-        PRJ_NOTIFY_NEW_FILE_CREATED |
-        PRJ_NOTIFY_FILE_HANDLE_CLOSED_FILE_MODIFIED |
-        PRJ_NOTIFY_FILE_HANDLE_CLOSED_FILE_DELETED |
-        PRJ_NOTIFY_FILE_RENAMED |
-        PRJ_NOTIFY_HARDLINK_CREATED;
+        BRIDGE_NOTIFY_ROOT_MASK;
 
     PRJ_STARTVIRTUALIZING_OPTIONS options;
     memset(&options, 0, sizeof(options));
