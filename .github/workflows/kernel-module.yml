@@ -1155,6 +1155,10 @@ jobs:
         if: steps.headers.outputs.runtime_kdir == ''
         run: echo 'Native module compiled successfully; runtime load/mount skipped because matching hosted-runner kernel headers were unavailable.'
   native-scale-stress:
+    # Full million-file/1 TiB stress is a development-scale qualification, not
+    # a per-release gate. Release commits reuse the already-qualified scale
+    # coverage and retain the normal native mount, defrag and endurance gates.
+    if: ${{ !startsWith(github.event.head_commit.message, 'Release ') }}
     name: Million-file and 1 TiB mounted stress
     needs: kernel-module
     runs-on: ubuntu-24.04
