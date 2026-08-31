@@ -5,6 +5,16 @@ on:
   push:
     branches:
       - main
+    paths:
+      - 'kernel/**'
+      - 'src/**'
+      - 'include/**'
+      - 'tools/**'
+      - 'tests/**'
+      - 'packaging/**'
+      - 'CMakeLists.txt'
+      - '.gitmodules'
+      - '.github/workflows/kernel-module.yml'
   workflow_dispatch:
 
 permissions:
@@ -17,18 +27,6 @@ concurrency:
 jobs:
   kernel-module:
     name: Build and qualify out-of-tree VFS module
-    if: >-
-      github.event_name != 'push' ||
-      startsWith(github.event.head_commit.message, 'Release ') ||
-      contains(toJson(github.event.commits), 'kernel/') ||
-      contains(toJson(github.event.commits), 'src/') ||
-      contains(toJson(github.event.commits), 'include/') ||
-      contains(toJson(github.event.commits), 'tools/') ||
-      contains(toJson(github.event.commits), 'tests/') ||
-      contains(toJson(github.event.commits), 'packaging/') ||
-      contains(toJson(github.event.commits), 'CMakeLists.txt') ||
-      contains(toJson(github.event.commits), '.gitmodules') ||
-      contains(toJson(github.event.commits), '.github/workflows/kernel-module.yml')
     runs-on: ubuntu-24.04
     steps:
       - name: Check out source
