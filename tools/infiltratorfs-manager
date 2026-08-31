@@ -103,13 +103,8 @@ class Target:
 
 
 def discover_partitions() -> list[Target]:
-    result = capture(
-        "lsblk",
-        "-J",
-        "-b",
-        "-o",
-        "NAME,PATH,SIZE,TYPE,RM,PKNAME,TRAN,FSTYPE,LABEL,MOUNTPOINTS",
-    )
+    result = capture("lsblk", "-J", "-b", "-o",
+                     "NAME,PATH,SIZE,TYPE,RM,PKNAME,TRAN,FSTYPE,LABEL,MOUNTPOINTS")
     if result.returncode:
         raise RuntimeError(result.stderr.strip() or "Could not enumerate storage devices.")
     try:
