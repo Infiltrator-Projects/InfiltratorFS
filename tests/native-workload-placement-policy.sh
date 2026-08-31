@@ -28,6 +28,7 @@ grep -Fq 'infilfs_native_choose_scored_extent' "$data"
 grep -Fq 'primary = infilfs_native_block_distance(candidate, preferred);' "$data"
 grep -Fq 'secondary = U64_MAX - (extent_end - (candidate + wanted));' "$data"
 grep -Fq 'primary = extent->count - wanted;' "$data"
+grep -Fq 'if (workload == INFILFS_DATA_WORKLOAD_SEQUENTIAL &' "$data"
 grep -Fq 'allocation_locality_scored' "$data"
 grep -Fq 'allocation_best_fit' "$data"
 
