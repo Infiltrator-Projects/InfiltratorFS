@@ -84,7 +84,8 @@ jobs:
               dnf -y builddep libblockdev udisks2 gnome-disk-utility
               dnf -y install cargo cmake gcc gcc-c++ git make rust \
                 autoconf automake libtool \
-                gettext-devel glib2-devel gobject-introspection-devel \
+                blueprint-compiler gettext-devel glib2-devel \
+                gobject-introspection-devel gtk4-devel libadwaita-devel \
                 gtk-doc meson ninja-build python3-bytesize python3-gobject
 
               cmake -S . -B build-desktop -DCMAKE_BUILD_TYPE=Release
