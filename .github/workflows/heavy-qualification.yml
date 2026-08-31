@@ -25,7 +25,11 @@ permissions:
 
 concurrency:
   group: heavy-filesystem-qualification-${{ github.ref }}
-  cancel-in-progress: true
+  # A release commit reuses the already-running qualified storage/core source
+  # and must not cancel that expensive evidence run merely because CMake's
+  # version changed. Ordinary development storage/core pushes still replace
+  # stale heavy work with the newest source.
+  cancel-in-progress: ${{ github.event_name == 'push' && !startsWith(github.event.head_commit.message, 'Release ') }}
 
 jobs:
   native-scale-stress:
