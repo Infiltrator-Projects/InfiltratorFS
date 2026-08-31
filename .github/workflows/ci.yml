@@ -47,18 +47,14 @@ jobs:
     name: GNOME Disks formatter integration
     if: >-
       github.event_name != 'push' ||
-      (
-        !startsWith(github.event.head_commit.message, 'Release ') &&
-        (
-          contains(toJson(github.event.commits), 'packaging/libblockdev-infiltratorfs.patch') ||
-          contains(toJson(github.event.commits), 'packaging/udisks2-infiltratorfs-display.patch') ||
-          contains(toJson(github.event.commits), 'packaging/gnome-disks-infiltratorfs.patch') ||
-          contains(toJson(github.event.commits), 'tests/libblockdev-formatter-smoke.py') ||
-          contains(toJson(github.event.commits), 'tools/mkfs.infilfs') ||
-          contains(toJson(github.event.commits), 'tools/mkfs.infiltratorfs') ||
-          contains(toJson(github.event.commits), 'tools/infilfs-inspect.c')
-        )
-      )
+      startsWith(github.event.head_commit.message, 'Release ') ||
+      contains(toJson(github.event.commits), 'packaging/libblockdev-infiltratorfs.patch') ||
+      contains(toJson(github.event.commits), 'packaging/udisks2-infiltratorfs-display.patch') ||
+      contains(toJson(github.event.commits), 'packaging/gnome-disks-infiltratorfs.patch') ||
+      contains(toJson(github.event.commits), 'tests/libblockdev-formatter-smoke.py') ||
+      contains(toJson(github.event.commits), 'tools/mkfs.infilfs') ||
+      contains(toJson(github.event.commits), 'tools/mkfs.infiltratorfs') ||
+      contains(toJson(github.event.commits), 'tools/infilfs-inspect.c')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
