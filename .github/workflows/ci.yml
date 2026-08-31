@@ -448,7 +448,25 @@ jobs:
           grep -Fq 'Native build commands:' dist/native-installer-dry-run.txt
           grep -Fq 'Native kernel module commands:' dist/native-installer-dry-run.txt
           test ! -e build/infilfs-fuse
-          ! dpkg-deb --contents "$deb" | grep -q 'usr/bin/infilfs-fuse$'
+          deb_contents="$(dpkg-deb --contents "$deb")"
+          ! grep -q 'usr/bin/infilfs-fuse
+          depends="$(dpkg-deb --field "$deb" Depends)"
+          for dependency in dkms kmod policykit-1 util-linux xdg-utils python3 python3-gi gir1.2-gtk-3.0; do
+            grep -Eq "(^|, )${dependency}([ ,]|$)" <<<"$depends"
+          done
+          ! grep -Eqi '(^|[, ])(fuse3|libfuse3-3)([, ]|$)' <<<"$depends"
+          test "$(dpkg-deb --field "$deb" X-InfiltratorFS-Build)" = generic-apt
+          grep -Fq '+native1' support/installer/bootstrap.sh
+          grep -Fq 'INFILTRATORFS_BUILD_IDENTITY=native-local' support/installer/bootstrap.sh
+          grep -Fq 'bash "$ROOT/packaging/build-linux-packages.sh"' support/installer/bootstrap.sh
+          rm -f dist/native-installer-dry-run.txt
+      - name: Upload Linux installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: InfiltratorFS-Linux
+          path: dist/*
+          if-no-files-found: error
+ <<<"$deb_contents"
           depends="$(dpkg-deb --field "$deb" Depends)"
           for dependency in dkms kmod policykit-1 util-linux xdg-utils python3 python3-gi gir1.2-gtk-3.0; do
             grep -Eq "(^|, )${dependency}([ ,]|$)" <<<"$depends"
