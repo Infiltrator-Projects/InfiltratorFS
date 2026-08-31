@@ -248,7 +248,7 @@ jobs:
 
   clang:
     name: Clang conformance
-    runs-on: linux-native
+    runs-on: ubuntu-24.04
     env:
       CC: clang
     steps:
@@ -265,7 +265,7 @@ jobs:
 
   sanitizers:
     name: ASan and UBSan
-    runs-on: linux-native
+    runs-on: ubuntu-24.04
     env:
       ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
       UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
@@ -286,7 +286,7 @@ jobs:
 
   analyzer:
     name: GCC static analyzer
-    runs-on: linux-native
+    runs-on: ubuntu-24.04
     steps:
       - name: Check out source
         uses: actions/checkout@v6
