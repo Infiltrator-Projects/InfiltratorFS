@@ -224,7 +224,7 @@ static void layout_controls(HWND hwnd)
     const int right = margin + sidebar + gap;
     int right_width = width - right - margin;
     int status_y = height - 50;
-    int list_y = 166;
+    int list_y = body_top + 104;
     int list_height = status_y - list_y - 14;
     if (list_height < 240)
         list_height = 240;
