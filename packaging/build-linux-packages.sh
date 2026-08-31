@@ -13,6 +13,9 @@ version="$(sed -n 's/^project(InfiltratorFS VERSION \([^ ]*\) LANGUAGES C)$/\1/p
 package_version="${INFILTRATORFS_PACKAGE_VERSION:-$version}"
 build_identity="${INFILTRATORFS_BUILD_IDENTITY:-generic-apt}"
 emit_run="${INFILTRATORFS_EMIT_RUN:-1}"
+integration_bundle="${INFILTRATORFS_OS_INTEGRATION_BUNDLE_DIR:-}"
+require_integration="${INFILTRATORFS_REQUIRE_OS_INTEGRATION:-0}"
+integration_enabled=0
 
 [[ "$package_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\+native[0-9]+)?$ ]] || {
     echo "Invalid InfiltratorFS package version: $package_version" >&2
@@ -26,6 +29,22 @@ case "$emit_run" in
     0|1) ;;
     *) echo "INFILTRATORFS_EMIT_RUN must be 0 or 1." >&2; exit 1 ;;
 esac
+case "$require_integration" in
+    0|1) ;;
+    *) echo "INFILTRATORFS_REQUIRE_OS_INTEGRATION must be 0 or 1." >&2; exit 1 ;;
+esac
+if [[ -n "$integration_bundle" ]]; then
+    for required in gnome-disks libbd_fs.so manifest; do
+        [[ -s "$integration_bundle/$required" ]] || {
+            echo "Desktop integration bundle is missing $required." >&2
+            exit 1
+        }
+    done
+    integration_enabled=1
+elif [[ "$require_integration" = 1 ]]; then
+    echo "This package build requires the Ubuntu/Mint desktop integration bundle." >&2
+    exit 1
+fi
 [[ -f src/infiltratr-common/CMakeLists.txt ]] || {
     echo "The pinned Infiltratr Common submodule is not initialised." >&2
     exit 1
@@ -47,6 +66,15 @@ rm -f "$package_root/usr/bin/infilfs-fuse"
 install -d "$package_root/usr/share/doc/infiltratorfs"
 install -m 0644 LICENSE "$package_root/usr/share/doc/infiltratorfs/copyright"
 install -m 0644 README.md "$package_root/usr/share/doc/infiltratorfs/README.md"
+if [[ "$integration_enabled" = 1 ]]; then
+    install -d "$package_root/usr/lib/infiltratorfs/os-integration"
+    install -m 0755 "$integration_bundle/gnome-disks" \
+        "$package_root/usr/lib/infiltratorfs/os-integration/gnome-disks"
+    install -m 0644 "$integration_bundle/libbd_fs.so" \
+        "$package_root/usr/lib/infiltratorfs/os-integration/libbd_fs.so"
+    install -m 0644 "$integration_bundle/manifest" \
+        "$package_root/usr/lib/infiltratorfs/os-integration/manifest"
+fi
 
 # DKMS source must be self-contained. Every RW composition file is required;
 # omitting an implementation include makes host-side DKMS builds fail even
@@ -76,6 +104,14 @@ EOF
 
 install -d "$package_root/DEBIAN"
 installed_size="$(du -sk "$package_root/usr" | cut -f1)"
+desktop_depends=""
+desktop_recommends=", udisks2"
+desktop_identity="core-only"
+if [[ "$integration_enabled" = 1 ]]; then
+    desktop_depends=", udisks2, gnome-disk-utility (>= 46~), gnome-disk-utility (<< 47~), libblockdev-fs3 (>= 3.1~), libblockdev-fs3 (<< 3.2~)"
+    desktop_recommends=""
+    desktop_identity="ubuntu24.04-mint22-bundled"
+fi
 cat > "$package_root/DEBIAN/control" <<EOF
 Package: infiltratorfs
 Version: ${package_version}
@@ -84,8 +120,9 @@ Priority: optional
 Architecture: ${architecture}
 Maintainer: The First Infiltrator
 X-InfiltratorFS-Build: ${build_identity}
-Depends: dkms, kmod, policykit-1, util-linux, xdg-utils, python3, python3-gi, gir1.2-gtk-3.0
-Recommends: linux-headers-generic, udev, udisks2
+X-InfiltratorFS-Desktop-Integration: ${desktop_identity}
+Depends: dkms, kmod, policykit-1, util-linux, xdg-utils, python3, python3-gi, gir1.2-gtk-3.0${desktop_depends}
+Recommends: linux-headers-generic, udev${desktop_recommends}
 Installed-Size: ${installed_size}
 Homepage: https://github.com/Infiltrator-Projects/InfiltratorFS
 Description: native Linux InfiltratorFS filesystem and tools
@@ -188,6 +225,9 @@ else
     }
 fi
 rm -f /usr/bin/infilfs-fuse
+if [ -x /usr/lib/infiltratorfs/infiltratorfs-os-integration ]; then
+    /usr/lib/infiltratorfs/infiltratorfs-os-integration install
+fi
 if command -v udevadm >/dev/null 2>&1; then
     udevadm control --reload-rules || true
     udevadm trigger --subsystem-match=block --action=change || true
@@ -200,8 +240,13 @@ chmod 0755 "$package_root/DEBIAN/postinst"
 cat > "$package_root/DEBIAN/prerm" <<EOF
 #!/bin/sh
 set -e
-if [ "\${1:-}" = remove ] && command -v dkms >/dev/null 2>&1; then
-    dkms remove -m infiltratorfs -v '${package_version}' --all || true
+if [ "\${1:-}" = remove ]; then
+    if [ -x /usr/lib/infiltratorfs/infiltratorfs-os-integration ]; then
+        /usr/lib/infiltratorfs/infiltratorfs-os-integration remove
+    fi
+    if command -v dkms >/dev/null 2>&1; then
+        dkms remove -m infiltratorfs -v '${package_version}' --all || true
+    fi
 fi
 exit 0
 EOF
@@ -234,6 +279,8 @@ for required in \
     'usr/sbin/mount.infiltratorfs$' \
     'usr/sbin/fsck.infiltratorfs$' \
     'usr/lib/infiltratorfs/infiltratorfs-manager-helper$' \
+    'usr/lib/infiltratorfs/infiltratorfs-os-integration$' \
+    'usr/lib/infiltratorfs/patch-mintstick.py$' \
     'usr/lib/udev/rules.d/59-infiltratorfs.rules$' \
     'usr/share/applications/infiltratorfs-manager.desktop$' \
     "usr/src/infiltratorfs-${package_version}/dkms.conf$" \
@@ -253,6 +300,16 @@ for required in \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_ioctl.h$"; do
     grep -q "$required" "$contents"
 done
+if [[ "$integration_enabled" = 1 ]]; then
+    for required in \
+        'usr/lib/infiltratorfs/os-integration/gnome-disks$' \
+        'usr/lib/infiltratorfs/os-integration/libbd_fs.so$' \
+        'usr/lib/infiltratorfs/os-integration/manifest$'; do
+        grep -q "$required" "$contents"
+    done
+    test "$(dpkg-deb --field "$dist_dir/$deb_name" X-InfiltratorFS-Desktop-Integration)" = \
+        ubuntu24.04-mint22-bundled
+fi
 if grep -q 'usr/bin/infilfs-fuse$' "$contents"; then
     echo 'Native release package unexpectedly contains infilfs-fuse.' >&2
     exit 1
@@ -285,6 +342,9 @@ if awk '
 fi
 postinst_text="$(dpkg-deb --ctrl-tarfile "$dist_dir/$deb_name" | tar -xOf - ./postinst)"
 grep -Fq 'modprobe "$module"' <<<"$postinst_text"
+grep -Fq 'infiltratorfs-os-integration install' <<<"$postinst_text"
+prerm_text="$(dpkg-deb --ctrl-tarfile "$dist_dir/$deb_name" | tar -xOf - ./prerm)"
+grep -Fq 'infiltratorfs-os-integration remove' <<<"$prerm_text"
 grep -Fq 'modprobe --dry-run --verbose "$module"' <<<"$postinst_text"
 grep -Fq 'module loading is administratively disabled' <<<"$postinst_text"
 rm -f "$contents"
@@ -318,7 +378,8 @@ verify_installer() {
     trap 'rm -rf "$verify_root"' RETURN
     tail -n +"$payload_start" "$self" | tar --no-same-owner -xzf - -C "$verify_root"
     for required in CMakeLists.txt README.md support/installer/bootstrap.sh \
-        packaging/build-linux-packages.sh \
+        packaging/build-linux-packages.sh packaging/infiltratorfs-os-integration \
+        packaging/patch-mintstick.py \
         src/infiltratr-common/CMakeLists.txt kernel/Makefile kernel/infiltratorfs.c \
         kernel/infiltratorfs_format.h kernel/infiltratorfs_allocation_map.inc \
         kernel/infiltratorfs_allocation_publish.inc kernel/infiltratorfs_rw.inc \
