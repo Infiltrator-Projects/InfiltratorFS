@@ -127,6 +127,11 @@ static int infilfs_parallel_allocator_mount_init(struct super_block *sb)
     atomic64_set(&sbi->allocation_peak_active_reservations, 0);
     atomic64_set(&sbi->allocation_reservation_successes, 0);
     atomic64_set(&sbi->allocation_reservation_conflicts, 0);
+    atomic64_set(&sbi->allocation_workload_sequential, 0);
+    atomic64_set(&sbi->allocation_workload_random, 0);
+    atomic64_set(&sbi->allocation_workload_sparse, 0);
+    atomic64_set(&sbi->allocation_locality_scored, 0);
+    atomic64_set(&sbi->allocation_best_fit, 0);
 
     if (sb_rdonly(sb))
         return 0;
@@ -149,13 +154,23 @@ static void infilfs_parallel_allocator_mount_destroy(struct super_block *sb)
     if (!sbi)
         return;
     if (sbi->allocation_reservations)
-        pr_info("InfiltratorFS: parallel allocator reservations=%lld peak_active=%lld conflicts=%lld\n",
+        pr_info("InfiltratorFS: allocator reservations=%lld peak_active=%lld conflicts=%lld workload_seq=%lld workload_random=%lld workload_sparse=%lld locality_scored=%lld best_fit=%lld\n",
                 (long long)atomic64_read(
                     &sbi->allocation_reservation_successes),
                 (long long)atomic64_read(
                     &sbi->allocation_peak_active_reservations),
                 (long long)atomic64_read(
-                    &sbi->allocation_reservation_conflicts));
+                    &sbi->allocation_reservation_conflicts),
+                (long long)atomic64_read(
+                    &sbi->allocation_workload_sequential),
+                (long long)atomic64_read(
+                    &sbi->allocation_workload_random),
+                (long long)atomic64_read(
+                    &sbi->allocation_workload_sparse),
+                (long long)atomic64_read(
+                    &sbi->allocation_locality_scored),
+                (long long)atomic64_read(
+                    &sbi->allocation_best_fit));
     kvfree(sbi->allocation_reservations);
     sbi->allocation_reservations = NULL;
     sbi->allocation_reservation_bytes = 0;
@@ -255,6 +270,25 @@ static bool infilfs_parallel_range_free_locked(
             infilfs_parallel_bitmap_get(sbi->allocation_reservations, block))
             return false;
     return true;
+}
+
+static void infilfs_parallel_note_workload(
+    struct infilfs_sb_info *sbi, enum infilfs_data_workload workload)
+{
+    if (!sbi)
+        return;
+    switch (workload) {
+    case INFILFS_DATA_WORKLOAD_SEQUENTIAL:
+        atomic64_inc(&sbi->allocation_workload_sequential);
+        break;
+    case INFILFS_DATA_WORKLOAD_SPARSE:
+        atomic64_inc(&sbi->allocation_workload_sparse);
+        break;
+    case INFILFS_DATA_WORKLOAD_RANDOM:
+    default:
+        atomic64_inc(&sbi->allocation_workload_random);
+        break;
+    }
 }
 
 static void infilfs_parallel_note_active(struct infilfs_sb_info *sbi)
