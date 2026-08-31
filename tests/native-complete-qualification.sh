@@ -159,7 +159,7 @@ bash tests/native-sequential-write-scaling-policy.sh .
 bash tests/native-small-file-scaling-policy.sh .
 bash tests/native-free-extent-index-policy.sh .
 bash tests/native-parallel-allocation-policy.sh .
-          bash tests/native-workload-placement-policy.sh .
+bash tests/native-workload-placement-policy.sh .
 bash tests/native-defrag-policy.sh .
 bash tests/native-index-tree-policy.sh .
 bash tests/index-tree-format-policy.sh .
