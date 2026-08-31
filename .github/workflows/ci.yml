@@ -51,6 +51,11 @@ jobs:
       contains(toJson(github.event.commits), 'packaging/libblockdev-infiltratorfs.patch') ||
       contains(toJson(github.event.commits), 'packaging/udisks2-infiltratorfs-display.patch') ||
       contains(toJson(github.event.commits), 'packaging/gnome-disks-infiltratorfs.patch') ||
+      contains(toJson(github.event.commits), 'packaging/libblockdev-3.1-infiltratorfs.patch') ||
+      contains(toJson(github.event.commits), 'packaging/gnome-disks-46-infiltratorfs.patch') ||
+      contains(toJson(github.event.commits), 'packaging/build-noble-desktop-integration.sh') ||
+      contains(toJson(github.event.commits), 'packaging/infiltratorfs-os-integration') ||
+      contains(toJson(github.event.commits), 'packaging/patch-mintstick.py') ||
       contains(toJson(github.event.commits), 'tests/libblockdev-formatter-smoke.py') ||
       contains(toJson(github.event.commits), 'tools/mkfs.infilfs') ||
       contains(toJson(github.event.commits), 'tools/mkfs.infiltratorfs') ||
