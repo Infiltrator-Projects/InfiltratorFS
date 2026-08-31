@@ -96,8 +96,11 @@ grep -Fq 'dpkg-divert --package "$OWNER" --add --rename' "$os_helper"
 grep -Fq 'dpkg-divert --package "$OWNER" --remove --rename' "$os_helper"
 grep -Fq 'restart_udisks' "$os_helper"
 grep -Fq 'libblockdev-fs3' "$os_helper"
-grep -Fq 'GDU_OTHER_FS_TYPE_INFILTRATORFS' "$noble_gnome_patch"
-grep -Fq 'gdu-block.c' "$noble_gnome_patch"
+grep -Fq 'src/disks/gducreateotherpage.c' "$noble_gnome_patch"
+grep -Fq '{"infiltratorfs", N_("InfiltratorFS' "$noble_gnome_patch"
+grep -Fq 'src/disks/gduwindow.c' "$noble_gnome_patch"
+grep -Fq 'src/disks/gduvolumegrid.c' "$noble_gnome_patch"
+grep -Fq 'InfiltratorFS (format %s)' "$noble_gnome_patch"
 grep -Fq 'BD_FS_TECH_INFILTRATORFS' "$noble_libblockdev_patch"
 
 # Mintstick is patched from its locally installed stock files.  Exercise the
