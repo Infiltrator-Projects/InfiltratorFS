@@ -101,7 +101,7 @@ jobs:
                 python3 tests/libblockdev-formatter-smoke.py
 
               cd upstream/udisks
-              ./autogen.sh --disable-man
+              ./autogen.sh --disable-gtk-doc --disable-man
               make -j"$(nproc)"
 
               cd /workspace/upstream/gnome-disk-utility
