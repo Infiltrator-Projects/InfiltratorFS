@@ -174,7 +174,11 @@ jobs:
           test -x "dist/$installer"
           test "$(dpkg-deb --field "dist/$deb" Version)" = "$VERSION"
           test "$(dpkg-deb --field "dist/$deb" X-InfiltratorFS-Desktop-Integration)" = ubuntu24.04-mint22-bundled
-          dpkg-deb --contents "dist/$deb" | grep -q 'usr/lib/infiltratorfs/os-integration/gnome-disks          ! dpkg-deb --field "dist/$deb" Depends | grep -Eqi '(^|[, ])(fuse3|libfuse3-3)([, ]|$)'
+          dpkg-deb --contents "dist/$deb" | grep -q 'usr/lib/infiltratorfs/os-integration/gnome-disks$'
+          dpkg-deb --contents "dist/$deb" | grep -q 'usr/lib/infiltratorfs/os-integration/libbd_fs.so$'
+          dpkg-deb --contents "dist/$deb" | grep -q 'usr/lib/infiltratorfs/os-integration/manifest$'
+          ! dpkg-deb --contents "dist/$deb" | grep -q 'usr/bin/infilfs-fuse$'
+          ! dpkg-deb --field "dist/$deb" Depends | grep -Eqi '(^|[, ])(fuse3|libfuse3-3)([, ]|$)'
           for dependency in dkms kmod policykit-1 util-linux xdg-utils python3 python3-gi gir1.2-gtk-3.0; do
             dpkg-deb --field "dist/$deb" Depends | grep -Eq "(^|, )${dependency}([ ,]|$)"
           done
