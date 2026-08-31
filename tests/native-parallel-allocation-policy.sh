@@ -27,7 +27,7 @@ grep -Fq '#include "infiltratorfs_parallel_alloc.inc"' "$rw"
 grep -Fq 'data_allocation_hint' "$data"
 grep -Fq 'infiltratorfs_parallel_alloc.inc' "$package"
 grep -Fq 'parallel-allocation-ci' "$workflow"
-grep -Fq 'test "$parallel_peak" -ge 2' "$workflow"
+grep -Fq 'test "$allocator_peak" -ge 2' "$workflow"
 
 reserve_line="$(grep -n 'infilfs_parallel_reserve_data(' "$data" | tail -n1 | cut -d: -f1)"
 lock_line="$(awk -v reserve="$reserve_line" '
