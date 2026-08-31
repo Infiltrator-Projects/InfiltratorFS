@@ -8,6 +8,9 @@ mkfs="$build_dir/mkfs.infilfs"
 inspect="$build_dir/infilfs-inspect"
 rules="$repo_root/packaging/59-infiltratorfs.rules"
 udisks_patch="$repo_root/packaging/udisks2-infiltratorfs-display.patch"
+libblockdev_patch="$repo_root/packaging/libblockdev-infiltratorfs.patch"
+gnome_disks_patch="$repo_root/packaging/gnome-disks-infiltratorfs.patch"
+mkfs_alias="$repo_root/tools/mkfs.infiltratorfs"
 bootstrap="$repo_root/support/installer/bootstrap.sh"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -56,5 +59,32 @@ test -s "$udisks_patch"
 grep -Fq '"filesystem", "infiltratorfs",     "*"' "$udisks_patch"
 grep -Fq 'InfiltratorFS (format %s)' "$udisks_patch"
 grep -Fq '"filesystem", "infiltratorfs",     NULL' "$udisks_patch"
+
+# Formatting requires all three desktop-stack boundaries. libblockdev owns
+# capability discovery and mkfs execution, GNOME Disks owns its explicit
+# "Other" list, and libudisks2 owns the human-readable contents label.
+test -x "$mkfs_alias"
+test -s "$libblockdev_patch"
+test -s "$gnome_disks_patch"
+grep -Fq 'BD_FS_TECH_INFILTRATORFS' "$libblockdev_patch"
+grep -Fq 'mkfs.infiltratorfs' "$libblockdev_patch"
+grep -Fq '"--force"' "$libblockdev_patch"
+grep -Fq 'options->label' "$libblockdev_patch"
+grep -Fq 'GDU_OTHER_FS_TYPE_INFILTRATORFS' "$gnome_disks_patch"
+grep -Fq '"infiltratorfs"' "$gnome_disks_patch"
+
+# Prove the conventional helper expected by libblockdev forwards every
+# argument byte-for-byte to the qualified formatter installed beside it.
+cp "$mkfs_alias" "$tmp/mkfs.infiltratorfs"
+cat > "$tmp/mkfs.infilfs" <<'MOCK_MKFS'
+#!/usr/bin/env bash
+printf '%s\n' "$@" > "$INFILFS_MKFS_ALIAS_ARGS"
+MOCK_MKFS
+chmod 0755 "$tmp/mkfs.infiltratorfs" "$tmp/mkfs.infilfs"
+INFILFS_MKFS_ALIAS_ARGS="$tmp/mkfs-alias.args" \
+    "$tmp/mkfs.infiltratorfs" "$image" --force -L 'GNOME Disks Label'
+mapfile -t alias_args < "$tmp/mkfs-alias.args"
+expected_alias_args=("$image" --force -L 'GNOME Disks Label')
+[[ "${alias_args[*]}" == "${expected_alias_args[*]}" ]]
 
 echo 'desktop-integration: PASS'

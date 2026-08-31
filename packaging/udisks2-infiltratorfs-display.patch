@@ -1,6 +1,9 @@
 From: InfiltratorFS project
 Subject: [PATCH] udisks: add human-readable InfiltratorFS filesystem name
 
+Validated against upstream udisks commit
+c731cee133bb3240a0b91b59f9995a42aafb0ac4 (2026-08-28).
+
 GNOME Disks calls udisks_client_get_id_for_display() for the Contents
 field. Without an id_type[] entry libudisks2 deliberately falls back to
 "Unknown (infiltratorfs 0.12)" even when udev identification, mounting,
@@ -13,8 +16,8 @@ installed implementation version.
 diff --git a/udisks/udisksclient.c b/udisks/udisksclient.c
 --- a/udisks/udisksclient.c
 +++ b/udisks/udisksclient.c
-@@ -2041,6 +2041,8 @@ static const struct
-   {"filesystem", "jdb",               "*",     NC_("fs-type", "Journal for Ext"),                   NC_("fs-type", "JDB")},
+@@ -2055,6 +2055,8 @@ static const struct
+   {"filesystem", "jdb",               NULL,    NC_("fs-type", "Journal for Ext"),                   NC_("fs-type", "JDB")},
    {"filesystem", "xfs",               "*",     NC_("fs-type", "XFS (version %s)"),                  NC_("fs-type", "XFS")},
    {"filesystem", "xfs",               NULL,    NC_("fs-type", "XFS"),                               NC_("fs-type", "XFS")},
 +  {"filesystem", "infiltratorfs",     "*",     NC_("fs-type", "InfiltratorFS (format %s)"),         NC_("fs-type", "InfiltratorFS")},

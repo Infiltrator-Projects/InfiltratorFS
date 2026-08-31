@@ -272,7 +272,8 @@ if(UNIX)
 
     install(TARGETS mkfs.infilfs infilfs-inspect infilfs-tool infilfs-scrub infilfs-forensic infilfs-optimize
             RUNTIME DESTINATION bin)
-    install(PROGRAMS tools/infiltratorfs-manager DESTINATION bin)
+    install(PROGRAMS tools/infiltratorfs-manager tools/mkfs.infiltratorfs
+            DESTINATION bin)
     install(PROGRAMS tools/infiltratorfs-manager-helper
             DESTINATION lib/infiltratorfs)
     install(PROGRAMS tools/mount.infiltratorfs tools/fsck.infiltratorfs

@@ -158,6 +158,7 @@ bash tests/native-random-write-optimization-policy.sh .
 bash tests/native-sequential-write-scaling-policy.sh .
 bash tests/native-small-file-scaling-policy.sh .
 bash tests/native-free-extent-index-policy.sh .
+bash tests/native-parallel-allocation-policy.sh .
 bash tests/native-defrag-policy.sh .
 bash tests/native-index-tree-policy.sh .
 bash tests/index-tree-format-policy.sh .
@@ -180,7 +181,7 @@ make -C kernel KDIR="$KDIR"
 test "$(modinfo -F vermagic kernel/infiltratorfs.ko | awk '{print $1}')" = "$(uname -r)"
 dkms_copy="$WORK/dkms-source"
 mkdir -p "$dkms_copy"
-for file in Makefile infiltratorfs.c infiltratorfs_format.h     infiltratorfs_allocation_map.inc infiltratorfs_allocation_publish.inc     infiltratorfs_index_tree.inc infiltratorfs_directory_tree.inc     infiltratorfs_rw.inc infiltratorfs_rw_legacy.inc infiltratorfs_rw_data.inc     infiltratorfs_rw_namespace.inc infiltratorfs_rw_read_cache.inc     infiltratorfs_pagecache.inc infiltratorfs_linux_meta.inc     infiltratorfs_defrag.inc infiltratorfs_ioctl.h; do
+for file in Makefile infiltratorfs.c infiltratorfs_format.h     infiltratorfs_allocation_map.inc infiltratorfs_allocation_publish.inc     infiltratorfs_parallel_alloc.inc     infiltratorfs_index_tree.inc infiltratorfs_directory_tree.inc     infiltratorfs_rw.inc infiltratorfs_rw_legacy.inc infiltratorfs_rw_data.inc     infiltratorfs_rw_namespace.inc infiltratorfs_rw_read_cache.inc     infiltratorfs_pagecache.inc infiltratorfs_linux_meta.inc     infiltratorfs_defrag.inc infiltratorfs_ioctl.h; do
     cp "kernel/$file" "$dkms_copy/$file"
 done
 make -C "$dkms_copy" KDIR="$KDIR"

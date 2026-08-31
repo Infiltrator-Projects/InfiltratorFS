@@ -432,6 +432,40 @@ with open(p,'rb') as f: assert f.read()==exp
 PY
 pass "Shared writable mmap persists through verified writeback"
 
+section "Parallel allocation reservations"
+python3 - "$MOUNTPOINT/parallel-allocation" <<'PY'
+import hashlib, multiprocessing as mp, os, sys
+
+root = sys.argv[1]
+os.mkdir(root)
+workers = 16
+size = 4 * 1024 * 1024
+start = mp.Event()
+
+def writer(index):
+    byte = bytes([(index * 29 + 7) & 0xff])
+    start.wait()
+    path = os.path.join(root, f"writer-{index:02d}.bin")
+    with open(path, "wb", buffering=0) as stream:
+        stream.write(byte * size)
+        os.fsync(stream.fileno())
+
+processes = [mp.Process(target=writer, args=(i,)) for i in range(workers)]
+for process in processes:
+    process.start()
+start.set()
+for process in processes:
+    process.join(180)
+    assert process.exitcode == 0, (process.pid, process.exitcode)
+for index in range(workers):
+    expected = bytes([(index * 29 + 7) & 0xff]) * size
+    path = os.path.join(root, f"writer-{index:02d}.bin")
+    with open(path, "rb") as stream:
+        actual = stream.read()
+    assert hashlib.sha256(actual).digest() == hashlib.sha256(expected).digest()
+PY
+pass "Sixteen concurrent writers preserve disjoint file data"
+
 section "Free-space accounting after writes"
 sync
 read -r block_size_after blocks_after free_after avail_after < <(stat -f -c '%S %b %f %a' "$MOUNTPOINT")
@@ -442,6 +476,14 @@ printf 'Before free blocks: %s\nAfter free blocks:  %s\n' "$FREE_BEFORE" "$free_
 section "fsync, unmount, offline integrity check"
 sync
 timed "unmount after write workload" umount "$MOUNTPOINT"; MOUNTED=0
+if command -v journalctl >/dev/null 2>&1; then
+    parallel_log="$(journalctl -k --since "@${START_EPOCH}" --no-pager 2>/dev/null | grep 'parallel allocator reservations=' | tail -n1 || true)"
+else
+    parallel_log="$(dmesg | grep 'parallel allocator reservations=' | tail -n1 || true)"
+fi
+printf '%s\n' "$parallel_log"
+parallel_peak="$(sed -nE 's/.*peak_active=([0-9]+).*/\1/p' <<<"$parallel_log")"
+[[ -n "$parallel_peak" && "$parallel_peak" -ge 2 ]] && pass "Parallel allocator observed overlapping reservations (peak=$parallel_peak)" || fail "Parallel allocator did not prove overlapping reservations (${parallel_log:-no diagnostic})"
 [[ "$(infilfs-tool "$TARGET" cat /snapshot-live.txt)" == snapshot-after-native ]] && pass "Live generation changed while a snapshot was retained" || fail "Live snapshot test content mismatch"
 [[ "$(infilfs-tool "$TARGET" snapshot-cat before-native-rw /snapshot-live.txt)" == snapshot-before-native ]] && pass "Retained snapshot preserved its original generation" || fail "Retained snapshot content changed"
 infilfs-tool "$TARGET" snapshot-cat before-online-defrag /defrag-live.bin >"$WORKDIR/defrag-snapshot.bin"

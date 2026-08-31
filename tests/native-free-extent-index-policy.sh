@@ -15,7 +15,7 @@ metadata_alloc="$(sed -n '/static int infilfs_rw_tx_alloc(/,/^}/p' "$legacy")"
 grep -Fq 'infilfs_rw_free_extent_choose_reverse' <<<"$metadata_alloc"
 grep -Fq 'for (scanned = 0; scanned < total - 1u; ++scanned)' <<<"$metadata_alloc"
 
-data_alloc="$(sed -n '/static int infilfs_native_alloc_data_exact(/,/^}/p' "$data")"
+data_alloc="$(sed -n '/static int infilfs_native_alloc_data_exact_reserved(/,/^}/p' "$data")"
 grep -Fq 'infilfs_rw_free_extent_choose_forward' <<<"$data_alloc"
 grep -Fq 'for (scanned = 0; scanned < total - 1u; ++scanned)' <<<"$data_alloc"
 

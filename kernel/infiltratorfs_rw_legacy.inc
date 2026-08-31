@@ -799,6 +799,10 @@ static int infilfs_rw_mount_init(struct super_block *sb)
         goto fail;
     infilfs_allocation_cache_replace(sbi, &committed_layout);
 
+    ret = infilfs_parallel_allocator_mount_init(sb);
+    if (ret)
+        goto fail;
+
     write_lock(&sbi->bitmap_lock);
     sbi->visible_bitmap = sbi->bitmap;
     sbi->visible_bitmap_bytes = sbi->bitmap_bytes;
@@ -818,6 +822,7 @@ static int infilfs_rw_mount_init(struct super_block *sb)
     return 0;
 
 fail:
+    infilfs_parallel_allocator_mount_destroy(sb);
     write_lock(&sbi->bitmap_lock);
     sbi->visible_bitmap = NULL;
     sbi->visible_bitmap_bytes = 0;
@@ -838,6 +843,7 @@ static void infilfs_rw_mount_destroy(struct super_block *sb)
 
     if (!sbi)
         return;
+    infilfs_parallel_allocator_mount_destroy(sb);
     write_lock(&sbi->bitmap_lock);
     sbi->visible_bitmap = NULL;
     sbi->visible_bitmap_bytes = 0;
@@ -904,6 +910,8 @@ static void infilfs_rw_tx_abort(struct infilfs_rw_tx *tx)
     }
     if (tx->sbi && tx->bitmap == tx->sbi->bitmap) {
         size_t r;
+
+        write_lock(&tx->sbi->bitmap_lock);
         for (r = 0; r < tx->allocated_count; ++r) {
             u64 i;
             for (i = 0; i < tx->allocated[r].count; ++i)
@@ -928,7 +936,6 @@ static void infilfs_rw_tx_abort(struct infilfs_rw_tx *tx)
                     infilfs_rw_bitmap_set(tx->bitmap, block, true);
             }
         }
-        write_lock(&tx->sbi->bitmap_lock);
         tx->sbi->visible_bitmap = tx->sbi->bitmap;
         tx->sbi->visible_bitmap_bytes = tx->sbi->bitmap_bytes;
         write_unlock(&tx->sbi->bitmap_lock);
@@ -975,42 +982,7 @@ static int infilfs_rw_tx_defer_free(struct infilfs_rw_tx *tx,
 static int infilfs_rw_tx_record_alloc(struct infilfs_rw_tx *tx,
                                       u64 start, u64 count)
 {
-    struct infilfs_rw_free_range *grown;
-    size_t next;
-    u64 i;
-
-    if (!count || start >= tx->sbi->device_blocks ||
-        count > tx->sbi->device_blocks - start ||
-        count > tx->free_blocks)
-        return -ENOSPC;
-    for (i = 0; i < count; ++i)
-        if (infilfs_rw_bitmap_get(tx->bitmap, start + i))
-            return -EEXIST;
-
-    if (tx->allocated_count == tx->allocated_capacity) {
-        next = tx->allocated_capacity ?
-            tx->allocated_capacity * 2u : INFILFS_RW_ALLOC_RANGES_INITIAL;
-        if (next < tx->allocated_capacity ||
-            next > SIZE_MAX / sizeof(*grown))
-            return -EOVERFLOW;
-        grown = krealloc(tx->allocated, next * sizeof(*grown), GFP_NOFS);
-        if (!grown)
-            return -ENOMEM;
-        tx->allocated = grown;
-        tx->allocated_capacity = next;
-    }
-
-    if (tx->free_extent_index_valid &&
-        infilfs_rw_free_extent_index_remove(tx, start, count) != 0)
-        infilfs_rw_free_extent_index_invalidate(tx);
-
-    tx->allocated[tx->allocated_count].start = start;
-    tx->allocated[tx->allocated_count].count = count;
-    tx->allocated_count++;
-    for (i = 0; i < count; ++i)
-        infilfs_rw_bitmap_set(tx->bitmap, start + i, true);
-    tx->free_blocks -= count;
-    return 0;
+    return infilfs_parallel_tx_claim(tx, start, count, false);
 }
 
 static int infilfs_rw_tx_alloc(struct infilfs_rw_tx *tx, u64 count,
@@ -1023,8 +995,14 @@ static int infilfs_rw_tx_alloc(struct infilfs_rw_tx *tx, u64 count,
     u64 scanned;
     u64 run = 0;
     u64 start = 0;
+    unsigned int attempts = 0;
     int ret;
 
+retry:
+    run = 0;
+    start = 0;
+    if (attempts++ >= INFILFS_ALLOCATION_RESERVATION_SHARDS)
+        return -ENOSPC;
     if (!count || count > tx->free_blocks || total <= 1)
         return -ENOSPC;
 
@@ -1040,11 +1018,13 @@ static int infilfs_rw_tx_alloc(struct infilfs_rw_tx *tx, u64 count,
     candidate = hint;
 
     if (tx->free_extent_index_valid &&
-        infilfs_rw_free_extent_choose_reverse(tx, count, hint, &start)) {
+        infilfs_rw_free_extent_choose_reverse(tx, count, hint, &start) &&
+        !infilfs_parallel_range_reserved(sbi, start, count)) {
         run = count;
     } else {
         for (scanned = 0; scanned < total - 1u; ++scanned) {
-            if (!infilfs_rw_bitmap_get(tx->bitmap, candidate)) {
+            if (!infilfs_rw_bitmap_get(tx->bitmap, candidate) &&
+                !infilfs_parallel_range_reserved(sbi, candidate, 1u)) {
                 run++;
                 if (run == count) {
                     start = candidate;
@@ -1066,6 +1046,10 @@ static int infilfs_rw_tx_alloc(struct infilfs_rw_tx *tx, u64 count,
         return -ENOSPC;
 
     ret = infilfs_rw_tx_record_alloc(tx, start, count);
+    if (ret == -EAGAIN) {
+        infilfs_rw_free_extent_index_invalidate(tx);
+        goto retry;
+    }
     if (ret)
         return ret;
     sbi->metadata_alloc_hint = start > 1 ? start - 1u : total - 1u;
@@ -1078,6 +1062,7 @@ static int infilfs_rw_tx_apply_deferred(struct infilfs_rw_tx *tx)
     size_t r;
     u64 i;
 
+    write_lock(&tx->sbi->bitmap_lock);
     for (r = 0; r < tx->deferred_count; ++r) {
         u64 start = tx->deferred[r].start;
         u64 count = tx->deferred[r].count;
@@ -1097,6 +1082,7 @@ static int infilfs_rw_tx_apply_deferred(struct infilfs_rw_tx *tx)
             tx->free_blocks++;
         }
     }
+    write_unlock(&tx->sbi->bitmap_lock);
     return 0;
 }
 

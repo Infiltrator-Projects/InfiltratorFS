@@ -970,6 +970,7 @@ static int infilfs_native_operation_rollback(
      * changed the working bitmap by allocating new ranges.  Clear precisely
      * those ranges instead of copying the complete multi-megabyte bitmap back.
      */
+    write_lock(&sbi->bitmap_lock);
     for (a = pending->operation_allocated_count;
          a < pending->tx.allocated_count; ++a) {
         u64 start = pending->tx.allocated[a].start;
@@ -979,6 +980,7 @@ static int infilfs_native_operation_rollback(
         for (b = 0; b < count; ++b)
             infilfs_rw_bitmap_set(pending->tx.bitmap, start + b, false);
     }
+    write_unlock(&sbi->bitmap_lock);
     pending->tx.allocated_count = pending->operation_allocated_count;
     pending->tx.next_sb = pending->operation_next_sb;
     pending->tx.free_blocks = pending->operation_free_blocks;
@@ -1100,9 +1102,9 @@ static void infilfs_native_pending_destroy(struct super_block *sb)
     kfree(pending);
 }
 
-static int infilfs_native_alloc_data_exact(struct infilfs_native_pending *pending,
-                                           u64 count, u64 preferred,
-                                           u64 *start_out)
+static int infilfs_native_alloc_data_exact_reserved(
+    struct infilfs_native_pending *pending, u64 count, u64 preferred,
+    struct infilfs_parallel_reservation *reservation, u64 *start_out)
 {
     struct infilfs_rw_tx *tx = &pending->tx;
     struct infilfs_sb_info *sbi = tx->sbi;
@@ -1113,8 +1115,14 @@ static int infilfs_native_alloc_data_exact(struct infilfs_native_pending *pendin
     u64 start = 0;
     u64 run = 0;
     u64 i;
+    unsigned int attempts = 0;
     int ret;
 
+retry:
+    run = 0;
+    start = 0;
+    if (attempts++ >= INFILFS_ALLOCATION_RESERVATION_SHARDS)
+        return -ENOSPC;
     if (!count || count > tx->free_blocks || total <= 1)
         return -ENOSPC;
     {
@@ -1125,12 +1133,30 @@ static int infilfs_native_alloc_data_exact(struct infilfs_native_pending *pendin
             return -ENOSPC;
     }
 
+    if (reservation && reservation->active &&
+        reservation->count == count) {
+        ret = infilfs_parallel_consume_reservation(
+            tx, reservation, count, start_out);
+        if (!ret) {
+            sbi->data_alloc_hint = *start_out + count < total ?
+                *start_out + count : 1u;
+            return 0;
+        }
+        if (ret != -ENOENT && ret != -EAGAIN)
+            return ret;
+    }
+
     if (preferred > 0 && preferred < total && count <= total - preferred) {
         for (i = 0; i < count; ++i)
             if (infilfs_rw_bitmap_get(tx->bitmap, preferred + i))
                 break;
-        if (i == count) {
+        if (i == count &&
+            !infilfs_parallel_range_reserved(sbi, preferred, count)) {
             ret = infilfs_rw_tx_record_alloc(tx, preferred, count);
+            if (ret == -EAGAIN) {
+                infilfs_rw_free_extent_index_invalidate(tx);
+                goto retry;
+            }
             if (ret)
                 return ret;
             sbi->data_alloc_hint = preferred + count < total ?
@@ -1152,11 +1178,13 @@ static int infilfs_native_alloc_data_exact(struct infilfs_native_pending *pendin
     candidate = hint;
 
     if (tx->free_extent_index_valid &&
-        infilfs_rw_free_extent_choose_forward(tx, count, hint, &start)) {
+        infilfs_rw_free_extent_choose_forward(tx, count, hint, &start) &&
+        !infilfs_parallel_range_reserved(sbi, start, count)) {
         run = count;
     } else {
         for (scanned = 0; scanned < total - 1u; ++scanned) {
-            if (!infilfs_rw_bitmap_get(tx->bitmap, candidate)) {
+            if (!infilfs_rw_bitmap_get(tx->bitmap, candidate) &&
+                !infilfs_parallel_range_reserved(sbi, candidate, 1u)) {
                 if (!run)
                     start = candidate;
                 run++;
@@ -1177,11 +1205,23 @@ static int infilfs_native_alloc_data_exact(struct infilfs_native_pending *pendin
         return -ENOSPC;
 
     ret = infilfs_rw_tx_record_alloc(tx, start, count);
+    if (ret == -EAGAIN) {
+        infilfs_rw_free_extent_index_invalidate(tx);
+        goto retry;
+    }
     if (ret)
         return ret;
     sbi->data_alloc_hint = start + count < total ? start + count : 1u;
     *start_out = start;
     return 0;
+}
+
+static int infilfs_native_alloc_data_exact(
+    struct infilfs_native_pending *pending, u64 count, u64 preferred,
+    u64 *start_out)
+{
+    return infilfs_native_alloc_data_exact_reserved(
+        pending, count, preferred, NULL, start_out);
 }
 
 static void infilfs_native_block_digest(
@@ -3467,6 +3507,7 @@ static int infilfs_native_try_single_paged_overwrite(
     struct infilfs_native_pending *pending, struct inode *inode,
     const u8 write_data[INFILFS_DISK_BLOCK_SIZE], u64 pos, size_t bytes,
     const u8 old_object[INFILFS_DISK_BLOCK_SIZE],
+    struct infilfs_parallel_reservation *reservation,
     u64 *new_file_block_out, u64 *new_size_out,
     u64 *allocated_blocks_out, u8 final_tail_id[16],
     u64 *final_tail_block, u64 *final_tail_start)
@@ -3651,11 +3692,11 @@ static int infilfs_native_try_single_paged_overwrite(
         old_physical = base + logical - extent_start;
     }
 
-    ret = infilfs_native_alloc_data_exact(
+    ret = infilfs_native_alloc_data_exact_reserved(
         pending, 1,
         old_physical && old_physical + 1u < pending->tx.sbi->device_blocks ?
             old_physical + 1u : 1u,
-        &replacement_block);
+        reservation, &replacement_block);
     if (ret)
         goto out;
 
@@ -3841,7 +3882,9 @@ out:
 
 static int infilfs_native_append_chunk_locked(
     struct infilfs_native_pending *pending, struct inode *inode,
-    struct iov_iter *from, u64 pos, size_t bytes, size_t *consumed_out,
+    struct iov_iter *from, u64 pos, size_t bytes,
+    struct infilfs_parallel_reservation *reservation,
+    size_t *consumed_out,
     u64 *new_file_block_out, u64 *new_size_out, u64 *allocated_blocks_out,
     u8 final_tail_id[16], u64 *final_tail_block, u64 *final_tail_start)
 {
@@ -3912,6 +3955,7 @@ static int infilfs_native_append_chunk_locked(
         }
         ret = infilfs_native_try_single_paged_overwrite(
             pending, inode, fast_data, pos, bytes, old_object,
+            reservation,
             new_file_block_out, new_size_out, allocated_blocks_out,
             final_tail_id, final_tail_block, final_tail_start);
         kfree(fast_data);
@@ -3959,8 +4003,8 @@ generic_extent_write:
             preferred = le64_to_cpu(last->physical_block) +
                 le32_to_cpu(last->block_count);
     }
-    ret = infilfs_native_alloc_data_exact(pending, touched_blocks,
-                                          preferred, &data_start);
+    ret = infilfs_native_alloc_data_exact_reserved(
+        pending, touched_blocks, preferred, reservation, &data_start);
     if (ret)
         goto out;
     digests = kvmalloc_array(touched_blocks, sizeof(*digests), GFP_NOFS);
@@ -4102,6 +4146,7 @@ static ssize_t infilfs_native_extent_write_iter(struct inode *inode,
     struct infilfs_sb_info *sbi = INFILFS_SB(inode->i_sb);
     struct infilfs_inode_info *ii = INFILFS_I(inode);
     struct infilfs_native_pending *pending;
+    struct infilfs_parallel_reservation reservation = {0};
     size_t done = 0;
     loff_t pos = *position;
     int ret = 0;
@@ -4113,6 +4158,26 @@ static ssize_t infilfs_native_extent_write_iter(struct inode *inode,
     pending = infilfs_native_pending_get(inode->i_sb, true);
     if (!pending)
         return -ENOMEM;
+
+    /*
+     * Reserve the first bounded data chunk before entering write_lock.  Many
+     * independent writers can search and reserve separate allocation arenas
+     * concurrently; the serialized metadata transaction later consumes the
+     * reservation atomically.  Failure simply falls back to the authoritative
+     * transaction allocator, preserving near-full behaviour.
+     */
+    {
+        size_t first_bytes = min_t(size_t, requested,
+                                   INFILFS_NATIVE_WRITE_CHUNK);
+        u64 first_end = (u64)pos + first_bytes;
+        u64 first_block = (u64)pos >> INFILFS_DISK_BLOCK_SHIFT;
+        u64 last_block = (first_end - 1u) >> INFILFS_DISK_BLOCK_SHIFT;
+
+        if (first_end >= (u64)pos)
+            (void)infilfs_parallel_reserve_data(
+                inode->i_sb, last_block - first_block + 1u, 0,
+                &reservation);
+    }
 
     mutex_lock(&sbi->write_lock);
     ret = infilfs_native_pending_begin_locked(pending);
@@ -4135,7 +4200,8 @@ static ssize_t infilfs_native_extent_write_iter(struct inode *inode,
             if (ret)
                 break;
             ret = infilfs_native_append_chunk_locked(
-                pending, inode, from, (u64)pos + done, chunk, &consumed,
+                pending, inode, from, (u64)pos + done, chunk,
+                reservation.active ? &reservation : NULL, &consumed,
                 &new_file_block, &new_size, &allocated_blocks, tail_id,
                 &tail_block, &tail_start);
             if (!ret)
@@ -4223,6 +4289,7 @@ static ssize_t infilfs_native_extent_write_iter(struct inode *inode,
     }
 out_unlock:
     mutex_unlock(&sbi->write_lock);
+    infilfs_parallel_release_reservation(inode->i_sb, &reservation);
     return ret;
 }
 

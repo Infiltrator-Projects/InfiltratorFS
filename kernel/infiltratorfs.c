@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include <linux/blkdev.h>
+#include <linux/bitops.h>
 #include <linux/buffer_head.h>
 #include <linux/capability.h>
 #include <linux/dirent.h>
 #include <linux/falloc.h>
+#include <linux/atomic.h>
 #include <linux/fs.h>
 #include <linux/fs_context.h>
 #include <linux/cred.h>
 #include <linux/highmem.h>
 #include <linux/kernel.h>
+#include <linux/math64.h>
 #include <linux/mutex.h>
 #include <linux/random.h>
 #include <linux/sort.h>
@@ -56,6 +59,15 @@ static const u8 infilfs_extent_page_magic[8] = {
     'I', 'N', 'F', 'S', 'E', 'P', '0', '1'
 };
 
+#define INFILFS_ALLOCATION_RESERVATION_SHARDS 64u
+
+struct infilfs_parallel_reservation {
+    u64 start;
+    u64 count;
+    u32 shard;
+    bool active;
+};
+
 struct infilfs_sb_info {
     struct infilfs_superblock_disk disk;
     u64 device_blocks;
@@ -83,6 +95,24 @@ struct infilfs_sb_info {
      */
     u64 data_alloc_hint;
     u64 metadata_alloc_hint;
+    /*
+     * Volatile allocation reservations let independent writers search and
+     * claim disjoint data runs before entering the checkpoint publication
+     * critical section.  They never enter the on-disk format and are either
+     * consumed by the live transaction or released by the calling writer.
+     */
+    spinlock_t allocation_reservation_locks[
+        INFILFS_ALLOCATION_RESERVATION_SHARDS];
+    unsigned long *allocation_reservations;
+    size_t allocation_reservation_bytes;
+    u64 allocation_reservation_hints[
+        INFILFS_ALLOCATION_RESERVATION_SHARDS];
+    atomic64_t allocation_reservation_steer;
+    atomic64_t allocation_reserved_blocks;
+    atomic64_t allocation_active_reservations;
+    atomic64_t allocation_peak_active_reservations;
+    atomic64_t allocation_reservation_successes;
+    atomic64_t allocation_reservation_conflicts;
     bool rw_enabled;
     bool write_poisoned;
     bool checkpoint_repair_needed;

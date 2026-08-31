@@ -10,6 +10,17 @@
 
 #include <linux/statfs.h>
 
+struct infilfs_rw_tx;
+static int infilfs_parallel_allocator_mount_init(struct super_block *sb);
+static void infilfs_parallel_allocator_mount_destroy(struct super_block *sb);
+static int infilfs_parallel_tx_claim(struct infilfs_rw_tx *tx, u64 start,
+                                     u64 count, bool consume_reservation);
+static bool infilfs_parallel_range_reserved(
+    const struct infilfs_sb_info *sbi, u64 start, u64 count);
+static u64 infilfs_native_metadata_reserve_blocks(
+    const struct infilfs_sb_info *sbi);
+static u64 infilfs_native_visible_free_blocks(struct super_block *sb);
+
 #define infilfs_rw_tx_begin infilfs_rw_tx_begin_legacy
 #define infilfs_file_write_iter infilfs_file_write_iter_legacy
 #define infilfs_file_fsync infilfs_file_fsync_legacy
@@ -26,6 +37,7 @@
 #undef infilfs_rw_setattr
 #undef infilfs_rw_mount_destroy
 
+#include "infiltratorfs_parallel_alloc.inc"
 #include "infiltratorfs_allocation_publish.inc"
 
 /*

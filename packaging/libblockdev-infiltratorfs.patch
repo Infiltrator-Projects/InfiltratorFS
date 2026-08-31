@@ -1,0 +1,146 @@
+From: InfiltratorFS project
+Subject: [PATCH] fs: add InfiltratorFS formatter support
+
+Validated against upstream libblockdev commit
+7ce6c6e9b59fdf16cd5dffd602f954ef52588dbb (2026-08-31).
+
+Expose InfiltratorFS through the generic filesystem plugin so UDisks can
+discover mkfs.infiltratorfs, report its creation features and invoke it.
+libblockdev mkfs requests are already explicit destructive operations, so
+the adapter supplies the formatter's required --force acknowledgement.
+
+diff --git a/src/lib/plugin_apis/fs.api b/src/lib/plugin_apis/fs.api
+--- a/src/lib/plugin_apis/fs.api
++++ b/src/lib/plugin_apis/fs.api
+@@ -528,6 +528,7 @@ typedef enum {
+     BD_FS_TECH_EXFAT,
+     BD_FS_TECH_BTRFS,
+     BD_FS_TECH_UDF,
++    BD_FS_TECH_INFILTRATORFS,
+ } BDFSTech;
+ 
+ typedef enum {
+diff --git a/src/plugins/fs.c b/src/plugins/fs.c
+--- a/src/plugins/fs.c
++++ b/src/plugins/fs.c
+@@ -125,6 +125,15 @@ gboolean bd_fs_is_tech_avail (BDFSTech tech, guint64 mode, GError **error) {
+             return bd_fs_btrfs_is_tech_avail (tech, mode, error);
+         case BD_FS_TECH_UDF:
+             return bd_fs_udf_is_tech_avail (tech, mode, error);
++        case BD_FS_TECH_INFILTRATORFS:
++            if (mode & ~((guint64) BD_FS_TECH_MODE_MKFS)) {
++                g_set_error_literal (error, BD_FS_ERROR,
++                                     BD_FS_ERROR_TECH_UNAVAIL,
++                                     "InfiltratorFS currently supports filesystem creation only.");
++                return FALSE;
++            }
++            return bd_utils_check_util_version ("mkfs.infiltratorfs", NULL,
++                                                "", NULL, error);
+         /* coverity[dead_error_begin] */
+         default:
+             /* this should never be reached (see the comparison with LAST_FS
+diff --git a/src/plugins/fs.h b/src/plugins/fs.h
+--- a/src/plugins/fs.h
++++ b/src/plugins/fs.h
+@@ -23,7 +23,7 @@ typedef enum {
+ 
+ /* XXX: where the file systems start at the enum of technologies */
+ #define BD_FS_OFFSET 2
+-#define BD_FS_LAST_FS 13
++#define BD_FS_LAST_FS 14
+ typedef enum {
+     BD_FS_TECH_GENERIC  = 0,
+     BD_FS_TECH_MOUNT    = 1,
+@@ -38,6 +38,7 @@ typedef enum {
+     BD_FS_TECH_EXFAT    = 10,
+     BD_FS_TECH_BTRFS    = 11,
+     BD_FS_TECH_UDF      = 12,
++    BD_FS_TECH_INFILTRATORFS = 13,
+ } BDFSTech;
+ 
+ /* XXX: number of the highest bit of all modes */
+diff --git a/src/plugins/fs/generic.c b/src/plugins/fs/generic.c
+--- a/src/plugins/fs/generic.c
++++ b/src/plugins/fs/generic.c
+@@ -174,6 +174,16 @@ static const BDFSFeatures fs_features[BD_FS_LAST_FS] = {
+       .partition_type = "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7",
+       .min_size = 2 MiB,
+       .max_size = 16 TiB },
++    /* INFILTRATORFS */
++    { .resize = 0,
++      .mkfs = BD_FS_MKFS_LABEL | BD_FS_MKFS_FORCE,
++      .fsck = 0,
++      .configure = 0,
++      .features = BD_FS_FEATURE_OWNERS,
++      .partition_id = "0x83",
++      .partition_type = "0fc63daf-8483-4772-8e79-3d69d8477de4",
++      .min_size = 16 MiB,
++      .max_size = 16 EiB - 1 },
+ };
+ 
+ /**
+@@ -312,6 +322,16 @@ const BDFSInfo fs_info[BD_FS_LAST_FS] = {
+       .label_util = "udflabel",
+       .info_util = "udfinfo",
+       .uuid_util = "udflabel" },
++    /* INFILTRATORFS */
++    { .type = "infiltratorfs",
++      .mkfs_util = "mkfs.infiltratorfs",
++      .check_util = NULL,
++      .repair_util = NULL,
++      .resize_util = NULL,
++      .minsize_util = NULL,
++      .label_util = NULL,
++      .info_util = NULL,
++      .uuid_util = NULL },
+ };
+ 
+ /**
+@@ -366,6 +386,8 @@ static BDFSTech fstype_to_tech (const gchar *fstype) {
+         return BD_FS_TECH_BTRFS;
+     } else if (g_strcmp0 (fstype, "udf") == 0) {
+         return BD_FS_TECH_UDF;
++    } else if (g_strcmp0 (fstype, "infiltratorfs") == 0) {
++        return BD_FS_TECH_INFILTRATORFS;
+     } else {
+         return BD_FS_TECH_GENERIC;
+     }
+@@ -2006,6 +2028,26 @@ extern BDExtraArg** bd_fs_xfs_mkfs_options (BDFSMkfsOptions *options, const BDEx
+ extern BDExtraArg** bd_fs_btrfs_mkfs_options (BDFSMkfsOptions *options, const BDExtraArg **extra);
+ extern BDExtraArg** bd_fs_udf_mkfs_options (BDFSMkfsOptions *options, const BDExtraArg **extra);
+ 
++static BDExtraArg** bd_fs_infiltratorfs_mkfs_options (BDFSMkfsOptions *options,
++                                                       const BDExtraArg **extra) {
++    GPtrArray *options_array = g_ptr_array_new ();
++    const BDExtraArg **extra_p = NULL;
++
++    /* mkfs.infiltratorfs deliberately requires --force for block devices.
++     * A libblockdev mkfs request is already an explicit destructive format
++     * operation, so always supply it at this boundary. */
++    g_ptr_array_add (options_array, bd_extra_arg_new ("--force", ""));
++    if (options->label && g_strcmp0 (options->label, "") != 0)
++        g_ptr_array_add (options_array, bd_extra_arg_new ("-L", options->label));
++    if (extra) {
++        for (extra_p = extra; *extra_p; extra_p++)
++            g_ptr_array_add (options_array,
++                             bd_extra_arg_copy ((BDExtraArg *) *extra_p));
++    }
++    g_ptr_array_add (options_array, NULL);
++    return (BDExtraArg **) g_ptr_array_free (options_array, FALSE);
++}
++
+ /**
+  * bd_fs_mkfs:
+  * @device: the device to create the new filesystem on
+@@ -2068,6 +2110,11 @@ gboolean bd_fs_mkfs (const gchar *device, const gchar *fstype, BDFSMkfsOptions *
+     } else if (g_strcmp0 (fstype, "udf") == 0) {
+         extra_args = bd_fs_udf_mkfs_options (options, extra);
+         ret = bd_fs_udf_mkfs (device, NULL, NULL, 0, (const BDExtraArg **) extra_args, error);
++    } else if (g_strcmp0 (fstype, "infiltratorfs") == 0) {
++        const gchar *args[3] = {"mkfs.infiltratorfs", device, NULL};
++        extra_args = bd_fs_infiltratorfs_mkfs_options (options, extra);
++        ret = bd_utils_exec_and_report_error (
++            args, (const BDExtraArg **) extra_args, error);
+     } else {
+         g_set_error (error, BD_FS_ERROR, BD_FS_ERROR_NOT_SUPPORTED,
+                      "Filesystem '%s' is not supported.", fstype);

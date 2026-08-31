@@ -74,6 +74,7 @@ jobs:
              kernel/infiltratorfs_format.h \
              kernel/infiltratorfs_allocation_map.inc \
              kernel/infiltratorfs_allocation_publish.inc \
+             kernel/infiltratorfs_parallel_alloc.inc \
              kernel/infiltratorfs_index_tree.inc \
              kernel/infiltratorfs_directory_tree.inc \
              kernel/infiltratorfs_rw.inc \

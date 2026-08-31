@@ -55,6 +55,7 @@ dkms_root="$package_root/usr/src/infiltratorfs-$package_version"
 install -d "$dkms_root"
 for file in Makefile infiltratorfs.c infiltratorfs_format.h \
             infiltratorfs_allocation_map.inc infiltratorfs_allocation_publish.inc \
+            infiltratorfs_parallel_alloc.inc \
             infiltratorfs_index_tree.inc infiltratorfs_directory_tree.inc \
             infiltratorfs_rw.inc \
             infiltratorfs_rw_legacy.inc infiltratorfs_rw_data.inc \
@@ -229,6 +230,7 @@ for required in \
     'usr/bin/infiltratorfs-manager$' \
     'usr/bin/infilfs-forensic$' \
     'usr/bin/infilfs-optimize$' \
+    'usr/bin/mkfs.infiltratorfs$' \
     'usr/sbin/mount.infiltratorfs$' \
     'usr/sbin/fsck.infiltratorfs$' \
     'usr/lib/infiltratorfs/infiltratorfs-manager-helper$' \
@@ -239,6 +241,7 @@ for required in \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_format.h$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_allocation_map.inc$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_allocation_publish.inc$" \
+    "usr/src/infiltratorfs-${package_version}/infiltratorfs_parallel_alloc.inc$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_rw.inc$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_rw_legacy.inc$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_rw_data.inc$" \
@@ -311,6 +314,7 @@ verify_installer() {
         src/infiltratr-common/CMakeLists.txt kernel/Makefile kernel/infiltratorfs.c \
         kernel/infiltratorfs_format.h kernel/infiltratorfs_allocation_map.inc \
         kernel/infiltratorfs_allocation_publish.inc kernel/infiltratorfs_rw.inc \
+        kernel/infiltratorfs_parallel_alloc.inc \
         kernel/infiltratorfs_rw_legacy.inc kernel/infiltratorfs_rw_data.inc \
         kernel/infiltratorfs_rw_namespace.inc kernel/infiltratorfs_rw_read_cache.inc \
         kernel/infiltratorfs_pagecache.inc kernel/infiltratorfs_linux_meta.inc \
