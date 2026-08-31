@@ -120,6 +120,8 @@ struct infilfs_sb_info {
 
 struct infilfs_inode_info {
     u64 object_block;
+    /* Volatile per-object locality cursor for sharded data reservations. */
+    u64 data_allocation_hint;
     u16 object_type;
     u8 object_id[16];
     char *symlink_target;

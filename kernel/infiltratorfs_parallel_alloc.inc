@@ -53,6 +53,24 @@ static void infilfs_parallel_shard_bounds(const struct infilfs_sb_info *sbi,
         INFILFS_ALLOCATION_RESERVATION_SHARDS);
 }
 
+static u64 infilfs_parallel_object_preferred(
+    const struct infilfs_sb_info *sbi, const u8 object_id[16])
+{
+    u64 hash = 1469598103934665603ULL;
+    u64 start;
+    u64 end;
+    unsigned int i;
+
+    for (i = 0; i < 16u; ++i) {
+        hash ^= object_id[i];
+        hash *= 1099511628211ULL;
+    }
+    infilfs_parallel_shard_bounds(
+        sbi, (u32)(hash % INFILFS_ALLOCATION_RESERVATION_SHARDS),
+        &start, &end);
+    return start < end ? start : 1u;
+}
+
 static void infilfs_parallel_lock_range(struct infilfs_sb_info *sbi,
                                         u32 first, u32 last)
 {

@@ -4172,11 +4172,19 @@ static ssize_t infilfs_native_extent_write_iter(struct inode *inode,
         u64 first_end = (u64)pos + first_bytes;
         u64 first_block = (u64)pos >> INFILFS_DISK_BLOCK_SHIFT;
         u64 last_block = (first_end - 1u) >> INFILFS_DISK_BLOCK_SHIFT;
+        u64 preferred = READ_ONCE(ii->data_allocation_hint);
 
-        if (first_end >= (u64)pos)
-            (void)infilfs_parallel_reserve_data(
-                inode->i_sb, last_block - first_block + 1u, 0,
-                &reservation);
+        if (preferred < 1u || preferred >= sbi->device_blocks)
+            preferred = infilfs_parallel_object_preferred(
+                sbi, ii->object_id);
+
+        if (first_end >= (u64)pos &&
+            infilfs_parallel_reserve_data(
+                inode->i_sb, last_block - first_block + 1u, preferred,
+                &reservation) == 0)
+            WRITE_ONCE(ii->data_allocation_hint,
+                reservation.start + reservation.count < sbi->device_blocks ?
+                    reservation.start + reservation.count : 1u);
     }
 
     mutex_lock(&sbi->write_lock);
