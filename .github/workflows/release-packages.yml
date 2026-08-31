@@ -174,10 +174,12 @@ jobs:
           test -x "dist/$installer"
           test "$(dpkg-deb --field "dist/$deb" Version)" = "$VERSION"
           test "$(dpkg-deb --field "dist/$deb" X-InfiltratorFS-Desktop-Integration)" = ubuntu24.04-mint22-bundled
-          dpkg-deb --contents "dist/$deb" | grep -q 'usr/lib/infiltratorfs/os-integration/gnome-disks$'
-          dpkg-deb --contents "dist/$deb" | grep -q 'usr/lib/infiltratorfs/os-integration/libbd_fs.so$'
-          dpkg-deb --contents "dist/$deb" | grep -q 'usr/lib/infiltratorfs/os-integration/manifest$'
-          ! dpkg-deb --contents "dist/$deb" | grep -q 'usr/bin/infilfs-fuse$'
+          deb_contents_file="$RUNNER_TEMP/infiltratorfs-release-deb-contents.txt"
+          dpkg-deb --contents "dist/$deb" > "$deb_contents_file"
+          grep -q 'usr/lib/infiltratorfs/os-integration/gnome-disks$' "$deb_contents_file"
+          grep -q 'usr/lib/infiltratorfs/os-integration/libbd_fs.so$' "$deb_contents_file"
+          grep -q 'usr/lib/infiltratorfs/os-integration/manifest$' "$deb_contents_file"
+          ! grep -q 'usr/bin/infilfs-fuse$' "$deb_contents_file"
           ! dpkg-deb --field "dist/$deb" Depends | grep -Eqi '(^|[, ])(fuse3|libfuse3-3)([, ]|$)'
           for dependency in dkms kmod policykit-1 util-linux xdg-utils python3 python3-gi gir1.2-gtk-3.0; do
             dpkg-deb --field "dist/$deb" Depends | grep -Eq "(^|, )${dependency}([ ,]|$)"
@@ -421,7 +423,9 @@ jobs:
           windows="InfiltratorFS-Windows-${VERSION}.exe"
           for asset in "$deb" "$installer" "$windows"; do test -s "release-assets/$asset"; done
           test "$(dpkg-deb --field "release-assets/$deb" Version)" = "$VERSION"
-          ! dpkg-deb --contents "release-assets/$deb" | grep -q 'usr/bin/infilfs-fuse$'
+          published_deb_contents_file="$RUNNER_TEMP/infiltratorfs-published-deb-contents.txt"
+          dpkg-deb --contents "release-assets/$deb" > "$published_deb_contents_file"
+          ! grep -q 'usr/bin/infilfs-fuse$' "$published_deb_contents_file"
           ! dpkg-deb --field "release-assets/$deb" Depends | grep -Eqi '(^|[, ])(fuse3|libfuse3-3)([, ]|$)'
 
           (cd release-assets && sha256sum "$deb" "$installer" "$windows" > SHA256SUMS.txt)
