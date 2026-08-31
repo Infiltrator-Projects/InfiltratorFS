@@ -333,25 +333,20 @@ class Manager(Gtk.ApplicationWindow):
     def run(self, title, commands, success, after=None, activity=True):
         if self.busy: return
         if activity: self.stack.set_visible_child_name("activity")
-        self.log(f"
-── {title} ──
-"); self.busy=True; self.spinner.show(); self.spinner.start(); self.status.set_text(f"{title}…"); self.enable()
+        self.log(f"\n── {title} ──\n"); self.busy=True; self.spinner.show(); self.spinner.start(); self.status.set_text(f"{title}…"); self.enable()
         def worker():
             failure=""
             for command in commands:
-                GLib.idle_add(self.log,"$ "+" ".join(command)+"
-")
+                GLib.idle_add(self.log,"$ "+" ".join(command)+"\n")
                 try: process=subprocess.Popen(command,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1)
                 except OSError as exc: failure=str(exc); break
                 for line in process.stdout or (): GLib.idle_add(self.log,line)
                 if process.wait(): failure=f"Command exited with status {process.returncode}."; break
             def finish():
                 self.busy=False; self.spinner.stop(); self.spinner.hide(); self.status.set_text(success if not failure else "Operation failed")
-                if failure: self.log("ERROR: "+failure+"
-"); self.error(failure)
+                if failure: self.log("ERROR: "+failure+"\n"); self.error(failure)
                 else:
-                    self.log(success+"
-")
+                    self.log(success+"\n")
                     if after: after()
                     self.refresh_devices()
                 self.enable(); return False
@@ -382,9 +377,7 @@ class Manager(Gtk.ApplicationWindow):
         if self.target.mountpoint: self.error("Unmount the selected volume before formatting it."); return
         label=self.ask_label()
         if not label: return
-        d=Gtk.MessageDialog(transient_for=self,modal=True,message_type=Gtk.MessageType.WARNING,buttons=Gtk.ButtonsType.NONE,text="Erase and format this volume?"); d.format_secondary_text(f"All existing data on {self.target.path} will be destroyed.
-
-New label: {label}"); d.add_button("Cancel",Gtk.ResponseType.CANCEL); erase=d.add_button("Erase and Format",Gtk.ResponseType.ACCEPT); erase.get_style_context().add_class("destructive-action"); response=d.run(); d.destroy()
+        d=Gtk.MessageDialog(transient_for=self,modal=True,message_type=Gtk.MessageType.WARNING,buttons=Gtk.ButtonsType.NONE,text="Erase and format this volume?"); d.format_secondary_text(f"All existing data on {self.target.path} will be destroyed.\n\nNew label: {label}"); d.add_button("Cancel",Gtk.ResponseType.CANCEL); erase=d.add_button("Erase and Format",Gtk.ResponseType.ACCEPT); erase.get_style_context().add_class("destructive-action"); response=d.run(); d.destroy()
         if response != Gtk.ResponseType.ACCEPT: return
         command=["pkexec",HELPER,"format-block",self.target.path,label] if self.target.block else [TOOLS["mkfs"],"-L",label,self.target.path]
         def after(): self.target.label=label; self.target.name=label; self.target.filesystem="infiltratorfs"; self.show_target()
@@ -418,8 +411,7 @@ New label: {label}"); d.add_button("Cancel",Gtk.ResponseType.CANCEL); erase=d.ad
         self.run("Unmount filesystem",[command],"Filesystem unmounted safely.",after,False)
 
     def about(self,*_):
-        d=Gtk.AboutDialog(transient_for=self,modal=True,program_name=APP_NAME,version=package_version(),comments="Native Linux management for InfiltratorFS volumes.
-Uses the native VFS/DKMS driver; FUSE is not the product path.",website="https://github.com/Infiltrator-Projects/InfiltratorFS",license_type=Gtk.License.GPL_3_0); d.run(); d.destroy()
+        d=Gtk.AboutDialog(transient_for=self,modal=True,program_name=APP_NAME,version=package_version(),comments="Native Linux management for InfiltratorFS volumes.\nUses the native VFS/DKMS driver; FUSE is not the product path.",website="https://github.com/Infiltrator-Projects/InfiltratorFS",license_type=Gtk.License.GPL_3_0); d.run(); d.destroy()
 
 
 class Application(Gtk.Application):

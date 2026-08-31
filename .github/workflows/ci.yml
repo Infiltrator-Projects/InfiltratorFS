@@ -140,8 +140,12 @@ jobs:
         run: desktop-file-validate packaging/infiltratorfs-manager.desktop
       - name: Validate Manager partition enumeration
         run: |
-          grep -Fq 'lsblk -prno NAME,SIZE,TYPE,RM,PKNAME,TRAN' tools/infiltratorfs-manager
-          ! grep -Fq 'lsblk -prndo NAME,SIZE,TYPE,RM,PKNAME,TRAN' tools/infiltratorfs-manager
+          grep -Fq '"lsblk", "-J", "-b", "-o"' tools/infiltratorfs-manager
+          grep -Fq '"NAME,PATH,SIZE,TYPE,RM,PKNAME,TRAN,FSTYPE,LABEL,MOUNTPOINTS"' tools/infiltratorfs-manager
+          grep -Fq 'if node.get("type") != "part":' tools/infiltratorfs-manager
+          grep -Fq -- '--list-partitions' tools/infiltratorfs-manager
+          ! grep -Fqi 'zenity' tools/infiltratorfs-manager
+          tools/infiltratorfs-manager --list-partitions >/dev/null
       - name: Validate partition 22 torture-test shell syntax and safety gate
         run: |
           bash -n tests/native-partition22-full-test.sh
