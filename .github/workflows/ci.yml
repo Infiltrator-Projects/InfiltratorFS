@@ -84,7 +84,7 @@ jobs:
               dnf -y builddep libblockdev udisks2 gnome-disk-utility
               dnf -y install cmake gcc gcc-c++ git make autoconf automake libtool \
                 gettext-devel glib2-devel gobject-introspection-devel \
-                gtk-doc meson ninja-build python3-gobject
+                gtk-doc meson ninja-build python3-bytesize python3-gobject
 
               cmake -S . -B build-desktop -DCMAKE_BUILD_TYPE=Release
               cmake --build build-desktop --parallel
