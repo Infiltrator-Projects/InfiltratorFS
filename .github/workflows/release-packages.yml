@@ -206,8 +206,18 @@ jobs:
           set -euo pipefail
           deb="dist/infiltratorfs_${VERSION}_amd64.deb"
           stock_gnome_sha="$(sha256sum /usr/bin/gnome-disks | awk '{print $1}')"
-          plugin_path="$(dpkg-query -L libblockdev-fs3 | grep -E '/libbd_fs\\.so\\.[0-9]+\\.[0-9]+\\.[0-9]+$' | head -n1)"
-          test -n "$plugin_path"
+          plugin_path=""
+          while IFS= read -r candidate; do
+            if [[ "$candidate" =~ /libbd_fs\.so\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              plugin_path="$candidate"
+              break
+            fi
+          done <<<"$(dpkg-query -L libblockdev-fs3)"
+          if [[ -z "$plugin_path" ]]; then
+            echo "Could not locate the versioned libblockdev filesystem plugin." >&2
+            dpkg-query -L libblockdev-fs3 >&2
+            exit 1
+          fi
           stock_plugin_sha="$(sha256sum "$plugin_path" | awk '{print $1}')"
 
           sudo dpkg -i "$deb"
