@@ -768,6 +768,27 @@ jobs:
           sudo truncate -s 134217728 "$mountpoint/native-rw/sparse-1t.bin"
           test "$(stat -c '%s' "$mountpoint/native-rw/sparse-1t.bin")" = 134217728
 
+          # Exercise the allocator's true write-beyond-EOF workload class.
+          # Unlike truncate-then-write, this reaches the in-lock SPARSE
+          # classifier with pos > old_size and must survive remount/scrub.
+          sudo python3 - "$mountpoint/native-rw/direct-sparse.bin" <<'PY'
+          import os
+          import sys
+
+          path = sys.argv[1]
+          offset = 64 * 1024 * 1024 + 123
+          payload = b'infiltratorfs-direct-sparse-placement'
+          fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_EXCL, 0o600)
+          try:
+              assert os.pwrite(fd, payload, offset) == len(payload)
+              os.fsync(fd)
+              assert os.fstat(fd).st_size == offset + len(payload)
+              assert os.pread(fd, len(payload), offset) == payload
+              assert os.pread(fd, 4096, 0) == bytes(4096)
+          finally:
+              os.close(fd)
+          PY
+
           sudo fallocate -l 16M "$mountpoint/native-rw/preallocated.bin"
           preallocated_blocks="$(stat -c '%b' "$mountpoint/native-rw/preallocated.bin")"
           test "$preallocated_blocks" -ge 32768
