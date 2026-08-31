@@ -66,6 +66,9 @@ jobs:
       - name: Guard native free-extent index
         run: bash tests/native-free-extent-index-policy.sh .
 
+      - name: Guard native workload-aware placement
+        run: bash tests/native-workload-placement-policy.sh .
+
       - name: Guard Format 0.17 sharded allocation tree
         run: bash tests/allocation-tree-format-policy.sh .
       - name: Guard native transaction durability
@@ -1259,18 +1262,6 @@ jobs:
         run: echo 'Native module compiled successfully; runtime load/mount skipped because matching hosted-runner kernel headers were unavailable.'
   local-kernel-compile:
     name: Local running-kernel compile qualification
-    if: >-
-      github.event_name != 'push' ||
-      startsWith(github.event.head_commit.message, 'Release ') ||
-      contains(toJson(github.event.commits), 'kernel/') ||
-      contains(toJson(github.event.commits), 'src/') ||
-      contains(toJson(github.event.commits), 'include/') ||
-      contains(toJson(github.event.commits), 'tools/') ||
-      contains(toJson(github.event.commits), 'tests/') ||
-      contains(toJson(github.event.commits), 'packaging/') ||
-      contains(toJson(github.event.commits), 'CMakeLists.txt') ||
-      contains(toJson(github.event.commits), '.gitmodules') ||
-      contains(toJson(github.event.commits), '.github/workflows/kernel-module.yml')
     runs-on: linux-native
     timeout-minutes: 20
     steps:
@@ -1288,6 +1279,7 @@ jobs:
       - name: Guard native allocation and transaction policies
         run: |
           bash tests/native-free-extent-index-policy.sh .
+          bash tests/native-workload-placement-policy.sh .
           bash tests/allocation-tree-format-policy.sh .
           bash tests/native-transaction-durability-policy.sh .
       - name: Compile module for local running kernel

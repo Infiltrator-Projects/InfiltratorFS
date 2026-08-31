@@ -28,7 +28,7 @@ Pre-1.0 development is current-format-only. A new development format may superse
 - [x] Runtime hashed metadata indexes.
 - [x] Sequential allocation and checksum hot-path performance work.
 
-## Completed native Linux filesystem surface through release 0.18.30
+## Completed native Linux filesystem surface through release 0.18.31
 
 - [x] Native out-of-tree Linux VFS filesystem driver `infiltratorfs.ko`.
 - [x] DKMS packaging and host-kernel rebuild/install path.
@@ -103,6 +103,17 @@ image. The hosted native kernel gate also hash-verified 16 concurrent 4 MiB
 writers and observed three simultaneously active allocation reservations. See
 [QUALIFICATION.md](QUALIFICATION.md) for the commit and workflow evidence.
 
+On 2026-09-01, locality scoring and workload-aware placement passed mounted
+native qualification. The final allocator code at
+`69c66ad7fa28b9308729f0181c270cd78a94ea59` survived the near-full,
+fragmentation and five-minute mixed-I/O qualification in workflow run
+`33448454593`, including two CLEAN offline scrubs. The mounted kernel gate in
+run `33448866530` then exercised all three authoritative workload classes and
+reported `workload_seq=9705`, `workload_random=4401`,
+`workload_sparse=1`, `locality_scored=6432` and `best_fit=4402`, while
+retaining a peak of three concurrent reservations with zero conflicts. See
+[QUALIFICATION.md](QUALIFICATION.md) for the evidence and performance comparison.
+
 ## Scale and performance
 
 - [x] Scalable generation-aware object-index tree.
@@ -110,7 +121,7 @@ writers and observed three simultaneously active allocation reservations. See
 - [x] Rebuildable free-extent index.
 - [x] Parallel native data-allocation model with 64 volatile reservation
   shards, object-stable placement and mounted multi-writer qualification.
-- [ ] Locality scoring and workload-aware placement.
+- [x] Locality scoring and workload-aware placement.
 - [ ] Media-aware placement.
 - [ ] Per-extent compression.
 

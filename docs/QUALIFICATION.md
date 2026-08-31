@@ -83,6 +83,56 @@ run `33333450633`, Windows job `99316218768`. The Windows runner:
 
 The runtime trace showed successful ProjFS overwrite, pre-convert-to-full, new-file, modified-close, rename, hard-link and deleted-close notifications, all returning success. This qualification covers the interim user-mode Explorer bridge; it does not claim native Windows kernel-filesystem, Cache Manager, security-descriptor or boot-volume support.
 
+## 2026-09-01 workload-aware placement qualification
+
+Locality scoring and workload-aware placement were qualified without changing
+on-disk Format 0.17. The final allocator-code commit was
+`69c66ad7fa28b9308729f0181c270cd78a94ea59`; later commits in the release
+series changed tests, workflow gating and documentation but not the allocator
+semantics.
+
+Heavy filesystem workflow run `33448454593` built that exact native module.
+Its near-full/fragmentation/endurance job passed after:
+
+- coarse, refill and tiny-run fragmentation with free space driven below 10%;
+- 300 seconds of concurrent mixed I/O completing 31,859 operations at
+  106.1 operations/second;
+- random overwrite/readback, sequential append, rename/xattr churn, sparse and
+  high-offset mutation, links and repeated durability publication;
+- an additional hole-punch/refill cycle;
+- durable read-only remount verification; and
+- two offline scrubs reporting zero checksum errors, zero metadata errors and
+  `CLEAN`.
+
+Native kernel workflow run `33448866530` then passed the full mounted
+read-write/remount/scrub and online-defragmentation qualification with the same
+allocator semantics. Its unmount telemetry demonstrated that the new policy was
+actually exercised rather than merely present in source:
+
+- sequential workload decisions: 9,705;
+- random/in-place CoW decisions: 4,401;
+- direct write-beyond-EOF sparse decisions: 1;
+- locality-scored extent selections: 6,432;
+- best-fit random/sparse selections: 4,402;
+- successful parallel reservations: 3,469;
+- peak simultaneous reservations: 3; and
+- reservation conflicts: 0.
+
+The mounted 4,000 x 4 KiB random-overwrite phase completed in 86.925 seconds
+(46.0 writes/second), compared with 83.226 seconds (48.1 writes/second) in the
+0.18.30 hosted kernel qualification, a 4.4% elapsed-time increase while adding
+best-fit/locality scoring. The complete ordinary Build and conformance workflow
+run `33448969940` also passed Linux, Clang, ASan/UBSan, GCC static analysis,
+native packages and Windows qualification.
+
+The placement policy remains entirely volatile. Sequential EOF growth may
+consume an exact-adjacent streaming reservation or score nearby free extents by
+physical distance and remaining tail length. Random CoW and direct sparse
+growth select the tightest suitable free extent before locality, preserving
+larger contiguous runs for streaming writes. A pre-lock streaming reservation
+is rejected if the authoritative in-lock classification is no longer
+sequential.
+
 ## 2026-08-30 scale, endurance and online-defragmentation qualification
 
 The next three Linux roadmap items were qualified at exact source commit
