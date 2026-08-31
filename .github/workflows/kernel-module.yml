@@ -875,6 +875,47 @@ jobs:
           allocator_stress_sha="$(sudo sha256sum               "$mountpoint/native-rw/allocator-stress/proof.bin" | awk '{print $1}')"
           test -n "$allocator_stress_sha"
 
+          # A compile-time sharding check cannot establish parallelism. Start
+          # sixteen writers together, verify their disjoint data, and after
+          # unmount require the driver's peak-active counter to prove that at
+          # least two volatile reservations overlapped before write_lock.
+          sudo python3 - "$mountpoint/native-rw/parallel-allocation-ci" <<'PY'
+          import hashlib
+          import multiprocessing as mp
+          import os
+          import sys
+
+          root = sys.argv[1]
+          os.mkdir(root)
+          workers = 16
+          size = 4 * 1024 * 1024
+          start = mp.Event()
+
+          def writer(index):
+              byte = bytes([(index * 29 + 7) & 0xff])
+              start.wait()
+              path = os.path.join(root, f'writer-{index:02d}.bin')
+              with open(path, 'wb', buffering=0) as stream:
+                  stream.write(byte * size)
+                  os.fsync(stream.fileno())
+
+          processes = [mp.Process(target=writer, args=(index,))
+                       for index in range(workers)]
+          for process in processes:
+              process.start()
+          start.set()
+          for process in processes:
+              process.join(180)
+              assert process.exitcode == 0, (process.pid, process.exitcode)
+          for index in range(workers):
+              expected = bytes([(index * 29 + 7) & 0xff]) * size
+              path = os.path.join(root, f'writer-{index:02d}.bin')
+              with open(path, 'rb') as stream:
+                  actual = stream.read()
+              assert hashlib.sha256(actual).digest() == \
+                  hashlib.sha256(expected).digest()
+          PY
+
           printf 'Publishing durability barrier...\n'
           sync_start="$(date +%s%N)"
           if ! timeout --signal=TERM --kill-after=10s 120s sync; then
@@ -891,6 +932,13 @@ jobs:
           printf 'Unmounting and scrubbing native result...\n'
           sudo umount "$mountpoint"
           mounted=0
+          parallel_log="$(sudo dmesg | \
+              grep 'parallel allocator reservations=' | tail -n1 || true)"
+          printf '%s\n' "$parallel_log"
+          parallel_peak="$(sed -nE \
+              's/.*peak_active=([0-9]+).*/\1/p' <<<"$parallel_log")"
+          test -n "$parallel_peak"
+          test "$parallel_peak" -ge 2
           test "$(build/infilfs-tool "$image" cat /native-rw/created.txt)" = 'rewritte'
           test "$(build/infilfs-tool "$image" cat /docs/inline.txt)" = \
                'native-snapshot-live-edit'

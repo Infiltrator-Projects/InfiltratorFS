@@ -8,8 +8,9 @@ driver="$root/kernel/infiltratorfs.c"
 rw="$root/kernel/infiltratorfs_rw.inc"
 data="$root/kernel/infiltratorfs_rw_data.inc"
 package="$root/packaging/build-linux-packages.sh"
+workflow="$root/.github/workflows/kernel-module.yml"
 
-for file in "$allocator" "$driver" "$rw" "$data" "$package"; do
+for file in "$allocator" "$driver" "$rw" "$data" "$package" "$workflow"; do
     test -f "$file"
 done
 
@@ -25,6 +26,8 @@ grep -Fq 'allocation_peak_active_reservations' "$allocator"
 grep -Fq '#include "infiltratorfs_parallel_alloc.inc"' "$rw"
 grep -Fq 'data_allocation_hint' "$data"
 grep -Fq 'infiltratorfs_parallel_alloc.inc' "$package"
+grep -Fq 'parallel-allocation-ci' "$workflow"
+grep -Fq 'test "$parallel_peak" -ge 2' "$workflow"
 
 reserve_line="$(grep -n 'infilfs_parallel_reserve_data(' "$data" | tail -n1 | cut -d: -f1)"
 lock_line="$(awk -v reserve="$reserve_line" '
