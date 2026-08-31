@@ -2,56 +2,19 @@ From: InfiltratorFS project
 Subject: [PATCH] disks: integrate InfiltratorFS on GNOME Disks 46
 
 This downstream patch targets the GNOME Disks 46 series shipped by Ubuntu
-24.04 and Linux Mint 22.x. It adds InfiltratorFS to the explicit "Other"
-filesystem selector and gives already-formatted volumes a native display name
-without requiring a replacement libudisks2 client library.
+24.04 and Linux Mint 22.x. GNOME Disks 46 uses the pre-47 compact source
+filenames and a static other_fs table rather than the later GduOtherFsType
+enum. Add InfiltratorFS to that table; availability continues to be queried
+through UDisks CanFormat, so the row is disabled unless the formatter is
+available.
 
-diff --git a/src/disks/gdu-create-other-page.c b/src/disks/gdu-create-other-page.c
---- a/src/disks/gdu-create-other-page.c
-+++ b/src/disks/gdu-create-other-page.c
-@@ -45,6 +45,7 @@ G_DEFINE_ENUM_TYPE (GduOtherFsType, gdu_other_fs_type,
-                     G_DEFINE_ENUM_VALUE (GDU_OTHER_FS_TYPE_F2FS,  "f2fs"),
-                     G_DEFINE_ENUM_VALUE (GDU_OTHER_FS_TYPE_EXFAT, "exfat"),
-                     G_DEFINE_ENUM_VALUE (GDU_OTHER_FS_TYPE_UDF,   "udf"),
-+                    G_DEFINE_ENUM_VALUE (GDU_OTHER_FS_TYPE_INFILTRATORFS, "infiltratorfs"),
-                     G_DEFINE_ENUM_VALUE (GDU_OTHER_FS_TYPE_EMPTY, "empty"));
-
- static void
-@@ -166,6 +167,7 @@ gdu_create_other_page_new (UDisksClient *client)
-     { N_ ("F2FS"), N_ ("Flash Storage Linux Filesystem") },
-     { N_ ("exFAT"), N_ ("Flash Storage Windows Filesystem, used on SDXC cards") },
-     { N_ ("UDF"), N_ ("Universal Disk Format, for removable devices on many systems") },
-+    { N_ ("InfiltratorFS"), N_ ("Portable checksummed copy-on-write filesystem") },
-     { N_ ("No Filesystem"), NULL }
-   };
-
-diff --git a/src/disks/gdu-create-other-page.h b/src/disks/gdu-create-other-page.h
---- a/src/disks/gdu-create-other-page.h
-+++ b/src/disks/gdu-create-other-page.h
-@@ -26,6 +26,7 @@ typedef enum
-   GDU_OTHER_FS_TYPE_F2FS,
-   GDU_OTHER_FS_TYPE_EXFAT,
-   GDU_OTHER_FS_TYPE_UDF,
-+  GDU_OTHER_FS_TYPE_INFILTRATORFS,
-   GDU_OTHER_FS_TYPE_EMPTY,
-   N_OTHER_FS
- } GduOtherFsType;
-diff --git a/src/disks/gdu-block.c b/src/disks/gdu-block.c
---- a/src/disks/gdu-block.c
-+++ b/src/disks/gdu-block.c
-@@ -106,7 +106,14 @@ gdu_block_get_description (GduItem *item)
-           usage = udisks_block_get_id_usage (self->block);
-           type = udisks_block_get_id_type (self->block);
-           version = udisks_block_get_id_version (self->block);
--          id = udisks_client_get_id_for_display (self->client, usage, type, version, FALSE);
-+          if (g_strcmp0 (usage, "filesystem") == 0 &&
-+              g_strcmp0 (type, "infiltratorfs") == 0)
-+            id = (version && *version)
-+                 ? g_strdup_printf (_("InfiltratorFS (format %s)"), version)
-+                 : g_strdup (_("InfiltratorFS"));
-+          else
-+            id = udisks_client_get_id_for_display (self->client, usage, type,
-+                                                   version, FALSE);
-
-           size = gdu_item_get_size (item);
-           if (size)
+diff --git a/src/disks/gducreateotherpage.c b/src/disks/gducreateotherpage.c
+--- a/src/disks/gducreateotherpage.c
++++ b/src/disks/gducreateotherpage.c
+@@ -17,6 +17,7 @@ static const char *other_fs[][2] = {
+   {"f2fs", N_("F2FS — Flash Storage Linux Filesystem")},
+   {"exfat", N_("exFAT — Flash Storage Windows Filesystem, used on SDXC cards")},
+   {"udf", N_("UDF — Universal Disk Format, for removable devices on many systems")},
++  {"infiltratorfs", N_("InfiltratorFS — Portable checksummed copy-on-write filesystem")},
+   {"empty", N_("No Filesystem")},
+ };
