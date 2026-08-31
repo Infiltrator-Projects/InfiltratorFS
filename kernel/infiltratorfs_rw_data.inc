@@ -1237,7 +1237,8 @@ retry:
             return -ENOSPC;
     }
 
-    if (reservation && reservation->active &&
+    if (workload == INFILFS_DATA_WORKLOAD_SEQUENTIAL &&
+        reservation && reservation->active &&
         reservation->count == count) {
         ret = infilfs_parallel_consume_reservation(
             tx, reservation, count, start_out);
