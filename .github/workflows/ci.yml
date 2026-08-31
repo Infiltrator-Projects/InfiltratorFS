@@ -149,7 +149,13 @@ jobs:
           ! grep -Fqi 'zenity' tools/infiltratorfs-manager
           tools/infiltratorfs-manager --list-partitions >/dev/null
       - name: Launch GTK Manager
-        run: xvfb-run -a tools/infiltratorfs-manager --startup-check
+        run: |
+          set -euo pipefail
+          output="$(xvfb-run -a tools/infiltratorfs-manager --startup-check 2>&1)"
+          printf '%s\n' "$output"
+          grep -Fq 'infiltratorfs-manager: GTK startup PASS' <<<"$output"
+          ! grep -Fq 'PyGIWarning' <<<"$output"
+          ! grep -Fq 'install python3-gi and gir1.2-gtk-3.0' <<<"$output"
       - name: Validate partition 22 torture-test shell syntax and safety gate
         run: |
           bash -n tests/native-partition22-full-test.sh
