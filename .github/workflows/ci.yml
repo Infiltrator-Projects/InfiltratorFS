@@ -135,7 +135,9 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v6
       - name: Install Linux native adapter dependencies
-        run: sudo apt-get update && sudo apt-get install -y desktop-file-utils
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y desktop-file-utils python3-gi gir1.2-gtk-3.0 xvfb
       - name: Validate Mint desktop integration
         run: desktop-file-validate packaging/infiltratorfs-manager.desktop
       - name: Validate Manager partition enumeration
@@ -146,6 +148,8 @@ jobs:
           grep -Fq -- '--list-partitions' tools/infiltratorfs-manager
           ! grep -Fqi 'zenity' tools/infiltratorfs-manager
           tools/infiltratorfs-manager --list-partitions >/dev/null
+      - name: Launch GTK Manager
+        run: xvfb-run -a tools/infiltratorfs-manager --startup-check
       - name: Validate partition 22 torture-test shell syntax and safety gate
         run: |
           bash -n tests/native-partition22-full-test.sh
