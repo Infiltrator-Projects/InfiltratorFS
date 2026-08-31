@@ -208,6 +208,11 @@ parser.add_argument(
     action="store_true",
     help="print non-system partitions without starting GTK",
 )
+parser.add_argument(
+    "--startup-check",
+    action="store_true",
+    help=argparse.SUPPRESS,
+)
 args = parser.parse_args()
 if args.list_partitions:
     raise SystemExit(list_partitions())
@@ -1210,6 +1215,13 @@ class Application(Gtk.Application):
     def do_activate(self):
         window = self.props.active_window or Manager(self)
         window.present()
+        if args.startup_check:
+            GLib.idle_add(self._finish_startup_check)
+
+    def _finish_startup_check(self):
+        print("infiltratorfs-manager: GTK startup PASS")
+        self.quit()
+        return False
 
 
 missing = [
