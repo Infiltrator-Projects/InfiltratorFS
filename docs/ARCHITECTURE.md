@@ -65,14 +65,30 @@ Operation-level savepoints prevent one failed mutation from discarding earlier a
 One allocation bit describes one 4096-byte block and remains authoritative free-space state. Format 0.17 persists the live bitset as independently checksummed 32,192-bit leaves beneath a small CoW radix spine, so commit work scales with changed allocation regions rather than total volume size. Open validates the complete allocation tree once and caches its committed page-location layout; normal publication then uses that cache and atomically replaces it only after the primary checkpoint is durable, avoiding an O(tree-size) rediscovery on every fsync. Portable and native Linux writers reconstruct the same simple in-memory bitset and rebuild an index of maximal free extents from it. The free-extent index is an accelerator only: it is never persisted, may be discarded under memory pressure or rollback, and allocator correctness falls back to the authoritative allocation-bit scan if the cache cannot satisfy a request. Native user-data allocation preserves an internal metadata publication reserve, statfs reports active deferred-transaction free space with that reserve excluded from f_bavail, and large write chunks are subdivided adaptively under fragmentation until a single-block allocation is attempted before ENOSPC is returned.
 
 The native writer divides allocatable space into 64 volatile reservation shards.
-Independent writers search and reserve free data runs under per-shard spinlocks
-before entering the global write transaction; the transaction then atomically
-claims a reservation into the authoritative allocation bitmap and existing
-rollback journal. Reservations never become persistent or reachable on their
-own. A hash of the persistent object ID selects the initial shard, and a
-per-inode cursor advances from the last reservation so parallelism does not
-scatter one sequential file across every shard. Metadata mutation and
-checkpoint publication remain serialized by the native write lock.
+Independent streaming writers search and reserve free data runs under per-shard
+spinlocks before entering the global write transaction; the transaction then
+atomically claims a still-valid sequential reservation into the authoritative
+allocation bitmap and existing rollback journal. Reservations never become
+persistent or reachable on their own. A hash of the persistent object ID
+selects the initial shard, and a per-inode cursor advances from the last
+reservation so parallelism does not scatter one sequential file across every
+shard. If another writer changes the file before the transaction lock is
+acquired, the in-lock workload classification is authoritative and a stale
+streaming reservation cannot be consumed by a random write.
+
+Native allocation classifies each data mutation as sequential EOF growth,
+in-place/random CoW, or direct sparse growth. Sequential growth first preserves
+exact physical adjacency; when that is unavailable, the free-extent index
+scores candidate runs by distance from the file's placement cursor and then by
+the contiguous tail left for future appends. Random overwrites prefer physical
+locality around the replaced block but select the tightest suitable free extent
+first, and sparse writes use the same best-fit rule. This deliberately preserves
+larger contiguous runs for streaming files rather than allowing small CoW or
+sparse mutations to consume their leading edge. The classifier, scores,
+reservation map, object cursors and telemetry are all volatile heuristics:
+allocation ownership remains the Format 0.17 bitmap/tree and no on-disk field
+or compatibility rule changes. Metadata mutation and checkpoint publication
+remain serialized by the native write lock.
 
 Regular files may use:
 
