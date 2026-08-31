@@ -32,7 +32,7 @@ jobs:
     # Full million-file/1 TiB stress is development-scale qualification, not
     # a per-release gate. Release commits reuse already-qualified heavy evidence
     # and retain the ordinary mounted kernel and exact-package release gates.
-    if: ${{ !startsWith(github.event.head_commit.message, 'Release ') }}
+    if: ${{ github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'Release ') }}
     name: Million-file and 1 TiB mounted stress
     runs-on: ubuntu-24.04
     timeout-minutes: 180
@@ -86,7 +86,6 @@ jobs:
   native-endurance-stress:
     if: ${{ github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'Release ') }}
     name: Near-full fragmentation and mixed-workload endurance
-    needs: kernel-module
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     steps:
