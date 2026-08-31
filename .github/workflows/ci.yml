@@ -82,7 +82,8 @@ jobs:
             -v "$PWD:/workspace" -w /workspace fedora:latest bash -euxo pipefail -c '
               dnf -y install dnf-plugins-core
               dnf -y builddep libblockdev udisks2 gnome-disk-utility
-              dnf -y install cmake gcc gcc-c++ git make autoconf automake libtool \
+              dnf -y install cargo cmake gcc gcc-c++ git make rust \
+                autoconf automake libtool \
                 gettext-devel glib2-devel gobject-introspection-devel \
                 gtk-doc meson ninja-build python3-bytesize python3-gobject
 
