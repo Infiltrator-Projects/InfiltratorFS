@@ -198,8 +198,107 @@ deb="$DIST/infiltratorfs_${VERSION}_$(dpkg --print-architecture).deb"
     sha256sum -c "$(basename "$deb").sha256"
     sha256sum -c "$(basename "$installer").sha256"
 )
-dpkg-deb --contents "$deb" | grep -q 'usr/bin/infilfs-optimize$'
-! dpkg-deb --contents "$deb" | grep -q 'usr/bin/infilfs-fuse$'
+deb_contents="$(dpkg-deb --contents "$deb")"
+grep -q 'usr/bin/infilfs-optimize
+
+section "Installed-release destructive partition-22 qualification"
+partition_started="$(date +%s)"
+run_timed "partition-22 full native qualification" 3h     bash tests/native-partition22-full-test.sh --destroy-partition-22
+partition_log="$(find "$ROOT" -maxdepth 1 -type f     -name 'infiltratorfs-partition22-test-*.log'     -newermt "@$partition_started" -printf '%T@ %p\n' |
+    sort -nr | head -n1 | cut -d' ' -f2-)"
+[[ -n "$partition_log" && -f "$partition_log" ]] || fatal "Could not locate the partition-22 qualification log."
+printf '[PASS] Partition qualification log: %s\n' "$partition_log"
+
+seq_write="$(sed -nE 's/.*sequential write: ([0-9.]+) MiB\/s.*/\1/p' "$partition_log" | tail -n1)"
+seq_read="$(sed -nE 's/.*verified sequential read: ([0-9.]+) MiB\/s.*/\1/p' "$partition_log" | tail -n1)"
+random_iops="$(sed -nE 's/.*random 4 KiB overwrite: ([0-9.]+) IOPS.*/\1/p' "$partition_log" | tail -n1)"
+fsync_p95="$(sed -nE 's/.*fsync latency:.*p95=([0-9.]+)ms.*/\1/p' "$partition_log" | tail -n1)"
+require_ge "Sequential write MiB/s" "$seq_write" "$MIN_SEQ_WRITE_MIB_S"
+require_ge "Verified sequential read MiB/s" "$seq_read" "$MIN_SEQ_READ_MIB_S"
+require_ge "Random 4 KiB overwrite IOPS" "$random_iops" "$MIN_RANDOM_IOPS"
+require_le "fsync p95 milliseconds" "$fsync_p95" "$MAX_FSYNC_P95_MS"
+
+section "Exact-source online fragmentation and defragmentation"
+run_timed "native online-defrag qualification" 30m     bash tests/native-defrag-qualification.sh "$BUILD" "$ROOT/kernel/infiltratorfs.ko"
+
+section "Exact-source million-file and 1 TiB mounted scale"
+sudo insmod "$ROOT/kernel/infiltratorfs.ko"
+MODULE_LOADED=1
+grep -qw infiltratorfs /proc/filesystems
+run_timed "million-file and 1 TiB scale qualification" 4h     bash tests/native-scale-qualification.sh "$BUILD"
+
+section "Exact-source near-full and five-minute mixed-workload endurance"
+run_timed "near-full mixed-workload endurance qualification" 2h     bash tests/native-endurance-qualification.sh "$BUILD"
+sudo rmmod infiltratorfs
+MODULE_LOADED=0
+
+section "Final physical-media scrub and kernel diagnostics"
+sudo "$BUILD/infilfs-scrub" "$TARGET" | tee "$WORK/final-partition22-scrub.txt"
+grep -Fq 'Result:              CLEAN' "$WORK/final-partition22-scrub.txt"
+kernel_failures="$(sudo dmesg --since "$START_TIME" 2>/dev/null |
+    grep -E 'EUCLEAN|Structure needs cleaning|BUG:|Oops:|Kernel panic|hung task|soft lockup|hard LOCKUP|general protection fault' || true)"
+[[ -z "$kernel_failures" ]] || {
+    printf '%s\n' "$kernel_failures" >&2
+    fatal "Kernel corruption, crash or lockup signature observed."
+}
+
+elapsed=$(( $(date +%s) - START_EPOCH ))
+section "COMPLETE QUALIFICATION PASS"
+printf '[PASS] Installed release, source, packages, portable core, native kernel,\n'
+printf '       physical VFS, recovery, integrity, performance, scale, endurance,\n'
+printf '       online defrag, remount and scrub qualification all passed.\n'
+printf '[PASS] Version: %s\n[PASS] Elapsed: %d seconds\n[PASS] Log: %s\n'     "$VERSION" "$elapsed" "$LOG"
+ <<<"$deb_contents"
+! grep -q 'usr/bin/infilfs-fuse
+
+section "Installed-release destructive partition-22 qualification"
+partition_started="$(date +%s)"
+run_timed "partition-22 full native qualification" 3h     bash tests/native-partition22-full-test.sh --destroy-partition-22
+partition_log="$(find "$ROOT" -maxdepth 1 -type f     -name 'infiltratorfs-partition22-test-*.log'     -newermt "@$partition_started" -printf '%T@ %p\n' |
+    sort -nr | head -n1 | cut -d' ' -f2-)"
+[[ -n "$partition_log" && -f "$partition_log" ]] || fatal "Could not locate the partition-22 qualification log."
+printf '[PASS] Partition qualification log: %s\n' "$partition_log"
+
+seq_write="$(sed -nE 's/.*sequential write: ([0-9.]+) MiB\/s.*/\1/p' "$partition_log" | tail -n1)"
+seq_read="$(sed -nE 's/.*verified sequential read: ([0-9.]+) MiB\/s.*/\1/p' "$partition_log" | tail -n1)"
+random_iops="$(sed -nE 's/.*random 4 KiB overwrite: ([0-9.]+) IOPS.*/\1/p' "$partition_log" | tail -n1)"
+fsync_p95="$(sed -nE 's/.*fsync latency:.*p95=([0-9.]+)ms.*/\1/p' "$partition_log" | tail -n1)"
+require_ge "Sequential write MiB/s" "$seq_write" "$MIN_SEQ_WRITE_MIB_S"
+require_ge "Verified sequential read MiB/s" "$seq_read" "$MIN_SEQ_READ_MIB_S"
+require_ge "Random 4 KiB overwrite IOPS" "$random_iops" "$MIN_RANDOM_IOPS"
+require_le "fsync p95 milliseconds" "$fsync_p95" "$MAX_FSYNC_P95_MS"
+
+section "Exact-source online fragmentation and defragmentation"
+run_timed "native online-defrag qualification" 30m     bash tests/native-defrag-qualification.sh "$BUILD" "$ROOT/kernel/infiltratorfs.ko"
+
+section "Exact-source million-file and 1 TiB mounted scale"
+sudo insmod "$ROOT/kernel/infiltratorfs.ko"
+MODULE_LOADED=1
+grep -qw infiltratorfs /proc/filesystems
+run_timed "million-file and 1 TiB scale qualification" 4h     bash tests/native-scale-qualification.sh "$BUILD"
+
+section "Exact-source near-full and five-minute mixed-workload endurance"
+run_timed "near-full mixed-workload endurance qualification" 2h     bash tests/native-endurance-qualification.sh "$BUILD"
+sudo rmmod infiltratorfs
+MODULE_LOADED=0
+
+section "Final physical-media scrub and kernel diagnostics"
+sudo "$BUILD/infilfs-scrub" "$TARGET" | tee "$WORK/final-partition22-scrub.txt"
+grep -Fq 'Result:              CLEAN' "$WORK/final-partition22-scrub.txt"
+kernel_failures="$(sudo dmesg --since "$START_TIME" 2>/dev/null |
+    grep -E 'EUCLEAN|Structure needs cleaning|BUG:|Oops:|Kernel panic|hung task|soft lockup|hard LOCKUP|general protection fault' || true)"
+[[ -z "$kernel_failures" ]] || {
+    printf '%s\n' "$kernel_failures" >&2
+    fatal "Kernel corruption, crash or lockup signature observed."
+}
+
+elapsed=$(( $(date +%s) - START_EPOCH ))
+section "COMPLETE QUALIFICATION PASS"
+printf '[PASS] Installed release, source, packages, portable core, native kernel,\n'
+printf '       physical VFS, recovery, integrity, performance, scale, endurance,\n'
+printf '       online defrag, remount and scrub qualification all passed.\n'
+printf '[PASS] Version: %s\n[PASS] Elapsed: %d seconds\n[PASS] Log: %s\n'     "$VERSION" "$elapsed" "$LOG"
+ <<<"$deb_contents"
 
 section "Installed-release destructive partition-22 qualification"
 partition_started="$(date +%s)"
