@@ -220,7 +220,12 @@ if args.list_partitions:
 try:
     import gi
 
+    # Pin every GTK-stack namespace before importing any of them.  Systems
+    # carrying both GTK 3 and GTK 4 otherwise let PyGObject resolve Gdk
+    # independently, which can load Gdk 4 alongside Gtk 3 and abort startup.
     gi.require_version("Gtk", "3.0")
+    gi.require_version("Gdk", "3.0")
+    gi.require_version("Pango", "1.0")
     from gi.repository import Gdk, Gio, GLib, Gtk, Pango
 except (ImportError, ValueError) as exc:
     print(f"{APP_NAME}: install python3-gi and gir1.2-gtk-3.0", file=sys.stderr)
