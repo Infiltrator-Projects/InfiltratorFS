@@ -1250,7 +1250,9 @@ retry:
             return ret;
     }
 
-    if (preferred > 0 && preferred < total && count <= total - preferred) {
+    if (workload == INFILFS_DATA_WORKLOAD_SEQUENTIAL &&
+        preferred > 0 && preferred < total &&
+        count <= total - preferred) {
         for (i = 0; i < count; ++i)
             if (infilfs_rw_bitmap_get(tx->bitmap, preferred + i))
                 break;
