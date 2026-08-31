@@ -271,7 +271,15 @@ grep -Fq 'sync' <<<"$preinst_text"
 grep -Fq 'umount -a -t infiltratorfs,fuse.infilfs-fuse' <<<"$preinst_text"
 grep -Fq 'clean automatic unmount complete' <<<"$preinst_text"
 grep -Fq 'volume is still busy' <<<"$preinst_text"
-if grep -Eq 'umount[[:space:]].*(-f|--force|-l|--lazy)' <<<"$preinst_text"; then
+if awk '
+    /^[[:space:]]*umount[[:space:]]/ {
+        for (field = 2; field <= NF; ++field)
+            if ($field ~ /^-[^-]*[fl]/ || $field == "--force" ||
+                $field == "--lazy")
+                unsafe = 1
+    }
+    END { exit unsafe ? 0 : 1 }
+' <<<"$preinst_text"; then
     echo 'Debian preinst must never force or lazily detach mounted InfiltratorFS volumes.' >&2
     exit 1
 fi
