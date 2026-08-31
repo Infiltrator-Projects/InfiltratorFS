@@ -3,6 +3,42 @@
 
 This file records significant qualification runs against specific source commits. It is evidence for implemented behavior, not a claim that InfiltratorFS is bug-free.
 
+## 2026-08-31 desktop formatter and parallel-allocation qualification
+
+The last two Linux roadmap items selected for release 0.18.28 were qualified
+against exact `main` source.
+
+Exact source commit `b9700642e8eb70c7969124a7add21429608f5003`
+passed Build and conformance workflow run `33380655074`, including GNOME Disks
+formatter job `99452037637`. The job applied the repository's version-pinned
+patches to libblockdev `7ce6c6e9b59fdf16cd5dffd602f954ef52588dbb`, UDisks
+`c731cee133bb3240a0b91b59f9995a42aafb0ac4` and GNOME Disks
+`dc2da843a7afc7f9e916999d5daeecb0d6adf84c`, then:
+
+- built and installed the patched libblockdev filesystem plugin;
+- required InfiltratorFS `MKFS`, label and force capability discovery;
+- invoked libblockdev's generic `fs_mkfs()` path against a 64 MiB image with
+  the label `GNOME Disks Integration`;
+- verified Format 0.17 type and label output through
+  `infilfs-inspect --udev`;
+- built the patched UDisks/libudisks2 source; and
+- completed all 142 targets in the patched GNOME Disks Meson build.
+
+The same exact source commit's Native Linux workflow run `33380655054`, kernel
+qualification job `99452036592`, built both the generic and running-kernel
+modules, reproduced the self-contained DKMS build and passed the complete
+mounted native transaction suite. Its explicit parallel gate
+started 16 writers together, wrote and hash-verified 16 disjoint 4 MiB files,
+then unmounted and observed the driver diagnostic
+`reservations=7907 peak_active=3 conflicts=0`. The required overlap floor is
+two. The resulting image and recovery fixtures passed CLEAN scrubs, and the
+same job reduced its deliberately fragmented 32 MiB file from 193 extents to
+one without changing content or retained metadata.
+
+These results qualify the integration patches themselves; unpatched
+distribution GNOME Disks/UDisks/libblockdev packages require distribution or
+upstream adoption before they expose the InfiltratorFS format row.
+
 ## 2026-08-31 driverless Windows Explorer bridge qualification
 
 Release 0.18.26 driverless Windows mounting was qualified against exact source

@@ -3,9 +3,9 @@
 
 This directory contains the native Linux VFS adapter for InfiltratorFS. It is an out-of-tree kernel module built against installed kernel headers and packaged through DKMS; Linux itself does not need to be rebuilt.
 
-Release 0.18.26 is the current normal Linux filesystem path. The old userspace FUSE adapter has been removed from the source tree and survives only in Git history.
+Release 0.18.28 is the current normal Linux filesystem path. The old userspace FUSE adapter has been removed from the source tree and survives only in Git history.
 
-Release 0.18.26 rejects repeated physical metadata-tree blocks during full walks, keeps large allocation-tree traversal scratch buffers off the kernel stack, and permits DKMS/package upgrades to complete while an explicit administrator module-disable policy remains active.
+Release 0.18.28 rejects repeated physical metadata-tree blocks during full walks, keeps large allocation-tree traversal scratch buffers off the kernel stack, permits DKMS/package upgrades to complete while an explicit administrator module-disable policy remains active, and adds object-local 64-shard volatile data-allocation reservations.
 
 The module:
 
@@ -59,6 +59,7 @@ The DKMS source root is deliberately self-contained and includes:
 - `infiltratorfs_format.h`
 - `infiltratorfs_allocation_map.inc`
 - `infiltratorfs_allocation_publish.inc`
+- `infiltratorfs_parallel_alloc.inc`
 - `infiltratorfs_rw.inc`
 - `infiltratorfs_rw_legacy.inc`
 - `infiltratorfs_rw_data.inc`
@@ -83,6 +84,6 @@ The release publisher adds an installed-package gate: it installs the generated 
 
 ## Current release scope
 
-The native driver has passed the major migration milestone: the current product path no longer depends on restoration of FUSE-era functionality. Follow-on work is focused on deeper checkpoint-recovery qualification, broader xattr and allocation-reporting semantics, explicit mounted regression coverage, locking/concurrency, scale, fragmentation, near-full behavior and long-running mixed-workload stress.
+The native driver has passed the major migration milestone: the current product path no longer depends on restoration of FUSE-era functionality. Scale, near-full endurance, online defragmentation and parallel allocation reservations now have dedicated mounted qualification. Follow-on work is focused on workload- and media-aware placement, further recovery depth and broader long-running stress.
 
 The portable core remains the canonical on-disk transaction and validation model shared by every operating-system adapter. Linux VFS code is therefore not intended to become the definition that a future Windows, macOS, BSD or Haiku implementation must copy.

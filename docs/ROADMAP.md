@@ -28,7 +28,7 @@ Pre-1.0 development is current-format-only. A new development format may superse
 - [x] Runtime hashed metadata indexes.
 - [x] Sequential allocation and checksum hot-path performance work.
 
-## Completed native Linux filesystem surface through release 0.18.26
+## Completed native Linux filesystem surface through release 0.18.28
 
 - [x] Native out-of-tree Linux VFS filesystem driver `infiltratorfs.ko`.
 - [x] DKMS packaging and host-kernel rebuild/install path.
@@ -73,7 +73,11 @@ Pre-1.0 development is current-format-only. A new development format may superse
 - [x] Native fragmentation/optimisation metrics and online defragmentation
   through the per-file ioctl ABI and `infilfs-optimize`, with mounted identity,
   content, xattr, timestamp, hard-link, snapshot, scrub and remount qualification.
-- [ ] Upstream/libblockdev formatter integration so stock GNOME Disks can offer InfiltratorFS directly in its format menu.
+- [x] libblockdev/UDisks/GNOME Disks formatter integration through
+  version-pinned upstream patches, a conventional `mkfs.infiltratorfs` helper
+  and CI that builds all three projects and executes generic format, label and
+  probe end to end. Distribution adoption remains separate from the shipped
+  integration implementation.
 
 The completed items above are enforced by native mounted CI and the partition-22
 destructive qualification harness.
@@ -92,12 +96,20 @@ passed on exact `main` at commit
 and near-full/endurance jobs passed, as did mounted native online-defragmentation
 qualification. See [QUALIFICATION.md](QUALIFICATION.md) for the evidence record.
 
+On 2026-08-31, the final two selected items passed exact-source qualification.
+The pinned libblockdev/UDisks/GNOME Disks stack built successfully and its
+generic libblockdev path formatted, labelled and probed a real Format 0.17
+image. The hosted native kernel gate also hash-verified 16 concurrent 4 MiB
+writers and observed three simultaneously active allocation reservations. See
+[QUALIFICATION.md](QUALIFICATION.md) for the commit and workflow evidence.
+
 ## Scale and performance
 
 - [x] Scalable generation-aware object-index tree.
 - [x] Scalable directory trees.
 - [x] Rebuildable free-extent index.
-- [ ] Parallel allocation model.
+- [x] Parallel native data-allocation model with 64 volatile reservation
+  shards, object-stable placement and mounted multi-writer qualification.
 - [ ] Locality scoring and workload-aware placement.
 - [ ] Media-aware placement.
 - [ ] Per-extent compression.

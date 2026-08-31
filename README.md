@@ -6,7 +6,7 @@
 
 InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem started in 2026. The persistent format and portable core define the filesystem; operating-system adapters translate native APIs and semantics onto the same on-disk objects, transactions, extents, snapshots and integrity model.
 
-**Current release:** 0.18.26 (Format 0.17)<br>
+**Current release:** 0.18.28 (Format 0.17)<br>
 **Shared foundation:** Infiltratr Common 1.11.0  
 **Licence:** GPL-3.0-or-later
 
@@ -16,9 +16,9 @@ Pre-1.0 development intentionally does not preserve compatibility with older dev
 
 Format 0.17 provides 4096-byte little-endian blocks, 128-bit filesystem/object identities, three physically separated checksummed checkpoints, authoritative one-bit-per-block allocation persisted as a sharded CoW allocation tree with rebuildable runtime free-extent indexes, 1023-byte UTF-8 namespace components, copy-on-write transactions, a generation-aware object-index radix tree, hashed directory trees, paged extent metadata, inline small files, sparse files and hole extents, shared extents/reflinks, symbolic and hard links, retained historical generations and named read-only snapshots, CRC64-ECMA metadata integrity, SHA-256 file-data integrity, portable attributes, isolated POSIX compatibility metadata, UTF-8 namespace validation, scrub/verify and callback-based storage/durability/randomness/clock services.
 
-Linux is the most complete mounted adapter. Release 0.18.26 uses the native `infiltratorfs.ko` VFS driver and includes native namespace mutation, random and sparse writes, truncate, `fallocate`, hole punching, hard links and symlinks, crash-safe open-unlink lifetime, mount-time orphan recovery, persistent standard Linux xattr namespaces, FIFO/socket/character/block special-node identity, page-cache and readahead integration, shared writable `mmap`, snapshot-preserving live writes, checkpoint fallback and replica healing, complete allocation reporting, bounded metadata-tree alias/cycle rejection, kernel-stack-safe allocation-tree traversal, and native remount/scrub qualification. Sustained native writes use a writer-tail checksum path and persistent tree indexes so multi-gigabyte sequential appends no longer rescan historical checksum/index metadata. Mounted CI also exercises the former FUSE regression surface, including six-way concurrent namespace mutation, shared-inode writes/fsync, same-inode xattr readers/writers, open-unlink contention, 4,000 random overwrites and repeated durability publication.
+Linux is the most complete mounted adapter. Release 0.18.28 uses the native `infiltratorfs.ko` VFS driver and includes native namespace mutation, random and sparse writes, truncate, `fallocate`, hole punching, hard links and symlinks, crash-safe open-unlink lifetime, mount-time orphan recovery, persistent standard Linux xattr namespaces, FIFO/socket/character/block special-node identity, page-cache and readahead integration, shared writable `mmap`, snapshot-preserving live writes, checkpoint fallback and replica healing, complete allocation reporting, bounded metadata-tree alias/cycle rejection, kernel-stack-safe allocation-tree traversal, online defragmentation and native remount/scrub qualification. A 64-shard volatile reservation layer lets independent writers search and reserve free data runs before the serialized metadata transaction, while per-object placement cursors preserve sequential locality. Sustained native writes use a writer-tail checksum path and persistent tree indexes so multi-gigabyte sequential appends no longer rescan historical checksum/index metadata. Mounted CI also exercises the former FUSE regression surface, including six-way concurrent namespace mutation, shared-inode writes/fsync, same-inode xattr readers/writers, open-unlink contention, 4,000 random overwrites and repeated durability publication.
 
-Windows release 0.18.26 adds a driverless Explorer bridge on top of Microsoft's inbox Projected File System (ProjFS). The Windows application opens an InfiltratorFS image or raw partition through the portable core, **Mount in Explorer** assigns a temporary drive letter, Linux-created files are hydrated on demand, and ordinary Windows create/write/rename/hard-link/delete operations are committed back to the same Format 0.17 volume. This interim path ships no InfiltratorFS kernel driver; the true native Windows filesystem driver remains future work.
+Windows release 0.18.28 includes a driverless Explorer bridge on top of Microsoft's inbox Projected File System (ProjFS). The Windows application opens an InfiltratorFS image or raw partition through the portable core, **Mount in Explorer** assigns a temporary drive letter, Linux-created files are hydrated on demand, and ordinary Windows create/write/rename/hard-link/delete operations are committed back to the same Format 0.17 volume. This interim path ships no InfiltratorFS kernel driver; the true native Windows filesystem driver remains future work.
 
 ## Platform-neutral architecture
 
@@ -60,7 +60,15 @@ The Debian package installs **InfiltratorFS Manager** plus udev/UDisks identific
 
 For block devices Manager uses a native kernel mount under `/media/<user>/InfiltratorFS`. For image files it uses a kernel loop mount under `~/InfiltratorFS`. The privileged helper verifies that the resulting filesystem type is exactly `infiltratorfs` and refuses a non-native mount.
 
-Stock GNOME Disks may still not offer “InfiltratorFS” in its built-in format-type dropdown because that list comes from UDisks/libblockdev support. An already-formatted InfiltratorFS volume can nevertheless be identified and mounted through the installed desktop integration.
+The source tree includes the conventional `mkfs.infiltratorfs` helper and
+version-pinned integration patches for libblockdev, UDisks and GNOME Disks.
+Continuous integration applies those patches to the pinned upstream projects,
+builds the complete stack, invokes libblockdev's generic formatter with a
+label, and verifies the resulting Format 0.17 image through
+`infilfs-inspect --udev`. Distribution-provided GNOME Disks packages will not
+show the new format row until their maintainers adopt the patches; already
+formatted volumes remain identifiable and mountable through the installed
+desktop integration.
 
 ## Build and test on Linux
 
@@ -133,8 +141,8 @@ A release includes `infiltratorfs-<version>-linux-native.run`. It contains the t
 For the current release:
 
 ```bash
-chmod +x infiltratorfs-0.18.26-linux-native.run
-./infiltratorfs-0.18.26-linux-native.run --dry-run
+chmod +x infiltratorfs-0.18.28-linux-native.run
+./infiltratorfs-0.18.28-linux-native.run --dry-run
 ```
 
 The installer refuses to upgrade while an InfiltratorFS volume is mounted. This prevents replacing a live filesystem driver underneath active media.
