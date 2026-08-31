@@ -198,8 +198,10 @@ deb="$DIST/infiltratorfs_${VERSION}_$(dpkg --print-architecture).deb"
     sha256sum -c "$(basename "$deb").sha256"
     sha256sum -c "$(basename "$installer").sha256"
 )
-dpkg-deb --contents "$deb" | grep -q 'usr/bin/infilfs-optimize$'
-! dpkg-deb --contents "$deb" | grep -q 'usr/bin/infilfs-fuse$'
+deb_contents_file="$WORK/deb-contents.txt"
+dpkg-deb --contents "$deb" > "$deb_contents_file"
+grep -q 'usr/bin/infilfs-optimize$' "$deb_contents_file"
+! grep -q 'usr/bin/infilfs-fuse$' "$deb_contents_file"
 
 section "Installed-release destructive partition-22 qualification"
 partition_started="$(date +%s)"
