@@ -155,9 +155,11 @@ jobs:
           tools/infiltratorfs-manager --list-partitions >/dev/null
       - name: Launch GTK Manager
         run: |
-          set -euo pipefail
+          set -uo pipefail
           output="$(xvfb-run -a tools/infiltratorfs-manager --startup-check 2>&1)"
+          rc=$?
           printf '%s\n' "$output"
+          test "$rc" -eq 0
           grep -Fq 'infiltratorfs-manager: GTK startup PASS' <<<"$output"
           ! grep -Fq 'PyGIWarning' <<<"$output"
           ! grep -Fq 'install python3-gi and gir1.2-gtk-3.0' <<<"$output"
