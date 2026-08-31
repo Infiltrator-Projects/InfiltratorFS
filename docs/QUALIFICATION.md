@@ -3,6 +3,33 @@
 
 This file records significant qualification runs against specific source commits. It is evidence for implemented behavior, not a claim that InfiltratorFS is bug-free.
 
+## Qualification cadence
+
+InfiltratorFS deliberately separates fast regression from expensive qualification.
+
+- **Build and conformance** remains the broad every-main-push gate. Superseded runs
+  are cancelled. GCC/Linux, Clang, sanitizers, static analysis, Windows
+  portability and package construction remain ordinary regression coverage.
+- **Local Linux userspace** proves a native build and cross-platform image on the
+  real local runner environment without repeating the complete GCC CTest suite.
+- **GNOME Disks formatter integration** builds the pinned libblockdev/UDisks/GNOME
+  Disks stack only when the formatter/integration surface changes, plus the
+  scheduled weekly and explicit manual comprehensive runs.
+- **Native Linux kernel module** remains the ordinary mounted kernel qualification
+  for kernel/core/package changes and every explicit Release commit; unrelated
+  documentation pushes do not spend kernel-runner time.
+- **Heavy filesystem qualification** owns the million-file/1 TiB and near-full
+  mixed-workload endurance suites. It runs for storage/core changes, weekly, or
+  manually. Superseded heavy runs are cancelled rather than finishing obsolete
+  source revisions.
+- **Physical partition qualification** remains an explicitly destructive operator
+  milestone/audit run and is never unattended ordinary CI.
+- **Release publication** still rebuilds, installs, mounts and cross-checks the
+  exact release source and artefacts before immutable publication.
+
+The purpose is to preserve the hard-earned regression coverage while matching
+test cost to the code that can actually invalidate each qualification.
+
 ## 2026-08-31 desktop formatter and parallel-allocation qualification
 
 The last two Linux roadmap items selected for release 0.18.28 were qualified

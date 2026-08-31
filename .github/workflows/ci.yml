@@ -5,9 +5,16 @@ on:
   push:
     branches:
       - main
+  schedule:
+    - cron: "17 3 * * 0"
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: build-and-conformance-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   release-policy:
@@ -38,6 +45,20 @@ jobs:
 
   desktop-formatter:
     name: GNOME Disks formatter integration
+    if: >-
+      github.event_name != 'push' ||
+      (
+        !startsWith(github.event.head_commit.message, 'Release ') &&
+        (
+          contains(toJson(github.event.commits), 'packaging/libblockdev-infiltratorfs.patch') ||
+          contains(toJson(github.event.commits), 'packaging/udisks2-infiltratorfs-display.patch') ||
+          contains(toJson(github.event.commits), 'packaging/gnome-disks-infiltratorfs.patch') ||
+          contains(toJson(github.event.commits), 'tests/libblockdev-formatter-smoke.py') ||
+          contains(toJson(github.event.commits), 'tools/mkfs.infilfs') ||
+          contains(toJson(github.event.commits), 'tools/mkfs.infiltratorfs') ||
+          contains(toJson(github.event.commits), 'tools/infilfs-inspect.c')
+        )
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -284,8 +305,6 @@ jobs:
         run: cmake -S . -B build-local -DCMAKE_BUILD_TYPE=Release
       - name: Build
         run: cmake --build build-local --parallel
-      - name: Test
-        run: ctest --test-dir build-local --output-on-failure
       - name: Cross-platform image smoke
         run: |
           truncate -s 64M build-local/local-cross-platform.img

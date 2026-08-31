@@ -1,0 +1,138 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Heavy filesystem qualification
+
+# Expensive mounted scale/endurance work is deliberately not ordinary per-push CI.
+# Run it for storage/core changes, once a week, or explicitly on demand.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'kernel/**'
+      - 'src/**'
+      - 'include/**'
+      - 'tools/**'
+      - 'tests/native-scale-*'
+      - 'tests/native-endurance-*'
+      - 'tests/native-defrag-*'
+      - 'CMakeLists.txt'
+  schedule:
+    - cron: "43 2 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: heavy-filesystem-qualification-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-scale-stress:
+    # Full million-file/1 TiB stress is development-scale qualification, not
+    # a per-release gate. Release commits reuse already-qualified heavy evidence
+    # and retain the ordinary mounted kernel and exact-package release gates.
+    if: ${{ !startsWith(github.event.head_commit.message, 'Release ') }}
+    name: Million-file and 1 TiB mounted stress
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+      - name: Install scale qualification dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake kmod
+      - name: Require running-kernel headers
+        id: scale_headers
+        shell: bash
+        run: |
+          set -euo pipefail
+          kdir="/lib/modules/$(uname -r)/build"
+          if [[ ! -f "$kdir/Makefile" ]]; then
+            sudo apt-get install -y "linux-headers-$(uname -r)"
+          fi
+          test -f "$kdir/Makefile"
+          printf 'kdir=%s\n' "$kdir" >> "$GITHUB_OUTPUT"
+      - name: Guard scale qualification contract
+        run: |
+          bash tests/native-scale-policy.sh .
+          bash -n tests/native-scale-qualification.sh
+          python3 -m py_compile tests/native-scale-stress.py
+      - name: Build scale qualification userspace tools
+        run: |
+          cmake -S . -B build-scale -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-scale --parallel --target mkfs.infilfs infilfs-scrub infilfs-inspect
+      - name: Build exact module for running kernel
+        env:
+          KDIR: ${{ steps.scale_headers.outputs.kdir }}
+        run: |
+          make -C kernel clean KDIR="$KDIR"
+          make -C kernel KDIR="$KDIR"
+          test "$(modinfo -F vermagic kernel/infiltratorfs.ko | awk '{print $1}')" = "$(uname -r)"
+      - name: Run full million-file and 1 TiB mounted qualification
+        timeout-minutes: 165
+        shell: bash
+        run: |
+          set -euo pipefail
+          cleanup() {
+            set +e
+            sudo rmmod infiltratorfs 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          sudo insmod kernel/infiltratorfs.ko
+          bash tests/native-scale-qualification.sh build-scale
+
+  native-endurance-stress:
+    if: ${{ github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'Release ') }}
+    name: Near-full fragmentation and mixed-workload endurance
+    needs: kernel-module
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+      - name: Install endurance qualification dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake kmod util-linux
+      - name: Require running-kernel headers
+        id: endurance_headers
+        shell: bash
+        run: |
+          set -euo pipefail
+          kdir="/lib/modules/$(uname -r)/build"
+          if [[ ! -f "$kdir/Makefile" ]]; then
+            sudo apt-get install -y "linux-headers-$(uname -r)"
+          fi
+          test -f "$kdir/Makefile"
+          printf 'kdir=%s\n' "$kdir" >> "$GITHUB_OUTPUT"
+      - name: Guard endurance qualification contract
+        run: |
+          bash tests/native-endurance-policy.sh .
+          bash -n tests/native-endurance-qualification.sh
+          python3 -m py_compile tests/native-endurance-stress.py
+      - name: Build endurance userspace tools
+        run: |
+          cmake -S . -B build-endurance -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-endurance --parallel --target mkfs.infilfs infilfs-scrub infilfs-inspect
+      - name: Build exact module for running kernel
+        env:
+          KDIR: ${{ steps.endurance_headers.outputs.kdir }}
+        run: |
+          make -C kernel clean KDIR="$KDIR"
+          make -C kernel KDIR="$KDIR"
+          test "$(modinfo -F vermagic kernel/infiltratorfs.ko | awk '{print $1}')" = "$(uname -r)"
+      - name: Run full near-full fragmentation endurance qualification
+        timeout-minutes: 60
+        shell: bash
+        run: |
+          set -euo pipefail
+          cleanup() {
+            set +e
+            sudo rmmod infiltratorfs 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          sudo insmod kernel/infiltratorfs.ko
+          bash tests/native-endurance-qualification.sh build-endurance
+
