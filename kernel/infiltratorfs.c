@@ -68,6 +68,12 @@ struct infilfs_parallel_reservation {
     bool active;
 };
 
+enum infilfs_data_workload {
+    INFILFS_DATA_WORKLOAD_SEQUENTIAL = 0,
+    INFILFS_DATA_WORKLOAD_RANDOM,
+    INFILFS_DATA_WORKLOAD_SPARSE,
+};
+
 struct infilfs_sb_info {
     struct infilfs_superblock_disk disk;
     u64 device_blocks;
@@ -113,6 +119,11 @@ struct infilfs_sb_info {
     atomic64_t allocation_peak_active_reservations;
     atomic64_t allocation_reservation_successes;
     atomic64_t allocation_reservation_conflicts;
+    atomic64_t allocation_workload_sequential;
+    atomic64_t allocation_workload_random;
+    atomic64_t allocation_workload_sparse;
+    atomic64_t allocation_locality_scored;
+    atomic64_t allocation_best_fit;
     bool rw_enabled;
     bool write_poisoned;
     bool checkpoint_repair_needed;
