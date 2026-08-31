@@ -6,7 +6,8 @@ This downstream patch targets the GNOME Disks 46 series shipped by Ubuntu
 filenames and a static other_fs table rather than the later GduOtherFsType
 enum. Add InfiltratorFS to that table; availability continues to be queried
 through UDisks CanFormat, so the row is disabled unless the formatter is
-available.
+available. Also provide the native filesystem name in the main Contents field
+and volume grid without replacing the distro libudisks2 client library.
 
 diff --git a/src/disks/gducreateotherpage.c b/src/disks/gducreateotherpage.c
 --- a/src/disks/gducreateotherpage.c
@@ -18,3 +19,50 @@ diff --git a/src/disks/gducreateotherpage.c b/src/disks/gducreateotherpage.c
 +  {"infiltratorfs", N_("InfiltratorFS — Portable checksummed copy-on-write filesystem")},
    {"empty", N_("No Filesystem")},
  };
+
+diff --git a/src/disks/gduwindow.c b/src/disks/gduwindow.c
+--- a/src/disks/gduwindow.c
++++ b/src/disks/gduwindow.c
+@@ -2630,7 +2630,14 @@ update_device_page_for_block (GduWindow          *window,
+         }
+       else
+         {
+-          s = udisks_client_get_id_for_display (window->client, usage, type, version, TRUE);
++          if (g_strcmp0 (usage, "filesystem") == 0 &&
++              g_strcmp0 (type, "infiltratorfs") == 0)
++            s = (version && *version)
++                ? g_strdup_printf (_("InfiltratorFS (format %s)"), version)
++                : g_strdup (_("InfiltratorFS"));
++          else
++            s = udisks_client_get_id_for_display (window->client, usage, type,
++                                                  version, TRUE);
+         }
+     }
+   else
+
+diff --git a/src/disks/gduvolumegrid.c b/src/disks/gduvolumegrid.c
+--- a/src/disks/gduvolumegrid.c
++++ b/src/disks/gduvolumegrid.c
+@@ -1644,11 +1644,17 @@ create_size_string (UDisksClient *client,
+       gchar *type_for_display;
+       gchar *size_with_type_str;
+
+-      type_for_display = udisks_client_get_id_for_display (client,
+-                                                           usage,
+-                                                           type,
+-                                                           version,
+-                                                           NO_LONG_STRING);
++      if (g_strcmp0 (usage, "filesystem") == 0 &&
++          g_strcmp0 (type, "infiltratorfs") == 0)
++        type_for_display = (version && *version)
++                           ? g_strdup_printf (_("InfiltratorFS (format %s)"), version)
++                           : g_strdup (_("InfiltratorFS"));
++      else
++        type_for_display = udisks_client_get_id_for_display (client,
++                                                             usage,
++                                                             type,
++                                                             version,
++                                                             NO_LONG_STRING);
+
+       size_with_type_str = g_strdup_printf ("%s %s", size_str, type_for_display);
+       g_free (type_for_display);
