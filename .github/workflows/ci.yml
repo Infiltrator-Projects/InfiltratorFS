@@ -142,7 +142,7 @@ jobs:
       - name: Install Linux native adapter dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y desktop-file-utils python3-gi gir1.2-gtk-3.0 xvfb
+          sudo apt-get install -y desktop-file-utils policykit-1 xdg-utils python3-gi gir1.2-gtk-3.0 xvfb
       - name: Validate Mint desktop integration
         run: desktop-file-validate packaging/infiltratorfs-manager.desktop
       - name: Validate Manager partition enumeration
@@ -156,8 +156,10 @@ jobs:
       - name: Launch GTK Manager
         run: |
           set -uo pipefail
+          set +e
           output="$(xvfb-run -a tools/infiltratorfs-manager --startup-check 2>&1)"
           rc=$?
+          set -e
           printf '%s\n' "$output"
           test "$rc" -eq 0
           grep -Fq 'infiltratorfs-manager: GTK startup PASS' <<<"$output"
