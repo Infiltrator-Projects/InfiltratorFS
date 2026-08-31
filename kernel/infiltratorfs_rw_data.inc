@@ -158,6 +158,23 @@ static u32 infilfs_native_id_hash(const u8 id[16])
     return h;
 }
 
+static enum infilfs_data_workload infilfs_native_classify_write(
+    u64 pos, size_t bytes, u64 old_size)
+{
+    if (!bytes)
+        return INFILFS_DATA_WORKLOAD_RANDOM;
+    if (pos == old_size)
+        return INFILFS_DATA_WORKLOAD_SEQUENTIAL;
+    if (pos > old_size)
+        return INFILFS_DATA_WORKLOAD_SPARSE;
+    return INFILFS_DATA_WORKLOAD_RANDOM;
+}
+
+static u64 infilfs_native_block_distance(u64 a, u64 b)
+{
+    return a > b ? a - b : b - a;
+}
+
 
 static void infilfs_native_writer_tail_invalidate(
     struct infilfs_native_pending *pending)
@@ -1102,8 +1119,93 @@ static void infilfs_native_pending_destroy(struct super_block *sb)
     kfree(pending);
 }
 
+static bool infilfs_native_choose_scored_extent(
+    const struct infilfs_rw_tx *tx, u64 wanted, u64 preferred,
+    enum infilfs_data_workload workload, u64 *start_out)
+{
+    const struct infilfs_sb_info *sbi;
+    u64 best_primary = U64_MAX;
+    u64 best_secondary = U64_MAX;
+    u64 best_start = 0;
+    bool found = false;
+    size_t i;
+
+    if (!tx || !tx->sbi || !tx->free_extent_index_valid || !wanted ||
+        !tx->free_extent_count || !start_out)
+        return false;
+    sbi = tx->sbi;
+    if (preferred < 1u || preferred >= sbi->device_blocks) {
+        preferred = sbi->data_alloc_hint;
+        if (preferred < 1u || preferred >= sbi->device_blocks)
+            preferred = 1u;
+    }
+
+    for (i = 0; i < tx->free_extent_count; ++i) {
+        const struct infilfs_rw_free_range *extent = &tx->free_extents[i];
+        u64 extent_start = extent->start;
+        u64 extent_end;
+        u64 candidate;
+        u64 primary;
+        u64 secondary;
+
+        if (extent->count < wanted ||
+            extent_start > U64_MAX - extent->count)
+            continue;
+        extent_end = extent_start + extent->count;
+
+        if (workload == INFILFS_DATA_WORKLOAD_SEQUENTIAL) {
+            if (preferred <= extent_start)
+                candidate = extent_start;
+            else if (preferred <= extent_end - wanted)
+                candidate = preferred;
+            else
+                candidate = extent_end - wanted;
+            primary = infilfs_native_block_distance(candidate, preferred);
+            /*
+             * Equal-distance sequential candidates prefer the run that leaves
+             * the largest contiguous tail for the next append.
+             */
+            secondary = U64_MAX - (extent_end - (candidate + wanted));
+        } else {
+            if (preferred <= extent_start)
+                candidate = extent_start;
+            else if (preferred >= extent_end - wanted)
+                candidate = extent_end - wanted;
+            else
+                candidate = preferred;
+            /*
+             * Random and sparse writes consume the tightest suitable hole
+             * first, preserving large contiguous runs for streaming growth.
+             */
+            primary = extent->count - wanted;
+            secondary = infilfs_native_block_distance(candidate, preferred);
+        }
+
+        if (infilfs_parallel_range_reserved(sbi, candidate, wanted))
+            continue;
+        if (!found || primary < best_primary ||
+            (primary == best_primary && secondary < best_secondary) ||
+            (primary == best_primary && secondary == best_secondary &&
+             candidate < best_start)) {
+            best_primary = primary;
+            best_secondary = secondary;
+            best_start = candidate;
+            found = true;
+        }
+    }
+
+    if (!found)
+        return false;
+    *start_out = best_start;
+    atomic64_inc(&tx->sbi->allocation_locality_scored);
+    if (workload != INFILFS_DATA_WORKLOAD_SEQUENTIAL)
+        atomic64_inc(&tx->sbi->allocation_best_fit);
+    return true;
+}
+
 static int infilfs_native_alloc_data_exact_reserved(
     struct infilfs_native_pending *pending, u64 count, u64 preferred,
+    enum infilfs_data_workload workload,
     struct infilfs_parallel_reservation *reservation, u64 *start_out)
 {
     struct infilfs_rw_tx *tx = &pending->tx;
@@ -1117,6 +1219,8 @@ static int infilfs_native_alloc_data_exact_reserved(
     u64 i;
     unsigned int attempts = 0;
     int ret;
+
+    infilfs_parallel_note_workload(sbi, workload);
 
 retry:
     run = 0;
@@ -1178,8 +1282,13 @@ retry:
     candidate = hint;
 
     if (tx->free_extent_index_valid &&
-        infilfs_rw_free_extent_choose_forward(tx, count, hint, &start) &&
-        !infilfs_parallel_range_reserved(sbi, start, count)) {
+        infilfs_native_choose_scored_extent(
+            tx, count, preferred, workload, &start)) {
+        run = count;
+    } else if (tx->free_extent_index_valid &&
+               infilfs_rw_free_extent_choose_forward(
+                   tx, count, hint, &start) &&
+               !infilfs_parallel_range_reserved(sbi, start, count)) {
         run = count;
     } else {
         for (scanned = 0; scanned < total - 1u; ++scanned) {
@@ -1221,7 +1330,8 @@ static int infilfs_native_alloc_data_exact(
     u64 *start_out)
 {
     return infilfs_native_alloc_data_exact_reserved(
-        pending, count, preferred, NULL, start_out);
+        pending, count, preferred, INFILFS_DATA_WORKLOAD_RANDOM,
+        NULL, start_out);
 }
 
 static void infilfs_native_block_digest(
@@ -3696,7 +3806,7 @@ static int infilfs_native_try_single_paged_overwrite(
         pending, 1,
         old_physical && old_physical + 1u < pending->tx.sbi->device_blocks ?
             old_physical + 1u : 1u,
-        reservation, &replacement_block);
+        INFILFS_DATA_WORKLOAD_RANDOM, reservation, &replacement_block);
     if (ret)
         goto out;
 
@@ -3913,6 +4023,7 @@ static int infilfs_native_append_chunk_locked(
     u64 touched_blocks;
     u64 preferred = 1;
     u64 data_start;
+    enum infilfs_data_workload workload;
     u64 logical;
     size_t consumed = 0;
     bool file_repoint;
@@ -3997,14 +4108,32 @@ generic_extent_write:
         goto out;
     }
 
-    if (old_extent_count) {
+    workload = infilfs_native_classify_write(pos, bytes, old_size);
+    preferred = READ_ONCE(ii->data_allocation_hint);
+    if (preferred < 1u || preferred >= pending->tx.sbi->device_blocks)
+        preferred = infilfs_parallel_object_preferred(
+            pending->tx.sbi, ii->object_id);
+
+    if (workload == INFILFS_DATA_WORKLOAD_RANDOM && old_extent_count) {
+        u64 old_physical = 0;
+        u32 old_flags = INFILFS_EXTENT_HOLE;
+
+        if (infilfs_native_map_extent(
+                old_extents, old_extent_count, start_block,
+                &old_physical, &old_flags) == 0 &&
+            old_flags == INFILFS_EXTENT_NORMAL)
+            preferred = old_physical;
+    } else if (old_extent_count) {
         struct infilfs_extent_disk *last = &old_extents[old_extent_count - 1u];
+
         if (le32_to_cpu(last->flags) == INFILFS_EXTENT_NORMAL)
             preferred = le64_to_cpu(last->physical_block) +
                 le32_to_cpu(last->block_count);
     }
+
     ret = infilfs_native_alloc_data_exact_reserved(
-        pending, touched_blocks, preferred, reservation, &data_start);
+        pending, touched_blocks, preferred, workload,
+        reservation, &data_start);
     if (ret)
         goto out;
     digests = kvmalloc_array(touched_blocks, sizeof(*digests), GFP_NOFS);
@@ -4172,13 +4301,23 @@ static ssize_t infilfs_native_extent_write_iter(struct inode *inode,
         u64 first_end = (u64)pos + first_bytes;
         u64 first_block = (u64)pos >> INFILFS_DISK_BLOCK_SHIFT;
         u64 last_block = (first_end - 1u) >> INFILFS_DISK_BLOCK_SHIFT;
+        u64 old_size = (u64)i_size_read(inode);
+        enum infilfs_data_workload workload =
+            infilfs_native_classify_write((u64)pos, first_bytes, old_size);
         u64 preferred = READ_ONCE(ii->data_allocation_hint);
 
         if (preferred < 1u || preferred >= sbi->device_blocks)
             preferred = infilfs_parallel_object_preferred(
                 sbi, ii->object_id);
 
-        if (first_end >= (u64)pos &&
+        /*
+         * Keep lockless multi-writer reservations for streaming growth. Small
+         * random/sparse CoW writes enter the scored transaction allocator so
+         * they can best-fit into existing holes instead of consuming the head
+         * of a large free run.
+         */
+        if (workload == INFILFS_DATA_WORKLOAD_SEQUENTIAL &&
+            first_end >= (u64)pos &&
             infilfs_parallel_reserve_data(
                 inode->i_sb, last_block - first_block + 1u, preferred,
                 &reservation) == 0)
