@@ -3,9 +3,10 @@
 Type=Application
 Version=1.0
 Name=InfiltratorFS Manager
-Comment=Create, inspect, check and mount InfiltratorFS volumes
+Comment=Create, inspect, verify and mount InfiltratorFS volumes
 Exec=infiltratorfs-manager
 Icon=drive-harddisk
 Terminal=false
+StartupNotify=true
 Categories=System;Utility;
 Keywords=filesystem;disk;image;format;mount;scrub;

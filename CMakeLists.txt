@@ -258,8 +258,9 @@ if(UNIX)
         COMMAND bash ${CMAKE_SOURCE_DIR}/tests/forensic-scan.sh ${CMAKE_BINARY_DIR})
     add_test(NAME infilfs-current-format-tree
         COMMAND bash ${CMAKE_SOURCE_DIR}/tests/current-format-tree.sh ${CMAKE_BINARY_DIR})
-    add_test(NAME infilfs-manager-shell-syntax
-        COMMAND bash -n ${CMAKE_SOURCE_DIR}/tools/infiltratorfs-manager)
+    add_test(NAME infilfs-manager-python-syntax
+        COMMAND python3 -c
+            "import ast,pathlib; ast.parse(pathlib.Path(r'${CMAKE_SOURCE_DIR}/tools/infiltratorfs-manager').read_text(encoding='utf-8'))")
     add_test(NAME infilfs-manager-helper-shell-syntax
         COMMAND bash -n ${CMAKE_SOURCE_DIR}/tools/infiltratorfs-manager-helper)
     add_test(NAME infilfs-manager-partition-discovery

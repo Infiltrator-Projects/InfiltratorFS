@@ -5,21 +5,25 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 manager="${repo_root}/tools/infiltratorfs-manager"
 
-# Regression for the real SD-card failure: lsblk -d suppresses child
-# partitions such as /dev/mmcblk0p1. The Manager must enumerate the full block
-# tree and then filter candidate disk/partition rows itself.
-grep -Fq 'lsblk -prno NAME,SIZE,TYPE,RM,PKNAME,TRAN' "${manager}"
-if grep -Fq 'lsblk -prndo NAME,SIZE,TYPE,RM,PKNAME,TRAN' "${manager}"; then
-    echo "manager-partition-discovery: lsblk -d regression detected" >&2
+# The GTK rewrite must preserve full-tree partition discovery. The historic
+# regression came from lsblk -d hiding child partitions such as mmcblk0p1.
+grep -Fq '"lsblk", "-J", "-b", "-o"' "${manager}"
+grep -Fq '"NAME,PATH,SIZE,TYPE,RM,PKNAME,TRAN,FSTYPE,LABEL,MOUNTPOINTS"' "${manager}"
+grep -Fq 'if node.get("type") != "part":' "${manager}"
+grep -Fq 'return "Fixed disk"' "${manager}"
+grep -Fq -- '--list-partitions' "${manager}"
+grep -Fq 'Gtk.ApplicationWindow' "${manager}"
+grep -Fq 'Gtk.StackSwitcher' "${manager}"
+grep -Fq 'threading.Thread' "${manager}"
+
+if grep -Fqi 'zenity' "${manager}"; then
+    echo "manager-partition-discovery: Zenity UI regression detected" >&2
     exit 1
 fi
 
-# Keep the expected partition vocabulary present so mmc/nvme/sd child
-# partitions cannot silently disappear from a future selector rewrite.
-grep -Fq 'TYPE' "${manager}"
-grep -Eq 'part|partition' "${manager}"
-grep -Fq "printf 'Fixed disk\\n'" "${manager}"
-grep -Fq 'TRUE "Image file" FALSE "Disk partition"' "${manager}"
+# This path deliberately exits before importing GTK, so storage discovery stays
+# testable on headless CI runners.
+"${manager}" --list-partitions >/dev/null
 
 helper="${repo_root}/tools/infiltratorfs-manager-helper"
 grep -Fq 'validate_partition()' "${helper}"

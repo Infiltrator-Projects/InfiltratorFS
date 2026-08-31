@@ -84,13 +84,13 @@ Priority: optional
 Architecture: ${architecture}
 Maintainer: The First Infiltrator
 X-InfiltratorFS-Build: ${build_identity}
-Depends: dkms, kmod, policykit-1, util-linux, xdg-utils, zenity
+Depends: dkms, kmod, policykit-1, util-linux, xdg-utils, python3, python3-gi, gir1.2-gtk-3.0
 Recommends: linux-headers-generic, udev, udisks2
 Installed-Size: ${installed_size}
 Homepage: https://github.com/Infiltrator-Projects/InfiltratorFS
 Description: native Linux InfiltratorFS filesystem and tools
  InfiltratorFS formatter, inspector, scrubber, forensic scanner,
- native mount/fsck helpers, direct-image utility, Linux Mint desktop manager,
+ native mount/fsck helpers, direct-image utility, GTK desktop manager,
  and the native Linux VFS kernel driver installed through DKMS.
  FUSE is not used or required by this package.
  Use only with disposable or backed-up media while the filesystem is pre-1.0.
@@ -259,7 +259,7 @@ if grep -q 'usr/bin/infilfs-fuse$' "$contents"; then
 fi
 test "$(dpkg-deb --field "$dist_dir/$deb_name" Version)" = "$package_version"
 depends="$(dpkg-deb --field "$dist_dir/$deb_name" Depends)"
-for dependency in dkms kmod policykit-1 util-linux xdg-utils zenity; do
+for dependency in dkms kmod policykit-1 util-linux xdg-utils python3 python3-gi gir1.2-gtk-3.0; do
     grep -Eq "(^|, )${dependency}([ ,]|$)" <<<"$depends"
 done
 if grep -Eqi '(^|[, ])(fuse3|libfuse3-3)([, ]|$)' <<<"$depends"; then

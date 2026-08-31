@@ -56,7 +56,7 @@ A full checked-roadmap audit was completed on 2026-08-29 against source commit `
 
 ## Linux desktop integration
 
-The Debian package installs **InfiltratorFS Manager** plus udev/UDisks identification rules. Manager can create/format images, select non-system partitions, inspect, scrub, run forensic scans, mount natively, open in the desktop file manager and unmount safely.
+The Debian package installs **InfiltratorFS Manager** plus udev/UDisks identification rules. Manager is a persistent GTK desktop application with automatic non-system partition discovery, selected-volume identity and mount state, themed destructive-action handling, a built-in operation console and non-blocking maintenance jobs. It can create/format images, inspect, scrub, run forensic scans, mount natively, open in the desktop file manager and unmount safely.
 
 For block devices Manager uses a native kernel mount under `/media/<user>/InfiltratorFS`. For image files it uses a kernel loop mount under `~/InfiltratorFS`. The privileged helper verifies that the resulting filesystem type is exactly `infiltratorfs` and refuses a non-native mount.
 
@@ -76,7 +76,7 @@ On Linux Mint, Ubuntu or another supported Debian-family host:
 
 ```bash
 sudo apt install build-essential cmake dkms kmod policykit-1 util-linux \
-  xdg-utils zenity udev udisks2 linux-headers-$(uname -r)
+  xdg-utils python3 python3-gi gir1.2-gtk-3.0 udev udisks2 linux-headers-$(uname -r)
 
 git clone --recurse-submodules https://github.com/Infiltrator-Projects/InfiltratorFS.git
 cd InfiltratorFS
