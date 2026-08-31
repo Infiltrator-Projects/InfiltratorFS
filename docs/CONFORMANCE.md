@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # Format 0.17 Conformance
 
-Release 0.18.29 accepts exactly current on-disk Format 0.17. Pre-1.0 builds do not promise compatibility with earlier development formats.
+Release 0.18.30 accepts exactly current on-disk Format 0.17. Pre-1.0 builds do not promise compatibility with earlier development formats.
 
 ## Persistent representation
 
@@ -121,7 +121,7 @@ Native Linux qualification requires:
 - clean unmount followed by userspace scrub; and
 - refusal to silently substitute a non-native filesystem path.
 
-Release 0.18.29 qualifies this native migrated surface, including concurrent
+Release 0.18.30 qualifies this native migrated surface, including concurrent
 64-shard data-run reservation before the serialized metadata transaction.
 Additional development qualification is expected to expand workload-aware
 placement and long-running mixed-workload stress rather than reintroduce a FUSE
