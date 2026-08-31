@@ -1,0 +1,222 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+set -Eeuo pipefail
+
+readonly OWNER="infiltratorfs"
+readonly BUNDLE="/usr/lib/infiltratorfs/os-integration"
+readonly MINT_PATCHER="/usr/lib/infiltratorfs/patch-mintstick.py"
+readonly GDU_TARGET="/usr/bin/gnome-disks"
+readonly MINT_UI="/usr/lib/mintstick/mintstick.py"
+readonly MINT_FORMATTER="/usr/lib/mintstick/raw_format.py"
+
+log()
+{
+    printf 'InfiltratorFS desktop integration: %s\n' "$*"
+}
+
+diversion_for()
+{
+    dpkg-divert --list "$1" 2>/dev/null || true
+}
+
+is_our_diversion()
+{
+    diversion_for "$1" | grep -Fq "by ${OWNER}"
+}
+
+require_no_foreign_diversion()
+{
+    local path="$1" current
+    current="$(diversion_for "$path")"
+    if [[ -n "$current" ]] && ! grep -Fq "by ${OWNER}" <<<"$current"; then
+        printf 'InfiltratorFS: refusing to replace %s because another package already diverts it:\n%s\n' \
+            "$path" "$current" >&2
+        return 1
+    fi
+}
+
+divert_path()
+{
+    local path="$1" stock="$2"
+    if is_our_diversion "$path"; then
+        return 0
+    fi
+    require_no_foreign_diversion "$path"
+    [[ -e "$path" || -L "$path" ]] || {
+        printf 'InfiltratorFS: required desktop component is missing: %s\n' "$path" >&2
+        return 1
+    }
+    dpkg-divert --package "$OWNER" --add --rename --divert "$stock" "$path" >/dev/null
+}
+
+restore_path()
+{
+    local path="$1" stock="$2"
+    if ! is_our_diversion "$path"; then
+        return 0
+    fi
+    rm -f -- "$path"
+    dpkg-divert --package "$OWNER" --remove --rename --divert "$stock" "$path" >/dev/null
+}
+
+find_libblockdev_plugin()
+{
+    local candidate
+    while IFS= read -r candidate; do
+        case "$candidate" in
+            */libbd_fs.so.[0-9]*.[0-9]*.[0-9]*)
+                if [[ -e "$candidate" || -L "$candidate" ]]; then
+                    printf '%s\n' "$candidate"
+                    return 0
+                fi
+                ;;
+        esac
+    done < <(dpkg-query -L libblockdev-fs3 2>/dev/null || true)
+    return 1
+}
+
+check_supported_stack()
+{
+    local gdu_version bd_version
+    gdu_version="$(dpkg-query -W -f='${Version}' gnome-disk-utility 2>/dev/null || true)"
+    bd_version="$(dpkg-query -W -f='${Version}' libblockdev-fs3 2>/dev/null || true)"
+    case "$gdu_version" in
+        46.*) ;;
+        *)
+            printf 'InfiltratorFS: bundled GNOME Disks integration requires 46.x; found %s.\n' \
+                "${gdu_version:-none}" >&2
+            return 1
+            ;;
+    esac
+    case "$bd_version" in
+        3.1.*) ;;
+        *)
+            printf 'InfiltratorFS: bundled libblockdev integration requires 3.1.x; found %s.\n' \
+                "${bd_version:-none}" >&2
+            return 1
+            ;;
+    esac
+}
+
+restart_udisks()
+{
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl try-restart udisks2.service >/dev/null 2>&1 || true
+    elif command -v service >/dev/null 2>&1; then
+        service udisks2 restart >/dev/null 2>&1 || true
+    fi
+}
+
+remove_all()
+{
+    local plugin="" line path
+
+    restore_path "$MINT_FORMATTER" "${MINT_FORMATTER}.infiltratorfs-stock"
+    restore_path "$MINT_UI" "${MINT_UI}.infiltratorfs-stock"
+
+    plugin="$(find_libblockdev_plugin || true)"
+    if [[ -n "$plugin" ]]; then
+        restore_path "$plugin" "${plugin}.infiltratorfs-stock"
+    else
+        while IFS= read -r line; do
+            [[ "$line" == *"libbd_fs.so."*" by ${OWNER}"* ]] || continue
+            path="${line#diversion of }"
+            path="${path%% to *}"
+            restore_path "$path" "${path}.infiltratorfs-stock"
+        done < <(dpkg-divert --list 2>/dev/null || true)
+    fi
+
+    restore_path "$GDU_TARGET" "${GDU_TARGET}.infiltratorfs-stock"
+    restart_udisks
+    log "stock desktop components restored."
+}
+
+install_all()
+{
+    if [[ ! -s "$BUNDLE/gnome-disks" ||
+          ! -s "$BUNDLE/libbd_fs.so" ||
+          ! -s "$BUNDLE/manifest" ]]; then
+        # Source-built +native packages intentionally carry no distro binary
+        # bundle. Do not disturb an integration installed by a release package.
+        log "no distro integration bundle in this package; nothing to install."
+        return 0
+    fi
+
+    check_supported_stack
+
+    local plugin plugin_stock tmp=""
+    local mint_ui_source="" mint_formatter_source=""
+    plugin="$(find_libblockdev_plugin)" || {
+        echo 'InfiltratorFS: could not locate the libblockdev filesystem plugin.' >&2
+        return 1
+    }
+    plugin_stock="${plugin}.infiltratorfs-stock"
+
+    require_no_foreign_diversion "$GDU_TARGET"
+    require_no_foreign_diversion "$plugin"
+
+    tmp="$(mktemp -d)"
+    trap 'rm -rf "$tmp"' RETURN
+
+    if [[ -e "$MINT_UI" && -e "$MINT_FORMATTER" ]] ||
+       { is_our_diversion "$MINT_UI" && is_our_diversion "$MINT_FORMATTER"; }; then
+        require_no_foreign_diversion "$MINT_UI"
+        require_no_foreign_diversion "$MINT_FORMATTER"
+        if is_our_diversion "$MINT_UI"; then
+            mint_ui_source="${MINT_UI}.infiltratorfs-stock"
+            mint_formatter_source="${MINT_FORMATTER}.infiltratorfs-stock"
+        else
+            mint_ui_source="$MINT_UI"
+            mint_formatter_source="$MINT_FORMATTER"
+        fi
+        python3 "$MINT_PATCHER" "$mint_ui_source" "$mint_formatter_source" \
+            "$tmp/mintstick.py" "$tmp/raw_format.py"
+    fi
+
+    trap 'remove_all; rm -rf "$tmp"' ERR
+
+    divert_path "$GDU_TARGET" "${GDU_TARGET}.infiltratorfs-stock"
+    install -m 0755 "$BUNDLE/gnome-disks" "$GDU_TARGET"
+
+    divert_path "$plugin" "$plugin_stock"
+    install -m 0644 "$BUNDLE/libbd_fs.so" "$plugin"
+
+    if [[ -s "$tmp/mintstick.py" && -s "$tmp/raw_format.py" ]]; then
+        divert_path "$MINT_UI" "${MINT_UI}.infiltratorfs-stock"
+        divert_path "$MINT_FORMATTER" "${MINT_FORMATTER}.infiltratorfs-stock"
+        install -m "$(stat -c '%a' "${MINT_UI}.infiltratorfs-stock")" \
+            "$tmp/mintstick.py" "$MINT_UI"
+        install -m "$(stat -c '%a' "${MINT_FORMATTER}.infiltratorfs-stock")" \
+            "$tmp/raw_format.py" "$MINT_FORMATTER"
+        log "Linux Mint USB Stick Formatter integration installed."
+    else
+        log "Mintstick is not installed; skipping its optional integration."
+    fi
+
+    restart_udisks
+    rm -rf "$tmp"
+    trap - RETURN
+    trap - ERR
+    log "GNOME Disks, libblockdev and UDisks/GVfs integration installed."
+}
+
+case "${1:-}" in
+    install)
+        install_all
+        ;;
+    remove)
+        remove_all
+        ;;
+    verify)
+        [[ -s "$BUNDLE/gnome-disks" && -s "$BUNDLE/libbd_fs.so" ]]
+        is_our_diversion "$GDU_TARGET"
+        plugin="$(find_libblockdev_plugin)"
+        is_our_diversion "$plugin"
+        grep -aFq 'InfiltratorFS' "$GDU_TARGET"
+        grep -aFq 'infiltratorfs' "$plugin"
+        ;;
+    *)
+        echo 'Usage: infiltratorfs-os-integration {install|remove|verify}' >&2
+        exit 2
+        ;;
+esac
