@@ -37,7 +37,7 @@ grep -Fq 'allocation_best_fit' "$data"
 
 # Random overwrites should anchor locality near the block being replaced,
 # rather than always allocating at the physical tail of the file.
-grep -Fq 'old_flags == INFILFS_EXTENT_NORMAL)' "$data"
+grep -Fq 'infilfs_extent_kind(old_flags) == INFILFS_EXTENT_NORMAL)' "$data"
 grep -Fq 'preferred = old_physical;' "$data"
 
 # Parallel pre-reservations remain enabled for streaming growth. Random/sparse
