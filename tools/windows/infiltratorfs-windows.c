@@ -60,7 +60,7 @@
 #define IDM_HELP_ABOUT      2101
 
 #define MAX_TARGETS      256u
-#define TARGET_PATH_MAX  160u
+#define TARGET_PATH_MAX  4096u
 #define MAX_SYSTEM_DISKS 16u
 #define MAX_PHYSICAL_DISKS 64u
 
@@ -92,6 +92,7 @@ static HFONT g_ui_font = NULL;
 static HFONT g_title_font = NULL;
 static HFONT g_heading_font = NULL;
 static HFONT g_mono_font = NULL;
+static LONG g_copy_sequence = 0;
 
 static void append_activity(const wchar_t *text)
 {
@@ -865,10 +866,15 @@ static void open_image_dialog(void)
     }
     CloseHandle(file);
 
+    if (wcslen(path) >= TARGET_PATH_MAX) {
+        SetLastError(ERROR_FILENAME_EXCED_RANGE);
+        set_windows_error(L"Open image path", GetLastError());
+        return;
+    }
+
     struct target_volume candidate;
     memset(&candidate, 0, sizeof(candidate));
     wcsncpy_s(candidate.device_path, TARGET_PATH_MAX, path, _TRUNCATE);
-    wcsncpy_s(candidate.mount_point, MAX_PATH, path, _TRUNCATE);
     candidate.size_bytes = (uint64_t)length.QuadPart;
     candidate.is_image = 1;
 
@@ -886,15 +892,17 @@ static void open_image_dialog(void)
     const wchar_t *base = wcsrchr(path, L'\\');
     base = base ? base + 1 : path;
     wchar_t display[512];
-    _snwprintf_s(display, sizeof(display) / sizeof(display[0]), _TRUNCATE,
-                 candidate.is_infiltrator ?
-                 L"[Image • InfiltratorFS %u.%u]  %s  %.2f GiB" :
-                 L"[Image]  %s  %.2f GiB",
-                 (unsigned)candidate.format_major,
-                 (unsigned)candidate.format_minor,
-                 base,
-                 (double)candidate.size_bytes /
-                     (1024.0 * 1024.0 * 1024.0));
+    double gib = (double)candidate.size_bytes /
+                 (1024.0 * 1024.0 * 1024.0);
+    if (candidate.is_infiltrator) {
+        _snwprintf_s(display, sizeof(display) / sizeof(display[0]), _TRUNCATE,
+                     L"[Image • InfiltratorFS %u.%u]  %s  %.2f GiB",
+                     (unsigned)candidate.format_major,
+                     (unsigned)candidate.format_minor, base, gib);
+    } else {
+        _snwprintf_s(display, sizeof(display) / sizeof(display[0]), _TRUNCATE,
+                     L"[Image]  %s  %.2f GiB", base, gib);
+    }
 
     HWND list = GetDlgItem(g_main_window, IDC_TARGET);
     if (!add_combo_target(list, &candidate, display))
@@ -1130,6 +1138,47 @@ static int copy_selected_host_path(const wchar_t *host_path)
     return copy_host_path(host_path, "/");
 }
 
+static int create_copy_staging_path(const char *dest_path,
+                                    char staging[INFS_PATH_MAX + 1u],
+                                    const struct infs_create_options *options)
+{
+    const char *slash = strrchr(dest_path, '/');
+    if (!slash)
+        return 0;
+    size_t parent_len = (size_t)(slash - dest_path);
+
+    for (unsigned attempt = 0; attempt < 32u; ++attempt) {
+        unsigned long sequence =
+            (unsigned long)InterlockedIncrement(&g_copy_sequence);
+        int written;
+        if (parent_len == 0u) {
+            written = snprintf(staging, INFS_PATH_MAX + 1u,
+                               "/.infs-copy-%08lx-%08lx.tmp",
+                               (unsigned long)GetCurrentProcessId(),
+                               sequence);
+        } else {
+            written = snprintf(staging, INFS_PATH_MAX + 1u,
+                               "%.*s/.infs-copy-%08lx-%08lx.tmp",
+                               (int)parent_len, dest_path,
+                               (unsigned long)GetCurrentProcessId(),
+                               sequence);
+        }
+        if (written <= 0 || written > (int)INFS_PATH_MAX)
+            return 0;
+
+        infs_status status = infs_create_file(&g_volume, staging, options);
+        if (status == INFS_STATUS_OK)
+            return 1;
+        if (status != INFS_STATUS_ALREADY_EXISTS) {
+            set_status_code(L"Create temporary destination file", status);
+            return 0;
+        }
+    }
+    set_status_code(L"Create temporary destination file",
+                    INFS_STATUS_ALREADY_EXISTS);
+    return 0;
+}
+
 static int copy_host_file(const wchar_t *host_path, const char *dest_path)
 {
     HANDLE input = CreateFileW(host_path, GENERIC_READ,
@@ -1143,15 +1192,15 @@ static int copy_host_file(const wchar_t *host_path, const char *dest_path)
     struct infs_create_options options;
     memset(&options, 0, sizeof(options));
     options.posix_permissions = 0644u;
-    infs_status status = infs_create_file(&g_volume, dest_path, &options);
-    if (status == INFS_STATUS_ALREADY_EXISTS)
-        status = infs_truncate_file(&g_volume, dest_path, 0u);
-    if (status != INFS_STATUS_OK) {
+    options.portable_flags = INFS_ATTR_HIDDEN | INFS_ATTR_TEMPORARY;
+
+    char staging[INFS_PATH_MAX + 1u];
+    if (!create_copy_staging_path(dest_path, staging, &options)) {
         CloseHandle(input);
-        set_status_code(L"Create destination file", status);
         return 0;
     }
 
+    infs_status status = INFS_STATUS_OK;
     const DWORD chunk_size = 4u * 1024u * 1024u;
     uint8_t *buffer = malloc(chunk_size);
     if (!buffer) {
@@ -1171,7 +1220,7 @@ static int copy_host_file(const wchar_t *host_path, const char *dest_path)
         if (!got)
             break;
         int64_t written = infs_write_file_buffered(
-            &g_volume, dest_path, buffer, got, offset);
+            &g_volume, staging, buffer, got, offset);
         if (written != (int64_t)got) {
             set_status_code(L"Write InfiltratorFS file",
                             written < 0 ? (infs_status)written : INFS_STATUS_IO_ERROR);
@@ -1185,9 +1234,27 @@ static int copy_host_file(const wchar_t *host_path, const char *dest_path)
     if (okay) {
         status = infs_volume_sync(&g_volume);
         if (status != INFS_STATUS_OK) {
+            set_status_code(L"Commit staged file data", status);
+            okay = 0;
+        }
+    }
+    if (okay) {
+        status = infs_rename(&g_volume, staging, dest_path);
+        if (status != INFS_STATUS_OK) {
+            set_status_code(L"Publish copied file", status);
+            okay = 0;
+        }
+    }
+    if (okay) {
+        status = infs_volume_sync(&g_volume);
+        if (status != INFS_STATUS_OK) {
             set_status_code(L"Commit copied file", status);
             okay = 0;
         }
+    }
+    if (!okay) {
+        (void)infs_unlink(&g_volume, staging);
+        (void)infs_volume_sync(&g_volume);
     }
     return okay;
 }
