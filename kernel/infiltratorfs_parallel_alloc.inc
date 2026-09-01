@@ -132,6 +132,9 @@ static int infilfs_parallel_allocator_mount_init(struct super_block *sb)
     atomic64_set(&sbi->allocation_workload_sparse, 0);
     atomic64_set(&sbi->allocation_locality_scored, 0);
     atomic64_set(&sbi->allocation_best_fit, 0);
+    atomic64_set(&sbi->allocation_media_rotational_scored, 0);
+    atomic64_set(&sbi->allocation_media_nonrotational_scored, 0);
+    atomic64_set(&sbi->allocation_media_balanced_scored, 0);
 
     if (sb_rdonly(sb))
         return 0;
@@ -154,7 +157,7 @@ static void infilfs_parallel_allocator_mount_destroy(struct super_block *sb)
     if (!sbi)
         return;
     if (sbi->allocation_reservations)
-        pr_info("InfiltratorFS: allocator reservations=%lld peak_active=%lld conflicts=%lld workload_seq=%lld workload_random=%lld workload_sparse=%lld locality_scored=%lld best_fit=%lld\n",
+        pr_info("InfiltratorFS: allocator reservations=%lld peak_active=%lld conflicts=%lld workload_seq=%lld workload_random=%lld workload_sparse=%lld locality_scored=%lld best_fit=%lld media=%s media_source=%s media_rotational_scored=%lld media_nonrotational_scored=%lld media_balanced_scored=%lld\n",
                 (long long)atomic64_read(
                     &sbi->allocation_reservation_successes),
                 (long long)atomic64_read(
@@ -170,7 +173,15 @@ static void infilfs_parallel_allocator_mount_destroy(struct super_block *sb)
                 (long long)atomic64_read(
                     &sbi->allocation_locality_scored),
                 (long long)atomic64_read(
-                    &sbi->allocation_best_fit));
+                    &sbi->allocation_best_fit),
+                infilfs_media_profile_name(sbi->media_profile),
+                sbi->media_profile_overridden ? "override" : "auto",
+                (long long)atomic64_read(
+                    &sbi->allocation_media_rotational_scored),
+                (long long)atomic64_read(
+                    &sbi->allocation_media_nonrotational_scored),
+                (long long)atomic64_read(
+                    &sbi->allocation_media_balanced_scored));
     kvfree(sbi->allocation_reservations);
     sbi->allocation_reservations = NULL;
     sbi->allocation_reservation_bytes = 0;
@@ -354,6 +365,15 @@ static int infilfs_parallel_reserve_data(
         spin_lock(&sbi->allocation_reservation_locks[shard]);
         read_lock(&sbi->bitmap_lock);
         hint = sbi->allocation_reservation_hints[shard];
+        /*
+         * Rotational media pays heavily for seeks, so streaming reservations
+         * start at the file's physical preference whenever that preference
+         * lies inside this shard. Non-rotational/balanced profiles retain the
+         * shard next-fit cursor to preserve free-run shape and writer spread.
+         */
+        if (sbi->media_profile == INFILFS_MEDIA_ROTATIONAL &&
+            preferred >= arena_start && preferred < arena_end)
+            hint = min_t(u64, preferred, arena_end - count);
         if (hint < arena_start || hint >= arena_end)
             hint = arena_start;
 
