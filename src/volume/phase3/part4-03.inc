@@ -106,8 +106,19 @@ static int64_t write_file_tx(struct infs_volume *vol, const char *path,
         status = file_map_block(vol, object, p, ext, logical, &physical, &flags);
         if (status != INFS_STATUS_OK)
             return status;
+        if (extent_is_compressed(flags)) {
+            status = file_materialize_compressed_at(vol, object, &p, &ext,
+                                                    logical);
+            if (status != INFS_STATUS_OK)
+                return status;
+            file_hdr = (struct infs_object_header_disk *)object;
+            status = file_map_block(
+                vol, object, p, ext, logical, &physical, &flags);
+            if (status != INFS_STATUS_OK || extent_is_compressed(flags))
+                return status != INFS_STATUS_OK ? status : INFS_STATUS_CORRUPT;
+        }
 
-        if (within == 0 && flags == INFS_EXTENT_HOLE &&
+        if (within == 0 && extent_kind(flags) == INFS_EXTENT_HOLE &&
     size - done >= INFS_BLOCK_SIZE) {
     uint64_t wanted = (uint64_t)((size - done) / INFS_BLOCK_SIZE);
     uint64_t hole_blocks = 0;
@@ -154,8 +165,8 @@ static int64_t write_file_tx(struct infs_volume *vol, const char *path,
         return INFS_STATUS_CORRUPT;
     if (wanted > hole_blocks)
         wanted = hole_blocks;
-    if (wanted > UINT32_MAX)
-        wanted = UINT32_MAX;
+    if (wanted > INFS_COMPRESSION_CLUSTER_BLOCKS)
+        wanted = INFS_COMPRESSION_CLUSTER_BLOCKS;
 
     if (pending_count != 0) {
         status = checksum_set_range(vol, p, file_hdr->object_id,
@@ -166,28 +177,23 @@ static int64_t write_file_tx(struct infs_volume *vol, const char *path,
         pending_count = 0;
     }
 
-    uint64_t replacement = 0, got = 0;
-    status = alloc_data_run_uninitialized(
-        vol, wanted, &replacement, &got);
+    uint64_t replacement = 0;
+    uint32_t replacement_flags = INFS_EXTENT_NORMAL;
+    uint32_t logical_blocks = (uint32_t)wanted;
+    size_t batch_bytes = (size_t)logical_blocks * INFS_BLOCK_SIZE;
+    status = file_store_extent_payload(
+        vol, (const uint8_t *)buf + done, logical_blocks,
+        &replacement, &replacement_flags);
     if (status != INFS_STATUS_OK)
         return status;
-    if (got == 0 || got > wanted)
-        return INFS_STATUS_CORRUPT;
-
-    size_t batch_bytes = (size_t)got * INFS_BLOCK_SIZE;
-    status = infs_storage_write(
-        &vol->storage, replacement * INFS_BLOCK_SIZE,
-        (const uint8_t *)buf + done, batch_bytes);
-    if (status != INFS_STATUS_OK)
-        return status;
-    status = file_replace_range(vol, object, logical, got,
-                                replacement, INFS_EXTENT_NORMAL);
+    status = file_replace_range(vol, object, logical, logical_blocks,
+                                replacement, replacement_flags);
     if (status != INFS_STATUS_OK)
         return status;
 
     uint64_t digest_logical = logical;
     size_t digest_bytes = 0;
-    uint64_t digest_blocks_left = got;
+    uint64_t digest_blocks_left = logical_blocks;
     while (digest_blocks_left != 0) {
         uint32_t digest_count = digest_blocks_left >
             INFS_CHECKSUMS_PER_OBJECT ?
@@ -213,14 +219,11 @@ static int64_t write_file_tx(struct infs_volume *vol, const char *path,
 }
 
         int full_overwrite = within == 0 && chunk == INFS_BLOCK_SIZE;
-        if (flags == INFS_EXTENT_HOLE || full_overwrite) {
+        if (extent_kind(flags) == INFS_EXTENT_HOLE || full_overwrite) {
             memset(data, 0, sizeof(data));
         } else {
-            status = read_block(vol, physical, data);
-            if (status != INFS_STATUS_OK)
-                return status;
-            status = data_block_verify(vol, p, file_hdr->object_id, logical,
-                                       data);
+            status = file_read_logical_block(
+                vol, object, p, ext, file_hdr->object_id, logical, data);
             if (status != INFS_STATUS_OK)
                 return status;
         }
@@ -230,7 +233,7 @@ static int64_t write_file_tx(struct infs_volume *vol, const char *path,
          * it with an unreachable block and repoint the extent metadata. Blocks
          * allocated earlier in this same transaction are already unreachable
          * from N and may be filled in place before publication. */
-        if (flags == INFS_EXTENT_HOLE ||
+        if (extent_kind(flags) == INFS_EXTENT_HOLE ||
             !tx_block_private(vol, physical)) {
             uint64_t replacement = 0, got = 0;
             status = alloc_data_run(vol, 1, &replacement, &got);
