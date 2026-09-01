@@ -185,6 +185,15 @@ static int file_materialize_compressed_extent(
                                 replacement, INFS_EXTENT_NORMAL);
     if (status != INFS_STATUS_OK)
         return status;
+    /*
+     * file_replace_range mutates the in-memory object payload. Refresh the
+     * object CRC before using the normal validator to reacquire classic/paged
+     * extent pointers; otherwise a correct CoW materialization is rejected as
+     * corrupt solely because its old object checksum is stale.
+     */
+    status = infs_object_finalize(object);
+    if (status != INFS_STATUS_OK)
+        return status;
     return file_validate_volume(vol, object, &file, &classic);
 }
 
