@@ -287,12 +287,18 @@ static int infilfs_resolve_media_profile(
         }
     }
 
-    if (!queue)
+    if (!queue) {
         sbi->media_profile = INFILFS_MEDIA_BALANCED;
-    else if (bdev_rot(sb->s_bdev))
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
+    } else if (bdev_rot(sb->s_bdev)) {
         sbi->media_profile = INFILFS_MEDIA_ROTATIONAL;
-    else
+#else
+    } else if (!blk_queue_nonrot(queue)) {
+        sbi->media_profile = INFILFS_MEDIA_ROTATIONAL;
+#endif
+    } else {
         sbi->media_profile = INFILFS_MEDIA_NONROTATIONAL;
+    }
     return 0;
 }
 
