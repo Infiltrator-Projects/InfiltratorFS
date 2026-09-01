@@ -105,7 +105,7 @@ diff --git a/src/plugins/fs/generic.c b/src/plugins/fs/generic.c
      } else {
          return BD_FS_TECH_GENERIC;
      }
-@@ -523,6 +545,48 @@ gboolean bd_fs_clean (const gchar *device, gboolean force, GError **error) {
+@@ -523,4 +545,50 @@ gboolean bd_fs_clean (const gchar *device, gboolean force, GError **error) {
    gboolean ret = FALSE;
    GError *l_error = NULL;
 +  gchar *infiltrator_mkfs = NULL;
