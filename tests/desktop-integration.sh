@@ -54,10 +54,6 @@ if "$inspect" --udev "$plain" > "$tmp/plain-probe.txt" 2>/dev/null; then
     exit 1
 fi
 [[ ! -s "$tmp/plain-probe.txt" ]]
-    echo 'desktop-integration: non-InfiltratorFS image was identified' >&2
-    exit 1
-fi
-[[ ! -s "$tmp/plain-probe.txt" ]]
 
 grep -Fq 'ID_FS_TYPE}=="infiltratorfs"' "$rules"
 grep -Fq 'UDISKS_MOUNT_OPTIONS_DEFAULTS' "$rules"
