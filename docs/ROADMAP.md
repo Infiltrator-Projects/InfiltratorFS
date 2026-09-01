@@ -133,7 +133,7 @@ checksum or metadata errors. See [QUALIFICATION.md](QUALIFICATION.md).
   shards, object-stable placement and mounted multi-writer qualification.
 - [x] Locality scoring and workload-aware placement.
 - [x] Media-aware placement.
-- [ ] Per-extent compression.
+- [x] Per-extent compression.
 
 ## Administration and recovery
 
