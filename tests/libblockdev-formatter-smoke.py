@@ -56,4 +56,29 @@ with tempfile.TemporaryDirectory(prefix="infiltratorfs-libblockdev-") as tmp:
     if missing:
         fail(f"formatted image probe is missing {missing}")
 
+    # UDisks performs bd_fs_clean() before every format and waits for the old
+    # filesystem identity to disappear.  This used to be missed because
+    # libblkid does not yet know InfiltratorFS, causing GNOME Disks to time out
+    # after its "initial wipe" on an already formatted volume.
+    if not BlockDev.fs_clean(image):
+        fail("generic fs_clean returned false for an InfiltratorFS image")
+    cleaned = subprocess.run(
+        ["infilfs-inspect", "--udev", image],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if cleaned.returncode == 0 or cleaned.stdout:
+        fail("fs_clean left the InfiltratorFS signature visible")
+
+    if not BlockDev.fs_mkfs(image, "infiltratorfs", options):
+        fail("reformat after fs_clean returned false")
+    reprobe = subprocess.check_output(
+        ["infilfs-inspect", "--udev", image], text=True
+    )
+    missing = sorted(expected.difference(reprobe.splitlines()))
+    if missing:
+        fail(f"reformatted image probe is missing {missing}")
+
 print("libblockdev-formatter-smoke: PASS")
