@@ -111,7 +111,7 @@ static int infilfs_rw_free_extent_index_rebuild(struct infilfs_rw_tx *tx)
 
     if (!tx || !tx->bitmap || !tx->sbi)
         return -EINVAL;
-    total = tx->sbi->device_blocks;
+    total = infilfs_volume_blocks(tx->sbi);
 
     while (block < total) {
         while (block < total && infilfs_rw_bitmap_get(tx->bitmap, block))
@@ -750,8 +750,8 @@ static int infilfs_rw_snapshot_union(struct super_block *sb, u32 snapshots)
         u64 b;
 
         if (blocks != sbi->bitmap_bytes / INFILFS_DISK_BLOCK_SIZE ||
-            !start || start >= sbi->device_blocks ||
-            blocks > sbi->device_blocks - start) {
+            !start || start >= infilfs_volume_blocks(sbi) ||
+            blocks > infilfs_volume_blocks(sbi) - start) {
             ret = -EFSCORRUPTED;
             goto out;
         }
@@ -784,7 +784,7 @@ static int infilfs_rw_mount_init(struct super_block *sb)
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
     struct infilfs_allocation_layout committed_layout = {0};
-    u64 total = sbi->device_blocks;
+    u64 total = infilfs_volume_blocks(sbi);
     u32 snapshots = 0;
     int ret;
 
@@ -952,8 +952,8 @@ static int infilfs_rw_tx_defer_free(struct infilfs_rw_tx *tx,
 {
     struct infilfs_rw_free_range *grown;
 
-    if (!count || start >= tx->sbi->device_blocks ||
-        count > tx->sbi->device_blocks - start)
+    if (!count || start >= infilfs_volume_blocks(tx->sbi) ||
+        count > infilfs_volume_blocks(tx->sbi) - start)
         return count ? -EINVAL : 0;
     if (tx->deferred_count) {
         struct infilfs_rw_free_range *last =
@@ -989,7 +989,7 @@ static int infilfs_rw_tx_alloc(struct infilfs_rw_tx *tx, u64 count,
                                u64 *start_out)
 {
     struct infilfs_sb_info *sbi = tx->sbi;
-    u64 total = sbi->device_blocks;
+    u64 total = infilfs_volume_blocks(sbi);
     u64 hint;
     u64 candidate;
     u64 scanned;

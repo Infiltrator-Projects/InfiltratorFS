@@ -30,7 +30,7 @@ static void infilfs_rw_allocation_mark_tx(
     const struct infilfs_rw_tx *tx, u8 *dirty, size_t leaf_count)
 {
     size_t i;
-    u64 total = tx->sbi->device_blocks;
+    u64 total = infilfs_volume_blocks(tx->sbi);
 
     for (i = 0; i < tx->allocated_count; ++i)
         infilfs_rw_allocation_mark_range(
@@ -185,7 +185,7 @@ static int infilfs_rw_allocation_map_publish(
     struct infilfs_allocation_layout old = {0};
     struct super_block *sb = tx->sb;
     struct infilfs_sb_info *sbi = tx->sbi;
-    u64 total = sbi->device_blocks;
+    u64 total = infilfs_volume_blocks(sbi);
     u64 *reserved = NULL;
     u64 *new_leaves = NULL;
     u64 *new_branches = NULL;

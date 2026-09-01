@@ -284,7 +284,7 @@ static int infilfs_index_tree_snapshot(
             sizeof(*payload) + sizeof(__le64))
         return -EFSCORRUPTED;
     count = le32_to_cpu(payload->entry_count);
-    if (!count || count > INFILFS_SB(sb)->device_blocks ||
+    if (!count || count > infilfs_volume_blocks(INFILFS_SB(sb)) ||
         !infilfs_index_tree_root(payload))
         return -EFSCORRUPTED;
 

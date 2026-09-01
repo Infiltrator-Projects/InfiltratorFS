@@ -242,6 +242,17 @@ static struct infilfs_sb_info *INFILFS_SB(struct super_block *sb)
     return sb->s_fs_info;
 }
 
+/*
+ * device_blocks is the physical backing-store bound.  The mounted filesystem
+ * may deliberately be smaller after a shrink or before an online grow.
+ * Allocation, bitmap indexing and persistent-reference validation must use the
+ * committed filesystem geometry, never the backing-device capacity.
+ */
+static u64 infilfs_volume_blocks(const struct infilfs_sb_info *sbi)
+{
+    return sbi ? le64_to_cpu(sbi->disk.total_blocks) : 0;
+}
+
 static int infilfs_read_allocated_block(
     struct super_block *sb, u64 block, void *buffer);
 
@@ -435,7 +446,7 @@ static bool infilfs_block_allocated(struct super_block *sb, u64 block)
     size_t bytes;
     bool allocated = false;
 
-    if (!sbi || block >= sbi->device_blocks)
+    if (!sbi || block >= infilfs_volume_blocks(sbi))
         return false;
     read_lock(&sbi->bitmap_lock);
     if (sbi->validation_bitmap) {
@@ -1179,7 +1190,7 @@ static int infilfs_validate_checkpoint_directory_tree(
                     size_t next = capacity * 2u;
 
                     if (next < capacity ||
-                        next > INFILFS_SB(sb)->device_blocks ||
+                        next > infilfs_volume_blocks(INFILFS_SB(sb)) ||
                         next > SIZE_MAX / sizeof(*nodes)) {
                         ret = -EFSCORRUPTED;
                         goto out;
@@ -1243,8 +1254,9 @@ static int infilfs_validate_checkpoint_extents(
             return -EFSCORRUPTED;
         physical_blocks = infilfs_extent_physical_blocks(blocks, flags);
         if (!physical_blocks ||
-            physical >= INFILFS_SB(sb)->device_blocks ||
-            physical_blocks > INFILFS_SB(sb)->device_blocks - physical)
+            physical >= infilfs_volume_blocks(INFILFS_SB(sb)) ||
+            physical_blocks >
+                infilfs_volume_blocks(INFILFS_SB(sb)) - physical)
             return -EFSCORRUPTED;
         *has_normal = true;
         for (b = 0; b < physical_blocks; ++b)

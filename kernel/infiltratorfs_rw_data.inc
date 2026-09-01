@@ -792,7 +792,7 @@ static bool infilfs_native_block_private(struct infilfs_native_pending *pending,
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(pending->sb);
 
-    return sbi && block < sbi->device_blocks && sbi->bitmap &&
+    return sbi && block < infilfs_volume_blocks(sbi) && sbi->bitmap &&
         !infilfs_rw_bitmap_get(sbi->bitmap, block) &&
         infilfs_rw_bitmap_get(pending->tx.bitmap, block);
 }
@@ -893,7 +893,7 @@ static u64 infilfs_native_metadata_reserve_blocks(
 
     if (!sbi)
         return 0;
-    total = sbi->device_blocks;
+    total = infilfs_volume_blocks(sbi);
     reserve = (u64)sbi->allocation_leaf_count +
         (u64)sbi->allocation_branch_count;
     if (reserve > U64_MAX - INFILFS_NATIVE_METADATA_RESERVE_EXTRA_BLOCKS)
@@ -946,7 +946,7 @@ infilfs_native_pending_get(struct super_block *sb, bool create)
     pending = infilfs_native_pending_find_locked(sb);
     if (!pending && create) {
         struct infilfs_sb_info *sbi = INFILFS_SB(sb);
-        u64 bytes = sbi ? sbi->device_blocks << INFILFS_DISK_BLOCK_SHIFT : 0;
+        u64 bytes = infilfs_volume_blocks(sbi) << INFILFS_DISK_BLOCK_SHIFT;
         u64 threshold = bytes / 64u;
         const u64 min_publish = 16ULL * 1024ULL * 1024ULL;
         const u64 max_publish = 512ULL * 1024ULL * 1024ULL;
@@ -1169,9 +1169,9 @@ static bool infilfs_native_choose_scored_extent(
         !tx->free_extent_count || !start_out)
         return false;
     sbi = tx->sbi;
-    if (preferred < 1u || preferred >= sbi->device_blocks) {
+    if (preferred < 1u || preferred >= infilfs_volume_blocks(sbi)) {
         preferred = sbi->data_alloc_hint;
-        if (preferred < 1u || preferred >= sbi->device_blocks)
+        if (preferred < 1u || preferred >= infilfs_volume_blocks(sbi))
             preferred = 1u;
     }
 
@@ -1255,7 +1255,7 @@ static int infilfs_native_alloc_data_exact_reserved(
 {
     struct infilfs_rw_tx *tx = &pending->tx;
     struct infilfs_sb_info *sbi = tx->sbi;
-    u64 total = sbi->device_blocks;
+    u64 total = infilfs_volume_blocks(sbi);
     u64 hint;
     u64 candidate;
     u64 scanned;
@@ -3902,7 +3902,8 @@ static int infilfs_native_try_single_paged_overwrite(
 
     ret = infilfs_native_alloc_data_exact_reserved(
         pending, 1,
-        old_physical && old_physical + 1u < pending->tx.sbi->device_blocks ?
+        old_physical &&
+            old_physical + 1u < infilfs_volume_blocks(pending->tx.sbi) ?
             old_physical + 1u : 1u,
         INFILFS_DATA_WORKLOAD_RANDOM, reservation, &replacement_block);
     if (ret)
@@ -4347,7 +4348,8 @@ generic_extent_write:
 
     workload = infilfs_native_classify_write(pos, bytes, old_size);
     preferred = READ_ONCE(ii->data_allocation_hint);
-    if (preferred < 1u || preferred >= pending->tx.sbi->device_blocks)
+    if (preferred < 1u ||
+        preferred >= infilfs_volume_blocks(pending->tx.sbi))
         preferred = infilfs_parallel_object_preferred(
             pending->tx.sbi, ii->object_id);
 
@@ -4622,7 +4624,7 @@ static ssize_t infilfs_native_extent_write_iter_mode(
             infilfs_native_classify_write((u64)pos, first_bytes, old_size);
         u64 preferred = READ_ONCE(ii->data_allocation_hint);
 
-        if (preferred < 1u || preferred >= sbi->device_blocks)
+        if (preferred < 1u || preferred >= infilfs_volume_blocks(sbi))
             preferred = infilfs_parallel_object_preferred(
                 sbi, ii->object_id);
 
@@ -4638,7 +4640,8 @@ static ssize_t infilfs_native_extent_write_iter_mode(
                 inode->i_sb, last_block - first_block + 1u, preferred,
                 &reservation) == 0)
             WRITE_ONCE(ii->data_allocation_hint,
-                reservation.start + reservation.count < sbi->device_blocks ?
+                reservation.start + reservation.count <
+                        infilfs_volume_blocks(sbi) ?
                     reservation.start + reservation.count : 1u);
     }
 

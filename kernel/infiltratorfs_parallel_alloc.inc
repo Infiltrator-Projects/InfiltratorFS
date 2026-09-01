@@ -30,9 +30,11 @@ static u32 infilfs_parallel_shard_for(const struct infilfs_sb_info *sbi,
     u64 allocatable;
     u64 offset;
 
-    if (!sbi || sbi->device_blocks <= 1u || block <= 1u)
+    u64 total = infilfs_volume_blocks(sbi);
+
+    if (total <= 1u || block <= 1u)
         return 0;
-    allocatable = sbi->device_blocks - 1u;
+    allocatable = total - 1u;
     offset = min_t(u64, block - 1u, allocatable - 1u);
     return min_t(u32,
         (u32)div64_u64(offset * INFILFS_ALLOCATION_RESERVATION_SHARDS,
@@ -43,8 +45,8 @@ static u32 infilfs_parallel_shard_for(const struct infilfs_sb_info *sbi,
 static void infilfs_parallel_shard_bounds(const struct infilfs_sb_info *sbi,
                                           u32 shard, u64 *start, u64 *end)
 {
-    u64 allocatable = sbi->device_blocks > 1u ?
-        sbi->device_blocks - 1u : 0;
+    u64 total = infilfs_volume_blocks(sbi);
+    u64 allocatable = total > 1u ? total - 1u : 0;
 
     *start = 1u + div64_u64(
         allocatable * shard, INFILFS_ALLOCATION_RESERVATION_SHARDS);
@@ -98,8 +100,10 @@ static bool infilfs_parallel_range_reserved(
 {
     u64 block;
 
+    u64 total = infilfs_volume_blocks(sbi);
+
     if (!sbi || !sbi->allocation_reservations || !count ||
-        start >= sbi->device_blocks || count > sbi->device_blocks - start)
+        start >= total || count > total - start)
         return false;
     for (block = start; block < start + count; ++block)
         if (infilfs_parallel_bitmap_get(sbi->allocation_reservations, block))
@@ -138,7 +142,7 @@ static int infilfs_parallel_allocator_mount_init(struct super_block *sb)
 
     if (sb_rdonly(sb))
         return 0;
-    words = DIV_ROUND_UP_ULL(sbi->device_blocks, BITS_PER_LONG);
+    words = DIV_ROUND_UP_ULL(infilfs_volume_blocks(sbi), BITS_PER_LONG);
     if (words > SIZE_MAX / sizeof(unsigned long))
         return -EOVERFLOW;
     sbi->allocation_reservation_bytes =
@@ -220,8 +224,13 @@ static int infilfs_parallel_tx_claim(struct infilfs_rw_tx *tx, u64 start,
     if (!tx || !tx->sbi || !tx->bitmap || !count)
         return -EINVAL;
     sbi = tx->sbi;
-    if (start < 1u || start >= sbi->device_blocks ||
-        count > sbi->device_blocks - start || count > tx->free_blocks)
+    {
+        u64 total = infilfs_volume_blocks(sbi);
+
+        if (start < 1u || start >= total ||
+            count > total - start || count > tx->free_blocks)
+            return -ENOSPC;
+    }
         return -ENOSPC;
     ret = infilfs_parallel_alloc_journal_reserve(tx);
     if (ret)
@@ -327,9 +336,11 @@ static int infilfs_parallel_reserve_data(
     u32 first_shard;
     u32 pass;
 
+    u64 total = infilfs_volume_blocks(sbi);
+
     memset(reservation, 0, sizeof(*reservation));
     if (!sbi || !sbi->allocation_reservations || !count ||
-        count >= sbi->device_blocks)
+        count >= total)
         return -ENOSPC;
     metadata_reserve = infilfs_native_metadata_reserve_blocks(sbi);
     for (;;) {
@@ -345,7 +356,7 @@ static int infilfs_parallel_reserve_data(
                              charged, charged + (s64)count) == charged)
             break;
     }
-    first_shard = preferred > 0 && preferred < sbi->device_blocks ?
+    first_shard = preferred > 0 && preferred < total ?
         infilfs_parallel_shard_for(sbi, preferred) :
         (u32)(atomic64_inc_return(&sbi->allocation_reservation_steer) %
               INFILFS_ALLOCATION_RESERVATION_SHARDS);
