@@ -55,8 +55,8 @@ FetchContent_Declare(infilfs_lz4
     GIT_SHALLOW TRUE)
 FetchContent_MakeAvailable(infilfs_lz4)
 
-# InfiltratorFS desktop applications use the same bundled MB Corpo
-# typography on Linux and Windows. Keep the archive immutable and verify
+# Release 0.18.34 standardises InfiltratorFS desktop applications on the
+# same bundled MB Corpo typography on Linux and Windows. Keep the archive immutable and verify
 # every extracted face so a build cannot silently fall back to system fonts.
 set(INFILFS_FONT_ARCHIVE
     "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/mb-corpo-fonts.tar.xz")
