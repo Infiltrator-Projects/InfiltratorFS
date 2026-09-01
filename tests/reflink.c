@@ -203,9 +203,16 @@ int main(void)
     expect(memcmp(readback, source_data, sizeof(readback)) == 0,
            "clone data matches source");
 
-    expect(infs_write_file(&vol, "/clone", changed, sizeof(changed), 0) ==
-               (int64_t)sizeof(changed),
-           "break sharing on clone write");
+    {
+        int64_t rc = infs_write_file(
+            &vol, "/clone", changed, sizeof(changed), 0);
+        if (rc != (int64_t)sizeof(changed)) {
+            fprintf(stderr,
+                    "reflink: clone write returned %lld (expected %zu)\n",
+                    (long long)rc, sizeof(changed));
+            fail("break sharing on clone write");
+        }
+    }
     uint64_t clone0 = physical_block_for(&vol, &image, "/clone", 0, NULL);
     expect(clone0 != source0, "changed clone block is private");
     if (source_compressed) {
