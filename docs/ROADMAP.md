@@ -135,6 +135,13 @@ checksum or metadata errors. See [QUALIFICATION.md](QUALIFICATION.md).
 - [x] Media-aware placement.
 - [ ] Per-extent compression.
 
+## Administration and recovery
+
+- [ ] Filesystem resize support, including online grow and safely bounded shrink.
+- [ ] Native user, group and project/directory-tree quotas.
+- [ ] Deterministic repair-capable filesystem checker for corruption that can be repaired unambiguously, while retaining fail-closed behaviour where correctness cannot be established.
+- [ ] Snapshot restore and rollback for selected files/directories and whole-volume recovery to a retained generation.
+
 ## Security and protection
 
 - [ ] Versioned portable security objects with stable typed principals and ACL entries.
