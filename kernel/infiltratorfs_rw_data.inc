@@ -3878,12 +3878,15 @@ static int infilfs_native_try_single_paged_overwrite(
     extent_end = extent_start +
         le32_to_cpu(entries[extent_index].block_count);
     old_flags = le32_to_cpu(entries[extent_index].flags);
-    if (old_flags != INFILFS_EXTENT_NORMAL &&
-        old_flags != INFILFS_EXTENT_HOLE) {
+    if (!infilfs_extent_flags_valid(
+            le32_to_cpu(entries[extent_index].block_count),
+            le64_to_cpu(entries[extent_index].physical_block),
+            old_flags)) {
         ret = -EFSCORRUPTED;
         goto out;
     }
-    if (old_flags == INFILFS_EXTENT_HOLE) {
+    if (infilfs_extent_kind(old_flags) == INFILFS_EXTENT_HOLE ||
+        infilfs_extent_is_compressed(old_flags)) {
         ret = -EOPNOTSUPP;
         goto out;
     }
@@ -4197,6 +4200,42 @@ generic_extent_write:
     new_size = max_t(u64, old_size, request_end);
     start_block = pos >> INFILFS_DISK_BLOCK_SHIFT;
     end_block = (request_end - 1u) >> INFILFS_DISK_BLOCK_SHIFT;
+    /*
+     * A compressed extent is one indivisible LZ4 stream.  If this write
+     * touches any logical block inside one, expand the CoW replacement to the
+     * complete bounded compression cluster.  Untouched logical blocks are
+     * copied forward below, so application-visible write semantics do not
+     * change.
+     */
+    if (old_extent_count) {
+        bool expanded;
+
+        do {
+            u32 i;
+
+            expanded = false;
+            for (i = 0; i < old_extent_count; ++i) {
+                u64 extent_start =
+                    le64_to_cpu(old_extents[i].logical_block);
+                u64 extent_end = extent_start +
+                    le32_to_cpu(old_extents[i].block_count);
+                u32 flags = le32_to_cpu(old_extents[i].flags);
+
+                if (!infilfs_extent_is_compressed(flags) ||
+                    extent_end <= start_block ||
+                    extent_start > end_block)
+                    continue;
+                if (extent_start < start_block) {
+                    start_block = extent_start;
+                    expanded = true;
+                }
+                if (extent_end - 1u > end_block) {
+                    end_block = extent_end - 1u;
+                    expanded = true;
+                }
+            }
+        } while (expanded);
+    }
     touched_blocks = end_block - start_block + 1u;
     if (touched_blocks > U32_MAX) {
         ret = -EFBIG;
@@ -4216,14 +4255,20 @@ generic_extent_write:
         if (infilfs_native_map_extent(
                 old_extents, old_extent_count, start_block,
                 &old_physical, &old_flags) == 0 &&
-            old_flags == INFILFS_EXTENT_NORMAL)
+            infilfs_extent_kind(old_flags) == INFILFS_EXTENT_NORMAL)
             preferred = old_physical;
     } else if (old_extent_count) {
         struct infilfs_extent_disk *last = &old_extents[old_extent_count - 1u];
 
-        if (le32_to_cpu(last->flags) == INFILFS_EXTENT_NORMAL)
-            preferred = le64_to_cpu(last->physical_block) +
-                le32_to_cpu(last->block_count);
+        {
+            u32 last_flags = le32_to_cpu(last->flags);
+            u32 last_logical = le32_to_cpu(last->block_count);
+
+            if (infilfs_extent_kind(last_flags) == INFILFS_EXTENT_NORMAL)
+                preferred = le64_to_cpu(last->physical_block) +
+                    infilfs_extent_physical_blocks(
+                        last_logical, last_flags);
+        }
     }
 
     ret = infilfs_native_alloc_data_exact_reserved(
@@ -4245,12 +4290,14 @@ generic_extent_write:
 
     for (logical = start_block; logical <= end_block; ++logical) {
         u64 block_begin = logical << INFILFS_DISK_BLOCK_SHIFT;
+        u64 block_end = block_begin + INFILFS_DISK_BLOCK_SIZE;
         u64 write_begin = max_t(u64, pos, block_begin);
-        u64 write_end = min_t(u64, request_end,
-                              block_begin + INFILFS_DISK_BLOCK_SIZE);
-        size_t offset = (size_t)(write_begin - block_begin);
-        size_t take = (size_t)(write_end - write_begin);
+        u64 write_end = min_t(u64, request_end, block_end);
+        size_t offset = 0;
+        size_t take = 0;
         u64 old_physical = 0;
+        u64 old_extent_start = 0;
+        u32 old_extent_blocks = 0;
         u32 old_flags = INFILFS_EXTENT_HOLE;
 
         memset(data_block, 0, INFILFS_DISK_BLOCK_SIZE);
@@ -4259,20 +4306,33 @@ generic_extent_write:
                 sizeof(struct infilfs_data_checksum_disk);
             memcpy(data_block, inline_bytes, (size_t)old_size);
         } else if (logical < old_blocks &&
-                   infilfs_native_map_extent(old_extents, old_extent_count,
-                                             logical, &old_physical,
-                                             &old_flags) == 0 &&
-                   old_flags == INFILFS_EXTENT_NORMAL) {
-            ret = infilfs_read_allocated_block(
-                inode->i_sb, old_physical, data_block);
+                   infilfs_native_map_extent_detail(
+                       old_extents, old_extent_count, logical,
+                       &old_physical, &old_flags,
+                       &old_extent_start, &old_extent_blocks) == 0 &&
+                   infilfs_extent_kind(old_flags) ==
+                       INFILFS_EXTENT_NORMAL) {
+            if (infilfs_extent_is_compressed(old_flags))
+                ret = infilfs_read_compressed_logical_block(
+                    inode, old_physical, old_extent_start,
+                    old_extent_blocks, old_flags, logical, data_block);
+            else
+                ret = infilfs_read_allocated_block(
+                    inode->i_sb, old_physical, data_block);
             if (ret)
                 goto out;
         }
-        if (copy_from_iter(data_block + offset, take, from) != take) {
-            ret = -EFAULT;
-            goto out;
+
+        if (write_end > write_begin) {
+            offset = (size_t)(write_begin - block_begin);
+            take = (size_t)(write_end - write_begin);
+            if (copy_from_iter(data_block + offset, take, from) != take) {
+                ret = -EFAULT;
+                goto out;
+            }
+            consumed += take;
         }
-        consumed += take;
+
         ret = infilfs_native_stage_block(inode->i_sb,
                                          data_start + logical - start_block,
                                          data_block);
@@ -4343,10 +4403,13 @@ generic_extent_write:
     pending->tx.next_sb.generation = cpu_to_le64(pending->tx.generation);
     *new_size_out = new_size;
     *allocated_blocks_out = 0;
-    for (logical = 0; logical < new_extent_count; ++logical)
-        if (le32_to_cpu(new_extents[logical].flags) == INFILFS_EXTENT_NORMAL)
-            *allocated_blocks_out +=
-                le32_to_cpu(new_extents[logical].block_count);
+    for (logical = 0; logical < new_extent_count; ++logical) {
+        u32 flags = le32_to_cpu(new_extents[logical].flags);
+        u32 logical_blocks = le32_to_cpu(new_extents[logical].block_count);
+
+        *allocated_blocks_out +=
+            infilfs_extent_physical_blocks(logical_blocks, flags);
+    }
     ret = 0;
 out:
     if (ret && consumed)
