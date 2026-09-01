@@ -33,7 +33,7 @@ grep -Fxq 'ID_FS_TYPE=infiltratorfs' "$probe"
 grep -Fxq 'ID_FS_VERSION=0.17' "$probe"
 grep -Fxq 'ID_FS_LABEL=Desktop Test' "$probe"
 grep -Fxq 'ID_FS_BLOCK_SIZE=4096' "$probe"
-grep -Eq '^ID_FS_UUID=[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}if "$inspect" --udev "$plain" > "$tmp/plain-probe.txt" 2>/dev/null; then
+grep -Eq '^ID_FS_UUID=[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}if "$inspect" --udev "$plain" > "$tmp/plain-probe.txt" 2>/dev/null; then
     echo 'desktop-integration: non-InfiltratorFS image was identified' >&2
     exit 1
 fi
@@ -149,9 +149,8 @@ expected_alias_args=("$image" --force -L 'GNOME Disks Label')
 echo 'desktop-integration: PASS'
  "$probe"
 
-# Standalone mkfs.infilfs and the portable formatter must publish the same
-# current-format feature contract. Native mounted IAC1 is gated by bit 0x1000,
-# so inspect the actual raw checkpoint produced above.
+# Keep the standalone Linux formatter and portable formatter on one current
+# Format 0.17 feature contract. Native IAC1 writeback is gated by bit 0x1000.
 python3 - "$image" <<'PY'
 import struct
 import sys
