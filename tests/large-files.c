@@ -219,8 +219,8 @@ int main(void)
             INFS_INCOMPAT_PAGED_EXTENTS) != 0,
            "paged extent feature enabled");
     expect((infs_le64_to_cpu(volume.sb.incompat_flags) &
-            INFS_INCOMPAT_COMPRESSED_EXTENTS) == 0,
-           "experimental compression is not enabled by normal formatting");
+            INFS_INCOMPAT_COMPRESSED_EXTENTS) != 0,
+           "native adaptive compression enabled by normal formatting");
     expect(infs_create_file(&volume, "/movie.bin", NULL) == INFS_STATUS_OK,
            "create large file");
 
