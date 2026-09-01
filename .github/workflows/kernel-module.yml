@@ -219,7 +219,12 @@ jobs:
           build/infilfs-tool "$image" symlink docs/inline.txt /current
           build/infilfs-tool "$image" snapshot-create before-native-rw
 
-          sudo insmod kernel/infiltratorfs.ko
+          sudo modprobe lz4_compress 2>/dev/null || true
+          sudo modprobe lz4_decompress 2>/dev/null || true
+          if ! sudo insmod kernel/infiltratorfs.ko; then
+            sudo dmesg | tail -n 80 >&2 || true
+            exit 1
+          fi
           loaded=1
           loopdev="$(sudo losetup --find --show "$image")"
           mkdir -p "$mountpoint"
