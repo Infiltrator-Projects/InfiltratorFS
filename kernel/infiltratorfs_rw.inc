@@ -267,9 +267,13 @@ static u64 infilfs_native_extent_allocated_blocks(
     u64 allocated = 0;
     u32 i;
 
-    for (i = 0; i < count; ++i)
-        if (le32_to_cpu(extents[i].flags) == INFILFS_EXTENT_NORMAL)
-            allocated += le32_to_cpu(extents[i].block_count);
+    for (i = 0; i < count; ++i) {
+        u32 flags = le32_to_cpu(extents[i].flags);
+        u32 blocks = le32_to_cpu(extents[i].block_count);
+
+        if (infilfs_extent_kind(flags) == INFILFS_EXTENT_NORMAL)
+            allocated += infilfs_extent_physical_blocks(blocks, flags);
+    }
     return allocated;
 }
 

@@ -4657,7 +4657,7 @@ static ssize_t infilfs_native_extent_write_iter(struct inode *inode,
 
         if (current_pos == (u64)i_size_read(inode) &&
             (current_pos & (INFILFS_DISK_BLOCK_SIZE - 1u)) == 0 &&
-            (le64_to_cpu(sbi->disk.incompat_flags) &
+            (le64_to_cpu(pending->tx.next_sb.incompat_flags) &
              INFILFS_INCOMPAT_COMPRESSED_EXTENTS) != 0)
             chunk = min_t(size_t, chunk, (size_t)compression_bytes);
         u64 new_file_block = 0;
