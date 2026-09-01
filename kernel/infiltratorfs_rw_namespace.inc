@@ -1269,12 +1269,14 @@ static int infilfs_ns_other_reference_cover(
             return ret;
         }
         for (j = 0; j < extent_count; ++j) {
-            u64 physical, extent_end;
-            u32 blocks;
-            if (le32_to_cpu(extents[j].flags) != INFILFS_EXTENT_NORMAL)
+            u64 physical, extent_end, blocks;
+            u32 flags = le32_to_cpu(extents[j].flags);
+            u32 logical_blocks = le32_to_cpu(extents[j].block_count);
+
+            if (infilfs_extent_kind(flags) != INFILFS_EXTENT_NORMAL)
                 continue;
             physical = le64_to_cpu(extents[j].physical_block);
-            blocks = le32_to_cpu(extents[j].block_count);
+            blocks = infilfs_extent_physical_blocks(logical_blocks, flags);
             extent_end = physical + blocks;
             if (extent_end <= cursor || physical >= end)
                 continue;
@@ -1433,12 +1435,15 @@ static int infilfs_ns_delete_file_resources(
     if (ret)
         goto out;
     for (i = 0; i < extent_count; ++i) {
-        if (le32_to_cpu(extents[i].flags) != INFILFS_EXTENT_NORMAL)
+        u32 flags = le32_to_cpu(extents[i].flags);
+        u32 logical_blocks = le32_to_cpu(extents[i].block_count);
+
+        if (infilfs_extent_kind(flags) != INFILFS_EXTENT_NORMAL)
             continue;
         ret = infilfs_ns_free_unshared_run(
             pending, ii->object_id,
             le64_to_cpu(extents[i].physical_block),
-            le32_to_cpu(extents[i].block_count));
+            infilfs_extent_physical_blocks(logical_blocks, flags));
         if (ret)
             goto out;
     }
