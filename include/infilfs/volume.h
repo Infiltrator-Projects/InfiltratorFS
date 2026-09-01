@@ -200,6 +200,13 @@ infs_status infs_volume_open_storage(struct infs_volume *vol,
                                      int writable);
 void infs_volume_close(struct infs_volume *vol);
 infs_status infs_volume_sync(struct infs_volume *vol);
+/* Resize the filesystem geometry inside an already-sized backing store.
+ * Grow requires the backing file/device to be enlarged first. Shrink is
+ * fail-closed: it succeeds only when every block outside the requested
+ * geometry is relocatable format bookkeeping; live user/metadata allocation
+ * or named snapshots make the operation return BUSY rather than risk data. */
+infs_status infs_volume_resize(struct infs_volume *vol,
+                               uint64_t new_size_bytes);
 /* Enable or disable bounded deferred publication for normal mutators.
  * threshold_bytes == 0 selects INFS_DEFAULT_DEFERRED_PUBLISH_BYTES.
  * Explicit infs_volume_sync() remains a forced durability boundary. */

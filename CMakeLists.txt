@@ -340,6 +340,8 @@ if(UNIX)
         COMMAND bash ${CMAKE_SOURCE_DIR}/tests/phase3-integrity.sh ${CMAKE_BINARY_DIR})
     add_test(NAME infilfs-sparse-files
         COMMAND bash ${CMAKE_SOURCE_DIR}/tests/sparse-files.sh ${CMAKE_BINARY_DIR})
+    add_test(NAME infilfs-resize
+        COMMAND bash ${CMAKE_SOURCE_DIR}/tests/resize.sh ${CMAKE_BINARY_DIR})
     add_test(NAME infilfs-forensic-scan
         COMMAND bash ${CMAKE_SOURCE_DIR}/tests/forensic-scan.sh ${CMAKE_BINARY_DIR})
     add_test(NAME infilfs-current-format-tree

@@ -23,6 +23,7 @@ static void usage(const char *prog)
         "  %s <image> put <host-file> <path>\n"
         "  %s <image> write <host-file> <path> <offset>\n"
         "  %s <image> punch <path> <offset> <length>\n"
+        "  %s <image> resize <bytes|KiB|MiB|GiB|TiB|max>\n"
         "  %s <image> cat <path>\n"
         "  %s <image> map <path> <logical-block>\n"
         "  %s <image> reflink <source-path> <destination-path>\n"
@@ -40,7 +41,7 @@ static void usage(const char *prog)
         "  %s <image> snapshot-cat <name> <path>\n"
         "  %s <image> snapshot-readlink <name> <path>\n",
         prog, prog, prog, prog, prog, prog, prog, prog, prog, prog, prog,
-        prog, prog, prog, prog, prog, prog, prog, prog, prog, prog, prog);
+        prog, prog, prog, prog, prog, prog, prog, prog, prog, prog, prog, prog);
 }
 
 static int die_errno(const char *what)

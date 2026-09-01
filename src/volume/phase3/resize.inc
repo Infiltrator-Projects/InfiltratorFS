@@ -245,6 +245,8 @@ infs_status infs_volume_resize(struct infs_volume *vol,
     (void)is_device;
     if (new_size_bytes > storage_bytes)
         return INFS_STATUS_NO_SPACE;
+    if ((storage_bytes % INFS_BLOCK_SIZE) != 0)
+        return INFS_STATUS_INVALID_ARGUMENT;
 
     uint64_t old_total = infs_le64_to_cpu(vol->sb.total_blocks);
     uint64_t new_total = new_size_bytes / INFS_BLOCK_SIZE;
@@ -411,6 +413,16 @@ infs_status infs_volume_resize(struct infs_volume *vol,
     (void)free_extent_index_rebuild(vol);
     vol->data_allocation_cursor = 1u;
     vol->metadata_allocation_cursor = new_total;
+
+    /*
+     * The storage object keeps the physical backing size; the superblock is
+     * the authoritative filesystem geometry.  Keep runtime validation bounded
+     * by the new bitmap even when the partition/image is larger.
+     */
+    vol->checksum_cursor_valid = 0;
+    object_cache_clear(vol);
+    directory_cache_clear(vol);
+    (void)object_cache_rebuild(vol);
 
     infs_status replica_status = INFS_STATUS_OK;
     for (unsigned i = 1; i < INFS_CHECKPOINT_COUNT; ++i) {

@@ -47,6 +47,68 @@ static int command_write(struct infs_volume *vol, const char *host,
     return 0;
 }
 
+static int parse_resize_size(struct infs_volume *vol, const char *text,
+                             uint64_t *bytes_out)
+{
+    uint64_t storage_bytes = 0;
+    int is_device = 0;
+    if (!vol || !text || !bytes_out)
+        return 0;
+    if (strcmp(text, "max") == 0) {
+        if (infs_storage_get_size(&vol->storage, &storage_bytes,
+                                  &is_device) != INFS_STATUS_OK)
+            return 0;
+        (void)is_device;
+        if ((storage_bytes % INFS_BLOCK_SIZE) != 0)
+            return 0;
+        *bytes_out = storage_bytes;
+        return 1;
+    }
+
+    errno = 0;
+    char *end = NULL;
+    unsigned long long value = strtoull(text, &end, 10);
+    if (errno || end == text)
+        return 0;
+
+    uint64_t multiplier = 1u;
+    if (*end != '\0') {
+        if (strcmp(end, "KiB") == 0)
+            multiplier = UINT64_C(1024);
+        else if (strcmp(end, "MiB") == 0)
+            multiplier = UINT64_C(1024) * 1024u;
+        else if (strcmp(end, "GiB") == 0)
+            multiplier = UINT64_C(1024) * 1024u * 1024u;
+        else if (strcmp(end, "TiB") == 0)
+            multiplier = UINT64_C(1024) * 1024u * 1024u * 1024u;
+        else
+            return 0;
+    }
+    if ((uint64_t)value > UINT64_MAX / multiplier)
+        return 0;
+    uint64_t bytes = (uint64_t)value * multiplier;
+    if ((bytes % INFS_BLOCK_SIZE) != 0)
+        return 0;
+    *bytes_out = bytes;
+    return 1;
+}
+
+static int command_resize(struct infs_volume *vol, const char *size_text)
+{
+    uint64_t bytes = 0;
+    if (!parse_resize_size(vol, size_text, &bytes)) {
+        errno = EINVAL;
+        return die_errno("resize size");
+    }
+    uint64_t before =
+        infs_le64_to_cpu(vol->sb.total_blocks) * (uint64_t)INFS_BLOCK_SIZE;
+    infs_status status = infs_volume_resize(vol, bytes);
+    if (status != INFS_STATUS_OK)
+        return die_status("resize", status);
+    printf("resized=%" PRIu64 " previous=%" PRIu64 "\n", bytes, before);
+    return 0;
+}
+
 static int command_map(struct infs_volume *vol, const char *path,
                        const char *logical_text)
 {

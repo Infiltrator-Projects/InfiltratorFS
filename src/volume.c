@@ -235,6 +235,7 @@ static int paged_extent_replace(struct infs_volume *vol,
 #include "volume/phase3/part3-04.inc"
 #include "volume/phase3/part3-05.inc"
 #include "volume/phase3/part4-snapshot.inc"
+#include "volume/phase3/resize.inc"
 #include "volume/integrity.inc"
 #include "volume/phase3/part4-reflink.inc"
 #include "volume/phase3/part4-inline.inc"
