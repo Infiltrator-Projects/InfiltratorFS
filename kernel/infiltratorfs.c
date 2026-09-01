@@ -36,7 +36,7 @@
 
 #include "infiltratorfs_format.h"
 #include "infiltratorfs_ioctl.h"
-#include "../include/infilfs/iac1.h"
+#include "iac1.h"
 
 #define INFILTRATORFS_NAME "infiltratorfs"
 #define INFILTRATORFS_MAGIC 0x494e4653u
