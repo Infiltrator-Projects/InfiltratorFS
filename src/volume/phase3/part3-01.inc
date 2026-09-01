@@ -115,9 +115,7 @@ static int file_validate(uint8_t block[INFS_BLOCK_SIZE],
         uint32_t blocks = infs_le32_to_cpu(ext[i].block_count);
         uint32_t flags = infs_le32_to_cpu(ext[i].flags);
         if (!blocks || logical != next_logical || logical > UINT64_MAX - blocks ||
-            (flags != INFS_EXTENT_NORMAL && flags != INFS_EXTENT_HOLE) ||
-            (flags == INFS_EXTENT_HOLE && physical != 0) ||
-            (flags == INFS_EXTENT_NORMAL && physical == 0))
+            !extent_flags_valid(blocks, physical, flags))
             return INFS_STATUS_CORRUPT;
         next_logical += blocks;
     }
@@ -161,11 +159,18 @@ static int file_validate_volume(struct infs_volume *vol,
         uint64_t physical = infs_le64_to_cpu(ext[i].physical_block);
         uint32_t blocks = infs_le32_to_cpu(ext[i].block_count);
         uint32_t flags = infs_le32_to_cpu(ext[i].flags);
-        if (flags == INFS_EXTENT_HOLE)
+        uint64_t physical_blocks;
+        if (extent_kind(flags) == INFS_EXTENT_HOLE)
             continue;
-        if (physical >= total || blocks > total - physical ||
+        if (extent_is_compressed(flags) &&
+            (infs_le64_to_cpu(vol->sb.incompat_flags) &
+             INFS_INCOMPAT_COMPRESSED_EXTENTS) == 0)
+            return INFS_STATUS_CORRUPT;
+        physical_blocks = extent_physical_blocks(blocks, flags);
+        if (!physical_blocks || physical >= total ||
+            physical_blocks > total - physical ||
             !bitmap_get(vol->bitmap, physical) ||
-            !bitmap_get(vol->bitmap, physical + blocks - 1u))
+            !bitmap_get(vol->bitmap, physical + physical_blocks - 1u))
             return INFS_STATUS_CORRUPT;
     }
     if (payload_out)
@@ -191,8 +196,9 @@ static uint64_t file_allocated_blocks_classic(const struct infs_file_payload_dis
     uint64_t blocks = 0;
     uint32_t count = infs_le32_to_cpu(p->extent_count);
     for (uint32_t i = 0; i < count; ++i) {
-        if (infs_le32_to_cpu(ext[i].flags) == INFS_EXTENT_NORMAL)
-            blocks += infs_le32_to_cpu(ext[i].block_count);
+        uint32_t logical = infs_le32_to_cpu(ext[i].block_count);
+        uint32_t flags = infs_le32_to_cpu(ext[i].flags);
+        blocks += extent_physical_blocks(logical, flags);
     }
     return blocks;
 }
@@ -240,9 +246,11 @@ static int file_allocated_blocks_volume(struct infs_volume *vol,
     if (status != INFS_STATUS_OK)
         return status;
     uint64_t blocks = 0;
-    for (uint32_t i = 0; i < count; ++i)
-        if (infs_le32_to_cpu(all[i].flags) == INFS_EXTENT_NORMAL)
-            blocks += infs_le32_to_cpu(all[i].block_count);
+    for (uint32_t i = 0; i < count; ++i) {
+        uint32_t logical = infs_le32_to_cpu(all[i].block_count);
+        uint32_t flags = infs_le32_to_cpu(all[i].flags);
+        blocks += extent_physical_blocks(logical, flags);
+    }
     free(all);
     *blocks_out = blocks;
     return INFS_STATUS_OK;
