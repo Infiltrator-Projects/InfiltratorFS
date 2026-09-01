@@ -86,7 +86,8 @@ infs_status infs_scrub(struct infs_volume *vol,
             continue;
         }
         for (uint32_t j = 0; j < extent_count; ++j) {
-            if (infs_le32_to_cpu(scan_extents[j].flags) != INFS_EXTENT_NORMAL)
+            uint32_t flags = infs_le32_to_cpu(scan_extents[j].flags);
+            if (extent_kind(flags) != INFS_EXTENT_NORMAL)
                 continue;
             uint64_t logical =
                 infs_le64_to_cpu(scan_extents[j].logical_block);
@@ -94,10 +95,26 @@ infs_status infs_scrub(struct infs_volume *vol,
                 infs_le64_to_cpu(scan_extents[j].physical_block);
             uint32_t blocks =
                 infs_le32_to_cpu(scan_extents[j].block_count);
+            uint8_t *plain = NULL;
+            if (extent_is_compressed(flags)) {
+                size_t plain_bytes = 0;
+                if (file_decompress_extent(
+                        vol, &scan_extents[j], &plain, &plain_bytes) !=
+                        INFS_STATUS_OK ||
+                    plain_bytes != (size_t)blocks * INFS_BLOCK_SIZE) {
+                    free(plain);
+                    ++report->checksum_errors;
+                    continue;
+                }
+            }
             for (uint32_t k = 0; k < blocks; ++k) {
                 ++report->data_blocks_checked;
                 uint8_t data[INFS_BLOCK_SIZE];
-                if (read_block(vol, physical + k, data) != INFS_STATUS_OK) {
+                if (plain) {
+                    memcpy(data, plain + (size_t)k * INFS_BLOCK_SIZE,
+                           INFS_BLOCK_SIZE);
+                } else if (read_block(vol, physical + k, data) !=
+                           INFS_STATUS_OK) {
                     ++report->metadata_errors;
                     continue;
                 }
@@ -111,6 +128,7 @@ infs_status infs_scrub(struct infs_volume *vol,
                 if (memcmp(&expected, &actual, sizeof(expected)) != 0)
                     ++report->checksum_errors;
             }
+            free(plain);
         }
         if (owned_extents)
             free(scan_extents);
