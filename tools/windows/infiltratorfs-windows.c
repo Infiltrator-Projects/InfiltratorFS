@@ -226,13 +226,7 @@ static void update_target_summary(void)
         if (target->is_infiltrator)
             SetWindowTextW(GetDlgItem(g_main_window, IDC_LABEL), label);
     } else if (target->is_infiltrator) {
-        if (target->is_image) {
-            _snwprintf_s(prompt, sizeof(prompt) / sizeof(prompt[0]), _TRUNCATE,
-                         L"FORMAT THIS IMAGE AS INFILTRATORFS?\n\nFile: %s\nSize: %.2f GiB\n\nEverything currently in this image file will be destroyed.",
-                         target->device_path,
-                         (double)target->size_bytes /
-                         (1024.0 * 1024.0 * 1024.0));
-        } else if (target->use_region) {
+        if (target->use_region) {
             _snwprintf_s(text, sizeof(text) / sizeof(text[0]), _TRUNCATE,
                          L"Disk %lu  •  Partition %lu\r\n"
                          L"%.2f GiB  •  InfiltratorFS %u.%u  •  %s",
@@ -1393,7 +1387,13 @@ static int open_selected_volume(int format_first)
 
     if (format_first) {
         wchar_t prompt[896];
-        if (target->use_region) {
+        if (target->is_image) {
+            _snwprintf_s(prompt, sizeof(prompt) / sizeof(prompt[0]), _TRUNCATE,
+                         L"FORMAT THIS IMAGE AS INFILTRATORFS?\n\nFile: %s\nSize: %.2f GiB\n\nEverything currently in this image file will be destroyed.",
+                         target->device_path,
+                         (double)target->size_bytes /
+                         (1024.0 * 1024.0 * 1024.0));
+        } else if (target->use_region) {
             _snwprintf_s(prompt, sizeof(prompt) / sizeof(prompt[0]), _TRUNCATE,
                          L"FORMAT DISK %lu PARTITION %lu AS INFILTRATORFS?\n\nSize: %.2f GiB\n\nEverything currently in this partition will be destroyed. The raw storage view is bounded to this partition.",
                          (unsigned long)target->disk_number,
