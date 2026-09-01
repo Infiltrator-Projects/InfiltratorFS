@@ -74,6 +74,12 @@ static int truncate_file_tx(struct infs_volume *vol, const char *path, uint64_t 
     status = file_logical_blocks_volume(vol, object, p, ext, &have);
     if (status != INFS_STATUS_OK)
         return status;
+    if (target_blocks < have && target_blocks > 0) {
+        status = file_materialize_compressed_at(
+            vol, object, &p, &ext, target_blocks - 1u);
+        if (status != INFS_STATUS_OK)
+            return status;
+    }
     if (target_blocks > have) {
         status = file_ensure_logical_blocks(vol, object, target_blocks);
         if (status != INFS_STATUS_OK)
@@ -94,9 +100,11 @@ static int truncate_file_tx(struct infs_volume *vol, const char *path, uint64_t 
             uint32_t blocks = infs_le32_to_cpu(ext[i].block_count);
             uint32_t flags = infs_le32_to_cpu(ext[i].flags);
             if (logical >= target_blocks) {
-                if (flags == INFS_EXTENT_NORMAL) {
+                if (extent_kind(flags) == INFS_EXTENT_NORMAL) {
+                    uint64_t physical_blocks =
+                        extent_physical_blocks(blocks, flags);
                     status = file_free_unshared_run(
-                        vol, hdr->object_id, physical, blocks);
+                        vol, hdr->object_id, physical, physical_blocks);
                     if (status != INFS_STATUS_OK)
                         return status;
                 }
@@ -105,7 +113,9 @@ static int truncate_file_tx(struct infs_volume *vol, const char *path, uint64_t 
             uint64_t extent_end = logical + blocks;
             if (extent_end > target_blocks) {
                 uint32_t retained = (uint32_t)(target_blocks - logical);
-                if (flags == INFS_EXTENT_NORMAL) {
+                if (extent_is_compressed(flags))
+                    return INFS_STATUS_CORRUPT;
+                if (extent_kind(flags) == INFS_EXTENT_NORMAL) {
                     status = file_free_unshared_run(
                         vol, hdr->object_id, physical + retained,
                         blocks - retained);
@@ -141,12 +151,10 @@ static int truncate_file_tx(struct infs_volume *vol, const char *path, uint64_t 
         status = file_map_block(vol, object, p, ext, logical, &physical, &flags);
         if (status != INFS_STATUS_OK)
             return status;
-        if (flags == INFS_EXTENT_NORMAL) {
+        if (extent_kind(flags) == INFS_EXTENT_NORMAL) {
             uint8_t data[INFS_BLOCK_SIZE];
-            status = read_block(vol, physical, data);
-            if (status != INFS_STATUS_OK)
-                return status;
-            status = data_block_verify(vol, p, hdr->object_id, logical, data);
+            status = file_read_logical_block(
+                vol, object, p, ext, hdr->object_id, logical, data);
             if (status != INFS_STATUS_OK)
                 return status;
             size_t tail = (size_t)(size % INFS_BLOCK_SIZE);
