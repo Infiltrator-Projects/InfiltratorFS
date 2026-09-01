@@ -49,13 +49,21 @@ static int extent_page_validate(struct infs_volume *vol,
         uint64_t physical = infs_le64_to_cpu(ext[i].physical_block);
         uint32_t blocks = infs_le32_to_cpu(ext[i].block_count);
         uint32_t flags = infs_le32_to_cpu(ext[i].flags);
+        uint64_t physical_blocks;
         if (!blocks || logical != next || logical > UINT64_MAX - blocks ||
-            (flags != INFS_EXTENT_NORMAL && flags != INFS_EXTENT_HOLE) ||
-            (flags == INFS_EXTENT_HOLE && physical != 0) ||
-            (flags == INFS_EXTENT_NORMAL && physical == 0))
+            !extent_flags_valid(blocks, physical, flags))
             return INFS_STATUS_CORRUPT;
-        if (flags == INFS_EXTENT_NORMAL &&
-            (physical >= total || blocks > total - physical))
+        if (extent_kind(flags) == INFS_EXTENT_HOLE) {
+            next += blocks;
+            continue;
+        }
+        if (extent_is_compressed(flags) &&
+            (infs_le64_to_cpu(vol->sb.incompat_flags) &
+             INFS_INCOMPAT_COMPRESSED_EXTENTS) == 0)
+            return INFS_STATUS_CORRUPT;
+        physical_blocks = extent_physical_blocks(blocks, flags);
+        if (!physical_blocks || physical >= total ||
+            physical_blocks > total - physical)
             return INFS_STATUS_CORRUPT;
         next += blocks;
     }
@@ -271,9 +279,15 @@ static int paged_extent_map(struct infs_volume *vol,
         if (logical < l || logical >= l + n)
             continue;
         uint32_t flags = infs_le32_to_cpu(ext[i].flags);
-        uint64_t mapped = flags == INFS_EXTENT_HOLE ? 0 :
-            infs_le64_to_cpu(ext[i].physical_block) + (logical - l);
-        if (flags == INFS_EXTENT_NORMAL && !bitmap_get(vol->bitmap, mapped))
+        uint64_t mapped;
+        if (extent_kind(flags) == INFS_EXTENT_HOLE)
+            mapped = 0;
+        else if (extent_is_compressed(flags))
+            mapped = infs_le64_to_cpu(ext[i].physical_block);
+        else
+            mapped = infs_le64_to_cpu(ext[i].physical_block) + (logical - l);
+        if (extent_kind(flags) == INFS_EXTENT_NORMAL &&
+            !bitmap_get(vol->bitmap, mapped))
             return INFS_STATUS_CORRUPT;
         if (physical)
             *physical = mapped;
@@ -293,7 +307,8 @@ static int extent_emit_capacity(struct infs_extent_disk *out, uint32_t *count,
         return INFS_STATUS_OK;
     if (*count) {
         struct infs_extent_disk *last = &out[*count - 1u];
-        if (infs_le32_to_cpu(last->flags) == flags &&
+        if (!extent_is_compressed(flags) &&
+            infs_le32_to_cpu(last->flags) == flags &&
             infs_le64_to_cpu(last->logical_block) +
                 infs_le32_to_cpu(last->block_count) == logical &&
             ((flags == INFS_EXTENT_HOLE && physical == 0) ||
