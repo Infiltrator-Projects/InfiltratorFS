@@ -260,6 +260,13 @@ static u32 infilfs_extent_stored_bytes(u32 flags)
     return flags >> INFILFS_EXTENT_STORED_BYTES_SHIFT;
 }
 
+static u32 infilfs_extent_compressed_flags(u32 codec, u32 stored_bytes)
+{
+    return INFILFS_EXTENT_NORMAL |
+        (codec << INFILFS_EXTENT_CODEC_SHIFT) |
+        (stored_bytes << INFILFS_EXTENT_STORED_BYTES_SHIFT);
+}
+
 static bool infilfs_extent_is_compressed(u32 flags)
 {
     return infilfs_extent_kind(flags) == INFILFS_EXTENT_NORMAL &&
