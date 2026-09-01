@@ -175,6 +175,41 @@ static u64 infilfs_native_block_distance(u64 a, u64 b)
     return a > b ? a - b : b - a;
 }
 
+static void infilfs_native_media_scores(
+    const struct infilfs_sb_info *sbi, enum infilfs_data_workload workload,
+    u64 distance, u64 slack, u64 tail,
+    u64 *primary, u64 *secondary)
+{
+    if (sbi->media_profile == INFILFS_MEDIA_ROTATIONAL) {
+        /*
+         * HDDs pay for head movement: physical distance is the first-order
+         * cost for every workload. Sequential ties preserve the longest tail;
+         * random/sparse ties consume the tighter hole.
+         */
+        *primary = distance;
+        *secondary = workload == INFILFS_DATA_WORKLOAD_SEQUENTIAL ?
+            U64_MAX - tail : slack;
+        return;
+    }
+    if (sbi->media_profile == INFILFS_MEDIA_NONROTATIONAL) {
+        /*
+         * Flash/NVMe has negligible seek cost. Streaming growth therefore
+         * preserves the largest contiguous tail, while random/sparse CoW
+         * consumes the tightest suitable hole before considering locality.
+         */
+        *primary = workload == INFILFS_DATA_WORKLOAD_SEQUENTIAL ?
+            U64_MAX - tail : slack;
+        *secondary = distance;
+        return;
+    }
+
+    /* Balanced/unknown keeps the pre-media-aware workload policy. */
+    *primary = workload == INFILFS_DATA_WORKLOAD_SEQUENTIAL ?
+        distance : slack;
+    *secondary = workload == INFILFS_DATA_WORKLOAD_SEQUENTIAL ?
+        U64_MAX - tail : distance;
+}
+
 
 static void infilfs_native_writer_tail_invalidate(
     struct infilfs_native_pending *pending)
@@ -1145,6 +1180,9 @@ static bool infilfs_native_choose_scored_extent(
         u64 extent_start = extent->start;
         u64 extent_end;
         u64 candidate;
+        u64 distance;
+        u64 slack;
+        u64 tail;
         u64 primary;
         u64 secondary;
 
@@ -1160,12 +1198,6 @@ static bool infilfs_native_choose_scored_extent(
                 candidate = preferred;
             else
                 candidate = extent_end - wanted;
-            primary = infilfs_native_block_distance(candidate, preferred);
-            /*
-             * Equal-distance sequential candidates prefer the run that leaves
-             * the largest contiguous tail for the next append.
-             */
-            secondary = U64_MAX - (extent_end - (candidate + wanted));
         } else {
             if (preferred <= extent_start)
                 candidate = extent_start;
@@ -1173,13 +1205,13 @@ static bool infilfs_native_choose_scored_extent(
                 candidate = extent_end - wanted;
             else
                 candidate = preferred;
-            /*
-             * Random and sparse writes consume the tightest suitable hole
-             * first, preserving large contiguous runs for streaming growth.
-             */
-            primary = extent->count - wanted;
-            secondary = infilfs_native_block_distance(candidate, preferred);
         }
+
+        distance = infilfs_native_block_distance(candidate, preferred);
+        slack = extent->count - wanted;
+        tail = extent_end - (candidate + wanted);
+        infilfs_native_media_scores(
+            sbi, workload, distance, slack, tail, &primary, &secondary);
 
         if (infilfs_parallel_range_reserved(sbi, candidate, wanted))
             continue;
@@ -1198,7 +1230,20 @@ static bool infilfs_native_choose_scored_extent(
         return false;
     *start_out = best_start;
     atomic64_inc(&tx->sbi->allocation_locality_scored);
-    if (workload != INFILFS_DATA_WORKLOAD_SEQUENTIAL)
+    switch (tx->sbi->media_profile) {
+    case INFILFS_MEDIA_ROTATIONAL:
+        atomic64_inc(&tx->sbi->allocation_media_rotational_scored);
+        break;
+    case INFILFS_MEDIA_NONROTATIONAL:
+        atomic64_inc(&tx->sbi->allocation_media_nonrotational_scored);
+        break;
+    case INFILFS_MEDIA_BALANCED:
+    default:
+        atomic64_inc(&tx->sbi->allocation_media_balanced_scored);
+        break;
+    }
+    if (workload != INFILFS_DATA_WORKLOAD_SEQUENTIAL &&
+        tx->sbi->media_profile != INFILFS_MEDIA_ROTATIONAL)
         atomic64_inc(&tx->sbi->allocation_best_fit);
     return true;
 }
