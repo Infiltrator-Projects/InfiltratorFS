@@ -25,16 +25,14 @@ static infs_status file_read_small_content(
     status = file_map_block(vol, object, file, ext, 0, &physical, &flags);
     if (status != INFS_STATUS_OK)
         return status;
-    if (flags == INFS_EXTENT_HOLE)
+    if (extent_kind(flags) == INFS_EXTENT_HOLE)
         return INFS_STATUS_OK;
 
     uint8_t block[INFS_BLOCK_SIZE];
-    status = read_block(vol, physical, block);
-    if (status != INFS_STATUS_OK)
-        return status;
     struct infs_object_header_disk *hdr =
         (struct infs_object_header_disk *)object;
-    status = data_block_verify(vol, file, hdr->object_id, 0, block);
+    status = file_read_logical_block(
+        vol, object, file, ext, hdr->object_id, 0, block);
     if (status != INFS_STATUS_OK)
         return status;
     memcpy(data, block, (size_t)size);
@@ -65,11 +63,13 @@ static infs_status file_release_external_storage(
     if (status != INFS_STATUS_OK)
         return status;
     for (uint32_t i = 0; i < count; ++i) {
-        if (infs_le32_to_cpu(all[i].flags) != INFS_EXTENT_NORMAL)
+        uint32_t flags = infs_le32_to_cpu(all[i].flags);
+        uint32_t logical_blocks = infs_le32_to_cpu(all[i].block_count);
+        if (extent_kind(flags) != INFS_EXTENT_NORMAL)
             continue;
         status = file_free_unshared_run(
             vol, hdr->object_id, infs_le64_to_cpu(all[i].physical_block),
-            infs_le32_to_cpu(all[i].block_count));
+            extent_physical_blocks(logical_blocks, flags));
         if (status != INFS_STATUS_OK) {
             if (owned) free(all);
             return status;
