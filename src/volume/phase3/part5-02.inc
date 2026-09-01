@@ -46,12 +46,14 @@ static int destroy_replaced_object_tx(struct infs_volume *vol,
         if (status != INFS_STATUS_OK)
             return status;
         for (uint32_t i = 0; i < count; ++i) {
-            if (infs_le32_to_cpu(all[i].flags) != INFS_EXTENT_NORMAL)
+            uint32_t flags = infs_le32_to_cpu(all[i].flags);
+            uint32_t logical_blocks = infs_le32_to_cpu(all[i].block_count);
+            if (extent_kind(flags) != INFS_EXTENT_NORMAL)
                 continue;
             status = file_free_unshared_run(
                 vol, target->object_id,
                 infs_le64_to_cpu(all[i].physical_block),
-                infs_le32_to_cpu(all[i].block_count));
+                extent_physical_blocks(logical_blocks, flags));
             if (status != INFS_STATUS_OK) {
                 if (owned) free(all);
                 return status;
