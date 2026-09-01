@@ -775,17 +775,45 @@ jobs:
 
           # Native parity: sparse high-offset growth, extent truncate,
           # preallocation and hole punching must survive the offline scrub.
+          # Keep these values visible in the hosted log: this path is both a
+          # correctness gate and the fastest way to distinguish logical-size,
+          # allocation-accounting and high-offset-write regressions.
+          printf 'Qualifying 1 TiB sparse growth/truncate...\n'
           sudo truncate -s 1T "$mountpoint/native-rw/sparse-1t.bin"
-          test "$(stat -c '%s' "$mountpoint/native-rw/sparse-1t.bin")" = \
-               1099511627776
-          test "$(stat -c '%b' "$mountpoint/native-rw/sparse-1t.bin")" -eq 0
+          sparse_size="$(stat -c '%s' "$mountpoint/native-rw/sparse-1t.bin")"
+          sparse_blocks="$(stat -c '%b' "$mountpoint/native-rw/sparse-1t.bin")"
+          printf 'Sparse growth state: size=%s bytes blocks=%s (512-byte units)\n' \
+              "$sparse_size" "$sparse_blocks"
+          if [[ "$sparse_size" != 1099511627776 ]]; then
+            echo "Sparse growth logical-size regression: $sparse_size" >&2
+            diagnostics
+            exit 1
+          fi
+          if [[ "$sparse_blocks" -ne 0 ]]; then
+            echo "Sparse growth allocation regression: $sparse_blocks blocks" >&2
+            diagnostics
+            exit 1
+          fi
           printf 'sparse-tail\n' | sudo dd \
               of="$mountpoint/native-rw/sparse-1t.bin" bs=1 seek=1099511623680 \
               conv=notrunc status=none
-          test "$(sudo dd if="$mountpoint/native-rw/sparse-1t.bin" bs=1 \
-              skip=1099511623680 count=12 status=none)" = 'sparse-tail'
+          sparse_tail="$(sudo dd if="$mountpoint/native-rw/sparse-1t.bin" bs=1 \
+              skip=1099511623680 count=12 status=none)"
+          if [[ "$sparse_tail" != 'sparse-tail' ]]; then
+            echo "Sparse high-offset data regression: '$sparse_tail'" >&2
+            diagnostics
+            exit 1
+          fi
           sudo truncate -s 134217728 "$mountpoint/native-rw/sparse-1t.bin"
-          test "$(stat -c '%s' "$mountpoint/native-rw/sparse-1t.bin")" = 134217728
+          sparse_truncated_size="$(stat -c '%s' "$mountpoint/native-rw/sparse-1t.bin")"
+          printf 'Sparse truncated state: size=%s bytes blocks=%s (512-byte units)\n' \
+              "$sparse_truncated_size" \
+              "$(stat -c '%b' "$mountpoint/native-rw/sparse-1t.bin")"
+          if [[ "$sparse_truncated_size" != 134217728 ]]; then
+            echo "Sparse truncate logical-size regression: $sparse_truncated_size" >&2
+            diagnostics
+            exit 1
+          fi
 
           # Exercise the allocator's true write-beyond-EOF workload class.
           # Unlike truncate-then-write, this reaches the in-lock SPARSE
