@@ -113,7 +113,8 @@ static infs_status reflink_copy_checksums(
 {
     struct infs_data_checksum_disk digests[INFS_CHECKSUMS_PER_OBJECT];
     for (uint32_t i = 0; i < extent_count; ++i) {
-        if (infs_le32_to_cpu(extents[i].flags) != INFS_EXTENT_NORMAL)
+        if (extent_kind(infs_le32_to_cpu(extents[i].flags)) !=
+            INFS_EXTENT_NORMAL)
             continue;
         uint64_t logical = infs_le64_to_cpu(extents[i].logical_block);
         uint64_t remaining = infs_le32_to_cpu(extents[i].block_count);
