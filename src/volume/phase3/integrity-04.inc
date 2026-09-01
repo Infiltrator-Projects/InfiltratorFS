@@ -10,9 +10,7 @@ static int file_replace_range(struct infs_volume *vol,
         (struct infs_file_payload_disk *)(object + sizeof(*hdr));
     uint64_t replace_end = logical_start + block_count;
     if (replace_end < logical_start || block_count > UINT32_MAX ||
-        (new_flags != INFS_EXTENT_NORMAL && new_flags != INFS_EXTENT_HOLE) ||
-        (new_flags == INFS_EXTENT_HOLE && new_physical != 0) ||
-        (new_flags == INFS_EXTENT_NORMAL && new_physical == 0))
+        !extent_flags_valid((uint32_t)block_count, new_physical, new_flags))
         return INFS_STATUS_INVALID_ARGUMENT;
 
     /* Random overwrites can repeatedly split non-tail extent pages inside one
@@ -55,6 +53,11 @@ static int file_replace_range(struct infs_volume *vol,
                 goto out;
             continue;
         }
+        if (extent_is_compressed(flags) &&
+            (logical_start > l || replace_end < e)) {
+            status = INFS_STATUS_NOT_SUPPORTED;
+            goto out;
+        }
         if (l < logical_start) {
             status = extent_emit_capacity(rebuilt, &new_count, capacity,
                 l, phys, (uint32_t)(logical_start - l), flags);
@@ -70,14 +73,20 @@ static int file_replace_range(struct infs_volume *vol,
                 goto out;
             emitted = 1;
         }
-        if (flags == INFS_EXTENT_NORMAL) {
-            release[release_count].start = phys + (overlap_start - l);
-            release[release_count].count = overlap_end - overlap_start;
+        if (extent_kind(flags) == INFS_EXTENT_NORMAL) {
+            if (extent_is_compressed(flags)) {
+                release[release_count].start = phys;
+                release[release_count].count =
+                    extent_physical_blocks(n, flags);
+            } else {
+                release[release_count].start = phys + (overlap_start - l);
+                release[release_count].count = overlap_end - overlap_start;
+            }
             ++release_count;
         }
         if (e > replace_end) {
             status = extent_emit_capacity(rebuilt, &new_count, capacity,
-                replace_end, flags == INFS_EXTENT_HOLE ? 0 :
+                replace_end, extent_kind(flags) == INFS_EXTENT_HOLE ? 0 :
                     phys + (replace_end - l),
                 (uint32_t)(e - replace_end), flags);
             if (status != INFS_STATUS_OK)
