@@ -162,13 +162,52 @@ int main(int argc, char **argv)
     if (wipe_only) {
         uint8_t raw[INFS_BLOCK_SIZE];
         struct infs_superblock_disk existing;
+        uint64_t wipe_checkpoints[INFS_CHECKPOINT_COUNT] = {
+            checkpoints[0], checkpoints[1], checkpoints[2]
+        };
         int identified = 0;
 
-        for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i) {
-            off_t off = (off_t)(checkpoints[i] * INFS_BLOCK_SIZE);
-            if (infs_pread_full(fd, raw, sizeof(raw), off) == 0 &&
-                infs_decode_superblock(raw, &existing) == 0 &&
-                infs_le64_to_cpu(existing.total_blocks) == total_blocks) {
+        /*
+         * Resize deliberately allows filesystem geometry to differ from the
+         * backing partition.  Prefer the valid block-zero geometry anchor and
+         * wipe the checkpoint locations recorded by the filesystem itself.
+         * The geometric fallback retains recovery for historical, unresized
+         * volumes whose block-zero copy is damaged.
+         */
+        if (infs_pread_full(fd, raw, sizeof(raw), 0) == 0 &&
+            infs_decode_superblock(raw, &existing) == 0) {
+            uint64_t fs_blocks = infs_le64_to_cpu(existing.total_blocks);
+            uint64_t c0 =
+                infs_le64_to_cpu(existing.checkpoint_block[0]);
+            uint64_t c1 =
+                infs_le64_to_cpu(existing.checkpoint_block[1]);
+            uint64_t c2 =
+                infs_le64_to_cpu(existing.checkpoint_block[2]);
+            if (fs_blocks >= 3u && fs_blocks <= total_blocks &&
+                c0 == 0 && c1 < fs_blocks && c2 < fs_blocks &&
+                c1 != c0 && c2 != c0 && c2 != c1) {
+                wipe_checkpoints[0] = c0;
+                wipe_checkpoints[1] = c1;
+                wipe_checkpoints[2] = c2;
+                identified = 1;
+            }
+        }
+
+        if (!identified) {
+            for (unsigned i = 1; i < INFS_CHECKPOINT_COUNT; ++i) {
+                off_t off =
+                    (off_t)(checkpoints[i] * INFS_BLOCK_SIZE);
+                if (infs_pread_full(fd, raw, sizeof(raw), off) != 0 ||
+                    infs_decode_superblock(raw, &existing) != 0 ||
+                    infs_le64_to_cpu(existing.total_blocks) != total_blocks)
+                    continue;
+                if (infs_le64_to_cpu(existing.checkpoint_block[0]) !=
+                        checkpoints[0] ||
+                    infs_le64_to_cpu(existing.checkpoint_block[1]) !=
+                        checkpoints[1] ||
+                    infs_le64_to_cpu(existing.checkpoint_block[2]) !=
+                        checkpoints[2])
+                    continue;
                 identified = 1;
                 break;
             }
@@ -182,7 +221,8 @@ int main(int argc, char **argv)
 
         memset(raw, 0, sizeof(raw));
         for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i) {
-            off_t off = (off_t)(checkpoints[i] * INFS_BLOCK_SIZE);
+            off_t off =
+                (off_t)(wipe_checkpoints[i] * INFS_BLOCK_SIZE);
             if (infs_pwrite_full(fd, raw, sizeof(raw), off) != 0) {
                 perror("wipe checkpoint");
                 close(fd);
