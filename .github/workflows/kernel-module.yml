@@ -69,6 +69,9 @@ jobs:
       - name: Guard native workload-aware placement
         run: bash tests/native-workload-placement-policy.sh .
 
+      - name: Guard native media-aware placement
+        run: bash tests/native-media-placement-policy.sh .
+
       - name: Guard Format 0.17 sharded allocation tree
         run: bash tests/allocation-tree-format-policy.sh .
       - name: Guard native transaction durability
@@ -1246,6 +1249,16 @@ jobs:
           printf 'Native kernel RW snapshot/xattr/special-node/mmap/'
           printf 'extent/remount/scrub qualification passed on %s\n' "$(uname -r)"
 
+      - name: Native media-aware rotational/non-rotational placement
+        if: steps.headers.outputs.runtime_kdir != ''
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash tests/native-media-placement-policy.sh .
+          bash -n tests/native-media-placement-qualification.sh
+          bash tests/native-media-placement-qualification.sh build kernel/infiltratorfs.ko
+
       - name: Native fragmentation metrics and online defragmentation
         if: steps.headers.outputs.runtime_kdir != ''
         timeout-minutes: 20
@@ -1280,6 +1293,7 @@ jobs:
         run: |
           bash tests/native-free-extent-index-policy.sh .
           bash tests/native-workload-placement-policy.sh .
+          bash tests/native-media-placement-policy.sh .
           bash tests/allocation-tree-format-policy.sh .
           bash tests/native-transaction-durability-policy.sh .
       - name: Compile module for local running kernel
