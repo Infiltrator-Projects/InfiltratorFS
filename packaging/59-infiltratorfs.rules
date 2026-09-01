@@ -5,6 +5,14 @@
 # ID_FS_* properties that blkid normally supplies for established filesystems.
 # Running before the persistent-storage rules also allows normal by-label and
 # by-uuid links to be created from those properties.
+#
+# IMPORT{program} does not implicitly remove values imported by an earlier
+# event when a later probe returns "not this filesystem".  UDisks deliberately
+# waits for ID_FS_TYPE to become empty after its initial format wipe, so clear
+# only properties belonging to a previously identified InfiltratorFS volume
+# before re-probing.  A still-valid InfiltratorFS volume immediately repopulates
+# them on the next IMPORT line.
+ACTION=="add|change", SUBSYSTEM=="block", ENV{ID_FS_TYPE}=="infiltratorfs", ENV{ID_FS_USAGE}="", ENV{ID_FS_TYPE}="", ENV{ID_FS_VERSION}="", ENV{ID_FS_UUID}="", ENV{ID_FS_UUID_ENC}="", ENV{ID_FS_LABEL}="", ENV{ID_FS_LABEL_ENC}="", ENV{ID_FS_BLOCK_SIZE}="", ENV{UDISKS_NAME}="", ENV{UDISKS_ICON_NAME}="", ENV{UDISKS_SYMBOLIC_ICON_NAME}="", ENV{UDISKS_MOUNT_OPTIONS_DEFAULTS}="", ENV{UDISKS_MOUNT_OPTIONS_ALLOW}=""
 
 ACTION=="add|change", SUBSYSTEM=="block", ENV{DEVTYPE}=="partition", IMPORT{program}="/usr/bin/infilfs-inspect --udev /dev/%k"
 ACTION=="add|change", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", IMPORT{program}="/usr/bin/infilfs-inspect --udev /dev/%k"
