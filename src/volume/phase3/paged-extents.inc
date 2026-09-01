@@ -450,6 +450,11 @@ static int paged_extent_replace_rebuild(
                 goto out;
             continue;
         }
+        if (extent_is_compressed(flags) &&
+            (logical_start > l || replace_end < e)) {
+            status = INFS_STATUS_NOT_SUPPORTED;
+            goto out;
+        }
         if (l < logical_start) {
             status = extent_emit_capacity(
                 rebuilt, &new_count, capacity, l, phys,
@@ -466,17 +471,22 @@ static int paged_extent_replace_rebuild(
                 goto out;
             emitted = 1;
         }
-        if (flags == INFS_EXTENT_NORMAL) {
+        if (extent_kind(flags) == INFS_EXTENT_NORMAL) {
+            uint64_t release_start = extent_is_compressed(flags) ?
+                phys : phys + (overlap_start - l);
+            uint64_t release_count = extent_is_compressed(flags) ?
+                extent_physical_blocks(n, flags) :
+                overlap_end - overlap_start;
             status = file_free_unshared_run(
-                vol, hdr->object_id, phys + (overlap_start - l),
-                overlap_end - overlap_start);
+                vol, hdr->object_id, release_start, release_count);
             if (status != INFS_STATUS_OK)
                 goto out;
         }
         if (e > replace_end) {
             status = extent_emit_capacity(
                 rebuilt, &new_count, capacity, replace_end,
-                flags == INFS_EXTENT_HOLE ? 0 : phys + (replace_end - l),
+                extent_kind(flags) == INFS_EXTENT_HOLE ? 0 :
+                    phys + (replace_end - l),
                 (uint32_t)(e - replace_end), flags);
             if (status != INFS_STATUS_OK)
                 goto out;
@@ -702,8 +712,10 @@ static int paged_extent_truncate(struct infs_volume *vol,
         uint32_t flags = infs_le32_to_cpu(old[i].flags);
         uint64_t e = l + n;
         if (l >= target_blocks) {
-            if (flags == INFS_EXTENT_NORMAL) {
-                status = file_free_unshared_run(vol, hdr->object_id, phys, n);
+            if (extent_kind(flags) == INFS_EXTENT_NORMAL) {
+                status = file_free_unshared_run(
+                    vol, hdr->object_id, phys,
+                    extent_physical_blocks(n, flags));
                 if (status != INFS_STATUS_OK)
                     goto out;
             }
@@ -714,7 +726,11 @@ static int paged_extent_truncate(struct infs_volume *vol,
         kept[kept_count] = old[i];
         kept[kept_count].block_count = infs_cpu_to_le32(retain);
         ++kept_count;
-        if (retain < n && flags == INFS_EXTENT_NORMAL) {
+        if (retain < n && extent_is_compressed(flags)) {
+            status = INFS_STATUS_CORRUPT;
+            goto out;
+        }
+        if (retain < n && extent_kind(flags) == INFS_EXTENT_NORMAL) {
             status = file_free_unshared_run(
                 vol, hdr->object_id, phys + retain, n - retain);
             if (status != INFS_STATUS_OK)
