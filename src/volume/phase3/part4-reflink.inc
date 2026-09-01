@@ -43,10 +43,12 @@ static infs_status file_other_reference_cover(
             return status;
         }
         for (uint32_t j = 0; j < extent_count; ++j) {
-            if (infs_le32_to_cpu(all[j].flags) != INFS_EXTENT_NORMAL)
+            uint32_t flags = infs_le32_to_cpu(all[j].flags);
+            uint32_t logical_blocks = infs_le32_to_cpu(all[j].block_count);
+            if (extent_kind(flags) != INFS_EXTENT_NORMAL)
                 continue;
             uint64_t physical = infs_le64_to_cpu(all[j].physical_block);
-            uint64_t blocks = infs_le32_to_cpu(all[j].block_count);
+            uint64_t blocks = extent_physical_blocks(logical_blocks, flags);
             uint64_t extent_end = physical + blocks;
             if (extent_end <= cursor || physical >= end)
                 continue;
