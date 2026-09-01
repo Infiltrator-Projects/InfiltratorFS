@@ -107,6 +107,28 @@ static void set_status_code(const wchar_t *action, infs_status status)
     MessageBoxW(g_main_window, message, L"InfiltratorFS", MB_OK | MB_ICONERROR);
 }
 
+static void set_windows_error(const wchar_t *action, DWORD error)
+{
+    wchar_t detail[512] = L"Windows error";
+    DWORD length = FormatMessageW(
+        FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+        NULL, error, 0, detail,
+        (DWORD)(sizeof(detail) / sizeof(detail[0])), NULL);
+    while (length && (detail[length - 1u] == L'\r' ||
+                      detail[length - 1u] == L'\n' ||
+                      detail[length - 1u] == L' ' ||
+                      detail[length - 1u] == L'.'))
+        detail[--length] = L'\0';
+
+    wchar_t message[896];
+    _snwprintf_s(message, sizeof(message) / sizeof(message[0]), _TRUNCATE,
+                 L"%s failed: %s (Windows error %lu)",
+                 action, detail, (unsigned long)error);
+    set_status(message);
+    MessageBoxW(g_main_window, message, L"InfiltratorFS",
+                MB_OK | MB_ICONERROR);
+}
+
 static void close_volume(void)
 {
     if (infs_windows_bridge_active())
@@ -297,15 +319,17 @@ static void update_buttons(void)
     EnableWindow(GetDlgItem(g_main_window, IDC_OPEN),
                  have_target && !bridge_active);
     EnableWindow(GetDlgItem(g_main_window, IDC_ADD_FILES),
-                 g_volume_open && !bridge_active);
+                 g_volume_open);
     EnableWindow(GetDlgItem(g_main_window, IDC_ADD_FOLDER),
-                 g_volume_open && !bridge_active);
+                 g_volume_open);
     EnableWindow(GetDlgItem(g_main_window, IDC_SCRUB),
                  g_volume_open && !bridge_active);
     EnableWindow(GetDlgItem(g_main_window, IDC_MOUNT_DRIVE),
-                 g_volume_open && !bridge_active);
+                 g_volume_open);
     EnableWindow(GetDlgItem(g_main_window, IDC_UNMOUNT_DRIVE),
                  bridge_active);
+    SetWindowTextW(GetDlgItem(g_main_window, IDC_MOUNT_DRIVE),
+                   bridge_active ? L"Open in Explorer" : L"Mount in Explorer");
 }
 
 static void trim_volume_slash(const wchar_t *volume_name,
@@ -810,6 +834,8 @@ static void refresh_volumes(void)
     }
 }
 
+static int copy_host_path(const wchar_t *host_path, const char *parent_dest);
+
 static int utf8_component(const wchar_t *wide, char out[INFS_NAME_MAX + 1u])
 {
     int needed = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide, -1,
@@ -844,13 +870,147 @@ static int make_child_path(const char *parent, const char *name,
     return written > 0 && written <= (int)INFS_PATH_MAX;
 }
 
+static int join_windows_path(const wchar_t *parent, const wchar_t *name,
+                             wchar_t *out, size_t out_count)
+{
+    if (!parent || !name || !out || !out_count)
+        return 0;
+    int written = _snwprintf_s(out, out_count, _TRUNCATE,
+                               L"%s\\%s", parent, name);
+    return written > 0 && (size_t)written < out_count;
+}
+
+static int copy_windows_tree(const wchar_t *source, const wchar_t *destination)
+{
+    DWORD attrs = GetFileAttributesW(source);
+    if (attrs == INVALID_FILE_ATTRIBUTES) {
+        set_windows_error(L"Read source path", GetLastError());
+        return 0;
+    }
+
+    if (!(attrs & FILE_ATTRIBUTE_DIRECTORY)) {
+        if (!CopyFileW(source, destination, FALSE)) {
+            set_windows_error(L"Copy file through Explorer bridge",
+                              GetLastError());
+            return 0;
+        }
+        return 1;
+    }
+
+    if (attrs & FILE_ATTRIBUTE_REPARSE_POINT) {
+        SetLastError(ERROR_NOT_SUPPORTED);
+        set_windows_error(L"Copy reparse-point directory", GetLastError());
+        return 0;
+    }
+
+    if (!CreateDirectoryW(destination, NULL) &&
+        GetLastError() != ERROR_ALREADY_EXISTS) {
+        set_windows_error(L"Create folder through Explorer bridge",
+                          GetLastError());
+        return 0;
+    }
+
+    wchar_t pattern[32768];
+    if (_snwprintf_s(pattern, sizeof(pattern) / sizeof(pattern[0]),
+                     _TRUNCATE, L"%s\\*", source) < 0) {
+        SetLastError(ERROR_FILENAME_EXCED_RANGE);
+        set_windows_error(L"Build source folder path", GetLastError());
+        return 0;
+    }
+
+    WIN32_FIND_DATAW data;
+    HANDLE search = FindFirstFileW(pattern, &data);
+    if (search == INVALID_HANDLE_VALUE) {
+        DWORD error = GetLastError();
+        if (error == ERROR_FILE_NOT_FOUND)
+            return 1;
+        set_windows_error(L"Enumerate source folder", error);
+        return 0;
+    }
+
+    int okay = 1;
+    do {
+        if (wcscmp(data.cFileName, L".") == 0 ||
+            wcscmp(data.cFileName, L"..") == 0)
+            continue;
+        wchar_t child_source[32768];
+        wchar_t child_destination[32768];
+        if (!join_windows_path(source, data.cFileName,
+                               child_source,
+                               sizeof(child_source) / sizeof(child_source[0])) ||
+            !join_windows_path(destination, data.cFileName,
+                               child_destination,
+                               sizeof(child_destination) /
+                                   sizeof(child_destination[0])) ||
+            !copy_windows_tree(child_source, child_destination)) {
+            okay = 0;
+            break;
+        }
+    } while (FindNextFileW(search, &data));
+    DWORD error = GetLastError();
+    FindClose(search);
+    if (okay && error != ERROR_NO_MORE_FILES) {
+        set_windows_error(L"Enumerate source folder", error);
+        okay = 0;
+    }
+    return okay;
+}
+
+static int copy_host_path_through_bridge(const wchar_t *host_path)
+{
+    wchar_t root[MAX_PATH * 4u];
+    if (!infs_windows_bridge_root(
+            root, sizeof(root) / sizeof(root[0]))) {
+        SetLastError(ERROR_NOT_READY);
+        set_windows_error(L"Locate Explorer projection", GetLastError());
+        return 0;
+    }
+
+    const wchar_t *base = host_basename(host_path);
+    if (!base[0])
+        return 0;
+
+    wchar_t destination[32768];
+    if (!join_windows_path(root, base, destination,
+                           sizeof(destination) / sizeof(destination[0]))) {
+        SetLastError(ERROR_FILENAME_EXCED_RANGE);
+        set_windows_error(L"Build projected destination path", GetLastError());
+        return 0;
+    }
+
+    wchar_t status_text[640];
+    _snwprintf_s(status_text,
+                 sizeof(status_text) / sizeof(status_text[0]), _TRUNCATE,
+                 L"Copying %s through the Windows Explorer bridge ...", base);
+    set_status(status_text);
+
+    if (!copy_windows_tree(host_path, destination))
+        return 0;
+
+    infs_status status = infs_volume_sync(&g_volume);
+    if (status != INFS_STATUS_OK) {
+        set_status_code(L"Commit Explorer-bridge copy", status);
+        return 0;
+    }
+    return 1;
+}
+
+static int copy_selected_host_path(const wchar_t *host_path)
+{
+    if (infs_windows_bridge_active())
+        return copy_host_path_through_bridge(host_path);
+    return copy_host_path(host_path, "/");
+}
+
 static int copy_host_file(const wchar_t *host_path, const char *dest_path)
 {
     HANDLE input = CreateFileW(host_path, GENERIC_READ,
                                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                                NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
-    if (input == INVALID_HANDLE_VALUE)
+    if (input == INVALID_HANDLE_VALUE) {
+        set_windows_error(L"Open source file", GetLastError());
         return 0;
+    }
 
     struct infs_create_options options;
     memset(&options, 0, sizeof(options));
@@ -876,6 +1036,7 @@ static int copy_host_file(const wchar_t *host_path, const char *dest_path)
     for (;;) {
         DWORD got = 0;
         if (!ReadFile(input, buffer, chunk_size, &got, NULL)) {
+            set_windows_error(L"Read source file", GetLastError());
             okay = 0;
             break;
         }
@@ -906,8 +1067,10 @@ static int copy_host_file(const wchar_t *host_path, const char *dest_path)
 static int copy_host_path(const wchar_t *host_path, const char *parent_dest)
 {
     DWORD attrs = GetFileAttributesW(host_path);
-    if (attrs == INVALID_FILE_ATTRIBUTES)
+    if (attrs == INVALID_FILE_ATTRIBUTES) {
+        set_windows_error(L"Read source path", GetLastError());
         return 0;
+    }
     const wchar_t *base = host_basename(host_path);
     if (!base[0])
         return 0;
@@ -1144,7 +1307,7 @@ static void add_files_dialog(void)
     wchar_t *next = first + wcslen(first) + 1u;
     int okay = 1;
     if (*next == 0) {
-        okay = copy_host_path(first, "/");
+        okay = copy_selected_host_path(first);
     } else {
         wchar_t directory[32768];
         wcsncpy_s(directory, sizeof(directory) / sizeof(directory[0]),
@@ -1153,7 +1316,7 @@ static void add_files_dialog(void)
             wchar_t full[32768];
             if (_snwprintf_s(full, sizeof(full) / sizeof(full[0]), _TRUNCATE,
                              L"%s\\%s", directory, next) < 0 ||
-                !copy_host_path(full, "/")) {
+                !copy_selected_host_path(full)) {
                 okay = 0;
                 break;
             }
@@ -1178,18 +1341,27 @@ static void add_folder_dialog(void)
     if (!item)
         return;
     wchar_t path[32768];
-    if (SHGetPathFromIDListW(item, path) && copy_host_path(path, "/"))
+    if (SHGetPathFromIDListW(item, path) && copy_selected_host_path(path))
         refresh_contents();
     CoTaskMemFree(item);
 }
 
 static void mount_windows_drive(void)
 {
-    if (!g_volume_open || infs_windows_bridge_active())
+    if (!g_volume_open)
         return;
 
+    if (infs_windows_bridge_active()) {
+        wchar_t root[MAX_PATH * 4u];
+        if (infs_windows_bridge_root(
+                root, sizeof(root) / sizeof(root[0])))
+            ShellExecuteW(g_main_window, L"open", root,
+                          NULL, NULL, SW_SHOWNORMAL);
+        return;
+    }
+
     wchar_t drive[3] = {0};
-    set_status(L"Starting driverless Windows bridge ...");
+    set_status(L"Starting driverless Windows Explorer bridge ...");
     if (!infs_windows_bridge_start(&g_volume, g_main_window,
                                    drive,
                                    sizeof(drive) / sizeof(drive[0]))) {
@@ -1197,12 +1369,23 @@ static void mount_windows_drive(void)
         return;
     }
 
-    wchar_t message[256];
-    _snwprintf_s(message, sizeof(message) / sizeof(message[0]), _TRUNCATE,
-                 L"Mounted as %s\\ using the Windows Projected File System. "
-                 L"Files opened in Explorer are read from InfiltratorFS and "
-                 L"changes are committed back on close.",
-                 drive);
+    wchar_t root[MAX_PATH * 4u] = {0};
+    infs_windows_bridge_root(root, sizeof(root) / sizeof(root[0]));
+    wchar_t message[768];
+    if (drive[0]) {
+        _snwprintf_s(message, sizeof(message) / sizeof(message[0]), _TRUNCATE,
+                     L"Explorer projection active. Projected folder: %s  •  "
+                     L"auxiliary drive alias: %s\\. Explorer is opened on "
+                     L"the projected folder so UAC drive-namespace separation "
+                     L"cannot hide the filesystem.",
+                     root, drive);
+    } else {
+        _snwprintf_s(message, sizeof(message) / sizeof(message[0]), _TRUNCATE,
+                     L"Explorer projection active at %s. Windows did not "
+                     L"create a usable auxiliary drive alias, so Explorer is "
+                     L"using the projected folder directly.",
+                     root);
+    }
     set_status(message);
     update_buttons();
 }
@@ -1290,7 +1473,7 @@ static void handle_drop(HDROP drop)
             break;
         }
         DragQueryFileW(drop, i, path, length + 1u);
-        if (!copy_host_path(path, "/"))
+        if (!copy_selected_host_path(path))
             okay = 0;
         free(path);
         if (!okay)
