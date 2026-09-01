@@ -589,10 +589,12 @@ static bool infilfs_checkpoint_basic_valid(
     const u8 *label_end;
     u64 total;
     u64 incompat;
-    u64 expected[INFILFS_CHECKPOINT_COUNT];
+    u64 checkpoint[INFILFS_CHECKPOINT_COUNT];
     unsigned int i;
+    unsigned int j;
 
-    if (memcmp(disk->magic, infilfs_disk_magic, sizeof(infilfs_disk_magic)) != 0)
+    if (memcmp(disk->magic, infilfs_disk_magic,
+               sizeof(infilfs_disk_magic)) != 0)
         return false;
     if (le16_to_cpu(disk->format_major) != INFILFS_FORMAT_MAJOR ||
         le16_to_cpu(disk->format_minor) != INFILFS_FORMAT_MINOR ||
@@ -603,16 +605,21 @@ static bool infilfs_checkpoint_basic_valid(
         return false;
 
     total = le64_to_cpu(disk->total_blocks);
-    if (total != device_blocks || total < 3 ||
+    if (total < 3 || total > device_blocks ||
         le64_to_cpu(disk->free_blocks) > total)
         return false;
 
-    expected[0] = 0;
-    expected[1] = total / 2;
-    expected[2] = total - 1;
-    for (i = 0; i < INFILFS_CHECKPOINT_COUNT; ++i)
-        if (le64_to_cpu(disk->checkpoint_block[i]) != expected[i])
+    for (i = 0; i < INFILFS_CHECKPOINT_COUNT; ++i) {
+        checkpoint[i] = le64_to_cpu(disk->checkpoint_block[i]);
+        if (checkpoint[i] >= total)
             return false;
+    }
+    if (checkpoint[0] != 0)
+        return false;
+    for (i = 0; i < INFILFS_CHECKPOINT_COUNT; ++i)
+        for (j = i + 1; j < INFILFS_CHECKPOINT_COUNT; ++j)
+            if (checkpoint[i] == checkpoint[j])
+                return false;
 
     {
         size_t leaves = 0;
@@ -637,15 +644,18 @@ static bool infilfs_checkpoint_basic_valid(
     if (le64_to_cpu(disk->compat_flags) != 0 ||
         le64_to_cpu(disk->ro_compat_flags) != 0)
         return false;
-    if (!memchr_inv(disk->filesystem_uuid, 0, sizeof(disk->filesystem_uuid)) ||
-        !memchr_inv(disk->root_object_id, 0, sizeof(disk->root_object_id)))
+    if (!memchr_inv(disk->filesystem_uuid, 0,
+                    sizeof(disk->filesystem_uuid)) ||
+        !memchr_inv(disk->root_object_id, 0,
+                    sizeof(disk->root_object_id)))
         return false;
     label_end = memchr(disk->label, 0, sizeof(disk->label));
     if (!label_end ||
         memchr_inv(label_end, 0,
-                   sizeof(disk->label) - (size_t)(label_end - disk->label)) ||
-        !infilfs_rw_utf8_valid(disk->label,
-                               (size_t)(label_end - disk->label)))
+                   sizeof(disk->label) -
+                       (size_t)(label_end - disk->label)) ||
+        !infilfs_rw_utf8_valid(
+            disk->label, (size_t)(label_end - disk->label)))
         return false;
 
     return true;
@@ -660,21 +670,48 @@ struct infilfs_checkpoint_candidates {
 static int infilfs_read_checkpoint_candidates(
     struct super_block *sb, struct infilfs_checkpoint_candidates *set)
 {
-    u64 blocks = INFILFS_SB(sb)->device_blocks;
-    u64 candidates[INFILFS_CHECKPOINT_COUNT];
+    u64 device_blocks = INFILFS_SB(sb)->device_blocks;
+    u64 candidates[INFILFS_CHECKPOINT_COUNT] = {
+        0, device_blocks / 2, device_blocks - 1
+    };
+    struct infilfs_superblock_disk anchor;
     struct infilfs_superblock_disk current;
+    bool anchored = false;
     unsigned int found = 0;
     unsigned int i;
     u8 *raw;
 
     memset(set, 0, sizeof(*set));
-    candidates[0] = 0;
-    candidates[1] = blocks / 2;
-    candidates[2] = blocks - 1;
-
     raw = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_KERNEL);
     if (!raw)
         return -ENOMEM;
+
+    /*
+     * Block zero is a stable geometry anchor. This permits the filesystem
+     * geometry to lag a newly enlarged backing partition while online grow is
+     * prepared, and permits a safely staged shrink before the partition is
+     * reduced. If block zero is invalid, retain the historic physical
+     * half/end fallback for ordinary unresized volumes.
+     */
+    {
+        int ret = infilfs_read_block(sb, 0, raw);
+        if (!ret &&
+            infilfs_crc64_block_valid(
+                raw, offsetof(struct infilfs_superblock_disk, checksum),
+                sizeof(((struct infilfs_superblock_disk *)raw)->checksum)) &&
+            !memchr_inv(raw + sizeof(anchor), 0,
+                        INFILFS_DISK_BLOCK_SIZE - sizeof(anchor))) {
+            memcpy(&anchor, raw, sizeof(anchor));
+            if (infilfs_checkpoint_basic_valid(&anchor, device_blocks)) {
+                for (i = 0; i < INFILFS_CHECKPOINT_COUNT; ++i)
+                    candidates[i] =
+                        le64_to_cpu(anchor.checkpoint_block[i]);
+                anchored = true;
+            }
+        } else if (ret) {
+            set->first_read_error = ret;
+        }
+    }
 
     for (i = 0; i < INFILFS_CHECKPOINT_COUNT; ++i) {
         int ret = infilfs_read_block(sb, candidates[i], raw);
@@ -684,30 +721,39 @@ static int infilfs_read_checkpoint_candidates(
                 set->first_read_error = ret;
             continue;
         }
-        if (!infilfs_crc64_block_valid(raw,
-                offsetof(struct infilfs_superblock_disk, checksum),
+        if (!infilfs_crc64_block_valid(
+                raw, offsetof(struct infilfs_superblock_disk, checksum),
                 sizeof(((struct infilfs_superblock_disk *)raw)->checksum)))
             continue;
         if (memchr_inv(raw + sizeof(current), 0,
                        INFILFS_DISK_BLOCK_SIZE - sizeof(current)))
             continue;
         memcpy(&current, raw, sizeof(current));
-        if (!infilfs_checkpoint_basic_valid(&current, blocks))
+        if (!infilfs_checkpoint_basic_valid(&current, device_blocks))
             continue;
+        if (le64_to_cpu(current.checkpoint_block[0]) != candidates[0] ||
+            le64_to_cpu(current.checkpoint_block[1]) != candidates[1] ||
+            le64_to_cpu(current.checkpoint_block[2]) != candidates[2])
+            continue;
+        if (anchored &&
+            (le64_to_cpu(current.total_blocks) !=
+                 le64_to_cpu(anchor.total_blocks) ||
+             memcmp(current.filesystem_uuid, anchor.filesystem_uuid,
+                    sizeof(current.filesystem_uuid)) != 0))
+            continue;
+
         set->disks[i] = current;
         set->valid[i] = true;
         found++;
     }
 
     kfree(raw);
-    /* A writable mount must never heal over an unreadable checkpoint: that
-     * location may contain the only durable newer generation after a crash
-     * between primary publication and replica refresh. */
     if (set->first_read_error && !sb_rdonly(sb))
         return set->first_read_error;
     if (found)
         return 0;
-    return set->first_read_error ? set->first_read_error : -EFSCORRUPTED;
+    return set->first_read_error ?
+        set->first_read_error : -EFSCORRUPTED;
 }
 
 static bool infilfs_object_basic_valid(struct super_block *sb,
