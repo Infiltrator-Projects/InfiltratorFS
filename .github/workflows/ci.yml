@@ -48,7 +48,11 @@ jobs:
     if: >-
       github.event_name != 'push' ||
       startsWith(github.event.head_commit.message, 'Release ') ||
+      startsWith(github.event.head_commit.message, 'desktop:') ||
+      startsWith(github.event.head_commit.message, 'mkfs:') ||
       contains(toJson(github.event.commits), 'packaging/libblockdev-infiltratorfs.patch') ||
+      contains(toJson(github.event.commits), 'packaging/59-infiltratorfs.rules') ||
+      contains(toJson(github.event.commits), 'tests/desktop-integration.sh') ||
       contains(toJson(github.event.commits), 'packaging/udisks2-infiltratorfs-display.patch') ||
       contains(toJson(github.event.commits), 'packaging/gnome-disks-infiltratorfs.patch') ||
       contains(toJson(github.event.commits), 'packaging/libblockdev-3.1-infiltratorfs.patch') ||
