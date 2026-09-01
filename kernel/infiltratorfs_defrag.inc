@@ -3,9 +3,13 @@
  * Native mounted fragmentation metrics and bounded online file defragmentation.
  *
  * Defragmentation is copy-on-write: a bounded group of logically adjacent
- * normal extents is copied into one newly allocated contiguous physical run,
- * the file extent map is repointed in the same native transaction, and the old
- * blocks are released through the existing snapshot/reflink-aware path.
+ * uncompressed normal extents is copied into one newly allocated contiguous
+ * physical run, the file extent map is repointed in the same native
+ * transaction, and the old blocks are released through the existing
+ * snapshot/reflink-aware path. Compressed extents are counted using their
+ * stored physical footprint but are deliberately skipped by this first
+ * defragmenter; a compression stream is indivisible and must never be sliced
+ * as if logical blocks mapped one-for-one to physical blocks.
  */
 #include <linux/math64.h>
 #include <linux/uaccess.h>
@@ -31,11 +35,14 @@ static void infilfs_fragmentation_from_extents(
         u64 blocks = le32_to_cpu(extents[i].block_count);
         u32 flags = le32_to_cpu(extents[i].flags);
 
-        if (flags == INFILFS_EXTENT_NORMAL) {
-            allocated += blocks;
+        if (infilfs_extent_kind(flags) == INFILFS_EXTENT_NORMAL) {
+            u64 physical_blocks =
+                infilfs_extent_physical_blocks((u32)blocks, flags);
+
+            allocated += physical_blocks;
             data_extents++;
-            largest = max_t(u64, largest, blocks);
-        } else if (flags == INFILFS_EXTENT_HOLE) {
+            largest = max_t(u64, largest, physical_blocks);
+        } else if (infilfs_extent_kind(flags) == INFILFS_EXTENT_HOLE) {
             hole_extents++;
         }
     }
