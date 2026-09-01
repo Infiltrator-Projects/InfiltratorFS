@@ -3,6 +3,25 @@
 
 Pre-1.0 development is current-format-only. A new development format may supersede the current format without a backward reader or migration path. Backward compatibility begins with the first stable release.
 
+## Design principles and scope guardrails
+
+InfiltratorFS is a greenfield filesystem intended for future general-purpose operating systems, not a compatibility clone of an older filesystem. Before 1.0, prefer the cleanest long-term format and semantics over preserving development-format compatibility.
+
+The roadmap is guided by these architectural commitments:
+
+- Persistent 128-bit object identity is fundamental; pathnames are namespace mappings rather than file identity.
+- Updates are generation-based copy-on-write transactions with atomic publication. Snapshots, retained history, reflinks and recovery should remain consequences of that common model rather than separate incompatible mechanisms.
+- Data and metadata integrity are first-class requirements. Normal operation must verify stored state, scrub must be able to validate the complete reachable graph, and recovery must fail closed when correctness cannot be established.
+- Metadata structures must scale without a fixed global inode table or other small-volume assumptions.
+- The persistent format and portable core define filesystem semantics. Linux, Windows and future operating systems are native adapters over that model, not the definition of it.
+- Namespace and security semantics should be portable and Unicode-native rather than permanently encoding one operating system's UID/GID, SID, ACL or filename model as canonical.
+- Storage layout is policy, not identity. Allocation, workload classification, media-aware placement and similar tuning should remain replaceable runtime policy wherever they do not need persistent semantics.
+- A single-device volume must remain a complete, understandable and efficient filesystem in its own right. Multi-device placement, protection classes, replication and parity must remain optional layers and must not distort the single-device core.
+- Advanced capabilities such as compression, online defragmentation, encryption, case-folding and named streams belong when they provide broad general-purpose value, but should remain optional or policy-driven where possible.
+- New roadmap features should either strengthen a core primitive or provide a broadly useful filesystem capability. Avoid adding narrowly specialised machinery merely to increase the feature count.
+
+The intended core can be summarized as: stable object identity; transactional generations; end-to-end integrity; cheap history; scalable metadata; portable security; and native operating-system adapters. Features that build naturally on those primitives are preferred over unrelated special cases.
+
 ## Completed foundation
 
 - [x] Three physically separated checkpoints and generation-based recovery.
