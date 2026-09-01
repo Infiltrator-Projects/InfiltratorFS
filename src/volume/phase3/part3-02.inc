@@ -86,8 +86,13 @@ static int file_map_block(struct infs_volume *vol,
         if (logical >= l && logical < l + n) {
             uint32_t flags = infs_le32_to_cpu(ext[i].flags);
             if (physical) {
-                *physical = flags == INFS_EXTENT_HOLE ? 0 :
-                    infs_le64_to_cpu(ext[i].physical_block) + (logical - l);
+                if (extent_kind(flags) == INFS_EXTENT_HOLE)
+                    *physical = 0;
+                else if (extent_is_compressed(flags))
+                    *physical = infs_le64_to_cpu(ext[i].physical_block);
+                else
+                    *physical = infs_le64_to_cpu(ext[i].physical_block) +
+                        (logical - l);
             }
             if (flags_out)
                 *flags_out = flags;
