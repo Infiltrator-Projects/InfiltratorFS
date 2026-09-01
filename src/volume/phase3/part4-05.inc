@@ -16,10 +16,8 @@ static int punch_partial_block(struct infs_volume *vol,
     struct infs_object_header_disk *hdr =
         (struct infs_object_header_disk *)object;
     uint8_t data[INFS_BLOCK_SIZE];
-    status = read_block(vol, physical, data);
-    if (status != INFS_STATUS_OK)
-        return status;
-    status = data_block_verify(vol, file, hdr->object_id, logical, data);
+    status = file_read_logical_block(
+        vol, object, file, ext, hdr->object_id, logical, data);
     if (status != INFS_STATUS_OK)
         return status;
     memset(data + within, 0, length);
@@ -92,6 +90,19 @@ static int punch_hole_tx(struct infs_volume *vol, const char *path,
         if (status != INFS_STATUS_OK)
             return status;
         return finish_mutation(vol, (uint64_t)INFS_BLOCK_SIZE * 2u);
+    }
+
+    {
+        uint64_t first_block = offset / INFS_BLOCK_SIZE;
+        uint64_t materialize_end = end / INFS_BLOCK_SIZE +
+            ((end % INFS_BLOCK_SIZE) != 0);
+        if (materialize_end > first_block) {
+            status = file_materialize_compressed_range(
+                vol, object, &file, &ext, first_block,
+                materialize_end - first_block);
+            if (status != INFS_STATUS_OK)
+                return status;
+        }
     }
 
     uint64_t logical_end = file_size;
