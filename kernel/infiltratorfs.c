@@ -36,6 +36,7 @@
 
 #include "infiltratorfs_format.h"
 #include "infiltratorfs_ioctl.h"
+#include "../include/infilfs/iac1.h"
 
 #define INFILTRATORFS_NAME "infiltratorfs"
 #define INFILTRATORFS_MAGIC 0x494e4653u
@@ -299,7 +300,8 @@ static bool infilfs_extent_flags_valid(u32 logical_blocks, u64 physical,
         return false;
     if (codec == INFILFS_COMPRESSION_NONE)
         return flags == INFILFS_EXTENT_NORMAL;
-    if (codec != INFILFS_COMPRESSION_LZ4 || !stored ||
+    if ((codec != INFILFS_COMPRESSION_LZ4 &&
+         codec != INFILFS_COMPRESSION_IAC1) || !stored ||
         logical_blocks > INFILFS_COMPRESSION_CLUSTER_BLOCKS ||
         (u64)stored >= (u64)logical_blocks * INFILFS_DISK_BLOCK_SIZE)
         return false;
@@ -340,9 +342,16 @@ static int infilfs_read_compressed_logical_block(
         if (ret)
             goto out;
     }
-    decoded = LZ4_decompress_safe(
-        (const char *)compressed, (char *)plain,
-        (int)stored, (int)plain_bytes);
+    if (infilfs_extent_codec(flags) == INFILFS_COMPRESSION_LZ4) {
+        decoded = LZ4_decompress_safe(
+            (const char *)compressed, (char *)plain,
+            (int)stored, (int)plain_bytes);
+    } else if (infilfs_extent_codec(flags) == INFILFS_COMPRESSION_IAC1) {
+        decoded = (int)infs_iac1_decompress(
+            compressed, stored, plain, plain_bytes);
+    } else {
+        decoded = 0;
+    }
     if (decoded != (int)plain_bytes) {
         ret = -EFSCORRUPTED;
         goto out;
