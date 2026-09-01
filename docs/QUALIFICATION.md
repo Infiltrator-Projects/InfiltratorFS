@@ -83,6 +83,70 @@ run `33333450633`, Windows job `99316218768`. The Windows runner:
 
 The runtime trace showed successful ProjFS overwrite, pre-convert-to-full, new-file, modified-close, rename, hard-link and deleted-close notifications, all returning success. This qualification covers the interim user-mode Explorer bridge; it does not claim native Windows kernel-filesystem, Cache Manager, security-descriptor or boot-volume support.
 
+## 2026-09-01 media-aware placement qualification
+
+Media-aware allocation was qualified without changing on-disk Format 0.17.
+The final allocator media-detection code commit was
+`fe6b11c984867b4fb23c937b8468924cca4e8377`; later source through
+`bf123d2cc98aef8b848386c4f26cc93a04fe4dc3` changed policy guards and CI
+concurrency but not media scoring semantics.
+
+Build and conformance workflow run `33454396856` passed on exact source
+`bf123d2cc98aef8b848386c4f26cc93a04fe4dc3`, including Linux, Clang,
+ASan/UBSan, GCC static analysis, native Linux packages and Windows
+qualification.
+
+Native Linux workflow run `33454396842` passed both kernel families used by
+the project: the self-hosted Linux 7.0 running-kernel compile and the hosted
+Linux 6.17 generic/DKMS/running-kernel builds. The hosted job then passed the
+full native read-write/remount/scrub qualification, online defragmentation, and
+a dedicated media-profile qualification. Automatic detection on the hosted
+loop-backed device resolved `media=nonrotational media_source=auto` and
+reported:
+
+- sequential workload decisions: 10,499;
+- random/in-place CoW decisions: 4,401;
+- direct sparse decisions: 1;
+- media-aware scored selections: 6,572;
+- best-fit selections: 4,402;
+- successful reservations: 3,474;
+- peak simultaneous reservations: 2; and
+- reservation conflicts: 0.
+
+The forced rotational profile exercised 24 sequential, 96 random and one
+direct-sparse decision and reported
+`media_rotational_scored=97 best_fit=0`. The forced non-rotational profile
+ran the same workload and reported
+`media_nonrotational_scored=97 best_fit=97`. Both images unmounted normally
+and scrubbed `CLEAN`. This demonstrates the intended policy difference:
+rotational media makes physical distance the primary cost, whereas
+non-rotational media makes free-run preservation/best-fit primary where
+appropriate. The mount option accepts
+`media=auto|rotational|nonrotational|balanced`, and the resolved profile is
+visible in mount options and driver telemetry. Zoned block devices fail closed
+until explicit zone-write-pointer allocation is implemented.
+
+The ordinary hosted 4,000 x 4 KiB random-overwrite phase completed in 63.246
+seconds (63.2 writes/second), the 512 MiB verified read completed at
+126.80 MiB/second, and the 200-fsync phase completed at 776.7 fsyncs/second.
+These numbers are qualification telemetry for that hosted runner rather than
+cross-filesystem benchmark claims.
+
+Heavy filesystem workflow run `33454248279` built the exact final allocator
+code on Linux 6.17. Its near-full/fragmentation/endurance job passed after a
+300-second mixed workload completing 32,607 operations at 108.6
+operations/second with 4,074 fsyncs. Free space was driven to 8.94%, the
+hole-punch/refill cycle passed, durable read-only remount verification passed,
+and both offline scrubs reported zero checksum errors, zero metadata errors and
+`CLEAN`. The separate million-file/1 TiB job in that heavy run is
+development-scale coverage and is not required to establish the media-profile
+selection contract recorded here.
+
+The media policy is deliberately volatile. Linux auto-detects rotational state
+from the block-device API with a compatibility path for Linux 6.x and 7.x;
+operators can override the profile per mount. No media type, score, cursor or
+device assumption is written into Format 0.17.
+
 ## 2026-09-01 workload-aware placement qualification
 
 Locality scoring and workload-aware placement were qualified without changing

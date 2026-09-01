@@ -28,7 +28,7 @@ Pre-1.0 development is current-format-only. A new development format may superse
 - [x] Runtime hashed metadata indexes.
 - [x] Sequential allocation and checksum hot-path performance work.
 
-## Completed native Linux filesystem surface through release 0.18.31
+## Completed native Linux filesystem surface through release 0.18.32
 
 - [x] Native out-of-tree Linux VFS filesystem driver `infiltratorfs.ko`.
 - [x] DKMS packaging and host-kernel rebuild/install path.
@@ -114,6 +114,16 @@ reported `workload_seq=9705`, `workload_random=4401`,
 retaining a peak of three concurrent reservations with zero conflicts. See
 [QUALIFICATION.md](QUALIFICATION.md) for the evidence and performance comparison.
 
+Also on 2026-09-01, media-aware placement passed exact-source qualification.
+Current-head native workflow run `33454396842` passed Linux 7.0 local compile,
+Linux 6.17 hosted DKMS/running-kernel builds, the full mounted native suite, and
+forced rotational/non-rotational placement profiles. Rotational scoring recorded
+97 seek-first scored selections with `best_fit=0`; non-rotational scoring
+recorded 97 scored selections with `best_fit=97`. Both profile images scrubbed
+CLEAN. Heavy run `33454248279` passed the near-full five-minute mixed workload
+on the same allocator semantics with 32,607 operations, two CLEAN scrubs and no
+checksum or metadata errors. See [QUALIFICATION.md](QUALIFICATION.md).
+
 ## Scale and performance
 
 - [x] Scalable generation-aware object-index tree.
@@ -122,7 +132,7 @@ retaining a peak of three concurrent reservations with zero conflicts. See
 - [x] Parallel native data-allocation model with 64 volatile reservation
   shards, object-stable placement and mounted multi-writer qualification.
 - [x] Locality scoring and workload-aware placement.
-- [ ] Media-aware placement.
+- [x] Media-aware placement.
 - [ ] Per-extent compression.
 
 ## Security and protection
