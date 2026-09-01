@@ -57,6 +57,15 @@ static void directory_cache_destroy(struct infs_volume *vol);
 static void directory_cache_init(struct infs_volume *vol);
 static int object_cache_rebuild(struct infs_volume *vol);
 
+static int file_validate_volume(
+    struct infs_volume *vol, uint8_t block[INFS_BLOCK_SIZE],
+    struct infs_file_payload_disk **payload_out,
+    struct infs_extent_disk **extents_out);
+static int data_block_verify(
+    struct infs_volume *vol, struct infs_file_payload_disk *file,
+    const uint8_t owner_id[16], uint64_t logical,
+    const uint8_t data[INFS_BLOCK_SIZE]);
+
 static uint32_t extent_kind(uint32_t flags)
 {
     return flags & INFS_EXTENT_KIND_MASK;
