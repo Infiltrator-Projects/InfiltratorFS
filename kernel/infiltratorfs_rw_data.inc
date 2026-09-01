@@ -4604,10 +4604,23 @@ static ssize_t infilfs_native_extent_write_iter(struct inode *inode,
     {
         size_t first_bytes = min_t(size_t, requested,
                                    INFILFS_NATIVE_WRITE_CHUNK);
-        u64 first_end = (u64)pos + first_bytes;
-        u64 first_block = (u64)pos >> INFILFS_DISK_BLOCK_SHIFT;
-        u64 last_block = (first_end - 1u) >> INFILFS_DISK_BLOCK_SHIFT;
         u64 old_size = (u64)i_size_read(inode);
+        u64 compression_bytes =
+            (u64)INFILFS_COMPRESSION_CLUSTER_BLOCKS *
+            INFILFS_DISK_BLOCK_SIZE;
+        u64 first_end;
+        u64 first_block;
+        u64 last_block;
+
+        if ((u64)pos == old_size &&
+            ((u64)pos & (INFILFS_DISK_BLOCK_SIZE - 1u)) == 0 &&
+            (le64_to_cpu(sbi->disk.incompat_flags) &
+             INFILFS_INCOMPAT_COMPRESSED_EXTENTS) != 0)
+            first_bytes = min_t(size_t, first_bytes,
+                                (size_t)compression_bytes);
+        first_end = (u64)pos + first_bytes;
+        first_block = (u64)pos >> INFILFS_DISK_BLOCK_SHIFT;
+        last_block = (first_end - 1u) >> INFILFS_DISK_BLOCK_SHIFT;
         enum infilfs_data_workload workload =
             infilfs_native_classify_write((u64)pos, first_bytes, old_size);
         u64 preferred = READ_ONCE(ii->data_allocation_hint);
@@ -4640,7 +4653,17 @@ static ssize_t infilfs_native_extent_write_iter(struct inode *inode,
     while (done < requested) {
         size_t chunk = min_t(size_t, requested - done,
                              INFILFS_NATIVE_WRITE_CHUNK);
+        u64 current_pos = (u64)pos + done;
+        u64 compression_bytes =
+            (u64)INFILFS_COMPRESSION_CLUSTER_BLOCKS *
+            INFILFS_DISK_BLOCK_SIZE;
         size_t consumed = 0;
+
+        if (current_pos == (u64)i_size_read(inode) &&
+            (current_pos & (INFILFS_DISK_BLOCK_SIZE - 1u)) == 0 &&
+            (le64_to_cpu(sbi->disk.incompat_flags) &
+             INFILFS_INCOMPAT_COMPRESSED_EXTENTS) != 0)
+            chunk = min_t(size_t, chunk, (size_t)compression_bytes);
         u64 new_file_block = 0;
         u64 new_size = 0;
         u64 allocated_blocks = 0;
