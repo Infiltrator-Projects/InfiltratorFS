@@ -983,7 +983,7 @@ static long infilfs_file_fallocate(struct file *file, int mode,
         init_sync_kiocb(&iocb, file);
         iocb.ki_pos = position;
         iov_iter_kvec(&iter, ITER_SOURCE, &vec, 1, chunk);
-        written = infilfs_file_write_iter(&iocb, &iter);
+        written = infilfs_file_write_iter_uncompressed(&iocb, &iter);
         if (written < 0) {
             ret = (int)written;
             break;

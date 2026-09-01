@@ -4191,7 +4191,7 @@ out:
 
 static int infilfs_native_append_chunk_locked(
     struct infilfs_native_pending *pending, struct inode *inode,
-    struct iov_iter *from, u64 pos, size_t bytes,
+    struct iov_iter *from, u64 pos, size_t bytes, bool allow_compression,
     struct infilfs_parallel_reservation *reservation,
     size_t *consumed_out,
     u64 *new_file_block_out, u64 *new_size_out, u64 *allocated_blocks_out,
@@ -4385,7 +4385,8 @@ generic_extent_write:
      * It has no old-data dependency, which lets us compress the complete
      * plaintext before choosing the smaller physical allocation.
      */
-    if (workload == INFILFS_DATA_WORKLOAD_SEQUENTIAL &&
+    if (allow_compression &&
+        workload == INFILFS_DATA_WORKLOAD_SEQUENTIAL &&
         pos == old_size &&
         (pos & (INFILFS_DISK_BLOCK_SIZE - 1u)) == 0 &&
         bytes == touched_blocks * INFILFS_DISK_BLOCK_SIZE &&
@@ -4569,10 +4570,9 @@ out:
     return ret;
 }
 
-static ssize_t infilfs_native_extent_write_iter(struct inode *inode,
-                                                loff_t *position,
-                                                struct iov_iter *from,
-                                                size_t requested)
+static ssize_t infilfs_native_extent_write_iter_mode(
+    struct inode *inode, loff_t *position, struct iov_iter *from,
+    size_t requested, bool allow_compression)
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(inode->i_sb);
     struct infilfs_inode_info *ii = INFILFS_I(inode);
@@ -4608,7 +4608,8 @@ static ssize_t infilfs_native_extent_write_iter(struct inode *inode,
         u64 first_block;
         u64 last_block;
 
-        if ((u64)pos == old_size &&
+        if (allow_compression &&
+            (u64)pos == old_size &&
             ((u64)pos & (INFILFS_DISK_BLOCK_SIZE - 1u)) == 0 &&
             (le64_to_cpu(sbi->disk.incompat_flags) &
              INFILFS_INCOMPAT_COMPRESSED_EXTENTS) != 0)
@@ -4655,7 +4656,8 @@ static ssize_t infilfs_native_extent_write_iter(struct inode *inode,
             INFILFS_DISK_BLOCK_SIZE;
         size_t consumed = 0;
 
-        if (current_pos == (u64)i_size_read(inode) &&
+        if (allow_compression &&
+            current_pos == (u64)i_size_read(inode) &&
             (current_pos & (INFILFS_DISK_BLOCK_SIZE - 1u)) == 0 &&
             (le64_to_cpu(pending->tx.next_sb.incompat_flags) &
              INFILFS_INCOMPAT_COMPRESSED_EXTENTS) != 0)
@@ -4673,6 +4675,7 @@ static ssize_t infilfs_native_extent_write_iter(struct inode *inode,
                 break;
             ret = infilfs_native_append_chunk_locked(
                 pending, inode, from, (u64)pos + done, chunk,
+                allow_compression,
                 reservation.active ? &reservation : NULL, &consumed,
                 &new_file_block, &new_size, &allocated_blocks, tail_id,
                 &tail_block, &tail_start);
@@ -4763,6 +4766,15 @@ out_unlock:
     mutex_unlock(&sbi->write_lock);
     infilfs_parallel_release_reservation(inode->i_sb, &reservation);
     return ret;
+}
+
+static ssize_t infilfs_native_extent_write_iter(struct inode *inode,
+                                                loff_t *position,
+                                                struct iov_iter *from,
+                                                size_t requested)
+{
+    return infilfs_native_extent_write_iter_mode(
+        inode, position, from, requested, true);
 }
 
 /*
@@ -4909,8 +4921,9 @@ out_free:
     return ret;
 }
 
-static ssize_t infilfs_file_write_iter(struct kiocb *iocb,
-                                       struct iov_iter *from)
+static ssize_t infilfs_file_write_iter_common(struct kiocb *iocb,
+                                              struct iov_iter *from,
+                                              bool allow_compression)
 {
     struct file *filep = iocb->ki_filp;
     struct inode *inode = file_inode(filep);
@@ -4957,11 +4970,29 @@ static ssize_t infilfs_file_write_iter(struct kiocb *iocb,
     }
 
     iocb->ki_pos = pos;
-    ret = infilfs_native_extent_write_iter(inode, &iocb->ki_pos, from,
-                                            requested);
+    ret = infilfs_native_extent_write_iter_mode(
+        inode, &iocb->ki_pos, from, requested, allow_compression);
 out_unlock:
     filemap_invalidate_unlock(mapping);
     return ret;
+}
+
+static ssize_t infilfs_file_write_iter(struct kiocb *iocb,
+                                       struct iov_iter *from)
+{
+    return infilfs_file_write_iter_common(iocb, from, true);
+}
+
+/*
+ * fallocate(2) must reserve physical space.  Reusing the ordinary write path
+ * is safe only when compression is disabled for those synthetic zero/data
+ * rewrites; otherwise a compressible preallocation can consume far less space
+ * than userspace asked the filesystem to reserve.
+ */
+static ssize_t infilfs_file_write_iter_uncompressed(struct kiocb *iocb,
+                                                    struct iov_iter *from)
+{
+    return infilfs_file_write_iter_common(iocb, from, false);
 }
 
 static int infilfs_file_fsync(struct file *file, loff_t start, loff_t end,
