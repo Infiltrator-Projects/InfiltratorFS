@@ -1,5 +1,28 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+static int compression_alloc_data_exact(struct infs_volume *vol,
+                                        uint32_t wanted,
+                                        uint64_t *physical_out)
+{
+    uint64_t physical = 0;
+    uint64_t got = 0;
+    infs_status status;
+
+    if (!wanted || !physical_out)
+        return INFS_STATUS_INVALID_ARGUMENT;
+    status = alloc_data_run_uninitialized(vol, wanted, &physical, &got);
+    if (status != INFS_STATUS_OK)
+        return status;
+    if (got != wanted) {
+        free_run(vol, physical, got);
+        if (vol->tx_error != INFS_STATUS_OK)
+            return vol->tx_error;
+        return INFS_STATUS_NO_SPACE;
+    }
+    *physical_out = physical;
+    return INFS_STATUS_OK;
+}
+
 static int file_extent_lookup(struct infs_volume *vol,
                               uint8_t object[INFS_BLOCK_SIZE],
                               struct infs_file_payload_disk *file,
@@ -148,7 +171,7 @@ static int file_materialize_compressed_extent(
     status = file_decompress_extent(vol, extent, &plain, &plain_bytes);
     if (status != INFS_STATUS_OK)
         return status;
-    status = alloc_exact_run_uninitialized(vol, blocks, &replacement);
+    status = compression_alloc_data_exact(vol, blocks, &replacement);
     if (status != INFS_STATUS_OK) {
         free(plain);
         return status;
@@ -255,8 +278,8 @@ static int file_store_extent_payload(
                 return INFS_STATUS_NO_MEMORY;
             }
             memcpy(stored, compressed, (size_t)compressed_bytes);
-            status = alloc_exact_run_uninitialized(vol, stored_blocks,
-                                                   &physical);
+            status = compression_alloc_data_exact(vol, stored_blocks,
+                                                  &physical);
             if (status == INFS_STATUS_OK)
                 status = infs_storage_write(
                     &vol->storage, physical * INFS_BLOCK_SIZE, stored, span);
@@ -271,7 +294,7 @@ static int file_store_extent_payload(
         }
     }
     free(compressed);
-    status = alloc_exact_run_uninitialized(vol, logical_blocks, &physical);
+    status = compression_alloc_data_exact(vol, logical_blocks, &physical);
     if (status != INFS_STATUS_OK)
         return status;
     status = infs_storage_write(&vol->storage, physical * INFS_BLOCK_SIZE,
