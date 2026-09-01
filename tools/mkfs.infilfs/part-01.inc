@@ -23,7 +23,7 @@
 
 static void usage(const char *prog)
 {
-    fprintf(stderr, "Usage: %s [--force] [-L label] <image-or-block-device>\n", prog);
+    fprintf(stderr, "Usage: %s [--force] [--wipe-only] [-L label] <image-or-block-device>\n", prog);
 }
 
 static int parse_identity_component(const char *text, uint32_t *value)
