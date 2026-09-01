@@ -22,12 +22,14 @@ grep -Fq 'if (pos == old_size)' "$data"
 grep -Fq 'if (pos > old_size)' "$data"
 
 # Fallback placement must be scored rather than reverting directly to global
-# next-fit. Sequential growth scores physical distance and contiguous tail;
-# random/sparse writes use best-fit slack to preserve large streaming runs.
+# next-fit. Workload distance/slack/tail inputs remain explicit; the media
+# helper now decides which of those costs is primary for the current device.
 grep -Fq 'infilfs_native_choose_scored_extent' "$data"
-grep -Fq 'primary = infilfs_native_block_distance(candidate, preferred);' "$data"
-grep -Fq 'secondary = U64_MAX - (extent_end - (candidate + wanted));' "$data"
-grep -Fq 'primary = extent->count - wanted;' "$data"
+grep -Fq 'distance = infilfs_native_block_distance(candidate, preferred);' "$data"
+grep -Fq 'slack = extent->count - wanted;' "$data"
+grep -Fq 'tail = extent_end - (candidate + wanted);' "$data"
+grep -Fq 'infilfs_native_media_scores(' "$data"
+grep -Fq 'Balanced/unknown keeps the pre-media-aware workload policy.' "$data"
 grep -Fq 'if (workload == INFILFS_DATA_WORKLOAD_SEQUENTIAL &' "$data"
 grep -Fq 'reservation && reservation->active' "$data"
 grep -Fq 'allocation_locality_scored' "$data"
