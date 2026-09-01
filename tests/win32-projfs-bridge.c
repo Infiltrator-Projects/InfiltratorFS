@@ -75,15 +75,24 @@ static int read_portable_file(struct infs_volume *volume, const char *path,
 
 static int run_windows_client(const wchar_t *root_arg)
 {
-    if (!root_arg || !root_arg[0] || root_arg[1] != L':')
-        return fail(L"Invalid bridge client drive");
+    if (!root_arg || !root_arg[0])
+        return fail(L"Invalid bridge client root");
 
-    wchar_t root[4] = {root_arg[0], L':', L'\\', L'\0'};
-    wchar_t path[1024];
+    wchar_t root[32768];
+    size_t length = wcslen(root_arg);
+    if (length + 2u > sizeof(root) / sizeof(root[0]))
+        return fail(L"Bridge client root is too long");
+    wcsncpy_s(root, sizeof(root) / sizeof(root[0]), root_arg, _TRUNCATE);
+    if (length && root[length - 1u] != L'\\') {
+        root[length++] = L'\\';
+        root[length] = L'\0';
+    }
+
+    wchar_t path[32768];
     char data[4096];
     DWORD got = 0;
 
-    _snwprintf_s(path, 1024, _TRUNCATE,
+    _snwprintf_s(path, sizeof(path) / sizeof(path[0]), _TRUNCATE,
                  L"%lslinux-cross-platform.txt", root);
     memset(data, 0, sizeof(data));
     if (!read_windows_file(path, data, sizeof(data) - 1u, &got) ||
@@ -101,18 +110,18 @@ static int run_windows_client(const wchar_t *root_arg)
                             (DWORD)(sizeof(edited_linux_payload) - 1u)))
         return fail(L"Edit Linux-created file through Windows bridge");
 
-    _snwprintf_s(path, 1024, _TRUNCATE, L"%lswindows-dir", root);
+    _snwprintf_s(path, sizeof(path) / sizeof(path[0]), _TRUNCATE, L"%lswindows-dir", root);
     if (!CreateDirectoryW(path, NULL))
         return fail(L"CreateDirectory through bridge");
 
-    wchar_t original[1024];
-    wchar_t renamed[1024];
-    wchar_t hardlink[1024];
-    _snwprintf_s(original, 1024, _TRUNCATE,
+    wchar_t original[32768];
+    wchar_t renamed[32768];
+    wchar_t hardlink[32768];
+    _snwprintf_s(original, sizeof(original) / sizeof(original[0]), _TRUNCATE,
                  L"%lswindows-dir\\created.txt", root);
-    _snwprintf_s(renamed, 1024, _TRUNCATE,
+    _snwprintf_s(renamed, sizeof(renamed) / sizeof(renamed[0]), _TRUNCATE,
                  L"%lswindows-dir\\renamed.txt", root);
-    _snwprintf_s(hardlink, 1024, _TRUNCATE,
+    _snwprintf_s(hardlink, sizeof(hardlink) / sizeof(hardlink[0]), _TRUNCATE,
                  L"%lswindows-dir\\hardlink.txt", root);
 
     if (!write_windows_file(original, windows_payload,
@@ -123,16 +132,16 @@ static int run_windows_client(const wchar_t *root_arg)
     if (!CreateHardLinkW(hardlink, renamed, NULL))
         return fail(L"Create hard link through bridge");
 
-    wchar_t tree[1024];
-    wchar_t tree_child[1024];
-    wchar_t tree_renamed[1024];
-    wchar_t tree_renamed_child[1024];
-    _snwprintf_s(tree, 1024, _TRUNCATE, L"%lstree", root);
-    _snwprintf_s(tree_child, 1024, _TRUNCATE,
+    wchar_t tree[32768];
+    wchar_t tree_child[32768];
+    wchar_t tree_renamed[32768];
+    wchar_t tree_renamed_child[32768];
+    _snwprintf_s(tree, sizeof(tree) / sizeof(tree[0]), _TRUNCATE, L"%lstree", root);
+    _snwprintf_s(tree_child, sizeof(tree_child) / sizeof(tree_child[0]), _TRUNCATE,
                  L"%lstree\\child.txt", root);
-    _snwprintf_s(tree_renamed, 1024, _TRUNCATE,
+    _snwprintf_s(tree_renamed, sizeof(tree_renamed) / sizeof(tree_renamed[0]), _TRUNCATE,
                  L"%lstree-renamed", root);
-    _snwprintf_s(tree_renamed_child, 1024, _TRUNCATE,
+    _snwprintf_s(tree_renamed_child, sizeof(tree_renamed_child) / sizeof(tree_renamed_child[0]), _TRUNCATE,
                  L"%lstree-renamed\\child.txt", root);
 
     if (!CreateDirectoryW(tree, NULL) ||
@@ -148,8 +157,8 @@ static int run_windows_client(const wchar_t *root_arg)
         !write_windows_file(tree_renamed_child, "after-rename\n", 13u))
         return fail(L"Rename projected directory and rewrite child");
 
-    wchar_t delete_path[1024];
-    _snwprintf_s(delete_path, 1024, _TRUNCATE,
+    wchar_t delete_path[32768];
+    _snwprintf_s(delete_path, sizeof(delete_path) / sizeof(delete_path[0]), _TRUNCATE,
                  L"%lsdelete-me.txt", root);
     if (!write_windows_file(delete_path, "delete\n", 7u) ||
         !DeleteFileW(delete_path))
@@ -168,13 +177,13 @@ static int run_external_client(const wchar_t *root)
         return fail(L"GetModuleFileName for bridge client");
 
     wchar_t command[65536];
-    if (!root || !root[0] || root[1] != L':')
+    if (!root || !root[0])
         return fail(L"Invalid bridge root for external client");
 
     if (_snwprintf_s(command,
                      sizeof(command) / sizeof(command[0]), _TRUNCATE,
-                     L"\"%ls\" --client %lc:",
-                     executable, root[0]) < 0)
+                     L"\"%ls\" --client \"%ls\"",
+                     executable, root) < 0)
         return fail(L"Build bridge client command line");
 
     STARTUPINFOW startup;
@@ -250,7 +259,19 @@ int wmain(int argc, wchar_t **argv)
         return 1;
     }
 
-    wchar_t root[4] = {drive[0], L':', L'\\', L'\0'};
+    wchar_t root[32768] = {0};
+    if (!infs_windows_bridge_root(
+            root, sizeof(root) / sizeof(root[0]))) {
+        infs_windows_bridge_stop();
+        infs_volume_close(&volume);
+        return fail(L"Resolve ProjFS virtualization root");
+    }
+    /*
+     * Qualify the actual projected directory from a separate client process.
+     * The manager is elevated for raw-device access while Explorer is normally
+     * unelevated, so a DOS-device alias can live in a different UAC namespace.
+     * The projection root must therefore work independently of the drive alias.
+     */
     int client_status = run_external_client(root);
     infs_windows_bridge_stop();
     if (client_status != 0) {
@@ -318,7 +339,7 @@ int wmain(int argc, wchar_t **argv)
         return 1;
     }
 
-    wprintf(L"Windows ProjFS bridge cross-platform read/write/rename/"
+    wprintf(L"Windows ProjFS projected-root cross-platform read/write/rename/"
             L"hardlink/delete qualification: PASS\n");
     return 0;
 }
