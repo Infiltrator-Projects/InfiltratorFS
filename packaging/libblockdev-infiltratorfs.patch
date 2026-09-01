@@ -143,7 +143,6 @@ diff --git a/src/plugins/fs/generic.c b/src/plugins/fs/generic.c
 +  }
  
    ret = bd_fs_wipe (device, TRUE, force, &l_error);
-
 @@ -2006,6 +2028,26 @@ extern BDExtraArg** bd_fs_xfs_mkfs_options (BDFSMkfsOptions *options, const BDEx
  extern BDExtraArg** bd_fs_btrfs_mkfs_options (BDFSMkfsOptions *options, const BDExtraArg **extra);
  extern BDExtraArg** bd_fs_udf_mkfs_options (BDFSMkfsOptions *options, const BDExtraArg **extra);
