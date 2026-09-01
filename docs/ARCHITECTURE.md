@@ -77,18 +77,29 @@ acquired, the in-lock workload classification is authoritative and a stale
 streaming reservation cannot be consumed by a random write.
 
 Native allocation classifies each data mutation as sequential EOF growth,
-in-place/random CoW, or direct sparse growth. Sequential growth first preserves
-exact physical adjacency; when that is unavailable, the free-extent index
-scores candidate runs by distance from the file's placement cursor and then by
-the contiguous tail left for future appends. Random overwrites prefer physical
-locality around the replaced block but select the tightest suitable free extent
-first, and sparse writes use the same best-fit rule. This deliberately preserves
-larger contiguous runs for streaming files rather than allowing small CoW or
-sparse mutations to consume their leading edge. The classifier, scores,
-reservation map, object cursors and telemetry are all volatile heuristics:
-allocation ownership remains the Format 0.17 bitmap/tree and no on-disk field
-or compatibility rule changes. Metadata mutation and checkpoint publication
-remain serialized by the native write lock.
+in-place/random CoW, or direct sparse growth. Media policy is then applied as a
+second volatile layer. On rotational media, physical distance is the primary
+score for every workload so random CoW and sparse allocations remain close to
+the file being modified and mechanical seek cost is minimised. On
+non-rotational media, sequential fallback maximises the remaining contiguous
+tail while random/sparse mutations consume the tightest suitable free extent
+before locality, preserving large runs because flash/NVMe does not pay a
+mechanical seek penalty. The balanced profile retains the pre-media-aware
+workload policy.
+
+Linux resolves the default profile from the block queue's rotational feature
+and exposes the resolved profile through mount options and telemetry. Operators
+and qualification can override it per mount with
+`media=auto|rotational|nonrotational|balanced`. Zoned block devices are
+rejected until InfiltratorFS has explicit zone-write-pointer allocation rather
+than being misclassified as ordinary flash. Rotational streaming reservations
+also start from the file's preferred physical position so the pre-lock
+reservation path cannot bypass media policy.
+
+The classifier, media profile, scores, reservation map, object cursors and
+telemetry are all volatile heuristics: allocation ownership remains the Format
+0.17 bitmap/tree and no on-disk field or compatibility rule changes. Metadata
+mutation and checkpoint publication remain serialized by the native write lock.
 
 Regular files may use:
 
