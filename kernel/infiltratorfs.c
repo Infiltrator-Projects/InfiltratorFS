@@ -12,6 +12,7 @@
 #include <linux/cred.h>
 #include <linux/highmem.h>
 #include <linux/kernel.h>
+#include <linux/lz4.h>
 #include <linux/math64.h>
 #include <linux/mutex.h>
 #include <linux/random.h>
@@ -238,6 +239,112 @@ static bool infilfs_crc64_block_valid(const u8 block[INFILFS_DISK_BLOCK_SIZE],
 static struct infilfs_sb_info *INFILFS_SB(struct super_block *sb)
 {
     return sb->s_fs_info;
+}
+
+static u32 infilfs_extent_kind(u32 flags)
+{
+    return flags & INFILFS_EXTENT_KIND_MASK;
+}
+
+static u32 infilfs_extent_codec(u32 flags)
+{
+    return (flags & INFILFS_EXTENT_CODEC_MASK) >> INFILFS_EXTENT_CODEC_SHIFT;
+}
+
+static u32 infilfs_extent_stored_bytes(u32 flags)
+{
+    return flags >> INFILFS_EXTENT_STORED_BYTES_SHIFT;
+}
+
+static bool infilfs_extent_is_compressed(u32 flags)
+{
+    return infilfs_extent_kind(flags) == INFILFS_EXTENT_NORMAL &&
+        infilfs_extent_codec(flags) != INFILFS_COMPRESSION_NONE;
+}
+
+static u64 infilfs_extent_physical_blocks(u32 logical_blocks, u32 flags)
+{
+    u32 stored;
+
+    if (infilfs_extent_kind(flags) == INFILFS_EXTENT_HOLE)
+        return 0;
+    if (!infilfs_extent_is_compressed(flags))
+        return logical_blocks;
+    stored = infilfs_extent_stored_bytes(flags);
+    return DIV_ROUND_UP((u64)stored, (u64)INFILFS_DISK_BLOCK_SIZE);
+}
+
+static bool infilfs_extent_flags_valid(u32 logical_blocks, u64 physical,
+                                       u32 flags)
+{
+    u32 kind = infilfs_extent_kind(flags);
+    u32 codec = infilfs_extent_codec(flags);
+    u32 stored = infilfs_extent_stored_bytes(flags);
+
+    if (!logical_blocks)
+        return false;
+    if (kind == INFILFS_EXTENT_HOLE)
+        return flags == INFILFS_EXTENT_HOLE && physical == 0;
+    if (kind != INFILFS_EXTENT_NORMAL || !physical)
+        return false;
+    if (codec == INFILFS_COMPRESSION_NONE)
+        return flags == INFILFS_EXTENT_NORMAL;
+    if (codec != INFILFS_COMPRESSION_LZ4 || !stored ||
+        logical_blocks > INFILFS_COMPRESSION_CLUSTER_BLOCKS ||
+        (u64)stored >= (u64)logical_blocks * INFILFS_DISK_BLOCK_SIZE)
+        return false;
+    return true;
+}
+
+static int infilfs_read_compressed_logical_block(
+    struct inode *inode, u64 physical, u64 extent_logical,
+    u32 extent_blocks, u32 flags, u64 logical,
+    u8 data[INFILFS_DISK_BLOCK_SIZE])
+{
+    u32 stored = infilfs_extent_stored_bytes(flags);
+    u64 physical_blocks = infilfs_extent_physical_blocks(extent_blocks, flags);
+    size_t stored_span = (size_t)physical_blocks * INFILFS_DISK_BLOCK_SIZE;
+    size_t plain_bytes = (size_t)extent_blocks * INFILFS_DISK_BLOCK_SIZE;
+    u8 *compressed;
+    u8 *plain;
+    u64 i;
+    int decoded;
+    int ret = 0;
+
+    if (!infilfs_extent_is_compressed(flags) ||
+        logical < extent_logical ||
+        logical - extent_logical >= extent_blocks ||
+        !stored || !physical_blocks || stored > stored_span ||
+        extent_blocks > INFILFS_COMPRESSION_CLUSTER_BLOCKS)
+        return -EFSCORRUPTED;
+    compressed = kvmalloc(stored_span, GFP_NOFS);
+    plain = kvmalloc(plain_bytes, GFP_NOFS);
+    if (!compressed || !plain) {
+        ret = -ENOMEM;
+        goto out;
+    }
+    for (i = 0; i < physical_blocks; ++i) {
+        ret = infilfs_read_allocated_block(
+            inode->i_sb, physical + i,
+            compressed + (size_t)i * INFILFS_DISK_BLOCK_SIZE);
+        if (ret)
+            goto out;
+    }
+    decoded = LZ4_decompress_safe(
+        (const char *)compressed, (char *)plain,
+        (int)stored, (int)plain_bytes);
+    if (decoded != (int)plain_bytes) {
+        ret = -EFSCORRUPTED;
+        goto out;
+    }
+    memcpy(data,
+           plain + (size_t)(logical - extent_logical) *
+               INFILFS_DISK_BLOCK_SIZE,
+           INFILFS_DISK_BLOCK_SIZE);
+out:
+    kvfree(plain);
+    kvfree(compressed);
+    return ret;
 }
 
 static const char *infilfs_media_profile_name(
@@ -1056,22 +1163,26 @@ static int infilfs_validate_checkpoint_extents(
         u32 flags = le32_to_cpu(extents[i].flags);
         u64 b;
 
+        u64 physical_blocks;
+
         if (!blocks || logical != *last_logical ||
             logical > U64_MAX - blocks ||
-            (flags != INFILFS_EXTENT_NORMAL &&
-             flags != INFILFS_EXTENT_HOLE))
+            !infilfs_extent_flags_valid(blocks, physical, flags))
             return -EFSCORRUPTED;
         *last_logical = logical + blocks;
-        if (flags == INFILFS_EXTENT_HOLE) {
-            if (physical)
-                return -EFSCORRUPTED;
+        if (infilfs_extent_kind(flags) == INFILFS_EXTENT_HOLE)
             continue;
-        }
-        if (!physical || physical >= INFILFS_SB(sb)->device_blocks ||
-            blocks > INFILFS_SB(sb)->device_blocks - physical)
+        if (infilfs_extent_is_compressed(flags) &&
+            (le64_to_cpu(INFILFS_SB(sb)->disk.incompat_flags) &
+             INFILFS_INCOMPAT_COMPRESSED_EXTENTS) == 0)
+            return -EFSCORRUPTED;
+        physical_blocks = infilfs_extent_physical_blocks(blocks, flags);
+        if (!physical_blocks ||
+            physical >= INFILFS_SB(sb)->device_blocks ||
+            physical_blocks > INFILFS_SB(sb)->device_blocks - physical)
             return -EFSCORRUPTED;
         *has_normal = true;
-        for (b = 0; b < blocks; ++b)
+        for (b = 0; b < physical_blocks; ++b)
             if (!infilfs_block_allocated(sb, physical + b))
                 return -EFSCORRUPTED;
     }
@@ -1627,9 +1738,10 @@ static int infilfs_emit_snapshot_entry(
     return 0;
 }
 
-static int infilfs_map_file_block(struct inode *inode, const u8 *object,
-                                  u64 logical, u64 *physical_out,
-                                  u32 *flags_out)
+static int infilfs_map_file_block_detail(
+    struct inode *inode, const u8 *object, u64 logical,
+    u64 *physical_out, u32 *flags_out,
+    u64 *extent_logical_out, u32 *extent_blocks_out)
 {
     const struct infilfs_object_header_disk *header =
         (const struct infilfs_object_header_disk *)object;
@@ -1654,9 +1766,21 @@ static int infilfs_map_file_block(struct inode *inode, const u8 *object,
 
             if (!blocks || logical < start || logical >= start + blocks)
                 continue;
+            if (!infilfs_extent_flags_valid(
+                    blocks, le64_to_cpu(ext[i].physical_block), flags))
+                return -EFSCORRUPTED;
             *flags_out = flags;
-            *physical_out = flags == INFILFS_EXTENT_HOLE ? 0 :
-                le64_to_cpu(ext[i].physical_block) + (logical - start);
+            if (infilfs_extent_kind(flags) == INFILFS_EXTENT_HOLE)
+                *physical_out = 0;
+            else if (infilfs_extent_is_compressed(flags))
+                *physical_out = le64_to_cpu(ext[i].physical_block);
+            else
+                *physical_out = le64_to_cpu(ext[i].physical_block) +
+                    (logical - start);
+            if (extent_logical_out)
+                *extent_logical_out = start;
+            if (extent_blocks_out)
+                *extent_blocks_out = blocks;
             return 0;
         }
         return -EFSCORRUPTED;
@@ -1754,15 +1878,26 @@ static int infilfs_map_file_block(struct inode *inode, const u8 *object,
                         elo = emid + 1u;
                         continue;
                     }
-                    if (flags != INFILFS_EXTENT_NORMAL &&
-                        flags != INFILFS_EXTENT_HOLE) {
+                    if (!infilfs_extent_flags_valid(
+                            blocks,
+                            le64_to_cpu(ext[emid].physical_block), flags)) {
                         ret = -EFSCORRUPTED;
                         goto paged_out;
                     }
                     *flags_out = flags;
-                    *physical_out = flags == INFILFS_EXTENT_HOLE ? 0 :
-                        le64_to_cpu(ext[emid].physical_block) +
+                    if (infilfs_extent_kind(flags) == INFILFS_EXTENT_HOLE)
+                        *physical_out = 0;
+                    else if (infilfs_extent_is_compressed(flags))
+                        *physical_out =
+                            le64_to_cpu(ext[emid].physical_block);
+                    else
+                        *physical_out =
+                            le64_to_cpu(ext[emid].physical_block) +
                             (logical - start);
+                    if (extent_logical_out)
+                        *extent_logical_out = start;
+                    if (extent_blocks_out)
+                        *extent_blocks_out = blocks;
                     ret = 0;
                     goto paged_out;
                 }
@@ -1776,6 +1911,14 @@ paged_out:
     }
 
     return -EFSCORRUPTED;
+}
+
+static int infilfs_map_file_block(
+    struct inode *inode, const u8 *object, u64 logical,
+    u64 *physical_out, u32 *flags_out)
+{
+    return infilfs_map_file_block_detail(
+        inode, object, logical, physical_out, flags_out, NULL, NULL);
 }
 
 static __maybe_unused ssize_t infilfs_file_read_iter(struct kiocb *iocb, struct iov_iter *to)
@@ -1842,15 +1985,25 @@ static __maybe_unused ssize_t infilfs_file_read_iter(struct kiocb *iocb, struct 
                                      &physical, &flags);
         if (ret)
             goto out_partial;
-        if (flags == INFILFS_EXTENT_HOLE) {
+        if (infilfs_extent_kind(flags) == INFILFS_EXTENT_HOLE) {
             memset(data, 0, INFILFS_DISK_BLOCK_SIZE);
-        } else if (flags == INFILFS_EXTENT_NORMAL) {
+        } else if (!infilfs_extent_is_compressed(flags)) {
             ret = infilfs_read_allocated_block(inode->i_sb, physical, data);
             if (ret)
                 goto out_partial;
         } else {
-            ret = -EFSCORRUPTED;
-            goto out_partial;
+            u64 extent_logical = 0;
+            u32 extent_blocks = 0;
+
+            ret = infilfs_map_file_block_detail(
+                inode, object, logical, &physical, &flags,
+                &extent_logical, &extent_blocks);
+            if (!ret)
+                ret = infilfs_read_compressed_logical_block(
+                    inode, physical, extent_logical, extent_blocks,
+                    flags, logical, data);
+            if (ret)
+                goto out_partial;
         }
 
         copied = copy_to_iter(data + within, chunk, to);
@@ -1914,9 +2067,13 @@ static int infilfs_file_allocated_blocks(
         if (sizeof(*file) + (size_t)extent_count * sizeof(*extents) !=
             le32_to_cpu(header->payload_size))
             return -EFSCORRUPTED;
-        for (i = 0; i < extent_count; ++i)
-            if (le32_to_cpu(extents[i].flags) == INFILFS_EXTENT_NORMAL)
-                allocated += le32_to_cpu(extents[i].block_count);
+        for (i = 0; i < extent_count; ++i) {
+            u32 flags = le32_to_cpu(extents[i].flags);
+            u32 logical_blocks = le32_to_cpu(extents[i].block_count);
+
+            allocated += infilfs_extent_physical_blocks(
+                logical_blocks, flags);
+        }
     } else if (le16_to_cpu(header->object_version) ==
                INFILFS_OBJECT_VERSION_PAGED) {
         const struct infilfs_extent_head_disk *head =
@@ -1958,9 +2115,13 @@ static int infilfs_file_allocated_blocks(
                 break;
             }
             extents = (const struct infilfs_extent_disk *)(page + 1);
-            for (i = 0; i < count; ++i)
-                if (le32_to_cpu(extents[i].flags) == INFILFS_EXTENT_NORMAL)
-                    allocated += le32_to_cpu(extents[i].block_count);
+            for (i = 0; i < count; ++i) {
+                u32 flags = le32_to_cpu(extents[i].flags);
+                u32 logical_blocks = le32_to_cpu(extents[i].block_count);
+
+                allocated += infilfs_extent_physical_blocks(
+                    logical_blocks, flags);
+            }
             copied += count;
         }
         kfree(page_block);
