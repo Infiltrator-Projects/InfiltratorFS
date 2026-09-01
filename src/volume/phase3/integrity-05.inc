@@ -319,11 +319,13 @@ static int build_live_ownership_bitmap(
         if (status != INFS_STATUS_OK)
             goto out;
         for (uint32_t j = 0; j < extent_count; ++j) {
-            if (infs_le32_to_cpu(all[j].flags) != INFS_EXTENT_NORMAL)
+            uint32_t flags = infs_le32_to_cpu(all[j].flags);
+            uint32_t logical_blocks = infs_le32_to_cpu(all[j].block_count);
+            if (extent_kind(flags) != INFS_EXTENT_NORMAL)
                 continue;
             uint64_t physical = infs_le64_to_cpu(all[j].physical_block);
-            uint32_t blocks = infs_le32_to_cpu(all[j].block_count);
-            for (uint32_t k = 0; k < blocks; ++k) {
+            uint64_t blocks = extent_physical_blocks(logical_blocks, flags);
+            for (uint64_t k = 0; k < blocks; ++k) {
                 status = ownership_claim_data(
                     owners, data_owners, total, physical + k, allow_shared);
                 if (status != INFS_STATUS_OK) {
@@ -461,7 +463,8 @@ static int validate_integrity_metadata(struct infs_volume *vol)
             if (status != INFS_STATUS_OK)
                 goto out;
             for (uint32_t j = 0; j < extent_count; ++j) {
-                if (infs_le32_to_cpu(all[j].flags) != INFS_EXTENT_NORMAL)
+                if (extent_kind(infs_le32_to_cpu(all[j].flags)) !=
+                    INFS_EXTENT_NORMAL)
                     continue;
                 uint64_t logical = infs_le64_to_cpu(all[j].logical_block);
                 uint64_t remaining = infs_le32_to_cpu(all[j].block_count);
