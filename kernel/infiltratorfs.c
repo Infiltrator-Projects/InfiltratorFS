@@ -8,12 +8,14 @@
 #include <linux/atomic.h>
 #include <linux/fs.h>
 #include <linux/fs_context.h>
+#include <linux/fs_parser.h>
 #include <linux/cred.h>
 #include <linux/highmem.h>
 #include <linux/kernel.h>
 #include <linux/math64.h>
 #include <linux/mutex.h>
 #include <linux/random.h>
+#include <linux/seq_file.h>
 #include <linux/sort.h>
 #include <linux/spinlock.h>
 #include <linux/pagevec.h>
@@ -74,6 +76,23 @@ enum infilfs_data_workload {
     INFILFS_DATA_WORKLOAD_SPARSE,
 };
 
+enum infilfs_media_profile {
+    INFILFS_MEDIA_BALANCED = 0,
+    INFILFS_MEDIA_ROTATIONAL,
+    INFILFS_MEDIA_NONROTATIONAL,
+};
+
+enum infilfs_media_override {
+    INFILFS_MEDIA_OVERRIDE_AUTO = 0,
+    INFILFS_MEDIA_OVERRIDE_BALANCED,
+    INFILFS_MEDIA_OVERRIDE_ROTATIONAL,
+    INFILFS_MEDIA_OVERRIDE_NONROTATIONAL,
+};
+
+struct infilfs_fs_context {
+    enum infilfs_media_override media_override;
+};
+
 struct infilfs_sb_info {
     struct infilfs_superblock_disk disk;
     u64 device_blocks;
@@ -124,6 +143,11 @@ struct infilfs_sb_info {
     atomic64_t allocation_workload_sparse;
     atomic64_t allocation_locality_scored;
     atomic64_t allocation_best_fit;
+    atomic64_t allocation_media_rotational_scored;
+    atomic64_t allocation_media_nonrotational_scored;
+    atomic64_t allocation_media_balanced_scored;
+    enum infilfs_media_profile media_profile;
+    bool media_profile_overridden;
     bool rw_enabled;
     bool write_poisoned;
     bool checkpoint_repair_needed;
@@ -214,6 +238,62 @@ static bool infilfs_crc64_block_valid(const u8 block[INFILFS_DISK_BLOCK_SIZE],
 static struct infilfs_sb_info *INFILFS_SB(struct super_block *sb)
 {
     return sb->s_fs_info;
+}
+
+static const char *infilfs_media_profile_name(
+    enum infilfs_media_profile profile)
+{
+    switch (profile) {
+    case INFILFS_MEDIA_ROTATIONAL:
+        return "rotational";
+    case INFILFS_MEDIA_NONROTATIONAL:
+        return "nonrotational";
+    case INFILFS_MEDIA_BALANCED:
+    default:
+        return "balanced";
+    }
+}
+
+static int infilfs_resolve_media_profile(
+    struct super_block *sb, const struct infilfs_fs_context *ctx,
+    struct infilfs_sb_info *sbi)
+{
+    struct request_queue *queue;
+
+    if (!sb || !sb->s_bdev || !sbi)
+        return -EINVAL;
+    queue = bdev_get_queue(sb->s_bdev);
+    if (queue && blk_queue_is_zoned(queue)) {
+        pr_err("InfiltratorFS: zoned block devices require zone-aware allocation and are not yet supported\n");
+        return -EOPNOTSUPP;
+    }
+
+    sbi->media_profile_overridden =
+        ctx && ctx->media_override != INFILFS_MEDIA_OVERRIDE_AUTO;
+    if (ctx) {
+        switch (ctx->media_override) {
+        case INFILFS_MEDIA_OVERRIDE_BALANCED:
+            sbi->media_profile = INFILFS_MEDIA_BALANCED;
+            return 0;
+        case INFILFS_MEDIA_OVERRIDE_ROTATIONAL:
+            sbi->media_profile = INFILFS_MEDIA_ROTATIONAL;
+            return 0;
+        case INFILFS_MEDIA_OVERRIDE_NONROTATIONAL:
+            sbi->media_profile = INFILFS_MEDIA_NONROTATIONAL;
+            return 0;
+        case INFILFS_MEDIA_OVERRIDE_AUTO:
+        default:
+            break;
+        }
+    }
+
+    if (!queue)
+        sbi->media_profile = INFILFS_MEDIA_BALANCED;
+    else if (blk_queue_rot(queue))
+        sbi->media_profile = INFILFS_MEDIA_ROTATIONAL;
+    else
+        sbi->media_profile = INFILFS_MEDIA_NONROTATIONAL;
+    return 0;
 }
 
 static bool infilfs_block_allocated(struct super_block *sb, u64 block)
@@ -2384,11 +2464,22 @@ static void infilfs_put_super(struct super_block *sb)
     sb->s_fs_info = NULL;
 }
 
+static int infilfs_show_options(struct seq_file *seq, struct dentry *root)
+{
+    const struct infilfs_sb_info *sbi = INFILFS_SB(root->d_sb);
+
+    if (sbi)
+        seq_printf(seq, ",media=%s", infilfs_media_profile_name(
+            sbi->media_profile));
+    return 0;
+}
+
 static const struct super_operations infilfs_super_operations = {
     .statfs = simple_statfs,
     .sync_fs = infilfs_sync_fs,
     .evict_inode = infilfs_evict_inode,
     .put_super = infilfs_put_super,
+    .show_options = infilfs_show_options,
 };
 
 static const struct inode_operations infilfs_dir_inode_operations = {
@@ -2431,9 +2522,9 @@ static int infilfs_fill_super(struct super_block *sb, struct fs_context *fc)
     struct infilfs_sb_info *sbi;
     struct inode *root_inode;
     u64 bytes;
+    const struct infilfs_fs_context *ctx =
+        fc ? fc->fs_private : NULL;
     int ret;
-
-    (void)fc;
 
     if (!sb_set_blocksize(sb, INFILFS_DISK_BLOCK_SIZE))
         return -EINVAL;
@@ -2447,6 +2538,11 @@ static int infilfs_fill_super(struct super_block *sb, struct fs_context *fc)
     if (!sbi)
         return -ENOMEM;
     sbi->device_blocks = bytes >> INFILFS_DISK_BLOCK_SHIFT;
+    ret = infilfs_resolve_media_profile(sb, ctx, sbi);
+    if (ret) {
+        kfree(sbi);
+        return ret;
+    }
     mutex_init(&sbi->write_lock);
     mutex_init(&sbi->linux_meta_lock);
     rwlock_init(&sbi->bitmap_lock);
@@ -2485,10 +2581,12 @@ static int infilfs_fill_super(struct super_block *sb, struct fs_context *fc)
     if (ret)
         goto fail;
 
-    pr_info("InfiltratorFS: native %s mount Format %u.%u generation %llu\n",
+    pr_info("InfiltratorFS: native %s mount Format %u.%u generation %llu media=%s media_source=%s\n",
             sb_rdonly(sb) ? "read-only" : "read-write",
             INFILFS_FORMAT_MAJOR, INFILFS_FORMAT_MINOR,
-            (unsigned long long)le64_to_cpu(sbi->disk.generation));
+            (unsigned long long)le64_to_cpu(sbi->disk.generation),
+            infilfs_media_profile_name(sbi->media_profile),
+            sbi->media_profile_overridden ? "override" : "auto");
     return 0;
 
 fail:
@@ -2502,17 +2600,73 @@ fail:
     return ret;
 }
 
+enum {
+    Opt_media,
+};
+
+static const struct constant_table infilfs_media_param_values[] = {
+    { "auto", INFILFS_MEDIA_OVERRIDE_AUTO },
+    { "balanced", INFILFS_MEDIA_OVERRIDE_BALANCED },
+    { "rotational", INFILFS_MEDIA_OVERRIDE_ROTATIONAL },
+    { "nonrotational", INFILFS_MEDIA_OVERRIDE_NONROTATIONAL },
+    {}
+};
+
+static const struct fs_parameter_spec infilfs_fs_parameters[] = {
+    fsparam_enum("media", Opt_media, infilfs_media_param_values),
+    {}
+};
+
+static int infilfs_parse_param(
+    struct fs_context *fc, struct fs_parameter *param)
+{
+    struct infilfs_fs_context *ctx = fc->fs_private;
+    struct fs_parse_result result;
+    int opt;
+    int ret;
+
+    ret = vfs_parse_fs_param_source(fc, param);
+    if (ret != -ENOPARAM)
+        return ret;
+    opt = fs_parse(fc, infilfs_fs_parameters, param, &result);
+    if (opt < 0)
+        return opt;
+    switch (opt) {
+    case Opt_media:
+        ctx->media_override =
+            (enum infilfs_media_override)result.uint_32;
+        return 0;
+    default:
+        return -EINVAL;
+    }
+}
+
+static void infilfs_free_fs_context(struct fs_context *fc)
+{
+    kfree(fc->fs_private);
+    fc->fs_private = NULL;
+}
+
 static int infilfs_get_tree(struct fs_context *fc)
 {
     return get_tree_bdev(fc, infilfs_fill_super);
 }
 
 static const struct fs_context_operations infilfs_context_operations = {
+    .free = infilfs_free_fs_context,
+    .parse_param = infilfs_parse_param,
     .get_tree = infilfs_get_tree,
 };
 
 static int infilfs_init_fs_context(struct fs_context *fc)
 {
+    struct infilfs_fs_context *ctx;
+
+    ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
+    if (!ctx)
+        return -ENOMEM;
+    ctx->media_override = INFILFS_MEDIA_OVERRIDE_AUTO;
+    fc->fs_private = ctx;
     fc->ops = &infilfs_context_operations;
     return 0;
 }
@@ -2520,6 +2674,7 @@ static int infilfs_init_fs_context(struct fs_context *fc)
 static struct file_system_type infilfs_type = {
     .owner = THIS_MODULE,
     .name = INFILTRATORFS_NAME,
+    .parameters = infilfs_fs_parameters,
     .init_fs_context = infilfs_init_fs_context,
     .kill_sb = kill_block_super,
     .fs_flags = FS_REQUIRES_DEV,
