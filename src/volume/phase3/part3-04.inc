@@ -25,19 +25,41 @@ static infs_status read_checkpoint_candidates(
     struct infs_superblock_disk candidates[INFS_CHECKPOINT_COUNT],
     uint8_t valid[INFS_CHECKPOINT_COUNT])
 {
-    if (!vol || !candidates || !valid || vol->size_bytes < INFS_BLOCK_SIZE * 3u)
+    if (!vol || !candidates || !valid ||
+        vol->size_bytes < INFS_BLOCK_SIZE * 3u)
         return INFS_STATUS_INVALID_ARGUMENT;
 
     memset(valid, 0, INFS_CHECKPOINT_COUNT);
-    const uint64_t total_blocks = vol->size_bytes / INFS_BLOCK_SIZE;
-    const uint64_t blocks[INFS_CHECKPOINT_COUNT] = {
-        0,
-        total_blocks / 2u,
-        total_blocks - 1u
+    const uint64_t storage_blocks = vol->size_bytes / INFS_BLOCK_SIZE;
+    uint64_t blocks[INFS_CHECKPOINT_COUNT] = {
+        0, storage_blocks / 2u, storage_blocks - 1u
     };
-    unsigned found = 0;
-    infs_status first_read_error = INFS_STATUS_OK;
+    struct infs_superblock_disk anchor;
+    int anchored = 0;
     uint8_t raw[INFS_BLOCK_SIZE];
+
+    infs_status anchor_read = infs_storage_read(
+        &vol->storage, 0, raw, sizeof(raw));
+    if (anchor_read == INFS_STATUS_OK &&
+        infs_validate_superblock_block(raw)) {
+        memcpy(&anchor, raw, sizeof(anchor));
+        uint64_t total = infs_le64_to_cpu(anchor.total_blocks);
+        uint64_t c0 = infs_le64_to_cpu(anchor.checkpoint_block[0]);
+        uint64_t c1 = infs_le64_to_cpu(anchor.checkpoint_block[1]);
+        uint64_t c2 = infs_le64_to_cpu(anchor.checkpoint_block[2]);
+        if (total >= 3u && total <= storage_blocks &&
+            c0 == 0 && c1 < total && c2 < total &&
+            c1 != c0 && c2 != c0 && c2 != c1) {
+            blocks[0] = c0;
+            blocks[1] = c1;
+            blocks[2] = c2;
+            anchored = 1;
+        }
+    }
+
+    unsigned found = 0;
+    infs_status first_read_error = anchor_read == INFS_STATUS_OK ?
+        INFS_STATUS_OK : anchor_read;
 
     for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i) {
         infs_status status = infs_storage_read(
@@ -52,10 +74,16 @@ static infs_status read_checkpoint_candidates(
 
         struct infs_superblock_disk sb;
         memcpy(&sb, raw, sizeof(sb));
-        if (infs_le64_to_cpu(sb.total_blocks) != total_blocks ||
+        uint64_t total = infs_le64_to_cpu(sb.total_blocks);
+        if (total < 3u || total > storage_blocks ||
             infs_le64_to_cpu(sb.checkpoint_block[0]) != blocks[0] ||
             infs_le64_to_cpu(sb.checkpoint_block[1]) != blocks[1] ||
             infs_le64_to_cpu(sb.checkpoint_block[2]) != blocks[2])
+            continue;
+        if (anchored &&
+            (total != infs_le64_to_cpu(anchor.total_blocks) ||
+             memcmp(sb.filesystem_uuid, anchor.filesystem_uuid,
+                    sizeof(sb.filesystem_uuid)) != 0))
             continue;
 
         candidates[i] = sb;
@@ -63,10 +91,6 @@ static infs_status read_checkpoint_candidates(
         ++found;
     }
 
-    /* A read-only opener can inspect any surviving replica. A writable opener
-     * must not heal over an unreadable location: that location may hold the
-     * only durably committed newer generation after a crash between primary
-     * checkpoint publication and replication. */
     if (first_read_error != INFS_STATUS_OK && vol->writable)
         return first_read_error;
     if (found)
