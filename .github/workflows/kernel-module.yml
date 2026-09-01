@@ -107,6 +107,7 @@ jobs:
              kernel/infiltratorfs_defrag.inc \
              kernel/infiltratorfs_ioctl.h \
              "$dkms_src/"
+          cp include/infilfs/iac1.h "$dkms_src/iac1.h"
           release="$(make -sC "$KDIR" kernelrelease)"
           KERNELRELEASE="$release" make -C "$dkms_src" KDIR="$KDIR"
           test -s "$dkms_src/infiltratorfs.ko"
