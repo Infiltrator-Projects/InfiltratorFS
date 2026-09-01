@@ -993,8 +993,18 @@ jobs:
               's/.*locality_scored=([0-9]+).*/\1/p' <<<"$allocator_log")"
           best_fit="$(sed -nE \
               's/.*best_fit=([0-9]+).*/\1/p' <<<"$allocator_log")"
+          media_profile="$(sed -nE \
+              's/.*media=([^ ]+).*/\1/p' <<<"$allocator_log")"
+          media_rotational_scored="$(sed -nE \
+              's/.*media_rotational_scored=([0-9]+).*/\1/p' <<<"$allocator_log")"
+          media_nonrotational_scored="$(sed -nE \
+              's/.*media_nonrotational_scored=([0-9]+).*/\1/p' <<<"$allocator_log")"
+          media_balanced_scored="$(sed -nE \
+              's/.*media_balanced_scored=([0-9]+).*/\1/p' <<<"$allocator_log")"
           for value in "$allocator_peak" "$workload_seq" "$workload_random" \
-                       "$workload_sparse" "$locality_scored" "$best_fit"; do
+                       "$workload_sparse" "$locality_scored" "$best_fit" \
+                       "$media_profile" "$media_rotational_scored" \
+                       "$media_nonrotational_scored" "$media_balanced_scored"; do
             test -n "$value"
           done
           test "$allocator_peak" -ge 2
@@ -1002,7 +1012,23 @@ jobs:
           test "$workload_random" -ge 1
           test "$workload_sparse" -ge 1
           test "$locality_scored" -ge 1
-          test "$best_fit" -ge 1
+          case "$media_profile" in
+            rotational)
+              test "$media_rotational_scored" -ge 1
+              ;;
+            nonrotational)
+              test "$media_nonrotational_scored" -ge 1
+              test "$best_fit" -ge 1
+              ;;
+            balanced)
+              test "$media_balanced_scored" -ge 1
+              test "$best_fit" -ge 1
+              ;;
+            *)
+              echo "Unexpected allocator media profile: $media_profile" >&2
+              exit 1
+              ;;
+          esac
           test "$(build/infilfs-tool "$image" cat /native-rw/created.txt)" = 'rewritte'
           test "$(build/infilfs-tool "$image" cat /docs/inline.txt)" = \
                'native-snapshot-live-edit'
