@@ -289,7 +289,7 @@ static int infilfs_resolve_media_profile(
 
     if (!queue)
         sbi->media_profile = INFILFS_MEDIA_BALANCED;
-    else if (blk_queue_rot(queue))
+    else if (bdev_rot(sb->s_bdev))
         sbi->media_profile = INFILFS_MEDIA_ROTATIONAL;
     else
         sbi->media_profile = INFILFS_MEDIA_NONROTATIONAL;
