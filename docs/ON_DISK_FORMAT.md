@@ -230,7 +230,7 @@ The policy is to fail closed when committed state cannot be trusted while retain
 - paged extent maps remain bounded by the page-pointer capacity of one file head;
 - at most 27 named snapshots in the bounded catalog;
 - no snapshot rollback or native undelete policy;
-- no compression;
+- compression policy and the final native codec are not yet frozen; current development code includes experimental LZ4 per-extent representation, but LZ4 is not the intended automatic/default compression policy; see `COMPRESSION.md`;
 - portable security and generic named-metadata object references are reserved but not yet standardized;
 - Linux 0.18.30 development adapter xattrs/special-node metadata are not the final portable named-metadata/security model;
 - POSIX compatibility metadata exists; Windows security mapping is not implemented;
