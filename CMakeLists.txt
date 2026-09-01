@@ -40,6 +40,21 @@ if(NOT TARGET InfiltratrCommon::Portable OR
         "Infiltratr Common ${INFILTRATR_COMMON_REQUIRED_VERSION} is required")
 endif()
 
+# Per-extent compression is a portable-format feature. Pin LZ4 so Linux,
+# Windows and future adapters encode the same byte stream without relying on
+# a distribution-specific shared library version.
+include(FetchContent)
+set(LZ4_BUILD_CLI OFF CACHE BOOL "" FORCE)
+set(LZ4_BUNDLED_MODE ON CACHE BOOL "" FORCE)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(BUILD_STATIC_LIBS ON CACHE BOOL "" FORCE)
+FetchContent_Declare(infilfs_lz4
+    GIT_REPOSITORY https://github.com/lz4/lz4.git
+    GIT_TAG v1.10.0
+    SOURCE_SUBDIR build/cmake
+    GIT_SHALLOW TRUE)
+FetchContent_MakeAvailable(infilfs_lz4)
+
 function(infilfs_enable_warnings target)
     if(MSVC)
         target_compile_options(${target} PRIVATE /W4)
@@ -59,7 +74,7 @@ add_library(infilfs_core STATIC
     src/format_volume.c
 )
 target_include_directories(infilfs_core PUBLIC include)
-target_link_libraries(infilfs_core PUBLIC InfiltratrCommon::Portable)
+target_link_libraries(infilfs_core PUBLIC InfiltratrCommon::Portable lz4_static)
 infilfs_enable_warnings(infilfs_core)
 
 add_executable(infilfs-checksum-test tests/checksum-test.c)

@@ -11,6 +11,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#include <lz4.h>
 
 #define INFS_DIRENT_ALIGN 8u
 
@@ -55,6 +56,74 @@ static void directory_cache_clear(struct infs_volume *vol);
 static void directory_cache_destroy(struct infs_volume *vol);
 static void directory_cache_init(struct infs_volume *vol);
 static int object_cache_rebuild(struct infs_volume *vol);
+
+static uint32_t extent_kind(uint32_t flags)
+{
+    return flags & INFS_EXTENT_KIND_MASK;
+}
+
+static uint32_t extent_codec(uint32_t flags)
+{
+    return (flags & INFS_EXTENT_CODEC_MASK) >> INFS_EXTENT_CODEC_SHIFT;
+}
+
+static uint32_t extent_stored_bytes(uint32_t flags)
+{
+    return flags >> INFS_EXTENT_STORED_BYTES_SHIFT;
+}
+
+static int extent_is_compressed(uint32_t flags)
+{
+    return extent_kind(flags) == INFS_EXTENT_NORMAL &&
+        extent_codec(flags) != INFS_COMPRESSION_NONE;
+}
+
+static uint64_t extent_physical_blocks(uint32_t logical_blocks, uint32_t flags)
+{
+    uint32_t stored;
+
+    if (extent_kind(flags) == INFS_EXTENT_HOLE)
+        return 0;
+    if (!extent_is_compressed(flags))
+        return logical_blocks;
+    stored = extent_stored_bytes(flags);
+    return stored / INFS_BLOCK_SIZE + ((stored % INFS_BLOCK_SIZE) != 0);
+}
+
+static int extent_flags_valid(uint32_t logical_blocks, uint64_t physical,
+                              uint32_t flags)
+{
+    uint32_t kind = extent_kind(flags);
+    uint32_t codec = extent_codec(flags);
+    uint32_t stored = extent_stored_bytes(flags);
+
+    if (!logical_blocks)
+        return 0;
+    if (kind == INFS_EXTENT_HOLE)
+        return flags == INFS_EXTENT_HOLE && physical == 0;
+    if (kind != INFS_EXTENT_NORMAL || physical == 0)
+        return 0;
+    if (codec == INFS_COMPRESSION_NONE)
+        return flags == INFS_EXTENT_NORMAL;
+    if (codec != INFS_COMPRESSION_LZ4 || !stored ||
+        logical_blocks > INFS_COMPRESSION_CLUSTER_BLOCKS ||
+        stored > INFS_EXTENT_STORED_BYTES_MAX ||
+        (uint64_t)stored >= (uint64_t)logical_blocks * INFS_BLOCK_SIZE)
+        return 0;
+    return 1;
+}
+
+static uint32_t extent_compressed_flags(uint32_t codec, uint32_t stored_bytes)
+{
+    return INFS_EXTENT_NORMAL |
+        (codec << INFS_EXTENT_CODEC_SHIFT) |
+        (stored_bytes << INFS_EXTENT_STORED_BYTES_SHIFT);
+}
+
+static int file_replace_range(struct infs_volume *vol,
+                              uint8_t object[INFS_BLOCK_SIZE],
+                              uint64_t logical_start, uint64_t block_count,
+                              uint64_t new_physical, uint32_t new_flags);
 
 static int namespace_object_type(uint16_t type)
 {
@@ -141,6 +210,7 @@ static int paged_extent_replace(struct infs_volume *vol,
 #pragma GCC diagnostic ignored "-Wtype-limits"
 #endif
 #include "volume/phase3/paged-extents.inc"
+#include "volume/phase3/compression.inc"
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic pop
 #endif

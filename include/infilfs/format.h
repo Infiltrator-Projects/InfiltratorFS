@@ -56,6 +56,14 @@ static const uint8_t INFS_ALLOCATION_LEAF_PAGE_MAGIC[8] = {
 
 #define INFS_EXTENT_NORMAL     0u
 #define INFS_EXTENT_HOLE       1u
+#define INFS_EXTENT_KIND_MASK  0x00000003u
+#define INFS_EXTENT_CODEC_SHIFT 2u
+#define INFS_EXTENT_CODEC_MASK 0x0000000cu
+#define INFS_EXTENT_STORED_BYTES_SHIFT 4u
+#define INFS_EXTENT_STORED_BYTES_MAX 0x0fffffffu
+#define INFS_COMPRESSION_NONE 0u
+#define INFS_COMPRESSION_LZ4  1u
+#define INFS_COMPRESSION_CLUSTER_BLOCKS 64u
 
 #define INFS_INCOMPAT_UTF8_NAMES UINT64_C(0x0000000000000001)
 #define INFS_INCOMPAT_SPARSE_EXTENTS UINT64_C(0x0000000000000002)
@@ -69,6 +77,7 @@ static const uint8_t INFS_ALLOCATION_LEAF_PAGE_MAGIC[8] = {
 #define INFS_INCOMPAT_INDEX_TREE UINT64_C(0x0000000000000200)
 #define INFS_INCOMPAT_DIRECTORY_TREE UINT64_C(0x0000000000000400)
 #define INFS_INCOMPAT_ALLOCATION_TREE UINT64_C(0x0000000000000800)
+#define INFS_INCOMPAT_COMPRESSED_EXTENTS UINT64_C(0x0000000000001000)
 #define INFS_KNOWN_COMPAT_FLAGS UINT64_C(0)
 #define INFS_KNOWN_RO_COMPAT_FLAGS UINT64_C(0)
 #define INFS_KNOWN_INCOMPAT_FLAGS \
@@ -77,7 +86,8 @@ static const uint8_t INFS_ALLOCATION_LEAF_PAGE_MAGIC[8] = {
      INFS_INCOMPAT_PAGED_METADATA | INFS_INCOMPAT_SYMBOLIC_LINKS | \
      INFS_INCOMPAT_HARD_LINKS | INFS_INCOMPAT_SNAPSHOTS | \
      INFS_INCOMPAT_PAGED_EXTENTS | INFS_INCOMPAT_INDEX_TREE | \
-     INFS_INCOMPAT_DIRECTORY_TREE | INFS_INCOMPAT_ALLOCATION_TREE)
+     INFS_INCOMPAT_DIRECTORY_TREE | INFS_INCOMPAT_ALLOCATION_TREE | \
+     INFS_INCOMPAT_COMPRESSED_EXTENTS)
 
 #define INFS_ATTR_READ_ONLY           UINT64_C(0x0000000000000001)
 #define INFS_ATTR_HIDDEN              UINT64_C(0x0000000000000002)
@@ -233,6 +243,11 @@ struct INFS_PACKED infs_extent_head_disk {
     uint32_t reserved;
 };
 
+/* Extent flags retain the 24-byte extent record. Bits 0..1 are the extent
+ * kind (normal/hole), bits 2..3 are the compression codec, and bits 4..31
+ * store the exact compressed byte count when codec != NONE. block_count is
+ * always the logical 4096-byte block count. The physical allocation of a
+ * compressed extent is ceil(stored_bytes / 4096). */
 struct INFS_PACKED infs_extent_disk {
     uint64_t logical_block;
     uint64_t physical_block;
