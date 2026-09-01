@@ -684,13 +684,22 @@ class Manager(Gtk.ApplicationWindow):
         page.pack_start(top, False, False, 0)
 
         frame = Gtk.Box()
+        frame.set_hexpand(True)
+        frame.set_vexpand(True)
         self._style(frame, "activity-frame")
+
         scroll = Gtk.ScrolledWindow()
+        scroll.set_hexpand(True)
+        scroll.set_vexpand(True)
+        scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+
         view = Gtk.TextView(
             editable=False,
             cursor_visible=False,
-            wrap_mode=Gtk.WrapMode.WORD_CHAR,
+            wrap_mode=Gtk.WrapMode.NONE,
         )
+        view.set_hexpand(True)
+        view.set_vexpand(True)
         self._style(view, "activity")
         view.set_monospace(True)
         view.set_left_margin(12)
@@ -700,7 +709,7 @@ class Manager(Gtk.ApplicationWindow):
         self.buffer = view.get_buffer()
         self.view = view
         scroll.add(view)
-        frame.add(scroll)
+        frame.pack_start(scroll, True, True, 0)
         page.pack_start(frame, True, True, 0)
 
     def _build_statusbar(self, root):
