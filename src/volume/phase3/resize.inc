@@ -138,6 +138,40 @@ static infs_status resize_allocate_layout(
     return INFS_STATUS_OK;
 }
 
+/*
+ * Resize may grow the filesystem beyond the currently committed geometry.
+ * The ordinary write_block() helper intentionally rejects such blocks, so the
+ * resize transaction needs a bounded raw page writer whose authority is the
+ * proposed geometry plus the already-validated backing-store size.
+ */
+static infs_status resize_write_allocation_page(
+    struct infs_volume *vol, uint64_t total, uint64_t physical,
+    const uint8_t magic[8], uint64_t generation,
+    uint64_t logical, uint32_t level, uint32_t entries,
+    const void *payload, uint32_t bytes)
+{
+    uint8_t block[INFS_BLOCK_SIZE];
+
+    if (!vol || !physical || physical >= total)
+        return INFS_STATUS_INVALID_ARGUMENT;
+    infs_status status = infs_allocation_page_init(
+        block, magic, generation, logical, level);
+    if (status != INFS_STATUS_OK)
+        return status;
+    struct infs_allocation_page_disk *page =
+        (struct infs_allocation_page_disk *)block;
+    page->entry_count = infs_cpu_to_le32(entries);
+    page->bytes_used = infs_cpu_to_le32(bytes);
+    if (bytes)
+        memcpy(page + 1, payload, bytes);
+    status = infs_allocation_page_finalize(block);
+    if (status != INFS_STATUS_OK)
+        return status;
+    return infs_storage_write(
+        &vol->storage, physical * INFS_BLOCK_SIZE,
+        block, sizeof(block));
+}
+
 static infs_status resize_write_layout(
     struct infs_volume *vol, const uint8_t *bitmap, size_t bitmap_bytes,
     uint64_t total, uint64_t generation,
@@ -157,8 +191,8 @@ static infs_status resize_write_layout(
         size_t offset = i * (size_t)INFS_ALLOCATION_PAGE_DATA_SIZE;
         if (offset > bitmap_bytes || bytes > bitmap_bytes - offset)
             return INFS_STATUS_CORRUPT;
-        infs_status status = allocation_map_write_page(
-            vol, layout->leaf_blocks[i],
+        infs_status status = resize_write_allocation_page(
+            vol, total, layout->leaf_blocks[i],
             INFS_ALLOCATION_LEAF_PAGE_MAGIC, generation,
             i, 0u, valid_bits, bitmap + offset, bytes);
         if (status != INFS_STATUS_OK)
@@ -175,8 +209,8 @@ static infs_status resize_write_layout(
         for (uint32_t j = 0; j < entries; ++j)
             pointers[j] =
                 infs_cpu_to_le64(layout->leaf_blocks[first + j]);
-        infs_status status = allocation_map_write_page(
-            vol, layout->branch_blocks[level1_base + i],
+        infs_status status = resize_write_allocation_page(
+            vol, total, layout->branch_blocks[level1_base + i],
             INFS_ALLOCATION_BRANCH_PAGE_MAGIC, generation,
             i, 1u, entries, pointers,
             entries * (uint32_t)sizeof(uint64_t));
@@ -193,8 +227,8 @@ static infs_status resize_write_layout(
         for (uint32_t j = 0; j < entries; ++j)
             pointers[j] = infs_cpu_to_le64(
                 layout->branch_blocks[level1_base + first + j]);
-        infs_status status = allocation_map_write_page(
-            vol, layout->branch_blocks[1u + i],
+        infs_status status = resize_write_allocation_page(
+            vol, total, layout->branch_blocks[1u + i],
             INFS_ALLOCATION_BRANCH_PAGE_MAGIC, generation,
             i, 2u, entries, pointers,
             entries * (uint32_t)sizeof(uint64_t));
@@ -208,8 +242,8 @@ static infs_status resize_write_layout(
              i < (uint32_t)layout->level2_count; ++i)
             pointers[i] =
                 infs_cpu_to_le64(layout->branch_blocks[1u + i]);
-        return allocation_map_write_page(
-            vol, layout->branch_blocks[0],
+        return resize_write_allocation_page(
+            vol, total, layout->branch_blocks[0],
             INFS_ALLOCATION_BRANCH_PAGE_MAGIC, generation,
             0u, INFS_ALLOCATION_TREE_ROOT_LEVEL,
             (uint32_t)layout->level2_count, pointers,
