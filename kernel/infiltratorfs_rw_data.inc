@@ -1503,9 +1503,13 @@ static int infilfs_native_collect_extents(
         u32 flags = le32_to_cpu(extents[i].flags);
 
         if (!blocks || start != logical ||
-            (flags != INFILFS_EXTENT_NORMAL && flags != INFILFS_EXTENT_HOLE) ||
-            (flags == INFILFS_EXTENT_HOLE && physical != 0) ||
-            (flags == INFILFS_EXTENT_NORMAL && physical == 0)) {
+            !infilfs_extent_flags_valid(blocks, physical, flags)) {
+            ret = -EFSCORRUPTED;
+            goto fail;
+        }
+        if (infilfs_extent_is_compressed(flags) &&
+            (le64_to_cpu(INFILFS_SB(inode->i_sb)->disk.incompat_flags) &
+             INFILFS_INCOMPAT_COMPRESSED_EXTENTS) == 0) {
             ret = -EFSCORRUPTED;
             goto fail;
         }
@@ -1520,9 +1524,10 @@ fail:
     return ret;
 }
 
-static int infilfs_native_map_extent(const struct infilfs_extent_disk *extents,
-                                     u32 count, u64 logical,
-                                     u64 *physical_out, u32 *flags_out)
+static int infilfs_native_map_extent_detail(
+    const struct infilfs_extent_disk *extents, u32 count, u64 logical,
+    u64 *physical_out, u32 *flags_out,
+    u64 *extent_start_out, u32 *extent_blocks_out)
 {
     u32 i;
 
@@ -1534,11 +1539,28 @@ static int infilfs_native_map_extent(const struct infilfs_extent_disk *extents,
         if (logical < start || logical >= start + blocks)
             continue;
         *flags_out = flags;
-        *physical_out = flags == INFILFS_EXTENT_HOLE ? 0 :
-            le64_to_cpu(extents[i].physical_block) + logical - start;
+        if (infilfs_extent_kind(flags) == INFILFS_EXTENT_HOLE)
+            *physical_out = 0;
+        else if (infilfs_extent_is_compressed(flags))
+            *physical_out = le64_to_cpu(extents[i].physical_block);
+        else
+            *physical_out =
+                le64_to_cpu(extents[i].physical_block) + logical - start;
+        if (extent_start_out)
+            *extent_start_out = start;
+        if (extent_blocks_out)
+            *extent_blocks_out = blocks;
         return 0;
     }
     return -ENOENT;
+}
+
+static int infilfs_native_map_extent(
+    const struct infilfs_extent_disk *extents, u32 count, u64 logical,
+    u64 *physical_out, u32 *flags_out)
+{
+    return infilfs_native_map_extent_detail(
+        extents, count, logical, physical_out, flags_out, NULL, NULL);
 }
 
 static int infilfs_native_extent_append(struct infilfs_extent_disk *out,
@@ -1552,7 +1574,8 @@ static int infilfs_native_extent_append(struct infilfs_extent_disk *out,
         return 0;
     if (*count) {
         last = &out[*count - 1u];
-        if (le64_to_cpu(last->logical_block) +
+        if (!infilfs_extent_is_compressed(flags) &&
+            le64_to_cpu(last->logical_block) +
                 le32_to_cpu(last->block_count) == logical &&
             le32_to_cpu(last->flags) == flags &&
             ((flags == INFILFS_EXTENT_HOLE && physical == 0) ||
@@ -1603,8 +1626,13 @@ static int infilfs_native_replace_extent_range(
         if (start >= replace_start)
             break;
         keep_end = min_t(u64, end, replace_start);
+        if (infilfs_extent_is_compressed(flags) && keep_end != end) {
+            ret = -EOPNOTSUPP;
+            goto fail;
+        }
         ret = infilfs_native_extent_append(out, capacity, &count, start,
-            flags == INFILFS_EXTENT_NORMAL ? physical : 0,
+            infilfs_extent_kind(flags) == INFILFS_EXTENT_NORMAL ?
+                physical : 0,
             (u32)(keep_end - start), flags);
         if (ret)
             goto fail;
@@ -1633,8 +1661,12 @@ static int infilfs_native_replace_extent_range(
         if (end <= replace_end)
             continue;
         keep_start = max_t(u64, start, replace_end);
+        if (infilfs_extent_is_compressed(flags) && keep_start != start) {
+            ret = -EOPNOTSUPP;
+            goto fail;
+        }
         ret = infilfs_native_extent_append(out, capacity, &count, keep_start,
-            flags == INFILFS_EXTENT_NORMAL ?
+            infilfs_extent_kind(flags) == INFILFS_EXTENT_NORMAL ?
                 physical + (keep_start - start) : 0,
             (u32)(end - keep_start), flags);
         if (ret)
@@ -1670,14 +1702,29 @@ static int infilfs_native_release_replaced_extents(
         u64 physical;
         int ret;
 
-        if (le32_to_cpu(extents[i].flags) != INFILFS_EXTENT_NORMAL ||
-            extent_end <= replace_start || logical >= replace_end)
-            continue;
-        first = max_t(u64, logical, replace_start);
-        last = min_t(u64, extent_end, replace_end);
-        physical = le64_to_cpu(extents[i].physical_block) + first - logical;
-        ret = infilfs_ns_free_unshared_run(pending, owner_id, physical,
-                                           last - first);
+        {
+            u32 flags = le32_to_cpu(extents[i].flags);
+            u32 logical_blocks = le32_to_cpu(extents[i].block_count);
+
+            if (infilfs_extent_kind(flags) != INFILFS_EXTENT_NORMAL ||
+                extent_end <= replace_start || logical >= replace_end)
+                continue;
+            first = max_t(u64, logical, replace_start);
+            last = min_t(u64, extent_end, replace_end);
+            if (infilfs_extent_is_compressed(flags)) {
+                if (first != logical || last != extent_end)
+                    return -EOPNOTSUPP;
+                physical = le64_to_cpu(extents[i].physical_block);
+                ret = infilfs_ns_free_unshared_run(
+                    pending, owner_id, physical,
+                    infilfs_extent_physical_blocks(logical_blocks, flags));
+            } else {
+                physical = le64_to_cpu(extents[i].physical_block) +
+                    first - logical;
+                ret = infilfs_ns_free_unshared_run(
+                    pending, owner_id, physical, last - first);
+            }
+        }
         if (ret)
             return ret;
     }
