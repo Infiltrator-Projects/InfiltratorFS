@@ -20,13 +20,12 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: native-kernel-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   kernel-module:
     name: Build and qualify out-of-tree VFS module
+    concurrency:
+      group: native-kernel-hosted-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-24.04
     steps:
       - name: Check out source
@@ -1275,6 +1274,9 @@ jobs:
         run: echo 'Native module compiled successfully; runtime load/mount skipped because matching hosted-runner kernel headers were unavailable.'
   local-kernel-compile:
     name: Local running-kernel compile qualification
+    concurrency:
+      group: native-kernel-local-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: linux-native
     timeout-minutes: 20
     steps:
