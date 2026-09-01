@@ -73,6 +73,8 @@ test -s "$gnome_disks_patch"
 grep -Fq 'BD_FS_TECH_INFILTRATORFS' "$libblockdev_patch"
 grep -Fq 'mkfs.infiltratorfs' "$libblockdev_patch"
 grep -Fq '"--force"' "$libblockdev_patch"
+grep -Fq '"--wipe-only"' "$libblockdev_patch"
+grep -Fq 'bd_fs_clean' "$libblockdev_patch"
 grep -Fq 'options->label' "$libblockdev_patch"
 grep -Fq 'GDU_OTHER_FS_TYPE_INFILTRATORFS' "$gnome_disks_patch"
 grep -Fq '"infiltratorfs"' "$gnome_disks_patch"
@@ -101,6 +103,8 @@ grep -Fq 'src/disks/gduwindow.c' "$noble_gnome_patch"
 grep -Fq 'src/disks/gduvolumegrid.c' "$noble_gnome_patch"
 grep -Fq 'InfiltratorFS (format %s)' "$noble_gnome_patch"
 grep -Fq 'BD_FS_TECH_INFILTRATORFS' "$noble_libblockdev_patch"
+grep -Fq '"--wipe-only"' "$noble_libblockdev_patch"
+grep -Fq 'bd_fs_clean' "$noble_libblockdev_patch"
 
 # Mintstick is patched from its locally installed stock files.  Exercise the
 # exact upstream anchors so drift fails in CI rather than on a user's desktop.
