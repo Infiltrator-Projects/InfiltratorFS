@@ -92,6 +92,7 @@ for file in Makefile infiltratorfs.c infiltratorfs_format.h \
             infiltratorfs_defrag.inc infiltratorfs_ioctl.h; do
     install -m 0644 "kernel/$file" "$dkms_root/$file"
 done
+install -m 0644 "include/infilfs/iac1.h" "$dkms_root/iac1.h"
 cat > "$dkms_root/dkms.conf" <<EOF
 PACKAGE_NAME="infiltratorfs"
 PACKAGE_VERSION="${package_version}"
@@ -286,6 +287,7 @@ for required in \
     "usr/src/infiltratorfs-${package_version}/dkms.conf$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs.c$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_format.h$" \
+    "usr/src/infiltratorfs-${package_version}/iac1.h$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_allocation_map.inc$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_allocation_publish.inc$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_parallel_alloc.inc$" \
@@ -381,7 +383,7 @@ verify_installer() {
         packaging/build-linux-packages.sh packaging/infiltratorfs-os-integration \
         packaging/patch-mintstick.py \
         src/infiltratr-common/CMakeLists.txt kernel/Makefile kernel/infiltratorfs.c \
-        kernel/infiltratorfs_format.h kernel/infiltratorfs_allocation_map.inc \
+        kernel/infiltratorfs_format.h include/infilfs/iac1.h kernel/infiltratorfs_allocation_map.inc \
         kernel/infiltratorfs_allocation_publish.inc kernel/infiltratorfs_rw.inc \
         kernel/infiltratorfs_parallel_alloc.inc \
         kernel/infiltratorfs_rw_legacy.inc kernel/infiltratorfs_rw_data.inc \
