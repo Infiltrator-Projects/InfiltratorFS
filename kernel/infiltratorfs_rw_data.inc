@@ -4096,11 +4096,12 @@ static int infilfs_native_stage_compression_candidate(
     u64 *data_start_out, u32 *extent_flags_out)
 {
     size_t plain_bytes;
-    int bound;
+    size_t bound = 0;
     u8 *compressed = NULL;
+    u8 *candidate = NULL;
     u8 *stored = NULL;
-    void *workmem = NULL;
-    int compressed_bytes = 0;
+    struct infs_iac1_scratch *scratch = NULL;
+    size_t compressed_bytes = 0;
     u32 stored_blocks = 0;
     u64 data_start = 0;
     u32 i;
@@ -4115,27 +4116,26 @@ static int infilfs_native_stage_compression_candidate(
         logical_blocks >= 2u &&
         logical_blocks <= INFILFS_COMPRESSION_CLUSTER_BLOCKS &&
         (le64_to_cpu(pending->tx.next_sb.incompat_flags) &
-         INFILFS_INCOMPAT_COMPRESSED_EXTENTS) != 0) {
-        bound = LZ4_compressBound(plain_bytes);
-        if (bound > 0) {
-            compressed = kvmalloc((size_t)bound, GFP_NOFS);
-            workmem = kvmalloc(LZ4_MEM_COMPRESS, GFP_NOFS);
-            if (!compressed || !workmem) {
-                ret = -ENOMEM;
-                goto out;
-            }
-            compressed_bytes = LZ4_compress_default(
-                (const char *)plain, (char *)compressed,
-                (int)plain_bytes, bound, workmem);
-            if (compressed_bytes > 0 &&
-                (u32)compressed_bytes <=
-                    INFILFS_EXTENT_STORED_BYTES_MAX) {
-                stored_blocks = DIV_ROUND_UP(
-                    (u32)compressed_bytes,
-                    (u32)INFILFS_DISK_BLOCK_SIZE);
-                if (stored_blocks >= logical_blocks)
-                    stored_blocks = 0;
-            }
+         INFILFS_INCOMPAT_COMPRESSED_EXTENTS) != 0 &&
+        infs_iac1_should_attempt(plain, plain_bytes)) {
+        bound = infs_iac1_bound(plain_bytes);
+        compressed = kvmalloc(bound, GFP_NOFS);
+        candidate = kvmalloc(bound, GFP_NOFS);
+        scratch = kvmalloc(sizeof(*scratch), GFP_NOFS);
+        if (!compressed || !candidate || !scratch) {
+            ret = -ENOMEM;
+            goto out;
+        }
+        compressed_bytes = infs_iac1_compress(
+            plain, plain_bytes, compressed, bound,
+            candidate, bound, scratch);
+        if (compressed_bytes &&
+            compressed_bytes <= INFILFS_EXTENT_STORED_BYTES_MAX) {
+            stored_blocks = DIV_ROUND_UP(
+                (u32)compressed_bytes,
+                (u32)INFILFS_DISK_BLOCK_SIZE);
+            if (stored_blocks >= logical_blocks)
+                stored_blocks = 0;
         }
     }
 
@@ -4143,18 +4143,13 @@ static int infilfs_native_stage_compression_candidate(
         size_t stored_span =
             (size_t)stored_blocks * INFILFS_DISK_BLOCK_SIZE;
 
-        /*
-         * A pre-lock reservation describes the uncompressed logical run.
-         * Once compression wins, release it before claiming the smaller
-         * physical run so the reservation map never retains phantom blocks.
-         */
         infilfs_parallel_release_reservation(inode->i_sb, reservation);
         stored = kvzalloc(stored_span, GFP_NOFS);
         if (!stored) {
             ret = -ENOMEM;
             goto out;
         }
-        memcpy(stored, compressed, (size_t)compressed_bytes);
+        memcpy(stored, compressed, compressed_bytes);
         ret = infilfs_native_alloc_data_exact_reserved(
             pending, stored_blocks, preferred, workload,
             NULL, &data_start);
@@ -4168,7 +4163,7 @@ static int infilfs_native_stage_compression_candidate(
                 goto out;
         }
         *extent_flags_out = infilfs_extent_compressed_flags(
-            INFILFS_COMPRESSION_LZ4, (u32)compressed_bytes);
+            INFILFS_COMPRESSION_IAC1, (u32)compressed_bytes);
     } else {
         ret = infilfs_native_alloc_data_exact_reserved(
             pending, logical_blocks, preferred, workload,
@@ -4188,7 +4183,8 @@ static int infilfs_native_stage_compression_candidate(
     ret = 0;
 out:
     kvfree(stored);
-    kvfree(workmem);
+    kvfree(scratch);
+    kvfree(candidate);
     kvfree(compressed);
     return ret;
 }
@@ -4308,7 +4304,7 @@ generic_extent_write:
     start_block = pos >> INFILFS_DISK_BLOCK_SHIFT;
     end_block = (request_end - 1u) >> INFILFS_DISK_BLOCK_SHIFT;
     /*
-     * A compressed extent is one indivisible LZ4 stream.  If this write
+     * A compressed extent is one indivisible bounded codec stream.  If this write
      * touches any logical block inside one, expand the CoW replacement to the
      * complete bounded compression cluster.  Untouched logical blocks are
      * copied forward below, so application-visible write semantics do not
