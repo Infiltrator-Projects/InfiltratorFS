@@ -1334,34 +1334,42 @@ int infs_windows_bridge_start(struct infs_volume *volume, HWND owner,
         return 0;
     }
 
+    /*
+     * The manager runs elevated so it can open raw partitions. A DOS-device
+     * alias created by that elevated process can be invisible to the normal
+     * unelevated Explorer process because Windows keeps per-logon/UAC DOS
+     * device namespaces. Treat the drive letter as an optional convenience,
+     * never as the projection itself. The ProjFS virtualization root is the
+     * authoritative Explorer endpoint and is accessible in either token.
+     */
+    int have_drive_alias = 0;
     if (_snwprintf_s(g_bridge.dos_target,
                      sizeof(g_bridge.dos_target) /
                          sizeof(g_bridge.dos_target[0]),
-                     _TRUNCATE, L"\\??\\%s", g_bridge.root) < 0 ||
-        !DefineDosDeviceW(DDD_RAW_TARGET_PATH, g_bridge.drive,
-                          g_bridge.dos_target)) {
-        DWORD error = GetLastError();
-        infs_windows_bridge_stop();
-        show_bridge_error(owner, L"Assign Windows drive letter",
-                          HRESULT_FROM_WIN32(error));
-        return 0;
+                     _TRUNCATE, L"\\??\\%s", g_bridge.root) >= 0 &&
+        DefineDosDeviceW(DDD_RAW_TARGET_PATH, g_bridge.drive,
+                         g_bridge.dos_target)) {
+        have_drive_alias = 1;
+    } else {
+        g_bridge.drive[0] = L'\0';
+        g_bridge.dos_target[0] = L'\0';
     }
 
     g_bridge.active = 1;
-    if (drive_out && drive_out_count)
-        wcsncpy_s(drive_out, drive_out_count, g_bridge.drive, _TRUNCATE);
+    if (drive_out && drive_out_count) {
+        if (have_drive_alias)
+            wcsncpy_s(drive_out, drive_out_count, g_bridge.drive, _TRUNCATE);
+        else
+            drive_out[0] = L'\0';
+    }
 
     wchar_t no_explorer[8] = {0};
     DWORD no_explorer_length = GetEnvironmentVariableW(
         L"INFILTRATORFS_BRIDGE_NO_EXPLORER", no_explorer,
         (DWORD)(sizeof(no_explorer) / sizeof(no_explorer[0])));
-    if (!no_explorer_length) {
-        wchar_t explorer_path[4] = {
-            g_bridge.drive[0], L':', L'\\', L'\0'
-        };
-        ShellExecuteW(owner, L"open", explorer_path,
+    if (!no_explorer_length)
+        ShellExecuteW(owner, L"open", g_bridge.root,
                       NULL, NULL, SW_SHOWNORMAL);
-    }
     return 1;
 }
 
@@ -1397,5 +1405,13 @@ void infs_windows_bridge_stop(void)
 int infs_windows_bridge_active(void)
 {
     return g_bridge.active;
+}
+
+int infs_windows_bridge_root(wchar_t *root_out, size_t root_out_count)
+{
+    if (!g_bridge.active || !root_out || !root_out_count)
+        return 0;
+    wcsncpy_s(root_out, root_out_count, g_bridge.root, _TRUNCATE);
+    return root_out[0] != L'\0';
 }
 #endif
