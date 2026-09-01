@@ -19,6 +19,8 @@
 #include <wchar.h>
 
 #define BRIDGE_READ_CHUNK (4u * 1024u * 1024u)
+#define BRIDGE_IDLE_FLUSH_MS 1200u
+#define BRIDGE_PROVIDER_THREADS 4u
 
 #define BRIDGE_NOTIFY_PERSIST_MASK ( \
     PRJ_NOTIFY_FILE_OVERWRITTEN | \
@@ -69,12 +71,60 @@ struct bridge_state {
     CRITICAL_SECTION lock;
     int lock_ready;
     int active;
+    HANDLE flush_timer;
+    ULONGLONG last_mutation_tick;
+    int publish_pending;
+    struct infs_windows_bridge_stats stats;
     struct bridge_enum *enums;
     struct bridge_alias *aliases;
     struct bridge_identity *identities;
 };
 
 static struct bridge_state g_bridge;
+
+static infs_status bridge_publish_locked(void)
+{
+    if (!g_bridge.publish_pending || !g_bridge.volume)
+        return INFS_STATUS_OK;
+
+    infs_status status = infs_volume_sync(g_bridge.volume);
+    if (status == INFS_STATUS_OK) {
+        g_bridge.publish_pending = 0;
+        g_bridge.stats.publish_count++;
+    }
+    return status;
+}
+
+static infs_status bridge_note_mutation_locked(void)
+{
+    g_bridge.publish_pending = 1;
+    g_bridge.last_mutation_tick = GetTickCount64();
+
+    /*
+     * The timer normally coalesces a burst of Explorer operations into one
+     * checkpoint publication. If timer creation was unavailable, preserve the
+     * old durability behaviour rather than leaving mutations pending.
+     */
+    if (!g_bridge.flush_timer)
+        return bridge_publish_locked();
+    return INFS_STATUS_OK;
+}
+
+static VOID CALLBACK bridge_idle_flush(PVOID context, BOOLEAN fired)
+{
+    (void)context;
+    (void)fired;
+    if (!g_bridge.lock_ready)
+        return;
+
+    EnterCriticalSection(&g_bridge.lock);
+    if (g_bridge.active && g_bridge.publish_pending) {
+        ULONGLONG now = GetTickCount64();
+        if (now - g_bridge.last_mutation_tick >= BRIDGE_IDLE_FLUSH_MS)
+            (void)bridge_publish_locked();
+    }
+    LeaveCriticalSection(&g_bridge.lock);
+}
 
 typedef HRESULT (WINAPI *bridge_prj_mark_directory_fn)(
     PCWSTR, PCWSTR, const PRJ_PLACEHOLDER_VERSION_INFO *, const GUID *);
@@ -859,16 +909,36 @@ static infs_status bridge_sync_local_file(PCWSTR relative)
     if (input == INVALID_HANDLE_VALUE)
         return INFS_STATUS_IO_ERROR;
 
-    infs_status status = bridge_create_empty(path, 0);
-    if (status == INFS_STATUS_OK)
-        status = infs_truncate_file(g_bridge.volume, path, 0);
+    LARGE_INTEGER local_length;
+    if (!GetFileSizeEx(input, &local_length) || local_length.QuadPart < 0) {
+        CloseHandle(input);
+        return INFS_STATUS_IO_ERROR;
+    }
+
+    struct infs_attributes existing;
+    memset(&existing, 0, sizeof(existing));
+    infs_status status =
+        infs_get_attributes(g_bridge.volume, path, &existing);
+    uint64_t old_size = 0;
+    if (status == INFS_STATUS_NOT_FOUND) {
+        status = bridge_create_empty(path, 0);
+    } else if (status == INFS_STATUS_OK) {
+        if (existing.object_type == INFS_OBJECT_DIRECTORY) {
+            CloseHandle(input);
+            return INFS_STATUS_INVALID_ARGUMENT;
+        }
+        old_size = existing.logical_size;
+    }
     if (status != INFS_STATUS_OK) {
         CloseHandle(input);
         return status;
     }
 
-    uint8_t *buffer = malloc(BRIDGE_READ_CHUNK);
-    if (!buffer) {
+    uint8_t *local_buffer = malloc(BRIDGE_READ_CHUNK);
+    uint8_t *old_buffer = malloc(BRIDGE_READ_CHUNK);
+    if (!local_buffer || !old_buffer) {
+        free(local_buffer);
+        free(old_buffer);
         CloseHandle(input);
         return INFS_STATUS_NO_MEMORY;
     }
@@ -876,22 +946,87 @@ static infs_status bridge_sync_local_file(PCWSTR relative)
     uint64_t offset = 0;
     for (;;) {
         DWORD got = 0;
-        if (!ReadFile(input, buffer, BRIDGE_READ_CHUNK, &got, NULL)) {
+        if (!ReadFile(input, local_buffer, BRIDGE_READ_CHUNK, &got, NULL)) {
             status = INFS_STATUS_IO_ERROR;
             break;
         }
         if (!got)
             break;
-        int64_t written = infs_write_file_buffered(
-            g_bridge.volume, path, buffer, got, offset);
-        if (written != (int64_t)got) {
-            status = written < 0 ? (infs_status)written :
-                                   INFS_STATUS_IO_ERROR;
-            break;
+
+        size_t old_available = 0;
+        if (offset < old_size) {
+            uint64_t remaining = old_size - offset;
+            size_t wanted = got;
+            if (remaining < wanted)
+                wanted = (size_t)remaining;
+            int64_t read = infs_read_file(
+                g_bridge.volume, path, old_buffer, wanted, offset);
+            if (read < 0 || (size_t)read != wanted) {
+                status = read < 0 ? (infs_status)read :
+                                    INFS_STATUS_IO_ERROR;
+                break;
+            }
+            old_available = wanted;
         }
+
+        g_bridge.stats.bytes_examined += got;
+
+        /*
+         * ProjFS exposes completed local file contents rather than native
+         * byte-range write callbacks. Compare at filesystem-block granularity
+         * and write back only changed runs. A 4 KiB edit of a multi-gigabyte
+         * file therefore becomes a small CoW mutation instead of a whole-file
+         * rewrite.
+         */
+        size_t cursor = 0;
+        while (cursor < got) {
+            size_t span = INFS_BLOCK_SIZE;
+            if (span > (size_t)got - cursor)
+                span = (size_t)got - cursor;
+
+            int changed =
+                cursor + span > old_available ||
+                memcmp(local_buffer + cursor, old_buffer + cursor, span) != 0;
+            if (!changed) {
+                cursor += span;
+                continue;
+            }
+
+            size_t run_start = cursor;
+            cursor += span;
+            while (cursor < got) {
+                span = INFS_BLOCK_SIZE;
+                if (span > (size_t)got - cursor)
+                    span = (size_t)got - cursor;
+                changed =
+                    cursor + span > old_available ||
+                    memcmp(local_buffer + cursor,
+                           old_buffer + cursor, span) != 0;
+                if (!changed)
+                    break;
+                cursor += span;
+            }
+
+            size_t run_length = cursor - run_start;
+            int64_t written = infs_write_file_buffered(
+                g_bridge.volume, path, local_buffer + run_start,
+                run_length, offset + run_start);
+            if (written != (int64_t)run_length) {
+                status = written < 0 ? (infs_status)written :
+                                       INFS_STATUS_IO_ERROR;
+                break;
+            }
+            g_bridge.stats.bytes_written += run_length;
+        }
+        if (status != INFS_STATUS_OK)
+            break;
         offset += got;
     }
-    free(buffer);
+    free(local_buffer);
+    free(old_buffer);
+
+    if (status == INFS_STATUS_OK && old_size > offset)
+        status = infs_truncate_file(g_bridge.volume, path, offset);
 
     FILETIME creation_time, access_time, write_time;
     if (status == INFS_STATUS_OK &&
@@ -911,8 +1046,11 @@ static infs_status bridge_sync_local_file(PCWSTR relative)
         status = infs_set_times(g_bridge.volume, path, &update);
     }
     CloseHandle(input);
-    if (status == INFS_STATUS_OK)
-        status = infs_volume_sync(g_bridge.volume);
+
+    if (status == INFS_STATUS_OK) {
+        g_bridge.stats.files_imported++;
+        status = bridge_note_mutation_locked();
+    }
     return status;
 }
 
@@ -939,6 +1077,9 @@ static infs_status bridge_import_local_tree(PCWSTR relative)
         return bridge_sync_local_file(relative);
 
     infs_status status = bridge_create_empty(path, 1);
+    if (status != INFS_STATUS_OK)
+        return status;
+    status = bridge_note_mutation_locked();
     if (status != INFS_STATUS_OK)
         return status;
 
@@ -979,8 +1120,6 @@ static infs_status bridge_import_local_tree(PCWSTR relative)
     FindClose(find);
     if (status == INFS_STATUS_OK && error != ERROR_NO_MORE_FILES)
         status = INFS_STATUS_IO_ERROR;
-    if (status == INFS_STATUS_OK)
-        status = infs_volume_sync(g_bridge.volume);
     return status;
 }
 
@@ -1027,7 +1166,7 @@ static HRESULT CALLBACK bridge_notification(
     case PRJ_NOTIFICATION_NEW_FILE_CREATED:
         status = bridge_create_empty(source, is_directory ? 1 : 0);
         if (status == INFS_STATUS_OK)
-            status = infs_volume_sync(g_bridge.volume);
+            status = bridge_note_mutation_locked();
         operation_parameters->PostCreate.NotificationMask =
             BRIDGE_NOTIFY_PERSIST_MASK;
         break;
@@ -1062,7 +1201,7 @@ static HRESULT CALLBACK bridge_notification(
         if (status == INFS_STATUS_OK) {
             if (have_current)
                 bridge_forget_identity_prefix(current_relative);
-            status = infs_volume_sync(g_bridge.volume);
+            status = bridge_note_mutation_locked();
         }
         break;
 
@@ -1079,7 +1218,7 @@ static HRESULT CALLBACK bridge_notification(
             if (status == INFS_STATUS_OK) {
                 if (have_current)
                     bridge_forget_identity_prefix(current_relative);
-                status = infs_volume_sync(g_bridge.volume);
+                status = bridge_note_mutation_locked();
             }
         } else if (destination_file_name && *destination_file_name) {
             char destination[INFS_PATH_MAX + 1u];
@@ -1097,7 +1236,7 @@ static HRESULT CALLBACK bridge_notification(
                                               destination_file_name);
                 operation_parameters->FileRenamed.NotificationMask =
                     BRIDGE_NOTIFY_PERSIST_MASK;
-                status = infs_volume_sync(g_bridge.volume);
+                status = bridge_note_mutation_locked();
             }
         }
         break;
@@ -1117,7 +1256,7 @@ static HRESULT CALLBACK bridge_notification(
                 }
                 status = infs_link_file(g_bridge.volume, source, destination);
                 if (status == INFS_STATUS_OK)
-                    status = infs_volume_sync(g_bridge.volume);
+                    status = bridge_note_mutation_locked();
             }
         }
         break;
@@ -1321,8 +1460,8 @@ int infs_windows_bridge_start(struct infs_volume *volume, HWND owner,
 
     PRJ_STARTVIRTUALIZING_OPTIONS options;
     memset(&options, 0, sizeof(options));
-    options.PoolThreadCount = 1;
-    options.ConcurrentThreadCount = 1;
+    options.PoolThreadCount = BRIDGE_PROVIDER_THREADS;
+    options.ConcurrentThreadCount = BRIDGE_PROVIDER_THREADS;
     options.NotificationMappings = &notification;
     options.NotificationMappingsCount = 1;
 
@@ -1356,6 +1495,12 @@ int infs_windows_bridge_start(struct infs_volume *volume, HWND owner,
     }
 
     g_bridge.active = 1;
+    if (!CreateTimerQueueTimer(
+            &g_bridge.flush_timer, NULL, bridge_idle_flush, NULL,
+            BRIDGE_IDLE_FLUSH_MS, BRIDGE_IDLE_FLUSH_MS,
+            WT_EXECUTEDEFAULT)) {
+        g_bridge.flush_timer = NULL;
+    }
     if (drive_out && drive_out_count) {
         if (have_drive_alias)
             wcsncpy_s(drive_out, drive_out_count, g_bridge.drive, _TRUNCATE);
@@ -1387,10 +1532,15 @@ void infs_windows_bridge_stop(void)
         g_bridge.context = NULL;
     }
 
+    if (g_bridge.flush_timer) {
+        DeleteTimerQueueTimer(NULL, g_bridge.flush_timer,
+                              INVALID_HANDLE_VALUE);
+        g_bridge.flush_timer = NULL;
+    }
+
     if (g_bridge.lock_ready) {
         EnterCriticalSection(&g_bridge.lock);
-        if (g_bridge.volume)
-            (void)infs_volume_sync(g_bridge.volume);
+        (void)bridge_publish_locked();
         bridge_free_enums();
         LeaveCriticalSection(&g_bridge.lock);
         DeleteCriticalSection(&g_bridge.lock);
@@ -1400,6 +1550,17 @@ void infs_windows_bridge_stop(void)
         remove_tree(g_bridge.root);
 
     memset(&g_bridge, 0, sizeof(g_bridge));
+}
+
+int infs_windows_bridge_get_stats(
+    struct infs_windows_bridge_stats *stats)
+{
+    if (!stats || !g_bridge.lock_ready)
+        return 0;
+    EnterCriticalSection(&g_bridge.lock);
+    *stats = g_bridge.stats;
+    LeaveCriticalSection(&g_bridge.lock);
+    return 1;
 }
 
 int infs_windows_bridge_active(void)

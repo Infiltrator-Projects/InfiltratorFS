@@ -6,6 +6,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #include "infilfs/volume.h"
 
@@ -21,11 +22,19 @@
  * modifications are committed back on close. Explorer access does not depend
  * on the DOS alias, which may live in a different UAC device namespace.
  */
+struct infs_windows_bridge_stats {
+    uint64_t files_imported;
+    uint64_t bytes_examined;
+    uint64_t bytes_written;
+    uint64_t publish_count;
+};
+
 int infs_windows_bridge_start(struct infs_volume *volume, HWND owner,
                               wchar_t *drive_out, size_t drive_out_count);
 void infs_windows_bridge_stop(void);
 int infs_windows_bridge_active(void);
 int infs_windows_bridge_root(wchar_t *root_out, size_t root_out_count);
+int infs_windows_bridge_get_stats(struct infs_windows_bridge_stats *stats);
 
 #endif
 #endif

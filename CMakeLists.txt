@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.20)
-project(InfiltratorFS VERSION 0.18.32 LANGUAGES C)
+project(InfiltratorFS VERSION 0.18.33 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -57,7 +57,7 @@ FetchContent_MakeAvailable(infilfs_lz4)
 
 function(infilfs_enable_warnings target)
     if(MSVC)
-        target_compile_options(${target} PRIVATE /W4)
+        target_compile_options(${target} PRIVATE /W4 /utf-8)
     else()
         target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
     endif()
@@ -203,7 +203,7 @@ if(WIN32)
         ${CMAKE_CURRENT_BINARY_DIR}/infiltratorfs-windows-version.rc)
     target_include_directories(infiltratorfs-windows PRIVATE tools/windows)
     target_link_libraries(infiltratorfs-windows PRIVATE
-        infilfs_windows_bridge comdlg32 comctl32)
+        infilfs_windows_bridge comdlg32 comctl32 dwmapi uxtheme advapi32)
     target_compile_definitions(infiltratorfs-windows PRIVATE
         INFILFS_VERSION_W=L\"${PROJECT_VERSION}\")
 

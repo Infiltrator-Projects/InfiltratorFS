@@ -18,6 +18,8 @@
 
 static const char windows_payload[] = "windows-projfs-write\n";
 static const char edited_linux_payload[] = "windows-edited-linux-file\n";
+#define DIRTY_RANGE_FILE_SIZE (8u * 1024u * 1024u)
+#define DIRTY_RANGE_OFFSET (4u * 1024u * 1024u)
 
 static int fail(const wchar_t *message)
 {
@@ -57,6 +59,26 @@ static int read_windows_file(const wchar_t *path,
     CloseHandle(file);
     if (okay && size_out)
         *size_out = got;
+    return okay;
+}
+
+static int write_windows_range(const wchar_t *path,
+                               uint64_t offset,
+                               const void *data, DWORD size)
+{
+    HANDLE file = CreateFileW(path, GENERIC_WRITE | GENERIC_READ,
+                              FILE_SHARE_READ, NULL, OPEN_EXISTING,
+                              FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file == INVALID_HANDLE_VALUE)
+        return 0;
+    LARGE_INTEGER position;
+    position.QuadPart = (LONGLONG)offset;
+    DWORD written = 0;
+    int okay = SetFilePointerEx(file, position, NULL, FILE_BEGIN) &&
+               WriteFile(file, data, size, &written, NULL) &&
+               written == size &&
+               FlushFileBuffers(file);
+    CloseHandle(file);
     return okay;
 }
 
@@ -109,6 +131,14 @@ static int run_windows_client(const wchar_t *root_arg)
     if (!write_windows_file(path, edited_linux_payload,
                             (DWORD)(sizeof(edited_linux_payload) - 1u)))
         return fail(L"Edit Linux-created file through Windows bridge");
+
+    _snwprintf_s(path, sizeof(path) / sizeof(path[0]), _TRUNCATE,
+                 L"%lsdirty-range.bin", root);
+    uint8_t dirty[INFS_BLOCK_SIZE];
+    memset(dirty, 0x5a, sizeof(dirty));
+    if (!write_windows_range(path, DIRTY_RANGE_OFFSET,
+                             dirty, (DWORD)sizeof(dirty)))
+        return fail(L"Edit one 4 KiB range in an existing large file");
 
     _snwprintf_s(path, sizeof(path) / sizeof(path[0]), _TRUNCATE, L"%lswindows-dir", root);
     if (!CreateDirectoryW(path, NULL))
@@ -251,6 +281,35 @@ int wmain(int argc, wchar_t **argv)
         return 1;
     }
 
+    if (infs_create_file(&volume, "/dirty-range.bin", NULL) !=
+        INFS_STATUS_OK) {
+        infs_volume_close(&volume);
+        return fail(L"Create dirty-range qualification file");
+    }
+    uint8_t *seed = malloc(256u * 1024u);
+    if (!seed) {
+        infs_volume_close(&volume);
+        return 1;
+    }
+    for (size_t i = 0; i < 256u * 1024u; ++i)
+        seed[i] = (uint8_t)((i * 37u + 11u) & 0xffu);
+    for (uint64_t offset = 0; offset < DIRTY_RANGE_FILE_SIZE;
+         offset += 256u * 1024u) {
+        int64_t written = infs_write_file_buffered(
+            &volume, "/dirty-range.bin", seed, 256u * 1024u, offset);
+        if (written != 256 * 1024) {
+            free(seed);
+            infs_volume_close(&volume);
+            return fail(L"Seed dirty-range qualification file");
+        }
+    }
+    free(seed);
+    status = infs_volume_sync(&volume);
+    if (status != INFS_STATUS_OK) {
+        infs_volume_close(&volume);
+        return fail(L"Publish dirty-range qualification file");
+    }
+
     wchar_t drive[3] = {0};
     if (!infs_windows_bridge_start(&volume, NULL, drive,
                                    sizeof(drive) / sizeof(drive[0]))) {
@@ -273,6 +332,9 @@ int wmain(int argc, wchar_t **argv)
      * The projection root must therefore work independently of the drive alias.
      */
     int client_status = run_external_client(root);
+    struct infs_windows_bridge_stats bridge_stats;
+    memset(&bridge_stats, 0, sizeof(bridge_stats));
+    int have_stats = infs_windows_bridge_get_stats(&bridge_stats);
     infs_windows_bridge_stop();
     if (client_status != 0) {
         infs_volume_close(&volume);
@@ -306,6 +368,30 @@ int wmain(int argc, wchar_t **argv)
         persisted = 0;
     }
     if (!persisted) {
+        infs_volume_close(&volume);
+        return 1;
+    }
+
+    uint8_t dirty_verify[INFS_BLOCK_SIZE];
+    memset(dirty_verify, 0, sizeof(dirty_verify));
+    int64_t dirty_got = infs_read_file(
+        &volume, "/dirty-range.bin", dirty_verify,
+        sizeof(dirty_verify), DIRTY_RANGE_OFFSET);
+    if (dirty_got != (int64_t)sizeof(dirty_verify)) {
+        infs_volume_close(&volume);
+        return fail(L"Read dirty-range qualification edit");
+    }
+    for (size_t i = 0; i < sizeof(dirty_verify); ++i) {
+        if (dirty_verify[i] != 0x5a) {
+            infs_volume_close(&volume);
+            return fail(L"Dirty-range edit contents were not preserved");
+        }
+    }
+    if (!have_stats ||
+        bridge_stats.bytes_written >= UINT64_C(1024) * 1024u) {
+        fwprintf(stderr,
+                 L"FAIL: bounded edit wrote back %llu bytes (expected < 1 MiB).\n",
+                 (unsigned long long)bridge_stats.bytes_written);
         infs_volume_close(&volume);
         return 1;
     }

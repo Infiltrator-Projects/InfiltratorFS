@@ -4,6 +4,8 @@
 #define _UNICODE
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <dwmapi.h>
+#include <uxtheme.h>
 #include <winioctl.h>
 #include <commdlg.h>
 #include <commctrl.h>
@@ -24,6 +26,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
+
+#ifdef _MSC_VER
+#pragma comment(linker, "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
+#endif
 
 #ifndef INFILFS_VERSION_W
 #define INFILFS_VERSION_W L"0.9.6"
@@ -94,6 +100,75 @@ static HFONT g_title_font = NULL;
 static HFONT g_heading_font = NULL;
 static HFONT g_mono_font = NULL;
 static LONG g_copy_sequence = 0;
+static int g_dark_mode = 0;
+static COLORREF g_background_color;
+static COLORREF g_panel_color;
+static COLORREF g_text_color;
+static COLORREF g_muted_color;
+static HBRUSH g_background_brush = NULL;
+static HBRUSH g_panel_brush = NULL;
+static HIMAGELIST g_content_images = NULL;
+static int g_icon_file = -1;
+static int g_icon_folder = -1;
+static int g_icon_link = -1;
+
+static int system_prefers_dark_mode(void)
+{
+    DWORD value = 1;
+    DWORD size = sizeof(value);
+    LONG status = RegGetValueW(
+        HKEY_CURRENT_USER,
+        L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+        L"AppsUseLightTheme", RRF_RT_REG_DWORD, NULL, &value, &size);
+    return status == ERROR_SUCCESS && value == 0;
+}
+
+static void initialise_visual_theme(void)
+{
+    g_dark_mode = system_prefers_dark_mode();
+    if (g_dark_mode) {
+        g_background_color = RGB(31, 31, 31);
+        g_panel_color = RGB(43, 43, 43);
+        g_text_color = RGB(245, 245, 245);
+        g_muted_color = RGB(184, 184, 184);
+    } else {
+        g_background_color = RGB(246, 247, 249);
+        g_panel_color = RGB(255, 255, 255);
+        g_text_color = RGB(32, 33, 36);
+        g_muted_color = RGB(95, 99, 104);
+    }
+    g_background_brush = CreateSolidBrush(g_background_color);
+    g_panel_brush = CreateSolidBrush(g_panel_color);
+}
+
+static void apply_window_visual_theme(HWND hwnd)
+{
+    BOOL dark = g_dark_mode ? TRUE : FALSE;
+    DwmSetWindowAttribute(hwnd, 20, &dark, sizeof(dark));
+    SetWindowTheme(hwnd, g_dark_mode ? L"DarkMode_Explorer" : L"Explorer",
+                   NULL);
+}
+
+static void theme_control(HWND control)
+{
+    if (!control)
+        return;
+    SetWindowTheme(control,
+                   g_dark_mode ? L"DarkMode_Explorer" : L"Explorer", NULL);
+}
+
+static int add_stock_icon(HIMAGELIST list, SHSTOCKICONID stock)
+{
+    SHSTOCKICONINFO info;
+    memset(&info, 0, sizeof(info));
+    info.cbSize = sizeof(info);
+    if (FAILED(SHGetStockIconInfo(stock, SHGSI_ICON | SHGSI_SMALLICON,
+                                  &info)))
+        return -1;
+    int index = ImageList_AddIcon(list, info.hIcon);
+    DestroyIcon(info.hIcon);
+    return index;
+}
 
 static void append_activity(const wchar_t *text)
 {
@@ -220,7 +295,7 @@ static void update_target_summary(void)
                            target->infs_label : L"InfiltratorFS";
     if (target->is_image) {
         _snwprintf_s(text, sizeof(text) / sizeof(text[0]), _TRUNCATE,
-                     L"Image file\r\n%.2f GiB  •  %s",
+                     L"Image file\r\n%.2f GiB  \u2022  %s",
                      gib,
                      target->is_infiltrator ? label :
                      L"Unknown / unformatted image");
@@ -229,8 +304,8 @@ static void update_target_summary(void)
     } else if (target->is_infiltrator) {
         if (target->use_region) {
             _snwprintf_s(text, sizeof(text) / sizeof(text[0]), _TRUNCATE,
-                         L"Disk %lu  •  Partition %lu\r\n"
-                         L"%.2f GiB  •  InfiltratorFS %u.%u  •  %s",
+                         L"Disk %lu  \u2022  Partition %lu\r\n"
+                         L"%.2f GiB  \u2022  InfiltratorFS %u.%u  \u2022  %s",
                          (unsigned long)target->disk_number,
                          (unsigned long)target->partition_number,
                          gib,
@@ -239,7 +314,7 @@ static void update_target_summary(void)
                          label);
         } else {
             _snwprintf_s(text, sizeof(text) / sizeof(text[0]), _TRUNCATE,
-                         L"%s\r\n%.2f GiB  •  InfiltratorFS %u.%u  •  %s",
+                         L"%s\r\n%.2f GiB  \u2022  InfiltratorFS %u.%u  \u2022  %s",
                          target->mount_point[0] ?
                          target->mount_point : L"No drive letter",
                          gib,
@@ -250,14 +325,14 @@ static void update_target_summary(void)
         SetWindowTextW(GetDlgItem(g_main_window, IDC_LABEL), label);
     } else if (target->use_region) {
         _snwprintf_s(text, sizeof(text) / sizeof(text[0]), _TRUNCATE,
-                     L"Disk %lu  •  Partition %lu\r\n"
-                     L"%.2f GiB  •  Not currently InfiltratorFS",
+                     L"Disk %lu  \u2022  Partition %lu\r\n"
+                     L"%.2f GiB  \u2022  Not currently InfiltratorFS",
                      (unsigned long)target->disk_number,
                      (unsigned long)target->partition_number,
                      gib);
     } else {
         _snwprintf_s(text, sizeof(text) / sizeof(text[0]), _TRUNCATE,
-                     L"%s\r\n%.2f GiB  •  Not currently InfiltratorFS",
+                     L"%s\r\n%.2f GiB  \u2022  Not currently InfiltratorFS",
                      target->mount_point[0] ?
                      target->mount_point : L"No drive letter",
                      gib);
@@ -271,11 +346,11 @@ static void layout_controls(HWND hwnd)
     GetClientRect(hwnd, &rect);
     int width = rect.right - rect.left;
     int height = rect.bottom - rect.top;
-    const int margin = 20;
-    const int sidebar = 315;
-    const int gap = 18;
-    const int header_top = 16;
-    const int body_top = 92;
+    const int margin = 24;
+    const int sidebar = 330;
+    const int gap = 24;
+    const int header_top = 18;
+    const int body_top = 104;
     const int right = margin + sidebar + gap;
     int right_width = width - right - margin;
     int status_y = height - 50;
@@ -294,21 +369,21 @@ static void layout_controls(HWND hwnd)
     MoveWindow(GetDlgItem(hwnd, IDC_STORAGE_HEADING),
                margin, body_top, sidebar, 24, TRUE);
     MoveWindow(GetDlgItem(hwnd, IDC_TARGET),
-               margin, body_top + 30, sidebar, 260, TRUE);
+               margin, body_top + 32, sidebar, 250, TRUE);
     MoveWindow(GetDlgItem(hwnd, IDC_REFRESH),
                margin + sidebar - 90, body_top - 2, 90, 28, TRUE);
     MoveWindow(GetDlgItem(hwnd, IDC_TARGET_SUMMARY),
-               margin, body_top + 300, sidebar, 62, TRUE);
+               margin, body_top + 292, sidebar, 72, TRUE);
     MoveWindow(GetDlgItem(hwnd, IDC_LABEL_CAPTION),
-               margin, body_top + 368, sidebar, 20, TRUE);
+               margin, body_top + 372, sidebar, 20, TRUE);
     MoveWindow(GetDlgItem(hwnd, IDC_LABEL),
-               margin, body_top + 392, sidebar, 28, TRUE);
+               margin, body_top + 396, sidebar, 32, TRUE);
     MoveWindow(GetDlgItem(hwnd, IDC_OPEN_IMAGE),
-               margin, body_top + 432, 102, 34, TRUE);
+               margin, body_top + 442, 102, 36, TRUE);
     MoveWindow(GetDlgItem(hwnd, IDC_OPEN),
-               margin + 108, body_top + 432, 98, 34, TRUE);
+               margin + 108, body_top + 442, 98, 36, TRUE);
     MoveWindow(GetDlgItem(hwnd, IDC_FORMAT),
-               margin + 212, body_top + 432, 103, 34, TRUE);
+               margin + 212, body_top + 442, 103, 36, TRUE);
 
     MoveWindow(GetDlgItem(hwnd, IDC_CONTENTS_HEADING),
                right, body_top, right_width, 24, TRUE);
@@ -317,23 +392,23 @@ static void layout_controls(HWND hwnd)
 
     int x = right;
     MoveWindow(GetDlgItem(hwnd, IDC_INSPECT),
-               x, body_top + 58, 82, 32, TRUE);
-    x += 90;
+               x, body_top + 60, 88, 36, TRUE);
+    x += 96;
     MoveWindow(GetDlgItem(hwnd, IDC_ADD_FILES),
-               x, body_top + 58, 102, 32, TRUE);
-    x += 110;
+               x, body_top + 60, 108, 36, TRUE);
+    x += 116;
     MoveWindow(GetDlgItem(hwnd, IDC_ADD_FOLDER),
-               x, body_top + 58, 112, 32, TRUE);
-    x += 120;
+               x, body_top + 60, 118, 36, TRUE);
+    x += 126;
     MoveWindow(GetDlgItem(hwnd, IDC_SCRUB),
-               x, body_top + 58, 112, 32, TRUE);
+               x, body_top + 60, 118, 36, TRUE);
 
     int unmount_x = right + right_width - 112;
     int mount_x = unmount_x - 148;
     MoveWindow(GetDlgItem(hwnd, IDC_MOUNT_DRIVE),
-               mount_x, body_top + 98, 140, 32, TRUE);
+               mount_x, body_top + 106, 148, 36, TRUE);
     MoveWindow(GetDlgItem(hwnd, IDC_UNMOUNT_DRIVE),
-               unmount_x, body_top + 98, 112, 32, TRUE);
+               unmount_x, body_top + 106, 112, 36, TRUE);
 
     MoveWindow(GetDlgItem(hwnd, IDC_CONTENTS),
                right, list_y, right_width, list_height, TRUE);
@@ -893,7 +968,7 @@ static void open_image_dialog(void)
                  (1024.0 * 1024.0 * 1024.0);
     if (candidate.is_infiltrator) {
         _snwprintf_s(display, sizeof(display) / sizeof(display[0]), _TRUNCATE,
-                     L"[Image • InfiltratorFS %u.%u]  %s  %.2f GiB",
+                     L"[Image \u2022 InfiltratorFS %u.%u]  %s  %.2f GiB",
                      (unsigned)candidate.format_major,
                      (unsigned)candidate.format_minor, base, gib);
     } else {
@@ -1228,13 +1303,11 @@ static int copy_host_file(const wchar_t *host_path, const char *dest_path)
     }
     free(buffer);
     CloseHandle(input);
-    if (okay) {
-        status = infs_volume_sync(&g_volume);
-        if (status != INFS_STATUS_OK) {
-            set_status_code(L"Commit staged file data", status);
-            okay = 0;
-        }
-    }
+    /*
+     * Data and namespace publication are one CoW transaction. Publishing the
+     * temporary file before the rename doubled the durability cost for every
+     * copied file without improving atomicity for sub-threshold transfers.
+     */
     if (okay) {
         status = infs_rename(&g_volume, staging, dest_path);
         if (status != INFS_STATUS_OK) {
@@ -1350,9 +1423,13 @@ static void refresh_contents(void)
                         L"Symbolic link" : L"File";
         LVITEMW item;
         memset(&item, 0, sizeof(item));
-        item.mask = LVIF_TEXT;
+        item.mask = LVIF_TEXT | LVIF_IMAGE;
         item.iItem = (int)i;
         item.pszText = name;
+        item.iImage = items[i].type == INFS_OBJECT_DIRECTORY ?
+                      g_icon_folder :
+                      items[i].type == INFS_OBJECT_SYMLINK ?
+                      g_icon_link : g_icon_file;
         int row = ListView_InsertItem(list, &item);
         if (row >= 0)
             ListView_SetItemText(list, row, 1, type);
@@ -1574,7 +1651,7 @@ static void mount_windows_drive(void)
     wchar_t message[768];
     if (drive[0]) {
         _snwprintf_s(message, sizeof(message) / sizeof(message[0]), _TRUNCATE,
-                     L"Explorer projection active. Projected folder: %s  •  "
+                     L"Explorer projection active. Projected folder: %s  \u2022  "
                      L"auxiliary drive alias: %s\\. Explorer is opened on "
                      L"the projected folder so UAC drive-namespace separation "
                      L"cannot hide the filesystem.",
@@ -1676,7 +1753,7 @@ static void show_about(void)
     _snwprintf_s(message, sizeof(message) / sizeof(message[0]), _TRUNCATE,
                  L"InfiltratorFS Manager for Windows " INFILFS_VERSION_W
                  L"\n\nInfiltratorFS implementation " INFILFS_VERSION_W
-                 L"\nDisk format: %u.%u\n\nPortable InfiltratorFS core with a native Windows storage/UI adapter.\nWindows discovery includes raw physical partitions that have no drive letter or Windows filesystem driver.\n\nDriverless Explorer bridge: Microsoft's inbox Projected File System (ProjFS) exposes an opened InfiltratorFS volume through a projected Explorer folder, with an auxiliary drive alias when Windows can expose one in the current UAC namespace. InfiltratorFS ships no custom Windows kernel driver in this mode.\n\nLicence: GPL-3.0-or-later\n\nExperimental filesystem — use backed-up or disposable media while testing.",
+                 L"\nDisk format: %u.%u\n\nPortable InfiltratorFS core with a native Windows storage/UI adapter.\nWindows discovery includes raw physical partitions that have no drive letter or Windows filesystem driver.\n\nDriverless Explorer bridge: Microsoft's inbox Projected File System (ProjFS) exposes an opened InfiltratorFS volume through a projected Explorer folder, with an auxiliary drive alias when Windows can expose one in the current UAC namespace. InfiltratorFS ships no custom Windows kernel driver in this mode.\n\nLicence: GPL-3.0-or-later\n\nExperimental filesystem \u2014 use backed-up or disposable media while testing.",
                  (unsigned)INFS_FORMAT_MAJOR,
                  (unsigned)INFS_FORMAT_MINOR);
     MessageBoxW(g_main_window, message, L"About InfiltratorFS",
@@ -1739,9 +1816,9 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message,
         g_main_window = hwnd;
         SetMenu(hwnd, create_main_menu());
 
-        g_ui_font = create_ui_font(hwnd, 9, FW_NORMAL);
-        g_title_font = create_ui_font(hwnd, 20, FW_SEMIBOLD);
-        g_heading_font = create_ui_font(hwnd, 11, FW_SEMIBOLD);
+        g_ui_font = create_ui_font(hwnd, 10, FW_NORMAL);
+        g_title_font = create_ui_font(hwnd, 22, FW_SEMIBOLD);
+        g_heading_font = create_ui_font(hwnd, 12, FW_SEMIBOLD);
         g_mono_font = CreateFontW(
             -MulDiv(9, GetDpiForWindow(hwnd), 72), 0, 0, 0, FW_NORMAL,
             FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
@@ -1752,16 +1829,16 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message,
                       WS_CHILD | WS_VISIBLE | SS_LEFT,
                       0, 0, 0, 0, hwnd, (HMENU)IDC_HEADER_TITLE, NULL, NULL);
         CreateWindowW(L"STATIC",
-                      L"Windows Volume Manager  •  Native portable-core access  •  Driverless Explorer bridge",
+                      L"Windows Volume Manager  \u2022  Native portable-core access  \u2022  Driverless Explorer bridge",
                       WS_CHILD | WS_VISIBLE | SS_LEFT,
                       0, 0, 0, 0, hwnd, (HMENU)IDC_HEADER_SUBTITLE, NULL, NULL);
 
         CreateWindowW(L"STATIC", L"Storage",
                       WS_CHILD | WS_VISIBLE | SS_LEFT,
                       0, 0, 0, 0, hwnd, (HMENU)IDC_STORAGE_HEADING, NULL, NULL);
-        HWND combo = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", L"",
+        HWND combo = CreateWindowExW(0, L"LISTBOX", L"",
                       WS_CHILD | WS_VISIBLE | WS_TABSTOP |
-                      WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
+                      WS_VSCROLL | WS_BORDER | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
                       0, 0, 0, 0, hwnd, (HMENU)IDC_TARGET, NULL, NULL);
         HWND refresh = CreateWindowW(L"BUTTON", L"Refresh",
                       WS_CHILD | WS_VISIBLE | WS_TABSTOP,
@@ -1774,8 +1851,8 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message,
         CreateWindowW(L"STATIC", L"Format label",
                       WS_CHILD | WS_VISIBLE | SS_LEFT,
                       0, 0, 0, 0, hwnd, (HMENU)IDC_LABEL_CAPTION, NULL, NULL);
-        HWND label = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"InfiltratorFS",
-                      WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
+        HWND label = CreateWindowExW(0, L"EDIT", L"InfiltratorFS",
+                      WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL,
                       0, 0, 0, 0, hwnd, (HMENU)IDC_LABEL, NULL, NULL);
         HWND open_image = CreateWindowW(L"BUTTON", L"Open Image...",
                       WS_CHILD | WS_VISIBLE | WS_TABSTOP,
@@ -1791,14 +1868,14 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message,
                       WS_CHILD | WS_VISIBLE | SS_LEFT,
                       0, 0, 0, 0, hwnd, (HMENU)IDC_CONTENTS_HEADING, NULL, NULL);
         CreateWindowW(L"STATIC",
-                      L"Root directory  •  Drag files or folders here to copy them",
+                      L"Root directory  \u2022  Drag files or folders here to copy them",
                       WS_CHILD | WS_VISIBLE | SS_LEFT,
                       0, 0, 0, 0, hwnd, (HMENU)IDC_CONTENTS_HINT, NULL, NULL);
 
-        HWND add_files = CreateWindowW(L"BUTTON", L"Add Files…",
+        HWND add_files = CreateWindowW(L"BUTTON", L"Add Files\u2026",
                       WS_CHILD | WS_VISIBLE | WS_TABSTOP,
                       0, 0, 0, 0, hwnd, (HMENU)IDC_ADD_FILES, NULL, NULL);
-        HWND add_folder = CreateWindowW(L"BUTTON", L"Add Folder…",
+        HWND add_folder = CreateWindowW(L"BUTTON", L"Add Folder\u2026",
                       WS_CHILD | WS_VISIBLE | WS_TABSTOP,
                       0, 0, 0, 0, hwnd, (HMENU)IDC_ADD_FOLDER, NULL, NULL);
         HWND inspect = CreateWindowW(L"BUTTON", L"Inspect",
@@ -1814,12 +1891,23 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message,
                       WS_CHILD | WS_VISIBLE | WS_TABSTOP,
                       0, 0, 0, 0, hwnd, (HMENU)IDC_UNMOUNT_DRIVE, NULL, NULL);
 
-        HWND list = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"",
+        HWND list = CreateWindowExW(0, WC_LISTVIEWW, L"",
                       WS_CHILD | WS_VISIBLE | WS_TABSTOP |
-                      LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS,
+                      WS_BORDER | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS,
                       0, 0, 0, 0, hwnd, (HMENU)IDC_CONTENTS, NULL, NULL);
         ListView_SetExtendedListViewStyle(
             list, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_LABELTIP);
+        ListView_SetBkColor(list, g_panel_color);
+        ListView_SetTextBkColor(list, g_panel_color);
+        ListView_SetTextColor(list, g_text_color);
+        g_content_images = ImageList_Create(
+            20, 20, ILC_COLOR32 | ILC_MASK, 3, 1);
+        if (g_content_images) {
+            g_icon_file = add_stock_icon(g_content_images, SIID_DOCNOASSOC);
+            g_icon_folder = add_stock_icon(g_content_images, SIID_FOLDER);
+            g_icon_link = add_stock_icon(g_content_images, SIID_LINK);
+            ListView_SetImageList(list, g_content_images, LVSIL_SMALL);
+        }
         LVCOLUMNW column;
         memset(&column, 0, sizeof(column));
         column.mask = LVCF_TEXT | LVCF_WIDTH | LVCF_SUBITEM;
@@ -1839,12 +1927,12 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message,
                       WS_CHILD | WS_VISIBLE | WS_TABSTOP,
                       0, 0, 0, 0, hwnd, (HMENU)IDC_ACTIVITY_CLEAR, NULL, NULL);
         HWND activity = CreateWindowExW(
-                      WS_EX_CLIENTEDGE, L"EDIT", L"",
+                      0, L"EDIT", L"",
                       WS_CHILD | WS_VISIBLE | WS_VSCROLL |
-                      ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY,
+                      WS_BORDER | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY,
                       0, 0, 0, 0, hwnd, (HMENU)IDC_ACTIVITY, NULL, NULL);
 
-        HWND status = CreateWindowExW(WS_EX_CLIENTEDGE, L"STATIC", L"Ready",
+        HWND status = CreateWindowExW(0, L"STATIC", L"Ready",
                       WS_CHILD | WS_VISIBLE | SS_LEFT | SS_CENTERIMAGE,
                       0, 0, 0, 0, hwnd, (HMENU)IDC_STATUS, NULL, NULL);
 
@@ -1864,6 +1952,19 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message,
         set_control_font(hwnd, IDC_ACTIVITY_HEADING, g_heading_font);
         set_control_font(hwnd, IDC_ACTIVITY, g_mono_font);
 
+        SendMessageW(combo, LB_SETITEMHEIGHT, 0, 28);
+        int themed_ids[] = {
+            IDC_TARGET, IDC_REFRESH, IDC_LABEL, IDC_FORMAT, IDC_OPEN_IMAGE,
+            IDC_OPEN, IDC_INSPECT, IDC_ADD_FILES, IDC_ADD_FOLDER, IDC_SCRUB,
+            IDC_MOUNT_DRIVE, IDC_UNMOUNT_DRIVE, IDC_CONTENTS,
+            IDC_ACTIVITY_CLEAR, IDC_ACTIVITY
+        };
+        for (size_t i = 0;
+             i < sizeof(themed_ids) / sizeof(themed_ids[0]); ++i)
+            theme_control(GetDlgItem(hwnd, themed_ids[i]));
+        theme_control(ListView_GetHeader(list));
+        apply_window_visual_theme(hwnd);
+
         DragAcceptFiles(hwnd, TRUE);
         layout_controls(hwnd);
         refresh_volumes();
@@ -1873,10 +1974,31 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message,
     case WM_SIZE:
         layout_controls(hwnd);
         return 0;
+    case WM_CTLCOLORSTATIC: {
+        HDC dc = (HDC)wparam;
+        HWND control = (HWND)lparam;
+        int id = GetDlgCtrlID(control);
+        SetBkMode(dc, TRANSPARENT);
+        SetTextColor(dc,
+                     id == IDC_HEADER_SUBTITLE ||
+                     id == IDC_CONTENTS_HINT ||
+                     id == IDC_TARGET_SUMMARY ||
+                     id == IDC_LABEL_CAPTION ||
+                     id == IDC_STATUS ?
+                     g_muted_color : g_text_color);
+        return (LRESULT)g_background_brush;
+    }
+    case WM_CTLCOLOREDIT:
+    case WM_CTLCOLORLISTBOX: {
+        HDC dc = (HDC)wparam;
+        SetTextColor(dc, g_text_color);
+        SetBkColor(dc, g_panel_color);
+        return (LRESULT)g_panel_brush;
+    }
     case WM_GETMINMAXINFO: {
         MINMAXINFO *limits = (MINMAXINFO *)lparam;
-        limits->ptMinTrackSize.x = 1040;
-        limits->ptMinTrackSize.y = 620;
+        limits->ptMinTrackSize.x = 1100;
+        limits->ptMinTrackSize.y = 680;
         return 0;
     }
     case WM_COMMAND:
@@ -1925,6 +2047,10 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message,
             DeleteObject(g_ui_font);
         if (g_mono_font)
             DeleteObject(g_mono_font);
+        if (g_content_images) {
+            ImageList_Destroy(g_content_images);
+            g_content_images = NULL;
+        }
         g_title_font = g_heading_font = g_ui_font = g_mono_font = NULL;
         PostQuitMessage(0);
         return 0;
@@ -1940,8 +2066,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous,
     (void)previous;
     (void)command_line;
     CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    initialise_visual_theme();
     INITCOMMONCONTROLSEX controls = {
-        sizeof(INITCOMMONCONTROLSEX), ICC_LISTVIEW_CLASSES
+        sizeof(INITCOMMONCONTROLSEX),
+        ICC_LISTVIEW_CLASSES | ICC_STANDARD_CLASSES | ICC_BAR_CLASSES
     };
     InitCommonControlsEx(&controls);
     const wchar_t class_name[] = L"InfiltratorFSWindowsTransfer";
@@ -1950,14 +2079,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous,
     wc.lpfnWndProc = window_proc;
     wc.hInstance = instance;
     wc.hCursor = LoadCursorW(NULL, IDC_ARROW);
-    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    wc.hbrBackground = g_background_brush;
     wc.lpszClassName = class_name;
     if (!RegisterClassW(&wc))
         return 1;
     HWND window = CreateWindowW(
-        class_name, L"InfiltratorFS Manager — Windows " INFILFS_VERSION_W,
+        class_name, L"InfiltratorFS Manager \u2014 Windows " INFILFS_VERSION_W,
         WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT, CW_USEDEFAULT, 1180, 760,
+        CW_USEDEFAULT, CW_USEDEFAULT, 1240, 800,
         NULL, NULL, instance, NULL);
     if (!window)
         return 1;
@@ -1968,6 +2097,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous,
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
+    if (g_panel_brush)
+        DeleteObject(g_panel_brush);
+    if (g_background_brush)
+        DeleteObject(g_background_brush);
+    g_panel_brush = g_background_brush = NULL;
     CoUninitialize();
     return (int)msg.wParam;
 }
