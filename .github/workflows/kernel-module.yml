@@ -670,6 +670,61 @@ jobs:
           PY
           cmp "$large_src" "$mountpoint/native-rw/large.bin"
 
+          # Compression mutation parity: truncate and hole-punch may split a
+          # codec cluster at their logical boundary. Exercise both while the
+          # source extents are still genuinely compressed, then verify them
+          # again after the final cold remount below.
+          compressed_mutation_src="$RUNNER_TEMP/native-compressed-mutation-source.bin"
+          compressed_truncate_expected="$RUNNER_TEMP/native-compressed-truncate-expected.bin"
+          compressed_punch_expected="$RUNNER_TEMP/native-compressed-punch-expected.bin"
+          python3 - "$compressed_mutation_src" <<'PY'
+          import sys
+          path = sys.argv[1]
+          phrase = b'InfiltratorFS compressed mutation boundary regression\n'
+          size = 2 * 1024 * 1024
+          data = (phrase * ((size + len(phrase) - 1) // len(phrase)))[:size]
+          with open(path, 'wb') as stream:
+              stream.write(data)
+          PY
+          cp "$compressed_mutation_src" "$compressed_truncate_expected"
+          cp "$compressed_mutation_src" "$compressed_punch_expected"
+          sudo dd if="$compressed_mutation_src"               of="$mountpoint/native-rw/compressed-truncate.bin"               bs=1M status=none
+          sudo dd if="$compressed_mutation_src"               of="$mountpoint/native-rw/compressed-punch.bin"               bs=1M status=none
+          for compressed_file in compressed-truncate.bin compressed-punch.bin; do
+            logical="$(stat -c '%s' "$mountpoint/native-rw/$compressed_file")"
+            allocated="$(( $(stat -c '%b' "$mountpoint/native-rw/$compressed_file") * 512 ))"
+            test "$allocated" -lt "$((logical / 2))"
+          done
+
+          compressed_truncate_size="$((41 * 4096 + 123))"
+          sudo truncate -s "$compressed_truncate_size"               "$mountpoint/native-rw/compressed-truncate.bin"
+          python3 - "$compressed_truncate_expected" "$compressed_truncate_size" <<'PY'
+          import sys
+          with open(sys.argv[1], 'r+b') as stream:
+              stream.truncate(int(sys.argv[2]))
+          PY
+          cmp "$compressed_truncate_expected"               "$mountpoint/native-rw/compressed-truncate.bin"
+          compressed_regrow_size=600000
+          sudo truncate -s "$compressed_regrow_size"               "$mountpoint/native-rw/compressed-truncate.bin"
+          python3 - "$compressed_truncate_expected" "$compressed_regrow_size" <<'PY'
+          import sys
+          with open(sys.argv[1], 'r+b') as stream:
+              stream.truncate(int(sys.argv[2]))
+          PY
+          cmp "$compressed_truncate_expected"               "$mountpoint/native-rw/compressed-truncate.bin"
+
+          compressed_punch_offset=12345
+          compressed_punch_length=700000
+          sudo fallocate -p -o "$compressed_punch_offset"               -l "$compressed_punch_length"               "$mountpoint/native-rw/compressed-punch.bin"
+          python3 - "$compressed_punch_expected"               "$compressed_punch_offset" "$compressed_punch_length" <<'PY'
+          import sys
+          path, offset, length = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+          with open(path, 'r+b') as stream:
+              stream.seek(offset)
+              stream.write(bytes(length))
+          PY
+          cmp "$compressed_punch_expected"               "$mountpoint/native-rw/compressed-punch.bin"
+
           # Native parity: extent-backed files must permit bounded random
           # overwrite without changing their length or invalidating checksums.
           sudo python3 - "$large_src" "$mountpoint/native-rw/large.bin" <<'PY'
@@ -1298,6 +1353,8 @@ jobs:
           fi
           remount_read_end="$(date +%s%N)"
           test "$remounted_sha" = "$large_source_sha"
+          cmp "$compressed_truncate_expected"               "$mountpoint/native-rw/compressed-truncate.bin"
+          cmp "$compressed_punch_expected"               "$mountpoint/native-rw/compressed-punch.bin"
           sudo python3 - "$mountpoint/native-rw/fsync-publications.bin" <<'PY'
           import os
           import sys

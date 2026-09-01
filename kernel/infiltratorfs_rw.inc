@@ -321,24 +321,46 @@ static int infilfs_native_copy_truncated_extents(
     for (i = 0; i < old_count; ++i) {
         u64 logical = le64_to_cpu(old_extents[i].logical_block);
         u64 physical = le64_to_cpu(old_extents[i].physical_block);
-        u64 extent_end = logical + le32_to_cpu(old_extents[i].block_count);
+        u32 logical_blocks = le32_to_cpu(old_extents[i].block_count);
+        u64 extent_end = logical + logical_blocks;
         u32 flags = le32_to_cpu(old_extents[i].flags);
+        u32 kind = infilfs_extent_kind(flags);
         u64 keep_end = min_t(u64, extent_end, target_blocks);
+
+        /*
+         * A compressed extent is an indivisible codec stream. The caller
+         * materializes the one boundary cluster before truncation, so seeing
+         * a partial compressed extent here means that invariant was lost.
+         */
+        if (infilfs_extent_is_compressed(flags) &&
+            logical < target_blocks && extent_end > target_blocks) {
+            ret = -EOPNOTSUPP;
+            goto fail;
+        }
 
         if (logical < target_blocks) {
             ret = infilfs_native_extent_append(
                 out, capacity, &count, logical,
-                flags == INFILFS_EXTENT_NORMAL ? physical : 0,
+                kind == INFILFS_EXTENT_NORMAL ? physical : 0,
                 (u32)(keep_end - logical), flags);
             if (ret)
                 goto fail;
         }
-        if (flags == INFILFS_EXTENT_NORMAL && extent_end > target_blocks) {
+        if (kind == INFILFS_EXTENT_NORMAL && extent_end > target_blocks) {
             u64 removed_start = max_t(u64, logical, target_blocks);
+            u64 release_start;
+            u64 release_blocks;
 
+            if (infilfs_extent_is_compressed(flags)) {
+                release_start = physical;
+                release_blocks =
+                    infilfs_extent_physical_blocks(logical_blocks, flags);
+            } else {
+                release_start = physical + removed_start - logical;
+                release_blocks = extent_end - removed_start;
+            }
             ret = infilfs_ns_free_unshared_run(
-                pending, ii->object_id, physical + removed_start - logical,
-                extent_end - removed_start);
+                pending, ii->object_id, release_start, release_blocks);
             if (ret)
                 goto fail;
         }
@@ -380,6 +402,88 @@ static int infilfs_native_verify_data_block(
     infilfs_native_block_digest(data, &actual);
     return memcmp(actual.bytes, expected.bytes, sizeof(actual.bytes)) == 0 ?
         0 : -EIO;
+}
+
+/*
+ * Convert the compressed extent containing one logical block into ordinary
+ * physical blocks inside the current transaction. The logical bytes and their
+ * SHA-256 digests do not change; only the storage representation changes.
+ *
+ * Truncate and hole-punch need this at mutation boundaries because a compressed
+ * cluster cannot be sliced by adjusting logical_block/block_count.
+ */
+static int infilfs_native_materialize_compressed_at_locked(
+    struct infilfs_native_pending *pending, struct inode *inode,
+    const struct infilfs_file_payload_disk *file,
+    struct infilfs_extent_disk **extents_inout, u32 *extent_count_inout,
+    u64 old_blocks, u64 logical)
+{
+    struct infilfs_inode_info *ii = INFILFS_I(inode);
+    struct infilfs_extent_disk *replaced = NULL;
+    u8 *data = NULL;
+    u64 physical = 0;
+    u64 extent_start = 0;
+    u64 replacement = 0;
+    u32 flags = INFILFS_EXTENT_HOLE;
+    u32 extent_blocks = 0;
+    u32 replaced_count = 0;
+    u32 i;
+    int ret;
+
+    ret = infilfs_native_map_extent_detail(
+        *extents_inout, *extent_count_inout, logical,
+        &physical, &flags, &extent_start, &extent_blocks);
+    if (ret)
+        return ret;
+    if (!infilfs_extent_is_compressed(flags))
+        return 0;
+    if (!extent_blocks || extent_start >= old_blocks ||
+        extent_blocks > old_blocks - extent_start)
+        return -EFSCORRUPTED;
+
+    data = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+    if (!data)
+        return -ENOMEM;
+    ret = infilfs_native_alloc_data_exact(
+        pending, extent_blocks, physical, &replacement);
+    if (ret)
+        goto out;
+
+    for (i = 0; i < extent_blocks; ++i) {
+        u64 block = extent_start + i;
+
+        ret = infilfs_read_compressed_logical_block(
+            inode, physical, extent_start, extent_blocks,
+            flags, block, data);
+        if (!ret)
+            ret = infilfs_native_verify_data_block(
+                inode, file, block, data);
+        if (!ret)
+            ret = infilfs_native_stage_block(
+                inode->i_sb, replacement + i, data);
+        if (ret)
+            goto out;
+    }
+
+    ret = infilfs_native_replace_extent_range(
+        *extents_inout, *extent_count_inout, old_blocks,
+        extent_start, extent_blocks, replacement, INFILFS_EXTENT_NORMAL,
+        &replaced, &replaced_count);
+    if (!ret)
+        ret = infilfs_native_release_replaced_extents(
+            pending, ii->object_id, *extents_inout, *extent_count_inout,
+            extent_start, extent_blocks);
+    if (ret)
+        goto out;
+
+    kvfree(*extents_inout);
+    *extents_inout = replaced;
+    *extent_count_inout = replaced_count;
+    replaced = NULL;
+out:
+    kvfree(replaced);
+    kfree(data);
+    return ret;
 }
 
 static int infilfs_native_translate_index_changes(
@@ -508,6 +612,19 @@ static int infilfs_native_truncate(struct inode *inode, u64 new_size)
         goto finish;
     }
 
+    /*
+     * If the truncate boundary lands inside a compressed cluster, materialize
+     * that one cluster first. Fully retained clusters stay compressed and
+     * fully discarded clusters can be released without decoding.
+     */
+    if (!was_inline && target_blocks && target_blocks < old_blocks) {
+        ret = infilfs_native_materialize_compressed_at_locked(
+            pending, inode, &working_file, &old_extents, &old_extent_count,
+            old_blocks, target_blocks - 1u);
+        if (ret)
+            goto finish;
+    }
+
     ret = infilfs_native_copy_truncated_extents(
         pending, inode, old_extents, old_extent_count, old_blocks,
         target_blocks, &new_extents, &new_extent_count);
@@ -568,7 +685,7 @@ static int infilfs_native_truncate(struct inode *inode, u64 new_size)
                                         &physical, &flags);
         if (ret)
             goto finish;
-        if (flags == INFILFS_EXTENT_NORMAL) {
+        if (infilfs_extent_kind(flags) == INFILFS_EXTENT_NORMAL) {
             struct infilfs_data_checksum_disk digest;
             struct infilfs_extent_disk *replaced = NULL;
             u32 replaced_count = 0;
@@ -694,8 +811,15 @@ static int infilfs_native_punch_partial_locked(
         return 0;
     ret = infilfs_native_map_extent(*extents_inout, *extent_count_inout,
                                     logical, &physical, &flags);
-    if (ret || flags == INFILFS_EXTENT_HOLE)
+    if (ret || infilfs_extent_kind(flags) == INFILFS_EXTENT_HOLE)
         return ret;
+    /*
+     * Boundary clusters are materialized by infilfs_native_punch_hole().
+     * Never interpret compressed payload bytes as a plain 4 KiB data block if
+     * that invariant is broken.
+     */
+    if (infilfs_extent_is_compressed(flags))
+        return -EOPNOTSUPP;
     data = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
     if (!data)
         return -ENOMEM;
@@ -843,6 +967,31 @@ static int infilfs_native_punch_hole(struct inode *inode,
         memcpy(extents, old_extents,
                (size_t)old_extent_count * sizeof(*extents));
     extent_count = old_extent_count;
+
+    /*
+     * A block-aligned punch can still begin or end in the middle of a
+     * compressed cluster. Materialize only those two boundary clusters;
+     * compressed extents wholly inside the punched range can be released
+     * directly without wasting decode/write work.
+     */
+    if (end > offset) {
+        u64 first_block = offset >> INFILFS_DISK_BLOCK_SHIFT;
+        u64 last_block = (end - 1u) >> INFILFS_DISK_BLOCK_SHIFT;
+
+        ret = infilfs_native_materialize_compressed_at_locked(
+            pending, inode, &working_file, &extents, &extent_count,
+            old_blocks, first_block);
+        if (ret)
+            goto finish;
+        if (last_block != first_block) {
+            ret = infilfs_native_materialize_compressed_at_locked(
+                pending, inode, &working_file, &extents, &extent_count,
+                old_blocks, last_block);
+            if (ret)
+                goto finish;
+        }
+    }
+
     pos = offset;
     if (pos & (INFILFS_DISK_BLOCK_SIZE - 1u)) {
         size_t within = pos & (INFILFS_DISK_BLOCK_SIZE - 1u);
