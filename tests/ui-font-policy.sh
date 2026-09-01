@@ -16,8 +16,11 @@ cmake="$root/CMakeLists.txt"
 
 for file in mb_corpo_a_cond_regular.ttf mb_corpo_s_bold.ttf mb_corpo_s_regular.ttf; do
     grep -Fq "$file" "$cmake"
-    grep -Fq "$file" "$resource"
 done
+
+grep -Fq '@INFILFS_FONT_A_COND_REGULAR_RC@' "$resource"
+grep -Fq '@INFILFS_FONT_S_BOLD_RC@' "$resource"
+grep -Fq '@INFILFS_FONT_S_REGULAR_RC@' "$resource"
 
 grep -Fq 'FcConfigAppFontAddFile' "$manager"
 grep -Fq 'MB Corpo S Title WEB' "$manager"
