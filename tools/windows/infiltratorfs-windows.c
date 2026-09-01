@@ -52,6 +52,7 @@
 #define IDC_ACTIVITY_CLEAR  1021
 #define IDC_INSPECT         1022
 #define IDC_OPEN_IMAGE      1023
+#define IDC_LABEL_CAPTION   1024
 
 #define IDM_FILE_REFRESH    2001
 #define IDM_FILE_OPEN       2002
@@ -278,7 +279,7 @@ static void layout_controls(HWND hwnd)
     const int right = margin + sidebar + gap;
     int right_width = width - right - margin;
     int status_y = height - 50;
-    int list_y = body_top + 104;
+    int list_y = body_top + 144;
     const int activity_height = 118;
     int list_height = status_y - list_y - activity_height - 58;
     if (list_height < 170)
@@ -298,6 +299,8 @@ static void layout_controls(HWND hwnd)
                margin + sidebar - 90, body_top - 2, 90, 28, TRUE);
     MoveWindow(GetDlgItem(hwnd, IDC_TARGET_SUMMARY),
                margin, body_top + 300, sidebar, 62, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_LABEL_CAPTION),
+               margin, body_top + 368, sidebar, 20, TRUE);
     MoveWindow(GetDlgItem(hwnd, IDC_LABEL),
                margin, body_top + 392, sidebar, 28, TRUE);
     MoveWindow(GetDlgItem(hwnd, IDC_OPEN_IMAGE),
@@ -328,9 +331,9 @@ static void layout_controls(HWND hwnd)
     int unmount_x = right + right_width - 112;
     int mount_x = unmount_x - 148;
     MoveWindow(GetDlgItem(hwnd, IDC_MOUNT_DRIVE),
-               mount_x, body_top + 58, 140, 32, TRUE);
+               mount_x, body_top + 98, 140, 32, TRUE);
     MoveWindow(GetDlgItem(hwnd, IDC_UNMOUNT_DRIVE),
-               unmount_x, body_top + 58, 112, 32, TRUE);
+               unmount_x, body_top + 98, 112, 32, TRUE);
 
     MoveWindow(GetDlgItem(hwnd, IDC_CONTENTS),
                right, list_y, right_width, list_height, TRUE);
@@ -1770,7 +1773,7 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message,
 
         CreateWindowW(L"STATIC", L"Format label",
                       WS_CHILD | WS_VISIBLE | SS_LEFT,
-                      20, 236, 150, 20, hwnd, NULL, NULL, NULL);
+                      0, 0, 0, 0, hwnd, (HMENU)IDC_LABEL_CAPTION, NULL, NULL);
         HWND label = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"InfiltratorFS",
                       WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
                       0, 0, 0, 0, hwnd, (HMENU)IDC_LABEL, NULL, NULL);
@@ -1847,7 +1850,7 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message,
 
         int normal_ids[] = {
             IDC_HEADER_SUBTITLE, IDC_TARGET, IDC_REFRESH, IDC_TARGET_SUMMARY,
-            IDC_LABEL, IDC_FORMAT, IDC_OPEN_IMAGE, IDC_OPEN,
+            IDC_LABEL_CAPTION, IDC_LABEL, IDC_FORMAT, IDC_OPEN_IMAGE, IDC_OPEN,
             IDC_INSPECT, IDC_ADD_FILES, IDC_ADD_FOLDER,
             IDC_SCRUB, IDC_MOUNT_DRIVE, IDC_UNMOUNT_DRIVE, IDC_CONTENTS,
             IDC_CONTENTS_HINT, IDC_ACTIVITY_HEADING, IDC_ACTIVITY_CLEAR,
