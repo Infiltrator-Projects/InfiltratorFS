@@ -84,7 +84,12 @@ jobs:
             sudo rmmod infiltratorfs 2>/dev/null || true
           }
           trap cleanup EXIT
-          sudo insmod kernel/infiltratorfs.ko
+          sudo modprobe lz4_compress 2>/dev/null || true
+          sudo modprobe lz4_decompress 2>/dev/null || true
+          if ! sudo insmod kernel/infiltratorfs.ko; then
+            sudo dmesg | tail -n 80 >&2 || true
+            exit 1
+          fi
           bash tests/native-scale-qualification.sh build-scale
 
   native-endurance-stress:
@@ -136,6 +141,11 @@ jobs:
             sudo rmmod infiltratorfs 2>/dev/null || true
           }
           trap cleanup EXIT
-          sudo insmod kernel/infiltratorfs.ko
+          sudo modprobe lz4_compress 2>/dev/null || true
+          sudo modprobe lz4_decompress 2>/dev/null || true
+          if ! sudo insmod kernel/infiltratorfs.ko; then
+            sudo dmesg | tail -n 80 >&2 || true
+            exit 1
+          fi
           bash tests/native-endurance-qualification.sh build-endurance
 
