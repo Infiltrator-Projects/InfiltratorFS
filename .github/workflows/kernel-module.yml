@@ -633,6 +633,14 @@ jobs:
             exit 1
           fi
           write_end="$(date +%s%N)"
+          large_logical="$(stat -c '%s' "$mountpoint/native-rw/large.bin")"
+          large_allocated="$(( $(stat -c '%b' "$mountpoint/native-rw/large.bin") * 512 ))"
+          printf 'Native compressed allocation: %s logical bytes, %s allocated bytes\n' \
+              "$large_logical" "$large_allocated"
+          test "$large_allocated" -lt "$large_logical"
+          # The deterministic source has a short repeating byte period. Native
+          # IAC1 should therefore win decisively rather than merely by one block.
+          test "$large_allocated" -lt "$((large_logical / 2))"
           python3 - "$write_start" "$write_end" <<'PY'
           import sys
           elapsed = (int(sys.argv[2]) - int(sys.argv[1])) / 1_000_000_000
