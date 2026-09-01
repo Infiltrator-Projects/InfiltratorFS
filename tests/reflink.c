@@ -118,7 +118,8 @@ static int bitmap_get_test(const uint8_t *bitmap, uint64_t block)
 
 static uint64_t physical_block_for(struct infs_volume *vol,
                                    struct memory_image *image,
-                                   const char *path, uint64_t logical)
+                                   const char *path, uint64_t logical,
+                                   int *compressed_out)
 {
     struct infs_lookup lookup;
     expect(infs_lookup_path(vol, path, &lookup) == INFS_STATUS_OK,
@@ -135,9 +136,16 @@ static uint64_t physical_block_for(struct infs_volume *vol,
         uint32_t blocks = infs_le32_to_cpu(ext[i].block_count);
         if (logical < first || logical - first >= blocks)
             continue;
-        expect(infs_le32_to_cpu(ext[i].flags) == INFS_EXTENT_NORMAL,
-               "expected normal extent");
-        return infs_le64_to_cpu(ext[i].physical_block) + (logical - first);
+        uint32_t flags = infs_le32_to_cpu(ext[i].flags);
+        expect((flags & INFS_EXTENT_KIND_MASK) == INFS_EXTENT_NORMAL,
+               "expected data extent");
+        int compressed =
+            ((flags & INFS_EXTENT_CODEC_MASK) >> INFS_EXTENT_CODEC_SHIFT) !=
+            INFS_COMPRESSION_NONE;
+        if (compressed_out)
+            *compressed_out = compressed;
+        return infs_le64_to_cpu(ext[i].physical_block) +
+            (compressed ? 0u : logical - first);
     }
     fail("logical block not mapped");
     return 0;
@@ -177,13 +185,15 @@ int main(void)
                (int64_t)sizeof(source_data),
            "write source");
 
-    uint64_t source0 = physical_block_for(&vol, &image, "/source", 0);
-    uint64_t source1 = physical_block_for(&vol, &image, "/source", 1);
+    int source_compressed = 0;
+    uint64_t source0 = physical_block_for(
+        &vol, &image, "/source", 0, &source_compressed);
+    uint64_t source1 = physical_block_for(&vol, &image, "/source", 1, NULL);
     expect(infs_reflink_file(&vol, "/source", "/clone") == INFS_STATUS_OK,
            "create reflink clone");
-    expect(physical_block_for(&vol, &image, "/clone", 0) == source0,
+    expect(physical_block_for(&vol, &image, "/clone", 0, NULL) == source0,
            "clone shares first data block");
-    expect(physical_block_for(&vol, &image, "/clone", 1) == source1,
+    expect(physical_block_for(&vol, &image, "/clone", 1, NULL) == source1,
            "clone shares second data block");
 
     uint8_t readback[sizeof(source_data)];
@@ -196,10 +206,15 @@ int main(void)
     expect(infs_write_file(&vol, "/clone", changed, sizeof(changed), 0) ==
                (int64_t)sizeof(changed),
            "break sharing on clone write");
-    uint64_t clone0 = physical_block_for(&vol, &image, "/clone", 0);
+    uint64_t clone0 = physical_block_for(&vol, &image, "/clone", 0, NULL);
     expect(clone0 != source0, "changed clone block is private");
-    expect(physical_block_for(&vol, &image, "/clone", 1) == source1,
-           "unchanged clone block remains shared");
+    if (source_compressed) {
+        expect(physical_block_for(&vol, &image, "/clone", 1, NULL) != source1,
+               "partial clone write materializes bounded compressed cluster");
+    } else {
+        expect(physical_block_for(&vol, &image, "/clone", 1, NULL) == source1,
+               "unchanged uncompressed clone block remains shared");
+    }
     expect(infs_read_file(&vol, "/source", readback, sizeof(readback), 0) ==
                (int64_t)sizeof(readback),
            "read source after clone write");
