@@ -13,6 +13,8 @@ The current tree contains working LZ4 per-extent machinery and assigns LZ4 a cod
 
 LZ4 is **not the intended automatic/default InfiltratorFS compression policy** and its current presence must not be interpreted as the final codec decision.
 
+The normal formatter therefore leaves `INFS_INCOMPAT_COMPRESSED_EXTENTS` clear. Current readers retain the experimental LZ4 extent decoder/encoder contract for development and interoperability testing, but ordinary newly formatted volumes do not silently opt into the experimental representation.
+
 The final default is expected to be an InfiltratorFS-native codec or codec family. Its on-disk identifier, framing and parameters are deliberately not frozen until the design and qualification work below is complete.
 
 ## Required properties of the native codec
