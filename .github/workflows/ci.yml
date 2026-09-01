@@ -181,10 +181,11 @@ jobs:
         run: bash tests/native-small-file-scaling-policy.sh .
       - name: Guard native free-extent index
         run: bash tests/native-free-extent-index-policy.sh .
-      - name: Guard native parallel allocation and workload placement
+      - name: Guard native parallel, workload and media placement
         run: |
           bash tests/native-parallel-allocation-policy.sh .
           bash tests/native-workload-placement-policy.sh .
+          bash tests/native-media-placement-policy.sh .
       - name: Guard native fragmentation/defrag
         run: |
           bash tests/native-defrag-policy.sh .
@@ -319,6 +320,7 @@ jobs:
           bash tests/native-free-extent-index-policy.sh .
           bash tests/native-parallel-allocation-policy.sh .
           bash tests/native-workload-placement-policy.sh .
+          bash tests/native-media-placement-policy.sh .
           bash tests/native-index-tree-policy.sh .
           bash tests/index-tree-format-policy.sh .
           bash tests/allocation-tree-format-policy.sh .
