@@ -96,8 +96,16 @@ static int file_decompress_extent(struct infs_volume *vol,
         free(plain);
         return status;
     }
-    decoded = LZ4_decompress_safe((const char *)compressed, (char *)plain,
-                                  (int)stored, (int)logical_bytes);
+    if (extent_codec(flags) == INFS_COMPRESSION_LZ4) {
+        decoded = LZ4_decompress_safe(
+            (const char *)compressed, (char *)plain,
+            (int)stored, (int)logical_bytes);
+    } else if (extent_codec(flags) == INFS_COMPRESSION_IAC1) {
+        decoded = (int)infs_iac1_decompress(
+            compressed, stored, plain, logical_bytes);
+    } else {
+        decoded = 0;
+    }
     free(compressed);
     if (decoded != (int)logical_bytes) {
         free(plain);
@@ -255,53 +263,75 @@ static int file_store_extent_payload(
     uint64_t *physical_out, uint32_t *flags_out)
 {
     size_t plain_bytes = (size_t)logical_blocks * INFS_BLOCK_SIZE;
-    int bound;
+    size_t bound = 0;
     uint8_t *compressed = NULL;
+    uint8_t *candidate = NULL;
+    struct infs_iac1_scratch *scratch = NULL;
+    size_t compressed_bytes = 0;
     uint8_t *stored = NULL;
-    int compressed_bytes = 0;
-    uint32_t stored_blocks;
+    uint32_t stored_blocks = 0;
     uint64_t physical = 0;
     infs_status status;
 
     if (!logical_blocks || logical_blocks > INFS_COMPRESSION_CLUSTER_BLOCKS)
         return INFS_STATUS_INVALID_ARGUMENT;
+
     if ((infs_le64_to_cpu(vol->sb.incompat_flags) &
-         INFS_INCOMPAT_COMPRESSED_EXTENTS) != 0 && logical_blocks >= 2u) {
-        bound = LZ4_compressBound((int)plain_bytes);
-        compressed = malloc((size_t)bound);
-        if (!compressed)
-            return INFS_STATUS_NO_MEMORY;
-        compressed_bytes = LZ4_compress_default(
-            (const char *)plain, (char *)compressed,
-            (int)plain_bytes, bound);
-    }
-    if (compressed_bytes > 0 &&
-        (uint32_t)compressed_bytes <= INFS_EXTENT_STORED_BYTES_MAX) {
-        stored_blocks = (uint32_t)compressed_bytes / INFS_BLOCK_SIZE +
-            (((uint32_t)compressed_bytes % INFS_BLOCK_SIZE) != 0);
-        if (stored_blocks < logical_blocks) {
-            size_t span = (size_t)stored_blocks * INFS_BLOCK_SIZE;
-            stored = calloc(1u, span);
-            if (!stored) {
-                free(compressed);
-                return INFS_STATUS_NO_MEMORY;
-            }
-            memcpy(stored, compressed, (size_t)compressed_bytes);
-            status = compression_alloc_data_exact(vol, stored_blocks,
-                                                  &physical);
-            if (status == INFS_STATUS_OK)
-                status = infs_storage_write(
-                    &vol->storage, physical * INFS_BLOCK_SIZE, stored, span);
-            free(stored);
+         INFS_INCOMPAT_COMPRESSED_EXTENTS) != 0 &&
+        logical_blocks >= 2u &&
+        infs_iac1_should_attempt(plain, plain_bytes)) {
+        bound = infs_iac1_bound(plain_bytes);
+        compressed = malloc(bound);
+        candidate = malloc(bound);
+        scratch = malloc(sizeof(*scratch));
+        if (!compressed || !candidate || !scratch) {
+            free(scratch);
+            free(candidate);
             free(compressed);
-            if (status != INFS_STATUS_OK)
-                return status;
-            *physical_out = physical;
-            *flags_out = extent_compressed_flags(
-                INFS_COMPRESSION_LZ4, (uint32_t)compressed_bytes);
-            return INFS_STATUS_OK;
+            return INFS_STATUS_NO_MEMORY;
+        }
+        compressed_bytes = infs_iac1_compress(
+            plain, plain_bytes, compressed, bound,
+            candidate, bound, scratch);
+        if (compressed_bytes &&
+            compressed_bytes <= INFS_EXTENT_STORED_BYTES_MAX) {
+            stored_blocks = (uint32_t)(
+                compressed_bytes / INFS_BLOCK_SIZE +
+                ((compressed_bytes % INFS_BLOCK_SIZE) != 0));
+            if (stored_blocks >= logical_blocks)
+                stored_blocks = 0;
         }
     }
+
+    if (stored_blocks) {
+        size_t span = (size_t)stored_blocks * INFS_BLOCK_SIZE;
+        stored = calloc(1u, span);
+        if (!stored) {
+            free(scratch);
+            free(candidate);
+            free(compressed);
+            return INFS_STATUS_NO_MEMORY;
+        }
+        memcpy(stored, compressed, compressed_bytes);
+        status = compression_alloc_data_exact(
+            vol, stored_blocks, &physical);
+        if (status == INFS_STATUS_OK)
+            status = infs_storage_write(
+                &vol->storage, physical * INFS_BLOCK_SIZE, stored, span);
+        free(stored);
+        free(scratch);
+        free(candidate);
+        free(compressed);
+        if (status != INFS_STATUS_OK)
+            return status;
+        *physical_out = physical;
+        *flags_out = extent_compressed_flags(
+            INFS_COMPRESSION_IAC1, (uint32_t)compressed_bytes);
+        return INFS_STATUS_OK;
+    }
+
+    free(scratch);
+    free(candidate);
     free(compressed);
     status = compression_alloc_data_exact(vol, logical_blocks, &physical);
     if (status != INFS_STATUS_OK)
