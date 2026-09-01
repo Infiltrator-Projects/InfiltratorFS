@@ -1036,14 +1036,26 @@ static infs_status bridge_sync_local_file(PCWSTR relative)
         ft.HighPart = write_time.dwHighDateTime;
         const uint64_t epoch = UINT64_C(116444736000000000);
         int64_t mtime_ns = 0;
-        if (ft.QuadPart >= epoch)
-            mtime_ns = (int64_t)((ft.QuadPart - epoch) * UINT64_C(100));
+        if (ft.QuadPart >= epoch) {
+            uint64_t ticks = ft.QuadPart - epoch;
+            if (ticks > (uint64_t)INT64_MAX / UINT64_C(100))
+                status = INFS_STATUS_OVERFLOW;
+            else
+                mtime_ns = (int64_t)(ticks * UINT64_C(100));
+        } else {
+            uint64_t ticks = epoch - ft.QuadPart;
+            if (ticks > (uint64_t)INT64_MAX / UINT64_C(100))
+                status = INFS_STATUS_OVERFLOW;
+            else
+                mtime_ns = -(int64_t)(ticks * UINT64_C(100));
+        }
         struct infs_time_update update;
         memset(&update, 0, sizeof(update));
         update.access_action = INFS_TIME_OMIT;
         update.modification_action = INFS_TIME_SET;
         update.modification_time_ns = mtime_ns;
-        status = infs_set_times(g_bridge.volume, path, &update);
+        if (status == INFS_STATUS_OK)
+            status = infs_set_times(g_bridge.volume, path, &update);
     }
     CloseHandle(input);
 
@@ -1352,18 +1364,20 @@ static int create_bridge_root(wchar_t out[MAX_PATH * 4u])
     if (_snwprintf_s(parent, sizeof(parent) / sizeof(parent[0]),
                      _TRUNCATE, L"%s\\InfiltratorFS", base) < 0)
         return 0;
-    CreateDirectoryW(parent, NULL);
-    if (GetLastError() != ERROR_SUCCESS &&
-        GetLastError() != ERROR_ALREADY_EXISTS)
-        return 0;
+    if (!CreateDirectoryW(parent, NULL)) {
+        DWORD error = GetLastError();
+        if (error != ERROR_ALREADY_EXISTS)
+            return 0;
+    }
 
     if (_snwprintf_s(parent, sizeof(parent) / sizeof(parent[0]),
                      _TRUNCATE, L"%s\\InfiltratorFS\\Bridge", base) < 0)
         return 0;
-    CreateDirectoryW(parent, NULL);
-    if (GetLastError() != ERROR_SUCCESS &&
-        GetLastError() != ERROR_ALREADY_EXISTS)
-        return 0;
+    if (!CreateDirectoryW(parent, NULL)) {
+        DWORD error = GetLastError();
+        if (error != ERROR_ALREADY_EXISTS)
+            return 0;
+    }
 
     GUID guid;
     if (FAILED(CoCreateGuid(&guid)))
