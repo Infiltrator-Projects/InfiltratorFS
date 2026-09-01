@@ -5,6 +5,7 @@
 # KERNELRELEASE conditional, the initial DKMS make terminates with
 # "make: *** No targets. Stop." before Kbuild is ever entered.
 obj-m += infiltratorfs.o
+ccflags-y += -I$(src)/../include/infilfs
 
 KDIR ?= /lib/modules/$(shell uname -r)/build
 
