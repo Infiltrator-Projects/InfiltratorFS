@@ -4,6 +4,7 @@
 #include "infilfs/checksum.h"
 #include "infilfs/endian.h"
 #include "infilfs/fs.h"
+#include "infilfs/iac1.h"
 #include "infilfs/storage.h"
 #include "infilfs/utf8.h"
 #include "infiltratr/core.h"
@@ -114,7 +115,8 @@ static int extent_flags_valid(uint32_t logical_blocks, uint64_t physical,
         return 0;
     if (codec == INFS_COMPRESSION_NONE)
         return flags == INFS_EXTENT_NORMAL;
-    if (codec != INFS_COMPRESSION_LZ4 || !stored ||
+    if ((codec != INFS_COMPRESSION_LZ4 &&
+         codec != INFS_COMPRESSION_IAC1) || !stored ||
         logical_blocks > INFS_COMPRESSION_CLUSTER_BLOCKS ||
         stored > INFS_EXTENT_STORED_BYTES_MAX ||
         (uint64_t)stored >= (uint64_t)logical_blocks * INFS_BLOCK_SIZE)
