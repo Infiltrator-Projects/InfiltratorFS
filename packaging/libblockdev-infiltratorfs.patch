@@ -105,6 +105,58 @@ diff --git a/src/plugins/fs/generic.c b/src/plugins/fs/generic.c
      } else {
          return BD_FS_TECH_GENERIC;
      }
+@@ -523,6 +545,48 @@ gboolean bd_fs_clean (const gchar *device, gboolean force, GError **error) {
+   gboolean ret = FALSE;
+   GError *l_error = NULL;
++  gchar *infiltrator_mkfs = NULL;
++
++  /*
++   * libblkid does not yet know the InfiltratorFS signature, but UDisks calls
++   * bd_fs_clean() before every mkfs and then waits for the old filesystem
++   * identity to disappear.  Give the bundled filesystem plugin a narrow
++   * bridge: mkfs.infiltratorfs --wipe-only positively identifies the existing
++   * format before clearing its distributed checkpoints. Exit status 3 means
++   * "not InfiltratorFS" and falls through to libblkid's normal cleaner.
++   */
++  infiltrator_mkfs = g_find_program_in_path ("mkfs.infiltratorfs");
++  if (infiltrator_mkfs != NULL) {
++      const gchar *wipe_args[] = {
++          infiltrator_mkfs, "--force", "--wipe-only", device, NULL
++      };
++      gchar *wipe_stdout = NULL;
++      gchar *wipe_stderr = NULL;
++      gint wipe_status = 0;
++      GError *wipe_error = NULL;
++
++      if (!bd_utils_exec_and_capture_output_no_progress (
++              wipe_args, NULL, &wipe_stdout, &wipe_stderr,
++              &wipe_status, &wipe_error)) {
++          g_free (wipe_stdout);
++          g_free (wipe_stderr);
++          g_free (infiltrator_mkfs);
++          g_prefix_error (&wipe_error,
++                          "Failed to run InfiltratorFS signature cleaner: ");
++          g_propagate_error (error, wipe_error);
++          return FALSE;
++      }
++      if (wipe_status != 0 && wipe_status != 3) {
++          g_set_error (error, BD_FS_ERROR, BD_FS_ERROR_FAIL,
++                       "Failed to clear InfiltratorFS signatures on '%s': %s",
++                       device,
++                       (wipe_stderr && *wipe_stderr) ? wipe_stderr :
++                       "signature cleaner failed");
++          g_free (wipe_stdout);
++          g_free (wipe_stderr);
++          g_free (infiltrator_mkfs);
++          return FALSE;
++      }
++      g_free (wipe_stdout);
++      g_free (wipe_stderr);
++      g_free (infiltrator_mkfs);
++  }
+ 
+   ret = bd_fs_wipe (device, TRUE, force, &l_error);
+
 @@ -2006,6 +2028,26 @@ extern BDExtraArg** bd_fs_xfs_mkfs_options (BDFSMkfsOptions *options, const BDEx
  extern BDExtraArg** bd_fs_btrfs_mkfs_options (BDFSMkfsOptions *options, const BDExtraArg **extra);
  extern BDExtraArg** bd_fs_udf_mkfs_options (BDFSMkfsOptions *options, const BDExtraArg **extra);
