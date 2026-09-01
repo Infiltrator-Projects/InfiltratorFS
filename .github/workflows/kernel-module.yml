@@ -855,7 +855,9 @@ jobs:
 
           # statfs must account for the live deferred transaction, not merely
           # the last committed checkpoint. Keep this probe below the minimum
-          # 16 MiB publication threshold, sample immediately, then clean it up.
+          # 16 MiB publication threshold and use deterministic high-entropy data:
+          # a zero-filled probe is legitimately compressed now and therefore no
+          # longer consumes its logical byte count in physical free space.
           sudo python3 - "$mountpoint/native-rw" <<'PY'
           import os
           import sys
@@ -863,7 +865,12 @@ jobs:
           root = sys.argv[1]
           path = os.path.join(root, 'statfs-pending-probe.bin')
           before = os.statvfs(root).f_bavail
-          payload = bytes(1024 * 1024)
+          state = 0x51A7E123
+          payload = bytearray(1024 * 1024)
+          for i in range(len(payload)):
+              state = (state * 1664525 + 1013904223) & 0xffffffff
+              payload[i] = state >> 24
+          payload = bytes(payload)
           fd = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_EXCL, 0o600)
           try:
               for _ in range(8):
