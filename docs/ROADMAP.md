@@ -19,6 +19,7 @@ The roadmap is guided by these architectural commitments:
 - A single-device volume must remain a complete, understandable and efficient filesystem in its own right. Multi-device placement, protection classes, replication and parity must remain optional layers and must not distort the single-device core.
 - Advanced capabilities such as compression, online defragmentation, encryption, case-folding and named streams belong when they provide broad general-purpose value, but should remain optional or policy-driven where possible.
 - New roadmap features should either strengthen a core primitive or provide a broadly useful filesystem capability. Avoid adding narrowly specialised machinery merely to increase the feature count.
+- Do not inherit historical filesystem limits, codec choices, constants or semantics merely because they are conventional. Every persistent hard limit or default must have an explicit current rationale, scale analysis and qualification plan; implementation conveniences remain provisional until deliberately adopted.
 
 The intended core can be summarized as: stable object identity; transactional generations; end-to-end integrity; cheap history; scalable metadata; portable security; and native operating-system adapters. Features that build naturally on those primitives are preferred over unrelated special cases.
 
@@ -152,7 +153,7 @@ checksum or metadata errors. See [QUALIFICATION.md](QUALIFICATION.md).
   shards, object-stable placement and mounted multi-writer qualification.
 - [x] Locality scoring and workload-aware placement.
 - [x] Media-aware placement.
-- [ ] Per-extent compression.
+- [ ] InfiltratorFS-native adaptive per-extent compression designed from current compression research; retain LZ4 as a non-default development/reference codec and keep the on-disk codec model extensible. See [COMPRESSION.md](COMPRESSION.md).
 
 ## Administration and recovery
 
