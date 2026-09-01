@@ -231,7 +231,6 @@ static int infilfs_parallel_tx_claim(struct infilfs_rw_tx *tx, u64 start,
             count > total - start || count > tx->free_blocks)
             return -ENOSPC;
     }
-        return -ENOSPC;
     ret = infilfs_parallel_alloc_journal_reserve(tx);
     if (ret)
         return ret;
