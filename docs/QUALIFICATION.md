@@ -30,6 +30,41 @@ InfiltratorFS deliberately separates fast regression from expensive qualificatio
 The purpose is to preserve the hard-earned regression coverage while matching
 test cost to the code that can actually invalidate each qualification.
 
+## 2026-09-01 Windows bridge performance and manager qualification
+
+Development commit `ba1b06561de13dfa434b5cebf2e5797022d83572`
+passed Build and conformance workflow run `33474719972`. The Windows job
+`99751681139` built the 0.18.33 native manager and portable core with MSVC,
+passed all 19 Windows/portable CTest tests, opened the Linux-created Format
+0.17 interoperability image and completed the real hosted ProjFS provider
+qualification.
+
+The Windows bridge qualification now includes an 8 MiB existing file followed
+by a 4096-byte in-place Windows edit at the 4 MiB offset. The bridge records
+write-back statistics and the test requires less than 1 MiB of InfiltratorFS
+write-back for that edit. This prevents regression to the former close-time
+whole-file rewrite behaviour. The same ProjFS run also requalified
+Linux-created-file hydration/editing, Windows create/write, directory rename,
+hard-link identity and delete persistence.
+
+The 0.18.33 bridge coalesces Explorer mutation bursts and publishes after a
+short idle interval rather than forcing a checkpoint for every created or
+closed file; stopping the bridge still forces final durability. The Manager's
+direct-copy path also removes the redundant pre-rename publication so the
+staged data and namespace rename can be committed together.
+
+The Windows executable was also rebuilt with explicit UTF-8 MSVC source
+handling, Unicode Win32 APIs, Common Controls v6 visual styles, per-monitor DPI
+awareness, light/dark palette handling and file-type icons. This addresses the
+mojibake and legacy-control appearance seen in 0.18.32 without changing Format
+0.17.
+
+The same development source passed Native Linux kernel workflow run
+`33474719970`, including the complete mounted read-write transaction/scrub
+qualification, media-aware placement and online defragmentation. Linux full
+suite, Clang, ASan/UBSan, GCC static analysis and native package construction
+also passed in run `33474719972`.
+
 ## 2026-08-31 desktop formatter and parallel-allocation qualification
 
 The last two Linux roadmap items selected for release 0.18.28 were qualified
