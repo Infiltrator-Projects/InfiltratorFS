@@ -66,6 +66,10 @@
 #define IDM_FILE_OPEN_IMAGE 2004
 #define IDM_HELP_ABOUT      2101
 
+#define IDR_FONT_CORPO_A_COND_REGULAR 301
+#define IDR_FONT_CORPO_S_BOLD          302
+#define IDR_FONT_CORPO_S_REGULAR       303
+
 #define MAX_TARGETS      256u
 #define TARGET_PATH_MAX  4096u
 #define MAX_SYSTEM_DISKS 16u
@@ -98,7 +102,8 @@ static size_t g_system_disk_count = 0;
 static HFONT g_ui_font = NULL;
 static HFONT g_title_font = NULL;
 static HFONT g_heading_font = NULL;
-static HFONT g_mono_font = NULL;
+static HFONT g_activity_font = NULL;
+static HANDLE g_private_fonts[3] = { NULL, NULL, NULL };
 static LONG g_copy_sequence = 0;
 static int g_dark_mode = 0;
 static COLORREF g_background_color;
@@ -253,7 +258,57 @@ static struct target_volume *selected_target(void)
 }
 
 
-static HFONT create_ui_font(HWND hwnd, int points, int weight)
+
+static int register_embedded_font(HINSTANCE instance, WORD resource_id,
+                                  size_t slot)
+{
+    HRSRC resource = FindResourceW(
+        instance, MAKEINTRESOURCEW(resource_id), RT_RCDATA);
+    if (!resource)
+        return 0;
+    HGLOBAL loaded = LoadResource(instance, resource);
+    if (!loaded)
+        return 0;
+    DWORD size = SizeofResource(instance, resource);
+    void *data = LockResource(loaded);
+    if (!data || !size)
+        return 0;
+    DWORD count = 0;
+    HANDLE font = AddFontMemResourceEx(data, size, NULL, &count);
+    if (!font || count == 0)
+        return 0;
+    g_private_fonts[slot] = font;
+    return 1;
+}
+
+static int register_project_fonts(HINSTANCE instance)
+{
+    static const WORD resources[] = {
+        IDR_FONT_CORPO_A_COND_REGULAR,
+        IDR_FONT_CORPO_S_BOLD,
+        IDR_FONT_CORPO_S_REGULAR
+    };
+    for (size_t index = 0;
+         index < sizeof(resources) / sizeof(resources[0]); ++index) {
+        if (!register_embedded_font(instance, resources[index], index))
+            return 0;
+    }
+    return 1;
+}
+
+static void unregister_project_fonts(void)
+{
+    for (size_t index = 0;
+         index < sizeof(g_private_fonts) / sizeof(g_private_fonts[0]); ++index) {
+        if (g_private_fonts[index]) {
+            RemoveFontMemResourceEx(g_private_fonts[index]);
+            g_private_fonts[index] = NULL;
+        }
+    }
+}
+
+static HFONT create_ui_font(HWND hwnd, int points, int weight,
+                            const wchar_t *family)
 {
     HDC dc = GetDC(hwnd);
     int dpi = dc ? GetDeviceCaps(dc, LOGPIXELSY) : 96;
@@ -261,9 +316,9 @@ static HFONT create_ui_font(HWND hwnd, int points, int weight)
         ReleaseDC(hwnd, dc);
     return CreateFontW(-MulDiv(points, dpi, 72), 0, 0, 0, weight,
                        FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                       OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                       OUT_TT_ONLY_PRECIS, CLIP_DEFAULT_PRECIS,
                        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
-                       L"Segoe UI");
+                       family);
 }
 
 static void set_control_font(HWND hwnd, int id, HFONT font)
@@ -1816,14 +1871,14 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message,
         g_main_window = hwnd;
         SetMenu(hwnd, create_main_menu());
 
-        g_ui_font = create_ui_font(hwnd, 10, FW_NORMAL);
-        g_title_font = create_ui_font(hwnd, 22, FW_SEMIBOLD);
-        g_heading_font = create_ui_font(hwnd, 12, FW_SEMIBOLD);
-        g_mono_font = CreateFontW(
-            -MulDiv(9, GetDpiForWindow(hwnd), 72), 0, 0, 0, FW_NORMAL,
-            FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-            CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-            FIXED_PITCH | FF_MODERN, L"Consolas");
+        g_ui_font = create_ui_font(
+            hwnd, 10, FW_NORMAL, L"MB Corpo S Title WEB");
+        g_title_font = create_ui_font(
+            hwnd, 22, FW_NORMAL, L"MB Corpo A Title Cond WEB");
+        g_heading_font = create_ui_font(
+            hwnd, 12, FW_BOLD, L"MB Corpo S Title WEB");
+        g_activity_font = create_ui_font(
+            hwnd, 9, FW_NORMAL, L"MB Corpo S Title WEB");
 
         CreateWindowW(L"STATIC", L"InfiltratorFS",
                       WS_CHILD | WS_VISIBLE | SS_LEFT,
@@ -1950,7 +2005,7 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message,
         set_control_font(hwnd, IDC_STORAGE_HEADING, g_heading_font);
         set_control_font(hwnd, IDC_CONTENTS_HEADING, g_heading_font);
         set_control_font(hwnd, IDC_ACTIVITY_HEADING, g_heading_font);
-        set_control_font(hwnd, IDC_ACTIVITY, g_mono_font);
+        set_control_font(hwnd, IDC_ACTIVITY, g_activity_font);
 
         SendMessageW(combo, LB_SETITEMHEIGHT, 0, 28);
         int themed_ids[] = {
@@ -2045,13 +2100,13 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message,
             DeleteObject(g_heading_font);
         if (g_ui_font)
             DeleteObject(g_ui_font);
-        if (g_mono_font)
-            DeleteObject(g_mono_font);
+        if (g_activity_font)
+            DeleteObject(g_activity_font);
         if (g_content_images) {
             ImageList_Destroy(g_content_images);
             g_content_images = NULL;
         }
-        g_title_font = g_heading_font = g_ui_font = g_mono_font = NULL;
+        g_title_font = g_heading_font = g_ui_font = g_activity_font = NULL;
         PostQuitMessage(0);
         return 0;
     default:
@@ -2073,6 +2128,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous,
         ICC_LISTVIEW_CLASSES | ICC_STANDARD_CLASSES | ICC_BAR_CLASSES
     };
     InitCommonControlsEx(&controls);
+    if (!register_project_fonts(instance)) {
+        MessageBoxW(NULL,
+                    L"InfiltratorFS could not load its bundled MB Corpo fonts.",
+                    L"InfiltratorFS", MB_OK | MB_ICONERROR);
+        CoUninitialize();
+        return 1;
+    }
     const wchar_t class_name[] = L"InfiltratorFSWindowsTransfer";
     WNDCLASSW wc;
     memset(&wc, 0, sizeof(wc));
@@ -2081,15 +2143,21 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous,
     wc.hCursor = LoadCursorW(NULL, IDC_ARROW);
     wc.hbrBackground = g_background_brush;
     wc.lpszClassName = class_name;
-    if (!RegisterClassW(&wc))
+    if (!RegisterClassW(&wc)) {
+        unregister_project_fonts();
+        CoUninitialize();
         return 1;
+    }
     HWND window = CreateWindowW(
         class_name, L"InfiltratorFS Manager \u2014 Windows " INFILFS_VERSION_W,
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT, 1240, 800,
         NULL, NULL, instance, NULL);
-    if (!window)
+    if (!window) {
+        unregister_project_fonts();
+        CoUninitialize();
         return 1;
+    }
     ShowWindow(window, show_command);
     UpdateWindow(window);
     MSG msg;
@@ -2102,6 +2170,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous,
     if (g_background_brush)
         DeleteObject(g_background_brush);
     g_panel_brush = g_background_brush = NULL;
+    unregister_project_fonts();
     CoUninitialize();
     return (int)msg.wParam;
 }

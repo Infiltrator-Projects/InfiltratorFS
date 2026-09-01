@@ -4,6 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
+import ctypes.util
+import hashlib
 import json
 import os
 import pwd
@@ -11,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import tarfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -202,6 +206,137 @@ def package_version() -> str:
     return "source/development"
 
 
+FONT_ARCHIVE_SHA256 = "bdb6063f838a7fab22b4d6b412170640c69511df53aa3dfa9a4ea8431c9d8274"
+FONT_FILES = {
+    "mb_corpo_a_cond_regular.ttf":
+        "c8bcd7e1a7d71169b38491d9b7c1ffe7ba7b46e888f0c1219931343a47bc0e05",
+    "mb_corpo_s_bold.ttf":
+        "d37ea986e2344d83390f94f170e6272b56efd00bfec808afe8314c4ca45d43b4",
+    "mb_corpo_s_regular.ttf":
+        "94ede6629443c03d4362dcef425fb3ff520be5d654370021a34e81286804465c",
+}
+FONT_FAMILY = "MB Corpo S Title WEB"
+FONT_BRAND_FAMILY = "MB Corpo A Title Cond WEB"
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _valid_font_directory(directory: Path) -> bool:
+    return all(
+        (directory / filename).is_file()
+        and _sha256(directory / filename) == expected
+        for filename, expected in FONT_FILES.items()
+    )
+
+
+def _source_font_archive() -> Path:
+    return (
+        Path(__file__).resolve().parent.parent
+        / "assets" / "fonts" / "mb-corpo-fonts.tar.xz"
+    )
+
+
+def _extract_source_fonts() -> Path:
+    archive = _source_font_archive()
+    if not archive.is_file():
+        raise RuntimeError(f"required MB Corpo font archive is missing: {archive}")
+    if _sha256(archive) != FONT_ARCHIVE_SHA256:
+        raise RuntimeError("MB Corpo font archive hash mismatch")
+
+    cache_root = Path(
+        os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))
+    ) / "infiltratorfs" / "fonts" / FONT_ARCHIVE_SHA256[:16]
+    if _valid_font_directory(cache_root):
+        return cache_root
+
+    cache_root.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(archive, "r:xz") as bundle:
+        for filename, expected in FONT_FILES.items():
+            try:
+                member = bundle.getmember(filename)
+            except KeyError as exc:
+                raise RuntimeError(
+                    f"required MB Corpo font is missing from the archive: {filename}"
+                ) from exc
+            if not member.isfile():
+                raise RuntimeError(f"invalid MB Corpo font member: {filename}")
+            extracted = bundle.extractfile(member)
+            if extracted is None:
+                raise RuntimeError(f"could not read MB Corpo font: {filename}")
+            data = extracted.read()
+            if hashlib.sha256(data).hexdigest() != expected:
+                raise RuntimeError(f"MB Corpo font hash mismatch: {filename}")
+            target = cache_root / filename
+            temporary = target.with_suffix(target.suffix + ".tmp")
+            temporary.write_bytes(data)
+            temporary.chmod(0o644)
+            temporary.replace(target)
+
+    if not _valid_font_directory(cache_root):
+        raise RuntimeError("MB Corpo font extraction did not verify")
+    return cache_root
+
+
+def _project_font_directory() -> Path:
+    prefix = Path(__file__).resolve().parent.parent
+    candidates = (
+        prefix / "share" / "infiltratorfs" / "fonts",
+        Path("/usr/share/infiltratorfs/fonts"),
+    )
+    for directory in candidates:
+        if directory.is_dir():
+            if _valid_font_directory(directory):
+                return directory
+            raise RuntimeError(f"installed MB Corpo font set failed integrity: {directory}")
+    return _extract_source_fonts()
+
+
+_FONTCONFIG = None
+
+
+def register_project_fonts() -> None:
+    global _FONTCONFIG
+    directory = _project_font_directory()
+    library_name = ctypes.util.find_library("fontconfig") or "libfontconfig.so.1"
+    try:
+        fontconfig = ctypes.CDLL(library_name)
+    except OSError as exc:
+        raise RuntimeError(
+            "fontconfig is required for the InfiltratorFS UI fonts"
+        ) from exc
+
+    fontconfig.FcInit.restype = ctypes.c_int
+    fontconfig.FcConfigGetCurrent.restype = ctypes.c_void_p
+    fontconfig.FcConfigAppFontAddFile.argtypes = [
+        ctypes.c_void_p, ctypes.c_char_p
+    ]
+    fontconfig.FcConfigAppFontAddFile.restype = ctypes.c_int
+    fontconfig.FcConfigBuildFonts.argtypes = [ctypes.c_void_p]
+    fontconfig.FcConfigBuildFonts.restype = ctypes.c_int
+
+    if not fontconfig.FcInit():
+        raise RuntimeError("fontconfig initialisation failed")
+    config = fontconfig.FcConfigGetCurrent()
+    if not config:
+        raise RuntimeError("fontconfig did not provide a current configuration")
+
+    for filename in FONT_FILES:
+        path = directory / filename
+        if not fontconfig.FcConfigAppFontAddFile(config, os.fsencode(path)):
+            raise RuntimeError(f"could not register MB Corpo font: {filename}")
+    if not fontconfig.FcConfigBuildFonts(config):
+        raise RuntimeError(
+            "fontconfig could not rebuild the InfiltratorFS application font set"
+        )
+    _FONTCONFIG = fontconfig
+
+
 parser = argparse.ArgumentParser()
 parser.add_argument(
     "--list-partitions",
@@ -231,8 +366,15 @@ except (ImportError, ValueError) as exc:
     print(f"{APP_NAME}: install python3-gi and gir1.2-gtk-3.0", file=sys.stderr)
     raise SystemExit(1) from exc
 
+try:
+    register_project_fonts()
+except RuntimeError as exc:
+    print(f"{APP_NAME}: {exc}", file=sys.stderr)
+    raise SystemExit(1) from exc
+
 
 CSS = b"""
+* { font-family: "MB Corpo S Title WEB"; font-weight: 400; }
 window { background: @theme_bg_color; }
 
 .sidebar {
@@ -269,7 +411,7 @@ window { background: @theme_bg_color; }
     border-radius: 14px;
     background: alpha(@theme_selected_bg_color, 0.10);
 }
-.hero-title { font-size: 24px; font-weight: 700; }
+.hero-title { font-family: "MB Corpo A Title Cond WEB"; font-size: 24px; font-weight: 400; }
 .hero-path { color: @theme_unfocused_fg_color; }
 .badge {
     padding: 4px 9px;
@@ -319,7 +461,7 @@ window { background: @theme_bg_color; }
     border-radius: 10px;
     background: @theme_base_color;
 }
-.activity { font-family: monospace; }
+.activity { font-family: "MB Corpo S Title WEB"; font-weight: 400; }
 .statusbar {
     padding: 9px 12px;
     border-top: 1px solid @borders;

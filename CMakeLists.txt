@@ -55,6 +55,58 @@ FetchContent_Declare(infilfs_lz4
     GIT_SHALLOW TRUE)
 FetchContent_MakeAvailable(infilfs_lz4)
 
+# InfiltratorFS desktop applications use the same bundled MB Corpo
+# typography on Linux and Windows. Keep the archive immutable and verify
+# every extracted face so a build cannot silently fall back to system fonts.
+set(INFILFS_FONT_ARCHIVE
+    "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/mb-corpo-fonts.tar.xz")
+set(INFILFS_FONT_ARCHIVE_SHA256
+    "bdb6063f838a7fab22b4d6b412170640c69511df53aa3dfa9a4ea8431c9d8274")
+if(NOT EXISTS "${INFILFS_FONT_ARCHIVE}")
+    message(FATAL_ERROR "Required InfiltratorFS MB Corpo font archive is missing")
+endif()
+file(SHA256 "${INFILFS_FONT_ARCHIVE}" INFILFS_FONT_ARCHIVE_ACTUAL_SHA256)
+if(NOT INFILFS_FONT_ARCHIVE_ACTUAL_SHA256 STREQUAL INFILFS_FONT_ARCHIVE_SHA256)
+    message(FATAL_ERROR "InfiltratorFS MB Corpo font archive hash mismatch")
+endif()
+
+set(INFILFS_FONT_DIR "${CMAKE_CURRENT_BINARY_DIR}/infiltratorfs-fonts")
+file(REMOVE_RECURSE "${INFILFS_FONT_DIR}")
+file(MAKE_DIRECTORY "${INFILFS_FONT_DIR}")
+file(ARCHIVE_EXTRACT INPUT "${INFILFS_FONT_ARCHIVE}"
+                     DESTINATION "${INFILFS_FONT_DIR}")
+set(INFILFS_FONT_A_COND_REGULAR
+    "${INFILFS_FONT_DIR}/mb_corpo_a_cond_regular.ttf")
+set(INFILFS_FONT_S_BOLD
+    "${INFILFS_FONT_DIR}/mb_corpo_s_bold.ttf")
+set(INFILFS_FONT_S_REGULAR
+    "${INFILFS_FONT_DIR}/mb_corpo_s_regular.ttf")
+set(INFILFS_FONT_FILES
+    "${INFILFS_FONT_A_COND_REGULAR}"
+    "${INFILFS_FONT_S_BOLD}"
+    "${INFILFS_FONT_S_REGULAR}")
+
+function(infilfs_verify_font path expected_sha256)
+    if(NOT EXISTS "${path}")
+        message(FATAL_ERROR "Required InfiltratorFS MB Corpo font is missing: ${path}")
+    endif()
+    file(SHA256 "${path}" actual_sha256)
+    if(NOT actual_sha256 STREQUAL expected_sha256)
+        get_filename_component(font_name "${path}" NAME)
+        message(FATAL_ERROR "InfiltratorFS MB Corpo font hash mismatch: ${font_name}")
+    endif()
+endfunction()
+
+infilfs_verify_font(
+    "${INFILFS_FONT_A_COND_REGULAR}"
+    "c8bcd7e1a7d71169b38491d9b7c1ffe7ba7b46e888f0c1219931343a47bc0e05")
+infilfs_verify_font(
+    "${INFILFS_FONT_S_BOLD}"
+    "d37ea986e2344d83390f94f170e6272b56efd00bfec808afe8314c4ca45d43b4")
+infilfs_verify_font(
+    "${INFILFS_FONT_S_REGULAR}"
+    "94ede6629443c03d4362dcef425fb3ff520be5d654370021a34e81286804465c")
+
 function(infilfs_enable_warnings target)
     if(MSVC)
         target_compile_options(${target} PRIVATE /W4 /utf-8)
@@ -196,6 +248,14 @@ if(WIN32)
     infilfs_enable_warnings(infilfs-win32-partition-region)
     add_test(NAME infilfs-win32-partition-region COMMAND infilfs-win32-partition-region)
 
+    set(INFILFS_FONT_A_COND_REGULAR_RC "${INFILFS_FONT_A_COND_REGULAR}")
+    set(INFILFS_FONT_S_BOLD_RC "${INFILFS_FONT_S_BOLD}")
+    set(INFILFS_FONT_S_REGULAR_RC "${INFILFS_FONT_S_REGULAR}")
+    configure_file(
+        tools/windows/infiltratorfs-windows-fonts.rc.in
+        ${CMAKE_CURRENT_BINARY_DIR}/infiltratorfs-windows-fonts.rc
+        @ONLY)
+
     configure_file(
         tools/windows/infiltratorfs-windows-version.rc.in
         ${CMAKE_CURRENT_BINARY_DIR}/infiltratorfs-windows-version.rc
@@ -210,7 +270,8 @@ if(WIN32)
 
     add_executable(infiltratorfs-windows WIN32
         tools/windows/infiltratorfs-windows-entry.c
-        ${CMAKE_CURRENT_BINARY_DIR}/infiltratorfs-windows-version.rc)
+        ${CMAKE_CURRENT_BINARY_DIR}/infiltratorfs-windows-version.rc
+        ${CMAKE_CURRENT_BINARY_DIR}/infiltratorfs-windows-fonts.rc)
     target_include_directories(infiltratorfs-windows PRIVATE tools/windows)
     target_link_libraries(infiltratorfs-windows PRIVATE
         infilfs_windows_bridge comdlg32 comctl32 dwmapi uxtheme advapi32)
@@ -286,6 +347,9 @@ if(UNIX)
     add_test(NAME infilfs-manager-python-syntax
         COMMAND python3 -c
             "import ast,pathlib; ast.parse(pathlib.Path(r'${CMAKE_SOURCE_DIR}/tools/infiltratorfs-manager').read_text(encoding='utf-8'))")
+    add_test(NAME infilfs-ui-font-policy
+        COMMAND bash ${CMAKE_SOURCE_DIR}/tests/ui-font-policy.sh
+                     ${CMAKE_SOURCE_DIR})
     add_test(NAME infilfs-manager-helper-shell-syntax
         COMMAND bash -n ${CMAKE_SOURCE_DIR}/tools/infiltratorfs-manager-helper)
     add_test(NAME infilfs-manager-partition-discovery
@@ -308,6 +372,8 @@ if(UNIX)
             DESTINATION sbin)
     install(FILES packaging/infiltratorfs-manager.desktop
             DESTINATION share/applications)
+    install(FILES ${INFILFS_FONT_FILES}
+            DESTINATION share/infiltratorfs/fonts)
     install(FILES packaging/59-infiltratorfs.rules
             DESTINATION lib/udev/rules.d)
 endif()
