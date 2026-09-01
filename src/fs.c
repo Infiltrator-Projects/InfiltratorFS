@@ -670,17 +670,41 @@ infs_status infs_read_best_superblock(const struct infs_storage *storage,
         size_bytes < INFS_BLOCK_SIZE * 3u || !out)
         return INFS_STATUS_INVALID_ARGUMENT;
 
-    const uint64_t total_blocks = size_bytes / INFS_BLOCK_SIZE;
-    const uint64_t candidates[INFS_CHECKPOINT_COUNT] = {
-        0,
-        total_blocks / 2u,
-        total_blocks - 1u
+    const uint64_t storage_blocks = size_bytes / INFS_BLOCK_SIZE;
+    uint64_t candidates[INFS_CHECKPOINT_COUNT] = {
+        0, storage_blocks / 2u, storage_blocks - 1u
     };
+    struct infs_superblock_disk anchor;
+    int anchored = 0;
+    uint8_t block[INFS_BLOCK_SIZE];
+
+    /*
+     * Block zero is the stable geometry anchor.  This lets a filesystem be
+     * smaller than its backing partition while an online grow (or staged
+     * shrink) is in progress.  Existing unresized volumes keep the historical
+     * half/end fallback when block zero is unreadable.
+     */
+    if (infs_storage_read(storage, 0, block, sizeof(block)) ==
+            INFS_STATUS_OK &&
+        infs_validate_superblock_block(block)) {
+        memcpy(&anchor, block, sizeof(anchor));
+        uint64_t total = infs_le64_to_cpu(anchor.total_blocks);
+        uint64_t c0 = infs_le64_to_cpu(anchor.checkpoint_block[0]);
+        uint64_t c1 = infs_le64_to_cpu(anchor.checkpoint_block[1]);
+        uint64_t c2 = infs_le64_to_cpu(anchor.checkpoint_block[2]);
+        if (total >= 3u && total <= storage_blocks &&
+            c0 == 0 && c1 < total && c2 < total &&
+            c1 != c0 && c2 != c0 && c2 != c1) {
+            candidates[0] = c0;
+            candidates[1] = c1;
+            candidates[2] = c2;
+            anchored = 1;
+        }
+    }
 
     uint64_t best_generation = 0;
     int found = 0;
     unsigned valid = 0;
-    uint8_t block[INFS_BLOCK_SIZE];
 
     for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i) {
         uint64_t offset = candidates[i] * INFS_BLOCK_SIZE;
@@ -692,11 +716,16 @@ infs_status infs_read_best_superblock(const struct infs_storage *storage,
 
         struct infs_superblock_disk sb;
         memcpy(&sb, block, sizeof(sb));
-        if (infs_le64_to_cpu(sb.total_blocks) != total_blocks)
-            continue;
-        if (infs_le64_to_cpu(sb.checkpoint_block[0]) != candidates[0] ||
+        uint64_t total = infs_le64_to_cpu(sb.total_blocks);
+        if (total < 3u || total > storage_blocks ||
+            infs_le64_to_cpu(sb.checkpoint_block[0]) != candidates[0] ||
             infs_le64_to_cpu(sb.checkpoint_block[1]) != candidates[1] ||
             infs_le64_to_cpu(sb.checkpoint_block[2]) != candidates[2])
+            continue;
+        if (anchored &&
+            (total != infs_le64_to_cpu(anchor.total_blocks) ||
+             memcmp(sb.filesystem_uuid, anchor.filesystem_uuid,
+                    sizeof(sb.filesystem_uuid)) != 0))
             continue;
 
         ++valid;
