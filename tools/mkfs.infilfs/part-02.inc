@@ -2,12 +2,15 @@
 int main(int argc, char **argv)
 {
     int force = 0;
+    int wipe_only = 0;
     const char *label = "InfiltratorFS";
     const char *path = NULL;
 
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--force") == 0) {
             force = 1;
+        } else if (strcmp(argv[i], "--wipe-only") == 0) {
+            wipe_only = 1;
         } else if (strcmp(argv[i], "-L") == 0 && i + 1 < argc) {
             label = argv[++i];
         } else if (argv[i][0] == '-') {
@@ -147,6 +150,55 @@ int main(int argc, char **argv)
         total_blocks / 2u,
         total_blocks - 1u
     };
+
+    /*
+     * UDisks/libblockdev performs a signature-clean step before mkfs and waits
+     * for the block object to become filesystem-empty.  util-linux/libblkid
+     * does not yet know the InfiltratorFS on-disk signature, so provide a
+     * narrow helper mode that removes only a positively identified
+     * InfiltratorFS checkpoint set.  Exit status 3 means "not InfiltratorFS";
+     * callers may then continue with their normal generic signature cleaner.
+     */
+    if (wipe_only) {
+        uint8_t raw[INFS_BLOCK_SIZE];
+        struct infs_superblock_disk existing;
+        int identified = 0;
+
+        for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i) {
+            off_t off = (off_t)(checkpoints[i] * INFS_BLOCK_SIZE);
+            if (infs_pread_full(fd, raw, sizeof(raw), off) == 0 &&
+                infs_decode_superblock(raw, &existing) == 0 &&
+                infs_le64_to_cpu(existing.total_blocks) == total_blocks) {
+                identified = 1;
+                break;
+            }
+        }
+
+        if (!identified) {
+            fprintf(stderr, "Target is not an InfiltratorFS volume.\n");
+            close(fd);
+            return 3;
+        }
+
+        memset(raw, 0, sizeof(raw));
+        for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i) {
+            off_t off = (off_t)(checkpoints[i] * INFS_BLOCK_SIZE);
+            if (infs_pwrite_full(fd, raw, sizeof(raw), off) != 0) {
+                perror("wipe checkpoint");
+                close(fd);
+                return 1;
+            }
+        }
+        if (fsync(fd) != 0) {
+            perror("fsync signature wipe");
+            close(fd);
+            return 1;
+        }
+
+        close(fd);
+        printf("Cleared InfiltratorFS signatures on %s.\n", path);
+        return 0;
+    }
 
     if (index_page_block >= checkpoints[1]) {
         fprintf(stderr, "Target is too small for the Format 0.17 metadata layout.\n");
