@@ -193,7 +193,7 @@ See `SECURITY.md` for the intended cross-platform model. Current POSIX compatibi
 - [x] Windows storage/partition conformance harness.
 - [x] Windows formatter, root transfer/listing and scrub application.
 - [x] Shared Linux/Windows Format 0.17 interoperability tests.
-- [x] Driverless Windows Explorer drive-letter bridge using Microsoft's inbox ProjFS, with portable-core read/write, rename, hard-link and delete persistence qualification.
+- [x] Driverless Windows Explorer projection using Microsoft's inbox ProjFS, with projected-root access independent of the elevated process's optional DOS drive alias and portable-core read/write, rename, hard-link and delete persistence qualification.
 - [ ] Windows attribute/security/filename adapter completion.
 - [ ] Native Windows filesystem driver and native Cache Manager/I/O Manager integration.
 - [ ] macOS native adapter investigation/implementation.
