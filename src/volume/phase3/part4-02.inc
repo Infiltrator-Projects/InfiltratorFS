@@ -50,23 +50,11 @@ int64_t infs_read_file(struct infs_volume *vol, const char *path, void *buf,
         if (chunk > remaining - done)
             chunk = remaining - done;
 
-        uint64_t physical;
-        uint32_t flags;
-        status = file_map_block(vol, object, p, ext, logical, &physical, &flags);
+        status = file_read_logical_block(
+            vol, object, p, ext, file_hdr->object_id, logical, data);
         if (status != INFS_STATUS_OK)
             return status;
-        if (flags == INFS_EXTENT_HOLE) {
-            memset((uint8_t *)buf + done, 0, chunk);
-        } else {
-            status = read_block(vol, physical, data);
-            if (status != INFS_STATUS_OK)
-                return status;
-            status = data_block_verify(vol, p, file_hdr->object_id,
-                                       logical, data);
-            if (status != INFS_STATUS_OK)
-                return status;
-            memcpy((uint8_t *)buf + done, data + within, chunk);
-        }
+        memcpy((uint8_t *)buf + done, data + within, chunk);
         done += chunk;
     }
     return (int64_t)done;
