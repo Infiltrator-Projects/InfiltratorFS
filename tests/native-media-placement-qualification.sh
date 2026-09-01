@@ -38,7 +38,12 @@ if lsmod | awk '{print $1}' | grep -qx infiltratorfs; then
     fi
     sudo rmmod infiltratorfs
 fi
-sudo insmod "$MODULE"
+sudo modprobe lz4_compress 2>/dev/null || true
+sudo modprobe lz4_decompress 2>/dev/null || true
+if ! sudo insmod "$MODULE"; then
+    sudo dmesg | tail -n 80 >&2 || true
+    exit 1
+fi
 LOADED=1
 mkdir -p "$MOUNTPOINT"
 
