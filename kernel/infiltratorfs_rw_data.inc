@@ -4088,6 +4088,111 @@ out:
     return ret;
 }
 
+static int infilfs_native_stage_compression_candidate(
+    struct infilfs_native_pending *pending, struct inode *inode,
+    const u8 *plain, u32 logical_blocks, u64 preferred,
+    enum infilfs_data_workload workload,
+    struct infilfs_parallel_reservation *reservation,
+    u64 *data_start_out, u32 *extent_flags_out)
+{
+    size_t plain_bytes;
+    int bound;
+    u8 *compressed = NULL;
+    u8 *stored = NULL;
+    void *workmem = NULL;
+    int compressed_bytes = 0;
+    u32 stored_blocks = 0;
+    u64 data_start = 0;
+    u32 i;
+    int ret;
+
+    if (!plain || !logical_blocks || !data_start_out || !extent_flags_out)
+        return -EINVAL;
+    plain_bytes = (size_t)logical_blocks * INFILFS_DISK_BLOCK_SIZE;
+    *extent_flags_out = INFILFS_EXTENT_NORMAL;
+
+    if (workload == INFILFS_DATA_WORKLOAD_SEQUENTIAL &&
+        logical_blocks >= 2u &&
+        logical_blocks <= INFILFS_COMPRESSION_CLUSTER_BLOCKS &&
+        (le64_to_cpu(pending->tx.next_sb.incompat_flags) &
+         INFILFS_INCOMPAT_COMPRESSED_EXTENTS) != 0) {
+        bound = LZ4_compressBound(plain_bytes);
+        if (bound > 0) {
+            compressed = kvmalloc((size_t)bound, GFP_NOFS);
+            workmem = kvmalloc(LZ4_MEM_COMPRESS, GFP_NOFS);
+            if (!compressed || !workmem) {
+                ret = -ENOMEM;
+                goto out;
+            }
+            compressed_bytes = LZ4_compress_default(
+                (const char *)plain, (char *)compressed,
+                (int)plain_bytes, bound, workmem);
+            if (compressed_bytes > 0 &&
+                (u32)compressed_bytes <=
+                    INFILFS_EXTENT_STORED_BYTES_MAX) {
+                stored_blocks = DIV_ROUND_UP(
+                    (u32)compressed_bytes,
+                    (u32)INFILFS_DISK_BLOCK_SIZE);
+                if (stored_blocks >= logical_blocks)
+                    stored_blocks = 0;
+            }
+        }
+    }
+
+    if (stored_blocks) {
+        size_t stored_span =
+            (size_t)stored_blocks * INFILFS_DISK_BLOCK_SIZE;
+
+        /*
+         * A pre-lock reservation describes the uncompressed logical run.
+         * Once compression wins, release it before claiming the smaller
+         * physical run so the reservation map never retains phantom blocks.
+         */
+        infilfs_parallel_release_reservation(inode->i_sb, reservation);
+        stored = kvzalloc(stored_span, GFP_NOFS);
+        if (!stored) {
+            ret = -ENOMEM;
+            goto out;
+        }
+        memcpy(stored, compressed, (size_t)compressed_bytes);
+        ret = infilfs_native_alloc_data_exact_reserved(
+            pending, stored_blocks, preferred, workload,
+            NULL, &data_start);
+        if (ret)
+            goto out;
+        for (i = 0; i < stored_blocks; ++i) {
+            ret = infilfs_native_stage_block(
+                inode->i_sb, data_start + i,
+                stored + (size_t)i * INFILFS_DISK_BLOCK_SIZE);
+            if (ret)
+                goto out;
+        }
+        *extent_flags_out = infilfs_extent_compressed_flags(
+            INFILFS_COMPRESSION_LZ4, (u32)compressed_bytes);
+    } else {
+        ret = infilfs_native_alloc_data_exact_reserved(
+            pending, logical_blocks, preferred, workload,
+            reservation, &data_start);
+        if (ret)
+            goto out;
+        for (i = 0; i < logical_blocks; ++i) {
+            ret = infilfs_native_stage_block(
+                inode->i_sb, data_start + i,
+                plain + (size_t)i * INFILFS_DISK_BLOCK_SIZE);
+            if (ret)
+                goto out;
+        }
+    }
+
+    *data_start_out = data_start;
+    ret = 0;
+out:
+    kvfree(stored);
+    kvfree(workmem);
+    kvfree(compressed);
+    return ret;
+}
+
 static int infilfs_native_append_chunk_locked(
     struct infilfs_native_pending *pending, struct inode *inode,
     struct iov_iter *from, u64 pos, size_t bytes,
@@ -4106,6 +4211,8 @@ static int infilfs_native_append_chunk_locked(
     struct infilfs_extent_disk *new_extents = NULL;
     struct infilfs_data_checksum_disk *digests = NULL;
     u8 *data_block = NULL;
+    u8 *plain_data = NULL;
+    u32 replacement_flags = INFILFS_EXTENT_NORMAL;
     const u32 change_capacity = 32u;
     struct infilfs_native_index_change *changes = NULL;
     u32 change_count = 0;
@@ -4271,17 +4378,56 @@ generic_extent_write:
         }
     }
 
-    ret = infilfs_native_alloc_data_exact_reserved(
-        pending, touched_blocks, preferred, workload,
-        reservation, &data_start);
-    if (ret)
-        goto out;
     digests = kvmalloc_array(touched_blocks, sizeof(*digests), GFP_NOFS);
     if (!digests) {
         ret = -ENOMEM;
         goto out;
     }
 
+    /*
+     * Compression is emitted only for an aligned sequential append cluster.
+     * It has no old-data dependency, which lets us compress the complete
+     * plaintext before choosing the smaller physical allocation.
+     */
+    if (workload == INFILFS_DATA_WORKLOAD_SEQUENTIAL &&
+        pos == old_size &&
+        (pos & (INFILFS_DISK_BLOCK_SIZE - 1u)) == 0 &&
+        bytes == touched_blocks * INFILFS_DISK_BLOCK_SIZE &&
+        start_block == old_blocks &&
+        touched_blocks >= 2u &&
+        touched_blocks <= INFILFS_COMPRESSION_CLUSTER_BLOCKS) {
+        size_t plain_bytes =
+            (size_t)touched_blocks * INFILFS_DISK_BLOCK_SIZE;
+
+        plain_data = kvmalloc(plain_bytes, GFP_NOFS);
+        if (!plain_data) {
+            ret = -ENOMEM;
+            goto out;
+        }
+        if (copy_from_iter(plain_data, plain_bytes, from) != plain_bytes) {
+            ret = -EFAULT;
+            goto out;
+        }
+        consumed = plain_bytes;
+        for (logical = 0; logical < touched_blocks; ++logical)
+            infilfs_native_block_digest(
+                plain_data + (size_t)logical * INFILFS_DISK_BLOCK_SIZE,
+                &digests[logical]);
+        ret = infilfs_native_stage_compression_candidate(
+            pending, inode, plain_data, (u32)touched_blocks,
+            preferred, workload, reservation,
+            &data_start, &replacement_flags);
+        if (ret)
+            goto out;
+        goto data_staged;
+    }
+
+    replacement_flags = INFILFS_EXTENT_NORMAL;
+    ret = infilfs_native_alloc_data_exact_reserved(
+        pending, touched_blocks, preferred, workload,
+        reservation, &data_start);
+    if (ret)
+        goto out;
     data_block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
     if (!data_block) {
         ret = -ENOMEM;
@@ -4342,9 +4488,10 @@ generic_extent_write:
                                     &digests[logical - start_block]);
     }
 
+data_staged:
     ret = infilfs_native_replace_extent_range(
         old_extents, old_extent_count, old_blocks, start_block,
-        touched_blocks, data_start, INFILFS_EXTENT_NORMAL,
+        touched_blocks, data_start, replacement_flags,
         &new_extents, &new_extent_count);
     if (ret)
         goto out;
@@ -4415,6 +4562,7 @@ out:
     if (ret && consumed)
         iov_iter_revert(from, consumed);
     *consumed_out = ret ? 0 : consumed;
+    kvfree(plain_data);
     kfree(data_block);
     kfree(changes);
     kvfree(digests);
