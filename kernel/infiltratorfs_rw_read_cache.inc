@@ -60,7 +60,8 @@ static int infilfs_native_map_file_block_cached(
     struct inode *inode, const u8 *object, u64 logical,
     u8 extent_page[INFILFS_DISK_BLOCK_SIZE],
     struct infilfs_native_read_extent_cursor *cursor,
-    u64 *physical_out, u32 *flags_out)
+    u64 *physical_out, u32 *flags_out,
+    u64 *extent_logical_out, u32 *extent_blocks_out)
 {
     const struct infilfs_object_header_disk *header =
         (const struct infilfs_object_header_disk *)object;
@@ -78,8 +79,9 @@ static int infilfs_native_map_file_block_cached(
     int ret;
 
     if (version != INFILFS_OBJECT_VERSION_PAGED)
-        return infilfs_map_file_block(
-            inode, object, logical, physical_out, flags_out);
+        return infilfs_map_file_block_detail(
+            inode, object, logical, physical_out, flags_out,
+            extent_logical_out, extent_blocks_out);
 
     head = (const struct infilfs_extent_head_disk *)(file + 1);
     pages = (const __le64 *)(head + 1);
@@ -170,12 +172,21 @@ static int infilfs_native_map_file_block_cached(
             lo = mid + 1u;
             continue;
         }
-        if (flags != INFILFS_EXTENT_NORMAL &&
-            flags != INFILFS_EXTENT_HOLE)
+        if (!infilfs_extent_flags_valid(
+                blocks, le64_to_cpu(ext[mid].physical_block), flags))
             return -EFSCORRUPTED;
         *flags_out = flags;
-        *physical_out = flags == INFILFS_EXTENT_HOLE ? 0 :
-            le64_to_cpu(ext[mid].physical_block) + (logical - start);
+        if (infilfs_extent_kind(flags) == INFILFS_EXTENT_HOLE)
+            *physical_out = 0;
+        else if (infilfs_extent_is_compressed(flags))
+            *physical_out = le64_to_cpu(ext[mid].physical_block);
+        else
+            *physical_out =
+                le64_to_cpu(ext[mid].physical_block) + (logical - start);
+        if (extent_logical_out)
+            *extent_logical_out = start;
+        if (extent_blocks_out)
+            *extent_blocks_out = blocks;
         return 0;
     }
     return -EFSCORRUPTED;
@@ -270,21 +281,28 @@ static ssize_t infilfs_native_read_iter_cached(struct inode *inode,
         size_t chunk = min_t(size_t, INFILFS_DISK_BLOCK_SIZE - within,
                              requested - done);
         u64 physical = 0;
+        u64 extent_logical = 0;
+        u32 extent_blocks = 0;
         u32 flags = 0;
         size_t copied;
 
         ret = infilfs_native_map_file_block_cached(
             inode, object, logical, extent_page, &extent_cursor,
-            &physical, &flags);
+            &physical, &flags, &extent_logical, &extent_blocks);
         if (ret)
             goto partial;
-        if (flags == INFILFS_EXTENT_HOLE) {
+        if (infilfs_extent_kind(flags) == INFILFS_EXTENT_HOLE) {
             memset(data_block, 0, INFILFS_DISK_BLOCK_SIZE);
-        } else if (flags == INFILFS_EXTENT_NORMAL) {
+        } else if (infilfs_extent_kind(flags) == INFILFS_EXTENT_NORMAL) {
             struct infilfs_data_checksum_disk expected, actual;
 
-            ret = infilfs_read_allocated_block(
-                inode->i_sb, physical, data_block);
+            if (infilfs_extent_is_compressed(flags))
+                ret = infilfs_read_compressed_logical_block(
+                    inode, physical, extent_logical, extent_blocks,
+                    flags, logical, data_block);
+            else
+                ret = infilfs_read_allocated_block(
+                    inode->i_sb, physical, data_block);
             if (ret)
                 goto partial;
             ret = infilfs_native_read_expected_digest(
