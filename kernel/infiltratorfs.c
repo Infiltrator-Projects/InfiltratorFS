@@ -242,8 +242,7 @@ static struct infilfs_sb_info *INFILFS_SB(struct super_block *sb)
 }
 
 static int infilfs_read_allocated_block(
-    struct super_block *sb, u64 block,
-    u8 buffer[INFILFS_DISK_BLOCK_SIZE]);
+    struct super_block *sb, u64 block, void *buffer);
 
 static u32 infilfs_extent_kind(u32 flags)
 {
