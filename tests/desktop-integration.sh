@@ -164,6 +164,20 @@ if "$inspect" --udev "$wipe_image" > "$tmp/wiped-probe.txt" 2>/dev/null; then
 fi
 [[ ! -s "$tmp/wiped-probe.txt" ]]
 
+# A filesystem may legitimately be smaller than its backing device during the
+# resize lifecycle. Signature cleanup must follow the block-zero checkpoint
+# geometry rather than guessing checkpoint locations from the current device
+# length, otherwise UDisks can regress to the same post-wipe timeout.
+resize_wipe_image="$tmp/wipe-resized-backing.img"
+cp "$image" "$resize_wipe_image"
+truncate -s 96M "$resize_wipe_image"
+"$mkfs" --wipe-only "$resize_wipe_image" >/dev/null
+if "$inspect" --udev "$resize_wipe_image" > "$tmp/wiped-resized-probe.txt" 2>/dev/null; then
+    echo 'desktop-integration: resize-safe --wipe-only left an InfiltratorFS signature' >&2
+    exit 1
+fi
+[[ ! -s "$tmp/wiped-resized-probe.txt" ]]
+
 truncate -s 64M "$plain"
 set +e
 "$mkfs" --wipe-only "$plain" >"$tmp/plain-wipe.out" 2>"$tmp/plain-wipe.err"
