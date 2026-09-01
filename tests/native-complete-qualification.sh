@@ -160,6 +160,7 @@ bash tests/native-small-file-scaling-policy.sh .
 bash tests/native-free-extent-index-policy.sh .
 bash tests/native-parallel-allocation-policy.sh .
 bash tests/native-workload-placement-policy.sh .
+bash tests/native-media-placement-policy.sh .
 bash tests/native-defrag-policy.sh .
 bash tests/native-index-tree-policy.sh .
 bash tests/index-tree-format-policy.sh .
@@ -170,6 +171,7 @@ bash tests/native-endurance-policy.sh .
 bash -n tests/native-partition22-full-test.sh
 bash -n tests/native-partition22-qualification.sh
 bash -n tests/native-defrag-qualification.sh
+bash -n tests/native-media-placement-qualification.sh
 bash -n tests/native-scale-qualification.sh
 bash -n tests/native-endurance-qualification.sh
 PYTHONPYCACHEPREFIX="$WORK/pycache" python3 -m py_compile     tests/native-scale-stress.py tests/native-endurance-stress.py
