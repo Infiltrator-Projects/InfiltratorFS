@@ -173,4 +173,4 @@ Release 0.18.32 does not yet implement the final portable security-object format
 
 InfiltratorFS does not use FAT-style linked allocation, a fixed global inode table, a single irreplaceable superblock, unchecked critical metadata or synchronous global deduplication.
 
-Future work includes compression, media/workload-aware placement, protection classes, portable security objects/ACL mapping, generic named metadata/streams, encryption domains, broader mounted stress and additional native operating-system drivers.
+Future work includes the InfiltratorFS-native adaptive compression design described in `COMPRESSION.md`, protection classes, portable security objects/ACL mapping, generic named metadata/streams, encryption domains, broader mounted stress and additional native operating-system drivers. The current LZ4 implementation is a development/reference codec, not the intended automatic default.
