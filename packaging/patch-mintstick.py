@@ -10,6 +10,7 @@ future Mintstick change fail visibly instead of silently damaging the formatter.
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
 
 
@@ -111,22 +112,31 @@ def patch_formatter(text: str) -> str:
         raise SystemExit("mintstick integration: partition-path anchor missing")
 
     # Force the kernel to adopt the new partition table and wait for the
-    # resulting node before wipefs/mkfs.  A stale table must be reported as an
-    # error rather than returning a false success.
-    old_mkpart = '''    execute(["parted", device_path, "mkpart", "primary", partition_type, "1MiB", "100%"])
-
-    # Call wipefs on the new partitions to avoid problems with old filesystem signatures
-'''
-    new_mkpart = '''    execute(["parted", device_path, "mkpart", "primary", partition_type, "1MiB", "100%"])
-    execute(["partprobe", device_path])
-    execute(["udevadm", "settle", "--timeout=10"])
-
-    # Call wipefs on the new partitions to avoid problems with old filesystem signatures
-'''
-    if old_mkpart in text:
-        text = replace_once(text, old_mkpart, new_mkpart, "partition-refresh")
-    elif 'execute(["partprobe", device_path])' not in text:
-        raise SystemExit("mintstick integration: partition-refresh anchor missing")
+    # resulting node before wipefs/mkfs. Linux Mint 22.x shipped Mintstick
+    # with a historical "1" start value; newer Mintstick uses "1MiB". Accept
+    # either stock form while still requiring exactly one recognised mkpart
+    # site so an unrelated upstream rewrite fails closed.
+    if 'execute(["partprobe", device_path])' not in text:
+        mkpart_pattern = re.compile(
+            r'(?m)^(    execute\(\["parted", device_path, "mkpart", "primary", '
+            r'partition_type, "(?:1|1MiB)", "100%"\]\)\n)'
+            r'(\n    # Call wipefs on the new partitions to avoid problems with old '
+            r'filesystem signatures\n)'
+        )
+        matches = list(mkpart_pattern.finditer(text))
+        if len(matches) != 1:
+            raise SystemExit(
+                "mintstick integration: expected exactly one partition-refresh "
+                f"anchor, found {len(matches)}"
+            )
+        match = matches[0]
+        refresh = (
+            match.group(1)
+            + '    execute(["partprobe", device_path])\n'
+            + '    execute(["udevadm", "settle", "--timeout=10"])\n'
+            + match.group(2)
+        )
+        text = text[: match.start()] + refresh + text[match.end() :]
 
     if '"infiltratorfs"' not in text or "mkfs.infiltratorfs" not in text:
         old_partition = '''    elif fstype == "ext4":
