@@ -849,8 +849,11 @@ static loff_t infilfs_file_remap_file_range(
     loff_t source_size = i_size_read(file_inode(file_in));
     int ret;
 
-    if (remap_flags || pos_in != 0 || pos_out != 0 ||
-        len != source_size)
+    if (remap_flags || pos_in != 0 || pos_out != 0)
+        return -EOPNOTSUPP;
+    if (len == 0)
+        len = source_size;
+    if (len != source_size)
         return -EOPNOTSUPP;
     ret = infilfs_native_reflink_full(file_in, file_out);
     return ret ? ret : len;
