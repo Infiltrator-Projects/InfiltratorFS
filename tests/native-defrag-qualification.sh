@@ -112,6 +112,38 @@ print(h.hexdigest())
 PY
 )"
 
+# Build several independent highly-compressible EOF clusters while unrelated
+# allocations sit between them. Deleting the fillers leaves codec streams
+# logically adjacent but physically split.
+COMPRESSED="$MOUNTPOINT/compressed-fragmented.bin"
+python3 - "$COMPRESSED" "$MOUNTPOINT" <<'PY'
+import hashlib
+import os
+import sys
+
+path, root = sys.argv[1], sys.argv[2]
+chunk = (b"InfiltratorFS-compressed-defrag-" * 8192)[:256 * 1024]
+with open(path, "xb", buffering=0) as stream:
+    for i in range(12):
+        stream.write(chunk)
+        os.fsync(stream.fileno())
+        filler = os.path.join(root, f".defrag-filler-{i}")
+        with open(filler, "xb", buffering=0) as f:
+            for j in range(256):
+                f.write(hashlib.sha256(f"{i}:{j}".encode()).digest() * 128)
+            os.fsync(f.fileno())
+for i in range(12):
+    os.unlink(os.path.join(root, f".defrag-filler-{i}"))
+PY
+COMPRESSED_EXPECTED="$(sha256sum "$COMPRESSED" | awk '{print $1}')"
+COMPRESSED_BLOCKS_BEFORE="$(stat -c '%b' "$COMPRESSED")"
+COMPRESSED_METRICS_BEFORE="$("$BUILD/infilfs-optimize" --metrics "$COMPRESSED")"
+printf '%s
+' "$COMPRESSED_METRICS_BEFORE"
+COMPRESSED_EXTENTS="$(sed -nE 's/.*extents=([0-9]+).*/\1/p' <<<"$COMPRESSED_METRICS_BEFORE" | head -n1)"
+[[ "$COMPRESSED_EXTENTS" =~ ^[0-9]+$ ]]
+(( COMPRESSED_EXTENTS > 1 ))
+
 setfattr -n user.infiltratorfs-defrag -v preserved "$FILE"
 ln "$FILE" "$LINK"
 INO_BEFORE="$(stat -c '%i' "$FILE")"
@@ -148,6 +180,14 @@ AFTER_EXTENTS="$(sed -nE 's/.*extents=([0-9]+).*/\1/p' <<<"$AFTER" | head -n1)"
 [[ "$AFTER_EXTENTS" =~ ^[0-9]+$ ]]
 (( AFTER_EXTENTS < BEFORE_EXTENTS ))
 
+echo "=== Compressed online defrag ==="
+COMPRESSED_DEFRAG="$("$BUILD/infilfs-optimize" --defrag --max-mib 64 --passes 16 "$COMPRESSED")"
+printf '%s
+' "$COMPRESSED_DEFRAG"
+grep -Eq 'moved 0\.[0-9]*[1-9][0-9]* MiB|moved [1-9][0-9]*\.[0-9]+ MiB' <<<"$COMPRESSED_DEFRAG"
+test "$(sha256sum "$COMPRESSED" | awk '{print $1}')" = "$COMPRESSED_EXPECTED"
+test "$(stat -c '%b' "$COMPRESSED")" = "$COMPRESSED_BLOCKS_BEFORE"
+
 ACTUAL="$(sha256sum "$FILE" | awk '{print $1}')"
 test "$ACTUAL" = "$EXPECTED"
 test "$(sha256sum "$LINK" | awk '{print $1}')" = "$EXPECTED"
@@ -170,11 +210,16 @@ grep -Fq 'Result:              CLEAN' "$SCRUB"
 SNAPSHOT_COPY="$WORK/snapshot-before-defrag.bin"
 "$BUILD/infilfs-tool" "$IMAGE" snapshot-cat before-defrag /fragmented.bin > "$SNAPSHOT_COPY"
 test "$(sha256sum "$SNAPSHOT_COPY" | awk '{print $1}')" = "$EXPECTED"
+COMPRESSED_SNAPSHOT="$WORK/snapshot-compressed-before-defrag.bin"
+"$BUILD/infilfs-tool" "$IMAGE" snapshot-cat before-defrag /compressed-fragmented.bin > "$COMPRESSED_SNAPSHOT"
+test "$(sha256sum "$COMPRESSED_SNAPSHOT" | awk '{print $1}')" = "$COMPRESSED_EXPECTED"
 
 sudo mount -t infiltratorfs -o ro "$LOOPDEV" "$MOUNTPOINT"
 MOUNTED=1
 test "$(sha256sum "$FILE" | awk '{print $1}')" = "$EXPECTED"
 test "$(sha256sum "$LINK" | awk '{print $1}')" = "$EXPECTED"
+test "$(sha256sum "$COMPRESSED" | awk '{print $1}')" = "$COMPRESSED_EXPECTED"
+test "$(stat -c '%b' "$COMPRESSED")" = "$COMPRESSED_BLOCKS_BEFORE"
 test "$(getfattr --only-values -n user.infiltratorfs-defrag "$FILE")" = preserved
 "$BUILD/infilfs-optimize" --metrics "$FILE"
 
