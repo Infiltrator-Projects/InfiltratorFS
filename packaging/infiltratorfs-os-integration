@@ -4,7 +4,6 @@ set -Eeuo pipefail
 
 readonly OWNER="infiltratorfs"
 readonly BUNDLE="/usr/lib/infiltratorfs/os-integration"
-readonly MINT_PATCHER="/usr/lib/infiltratorfs/patch-mintstick.py"
 readonly GDU_TARGET="/usr/bin/gnome-disks"
 readonly MINT_UI="/usr/lib/mintstick/mintstick.py"
 readonly MINT_FORMATTER="/usr/lib/mintstick/raw_format.py"
@@ -133,6 +132,17 @@ remove_all()
 
 install_all()
 {
+    # InfiltratorFS must never integrate with Mintstick/Nemo's "USB Stick
+    # Formatter". Mintstick is a whole-device repartitioner: it intentionally
+    # replaces the partition table and creates one filesystem spanning the
+    # selected drive. Older InfiltratorFS packages patched Mintstick and
+    # normalised /dev/mmcblk0pN or /dev/nvme0n1pN to the parent disk, which
+    # made a partition-looking desktop action destructive to every partition
+    # on that device. Always undo that historical diversion before doing
+    # anything else, including source-built packages with no desktop bundle.
+    restore_path "$MINT_FORMATTER" "${MINT_FORMATTER}.infiltratorfs-stock"
+    restore_path "$MINT_UI" "${MINT_UI}.infiltratorfs-stock"
+
     if [[ ! -s "$BUNDLE/gnome-disks" ||
           ! -s "$BUNDLE/libbd_fs.so" ||
           ! -s "$BUNDLE/manifest" ]]; then
@@ -145,7 +155,6 @@ install_all()
     check_supported_stack
 
     local plugin plugin_stock tmp=""
-    local mint_ui_source="" mint_formatter_source=""
     plugin="$(find_libblockdev_plugin)" || {
         echo 'InfiltratorFS: could not locate the libblockdev filesystem plugin.' >&2
         return 1
@@ -158,21 +167,6 @@ install_all()
     tmp="$(mktemp -d)"
     trap 'rm -rf "$tmp"' RETURN
 
-    if [[ -e "$MINT_UI" && -e "$MINT_FORMATTER" ]] ||
-       { is_our_diversion "$MINT_UI" && is_our_diversion "$MINT_FORMATTER"; }; then
-        require_no_foreign_diversion "$MINT_UI"
-        require_no_foreign_diversion "$MINT_FORMATTER"
-        if is_our_diversion "$MINT_UI"; then
-            mint_ui_source="${MINT_UI}.infiltratorfs-stock"
-            mint_formatter_source="${MINT_FORMATTER}.infiltratorfs-stock"
-        else
-            mint_ui_source="$MINT_UI"
-            mint_formatter_source="$MINT_FORMATTER"
-        fi
-        python3 "$MINT_PATCHER" "$mint_ui_source" "$mint_formatter_source" \
-            "$tmp/mintstick.py" "$tmp/raw_format.py"
-    fi
-
     trap 'remove_all; rm -rf "$tmp"' ERR
 
     divert_path "$GDU_TARGET" "${GDU_TARGET}.infiltratorfs-stock"
@@ -181,23 +175,11 @@ install_all()
     divert_path "$plugin" "$plugin_stock"
     install -m 0644 "$BUNDLE/libbd_fs.so" "$plugin"
 
-    if [[ -s "$tmp/mintstick.py" && -s "$tmp/raw_format.py" ]]; then
-        divert_path "$MINT_UI" "${MINT_UI}.infiltratorfs-stock"
-        divert_path "$MINT_FORMATTER" "${MINT_FORMATTER}.infiltratorfs-stock"
-        install -m "$(stat -c '%a' "${MINT_UI}.infiltratorfs-stock")" \
-            "$tmp/mintstick.py" "$MINT_UI"
-        install -m "$(stat -c '%a' "${MINT_FORMATTER}.infiltratorfs-stock")" \
-            "$tmp/raw_format.py" "$MINT_FORMATTER"
-        log "Linux Mint USB Stick Formatter integration installed."
-    else
-        log "Mintstick is not installed; skipping its optional integration."
-    fi
-
     restart_udisks
     rm -rf "$tmp"
     trap - RETURN
     trap - ERR
-    log "GNOME Disks, libblockdev and UDisks/GVfs integration installed."
+    log "GNOME Disks, libblockdev and UDisks/GVfs partition-safe integration installed; Mintstick remains stock."
 }
 
 case "${1:-}" in
