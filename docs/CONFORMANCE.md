@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # Format 0.17 Conformance
 
-Release 0.18.32 accepts exactly current on-disk Format 0.17. Pre-1.0 builds do not promise compatibility with earlier development formats.
+Current source accepts exactly on-disk Format 0.17. Pre-1.0 builds do not promise compatibility with earlier development formats.
 
 ## Persistent representation
 
@@ -126,7 +126,7 @@ Native Linux qualification requires:
 - clean unmount followed by userspace scrub; and
 - refusal to silently substitute a non-native filesystem path.
 
-Release 0.18.32 qualifies this native migrated surface, including concurrent
+Current source qualifies this native migrated surface, including concurrent
 64-shard data-run reservation before the serialized metadata transaction,
 volatile workload-aware placement for sequential, random-CoW and direct sparse
 writes, and volatile media-aware rotational/non-rotational placement. Further
@@ -167,7 +167,7 @@ Installation fails if matching running-kernel headers are unavailable or if the 
 
 ## Automated gates
 
-The main Build and conformance workflow runs the portable/core suite under GCC, Clang, ASan/UBSan and GCC `-fanalyzer`, including deterministic and randomized bitmap-oracle qualification of the rebuildable free-extent index and a policy guard that forbids restoration of monolithic persistent bitmap publication or whole-bitmap transaction clones. The same suite gates the IAC1 codec and compressed-extent representation plus a representative compression corpus covering source/text, executable/library patterns, office/document data, database records, VM/zero-heavy storage, structured binary data, mixed small-file/configuration content and high-entropy already-compressed/encrypted-style input; it records IAC1-versus-LZ4 size and throughput telemetry and enforces deterministic decoding, incompressible-data rejection, bounded scratch memory and minimum filesystem-block savings. It validates desktop/Manager behavior, checks cross-platform Linux-created media on Windows, and—when Microsoft's ProjFS component is available on the Windows runner—starts the driverless Explorer provider and requires an external Windows client to read Linux-created data and persist create/write/rename/hard-link/delete operations back through the portable core. It also builds release packages and rejects any FUSE build artifact or package dependency.
+The main Build and conformance workflow runs the portable/core suite under GCC, Clang, ASan/UBSan and GCC `-fanalyzer`, including deterministic and randomized bitmap-oracle qualification of the rebuildable free-extent index and a policy guard that forbids restoration of monolithic persistent bitmap publication or whole-bitmap transaction clones. The same suite gates the IAC1 codec and compressed-extent representation plus a representative compression corpus covering source/text, executable/library patterns, office/document data, database records, VM/zero-heavy storage, structured binary data, mixed small-file/configuration content and high-entropy already-compressed/encrypted-style input; it records IAC1-versus-LZ4 size and throughput telemetry and enforces deterministic decoding, incompressible-data rejection, bounded scratch memory and minimum filesystem-block savings. It validates desktop/Manager behavior, checks cross-platform Linux-created media on Windows, and requires Microsoft's ProjFS component on the Windows runner, starts the driverless Explorer provider and requires an external Windows client to read Linux-created data and persist create/write/rename/hard-link/delete operations back through the portable core. It also builds release packages and rejects any FUSE build artifact or package dependency.
 
 Portable smoke qualification requires a 1023-byte UTF-8 component to succeed and a 1024-byte component to be rejected. Native mounted qualification additionally verifies that `statfs` advertises the 1023-byte boundary and repeats create/read/enumerate/reject through the Linux VFS.
 
