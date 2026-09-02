@@ -421,6 +421,13 @@ jobs:
           $info = (Get-Item $exe).VersionInfo
           if (!$info.FileVersion.StartsWith($version)) { throw "FileVersion '$($info.FileVersion)' does not match $version" }
           if (!$info.ProductVersion.StartsWith($version)) { throw "ProductVersion '$($info.ProductVersion)' does not match $version" }
+          $manifest = Join-Path $env:RUNNER_TEMP 'infiltratorfs-windows-manifest.xml'
+          & mt.exe "-inputresource:$exe;#1" "-out:$manifest"
+          if ($LASTEXITCODE -ne 0) { throw "Could not extract embedded Windows manifest from $exe" }
+          $embedded = Get-Content $manifest -Raw
+          if ($embedded -notmatch '<longPathAware[^>]*>true</longPathAware>') {
+            throw 'Windows executable is missing longPathAware=true in its embedded manifest.'
+          }
       - name: Upload Windows transfer app
         uses: actions/upload-artifact@v4
         with:
