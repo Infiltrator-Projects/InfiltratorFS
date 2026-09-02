@@ -123,8 +123,17 @@ cat > "$tmp/mintstick.py" <<'MINT_UI'
             self.fsmodel.append(["exfat", "exFAT", 11, False, False])
             self.fsmodel.append(["ntfs", "NTFS", 32, False, False])
             self.fsmodel.append(["ext4", "EXT4", 16, False, False])
+                            name = block.get_property('device')
+                            name = ''.join([i for i in name if not i.isdigit()])
+            usb_path = ''.join([i for i in a if not i.isdigit()])
 MINT_UI
 cat > "$tmp/raw_format.py" <<'MINT_FORMAT'
+def execute(command):
+    syslog.syslog(str(command))
+    call(command)
+    call(["sync"])
+
+    partition_path = "%s1" % device_path
     if fstype == "fat32":
         partition_type = "fat32"
     elif fstype == "exfat":
@@ -134,6 +143,9 @@ cat > "$tmp/raw_format.py" <<'MINT_FORMAT'
     elif fstype == "ext4":
         partition_type = "ext4"
 
+    execute(["parted", device_path, "mkpart", "primary", partition_type, "1MiB", "100%"])
+
+    # Call wipefs on the new partitions to avoid problems with old filesystem signatures
     if fstype == "fat32":
         pass
     elif fstype == "ext4":
@@ -145,6 +157,14 @@ MINT_FORMAT
 python3 "$mint_patcher" "$tmp/mintstick.py" "$tmp/raw_format.py" \
     "$tmp/mintstick-patched.py" "$tmp/raw-format-patched.py"
 grep -Fq '["infiltratorfs", "InfiltratorFS", 63, False, False]' "$tmp/mintstick-patched.py"
+grep -Fq "name.startswith(('/dev/mmcblk', '/dev/nvme'))" "$tmp/mintstick-patched.py"
+grep -Fq "name = name.rstrip('0123456789')" "$tmp/mintstick-patched.py"
+grep -Fq "a.startswith(('/dev/mmcblk', '/dev/nvme'))" "$tmp/mintstick-patched.py"
+grep -Fq "usb_path = a.rstrip('0123456789')" "$tmp/mintstick-patched.py"
+grep -Fq 'partition_suffix = "p1" if device_path[-1].isdigit() else "1"' "$tmp/raw-format-patched.py"
+grep -Fq 'Command failed with exit status' "$tmp/raw-format-patched.py"
+grep -Fq 'execute(["partprobe", device_path])' "$tmp/raw-format-patched.py"
+grep -Fq 'execute(["udevadm", "settle", "--timeout=10"])' "$tmp/raw-format-patched.py"
 grep -Fq 'mkfs.infiltratorfs", "--force", "-L"' "$tmp/raw-format-patched.py"
 grep -Fq '"ext4", "infiltratorfs"' "$tmp/raw-format-patched.py"
 
