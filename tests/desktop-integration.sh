@@ -13,7 +13,7 @@ gnome_disks_patch="$repo_root/packaging/gnome-disks-infiltratorfs.patch"
 mkfs_alias="$repo_root/tools/mkfs.infiltratorfs"
 bootstrap="$repo_root/support/installer/bootstrap.sh"
 os_helper="$repo_root/packaging/infiltratorfs-os-integration"
-mint_patcher="$repo_root/packaging/patch-mintstick.py"
+mint_guard="$repo_root/packaging/patch-mintstick.py"
 noble_libblockdev_patch="$repo_root/packaging/libblockdev-3.1-infiltratorfs.patch"
 noble_gnome_patch="$repo_root/packaging/gnome-disks-46-infiltratorfs.patch"
 noble_bundle_builder="$repo_root/packaging/build-noble-desktop-integration.sh"
@@ -93,7 +93,7 @@ grep -Fq '"infiltratorfs"' "$gnome_disks_patch"
 
 # Public Ubuntu 24.04 / Linux Mint 22.x packages carry ABI-matched downstream
 # desktop binaries and restore the distro originals with dpkg-divert.
-for integration_file in "$os_helper" "$mint_patcher" "$noble_libblockdev_patch" \
+for integration_file in "$os_helper" "$mint_guard" "$noble_libblockdev_patch" \
                         "$noble_gnome_patch" "$noble_bundle_builder"; do
     test -s "$integration_file"
 done
@@ -116,69 +116,23 @@ grep -Fq 'src/disks/gduvolumegrid.c' "$noble_gnome_patch"
 grep -Fq 'InfiltratorFS (format %s)' "$noble_gnome_patch"
 grep -Fq 'BD_FS_TECH_INFILTRATORFS' "$noble_libblockdev_patch"
 
-# Mintstick is patched from its locally installed stock files.  Exercise the
-# exact upstream filesystem, device-name and command-execution anchors so
-# digit-ending block devices cannot regress to a false-success format.
-cat > "$tmp/mintstick.py" <<'MINT_UI'
-            self.fsmodel.append(["fat32", "FAT32", 11, True, True])
-            self.fsmodel.append(["exfat", "exFAT", 11, False, False])
-            self.fsmodel.append(["ntfs", "NTFS", 32, False, False])
-            self.fsmodel.append(["ext4", "EXT4", 16, False, False])
-                            name = block.get_property('device')
-                            name = ''.join([i for i in name if not i.isdigit()])
-            usb_path = ''.join([i for i in a if not i.isdigit()])
-MINT_UI
-cat > "$tmp/raw_format.py" <<'MINT_FORMAT'
-def execute(command):
-    syslog.syslog(str(command))
-    call(command)
-    call(["sync"])
-
-    partition_path = "%s1" % device_path
-    if fstype == "fat32":
-        partition_type = "fat32"
-    elif fstype == "exfat":
-        partition_type = "ntfs"
-    elif fstype == "ntfs":
-        partition_type = "ntfs"
-    elif fstype == "ext4":
-        partition_type = "ext4"
-
-    execute(["parted", device_path, "mkpart", "primary", partition_type, "1MiB", "100%"])
-
-    # Call wipefs on the new partitions to avoid problems with old filesystem signatures
-    if fstype == "fat32":
-        pass
-    elif fstype == "ext4":
-        execute(["mkfs.ext4", "-E", "root_owner=%s:%s" % (uid, gid), "-L", volume_label, partition_path])
-
-    parser.add_argument("-f", "--filesystem", help="File system type", action="store",
-                        type=str, choices=("fat32", "exfat", "ntfs", "ext4"), required=True)
-MINT_FORMAT
-python3 "$mint_patcher" "$tmp/mintstick.py" "$tmp/raw_format.py" \
-    "$tmp/mintstick-patched.py" "$tmp/raw-format-patched.py"
-grep -Fq '["infiltratorfs", "InfiltratorFS", 63, False, False]' "$tmp/mintstick-patched.py"
-grep -Fq "name.startswith(('/dev/mmcblk', '/dev/nvme'))" "$tmp/mintstick-patched.py"
-grep -Fq "name = name.rstrip('0123456789')" "$tmp/mintstick-patched.py"
-grep -Fq "a.startswith(('/dev/mmcblk', '/dev/nvme'))" "$tmp/mintstick-patched.py"
-grep -Fq "usb_path = a.rstrip('0123456789')" "$tmp/mintstick-patched.py"
-grep -Fq 'partition_suffix = "p1" if device_path[-1].isdigit() else "1"' "$tmp/raw-format-patched.py"
-grep -Fq 'Command failed with exit status' "$tmp/raw-format-patched.py"
-grep -Fq 'execute(["partprobe", device_path])' "$tmp/raw-format-patched.py"
-grep -Fq 'execute(["udevadm", "settle", "--timeout=10"])' "$tmp/raw-format-patched.py"
-grep -Fq 'mkfs.infiltratorfs", "--force", "-L"' "$tmp/raw-format-patched.py"
-grep -Fq '"ext4", "infiltratorfs"' "$tmp/raw-format-patched.py"
-
-# Linux Mint 22.x packages can still carry the pre-August-2026 Mintstick
-# partition start spelling ("1").  It must patch just as safely as current
-# upstream's "1MiB" spelling so package upgrades do not strand dpkg.
-sed 's/partition_type, "1MiB", "100%"/partition_type, "1", "100%"/' \
-    "$tmp/raw_format.py" > "$tmp/raw-format-legacy.py"
-python3 "$mint_patcher" "$tmp/mintstick.py" "$tmp/raw-format-legacy.py" \
-    "$tmp/mintstick-legacy-patched.py" "$tmp/raw-format-legacy-patched.py"
-grep -Fq 'partition_type, "1", "100%"' "$tmp/raw-format-legacy-patched.py"
-grep -Fq 'execute(["partprobe", device_path])' "$tmp/raw-format-legacy-patched.py"
-grep -Fq 'execute(["udevadm", "settle", "--timeout=10"])' "$tmp/raw-format-legacy-patched.py"
+# Mintstick/Nemo's USB Stick Formatter is intentionally NOT an InfiltratorFS
+# formatter. It repartitions the entire target device, so a selected partition
+# must never be normalised to its parent disk or offered as an InfiltratorFS
+# Mintstick target. Require the package integration helper to restore any
+# historical diversions before its early-return path and require the retired
+# patcher itself to fail closed.
+grep -Fq 'restore_path "$MINT_FORMATTER" "${MINT_FORMATTER}.infiltratorfs-stock"' "$os_helper"
+grep -Fq 'restore_path "$MINT_UI" "${MINT_UI}.infiltratorfs-stock"' "$os_helper"
+if grep -Fq 'python3 "$MINT_PATCHER"' "$os_helper"; then
+    echo 'desktop-integration: Mintstick patching unexpectedly re-enabled' >&2
+    exit 1
+fi
+if python3 "$mint_guard" /dev/null /dev/null /dev/null /dev/null 2>"$tmp/mint-guard.err"; then
+    echo 'desktop-integration: retired Mintstick patcher unexpectedly succeeded' >&2
+    exit 1
+fi
+grep -Fq 'Mintstick integration is disabled' "$tmp/mint-guard.err"
 
 # Prove the conventional helper expected by libblockdev forwards every
 # argument byte-for-byte to the qualified formatter installed beside it.
