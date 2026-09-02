@@ -2,14 +2,13 @@
 /*
  * Native mounted fragmentation metrics and bounded online file defragmentation.
  *
- * Defragmentation is copy-on-write: a bounded group of logically adjacent
- * uncompressed normal extents is copied into one newly allocated contiguous
- * physical run, the file extent map is repointed in the same native
- * transaction, and the old blocks are released through the existing
- * snapshot/reflink-aware path. Compressed extents are counted using their
- * stored physical footprint but are deliberately skipped by this first
- * defragmenter; a compression stream is indivisible and must never be sliced
- * as if logical blocks mapped one-for-one to physical blocks.
+ * Defragmentation is copy-on-write. Uncompressed adjacent extents can be
+ * coalesced into one extent. Mixed/compressed runs are relocated as opaque
+ * stored streams into one contiguous physical allocation while preserving
+ * every logical boundary, codec identifier and stored-byte count. The old
+ * blocks are released through the existing snapshot/reflink-aware path.
+ * Compressed streams are therefore never sliced, decompressed or recompressed
+ * merely to improve physical placement.
  */
 #include <linux/math64.h>
 #include <linux/uaccess.h>
@@ -142,6 +141,60 @@ static bool infilfs_defrag_find_candidate(
     return false;
 }
 
+static bool infilfs_defrag_find_compressed_candidate(
+    const struct infilfs_extent_disk *extents, u32 count, u64 max_blocks,
+    u32 *first_out, u32 *last_out, u64 *logical_out,
+    u64 *logical_blocks_out, u64 *physical_blocks_out)
+{
+    u32 first;
+
+    for (first = 0; first < count; ++first) {
+        u64 logical_blocks = 0;
+        u64 physical_blocks = 0;
+        u64 previous_physical_end = 0;
+        bool have_previous = false;
+        bool has_compressed = false;
+        bool physically_split = false;
+        u32 last = first;
+
+        while (last < count) {
+            u32 flags = le32_to_cpu(extents[last].flags);
+            u32 extent_logical = le32_to_cpu(extents[last].block_count);
+            u64 extent_physical;
+            u64 source;
+
+            if (infilfs_extent_kind(flags) != INFILFS_EXTENT_NORMAL)
+                break;
+            extent_physical =
+                infilfs_extent_physical_blocks(extent_logical, flags);
+            if (!extent_physical ||
+                extent_physical > max_blocks - physical_blocks)
+                break;
+            source = le64_to_cpu(extents[last].physical_block);
+            if (have_previous && source != previous_physical_end)
+                physically_split = true;
+            if (infilfs_extent_is_compressed(flags))
+                has_compressed = true;
+
+            physical_blocks += extent_physical;
+            logical_blocks += extent_logical;
+            previous_physical_end = source + extent_physical;
+            have_previous = true;
+            last++;
+        }
+
+        if (last - first >= 2u && has_compressed && physically_split) {
+            *first_out = first;
+            *last_out = last;
+            *logical_out = le64_to_cpu(extents[first].logical_block);
+            *logical_blocks_out = logical_blocks;
+            *physical_blocks_out = physical_blocks;
+            return true;
+        }
+    }
+    return false;
+}
+
 static int infilfs_defrag_copy_candidate(
     struct infilfs_native_pending *pending,
     const struct infilfs_extent_disk *extents,
@@ -158,10 +211,17 @@ static int infilfs_defrag_copy_candidate(
 
     for (i = first; i < last; ++i) {
         u64 source = le64_to_cpu(extents[i].physical_block);
-        u32 blocks = le32_to_cpu(extents[i].block_count);
-        u32 j;
+        u32 logical_blocks = le32_to_cpu(extents[i].block_count);
+        u32 flags = le32_to_cpu(extents[i].flags);
+        u64 blocks;
+        u64 j;
 
-        if (le32_to_cpu(extents[i].flags) != INFILFS_EXTENT_NORMAL) {
+        if (infilfs_extent_kind(flags) != INFILFS_EXTENT_NORMAL) {
+            ret = -EFSCORRUPTED;
+            break;
+        }
+        blocks = infilfs_extent_physical_blocks(logical_blocks, flags);
+        if (!blocks) {
             ret = -EFSCORRUPTED;
             break;
         }
@@ -203,6 +263,7 @@ static int infilfs_defrag_one(
     u64 old_blocks = 0;
     u64 segment_logical = 0;
     u64 segment_blocks = 0;
+    u64 segment_physical_blocks = 0;
     u64 new_physical = 0;
     u64 new_file_block = 0;
     u64 max_bytes;
@@ -213,6 +274,7 @@ static int infilfs_defrag_one(
     u32 last = 0;
     bool was_inline = false;
     bool file_repoint = false;
+    bool preserve_boundaries = false;
     int ret;
 
     if (!S_ISREG(inode->i_mode))
@@ -258,10 +320,31 @@ static int infilfs_defrag_one(
     request->before_data_extents = before.data_extents;
     request->before_fragmentation_milli = before.fragmentation_milli;
 
-    if (was_inline || before.data_extents <= 1 ||
-        !infilfs_defrag_find_candidate(
+    if (was_inline || before.data_extents <= 1) {
+        ret = infilfs_native_operation_rollback(pending);
+        mutex_unlock(&sbi->write_lock);
+        pending = NULL;
+        if (!ret)
+            ret = infilfs_native_pending_flush_sb(inode->i_sb);
+        if (!ret) {
+            request->after_data_extents = before.data_extents;
+            request->after_fragmentation_milli =
+                before.fragmentation_milli;
+            request->moved_bytes = 0;
+        }
+        goto out;
+    }
+
+    if (infilfs_defrag_find_candidate(
             old_extents, old_count, max_blocks,
             &first, &last, &segment_logical, &segment_blocks)) {
+        segment_physical_blocks = segment_blocks;
+    } else if (infilfs_defrag_find_compressed_candidate(
+                   old_extents, old_count, max_blocks,
+                   &first, &last, &segment_logical, &segment_blocks,
+                   &segment_physical_blocks)) {
+        preserve_boundaries = true;
+    } else {
         ret = infilfs_native_operation_rollback(pending);
         mutex_unlock(&sbi->write_lock);
         pending = NULL;
@@ -277,7 +360,7 @@ static int infilfs_defrag_one(
     }
 
     ret = infilfs_native_alloc_data_exact(
-        pending, segment_blocks, 0, &new_physical);
+        pending, segment_physical_blocks, 0, &new_physical);
     if (ret)
         goto finish;
 
@@ -286,12 +369,40 @@ static int infilfs_defrag_one(
     if (ret)
         goto finish;
 
-    ret = infilfs_native_replace_extent_range(
-        old_extents, old_count, old_blocks,
-        segment_logical, segment_blocks, new_physical,
-        INFILFS_EXTENT_NORMAL, &new_extents, &new_count);
-    if (ret)
-        goto finish;
+    if (!preserve_boundaries) {
+        ret = infilfs_native_replace_extent_range(
+            old_extents, old_count, old_blocks,
+            segment_logical, segment_blocks, new_physical,
+            INFILFS_EXTENT_NORMAL, &new_extents, &new_count);
+        if (ret)
+            goto finish;
+    } else {
+        u64 destination = new_physical;
+        u32 i;
+
+        new_extents = kvmalloc_array(
+            old_count ? old_count : 1u, sizeof(*new_extents), GFP_NOFS);
+        if (!new_extents) {
+            ret = -ENOMEM;
+            goto finish;
+        }
+        memcpy(new_extents, old_extents,
+               (size_t)old_count * sizeof(*new_extents));
+        new_count = old_count;
+        for (i = first; i < last; ++i) {
+            u32 flags = le32_to_cpu(old_extents[i].flags);
+            u32 logical = le32_to_cpu(old_extents[i].block_count);
+            u64 physical =
+                infilfs_extent_physical_blocks(logical, flags);
+
+            new_extents[i].physical_block = cpu_to_le64(destination);
+            destination += physical;
+        }
+        if (destination != new_physical + segment_physical_blocks) {
+            ret = -EFSCORRUPTED;
+            goto finish;
+        }
+    }
 
     ret = infilfs_native_release_replaced_extents(
         pending, ii->object_id, old_extents, old_count,
@@ -357,7 +468,9 @@ finish:
 
     ii->object_block = new_file_block;
     infilfs_refresh_inode_blocks_after_commit(inode);
-    request->moved_bytes = segment_blocks << INFILFS_DISK_BLOCK_SHIFT;
+    request->moved_bytes =
+        (preserve_boundaries ? segment_physical_blocks : segment_blocks) <<
+        INFILFS_DISK_BLOCK_SHIFT;
 
     ret = infilfs_native_pending_flush_sb(inode->i_sb);
     if (ret)
