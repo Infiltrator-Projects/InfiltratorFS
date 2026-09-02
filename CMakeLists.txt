@@ -374,7 +374,6 @@ if(UNIX)
             DESTINATION bin)
     install(PROGRAMS tools/infiltratorfs-manager-helper
                      packaging/infiltratorfs-os-integration
-                     packaging/patch-mintstick.py
             DESTINATION lib/infiltratorfs)
     install(PROGRAMS tools/mount.infiltratorfs tools/fsck.infiltratorfs
             DESTINATION sbin)
