@@ -64,6 +64,11 @@ For block devices Manager uses a native kernel mount under `/media/<user>/Infilt
 
 The source tree includes the conventional `mkfs.infiltratorfs` helper and
 version-pinned integration patches for libblockdev, UDisks and GNOME Disks.
+InfiltratorFS deliberately does **not** patch Linux Mint's Mintstick/Nemo USB
+Stick Formatter: Mintstick repartitions an entire drive rather than formatting
+one existing partition. Current packages restore any historical InfiltratorFS
+Mintstick diversion during upgrade so partition formatting remains on the
+partition-safe Manager/libblockdev/UDisks path.
 Continuous integration applies those patches to the pinned upstream projects,
 builds the complete stack, invokes libblockdev's generic formatter with a
 label, and verifies the resulting Format 0.17 image through
