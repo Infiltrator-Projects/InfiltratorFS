@@ -283,6 +283,7 @@ for required in \
     'usr/lib/infiltratorfs/infiltratorfs-os-integration$' \
     'usr/lib/udev/rules.d/59-infiltratorfs.rules$' \
     'usr/share/applications/infiltratorfs-manager.desktop$' \
+    'usr/share/nemo/actions/infiltratorfs-format-partition.nemo_action$' \
     'usr/share/infiltratorfs/fonts/mb_corpo_a_cond_regular.ttf$' \
     'usr/share/infiltratorfs/fonts/mb_corpo_s_bold.ttf$' \
     'usr/share/infiltratorfs/fonts/mb_corpo_s_regular.ttf$' \

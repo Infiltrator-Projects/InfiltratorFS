@@ -14,6 +14,7 @@ mkfs_alias="$repo_root/tools/mkfs.infiltratorfs"
 bootstrap="$repo_root/support/installer/bootstrap.sh"
 os_helper="$repo_root/packaging/infiltratorfs-os-integration"
 mint_guard="$repo_root/packaging/patch-mintstick.py"
+nemo_action="$repo_root/packaging/infiltratorfs-format-partition.nemo_action"
 noble_libblockdev_patch="$repo_root/packaging/libblockdev-3.1-infiltratorfs.patch"
 noble_gnome_patch="$repo_root/packaging/gnome-disks-46-infiltratorfs.patch"
 noble_bundle_builder="$repo_root/packaging/build-noble-desktop-integration.sh"
@@ -133,6 +134,19 @@ if python3 "$mint_guard" /dev/null /dev/null /dev/null /dev/null 2>"$tmp/mint-gu
     exit 1
 fi
 grep -Fq 'Mintstick integration is disabled' "$tmp/mint-guard.err"
+
+# Nemo gets a separate partition-scoped InfiltratorFS action. %D is Nemo's
+# exact selected block-device token; it must go straight to Manager and must
+# never invoke Mintstick or derive a parent disk.
+test -s "$nemo_action"
+grep -Fq 'Name=Format partition as InfiltratorFS' "$nemo_action"
+grep -Fq 'Exec=/usr/bin/infiltratorfs-manager --format-device %D' "$nemo_action"
+grep -Fq 'Conditions=removable;sidebar-allow;' "$nemo_action"
+if grep -Fqi 'mintstick' "$nemo_action"; then
+    echo 'desktop-integration: partition-safe Nemo action invokes Mintstick' >&2
+    exit 1
+fi
+grep -Fq -- '--format-device' "$repo_root/tools/infiltratorfs-manager"
 
 # Prove the conventional helper expected by libblockdev forwards every
 # argument byte-for-byte to the qualified formatter installed beside it.

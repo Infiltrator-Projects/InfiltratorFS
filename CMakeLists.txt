@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.20)
-project(InfiltratorFS VERSION 0.18.37 LANGUAGES C)
+project(InfiltratorFS VERSION 0.18.38 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -379,6 +379,8 @@ if(UNIX)
             DESTINATION sbin)
     install(FILES packaging/infiltratorfs-manager.desktop
             DESTINATION share/applications)
+    install(FILES packaging/infiltratorfs-format-partition.nemo_action
+            DESTINATION share/nemo/actions)
     install(FILES ${INFILFS_FONT_FILES}
             DESTINATION share/infiltratorfs/fonts)
     install(FILES packaging/59-infiltratorfs.rules

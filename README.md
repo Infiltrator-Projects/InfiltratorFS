@@ -6,7 +6,7 @@
 
 InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem started in 2026. The persistent format and portable core define the filesystem; operating-system adapters translate native APIs and semantics onto the same on-disk objects, transactions, extents, snapshots and integrity model.
 
-**Current source version:** 0.18.37 (Format 0.17)<br>
+**Current source version:** 0.18.38 (Format 0.17)<br>
 **Shared foundation:** Infiltratr Common 1.11.0  
 **Licence:** GPL-3.0-or-later
 
@@ -67,8 +67,15 @@ version-pinned integration patches for libblockdev, UDisks and GNOME Disks.
 InfiltratorFS deliberately does **not** patch Linux Mint's Mintstick/Nemo USB
 Stick Formatter: Mintstick repartitions an entire drive rather than formatting
 one existing partition. Current packages restore any historical InfiltratorFS
-Mintstick diversion during upgrade so partition formatting remains on the
-partition-safe Manager/libblockdev/UDisks path.
+Mintstick diversion during upgrade.
+
+On Linux Mint, InfiltratorFS instead installs a separate **Format partition as
+InfiltratorFS…** Nemo action. Nemo passes the exact selected block device through
+its `%D` token to InfiltratorFS Manager. Manager resolves that path only against
+its non-system partition inventory, then the privileged helper independently
+rejects whole disks and active system partitions before `mkfs.infilfs` can run.
+The action therefore formats the selected partition only and never normalises it
+to the parent SD card, USB device, NVMe namespace or disk.
 Continuous integration applies those patches to the pinned upstream projects,
 builds the complete stack, invokes libblockdev's generic formatter with a
 label, and verifies the resulting Format 0.17 image through

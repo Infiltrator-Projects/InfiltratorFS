@@ -344,6 +344,11 @@ parser.add_argument(
     help="print non-system partitions without starting GTK",
 )
 parser.add_argument(
+    "--format-device",
+    metavar="PATH",
+    help="select an exact non-system partition and open the format confirmation",
+)
+parser.add_argument(
     "--startup-check",
     action="store_true",
     help=argparse.SUPPRESS,
@@ -488,6 +493,8 @@ class Manager(Gtk.ApplicationWindow):
         self.show_all()
         self.spinner.hide()
         self._show_empty_state()
+        if args.format_device:
+            GLib.idle_add(self._select_requested_device, args.format_device, True)
 
     def _install_css(self):
         provider = Gtk.CssProvider()
@@ -937,6 +944,21 @@ class Manager(Gtk.ApplicationWindow):
     def _show_empty_state(self):
         self.content_stack.set_visible_child_name("empty")
         self.status.set_text("Ready")
+
+    def _select_requested_device(self, path: str, start_format: bool = False):
+        requested = os.path.realpath(path)
+        for candidate, row in self.rows.items():
+            if os.path.realpath(candidate) != requested:
+                continue
+            self.device_list.select_row(row)
+            if start_format:
+                GLib.idle_add(self.do_format)
+            return False
+
+        self.error(
+            f"Refusing to format {path}: it is not an available non-system partition."
+        )
+        return False
 
     def show_target(self):
         if not self.target:

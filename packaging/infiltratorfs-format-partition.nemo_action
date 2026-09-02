@@ -1,0 +1,9 @@
+[Nemo Action]
+Active=true
+Name=Format partition as InfiltratorFS…
+Comment=Erase and format only the selected partition as InfiltratorFS
+Exec=/usr/bin/infiltratorfs-manager --format-device %D
+Icon-Name=drive-harddisk-symbolic
+Selection=S
+Extensions=any;
+Conditions=removable;sidebar-allow;
