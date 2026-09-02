@@ -153,7 +153,7 @@ checksum or metadata errors. See [QUALIFICATION.md](QUALIFICATION.md).
   shards, object-stable placement and mounted multi-writer qualification.
 - [x] Locality scoring and workload-aware placement.
 - [x] Media-aware placement.
-- [ ] InfiltratorFS-native adaptive per-extent compression designed from current compression research; retain LZ4 as a non-default development/reference codec and keep the on-disk codec model extensible. See [COMPRESSION.md](COMPRESSION.md).
+- [x] InfiltratorFS-native adaptive per-extent compression using bounded deterministic IAC1 v1, with cheap incompressible-data rejection, filesystem-block-saving selection, retained non-default LZ4 reference/interoperability support, extensible codec identifiers and representative cross-platform qualification. See [COMPRESSION.md](COMPRESSION.md).
 
 ## Administration and recovery
 

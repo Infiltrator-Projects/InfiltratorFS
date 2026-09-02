@@ -372,3 +372,36 @@ run; none represented an InfiltratorFS failure:
 The qualification therefore supports the 56 checked roadmap claims at the
 exact audited source commit. It does not establish the unchecked roadmap items,
 nor does it prove absence of defects outside the exercised contracts.
+
+## 2026-09-02 native adaptive compression qualification
+
+Native IAC1 v1 compression was finalized against source commit
+`4d7f259edc8191918f5258e0397817dddf937baf` (Format 0.17). The exact current
+Build and conformance workflow run `33604589517` passed the Linux full suite,
+Clang conformance, ASan/UBSan, GCC static analyzer, local Linux userspace,
+Windows native app/portable core and native Linux package jobs.
+
+The new representative compression gate exercised eight deterministic 256 KiB
+workload classes: source/text, executable/library patterns, office/document
+data, database records, VM/zero-heavy storage, structured binary data, mixed
+small-file/configuration content and already-compressed/encrypted-style
+high-entropy data. IAC1 attempted all seven compressible classes, saved
+filesystem blocks on all seven, and correctly skipped the high-entropy class.
+
+Aggregate filesystem allocation was 2,097,152 bytes uncompressed, 401,408 bytes
+with IAC1 and 626,688 bytes with the retained LZ4 reference baseline. That is
+80.86% physical-block saving for IAC1 versus 70.12% for LZ4 on the maintained
+qualification corpus. IAC1 was materially slower to encode than LZ4 on these
+hosted measurements, but delivered the stronger aggregate space result and an
+especially large advantage on structured-binary data while retaining a fixed
+131,072-byte scratch bound, deterministic output and bounded independent
+compression units. The filesystem only selects a compressed representation
+when it saves physical blocks, so this codec trade-off does not impose storage
+expansion on incompressible content.
+
+The compression conformance surface also includes compressed portable/native
+read-write, partial CoW overwrite, snapshots, reflinks, truncate, hole punch,
+`fallocate` reservation semantics, hard-link/unlink lifetime, paged extents,
+logical allocation reporting, mmap/page-cache reads, scrub and corrupt-stream
+rejection. LZ4 remains decodable as codec identifier 1; automatic Format 0.17
+writes use IAC1 v1 as codec identifier 2.
