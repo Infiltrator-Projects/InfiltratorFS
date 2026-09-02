@@ -1,86 +1,136 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # InfiltratorFS Compression Design
 
-## Purpose
+## Status
 
-Compression in InfiltratorFS is not intended to mean "pick a conventional codec and make it the filesystem default". The long-term goal is an InfiltratorFS-native, lossless, adaptive compression system designed specifically for a greenfield general-purpose filesystem using current compression research, current processor capabilities and filesystem workload knowledge.
+Format 0.17 uses adaptive per-extent compression as a normal filesystem
+capability. Newly formatted volumes enable `INFS_INCOMPAT_COMPRESSED_EXTENTS`.
+The automatic native codec is **IAC1 version 1** (codec identifier 2).
 
-Pre-1.0 development does not preserve development-format compatibility. A convenient prototype choice must not become permanent merely because code already exists.
+IAC1 is the InfiltratorFS-native bounded codec selected for Format 0.17. LZ4
+(codec identifier 1) remains supported as a development/reference and
+interoperability codec, but new automatic writes do not select LZ4.
 
-## Status of LZ4
+Compression is a storage representation beneath the logical file-data
+contract. SHA-256 continues to protect the exact uncompressed logical bytes.
 
-The current tree contains working LZ4 per-extent machinery and assigns LZ4 a codec identifier. That work is useful and should be retained as a development/reference codec, interoperability test target and possible explicitly selected fast codec.
+## IAC1 v1
 
-LZ4 is **not the intended automatic/default InfiltratorFS compression policy** and its current presence must not be interpreted as the final codec decision.
+IAC1 is deliberately small, deterministic and suitable for both the portable
+core and the native Linux kernel adapter. It uses:
 
-The normal formatter therefore leaves `INFS_INCOMPAT_COMPRESSED_EXTENTS` clear. Current readers retain the experimental LZ4 extent decoder/encoder contract for development and interoperability testing, but ordinary newly formatted volumes do not silently opt into the experimental representation.
+- independently decodable bounded compression units of at most 64 filesystem
+  blocks (256 KiB);
+- identity, byte-delta and four-byte XOR reversible predictor modes;
+- a bounded 64 KiB backward match window;
+- deterministic two-candidate hash match finding;
+- explicit fill-run tokens for zero-heavy and repeated-byte data;
+- bounded literal and match tokens;
+- no persistent global dictionary, hidden mutable model or machine-specific
+  state; and
+- a fixed 128 KiB match-finder scratch structure in the current implementation.
 
-The final default is expected to be an InfiltratorFS-native codec or codec family. Its on-disk identifier, framing and parameters are deliberately not frozen until the design and qualification work below is complete.
+The stream header records the IAC1 version and predictor mode. Unknown versions,
+invalid modes, zero-distance matches, malformed fills, truncated streams and
+output-length mismatches are rejected.
 
-## Required properties of the native codec
+The current format keeps codec identification in each compressed extent, so a
+later codec can be added under a new identifier without changing file identity
+or requiring every extent on a volume to use the same representation.
 
-The native compressor must be:
+## Adaptive selection policy
 
-- strictly lossless and bit-exact across every supported operating-system adapter;
-- deterministic, versioned and fully specified by the on-disk format;
-- bounded in memory, stack use and worst-case decode work so it is suitable for kernel and low-level filesystem use;
-- independently decodable in bounded extents/clusters so random reads do not require decoding an entire file or a mutable global stream;
-- parallel-friendly across independent extents and, where practical, within larger compression units;
-- corruption-contained so damage to one compressed unit cannot make unrelated extents undecodable;
-- compatible with copy-on-write, reflinks, snapshots, scrub, checksums, truncate, hole punching and partial overwrite;
-- able to reject incompressible input cheaply and store it uncompressed rather than wasting space or CPU;
-- free of hidden mutable dictionaries or machine-specific state needed to recover persistent data; any dictionary, model or transform state required for decoding must be explicit, immutable/versioned and recoverable from the volume itself;
-- codec-agile so later research can add or replace codecs without redefining file identity or the rest of the filesystem.
+Compression is decided per bounded write cluster, not per file and not as a
+permanent whole-volume assumption.
 
-SHA-256 file-data integrity continues to describe the logical uncompressed bytes. Compression is a storage representation beneath that integrity contract, not a replacement for it.
+Before encoding, a cheap sampler rejects high-entropy input that lacks useful
+byte, delta or four-byte repetition. If IAC1 is attempted, the writer compares
+the encoded physical block count with the uncompressed physical block count.
+The compressed representation is selected only when it consumes fewer
+filesystem blocks. Otherwise the data is stored normally.
 
-## Research direction
+This means already-compressed media, encrypted data and other incompressible
+payloads normally avoid the full compressor and never consume extra data blocks
+merely because compression is enabled.
 
-The native design must start from the compression problem rather than from an existing codec API. Candidate techniques should be measured and combined only when they improve the filesystem Pareto frontier. Research areas include, but are not limited to:
+Linux mounted writes apply compression to eligible sequential EOF clusters.
+Portable-core writes use the same IAC1 format and selection rules. Persistent
+decoding never depends on the volatile workload classifier or media-placement
+policy.
 
-- modern Lempel-Ziv-family match finding and parsing;
-- finite-state and asymmetric numeral-system entropy coding such as rANS/tANS/FSE-class techniques;
-- arithmetic/range coding where its ratio justifies its latency and implementation cost;
-- byte/context modelling, delta/XOR prediction and other reversible predictors for structured binary data;
-- SIMD/vector-friendly matching, transforms and decode paths;
-- adaptive selection between coding modes from cheap per-extent statistics;
-- modern learned or model-assisted lossless techniques only where they can be made deterministic, compact, bounded, portable and practical for kernel/filesystem deployment.
+## Mutation semantics
 
-No technique is included merely because it is fashionable or historically common. The design may use several modes inside one native codec family when different data classes have materially different optimal representations.
+A compressed extent is one bounded codec stream. Operations that would slice a
+stream first materialize or replace the affected bounded cluster instead of
+pretending that its logical blocks map one-for-one to stored physical blocks.
 
-## Filesystem-specific policy
+Current compression-aware qualification covers:
 
-Compression decisions are per extent or bounded compression unit, not a permanent per-filesystem assumption. The compressor should use inexpensive statistics to decide whether to attempt a mode and should fall back to uncompressed storage when expected savings do not justify CPU, latency or extra write amplification.
+- portable and native reads and writes;
+- partial overwrite and copy-on-write replacement;
+- sparse files and hole punching;
+- truncate across compressed-cluster boundaries;
+- `fallocate` reservation semantics without accidental compression of
+  synthetic reserved space;
+- reflinks and shared-extent release accounting;
+- snapshots and retained historical generations;
+- hard-link/unlink and rename lifetime;
+- compact and paged extent maps;
+- logical-versus-physical allocation reporting;
+- page-cache/mmap read paths;
+- scrub and logical SHA-256 verification; and
+- corrupted compressed payload rejection.
 
-The design may use workload information available to the allocator/writer, but persistent decoding must never depend on volatile workload classification.
+Online defragmentation currently counts the physical footprint of compressed
+extents but deliberately leaves an intact compressed stream in place. Defrag is
+not allowed to split a codec stream.
 
-Random access and mutation matter as much as ratio. A small overwrite should require recompressing only a bounded unit. The unit size is a design parameter to be justified by measurements rather than inherited from an existing filesystem or codec.
+## Qualification policy
 
-Already-compressed or high-entropy content must be detected quickly enough that JPEG/AVIF/HEIF, video, archives, encrypted data and similar payloads do not suffer repeated expensive compression attempts.
+`tests/compression-codec.c` provides deterministic known-behaviour tests for
+IAC1 predictors, ratio on simple compressible classes, deterministic output,
+cheap high-entropy rejection and malformed-stream rejection.
 
-## What "better" means
+`tests/compression-extents.c` qualifies the actual Format 0.17 extent
+representation, adaptive fallback, snapshots, mutation, scrub and corruption
+handling.
 
-The native codec is not judged by compression ratio alone. Qualification must measure at least:
+`tests/compression-qualification.c` is the representative workload gate. It
+uses 256 KiB filesystem-sized samples covering source/text, executable/library
+patterns, office/document data, database records, VM/zero-heavy storage,
+structured binary data, mixed small-file/configuration content and
+already-compressed/encrypted-style high-entropy content. It requires:
 
-- compressed size;
-- compression throughput;
-- decompression throughput;
-- median and tail latency;
-- CPU time and memory use;
-- random-read amplification;
-- partial-write/recompression amplification;
-- parallel scaling;
-- behaviour on incompressible data; and
-- corruption detection/containment and cross-platform deterministic decoding.
+- the adaptive classifier to select the compressible workload classes and skip
+  the high-entropy class;
+- deterministic and bit-exact IAC1 round trips;
+- filesystem-block savings on at least six representative workload classes;
+- at least 30 percent aggregate physical-block savings across the deterministic
+  corpus; and
+- the IAC1 scratch-memory bound to remain at or below 128 KiB.
 
-The benchmark corpus must include source/text, executables and libraries, office/document data, databases and VM-style data, structured binary files, sparse/zero-heavy data, mixed small-file trees and already-compressed/encrypted media.
+The qualification also runs LZ4 over the same corpus and emits per-class and
+aggregate size plus encode/decode throughput telemetry. LZ4 remains the
+in-tree reference baseline. Zstandard remains useful as an external research
+baseline, but it is not a Format 0.17 codec dependency and is deliberately not
+required to mount or recover an InfiltratorFS volume.
 
-LZ4 and Zstandard should be retained as reference baselines during development. The native codec becomes the automatic default only after it demonstrates a worthwhile filesystem-level Pareto improvement or a clearly justified balance of ratio, latency and resource use across representative workloads. A roadmap checkbox is not complete merely because encoding and decoding code exists.
+The native codec is not required to beat a general-purpose codec on every
+individual corpus member. Its selection is justified at filesystem level by
+the combination of useful block savings, cheap incompressible-data rejection,
+bounded memory and decode work, deterministic cross-platform representation,
+small kernel implementation surface and bounded mutation amplification.
 
-## Codec and format discipline
+## Format discipline
 
-Compression metadata must identify the codec and any version/parameters needed to decode an extent. The format must reserve a clean path for additional codecs.
+For Format 0.17, codec identifier 2 means IAC1 v1 and codec identifier 1 means
+the retained LZ4 representation. The codec identifier, stored-byte count and
+logical extent length are sufficient to locate and decode each bounded stream.
 
-Temporary codecs, temporary cluster sizes and experimental heuristics must be labelled as such in code and documentation. They must not silently become long-term format contracts.
+Future codec research may add another codec identifier or may justify a future
+development-format revision. It must not silently change the meaning of an
+existing IAC1 v1 stream.
 
-This rule applies more broadly to InfiltratorFS: an implementation convenience is not a design decision.
+Pre-1.0 development may still replace Format 0.17 as a whole, but within a
+given accepted format a committed compressed stream must remain deterministic,
+recoverable and independently decodable.
