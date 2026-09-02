@@ -15,7 +15,7 @@ struct infilfs_fragmentation_metrics {
     __u64 largest_data_extent_blocks;
     __u64 generation;
     __u64 fragmentation_milli;
-    __u64 reserved;
+    __u64 physical_runs;
 };
 
 struct infilfs_defrag_request {

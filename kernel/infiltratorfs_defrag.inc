@@ -23,7 +23,10 @@ static void infilfs_fragmentation_from_extents(
     u64 allocated = 0;
     u64 data_extents = 0;
     u64 hole_extents = 0;
+    u64 physical_runs = 0;
+    u64 previous_physical_end = 0;
     u64 largest = 0;
+    bool have_previous = false;
     u32 i;
 
     memset(metrics, 0, sizeof(*metrics));
@@ -37,18 +40,27 @@ static void infilfs_fragmentation_from_extents(
         if (infilfs_extent_kind(flags) == INFILFS_EXTENT_NORMAL) {
             u64 physical_blocks =
                 infilfs_extent_physical_blocks((u32)blocks, flags);
+            u64 source = le64_to_cpu(extents[i].physical_block);
 
             allocated += physical_blocks;
             data_extents++;
             largest = max_t(u64, largest, physical_blocks);
+            if (!have_previous || source != previous_physical_end)
+                physical_runs++;
+            previous_physical_end = source + physical_blocks;
+            have_previous = true;
         } else if (infilfs_extent_kind(flags) == INFILFS_EXTENT_HOLE) {
             hole_extents++;
+            have_previous = false;
+        } else {
+            have_previous = false;
         }
     }
 
     metrics->allocated_blocks = allocated;
     metrics->data_extents = data_extents;
     metrics->hole_extents = hole_extents;
+    metrics->physical_runs = physical_runs;
     metrics->largest_data_extent_blocks = largest;
     if (data_extents > 1)
         metrics->fragmentation_milli =

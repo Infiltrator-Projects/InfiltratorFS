@@ -141,8 +141,11 @@ COMPRESSED_METRICS_BEFORE="$("$BUILD/infilfs-optimize" --metrics "$COMPRESSED")"
 printf '%s
 ' "$COMPRESSED_METRICS_BEFORE"
 COMPRESSED_EXTENTS="$(sed -nE 's/.*extents=([0-9]+).*/\1/p' <<<"$COMPRESSED_METRICS_BEFORE" | head -n1)"
+COMPRESSED_PHYSICAL_RUNS="$(sed -nE 's/.*physical-runs=([0-9]+).*/\1/p' <<<"$COMPRESSED_METRICS_BEFORE" | head -n1)"
 [[ "$COMPRESSED_EXTENTS" =~ ^[0-9]+$ ]]
+[[ "$COMPRESSED_PHYSICAL_RUNS" =~ ^[0-9]+$ ]]
 (( COMPRESSED_EXTENTS > 1 ))
+(( COMPRESSED_PHYSICAL_RUNS >= 1 ))
 
 setfattr -n user.infiltratorfs-defrag -v preserved "$FILE"
 ln "$FILE" "$LINK"
@@ -184,7 +187,20 @@ echo "=== Compressed online defrag ==="
 COMPRESSED_DEFRAG="$("$BUILD/infilfs-optimize" --defrag --max-mib 64 --passes 16 "$COMPRESSED")"
 printf '%s
 ' "$COMPRESSED_DEFRAG"
-grep -Eq 'moved 0\.[0-9]*[1-9][0-9]* MiB|moved [1-9][0-9]*\.[0-9]+ MiB' <<<"$COMPRESSED_DEFRAG"
+COMPRESSED_METRICS_AFTER="$("$BUILD/infilfs-optimize" --metrics "$COMPRESSED")"
+printf '%s
+' "$COMPRESSED_METRICS_AFTER"
+COMPRESSED_PHYSICAL_RUNS_AFTER="$(sed -nE 's/.*physical-runs=([0-9]+).*/\1/p' <<<"$COMPRESSED_METRICS_AFTER" | head -n1)"
+[[ "$COMPRESSED_PHYSICAL_RUNS_AFTER" =~ ^[0-9]+$ ]]
+if (( COMPRESSED_PHYSICAL_RUNS > 1 )); then
+    grep -Eq 'moved 0\.[0-9]*[1-9][0-9]* MiB|moved [1-9][0-9]*\.[0-9]+ MiB' <<<"$COMPRESSED_DEFRAG"
+    (( COMPRESSED_PHYSICAL_RUNS_AFTER < COMPRESSED_PHYSICAL_RUNS ))
+else
+    # Codec boundaries are not physical fragmentation. If placement already
+    # made every stored stream contiguous, defrag must avoid pointless CoW.
+    grep -Fq 'moved 0.00 MiB' <<<"$COMPRESSED_DEFRAG"
+    (( COMPRESSED_PHYSICAL_RUNS_AFTER == 1 ))
+fi
 test "$(sha256sum "$COMPRESSED" | awk '{print $1}')" = "$COMPRESSED_EXPECTED"
 test "$(stat -c '%b' "$COMPRESSED")" = "$COMPRESSED_BLOCKS_BEFORE"
 

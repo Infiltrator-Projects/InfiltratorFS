@@ -63,11 +63,12 @@ static int get_metrics(int fd, struct infilfs_fragmentation_metrics *metrics)
 static void print_metrics(const char *path,
                           const struct infilfs_fragmentation_metrics *m)
 {
-    printf("%s: extents=%" PRIu64 " holes=%" PRIu64
-           " allocated=%" PRIu64 " blocks largest=%" PRIu64
+    printf("%s: extents=%" PRIu64 " physical-runs=%" PRIu64
+           " holes=%" PRIu64 " allocated=%" PRIu64
+           " blocks largest=%" PRIu64
            " blocks fragmentation=%.1f%% generation=%" PRIu64 "\n",
-           path, (uint64_t)m->data_extents, (uint64_t)m->hole_extents,
-           (uint64_t)m->allocated_blocks,
+           path, (uint64_t)m->data_extents, (uint64_t)m->physical_runs,
+           (uint64_t)m->hole_extents, (uint64_t)m->allocated_blocks,
            (uint64_t)m->largest_data_extent_blocks,
            (double)m->fragmentation_milli / 10.0,
            (uint64_t)m->generation);

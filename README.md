@@ -126,8 +126,10 @@ truncate -s 128M infilfs.img
 ```
 
 For a mounted native filesystem, `infilfs-optimize` reports per-file extent
-fragmentation and can perform bounded copy-on-write online defragmentation
-without replacing the inode:
+fragmentation plus the actual physical-run count and can perform bounded
+copy-on-write online defragmentation without replacing the inode. Compressed
+codec boundaries remain intact; if those streams are already one contiguous
+physical run, defrag deliberately performs no pointless relocation:
 
 ```bash
 ./build/infilfs-optimize --metrics /media/user/InfiltratorFS/file.bin
