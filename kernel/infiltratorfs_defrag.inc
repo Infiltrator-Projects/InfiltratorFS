@@ -671,6 +671,9 @@ static int infilfs_native_reflink_full(
     if (!S_ISREG(source_inode->i_mode) ||
         !S_ISREG(destination_inode->i_mode))
         return -EINVAL;
+    if ((le64_to_cpu(INFILFS_SB(destination_inode->i_sb)->disk.incompat_flags) &
+         INFILFS_INCOMPAT_SHARED_EXTENTS) == 0)
+        return -EOPNOTSUPP;
     if (!(destination_file->f_mode & FMODE_WRITE))
         return -EBADF;
     if (sb_rdonly(destination_inode->i_sb))
