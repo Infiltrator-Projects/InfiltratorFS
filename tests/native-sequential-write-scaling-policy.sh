@@ -30,4 +30,22 @@ grep -Fq '#define INFILFS_NATIVE_IDLE_DELAY (5u * HZ)' "$data"
 grep -Fq 'const u64 max_publish = 512ULL * 1024ULL * 1024ULL;' "$data"
 grep -Fq '#define INFILFS_NATIVE_METADATA_PUBLISH_CHARGE (64ULL * 1024ULL)' "$ns"
 
+# Publication must retain the two-barrier dependency ordering: one barrier
+# after staging data/metadata/allocation-tree blocks and one after issuing all
+# three checkpoint replicas. Reintroducing the old four/five barrier sequence
+# causes severe burst/stall behaviour on removable flash media.
+legacy="$root/kernel/infiltratorfs_rw_legacy.inc"
+commit_body="$(sed -n '/static int infilfs_rw_tx_commit(/,/^}/p' "$legacy")"
+test "$(grep -Fc 'sync_blockdev(tx->sb->s_bdev)' <<<"$commit_body")" -eq 2
+grep -Fq 'infilfs_rw_allocation_map_publish(tx, &next_allocation)' <<<"$commit_body"
+grep -Fq 'for (n = 1; n < INFILFS_CHECKPOINT_COUNT; ++n)' <<<"$commit_body"
+
+# Deferred publication must react to excess physical CoW churn as well as
+# logical user bytes so tiny partial writes cannot consume the volume before
+# reaching the nominal logical threshold.
+grep -Fq 'u64 pending_physical_bytes;' "$data"
+grep -Fq 'infilfs_native_pending_should_publish' "$data"
+grep -Fq 'max_excess_churn = 64ULL * 1024ULL * 1024ULL' "$data"
+grep -Fq 'infilfs_native_pending_should_publish(pending)' "$ns"
+
 printf 'Native sequential-write scaling policy guard passed.\n'
