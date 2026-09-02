@@ -147,7 +147,7 @@ jobs:
 
   linux:
     name: Linux full suite
-    runs-on: [self-hosted, Linux, X64, linux-native]
+    runs-on: ubuntu-latest
     steps:
       - name: Check out source
         uses: actions/checkout@v6
