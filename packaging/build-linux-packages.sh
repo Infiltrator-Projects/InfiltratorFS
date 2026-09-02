@@ -279,7 +279,9 @@ for required in \
     'usr/bin/mkfs.infiltratorfs$' \
     'usr/sbin/mount.infiltratorfs$' \
     'usr/sbin/fsck.infiltratorfs$' \
-    'usr/lib/infiltratorfs/infiltratorfs-manager-helper
+    'usr/lib/infiltratorfs/infiltratorfs-manager-helper$' \
+    'usr/lib/infiltratorfs/infiltratorfs-os-integration$' \
+    'usr/lib/udev/rules.d/59-infiltratorfs.rules$' \
     'usr/share/applications/infiltratorfs-manager.desktop$' \
     'usr/share/infiltratorfs/fonts/mb_corpo_a_cond_regular.ttf$' \
     'usr/share/infiltratorfs/fonts/mb_corpo_s_bold.ttf$' \
