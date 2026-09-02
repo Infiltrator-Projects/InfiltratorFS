@@ -853,6 +853,39 @@ jobs:
           grep -Eq '[0-9]+ extent(s)? found|extent found' \
             "$RUNNER_TEMP/infiltratorfs-fiemap.txt"
 
+          # Standard Linux whole-file reflink exposure. --reflink=always must
+          # fail rather than silently copy if FICLONE is unsupported, so this
+          # directly gates the native shared-extent path. Mutating the clone
+          # then proves CoW leaves the source unchanged.
+          sudo python3 - "$mountpoint/native-rw/reflink-source.bin" <<'PY'
+          import hashlib
+          import os
+          import sys
+          path = sys.argv[1]
+          with open(path, "xb", buffering=0) as f:
+              for i in range(32768):
+                  f.write(hashlib.sha256(i.to_bytes(8, "little")).digest())
+              os.fsync(f.fileno())
+          PY
+          reflink_source_hash="$(sudo sha256sum "$mountpoint/native-rw/reflink-source.bin" | awk '{print $1}')"
+          sudo cp --reflink=always             "$mountpoint/native-rw/reflink-source.bin"             "$mountpoint/native-rw/reflink-clone.bin"
+          sudo cmp "$mountpoint/native-rw/reflink-source.bin"             "$mountpoint/native-rw/reflink-clone.bin"
+          sudo python3 - "$mountpoint/native-rw/reflink-clone.bin" <<'PY'
+          import os
+          import sys
+          fd = os.open(sys.argv[1], os.O_RDWR | os.O_CLOEXEC)
+          try:
+              assert os.pwrite(fd, b'R' * 4096, 0) == 4096
+              os.fsync(fd)
+          finally:
+              os.close(fd)
+          PY
+          test "$(sudo sha256sum "$mountpoint/native-rw/reflink-source.bin" | awk '{print $1}')" =             "$reflink_source_hash"
+          if sudo cmp -s "$mountpoint/native-rw/reflink-source.bin"               "$mountpoint/native-rw/reflink-clone.bin"; then
+            echo "Native reflink clone did not CoW after mutation." >&2
+            exit 1
+          fi
+
           # Native parity: sparse high-offset growth, extent truncate,
           # preallocation and hole punching must survive the offline scrub.
           # Keep these values visible in the hosted log: this path is both a
