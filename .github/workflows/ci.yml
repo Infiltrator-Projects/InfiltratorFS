@@ -34,6 +34,14 @@ jobs:
           grep -Fq "github.event.workflow_run.head_branch == 'main'" "$release"
           grep -Fq 'published releases are immutable' "$release"
           grep -Fq 'git tag --annotate' "$release"
+          source_version="$(sed -nE 's/^project\(InfiltratorFS VERSION ([0-9]+\.[0-9]+\.[0-9]+) LANGUAGES C\)$/\1/p' CMakeLists.txt)"
+          readme_version="$(sed -nE 's/^\*\*Current source version:\*\* ([0-9]+\.[0-9]+\.[0-9]+) \(Format 0\.17\)<br>$/\1/p' README.md)"
+          test -n "$source_version"
+          if [[ "$readme_version" != "$source_version" ]]; then
+            printf 'README current source version %s does not match CMake %s.\n' \
+              "${readme_version:-missing}" "$source_version" >&2
+            exit 1
+          fi
           if grep -Eq '^  workflow_dispatch:|^  pull_request:|^  schedule:' "$release"; then
             echo "Release publication must be automatic from tested main only." >&2
             exit 1
@@ -366,7 +374,7 @@ jobs:
       - name: Open Linux-created cross-platform image on Windows
         shell: pwsh
         run: '& .\build\Release\infilfs-win32-storage.exe .\cross-platform\linux-cross-platform.img'
-      - name: Qualify driverless Windows Explorer bridge when ProjFS is available
+      - name: Qualify driverless Windows Explorer bridge (required)
         shell: pwsh
         run: |
           $feature = Get-WindowsOptionalFeature -Online -FeatureName Client-ProjFS -ErrorAction SilentlyContinue
@@ -377,14 +385,13 @@ jobs:
             $feature = Get-WindowsOptionalFeature -Online -FeatureName Client-ProjFS -ErrorAction SilentlyContinue
           }
           $dll = Join-Path $env:SystemRoot 'System32\ProjectedFSLib.dll'
-          if ($feature -and $feature.State -eq 'Enabled' -and (Test-Path $dll)) {
-            Copy-Item .\cross-platform\linux-cross-platform.img .\cross-platform\windows-projfs-bridge.img
-            & .\build\Release\infilfs-win32-projfs-bridge.exe .\cross-platform\windows-projfs-bridge.img
-            if ($LASTEXITCODE -ne 0) {
-              throw "Windows ProjFS bridge integration qualification failed with exit code $LASTEXITCODE"
-            }
-          } else {
-            Write-Host '::notice::Client-ProjFS requires a reboot on this ephemeral runner; runtime bridge qualification is skipped, while compile/conformance coverage remains mandatory.'
+          if (!$feature -or $feature.State -ne 'Enabled' -or !(Test-Path $dll)) {
+            throw 'Client-ProjFS is unavailable after the enable attempt; runtime Explorer bridge qualification is mandatory.'
+          }
+          Copy-Item .\cross-platform\linux-cross-platform.img .\cross-platform\windows-projfs-bridge.img
+          & .\build\Release\infilfs-win32-projfs-bridge.exe .\cross-platform\windows-projfs-bridge.img
+          if ($LASTEXITCODE -ne 0) {
+            throw "Windows ProjFS bridge integration qualification failed with exit code $LASTEXITCODE"
           }
       - name: Verify Windows storage and transfer policy are compiled
         shell: pwsh
