@@ -99,7 +99,7 @@ for integration_file in "$os_helper" "$mint_guard" "$noble_libblockdev_patch" \
 done
 bash -n "$os_helper"
 bash -n "$noble_bundle_builder"
-python3 - "$mint_patcher" <<'PY'
+python3 - "$mint_guard" <<'PY'
 import ast
 import pathlib
 import sys
