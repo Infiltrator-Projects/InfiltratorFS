@@ -111,7 +111,7 @@ static int infilfs_ns_finish(struct infilfs_native_pending *pending, int ret)
     infilfs_native_writer_tail_invalidate(pending);
     pending->pending_bytes += INFILFS_NATIVE_METADATA_PUBLISH_CHARGE;
 
-    if (pending->pending_bytes >= pending->publish_threshold) {
+    if (infilfs_native_pending_should_publish(pending)) {
         ret = infilfs_native_pending_commit_locked(pending);
     } else if (pending->active && !pending->commit_failed) {
         mod_delayed_work(system_wq, &pending->idle_work,
