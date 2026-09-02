@@ -84,9 +84,12 @@ Current compression-aware qualification covers:
 - scrub and logical SHA-256 verification; and
 - corrupted compressed payload rejection.
 
-Online defragmentation currently counts the physical footprint of compressed
-extents but deliberately leaves an intact compressed stream in place. Defrag is
-not allowed to split a codec stream.
+Online defragmentation can relocate fragmented compressed extents without
+decoding or recompressing them. It copies each codec stream as an opaque stored
+physical run, preserves the logical extent boundary, codec identifier and exact
+stored-byte count, and repoints the file extent map transactionally. Multiple
+adjacent compressed/mixed streams may be packed into one contiguous physical
+allocation, but an individual codec stream is never split.
 
 ## Qualification policy
 
