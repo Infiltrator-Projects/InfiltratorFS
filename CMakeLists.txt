@@ -290,7 +290,8 @@ if(WIN32)
     infilfs_enable_warnings(infilfs-win32-projfs-bridge)
     if(MSVC)
         target_link_options(infiltratorfs-windows PRIVATE
-            "/MANIFESTUAC:\"level='requireAdministrator' uiAccess='false'\"")
+            "/MANIFESTUAC:\"level='requireAdministrator' uiAccess='false'\""
+            "/MANIFESTINPUT:${CMAKE_CURRENT_SOURCE_DIR}/tools/windows/infiltratorfs-windows.manifest")
     endif()
     infilfs_enable_warnings(infiltratorfs-windows)
     set_target_properties(infiltratorfs-windows PROPERTIES
