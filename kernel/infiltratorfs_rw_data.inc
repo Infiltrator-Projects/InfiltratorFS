@@ -109,6 +109,7 @@ struct infilfs_native_pending {
     u32 directory_locator_count;
     bool directory_locator_valid;
     u64 pending_bytes;
+    u64 pending_physical_bytes;
     u64 publish_threshold;
     bool active;
     bool commit_failed;
@@ -982,6 +983,7 @@ static int infilfs_native_pending_begin_locked(
         return ret;
     pending->base_disk = sbi->disk;
     pending->pending_bytes = 0;
+    pending->pending_physical_bytes = 0;
     pending->active = true;
     return 0;
 }
@@ -1056,7 +1058,61 @@ static int infilfs_native_operation_rollback(
 static void infilfs_native_operation_commit(
     struct infilfs_native_pending *pending)
 {
+    u64 blocks = 0;
+    size_t i;
+
+    /*
+     * Account the physical allocation pressure produced by this successful
+     * operation.  Partial CoW writes can allocate a full filesystem block (and
+     * associated metadata) for only a handful of user bytes; measuring only
+     * logical bytes lets those superseded transaction-private blocks consume a
+     * volume long before the normal publication threshold is reached.
+     */
+    for (i = pending->operation_allocated_count;
+         i < pending->tx.allocated_count; ++i) {
+        u64 count = pending->tx.allocated[i].count;
+
+        if (blocks > U64_MAX - count) {
+            blocks = U64_MAX;
+            break;
+        }
+        blocks += count;
+    }
+    if (blocks == U64_MAX ||
+        blocks > (U64_MAX >> INFILFS_DISK_BLOCK_SHIFT)) {
+        pending->pending_physical_bytes = U64_MAX;
+    } else {
+        u64 bytes = blocks << INFILFS_DISK_BLOCK_SHIFT;
+
+        if (pending->pending_physical_bytes > U64_MAX - bytes)
+            pending->pending_physical_bytes = U64_MAX;
+        else
+            pending->pending_physical_bytes += bytes;
+    }
     pending->undo_count = 0;
+}
+
+static bool infilfs_native_pending_should_publish(
+    const struct infilfs_native_pending *pending)
+{
+    const u64 max_excess_churn = 64ULL * 1024ULL * 1024ULL;
+    u64 churn_limit;
+    u64 excess;
+
+    if (infilfs_native_pending_should_publish(pending))
+        return true;
+
+    /*
+     * Do not make ordinary sequential writes publish every 64 MiB: their
+     * physical allocation naturally tracks logical bytes. Trigger only on
+     * excess physical CoW churn, capped so tiny/random writes cannot retain
+     * hundreds of MiB of superseded blocks inside one deferred transaction.
+     */
+    if (pending->pending_physical_bytes <= pending->pending_bytes)
+        return false;
+    excess = pending->pending_physical_bytes - pending->pending_bytes;
+    churn_limit = min_t(u64, pending->publish_threshold, max_excess_churn);
+    return excess >= churn_limit;
 }
 
 static int infilfs_native_pending_commit_locked(
@@ -1081,6 +1137,7 @@ static int infilfs_native_pending_commit_locked(
     memset(&pending->tx, 0, sizeof(pending->tx));
     pending->active = false;
     pending->pending_bytes = 0;
+    pending->pending_physical_bytes = 0;
     return 0;
 }
 
@@ -4744,7 +4801,7 @@ static ssize_t infilfs_native_extent_write_iter_mode(
         done += consumed;
         pending->pending_bytes += consumed;
 
-        if (pending->pending_bytes >= pending->publish_threshold) {
+        if (infilfs_native_pending_should_publish(pending)) {
             int publish = infilfs_native_pending_commit_locked(pending);
             if (publish) {
                 ret = publish;
@@ -4899,7 +4956,7 @@ static ssize_t infilfs_native_inline_write_iter(
     sbi->disk = pending->tx.next_sb;
     pending->pending_bytes += copied;
 
-    if (pending->pending_bytes >= pending->publish_threshold)
+    if (infilfs_native_pending_should_publish(pending))
         (void)infilfs_native_pending_commit_locked(pending);
     if (pending->active && !pending->commit_failed)
         mod_delayed_work(system_wq, &pending->idle_work,
