@@ -74,12 +74,17 @@ static uint32_t extent_kind(uint32_t flags)
 
 static uint32_t extent_codec(uint32_t flags)
 {
-    return (flags & INFS_EXTENT_CODEC_MASK) >> INFS_EXTENT_CODEC_SHIFT;
+    uint32_t low =
+        (flags & INFS_EXTENT_CODEC_MASK) >> INFS_EXTENT_CODEC_SHIFT;
+    uint32_t high =
+        (flags & INFS_EXTENT_CODEC_EXT_MASK) >> INFS_EXTENT_CODEC_EXT_SHIFT;
+    return low | (high << 2u);
 }
 
 static uint32_t extent_stored_bytes(uint32_t flags)
 {
-    return flags >> INFS_EXTENT_STORED_BYTES_SHIFT;
+    return (flags & INFS_EXTENT_STORED_BYTES_MASK) >>
+        INFS_EXTENT_STORED_BYTES_SHIFT;
 }
 
 static int extent_is_compressed(uint32_t flags)
@@ -126,9 +131,12 @@ static int extent_flags_valid(uint32_t logical_blocks, uint64_t physical,
 
 static uint32_t extent_compressed_flags(uint32_t codec, uint32_t stored_bytes)
 {
-    return INFS_EXTENT_NORMAL |
-        (codec << INFS_EXTENT_CODEC_SHIFT) |
-        (stored_bytes << INFS_EXTENT_STORED_BYTES_SHIFT);
+    uint32_t low = (codec & 0x3u) << INFS_EXTENT_CODEC_SHIFT;
+    uint32_t high = ((codec >> 2u) << INFS_EXTENT_CODEC_EXT_SHIFT) &
+        INFS_EXTENT_CODEC_EXT_MASK;
+    uint32_t stored = (stored_bytes << INFS_EXTENT_STORED_BYTES_SHIFT) &
+        INFS_EXTENT_STORED_BYTES_MASK;
+    return INFS_EXTENT_NORMAL | low | high | stored;
 }
 
 static int file_replace_range(struct infs_volume *vol,
