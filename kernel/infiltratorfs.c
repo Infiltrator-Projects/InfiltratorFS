@@ -6,6 +6,7 @@
 #include <linux/dirent.h>
 #include <linux/falloc.h>
 #include <linux/fiemap.h>
+#include <linux/file.h>
 #include <linux/atomic.h>
 #include <linux/fs.h>
 #include <linux/fs_context.h>
@@ -2781,6 +2782,7 @@ static const struct file_operations infilfs_file_operations = {
     .write_iter = infilfs_file_write_iter,
     .mmap = generic_file_mmap,
     .fallocate = infilfs_file_fallocate,
+    .remap_file_range = infilfs_file_remap_file_range,
     .unlocked_ioctl = infilfs_file_ioctl,
     .fsync = infilfs_file_fsync,
 };
