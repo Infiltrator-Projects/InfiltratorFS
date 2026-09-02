@@ -1099,7 +1099,7 @@ static bool infilfs_native_pending_should_publish(
     u64 churn_limit;
     u64 excess;
 
-    if (infilfs_native_pending_should_publish(pending))
+    if (pending->pending_bytes >= pending->publish_threshold)
         return true;
 
     /*
