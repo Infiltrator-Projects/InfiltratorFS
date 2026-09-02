@@ -237,6 +237,8 @@ jobs:
         run: cmake --build build --parallel
       - name: Test
         run: ctest --test-dir build --output-on-failure
+      - name: Record compression qualification telemetry
+        run: ./build/infilfs-compression-qualification
       - name: Reject FUSE build artifacts
         run: test ! -e build/infilfs-fuse
       - name: Build Linux-created cross-platform image
