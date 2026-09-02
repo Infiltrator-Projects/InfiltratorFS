@@ -196,6 +196,7 @@ static ssize_t infilfs_native_read_iter_cached(struct inode *inode,
                                                 loff_t *position,
                                                 struct iov_iter *to)
 {
+    struct infilfs_sb_info *sbi = INFILFS_SB(inode->i_sb);
     struct infilfs_inode_info *ii = INFILFS_I(inode);
     const struct infilfs_object_header_disk *header;
     const struct infilfs_file_payload_disk *file;
@@ -222,6 +223,18 @@ static ssize_t infilfs_native_read_iter_cached(struct inode *inode,
         ret = -ENOMEM;
         goto out;
     }
+
+    /*
+     * Deferred native writers temporarily expose transaction-private object
+     * index and checksum topology through sbi->disk while holding write_lock.
+     * A verified reader must not combine an inode/file object from one topology
+     * with checksum/index pages from another. Lookup and readdir already use
+     * this same lock for multi-block topology walks; do the same for one read
+     * syscall. The lock is released before returning to userspace, so ordinary
+     * sequential readers yield between syscalls rather than monopolising the
+     * writer lock for the lifetime of the open file.
+     */
+    mutex_lock(&sbi->write_lock);
     ret = infilfs_read_object(inode->i_sb, ii->object_block,
                               INFILFS_OBJECT_FILE, ii->object_id, object);
     if (ret)
@@ -373,8 +386,12 @@ partial:
         ret = done;
     }
 out:
-    if (ii)
-        infilfs_native_read_cursor_publish(inode->i_sb, ii->object_id, &cursor);
+    if (object && data_block && checksum_object && extent_page) {
+        if (ii)
+            infilfs_native_read_cursor_publish(
+                inode->i_sb, ii->object_id, &cursor);
+        mutex_unlock(&sbi->write_lock);
+    }
     kvfree(compressed_plain);
     kfree(extent_page);
     kfree(checksum_object);
