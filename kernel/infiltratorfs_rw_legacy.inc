@@ -1100,9 +1100,13 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
     int ret;
     int replica_error = 0;
 
-    ret = sync_blockdev(tx->sb->s_bdev);
-    if (ret)
-        return ret;
+    /*
+     * All transaction-private file data and metadata are still unreachable at
+     * this point. Build/stage the replacement allocation tree first, then use
+     * one durability barrier for the entire dependency graph. There is no
+     * safety benefit in flushing file data before staging the allocation tree:
+     * neither can become reachable until a checkpoint is durable.
+     */
     ret = infilfs_rw_allocation_map_publish(tx, &next_allocation);
     if (ret) {
         infilfs_allocation_layout_destroy(&next_allocation);
@@ -1121,25 +1125,53 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
     }
     infilfs_rw_encode_superblock(&tx->next_sb, sb_block);
     first = (unsigned int)(tx->generation % INFILFS_CHECKPOINT_COUNT);
+
+    /*
+     * The dependency graph above is already durable, so all checkpoint
+     * replicas can be issued before the second and final durability barrier.
+     * If power fails during this phase, recovery may see generation N or any
+     * complete generation-N+1 checkpoint; either is safe because every N+1
+     * dependency was flushed before checkpoint writes began.
+     */
     ret = infilfs_rw_write_block(tx->sb,
         le64_to_cpu(tx->next_sb.checkpoint_block[first]), sb_block);
-    if (!ret)
-        ret = sync_blockdev(tx->sb->s_bdev);
     if (ret) {
-        /*
-         * Once the primary checkpoint write has been attempted, an error
-         * cannot prove the newer generation is absent from stable storage.
-         * Freeze all later mutation until remount checkpoint selection decides
-         * which generation actually committed.
-         */
         sbi->write_poisoned = true;
         sbi->checkpoint_repair_needed = true;
-        pr_warn("InfiltratorFS: primary checkpoint durability indeterminate; further writes disabled until remount\n");
+        pr_warn("InfiltratorFS: primary checkpoint write failed; further writes disabled until remount\n");
         infilfs_allocation_layout_destroy(&next_allocation);
         kfree(sb_block);
         return ret;
     }
 
+    for (n = 1; n < INFILFS_CHECKPOINT_COUNT; ++n) {
+        unsigned int idx = (first + n) % INFILFS_CHECKPOINT_COUNT;
+        ret = infilfs_rw_write_block(tx->sb,
+            le64_to_cpu(tx->next_sb.checkpoint_block[idx]), sb_block);
+        if (ret && !replica_error)
+            replica_error = ret;
+    }
+
+    ret = sync_blockdev(tx->sb->s_bdev);
+    if (ret) {
+        /*
+         * At least the primary checkpoint write was issued. A failed flush
+         * cannot prove whether generation N+1 reached stable storage, so keep
+         * the existing fail-closed remount/recovery rule.
+         */
+        sbi->write_poisoned = true;
+        sbi->checkpoint_repair_needed = true;
+        pr_warn("InfiltratorFS: checkpoint durability indeterminate; further writes disabled until remount\n");
+        infilfs_allocation_layout_destroy(&next_allocation);
+        kfree(sb_block);
+        return ret;
+    }
+    kfree(sb_block);
+
+    /*
+     * The primary checkpoint is now durable, which is the atomic publication
+     * point. Replace the volatile allocation layout only after that barrier.
+     */
     infilfs_allocation_cache_replace(sbi, &next_allocation);
     sbi->disk = tx->next_sb;
     write_lock(&sbi->bitmap_lock);
@@ -1147,22 +1179,10 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
     sbi->visible_bitmap_bytes = sbi->bitmap_bytes;
     write_unlock(&sbi->bitmap_lock);
 
-    for (n = 1; n < INFILFS_CHECKPOINT_COUNT; ++n) {
-        unsigned int idx = (first + n) % INFILFS_CHECKPOINT_COUNT;
-        ret = infilfs_rw_write_block(tx->sb,
-            le64_to_cpu(sbi->disk.checkpoint_block[idx]), sb_block);
-        if (ret && !replica_error)
-            replica_error = ret;
-    }
-    ret = sync_blockdev(tx->sb->s_bdev);
-    if (ret && !replica_error)
-        replica_error = ret;
-    kfree(sb_block);
-
     if (replica_error) {
         sbi->write_poisoned = true;
         sbi->checkpoint_repair_needed = true;
-        pr_warn("InfiltratorFS: native RW checkpoint committed but replica refresh failed; further writes disabled until remount\n");
+        pr_warn("InfiltratorFS: native RW checkpoint committed but a replica write failed; further writes disabled until remount\n");
     } else {
         sbi->checkpoint_repair_needed = false;
     }
