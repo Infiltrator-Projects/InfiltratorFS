@@ -33,6 +33,8 @@
 #define BRIDGE_NOTIFY_ROOT_MASK ( \
     PRJ_NOTIFY_NEW_FILE_CREATED | BRIDGE_NOTIFY_PERSIST_MASK)
 
+#define BRIDGE_WINDOWS_PATH_CAP 32768u
+
 struct bridge_dir_entry {
     wchar_t name[INFS_NAME_MAX + 1u];
     struct infs_attributes attributes;
@@ -65,8 +67,8 @@ struct bridge_state {
     struct infs_volume *volume;
     HWND owner;
     PRJ_NAMESPACE_VIRTUALIZATION_CONTEXT context;
-    wchar_t root[MAX_PATH * 4u];
-    wchar_t dos_target[MAX_PATH * 4u + 8u];
+    wchar_t root[BRIDGE_WINDOWS_PATH_CAP];
+    wchar_t dos_target[BRIDGE_WINDOWS_PATH_CAP + 8u];
     wchar_t drive[3];
     CRITICAL_SECTION lock;
     int lock_ready;
@@ -555,13 +557,13 @@ static int make_child_infs_path(const char *parent, const char *name,
 }
 
 static int relative_to_local_path(PCWSTR relative,
-                                  wchar_t out[MAX_PATH * 4u])
+                                  wchar_t out[BRIDGE_WINDOWS_PATH_CAP])
 {
     if (!relative || !*relative)
-        return wcscpy_s(out, MAX_PATH * 4u, g_bridge.root) == 0;
+        return wcscpy_s(out, BRIDGE_WINDOWS_PATH_CAP, g_bridge.root) == 0;
     if (wcslen(relative) > INFS_PATH_MAX)
         return 0;
-    return _snwprintf_s(out, MAX_PATH * 4u, _TRUNCATE,
+    return _snwprintf_s(out, BRIDGE_WINDOWS_PATH_CAP, _TRUNCATE,
                         L"%s\\%s", g_bridge.root, relative) >= 0;
 }
 
@@ -896,7 +898,7 @@ static infs_status bridge_create_empty(const char *path, int is_directory)
 static infs_status bridge_sync_local_file(PCWSTR relative)
 {
     char path[INFS_PATH_MAX + 1u];
-    wchar_t local[MAX_PATH * 4u];
+    wchar_t local[BRIDGE_WINDOWS_PATH_CAP];
     if (!wide_relative_to_infs(relative, path) ||
         !relative_to_local_path(relative, local))
         return INFS_STATUS_NAME_TOO_LONG;
@@ -1076,7 +1078,7 @@ static infs_status bridge_delete_path(const char *path, int is_directory)
 
 static infs_status bridge_import_local_tree(PCWSTR relative)
 {
-    wchar_t local[MAX_PATH * 4u];
+    wchar_t local[BRIDGE_WINDOWS_PATH_CAP];
     char path[INFS_PATH_MAX + 1u];
     if (!relative_to_local_path(relative, local) ||
         !wide_relative_to_infs(relative, path))
@@ -1095,7 +1097,7 @@ static infs_status bridge_import_local_tree(PCWSTR relative)
     if (status != INFS_STATUS_OK)
         return status;
 
-    wchar_t pattern[MAX_PATH * 4u];
+    wchar_t pattern[BRIDGE_WINDOWS_PATH_CAP];
     if (_snwprintf_s(pattern, sizeof(pattern) / sizeof(pattern[0]),
                      _TRUNCATE, L"%s\\*", local) < 0)
         return INFS_STATUS_NAME_TOO_LONG;
@@ -1306,7 +1308,7 @@ static void bridge_free_enums(void)
 
 static int remove_tree(const wchar_t *root)
 {
-    wchar_t pattern[MAX_PATH * 4u];
+    wchar_t pattern[BRIDGE_WINDOWS_PATH_CAP];
     if (_snwprintf_s(pattern, sizeof(pattern) / sizeof(pattern[0]),
                      _TRUNCATE, L"%s\\*", root) < 0)
         return 0;
@@ -1318,7 +1320,7 @@ static int remove_tree(const wchar_t *root)
             if (wcscmp(data.cFileName, L".") == 0 ||
                 wcscmp(data.cFileName, L"..") == 0)
                 continue;
-            wchar_t child[MAX_PATH * 4u];
+            wchar_t child[BRIDGE_WINDOWS_PATH_CAP];
             if (_snwprintf_s(child, sizeof(child) / sizeof(child[0]),
                              _TRUNCATE, L"%s\\%s", root,
                              data.cFileName) < 0)
@@ -1353,14 +1355,14 @@ static int choose_drive_letter(wchar_t out[3])
     return 0;
 }
 
-static int create_bridge_root(wchar_t out[MAX_PATH * 4u])
+static int create_bridge_root(wchar_t out[BRIDGE_WINDOWS_PATH_CAP])
 {
-    wchar_t base[MAX_PATH * 4u];
+    wchar_t base[BRIDGE_WINDOWS_PATH_CAP];
     if (SHGetFolderPathW(NULL, CSIDL_LOCAL_APPDATA | CSIDL_FLAG_CREATE,
                          NULL, SHGFP_TYPE_CURRENT, base) != S_OK)
         return 0;
 
-    wchar_t parent[MAX_PATH * 4u];
+    wchar_t parent[BRIDGE_WINDOWS_PATH_CAP];
     if (_snwprintf_s(parent, sizeof(parent) / sizeof(parent[0]),
                      _TRUNCATE, L"%s\\InfiltratorFS", base) < 0)
         return 0;
@@ -1392,7 +1394,7 @@ static int create_bridge_root(wchar_t out[MAX_PATH * 4u])
             *p = L'_';
     }
 
-    if (_snwprintf_s(out, MAX_PATH * 4u, _TRUNCATE,
+    if (_snwprintf_s(out, BRIDGE_WINDOWS_PATH_CAP, _TRUNCATE,
                      L"%s\\%s", parent, guid_text) < 0)
         return 0;
     return CreateDirectoryW(out, NULL) != 0;

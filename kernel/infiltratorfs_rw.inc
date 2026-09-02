@@ -420,7 +420,8 @@ static int infilfs_native_materialize_compressed_at_locked(
 {
     struct infilfs_inode_info *ii = INFILFS_I(inode);
     struct infilfs_extent_disk *replaced = NULL;
-    u8 *data = NULL;
+    u8 *plain = NULL;
+    size_t plain_bytes = 0;
     u64 physical = 0;
     u64 extent_start = 0;
     u64 replacement = 0;
@@ -441,9 +442,15 @@ static int infilfs_native_materialize_compressed_at_locked(
         extent_blocks > old_blocks - extent_start)
         return -EFSCORRUPTED;
 
-    data = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
-    if (!data)
+    plain_bytes = (size_t)extent_blocks * INFILFS_DISK_BLOCK_SIZE;
+    plain = kvmalloc(plain_bytes, GFP_NOFS);
+    if (!plain)
         return -ENOMEM;
+    ret = infilfs_read_compressed_extent(
+        inode, physical, extent_blocks, flags, plain, plain_bytes);
+    if (ret)
+        goto out;
+
     ret = infilfs_native_alloc_data_exact(
         pending, extent_blocks, physical, &replacement);
     if (ret)
@@ -451,13 +458,9 @@ static int infilfs_native_materialize_compressed_at_locked(
 
     for (i = 0; i < extent_blocks; ++i) {
         u64 block = extent_start + i;
+        u8 *data = plain + (size_t)i * INFILFS_DISK_BLOCK_SIZE;
 
-        ret = infilfs_read_compressed_logical_block(
-            inode, physical, extent_start, extent_blocks,
-            flags, block, data);
-        if (!ret)
-            ret = infilfs_native_verify_data_block(
-                inode, file, block, data);
+        ret = infilfs_native_verify_data_block(inode, file, block, data);
         if (!ret)
             ret = infilfs_native_stage_block(
                 inode->i_sb, replacement + i, data);
@@ -482,7 +485,7 @@ static int infilfs_native_materialize_compressed_at_locked(
     replaced = NULL;
 out:
     kvfree(replaced);
-    kfree(data);
+    kvfree(plain);
     return ret;
 }
 
@@ -1784,6 +1787,209 @@ static int infilfs_statfs(struct dentry *dentry, struct kstatfs *buf)
     buf->f_ffree = buf->f_bavail;
     buf->f_namelen = INFILFS_NAME_MAX;
     return 0;
+}
+
+
+/*
+ * Expose the explicit sparse extent map through standard Linux APIs.  These
+ * helpers snapshot the same validated extent list used by native mutation and
+ * defrag code, so classic and paged extent maps have identical semantics.
+ */
+static loff_t infilfs_file_llseek(struct file *file, loff_t offset, int whence)
+{
+    struct inode *inode = file_inode(file);
+    struct infilfs_sb_info *sbi = INFILFS_SB(inode->i_sb);
+    struct infilfs_extent_disk *extents = NULL;
+    u8 *object = NULL;
+    u64 blocks = 0;
+    u64 size;
+    u64 logical;
+    u32 count = 0;
+    u32 i;
+    bool was_inline = false;
+    loff_t result = 0;
+    int ret;
+
+    if (whence != SEEK_DATA && whence != SEEK_HOLE)
+        return generic_file_llseek(file, offset, whence);
+    if (offset < 0)
+        return -EINVAL;
+
+    size = i_size_read(inode);
+    if ((u64)offset > size ||
+        ((u64)offset == size && whence == SEEK_DATA))
+        return -ENXIO;
+    if ((u64)offset == size)
+        return vfs_setpos(file, offset, inode->i_sb->s_maxbytes);
+
+    object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+    if (!object)
+        return -ENOMEM;
+
+    mutex_lock(&sbi->write_lock);
+    ret = infilfs_native_collect_extents(
+        NULL, inode, object, &extents, &count, &blocks, &was_inline);
+    if (ret)
+        goto out;
+
+    if (was_inline) {
+        result = whence == SEEK_DATA ? offset : (loff_t)size;
+        goto set;
+    }
+
+    logical = (u64)offset >> INFILFS_DISK_BLOCK_SHIFT;
+    for (i = 0; i < count; ++i) {
+        u64 extent_start = le64_to_cpu(extents[i].logical_block);
+        u64 extent_end = extent_start + le32_to_cpu(extents[i].block_count);
+        bool data;
+
+        if (logical < extent_start || logical >= extent_end)
+            continue;
+        data = infilfs_extent_kind(le32_to_cpu(extents[i].flags)) ==
+            INFILFS_EXTENT_NORMAL;
+        if ((whence == SEEK_DATA && data) ||
+            (whence == SEEK_HOLE && !data)) {
+            result = offset;
+            goto set;
+        }
+
+        for (++i; i < count; ++i) {
+            data = infilfs_extent_kind(le32_to_cpu(extents[i].flags)) ==
+                INFILFS_EXTENT_NORMAL;
+            if ((whence == SEEK_DATA && data) ||
+                (whence == SEEK_HOLE && !data)) {
+                u64 candidate =
+                    le64_to_cpu(extents[i].logical_block) <<
+                    INFILFS_DISK_BLOCK_SHIFT;
+                result = candidate > size ? (loff_t)size :
+                    (loff_t)candidate;
+                goto set;
+            }
+        }
+
+        if (whence == SEEK_HOLE) {
+            result = (loff_t)size;
+            goto set;
+        }
+        ret = -ENXIO;
+        goto out;
+    }
+
+    ret = -EFSCORRUPTED;
+    goto out;
+
+set:
+    result = vfs_setpos(file, result, inode->i_sb->s_maxbytes);
+    ret = 0;
+out:
+    mutex_unlock(&sbi->write_lock);
+    kvfree(extents);
+    kfree(object);
+    return ret ? ret : result;
+}
+
+static int infilfs_file_fiemap(
+    struct inode *inode, struct fiemap_extent_info *fieinfo,
+    u64 start, u64 len)
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(inode->i_sb);
+    struct infilfs_inode_info *ii = INFILFS_I(inode);
+    struct infilfs_extent_disk *extents = NULL;
+    u8 *object = NULL;
+    u64 blocks = 0;
+    u64 size;
+    u64 end;
+    u32 count = 0;
+    u32 last_data = U32_MAX;
+    u32 i;
+    bool was_inline = false;
+    int ret;
+
+    ret = fiemap_prep(inode, fieinfo, start, &len, 0);
+    if (ret)
+        return ret;
+    if (!len)
+        return 0;
+
+    object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+    if (!object)
+        return -ENOMEM;
+
+    mutex_lock(&sbi->write_lock);
+    ret = infilfs_native_collect_extents(
+        NULL, inode, object, &extents, &count, &blocks, &was_inline);
+    if (ret)
+        goto out;
+
+    size = i_size_read(inode);
+    end = start > U64_MAX - len ? U64_MAX : start + len;
+
+    if (was_inline && size) {
+        u64 physical =
+            (ii->object_block << INFILFS_DISK_BLOCK_SHIFT) +
+            sizeof(struct infilfs_object_header_disk) +
+            sizeof(struct infilfs_file_payload_disk) +
+            sizeof(struct infilfs_data_checksum_disk);
+        ret = fiemap_fill_next_extent(
+            fieinfo, 0, physical, size,
+            FIEMAP_EXTENT_DATA_INLINE | FIEMAP_EXTENT_NOT_ALIGNED |
+            FIEMAP_EXTENT_LAST);
+        if (ret > 0)
+            ret = 0;
+        goto out;
+    }
+
+    for (i = count; i > 0; --i) {
+        if (infilfs_extent_kind(le32_to_cpu(extents[i - 1u].flags)) ==
+            INFILFS_EXTENT_NORMAL) {
+            last_data = i - 1u;
+            break;
+        }
+    }
+
+    for (i = 0; i < count; ++i) {
+        u32 flags = le32_to_cpu(extents[i].flags);
+        u64 logical;
+        u64 length;
+        u64 physical;
+        u32 fiemap_flags = 0;
+
+        if (infilfs_extent_kind(flags) != INFILFS_EXTENT_NORMAL)
+            continue;
+
+        logical = le64_to_cpu(extents[i].logical_block) <<
+            INFILFS_DISK_BLOCK_SHIFT;
+        length = (u64)le32_to_cpu(extents[i].block_count) <<
+            INFILFS_DISK_BLOCK_SHIFT;
+        if (logical >= size)
+            break;
+        if (length > size - logical)
+            length = size - logical;
+        if (logical >= end || logical + length <= start)
+            continue;
+
+        physical = le64_to_cpu(extents[i].physical_block) <<
+            INFILFS_DISK_BLOCK_SHIFT;
+        if (infilfs_extent_is_compressed(flags))
+            fiemap_flags |= FIEMAP_EXTENT_ENCODED;
+        if (i == last_data)
+            fiemap_flags |= FIEMAP_EXTENT_LAST;
+
+        ret = fiemap_fill_next_extent(
+            fieinfo, logical, physical, length, fiemap_flags);
+        if (ret < 0)
+            goto out;
+        if (ret > 0) {
+            ret = 0;
+            break;
+        }
+    }
+    ret = 0;
+out:
+    mutex_unlock(&sbi->write_lock);
+    kvfree(extents);
+    kfree(object);
+    return ret;
 }
 
 #include "infiltratorfs_pagecache.inc"

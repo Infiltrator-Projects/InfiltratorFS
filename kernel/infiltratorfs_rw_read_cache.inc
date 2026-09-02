@@ -205,7 +205,11 @@ static ssize_t infilfs_native_read_iter_cached(struct inode *inode,
     u64 file_size;
     size_t requested, done = 0;
     u8 *object = NULL, *data_block = NULL, *checksum_object = NULL;
-    u8 *extent_page = NULL;
+    u8 *extent_page = NULL, *compressed_plain = NULL;
+    size_t compressed_capacity = 0;
+    u64 compressed_physical = 0, compressed_logical = 0;
+    u32 compressed_blocks = 0, compressed_flags = 0;
+    bool compressed_valid = false;
     int ret;
 
     if (pos < 0)
@@ -296,13 +300,48 @@ static ssize_t infilfs_native_read_iter_cached(struct inode *inode,
         } else if (infilfs_extent_kind(flags) == INFILFS_EXTENT_NORMAL) {
             struct infilfs_data_checksum_disk expected, actual;
 
-            if (infilfs_extent_is_compressed(flags))
-                ret = infilfs_read_compressed_logical_block(
-                    inode, physical, extent_logical, extent_blocks,
-                    flags, logical, data_block);
-            else
+            if (infilfs_extent_is_compressed(flags)) {
+                size_t plain_bytes =
+                    (size_t)extent_blocks * INFILFS_DISK_BLOCK_SIZE;
+
+                if (!compressed_valid ||
+                    compressed_physical != physical ||
+                    compressed_logical != extent_logical ||
+                    compressed_blocks != extent_blocks ||
+                    compressed_flags != flags) {
+                    if (compressed_capacity < plain_bytes) {
+                        kvfree(compressed_plain);
+                        compressed_plain = kvmalloc(plain_bytes, GFP_NOFS);
+                        if (!compressed_plain) {
+                            compressed_capacity = 0;
+                            ret = -ENOMEM;
+                            goto partial;
+                        }
+                        compressed_capacity = plain_bytes;
+                    }
+
+                    ret = infilfs_read_compressed_extent(
+                        inode, physical, extent_blocks, flags,
+                        compressed_plain, compressed_capacity);
+                    if (ret)
+                        goto partial;
+
+                    compressed_physical = physical;
+                    compressed_logical = extent_logical;
+                    compressed_blocks = extent_blocks;
+                    compressed_flags = flags;
+                    compressed_valid = true;
+                }
+
+                memcpy(data_block,
+                       compressed_plain +
+                           (size_t)(logical - extent_logical) *
+                               INFILFS_DISK_BLOCK_SIZE,
+                       INFILFS_DISK_BLOCK_SIZE);
+            } else {
                 ret = infilfs_read_allocated_block(
                     inode->i_sb, physical, data_block);
+            }
             if (ret)
                 goto partial;
             ret = infilfs_native_read_expected_digest(
@@ -336,6 +375,7 @@ partial:
 out:
     if (ii)
         infilfs_native_read_cursor_publish(inode->i_sb, ii->object_id, &cursor);
+    kvfree(compressed_plain);
     kfree(extent_page);
     kfree(checksum_object);
     kfree(data_block);

@@ -5,6 +5,7 @@
 #include <linux/capability.h>
 #include <linux/dirent.h>
 #include <linux/falloc.h>
+#include <linux/fiemap.h>
 #include <linux/atomic.h>
 #include <linux/fs.h>
 #include <linux/fs_context.h>
@@ -319,33 +320,28 @@ static bool infilfs_extent_flags_valid(u32 logical_blocks, u64 physical,
     return true;
 }
 
-static int infilfs_read_compressed_logical_block(
-    struct inode *inode, u64 physical, u64 extent_logical,
-    u32 extent_blocks, u32 flags, u64 logical,
-    u8 data[INFILFS_DISK_BLOCK_SIZE])
+static int infilfs_read_compressed_extent(
+    struct inode *inode, u64 physical, u32 extent_blocks, u32 flags,
+    u8 *plain, size_t plain_capacity)
 {
     u32 stored = infilfs_extent_stored_bytes(flags);
     u64 physical_blocks = infilfs_extent_physical_blocks(extent_blocks, flags);
     size_t stored_span = (size_t)physical_blocks * INFILFS_DISK_BLOCK_SIZE;
     size_t plain_bytes = (size_t)extent_blocks * INFILFS_DISK_BLOCK_SIZE;
     u8 *compressed;
-    u8 *plain;
     u64 i;
     int decoded;
     int ret = 0;
 
-    if (!infilfs_extent_is_compressed(flags) ||
-        logical < extent_logical ||
-        logical - extent_logical >= extent_blocks ||
+    if (!plain || !infilfs_extent_is_compressed(flags) ||
+        !extent_blocks || extent_blocks > INFILFS_COMPRESSION_CLUSTER_BLOCKS ||
         !stored || !physical_blocks || stored > stored_span ||
-        extent_blocks > INFILFS_COMPRESSION_CLUSTER_BLOCKS)
+        plain_capacity < plain_bytes)
         return -EFSCORRUPTED;
+
     compressed = kvmalloc(stored_span, GFP_NOFS);
-    plain = kvmalloc(plain_bytes, GFP_NOFS);
-    if (!compressed || !plain) {
-        ret = -ENOMEM;
-        goto out;
-    }
+    if (!compressed)
+        return -ENOMEM;
     for (i = 0; i < physical_blocks; ++i) {
         ret = infilfs_read_allocated_block(
             inode->i_sb, physical + i,
@@ -363,17 +359,36 @@ static int infilfs_read_compressed_logical_block(
     } else {
         decoded = 0;
     }
-    if (decoded != (int)plain_bytes) {
+    if (decoded != (int)plain_bytes)
         ret = -EFSCORRUPTED;
-        goto out;
-    }
-    memcpy(data,
-           plain + (size_t)(logical - extent_logical) *
-               INFILFS_DISK_BLOCK_SIZE,
-           INFILFS_DISK_BLOCK_SIZE);
 out:
-    kvfree(plain);
     kvfree(compressed);
+    return ret;
+}
+
+static int infilfs_read_compressed_logical_block(
+    struct inode *inode, u64 physical, u64 extent_logical,
+    u32 extent_blocks, u32 flags, u64 logical,
+    u8 data[INFILFS_DISK_BLOCK_SIZE])
+{
+    size_t plain_bytes = (size_t)extent_blocks * INFILFS_DISK_BLOCK_SIZE;
+    u8 *plain;
+    int ret;
+
+    if (logical < extent_logical ||
+        logical - extent_logical >= extent_blocks)
+        return -EFSCORRUPTED;
+    plain = kvmalloc(plain_bytes, GFP_NOFS);
+    if (!plain)
+        return -ENOMEM;
+    ret = infilfs_read_compressed_extent(
+        inode, physical, extent_blocks, flags, plain, plain_bytes);
+    if (!ret)
+        memcpy(data,
+               plain + (size_t)(logical - extent_logical) *
+                   INFILFS_DISK_BLOCK_SIZE,
+               INFILFS_DISK_BLOCK_SIZE);
+    kvfree(plain);
     return ret;
 }
 
@@ -2735,6 +2750,7 @@ static const struct inode_operations infilfs_dir_inode_operations = {
 
 static const struct inode_operations infilfs_file_inode_operations = {
     .setattr = infilfs_rw_setattr,
+    .fiemap = infilfs_file_fiemap,
     .listxattr = infilfs_linux_listxattr,
 };
 
@@ -2752,7 +2768,7 @@ static const struct file_operations infilfs_dir_operations = {
 
 static const struct file_operations infilfs_file_operations = {
     .owner = THIS_MODULE,
-    .llseek = generic_file_llseek,
+    .llseek = infilfs_file_llseek,
     .read_iter = infilfs_file_read_iter,
     .write_iter = infilfs_file_write_iter,
     .mmap = generic_file_mmap,

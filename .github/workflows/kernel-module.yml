@@ -34,7 +34,7 @@ jobs:
       - name: Install kernel build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake kmod linux-headers-generic
+          sudo apt-get install -y build-essential cmake e2fsprogs kmod linux-headers-generic
 
       - name: Resolve kernel header trees
         id: headers
@@ -827,6 +827,31 @@ jobs:
           print(f"Native 200-fsync durability phase: {elapsed:.3f} s "
                 f"({200.0/elapsed:.1f} fsyncs/s)")
           PY
+
+
+          # Standard sparse-discovery and FIEMAP interfaces must expose the
+          # InfiltratorFS extent map rather than generic byte-only fallbacks.
+          sudo python3 - "$mountpoint/native-rw/seek-map.bin" <<'PY'
+          import os, sys
+          path = sys.argv[1]
+          fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_EXCL, 0o600)
+          try:
+              os.pwrite(fd, b'A' * 4096, 0)
+              os.pwrite(fd, b'B' * 4096, 512 * 1024)
+              os.ftruncate(fd, 1024 * 1024)
+              os.fsync(fd)
+              assert os.lseek(fd, 0, os.SEEK_DATA) == 0
+              assert os.lseek(fd, 0, os.SEEK_HOLE) == 4096
+              assert os.lseek(fd, 4096, os.SEEK_DATA) == 512 * 1024
+              assert os.lseek(fd, 512 * 1024, os.SEEK_HOLE) == 516 * 1024
+              assert os.lseek(fd, 516 * 1024, os.SEEK_HOLE) == 516 * 1024
+          finally:
+              os.close(fd)
+          PY
+          filefrag -v "$mountpoint/native-rw/seek-map.bin" |
+            tee "$RUNNER_TEMP/infiltratorfs-fiemap.txt"
+          grep -Eq '[0-9]+ extent(s)? found|extent found' \
+            "$RUNNER_TEMP/infiltratorfs-fiemap.txt"
 
           # Native parity: sparse high-offset growth, extent truncate,
           # preallocation and hole punching must survive the offline scrub.
