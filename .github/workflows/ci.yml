@@ -424,7 +424,13 @@ jobs:
           $manifest = Join-Path $env:RUNNER_TEMP 'infiltratorfs-windows-manifest.xml'
           $sdkBin = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin'
           $mt = Get-ChildItem -Path $sdkBin -Filter mt.exe -File -Recurse -ErrorAction Stop |
-            Where-Object { $_.DirectoryName -match '\\x64
+            Where-Object { $_.DirectoryName.EndsWith('\x64', [System.StringComparison]::OrdinalIgnoreCase) } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (!$mt) { throw "Could not locate the Windows SDK x64 mt.exe under $sdkBin" }
+          & $mt.FullName "-inputresource:$exe;#1" "-out:$manifest"
+          if ($LASTEXITCODE -ne 0) { throw "Could not extract embedded Windows manifest from $exe" }
+          $embedded = Get-Content $manifest -Raw
           if ($embedded -notmatch '<longPathAware[^>]*>true</longPathAware>') {
             throw 'Windows executable is missing longPathAware=true in its embedded manifest.'
           }
