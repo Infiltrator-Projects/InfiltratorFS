@@ -264,19 +264,27 @@ static u32 infilfs_extent_kind(u32 flags)
 
 static u32 infilfs_extent_codec(u32 flags)
 {
-    return (flags & INFILFS_EXTENT_CODEC_MASK) >> INFILFS_EXTENT_CODEC_SHIFT;
+    u32 low =
+        (flags & INFILFS_EXTENT_CODEC_MASK) >> INFILFS_EXTENT_CODEC_SHIFT;
+    u32 high =
+        (flags & INFILFS_EXTENT_CODEC_EXT_MASK) >> INFILFS_EXTENT_CODEC_EXT_SHIFT;
+    return low | (high << 2u);
 }
 
 static u32 infilfs_extent_stored_bytes(u32 flags)
 {
-    return flags >> INFILFS_EXTENT_STORED_BYTES_SHIFT;
+    return (flags & INFILFS_EXTENT_STORED_BYTES_MASK) >>
+        INFILFS_EXTENT_STORED_BYTES_SHIFT;
 }
 
 static u32 infilfs_extent_compressed_flags(u32 codec, u32 stored_bytes)
 {
-    return INFILFS_EXTENT_NORMAL |
-        (codec << INFILFS_EXTENT_CODEC_SHIFT) |
-        (stored_bytes << INFILFS_EXTENT_STORED_BYTES_SHIFT);
+    u32 low = (codec & 0x3u) << INFILFS_EXTENT_CODEC_SHIFT;
+    u32 high = ((codec >> 2u) << INFILFS_EXTENT_CODEC_EXT_SHIFT) &
+        INFILFS_EXTENT_CODEC_EXT_MASK;
+    u32 stored = (stored_bytes << INFILFS_EXTENT_STORED_BYTES_SHIFT) &
+        INFILFS_EXTENT_STORED_BYTES_MASK;
+    return INFILFS_EXTENT_NORMAL | low | high | stored;
 }
 
 static bool infilfs_extent_is_compressed(u32 flags)
