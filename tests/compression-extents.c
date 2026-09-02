@@ -144,13 +144,28 @@ static struct infs_extent_disk file_first_extent(
 static uint32_t extent_codec_test(const struct infs_extent_disk *extent)
 {
     uint32_t flags = infs_le32_to_cpu(extent->flags);
-    return (flags & INFS_EXTENT_CODEC_MASK) >> INFS_EXTENT_CODEC_SHIFT;
+    uint32_t low =
+        (flags & INFS_EXTENT_CODEC_MASK) >> INFS_EXTENT_CODEC_SHIFT;
+    uint32_t high =
+        (flags & INFS_EXTENT_CODEC_EXT_MASK) >> INFS_EXTENT_CODEC_EXT_SHIFT;
+    return low | (high << 2u);
 }
 
 static uint32_t extent_stored_test(const struct infs_extent_disk *extent)
 {
-    return infs_le32_to_cpu(extent->flags) >>
+    uint32_t flags = infs_le32_to_cpu(extent->flags);
+    return (flags & INFS_EXTENT_STORED_BYTES_MASK) >>
         INFS_EXTENT_STORED_BYTES_SHIFT;
+}
+
+static uint32_t extent_flags_test(uint32_t codec, uint32_t stored_bytes)
+{
+    uint32_t low = (codec & 0x3u) << INFS_EXTENT_CODEC_SHIFT;
+    uint32_t high = ((codec >> 2u) << INFS_EXTENT_CODEC_EXT_SHIFT) &
+        INFS_EXTENT_CODEC_EXT_MASK;
+    uint32_t stored = (stored_bytes << INFS_EXTENT_STORED_BYTES_SHIFT) &
+        INFS_EXTENT_STORED_BYTES_MASK;
+    return INFS_EXTENT_NORMAL | low | high | stored;
 }
 
 static void fill_compressible(uint8_t *buffer, size_t size)
@@ -197,6 +212,22 @@ int main(void)
     expect((infs_le64_to_cpu(vol.sb.incompat_flags) &
             INFS_INCOMPAT_COMPRESSED_EXTENTS) != 0,
            "compression feature enabled");
+
+    {
+        struct infs_extent_disk future = {0};
+        uint32_t future_codec = INFS_EXTENT_CODEC_MAX;
+        uint32_t stored = INFS_COMPRESSION_CLUSTER_BLOCKS * INFS_BLOCK_SIZE - 1u;
+
+        future.flags = infs_cpu_to_le32(
+            extent_flags_test(future_codec, stored));
+        expect(extent_codec_test(&future) == future_codec,
+               "extended codec identifier round trip");
+        expect(extent_stored_test(&future) == stored,
+               "extended codec stored-byte field round trip");
+        expect((infs_le32_to_cpu(future.flags) &
+                INFS_EXTENT_KIND_MASK) == INFS_EXTENT_NORMAL,
+               "extended codec preserves normal extent kind");
+    }
 
     fill_compressible(plain, CLUSTER_BYTES);
     expect(infs_create_file(&vol, "/compressed.bin", NULL) ==
