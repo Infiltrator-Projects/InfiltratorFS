@@ -117,7 +117,8 @@ grep -Fq 'InfiltratorFS (format %s)' "$noble_gnome_patch"
 grep -Fq 'BD_FS_TECH_INFILTRATORFS' "$noble_libblockdev_patch"
 
 # Mintstick is patched from its locally installed stock files.  Exercise the
-# exact upstream anchors so drift fails in CI rather than on a user's desktop.
+# exact upstream filesystem, device-name and command-execution anchors so
+# digit-ending block devices cannot regress to a false-success format.
 cat > "$tmp/mintstick.py" <<'MINT_UI'
             self.fsmodel.append(["fat32", "FAT32", 11, True, True])
             self.fsmodel.append(["exfat", "exFAT", 11, False, False])
