@@ -19,13 +19,14 @@ InfiltratorFS deliberately separates fast regression from expensive qualificatio
   for kernel/core/package changes and every explicit Release commit; unrelated
   documentation pushes do not spend kernel-runner time.
 - **Heavy filesystem qualification** owns the million-file/1 TiB and near-full
-  mixed-workload endurance suites. It runs for storage/core changes, weekly, or
-  manually. Superseded heavy runs are cancelled rather than finishing obsolete
-  source revisions.
+  mixed-workload endurance suites. It runs for storage/core changes, every
+  explicit Release commit, weekly, or manually. Superseded development runs are
+  cancelled rather than finishing obsolete source revisions.
 - **Physical partition qualification** remains an explicitly destructive operator
   milestone/audit run and is never unattended ordinary CI.
-- **Release publication** still rebuilds, installs, mounts and cross-checks the
-  exact release source and artefacts before immutable publication.
+- **Release publication** waits for the exact same commit to pass both native
+  kernel and heavy filesystem qualification, then rebuilds, installs, mounts and
+  cross-checks the exact release source and artefacts before immutable publication.
 
 The purpose is to preserve the hard-earned regression coverage while matching
 test cost to the code that can actually invalidate each qualification.
