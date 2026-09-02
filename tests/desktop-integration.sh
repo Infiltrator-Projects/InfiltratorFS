@@ -169,6 +169,17 @@ grep -Fq 'execute(["udevadm", "settle", "--timeout=10"])' "$tmp/raw-format-patch
 grep -Fq 'mkfs.infiltratorfs", "--force", "-L"' "$tmp/raw-format-patched.py"
 grep -Fq '"ext4", "infiltratorfs"' "$tmp/raw-format-patched.py"
 
+# Linux Mint 22.x packages can still carry the pre-August-2026 Mintstick
+# partition start spelling ("1").  It must patch just as safely as current
+# upstream's "1MiB" spelling so package upgrades do not strand dpkg.
+sed 's/partition_type, "1MiB", "100%"/partition_type, "1", "100%"/' \
+    "$tmp/raw_format.py" > "$tmp/raw-format-legacy.py"
+python3 "$mint_patcher" "$tmp/mintstick.py" "$tmp/raw-format-legacy.py" \
+    "$tmp/mintstick-legacy-patched.py" "$tmp/raw-format-legacy-patched.py"
+grep -Fq 'partition_type, "1", "100%"' "$tmp/raw-format-legacy-patched.py"
+grep -Fq 'execute(["partprobe", device_path])' "$tmp/raw-format-legacy-patched.py"
+grep -Fq 'execute(["udevadm", "settle", "--timeout=10"])' "$tmp/raw-format-legacy-patched.py"
+
 # Prove the conventional helper expected by libblockdev forwards every
 # argument byte-for-byte to the qualified formatter installed beside it.
 cp "$mkfs_alias" "$tmp/mkfs.infiltratorfs"
