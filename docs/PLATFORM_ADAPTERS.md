@@ -63,6 +63,15 @@ Linux is currently the most complete mounted adapter. Current Linux source uses 
 
 These Linux implementation details are not requirements that another adapter copy line-for-line. For example, Linux `fallocate` flags are Linux API vocabulary; the underlying portable concepts are preallocation, sparse ranges and hole punching.
 
+Linux Mint's Mintstick/Nemo **USB Stick Formatter is intentionally not an
+InfiltratorFS partition-formatting adapter**. Mintstick is a whole-device
+repartitioner: it replaces the target disk's partition table and creates one
+new partition. InfiltratorFS packages therefore leave Mintstick stock and
+actively restore any historical InfiltratorFS Mintstick diversion during
+upgrade. Formatting an existing partition belongs to InfiltratorFS Manager or
+the libblockdev/UDisks/GNOME Disks path, which preserves surrounding
+partitions.
+
 ## Windows
 
 The repository contains Win32 image/raw-partition storage and direct transfer/scrub tooling over the portable core. Release 0.18.30 introduced an experimental driverless Explorer bridge built on Microsoft's inbox Projected File System (ProjFS). After the Windows application opens an InfiltratorFS partition, **Mount in Explorer** starts a user-mode provider and exposes a projected NTFS virtualization root. Explorer opens that root directly, rather than depending on a DOS drive alias created by the elevated raw-device process; an auxiliary drive alias is retained only when Windows exposes it in the current UAC device namespace. File data is hydrated from the portable InfiltratorFS core on demand, and Windows-created/modified/deleted/renamed files are committed back to the same InfiltratorFS volume. InfiltratorFS ships no Windows kernel driver for this bridge; the kernel component is Microsoft's signed ProjFS filter already supplied by Windows as an optional feature.
