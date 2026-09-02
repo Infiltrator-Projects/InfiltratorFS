@@ -33,10 +33,8 @@ concurrency:
 
 jobs:
   native-scale-stress:
-    # Full million-file/1 TiB stress is development-scale qualification, not
-    # a per-release gate. Release commits reuse already-qualified heavy evidence
-    # and retain the ordinary mounted kernel and exact-package release gates.
-    if: ${{ github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'Release ') }}
+    # Release commits run the exact same million-file/1 TiB evidence as storage
+    # development commits so a Release-labelled semantic change cannot bypass it.
     name: Million-file and 1 TiB mounted stress
     runs-on: ubuntu-24.04
     timeout-minutes: 180
@@ -93,7 +91,6 @@ jobs:
           bash tests/native-scale-qualification.sh build-scale
 
   native-endurance-stress:
-    if: ${{ github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'Release ') }}
     name: Near-full fragmentation and mixed-workload endurance
     runs-on: ubuntu-24.04
     timeout-minutes: 75
