@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # InfiltratorFS On-Disk Format 0.17
 
-Status: experimental writable prototype. Release 0.18.30 accepts exactly Format 0.17. Release 0.18.19 is the last Format 0.16 release. Pre-1.0 development builds do not promise compatibility with earlier development formats.
+Status: experimental writable prototype. Current source accepts exactly Format 0.17. Release 0.18.19 is the last Format 0.16 release. Pre-1.0 development builds do not promise compatibility with earlier development formats.
 
 Implementation 0.6.0 introduced sparse extents, sparse checksum indexing and hole punching. Implementation 0.7.0 defined `INFS_INCOMPAT_INLINE_DATA`. Implementation 0.8.0 added `INFS_INCOMPAT_SHARED_EXTENTS`; Format 0.8 added `INFS_INCOMPAT_PAGED_METADATA` and version-2 metadata heads. Format 0.9 added `INFS_INCOMPAT_SYMBOLIC_LINKS` and object type 5. Format 0.10 added `INFS_INCOMPAT_HARD_LINKS`. Format 0.12 added `INFS_INCOMPAT_SNAPSHOTS`, snapshot-catalog object type 6 and fixed-size generation-root records. Format 0.13 added `INFS_INCOMPAT_INDEX_TREE`, version-3 object-index heads and radix branch pages. Format 0.14 added `INFS_INCOMPAT_DIRECTORY_TREE`, version-3 directory heads and hashed directory branch pages. Format 0.15 doubled the maximum UTF-8 component length from 255 to 510 bytes without changing the variable-length directory-record layout. Format 0.16 raised that limit from 510 to 1023 bytes, again without changing the variable-length directory-record layout. Format 0.17 replaces the monolithic persistent allocation bitmap image with a checkpoint-rooted copy-on-write allocation tree while preserving one authoritative allocation bit per filesystem block. The normative acceptance rules are summarized in `CONFORMANCE.md`.
 
@@ -108,7 +108,7 @@ extended-attributes object ID   future portable named metadata, zero when absent
 
 This record is independent of Linux `struct stat` and Windows file-information structures.
 
-Only the portable attribute flags currently defined in `format.h` are accepted. The generic security and extended-attribute references remain zero until their portable object classes and compatibility features are specified. Release 0.18.30 can persist standard Linux xattr namespaces and special-node details through Linux adapter metadata; those adapter sidecars do not consume these reserved portable references and do not make Linux metadata the cross-platform canonical model.
+Only the portable attribute flags currently defined in `format.h` are accepted. The generic security and extended-attribute references remain zero until their portable object classes and compatibility features are specified. Current source can persist standard Linux xattr namespaces and special-node details through Linux adapter metadata; those adapter sidecars do not consume these reserved portable references and do not make Linux metadata the cross-platform canonical model.
 
 The current portable flags are persistent cross-platform metadata; mutation-policy semantics for flags such as `READ_ONLY` require an explicit core API/policy rather than being inferred silently by one adapter.
 
@@ -232,7 +232,7 @@ The policy is to fail closed when committed state cannot be trusted while retain
 - no snapshot rollback or native undelete policy;
 - compressed streams are bounded to the current 64-block (256 KiB) compression-unit limit; IAC1 v1 is the automatic native codec for Format 0.17, LZ4 remains a supported non-default reference representation, and future codecs require a new codec identifier rather than changing an existing stream meaning; see `COMPRESSION.md`;
 - portable security and generic named-metadata object references are reserved but not yet standardized;
-- Linux 0.18.30 development adapter xattrs/special-node metadata are not the final portable named-metadata/security model;
+- Current Linux adapter xattrs/special-node metadata are not the final portable named-metadata/security model;
 - POSIX compatibility metadata exists; Windows security mapping is not implemented;
 - metadata uses CRC64 while file data uses SHA-256;
 - scrub detects but cannot yet repair corruption; and
