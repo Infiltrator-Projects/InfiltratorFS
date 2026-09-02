@@ -848,7 +848,7 @@ jobs:
           finally:
               os.close(fd)
           PY
-          filefrag -v "$mountpoint/native-rw/seek-map.bin" |
+          sudo filefrag -v "$mountpoint/native-rw/seek-map.bin" |
             tee "$RUNNER_TEMP/infiltratorfs-fiemap.txt"
           grep -Eq '[0-9]+ extent(s)? found|extent found' \
             "$RUNNER_TEMP/infiltratorfs-fiemap.txt"
