@@ -26,6 +26,7 @@ A conforming implementation preserves:
 - exact root/object-index/directory/checksum graph reachability;
 - exact link counts and parent/reference rules;
 - ordinary extents, sparse hole extents and shared normal extents;
+- bounded compressed normal extents with explicit codec/stored-byte metadata, IAC1 v1 automatic encoding, retained LZ4 decoding, logical SHA-256 coverage and uncompressed fallback whenever compression would not save filesystem blocks;
 - inline small-file representation;
 - generation-aware object-index and directory trees plus paged extent metadata;
 - symbolic-link objects;
@@ -100,6 +101,7 @@ Native Linux qualification requires:
 - stable inode identity for persistent objects/hard links;
 - create/mkdir/mknod, link/symlink, rename/unlink/rmdir and persistent setattr;
 - sequential and random extent writes, large sparse growth/truncate, `fallocate` and hole punching;
+- native IAC1 v1 compressed EOF clusters with block-saving adaptive selection, high-entropy fallback, compressed read/page-cache paths, partial-write materialization, truncate/hole-punch boundary handling and remount/scrub verification;
 - correct logical versus allocated-size reporting for ordinary sparse and metadata-bearing objects;
 - persistent standard Linux xattr namespaces (`user.*`, `trusted.*`,
   `security.*`, `system.*`) and FIFO/socket/character/block node identity;
@@ -165,7 +167,7 @@ Installation fails if matching running-kernel headers are unavailable or if the 
 
 ## Automated gates
 
-The main Build and conformance workflow runs the portable/core suite under GCC, Clang, ASan/UBSan and GCC `-fanalyzer`, including deterministic and randomized bitmap-oracle qualification of the rebuildable free-extent index and a policy guard that forbids restoration of monolithic persistent bitmap publication or whole-bitmap transaction clones. It validates desktop/Manager behavior, checks cross-platform Linux-created media on Windows, and—when Microsoft's ProjFS component is available on the Windows runner—starts the driverless Explorer provider and requires an external Windows client to read Linux-created data and persist create/write/rename/hard-link/delete operations back through the portable core. It also builds release packages and rejects any FUSE build artifact or package dependency.
+The main Build and conformance workflow runs the portable/core suite under GCC, Clang, ASan/UBSan and GCC `-fanalyzer`, including deterministic and randomized bitmap-oracle qualification of the rebuildable free-extent index and a policy guard that forbids restoration of monolithic persistent bitmap publication or whole-bitmap transaction clones. The same suite gates the IAC1 codec and compressed-extent representation plus a representative compression corpus covering source/text, executable/library patterns, office/document data, database records, VM/zero-heavy storage, structured binary data, mixed small-file/configuration content and high-entropy already-compressed/encrypted-style input; it records IAC1-versus-LZ4 size and throughput telemetry and enforces deterministic decoding, incompressible-data rejection, bounded scratch memory and minimum filesystem-block savings. It validates desktop/Manager behavior, checks cross-platform Linux-created media on Windows, and—when Microsoft's ProjFS component is available on the Windows runner—starts the driverless Explorer provider and requires an external Windows client to read Linux-created data and persist create/write/rename/hard-link/delete operations back through the portable core. It also builds release packages and rejects any FUSE build artifact or package dependency.
 
 Portable smoke qualification requires a 1023-byte UTF-8 component to succeed and a 1024-byte component to be rejected. Native mounted qualification additionally verifies that `statfs` advertises the 1023-byte boundary and repeats create/read/enumerate/reject through the Linux VFS.
 
