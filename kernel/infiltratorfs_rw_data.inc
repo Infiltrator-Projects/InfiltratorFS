@@ -1146,15 +1146,24 @@ static int infilfs_native_pending_flush_sb(struct super_block *sb)
     struct infilfs_native_pending *pending =
         infilfs_native_pending_get(sb, false);
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
+    bool committed;
     int ret;
 
     if (!pending)
         return sync_blockdev(sb->s_bdev);
     cancel_delayed_work_sync(&pending->idle_work);
     mutex_lock(&sbi->write_lock);
+    committed = pending->active;
     ret = infilfs_native_pending_commit_locked(pending);
     mutex_unlock(&sbi->write_lock);
-    if (!ret)
+
+    /*
+     * A successful active transaction already ended with the checkpoint
+     * durability barrier in infilfs_rw_tx_commit(). Repeating sync_blockdev()
+     * immediately adds latency but no stronger persistence guarantee. Retain
+     * the standalone sync when there was no transaction to publish.
+     */
+    if (!ret && !committed)
         ret = sync_blockdev(sb->s_bdev);
     return ret;
 }
