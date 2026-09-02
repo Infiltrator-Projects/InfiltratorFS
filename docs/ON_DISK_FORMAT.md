@@ -214,7 +214,7 @@ Committed extent-backed file-data blocks are replaced through CoW. Inline file u
 
 The formatter reopens the exact block target with Linux `O_EXCL` after advisory mount/holder preflight, verifies that the device identity and geometry are unchanged, and retains that exclusive descriptor through the destructive write sequence. Failure to obtain exclusivity aborts formatting before the first write. Failure of the initial realtime-clock query is also a formatter error rather than silently creating zero initial timestamps. The formatter additionally takes the same nonblocking exclusive advisory lock used by writable POSIX volume openers, coordinating both image files and block targets with the formatter.
 
-Formatting first invalidates the three candidate checkpoint locations and flushes that invalidation. It then writes the initial allocation leaves/branches, tree index and tree root directory, durably flushes those referenced structures, and only then publishes the three valid generation-1 checkpoints. Therefore an interrupted format is unmountable rather than presenting a valid checkpoint that references incomplete initial metadata. The normal formatter creates Format 0.17 checkpoints with the stable incompatible-feature set enabled. Experimental `INFS_INCOMPAT_COMPRESSED_EXTENTS` is recognized by current readers for development/reference images but is deliberately not enabled by default while the compression policy and native codec remain under design.
+Formatting first invalidates the three candidate checkpoint locations and flushes that invalidation. It then writes the initial allocation leaves/branches, tree index and tree root directory, durably flushes those referenced structures, and only then publishes the three valid generation-1 checkpoints. Therefore an interrupted format is unmountable rather than presenting a valid checkpoint that references incomplete initial metadata. The normal formatter creates Format 0.17 checkpoints with the stable incompatible-feature set enabled, including `INFS_INCOMPAT_COMPRESSED_EXTENTS`. Codec identifier 2 is the native IAC1 v1 representation selected automatically for eligible bounded extents; codec identifier 1 remains the supported LZ4 development/reference representation. Compression is selected only when it reduces the stored filesystem-block count.
 
 ## 13. Corruption rejection
 
@@ -230,7 +230,7 @@ The policy is to fail closed when committed state cannot be trusted while retain
 - paged extent maps remain bounded by the page-pointer capacity of one file head;
 - at most 27 named snapshots in the bounded catalog;
 - no snapshot rollback or native undelete policy;
-- compression policy and the final native codec are not yet frozen; current development code includes experimental LZ4 per-extent representation, but LZ4 is not the intended automatic/default compression policy; see `COMPRESSION.md`;
+- compressed streams are bounded to the current 64-block (256 KiB) compression-unit limit; IAC1 v1 is the automatic native codec for Format 0.17, LZ4 remains a supported non-default reference representation, and future codecs require a new codec identifier rather than changing an existing stream meaning; see `COMPRESSION.md`;
 - portable security and generic named-metadata object references are reserved but not yet standardized;
 - Linux 0.18.30 development adapter xattrs/special-node metadata are not the final portable named-metadata/security model;
 - POSIX compatibility metadata exists; Windows security mapping is not implemented;
