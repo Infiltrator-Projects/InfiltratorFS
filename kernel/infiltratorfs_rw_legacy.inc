@@ -94,9 +94,21 @@ static int infilfs_rw_free_extent_index_reserve(struct infilfs_rw_tx *tx,
     }
     if (next > SIZE_MAX / sizeof(*grown))
         return -EOVERFLOW;
-    grown = krealloc(tx->free_extents, next * sizeof(*grown), GFP_NOFS);
+    /*
+     * The free-extent index can legitimately grow into the hundreds of
+     * thousands of entries on a heavily fragmented filesystem.  krealloc()
+     * is a poor fit for that cache because sufficiently large kmalloc-backed
+     * growth can fail solely from physical-memory fragmentation even when
+     * virtual memory is plentiful.  The index is rebuildable and never used
+     * for DMA, so allow kvmalloc() to fall back to vmalloc-backed storage.
+     */
+    grown = kvmalloc_array(next, sizeof(*grown), GFP_NOFS);
     if (!grown)
         return -ENOMEM;
+    if (tx->free_extents && tx->free_extent_count)
+        memcpy(grown, tx->free_extents,
+               tx->free_extent_count * sizeof(*grown));
+    kvfree(tx->free_extents);
     tx->free_extents = grown;
     tx->free_extent_capacity = next;
     return 0;
@@ -943,7 +955,7 @@ static void infilfs_rw_tx_abort(struct infilfs_rw_tx *tx)
     tx->bitmap = NULL;
     kfree(tx->deferred);
     kfree(tx->allocated);
-    kfree(tx->free_extents);
+    kvfree(tx->free_extents);
     memset(tx, 0, sizeof(*tx));
 }
 
@@ -1194,7 +1206,7 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
     tx->allocated = NULL;
     tx->allocated_count = 0;
     tx->allocated_capacity = 0;
-    kfree(tx->free_extents);
+    kvfree(tx->free_extents);
     tx->free_extents = NULL;
     tx->free_extent_count = 0;
     tx->free_extent_capacity = 0;

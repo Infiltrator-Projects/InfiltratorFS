@@ -43,8 +43,14 @@ def total_bytes(path: str) -> int:
 
 
 def write_extent(path: str, size: int, salt: int) -> None:
-    motif = bytes(((i * 37 + salt * 19 + 11) & 0xFF) for i in range(256))
-    pattern = motif * (MIB // len(motif))
+    # This phase measures physical near-full/fragmentation behaviour.  A
+    # short repeated motif became highly compressible once native IAC1 was
+    # enabled, so free space stopped falling and the qualification could spend
+    # the whole job filling data that occupied very little physical storage.
+    # SHAKE-256 gives us deterministic, compression-resistant bytes while
+    # retaining a reproducible workload.
+    seed = f"infiltratorfs-endurance:{salt}".encode("ascii")
+    pattern = hashlib.shake_256(seed).digest(MIB)
     fd = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_EXCL | os.O_CLOEXEC, 0o600)
     try:
         left = size
