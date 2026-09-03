@@ -174,6 +174,7 @@ struct infilfs_inode_info {
     u64 object_block;
     /* Volatile per-object locality cursor for sharded data reservations. */
     u64 data_allocation_hint;
+    u64 portable_flags;
     u16 object_type;
     u8 object_id[16];
     char *symlink_target;
@@ -2543,6 +2544,7 @@ static int infilfs_populate_inode(struct inode *inode, u64 object_block,
         goto fail_private;
     }
 
+    ii->portable_flags = le64_to_cpu(attributes->portable_flags);
     {
         kuid_t uid = make_kuid(&init_user_ns, le32_to_cpu(posix->uid));
         kgid_t gid = make_kgid(&init_user_ns, le32_to_cpu(posix->gid));
