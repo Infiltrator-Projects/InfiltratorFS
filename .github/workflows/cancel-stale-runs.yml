@@ -21,12 +21,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # These runs belong to superseded main commits. They can never
-          # satisfy exact-current-main publication, so clear them decisively.
+          # These runs belong to superseded main commits or to heavy
+          # qualification that must not consume runner time during ordinary
+          # development. They can never satisfy exact-current-main publication,
+          # so clear them decisively.
           # A normal cancellation can remain stuck when a hosted kernel test is
           # blocked in uninterruptible I/O; force-cancel is the documented
           # Actions escape hatch for that stale server-side run.
-          for run_id in 33718190487 33718842832 33725180042 33733703467 33733815554 33734182768; do
+          for run_id in 33718190487 33718842832 33725180042 33733703467 33733815554 33734182768 33805216852; do
             echo "Cancelling workflow run ${run_id}"
             code="$(curl -sS -o /tmp/cancel-${run_id}.txt -w '%{http_code}' \
               -L -X POST \
