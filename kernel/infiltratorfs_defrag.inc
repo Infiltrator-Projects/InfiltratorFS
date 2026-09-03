@@ -858,6 +858,8 @@ static loff_t infilfs_file_remap_file_range(
     struct file *file_out, loff_t pos_out,
     loff_t len, unsigned int remap_flags)
 {
+    struct inode *destination = file_inode(file_out);
+    struct infilfs_quota_reservation quota = {0};
     loff_t source_size = i_size_read(file_inode(file_in));
     int ret;
 
@@ -867,8 +869,21 @@ static loff_t infilfs_file_remap_file_range(
         len = source_size;
     if (len != source_size)
         return -EOPNOTSUPP;
+    if (i_size_read(destination) != 0)
+        return -EINVAL;
+
+    ret = infilfs_quota_reserve_inode(
+        destination, (u64)source_size, 0, &quota);
+    if (ret)
+        return ret;
     ret = infilfs_native_reflink_full(file_in, file_out);
-    return ret ? ret : len;
+    if (ret) {
+        infilfs_quota_reservation_abort(&quota);
+        return ret;
+    }
+    infilfs_quota_reservation_finish(
+        &quota, (u64)source_size, 0);
+    return len;
 }
 
 static long infilfs_file_ioctl(
