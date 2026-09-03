@@ -52,6 +52,8 @@ static int infilfs_quota_prepare_reparent_locked(
     struct inode *source, struct inode *new_dir,
     struct infilfs_quota_reservation *new_project,
     struct infilfs_quota_reservation *old_project);
+static int infilfs_quota_hardlink_check(
+    struct inode *source, struct inode *destination_dir);
 static void infilfs_quota_adjust_locked(
     struct infilfs_quota_reservation *reservation,
     u64 bytes, u64 objects);
