@@ -1440,6 +1440,12 @@ jobs:
           printf 'Native kernel RW snapshot/xattr/special-node/mmap/'
           printf 'extent/remount/scrub qualification passed on %s\n' "$(uname -r)"
 
+      - name: Native mounted online grow and bounded shrink
+        if: steps.headers.outputs.runtime_kdir != ''
+        timeout-minutes: 10
+        shell: bash
+        run: bash tests/native-resize-qualification.sh build kernel/infiltratorfs.ko
+
       - name: Native media-aware rotational/non-rotational placement
         if: steps.headers.outputs.runtime_kdir != ''
         timeout-minutes: 15
