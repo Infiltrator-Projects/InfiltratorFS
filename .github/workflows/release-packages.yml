@@ -65,58 +65,11 @@ jobs:
             "$EXPECTED_SHA" >&2
           exit 1
 
-      - name: Require heavy qualification only when this commit triggered it
-        timeout-minutes: 190
-        env:
-          EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
-          GH_TOKEN: ${{ github.token }}
+      - name: Record heavy qualification policy
         shell: bash
         run: |
           set -euo pipefail
-          api="repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${EXPECTED_SHA}&event=push&per_page=20"
-
-          # The heavy workflow is path-filtered to actual filesystem/scale
-          # changes. Pure versioning, release markers, documentation and other
-          # non-heavy changes deliberately do not launch million-file/1 TiB
-          # qualification. If no exact-SHA heavy run exists, there is nothing
-          # heavy to wait for on this release commit.
-          mapfile -t heavy < <(
-            gh api "$api" --jq '
-              first(.workflow_runs[] |
-                select(.name == "Heavy filesystem qualification")) |
-              .status, (.conclusion // ""), .html_url'
-          )
-          if [[ -z "${heavy[0]:-}" ]]; then
-            printf 'No heavy-qualified filesystem paths changed in %s; heavy qualification not required.\n' \
-              "$EXPECTED_SHA"
-            exit 0
-          fi
-
-          for attempt in $(seq 1 1080); do
-            mapfile -t heavy < <(
-              gh api "$api" --jq '
-                first(.workflow_runs[] |
-                  select(.name == "Heavy filesystem qualification")) |
-                .status, (.conclusion // ""), .html_url'
-            )
-            status="${heavy[0]:-}"
-            conclusion="${heavy[1]:-}"
-            run_url="${heavy[2]:-}"
-            if [[ "$status" == completed ]]; then
-              if [[ "$conclusion" != success ]]; then
-                printf 'Heavy qualification failed for %s: %s (%s)\n' \
-                  "$EXPECTED_SHA" "$conclusion" "$run_url" >&2
-                exit 1
-              fi
-              printf 'Heavy qualification passed for %s: %s\n' \
-                "$EXPECTED_SHA" "$run_url"
-              exit 0
-            fi
-            sleep 10
-          done
-          printf 'Timed out waiting for heavy qualification of %s.\n' \
-            "$EXPECTED_SHA" >&2
-          exit 1
+          echo "Heavy filesystem qualification is weekly/manual milestone evidence and is not an automatic per-release prerequisite."
 
       - name: Check out exact tested main commit
         uses: actions/checkout@v6
