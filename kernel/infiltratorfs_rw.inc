@@ -1694,6 +1694,8 @@ static int infilfs_posix_setattr(struct user_namespace *idmap,
 #endif
 {
     struct inode *inode = d_inode(dentry);
+    struct infilfs_quota_reservation new_identity_quota = {0};
+    struct infilfs_quota_reservation old_identity_quota = {0};
     struct iattr metadata;
     unsigned int disk_fields;
     int ret;
@@ -1753,9 +1755,25 @@ static int infilfs_posix_setattr(struct user_namespace *idmap,
     if (!disk_fields)
         return 0;
 
+    if (metadata.ia_valid & (ATTR_UID | ATTR_GID)) {
+        ret = infilfs_quota_prepare_identity_change(
+            inode, &metadata, &new_identity_quota, &old_identity_quota);
+        if (ret)
+            return ret;
+    }
+
     ret = infilfs_posix_rewrite_inode(inode, &metadata);
-    if (ret)
+    if (ret) {
+        infilfs_quota_reservation_abort(&new_identity_quota);
+        old_identity_quota.active = false;
         return ret;
+    }
+    infilfs_quota_reservation_finish(
+        &new_identity_quota, new_identity_quota.bytes,
+        new_identity_quota.objects);
+    infilfs_quota_apply_release(
+        &old_identity_quota, old_identity_quota.bytes,
+        old_identity_quota.objects);
 
     /*
      * Keep Linux's in-memory inode authoritative for permission checks between
