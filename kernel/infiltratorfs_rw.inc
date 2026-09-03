@@ -11,6 +11,37 @@
 #include <linux/statfs.h>
 
 struct infilfs_rw_tx;
+
+struct infilfs_quota_subject {
+    u32 type;
+    u32 id;
+};
+
+struct infilfs_quota_reservation {
+    struct super_block *sb;
+    struct infilfs_quota_subject subject[3];
+    u32 subject_count;
+    u64 bytes;
+    u64 objects;
+    bool active;
+};
+
+static int infilfs_quota_reserve_inode(
+    struct inode *inode, u64 bytes, u64 objects,
+    struct infilfs_quota_reservation *reservation);
+static int infilfs_quota_reserve_create(
+    struct inode *parent, u64 bytes, u64 objects,
+    struct infilfs_quota_reservation *reservation);
+static void infilfs_quota_reservation_finish(
+    struct infilfs_quota_reservation *reservation,
+    u64 actual_bytes, u64 actual_objects);
+static void infilfs_quota_reservation_abort(
+    struct infilfs_quota_reservation *reservation);
+static int infilfs_quota_capture_inode(
+    struct inode *inode, struct infilfs_quota_reservation *reservation);
+static void infilfs_quota_apply_release(
+    struct infilfs_quota_reservation *reservation, u64 bytes, u64 objects);
+static int infilfs_quota_rebuild_usage(struct super_block *sb);
 static int infilfs_parallel_allocator_mount_init(struct super_block *sb);
 static void infilfs_parallel_allocator_mount_destroy(struct super_block *sb);
 static int infilfs_parallel_tx_claim(struct infilfs_rw_tx *tx, u64 start,
