@@ -287,7 +287,7 @@ if(WIN32)
     add_executable(infilfs-win32-projfs-bridge
         tests/win32-projfs-bridge.c)
     target_link_libraries(infilfs-win32-projfs-bridge PRIVATE
-        infilfs_windows_bridge uuid)
+        infilfs_windows_bridge)
     infilfs_enable_warnings(infilfs-win32-projfs-bridge)
     if(MSVC)
         target_link_options(infiltratorfs-windows PRIVATE
