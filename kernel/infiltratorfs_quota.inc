@@ -889,3 +889,84 @@ static int infilfs_quota_rebuild_usage(struct super_block *sb)
     mutex_unlock(&sbi->quota_lock);
     return ret;
 }
+
+static int infilfs_quota_prepare_identity_change(
+    struct inode *inode, const struct iattr *attr,
+    struct infilfs_quota_reservation *new_quota,
+    struct infilfs_quota_reservation *old_quota)
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(inode->i_sb);
+    struct infilfs_inode_info *ii = INFILFS_I(inode);
+    struct infilfs_quota_subject targets[3];
+    u32 target_count = 0;
+    u64 bytes = (u64)i_size_read(inode);
+    u32 old_uid;
+    u32 old_gid;
+    u32 new_uid;
+    u32 new_gid;
+    int ret = 0;
+
+    memset(new_quota, 0, sizeof(*new_quota));
+    memset(old_quota, 0, sizeof(*old_quota));
+    old_quota->sb = inode->i_sb;
+
+    if (!sbi || !sbi->quota_rule_count || !ii ||
+        (ii->portable_flags & INFILFS_ATTR_SYSTEM) ||
+        !(attr->ia_valid & (ATTR_UID | ATTR_GID)))
+        return 0;
+
+    old_uid = (u32)from_kuid(&init_user_ns, inode->i_uid);
+    old_gid = (u32)from_kgid(&init_user_ns, inode->i_gid);
+    new_uid = old_uid;
+    new_gid = old_gid;
+    if (attr->ia_valid & ATTR_UID) {
+        ret = infilfs_posix_uid_to_disk(attr->ia_uid, &new_uid);
+        if (ret)
+            return ret;
+    }
+    if (attr->ia_valid & ATTR_GID) {
+        ret = infilfs_posix_gid_to_disk(attr->ia_gid, &new_gid);
+        if (ret)
+            return ret;
+    }
+
+    mutex_lock(&sbi->quota_lock);
+    if (new_uid != old_uid) {
+        int old_idx = infilfs_quota_find_rule_locked(
+            sbi, INFILFS_QUOTA_USER, old_uid);
+        int new_idx = infilfs_quota_find_rule_locked(
+            sbi, INFILFS_QUOTA_USER, new_uid);
+
+        if (old_idx >= 0)
+            old_quota->subject[old_quota->subject_count++] =
+                (struct infilfs_quota_subject){
+                    .type = INFILFS_QUOTA_USER, .id = old_uid };
+        if (new_idx >= 0)
+            targets[target_count++] = (struct infilfs_quota_subject){
+                .type = INFILFS_QUOTA_USER, .id = new_uid };
+    }
+    if (new_gid != old_gid) {
+        int old_idx = infilfs_quota_find_rule_locked(
+            sbi, INFILFS_QUOTA_GROUP, old_gid);
+        int new_idx = infilfs_quota_find_rule_locked(
+            sbi, INFILFS_QUOTA_GROUP, new_gid);
+
+        if (old_idx >= 0)
+            old_quota->subject[old_quota->subject_count++] =
+                (struct infilfs_quota_subject){
+                    .type = INFILFS_QUOTA_GROUP, .id = old_gid };
+        if (new_idx >= 0)
+            targets[target_count++] = (struct infilfs_quota_subject){
+                .type = INFILFS_QUOTA_GROUP, .id = new_gid };
+    }
+    old_quota->active = old_quota->subject_count != 0;
+    old_quota->bytes = bytes;
+    old_quota->objects = 1;
+
+    if (target_count)
+        ret = infilfs_quota_reserve_candidates_locked(
+            sbi, inode->i_sb, targets, target_count, bytes, 1, new_quota);
+    mutex_unlock(&sbi->quota_lock);
+    return ret;
+}
+
