@@ -302,6 +302,72 @@ static u32 infilfs_quota_root_match_locked(const struct infilfs_sb_info *sbi,
     return 0;
 }
 
+static int infilfs_quota_project_root_index_locked(
+    const struct infilfs_sb_info *sbi, const u8 object_id[16])
+{
+    size_t i;
+
+    for (i = 0; i < sbi->project_root_count; ++i)
+        if (!memcmp(sbi->project_roots[i].object_id, object_id, 16))
+            return (int)i;
+    return -1;
+}
+
+static bool infilfs_quota_remove_project_root_locked(
+    struct super_block *sb, const u8 object_id[16])
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
+    int idx;
+
+    if (!sbi)
+        return false;
+    idx = infilfs_quota_project_root_index_locked(sbi, object_id);
+    if (idx < 0)
+        return false;
+    memmove(&sbi->project_roots[idx], &sbi->project_roots[idx + 1],
+            (sbi->project_root_count - (size_t)idx - 1u) *
+                sizeof(*sbi->project_roots));
+    sbi->project_root_count--;
+    return true;
+}
+
+static int infilfs_quota_persist_locked(struct super_block *sb)
+{
+    return infilfs_quota_encode_locked(sb);
+}
+
+static int infilfs_quota_prune_project_roots_locked(
+    struct super_block *sb, bool *changed_out)
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
+    size_t i = 0;
+    bool changed = false;
+
+    while (i < sbi->project_root_count) {
+        u64 block = 0;
+        u16 type = 0;
+        int ret = infilfs_index_lookup(
+            sb, sbi->project_roots[i].object_id, &block, &type);
+
+        if (!ret && type == INFILFS_OBJECT_DIRECTORY) {
+            ++i;
+            continue;
+        }
+        if (ret && ret != -ENOENT)
+            return ret;
+
+        memmove(&sbi->project_roots[i], &sbi->project_roots[i + 1],
+                (sbi->project_root_count - i - 1u) *
+                    sizeof(*sbi->project_roots));
+        sbi->project_root_count--;
+        changed = true;
+    }
+
+    if (changed_out)
+        *changed_out = changed;
+    return 0;
+}
+
 static int infilfs_quota_effective_project_locked(
     struct super_block *sb, const u8 object_id[16],
     const u8 parent_id[16], u32 *project_out)
@@ -418,10 +484,15 @@ static int infilfs_quota_rebuild_usage_locked(struct super_block *sb)
 static int infilfs_quota_mount_init(struct super_block *sb)
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
+    bool pruned = false;
     int ret;
 
     mutex_lock(&sbi->quota_lock);
     ret = infilfs_quota_decode_locked(sb);
+    if (!ret)
+        ret = infilfs_quota_prune_project_roots_locked(sb, &pruned);
+    if (!ret && pruned && !sb_rdonly(sb))
+        ret = infilfs_quota_encode_locked(sb);
     if (!ret)
         ret = infilfs_quota_rebuild_usage_locked(sb);
     mutex_unlock(&sbi->quota_lock);
