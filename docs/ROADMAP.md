@@ -3,6 +3,8 @@
 
 Pre-1.0 development is current-format-only. A new development format may supersede the current format without a backward reader or migration path. Backward compatibility begins with the first stable release.
 
+Roadmap checkboxes describe **completed and qualified capability**, not merely the presence of implementation code. An unchecked entry may therefore have substantial implementation in `main` while still requiring a failing or missing qualification gate to pass before it is marked complete. Historical qualification records remain evidence for the exact commits named in `QUALIFICATION.md`; they do not imply that every later development commit has passed every expensive or mounted gate.
+
 ## Design principles and scope guardrails
 
 InfiltratorFS is a greenfield filesystem intended for future general-purpose operating systems, not a compatibility clone of an older filesystem. Before 1.0, prefer the cleanest long-term format and semantics over preserving development-format compatibility.
@@ -99,10 +101,12 @@ The intended core can be summarized as: stable object identity; transactional ge
   probe end to end. Distribution adoption remains separate from the shipped
   integration implementation.
 
-The completed items above are enforced by native mounted CI and the partition-22
-destructive qualification harness.
+The completed items above are backed by the qualification evidence recorded for
+the exact commits in `QUALIFICATION.md` and, where applicable, the partition-22
+destructive qualification harness. Ordinary development `main` can temporarily
+be ahead of the most recent complete mounted/heavy evidence.
 
-On 2026-08-29, all 56 currently checked roadmap entries were requalified at
+On 2026-08-29, all 56 then-checked roadmap entries were requalified at
 source commit `075aed9c737fb38cc408d752736a97773dc2a035` through the complete
 portable/CI suite plus destructive physical `/dev/mmcblk0p22` testing. The
 physical harness passed 69/69 checks, four additional concurrency rounds passed,
@@ -144,6 +148,20 @@ CLEAN. Heavy run `33454248279` passed the near-full five-minute mixed workload
 on the same allocator semantics with 32,607 operations, two CLEAN scrubs and no
 checksum or metadata errors. See [QUALIFICATION.md](QUALIFICATION.md).
 
+On 2026-09-03, online filesystem geometry change and native user/group/project
+quota work moved into `main`. Resize has a dedicated mounted grow/shrink gate
+and is implemented as a checkpoint-published geometry transaction with
+fail-closed shrink bounds. The quota subsystem has persistent rules and mounted
+coverage for byte/object limits, user/group/project accounting, project roots,
+reflinks, hard links, rename/reparenting and remount reconstruction. The latest
+substantive filesystem commit, `c5dd0bdb063faff4a94579b8a209b4a1e494191b`,
+passed portable Build and conformance but failed the native
+**user/group/project quota qualification**; later commits through `c86d64e`
+changed CI policy only. Because quota runs before resize in the mounted workflow,
+the resize step was skipped on that exact source. Quotas therefore remain
+unchecked below until that failure is corrected and the exact-source mounted
+suite passes again.
+
 ## Scale and performance
 
 - [x] Scalable generation-aware object-index tree.
@@ -157,8 +175,8 @@ checksum or metadata errors. See [QUALIFICATION.md](QUALIFICATION.md).
 
 ## Administration and recovery
 
-- [ ] Filesystem resize support, including online grow and safely bounded shrink.
-- [ ] Native user, group and project/directory-tree quotas.
+- [x] Filesystem resize support, including online grow and safely bounded shrink. Current implementation separates committed filesystem geometry from backing-device capacity, rebuilds allocation-tree geometry transactionally, preserves valid checkpoint locations across grow, refuses shrink across live allocations, and currently refuses resize while retained snapshots exist. The dedicated mounted resize gate must be rerun on the next quota-clean exact source because the latest native workflow stopped at quota qualification before reaching resize.
+- [ ] Native user, group and project/directory-tree quotas. The implementation is present in `main`, including persistent rules, live accounting, byte/object limits, project-root inheritance, reflink growth, hard-link/project-domain policy, rename/reparenting accounting and remount reconstruction; this remains unchecked because the latest exact-source mounted quota qualification is red.
 - [ ] Deterministic repair-capable filesystem checker for corruption that can be repaired unambiguously, while retaining fail-closed behaviour where correctness cannot be established.
 - [ ] Snapshot restore and rollback for selected files/directories and whole-volume recovery to a retained generation.
 
