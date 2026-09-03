@@ -1565,16 +1565,23 @@ static int infilfs_posix_create(struct user_namespace *idmap,
 #endif
 {
     struct inode *inode;
+    struct infilfs_quota_reservation quota = {0};
     u8 id[16];
     u64 block;
     int ret;
 
     (void)idmap;
     (void)excl;
-    ret = infilfs_posix_create_native_child(
-        dir, dentry, mode, INFILFS_OBJECT_FILE, id, &block);
+    ret = infilfs_quota_reserve_create(dir, 0, 1, &quota);
     if (ret)
         return ret;
+    ret = infilfs_posix_create_native_child(
+        dir, dentry, mode, INFILFS_OBJECT_FILE, id, &block);
+    if (ret) {
+        infilfs_quota_reservation_abort(&quota);
+        return ret;
+    }
+    infilfs_quota_reservation_finish(&quota, 0, 1);
     inode = infilfs_get_inode(dir->i_sb, block, INFILFS_OBJECT_FILE, id);
     if (IS_ERR(inode)) {
         ret = PTR_ERR(inode);
@@ -1604,13 +1611,13 @@ static int infilfs_posix_mkdir(struct user_namespace *idmap,
 #endif
 {
     struct inode *inode;
+    struct infilfs_quota_reservation quota = {0};
     u8 id[16];
     u64 block;
     int ret;
 
     (void)idmap;
-    ret = infilfs_posix_create_native_child(
-        dir, dentry, mode, INFILFS_OBJECT_DIRECTORY, id, &block);
+    ret = infilfs_quota_reserve_create(dir, 0, 1, &quota);
     if (ret) {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
         return ERR_PTR(ret);
@@ -1618,6 +1625,17 @@ static int infilfs_posix_mkdir(struct user_namespace *idmap,
         return ret;
 #endif
     }
+    ret = infilfs_posix_create_native_child(
+        dir, dentry, mode, INFILFS_OBJECT_DIRECTORY, id, &block);
+    if (ret) {
+        infilfs_quota_reservation_abort(&quota);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
+        return ERR_PTR(ret);
+#else
+        return ret;
+#endif
+    }
+    infilfs_quota_reservation_finish(&quota, 0, 1);
     inode = infilfs_get_inode(dir->i_sb, block,
                               INFILFS_OBJECT_DIRECTORY, id);
     if (IS_ERR(inode)) {
@@ -1645,10 +1663,19 @@ static int infilfs_posix_symlink(struct user_namespace *idmap,
                                  const char *target)
 #endif
 {
-    int ret = infilfs_ns_symlink(idmap, dir, dentry, target);
+    struct infilfs_quota_reservation quota = {0};
+    size_t length = target ? strlen(target) : 0;
+    int ret;
 
+    ret = infilfs_quota_reserve_create(dir, length, 1, &quota);
     if (ret)
         return ret;
+    ret = infilfs_ns_symlink(idmap, dir, dentry, target);
+    if (ret) {
+        infilfs_quota_reservation_abort(&quota);
+        return ret;
+    }
+    infilfs_quota_reservation_finish(&quota, length, 1);
     return infilfs_posix_fix_created(dir, dentry, false);
 }
 
@@ -1677,16 +1704,42 @@ static int infilfs_posix_setattr(struct user_namespace *idmap,
      * that accompany ATTR_SIZE are persisted immediately afterwards.
      */
     if (attr->ia_valid & ATTR_SIZE) {
+        struct infilfs_quota_reservation growth_quota = {0};
+        struct infilfs_quota_reservation release_quota = {0};
+        u64 old_size;
+        u64 new_size;
+
         if (!S_ISREG(inode->i_mode))
             return -EISDIR;
         if (attr->ia_size < 0)
             return -EINVAL;
+        old_size = (u64)i_size_read(inode);
+        new_size = (u64)attr->ia_size;
         ret = filemap_write_and_wait(inode->i_mapping);
         if (ret)
             return ret;
-        ret = infilfs_native_truncate(inode, (u64)attr->ia_size);
-        if (ret)
+        if (new_size > old_size) {
+            ret = infilfs_quota_reserve_inode(
+                inode, new_size - old_size, 0, &growth_quota);
+            if (ret)
+                return ret;
+        } else if (new_size < old_size) {
+            ret = infilfs_quota_capture_inode(inode, &release_quota);
+            if (ret)
+                return ret;
+        }
+        ret = infilfs_native_truncate(inode, new_size);
+        if (ret) {
+            infilfs_quota_reservation_abort(&growth_quota);
+            release_quota.active = false;
             return ret;
+        }
+        if (new_size > old_size)
+            infilfs_quota_reservation_finish(
+                &growth_quota, new_size - old_size, 0);
+        else if (new_size < old_size)
+            infilfs_quota_apply_release(
+                &release_quota, old_size - new_size, 0);
         truncate_pagecache(inode, attr->ia_size);
         metadata.ia_valid &= ~ATTR_SIZE;
     }
