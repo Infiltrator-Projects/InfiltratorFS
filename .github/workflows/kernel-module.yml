@@ -77,6 +77,9 @@ jobs:
       - name: Guard native transaction durability
         run: bash tests/native-transaction-durability-policy.sh .
 
+      - name: Guard native quotas
+        run: bash tests/native-quota-policy.sh .
+
       - name: Build InfiltratorFS kernel module
         env:
           KDIR: ${{ steps.headers.outputs.generic_kdir }}
@@ -1447,6 +1450,16 @@ jobs:
         shell: bash
         run: bash tests/native-resize-qualification.sh build kernel/infiltratorfs.ko
 
+      - name: Native user group and project quota qualification
+        if: steps.headers.outputs.runtime_kdir != ''
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash tests/native-quota-policy.sh .
+          bash -n tests/native-quota-qualification.sh
+          bash tests/native-quota-qualification.sh build kernel/infiltratorfs.ko
+
       - name: Native media-aware rotational/non-rotational placement
         if: steps.headers.outputs.runtime_kdir != ''
         timeout-minutes: 15
@@ -1500,6 +1513,7 @@ jobs:
           bash tests/native-media-placement-policy.sh .
           bash tests/allocation-tree-format-policy.sh .
           bash tests/native-transaction-durability-policy.sh .
+          bash tests/native-quota-policy.sh .
       - name: Compile module for local running kernel
         env:
           KDIR: ${{ steps.local_headers.outputs.kdir }}
