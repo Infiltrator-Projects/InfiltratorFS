@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # Qualification Record
 
-This file records significant qualification runs against specific source commits. It is evidence for implemented behavior, not a claim that InfiltratorFS is bug-free.
+This file records significant qualification runs against specific source commits. It is evidence for implemented behavior, not a claim that InfiltratorFS is bug-free. Historical results apply to the exact source named for each record; they are not silently promoted to later development commits.
 
 ## Qualification cadence
 
@@ -10,26 +10,67 @@ InfiltratorFS deliberately separates fast regression from expensive qualificatio
 - **Build and conformance** remains the broad every-main-push gate. Superseded runs
   are cancelled. GCC/Linux, Clang, sanitizers, static analysis, Windows
   portability and package construction remain ordinary regression coverage.
+  A green Build and conformance status does not by itself mean the mounted native
+  kernel workflow passed for the same commit.
 - **Local Linux userspace** proves a native build and cross-platform image on the
   real local runner environment without repeating the complete GCC CTest suite.
 - **GNOME Disks formatter integration** builds the pinned libblockdev/UDisks/GNOME
   Disks stack only when the formatter/integration surface changes, plus the
   scheduled weekly and explicit manual comprehensive runs.
 - **Native Linux kernel module** remains the ordinary mounted kernel qualification
-  for kernel/core/package changes and every explicit Release commit; unrelated
-  documentation pushes do not spend kernel-runner time.
+  for kernel/core/package changes and explicit Release commits; unrelated
+  documentation pushes do not spend kernel-runner time. Its mounted steps are
+  ordered gates: a failure in quota qualification prevents later mounted steps,
+  including resize, from being claimed for that exact source.
 - **Heavy filesystem qualification** owns the million-file/1 TiB and near-full
-  mixed-workload endurance suites. It runs for storage/core changes, every
-  explicit Release commit, weekly, or manually. Superseded development runs are
-  cancelled rather than finishing obsolete source revisions.
+  mixed-workload endurance suites. Since commit
+  `c86d64e012b3ae2cbe4e9816a9bf854dd7bbb38e`, it is milestone/regression
+  evidence run weekly or explicitly by manual dispatch, not ordinary per-push
+  CI. Historical heavy runs remain evidence for the exact commits on which they
+  ran.
 - **Physical partition qualification** remains an explicitly destructive operator
   milestone/audit run and is never unattended ordinary CI.
-- **Release publication** waits for the exact same commit to pass both native
-  kernel and heavy filesystem qualification, then rebuilds, installs, mounts and
-  cross-checks the exact release source and artefacts before immutable publication.
+- **Release publication** requires a successful Build and conformance run and a
+  successful Native Linux kernel module run for the same exact Release commit,
+  then rebuilds, installs, natively mounts and scrubs that exact source before
+  publication. The publisher contains a conditional exact-SHA heavy-run wait,
+  but the current heavy workflow has no push trigger; therefore an ordinary
+  Release commit does not automatically launch or require a heavy run.
 
-The purpose is to preserve the hard-earned regression coverage while matching
-test cost to the code that can actually invalidate each qualification.
+The purpose is to preserve hard-earned regression coverage while distinguishing
+ordinary regression, exact-source mounted qualification, milestone-scale stress
+and destructive physical-media evidence accurately.
+
+## Current development qualification status — 2026-09-03
+
+The resize and native quota development series is ahead of the last published
+0.18.39 release. The latest substantive filesystem commit in that series is
+`c5dd0bdb063faff4a94579b8a209b4a1e494191b`; later commits through
+`c86d64e012b3ae2cbe4e9816a9bf854dd7bbb38e` changed CI policy rather than
+filesystem semantics.
+
+On `c5dd0bdb063faff4a94579b8a209b4a1e494191b`, Build and conformance workflow
+run `33805398475` passed. Native Linux workflow run `33805398514` successfully
+completed the source checkout, dependency/header resolution, allocation/
+workload/media/durability/quota policy guards, generic module build, DKMS
+source-root reproduction, module metadata validation, userspace native tools and
+the running-kernel module build. It then failed the **Native user group and
+project quota qualification** step. The ordinary mounted transaction/scrub,
+online resize, media-profile and defragmentation steps were consequently skipped
+for that exact source.
+
+That result means:
+
+- the quota subsystem is implemented but is not currently recorded as completed
+  and qualified on the roadmap;
+- the stronger quota test using one atomic over-limit `write(2)` exposed a red
+  mounted gate and must be treated as a real unresolved qualification result
+  until a later exact-source native run passes;
+- resize is implemented and has its own mounted qualification harness, but the
+  latest exact-source native workflow did not reach that step because quota is
+  ordered before resize; and
+- a green Build and conformance status on a later CI-only commit must not be
+  described as a green complete native filesystem qualification.
 
 ## 2026-09-01 Windows bridge performance and manager qualification
 
