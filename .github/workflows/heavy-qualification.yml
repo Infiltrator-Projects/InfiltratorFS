@@ -15,8 +15,9 @@ on:
       - 'tests/native-scale-*'
       - 'tests/native-endurance-*'
       - 'tests/native-defrag-*'
-      - 'CMakeLists.txt'
-      - '.github/release-trigger'
+      # Version-only/release-marker changes do not justify a million-file/1 TiB
+      # stress rerun. Functional filesystem paths above still trigger it, and
+      # the weekly/manual runs remain available.
   schedule:
     - cron: "43 2 * * 0"
   workflow_dispatch:
@@ -26,10 +27,8 @@ permissions:
 
 concurrency:
   group: heavy-filesystem-qualification-v2-${{ github.ref }}
-  # Publication requires qualification of the exact current main commit.
-  # Therefore an older heavy run is unusable as soon as main advances, even
-  # when the newer commit is itself a Release commit. Cancel stale work so the
-  # exact publishable source gets the runner immediately.
+  # Only commits that actually touch heavy-qualified filesystem/test paths
+  # enter this workflow. Newer qualifying work replaces stale qualifying work.
   cancel-in-progress: true
 
 jobs:

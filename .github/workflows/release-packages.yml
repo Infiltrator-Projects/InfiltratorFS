@@ -65,7 +65,7 @@ jobs:
             "$EXPECTED_SHA" >&2
           exit 1
 
-      - name: Require heavy filesystem qualification for the same commit
+      - name: Require heavy qualification only when this commit triggered it
         timeout-minutes: 190
         env:
           EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
@@ -74,6 +74,24 @@ jobs:
         run: |
           set -euo pipefail
           api="repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${EXPECTED_SHA}&event=push&per_page=20"
+
+          # The heavy workflow is path-filtered to actual filesystem/scale
+          # changes. Pure versioning, release markers, documentation and other
+          # non-heavy changes deliberately do not launch million-file/1 TiB
+          # qualification. If no exact-SHA heavy run exists, there is nothing
+          # heavy to wait for on this release commit.
+          mapfile -t heavy < <(
+            gh api "$api" --jq '
+              first(.workflow_runs[] |
+                select(.name == "Heavy filesystem qualification")) |
+              .status, (.conclusion // ""), .html_url'
+          )
+          if [[ -z "${heavy[0]:-}" ]]; then
+            printf 'No heavy-qualified filesystem paths changed in %s; heavy qualification not required.\n' \
+              "$EXPECTED_SHA"
+            exit 0
+          fi
+
           for attempt in $(seq 1 1080); do
             mapfile -t heavy < <(
               gh api "$api" --jq '

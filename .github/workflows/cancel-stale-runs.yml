@@ -26,7 +26,7 @@ jobs:
           # A normal cancellation can remain stuck when a hosted kernel test is
           # blocked in uninterruptible I/O; force-cancel is the documented
           # Actions escape hatch for that stale server-side run.
-          for run_id in 33718190487 33718842832 33725180042 33733703467 33733815554; do
+          for run_id in 33718190487 33718842832 33725180042 33733703467 33733815554 33734182768; do
             echo "Cancelling workflow run ${run_id}"
             code="$(curl -sS -o /tmp/cancel-${run_id}.txt -w '%{http_code}' \
               -L -X POST \
