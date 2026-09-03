@@ -276,7 +276,9 @@ for required in \
     'usr/bin/infiltratorfs-manager$' \
     'usr/bin/infilfs-forensic$' \
     'usr/bin/infilfs-optimize$' \
-    'usr/bin/infiltratorfs-resize
+    'usr/bin/infiltratorfs-resize$' \
+    'usr/bin/infiltratorfs-quota$' \
+    'usr/bin/mkfs.infiltratorfs$' \
     'usr/sbin/mount.infiltratorfs$' \
     'usr/sbin/fsck.infiltratorfs$' \
     'usr/lib/infiltratorfs/infiltratorfs-manager-helper$' \
