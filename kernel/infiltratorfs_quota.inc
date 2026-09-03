@@ -1252,7 +1252,7 @@ static void infilfs_quota_reservation_abort(
     reservation->active = false;
 }
 
-static int infilfs_quota_capture_inode(
+static int infilfs_quota_capture_inode_locked(
     struct inode *inode, struct infilfs_quota_reservation *reservation)
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(inode->i_sb);
@@ -1265,7 +1265,6 @@ static int infilfs_quota_capture_inode(
     reservation->sb = inode->i_sb;
     if (!sbi || !sbi->quota_rule_count)
         return 0;
-    mutex_lock(&sbi->quota_lock);
     ret = infilfs_quota_candidate_subjects_locked(inode, candidate, &count);
     if (!ret) {
         for (i = 0; i < count; ++i) {
@@ -1276,6 +1275,21 @@ static int infilfs_quota_capture_inode(
         }
         reservation->active = reservation->subject_count != 0;
     }
+    return ret;
+}
+
+static int infilfs_quota_capture_inode(
+    struct inode *inode, struct infilfs_quota_reservation *reservation)
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(inode->i_sb);
+    int ret;
+
+    if (!sbi) {
+        memset(reservation, 0, sizeof(*reservation));
+        return 0;
+    }
+    mutex_lock(&sbi->quota_lock);
+    ret = infilfs_quota_capture_inode_locked(inode, reservation);
     mutex_unlock(&sbi->quota_lock);
     return ret;
 }
