@@ -2625,7 +2625,7 @@ static struct dentry *infilfs_lookup(struct inode *dir, struct dentry *dentry,
         ret = infilfs_for_each_dirent(dir, infilfs_lookup_visitor, &search);
     if (ret < 0) {
         if (ret == -EFSCORRUPTED)
-            pr_err("InfiltratorFS: lookup directory traversal saw corrupt metadata (dir_block=%llu generation=%llu name_len=%u)\n",
+            pr_err("InfiltratorFS: lookup directory traversal saw corrupt metadata (dir_block=%llu generation=%llu name_len=%zu)\n",
                    (unsigned long long)INFILFS_I(dir)->object_block,
                    (unsigned long long)le64_to_cpu(
                        INFILFS_SB(dir->i_sb)->disk.generation),

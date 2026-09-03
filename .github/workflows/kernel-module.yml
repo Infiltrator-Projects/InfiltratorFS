@@ -143,6 +143,16 @@ jobs:
           make -C kernel KDIR="$KDIR"
           test "$(modinfo -F vermagic kernel/infiltratorfs.ko | awk '{print $1}')" = "$(uname -r)"
 
+      - name: Native user group and project quota qualification
+        if: steps.headers.outputs.runtime_kdir != ''
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash tests/native-quota-policy.sh .
+          bash -n tests/native-quota-qualification.sh
+          bash tests/native-quota-qualification.sh build kernel/infiltratorfs.ko
+
       - name: Native read-write mount transaction and scrub qualification
         if: steps.headers.outputs.runtime_kdir != ''
         timeout-minutes: 30
@@ -1449,16 +1459,6 @@ jobs:
         timeout-minutes: 10
         shell: bash
         run: bash tests/native-resize-qualification.sh build kernel/infiltratorfs.ko
-
-      - name: Native user group and project quota qualification
-        if: steps.headers.outputs.runtime_kdir != ''
-        timeout-minutes: 15
-        shell: bash
-        run: |
-          set -euo pipefail
-          bash tests/native-quota-policy.sh .
-          bash -n tests/native-quota-qualification.sh
-          bash tests/native-quota-qualification.sh build kernel/infiltratorfs.ko
 
       - name: Native media-aware rotational/non-rotational placement
         if: steps.headers.outputs.runtime_kdir != ''

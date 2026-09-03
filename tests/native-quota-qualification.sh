@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-set -euo pipefail
+set -Eeuo pipefail
 
 build="${1:?build directory required}"
 module="${2:?kernel module required}"
@@ -11,6 +11,14 @@ mnt="$work/mnt"
 loopdev=""
 mounted=0
 loaded=0
+
+on_error() {
+    local rc=$?
+    printf 'native quota qualification: FAIL line=%s rc=%d command=%s\n' \
+        "${BASH_LINENO[0]:-$LINENO}" "$rc" "$BASH_COMMAND" >&2
+    return "$rc"
+}
+trap on_error ERR
 
 cleanup() {
     set +e

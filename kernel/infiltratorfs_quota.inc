@@ -1534,7 +1534,7 @@ static int infilfs_quota_prepare_reparent_locked(
     struct infilfs_sb_info *sbi = INFILFS_SB(source->i_sb);
     struct infilfs_inode_info *source_ii = INFILFS_I(source);
     struct infilfs_index_entry_disk *entries = NULL;
-    struct infilfs_quota_subject candidate;
+    struct infilfs_quota_subject candidate[3];
     u64 bytes = 0;
     u64 objects = 0;
     u32 entry_count = 0;
@@ -1639,10 +1639,10 @@ static int infilfs_quota_prepare_reparent_locked(
         goto out;
 
     if (new_project_id) {
-        candidate.type = INFILFS_QUOTA_PROJECT;
-        candidate.id = new_project_id;
+        candidate[0].type = INFILFS_QUOTA_PROJECT;
+        candidate[0].id = new_project_id;
         ret = infilfs_quota_reserve_candidates_locked(
-            sbi, source->i_sb, &candidate, 1u,
+            sbi, source->i_sb, candidate, 1u,
             bytes, objects, new_project);
         if (ret)
             goto out;
