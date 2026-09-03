@@ -2721,7 +2721,8 @@ static void infilfs_evict_inode(struct inode *inode)
     struct infilfs_inode_info *ii = INFILFS_I(inode);
     struct infilfs_quota_reservation released_quota = {0};
     u64 released_bytes = 0;
-    bool reclaiming = ii && inode->i_nlink == 0 && !sb_rdonly(inode->i_sb);
+    bool reclaiming = ii && ii->object_type == INFILFS_OBJECT_FILE &&
+        inode->i_nlink == 0 && !sb_rdonly(inode->i_sb);
     int ret;
 
     truncate_inode_pages_final(&inode->i_data);
