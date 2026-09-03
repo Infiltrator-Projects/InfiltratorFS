@@ -21,10 +21,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # These runs are for superseded main commits and can never satisfy
-          # exact-current-main publication.  Clear them so the 0.18.39 release
-          # qualification is not blocked behind stale work.
-          for run_id in 33718190487 33718842832 33725180042 33733703467; do
+          # These runs belong to superseded main commits. They can never
+          # satisfy exact-current-main publication, so clear them decisively.
+          # A normal cancellation can remain stuck when a hosted kernel test is
+          # blocked in uninterruptible I/O; force-cancel is the documented
+          # Actions escape hatch for that stale server-side run.
+          for run_id in 33718190487 33718842832 33725180042 33733703467 33733815554; do
             echo "Cancelling workflow run ${run_id}"
             code="$(curl -sS -o /tmp/cancel-${run_id}.txt -w '%{http_code}' \
               -L -X POST \
@@ -32,11 +34,28 @@ jobs:
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/cancel")"
-            if [[ "$code" == "202" || "$code" == "409" ]]; then
-              echo "Run ${run_id}: HTTP ${code}"
-            else
+            if [[ "$code" != "202" && "$code" != "409" ]]; then
               cat /tmp/cancel-${run_id}.txt >&2 || true
               echo "Failed to cancel run ${run_id}: HTTP ${code}" >&2
               exit 1
+            fi
+            echo "Run ${run_id}: cancel HTTP ${code}"
+
+            sleep 2
+            status="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}" --jq .status 2>/dev/null || true)"
+            if [[ "$status" != "completed" ]]; then
+              echo "Run ${run_id} is still ${status:-unknown}; force-cancelling it"
+              force_code="$(curl -sS -o /tmp/force-${run_id}.txt -w '%{http_code}' \
+                -L -X POST \
+                -H "Authorization: Bearer ${GH_TOKEN}" \
+                -H "Accept: application/vnd.github+json" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/force-cancel")"
+              if [[ "$force_code" != "202" && "$force_code" != "409" ]]; then
+                cat /tmp/force-${run_id}.txt >&2 || true
+                echo "Failed to force-cancel run ${run_id}: HTTP ${force_code}" >&2
+                exit 1
+              fi
+              echo "Run ${run_id}: force-cancel HTTP ${force_code}"
             fi
           done
