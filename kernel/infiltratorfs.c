@@ -98,6 +98,9 @@ struct infilfs_fs_context {
     enum infilfs_media_override media_override;
 };
 
+struct infilfs_quota_rule;
+struct infilfs_project_root;
+
 struct infilfs_sb_info {
     struct infilfs_superblock_disk disk;
     u64 device_blocks;
@@ -107,6 +110,12 @@ struct infilfs_sb_info {
     /* Serialize online geometry changes and gate new native transactions. */
     struct mutex resize_lock;
     bool resize_active;
+    /* Native Linux user/group/project quota policy and live accounting. */
+    struct mutex quota_lock;
+    struct infilfs_quota_rule *quota_rules;
+    size_t quota_rule_count;
+    struct infilfs_project_root *project_roots;
+    size_t project_root_count;
     rwlock_t bitmap_lock;
     u8 *bitmap;
     size_t bitmap_bytes;
@@ -2702,6 +2711,7 @@ out:
 
 #include "infiltratorfs_rw.inc"
 #include "infiltratorfs_resize.inc"
+#include "infiltratorfs_quota.inc"
 #include "infiltratorfs_defrag.inc"
 
 static void infilfs_evict_inode(struct inode *inode)
@@ -2732,6 +2742,7 @@ static void infilfs_evict_inode(struct inode *inode)
 
 static void infilfs_put_super(struct super_block *sb)
 {
+    infilfs_quota_mount_destroy(sb);
     infilfs_rw_mount_destroy(sb);
     kfree(sb->s_fs_info);
     sb->s_fs_info = NULL;
@@ -2822,6 +2833,7 @@ static int infilfs_fill_super(struct super_block *sb, struct fs_context *fc)
     mutex_init(&sbi->write_lock);
     mutex_init(&sbi->linux_meta_lock);
     mutex_init(&sbi->resize_lock);
+    mutex_init(&sbi->quota_lock);
     rwlock_init(&sbi->bitmap_lock);
     sb->s_fs_info = sbi;
 
@@ -2857,6 +2869,9 @@ static int infilfs_fill_super(struct super_block *sb, struct fs_context *fc)
     ret = infilfs_native_recover_unlinked_files(sb);
     if (ret)
         goto fail;
+    ret = infilfs_quota_mount_init(sb);
+    if (ret)
+        goto fail;
 
     pr_info("InfiltratorFS: native %s mount Format %u.%u generation %llu media=%s media_source=%s\n",
             sb_rdonly(sb) ? "read-only" : "read-write",
@@ -2871,6 +2886,7 @@ fail:
         dput(sb->s_root);
         sb->s_root = NULL;
     }
+    infilfs_quota_mount_destroy(sb);
     infilfs_rw_mount_destroy(sb);
     kfree(sbi);
     sb->s_fs_info = NULL;
