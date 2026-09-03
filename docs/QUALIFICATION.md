@@ -72,7 +72,7 @@ That result means:
   as the hang point; the mounted quota step timed out and remains unresolved until
   a later instrumented exact-source run localizes and clears it;
 - resize is implemented and now has an independent mounted qualification workflow,
-  so quota failure no longer prevents resize evidence from being collected; and
+  so the quota timeout no longer prevents resize evidence from being collected; and
 - a green Build and conformance status on a later CI-only commit must not be
   described as a green complete native filesystem qualification.
 
