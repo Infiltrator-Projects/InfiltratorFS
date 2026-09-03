@@ -610,3 +610,282 @@ static int infilfs_quota_get_project(struct inode *inode,
     kfree(object);
     return ret;
 }
+
+static int infilfs_quota_inode_project_locked(struct inode *inode, u32 *project_out)
+{
+    struct infilfs_inode_info *ii = INFILFS_I(inode);
+    struct infilfs_object_header_disk *header;
+    u8 *object;
+    int ret;
+
+    *project_out = 0;
+    if (!ii)
+        return -EINVAL;
+    object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+    if (!object)
+        return -ENOMEM;
+    ret = infilfs_read_object(inode->i_sb, ii->object_block, ii->object_type,
+                              ii->object_id, object);
+    if (!ret) {
+        header = (struct infilfs_object_header_disk *)object;
+        ret = infilfs_quota_effective_project_locked(
+            inode->i_sb, ii->object_id, header->parent_id, project_out);
+    }
+    kfree(object);
+    return ret;
+}
+
+static int infilfs_quota_candidate_subjects_locked(
+    struct inode *inode, struct infilfs_quota_subject candidate[3],
+    u32 *candidate_count)
+{
+    struct infilfs_inode_info *ii = INFILFS_I(inode);
+    u32 project = 0;
+    uid_t uid;
+    gid_t gid;
+    int ret;
+
+    *candidate_count = 0;
+    if (!ii || (ii->portable_flags & INFILFS_ATTR_SYSTEM))
+        return 0;
+    uid = from_kuid(&init_user_ns, inode->i_uid);
+    gid = from_kgid(&init_user_ns, inode->i_gid);
+    candidate[(*candidate_count)++] = (struct infilfs_quota_subject){
+        .type = INFILFS_QUOTA_USER, .id = (u32)uid };
+    candidate[(*candidate_count)++] = (struct infilfs_quota_subject){
+        .type = INFILFS_QUOTA_GROUP, .id = (u32)gid };
+    ret = infilfs_quota_inode_project_locked(inode, &project);
+    if (ret)
+        return ret;
+    if (project)
+        candidate[(*candidate_count)++] = (struct infilfs_quota_subject){
+            .type = INFILFS_QUOTA_PROJECT, .id = project };
+    return 0;
+}
+
+static int infilfs_quota_reserve_candidates_locked(
+    struct infilfs_sb_info *sbi, struct super_block *sb,
+    const struct infilfs_quota_subject candidate[3], u32 candidate_count,
+    u64 bytes, u64 objects, struct infilfs_quota_reservation *reservation)
+{
+    u32 i;
+
+    memset(reservation, 0, sizeof(*reservation));
+    reservation->sb = sb;
+    reservation->bytes = bytes;
+    reservation->objects = objects;
+
+    for (i = 0; i < candidate_count; ++i) {
+        int idx = infilfs_quota_find_rule_locked(
+            sbi, candidate[i].type, candidate[i].id);
+        struct infilfs_quota_rule *rule;
+
+        if (idx < 0)
+            continue;
+        rule = &sbi->quota_rules[idx];
+        if (rule->hard_bytes &&
+            (rule->used_bytes > rule->hard_bytes ||
+             bytes > rule->hard_bytes - rule->used_bytes))
+            return -EDQUOT;
+        if (rule->hard_objects &&
+            (rule->used_objects > rule->hard_objects ||
+             objects > rule->hard_objects - rule->used_objects))
+            return -EDQUOT;
+    }
+
+    for (i = 0; i < candidate_count; ++i) {
+        int idx = infilfs_quota_find_rule_locked(
+            sbi, candidate[i].type, candidate[i].id);
+        struct infilfs_quota_rule *rule;
+
+        if (idx < 0)
+            continue;
+        rule = &sbi->quota_rules[idx];
+        if (rule->used_bytes > U64_MAX - bytes ||
+            rule->used_objects > U64_MAX - objects)
+            return -EOVERFLOW;
+        rule->used_bytes += bytes;
+        rule->used_objects += objects;
+        reservation->subject[reservation->subject_count++] = candidate[i];
+    }
+    reservation->active = reservation->subject_count != 0;
+    return 0;
+}
+
+static int infilfs_quota_reserve_inode(
+    struct inode *inode, u64 bytes, u64 objects,
+    struct infilfs_quota_reservation *reservation)
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(inode->i_sb);
+    struct infilfs_quota_subject candidate[3];
+    u32 candidate_count = 0;
+    int ret;
+
+    memset(reservation, 0, sizeof(*reservation));
+    if (!sbi || !sbi->quota_rule_count || (!bytes && !objects))
+        return 0;
+    mutex_lock(&sbi->quota_lock);
+    ret = infilfs_quota_candidate_subjects_locked(
+        inode, candidate, &candidate_count);
+    if (!ret)
+        ret = infilfs_quota_reserve_candidates_locked(
+            sbi, inode->i_sb, candidate, candidate_count,
+            bytes, objects, reservation);
+    mutex_unlock(&sbi->quota_lock);
+    return ret;
+}
+
+static int infilfs_quota_reserve_create(
+    struct inode *parent, u64 bytes, u64 objects,
+    struct infilfs_quota_reservation *reservation)
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(parent->i_sb);
+    struct infilfs_quota_subject candidate[3];
+    kuid_t kuid;
+    kgid_t kgid;
+    u32 uid = 0, gid = 0, project = 0;
+    u32 count = 0;
+    int ret;
+
+    memset(reservation, 0, sizeof(*reservation));
+    if (!sbi || !sbi->quota_rule_count || (!bytes && !objects))
+        return 0;
+    infilfs_posix_current_ids(&kuid, &kgid);
+    ret = infilfs_posix_uid_to_disk(kuid, &uid);
+    if (ret)
+        return ret;
+    if (parent->i_mode & S_ISGID)
+        kgid = parent->i_gid;
+    ret = infilfs_posix_gid_to_disk(kgid, &gid);
+    if (ret)
+        return ret;
+
+    mutex_lock(&sbi->quota_lock);
+    candidate[count++] = (struct infilfs_quota_subject){
+        .type = INFILFS_QUOTA_USER, .id = uid };
+    candidate[count++] = (struct infilfs_quota_subject){
+        .type = INFILFS_QUOTA_GROUP, .id = gid };
+    ret = infilfs_quota_inode_project_locked(parent, &project);
+    if (!ret && project)
+        candidate[count++] = (struct infilfs_quota_subject){
+            .type = INFILFS_QUOTA_PROJECT, .id = project };
+    if (!ret)
+        ret = infilfs_quota_reserve_candidates_locked(
+            sbi, parent->i_sb, candidate, count, bytes, objects, reservation);
+    mutex_unlock(&sbi->quota_lock);
+    return ret;
+}
+
+static void infilfs_quota_adjust_locked(
+    struct infilfs_quota_reservation *reservation, u64 bytes, u64 objects)
+{
+    struct infilfs_sb_info *sbi;
+    u32 i;
+
+    if (!reservation || !reservation->active || !reservation->sb)
+        return;
+    sbi = INFILFS_SB(reservation->sb);
+    for (i = 0; i < reservation->subject_count; ++i) {
+        int idx = infilfs_quota_find_rule_locked(
+            sbi, reservation->subject[i].type, reservation->subject[i].id);
+        if (idx < 0)
+            continue;
+        sbi->quota_rules[idx].used_bytes =
+            sbi->quota_rules[idx].used_bytes > bytes ?
+            sbi->quota_rules[idx].used_bytes - bytes : 0;
+        sbi->quota_rules[idx].used_objects =
+            sbi->quota_rules[idx].used_objects > objects ?
+            sbi->quota_rules[idx].used_objects - objects : 0;
+    }
+}
+
+static void infilfs_quota_reservation_finish(
+    struct infilfs_quota_reservation *reservation,
+    u64 actual_bytes, u64 actual_objects)
+{
+    struct infilfs_sb_info *sbi;
+    u64 release_bytes;
+    u64 release_objects;
+
+    if (!reservation || !reservation->active || !reservation->sb)
+        return;
+    actual_bytes = min_t(u64, actual_bytes, reservation->bytes);
+    actual_objects = min_t(u64, actual_objects, reservation->objects);
+    release_bytes = reservation->bytes - actual_bytes;
+    release_objects = reservation->objects - actual_objects;
+    sbi = INFILFS_SB(reservation->sb);
+    mutex_lock(&sbi->quota_lock);
+    infilfs_quota_adjust_locked(reservation, release_bytes, release_objects);
+    mutex_unlock(&sbi->quota_lock);
+    reservation->active = false;
+}
+
+static void infilfs_quota_reservation_abort(
+    struct infilfs_quota_reservation *reservation)
+{
+    struct infilfs_sb_info *sbi;
+
+    if (!reservation || !reservation->active || !reservation->sb)
+        return;
+    sbi = INFILFS_SB(reservation->sb);
+    mutex_lock(&sbi->quota_lock);
+    infilfs_quota_adjust_locked(
+        reservation, reservation->bytes, reservation->objects);
+    mutex_unlock(&sbi->quota_lock);
+    reservation->active = false;
+}
+
+static int infilfs_quota_capture_inode(
+    struct inode *inode, struct infilfs_quota_reservation *reservation)
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(inode->i_sb);
+    struct infilfs_quota_subject candidate[3];
+    u32 count = 0;
+    u32 i;
+    int ret;
+
+    memset(reservation, 0, sizeof(*reservation));
+    reservation->sb = inode->i_sb;
+    if (!sbi || !sbi->quota_rule_count)
+        return 0;
+    mutex_lock(&sbi->quota_lock);
+    ret = infilfs_quota_candidate_subjects_locked(inode, candidate, &count);
+    if (!ret) {
+        for (i = 0; i < count; ++i) {
+            if (infilfs_quota_find_rule_locked(
+                    sbi, candidate[i].type, candidate[i].id) < 0)
+                continue;
+            reservation->subject[reservation->subject_count++] = candidate[i];
+        }
+        reservation->active = reservation->subject_count != 0;
+    }
+    mutex_unlock(&sbi->quota_lock);
+    return ret;
+}
+
+static void infilfs_quota_apply_release(
+    struct infilfs_quota_reservation *reservation, u64 bytes, u64 objects)
+{
+    struct infilfs_sb_info *sbi;
+
+    if (!reservation || !reservation->active || !reservation->sb)
+        return;
+    sbi = INFILFS_SB(reservation->sb);
+    mutex_lock(&sbi->quota_lock);
+    infilfs_quota_adjust_locked(reservation, bytes, objects);
+    mutex_unlock(&sbi->quota_lock);
+    reservation->active = false;
+}
+
+static int infilfs_quota_rebuild_usage(struct super_block *sb)
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
+    int ret;
+
+    if (!sbi)
+        return -EINVAL;
+    mutex_lock(&sbi->quota_lock);
+    ret = infilfs_quota_rebuild_usage_locked(sb);
+    mutex_unlock(&sbi->quota_lock);
+    return ret;
+}
