@@ -46,7 +46,7 @@ static int infilfs_quota_prepare_identity_change(
     struct inode *inode, const struct iattr *attr,
     struct infilfs_quota_reservation *new_quota,
     struct infilfs_quota_reservation *old_quota);
-static int infilfs_quota_prepare_reparent(
+static int infilfs_quota_prepare_reparent_locked(
     struct inode *source, struct inode *new_dir,
     struct infilfs_quota_reservation *new_project,
     struct infilfs_quota_reservation *old_project);
