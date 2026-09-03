@@ -887,6 +887,44 @@ static long infilfs_file_ioctl(
         return ret;
     }
 
+    if (command == INFILFS_IOC_SET_QUOTA ||
+        command == INFILFS_IOC_GET_QUOTA) {
+        struct infilfs_quota_request request;
+        int ret;
+
+        if (!capable(CAP_SYS_ADMIN))
+            return -EPERM;
+        if (copy_from_user(&request, (void __user *)argument, sizeof(request)))
+            return -EFAULT;
+        ret = command == INFILFS_IOC_SET_QUOTA ?
+            infilfs_quota_set_rule(inode->i_sb, &request) :
+            infilfs_quota_get_rule(inode->i_sb, &request);
+        if (ret)
+            return ret;
+        if (copy_to_user((void __user *)argument, &request, sizeof(request)))
+            return -EFAULT;
+        return 0;
+    }
+
+    if (command == INFILFS_IOC_SET_PROJECT ||
+        command == INFILFS_IOC_GET_PROJECT) {
+        struct infilfs_project_request request;
+        int ret;
+
+        if (command == INFILFS_IOC_SET_PROJECT && !capable(CAP_SYS_ADMIN))
+            return -EPERM;
+        if (copy_from_user(&request, (void __user *)argument, sizeof(request)))
+            return -EFAULT;
+        ret = command == INFILFS_IOC_SET_PROJECT ?
+            infilfs_quota_set_project(inode, &request) :
+            infilfs_quota_get_project(inode, &request);
+        if (ret)
+            return ret;
+        if (copy_to_user((void __user *)argument, &request, sizeof(request)))
+            return -EFAULT;
+        return 0;
+    }
+
     if (command == INFILFS_IOC_RESIZE_VOLUME) {
         struct infilfs_resize_request request;
         int ret;
