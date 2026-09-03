@@ -48,6 +48,7 @@ static int parse_size(const char *text, uint64_t *bytes)
 int main(int argc, char **argv)
 {
     struct infilfs_resize_request request;
+    uint64_t parsed_size = 0;
     int fd;
 
     if (argc != 3) {
@@ -58,11 +59,13 @@ int main(int argc, char **argv)
     memset(&request, 0, sizeof(request));
     if (strcasecmp(argv[2], "max") == 0) {
         request.flags = INFILFS_RESIZE_TO_DEVICE_MAX;
-    } else if (parse_size(argv[2], &request.size_bytes) != 0) {
+    } else if (parse_size(argv[2], &parsed_size) != 0) {
         fprintf(stderr,
                 "Invalid size: %s (use bytes, KiB, MiB, GiB, TiB or max)\n",
                 argv[2]);
         return 2;
+    } else {
+        request.size_bytes = (__u64)parsed_size;
     }
 
     fd = open(argv[1], O_RDONLY | O_CLOEXEC | O_DIRECTORY);
