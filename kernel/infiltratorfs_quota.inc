@@ -684,8 +684,12 @@ static int infilfs_quota_set_rule(struct super_block *sb,
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
     struct infilfs_quota_rule *grown;
+    struct infilfs_quota_rule *old_rules = NULL;
+    size_t old_count;
+    u64 initial_bytes = 0;
+    u64 initial_objects = 0;
     int idx;
-    int ret;
+    int ret = 0;
 
     if (!infilfs_quota_type_valid(request->type) ||
         (request->type == INFILFS_QUOTA_PROJECT && request->id == 0) ||
@@ -694,49 +698,99 @@ static int infilfs_quota_set_rule(struct super_block *sb,
         return -EINVAL;
     if (sb_rdonly(sb))
         return -EROFS;
+
     ret = infilfs_native_pending_flush_sb(sb);
     if (ret)
         return ret;
+
     mutex_lock(&sbi->quota_lock);
+    old_count = sbi->quota_rule_count;
+    if (old_count) {
+        old_rules = kvmalloc_array(old_count, sizeof(*old_rules), GFP_NOFS);
+        if (!old_rules) {
+            ret = -ENOMEM;
+            goto out;
+        }
+        memcpy(old_rules, sbi->quota_rules, old_count * sizeof(*old_rules));
+    }
+
     idx = infilfs_quota_find_rule_locked(sbi, request->type, request->id);
+
+    /*
+     * A newly introduced rule has no historical volatile counter.  Snapshot
+     * the authoritative object graph while holding write_lock so the initial
+     * usage cannot race a namespace or data mutation. Existing rules retain
+     * their live reservation-aware counters and therefore must not be rebuilt.
+     */
+    if (idx < 0 && (request->hard_bytes || request->hard_objects)) {
+        mutex_lock(&sbi->write_lock);
+        ret = infilfs_quota_rule_usage_locked(
+            sb, request->type, request->id,
+            &initial_bytes, &initial_objects);
+        mutex_unlock(&sbi->write_lock);
+        if (ret)
+            goto rollback;
+    }
+
     if (!request->hard_bytes && !request->hard_objects) {
         if (idx >= 0) {
             memmove(&sbi->quota_rules[idx], &sbi->quota_rules[idx + 1],
-                    (sbi->quota_rule_count - (size_t)idx - 1u) * sizeof(*sbi->quota_rules));
+                    (sbi->quota_rule_count - (size_t)idx - 1u) *
+                        sizeof(*sbi->quota_rules));
             sbi->quota_rule_count--;
         }
     } else if (idx >= 0) {
         sbi->quota_rules[idx].hard_bytes = request->hard_bytes;
         sbi->quota_rules[idx].hard_objects = request->hard_objects;
     } else {
-        if (sbi->quota_rule_count >= INFILFS_QUOTA_MAX_RULES) { ret = -E2BIG; goto out; }
-        grown = kvmalloc_array(sbi->quota_rule_count + 1u, sizeof(*grown), GFP_NOFS);
-        if (!grown) { ret = -ENOMEM; goto out; }
+        if (sbi->quota_rule_count >= INFILFS_QUOTA_MAX_RULES) {
+            ret = -E2BIG;
+            goto rollback;
+        }
+        grown = kvmalloc_array(
+            sbi->quota_rule_count + 1u, sizeof(*grown), GFP_NOFS);
+        if (!grown) {
+            ret = -ENOMEM;
+            goto rollback;
+        }
         if (sbi->quota_rule_count)
-            memcpy(grown, sbi->quota_rules, sbi->quota_rule_count * sizeof(*grown));
+            memcpy(grown, sbi->quota_rules,
+                   sbi->quota_rule_count * sizeof(*grown));
         memset(&grown[sbi->quota_rule_count], 0, sizeof(*grown));
         grown[sbi->quota_rule_count].type = request->type;
         grown[sbi->quota_rule_count].id = request->id;
         grown[sbi->quota_rule_count].hard_bytes = request->hard_bytes;
         grown[sbi->quota_rule_count].hard_objects = request->hard_objects;
+        grown[sbi->quota_rule_count].used_bytes = initial_bytes;
+        grown[sbi->quota_rule_count].used_objects = initial_objects;
         kvfree(sbi->quota_rules);
         sbi->quota_rules = grown;
         sbi->quota_rule_count++;
     }
+
     ret = infilfs_quota_encode_locked(sb);
-    if (!ret)
-        ret = infilfs_quota_rebuild_usage_locked(sb);
-    if (!ret) {
-        idx = infilfs_quota_find_rule_locked(sbi, request->type, request->id);
-        if (idx >= 0) {
-            request->used_bytes = sbi->quota_rules[idx].used_bytes;
-            request->used_objects = sbi->quota_rules[idx].used_objects;
-        } else {
-            request->used_bytes = 0;
-            request->used_objects = 0;
-        }
+    if (ret)
+        goto rollback;
+
+    idx = infilfs_quota_find_rule_locked(sbi, request->type, request->id);
+    if (idx >= 0) {
+        request->used_bytes = sbi->quota_rules[idx].used_bytes;
+        request->used_objects = sbi->quota_rules[idx].used_objects;
+    } else {
+        request->used_bytes = 0;
+        request->used_objects = 0;
     }
+    kvfree(old_rules);
+    old_rules = NULL;
+    goto out;
+
+rollback:
+    kvfree(sbi->quota_rules);
+    sbi->quota_rules = old_rules;
+    sbi->quota_rule_count = old_count;
+    old_rules = NULL;
 out:
+    kvfree(old_rules);
     mutex_unlock(&sbi->quota_lock);
     return ret;
 }
@@ -769,59 +823,170 @@ static int infilfs_quota_set_project(struct inode *inode,
     struct infilfs_sb_info *sbi = INFILFS_SB(inode->i_sb);
     struct infilfs_inode_info *ii = INFILFS_I(inode);
     struct infilfs_project_root *grown;
+    struct infilfs_project_root *old_roots = NULL;
+    size_t old_root_count;
+    u64 transfer_bytes = 0;
+    u64 transfer_objects = 0;
+    u32 old_effective = 0;
+    u32 new_effective = 0;
     int idx = -1;
+    int target_rule;
+    int old_rule;
     size_t i;
-    int ret;
+    int ret = 0;
 
-    if (!S_ISDIR(inode->i_mode) || !ii || request->flags || request->reserved0 ||
+    if (!S_ISDIR(inode->i_mode) || !ii || request->flags ||
+        request->reserved0 ||
         memchr_inv(request->reserved, 0, sizeof(request->reserved)))
         return -EINVAL;
     if (sb_rdonly(inode->i_sb))
         return -EROFS;
+
     ret = infilfs_native_pending_flush_sb(inode->i_sb);
     if (ret)
         return ret;
+
     mutex_lock(&sbi->quota_lock);
-    for (i = 0; i < sbi->project_root_count; ++i)
-        if (!memcmp(sbi->project_roots[i].object_id, ii->object_id, 16)) { idx = (int)i; break; }
+
+    old_root_count = sbi->project_root_count;
+    if (old_root_count) {
+        old_roots = kvmalloc_array(
+            old_root_count, sizeof(*old_roots), GFP_NOFS);
+        if (!old_roots) {
+            ret = -ENOMEM;
+            goto out;
+        }
+        memcpy(old_roots, sbi->project_roots,
+               old_root_count * sizeof(*old_roots));
+    }
+
+    for (i = 0; i < sbi->project_root_count; ++i) {
+        if (!memcmp(sbi->project_roots[i].object_id, ii->object_id, 16)) {
+            idx = (int)i;
+            break;
+        }
+    }
+
+    ret = infilfs_quota_inode_project_locked(inode, &old_effective);
+    if (ret)
+        goto rollback;
+    if (request->project_id) {
+        new_effective = request->project_id;
+    } else {
+        ret = infilfs_quota_parent_project_locked(inode, &new_effective);
+        if (ret)
+            goto rollback;
+    }
+
+    if (old_effective != new_effective) {
+        /*
+         * quota_lock -> write_lock is the native quota ordering.  A writer
+         * that reserved quota before us releases write_lock before finalising
+         * its reservation, so this scan observes its committed bytes while
+         * its conservative reservation remains visible in the old counter.
+         */
+        mutex_lock(&sbi->write_lock);
+        ret = infilfs_quota_domain_usage_locked(
+            inode, &transfer_bytes, &transfer_objects);
+        mutex_unlock(&sbi->write_lock);
+        if (ret)
+            goto rollback;
+
+        target_rule = new_effective ?
+            infilfs_quota_find_rule_locked(
+                sbi, INFILFS_QUOTA_PROJECT, new_effective) : -1;
+        if (target_rule >= 0) {
+            struct infilfs_quota_rule *rule = &sbi->quota_rules[target_rule];
+
+            if (rule->hard_bytes &&
+                (rule->used_bytes > rule->hard_bytes ||
+                 transfer_bytes > rule->hard_bytes - rule->used_bytes)) {
+                ret = -EDQUOT;
+                goto rollback;
+            }
+            if (rule->hard_objects &&
+                (rule->used_objects > rule->hard_objects ||
+                 transfer_objects >
+                    rule->hard_objects - rule->used_objects)) {
+                ret = -EDQUOT;
+                goto rollback;
+            }
+            if (rule->used_bytes > U64_MAX - transfer_bytes ||
+                rule->used_objects > U64_MAX - transfer_objects) {
+                ret = -EOVERFLOW;
+                goto rollback;
+            }
+        }
+    }
+
     if (!request->project_id) {
         if (idx >= 0) {
-            memmove(&sbi->project_roots[idx], &sbi->project_roots[idx + 1],
-                    (sbi->project_root_count - (size_t)idx - 1u) * sizeof(*sbi->project_roots));
+            memmove(&sbi->project_roots[idx],
+                    &sbi->project_roots[idx + 1],
+                    (sbi->project_root_count - (size_t)idx - 1u) *
+                        sizeof(*sbi->project_roots));
             sbi->project_root_count--;
         }
     } else if (idx >= 0) {
         sbi->project_roots[idx].project_id = request->project_id;
     } else {
-        if (sbi->project_root_count >= INFILFS_QUOTA_MAX_ROOTS) { ret = -E2BIG; goto out; }
-        grown = kvmalloc_array(sbi->project_root_count + 1u, sizeof(*grown), GFP_NOFS);
-        if (!grown) { ret = -ENOMEM; goto out; }
+        if (sbi->project_root_count >= INFILFS_QUOTA_MAX_ROOTS) {
+            ret = -E2BIG;
+            goto rollback;
+        }
+        grown = kvmalloc_array(
+            sbi->project_root_count + 1u, sizeof(*grown), GFP_NOFS);
+        if (!grown) {
+            ret = -ENOMEM;
+            goto rollback;
+        }
         if (sbi->project_root_count)
-            memcpy(grown, sbi->project_roots, sbi->project_root_count * sizeof(*grown));
+            memcpy(grown, sbi->project_roots,
+                   sbi->project_root_count * sizeof(*grown));
         memcpy(grown[sbi->project_root_count].object_id, ii->object_id, 16);
         grown[sbi->project_root_count].project_id = request->project_id;
         kvfree(sbi->project_roots);
         sbi->project_roots = grown;
         sbi->project_root_count++;
     }
+
     ret = infilfs_quota_encode_locked(inode->i_sb);
-    if (!ret)
-        ret = infilfs_quota_rebuild_usage_locked(inode->i_sb);
-    if (!ret) {
-        u8 *object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
-        if (!object) ret = -ENOMEM;
-        else {
-            struct infilfs_object_header_disk *header;
-            ret = infilfs_read_object(inode->i_sb, ii->object_block, ii->object_type, ii->object_id, object);
-            if (!ret) {
-                header = (struct infilfs_object_header_disk *)object;
-                ret = infilfs_quota_effective_project_locked(inode->i_sb, ii->object_id, header->parent_id,
-                                                               &request->effective_project_id);
-            }
-            kfree(object);
+    if (ret)
+        goto rollback;
+
+    if (old_effective != new_effective) {
+        old_rule = old_effective ?
+            infilfs_quota_find_rule_locked(
+                sbi, INFILFS_QUOTA_PROJECT, old_effective) : -1;
+        target_rule = new_effective ?
+            infilfs_quota_find_rule_locked(
+                sbi, INFILFS_QUOTA_PROJECT, new_effective) : -1;
+
+        if (old_rule >= 0) {
+            struct infilfs_quota_rule *rule = &sbi->quota_rules[old_rule];
+            rule->used_bytes = rule->used_bytes > transfer_bytes ?
+                rule->used_bytes - transfer_bytes : 0;
+            rule->used_objects = rule->used_objects > transfer_objects ?
+                rule->used_objects - transfer_objects : 0;
+        }
+        if (target_rule >= 0) {
+            sbi->quota_rules[target_rule].used_bytes += transfer_bytes;
+            sbi->quota_rules[target_rule].used_objects += transfer_objects;
         }
     }
+
+    request->effective_project_id = new_effective;
+    kvfree(old_roots);
+    old_roots = NULL;
+    goto out;
+
+rollback:
+    kvfree(sbi->project_roots);
+    sbi->project_roots = old_roots;
+    sbi->project_root_count = old_root_count;
+    old_roots = NULL;
 out:
+    kvfree(old_roots);
     mutex_unlock(&sbi->quota_lock);
     return ret;
 }
