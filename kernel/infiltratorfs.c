@@ -4,6 +4,7 @@
 #include <linux/buffer_head.h>
 #include <linux/capability.h>
 #include <linux/dirent.h>
+#include <linux/delay.h>
 #include <linux/falloc.h>
 #include <linux/fiemap.h>
 #include <linux/file.h>
@@ -103,6 +104,9 @@ struct infilfs_sb_info {
     struct mutex write_lock;
     /* Serialize compound Linux sidecar metadata mutations (xattr/special). */
     struct mutex linux_meta_lock;
+    /* Serialize online geometry changes and gate new native transactions. */
+    struct mutex resize_lock;
+    bool resize_active;
     rwlock_t bitmap_lock;
     u8 *bitmap;
     size_t bitmap_bytes;
@@ -2697,6 +2701,7 @@ out:
 }
 
 #include "infiltratorfs_rw.inc"
+#include "infiltratorfs_resize.inc"
 #include "infiltratorfs_defrag.inc"
 
 static void infilfs_evict_inode(struct inode *inode)
@@ -2772,6 +2777,7 @@ static const struct file_operations infilfs_dir_operations = {
     .owner = THIS_MODULE,
     .llseek = generic_file_llseek,
     .iterate_shared = infilfs_iterate_shared,
+    .unlocked_ioctl = infilfs_file_ioctl,
     .fsync = infilfs_file_fsync,
 };
 
@@ -2815,6 +2821,7 @@ static int infilfs_fill_super(struct super_block *sb, struct fs_context *fc)
     }
     mutex_init(&sbi->write_lock);
     mutex_init(&sbi->linux_meta_lock);
+    mutex_init(&sbi->resize_lock);
     rwlock_init(&sbi->bitmap_lock);
     sb->s_fs_info = sbi;
 

@@ -887,6 +887,26 @@ static long infilfs_file_ioctl(
         return ret;
     }
 
+    if (command == INFILFS_IOC_RESIZE_VOLUME) {
+        struct infilfs_resize_request request;
+        int ret;
+
+        if (!capable(CAP_SYS_ADMIN))
+            return -EPERM;
+        if (copy_from_user(&request, (void __user *)argument,
+                           sizeof(request)))
+            return -EFAULT;
+        if (request.reserved0 || memchr_inv(request.reserved, 0,
+                                            sizeof(request.reserved)))
+            return -EINVAL;
+        ret = infilfs_native_resize_volume(inode->i_sb, &request);
+        if (ret)
+            return ret;
+        if (copy_to_user((void __user *)argument, &request, sizeof(request)))
+            return -EFAULT;
+        return 0;
+    }
+
     if (command == INFILFS_IOC_GET_FRAGMENTATION) {
         struct infilfs_fragmentation_metrics metrics;
         int ret = infilfs_fragmentation_metrics(inode, &metrics);

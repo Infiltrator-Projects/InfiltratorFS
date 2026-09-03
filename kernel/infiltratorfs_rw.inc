@@ -52,10 +52,17 @@ static int infilfs_rw_tx_begin(struct super_block *sb,
                                struct infilfs_rw_tx *tx)
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
-    int ret = infilfs_rw_tx_begin_legacy(sb, tx);
+    int ret;
 
+    if (READ_ONCE(sbi->resize_active))
+        return -EBUSY;
+    ret = infilfs_rw_tx_begin_legacy(sb, tx);
     if (ret)
         return ret;
+    if (READ_ONCE(sbi->resize_active)) {
+        infilfs_rw_tx_abort(tx);
+        return -EBUSY;
+    }
     tx->next_sb.generation = cpu_to_le64(tx->generation);
     sbi->disk.generation = cpu_to_le64(tx->generation);
     write_lock(&sbi->bitmap_lock);

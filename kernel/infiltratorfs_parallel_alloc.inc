@@ -341,6 +341,8 @@ static int infilfs_parallel_reserve_data(
     if (!sbi || !sbi->allocation_reservations || !count ||
         count >= total)
         return -ENOSPC;
+    if (READ_ONCE(sbi->resize_active))
+        return -EBUSY;
     metadata_reserve = infilfs_native_metadata_reserve_blocks(sbi);
     for (;;) {
         u64 free_blocks = infilfs_native_visible_free_blocks(sb);
@@ -373,6 +375,11 @@ static int infilfs_parallel_reserve_data(
         if (arena_end <= arena_start || count > arena_end - arena_start)
             continue;
         spin_lock(&sbi->allocation_reservation_locks[shard]);
+        if (READ_ONCE(sbi->resize_active)) {
+            spin_unlock(&sbi->allocation_reservation_locks[shard]);
+            atomic64_sub(count, &sbi->allocation_reserved_blocks);
+            return -EBUSY;
+        }
         read_lock(&sbi->bitmap_lock);
         hint = sbi->allocation_reservation_hints[shard];
         /*
