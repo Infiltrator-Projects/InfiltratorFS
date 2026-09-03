@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Windows Explorer bridge qualification
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - CMakeLists.txt
+      - include/**
+      - src/**
+      - tools/windows/infiltratorfs-windows-bridge.c
+      - tools/windows/infiltratorfs-windows-bridge.h
+      - tests/win32-projfs-bridge.c
+      - .github/workflows/windows-bridge.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-explorer-bridge-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bridge:
+    name: Same-volume Explorer move-out
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+      - name: Configure MSVC
+        run: cmake -S . -B build -A x64
+      - name: Build bridge qualification
+        run: cmake --build build --config Release --target infilfs-win32-projfs-bridge --parallel
+      - name: Enable Projected File System
+        shell: pwsh
+        run: |
+          $feature = Get-WindowsOptionalFeature -Online -FeatureName Client-ProjFS -ErrorAction SilentlyContinue
+          if (!$feature -or $feature.State -ne 'Enabled') {
+            $dism = Start-Process dism.exe -ArgumentList '/Online','/Enable-Feature','/FeatureName:Client-ProjFS','/NoRestart','/Quiet' -Wait -PassThru -NoNewWindow
+            Write-Host "DISM exit code: $($dism.ExitCode)"
+            $feature = Get-WindowsOptionalFeature -Online -FeatureName Client-ProjFS -ErrorAction SilentlyContinue
+          }
+          if (!$feature -or $feature.State -ne 'Enabled') {
+            throw 'Client-ProjFS is unavailable; Windows bridge qualification is mandatory.'
+          }
+      - name: Qualify same-volume Explorer move-out
+        shell: pwsh
+        run: |
+          & .\build\Release\infilfs-win32-projfs-bridge.exe
+          if ($LASTEXITCODE -ne 0) {
+            throw "Windows bridge qualification failed with exit code $LASTEXITCODE"
+          }
