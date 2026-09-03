@@ -2719,11 +2719,22 @@ out:
 static void infilfs_evict_inode(struct inode *inode)
 {
     struct infilfs_inode_info *ii = INFILFS_I(inode);
+    struct infilfs_quota_reservation released_quota = {0};
+    u64 released_bytes = 0;
+    bool reclaiming = ii && inode->i_nlink == 0 && !sb_rdonly(inode->i_sb);
     int ret;
 
     truncate_inode_pages_final(&inode->i_data);
     ret = 0;
-    if (ii && inode->i_nlink == 0 && !sb_rdonly(inode->i_sb)) {
+    if (reclaiming) {
+        released_bytes = (u64)i_size_read(inode);
+        ret = infilfs_quota_capture_inode(inode, &released_quota);
+        if (ret) {
+            pr_err("InfiltratorFS: could not capture quota ownership for inode %lu: %d\n",
+                   inode->i_ino, ret);
+            released_quota.active = false;
+            ret = 0;
+        }
         ret = infilfs_linux_meta_remove_object(inode->i_sb, ii->object_id);
         if (ret)
             pr_err("InfiltratorFS: could not remove Linux metadata for inode %lu: %d\n",
@@ -2731,6 +2742,8 @@ static void infilfs_evict_inode(struct inode *inode)
     }
     if (!ret)
         ret = infilfs_ns_evict_unlinked_file(inode);
+    if (!ret && reclaiming)
+        infilfs_quota_apply_release(&released_quota, released_bytes, 1);
     if (ret)
         pr_err("InfiltratorFS: could not reclaim unlinked inode %lu: %d\n",
                inode->i_ino, ret);
