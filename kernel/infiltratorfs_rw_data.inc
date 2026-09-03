@@ -4999,9 +4999,12 @@ static ssize_t infilfs_file_write_iter_common(struct kiocb *iocb,
     struct file *filep = iocb->ki_filp;
     struct inode *inode = file_inode(filep);
     struct address_space *mapping = inode->i_mapping;
+    struct infilfs_quota_reservation quota = {0};
     size_t requested = iov_iter_count(from);
     loff_t pos = iocb->ki_pos;
+    loff_t old_size;
     loff_t end;
+    u64 quota_growth = 0;
     ssize_t ret;
 
     if (pos < 0)
@@ -5013,6 +5016,12 @@ static ssize_t infilfs_file_write_iter_common(struct kiocb *iocb,
     if (requested - 1u > LLONG_MAX - pos)
         return -EFBIG;
     end = pos + requested - 1u;
+    old_size = i_size_read(inode);
+    if (end + 1 > old_size)
+        quota_growth = (u64)(end + 1 - old_size);
+    ret = infilfs_quota_reserve_inode(inode, quota_growth, 0, &quota);
+    if (ret)
+        return ret;
 
     /*
      * mmap uses the page cache while read(2)/write(2) retain the qualified
@@ -5045,6 +5054,11 @@ static ssize_t infilfs_file_write_iter_common(struct kiocb *iocb,
         inode, &iocb->ki_pos, from, requested, allow_compression);
 out_unlock:
     filemap_invalidate_unlock(mapping);
+    if (ret > 0 && pos + ret > old_size)
+        infilfs_quota_reservation_finish(
+            &quota, min_t(u64, quota_growth, (u64)(pos + ret - old_size)), 0);
+    else
+        infilfs_quota_reservation_abort(&quota);
     return ret;
 }
 
