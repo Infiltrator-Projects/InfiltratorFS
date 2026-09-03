@@ -1463,6 +1463,9 @@ jobs:
         if: steps.headers.outputs.runtime_kdir == ''
         run: echo 'Native module compiled successfully; runtime load/mount skipped because matching hosted-runner kernel headers were unavailable.'
   local-kernel-compile:
+    # This is intentionally an opt-in check for Shannon's exact local kernel.
+    # Normal push/release qualification must not depend on a home runner.
+    if: github.event_name == 'workflow_dispatch'
     name: Local running-kernel compile qualification
     concurrency:
       group: native-kernel-local-${{ github.ref }}
