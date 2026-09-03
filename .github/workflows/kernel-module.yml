@@ -105,6 +105,7 @@ jobs:
              kernel/infiltratorfs_rw_read_cache.inc \
              kernel/infiltratorfs_pagecache.inc \
              kernel/infiltratorfs_linux_meta.inc \
+             kernel/infiltratorfs_resize.inc \
              kernel/infiltratorfs_defrag.inc \
              kernel/infiltratorfs_ioctl.h \
              "$dkms_src/"
@@ -127,7 +128,7 @@ jobs:
         if: steps.headers.outputs.runtime_kdir != ''
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --parallel --target mkfs.infilfs infilfs-tool infilfs-scrub infilfs-forensic infilfs-optimize
+          cmake --build build --parallel --target mkfs.infilfs infilfs-tool infilfs-scrub infilfs-forensic infilfs-optimize infiltratorfs-resize
 
       - name: Build module for the running kernel
         if: steps.headers.outputs.runtime_kdir != ''
