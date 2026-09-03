@@ -140,18 +140,23 @@ if python3 "$mint_guard" /dev/null /dev/null /dev/null /dev/null 2>"$tmp/mint-gu
 fi
 grep -Fq 'Mintstick integration is disabled' "$tmp/mint-guard.err"
 
-# Nemo gets a separate partition-scoped InfiltratorFS action. %D is Nemo's
-# exact selected block-device token; it must go straight to Manager and must
-# never invoke Mintstick or derive a parent disk.
+# Nemo must expose one Format action, not a stock whole-device Mintstick entry
+# plus a second InfiltratorFS-specific entry. The package diverts only
+# mintstick-format.nemo_action and replaces it with GNOME Disks' partition
+# format entry point. %D is the exact selected block device; GNOME Disks then
+# presents its normal filesystem chooser, including InfiltratorFS.
 test -s "$nemo_action"
-grep -Fq 'Name=Format partition as InfiltratorFS' "$nemo_action"
-grep -Fq 'Exec=/usr/bin/infiltratorfs-manager --format-device %D' "$nemo_action"
+grep -Fq 'Name=Format' "$nemo_action"
+grep -Fq 'Exec=/usr/bin/gnome-disks --block-device %D --format-device' "$nemo_action"
 grep -Fq 'Conditions=removable;sidebar-allow;' "$nemo_action"
 if grep -Fqi 'mintstick' "$nemo_action"; then
     echo 'desktop-integration: partition-safe Nemo action invokes Mintstick' >&2
     exit 1
 fi
-grep -Fq -- '--format-device' "$repo_root/tools/infiltratorfs-manager"
+grep -Fq 'MINT_NEMO_FORMAT="/usr/share/nemo/actions/mintstick-format.nemo_action"' "$os_helper"
+grep -Fq 'divert_path "$MINT_NEMO_FORMAT" "$MINT_NEMO_FORMAT_STOCK"' "$os_helper"
+grep -Fq 'install -m 0644 "$INFILTRATOR_NEMO_FORMAT" "$MINT_NEMO_FORMAT"' "$os_helper"
+grep -Fq 'rm -f -- "$LEGACY_INFILTRATOR_NEMO_FORMAT"' "$os_helper"
 
 # Prove the conventional helper expected by libblockdev forwards every
 # argument byte-for-byte to the qualified formatter installed beside it.

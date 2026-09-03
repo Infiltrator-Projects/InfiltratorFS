@@ -7,6 +7,10 @@ readonly BUNDLE="/usr/lib/infiltratorfs/os-integration"
 readonly GDU_TARGET="/usr/bin/gnome-disks"
 readonly MINT_UI="/usr/lib/mintstick/mintstick.py"
 readonly MINT_FORMATTER="/usr/lib/mintstick/raw_format.py"
+readonly MINT_NEMO_FORMAT="/usr/share/nemo/actions/mintstick-format.nemo_action"
+readonly MINT_NEMO_FORMAT_STOCK="${MINT_NEMO_FORMAT}.infiltratorfs-stock"
+readonly INFILTRATOR_NEMO_FORMAT="/usr/lib/infiltratorfs/infiltratorfs-format-partition.nemo_action"
+readonly LEGACY_INFILTRATOR_NEMO_FORMAT="/usr/share/nemo/actions/infiltratorfs-format-partition.nemo_action"
 
 log()
 {
@@ -161,6 +165,8 @@ remove_all()
 
     restore_path "$MINT_FORMATTER" "${MINT_FORMATTER}.infiltratorfs-stock"
     restore_path "$MINT_UI" "${MINT_UI}.infiltratorfs-stock"
+    restore_path "$MINT_NEMO_FORMAT" "$MINT_NEMO_FORMAT_STOCK"
+    rm -f -- "$LEGACY_INFILTRATOR_NEMO_FORMAT"
 
     plugin="$(find_libblockdev_plugin || true)"
     if [[ -n "$plugin" ]]; then
@@ -191,6 +197,11 @@ install_all()
     # anything else, including source-built packages with no desktop bundle.
     restore_path "$MINT_FORMATTER" "${MINT_FORMATTER}.infiltratorfs-stock"
     restore_path "$MINT_UI" "${MINT_UI}.infiltratorfs-stock"
+    # Older InfiltratorFS packages installed a second Nemo action named
+    # "Format partition as InfiltratorFS…".  The supported integration now
+    # replaces Mint's existing Format action instead, so remove only our
+    # legacy duplicate entry.
+    rm -f -- "$LEGACY_INFILTRATOR_NEMO_FORMAT"
 
     if [[ ! -s "$BUNDLE/gnome-disks" ||
           ! -s "$BUNDLE/libbd_fs.so" ||
@@ -212,6 +223,13 @@ install_all()
 
     require_no_foreign_diversion "$GDU_TARGET"
     require_no_foreign_diversion "$plugin"
+    if [[ -e "$MINT_NEMO_FORMAT" || -L "$MINT_NEMO_FORMAT" ]]; then
+        require_no_foreign_diversion "$MINT_NEMO_FORMAT"
+    fi
+    [[ -s "$INFILTRATOR_NEMO_FORMAT" ]] || {
+        echo 'InfiltratorFS: partition-safe Nemo Format action is missing.' >&2
+        return 1
+    }
 
     tmp="$(mktemp -d)"
     trap 'rm -rf "$tmp"' RETURN
@@ -223,6 +241,18 @@ install_all()
 
     divert_path "$plugin" "$plugin_stock"
     install -m 0644 "$BUNDLE/libbd_fs.so" "$plugin"
+
+    # Mintstick's stock Nemo "Format" action opens a whole-device formatter.
+    # Replace only that menu action (not Mintstick itself) with GNOME Disks'
+    # --format-device entry point.  %D remains the exact selected partition,
+    # so Nemo shows one Format item and the dialog offers InfiltratorFS along
+    # with the normal filesystem choices without ever normalising to a parent
+    # disk.
+    if [[ -e "$MINT_NEMO_FORMAT" || -L "$MINT_NEMO_FORMAT" ||
+          -e "$MINT_NEMO_FORMAT_STOCK" || -L "$MINT_NEMO_FORMAT_STOCK" ]]; then
+        divert_path "$MINT_NEMO_FORMAT" "$MINT_NEMO_FORMAT_STOCK"
+        install -m 0644 "$INFILTRATOR_NEMO_FORMAT" "$MINT_NEMO_FORMAT"
+    fi
 
     restart_udisks
     require_udisks_formatter
@@ -246,6 +276,11 @@ case "${1:-}" in
         is_our_diversion "$plugin"
         grep -aFq 'InfiltratorFS' "$GDU_TARGET"
         grep -aFq 'infiltratorfs' "$plugin"
+        if is_our_diversion "$MINT_NEMO_FORMAT"; then
+            grep -Fq 'Name=Format' "$MINT_NEMO_FORMAT"
+            grep -Fq 'Exec=/usr/bin/gnome-disks --block-device %D --format-device' "$MINT_NEMO_FORMAT"
+            [[ ! -e "$LEGACY_INFILTRATOR_NEMO_FORMAT" ]]
+        fi
         require_udisks_formatter
         ;;
     *)

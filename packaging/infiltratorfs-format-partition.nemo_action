@@ -1,8 +1,8 @@
 [Nemo Action]
 Active=true
-Name=Format partition as InfiltratorFS…
-Comment=Erase and format only the selected partition as InfiltratorFS
-Exec=/usr/bin/infiltratorfs-manager --format-device %D
+Name=Format…
+Comment=Format only the selected partition using GNOME Disks
+Exec=/usr/bin/gnome-disks --block-device %D --format-device
 Icon-Name=drive-harddisk-symbolic
 Selection=S
 Extensions=any;

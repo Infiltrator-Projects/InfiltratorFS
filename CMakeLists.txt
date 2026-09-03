@@ -380,8 +380,12 @@ if(UNIX)
             DESTINATION sbin)
     install(FILES packaging/infiltratorfs-manager.desktop
             DESTINATION share/applications)
+    # Nemo already gets a stock "Format" action from Mintstick.  Ship our
+    # partition-safe replacement beside the integration helper instead of as a
+    # second visible action; the helper diverts the stock action and installs
+    # this one in its place on supported Linux Mint systems.
     install(FILES packaging/infiltratorfs-format-partition.nemo_action
-            DESTINATION share/nemo/actions)
+            DESTINATION lib/infiltratorfs)
     install(FILES ${INFILFS_FONT_FILES}
             DESTINATION share/infiltratorfs/fonts)
     install(FILES packaging/59-infiltratorfs.rules
