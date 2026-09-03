@@ -1,0 +1,59 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: One-shot documentation audit final
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/one-shot-doc-audit-final.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Fix final stale wording
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def exact(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              if text.count(old) != 1:
+                  raise SystemExit(f'{path}: expected exactly one target occurrence')
+              p.write_text(text.replace(old, new), encoding='utf-8')
+
+          exact(
+              'docs/QUALIFICATION.md',
+              '- resize is implemented and now has an independent mounted qualification workflow,\n  so quota failure no longer prevents resize evidence from being collected; and',
+              '- resize is implemented and now has an independent mounted qualification workflow,\n  so the quota timeout no longer prevents resize evidence from being collected; and'
+          )
+
+          exact(
+              'docs/CONFORMANCE.md',
+              'The release publisher is triggered only by a successful Build and conformance run for a `Release <version>` commit on current `main`. It requires the Native Linux kernel module workflow for the same commit to complete successfully, then rebuilds assets from that exact source, installs the generated `.deb`, verifies native filesystem registration, mounts a real Format 0.17 loop image with `FSTYPE=infiltratorfs`, writes and byte-compares non-zero data, syncs, unmounts, requires a CLEAN scrub and rejects any legacy FUSE executable/process before creating the tag and release. The publisher also contains a conditional exact-SHA heavy-run check, but the current heavy workflow has no push trigger; therefore an ordinary Release commit does not itself create a heavy run and heavy qualification is not currently an automatic release prerequisite.',
+              'The release publisher is triggered only by a successful Build and conformance run for a `Release <version>` commit on current `main`. It requires the Native Linux kernel module workflow for the same commit to complete successfully, then rebuilds assets from that exact source, installs the generated `.deb`, verifies native filesystem registration, mounts a real Format 0.17 loop image with `FSTYPE=infiltratorfs`, writes and byte-compares non-zero data, syncs, unmounts, requires a CLEAN scrub and rejects any legacy FUSE executable/process before creating the tag and release. Heavy filesystem qualification is separate weekly/manual milestone evidence and is not an automatic per-release prerequisite.'
+          )
+          PY
+          git diff --check
+          grep -Fq 'quota timeout no longer prevents' docs/QUALIFICATION.md
+          grep -Fq 'Heavy filesystem qualification is separate weekly/manual milestone evidence' docs/CONFORMANCE.md
+      - name: Commit final documentation cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'InfiltratorFS CI'
+          git config user.email 'infiltratorfs-ci@users.noreply.github.com'
+          git add docs/QUALIFICATION.md docs/CONFORMANCE.md
+          git diff --cached --check
+          git commit -m 'Docs: finish qualification wording reconciliation'
+          git push origin HEAD:main
