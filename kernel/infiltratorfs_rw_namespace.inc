@@ -1720,17 +1720,33 @@ static int infilfs_ns_unlink(struct inode *dir, struct dentry *dentry)
     struct infilfs_inode_info *dir_ii = INFILFS_I(dir);
     struct infilfs_inode_info *ii = INFILFS_I(inode);
     struct infilfs_native_pending *pending;
+    struct infilfs_quota_reservation released_quota = {0};
     struct infilfs_ns_index_change *changes = NULL;
     u32 change_count = 0, change_capacity = 0;
     u64 new_dir_block = 0, retained_block = 0;
+    u64 released_bytes = 0;
     bool retained = false;
+    bool quota_locked = false;
     int ret;
 
     if (!inode || !ii || ii->object_type == INFILFS_OBJECT_DIRECTORY)
         return -EISDIR;
+    if (ii->object_type == INFILFS_OBJECT_SYMLINK) {
+        mutex_lock(&INFILFS_SB(dir->i_sb)->quota_lock);
+        quota_locked = true;
+        ret = infilfs_quota_capture_inode_locked(inode, &released_quota);
+        if (ret) {
+            mutex_unlock(&INFILFS_SB(dir->i_sb)->quota_lock);
+            return ret;
+        }
+        released_bytes = (u64)i_size_read(inode);
+    }
     ret = infilfs_ns_begin(dir->i_sb, &pending);
-    if (ret)
+    if (ret) {
+        if (quota_locked)
+            mutex_unlock(&INFILFS_SB(dir->i_sb)->quota_lock);
         return ret;
+    }
     ret = infilfs_ns_delete_object(pending, inode, &changes, &change_count,
                                    &change_capacity, &retained, &retained_block);
     if (!ret)
@@ -1743,6 +1759,14 @@ static int infilfs_ns_unlink(struct inode *dir, struct dentry *dentry)
     if (!ret)
         ret = infilfs_ns_rebuild_index(pending, changes, change_count);
     ret = infilfs_ns_finish(pending, ret);
+    if (quota_locked) {
+        if (!ret && released_quota.active)
+            infilfs_quota_adjust_locked(
+                &released_quota, released_bytes, 1);
+        released_quota.active = false;
+        mutex_unlock(&INFILFS_SB(dir->i_sb)->quota_lock);
+        quota_locked = false;
+    }
     if (!ret) {
         dir_ii->object_block = new_dir_block;
         infilfs_refresh_inode_blocks_after_commit(dir);
@@ -1763,17 +1787,32 @@ static int infilfs_ns_rmdir(struct inode *dir, struct dentry *dentry)
     struct infilfs_inode_info *dir_ii = INFILFS_I(dir);
     struct infilfs_inode_info *ii = INFILFS_I(inode);
     struct infilfs_native_pending *pending;
+    struct infilfs_quota_reservation released_quota = {0};
     struct infilfs_ns_index_change *changes = NULL;
     u32 change_count = 0, change_capacity = 0;
     u64 new_dir_block = 0, retained_block = 0;
+    u64 released_bytes = 0;
     bool retained = false;
+    bool quota_locked = false;
     int ret;
 
     if (!inode || !ii || ii->object_type != INFILFS_OBJECT_DIRECTORY)
         return -ENOTDIR;
-    ret = infilfs_ns_begin(dir->i_sb, &pending);
-    if (ret)
+
+    mutex_lock(&INFILFS_SB(dir->i_sb)->quota_lock);
+    quota_locked = true;
+    ret = infilfs_quota_capture_inode_locked(inode, &released_quota);
+    if (ret) {
+        mutex_unlock(&INFILFS_SB(dir->i_sb)->quota_lock);
         return ret;
+    }
+    released_bytes = (u64)i_size_read(inode);
+
+    ret = infilfs_ns_begin(dir->i_sb, &pending);
+    if (ret) {
+        mutex_unlock(&INFILFS_SB(dir->i_sb)->quota_lock);
+        return ret;
+    }
     ret = infilfs_ns_delete_object(pending, inode, &changes, &change_count,
                                    &change_capacity, &retained, &retained_block);
     if (!ret)
@@ -1786,6 +1825,14 @@ static int infilfs_ns_rmdir(struct inode *dir, struct dentry *dentry)
     if (!ret)
         ret = infilfs_ns_rebuild_index(pending, changes, change_count);
     ret = infilfs_ns_finish(pending, ret);
+    if (quota_locked) {
+        if (!ret && released_quota.active)
+            infilfs_quota_adjust_locked(
+                &released_quota, released_bytes, 1);
+        released_quota.active = false;
+        mutex_unlock(&INFILFS_SB(dir->i_sb)->quota_lock);
+        quota_locked = false;
+    }
     if (!ret) {
         dir_ii->object_block = new_dir_block;
         infilfs_refresh_inode_blocks_after_commit(dir);
