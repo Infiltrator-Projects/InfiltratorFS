@@ -1,23 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 name: Heavy filesystem qualification
 
-# Expensive mounted scale/endurance work is deliberately not ordinary per-push CI.
-# Run it for storage/core changes, once a week, or explicitly on demand.
+# Million-file/1 TiB and long endurance testing is milestone evidence, not
+# ordinary development CI. Run it weekly for regression coverage or explicitly
+# when a maintainer wants a new heavy qualification record.
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'kernel/**'
-      - 'src/**'
-      - 'include/**'
-      - 'tools/**'
-      - 'tests/native-scale-*'
-      - 'tests/native-endurance-*'
-      - 'tests/native-defrag-*'
-      # Version-only/release-marker changes do not justify a million-file/1 TiB
-      # stress rerun. Functional filesystem paths above still trigger it, and
-      # the weekly/manual runs remain available.
   schedule:
     - cron: "43 2 * * 0"
   workflow_dispatch:
@@ -26,15 +13,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: heavy-filesystem-qualification-v2-${{ github.ref }}
-  # Only commits that actually touch heavy-qualified filesystem/test paths
-  # enter this workflow. Newer qualifying work replaces stale qualifying work.
+  group: heavy-filesystem-qualification-v3-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   native-scale-stress:
-    # Release commits run the exact same million-file/1 TiB evidence as storage
-    # development commits so a Release-labelled semantic change cannot bypass it.
     name: Million-file and 1 TiB mounted stress
     runs-on: ubuntu-24.04
     timeout-minutes: 180
@@ -145,4 +128,3 @@ jobs:
             exit 1
           fi
           bash tests/native-endurance-qualification.sh build-endurance
-
