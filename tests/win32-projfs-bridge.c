@@ -4,6 +4,7 @@
 #define _UNICODE
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <shobjidl.h>
 
 #include "infiltratorfs-windows-bridge.h"
 #include "infilfs/status.h"
@@ -18,6 +19,7 @@
 
 static const char windows_payload[] = "windows-projfs-write\n";
 static const char edited_linux_payload[] = "windows-edited-linux-file\n";
+static const char exported_payload[] = "infiltratorfs-export-move\n";
 #define DIRTY_RANGE_FILE_SIZE (8u * 1024u * 1024u)
 #define DIRTY_RANGE_OFFSET (4u * 1024u * 1024u)
 
@@ -93,6 +95,59 @@ static int read_portable_file(struct infs_volume *volume, const char *path,
         return 0;
     buffer[(size_t)got] = '\0';
     return strcmp(buffer, expected) == 0;
+}
+
+static int shell_move_item(const wchar_t *source_path,
+                           const wchar_t *destination_directory)
+{
+    HRESULT initialized = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+    int uninitialize = SUCCEEDED(initialized);
+    if (FAILED(initialized) && initialized != RPC_E_CHANGED_MODE) {
+        SetLastError(HRESULT_CODE(initialized));
+        return 0;
+    }
+
+    IFileOperation *operation = NULL;
+    IShellItem *source = NULL;
+    IShellItem *destination = NULL;
+    HRESULT hr = CoCreateInstance(
+        &CLSID_FileOperation, NULL, CLSCTX_INPROC_SERVER,
+        &IID_IFileOperation, (void **)&operation);
+    if (SUCCEEDED(hr))
+        hr = SHCreateItemFromParsingName(
+            source_path, NULL, &IID_IShellItem, (void **)&source);
+    if (SUCCEEDED(hr))
+        hr = SHCreateItemFromParsingName(
+            destination_directory, NULL, &IID_IShellItem,
+            (void **)&destination);
+    if (SUCCEEDED(hr))
+        hr = operation->lpVtbl->SetOperationFlags(
+            operation, FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT);
+    if (SUCCEEDED(hr))
+        hr = operation->lpVtbl->MoveItem(
+            operation, source, destination, NULL, NULL);
+    if (SUCCEEDED(hr))
+        hr = operation->lpVtbl->PerformOperations(operation);
+
+    BOOL aborted = FALSE;
+    if (SUCCEEDED(hr))
+        hr = operation->lpVtbl->GetAnyOperationsAborted(
+            operation, &aborted);
+
+    if (destination)
+        destination->lpVtbl->Release(destination);
+    if (source)
+        source->lpVtbl->Release(source);
+    if (operation)
+        operation->lpVtbl->Release(operation);
+    if (uninitialize)
+        CoUninitialize();
+
+    if (FAILED(hr) || aborted) {
+        SetLastError(FAILED(hr) ? HRESULT_CODE(hr) : ERROR_CANCELLED);
+        return 0;
+    }
+    return 1;
 }
 
 static int run_windows_client(const wchar_t *root_arg)
@@ -186,6 +241,67 @@ static int run_windows_client(const wchar_t *root_arg)
     if (!MoveFileW(tree, tree_renamed) ||
         !write_windows_file(tree_renamed_child, "after-rename\n", 13u))
         return fail(L"Rename projected directory and rewrite child");
+
+    /*
+     * Reproduce the Explorer operation that exposed the regression: move a
+     * directory that originated in InfiltratorFS out of the projected root to
+     * an ordinary directory on the same Windows volume. The Shell must fall
+     * back from rename to copy-then-delete rather than surfacing 0x80070032.
+     */
+    wchar_t export_tree[32768];
+    wchar_t export_child[32768];
+    _snwprintf_s(export_tree,
+                 sizeof(export_tree) / sizeof(export_tree[0]), _TRUNCATE,
+                 L"%lsexport-tree", root);
+    _snwprintf_s(export_child,
+                 sizeof(export_child) / sizeof(export_child[0]), _TRUNCATE,
+                 L"%lsexport-tree\\payload.txt", root);
+
+    memset(data, 0, sizeof(data));
+    if (!read_windows_file(export_child, data, sizeof(data) - 1u, &got) ||
+        got != sizeof(exported_payload) - 1u ||
+        memcmp(data, exported_payload, sizeof(exported_payload) - 1u) != 0)
+        return fail(L"Hydrate projected export directory before move-out");
+
+    wchar_t temp_root[32768];
+    DWORD temp_length = GetTempPathW(
+        (DWORD)(sizeof(temp_root) / sizeof(temp_root[0])), temp_root);
+    if (!temp_length ||
+        temp_length >= sizeof(temp_root) / sizeof(temp_root[0]))
+        return fail(L"Resolve temporary directory for move-out test");
+
+    wchar_t destination_parent[32768];
+    wchar_t moved_tree[32768];
+    wchar_t moved_child[32768];
+    _snwprintf_s(destination_parent,
+                 sizeof(destination_parent) / sizeof(destination_parent[0]),
+                 _TRUNCATE, L"%lsInfiltratorFS-ProjFS-MoveOut-%lu",
+                 temp_root, (unsigned long)GetCurrentProcessId());
+    if (!CreateDirectoryW(destination_parent, NULL) &&
+        GetLastError() != ERROR_ALREADY_EXISTS)
+        return fail(L"Create ordinary Windows move-out destination");
+    _snwprintf_s(moved_tree,
+                 sizeof(moved_tree) / sizeof(moved_tree[0]), _TRUNCATE,
+                 L"%ls\\export-tree", destination_parent);
+    _snwprintf_s(moved_child,
+                 sizeof(moved_child) / sizeof(moved_child[0]), _TRUNCATE,
+                 L"%ls\\export-tree\\payload.txt", destination_parent);
+
+    if (!shell_move_item(export_tree, destination_parent))
+        return fail(L"Move projected directory out through Windows Shell");
+
+    memset(data, 0, sizeof(data));
+    if (!read_windows_file(moved_child, data, sizeof(data) - 1u, &got) ||
+        got != sizeof(exported_payload) - 1u ||
+        memcmp(data, exported_payload, sizeof(exported_payload) - 1u) != 0)
+        return fail(L"Verify ordinary Windows copy after move-out");
+    if (GetFileAttributesW(export_tree) != INVALID_FILE_ATTRIBUTES)
+        return fail(L"Projected source remained after Shell move-out");
+
+    if (!DeleteFileW(moved_child) ||
+        !RemoveDirectoryW(moved_tree) ||
+        !RemoveDirectoryW(destination_parent))
+        return fail(L"Clean ordinary Windows move-out destination");
 
     wchar_t delete_path[32768];
     _snwprintf_s(delete_path, sizeof(delete_path) / sizeof(delete_path[0]), _TRUNCATE,
@@ -310,6 +426,18 @@ int wmain(int argc, wchar_t **argv)
         return fail(L"Publish dirty-range qualification file");
     }
 
+    if (infs_mkdir(&volume, "/export-tree", NULL) != INFS_STATUS_OK ||
+        infs_create_file(&volume, "/export-tree/payload.txt", NULL) !=
+            INFS_STATUS_OK ||
+        infs_write_file_buffered(
+            &volume, "/export-tree/payload.txt", exported_payload,
+            sizeof(exported_payload) - 1u, 0u) !=
+            (int64_t)(sizeof(exported_payload) - 1u) ||
+        infs_volume_sync(&volume) != INFS_STATUS_OK) {
+        infs_volume_close(&volume);
+        return fail(L"Seed projected move-out qualification tree");
+    }
+
     wchar_t drive[3] = {0};
     if (!infs_windows_bridge_start(&volume, NULL, drive,
                                    sizeof(drive) / sizeof(drive[0]))) {
@@ -416,6 +544,13 @@ int wmain(int argc, wchar_t **argv)
         fwprintf(stderr, L"FAIL: deleted Windows file still exists.\n");
         return 1;
     }
+    if (infs_lookup_path(&volume, "/export-tree", &lookup) !=
+        INFS_STATUS_NOT_FOUND) {
+        infs_volume_close(&volume);
+        fwprintf(stderr,
+                 L"FAIL: Shell move-out did not delete the InfiltratorFS source.\n");
+        return 1;
+    }
 
     status = infs_volume_sync(&volume);
     infs_volume_close(&volume);
@@ -426,7 +561,7 @@ int wmain(int argc, wchar_t **argv)
     }
 
     wprintf(L"Windows ProjFS projected-root cross-platform read/write/rename/"
-            L"hardlink/delete qualification: PASS\n");
+            L"hardlink/delete/move-out qualification: PASS\n");
     return 0;
 }
 #endif

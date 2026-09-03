@@ -24,6 +24,7 @@
 
 #define BRIDGE_NOTIFY_PERSIST_MASK ( \
     PRJ_NOTIFY_FILE_OVERWRITTEN | \
+    PRJ_NOTIFY_PRE_RENAME | \
     PRJ_NOTIFY_FILE_HANDLE_CLOSED_FILE_MODIFIED | \
     PRJ_NOTIFY_FILE_HANDLE_CLOSED_FILE_DELETED | \
     PRJ_NOTIFY_FILE_RENAMED | \
@@ -1160,6 +1161,22 @@ static HRESULT CALLBACK bridge_notification(
                  destination_file_name ? destination_file_name : L"");
         fflush(stderr);
     }
+
+    /*
+     * A projected (partial) directory cannot be moved out of a ProjFS
+     * virtualization root by a same-volume rename. Explorer normally tries
+     * that fast path first when the bridge cache and destination both live on
+     * the same NTFS volume. Returning the conventional cross-device result
+     * from PRE_RENAME tells the Shell copy engine to perform the move as
+     * copy-then-delete instead. The later delete notifications remain the
+     * authoritative mutation back to InfiltratorFS.
+     */
+    if (notification == PRJ_NOTIFICATION_PRE_RENAME &&
+        callback_data && callback_data->FilePathName &&
+        *callback_data->FilePathName &&
+        (!destination_file_name || !*destination_file_name))
+        return HRESULT_FROM_WIN32(ERROR_NOT_SAME_DEVICE);
+
     wchar_t current_relative[INFS_PATH_MAX + 1u];
     EnterCriticalSection(&g_bridge.lock);
     int have_current =
