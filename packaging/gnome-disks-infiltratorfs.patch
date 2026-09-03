@@ -28,7 +28,7 @@ diff --git a/src/disks/gdu-create-other-page.c b/src/disks/gdu-create-other-page
                      { N_("No Filesystem"), NULL } };
  
      self = g_object_new (GDU_TYPE_CREATE_OTHER_PAGE, NULL);
-@@ -206,7 +207,15 @@ row_adder (GduCreateOtherPage *page, gboolean tested, gboolean available, gchar
+@@ -206,8 +207,13 @@ row_adder (GduCreateOtherPage *page, gboolean tested, gboolean available, gchar
      {
        gchar *s;
  

@@ -20,7 +20,7 @@ diff --git a/src/disks/gducreateotherpage.c b/src/disks/gducreateotherpage.c
    {"empty", N_("No Filesystem")},
  };
 
-@@ -73,9 +74,18 @@ can_format_cb (UDisksManager *manager,
+@@ -73,8 +74,17 @@ can_format_cb (UDisksManager *manager,
    if (!available)
      {
        g_autofree char *tooltip = NULL;
