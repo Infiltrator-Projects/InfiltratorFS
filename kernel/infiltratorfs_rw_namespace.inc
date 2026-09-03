@@ -1594,6 +1594,8 @@ static int infilfs_ns_evict_unlinked_file(struct inode *inode)
 {
     struct infilfs_inode_info *ii = INFILFS_I(inode);
     struct infilfs_native_pending *pending;
+    struct infilfs_quota_reservation new_project_quota = {0};
+    struct infilfs_quota_reservation old_project_quota = {0};
     struct infilfs_ns_index_change *changes = NULL;
     u32 change_count = 0;
     u32 change_capacity = 0;
@@ -1969,6 +1971,12 @@ static int infilfs_ns_rename(struct user_namespace *idmap,
     ret = infilfs_ns_begin(old_dir->i_sb, &pending);
     if (ret)
         return ret;
+    if (!same_parent) {
+        ret = infilfs_quota_prepare_reparent(
+            source, new_dir, &new_project_quota, &old_project_quota);
+        if (ret)
+            goto finish2;
+    }
     if (destination) {
         ret = infilfs_ns_delete_object(pending, destination, &changes,
                                        &change_count, &change_capacity,
@@ -2036,6 +2044,17 @@ finish:
         ret = infilfs_ns_rebuild_index(pending, changes, change_count);
 finish2:
     ret = infilfs_ns_finish(pending, ret);
+    if (ret) {
+        infilfs_quota_reservation_abort(&new_project_quota);
+        old_project_quota.active = false;
+    } else {
+        infilfs_quota_reservation_finish(
+            &new_project_quota, new_project_quota.bytes,
+            new_project_quota.objects);
+        infilfs_quota_apply_release(
+            &old_project_quota, old_project_quota.bytes,
+            old_project_quota.objects);
+    }
     if (!ret) {
         source_ii->object_block = source_block;
         old_dir_ii->object_block = old_dir_block;
@@ -2067,13 +2086,6 @@ finish2:
         while (new_delta > 0) {
             inc_nlink(new_dir);
             new_delta--;
-        }
-        if (!same_parent) {
-            int quota_ret = infilfs_quota_rebuild_usage(old_dir->i_sb);
-
-            if (quota_ret)
-                pr_err("InfiltratorFS: quota usage rebuild after rename failed: %d\n",
-                       quota_ret);
         }
     }
     kvfree(changes);
