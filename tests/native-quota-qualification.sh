@@ -35,6 +35,26 @@ field() {
     sudo "$quota" get "$@" | awk -F= -v key="$key" '$1 == key { print $2 }'
 }
 
+append_once() {
+    local path="$1"
+    local bytes="$2"
+    sudo python3 - "$path" "$bytes" <<'PY'
+import os
+import sys
+
+path = sys.argv[1]
+size = int(sys.argv[2])
+fd = os.open(path, os.O_WRONLY | os.O_APPEND)
+try:
+    payload = bytes((i * 17 + 11) & 0xff for i in range(size))
+    written = os.write(fd, payload)
+    if written != size:
+        raise OSError(f"short append: {written} of {size}")
+finally:
+    os.close(fd)
+PY
+}
+
 mkdir -p "$mnt"
 truncate -s 512M "$image"
 "$build/mkfs.infilfs" --force -L NativeQuota "$image" >/dev/null
@@ -51,8 +71,8 @@ mounted=1
 # truncate so later growth can consume the returned allowance.
 sudo "$quota" set "$mnt" user 0 6MiB 0 >/dev/null
 sudo dd if=/dev/urandom of="$mnt/user-bytes.bin" bs=1M count=4 status=none
-if sudo dd if=/dev/urandom of="$mnt/user-bytes.bin" bs=1M count=3 \
-        oflag=append conv=notrunc status=none 2>"$work/user-edquot"; then
+if append_once "$mnt/user-bytes.bin" $((3 * 1024 * 1024)) \
+        2>"$work/user-edquot"; then
     echo "user byte quota allowed an over-limit append" >&2
     exit 1
 fi
@@ -112,12 +132,13 @@ test "$(sudo "$quota" project-get "$mnt/project-a/sub" | \
 
 sudo "$quota" set "$mnt" project 42 5MiB 32 >/dev/null
 sudo dd if=/dev/urandom of="$mnt/project-a/data.bin" bs=1M count=4 status=none
-if sudo dd if=/dev/urandom of="$mnt/project-a/data.bin" bs=1M count=2 \
-        oflag=append conv=notrunc status=none 2>"$work/project42-edquot"; then
+if append_once "$mnt/project-a/data.bin" $((2 * 1024 * 1024)) \
+        2>"$work/project42-edquot"; then
     echo "project byte quota allowed an over-limit append" >&2
     exit 1
 fi
 grep -Eqi 'quota|Disk quota exceeded' "$work/project42-edquot"
+test "$(stat -c '%s' "$mnt/project-a/data.bin")" -eq $((4 * 1024 * 1024))
 
 # Reflink growth is logical-byte growth for quota purposes even though physical
 # blocks are shared.
@@ -205,12 +226,13 @@ test "$(sudo "$quota" project-get "$mnt/project-a/sub" | \
         awk -F= '$1 == "effective_project_id" { print $2 }')" -eq 42
 after42="$(field used_bytes "$mnt" project 42)"
 test "$after42" -eq "$before42"
-if sudo dd if=/dev/urandom of="$mnt/project-a/data.bin" bs=1M count=2 \
-        oflag=append conv=notrunc status=none 2>"$work/remount-edquot"; then
+if append_once "$mnt/project-a/data.bin" $((2 * 1024 * 1024)) \
+        2>"$work/remount-edquot"; then
     echo "persisted project quota was not enforced after remount" >&2
     exit 1
 fi
 grep -Eqi 'quota|Disk quota exceeded' "$work/remount-edquot"
+test "$(stat -c '%s' "$mnt/project-a/data.bin")" -eq $((4 * 1024 * 1024))
 
 sudo umount "$mnt"
 mounted=0
