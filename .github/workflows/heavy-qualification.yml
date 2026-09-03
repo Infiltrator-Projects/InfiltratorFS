@@ -25,7 +25,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: heavy-filesystem-qualification-${{ github.ref }}
+  group: heavy-filesystem-qualification-v2-${{ github.ref }}
   # Publication requires qualification of the exact current main commit.
   # Therefore an older heavy run is unusable as soon as main advances, even
   # when the newer commit is itself a Release commit. Cancel stale work so the
