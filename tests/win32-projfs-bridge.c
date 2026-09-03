@@ -5,6 +5,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <shellapi.h>
+#include <shlobj.h>
 #include <shobjidl.h>
 
 #include "infiltratorfs-windows-bridge.h"
@@ -264,20 +265,23 @@ static int run_windows_client(const wchar_t *root_arg)
         memcmp(data, exported_payload, sizeof(exported_payload) - 1u) != 0)
         return fail(L"Hydrate projected export directory before move-out");
 
-    wchar_t temp_root[32768];
-    DWORD temp_length = GetTempPathW(
-        (DWORD)(sizeof(temp_root) / sizeof(temp_root[0])), temp_root);
-    if (!temp_length ||
-        temp_length >= sizeof(temp_root) / sizeof(temp_root[0]))
-        return fail(L"Resolve temporary directory for move-out test");
+    /*
+     * Put the destination outside the virtualization root but on the same NTFS
+     * volume. This reproduces Explorer's troublesome fast-path exactly instead
+     * of accidentally testing an ordinary cross-volume copy.
+     */
+    wchar_t local_appdata[32768];
+    if (SHGetFolderPathW(NULL, CSIDL_LOCAL_APPDATA | CSIDL_FLAG_CREATE,
+                         NULL, SHGFP_TYPE_CURRENT, local_appdata) != S_OK)
+        return fail(L"Resolve same-volume move-out destination");
 
     wchar_t destination_parent[32768];
     wchar_t moved_tree[32768];
     wchar_t moved_child[32768];
     _snwprintf_s(destination_parent,
                  sizeof(destination_parent) / sizeof(destination_parent[0]),
-                 _TRUNCATE, L"%lsInfiltratorFS-ProjFS-MoveOut-%lu",
-                 temp_root, (unsigned long)GetCurrentProcessId());
+                 _TRUNCATE, L"%ls\\InfiltratorFS-ProjFS-MoveOut-%lu",
+                 local_appdata, (unsigned long)GetCurrentProcessId());
     if (!CreateDirectoryW(destination_parent, NULL) &&
         GetLastError() != ERROR_ALREADY_EXISTS)
         return fail(L"Create ordinary Windows move-out destination");
