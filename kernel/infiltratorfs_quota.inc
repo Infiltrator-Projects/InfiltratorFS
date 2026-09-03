@@ -976,3 +976,193 @@ static int infilfs_quota_prepare_identity_change(
     return ret;
 }
 
+
+static int infilfs_quota_reparent_member_locked(
+    struct super_block *sb, const u8 object_id[16],
+    const u8 source_id[16], bool *member_out)
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
+    u8 current[16];
+    unsigned int depth;
+
+    *member_out = false;
+    memcpy(current, object_id, 16);
+    for (depth = 0; memchr_inv(current, 0, 16) && depth < 1024u; ++depth) {
+        struct infilfs_object_header_disk *header;
+        u8 *object;
+        u64 block;
+        u16 type;
+        int ret;
+
+        if (!memcmp(current, source_id, 16)) {
+            *member_out = true;
+            return 0;
+        }
+
+        /*
+         * A nested project root owns itself and everything below it, so that
+         * branch does not move between project-accounting domains when an
+         * ancestor directory is reparented.
+         */
+        if (infilfs_quota_root_match_locked(sbi, current))
+            return 0;
+
+        ret = infilfs_index_lookup(sb, current, &block, &type);
+        if (ret)
+            return ret;
+        if (type != INFILFS_OBJECT_FILE &&
+            type != INFILFS_OBJECT_DIRECTORY &&
+            type != INFILFS_OBJECT_SYMLINK)
+            return -EFSCORRUPTED;
+
+        object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+        if (!object)
+            return -ENOMEM;
+        ret = infilfs_read_object(sb, block, type, current, object);
+        if (ret) {
+            kfree(object);
+            return ret;
+        }
+        header = (struct infilfs_object_header_disk *)object;
+        memcpy(current, header->parent_id, 16);
+        kfree(object);
+    }
+    if (depth >= 1024u)
+        return -EFSCORRUPTED;
+    return 0;
+}
+
+static int infilfs_quota_prepare_reparent(
+    struct inode *source, struct inode *new_dir,
+    struct infilfs_quota_reservation *new_project,
+    struct infilfs_quota_reservation *old_project)
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(source->i_sb);
+    struct infilfs_inode_info *source_ii = INFILFS_I(source);
+    struct infilfs_index_entry_disk *entries = NULL;
+    struct infilfs_quota_subject candidate;
+    u64 bytes = 0;
+    u64 objects = 0;
+    u32 entry_count = 0;
+    u32 old_project_id = 0;
+    u32 new_project_id = 0;
+    u32 i;
+    int ret = 0;
+
+    memset(new_project, 0, sizeof(*new_project));
+    memset(old_project, 0, sizeof(*old_project));
+    old_project->sb = source->i_sb;
+
+    if (!sbi || !source_ii || source->i_sb != new_dir->i_sb ||
+        !sbi->quota_rule_count)
+        return 0;
+
+    mutex_lock(&sbi->quota_lock);
+
+    /*
+     * Moving a project root does not transfer its accounting domain: the
+     * root's project identity travels with the subtree.
+     */
+    if (infilfs_quota_root_match_locked(sbi, source_ii->object_id))
+        goto out;
+
+    ret = infilfs_quota_inode_project_locked(source, &old_project_id);
+    if (ret)
+        goto out;
+    ret = infilfs_quota_inode_project_locked(new_dir, &new_project_id);
+    if (ret)
+        goto out;
+    if (old_project_id == new_project_id)
+        goto out;
+
+    ret = infilfs_ns_index_snapshot(source->i_sb, &entries, &entry_count);
+    if (ret)
+        goto out;
+
+    for (i = 0; i < entry_count; ++i) {
+        struct infilfs_object_header_disk *header;
+        struct infilfs_attributes_disk *attributes;
+        struct infilfs_posix_compat_disk *posix;
+        u8 *object;
+        u16 type = le16_to_cpu(entries[i].object_type);
+        bool member = false;
+        u64 logical;
+
+        if (type != INFILFS_OBJECT_FILE &&
+            type != INFILFS_OBJECT_DIRECTORY &&
+            type != INFILFS_OBJECT_SYMLINK)
+            continue;
+
+        ret = infilfs_quota_reparent_member_locked(
+            source->i_sb, entries[i].object_id,
+            source_ii->object_id, &member);
+        if (ret || !member) {
+            if (ret)
+                break;
+            continue;
+        }
+
+        object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+        if (!object) {
+            ret = -ENOMEM;
+            break;
+        }
+        ret = infilfs_read_object(
+            source->i_sb, le64_to_cpu(entries[i].object_block),
+            type, entries[i].object_id, object);
+        if (ret) {
+            kfree(object);
+            break;
+        }
+        header = (struct infilfs_object_header_disk *)object;
+        ret = infilfs_posix_object_fields(object, &attributes, &posix);
+        if (ret) {
+            kfree(object);
+            break;
+        }
+        (void)header;
+        (void)posix;
+        if (le64_to_cpu(attributes->portable_flags) & INFILFS_ATTR_SYSTEM) {
+            kfree(object);
+            continue;
+        }
+
+        logical = le64_to_cpu(attributes->logical_size);
+        if (bytes > U64_MAX - logical || objects == U64_MAX) {
+            kfree(object);
+            ret = -EOVERFLOW;
+            break;
+        }
+        bytes += logical;
+        objects++;
+        kfree(object);
+    }
+    if (ret)
+        goto out;
+
+    if (new_project_id) {
+        candidate.type = INFILFS_QUOTA_PROJECT;
+        candidate.id = new_project_id;
+        ret = infilfs_quota_reserve_candidates_locked(
+            sbi, source->i_sb, &candidate, 1u,
+            bytes, objects, new_project);
+        if (ret)
+            goto out;
+    }
+
+    if (old_project_id &&
+        infilfs_quota_find_rule_locked(
+            sbi, INFILFS_QUOTA_PROJECT, old_project_id) >= 0) {
+        old_project->subject[0].type = INFILFS_QUOTA_PROJECT;
+        old_project->subject[0].id = old_project_id;
+        old_project->subject_count = 1;
+        old_project->bytes = bytes;
+        old_project->objects = objects;
+        old_project->active = true;
+    }
+
+out:
+    kvfree(entries);
+    mutex_unlock(&sbi->quota_lock);
+    return ret;
+}
