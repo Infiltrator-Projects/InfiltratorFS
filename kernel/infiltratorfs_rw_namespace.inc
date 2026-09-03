@@ -1874,6 +1874,9 @@ static int infilfs_ns_link(struct dentry *old_dentry, struct inode *dir,
     ret = infilfs_ns_validate_name(&dentry->d_name);
     if (ret)
         return ret;
+    ret = infilfs_quota_hardlink_check(inode, dir);
+    if (ret)
+        return ret;
     ret = infilfs_ns_begin(dir->i_sb, &pending);
     if (ret)
         return ret;
@@ -2031,6 +2034,12 @@ static int infilfs_ns_rename(struct user_namespace *idmap,
             return ret;
         if (ret)
             return -EINVAL;
+    }
+    if (!same_parent && source_ii->object_type == INFILFS_OBJECT_FILE &&
+        source->i_nlink > 1) {
+        ret = infilfs_quota_hardlink_check(source, new_dir);
+        if (ret)
+            return ret;
     }
 
     if (!same_parent || destination_sync_delete) {
