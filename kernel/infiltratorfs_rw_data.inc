@@ -976,6 +976,8 @@ static int infilfs_native_pending_begin_locked(
 
     if (pending->commit_failed)
         return -EIO;
+    if (READ_ONCE(sbi->resize_active))
+        return -EBUSY;
     if (pending->active)
         return 0;
     ret = infilfs_rw_tx_begin(pending->sb, &pending->tx);
