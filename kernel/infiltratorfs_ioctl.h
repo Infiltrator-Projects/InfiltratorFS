@@ -28,9 +28,22 @@ struct infilfs_defrag_request {
     __u64 reserved[2];
 };
 
+#define INFILFS_RESIZE_TO_DEVICE_MAX 0x00000001u
+
+struct infilfs_resize_request {
+    __u64 size_bytes;
+    __u64 old_size_bytes;
+    __u64 new_size_bytes;
+    __u32 flags;
+    __u32 reserved0;
+    __u64 reserved[3];
+};
+
 #define INFILFS_IOC_GET_FRAGMENTATION \
     _IOR(INFILFS_IOC_MAGIC, 0x01, struct infilfs_fragmentation_metrics)
 #define INFILFS_IOC_DEFRAG_FILE \
     _IOWR(INFILFS_IOC_MAGIC, 0x02, struct infilfs_defrag_request)
+
+#define INFILFS_IOC_RESIZE_VOLUME _IOWR(INFILFS_IOC_MAGIC, 0x03, struct infilfs_resize_request)
 
 #endif
