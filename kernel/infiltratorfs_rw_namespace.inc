@@ -1933,6 +1933,7 @@ static int infilfs_ns_rename(struct user_namespace *idmap,
     u64 retained_destination_block = 0;
     bool retained_destination = false;
     bool same_parent;
+    bool quota_locked = false;
     int old_delta = 0, new_delta = 0;
     int ret;
 
@@ -1968,11 +1969,18 @@ static int infilfs_ns_rename(struct user_namespace *idmap,
             return -EINVAL;
     }
 
-    ret = infilfs_ns_begin(old_dir->i_sb, &pending);
-    if (ret)
-        return ret;
     if (!same_parent) {
-        ret = infilfs_quota_prepare_reparent(
+        mutex_lock(&INFILFS_SB(old_dir->i_sb)->quota_lock);
+        quota_locked = true;
+    }
+    ret = infilfs_ns_begin(old_dir->i_sb, &pending);
+    if (ret) {
+        if (quota_locked)
+            mutex_unlock(&INFILFS_SB(old_dir->i_sb)->quota_lock);
+        return ret;
+    }
+    if (!same_parent) {
+        ret = infilfs_quota_prepare_reparent_locked(
             source, new_dir, &new_project_quota, &old_project_quota);
         if (ret)
             goto finish2;
@@ -2044,16 +2052,31 @@ finish:
         ret = infilfs_ns_rebuild_index(pending, changes, change_count);
 finish2:
     ret = infilfs_ns_finish(pending, ret);
-    if (ret) {
-        infilfs_quota_reservation_abort(&new_project_quota);
-        old_project_quota.active = false;
-    } else {
-        infilfs_quota_reservation_finish(
-            &new_project_quota, new_project_quota.bytes,
-            new_project_quota.objects);
-        infilfs_quota_apply_release(
-            &old_project_quota, old_project_quota.bytes,
-            old_project_quota.objects);
+    if (quota_locked) {
+        if (ret) {
+            if (new_project_quota.active)
+                infilfs_quota_adjust_locked(
+                    &new_project_quota,
+                    new_project_quota.bytes,
+                    new_project_quota.objects);
+            new_project_quota.active = false;
+            old_project_quota.active = false;
+        } else {
+            /*
+             * Destination usage was reserved before mutation.  Keeping that
+             * reservation commits the transfer; only the old project needs
+             * to be debited after the namespace transaction succeeds.
+             */
+            new_project_quota.active = false;
+            if (old_project_quota.active)
+                infilfs_quota_adjust_locked(
+                    &old_project_quota,
+                    old_project_quota.bytes,
+                    old_project_quota.objects);
+            old_project_quota.active = false;
+        }
+        mutex_unlock(&INFILFS_SB(old_dir->i_sb)->quota_lock);
+        quota_locked = false;
     }
     if (!ret) {
         source_ii->object_block = source_block;
