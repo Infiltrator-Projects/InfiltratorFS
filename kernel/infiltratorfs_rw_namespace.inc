@@ -2068,6 +2068,13 @@ finish2:
             inc_nlink(new_dir);
             new_delta--;
         }
+        if (!same_parent) {
+            int quota_ret = infilfs_quota_rebuild_usage(old_dir->i_sb);
+
+            if (quota_ret)
+                pr_err("InfiltratorFS: quota usage rebuild after rename failed: %d\n",
+                       quota_ret);
+        }
     }
     kvfree(changes);
     return ret;
