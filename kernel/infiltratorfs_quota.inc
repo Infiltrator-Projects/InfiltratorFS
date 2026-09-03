@@ -732,6 +732,17 @@ static int infilfs_quota_domain_usage_locked(
             kfree(object);
             continue;
         }
+        if (type == INFILFS_OBJECT_FILE &&
+            le64_to_cpu(attributes->link_count) > 1u) {
+            /*
+             * A pre-existing multiply-linked inode may have names outside this
+             * subtree. Re-projecting it without proving every alias is inside
+             * the same domain would make accounting path-dependent.
+             */
+            kfree(object);
+            ret = -EXDEV;
+            break;
+        }
 
         logical = le64_to_cpu(attributes->logical_size);
         if (bytes > U64_MAX - logical || objects == U64_MAX) {
@@ -1606,6 +1617,12 @@ static int infilfs_quota_prepare_reparent_locked(
         if (le64_to_cpu(attributes->portable_flags) & INFILFS_ATTR_SYSTEM) {
             kfree(object);
             continue;
+        }
+        if (type == INFILFS_OBJECT_FILE &&
+            le64_to_cpu(attributes->link_count) > 1u) {
+            kfree(object);
+            ret = -EXDEV;
+            break;
         }
 
         logical = le64_to_cpu(attributes->logical_size);
