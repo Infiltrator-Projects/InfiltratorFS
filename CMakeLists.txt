@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.20)
-project(InfiltratorFS VERSION 0.18.39 LANGUAGES C)
-# Release qualification anchor: 0.18.39
+project(InfiltratorFS VERSION 0.18.40 LANGUAGES C)
+# Release qualification anchor: 0.18.40
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)

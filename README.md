@@ -6,7 +6,7 @@
 
 InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem started in 2026. The persistent format and portable core define the filesystem; operating-system adapters translate native APIs and semantics onto the same on-disk objects, transactions, extents, snapshots and integrity model.
 
-**Current source version field:** 0.18.39 (Format 0.17)<br>
+**Current source version:** 0.18.40 (Format 0.17)<br>
 **Latest published release:** v0.18.39, from commit `b1882ba2805ce4b45c14cc0bf757159fc8eb921b`.<br>
 **Published 0.18.39 release focus:** reliable Windows Explorer move-out from the driverless ProjFS bridge, including same-volume folder moves, recursive source removal and dedicated hosted-Windows regression qualification.<br>
 **Development `main`:** contains unreleased work after v0.18.39, including online resize and native user/group/project quota implementation. The latest substantive filesystem source currently has a red mounted quota qualification; later CI-policy-only commits do not turn that into a complete native qualification. See [`docs/QUALIFICATION.md`](docs/QUALIFICATION.md).<br>
