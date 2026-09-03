@@ -1,0 +1,88 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Reconcile resize qualification documentation
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/reconcile-resize-docs.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Remove obsolete quota dependency from resize documentation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          road = Path('docs/ROADMAP.md')
+          text = road.read_text()
+          text = text.replace(
+              "Because quota runs before resize in the mounted workflow,\n"
+              "the resize step was skipped on that exact source. Quotas therefore remain\n"
+              "unchecked below until that failure is corrected and the exact-source mounted\n"
+              "suite passes again.",
+              "That combined workflow therefore did not produce resize evidence for that exact\n"
+              "source. Resize qualification is now independent of quota through the dedicated\n"
+              "`Native resize qualification` workflow; the million-file/1 TiB and endurance\n"
+              "suites remain separate weekly/manual heavy qualification. Quotas remain unchecked\n"
+              "below until their own mounted qualification failure is corrected."
+          )
+          text = text.replace(
+              "The dedicated mounted resize gate must be rerun on the next quota-clean exact source because the latest native workflow stopped at quota qualification before reaching resize.",
+              "Mounted resize qualification now runs independently of the quota gate in the dedicated `Native resize qualification` workflow and does not invoke the million-file/1 TiB or endurance suites."
+          )
+          road.write_text(text)
+
+          qual = Path('docs/QUALIFICATION.md')
+          text = qual.read_text()
+          text = text.replace(
+              "- **Native Linux kernel module** remains the ordinary mounted kernel qualification\n"
+              "  for kernel/core/package changes and explicit Release commits; unrelated\n"
+              "  documentation pushes do not spend kernel-runner time. Its mounted steps are\n"
+              "  ordered gates: a failure in quota qualification prevents later mounted steps,\n"
+              "  including resize, from being claimed for that exact source.\n",
+              "- **Native Linux kernel module** remains the ordinary mounted kernel qualification\n"
+              "  for kernel/core/package changes and explicit Release commits; unrelated\n"
+              "  documentation pushes do not spend kernel-runner time. Its broad mounted steps\n"
+              "  remain ordered gates.\n"
+              "- **Native resize qualification** independently builds the running-kernel module\n"
+              "  and resize userspace tools, then exercises mounted online grow, bounded shrink,\n"
+              "  fail-closed tail protection, remount verification and CLEAN scrub. It is not\n"
+              "  gated by quota and does not invoke million-file/1 TiB or endurance stress.\n"
+          )
+          text = text.replace(
+              "- resize is implemented and has its own mounted qualification harness, but the\n"
+              "  latest exact-source native workflow did not reach that step because quota is\n"
+              "  ordered before resize; and\n",
+              "- resize is implemented and now has an independent mounted qualification workflow,\n"
+              "  so quota failure no longer prevents resize evidence from being collected; and\n"
+          )
+          qual.write_text(text)
+          PY
+          grep -Fq 'Native resize qualification' docs/ROADMAP.md
+          grep -Fq 'does not invoke the million-file/1 TiB or endurance suites' docs/ROADMAP.md
+          grep -Fq '**Native resize qualification** independently' docs/QUALIFICATION.md
+          grep -Fq 'does not invoke million-file/1 TiB or endurance stress' docs/QUALIFICATION.md
+          ! grep -Fq 'next quota-clean exact source' docs/ROADMAP.md
+      - name: Commit documentation reconciliation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'InfiltratorFS CI'
+          git config user.email 'infiltratorfs-ci@users.noreply.github.com'
+          git add docs/ROADMAP.md docs/QUALIFICATION.md
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m 'Docs: decouple resize evidence from quota and heavy stress'
+          git push origin HEAD:main
