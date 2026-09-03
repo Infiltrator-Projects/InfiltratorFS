@@ -1,0 +1,132 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: One-shot documentation audit reconcile
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/one-shot-doc-audit-reconcile.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Reconcile audit wording
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          def replace_exact(path, old, new, count=1):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              found = text.count(old)
+              if found != count:
+                  raise SystemExit(f"{path}: expected {count} occurrence(s), found {found}: {old[:90]!r}")
+              p.write_text(text.replace(old, new), encoding='utf-8')
+
+          def replace_regex(path, pattern, repl, count=1):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              new, n = re.subn(pattern, repl, text, count=count, flags=re.S)
+              if n != count:
+                  raise SystemExit(f"{path}: regex expected {count} replacement(s), got {n}")
+              p.write_text(new, encoding='utf-8')
+
+          replace_regex(
+              'docs/ARCHITECTURE.md',
+              r'The established native surface has exact-source qualification records for million-file/1 TiB scale, near-full mixed-workload endurance, online defragmentation, concurrent allocation reservation, workload/media-aware placement and the migrated read/write namespace surface\. Resize and quota implementations are newer development work\. As of the 2026-09-03 audit, the latest substantive filesystem commit passed portable Build and conformance but failed the mounted quota gate; because quota precedes resize in the native workflow, that exact-source run did not reach the resize step\. See `QUALIFICATION\.md` for the current evidence boundary rather than treating a green portable CI badge as proof of complete mounted qualification\.',
+              'The established native surface has exact-source qualification records for million-file/1 TiB scale, near-full mixed-workload endurance, online defragmentation, concurrent allocation reservation, workload/media-aware placement and the migrated read/write namespace surface. Resize and quota implementations are newer development work. Resize now also has independent exact-source mounted evidence: dedicated run `33818095528` on `c1dd5229e9c42e01ba2d9ab93ef79a6d6521e288` passed online shrink/grow, unsafe-tail shrink refusal, remount verification and CLEAN scrub. The latest substantive quota-bearing source `c5dd0bdb063faff4a94579b8a209b4a1e494191b` passed portable Build/conformance and module/DKMS/running-kernel compilation, but its mounted user/group/project quota qualification timed out after 15 minutes without localizing the exact blocking sub-operation. See `QUALIFICATION.md` for the exact-source evidence boundary rather than treating a green portable CI badge as proof of complete mounted qualification.'
+          )
+
+          replace_regex(
+              'docs/CONFORMANCE.md',
+              r'The established native migrated surface through allocation, recovery, compression, concurrency, placement and defragmentation has exact-source evidence in `QUALIFICATION\.md`\. Current development `main` additionally contains resize and native quota implementations\. As of the 2026-09-03 audit, the latest substantive filesystem commit `c5dd0bdb063faff4a94579b8a209b4a1e494191b` failed the mounted user/group/project quota qualification after compilation and DKMS/running-kernel builds had passed\. The workflow stopped there, so later mounted steps including resize were not executed on that exact source\. Until a later exact-source native workflow passes, documentation must not describe current `main` as completely mounted-qualified\.',
+              'The established native migrated surface through allocation, recovery, compression, concurrency, placement and defragmentation has exact-source evidence in `QUALIFICATION.md`. Current development `main` additionally contains resize and native quota implementations. Resize has independent mounted qualification evidence from dedicated run `33818095528` on exact source `c1dd5229e9c42e01ba2d9ab93ef79a6d6521e288`, covering online shrink/grow, unsafe-tail shrink refusal, remount verification and CLEAN scrub. The latest substantive quota-bearing source `c5dd0bdb063faff4a94579b8a209b4a1e494191b` passed compilation and DKMS/running-kernel builds, then its mounted user/group/project quota qualification timed out after 15 minutes without identifying the exact blocking sub-operation. Until a later exact-source quota/native workflow passes, documentation must not describe current `main` as completely mounted-qualified.'
+          )
+
+          replace_exact(
+              'docs/CONFORMANCE.md',
+              'The Native Linux kernel module workflow builds the out-of-tree driver, reproduces the DKMS source-root invocation and validates module metadata. When a matching hosted running kernel is available it runs the native quota gate first, followed by the ordinary mounted read-write/remount/scrub suite, online resize qualification, media-aware placement and online defragmentation. A failure in an earlier mounted step intentionally prevents later steps from being reported as qualified for that exact source.',
+              'The Native Linux kernel module workflow builds the out-of-tree driver, reproduces the DKMS source-root invocation and validates module metadata. When a matching hosted running kernel is available it runs the native quota gate first, followed by the ordinary mounted read-write/remount/scrub suite, an in-chain resize pass, media-aware placement and online defragmentation. A failure or timeout in an earlier mounted step intentionally prevents later steps from being reported as qualified for that exact source. Resize also has a dedicated `Native resize qualification` workflow so geometry evidence can be collected independently of the quota gate; that independent pass does not imply that the complete Native Linux chain is green.'
+          )
+
+          replace_exact(
+              'docs/QUALIFICATION.md',
+              'the running-kernel module build. It then failed the **Native user group and\nproject quota qualification** step. The ordinary mounted transaction/scrub,\nonline resize, media-profile and defragmentation steps were consequently skipped\nfor that exact source.',
+              'the running-kernel module build. It then entered the **Native user group and\nproject quota qualification** step, which ran until the workflow-enforced\n15-minute timeout and was terminated without emitting a failing sub-operation.\nThe ordinary mounted transaction/scrub, online resize, media-profile and\ndefragmentation steps were consequently skipped for that exact source.'
+          )
+          replace_exact(
+              'docs/QUALIFICATION.md',
+              '- the stronger quota test using one atomic over-limit `write(2)` exposed a red\n  mounted gate and must be treated as a real unresolved qualification result\n  until a later exact-source native run passes;',
+              '- the strengthened quota qualification includes one atomic over-limit\n  `write(2)`, but the available run evidence does **not** identify that operation\n  as the hang point; the mounted quota step timed out and remains unresolved until\n  a later instrumented exact-source run localizes and clears it;'
+          )
+          replace_exact(
+              'docs/QUALIFICATION.md',
+              'remain weekly/manual heavy qualification. The quota failure recorded above remains\na separate unresolved gate and does not invalidate this resize evidence.',
+              'remain weekly/manual heavy qualification. The quota timeout recorded above remains\na separate unresolved gate and does not invalidate this resize evidence.'
+          )
+
+          replace_exact(
+              'docs/ROADMAP.md',
+              'passed portable Build and conformance but failed the native\n**user/group/project quota qualification**; later commits through `c86d64e`\nchanged CI policy only.',
+              'passed portable Build and conformance, but the native\n**user/group/project quota qualification** ran until its 15-minute timeout; the\navailable log does not localize the exact blocking sub-operation. Later commits\nthrough `c86d64e` changed CI policy only.'
+          )
+          replace_exact(
+              'docs/ROADMAP.md',
+              'Quotas remain\nunchecked below until their own mounted qualification failure is corrected.',
+              'Quotas remain\nunchecked below until their mounted qualification timeout is localized, corrected\nand followed by a passing exact-source run.'
+          )
+
+          replace_exact(
+              'README.md',
+              '**Development `main`:** contains unreleased work after v0.18.39, including online resize and native user/group/project quota implementation. The latest substantive filesystem source currently has a red mounted quota qualification; later CI-policy-only commits do not turn that into a complete native qualification. See [`docs/QUALIFICATION.md`](docs/QUALIFICATION.md).<br>',
+              '**Development `main`:** contains unreleased work after v0.18.39, including online resize and native user/group/project quota implementation. Resize has an independent exact-source mounted pass; the latest substantive quota-bearing source still has an unresolved mounted quota qualification timeout. Later CI/documentation-only commits do not turn that into a complete native qualification. See [`docs/QUALIFICATION.md`](docs/QUALIFICATION.md).<br>'
+          )
+          replace_exact(
+              'README.md',
+              'The quota feature is deliberately not described as completed/qualified yet because the latest exact-source mounted quota gate is red; see the roadmap and qualification record for the evidence boundary.',
+              'The quota feature is deliberately not described as completed/qualified yet because the latest exact-source mounted quota gate timed out after 15 minutes without localizing the exact blocking sub-operation; see the roadmap and qualification record for the evidence boundary.'
+          )
+          replace_exact(
+              'README.md',
+              'The latest substantive filesystem development commit `c5dd0bdb063faff4a94579b8a209b4a1e494191b` passed Build and conformance plus module/DKMS/running-kernel compilation but failed the mounted quota qualification. The workflow therefore did not reach its ordinary mounted transaction, resize, media-profile or defragmentation steps. This is the current qualification state until a later exact-source native run passes.',
+              'The latest substantive filesystem development commit `c5dd0bdb063faff4a94579b8a209b4a1e494191b` passed Build and conformance plus module/DKMS/running-kernel compilation, but its mounted quota qualification ran until the 15-minute step timeout without identifying the exact blocking sub-operation. That combined workflow therefore did not reach its ordinary mounted transaction, in-chain resize, media-profile or defragmentation steps. Resize nevertheless has separate exact-source mounted qualification from dedicated run `33818095528`; complete native qualification still requires the quota gate and full chain to pass on a later exact source.'
+          )
+
+          replace_regex(
+              '.github/workflows/release-packages.yml',
+              r'      - name: Require heavy qualification only when this commit triggered it\n.*?(?=      - name: Check out exact tested main commit)',
+              '      - name: Record heavy qualification policy\n        shell: bash\n        run: |\n          set -euo pipefail\n          echo "Heavy filesystem qualification is weekly/manual milestone evidence and is not an automatic per-release prerequisite."\n\n'
+          )
+          PY
+
+          git diff --check
+          grep -Fq 'timed out after 15 minutes without localizing' docs/ARCHITECTURE.md
+          grep -Fq 'dedicated `Native resize qualification` workflow' docs/CONFORMANCE.md
+          grep -Fq '15-minute timeout' docs/QUALIFICATION.md
+          grep -Fq 'qualification timeout is localized' docs/ROADMAP.md
+          grep -Fq 'Resize has an independent exact-source mounted pass' README.md
+          grep -Fq 'Heavy filesystem qualification is weekly/manual milestone evidence' .github/workflows/release-packages.yml
+
+      - name: Commit reconciled documentation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'InfiltratorFS CI'
+          git config user.email 'infiltratorfs-ci@users.noreply.github.com'
+          git add README.md docs/ARCHITECTURE.md docs/CONFORMANCE.md docs/QUALIFICATION.md docs/ROADMAP.md .github/workflows/release-packages.yml
+          git diff --cached --check
+          git commit -m 'Docs: reconcile forensic audit evidence'
+          git push origin HEAD:main
