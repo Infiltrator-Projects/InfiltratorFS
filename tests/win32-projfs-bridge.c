@@ -8,6 +8,7 @@
 
 #include "infiltratorfs-windows-bridge.h"
 #include "infilfs/status.h"
+#include "infilfs/format_volume.h"
 #include "infilfs/volume.h"
 #include "infilfs/win32_io.h"
 
@@ -27,6 +28,47 @@ static int fail(const wchar_t *message)
 {
     fwprintf(stderr, L"FAIL: %ls (Win32=%lu)\n",
              message, (unsigned long)GetLastError());
+    return 1;
+}
+
+static int make_bridge_test_image(wchar_t path[MAX_PATH])
+{
+    wchar_t temp_dir[MAX_PATH];
+    if (!GetTempPathW(MAX_PATH, temp_dir) ||
+        !GetTempFileNameW(temp_dir, L"IFB", 0, path))
+        return 0;
+
+    HANDLE image = CreateFileW(
+        path, GENERIC_READ | GENERIC_WRITE, 0, NULL,
+        CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (image == INVALID_HANDLE_VALUE) {
+        DeleteFileW(path);
+        return 0;
+    }
+    LARGE_INTEGER size;
+    size.QuadPart = 128ll * 1024ll * 1024ll;
+    int okay = SetFilePointerEx(image, size, NULL, FILE_BEGIN) &&
+               SetEndOfFile(image);
+    CloseHandle(image);
+    if (!okay) {
+        DeleteFileW(path);
+        return 0;
+    }
+
+    struct infs_storage storage;
+    memset(&storage, 0, sizeof(storage));
+    infs_status status =
+        infs_win32_storage_open(&storage, path, 1, 0);
+    if (status != INFS_STATUS_OK) {
+        DeleteFileW(path);
+        return 0;
+    }
+    status = infs_format_storage(&storage, "Windows ProjFS CI");
+    infs_storage_close(&storage);
+    if (status != INFS_STATUS_OK) {
+        DeleteFileW(path);
+        return 0;
+    }
     return 1;
 }
 
@@ -308,8 +350,19 @@ int wmain(int argc, wchar_t **argv)
     if (argc == 3 && wcscmp(argv[1], L"--client") == 0)
         return run_windows_client(argv[2]);
 
-    if (argc != 2) {
-        fwprintf(stderr, L"Usage: %ls <writable-infiltratorfs-image>\n",
+    wchar_t self_image[MAX_PATH] = {0};
+    int remove_self_image = 0;
+    PCWSTR image_path = NULL;
+    if (argc == 1) {
+        if (!make_bridge_test_image(self_image))
+            return fail(L"Create self-contained ProjFS test image");
+        image_path = self_image;
+        remove_self_image = 1;
+    } else if (argc == 2) {
+        image_path = argv[1];
+    } else {
+        fwprintf(stderr,
+                 L"Usage: %ls [writable-infiltratorfs-image]\n",
                  argv[0]);
         return 2;
     }
@@ -326,7 +379,7 @@ int wmain(int argc, wchar_t **argv)
     struct infs_storage storage;
     memset(&storage, 0, sizeof(storage));
     infs_status status =
-        infs_win32_storage_open(&storage, argv[1], 1, 0);
+        infs_win32_storage_open(&storage, image_path, 1, 0);
     if (status != INFS_STATUS_OK) {
         fwprintf(stderr, L"Could not open test image: %d\n", (int)status);
         return 1;
@@ -346,7 +399,28 @@ int wmain(int argc, wchar_t **argv)
         &volume, 1, UINT64_C(16) * 1024u * 1024u);
     if (status != INFS_STATUS_OK) {
         infs_volume_close(&volume);
+        if (remove_self_image)
+            DeleteFileW(self_image);
         return 1;
+    }
+
+    struct infs_lookup cross_lookup;
+    if (infs_lookup_path(&volume, "/linux-cross-platform.txt",
+                         &cross_lookup) == INFS_STATUS_NOT_FOUND) {
+        static const char cross_payload[] =
+            "linux-to-windows-cross-platform\n";
+        if (infs_create_file(&volume, "/linux-cross-platform.txt", NULL) !=
+                INFS_STATUS_OK ||
+            infs_write_file_buffered(
+                &volume, "/linux-cross-platform.txt",
+                cross_payload, sizeof(cross_payload) - 1u, 0u) !=
+                (int64_t)(sizeof(cross_payload) - 1u) ||
+            infs_volume_sync(&volume) != INFS_STATUS_OK) {
+            infs_volume_close(&volume);
+            if (remove_self_image)
+                DeleteFileW(self_image);
+            return fail(L"Seed cross-platform bridge qualification file");
+        }
     }
 
     if (infs_create_file(&volume, "/dirty-range.bin", NULL) !=
@@ -517,6 +591,8 @@ int wmain(int argc, wchar_t **argv)
 
     wprintf(L"Windows ProjFS projected-root cross-platform read/write/rename/"
             L"hardlink/delete/move-out qualification: PASS\n");
+    if (remove_self_image)
+        DeleteFileW(self_image);
     return 0;
 }
 #endif
