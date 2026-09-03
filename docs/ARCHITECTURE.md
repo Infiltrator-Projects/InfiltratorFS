@@ -53,16 +53,18 @@ Committed critical metadata is never overwritten as its only valid copy. A trans
 5. rewrites only affected allocation leaves and only affected allocation-tree branch paths plus the root;
 6. issues the required durable flushes;
 7. publishes a generation `N+1` checkpoint containing the new allocation root as the atomic commit point;
-8. replicates that checkpoint to the other physical checkpoint locations; and
+8. replicates that checkpoint to the other recorded physical checkpoint locations; and
 9. reclaims superseded blocks only when no live or retained snapshot generation still owns them.
 
 A crash before publication retains generation `N`; a durable first checkpoint exposes generation `N+1`. Read-only recovery may use surviving replicas. Writable recovery fails closed when it cannot safely establish the newest durable generation.
 
 Operation-level savepoints prevent one failed mutation from discarding earlier acknowledged buffered changes.
 
-## 6. Allocation and file representations
+## 6. Allocation, geometry and file representations
 
 One allocation bit describes one 4096-byte block and remains authoritative free-space state. Format 0.17 persists the live bitset as independently checksummed 32,192-bit leaves beneath a small CoW radix spine, so commit work scales with changed allocation regions rather than total volume size. Open validates the complete allocation tree once and caches its committed page-location layout; normal publication then uses that cache and atomically replaces it only after the primary checkpoint is durable, avoiding an O(tree-size) rediscovery on every fsync. Portable and native Linux writers reconstruct the same simple in-memory bitset and rebuild an index of maximal free extents from it. The free-extent index is an accelerator only: it is never persisted, may be discarded under memory pressure or rollback, and allocator correctness falls back to the authoritative allocation-bit scan if the cache cannot satisfy a request. Native user-data allocation preserves an internal metadata publication reserve, statfs reports active deferred-transaction free space with that reserve excluded from f_bavail, and large write chunks are subdivided adaptively under fragmentation until a single-block allocation is attempted before ENOSPC is returned.
+
+Committed filesystem geometry is distinct from physical backing-device capacity. A volume may therefore occupy fewer blocks than the containing partition or image. Online grow/shrink rebuilds the allocation-tree geometry and, where necessary, checkpoint placement before publishing the new `total_blocks` value through the ordinary checkpoint durability boundary. Freshly formatted secondary checkpoints begin at midpoint/end positions, but after resize readers use the physical checkpoint positions recorded in the committed superblock rather than deriving new positions from backing-device size. Shrink refuses a target when live allocated blocks remain beyond the requested end. The current implementation also refuses resize while retained snapshots exist rather than rewriting historical snapshot ownership geometry.
 
 The native writer divides allocatable space into 64 volatile reservation shards.
 Independent streaming writers search and reserve free data runs under per-shard
@@ -135,13 +137,11 @@ The driver provides native Format 0.17 lookup/enumeration/read support and a bro
 
 The driver reads inline/extents/sparse/paged data directly from the block device and uses the Format 0.17 transaction/integrity model rather than a userspace mount daemon. Full native metadata-tree walks track visited physical blocks so cyclic or multiply aliased graphs fail as corruption instead of multiplying traversal work, and allocation-tree scratch storage is heap-backed rather than consuming multi-kilobyte kernel stack frames. Native reads verify metadata and file-data integrity; durability publication occurs through `fsync`, `syncfs` and global sync paths. Data-run search and reservation can proceed concurrently through the 64-shard volatile allocator, while authoritative metadata mutation and checkpoint publication remain correctness-first serialized by the native write lock. Compound Linux sidecar metadata mutations and xattr readers share a dedicated metadata mutex so readers cannot observe truncate/rewrite intermediates.
 
+Native administration now also includes online filesystem resize plus user/group/project quota machinery. Resize has a dedicated serialization gate around geometry changes. Quotas have persistent hard byte/object rules, live reservation-aware accounting, project-root inheritance and explicit project-domain rules for hard links and subtree moves. User/group/project quota policy is Linux-adapter administration state in the current implementation; it is not the future portable cross-platform ACL/security-object model described in `SECURITY.md`.
+
 The standard `mount.infiltratorfs` helper invokes util-linux `mount -i -t infiltratorfs`, and InfiltratorFS Manager performs the same native mount through its constrained privileged helper. The package/installer builds and installs the module through DKMS.
 
-The migrated native surface is qualified through million-file/1 TiB scale,
-near-full mixed-workload endurance, online defragmentation and concurrent
-allocation reservation. Further Linux work focuses on increasingly workload-
-and media-aware placement rather than restoration of the old FUSE-era feature
-surface.
+The established native surface has exact-source qualification records for million-file/1 TiB scale, near-full mixed-workload endurance, online defragmentation, concurrent allocation reservation, workload/media-aware placement and the migrated read/write namespace surface. Resize and quota implementations are newer development work. As of the 2026-09-03 audit, the latest substantive filesystem commit passed portable Build and conformance but failed the mounted quota gate; because quota precedes resize in the native workflow, that exact-source run did not reach the resize step. See `QUALIFICATION.md` for the current evidence boundary rather than treating a green portable CI badge as proof of complete mounted qualification.
 
 ## 10. Desktop integration
 
@@ -173,4 +173,4 @@ Current source does not yet implement the final portable security-object format.
 
 InfiltratorFS does not use FAT-style linked allocation, a fixed global inode table, a single irreplaceable superblock, unchecked critical metadata or synchronous global deduplication.
 
-Format 0.17 now includes the InfiltratorFS-native adaptive IAC1 v1 per-extent compression design described in `COMPRESSION.md`; LZ4 is retained as a non-default reference/interoperability representation. Future work includes protection classes, portable security objects/ACL mapping, generic named metadata/streams, encryption domains, broader mounted stress and additional native operating-system drivers.
+Format 0.17 now includes the InfiltratorFS-native adaptive IAC1 v1 per-extent compression design described in `COMPRESSION.md`; LZ4 is retained as a non-default reference/interoperability representation. Future work includes deterministic repair, snapshot restore/rollback, protection classes, portable security objects/ACL mapping, generic named metadata/streams, encryption domains, broader mounted stress and additional native operating-system drivers.
