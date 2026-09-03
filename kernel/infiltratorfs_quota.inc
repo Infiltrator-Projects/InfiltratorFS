@@ -1294,19 +1294,6 @@ static void infilfs_quota_apply_release(
     reservation->active = false;
 }
 
-static int infilfs_quota_rebuild_usage(struct super_block *sb)
-{
-    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
-    int ret;
-
-    if (!sbi)
-        return -EINVAL;
-    mutex_lock(&sbi->quota_lock);
-    ret = infilfs_quota_rebuild_usage_locked(sb);
-    mutex_unlock(&sbi->quota_lock);
-    return ret;
-}
-
 static int infilfs_quota_prepare_identity_change(
     struct inode *inode, const struct iattr *attr,
     struct infilfs_quota_reservation *new_quota,
