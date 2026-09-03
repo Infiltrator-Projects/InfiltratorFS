@@ -568,6 +568,380 @@ static int relative_to_local_path(PCWSTR relative,
                         L"%s\\%s", g_bridge.root, relative) >= 0;
 }
 
+struct bridge_walk_node {
+    char *path;
+    wchar_t *relative;
+    struct bridge_walk_node *next;
+};
+
+typedef int (*bridge_namespace_visit_fn)(
+    const char *path, PCWSTR relative,
+    const struct infs_attributes *attributes, void *context);
+
+static char *bridge_strdup_alloc(const char *value)
+{
+    size_t length = strlen(value) + 1u;
+    char *copy = malloc(length);
+    if (copy)
+        memcpy(copy, value, length);
+    return copy;
+}
+
+static wchar_t *bridge_wcsdup_alloc(PCWSTR value)
+{
+    size_t length = wcslen(value) + 1u;
+    wchar_t *copy = malloc(length * sizeof(*copy));
+    if (copy)
+        memcpy(copy, value, length * sizeof(*copy));
+    return copy;
+}
+
+static wchar_t *bridge_join_relative(PCWSTR parent, PCWSTR name)
+{
+    size_t parent_length = parent ? wcslen(parent) : 0u;
+    size_t name_length = wcslen(name);
+    size_t length = parent_length + (parent_length ? 1u : 0u) +
+                    name_length + 1u;
+    if (length > INFS_PATH_MAX + 1u)
+        return NULL;
+
+    wchar_t *joined = malloc(length * sizeof(*joined));
+    if (!joined)
+        return NULL;
+    if (parent_length)
+        _snwprintf_s(joined, length, _TRUNCATE, L"%s\\%s", parent, name);
+    else
+        _snwprintf_s(joined, length, _TRUNCATE, L"%s", name);
+    return joined;
+}
+
+static void bridge_free_walk(struct bridge_walk_node *node)
+{
+    while (node) {
+        struct bridge_walk_node *next = node->next;
+        free(node->path);
+        free(node->relative);
+        free(node);
+        node = next;
+    }
+}
+
+static int bridge_push_walk(struct bridge_walk_node **head,
+                            const char *path, PCWSTR relative)
+{
+    struct bridge_walk_node *node = calloc(1, sizeof(*node));
+    if (!node)
+        return 0;
+    node->path = bridge_strdup_alloc(path);
+    node->relative = bridge_wcsdup_alloc(relative);
+    if (!node->path || !node->relative) {
+        free(node->path);
+        free(node->relative);
+        free(node);
+        return 0;
+    }
+    node->next = *head;
+    *head = node;
+    return 1;
+}
+
+/*
+ * Walk the backing namespace without relying on ProjFS enumeration. This is
+ * used at bridge start to create provider-backed directories as ordinary full
+ * NTFS directories and then to seed file placeholders beneath them.
+ *
+ * ProjFS placeholder directories never become full directories. Full
+ * directories are essential for normal Explorer rename/move semantics, so
+ * directories that originate in InfiltratorFS must be created locally before
+ * the virtualization root starts serving I/O.
+ */
+static int bridge_walk_namespace(bridge_namespace_visit_fn visit,
+                                 void *context)
+{
+    struct bridge_walk_node *stack = NULL;
+    if (!bridge_push_walk(&stack, "/", L""))
+        return 0;
+
+    while (stack) {
+        struct bridge_walk_node *node = stack;
+        stack = node->next;
+        node->next = NULL;
+
+        struct infs_dir_item *items = NULL;
+        size_t count = 0;
+        EnterCriticalSection(&g_bridge.lock);
+        infs_status status =
+            infs_list_dir(g_bridge.volume, node->path, &items, &count);
+        LeaveCriticalSection(&g_bridge.lock);
+        if (status != INFS_STATUS_OK) {
+            bridge_free_walk(node);
+            bridge_free_walk(stack);
+            return 0;
+        }
+
+        for (size_t i = 0; i < count; ++i) {
+            wchar_t wide_name[INFS_NAME_MAX + 1u];
+            if (!MultiByteToWideChar(
+                    CP_UTF8, MB_ERR_INVALID_CHARS, items[i].name, -1,
+                    wide_name,
+                    (int)(sizeof(wide_name) / sizeof(wide_name[0]))))
+                continue;
+
+            char child_path[INFS_PATH_MAX + 1u];
+            if (!make_child_infs_path(node->path, items[i].name,
+                                      child_path))
+                continue;
+
+            wchar_t *child_relative =
+                bridge_join_relative(node->relative, wide_name);
+            if (!child_relative) {
+                infs_free_dir_items(items);
+                bridge_free_walk(node);
+                bridge_free_walk(stack);
+                return 0;
+            }
+
+            struct infs_attributes attributes;
+            EnterCriticalSection(&g_bridge.lock);
+            status = infs_get_attributes(
+                g_bridge.volume, child_path, &attributes);
+            LeaveCriticalSection(&g_bridge.lock);
+            if (status != INFS_STATUS_OK) {
+                free(child_relative);
+                infs_free_dir_items(items);
+                bridge_free_walk(node);
+                bridge_free_walk(stack);
+                return 0;
+            }
+
+            if (!visit(child_path, child_relative, &attributes, context)) {
+                free(child_relative);
+                infs_free_dir_items(items);
+                bridge_free_walk(node);
+                bridge_free_walk(stack);
+                return 0;
+            }
+
+            if (attributes.object_type == INFS_OBJECT_DIRECTORY) {
+                if (!bridge_push_walk(&stack, child_path, child_relative)) {
+                    free(child_relative);
+                    infs_free_dir_items(items);
+                    bridge_free_walk(node);
+                    bridge_free_walk(stack);
+                    return 0;
+                }
+            }
+            free(child_relative);
+        }
+
+        infs_free_dir_items(items);
+        bridge_free_walk(node);
+    }
+    return 1;
+}
+
+static int bridge_prepare_full_directory(
+    const char *path, PCWSTR relative,
+    const struct infs_attributes *attributes, void *context)
+{
+    (void)path;
+    (void)context;
+    if (attributes->object_type != INFS_OBJECT_DIRECTORY)
+        return 1;
+
+    wchar_t local[BRIDGE_WINDOWS_PATH_CAP];
+    if (!relative_to_local_path(relative, local))
+        return 0;
+    if (!CreateDirectoryW(local, NULL) &&
+        GetLastError() != ERROR_ALREADY_EXISTS)
+        return 0;
+
+    HANDLE directory = CreateFileW(
+        local, FILE_WRITE_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+    if (directory != INVALID_HANDLE_VALUE) {
+        FILETIME created, accessed, modified, changed;
+        created.dwLowDateTime =
+            (DWORD)unix_ns_to_filetime(attributes->birth_time_ns);
+        created.dwHighDateTime =
+            (DWORD)((UINT64)unix_ns_to_filetime(attributes->birth_time_ns) >> 32);
+        accessed.dwLowDateTime =
+            (DWORD)unix_ns_to_filetime(attributes->access_time_ns);
+        accessed.dwHighDateTime =
+            (DWORD)((UINT64)unix_ns_to_filetime(attributes->access_time_ns) >> 32);
+        modified.dwLowDateTime =
+            (DWORD)unix_ns_to_filetime(attributes->modification_time_ns);
+        modified.dwHighDateTime =
+            (DWORD)((UINT64)unix_ns_to_filetime(attributes->modification_time_ns) >> 32);
+        changed.dwLowDateTime =
+            (DWORD)unix_ns_to_filetime(attributes->change_time_ns);
+        changed.dwHighDateTime =
+            (DWORD)((UINT64)unix_ns_to_filetime(attributes->change_time_ns) >> 32);
+        (void)changed;
+        SetFileTime(directory, &created, &accessed, &modified);
+        CloseHandle(directory);
+    }
+    return 1;
+}
+
+static int bridge_seed_file_placeholder(
+    const char *path, PCWSTR relative,
+    const struct infs_attributes *attributes, void *context)
+{
+    (void)path;
+    (void)context;
+    if (attributes->object_type == INFS_OBJECT_DIRECTORY)
+        return 1;
+
+    PRJ_PLACEHOLDER_INFO placeholder;
+    memset(&placeholder, 0, sizeof(placeholder));
+    attributes_to_basic(attributes, &placeholder.FileBasicInfo);
+
+    EnterCriticalSection(&g_bridge.lock);
+    struct bridge_identity *identity =
+        bridge_remember_identity(attributes->object_id, relative);
+    if (identity)
+        bridge_fill_version(attributes, identity->token,
+                            &placeholder.VersionInfo);
+    LeaveCriticalSection(&g_bridge.lock);
+    if (!identity)
+        return 0;
+
+    HRESULT hr = g_projfs.write_placeholder(
+        g_bridge.context, relative, &placeholder, sizeof(placeholder));
+    return SUCCEEDED(hr) ||
+           hr == HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS);
+}
+
+static int bridge_force_file_full(PCWSTR path)
+{
+    DWORD original = GetFileAttributesW(path);
+    if (original == INVALID_FILE_ATTRIBUTES)
+        return 0;
+
+    int restore_readonly = (original & FILE_ATTRIBUTE_READONLY) != 0;
+    if (restore_readonly &&
+        !SetFileAttributesW(path, original & ~FILE_ATTRIBUTE_READONLY))
+        return 0;
+
+    HANDLE file = CreateFileW(
+        path, GENERIC_READ | GENERIC_WRITE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    int okay = file != INVALID_HANDLE_VALUE;
+    if (file != INVALID_HANDLE_VALUE)
+        CloseHandle(file);
+
+    if (restore_readonly)
+        SetFileAttributesW(path, original);
+    return okay;
+}
+
+/*
+ * Detaching a provider-backed directory from the virtualization root requires
+ * all descendant file placeholders to become full files first. The directories
+ * themselves were deliberately created as full directories at bridge startup.
+ * Converting files on PRE_RENAME lets NTFS perform an ordinary same-volume
+ * rename out of the projection while preserving every byte.
+ */
+static int bridge_make_local_tree_full(PCWSTR relative, int is_directory)
+{
+    wchar_t local[BRIDGE_WINDOWS_PATH_CAP];
+    if (!relative_to_local_path(relative, local))
+        return 0;
+    if (!is_directory)
+        return bridge_force_file_full(local);
+
+    struct bridge_walk_node *stack = NULL;
+    struct bridge_walk_node *root = calloc(1, sizeof(*root));
+    if (!root)
+        return 0;
+    root->relative = bridge_wcsdup_alloc(local);
+    if (!root->relative) {
+        free(root);
+        return 0;
+    }
+    stack = root;
+
+    while (stack) {
+        struct bridge_walk_node *node = stack;
+        stack = node->next;
+        node->next = NULL;
+
+        size_t base_length = wcslen(node->relative);
+        wchar_t *pattern = malloc(
+            (base_length + 3u) * sizeof(*pattern));
+        if (!pattern) {
+            bridge_free_walk(node);
+            bridge_free_walk(stack);
+            return 0;
+        }
+        _snwprintf_s(pattern, base_length + 3u, _TRUNCATE,
+                     L"%s\\*", node->relative);
+
+        WIN32_FIND_DATAW data;
+        HANDLE find = FindFirstFileW(pattern, &data);
+        free(pattern);
+        if (find == INVALID_HANDLE_VALUE) {
+            DWORD error = GetLastError();
+            bridge_free_walk(node);
+            if (error == ERROR_FILE_NOT_FOUND)
+                continue;
+            bridge_free_walk(stack);
+            return 0;
+        }
+
+        int okay = 1;
+        do {
+            if (wcscmp(data.cFileName, L".") == 0 ||
+                wcscmp(data.cFileName, L"..") == 0)
+                continue;
+            size_t name_length = wcslen(data.cFileName);
+            wchar_t *child = malloc(
+                (base_length + 1u + name_length + 1u) *
+                sizeof(*child));
+            if (!child) {
+                okay = 0;
+                break;
+            }
+            _snwprintf_s(child,
+                         base_length + 1u + name_length + 1u,
+                         _TRUNCATE, L"%s\\%s",
+                         node->relative, data.cFileName);
+            if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+                struct bridge_walk_node *next =
+                    calloc(1, sizeof(*next));
+                if (!next) {
+                    free(child);
+                    okay = 0;
+                    break;
+                }
+                next->relative = child;
+                next->next = stack;
+                stack = next;
+            } else {
+                if (!bridge_force_file_full(child))
+                    okay = 0;
+                free(child);
+                if (!okay)
+                    break;
+            }
+        } while (FindNextFileW(find, &data));
+
+        DWORD error = GetLastError();
+        FindClose(find);
+        bridge_free_walk(node);
+        if (!okay ||
+            (error != ERROR_NO_MORE_FILES &&
+             error != ERROR_SUCCESS)) {
+            bridge_free_walk(stack);
+            return 0;
+        }
+    }
+    return 1;
+}
+
 static HRESULT status_to_hresult(infs_status status)
 {
     switch (status) {
@@ -1069,10 +1443,53 @@ static infs_status bridge_sync_local_file(PCWSTR relative)
     return status;
 }
 
+static infs_status bridge_delete_tree(const char *path)
+{
+    struct infs_attributes attributes;
+    infs_status status =
+        infs_get_attributes(g_bridge.volume, path, &attributes);
+    if (status == INFS_STATUS_NOT_FOUND)
+        return INFS_STATUS_OK;
+    if (status != INFS_STATUS_OK)
+        return status;
+    if (attributes.object_type != INFS_OBJECT_DIRECTORY)
+        return infs_unlink(g_bridge.volume, path);
+
+    struct infs_dir_item *items = NULL;
+    size_t count = 0;
+    status = infs_list_dir(g_bridge.volume, path, &items, &count);
+    if (status != INFS_STATUS_OK)
+        return status;
+
+    for (size_t i = 0; i < count; ++i) {
+        size_t path_length = strlen(path);
+        size_t name_length = strlen(items[i].name);
+        size_t needed = path_length + (strcmp(path, "/") == 0 ? 0u : 1u) +
+                        name_length + 2u;
+        char *child = malloc(needed);
+        if (!child) {
+            status = INFS_STATUS_NO_MEMORY;
+            break;
+        }
+        if (strcmp(path, "/") == 0)
+            snprintf(child, needed, "/%s", items[i].name);
+        else
+            snprintf(child, needed, "%s/%s", path, items[i].name);
+        status = bridge_delete_tree(child);
+        free(child);
+        if (status != INFS_STATUS_OK)
+            break;
+    }
+    infs_free_dir_items(items);
+    if (status != INFS_STATUS_OK)
+        return status;
+    return infs_rmdir(g_bridge.volume, path);
+}
+
 static infs_status bridge_delete_path(const char *path, int is_directory)
 {
     infs_status status = is_directory ?
-        infs_rmdir(g_bridge.volume, path) :
+        bridge_delete_tree(path) :
         infs_unlink(g_bridge.volume, path);
     return status == INFS_STATUS_NOT_FOUND ? INFS_STATUS_OK : status;
 }
@@ -1162,21 +1579,6 @@ static HRESULT CALLBACK bridge_notification(
         fflush(stderr);
     }
 
-    /*
-     * A projected (partial) directory cannot be moved out of a ProjFS
-     * virtualization root by a same-volume rename. Explorer normally tries
-     * that fast path first when the bridge cache and destination both live on
-     * the same NTFS volume. Returning the conventional cross-device result
-     * from PRE_RENAME tells the Shell copy engine to perform the move as
-     * copy-then-delete instead. The later delete notifications remain the
-     * authoritative mutation back to InfiltratorFS.
-     */
-    if (notification == PRJ_NOTIFICATION_PRE_RENAME &&
-        callback_data && callback_data->FilePathName &&
-        *callback_data->FilePathName &&
-        (!destination_file_name || !*destination_file_name))
-        return HRESULT_FROM_WIN32(ERROR_NOT_SAME_DEVICE);
-
     wchar_t current_relative[INFS_PATH_MAX + 1u];
     EnterCriticalSection(&g_bridge.lock);
     int have_current =
@@ -1194,6 +1596,24 @@ static HRESULT CALLBACK bridge_notification(
     infs_status status = INFS_STATUS_OK;
     EnterCriticalSection(&g_bridge.lock);
     switch (notification) {
+    case PRJ_NOTIFICATION_PRE_RENAME:
+        /*
+         * If an InfiltratorFS-backed item is leaving the projection, detach
+         * its local cache from ProjFS before NTFS performs the rename.
+         */
+        if (callback_data->FilePathName &&
+            *callback_data->FilePathName &&
+            (!destination_file_name || !*destination_file_name)) {
+            LeaveCriticalSection(&g_bridge.lock);
+            if (!bridge_make_local_tree_full(
+                    have_current ? current_relative :
+                                   callback_data->FilePathName,
+                    is_directory ? 1 : 0))
+                return HRESULT_FROM_WIN32(ERROR_IO_DEVICE);
+            return S_OK;
+        }
+        break;
+
     case PRJ_NOTIFICATION_NEW_FILE_CREATED:
         status = bridge_create_empty(source, is_directory ? 1 : 0);
         if (status == INFS_STATUS_OK)
@@ -1462,6 +1882,21 @@ int infs_windows_bridge_start(struct infs_volume *volume, HWND owner,
         return 0;
     }
 
+    /*
+     * Seed all backing-store directories as full NTFS directories before the
+     * root becomes a ProjFS instance. A directory created as a ProjFS
+     * placeholder can never become full later, which breaks ordinary Explorer
+     * moves of directories that originated in InfiltratorFS.
+     */
+    if (!bridge_walk_namespace(bridge_prepare_full_directory, NULL)) {
+        infs_windows_bridge_stop();
+        MessageBoxW(owner,
+                    L"Could not materialize the InfiltratorFS directory namespace.",
+                    L"InfiltratorFS Windows Bridge",
+                    MB_OK | MB_ICONERROR);
+        return 0;
+    }
+
     GUID instance_id;
     if (FAILED(CoCreateGuid(&instance_id))) {
         infs_windows_bridge_stop();
@@ -1503,6 +1938,20 @@ int infs_windows_bridge_start(struct infs_volume *volume, HWND owner,
     if (FAILED(hr)) {
         show_bridge_error(owner, L"Start Projected File System provider", hr);
         infs_windows_bridge_stop();
+        return 0;
+    }
+
+    /*
+     * Full directories are not enumerated by the provider, so seed every
+     * provider-backed file as a placeholder beneath those full directories.
+     * File data remains lazy and is supplied only when Windows hydrates it.
+     */
+    if (!bridge_walk_namespace(bridge_seed_file_placeholder, NULL)) {
+        infs_windows_bridge_stop();
+        MessageBoxW(owner,
+                    L"Could not materialize the InfiltratorFS file namespace.",
+                    L"InfiltratorFS Windows Bridge",
+                    MB_OK | MB_ICONERROR);
         return 0;
     }
 
