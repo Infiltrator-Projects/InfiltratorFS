@@ -157,10 +157,11 @@ reflinks, hard links, rename/reparenting and remount reconstruction. The latest
 substantive filesystem commit, `c5dd0bdb063faff4a94579b8a209b4a1e494191b`,
 passed portable Build and conformance but failed the native
 **user/group/project quota qualification**; later commits through `c86d64e`
-changed CI policy only. Because quota runs before resize in the mounted workflow,
-the resize step was skipped on that exact source. Quotas therefore remain
-unchecked below until that failure is corrected and the exact-source mounted
-suite passes again.
+changed CI policy only. That combined workflow therefore did not produce resize evidence for that exact
+source. Resize qualification is now independent of quota through the dedicated
+`Native resize qualification` workflow; the million-file/1 TiB and endurance
+suites remain separate weekly/manual heavy qualification. Quotas remain unchecked
+below until their own mounted qualification failure is corrected.
 
 ## Scale and performance
 
@@ -175,7 +176,7 @@ suite passes again.
 
 ## Administration and recovery
 
-- [x] Filesystem resize support, including online grow and safely bounded shrink. Current implementation separates committed filesystem geometry from backing-device capacity, rebuilds allocation-tree geometry transactionally, preserves valid checkpoint locations across grow, refuses shrink across live allocations, and currently refuses resize while retained snapshots exist. The dedicated mounted resize gate must be rerun on the next quota-clean exact source because the latest native workflow stopped at quota qualification before reaching resize.
+- [x] Filesystem resize support, including online grow and safely bounded shrink. Current implementation separates committed filesystem geometry from backing-device capacity, rebuilds allocation-tree geometry transactionally, preserves valid checkpoint locations across grow, refuses shrink across live allocations, and currently refuses resize while retained snapshots exist. Mounted resize qualification now runs independently of the quota gate in the dedicated `Native resize qualification` workflow and does not invoke the million-file/1 TiB or endurance suites.
 - [ ] Native user, group and project/directory-tree quotas. The implementation is present in `main`, including persistent rules, live accounting, byte/object limits, project-root inheritance, reflink growth, hard-link/project-domain policy, rename/reparenting accounting and remount reconstruction; this remains unchecked because the latest exact-source mounted quota qualification is red.
 - [ ] Deterministic repair-capable filesystem checker for corruption that can be repaired unambiguously, while retaining fail-closed behaviour where correctness cannot be established.
 - [ ] Snapshot restore and rollback for selected files/directories and whole-volume recovery to a retained generation.

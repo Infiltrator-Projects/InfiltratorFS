@@ -19,9 +19,12 @@ InfiltratorFS deliberately separates fast regression from expensive qualificatio
   scheduled weekly and explicit manual comprehensive runs.
 - **Native Linux kernel module** remains the ordinary mounted kernel qualification
   for kernel/core/package changes and explicit Release commits; unrelated
-  documentation pushes do not spend kernel-runner time. Its mounted steps are
-  ordered gates: a failure in quota qualification prevents later mounted steps,
-  including resize, from being claimed for that exact source.
+  documentation pushes do not spend kernel-runner time. Its broad mounted steps
+  remain ordered gates.
+- **Native resize qualification** independently builds the running-kernel module
+  and resize userspace tools, then exercises mounted online grow, bounded shrink,
+  fail-closed tail protection, remount verification and CLEAN scrub. It is not
+  gated by quota and does not invoke million-file/1 TiB or endurance stress.
 - **Heavy filesystem qualification** owns the million-file/1 TiB and near-full
   mixed-workload endurance suites. Since commit
   `c86d64e012b3ae2cbe4e9816a9bf854dd7bbb38e`, it is milestone/regression
@@ -66,9 +69,8 @@ That result means:
 - the stronger quota test using one atomic over-limit `write(2)` exposed a red
   mounted gate and must be treated as a real unresolved qualification result
   until a later exact-source native run passes;
-- resize is implemented and has its own mounted qualification harness, but the
-  latest exact-source native workflow did not reach that step because quota is
-  ordered before resize; and
+- resize is implemented and now has an independent mounted qualification workflow,
+  so quota failure no longer prevents resize evidence from being collected; and
 - a green Build and conformance status on a later CI-only commit must not be
   described as a green complete native filesystem qualification.
 
