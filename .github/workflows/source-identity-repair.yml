@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Repair development source identity
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/source-identity-repair.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    name: Align CMake and README development version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Set unreleased development source to 0.18.40
+        shell: bash
+        run: |
+          set -euo pipefail
+          sed -i \
+            's/project(InfiltratorFS VERSION 0\.18\.39 LANGUAGES C)/project(InfiltratorFS VERSION 0.18.40 LANGUAGES C)/' \
+            CMakeLists.txt
+          sed -i \
+            's/# Release qualification anchor: 0\.18\.39/# Release qualification anchor: 0.18.40/' \
+            CMakeLists.txt
+          sed -i \
+            's/^\*\*Current source version field:\*\* 0\.18\.39 (Format 0\.17)<br>$/\*\*Current source version:\*\* 0.18.40 (Format 0.17)<br>/' \
+            README.md
+
+          grep -Fqx 'project(InfiltratorFS VERSION 0.18.40 LANGUAGES C)' CMakeLists.txt
+          grep -Fqx '# Release qualification anchor: 0.18.40' CMakeLists.txt
+          grep -Fqx '**Current source version:** 0.18.40 (Format 0.17)<br>' README.md
+          grep -Fqx '**Latest published release:** v0.18.39, from commit `b1882ba2805ce4b45c14cc0bf757159fc8eb921b`.<br>' README.md
+
+      - name: Commit source identity repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- CMakeLists.txt README.md; then
+            echo 'Source identity is already repaired.'
+            exit 0
+          fi
+          git config user.name 'InfiltratorFS CI'
+          git config user.email 'infiltratorfs-ci@users.noreply.github.com'
+          git add CMakeLists.txt README.md
+          git commit -m 'Build: identify unreleased 0.18.40 development source'
+          git push origin HEAD:main
