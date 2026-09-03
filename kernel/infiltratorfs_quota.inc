@@ -1646,3 +1646,33 @@ out:
     kvfree(entries);
     return ret;
 }
+
+static int infilfs_quota_hardlink_check(
+    struct inode *source, struct inode *destination_dir)
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(source->i_sb);
+    u32 source_project = 0;
+    u32 destination_project = 0;
+    int ret;
+
+    if (!sbi || source->i_sb != destination_dir->i_sb ||
+        !sbi->project_root_count)
+        return 0;
+
+    mutex_lock(&sbi->quota_lock);
+    ret = infilfs_quota_inode_project_locked(source, &source_project);
+    if (!ret)
+        ret = infilfs_quota_inode_project_locked(
+            destination_dir, &destination_project);
+    mutex_unlock(&sbi->quota_lock);
+    if (ret)
+        return ret;
+
+    /*
+     * Project quotas are inode/object domains. A multiply-linked inode cannot
+     * simultaneously inherit two different directory-tree projects without
+     * ambiguous accounting, so match native project-quota semantics and reject
+     * cross-project links/moves.
+     */
+    return source_project == destination_project ? 0 : -EXDEV;
+}
