@@ -55,6 +55,9 @@ static int infilfs_quota_prepare_reparent_locked(
 static void infilfs_quota_adjust_locked(
     struct infilfs_quota_reservation *reservation,
     u64 bytes, u64 objects);
+static bool infilfs_quota_remove_project_root_locked(
+    struct super_block *sb, const u8 object_id[16]);
+static int infilfs_quota_persist_locked(struct super_block *sb);
 static int infilfs_parallel_allocator_mount_init(struct super_block *sb);
 static void infilfs_parallel_allocator_mount_destroy(struct super_block *sb);
 static int infilfs_parallel_tx_claim(struct infilfs_rw_tx *tx, u64 start,
