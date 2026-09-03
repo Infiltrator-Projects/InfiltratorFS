@@ -74,6 +74,24 @@ That result means:
 - a green Build and conformance status on a later CI-only commit must not be
   described as a green complete native filesystem qualification.
 
+## 2026-09-03 independent mounted resize qualification
+
+Exact source commit `c1dd5229e9c42e01ba2d9ab93ef79a6d6521e288` passed dedicated `Native resize qualification`
+workflow run `33818095528`. The hosted Ubuntu running-kernel headers were available;
+the resize userspace tools and exact running-kernel module built successfully. The
+mounted qualification then shrank a 256 MiB filesystem to 128 MiB, verified the
+committed geometry, wrote and hash-recorded live data, grew online back to the
+256 MiB backing capacity, wrote and hash-recorded additional data, and refused a
+64 MiB shrink after a 96 MiB incompressible tail occupant placed live allocation
+beyond the requested boundary. Geometry remained unchanged after the refused
+shrink. The image then unmounted, scrubbed CLEAN, remounted read-only and both data
+hashes matched.
+
+This dedicated workflow is independent of the native quota gate. It does **not**
+run the million-file/1 TiB scale suite or the near-full/endurance suite; those
+remain weekly/manual heavy qualification. The quota failure recorded above remains
+a separate unresolved gate and does not invalidate this resize evidence.
+
 ## 2026-09-01 Windows bridge performance and manager qualification
 
 Development commit `ba1b06561de13dfa434b5cebf2e5797022d83572`
