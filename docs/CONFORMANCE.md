@@ -3,6 +3,8 @@
 
 Current source accepts exactly on-disk Format 0.17. Pre-1.0 builds do not promise compatibility with earlier development formats.
 
+Conformance requirements describe the behavior that a completed implementation must satisfy. A requirement appearing here does not by itself assert that the latest development `main` has passed every corresponding runtime gate; exact-source evidence is recorded separately in `QUALIFICATION.md`.
+
 ## Persistent representation
 
 A conforming implementation preserves:
@@ -10,7 +12,7 @@ A conforming implementation preserves:
 - 4096-byte little-endian filesystem blocks;
 - exact Format 0.17 major/minor identity;
 - the packed structure sizes and offsets declared by the public format headers;
-- three physical checkpoint locations;
+- three recorded physical checkpoint locations, initially placed at block 0, `floor(N/2)` and `N-1` by the formatter, with later online-resize preservation or relocation governed by the committed checkpoint geometry rather than recomputation from backing-device size;
 - CRC64-ECMA protection for checkpoints and metadata;
 - SHA-256 protection for logical file data;
 - nonzero 128-bit filesystem and object identities;
@@ -68,11 +70,15 @@ If durability of the first checkpoint publication cannot be established, further
 
 Operation-level savepoints preserve earlier acknowledged buffered mutations when a later operation fails.
 
+Online geometry changes use the same fail-closed publication model. The committed filesystem size may be smaller than the physical backing device. Grow/shrink must publish replacement allocation geometry and any checkpoint relocation atomically; failed shrink may not discard live allocations beyond the requested new boundary.
+
 ## Snapshots
 
 Each named snapshot identifies an immutable earlier generation, root, object index and retained allocation image. Superseded blocks remain unavailable while any retained generation references them. Deleting a snapshot reclaims only blocks absent from both the live graph and every remaining snapshot graph.
 
 Snapshot lookup, stat, enumeration, read and readlink operations are read-only. Live writes must not mutate or reclaim blocks still owned by a retained snapshot generation.
+
+The current resize implementation deliberately refuses geometry change while retained snapshots exist. Snapshot-aware geometry migration is not implied by Format 0.17 conformance merely because live-volume resize exists.
 
 ## Scrub and forensic behavior
 
@@ -112,6 +118,9 @@ Native Linux qualification requires:
 - extent-backed non-zero writes and byte-identical live/remount readback;
 - metadata CRC64 and file-data SHA-256 validation on native reads;
 - transaction publication through `fsync`/`syncfs`/sync durability boundaries;
+- online grow and bounded shrink with committed filesystem geometry independent of backing-device capacity, transactional allocation-tree rebuild, safe checkpoint-position handling, remount/scrub verification, refusal to shrink across live tail allocations and explicit refusal while retained snapshots exist;
+- native hard byte and object quotas for user, group and project subjects, persistent rule reconstruction across remount, project-root inheritance, accounting updates for create/write/truncate/reflink/chown/unlink/rename/reparent operations, and fail-before-mutation behavior for over-limit atomic writes;
+- project-domain hard-link policy that prevents one multiply linked object from acquiring ambiguous project accounting through cross-domain link or subtree movement;
 - bounded multi-process contention across same-directory create/rename/link/unlink, shared-inode disjoint writes and fsync, same-inode xattr readers/writers, stable concurrent reads and open-unlink writers without transient structural errors;
 - mounted scale stress with at least 1,000,000 distinct regular files across a bounded directory fan-out, 100,000 unlink/recreate operations, durable read-only remount verification and a CLEAN offline scrub;
 - mounted large-volume stress on a 1 TiB sparse loop-backed Format 0.17 volume, including non-zero extent I/O, thousands of namespace objects, a 900 GiB sparse high-offset file, read-only remount verification and a CLEAN offline scrub;
@@ -126,12 +135,7 @@ Native Linux qualification requires:
 - clean unmount followed by userspace scrub; and
 - refusal to silently substitute a non-native filesystem path.
 
-Current source qualifies this native migrated surface, including concurrent
-64-shard data-run reservation before the serialized metadata transaction,
-volatile workload-aware placement for sequential, random-CoW and direct sparse
-writes, and volatile media-aware rotational/non-rotational placement. Further
-development work can build on this allocation policy without changing Format
-0.17; no FUSE runtime path is reintroduced.
+The established native migrated surface through allocation, recovery, compression, concurrency, placement and defragmentation has exact-source evidence in `QUALIFICATION.md`. Current development `main` additionally contains resize and native quota implementations. As of the 2026-09-03 audit, the latest substantive filesystem commit `c5dd0bdb063faff4a94579b8a209b4a1e494191b` failed the mounted user/group/project quota qualification after compilation and DKMS/running-kernel builds had passed. The workflow stopped there, so later mounted steps including resize were not executed on that exact source. Until a later exact-source native workflow passes, documentation must not describe current `main` as completely mounted-qualified.
 
 `mount.infiltratorfs` and InfiltratorFS Manager must produce `FSTYPE=infiltratorfs`. The Manager privileged helper rejects a mounted result with any other filesystem type.
 
@@ -171,12 +175,14 @@ The main Build and conformance workflow runs the portable/core suite under GCC, 
 
 Portable smoke qualification requires a 1023-byte UTF-8 component to succeed and a 1024-byte component to be rejected. Native mounted qualification additionally verifies that `statfs` advertises the 1023-byte boundary and repeats create/read/enumerate/reject through the Linux VFS.
 
-The Native Linux kernel module workflow builds the out-of-tree driver, reproduces the DKMS source-root invocation, validates module metadata and performs mounted snapshot, all-namespace xattr, special-node, mmap, namespace, multi-process locking/concurrency, allocation-reporting, 4,000-write random I/O, repeated-fsync, bounded near-full fragmentation/refill allocation, crash-orphan recovery, checkpoint fallback/healing, malicious metadata-alias rejection with an explicit mount timeout, remount and scrub qualification when the hosted runner exposes matching running-kernel headers.
+The Native Linux kernel module workflow builds the out-of-tree driver, reproduces the DKMS source-root invocation and validates module metadata. When a matching hosted running kernel is available it runs the native quota gate first, followed by the ordinary mounted read-write/remount/scrub suite, online resize qualification, media-aware placement and online defragmentation. A failure in an earlier mounted step intentionally prevents later steps from being reported as qualified for that exact source.
 
-A dedicated scale-stress job runs only after the ordinary native kernel qualification succeeds. It creates one million distinct files, churns 100,000 of them through unlink/recreate, verifies the durable population after a read-only remount, requires a CLEAN scrub, and separately mounts and qualifies a 1 TiB sparse loop-backed volume. The workload emits `[SCALE-PERF]` telemetry so scale regressions are observable rather than reduced to a binary pass/fail.
+The **Heavy filesystem qualification** workflow is milestone/regression evidence rather than ordinary per-push CI. Its million-file/1 TiB scale job and near-full five-minute endurance job run on the weekly schedule or by explicit manual dispatch. They do not currently run automatically for every storage/core push or every Release commit. Historical heavy results remain exact-source evidence for the commits on which they ran and must not be presented as an exact-head result for unrelated later development commits.
 
-A dedicated endurance job independently drives a 4 GiB native volume below 15 percent free space while keeping a safety reserve, manufactures multiple physical free-run size classes, runs a five-minute multi-process mixed metadata/data workload, adds an explicit hole-punch/refill cycle, and requires two CLEAN offline scrubs around a read-only durable-manifest verification. It emits `[ENDURANCE-PERF]` telemetry for fragmentation setup, operation rate, fsync latency, free-space floor, sync and scrub timing.
+The million-file/1 TiB job creates one million distinct files, churns 100,000 of them through unlink/recreate, verifies the durable population after a read-only remount, requires a CLEAN scrub, and separately mounts and qualifies a 1 TiB sparse loop-backed volume. The workload emits `[SCALE-PERF]` telemetry so scale regressions are observable rather than reduced to a binary pass/fail.
+
+The endurance job independently drives a 4 GiB native volume below 15 percent free space while keeping a safety reserve, manufactures multiple physical free-run size classes, runs a five-minute multi-process mixed metadata/data workload, adds an explicit hole-punch/refill cycle, and requires two CLEAN offline scrubs around a read-only durable-manifest verification. It emits `[ENDURANCE-PERF]` telemetry for fragmentation setup, operation rate, fsync latency, free-space floor, sync and scrub timing.
 
 The native optimizer qualification deliberately fragments a mounted extent-backed file through durable 4 KiB CoW overwrites, records pre-optimization metrics, runs `infilfs-optimize --defrag`, requires the data-extent count to fall, verifies byte-identical content, hard-link inode identity, xattr retention and unchanged modification time, and then requires a CLEAN offline scrub plus read-only remount verification.
 
-The release publisher runs only after a successful `Release <version>` commit on current `main`. It rebuilds assets from that exact commit, installs the generated `.deb`, verifies the native filesystem registration, mounts a real Format 0.17 loop image with `FSTYPE=infiltratorfs`, writes and byte-compares non-zero data, syncs, unmounts, requires a CLEAN scrub and rejects any legacy FUSE executable/process before creating the tag and release.
+The release publisher is triggered only by a successful Build and conformance run for a `Release <version>` commit on current `main`. It requires the Native Linux kernel module workflow for the same commit to complete successfully, then rebuilds assets from that exact source, installs the generated `.deb`, verifies native filesystem registration, mounts a real Format 0.17 loop image with `FSTYPE=infiltratorfs`, writes and byte-compares non-zero data, syncs, unmounts, requires a CLEAN scrub and rejects any legacy FUSE executable/process before creating the tag and release. The publisher also contains a conditional exact-SHA heavy-run check, but the current heavy workflow has no push trigger; therefore an ordinary Release commit does not itself create a heavy run and heavy qualification is not currently an automatic release prerequisite.
