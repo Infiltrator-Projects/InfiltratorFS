@@ -24,7 +24,6 @@
 
 #define BRIDGE_NOTIFY_PERSIST_MASK ( \
     PRJ_NOTIFY_FILE_OVERWRITTEN | \
-    PRJ_NOTIFY_PRE_RENAME | \
     PRJ_NOTIFY_FILE_HANDLE_CLOSED_FILE_MODIFIED | \
     PRJ_NOTIFY_FILE_HANDLE_CLOSED_FILE_DELETED | \
     PRJ_NOTIFY_FILE_RENAMED | \
@@ -814,134 +813,6 @@ static int bridge_seed_file_placeholder(
            hr == HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS);
 }
 
-static int bridge_force_file_full(PCWSTR path)
-{
-    DWORD original = GetFileAttributesW(path);
-    if (original == INVALID_FILE_ATTRIBUTES)
-        return 0;
-
-    int restore_readonly = (original & FILE_ATTRIBUTE_READONLY) != 0;
-    if (restore_readonly &&
-        !SetFileAttributesW(path, original & ~FILE_ATTRIBUTE_READONLY))
-        return 0;
-
-    HANDLE file = CreateFileW(
-        path, GENERIC_READ | GENERIC_WRITE,
-        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-        NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-    int okay = file != INVALID_HANDLE_VALUE;
-    if (file != INVALID_HANDLE_VALUE)
-        CloseHandle(file);
-
-    if (restore_readonly)
-        SetFileAttributesW(path, original);
-    return okay;
-}
-
-/*
- * Detaching a provider-backed directory from the virtualization root requires
- * all descendant file placeholders to become full files first. The directories
- * themselves were deliberately created as full directories at bridge startup.
- * Converting files on PRE_RENAME lets NTFS perform an ordinary same-volume
- * rename out of the projection while preserving every byte.
- */
-static int bridge_make_local_tree_full(PCWSTR relative, int is_directory)
-{
-    wchar_t local[BRIDGE_WINDOWS_PATH_CAP];
-    if (!relative_to_local_path(relative, local))
-        return 0;
-    if (!is_directory)
-        return bridge_force_file_full(local);
-
-    struct bridge_walk_node *stack = NULL;
-    struct bridge_walk_node *root = calloc(1, sizeof(*root));
-    if (!root)
-        return 0;
-    root->relative = bridge_wcsdup_alloc(local);
-    if (!root->relative) {
-        free(root);
-        return 0;
-    }
-    stack = root;
-
-    while (stack) {
-        struct bridge_walk_node *node = stack;
-        stack = node->next;
-        node->next = NULL;
-
-        size_t base_length = wcslen(node->relative);
-        wchar_t *pattern = malloc(
-            (base_length + 3u) * sizeof(*pattern));
-        if (!pattern) {
-            bridge_free_walk(node);
-            bridge_free_walk(stack);
-            return 0;
-        }
-        _snwprintf_s(pattern, base_length + 3u, _TRUNCATE,
-                     L"%s\\*", node->relative);
-
-        WIN32_FIND_DATAW data;
-        HANDLE find = FindFirstFileW(pattern, &data);
-        free(pattern);
-        if (find == INVALID_HANDLE_VALUE) {
-            DWORD error = GetLastError();
-            bridge_free_walk(node);
-            if (error == ERROR_FILE_NOT_FOUND)
-                continue;
-            bridge_free_walk(stack);
-            return 0;
-        }
-
-        int okay = 1;
-        do {
-            if (wcscmp(data.cFileName, L".") == 0 ||
-                wcscmp(data.cFileName, L"..") == 0)
-                continue;
-            size_t name_length = wcslen(data.cFileName);
-            wchar_t *child = malloc(
-                (base_length + 1u + name_length + 1u) *
-                sizeof(*child));
-            if (!child) {
-                okay = 0;
-                break;
-            }
-            _snwprintf_s(child,
-                         base_length + 1u + name_length + 1u,
-                         _TRUNCATE, L"%s\\%s",
-                         node->relative, data.cFileName);
-            if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-                struct bridge_walk_node *next =
-                    calloc(1, sizeof(*next));
-                if (!next) {
-                    free(child);
-                    okay = 0;
-                    break;
-                }
-                next->relative = child;
-                next->next = stack;
-                stack = next;
-            } else {
-                if (!bridge_force_file_full(child))
-                    okay = 0;
-                free(child);
-                if (!okay)
-                    break;
-            }
-        } while (FindNextFileW(find, &data));
-
-        DWORD error = GetLastError();
-        FindClose(find);
-        bridge_free_walk(node);
-        if (!okay ||
-            (error != ERROR_NO_MORE_FILES &&
-             error != ERROR_SUCCESS)) {
-            bridge_free_walk(stack);
-            return 0;
-        }
-    }
-    return 1;
-}
-
 static HRESULT status_to_hresult(infs_status status)
 {
     switch (status) {
@@ -1596,24 +1467,6 @@ static HRESULT CALLBACK bridge_notification(
     infs_status status = INFS_STATUS_OK;
     EnterCriticalSection(&g_bridge.lock);
     switch (notification) {
-    case PRJ_NOTIFICATION_PRE_RENAME:
-        /*
-         * If an InfiltratorFS-backed item is leaving the projection, detach
-         * its local cache from ProjFS before NTFS performs the rename.
-         */
-        if (callback_data->FilePathName &&
-            *callback_data->FilePathName &&
-            (!destination_file_name || !*destination_file_name)) {
-            LeaveCriticalSection(&g_bridge.lock);
-            if (!bridge_make_local_tree_full(
-                    have_current ? current_relative :
-                                   callback_data->FilePathName,
-                    is_directory ? 1 : 0))
-                return HRESULT_FROM_WIN32(ERROR_IO_DEVICE);
-            return S_OK;
-        }
-        break;
-
     case PRJ_NOTIFICATION_NEW_FILE_CREATED:
         status = bridge_create_empty(source, is_directory ? 1 : 0);
         if (status == INFS_STATUS_OK)
