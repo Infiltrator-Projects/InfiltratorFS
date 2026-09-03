@@ -1032,7 +1032,7 @@ static int infilfs_quota_reparent_member_locked(
     return 0;
 }
 
-static int infilfs_quota_prepare_reparent(
+static int infilfs_quota_prepare_reparent_locked(
     struct inode *source, struct inode *new_dir,
     struct infilfs_quota_reservation *new_project,
     struct infilfs_quota_reservation *old_project)
@@ -1056,8 +1056,6 @@ static int infilfs_quota_prepare_reparent(
     if (!sbi || !source_ii || source->i_sb != new_dir->i_sb ||
         !sbi->quota_rule_count)
         return 0;
-
-    mutex_lock(&sbi->quota_lock);
 
     /*
      * Moving a project root does not transfer its accounting domain: the
@@ -1163,6 +1161,5 @@ static int infilfs_quota_prepare_reparent(
 
 out:
     kvfree(entries);
-    mutex_unlock(&sbi->quota_lock);
     return ret;
 }
