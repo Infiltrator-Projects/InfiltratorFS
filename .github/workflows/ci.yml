@@ -266,7 +266,7 @@ jobs:
 
   clang:
     name: Clang conformance
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, linux-native]
     env:
       CC: clang
     steps:
@@ -283,7 +283,7 @@ jobs:
 
   sanitizers:
     name: ASan and UBSan
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, linux-native]
     env:
       ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
       UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
@@ -304,7 +304,7 @@ jobs:
 
   analyzer:
     name: GCC static analyzer
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, linux-native]
     steps:
       - name: Check out source
         uses: actions/checkout@v6
@@ -321,8 +321,8 @@ jobs:
 
 
   local-userspace:
-    name: Hosted Linux userspace qualification
-    runs-on: ubuntu-24.04
+    name: Local Linux userspace qualification
+    runs-on: [self-hosted, Linux, X64, linux-native]
     timeout-minutes: 30
     steps:
       - name: Check out source
@@ -435,7 +435,7 @@ jobs:
   linux-packages:
     name: Native Linux packages
     needs: [linux]
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, linux-native]
     steps:
       - name: Check out source
         uses: actions/checkout@v6
