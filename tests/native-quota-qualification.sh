@@ -111,10 +111,34 @@ if sudo dd if=/dev/urandom of="$mnt/project-a/data.bin" bs=1M count=2 \
 fi
 grep -Eqi 'quota|Disk quota exceeded' "$work/project42-edquot"
 
+# Reflink growth is logical-byte growth for quota purposes even though physical
+# blocks are shared.
+if sudo cp --reflink=always "$mnt/project-a/data.bin" \
+        "$mnt/project-a/reflink-over-limit.bin" \
+        2>"$work/reflink-edquot"; then
+    echo "reflink growth crossed the project byte quota" >&2
+    exit 1
+fi
+grep -Eqi 'quota|Disk quota exceeded' "$work/reflink-edquot"
+sudo rm -f "$mnt/project-a/reflink-over-limit.bin"
+
+# A hard link inside the same project remains one persistent object.
+sudo ln "$mnt/project-a/data.bin" "$mnt/project-a/sub/same-project-link"
+test "$(stat -c '%i' "$mnt/project-a/data.bin")" = \
+     "$(stat -c '%i' "$mnt/project-a/sub/same-project-link")"
+
 # Cross-directory rename is preflighted against the destination project. It
 # must fail atomically rather than moving first and discovering overage later.
 sudo "$quota" project-set "$mnt/project-b" 43 >/dev/null
 sudo "$quota" set "$mnt" project 43 1MiB 32 >/dev/null
+if sudo ln "$mnt/project-a/data.bin" "$mnt/project-b/cross-project-link" \
+        2>"$work/hardlink-exdev"; then
+    echo "cross-project hard link unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -Eqi 'cross-device|Invalid cross-device link' "$work/hardlink-exdev"
+test ! -e "$mnt/project-b/cross-project-link"
+
 sudo mkdir "$mnt/outside/move-me"
 sudo dd if=/dev/urandom of="$mnt/outside/move-me/payload.bin" \
     bs=1M count=2 status=none
@@ -140,6 +164,24 @@ fi
 grep -Eqi 'quota|Disk quota exceeded' "$work/project-set-edquot"
 test "$(sudo "$quota" project-get "$mnt/outside/project-candidate" | \
         awk -F= '$1 == "effective_project_id" { print $2 }')" -eq 0
+
+# Deleting or replacing an empty project-root directory must remove the object
+# mapping and release the project's object charge.
+sudo mkdir "$mnt/project-delete"
+sudo "$quota" project-set "$mnt/project-delete" 77 >/dev/null
+sudo "$quota" set "$mnt" project 77 0 4 >/dev/null
+test "$(field used_objects "$mnt" project 77)" -eq 1
+sudo rmdir "$mnt/project-delete"
+test "$(field used_objects "$mnt" project 77)" -eq 0
+
+sudo mkdir "$mnt/project-replace" "$mnt/replacement-source"
+sudo "$quota" project-set "$mnt/project-replace" 78 >/dev/null
+sudo "$quota" set "$mnt" project 78 0 4 >/dev/null
+test "$(field used_objects "$mnt" project 78)" -eq 1
+sudo mv -T "$mnt/replacement-source" "$mnt/project-replace"
+test "$(sudo "$quota" project-get "$mnt/project-replace" | \
+        awk -F= '$1 == "effective_project_id" { print $2 }')" -eq 0
+test "$(field used_objects "$mnt" project 78)" -eq 0
 
 # Policy and project-root metadata are persistent, but volatile usage is
 # deliberately rebuilt from authoritative objects after remount.
