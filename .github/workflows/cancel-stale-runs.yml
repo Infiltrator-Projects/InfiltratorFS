@@ -21,7 +21,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          for run_id in 33711565831; do
+          # These runs are for superseded main commits and can never satisfy
+          # exact-current-main publication.  Clear them so the 0.18.39 release
+          # qualification is not blocked behind stale work.
+          for run_id in 33718190487 33718842832 33725180042 33733703467; do
             echo "Cancelling workflow run ${run_id}"
             code="$(curl -sS -o /tmp/cancel-${run_id}.txt -w '%{http_code}' \
               -L -X POST \
