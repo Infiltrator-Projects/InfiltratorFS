@@ -99,6 +99,7 @@ static int read_portable_file(struct infs_volume *volume, const char *path,
 
 static int run_windows_client(const wchar_t *root_arg)
 {
+    fwprintf(stderr, L"MARK: client-start\n"); fflush(stderr);
     if (!root_arg || !root_arg[0])
         return fail(L"Invalid bridge client root");
 
@@ -203,6 +204,7 @@ static int run_windows_client(const wchar_t *root_arg)
                  sizeof(export_child) / sizeof(export_child[0]), _TRUNCATE,
                  L"%lsexport-tree\\payload.txt", root);
 
+    fwprintf(stderr, L"MARK: before-export-hydrate\n"); fflush(stderr);
     memset(data, 0, sizeof(data));
     if (!read_windows_file(export_child, data, sizeof(data) - 1u, &got) ||
         got != sizeof(exported_payload) - 1u ||
@@ -236,6 +238,7 @@ static int run_windows_client(const wchar_t *root_arg)
                  sizeof(moved_child) / sizeof(moved_child[0]), _TRUNCATE,
                  L"%ls\\export-tree\\payload.txt", destination_parent);
 
+    fwprintf(stderr, L"MARK: before-move-out\n"); fflush(stderr);
     if (!MoveFileW(export_tree, moved_tree))
         return fail(L"Same-volume move of projected directory out of bridge");
 
@@ -387,6 +390,7 @@ int wmain(int argc, wchar_t **argv)
         return fail(L"Seed projected move-out qualification tree");
     }
 
+    fwprintf(stderr, L"MARK: before-bridge-start\n"); fflush(stderr);
     wchar_t drive[3] = {0};
     if (!infs_windows_bridge_start(&volume, NULL, drive,
                                    sizeof(drive) / sizeof(drive[0]))) {
@@ -395,6 +399,7 @@ int wmain(int argc, wchar_t **argv)
         return 1;
     }
 
+    fwprintf(stderr, L"MARK: after-bridge-start\n"); fflush(stderr);
     wchar_t root[32768] = {0};
     if (!infs_windows_bridge_root(
             root, sizeof(root) / sizeof(root[0]))) {
@@ -408,6 +413,7 @@ int wmain(int argc, wchar_t **argv)
      * unelevated, so a DOS-device alias can live in a different UAC namespace.
      * The projection root must therefore work independently of the drive alias.
      */
+    fwprintf(stderr, L"MARK: before-external-client\n"); fflush(stderr);
     int client_status = run_external_client(root);
     struct infs_windows_bridge_stats bridge_stats;
     memset(&bridge_stats, 0, sizeof(bridge_stats));
