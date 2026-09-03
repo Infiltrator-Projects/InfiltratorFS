@@ -13,11 +13,15 @@ Structures in `include/infilfs/format.h` describe the exact packed record order 
 
 ## 2. Volume layout
 
-For a volume of `N` blocks, three fixed physical checkpoint locations remain at block 0, block `floor(N/2)` and block `N-1`. The checkpoint references the current allocation-map root, object-index head and namespace root. Allocation pages, directory/index pages, objects, extent metadata and file data otherwise occupy ordinary allocated blocks and may move between generations.
+A newly formatted volume of `N` blocks initially places its three physical checkpoint copies at block 0, block `floor(N/2)` and block `N-1`. Those positions are then recorded explicitly in `checkpoint_block[3]` and are part of the committed filesystem geometry. They are **not** implicitly recomputed from `total_blocks` every time the volume is opened.
+
+Checkpoint block 0 remains block 0. The other two recorded checkpoint locations must be distinct from block 0 and from each other and must remain within the committed `total_blocks` geometry. Online resize may preserve already-valid checkpoint locations when the filesystem grows and may relocate a checkpoint when the new geometry requires it. A resized Format 0.17 volume is therefore conforming even when its recorded secondary checkpoint locations are no longer exactly `floor(N/2)` and `N-1` for the new value of `N`. Readers validate and use the recorded checkpoint set rather than deriving a new set from backing-device capacity.
+
+The checkpoint references the current allocation-map root, object-index head and namespace root. Allocation pages, directory/index pages, objects, extent metadata and file data otherwise occupy ordinary allocated blocks and may move between generations.
 
 A newly formatted volume initially places the allocation root and its branch/leaf pages near the start of the volume followed by the initial object index and root directory, but those physical positions are formatter policy rather than permanent format addresses. Subsequent transactions copy on write only the allocation leaves whose bit payload changes and only affected branch paths plus the root needed to publish a new root.
 
-The allocation map still contains exactly one authoritative bit per filesystem block. Bits beyond the volume end in the final in-memory byte are treated as unavailable. Inline bytes are part of an already allocated metadata object and therefore require no additional allocation ownership.
+The allocation map still contains exactly one authoritative bit per filesystem block. Bits beyond the committed filesystem end in the final in-memory byte are treated as unavailable even when the backing device or image is physically larger. Inline bytes are part of an already allocated metadata object and therefore require no additional allocation ownership.
 
 ## 3. Checkpoint
 
@@ -30,11 +34,11 @@ header size                 structure-size guard
 block shift                 12
 checksum algorithm          CRC64-ECMA
 generation                  publication counter
-total/free blocks           volume accounting
+total/free blocks           committed filesystem geometry/accounting
 allocation root/leaf count  authoritative allocation-tree bootstrap
 object-index block          current object-index root
 root-object block           current namespace root
-checkpoint blocks[3]        expected physical checkpoint positions
+checkpoint blocks[3]        committed physical checkpoint positions
 filesystem UUID             128-bit volume identity
 root object ID              128-bit persistent root identity
 feature flag sets           compat / read-only compatible / incompatible
@@ -50,7 +54,7 @@ Format selection is exact during development: only Format 0.17 is accepted. With
 
 Feature classes have distinct compatibility semantics. Unknown incompatible bits prevent any open. Unknown read-only-compatible bits may be opened read-only but prevent writable open. Unknown compatible bits may be ignored. Format 0.17 defines no compatible or read-only-compatible bits for newly created volumes.
 
-CRC64 occupies the first eight checksum bytes. The remaining checksum bytes are zero. The complete checksum field is zero during calculation. A physical checkpoint copy first passes its own magic, format, size, block geometry, checksum, volume size, feature flags, canonical padding and expected checkpoint-position checks. The implementation then validates the complete graph referenced by surviving checkpoint candidates in descending generation order. The newest candidate with a structurally valid committed graph wins; a corrupt newer graph may fall back to an older valid committed graph. External I/O, memory or unsupported-feature failures are not treated as graph corruption and therefore do not silently trigger fallback.
+CRC64 occupies the first eight checksum bytes. The remaining checksum bytes are zero. The complete checksum field is zero during calculation. A physical checkpoint copy first passes its own magic, format, size, block geometry, checksum, volume size, feature flags, canonical padding and recorded checkpoint-position checks. The recorded checkpoint locations must be distinct, in range and internally consistent for the candidate geometry; block zero is the bootstrap checkpoint. The implementation then validates the complete graph referenced by surviving checkpoint candidates in descending generation order. The newest candidate with a structurally valid committed graph wins; a corrupt newer graph may fall back to an older valid committed graph. External I/O, memory or unsupported-feature failures are not treated as graph corruption and therefore do not silently trigger fallback.
 
 ## 4. Allocation map
 
@@ -202,11 +206,13 @@ write remaining checkpoint copies
 durable flush
 ```
 
-The first checkpoint location rotates by generation. A crash before publication leaves generation `N` committed; a crash after publication leaves generation `N+1` committed. During open, each individually valid checkpoint candidate is validated through its referenced allocation tree, metadata, namespace and checksum graph before selection. If a newer candidate's committed graph is structurally corrupt, recovery may select the next older valid committed graph. A writable fallback then rewrites and durably flushes all three checkpoint copies to the selected generation before exposing the volume writable. A writable open does not perform fallback or healing when a physical checkpoint is unreadable, because that replica may be the only record of a newer committed generation. Read-only recovery may use surviving replicas and never modifies the media.
+The first checkpoint location rotates by generation across the three committed physical checkpoint positions. A crash before publication leaves generation `N` committed; a crash after publication leaves generation `N+1` committed. During open, each individually valid checkpoint candidate is validated through its referenced allocation tree, metadata, namespace and checksum graph before selection. If a newer candidate's committed graph is structurally corrupt, recovery may select the next older valid committed graph. A writable fallback then rewrites and durably flushes all three checkpoint copies to the selected generation before exposing the volume writable. A writable open does not perform fallback or healing when a physical checkpoint is unreadable, because that replica may be the only record of a newer committed generation. Read-only recovery may use surviving replicas and never modifies the media.
 
 Once the first generation-N+1 checkpoint has been durably flushed, the mutation is committed even if later replication of secondary checkpoint copies fails. The implementation records degraded checkpoint redundancy and reports the namespace/data mutation as successful; a later explicit sync heals the replicas or reports the remaining storage error. A failure returned by the first checkpoint write or its durability flush leaves the outcome indeterminate, so the current opener permits no further mutation until close-and-reopen recovery selects the on-media generation.
 
 Committed extent-backed file-data blocks are replaced through CoW. Inline file updates are committed through replacement of the file metadata object under the same CoW generation rules. Extent mappings, checksum metadata and inline/extent representation transitions publish atomically with the corresponding replacement data. Ordinary rename, including replacement of an existing file or empty directory, is one transaction and publishes no intermediate namespace.
+
+Online resize uses the same publication boundary for geometry. The mounted implementation separates committed filesystem blocks from physical backing-device blocks, prepares replacement allocation-tree geometry and any required checkpoint relocation before publication, durably publishes the new `total_blocks`, allocation root and recorded checkpoint set, and only then exposes the new geometry to subsequent allocation. Shrink fails closed when a live allocation would lie beyond the requested boundary. The current implementation also refuses resize while retained snapshots exist rather than attempting to rewrite historical snapshot geometry.
 
 ## 12. Formatting safety and publication
 
@@ -230,6 +236,7 @@ The policy is to fail closed when committed state cannot be trusted while retain
 - paged extent maps remain bounded by the page-pointer capacity of one file head;
 - at most 27 named snapshots in the bounded catalog;
 - no snapshot rollback or native undelete policy;
+- online resize currently refuses retained snapshots, and bounded shrink refuses a target that would require relocation of live user allocations beyond the new end;
 - compressed streams are bounded to the current 64-block (256 KiB) compression-unit limit; IAC1 v1 is the automatic native codec for Format 0.17, LZ4 remains a supported non-default reference representation, and future codecs require a new codec identifier rather than changing an existing stream meaning; see `COMPRESSION.md`;
 - portable security and generic named-metadata object references are reserved but not yet standardized;
 - Current Linux adapter xattrs/special-node metadata are not the final portable named-metadata/security model;
