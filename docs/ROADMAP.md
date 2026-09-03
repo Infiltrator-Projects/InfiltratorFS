@@ -155,16 +155,18 @@ fail-closed shrink bounds. The quota subsystem has persistent rules and mounted
 coverage for byte/object limits, user/group/project accounting, project roots,
 reflinks, hard links, rename/reparenting and remount reconstruction. The latest
 substantive filesystem commit, `c5dd0bdb063faff4a94579b8a209b4a1e494191b`,
-passed portable Build and conformance but failed the native
-**user/group/project quota qualification**; later commits through `c86d64e`
-changed CI policy only. That combined workflow therefore did not produce resize evidence for that exact
+passed portable Build and conformance, but the native
+**user/group/project quota qualification** ran until its 15-minute timeout; the
+available log does not localize the exact blocking sub-operation. Later commits
+through `c86d64e` changed CI policy only. That combined workflow therefore did not produce resize evidence for that exact
 source. Resize qualification is now independent of quota through the dedicated
 `Native resize qualification` workflow. Exact-source run `33818095528` passed on
 `c1dd5229e9c42e01ba2d9ab93ef79a6d6521e288`: the running-kernel module and resize tools built, mounted online
 shrink/grow passed, unsafe tail-truncating shrink failed closed, remount content
 verification passed and the offline scrub was CLEAN. The million-file/1 TiB and
 endurance suites remain separate weekly/manual heavy qualification. Quotas remain
-unchecked below until their own mounted qualification failure is corrected.
+unchecked below until their mounted qualification timeout is localized, corrected
+and followed by a passing exact-source run.
 
 ## Scale and performance
 

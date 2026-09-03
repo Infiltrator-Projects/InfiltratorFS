@@ -57,18 +57,20 @@ run `33805398475` passed. Native Linux workflow run `33805398514` successfully
 completed the source checkout, dependency/header resolution, allocation/
 workload/media/durability/quota policy guards, generic module build, DKMS
 source-root reproduction, module metadata validation, userspace native tools and
-the running-kernel module build. It then failed the **Native user group and
-project quota qualification** step. The ordinary mounted transaction/scrub,
-online resize, media-profile and defragmentation steps were consequently skipped
-for that exact source.
+the running-kernel module build. It then entered the **Native user group and
+project quota qualification** step, which ran until the workflow-enforced
+15-minute timeout and was terminated without emitting a failing sub-operation.
+The ordinary mounted transaction/scrub, online resize, media-profile and
+defragmentation steps were consequently skipped for that exact source.
 
 That result means:
 
 - the quota subsystem is implemented but is not currently recorded as completed
   and qualified on the roadmap;
-- the stronger quota test using one atomic over-limit `write(2)` exposed a red
-  mounted gate and must be treated as a real unresolved qualification result
-  until a later exact-source native run passes;
+- the strengthened quota qualification includes one atomic over-limit
+  `write(2)`, but the available run evidence does **not** identify that operation
+  as the hang point; the mounted quota step timed out and remains unresolved until
+  a later instrumented exact-source run localizes and clears it;
 - resize is implemented and now has an independent mounted qualification workflow,
   so quota failure no longer prevents resize evidence from being collected; and
 - a green Build and conformance status on a later CI-only commit must not be
@@ -89,7 +91,7 @@ hashes matched.
 
 This dedicated workflow is independent of the native quota gate. It does **not**
 run the million-file/1 TiB scale suite or the near-full/endurance suite; those
-remain weekly/manual heavy qualification. The quota failure recorded above remains
+remain weekly/manual heavy qualification. The quota timeout recorded above remains
 a separate unresolved gate and does not invalidate this resize evidence.
 
 ## 2026-09-01 Windows bridge performance and manager qualification
