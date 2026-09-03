@@ -52,6 +52,10 @@ struct infilfs_project_root {
     u32 project_id;
 };
 
+static int infilfs_quota_reparent_member_locked(
+    struct super_block *sb, const u8 object_id[16],
+    const u8 source_id[16], bool *member_out);
+
 static_assert(sizeof(struct infilfs_quota_db_header) == 24);
 static_assert(sizeof(struct infilfs_quota_rule_disk) == 24);
 static_assert(sizeof(struct infilfs_project_root_disk) == 24);
@@ -433,6 +437,246 @@ static void infilfs_quota_mount_destroy(struct super_block *sb)
     sbi->project_roots = NULL;
     sbi->quota_rule_count = 0;
     sbi->project_root_count = 0;
+}
+
+
+static int infilfs_quota_rule_usage_locked(
+    struct super_block *sb, u32 wanted_type, u32 wanted_id,
+    u64 *bytes_out, u64 *objects_out)
+{
+    struct infilfs_index_entry_disk *entries = NULL;
+    u32 count = 0;
+    u32 i;
+    u64 bytes = 0;
+    u64 objects = 0;
+    int ret;
+
+    *bytes_out = 0;
+    *objects_out = 0;
+    ret = infilfs_ns_index_snapshot(sb, &entries, &count);
+    if (ret)
+        return ret;
+
+    for (i = 0; i < count; ++i) {
+        struct infilfs_object_header_disk *header;
+        struct infilfs_attributes_disk *attributes;
+        struct infilfs_posix_compat_disk *posix;
+        u8 *object;
+        u16 type = le16_to_cpu(entries[i].object_type);
+        u32 uid;
+        u32 gid;
+        u32 project = 0;
+        u64 logical;
+        bool match;
+
+        if (type != INFILFS_OBJECT_FILE &&
+            type != INFILFS_OBJECT_DIRECTORY &&
+            type != INFILFS_OBJECT_SYMLINK)
+            continue;
+
+        object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+        if (!object) {
+            ret = -ENOMEM;
+            break;
+        }
+        ret = infilfs_read_object(
+            sb, le64_to_cpu(entries[i].object_block),
+            type, entries[i].object_id, object);
+        if (ret) {
+            kfree(object);
+            break;
+        }
+        header = (struct infilfs_object_header_disk *)object;
+        ret = infilfs_posix_object_fields(object, &attributes, &posix);
+        if (ret) {
+            kfree(object);
+            break;
+        }
+        if (le64_to_cpu(attributes->portable_flags) & INFILFS_ATTR_SYSTEM) {
+            kfree(object);
+            continue;
+        }
+        uid = le32_to_cpu(posix->uid);
+        gid = le32_to_cpu(posix->gid);
+        if (wanted_type == INFILFS_QUOTA_PROJECT) {
+            ret = infilfs_quota_effective_project_locked(
+                sb, header->object_id, header->parent_id, &project);
+            if (ret) {
+                kfree(object);
+                break;
+            }
+        }
+
+        match =
+            (wanted_type == INFILFS_QUOTA_USER && wanted_id == uid) ||
+            (wanted_type == INFILFS_QUOTA_GROUP && wanted_id == gid) ||
+            (wanted_type == INFILFS_QUOTA_PROJECT && wanted_id == project);
+        if (!match) {
+            kfree(object);
+            continue;
+        }
+
+        logical = le64_to_cpu(attributes->logical_size);
+        if (bytes > U64_MAX - logical || objects == U64_MAX) {
+            kfree(object);
+            ret = -EOVERFLOW;
+            break;
+        }
+        bytes += logical;
+        objects++;
+        kfree(object);
+    }
+
+    kvfree(entries);
+    if (!ret) {
+        *bytes_out = bytes;
+        *objects_out = objects;
+    }
+    return ret;
+}
+
+static int infilfs_quota_parent_project_locked(
+    struct inode *inode, u32 *project_out)
+{
+    struct infilfs_inode_info *ii = INFILFS_I(inode);
+    struct infilfs_sb_info *sbi = INFILFS_SB(inode->i_sb);
+    struct infilfs_object_header_disk *header;
+    u8 current[16];
+    u8 *object;
+    unsigned int depth;
+    int ret;
+
+    *project_out = 0;
+    if (!ii)
+        return -EINVAL;
+
+    object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+    if (!object)
+        return -ENOMEM;
+    ret = infilfs_read_object(
+        inode->i_sb, ii->object_block, ii->object_type, ii->object_id, object);
+    if (ret) {
+        kfree(object);
+        return ret;
+    }
+    header = (struct infilfs_object_header_disk *)object;
+    memcpy(current, header->parent_id, 16);
+    kfree(object);
+
+    for (depth = 0; memchr_inv(current, 0, 16) && depth < 1024u; ++depth) {
+        u64 block;
+        u16 type;
+
+        *project_out = infilfs_quota_root_match_locked(sbi, current);
+        if (*project_out)
+            return 0;
+        ret = infilfs_index_lookup(inode->i_sb, current, &block, &type);
+        if (ret)
+            return ret;
+        if (type != INFILFS_OBJECT_DIRECTORY)
+            return -EFSCORRUPTED;
+
+        object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+        if (!object)
+            return -ENOMEM;
+        ret = infilfs_read_object(
+            inode->i_sb, block, type, current, object);
+        if (ret) {
+            kfree(object);
+            return ret;
+        }
+        header = (struct infilfs_object_header_disk *)object;
+        memcpy(current, header->parent_id, 16);
+        kfree(object);
+    }
+    if (depth >= 1024u)
+        return -EFSCORRUPTED;
+    *project_out = 0;
+    return 0;
+}
+
+static int infilfs_quota_domain_usage_locked(
+    struct inode *root, u64 *bytes_out, u64 *objects_out)
+{
+    struct infilfs_inode_info *root_ii = INFILFS_I(root);
+    struct infilfs_index_entry_disk *entries = NULL;
+    u32 count = 0;
+    u32 i;
+    u64 bytes = 0;
+    u64 objects = 0;
+    int ret;
+
+    *bytes_out = 0;
+    *objects_out = 0;
+    if (!root_ii)
+        return -EINVAL;
+
+    ret = infilfs_ns_index_snapshot(root->i_sb, &entries, &count);
+    if (ret)
+        return ret;
+
+    for (i = 0; i < count; ++i) {
+        struct infilfs_attributes_disk *attributes;
+        struct infilfs_posix_compat_disk *posix;
+        u8 *object;
+        u16 type = le16_to_cpu(entries[i].object_type);
+        bool member = false;
+        u64 logical;
+
+        if (type != INFILFS_OBJECT_FILE &&
+            type != INFILFS_OBJECT_DIRECTORY &&
+            type != INFILFS_OBJECT_SYMLINK)
+            continue;
+
+        ret = infilfs_quota_reparent_member_locked(
+            root->i_sb, entries[i].object_id,
+            root_ii->object_id, &member);
+        if (ret || !member) {
+            if (ret)
+                break;
+            continue;
+        }
+
+        object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+        if (!object) {
+            ret = -ENOMEM;
+            break;
+        }
+        ret = infilfs_read_object(
+            root->i_sb, le64_to_cpu(entries[i].object_block),
+            type, entries[i].object_id, object);
+        if (ret) {
+            kfree(object);
+            break;
+        }
+        ret = infilfs_posix_object_fields(object, &attributes, &posix);
+        if (ret) {
+            kfree(object);
+            break;
+        }
+        (void)posix;
+        if (le64_to_cpu(attributes->portable_flags) & INFILFS_ATTR_SYSTEM) {
+            kfree(object);
+            continue;
+        }
+
+        logical = le64_to_cpu(attributes->logical_size);
+        if (bytes > U64_MAX - logical || objects == U64_MAX) {
+            kfree(object);
+            ret = -EOVERFLOW;
+            break;
+        }
+        bytes += logical;
+        objects++;
+        kfree(object);
+    }
+
+    kvfree(entries);
+    if (!ret) {
+        *bytes_out = bytes;
+        *objects_out = objects;
+    }
+    return ret;
 }
 
 static int infilfs_quota_set_rule(struct super_block *sb,
