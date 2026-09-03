@@ -316,10 +316,12 @@ if(UNIX)
     add_executable(infilfs-scrub tools/infilfs-scrub.c)
     add_executable(infilfs-forensic tools/infilfs-forensic.c)
     add_executable(infilfs-optimize tools/infilfs-optimize.c)
+    add_executable(infiltratorfs-resize tools/infiltratorfs-resize.c)
     target_include_directories(infilfs-optimize PRIVATE kernel)
+    target_include_directories(infiltratorfs-resize PRIVATE kernel)
     target_compile_definitions(mkfs.infilfs PRIVATE
         INFILFS_IMPLEMENTATION_VERSION=\"${PROJECT_VERSION}\")
-    foreach(tool_target IN ITEMS mkfs.infilfs infilfs-inspect infilfs-tool infilfs-scrub infilfs-forensic infilfs-optimize)
+    foreach(tool_target IN ITEMS mkfs.infilfs infilfs-inspect infilfs-tool infilfs-scrub infilfs-forensic infilfs-optimize infiltratorfs-resize)
         target_link_libraries(${tool_target} PRIVATE infilfs_posix)
         target_compile_definitions(${tool_target} PRIVATE _GNU_SOURCE)
         infilfs_enable_warnings(${tool_target})
@@ -369,7 +371,7 @@ if(UNIX)
         COMMAND bash ${CMAKE_SOURCE_DIR}/tests/desktop-integration.sh
                      ${CMAKE_BINARY_DIR})
 
-    install(TARGETS mkfs.infilfs infilfs-inspect infilfs-tool infilfs-scrub infilfs-forensic infilfs-optimize
+    install(TARGETS mkfs.infilfs infilfs-inspect infilfs-tool infilfs-scrub infilfs-forensic infilfs-optimize infiltratorfs-resize
             RUNTIME DESTINATION bin)
     install(PROGRAMS tools/infiltratorfs-manager tools/mkfs.infiltratorfs
             DESTINATION bin)
