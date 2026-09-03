@@ -4,9 +4,7 @@
 #define _UNICODE
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-#include <shellapi.h>
 #include <shlobj.h>
-#include <shobjidl.h>
 
 #include "infiltratorfs-windows-bridge.h"
 #include "infilfs/status.h"
@@ -97,59 +95,6 @@ static int read_portable_file(struct infs_volume *volume, const char *path,
         return 0;
     buffer[(size_t)got] = '\0';
     return strcmp(buffer, expected) == 0;
-}
-
-static int shell_move_item(const wchar_t *source_path,
-                           const wchar_t *destination_directory)
-{
-    HRESULT initialized = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
-    int uninitialize = SUCCEEDED(initialized);
-    if (FAILED(initialized) && initialized != RPC_E_CHANGED_MODE) {
-        SetLastError(HRESULT_CODE(initialized));
-        return 0;
-    }
-
-    IFileOperation *operation = NULL;
-    IShellItem *source = NULL;
-    IShellItem *destination = NULL;
-    HRESULT hr = CoCreateInstance(
-        &CLSID_FileOperation, NULL, CLSCTX_INPROC_SERVER,
-        &IID_IFileOperation, (void **)&operation);
-    if (SUCCEEDED(hr))
-        hr = SHCreateItemFromParsingName(
-            source_path, NULL, &IID_IShellItem, (void **)&source);
-    if (SUCCEEDED(hr))
-        hr = SHCreateItemFromParsingName(
-            destination_directory, NULL, &IID_IShellItem,
-            (void **)&destination);
-    if (SUCCEEDED(hr))
-        hr = operation->lpVtbl->SetOperationFlags(
-            operation, FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT);
-    if (SUCCEEDED(hr))
-        hr = operation->lpVtbl->MoveItem(
-            operation, source, destination, NULL, NULL);
-    if (SUCCEEDED(hr))
-        hr = operation->lpVtbl->PerformOperations(operation);
-
-    BOOL aborted = FALSE;
-    if (SUCCEEDED(hr))
-        hr = operation->lpVtbl->GetAnyOperationsAborted(
-            operation, &aborted);
-
-    if (destination)
-        destination->lpVtbl->Release(destination);
-    if (source)
-        source->lpVtbl->Release(source);
-    if (operation)
-        operation->lpVtbl->Release(operation);
-    if (uninitialize)
-        CoUninitialize();
-
-    if (FAILED(hr) || aborted) {
-        SetLastError(FAILED(hr) ? HRESULT_CODE(hr) : ERROR_CANCELLED);
-        return 0;
-    }
-    return 1;
 }
 
 static int run_windows_client(const wchar_t *root_arg)
@@ -245,10 +190,9 @@ static int run_windows_client(const wchar_t *root_arg)
         return fail(L"Rename projected directory and rewrite child");
 
     /*
-     * Reproduce the Explorer operation that exposed the regression: move a
-     * directory that originated in InfiltratorFS out of the projected root to
-     * an ordinary directory on the same Windows volume. The Shell must fall
-     * back from rename to copy-then-delete rather than surfacing 0x80070032.
+     * Reproduce Explorer's same-volume rename fast-path directly. The original
+     * failure surfaced as ERROR_NOT_SUPPORTED (0x80070032) when a directory
+     * that originated in InfiltratorFS was moved out of the projected root.
      */
     wchar_t export_tree[32768];
     wchar_t export_child[32768];
@@ -292,8 +236,8 @@ static int run_windows_client(const wchar_t *root_arg)
                  sizeof(moved_child) / sizeof(moved_child[0]), _TRUNCATE,
                  L"%ls\\export-tree\\payload.txt", destination_parent);
 
-    if (!shell_move_item(export_tree, destination_parent))
-        return fail(L"Move projected directory out through Windows Shell");
+    if (!MoveFileW(export_tree, moved_tree))
+        return fail(L"Same-volume move of projected directory out of bridge");
 
     memset(data, 0, sizeof(data));
     if (!read_windows_file(moved_child, data, sizeof(data) - 1u, &got) ||
