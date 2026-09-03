@@ -1,0 +1,86 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Record resize qualification pass
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/record-resize-pass.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Record exact resize evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          run = '33818095528'
+          commit = 'c1dd5229e9c42e01ba2d9ab93ef79a6d6521e288'
+
+          road = Path('docs/ROADMAP.md')
+          text = road.read_text()
+          needle = (
+              "`Native resize qualification` workflow; the million-file/1 TiB and endurance\n"
+              "suites remain separate weekly/manual heavy qualification. Quotas remain unchecked\n"
+              "below until their own mounted qualification failure is corrected."
+          )
+          replacement = (
+              f"`Native resize qualification` workflow. Exact-source run `{run}` passed on\n"
+              f"`{commit}`: the running-kernel module and resize tools built, mounted online\n"
+              "shrink/grow passed, unsafe tail-truncating shrink failed closed, remount content\n"
+              "verification passed and the offline scrub was CLEAN. The million-file/1 TiB and\n"
+              "endurance suites remain separate weekly/manual heavy qualification. Quotas remain\n"
+              "unchecked below until their own mounted qualification failure is corrected."
+          )
+          if needle not in text:
+              raise SystemExit('ROADMAP evidence anchor missing')
+          road.write_text(text.replace(needle, replacement, 1))
+
+          qual = Path('docs/QUALIFICATION.md')
+          text = qual.read_text()
+          anchor = "## 2026-09-01 Windows bridge performance and manager qualification\n"
+          record = (
+              "## 2026-09-03 independent mounted resize qualification\n\n"
+              f"Exact source commit `{commit}` passed dedicated `Native resize qualification`\n"
+              f"workflow run `{run}`. The hosted Ubuntu running-kernel headers were available;\n"
+              "the resize userspace tools and exact running-kernel module built successfully. The\n"
+              "mounted qualification then shrank a 256 MiB filesystem to 128 MiB, verified the\n"
+              "committed geometry, wrote and hash-recorded live data, grew online back to the\n"
+              "256 MiB backing capacity, wrote and hash-recorded additional data, and refused a\n"
+              "64 MiB shrink after a 96 MiB incompressible tail occupant placed live allocation\n"
+              "beyond the requested boundary. Geometry remained unchanged after the refused\n"
+              "shrink. The image then unmounted, scrubbed CLEAN, remounted read-only and both data\n"
+              "hashes matched.\n\n"
+              "This dedicated workflow is independent of the native quota gate. It does **not**\n"
+              "run the million-file/1 TiB scale suite or the near-full/endurance suite; those\n"
+              "remain weekly/manual heavy qualification. The quota failure recorded above remains\n"
+              "a separate unresolved gate and does not invalidate this resize evidence.\n\n"
+          )
+          if anchor not in text:
+              raise SystemExit('QUALIFICATION insertion anchor missing')
+          if f'workflow run `{run}`' not in text:
+              text = text.replace(anchor, record + anchor, 1)
+          qual.write_text(text)
+          PY
+          grep -Fq '33818095528' docs/ROADMAP.md
+          grep -Fq '33818095528' docs/QUALIFICATION.md
+          grep -Fq 'does **not**' docs/QUALIFICATION.md
+      - name: Commit qualification evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'InfiltratorFS CI'
+          git config user.email 'infiltratorfs-ci@users.noreply.github.com'
+          git add docs/ROADMAP.md docs/QUALIFICATION.md
+          git commit -m 'Docs: record exact mounted resize qualification' || exit 0
+          git push origin HEAD:main
