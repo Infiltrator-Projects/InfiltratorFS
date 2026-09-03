@@ -104,6 +104,8 @@ int main(int argc, char **argv)
                       !strcmp(argv[1], "get") ||
                       !strcmp(argv[1], "clear"))) {
         struct infilfs_quota_request request;
+        uint64_t parsed_bytes = 0;
+        uint64_t parsed_objects = 0;
         unsigned long command;
 
         if ((!strcmp(argv[1], "set") && argc != 7) ||
@@ -118,11 +120,13 @@ int main(int argc, char **argv)
             return 2;
         }
         if (!strcmp(argv[1], "set")) {
-            if (parse_size(argv[5], &request.hard_bytes) ||
-                parse_u64(argv[6], &request.hard_objects)) {
+            if (parse_size(argv[5], &parsed_bytes) ||
+                parse_u64(argv[6], &parsed_objects)) {
                 fprintf(stderr, "Invalid quota limit.\n");
                 return 2;
             }
+            request.hard_bytes = (__u64)parsed_bytes;
+            request.hard_objects = (__u64)parsed_objects;
             command = INFILFS_IOC_SET_QUOTA;
         } else if (!strcmp(argv[1], "clear")) {
             command = INFILFS_IOC_SET_QUOTA;
