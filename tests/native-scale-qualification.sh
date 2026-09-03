@@ -18,6 +18,7 @@ FILE_COUNT="${INFS_SCALE_FILE_COUNT:-1000000}"
 DIRECTORY_COUNT="${INFS_SCALE_DIRECTORY_COUNT:-1000}"
 WORKERS="${INFS_SCALE_WORKERS:-8}"
 CHURN_FILES="${INFS_SCALE_CHURN_FILES:-100000}"
+BATCH_DIRECTORIES="${INFS_SCALE_BATCH_DIRECTORIES:-64}"
 FILE_IMAGE_SIZE="${INFS_SCALE_FILE_IMAGE_SIZE:-16G}"
 LARGE_IMAGE_SIZE="${INFS_SCALE_LARGE_IMAGE_SIZE:-1T}"
 LARGE_PROBE_BYTES="${INFS_SCALE_LARGE_PROBE_BYTES:-268435456}"
@@ -97,7 +98,8 @@ test "$(findmnt -rn -T "$FILE_MOUNT" -o FSTYPE)" = infiltratorfs
 
 timed "million-file-workload" python3 "$STRESS_PY" "$FILE_MOUNT/million-files" \
     --files "$FILE_COUNT" --directories "$DIRECTORY_COUNT" \
-    --workers "$WORKERS" --churn-files "$CHURN_FILES"
+    --workers "$WORKERS" --churn-files "$CHURN_FILES" \
+    --batch-directories "$BATCH_DIRECTORIES" --reclaim-vfs-cache
 
 sync
 printf 'Million-file image allocation after workload:\n'

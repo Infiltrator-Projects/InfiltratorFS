@@ -8,6 +8,7 @@ import argparse
 import concurrent.futures
 import os
 import resource
+import subprocess
 import time
 
 
@@ -18,6 +19,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--directories", type=int, default=1_000)
     parser.add_argument("--workers", type=int, default=min(8, os.cpu_count() or 1))
     parser.add_argument("--churn-files", type=int, default=100_000)
+    parser.add_argument("--batch-directories", type=int, default=64)
+    parser.add_argument("--reclaim-vfs-cache", action="store_true")
     parser.add_argument("--verify-only", action="store_true")
     return parser.parse_args()
 
@@ -106,6 +109,80 @@ def run_parallel(fn, groups: list[list[int]], *prefix_args) -> tuple[int, float]
     return total, time.monotonic() - started
 
 
+def split_values(indices: list[int], workers: int) -> list[list[int]]:
+    workers = max(1, min(workers, len(indices)))
+    groups = [[] for _ in range(workers)]
+    for position, index in enumerate(indices):
+        groups[position % workers].append(index)
+    return [group for group in groups if group]
+
+
+def read_meminfo_kib() -> dict[str, int]:
+    wanted = {"MemAvailable", "Slab", "SReclaimable"}
+    observed: dict[str, int] = {}
+    try:
+        with open("/proc/meminfo", encoding="ascii") as stream:
+            for line in stream:
+                key, _, value = line.partition(":")
+                if key not in wanted:
+                    continue
+                observed[key] = int(value.strip().split()[0])
+    except (OSError, ValueError):
+        pass
+    return observed
+
+
+def reclaim_vfs_cache(label: str) -> float:
+    """
+    Keep the million-file qualification about persistent filesystem scale,
+    rather than exhausting a small hosted runner with clean Linux dentry/inode
+    cache.  The pool has no live file descriptors at batch boundaries.  Sync
+    first, then reclaim only dentries/inodes (drop_caches=2), never dirty data.
+    """
+    started = time.monotonic()
+    before = read_meminfo_kib()
+    subprocess.run(
+        ["sudo", "-n", "sh", "-c", "sync; echo 2 > /proc/sys/vm/drop_caches"],
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )
+    elapsed = time.monotonic() - started
+    after = read_meminfo_kib()
+    print(
+        "[SCALE-MEM] "
+        f"{label} reclaim_elapsed={elapsed:.3f}s "
+        f"available_before_kib={before.get('MemAvailable', -1)} "
+        f"available_after_kib={after.get('MemAvailable', -1)} "
+        f"slab_after_kib={after.get('Slab', -1)} "
+        f"sreclaimable_after_kib={after.get('SReclaimable', -1)}"
+    )
+    return elapsed
+
+
+def run_parallel_batched(
+    fn,
+    directories: int,
+    workers: int,
+    batch_directories: int,
+    reclaim_cache: bool,
+    *prefix_args,
+) -> tuple[int, float]:
+    started = time.monotonic()
+    total = 0
+    batch_number = 0
+    for first in range(0, directories, batch_directories):
+        last = min(directories, first + batch_directories)
+        groups = split_values(list(range(first, last)), workers)
+        count, _elapsed = run_parallel(fn, groups, *prefix_args)
+        total += count
+        batch_number += 1
+        if reclaim_cache:
+            reclaim_vfs_cache(
+                f"batch={batch_number} directories={first}-{last - 1}"
+            )
+    return total, time.monotonic() - started
+
+
 def verify_population(root: str, total_files: int, directories: int) -> float:
     started = time.monotonic()
     observed = 0
@@ -151,9 +228,11 @@ def main() -> int:
         raise SystemExit("--workers must be positive")
     if args.churn_files < 0 or args.churn_files > args.files:
         raise SystemExit("--churn-files must be between 0 and --files")
+    if args.batch_directories < 1:
+        raise SystemExit("--batch-directories must be positive")
 
     root = os.path.abspath(args.root)
-    groups = split_indices(args.directories, args.workers)
+    worker_count = max(1, min(args.workers, args.directories))
 
     if args.verify_only:
         elapsed = verify_population(root, args.files, args.directories)
@@ -166,12 +245,15 @@ def main() -> int:
     for directory_index in range(args.directories):
         os.mkdir(os.path.join(root, directory_name(directory_index)), 0o755)
 
-    created, create_elapsed = run_parallel(
-        create_dirs, groups, root, args.files, args.directories)
+    created, create_elapsed = run_parallel_batched(
+        create_dirs, args.directories, worker_count,
+        args.batch_directories, args.reclaim_vfs_cache,
+        root, args.files, args.directories)
     if created != args.files:
         raise AssertionError(f"created {created}, expected {args.files}")
     print(f"[SCALE-PERF] create files={created} directories={args.directories} "
-          f"workers={len(groups)} elapsed={create_elapsed:.3f}s "
+          f"workers={worker_count} batch_directories={args.batch_directories} "
+          f"elapsed={create_elapsed:.3f}s "
           f"rate={created / create_elapsed:.1f} files/s")
 
     sync_elapsed = sync_timed()
@@ -182,17 +264,19 @@ def main() -> int:
           f"rate={args.files / verify_elapsed:.1f} files/s")
 
     if args.churn_files:
-        removed, remove_elapsed = run_parallel(
-            churn_dirs, groups, root, args.files, args.directories,
-            args.churn_files, False)
+        removed, remove_elapsed = run_parallel_batched(
+            churn_dirs, args.directories, worker_count,
+            args.batch_directories, args.reclaim_vfs_cache,
+            root, args.files, args.directories, args.churn_files, False)
         if removed != args.churn_files:
             raise AssertionError(f"removed {removed}, expected {args.churn_files}")
         print(f"[SCALE-PERF] unlink files={removed} elapsed={remove_elapsed:.3f}s "
               f"rate={removed / remove_elapsed:.1f} files/s")
 
-        recreated, recreate_elapsed = run_parallel(
-            churn_dirs, groups, root, args.files, args.directories,
-            args.churn_files, True)
+        recreated, recreate_elapsed = run_parallel_batched(
+            churn_dirs, args.directories, worker_count,
+            args.batch_directories, args.reclaim_vfs_cache,
+            root, args.files, args.directories, args.churn_files, True)
         if recreated != args.churn_files:
             raise AssertionError(f"recreated {recreated}, expected {args.churn_files}")
         print(f"[SCALE-PERF] recreate files={recreated} elapsed={recreate_elapsed:.3f}s "
