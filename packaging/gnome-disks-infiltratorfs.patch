@@ -28,6 +28,22 @@ diff --git a/src/disks/gdu-create-other-page.c b/src/disks/gdu-create-other-page
                      { N_("No Filesystem"), NULL } };
  
      self = g_object_new (GDU_TYPE_CREATE_OTHER_PAGE, NULL);
+@@ -206,7 +207,15 @@ row_adder (GduCreateOtherPage *page, gboolean tested, gboolean available, gchar
+     {
+       gchar *s;
+ 
+       gtk_widget_set_sensitive (GTK_WIDGET (priv->prev_other_fs_radio), FALSE);
+-      s = g_strdup_printf (_("The utility %s is missing."), missing_util);
++      if (g_strcmp0 (id, "infiltratorfs") == 0 && missing_util == NULL)
++        s = g_strdup (
++            _("InfiltratorFS formatter service is unavailable. Reinstall or repair InfiltratorFS."));
++      else
++        s = g_strdup_printf (_("The utility %s is missing."),
++                             missing_util ? missing_util : _("unknown"));
+       gtk_widget_set_tooltip_text (GTK_WIDGET (priv->prev_other_fs_radio), s);
+ 
+       g_free (s);
+
 diff --git a/src/disks/gdu-create-other-page.h b/src/disks/gdu-create-other-page.h
 --- a/src/disks/gdu-create-other-page.h
 +++ b/src/disks/gdu-create-other-page.h

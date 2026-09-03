@@ -20,6 +20,26 @@ diff --git a/src/disks/gducreateotherpage.c b/src/disks/gducreateotherpage.c
    {"empty", N_("No Filesystem")},
  };
 
+@@ -73,9 +74,18 @@ can_format_cb (UDisksManager *manager,
+   if (!available)
+     {
+       g_autofree char *tooltip = NULL;
++      guint fs_index;
+ 
+       gtk_widget_set_sensitive (GTK_WIDGET (toggle_button), FALSE);
+-      tooltip = g_strdup_printf (_("The utility %s is missing."), util);
++      fs_index = GPOINTER_TO_INT (
++          g_object_get_data (G_OBJECT (toggle_button), "index"));
++      if (g_strcmp0 (other_fs[fs_index][0], "infiltratorfs") == 0 &&
++          util == NULL)
++        tooltip = g_strdup (
++            _("InfiltratorFS formatter service is unavailable. Reinstall or repair InfiltratorFS."));
++      else
++        tooltip = g_strdup_printf (_("The utility %s is missing."),
++                                   util ? util : _("unknown"));
+       gtk_widget_set_tooltip_text (GTK_WIDGET (toggle_button), tooltip);
+     }
+
 diff --git a/src/disks/gduwindow.c b/src/disks/gduwindow.c
 --- a/src/disks/gduwindow.c
 +++ b/src/disks/gduwindow.c

@@ -100,10 +100,59 @@ check_supported_stack()
 restart_udisks()
 {
     if command -v systemctl >/dev/null 2>&1; then
-        systemctl try-restart udisks2.service >/dev/null 2>&1 || true
+        # A plain restart is deliberate here. try-restart can leave a stale
+        # D-Bus-activated udisksd process alive with the stock libbd_fs plugin
+        # mapped, which makes GNOME Disks report "The utility (null) is missing."
+        systemctl restart udisks2.service >/dev/null 2>&1 ||
+            systemctl try-restart udisks2.service >/dev/null 2>&1 || true
     elif command -v service >/dev/null 2>&1; then
         service udisks2 restart >/dev/null 2>&1 || true
     fi
+}
+
+udisks_can_format_infiltratorfs()
+{
+    local result
+    command -v gdbus >/dev/null 2>&1 || return 1
+    result="$(gdbus call --system         --dest org.freedesktop.UDisks2         --object-path /org/freedesktop/UDisks2/Manager         --method org.freedesktop.UDisks2.Manager.CanFormat infiltratorfs         2>/dev/null || true)"
+    [[ "$result" == *"true"* ]]
+}
+
+wait_for_udisks_formatter()
+{
+    local attempt
+    for attempt in $(seq 1 20); do
+        if udisks_can_format_infiltratorfs; then
+            return 0
+        fi
+        sleep 0.25
+    done
+    return 1
+}
+
+require_udisks_formatter()
+{
+    command -v mkfs.infiltratorfs >/dev/null 2>&1 || {
+        echo 'InfiltratorFS: mkfs.infiltratorfs is not installed in PATH.' >&2
+        return 1
+    }
+
+    if wait_for_udisks_formatter; then
+        return 0
+    fi
+
+    # One explicit second restart covers package upgrades where udisksd was
+    # simultaneously being D-Bus activated while the diverted plugin changed.
+    restart_udisks
+    if wait_for_udisks_formatter; then
+        return 0
+    fi
+
+    echo 'InfiltratorFS: UDisks still does not advertise CanFormat(infiltratorfs) after the patched libblockdev plugin was installed.' >&2
+    if command -v gdbus >/dev/null 2>&1; then
+        gdbus call --system             --dest org.freedesktop.UDisks2             --object-path /org/freedesktop/UDisks2/Manager             --method org.freedesktop.DBus.Properties.Get             org.freedesktop.UDisks2.Manager SupportedFilesystems >&2 || true
+    fi
+    return 1
 }
 
 remove_all()
@@ -176,10 +225,11 @@ install_all()
     install -m 0644 "$BUNDLE/libbd_fs.so" "$plugin"
 
     restart_udisks
+    require_udisks_formatter
     rm -rf "$tmp"
     trap - RETURN
     trap - ERR
-    log "GNOME Disks, libblockdev and UDisks/GVfs partition-safe integration installed; Mintstick remains stock."
+    log "GNOME Disks, libblockdev and UDisks/GVfs partition-safe integration installed and formatter availability verified; Mintstick remains stock."
 }
 
 case "${1:-}" in
@@ -196,6 +246,7 @@ case "${1:-}" in
         is_our_diversion "$plugin"
         grep -aFq 'InfiltratorFS' "$GDU_TARGET"
         grep -aFq 'infiltratorfs' "$plugin"
+        require_udisks_formatter
         ;;
     *)
         echo 'Usage: infiltratorfs-os-integration {install|remove|verify}' >&2
