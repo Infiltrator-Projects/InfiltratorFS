@@ -237,65 +237,93 @@ static int run_windows_client(const wchar_t *root_arg)
      * failure surfaced as ERROR_NOT_SUPPORTED (0x80070032) when a directory
      * that originated in InfiltratorFS was moved out of the projected root.
      */
-    wchar_t export_tree[32768];
-    wchar_t export_child[32768];
-    _snwprintf_s(export_tree,
-                 sizeof(export_tree) / sizeof(export_tree[0]), _TRUNCATE,
-                 L"%lsexport-tree", root);
-    _snwprintf_s(export_child,
-                 sizeof(export_child) / sizeof(export_child[0]), _TRUNCATE,
-                 L"%lsexport-tree\\payload.txt", root);
+    struct move_out_paths {
+        wchar_t export_tree[32768];
+        wchar_t export_child[32768];
+        wchar_t local_appdata[32768];
+        wchar_t destination_parent[32768];
+        wchar_t moved_tree[32768];
+        wchar_t moved_child[32768];
+    };
+    struct move_out_paths *move = calloc(1, sizeof(*move));
+    if (!move)
+        return fail(L"Allocate move-out path workspace");
+
+    _snwprintf_s(move->export_tree,
+                 sizeof(move->export_tree) / sizeof(move->export_tree[0]),
+                 _TRUNCATE, L"%lsexport-tree", root);
+    _snwprintf_s(move->export_child,
+                 sizeof(move->export_child) / sizeof(move->export_child[0]),
+                 _TRUNCATE, L"%lsexport-tree\\payload.txt", root);
 
     fwprintf(stderr, L"MARK: before-export-hydrate\n"); fflush(stderr);
     memset(data, 0, sizeof(data));
-    if (!read_windows_file(export_child, data, sizeof(data) - 1u, &got) ||
+    if (!read_windows_file(move->export_child, data,
+                           sizeof(data) - 1u, &got) ||
         got != sizeof(exported_payload) - 1u ||
-        memcmp(data, exported_payload, sizeof(exported_payload) - 1u) != 0)
+        memcmp(data, exported_payload, sizeof(exported_payload) - 1u) != 0) {
+        free(move);
         return fail(L"Hydrate projected export directory before move-out");
+    }
 
     /*
      * Put the destination outside the virtualization root but on the same NTFS
      * volume. This reproduces Explorer's troublesome fast-path exactly instead
      * of accidentally testing an ordinary cross-volume copy.
      */
-    wchar_t local_appdata[32768];
     if (SHGetFolderPathW(NULL, CSIDL_LOCAL_APPDATA | CSIDL_FLAG_CREATE,
-                         NULL, SHGFP_TYPE_CURRENT, local_appdata) != S_OK)
+                         NULL, SHGFP_TYPE_CURRENT,
+                         move->local_appdata) != S_OK) {
+        free(move);
         return fail(L"Resolve same-volume move-out destination");
+    }
 
-    wchar_t destination_parent[32768];
-    wchar_t moved_tree[32768];
-    wchar_t moved_child[32768];
-    _snwprintf_s(destination_parent,
-                 sizeof(destination_parent) / sizeof(destination_parent[0]),
-                 _TRUNCATE, L"%ls\\InfiltratorFS-ProjFS-MoveOut-%lu",
-                 local_appdata, (unsigned long)GetCurrentProcessId());
-    if (!CreateDirectoryW(destination_parent, NULL) &&
-        GetLastError() != ERROR_ALREADY_EXISTS)
+    _snwprintf_s(
+        move->destination_parent,
+        sizeof(move->destination_parent) /
+            sizeof(move->destination_parent[0]),
+        _TRUNCATE, L"%ls\\InfiltratorFS-ProjFS-MoveOut-%lu",
+        move->local_appdata, (unsigned long)GetCurrentProcessId());
+    if (!CreateDirectoryW(move->destination_parent, NULL) &&
+        GetLastError() != ERROR_ALREADY_EXISTS) {
+        free(move);
         return fail(L"Create ordinary Windows move-out destination");
-    _snwprintf_s(moved_tree,
-                 sizeof(moved_tree) / sizeof(moved_tree[0]), _TRUNCATE,
-                 L"%ls\\export-tree", destination_parent);
-    _snwprintf_s(moved_child,
-                 sizeof(moved_child) / sizeof(moved_child[0]), _TRUNCATE,
-                 L"%ls\\export-tree\\payload.txt", destination_parent);
+    }
+    _snwprintf_s(move->moved_tree,
+                 sizeof(move->moved_tree) / sizeof(move->moved_tree[0]),
+                 _TRUNCATE, L"%ls\\export-tree",
+                 move->destination_parent);
+    _snwprintf_s(move->moved_child,
+                 sizeof(move->moved_child) / sizeof(move->moved_child[0]),
+                 _TRUNCATE, L"%ls\\export-tree\\payload.txt",
+                 move->destination_parent);
 
     fwprintf(stderr, L"MARK: before-move-out\n"); fflush(stderr);
-    if (!MoveFileW(export_tree, moved_tree))
+    if (!MoveFileW(move->export_tree, move->moved_tree)) {
+        free(move);
         return fail(L"Same-volume move of projected directory out of bridge");
+    }
 
     memset(data, 0, sizeof(data));
-    if (!read_windows_file(moved_child, data, sizeof(data) - 1u, &got) ||
+    if (!read_windows_file(move->moved_child, data,
+                           sizeof(data) - 1u, &got) ||
         got != sizeof(exported_payload) - 1u ||
-        memcmp(data, exported_payload, sizeof(exported_payload) - 1u) != 0)
+        memcmp(data, exported_payload, sizeof(exported_payload) - 1u) != 0) {
+        free(move);
         return fail(L"Verify ordinary Windows copy after move-out");
-    if (GetFileAttributesW(export_tree) != INVALID_FILE_ATTRIBUTES)
-        return fail(L"Projected source remained after Shell move-out");
+    }
+    if (GetFileAttributesW(move->export_tree) != INVALID_FILE_ATTRIBUTES) {
+        free(move);
+        return fail(L"Projected source remained after move-out");
+    }
 
-    if (!DeleteFileW(moved_child) ||
-        !RemoveDirectoryW(moved_tree) ||
-        !RemoveDirectoryW(destination_parent))
+    if (!DeleteFileW(move->moved_child) ||
+        !RemoveDirectoryW(move->moved_tree) ||
+        !RemoveDirectoryW(move->destination_parent)) {
+        free(move);
         return fail(L"Clean ordinary Windows move-out destination");
+    }
+    free(move);
 
     wchar_t delete_path[32768];
     _snwprintf_s(delete_path, sizeof(delete_path) / sizeof(delete_path[0]), _TRUNCATE,
