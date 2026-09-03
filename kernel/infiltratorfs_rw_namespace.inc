@@ -1594,8 +1594,6 @@ static int infilfs_ns_evict_unlinked_file(struct inode *inode)
 {
     struct infilfs_inode_info *ii = INFILFS_I(inode);
     struct infilfs_native_pending *pending;
-    struct infilfs_quota_reservation new_project_quota = {0};
-    struct infilfs_quota_reservation old_project_quota = {0};
     struct infilfs_ns_index_change *changes = NULL;
     u32 change_count = 0;
     u32 change_capacity = 0;
@@ -1927,6 +1925,8 @@ static int infilfs_ns_rename(struct user_namespace *idmap,
     struct infilfs_inode_info *new_dir_ii = INFILFS_I(new_dir);
     struct infilfs_inode_info *destination_ii = destination ? INFILFS_I(destination) : NULL;
     struct infilfs_native_pending *pending;
+    struct infilfs_quota_reservation new_project_quota = {0};
+    struct infilfs_quota_reservation old_project_quota = {0};
     struct infilfs_ns_index_change *changes = NULL;
     u32 change_count = 0, change_capacity = 0;
     u64 old_dir_block = 0, new_dir_block = 0, source_block = 0;
