@@ -402,7 +402,7 @@ jobs:
           Select-String -Path tools/windows/infiltratorfs-windows-entry.c -Pattern 'INFS_WINDOWS_TRANSFER_PUBLISH_BYTES' -SimpleMatch
           Select-String -Path tools/windows/infiltratorfs-windows-bridge.c -Pattern 'PrjStartVirtualizing' -SimpleMatch
           Select-String -Path tools/windows/infiltratorfs-windows-bridge.c -Pattern 'LoadLibraryW(L"ProjectedFSLib.dll")' -SimpleMatch
-          Select-String -Path tests/win32-projfs-bridge.c -Pattern 'Windows ProjFS bridge cross-platform read/write/rename/' -SimpleMatch
+          Select-String -Path tests/win32-projfs-bridge.c -Pattern 'hardlink/delete/move-out qualification: PASS' -SimpleMatch
           Select-String -Path tools/windows/infiltratorfs-windows-bridge.c -Pattern 'PrjWriteFileData' -SimpleMatch
           Select-String -Path tools/windows/infiltratorfs-windows-bridge.c -Pattern 'PRJ_NOTIFY_FILE_HANDLE_CLOSED_FILE_MODIFIED' -SimpleMatch
           Select-String -Path tools/windows/infiltratorfs-windows.c -Pattern 'Mount in Explorer' -SimpleMatch
