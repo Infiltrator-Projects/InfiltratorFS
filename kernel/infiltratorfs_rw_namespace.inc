@@ -1764,6 +1764,18 @@ static int infilfs_ns_unlink(struct inode *dir, struct dentry *dentry)
             infilfs_quota_adjust_locked(
                 &released_quota, released_bytes, 1);
         released_quota.active = false;
+        if (!ret &&
+            infilfs_quota_remove_project_root_locked(
+                dir->i_sb, ii->object_id)) {
+            int quota_policy_ret =
+                infilfs_quota_persist_locked(dir->i_sb);
+
+            if (quota_policy_ret) {
+                INFILFS_SB(dir->i_sb)->write_poisoned = true;
+                pr_err("InfiltratorFS: removed project root could not be persisted after rmdir: %d\n",
+                       quota_policy_ret);
+            }
+        }
         mutex_unlock(&INFILFS_SB(dir->i_sb)->quota_lock);
         quota_locked = false;
     }
@@ -1974,11 +1986,14 @@ static int infilfs_ns_rename(struct user_namespace *idmap,
     struct infilfs_native_pending *pending;
     struct infilfs_quota_reservation new_project_quota = {0};
     struct infilfs_quota_reservation old_project_quota = {0};
+    struct infilfs_quota_reservation destination_quota = {0};
     struct infilfs_ns_index_change *changes = NULL;
     u32 change_count = 0, change_capacity = 0;
     u64 old_dir_block = 0, new_dir_block = 0, source_block = 0;
     u64 retained_destination_block = 0;
+    u64 destination_bytes = 0;
     bool retained_destination = false;
+    bool destination_sync_delete = false;
     bool same_parent;
     bool quota_locked = false;
     int old_delta = 0, new_delta = 0;
@@ -2007,6 +2022,8 @@ static int infilfs_ns_rename(struct user_namespace *idmap,
             return -EISDIR;
     }
     same_parent = old_dir == new_dir;
+    destination_sync_delete = destination &&
+        destination_ii->object_type != INFILFS_OBJECT_FILE;
     if (source_ii->object_type == INFILFS_OBJECT_DIRECTORY && !same_parent) {
         ret = infilfs_ns_is_ancestor(old_dir->i_sb, source_ii->object_id,
                                      new_dir_ii->object_id);
@@ -2016,12 +2033,22 @@ static int infilfs_ns_rename(struct user_namespace *idmap,
             return -EINVAL;
     }
 
-    if (!same_parent) {
+    if (!same_parent || destination_sync_delete) {
         mutex_lock(&INFILFS_SB(old_dir->i_sb)->quota_lock);
         quota_locked = true;
     }
+    if (destination_sync_delete) {
+        ret = infilfs_quota_capture_inode_locked(
+            destination, &destination_quota);
+        if (ret) {
+            mutex_unlock(&INFILFS_SB(old_dir->i_sb)->quota_lock);
+            return ret;
+        }
+        destination_bytes = (u64)i_size_read(destination);
+    }
     ret = infilfs_ns_begin(old_dir->i_sb, &pending);
     if (ret) {
+        destination_quota.active = false;
         if (quota_locked)
             mutex_unlock(&INFILFS_SB(old_dir->i_sb)->quota_lock);
         return ret;
@@ -2108,11 +2135,13 @@ finish2:
                     new_project_quota.objects);
             new_project_quota.active = false;
             old_project_quota.active = false;
+            destination_quota.active = false;
         } else {
             /*
-             * Destination usage was reserved before mutation.  Keeping that
-             * reservation commits the transfer; only the old project needs
-             * to be debited after the namespace transaction succeeds.
+             * Destination-project usage was reserved before mutation. Keeping
+             * that reservation commits the source transfer; the old project
+             * and any synchronously removed non-file destination are debited
+             * only after the namespace transaction is known to have committed.
              */
             new_project_quota.active = false;
             if (old_project_quota.active)
@@ -2121,6 +2150,23 @@ finish2:
                     old_project_quota.bytes,
                     old_project_quota.objects);
             old_project_quota.active = false;
+            if (destination_quota.active)
+                infilfs_quota_adjust_locked(
+                    &destination_quota, destination_bytes, 1);
+            destination_quota.active = false;
+
+            if (destination_sync_delete &&
+                infilfs_quota_remove_project_root_locked(
+                    old_dir->i_sb, destination_ii->object_id)) {
+                int quota_policy_ret =
+                    infilfs_quota_persist_locked(old_dir->i_sb);
+
+                if (quota_policy_ret) {
+                    INFILFS_SB(old_dir->i_sb)->write_poisoned = true;
+                    pr_err("InfiltratorFS: replaced project root could not be persisted after rename: %d\n",
+                           quota_policy_ret);
+                }
+            }
         }
         mutex_unlock(&INFILFS_SB(old_dir->i_sb)->quota_lock);
         quota_locked = false;
