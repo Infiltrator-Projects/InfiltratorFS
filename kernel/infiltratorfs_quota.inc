@@ -443,8 +443,10 @@ static int infilfs_quota_set_rule(struct super_block *sb,
     int idx;
     int ret;
 
-    if (!infilfs_quota_type_valid(request->type) || request->flags ||
-        request->reserved0 || memchr_inv(request->reserved, 0, sizeof(request->reserved)))
+    if (!infilfs_quota_type_valid(request->type) ||
+        (request->type == INFILFS_QUOTA_PROJECT && request->id == 0) ||
+        request->flags || request->reserved0 ||
+        memchr_inv(request->reserved, 0, sizeof(request->reserved)))
         return -EINVAL;
     if (sb_rdonly(sb))
         return -EROFS;
@@ -501,8 +503,10 @@ static int infilfs_quota_get_rule(struct super_block *sb,
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
     int idx;
 
-    if (!infilfs_quota_type_valid(request->type) || request->flags ||
-        request->reserved0 || memchr_inv(request->reserved, 0, sizeof(request->reserved)))
+    if (!infilfs_quota_type_valid(request->type) ||
+        (request->type == INFILFS_QUOTA_PROJECT && request->id == 0) ||
+        request->flags || request->reserved0 ||
+        memchr_inv(request->reserved, 0, sizeof(request->reserved)))
         return -EINVAL;
     mutex_lock(&sbi->quota_lock);
     idx = infilfs_quota_find_rule_locked(sbi, request->type, request->id);
@@ -717,12 +721,14 @@ static int infilfs_quota_reserve_inode(
     struct infilfs_quota_reservation *reservation)
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(inode->i_sb);
+    struct infilfs_inode_info *ii = INFILFS_I(inode);
     struct infilfs_quota_subject candidate[3];
     u32 candidate_count = 0;
     int ret;
 
     memset(reservation, 0, sizeof(*reservation));
-    if (!sbi || !sbi->quota_rule_count || (!bytes && !objects))
+    if (!sbi || !sbi->quota_rule_count || (!bytes && !objects) ||
+        !ii || (ii->portable_flags & INFILFS_ATTR_SYSTEM))
         return 0;
     mutex_lock(&sbi->quota_lock);
     ret = infilfs_quota_candidate_subjects_locked(
