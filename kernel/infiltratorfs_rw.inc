@@ -42,6 +42,10 @@ static int infilfs_quota_capture_inode(
 static void infilfs_quota_apply_release(
     struct infilfs_quota_reservation *reservation, u64 bytes, u64 objects);
 static int infilfs_quota_rebuild_usage(struct super_block *sb);
+static int infilfs_quota_prepare_identity_change(
+    struct inode *inode, const struct iattr *attr,
+    struct infilfs_quota_reservation *new_quota,
+    struct infilfs_quota_reservation *old_quota);
 static int infilfs_parallel_allocator_mount_init(struct super_block *sb);
 static void infilfs_parallel_allocator_mount_destroy(struct super_block *sb);
 static int infilfs_parallel_tx_claim(struct infilfs_rw_tx *tx, u64 start,
