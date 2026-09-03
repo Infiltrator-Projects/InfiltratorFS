@@ -317,7 +317,14 @@ if grep -q 'usr/bin/infilfs-fuse$' "$contents"; then
     echo 'Native release package unexpectedly contains infilfs-fuse.' >&2
     exit 1
 fi
-if grep -q 'usr/lib/infiltratorfs/patch-mintstick.py
+if grep -q 'usr/lib/infiltratorfs/patch-mintstick.py$' "$contents"; then
+    echo 'Release package must not install the retired whole-device Mintstick patcher.' >&2
+    exit 1
+fi
+if grep -q 'usr/share/nemo/actions/infiltratorfs-format-partition.nemo_action$' "$contents"; then
+    echo 'Release package must not install a second visible Nemo Format action.' >&2
+    exit 1
+fi
 test "$(dpkg-deb --field "$dist_dir/$deb_name" Version)" = "$package_version"
 depends="$(dpkg-deb --field "$dist_dir/$deb_name" Depends)"
 for dependency in dkms kmod policykit-1 util-linux xdg-utils fontconfig python3 python3-gi gir1.2-gtk-3.0; do
