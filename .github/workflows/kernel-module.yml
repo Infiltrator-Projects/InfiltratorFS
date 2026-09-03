@@ -15,6 +15,7 @@ on:
       - 'CMakeLists.txt'
       - '.gitmodules'
       - '.github/workflows/kernel-module.yml'
+      - '.github/release-trigger'
   workflow_dispatch:
 
 permissions:

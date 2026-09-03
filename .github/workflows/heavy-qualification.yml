@@ -16,6 +16,7 @@ on:
       - 'tests/native-endurance-*'
       - 'tests/native-defrag-*'
       - 'CMakeLists.txt'
+      - '.github/release-trigger'
   schedule:
     - cron: "43 2 * * 0"
   workflow_dispatch:
