@@ -4,7 +4,7 @@ set -euo pipefail
 
 root="${1:-.}"
 kernel="$root/kernel"
-driver="$kernel/infiltratorfs.c"
+driver="$kernel/infiltratorfs_core.c"
 rw="$kernel/infiltratorfs_rw.inc"
 makefile="$kernel/Makefile"
 ioctl="$kernel/infiltratorfs_ioctl.h"
@@ -56,8 +56,18 @@ test -n "$resize_inner" || fail 'write_lock acquisition after resize_lock not fo
 grep -Fq 'mutex_lock(&sbi->quota_lock);' "$quota" || fail 'quota_lock acquisition missing'
 grep -Fq 'mutex_lock(&sbi->write_lock);' "$quota" || fail 'quota write_lock acquisition missing'
 
-# Only the top-level driver and the explicit RW compositor may textually compose
-# implementation .inc units. A leaf .inc importing another leaf creates hidden
+
+# The native driver must stay a genuine multi-object Kbuild module.  The
+# allocation map is the first extracted subsystem and must never regress into
+# textual inclusion.
+grep -Fq 'infiltratorfs-y := infiltratorfs_core.o infiltratorfs_allocation_map.o' "$makefile" ||     fail 'kernel module is no longer built from explicit component objects'
+test -f "$kernel/infiltratorfs_internal.h" || fail 'missing private kernel API header'
+test -f "$kernel/infiltratorfs_allocation_map.c" || fail 'allocation map object missing'
+test ! -e "$kernel/infiltratorfs_allocation_map.inc" || fail 'allocation map regressed to textual include'
+! grep -Fq 'infiltratorfs_allocation_map.inc' "$driver" || fail 'core textually includes allocation map'
+
+# Only the core object and the explicit RW compositor may textually compose
+# remaining implementation .inc units. A leaf .inc importing another leaf creates hidden
 # ordering/cycle dependencies and is rejected.
 while IFS= read -r file; do
     case "$file" in

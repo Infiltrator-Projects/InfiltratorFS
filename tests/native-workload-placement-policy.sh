@@ -3,7 +3,7 @@
 set -euo pipefail
 
 root="${1:-.}"
-driver="$root/kernel/infiltratorfs.c"
+driver="$root/kernel/infiltratorfs_core.c"
 allocator="$root/kernel/infiltratorfs_parallel_alloc.inc"
 data="$root/kernel/infiltratorfs_rw_data.inc"
 

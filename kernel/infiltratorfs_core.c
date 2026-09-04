@@ -1,48 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-#include <linux/blkdev.h>
-#include <linux/bitops.h>
-#include <linux/buffer_head.h>
-#include <linux/capability.h>
-#include <linux/dirent.h>
-#include <linux/delay.h>
-#include <linux/falloc.h>
-#include <linux/fiemap.h>
-#include <linux/file.h>
-#include <linux/atomic.h>
-#include <linux/fs.h>
-#include <linux/fs_context.h>
-#include <linux/fs_parser.h>
-#include <linux/cred.h>
-#include <linux/highmem.h>
-#include <linux/kernel.h>
-#include <linux/lz4.h>
-#include <linux/math64.h>
-#include <linux/mutex.h>
-#include <linux/random.h>
-#include <linux/seq_file.h>
-#include <linux/sort.h>
-#include <linux/spinlock.h>
-#include <linux/pagevec.h>
-#include <linux/pagemap.h>
-#include <linux/sched.h>
-#include <linux/timekeeping.h>
-#include <linux/uidgid.h>
-#include <linux/user_namespace.h>
-#include <linux/vmalloc.h>
-#include <linux/module.h>
-#include <linux/slab.h>
-#include <linux/string.h>
-#include <linux/uio.h>
-#include <linux/version.h>
-#include <linux/writeback.h>
-#include <linux/xattr.h>
-
-#include "infiltratorfs_format.h"
-#include "infiltratorfs_ioctl.h"
-#include "iac1.h"
-
-#define INFILTRATORFS_NAME "infiltratorfs"
-#define INFILTRATORFS_MAGIC 0x494e4653u
+#include "infiltratorfs_internal.h"
 
 static const u8 infilfs_disk_magic[8] = {
     'I', 'N', 'F', 'S', '2', '0', '2', '6'
@@ -65,150 +22,6 @@ static const u8 infilfs_index_branch_page_magic[8] = {
 static const u8 infilfs_extent_page_magic[8] = {
     'I', 'N', 'F', 'S', 'E', 'P', '0', '1'
 };
-
-#define INFILFS_ALLOCATION_RESERVATION_SHARDS 64u
-
-struct infilfs_parallel_reservation {
-    u64 start;
-    u64 count;
-    u32 shard;
-    bool active;
-};
-
-enum infilfs_data_workload {
-    INFILFS_DATA_WORKLOAD_SEQUENTIAL = 0,
-    INFILFS_DATA_WORKLOAD_RANDOM,
-    INFILFS_DATA_WORKLOAD_SPARSE,
-};
-
-enum infilfs_media_profile {
-    INFILFS_MEDIA_BALANCED = 0,
-    INFILFS_MEDIA_ROTATIONAL,
-    INFILFS_MEDIA_NONROTATIONAL,
-};
-
-enum infilfs_media_override {
-    INFILFS_MEDIA_OVERRIDE_AUTO = 0,
-    INFILFS_MEDIA_OVERRIDE_BALANCED,
-    INFILFS_MEDIA_OVERRIDE_ROTATIONAL,
-    INFILFS_MEDIA_OVERRIDE_NONROTATIONAL,
-};
-
-struct infilfs_fs_context {
-    enum infilfs_media_override media_override;
-};
-
-struct infilfs_quota_rule;
-struct infilfs_project_root;
-
-struct infilfs_sb_info {
-    struct infilfs_superblock_disk disk;
-    u64 device_blocks;
-    struct mutex write_lock;
-    /* Serialize compound Linux sidecar metadata mutations (xattr/special). */
-    struct mutex linux_meta_lock;
-    /* Serialize online geometry changes and gate new native transactions. */
-    struct mutex resize_lock;
-    bool resize_active;
-    /* Native Linux user/group/project quota policy and live accounting. */
-    struct mutex quota_lock;
-    struct infilfs_quota_rule *quota_rules;
-    size_t quota_rule_count;
-    struct infilfs_project_root *project_roots;
-    size_t project_root_count;
-    rwlock_t bitmap_lock;
-    u8 *bitmap;
-    size_t bitmap_bytes;
-    u64 *allocation_leaf_blocks;
-    u64 *allocation_branch_blocks;
-    size_t allocation_leaf_count;
-    size_t allocation_branch_count;
-    size_t allocation_level1_count;
-    size_t allocation_level2_count;
-    const u8 *visible_bitmap;
-    size_t visible_bitmap_bytes;
-    const u8 *validation_bitmap;
-    size_t validation_bitmap_bytes;
-    u8 *snapshot_bitmap;
-    /*
-     * Volatile next-fit cursors.  These are allocation heuristics only and
-     * deliberately never enter the on-disk format; a rollback or remount may
-     * move them without affecting correctness.
-     */
-    u64 data_alloc_hint;
-    u64 metadata_alloc_hint;
-    /*
-     * Volatile allocation reservations let independent writers search and
-     * claim disjoint data runs before entering the checkpoint publication
-     * critical section.  They never enter the on-disk format and are either
-     * consumed by the live transaction or released by the calling writer.
-     */
-    spinlock_t allocation_reservation_locks[
-        INFILFS_ALLOCATION_RESERVATION_SHARDS];
-    unsigned long *allocation_reservations;
-    size_t allocation_reservation_bytes;
-    u64 allocation_reservation_hints[
-        INFILFS_ALLOCATION_RESERVATION_SHARDS];
-    atomic64_t allocation_reservation_steer;
-    atomic64_t allocation_reserved_blocks;
-    atomic64_t allocation_active_reservations;
-    atomic64_t allocation_peak_active_reservations;
-    atomic64_t allocation_reservation_successes;
-    atomic64_t allocation_reservation_conflicts;
-    atomic64_t allocation_workload_sequential;
-    atomic64_t allocation_workload_random;
-    atomic64_t allocation_workload_sparse;
-    atomic64_t allocation_locality_scored;
-    atomic64_t allocation_best_fit;
-    atomic64_t allocation_media_rotational_scored;
-    atomic64_t allocation_media_nonrotational_scored;
-    atomic64_t allocation_media_balanced_scored;
-    enum infilfs_media_profile media_profile;
-    bool media_profile_overridden;
-    bool rw_enabled;
-    bool write_poisoned;
-    bool checkpoint_repair_needed;
-};
-
-struct infilfs_inode_info {
-    u64 object_block;
-    /* Volatile per-object locality cursor for sharded data reservations. */
-    u64 data_allocation_hint;
-    u64 portable_flags;
-    u16 object_type;
-    u8 object_id[16];
-    char *symlink_target;
-};
-
-struct infilfs_dir_lookup {
-    const char *name;
-    size_t name_len;
-    u8 object_id[16];
-    u16 object_type;
-    bool found;
-};
-
-struct infilfs_dir_emit_state {
-    struct dir_context *ctx;
-    struct inode *dir;
-    bool has_linux_meta;
-    bool hide_linux_meta;
-    u64 index;
-};
-
-struct infilfs_dir_snapshot_entry {
-    struct list_head link;
-    u8 object_id[16];
-    u16 object_type;
-    u16 name_len;
-    u8 name[];
-};
-
-struct infilfs_dir_snapshot {
-    struct list_head entries;
-};
-
-#define INFILFS_LINUX_META_DIRECTORY ".infilfs-posix-meta"
 
 static int infilfs_linux_meta_get_special(struct super_block *sb,
                                           const u8 object_id[16],
@@ -237,7 +50,7 @@ static u64 infilfs_rw_crc64_zeroed(const u8 *data, size_t length,
                                     size_t zero_offset, size_t zero_length);
 static bool infilfs_rw_utf8_valid(const u8 *s, size_t len);
 
-static bool infilfs_crc64_block_valid(const u8 block[INFILFS_DISK_BLOCK_SIZE],
+bool infilfs_crc64_block_valid(const u8 block[INFILFS_DISK_BLOCK_SIZE],
                                       size_t checksum_offset,
                                       size_t checksum_size)
 {
@@ -251,22 +64,6 @@ static bool infilfs_crc64_block_valid(const u8 block[INFILFS_DISK_BLOCK_SIZE],
             return false;
     return le64_to_cpu(stored) == infilfs_rw_crc64_zeroed(
         block, INFILFS_DISK_BLOCK_SIZE, checksum_offset, checksum_size);
-}
-
-static struct infilfs_sb_info *INFILFS_SB(struct super_block *sb)
-{
-    return sb->s_fs_info;
-}
-
-/*
- * device_blocks is the physical backing-store bound.  The mounted filesystem
- * may deliberately be smaller after a shrink or before an online grow.
- * Allocation, bitmap indexing and persistent-reference validation must use the
- * committed filesystem geometry, never the backing-device capacity.
- */
-static u64 infilfs_volume_blocks(const struct infilfs_sb_info *sbi)
-{
-    return sbi ? le64_to_cpu(sbi->disk.total_blocks) : 0;
 }
 
 static int infilfs_read_allocated_block(
@@ -606,7 +403,7 @@ static bool infilfs_inode_is_new(struct inode *inode)
 #endif
 }
 
-static int infilfs_read_block(struct super_block *sb, u64 block, void *out)
+int infilfs_read_block(struct super_block *sb, u64 block, void *out)
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
     struct buffer_head *bh;
@@ -630,7 +427,6 @@ static int infilfs_read_allocated_block(struct super_block *sb, u64 block,
     return infilfs_read_block(sb, block, out);
 }
 
-#include "infiltratorfs_allocation_map.inc"
 
 static bool infilfs_checkpoint_basic_valid(
     const struct infilfs_superblock_disk *disk, u64 device_blocks)

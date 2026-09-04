@@ -1,19 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "infiltratorfs_internal.h"
 
-struct infilfs_allocation_layout {
-    u64 *leaf_blocks;
-    u64 *branch_blocks;
-    size_t leaf_count;
-    size_t branch_count;
-    size_t level1_count;
-    size_t level2_count;
-};
 
-static int infilfs_allocation_counts(
-    u64 total, size_t *leaves_out, size_t *level1_out,
-    size_t *level2_out, size_t *branches_out);
 
-static void infilfs_allocation_layout_destroy(
+void infilfs_allocation_layout_destroy(
     struct infilfs_allocation_layout *layout)
 {
     if (!layout)
@@ -23,7 +13,7 @@ static void infilfs_allocation_layout_destroy(
     memset(layout, 0, sizeof(*layout));
 }
 
-static void infilfs_allocation_cache_destroy(struct infilfs_sb_info *sbi)
+void infilfs_allocation_cache_destroy(struct infilfs_sb_info *sbi)
 {
     if (!sbi)
         return;
@@ -37,7 +27,7 @@ static void infilfs_allocation_cache_destroy(struct infilfs_sb_info *sbi)
     sbi->allocation_level2_count = 0;
 }
 
-static void infilfs_allocation_cache_replace(
+void infilfs_allocation_cache_replace(
     struct infilfs_sb_info *sbi, struct infilfs_allocation_layout *layout)
 {
     if (!sbi || !layout)
@@ -53,7 +43,7 @@ static void infilfs_allocation_cache_replace(
 }
 
 /* Borrow the layout validated for the currently committed checkpoint. */
-static int infilfs_allocation_cache_view(
+int infilfs_allocation_cache_view(
     struct infilfs_sb_info *sbi,
     const struct infilfs_superblock_disk *disk,
     struct infilfs_allocation_layout *layout)
@@ -87,7 +77,7 @@ static int infilfs_allocation_cache_view(
     return 0;
 }
 
-static int infilfs_allocation_counts(
+int infilfs_allocation_counts(
     u64 total, size_t *leaves_out, size_t *level1_out,
     size_t *level2_out, size_t *branches_out)
 {
@@ -114,7 +104,7 @@ static int infilfs_allocation_counts(
     return 0;
 }
 
-static int infilfs_allocation_runtime_bytes(u64 total, size_t *bytes_out)
+int infilfs_allocation_runtime_bytes(u64 total, size_t *bytes_out)
 {
     u64 raw, blocks;
 
@@ -201,7 +191,7 @@ static int infilfs_allocation_read_page(
         0 : -EFSCORRUPTED;
 }
 
-static int infilfs_allocation_map_load(
+int infilfs_allocation_map_load(
     struct super_block *sb, const struct infilfs_superblock_disk *disk,
     u8 **bitmap_out, size_t *bitmap_bytes_out,
     struct infilfs_allocation_layout *layout_out)

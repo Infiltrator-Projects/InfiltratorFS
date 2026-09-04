@@ -2,7 +2,7 @@
 
 # Native driver synchronization and composition contract
 # ------------------------------------------------------
-# This is the implementation-level contract for the single translation-unit
+# This is the implementation-level contract for the composite
 # Linux driver. Keep it beside the Kbuild entry so repository and DKMS builds
 # share the same rules instead of relying on tribal knowledge or README prose.
 #
@@ -39,9 +39,11 @@
 #   only after the persistent mutation lock has been released.
 #
 # Source composition:
-#   infiltratorfs.c is the only top-level module translation unit.
-#   infiltratorfs_rw.inc is the only nested implementation compositor; leaf
-#   .inc files must not start including each other and creating hidden cycles.
+#   infiltratorfs.ko is a composite Kbuild module.
+#   infiltratorfs_core.c owns VFS/mount/checkpoint orchestration.
+#   infiltratorfs_allocation_map.c owns Format 0.17 allocation-map loading.
+#   infiltratorfs_rw.inc is the only remaining nested implementation compositor;
+#   leaf .inc files must not start including each other or creating hidden cycles.
 #   Existing macro-renamed legacy/data entry points are migration debt, not a
 #   pattern for new layers. New functionality must use explicit helper names.
 #   The maintainability policy test enforces include ownership, key ordering,
@@ -53,6 +55,7 @@
 # KERNELRELEASE conditional, the initial DKMS make terminates with
 # "make: *** No targets. Stop." before Kbuild is ever entered.
 obj-m += infiltratorfs.o
+infiltratorfs-y := infiltratorfs_core.o infiltratorfs_allocation_map.o
 ccflags-y += -I$(src)/../include/infilfs
 
 KDIR ?= /lib/modules/$(shell uname -r)/build

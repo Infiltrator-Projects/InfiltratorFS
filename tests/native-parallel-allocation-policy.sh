@@ -4,19 +4,20 @@ set -euo pipefail
 
 root="${1:-.}"
 allocator="$root/kernel/infiltratorfs_parallel_alloc.inc"
-driver="$root/kernel/infiltratorfs.c"
+driver="$root/kernel/infiltratorfs_core.c"
+state="$root/kernel/infiltratorfs_internal.h"
 rw="$root/kernel/infiltratorfs_rw.inc"
 data="$root/kernel/infiltratorfs_rw_data.inc"
 package="$root/packaging/build-linux-packages.sh"
 workflow="$root/.github/workflows/kernel-module.yml"
 
-for file in "$allocator" "$driver" "$rw" "$data" "$package" "$workflow"; do
+for file in "$allocator" "$driver" "$state" "$rw" "$data" "$package" "$workflow"; do
     test -f "$file"
 done
 
-grep -Fq '#define INFILFS_ALLOCATION_RESERVATION_SHARDS 64u' "$driver"
-grep -Fq 'allocation_reservation_locks' "$driver"
-grep -Fq 'allocation_reservations' "$driver"
+grep -Fq '#define INFILFS_ALLOCATION_RESERVATION_SHARDS 64u' "$state"
+grep -Fq 'allocation_reservation_locks' "$state"
+grep -Fq 'allocation_reservations' "$state"
 grep -Fq 'infilfs_parallel_reserve_data' "$allocator"
 grep -Fq 'infilfs_parallel_object_preferred' "$allocator"
 grep -Fq 'infilfs_parallel_consume_reservation' "$allocator"

@@ -81,8 +81,8 @@ fi
 # though the repository build itself succeeds.
 dkms_root="$package_root/usr/src/infiltratorfs-$package_version"
 install -d "$dkms_root"
-for file in Makefile infiltratorfs.c infiltratorfs_format.h \
-            infiltratorfs_allocation_map.inc infiltratorfs_allocation_publish.inc \
+for file in Makefile infiltratorfs_core.c infiltratorfs_internal.h infiltratorfs_format.h \
+            infiltratorfs_allocation_map.c infiltratorfs_allocation_publish.inc \
             infiltratorfs_parallel_alloc.inc \
             infiltratorfs_index_tree.inc infiltratorfs_directory_tree.inc \
             infiltratorfs_rw.inc \
@@ -291,10 +291,11 @@ for required in \
     'usr/share/infiltratorfs/fonts/mb_corpo_s_bold.ttf$' \
     'usr/share/infiltratorfs/fonts/mb_corpo_s_regular.ttf$' \
     "usr/src/infiltratorfs-${package_version}/dkms.conf$" \
-    "usr/src/infiltratorfs-${package_version}/infiltratorfs.c$" \
+    "usr/src/infiltratorfs-${package_version}/infiltratorfs_core.c$" \
+    "usr/src/infiltratorfs-${package_version}/infiltratorfs_internal.h$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_format.h$" \
     "usr/src/infiltratorfs-${package_version}/iac1.h$" \
-    "usr/src/infiltratorfs-${package_version}/infiltratorfs_allocation_map.inc$" \
+    "usr/src/infiltratorfs-${package_version}/infiltratorfs_allocation_map.c$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_allocation_publish.inc$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_parallel_alloc.inc$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_rw.inc$" \
@@ -398,8 +399,8 @@ verify_installer() {
     for required in CMakeLists.txt README.md support/installer/bootstrap.sh \
         packaging/build-linux-packages.sh packaging/infiltratorfs-os-integration \
         packaging/patch-mintstick.py \
-        src/infiltratr-common/CMakeLists.txt kernel/Makefile kernel/infiltratorfs.c \
-        kernel/infiltratorfs_format.h include/infilfs/iac1.h kernel/infiltratorfs_allocation_map.inc \
+        src/infiltratr-common/CMakeLists.txt kernel/Makefile kernel/infiltratorfs_core.c \
+        kernel/infiltratorfs_format.h include/infilfs/iac1.h kernel/infiltratorfs_allocation_map.c \
         kernel/infiltratorfs_allocation_publish.inc kernel/infiltratorfs_rw.inc \
         kernel/infiltratorfs_parallel_alloc.inc \
         kernel/infiltratorfs_rw_legacy.inc kernel/infiltratorfs_rw_data.inc \

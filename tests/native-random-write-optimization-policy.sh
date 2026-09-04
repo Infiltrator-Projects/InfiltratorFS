@@ -5,7 +5,7 @@ set -euo pipefail
 root="${1:-.}"
 data="$root/kernel/infiltratorfs_rw_data.inc"
 legacy="$root/kernel/infiltratorfs_rw_legacy.inc"
-mainc="$root/kernel/infiltratorfs.c"
+mainc="$root/kernel/infiltratorfs_core.c"
 ns="$root/kernel/infiltratorfs_rw_namespace.inc"
 
 grep -Fq 'u64 data_alloc_hint;' "$mainc"
