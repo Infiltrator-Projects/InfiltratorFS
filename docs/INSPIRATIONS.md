@@ -1,21 +1,23 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # InfiltratorFS Design Inspirations
 
+This file records design influences only. It is not a feature-status or qualification document.
+
 InfiltratorFS does not copy another filesystem's on-disk format. It treats filesystem history as a catalogue of mechanisms that can be accepted, changed, generalized or rejected independently.
 
 | Source | Idea retained or reconsidered |
 | --- | --- |
-| Amiga OFS/FFS | Compact bitmap-based free-space knowledge; simple explicit on-disk structures. |
+| Amiga OFS/FFS | Bitmap-style allocation truth and simple explicit on-disk structures. |
 | Amiga PFS/SFS | Fast recovery philosophy, transactional thinking and online optimisation ideas. |
 | ext4 | Extent-based allocation and practical Linux semantics. |
-| XFS | Allocation scalability, extent orientation, allocation-group thinking and online checking direction. |
-| NTFS | Rich metadata model, allocation bitmap concept, sparse data and named-metadata ideas. |
+| XFS | Allocation scalability, extent orientation and online checking direction. |
+| NTFS | Rich metadata model, sparse data and named-metadata ideas. |
 | ReFS | Windows-native integrity, allocation-on-write and large-scale metadata ideas. |
 | ZFS | End-to-end integrity, distrust of storage, copy-on-write roots, scrub and snapshot philosophy. |
 | Btrfs | Reflinks, shared extents, snapshots and Linux-native CoW ideas. |
 | APFS | Modern CoW metadata, clone/snapshot concepts and encryption-domain thinking. |
 | F2FS | Storage-media awareness and flash-sensitive allocation policy. |
-| bcachefs | Modern combination of checksums, compression, replication, snapshots and selectable CoW behaviour. |
+| bcachefs | Checksums, compression, replication, snapshots and selectable CoW behaviour. |
 | HAMMER/HAMMER2 | Historical/versioned filesystem state and transaction-oriented design. |
 | Haiku BFS | Rich named attributes, indexing/query ideas and metadata-centric desktop integration. |
 | Database engines | Atomic publication, generations, page checksums and rebuildable secondary indexes. |
@@ -31,11 +33,11 @@ InfiltratorFS does not copy another filesystem's on-disk format. It treats files
 - designing recovery only after the normal format is finished; and
 - making one operating system's metadata vocabulary the filesystem's canonical model.
 
-## New combinations explored by InfiltratorFS
+## Combinations explored by InfiltratorFS
 
-### Authoritative bitmap plus disposable free-extent index
+### Bitmap allocation semantics plus rebuildable free-extent acceleration
 
-The exact bitmap remains small, simple and reconstructable. A later free-extent tree exists to make large allocations fast, but it can be thrown away and rebuilt.
+Allocation ownership remains the simple one-bit-per-block logical model, while Format 0.17 persists that bitset through a scalable sharded copy-on-write allocation tree. Runtime free-extent indexes are disposable accelerators that can be rebuilt from the authoritative allocation state.
 
 ### Persistent object identity independent of pathname and location
 
@@ -45,11 +47,11 @@ A 128-bit object ID survives rename and physical relocation. Namespace, physical
 
 The disk format and portable core use fixed-width records, UTF-8 names and storage callbacks. Equivalent Linux, Windows, macOS, BSD, Haiku or future filesystem concepts map to the same underlying InfiltratorFS meaning rather than forcing one platform to emulate another.
 
-POSIX compatibility metadata and Linux adapter sidecars are deliberately isolated from the long-term portable security/named-metadata model. Future Windows SIDs/security descriptors, macOS metadata, Haiku attributes and other native semantics can be translated or preserved without changing a volume's persistent object identity.
+POSIX compatibility metadata and Linux adapter sidecars are isolated from the long-term portable security/named-metadata model. Future Windows SIDs/security descriptors, macOS metadata, Haiku attributes and other native semantics can be translated or preserved without changing persistent object identity.
 
 ### Workload-aware data policy
 
-The filesystem may automatically recognise static, sequential-growing, random-write, temporary and VM-like workloads and alter placement, CoW and compression behaviour without changing the application's ordinary file interface.
+Placement, CoW and compression policy may respond to workload and media characteristics without changing the application's ordinary file interface or the persistent identity model.
 
 ### Protection classes
 
@@ -57,4 +59,4 @@ Files may eventually request stronger or weaker redundancy while retaining a com
 
 ### Recovery-oriented redundancy
 
-Small amounts of intentionally redundant metadata may be worthwhile when they make reconstruction possible after the primary index is damaged. Redundant hints do not become conflicting sources of truth; one representation remains authoritative during normal operation.
+Small amounts of intentional metadata redundancy are worthwhile when they make reconstruction possible after primary metadata damage. Redundant hints do not become conflicting normal-operation sources of truth; committed checkpoint/graph rules remain authoritative.
