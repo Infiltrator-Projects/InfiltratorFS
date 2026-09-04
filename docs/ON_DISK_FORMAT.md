@@ -1,246 +1,239 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # InfiltratorFS On-Disk Format 0.17
 
-Status: experimental writable prototype. Current source accepts exactly Format 0.17. Release 0.18.19 is the last Format 0.16 release. Pre-1.0 development builds do not promise compatibility with earlier development formats.
+This document explains the persistent Format 0.17 model. Exact packed field order, sizes, constants and feature identifiers in `include/infilfs/format.h` are the byte-level authority. Architectural intent lives in `ARCHITECTURE.md`; feature completion and qualification do not belong in this specification.
 
-Implementation 0.6.0 introduced sparse extents, sparse checksum indexing and hole punching. Implementation 0.7.0 defined `INFS_INCOMPAT_INLINE_DATA`. Implementation 0.8.0 added `INFS_INCOMPAT_SHARED_EXTENTS`; Format 0.8 added `INFS_INCOMPAT_PAGED_METADATA` and version-2 metadata heads. Format 0.9 added `INFS_INCOMPAT_SYMBOLIC_LINKS` and object type 5. Format 0.10 added `INFS_INCOMPAT_HARD_LINKS`. Format 0.12 added `INFS_INCOMPAT_SNAPSHOTS`, snapshot-catalog object type 6 and fixed-size generation-root records. Format 0.13 added `INFS_INCOMPAT_INDEX_TREE`, version-3 object-index heads and radix branch pages. Format 0.14 added `INFS_INCOMPAT_DIRECTORY_TREE`, version-3 directory heads and hashed directory branch pages. Format 0.15 doubled the maximum UTF-8 component length from 255 to 510 bytes without changing the variable-length directory-record layout. Format 0.16 raised that limit from 510 to 1023 bytes, again without changing the variable-length directory-record layout. Format 0.17 replaces the monolithic persistent allocation bitmap image with a checkpoint-rooted copy-on-write allocation tree while preserving one authoritative allocation bit per filesystem block. The normative acceptance rules are summarized in `CONFORMANCE.md`.
+Pre-1.0 development accepts the current development format only and does not promise readers or migrations for superseded development formats.
 
-## 1. Encoding
+## 1. Encoding and block model
 
-All integer fields are little-endian. The filesystem block size is 4096 bytes and the checkpoint records a block shift of 12. Persistent objects occupy one block; current directory/index heads own checksummed tree pages and fragmented file heads may own checksummed extent pages. Extent-backed file data is described by extents of 4096-byte blocks; inline file data occupies otherwise unused bytes in the file metadata object.
+- Filesystem block size is 4096 bytes (`block_shift = 12`).
+- Persistent integers are little-endian.
+- Persistent records use explicitly packed layouts; compiler-native ABI layout is never authoritative.
+- Current reserved fields, unused checksum bytes and record padding are canonical zero unless a feature/version contract defines otherwise.
+- CRC-valid data that violates current structural, reserved-field or feature rules is still invalid.
 
-Structures in `include/infilfs/format.h` describe the exact packed record order and are guarded by compile-time size assertions. The byte format, not a compiler's native ABI, is authoritative. Current reserved fields, metadata block tails and record padding are canonical zero. A reader must reject a CRC-valid object that uses current reserved space without a feature/version definition permitting it.
+Persistent metadata objects occupy one filesystem block. Tree pages and paged extent metadata also occupy checksummed filesystem blocks. File data is addressed in logical 4096-byte units even when its physical representation is sparse, shared or compressed.
 
-## 2. Volume layout
+## 2. Volume geometry and checkpoints
 
-A newly formatted volume of `N` blocks initially places its three physical checkpoint copies at block 0, block `floor(N/2)` and block `N-1`. Those positions are then recorded explicitly in `checkpoint_block[3]` and are part of the committed filesystem geometry. They are **not** implicitly recomputed from `total_blocks` every time the volume is opened.
+A newly formatted volume of `N` committed filesystem blocks initially places three checkpoint copies at:
 
-Checkpoint block 0 remains block 0. The other two recorded checkpoint locations must be distinct from block 0 and from each other and must remain within the committed `total_blocks` geometry. Online resize may preserve already-valid checkpoint locations when the filesystem grows and may relocate a checkpoint when the new geometry requires it. A resized Format 0.17 volume is therefore conforming even when its recorded secondary checkpoint locations are no longer exactly `floor(N/2)` and `N-1` for the new value of `N`. Readers validate and use the recorded checkpoint set rather than deriving a new set from backing-device capacity.
+- block 0;
+- `floor(N/2)`; and
+- `N-1`.
 
-The checkpoint references the current allocation-map root, object-index head and namespace root. Allocation pages, directory/index pages, objects, extent metadata and file data otherwise occupy ordinary allocated blocks and may move between generations.
+Those positions are then recorded in the checkpoint and become part of committed filesystem geometry. Readers use the recorded checkpoint locations; they do not recompute them from current backing-device capacity.
 
-A newly formatted volume initially places the allocation root and its branch/leaf pages near the start of the volume followed by the initial object index and root directory, but those physical positions are formatter policy rather than permanent format addresses. Subsequent transactions copy on write only the allocation leaves whose bit payload changes and only affected branch paths plus the root needed to publish a new root.
+The committed filesystem size may be smaller than the physical backing device. Online resize may preserve existing valid checkpoint locations or relocate secondary checkpoints when the new committed geometry requires it. Block 0 remains the bootstrap checkpoint.
 
-The allocation map still contains exactly one authoritative bit per filesystem block. Bits beyond the committed filesystem end in the final in-memory byte are treated as unavailable even when the backing device or image is physically larger. Inline bytes are part of an already allocated metadata object and therefore require no additional allocation ownership.
+A checkpoint records the generation, committed total/free block accounting, allocation-tree root, object-index root, namespace root, checkpoint locations, filesystem UUID, root object identity, feature sets, label and integrity metadata.
 
-## 3. Checkpoint
+Filesystem UUID, root object identity and generation are nonzero.
 
-`struct infs_superblock_disk` contains:
+Each physical checkpoint copy is independently validated for magic, exact Format 0.17 identity, header/block geometry, feature compatibility, canonical reserved bytes, checksum and recorded checkpoint-position consistency before its referenced graph can be considered.
 
-```text
-magic                       8 bytes: "INFS2026"
-format major/minor          0.17
-header size                 structure-size guard
-block shift                 12
-checksum algorithm          CRC64-ECMA
-generation                  publication counter
-total/free blocks           committed filesystem geometry/accounting
-allocation root/leaf count  authoritative allocation-tree bootstrap
-object-index block          current object-index root
-root-object block           current namespace root
-checkpoint blocks[3]        committed physical checkpoint positions
-filesystem UUID             128-bit volume identity
-root object ID              128-bit persistent root identity
-feature flag sets           compat / read-only compatible / incompatible
-label                       UTF-8, up to 63 bytes plus terminator
-checksum field              32 bytes reserved
-```
+Recovery considers candidate checkpoints in descending generation order and selects the newest complete structurally valid committed graph. Structural corruption may justify fallback to an older committed generation. External I/O failures, unsupported features, memory failure or other operational errors must not be silently reclassified as corruption merely to force fallback.
 
-Generation, filesystem UUID and root object ID are nonzero.
+## 3. Feature compatibility
 
-Format 0.17 requires `INFS_INCOMPAT_UTF8_NAMES`, `INFS_INCOMPAT_SPARSE_EXTENTS` and `INFS_INCOMPAT_ALLOCATION_TREE`. Newly formatted volumes enable the complete known set: `INFS_INCOMPAT_INLINE_DATA`, `INFS_INCOMPAT_SHARED_EXTENTS`, `INFS_INCOMPAT_PAGED_METADATA`, `INFS_INCOMPAT_SYMBOLIC_LINKS`, `INFS_INCOMPAT_HARD_LINKS`, `INFS_INCOMPAT_SNAPSHOTS`, `INFS_INCOMPAT_PAGED_EXTENTS`, `INFS_INCOMPAT_INDEX_TREE`, `INFS_INCOMPAT_DIRECTORY_TREE` and `INFS_INCOMPAT_ALLOCATION_TREE`. The tree feature bits require matching version-3 object-index and directory heads. Without a tree bit, the corresponding classic or paged representation remains valid when its own feature contract agrees. Disagreement between a feature bit and the selected head version is corruption. Symbolic-link, hard-link and snapshot-catalog representations are accepted only with their corresponding feature bits. Readers reject a missing required bit or any unknown incompatible feature flag.
+Format 0.17 uses separate compatible, read-only-compatible and incompatible feature classes.
 
-Format selection is exact during development: only Format 0.17 is accepted. Within that format, shared extents, inline data, paged extents, symbolic links, hard links and snapshot catalogs are interpreted only when their incompatible feature bits are present.
+- Unknown incompatible bits prevent open.
+- Unknown read-only-compatible bits prevent writable open.
+- Unknown compatible bits may be ignored according to their contract.
 
-Feature classes have distinct compatibility semantics. Unknown incompatible bits prevent any open. Unknown read-only-compatible bits may be opened read-only but prevent writable open. Unknown compatible bits may be ignored. Format 0.17 defines no compatible or read-only-compatible bits for newly created volumes.
+Current Format 0.17 requires UTF-8 names, sparse extents and the allocation-tree representation. Current formatters enable the established known feature set for inline data, shared extents, paged metadata/extents, symbolic links, hard links, snapshots, object-index tree, directory tree, allocation tree and compressed extents.
 
-CRC64 occupies the first eight checksum bytes. The remaining checksum bytes are zero. The complete checksum field is zero during calculation. A physical checkpoint copy first passes its own magic, format, size, block geometry, checksum, volume size, feature flags, canonical padding and recorded checkpoint-position checks. The recorded checkpoint locations must be distinct, in range and internally consistent for the candidate geometry; block zero is the bootstrap checkpoint. The implementation then validates the complete graph referenced by surviving checkpoint candidates in descending generation order. The newest candidate with a structurally valid committed graph wins; a corrupt newer graph may fall back to an older valid committed graph. External I/O, memory or unsupported-feature failures are not treated as graph corruption and therefore do not silently trigger fallback.
+A representation is accepted only when its feature bit/version contract agrees with the structure actually stored. A feature bit that contradicts the selected record version is corruption.
 
-## 4. Allocation map
+## 4. Allocation ownership
 
-Bit `b` describes block `b`: zero means free; one means allocated or unavailable. The bits remain authoritative; Format 0.17 changes only how the live bitset is persisted.
+Logical allocation ownership remains one authoritative bit per filesystem block: zero means free; one means allocated or unavailable.
 
-The checkpoint stores `allocation_root_block` and `allocation_leaf_count`. The root is a level-3 `INFSAB01` branch page. Level-2 and level-1 branch pages also use `INFSAB01`; level-0 leaves use `INFSAL01`. Every allocation page contains generation, logical index, level, entry count, payload byte count, CRC64-ECMA type and a 32-byte checksum field whose first eight bytes carry CRC64 and whose remainder is zero.
+Format 0.17 persists that bitset as a checkpoint-rooted copy-on-write allocation tree rather than a monolithic bitmap image.
 
-The packed allocation-page header is 72 bytes. A 4096-byte page therefore has 4024 payload bytes. Each leaf owns exactly 32,192 allocation bits except the final leaf, which may contain fewer valid bits. Branch payloads contain little-endian 64-bit physical child pointers with fanout 503. Implementations that materialize branch-page locations in memory must preserve level grouping (root, all level-2 pages, then all level-1 pages); this is an implementation invariant used by copy-on-write publication and is qualified beyond the single-level-2 case. Format 0.17 fixes the root level at 3, giving a maximum addressable allocation geometry of 503^3 leaves. The declared leaf count must equal the count implied by `total_blocks`; missing, duplicate, out-of-range, checkpoint-overlapping or malformed allocation pages are corruption.
+Allocation leaves use `INFSAL01`; branch pages use `INFSAB01`. Allocation pages carry generation, logical index, level, entry count, payload length and CRC64 metadata.
 
-Allocation pages are bootstrap metadata rather than persistent objects and have no object IDs. Their generation may be older than the selected checkpoint because unchanged leaves are shared between committed generations. A page is valid only when its generation is nonzero and no newer than the checkpoint that references it, its logical index/level/entry count match its tree position, its reserved bytes are canonical zero and its CRC64 validates.
+The current packed allocation-page header is 72 bytes, leaving 4024 payload bytes in one 4096-byte page. Each leaf therefore represents 32,192 allocation bits except the final partially used leaf. Branch payloads contain little-endian 64-bit child block pointers with fanout 503. Format 0.17 fixes the allocation root at level 3.
 
-A transaction maintains the authoritative bitset in memory plus the rebuildable free-extent accelerator. It records allocated/deferred ranges rather than cloning the complete bitmap for rollback. At publication it computes the affected leaf set, closes that set over allocation-map pages whose own allocation state changes, reserves replacement pages before releasing old pages, writes only changed leaves, writes the affected replacement internal allocation-tree paths plus the root and finally publishes the new allocation root in the checkpoint. This removes volume-size-proportional bitmap rewrite and transaction-clone costs while preserving the existing CoW crash boundary.
+The checkpoint stores the allocation root and leaf count. The declared leaf count must agree with committed `total_blocks`. Missing, duplicate, out-of-range, malformed or checkpoint-overlapping allocation pages are corruption.
 
-The implementation reconstructs ownership from the committed roots. Every allocated in-volume block must be owned by a checkpoint, a current allocation-map page, current object-index head/page, directory page, indexed metadata object, normal file extent or retained snapshot graph. Metadata ownership overlap within one generation and allocated-but-unreachable blocks are corruption. Reuse across historical generations is expected. Normal data blocks may have multiple file owners within one generation only when `INFS_INCOMPAT_SHARED_EXTENTS` is set. Inline bytes remain owned by their file metadata object.
+Allocation pages are bootstrap metadata, not persistent namespace objects, and have no object IDs. Unchanged pages may be shared by later committed generations, so a referenced page generation may be older than the selected checkpoint but never zero or newer than that checkpoint.
 
-## 5. Object header
+Transactions maintain the authoritative allocation state plus rebuildable runtime free-extent acceleration. Publication rewrites only affected allocation leaves and the required replacement branch paths/root. Whole-volume bitmap cloning or whole-bitmap publication is not part of Format 0.17.
 
-Every metadata object begins with `struct infs_object_header_disk`:
+Every allocated block must be accounted for by the committed graph: checkpoints, allocation pages, metadata tree pages, indexed objects, extent metadata, file data or retained snapshot state. Metadata ownership overlap is corruption. Shared ordinary file-data ownership is permitted only by the shared-extents contract.
 
-```text
-magic                       8 bytes: "INFOBJ01"
-object type                 directory, file, index, checksum, symlink or snapshot catalog
-object version              type-specific version
-generation                  most recent update generation
-object ID                   128-bit persistent identity
-parent ID                   namespace/recovery relationship
-payload size                type-specific payload bytes
-checksum algorithm          CRC64-ECMA
-checksum                    32-byte reserved field
-```
+## 5. Persistent metadata objects
 
-Classic metadata objects use object version 1. Format 0.8 directory and object-index heads used object version 2. Current Format 0.17 directory and object-index heads use object version 3 and reference tree pages. Versioned `infs_metadata_page_disk` blocks carry their own magic, owner identity, generation, entry count and CRC64. All object IDs and generations are nonzero. Bytes after declared payloads and unused checksum-field bytes are canonical zero.
+Each metadata object begins with `struct infs_object_header_disk`, containing:
+
+- object magic;
+- object type and version;
+- generation;
+- 128-bit object ID;
+- parent/recovery relationship ID;
+- payload size;
+- checksum algorithm; and
+- reserved checksum field.
+
+Object IDs and generations are nonzero. Payloads, padding and reserved bytes must be canonical for the selected object type/version.
+
+Object types include directory, regular file, object index, checksum metadata, symbolic link and snapshot catalog.
 
 ## 6. Object index
 
-The index maps a persistent object ID to a physical metadata block and object type. Directory entries contain IDs rather than physical addresses, so relocation changes the index without rewriting every namespace reference.
+The object index maps a persistent 128-bit object ID to the physical block containing that object's metadata plus its type.
 
-Format 0.17 stores the total entry count and one physical tree-root pointer in the version-3 index head. Each object-ID byte selects one slot in a 256-way branch page. Leaves reuse fixed-size ID-to-block index entries. Branch and leaf pages are independently allocation/owner/generation/checksum validated; branch pages store exactly 256 physical child pointers and their entry count equals the number of nonzero pointers. An index entry must follow the branch prefix selected by its object ID. Entries are validated for nonzero and duplicate IDs, bounds, allocation state, zero reserved flags, object identity, type and checksum. The root must appear exactly once and match the checkpoint.
+Current Format 0.17 uses a generation-aware radix/tree representation. Directory entries refer to persistent object IDs rather than physical object blocks, so metadata relocation changes the index rather than every namespace reference.
+
+Index tree pages are independently bounds/allocation/owner/generation/checksum validated. Entries require nonzero unique object IDs, valid target blocks, matching object identity/type and canonical flags.
+
+The root object must appear exactly once and must agree with the checkpoint's recorded root identity and root block relationship.
 
 ## 7. Common attributes
 
-`struct infs_attributes_disk` contains:
+Portable common attributes contain:
 
-```text
-logical size                    64-bit bytes
-link count                      64-bit count
-portable flags                  read-only, hidden, system, archive, etc.
-birth time                      signed nanoseconds since Unix epoch
-access time                     signed nanoseconds since Unix epoch
-modification time               signed nanoseconds since Unix epoch
-metadata-change time            signed nanoseconds since Unix epoch
-security object ID              future portable security metadata, zero when absent
-extended-attributes object ID   future portable named metadata, zero when absent
-```
+- logical size;
+- link count;
+- portable flags;
+- birth/access/modification/metadata-change timestamps;
+- future portable security-object ID; and
+- future portable extended-metadata object ID.
 
-This record is independent of Linux `struct stat` and Windows file-information structures.
+These are not Linux `struct stat` or Windows file-information structures.
 
-Only the portable attribute flags currently defined in `format.h` are accepted. The generic security and extended-attribute references remain zero until their portable object classes and compatibility features are specified. Current source can persist standard Linux xattr namespaces and special-node details through Linux adapter metadata; those adapter sidecars do not consume these reserved portable references and do not make Linux metadata the cross-platform canonical model.
+Current security and extended-metadata references remain zero until their portable object classes and compatibility contracts are defined.
 
-The current portable flags are persistent cross-platform metadata; mutation-policy semantics for flags such as `READ_ONLY` require an explicit core API/policy rather than being inferred silently by one adapter.
-
-`struct infs_posix_compat_disk` follows the common attributes in current file and directory payloads. It contains permission bits, numeric UID/GID values and reserved flags. Permission bits are limited to `07777`; the current reserved flags field is zero. This is adapter compatibility metadata, not persistent object identity or the final cross-platform security model.
+A POSIX compatibility record stores current mode/UID/GID information for adapter use. It is compatibility metadata, not persistent object identity or the final portable security authority.
 
 ## 8. Directories and names
 
-A Format 0.17 directory head contains common attributes, POSIX compatibility data, a total entry count, zero `bytes_used` and one physical tree-root pointer. The root pointer is zero exactly when the directory is empty. SHA-256 of the exact name bytes routes lookup through one byte per 256-way branch depth, with a maximum depth of 32. Leaves contain the ordinary variable-length directory records. Hashes select storage paths only; the exact UTF-8 name remains namespace identity and is compared byte-for-byte. Every branch and leaf page is allocation/owner/generation/checksum validated.
+Current directory heads reference checksummed directory-tree pages. Hashing selects a storage path, but exact UTF-8 name bytes remain namespace identity and comparison is byte-exact/case-sensitive.
 
-Each record contains its aligned record size, name length, target object type, flags, 128-bit target ID and name bytes. Names must be well-formed UTF-8, contain 1–1023 bytes, and contain neither NUL nor `/`. Records are padded to eight-byte alignment. Current record flags and padding are zero.
+Stored component names:
 
-Lookup in Format 0.17 is case-sensitive and byte-exact. `.` and `..` are synthesized navigation components and are never stored. Pathnames ending in `/` retain directory semantics in namespace operations; rename does not silently strip a trailing slash from a non-directory source or nonexistent destination.
+- are valid UTF-8;
+- contain 1 to 1023 bytes;
+- contain neither NUL nor `/`; and
+- never store `.` or `..`, which remain traversal syntax.
 
-With `INFS_INCOMPAT_HARD_LINKS`, a regular file may be referenced by one or more directory entries while retaining one indexed object, one data/checksum representation and one persistent object ID. Its stored link count equals its exact incoming directory-reference count. Creating the second name clears the file object's parent ID to zero because no single containing directory is authoritative; that zero remains valid if later unlink reduces the count to one. A file that has never been multiply linked may retain its sole containing directory ID. Directory and symbolic-link objects remain single-parent and singly referenced. Directory link count remains 2 plus its direct child-directory count. Hard links to directories or symbolic links are unsupported. Every namespace object remains root-reachable, every dirent type and identity must match the index, and names within each directory remain unique.
+Variable-length directory records are aligned and include record length, name length, target type, flags, 128-bit target object ID and exact name bytes. Current unused flags/padding are zero.
 
-### Symbolic links
+Directories and symbolic links are single-parent objects. Regular files may have multiple incoming directory references when hard links are enabled. A regular file's stored link count must equal its reachable directory-reference count. Hard links to directories or symbolic links are unsupported.
 
-A symbolic-link object uses classic object version 1 and begins with common attributes and POSIX compatibility data, followed by a 32-bit target length and a zero reserved field. Exactly that many target bytes follow in the object payload. The target is nonempty, well-formed UTF-8, contains no NUL and is limited to 3,888 bytes. It may be absolute or relative. `logical_size` equals the target length, `link_count` is 1, and the portable core stores but does not resolve the target. Path resolution is the responsibility of the operating-system adapter.
+## 9. Symbolic links
 
-## 9. Files, extents, inline data and checksums
+A symbolic-link object stores common/POSIX attributes followed by target length and target bytes.
 
-A regular-file payload begins with common attributes, POSIX compatibility data, extent count, data-checksum algorithm and checksum-chain head. Format 0.8 retains the three Format 0.7 file shapes.
+The target is nonempty UTF-8, contains no NUL and is bounded by the current one-block symbolic-link payload capacity. It may be absolute or relative. The portable core stores the target but operating-system adapters own path-resolution semantics.
 
-### Empty file
+## 10. Regular files
 
-An empty file has logical size zero, extent count zero, a zero checksum-chain head and a payload consisting only of the fixed `struct infs_file_payload_disk`.
+A regular file may be:
 
-### Inline file
+- empty;
+- inline;
+- ordinary extent-backed;
+- sparse through hole extents;
+- shared through reflink/shared normal extents; or
+- compressed through bounded compressed normal extents.
 
-A non-empty inline file is valid only when the volume has `INFS_INCOMPAT_INLINE_DATA` set. It has:
+### Inline data
 
-- logical size from 1 through `INFS_INLINE_DATA_MAX` (currently 3,840 bytes);
-- extent count zero;
-- a zero checksum-chain head;
-- data checksum type SHA-256;
-- one 32-byte `struct infs_data_checksum_disk` immediately after the fixed file payload;
-- exactly `logical_size` bytes of file data immediately after that digest; and
-- no additional payload bytes.
+Small non-empty files may store their payload and logical SHA-256 digest in the file metadata object and own no separate data blocks.
 
-The inline SHA-256 digest is calculated over one logical 4096-byte block: the inline bytes followed by zeros through byte 4095. This deliberately uses the same full-logical-block checksum rule as an extent-backed first data block. The enclosing metadata object's CRC64 independently covers the entire inline payload, including the digest and data bytes.
+Current `INFS_INLINE_DATA_MAX` is 3840 bytes. Growing beyond the inline bound promotes the file transactionally to extent-backed representation. Shrinking may return to inline representation when the implementation chooses a valid canonical form.
 
-Inline bytes allocate no separate data blocks and no checksum objects, so their data-block contribution to allocated size is zero. Unwritten growth inside the inline range is represented by zero bytes. Hole punching inside an inline file zeroes the selected bytes while preserving logical size. Reads return the bytes directly after validating both the object and inline digest.
+### Ordinary and sparse extents
 
-A write or truncate that grows an inline file beyond 3,840 bytes promotes it transactionally. The existing inline content is copied into a zero-padded normal data block, a normal extent and checksum-chain entry are created, and subsequent growth follows ordinary extent/sparse rules in the same transaction. A truncate that shrinks an extent-backed file to 3,840 bytes or less on an inline-enabled volume reads the retained prefix, stores it inline, and reclaims the previous normal extents and checksum chain before publication. Applications see no representation change through the file API.
+Extent-backed files provide complete logical coverage through data and hole extents. Hole ranges read as zeros and own no physical data blocks.
 
-### Extent-backed file
+Fragmented files may move extent descriptors into checksummed paged extent metadata. Those pages are part of the ownership/integrity graph.
 
-A non-empty extent-backed file has one or more ordered 24-byte extent records after the fixed file payload. Each extent records a logical start block, physical start block, 32-bit block count and flags. Extents are ordered and must cover logical blocks contiguously from zero through `ceil(logical_size / 4096)`. A zero block count, logical gap, logical overlap or unknown flag is corruption. Extent counts are bounded by the one-block metadata capacity before multiplication or pointer derivation.
+### Shared extents
 
-Format 0.8 retains the Format 0.6 extent types:
+Shared normal extents implement reflinks. Writes break sharing through copy-on-write. Physical data may have multiple logical owners only under the shared-extents feature; metadata blocks may not be multiply owned where a tree requires unique ownership.
 
-- `INFS_EXTENT_NORMAL` (`flags == 0`): `physical_block` is nonzero and maps `block_count` allocated data blocks;
-- `INFS_EXTENT_HOLE` (`flags == 1`): `physical_block` is zero and the logical range reads as zeros without data-block allocation.
+### Compressed extents
 
-Truncate growth beyond the inline representation appends or extends hole extents. A write into a hole replaces only each touched logical block with a normal extent. A full-block punch replaces the selected range with hole extents and preserves logical size. A partial-block punch keeps a normal block, zeroes the selected bytes through copy-on-write and updates its checksum. Adjacent compatible extents may be coalesced.
+Compressed extents record codec identity, stored-byte length and logical extent length. Current automatic writes use IAC1 v1 (codec ID 2); LZ4 (codec ID 1) remains a supported non-default representation.
 
-Each allocated normal logical block has one 32-byte SHA-256 slot in a hidden checksum object. Hole blocks require no checksum and are never verified as stored data. Checksum objects identify their owner and an aligned logical segment. Their linked list is sorted by strictly increasing segment start, but segments containing only holes may be absent. This permits one high-offset write without allocating checksum metadata for all preceding holes. Inactive checksum slots or objects may remain while the same file still owns other allocated blocks; the complete chain is reclaimed when the file has no allocated extent data.
+Compression is selected only when it saves filesystem blocks. Logical SHA-256 covers the uncompressed logical bytes. Operations that would slice a compressed stream must materialize or replace the affected bounded cluster rather than pretending compressed logical blocks map one-for-one to physical blocks.
 
-Every indexed checksum object must be reachable exactly once from its owning extent-backed file's checksum head. Checksum owner ID and metadata parent ID must both identify that file. Shared, cyclic, duplicate or orphaned checksum objects are corruption. An inline or empty file has a zero checksum head.
+The detailed codec contract is in `COMPRESSION.md`.
 
-With `INFS_INCOMPAT_SHARED_EXTENTS`, two or more regular files may refer to the same normal physical data blocks. Each file retains its own checksum chain. Writes replace only the changed logical blocks through CoW; truncate, hole punching, rename replacement and unlink reclaim a shared block only after no other committed file extent refers to it.
+## 11. File-data checksums
 
-Extent-backed checksums cover the complete physical 4096-byte data block, including zero-filled bytes beyond logical EOF. Reads verify normal data before returning it and synthesize zeros directly for holes. Shrink zeroes the retained normal final-block tail so later growth cannot expose truncated bytes.
+Logical file data is SHA-256 protected. Checksum metadata belongs to the same committed graph and is validated together with file representation.
 
-## 10. Snapshot catalog and retained generations
+Sparse holes contribute logical zero bytes to the checksum model without owning physical data. Inline data uses the same logical-block checksum meaning even though bytes live inside the metadata object.
 
-`INFS_INCOMPAT_SNAPSHOTS` permits exactly one snapshot-catalog object in the active object index. Its reserved 16-byte object ID is the byte string `INFS-SNAP-CAT-01`. The catalog uses classic object version 1, has a zero parent ID and stores a count followed by at most 27 fixed-size `infs_snapshot_record_disk` records. Snapshot names contain 1–63 well-formed UTF-8 bytes, contain neither NUL nor `/`, have canonical zero padding and are unique within the catalog.
+Scrub must reject missing, duplicate, mismatched or structurally invalid checksum coverage.
 
-Each record stores a generation strictly older than the catalog's containing generation, creation time, immutable snapshot-bitmap start/count and free-block count, object-index block, root-object block and root object ID. Snapshot records deliberately retain a compact immutable flat ownership image even though the live generation uses the Format 0.17 allocation tree. That image owns its own blocks and describes the captured generation graph, but it excludes superseded live allocation-tree pages so snapshots do not pin obsolete allocator metadata. A captured graph may contain an older snapshot catalog; generation ordering therefore forms a strictly descending acyclic history.
+## 12. Snapshots and retained generations
 
-Snapshot creation first publishes pending mutations, copies the stable generation ownership bitset, removes the live allocation-tree pages from that historical ownership image, adds the new immutable snapshot-bitmap blocks themselves, writes that flat image and adds the generation-root record in one CoW transaction. Normal later transactions consult the active catalog before releasing deferred blocks. A block remains allocated while any retained snapshot bitmap contains it.
+Named snapshots reference immutable earlier generation roots and their retained allocation state.
 
-Snapshot deletion removes the selected record and computes the union of the active graph and remaining snapshot bitmaps. Blocks unique to the deleted history are deferred until the new catalog, index, bitmap and checkpoint publish atomically. A newer snapshot may retain the graph of an older snapshot that existed when it was captured; deleting the visible older name therefore does not reclaim those dependencies until the newer snapshot is also deleted.
+Blocks remain unavailable for reuse while referenced by the live graph or any retained generation. Deleting a snapshot may reclaim only blocks that are unreachable from every remaining live/retained graph.
 
-Snapshot views are read-only. Lookup, directory listing, attributes, symbolic-link targets and file reads use the captured root/index/bitmap rather than the active roots. Full graph validation and scrub recursively validate catalogued generation roots and verify retained file data. Rollback and undelete are not defined by Format 0.17.
+Snapshot reads are read-only. Live writes must copy on write rather than mutate blocks still referenced by a snapshot.
 
-## 11. Transaction publication and recovery
+Format 0.17 does not require snapshot-aware resize migration. An implementation may conservatively reject resize while retained snapshots exist.
 
-A writable storage backend must provide positioned write, durable flush, secure-random and current-time services in addition to read and size services. A mutation does not silently substitute a zero timestamp when the clock service fails.
+## 13. Transaction publication
 
-Commit ordering is:
+Critical metadata mutation is copy-on-write.
 
-```text
-write new unreachable metadata and data
-durable flush
-write changed allocation leaves and replacement internal allocation-tree paths plus the root
-durable flush
-write one generation N+1 checkpoint
-durable flush                 <- atomic publication point
-write remaining checkpoint copies
-durable flush
-```
+A successful transaction publishes a new generation only after required replacement data/metadata/allocation structures are written and required durability operations complete. The first durably published new checkpoint is the commit point. Later checkpoint replicas may be refreshed after that point.
 
-The first checkpoint location rotates by generation across the three committed physical checkpoint positions. A crash before publication leaves generation `N` committed; a crash after publication leaves generation `N+1` committed. During open, each individually valid checkpoint candidate is validated through its referenced allocation tree, metadata, namespace and checksum graph before selection. If a newer candidate's committed graph is structurally corrupt, recovery may select the next older valid committed graph. A writable fallback then rewrites and durably flushes all three checkpoint copies to the selected generation before exposing the volume writable. A writable open does not perform fallback or healing when a physical checkpoint is unreadable, because that replica may be the only record of a newer committed generation. Read-only recovery may use surviving replicas and never modifies the media.
+A crash before commit leaves the prior committed generation authoritative. If durability of the first checkpoint publication cannot be established, writable operation must fail closed until reopen/recovery.
 
-Once the first generation-N+1 checkpoint has been durably flushed, the mutation is committed even if later replication of secondary checkpoint copies fails. The implementation records degraded checkpoint redundancy and reports the namespace/data mutation as successful; a later explicit sync heals the replicas or reports the remaining storage error. A failure returned by the first checkpoint write or its durability flush leaves the outcome indeterminate, so the current opener permits no further mutation until close-and-reopen recovery selects the on-media generation.
+Operation-level savepoints may roll back the current operation's tentative changes while preserving earlier acknowledged buffered changes.
 
-Committed extent-backed file-data blocks are replaced through CoW. Inline file updates are committed through replacement of the file metadata object under the same CoW generation rules. Extent mappings, checksum metadata and inline/extent representation transitions publish atomically with the corresponding replacement data. Ordinary rename, including replacement of an existing file or empty directory, is one transaction and publishes no intermediate namespace.
+## 14. Online geometry change
 
-Online resize uses the same publication boundary for geometry. The mounted implementation separates committed filesystem blocks from physical backing-device blocks, prepares replacement allocation-tree geometry and any required checkpoint relocation before publication, durably publishes the new `total_blocks`, allocation root and recorded checkpoint set, and only then exposes the new geometry to subsequent allocation. Shrink fails closed when a live allocation would lie beyond the requested boundary. The current implementation also refuses resize while retained snapshots exist rather than attempting to rewrite historical snapshot geometry.
+Committed filesystem geometry is independent of physical backing capacity.
 
-## 12. Formatting safety and publication
+Grow/shrink uses the ordinary transaction/checkpoint model to publish replacement allocation geometry and, when necessary, relocated checkpoint positions.
 
-`mkfs.infilfs` refuses a real block device without `--force`. It also refuses a mounted target, a whole-disk target with a mounted child partition, or a target/child held by another Linux block layer. If active-use status cannot be established safely, formatting a real block device fails closed.
+Shrink must fail before commit if any live allocation would fall outside the requested new geometry. Failure must preserve the previously committed geometry and data.
 
-The formatter reopens the exact block target with Linux `O_EXCL` after advisory mount/holder preflight, verifies that the device identity and geometry are unchanged, and retains that exclusive descriptor through the destructive write sequence. Failure to obtain exclusivity aborts formatting before the first write. Failure of the initial realtime-clock query is also a formatter error rather than silently creating zero initial timestamps. The formatter additionally takes the same nonblocking exclusive advisory lock used by writable POSIX volume openers, coordinating both image files and block targets with the formatter.
+## 15. Integrity and graph validity
 
-Formatting first invalidates the three candidate checkpoint locations and flushes that invalidation. It then writes the initial allocation leaves/branches, tree index and tree root directory, durably flushes those referenced structures, and only then publishes the three valid generation-1 checkpoints. Therefore an interrupted format is unmountable rather than presenting a valid checkpoint that references incomplete initial metadata. The normal formatter creates Format 0.17 checkpoints with the stable incompatible-feature set enabled, including `INFS_INCOMPAT_COMPRESSED_EXTENTS`. Codec identifier 2 is the native IAC1 v1 representation selected automatically for eligible bounded extents; codec identifier 1 remains the supported LZ4 development/reference representation. Codec identifiers use the original low two flag bits plus nine formerly-unused high bits, giving Format 0.17 an 11-bit namespace while preserving the exact encoding of existing identifiers 0-3. The stored-byte field is explicitly bounded to the lower 19 payload bits, still comfortably above the maximum 256 KiB compression unit. Compression is selected only when it reduces the stored filesystem-block count.
+A structurally valid Format 0.17 graph requires:
 
-## 13. Corruption rejection
+- valid checksums and canonical encodings;
+- in-range allocated physical references;
+- exact object identities/types at referenced blocks;
+- valid parent/reference/link-count relationships;
+- no forbidden metadata cycles or multiply aliased tree pages;
+- complete ownership accounting;
+- exact namespace reachability; and
+- valid retained snapshot ownership.
 
-The opener rejects invalid checkpoint checksums or geometry, an allocation-tree shape that cannot describe the declared volume, malformed/duplicate/out-of-range allocation pages, unsupported feature usage, inconsistent allocation accounting, noncanonical reserved data, invalid identities/generations, malformed object payloads, invalid UTF-8 names, stored navigation entries, duplicate names or index identities, dangling or multiply referenced namespace objects, wrong parent/type relationships, unreachable namespace objects, incorrect link counts, invalid snapshot names or generation ordering, malformed historical bitmap geometry/accounting, corrupt retained roots, physical-block ownership overlap within one generation, allocated-but-unreachable blocks, logical extent gaps/overlaps, unknown extent flags, holes with physical storage, normal extents without physical storage, malformed/unsorted/shared/orphaned checksum chains, malformed inline payloads, inline data on a volume without the inline feature bit, mismatched inline SHA-256 digests and extent-backed data checksum mismatches.
+Unknown or malformed metadata must not be accepted merely because its CRC happens to validate.
 
-A corrupt newest checkpoint graph is not automatically fatal when an older independently valid committed checkpoint graph survives. Structural missing/cyclic internal references and repeated physical metadata-tree blocks are treated as graph corruption for candidate selection; checksummed aliasing does not make a DAG valid when tree semantics require unique ownership. Storage I/O failures, memory exhaustion and unsupported format/feature semantics are preserved as their actual failures and are not hidden by fallback.
+`infilfs-scrub` validates the authoritative reachable graph. `infilfs-forensic` may discover recognizable authenticated metadata physically, but forensic discovery alone is not committed state.
 
-The policy is to fail closed when committed state cannot be trusted while retaining a known-good older committed generation when the distributed checkpoint set proves one is available.
+## 16. Adapter metadata
 
-## 14. Prototype limits
+Platform-specific metadata must remain separate from the portable format concepts it does not define.
 
-- bounded tree depth and one-block branch fanout;
-- paged extent maps remain bounded by the page-pointer capacity of one file head;
-- at most 27 named snapshots in the bounded catalog;
-- no snapshot rollback or native undelete policy;
-- online resize currently refuses retained snapshots, and bounded shrink refuses a target that would require relocation of live user allocations beyond the new end;
-- compressed streams are bounded to the current 64-block (256 KiB) compression-unit limit; IAC1 v1 is the automatic native codec for Format 0.17, LZ4 remains a supported non-default reference representation, and future codecs require a new codec identifier rather than changing an existing stream meaning; see `COMPRESSION.md`;
-- portable security and generic named-metadata object references are reserved but not yet standardized;
-- Current Linux adapter xattrs/special-node metadata are not the final portable named-metadata/security model;
-- POSIX compatibility metadata exists; Windows security mapping is not implemented;
-- metadata uses CRC64 while file data uses SHA-256;
-- scrub detects but cannot yet repair corruption; and
-- one writable core instance at a time.
+Current Linux metadata can preserve standard xattr namespaces and special-node information without turning Linux UID/GID/xattrs into the universal security model. Future portable security and named-metadata object classes will require explicit feature/version contracts.
+
+See `PLATFORM_ADAPTERS.md` and `SECURITY.md`.
+
+## 17. Normative sources
+
+For Format 0.17 maintenance, use these sources in order:
+
+1. `include/infilfs/format.h` for exact persistent constants, packed layouts and compile-time size contracts.
+2. This document for the persistent structural model and acceptance intent.
+3. `ARCHITECTURE.md` for non-byte-level design invariants.
+4. The format/core test suite for executable regression requirements.
+5. `QUALIFICATION.md` only for exact-source evidence; qualification history does not redefine the byte format.
+
+No second conformance document is maintained. This avoids duplicating format rules and allowing two specifications to drift.
