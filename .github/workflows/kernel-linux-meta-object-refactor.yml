@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: One-shot kernel Linux metadata refactor
+
+on:
+  push:
+    paths:
+      - '.github/workflows/kernel-linux-meta-object-refactor.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  refactor:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Apply Linux metadata refactor
+        run: |
+          set -euo pipefail
+          python3 tools/kernel-linux-meta-object-refactor.py
+          rm -f tools/kernel-linux-meta-object-refactor.py
+          rm -f .github/workflows/kernel-linux-meta-object-refactor.yml
+          git diff --check
+
+      - name: Install kernel build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential linux-headers-generic kmod
+
+      - name: Verify metadata and transaction policies
+        run: |
+          set -euo pipefail
+          bash tests/native-kernel-maintainability-policy.sh .
+          bash tests/native-transaction-durability-policy.sh .
+          bash tests/native-deferred-publication-policy.sh .
+          bash tests/native-index-tree-policy.sh .
+
+      - name: Build ten-object kernel module
+        shell: bash
+        run: |
+          set -euo pipefail
+          KDIR="$(find /usr/src -maxdepth 1 -type d -name 'linux-headers-*-generic' -print | sort -V | tail -n 1)"
+          test -f "$KDIR/Makefile"
+          make -C kernel KDIR="$KDIR"
+          test -s kernel/infiltratorfs.ko
+          test "$(modinfo -F name kernel/infiltratorfs.ko)" = infiltratorfs
+
+      - name: Commit qualified refactor
+        shell: bash
+        run: |
+          set -euo pipefail
+          find kernel -maxdepth 1 -type f \( \
+            -name '*.o' -o -name '*.ko' -o -name '*.mod' -o \
+            -name '*.mod.c' -o -name '*.cmd' -o -name '.*.cmd' -o \
+            -name 'Module.symvers' -o -name 'modules.order' \
+          \) -delete
+          git config user.name 'Shannon Smith'
+          git config user.email 'infiltratr@yandex.com'
+          git add -A
+          git diff --cached --check
+          git commit -m 'Kernel: split Linux metadata into Kbuild object'
+          git push origin HEAD:main
