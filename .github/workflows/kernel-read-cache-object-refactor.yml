@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
+# Re-run after moving INFILFS_I() into the module-private boundary.
 name: One-shot kernel verified-read refactor
 
 on:
