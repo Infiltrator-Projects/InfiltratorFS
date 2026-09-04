@@ -5,11 +5,16 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 ns="$root/kernel/infiltratorfs_rw_namespace.inc"
 rw="$root/kernel/infiltratorfs_rw.inc"
+data="$root/kernel/infiltratorfs_rw_data.inc"
 
 grep -Fq 'INFILFS_NATIVE_METADATA_PUBLISH_CHARGE' "$ns"
 grep -Fq 'pending->pending_bytes += INFILFS_NATIVE_METADATA_PUBLISH_CHARGE' "$ns"
 grep -Fq 'mod_delayed_work(system_wq, &pending->idle_work' "$ns"
-grep -Fq 'pending->pending_bytes >= pending->publish_threshold' "$ns"
+# Namespace owns the metadata charge and asks the shared deferred-transaction
+# policy whether that charge now crosses a publication boundary.  The actual
+# threshold/churn calculation belongs to the data transaction layer.
+grep -Fq 'infilfs_native_pending_should_publish(pending)' "$ns"
+grep -Fq 'pending->pending_bytes >= pending->publish_threshold' "$data"
 grep -Fq 'infilfs_ns_update_paged_index' "$ns"
 grep -Fq 'infilfs_native_index_update(pending, native, change_count)' "$ns"
 grep -Fq 'changes[c].action == INFILFS_NS_REMOVE' "$ns"
