@@ -171,7 +171,7 @@ static int snapshots_enabled(const struct infs_volume *vol)
          INFS_INCOMPAT_SNAPSHOTS) != 0;
 }
 
-/* Format 0.17 paged-index dispatch targets. part1 owns the classic index
+/* Format 0.17 paged-index dispatch targets. core.inc owns the classic index
  * implementation and calls these when it encounters a version-2 index head. */
 static int paged_index_find(struct infs_volume *vol, const uint8_t id[16],
                             struct infs_lookup *out);
@@ -215,12 +215,18 @@ static int paged_extent_replace(struct infs_volume *vol,
     __attribute__((unused));
 #endif
 
-#include "volume/part1.inc"
+/*
+ * Portable volume implementation composition.  These units are ordered by
+ * dependency and named by responsibility rather than by historical phase.
+ * Keep this as the only portable implementation compositor: leaf .inc units
+ * must not include one another.
+ */
+#include "volume/core.inc"
 #include "volume/allocation-map.inc"
-#include "volume/phase3/runtime-cache.inc"
-#include "volume/phase3/paged-metadata.inc"
-#include "volume/phase3/index-tree.inc"
-#include "volume/phase3/directory-tree.inc"
+#include "volume/runtime-cache.inc"
+#include "volume/paged-metadata.inc"
+#include "volume/index-tree.inc"
+#include "volume/directory-tree.inc"
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic push
 /* total_count is uint32_t.  The overflow guard in paged-extents is required
@@ -228,33 +234,39 @@ static int paged_extent_replace(struct infs_volume *vol,
  * portable guard without accepting unrelated -Wtype-limits diagnostics. */
 #pragma GCC diagnostic ignored "-Wtype-limits"
 #endif
-#include "volume/phase3/paged-extents.inc"
-#include "volume/phase3/compression.inc"
+#include "volume/paged-extents.inc"
+#include "volume/compression.inc"
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic pop
 #endif
-#include "volume/phase3/part2-01.inc"
-#include "volume/phase3/part2-02.inc"
-#include "volume/phase3/part2-03.inc"
-#include "volume/phase3/part2-04.inc"
-#include "volume/phase3/part3-01.inc"
-#include "volume/phase3/part3-02.inc"
-#include "volume/phase3/part3-03.inc"
-#include "volume/phase3/part3-04.inc"
-#include "volume/phase3/part3-05.inc"
-#include "volume/phase3/part4-snapshot.inc"
-#include "volume/phase3/resize.inc"
-#include "volume/integrity.inc"
-#include "volume/phase3/part4-reflink.inc"
-#include "volume/phase3/part4-inline.inc"
-#include "volume/phase3/part4-01.inc"
-#include "volume/phase3/part4-02.inc"
-#include "volume/phase3/part4-03.inc"
-#include "volume/phase3/part4-04.inc"
-#include "volume/phase3/part4-05.inc"
-#include "volume/phase3/part5-01.inc"
-#include "volume/phase3/part5-02.inc"
-#include "volume/phase3/part5-03.inc"
+#include "volume/namespace-directory.inc"
+#include "volume/namespace-directory-mutation.inc"
+#include "volume/path-resolution.inc"
+#include "volume/object-create.inc"
+#include "volume/file-layout.inc"
+#include "volume/file-extents.inc"
+#include "volume/graph-validation.inc"
+#include "volume/checkpoint-recovery.inc"
+#include "volume/checkpoint-publication.inc"
+#include "volume/snapshots.inc"
+#include "volume/resize.inc"
+#include "volume/checksum-blocks.inc"
+#include "volume/checksum-index.inc"
+#include "volume/checksum-update.inc"
+#include "volume/extent-replacement.inc"
+#include "volume/ownership-validation.inc"
+#include "volume/scrub.inc"
+#include "volume/metadata-hardening.inc"
+#include "volume/reflink.inc"
+#include "volume/inline-files.inc"
+#include "volume/attributes.inc"
+#include "volume/file-read.inc"
+#include "volume/file-write.inc"
+#include "volume/file-truncate.inc"
+#include "volume/file-hole-punch.inc"
+#include "volume/namespace-remove.inc"
+#include "volume/namespace-replace.inc"
+#include "volume/posix-metadata.inc"
 
 /*
  * Private regression hooks for the allocator index. They are intentionally
@@ -298,4 +310,3 @@ int infs_internal_test_free_extent_choose_reverse(
     return free_extent_index_choose_reverse(
         vol, wanted, cursor, exact, start_out, count_out);
 }
-
