@@ -4,18 +4,19 @@ set -euo pipefail
 
 root="${1:-.}"
 driver="$root/kernel/infiltratorfs_core.c"
+state="$root/kernel/infiltratorfs_internal.h"
 allocator="$root/kernel/infiltratorfs_parallel_alloc.inc"
 data="$root/kernel/infiltratorfs_rw_data.inc"
 workflow="$root/.github/workflows/kernel-module.yml"
 
-for file in "$driver" "$allocator" "$data" "$workflow"; do
+for file in "$driver" "$state" "$allocator" "$data" "$workflow"; do
     test -f "$file"
 done
 
-grep -Fq 'enum infilfs_media_profile' "$driver"
-grep -Fq 'INFILFS_MEDIA_ROTATIONAL' "$driver"
-grep -Fq 'INFILFS_MEDIA_NONROTATIONAL' "$driver"
-grep -Fq 'INFILFS_MEDIA_BALANCED' "$driver"
+grep -Fq 'enum infilfs_media_profile' "$state"
+grep -Fq 'INFILFS_MEDIA_ROTATIONAL' "$state"
+grep -Fq 'INFILFS_MEDIA_NONROTATIONAL' "$state"
+grep -Fq 'INFILFS_MEDIA_BALANCED' "$state"
 grep -Fq 'fsparam_enum("media", Opt_media, infilfs_media_param_values)' "$driver"
 grep -Fq 'vfs_parse_fs_param_source' "$driver"
 grep -Fq '#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)' "$driver"
