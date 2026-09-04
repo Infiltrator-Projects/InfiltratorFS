@@ -11,7 +11,7 @@ grep -Fq 'infilfs_rw_free_extent_index_rebuild' "$legacy"
 grep -Fq 'infilfs_rw_free_extent_choose_forward' "$legacy"
 grep -Fq 'infilfs_rw_free_extent_choose_reverse' "$legacy"
 
-metadata_alloc="$(sed -n '/static int infilfs_rw_tx_alloc(/,/^}/p' "$legacy")"
+metadata_alloc="$(sed -n '/^int infilfs_rw_tx_alloc(/,/^}/p' "$legacy")"
 grep -Fq 'infilfs_rw_free_extent_choose_reverse' <<<"$metadata_alloc"
 grep -Fq 'for (scanned = 0; scanned < total - 1u; ++scanned)' <<<"$metadata_alloc"
 

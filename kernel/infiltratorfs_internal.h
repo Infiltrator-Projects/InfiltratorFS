@@ -315,4 +315,13 @@ int infilfs_parallel_consume_reservation(
     struct infilfs_rw_tx *tx, struct infilfs_parallel_reservation *reservation,
     u64 count, u64 *start_out);
 
+/* Transaction services shared with the compiled allocation publisher. */
+u64 infilfs_rw_crc64_zeroed(
+    const u8 *data, size_t length, size_t zero_offset, size_t zero_length);
+int infilfs_rw_tx_alloc(struct infilfs_rw_tx *tx, u64 count, u64 *start_out);
+int infilfs_rw_tx_defer_free(struct infilfs_rw_tx *tx, u64 start, u64 count);
+int infilfs_rw_tx_apply_deferred(struct infilfs_rw_tx *tx);
+int infilfs_rw_allocation_map_publish(
+    struct infilfs_rw_tx *tx, struct infilfs_allocation_layout *next_layout);
+
 #endif /* INFILTRATORFS_INTERNAL_H */

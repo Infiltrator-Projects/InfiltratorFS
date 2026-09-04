@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "infiltratorfs_internal.h"
 
 static size_t infilfs_rw_allocation_leaf_index(u64 block)
 {
@@ -178,7 +179,7 @@ int infilfs_rw_allocation_write_page(
     return ret;
 }
 
-static int infilfs_rw_allocation_map_publish(
+int infilfs_rw_allocation_map_publish(
     struct infilfs_rw_tx *tx,
     struct infilfs_allocation_layout *next_layout)
 {

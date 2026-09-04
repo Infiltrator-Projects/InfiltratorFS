@@ -82,7 +82,7 @@ fi
 dkms_root="$package_root/usr/src/infiltratorfs-$package_version"
 install -d "$dkms_root"
 for file in Makefile infiltratorfs_core.c infiltratorfs_internal.h infiltratorfs_format.h \
-            infiltratorfs_allocation_map.c infiltratorfs_allocation_publish.inc \
+            infiltratorfs_allocation_map.c infiltratorfs_allocation_publish.c \
             infiltratorfs_parallel_alloc.c \
             infiltratorfs_index_tree.c infiltratorfs_directory_tree.inc \
             infiltratorfs_rw.inc \
@@ -296,7 +296,7 @@ for required in \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_format.h$" \
     "usr/src/infiltratorfs-${package_version}/iac1.h$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_allocation_map.c$" \
-    "usr/src/infiltratorfs-${package_version}/infiltratorfs_allocation_publish.inc$" \
+    "usr/src/infiltratorfs-${package_version}/infiltratorfs_allocation_publish.c$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_parallel_alloc.c$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_rw.inc$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_rw_legacy.inc$" \
@@ -401,7 +401,7 @@ verify_installer() {
         packaging/patch-mintstick.py \
         src/infiltratr-common/CMakeLists.txt kernel/Makefile kernel/infiltratorfs_core.c \
         kernel/infiltratorfs_format.h include/infilfs/iac1.h kernel/infiltratorfs_allocation_map.c \
-        kernel/infiltratorfs_allocation_publish.inc kernel/infiltratorfs_rw.inc \
+        kernel/infiltratorfs_allocation_publish.c kernel/infiltratorfs_rw.inc \
         kernel/infiltratorfs_parallel_alloc.c \
         kernel/infiltratorfs_rw_legacy.inc kernel/infiltratorfs_rw_data.inc \
         kernel/infiltratorfs_rw_namespace.inc kernel/infiltratorfs_rw_read_cache.inc \

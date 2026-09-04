@@ -8,7 +8,7 @@ kfmt="$root/kernel/infiltratorfs_format.h"
 core="$root/src/volume/allocation-map.inc"
 commit="$root/src/volume/checkpoint-publication.inc"
 kmap="$root/kernel/infiltratorfs_allocation_map.c"
-kpublish="$root/kernel/infiltratorfs_allocation_publish.inc"
+kpublish="$root/kernel/infiltratorfs_allocation_publish.c"
 krw="$root/kernel/infiltratorfs_rw_legacy.inc"
 volume="$root/include/infilfs/volume.h"
 

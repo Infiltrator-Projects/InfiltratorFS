@@ -46,8 +46,6 @@ static const struct file_operations infilfs_file_operations;
 static const struct address_space_operations infilfs_aops;
 
 
-static u64 infilfs_rw_crc64_zeroed(const u8 *data, size_t length,
-                                    size_t zero_offset, size_t zero_length);
 static bool infilfs_rw_utf8_valid(const u8 *s, size_t len);
 
 bool infilfs_crc64_block_valid(const u8 block[INFILFS_DISK_BLOCK_SIZE],

@@ -355,7 +355,7 @@ static u64 infilfs_rw_crc64(const u8 *data, size_t length)
     return crc;
 }
 
-static u64 infilfs_rw_crc64_zeroed(const u8 *data, size_t length,
+u64 infilfs_rw_crc64_zeroed(const u8 *data, size_t length,
                                     size_t zero_offset, size_t zero_length)
 {
     u64 crc = 0;
@@ -919,7 +919,7 @@ static void infilfs_rw_tx_abort(struct infilfs_rw_tx *tx)
     memset(tx, 0, sizeof(*tx));
 }
 
-static int infilfs_rw_tx_defer_free(struct infilfs_rw_tx *tx,
+int infilfs_rw_tx_defer_free(struct infilfs_rw_tx *tx,
                                     u64 start, u64 count)
 {
     struct infilfs_rw_free_range *grown;
@@ -957,7 +957,7 @@ static int infilfs_rw_tx_record_alloc(struct infilfs_rw_tx *tx,
     return infilfs_parallel_tx_claim(tx, start, count, false);
 }
 
-static int infilfs_rw_tx_alloc(struct infilfs_rw_tx *tx, u64 count,
+int infilfs_rw_tx_alloc(struct infilfs_rw_tx *tx, u64 count,
                                u64 *start_out)
 {
     struct infilfs_sb_info *sbi = tx->sbi;
@@ -1029,7 +1029,7 @@ retry:
     return 0;
 }
 
-static int infilfs_rw_tx_apply_deferred(struct infilfs_rw_tx *tx)
+int infilfs_rw_tx_apply_deferred(struct infilfs_rw_tx *tx)
 {
     size_t r;
     u64 i;
@@ -1058,9 +1058,6 @@ static int infilfs_rw_tx_apply_deferred(struct infilfs_rw_tx *tx)
     return 0;
 }
 
-static int infilfs_rw_allocation_map_publish(
-    struct infilfs_rw_tx *tx,
-    struct infilfs_allocation_layout *next_layout);
 
 static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
 {
