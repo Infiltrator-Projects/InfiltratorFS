@@ -20,6 +20,15 @@ jobs:
       - name: Apply resize-object refactor
         run: |
           set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('tools/kernel-resize-object-refactor.py')
+          data = path.read_text()
+          old = "path == Path('tools/kernel-resize-object-refactor.py')"
+          new = "path in {Path('tools/kernel-resize-object-refactor.py'), Path('tests/native-kernel-maintainability-policy.sh')}"
+          assert data.count(old) == 1
+          path.write_text(data.replace(old, new, 1))
+          PY
           python3 tools/kernel-resize-object-refactor.py
           rm -f tools/kernel-resize-object-refactor.py
           rm -f .github/workflows/kernel-resize-object-refactor.yml
