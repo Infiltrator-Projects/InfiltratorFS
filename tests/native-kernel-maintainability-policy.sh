@@ -60,7 +60,7 @@ grep -Fq 'mutex_lock(&sbi->write_lock);' "$quota" || fail 'quota write_lock acqu
 # The native driver must stay a genuine multi-object Kbuild module.  The
 # allocation map is the first extracted subsystem and must never regress into
 # textual inclusion.
-grep -Fqx 'infiltratorfs-y := infiltratorfs_core.o infiltratorfs_allocation_map.o infiltratorfs_resize.o infiltratorfs_index_tree.o infiltratorfs_parallel_alloc.o infiltratorfs_allocation_publish.o infiltratorfs_read_cache.o infiltratorfs_pagecache.o' "$makefile" || \
+grep -Fqx 'infiltratorfs-y := infiltratorfs_core.o infiltratorfs_allocation_map.o infiltratorfs_resize.o infiltratorfs_index_tree.o infiltratorfs_parallel_alloc.o infiltratorfs_allocation_publish.o infiltratorfs_read_cache.o infiltratorfs_pagecache.o infiltratorfs_directory_tree.o' "$makefile" || \
     fail 'kernel module is no longer built from explicit component objects'
 test -f "$kernel/infiltratorfs_internal.h" || fail 'missing private kernel API header'
 test -f "$kernel/infiltratorfs_allocation_map.c" || fail 'allocation map object missing'
@@ -69,6 +69,9 @@ test -f "$kernel/infiltratorfs_parallel_alloc.c" || fail 'parallel allocator obj
 test -f "$kernel/infiltratorfs_allocation_publish.c" || fail 'allocation publisher object missing'
 test -f "$kernel/infiltratorfs_read_cache.c" || fail 'verified-read cache object missing'
 test -f "$kernel/infiltratorfs_pagecache.c" || fail 'page-cache object missing'
+test -f "$kernel/infiltratorfs_directory_tree.c" || fail 'directory-tree object missing'
+test ! -e "$kernel/infiltratorfs_directory_tree.inc" || fail 'directory tree regressed to textual include'
+! grep -Fq 'infiltratorfs_directory_tree.inc' "$rw" || fail 'RW compositor textually includes directory tree'
 test ! -e "$kernel/infiltratorfs_pagecache.inc" || fail 'page-cache regressed to textual include'
 ! grep -Fq 'infiltratorfs_pagecache.inc' "$rw" || fail 'RW compositor textually includes page cache'
 test ! -e "$kernel/infiltratorfs_rw_read_cache.inc" || fail 'verified-read cache regressed to textual include'
@@ -101,7 +104,6 @@ done < <(grep -RIlE '#include[[:space:]]+"infiltratorfs_[^"]+\.inc"' \
 ordered=(
     infiltratorfs_rw_legacy.inc
     infiltratorfs_rw_data.inc
-    infiltratorfs_directory_tree.inc
     infiltratorfs_rw_namespace.inc
     infiltratorfs_linux_meta.inc
 )

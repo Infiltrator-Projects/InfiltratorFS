@@ -38,6 +38,7 @@
 #include <linux/version.h>
 #include <linux/vmalloc.h>
 #include <linux/writeback.h>
+#include <linux/workqueue.h>
 #include <linux/xattr.h>
 
 #include "infiltratorfs_format.h"
@@ -84,6 +85,75 @@ struct infilfs_rw_tx {
     size_t free_extent_capacity;
     bool free_extent_index_valid;
 };
+
+struct infilfs_rw_sha256_ctx {
+    u32 state[8];
+    u64 total;
+    u8 block[64];
+    u32 used;
+};
+
+#define INFILFS_NATIVE_WRITER_TAIL_SLOTS 64u
+struct infilfs_native_undo {
+    u64 block;
+    u8 data[INFILFS_DISK_BLOCK_SIZE];
+};
+
+struct infilfs_native_writer_tail {
+    u8 owner_id[16];
+    u8 object_id[16];
+    u64 object_block;
+    u64 start_logical;
+    bool valid;
+};
+
+struct infilfs_native_index_locator {
+    u8 object_id[16];
+    u32 page_index;
+    u32 entry_index;
+    bool valid;
+};
+
+struct infilfs_native_directory_locator {
+    u32 hash;
+    u16 name_len;
+    bool valid;
+    u8 name[INFILFS_NAME_MAX];
+};
+
+struct infilfs_native_pending {
+    struct list_head node;
+    struct super_block *sb;
+    struct infilfs_rw_tx tx;
+    struct infilfs_superblock_disk base_disk;
+    struct delayed_work idle_work;
+    size_t operation_allocated_count;
+    struct infilfs_superblock_disk operation_next_sb;
+    u64 operation_free_blocks;
+    size_t operation_deferred_count;
+    struct infilfs_rw_free_range operation_last_deferred;
+    bool operation_had_last;
+    struct infilfs_native_undo *undo;
+    unsigned int undo_count;
+    unsigned int undo_capacity;
+    struct infilfs_native_writer_tail
+        writer_tail[INFILFS_NATIVE_WRITER_TAIL_SLOTS];
+    struct infilfs_native_index_locator *index_locators;
+    u32 index_locator_capacity;
+    u32 index_locator_count;
+    bool index_locator_valid;
+    struct infilfs_native_directory_locator *directory_locators;
+    u8 directory_locator_owner_id[16];
+    u32 directory_locator_capacity;
+    u32 directory_locator_count;
+    bool directory_locator_valid;
+    u64 pending_bytes;
+    u64 pending_physical_bytes;
+    u64 publish_threshold;
+    bool active;
+    bool commit_failed;
+};
+
 
 enum infilfs_data_workload {
     INFILFS_DATA_WORKLOAD_SEQUENTIAL = 0,
@@ -397,5 +467,39 @@ ssize_t infilfs_native_extent_write_iter(
     struct inode *inode, loff_t *position, struct iov_iter *from,
     size_t requested);
 extern const struct address_space_operations infilfs_aops;
+
+/* Services shared with the compiled Format 0.17 directory-tree layer. */
+extern const u8 infilfs_directory_page_magic[8];
+extern const u8 infilfs_directory_branch_page_magic[8];
+void infilfs_rw_sha256_init(struct infilfs_rw_sha256_ctx *ctx);
+void infilfs_rw_sha256_update(
+    struct infilfs_rw_sha256_ctx *ctx, const u8 *data, size_t length);
+void infilfs_rw_sha256_final(struct infilfs_rw_sha256_ctx *ctx, u8 out[32]);
+bool infilfs_rw_utf8_valid(const u8 *s, size_t len);
+void infilfs_rw_init_page(
+    u8 *block, const u8 magic[8], const u8 owner[16], u64 generation);
+int infilfs_rw_finalize_page(u8 block[INFILFS_DISK_BLOCK_SIZE]);
+int infilfs_rw_finalize_object(u8 block[INFILFS_DISK_BLOCK_SIZE]);
+int infilfs_walk_dir_buffer(
+    const u8 *buffer, u32 bytes,
+    int (*visitor)(const struct infilfs_dirent_disk *, const u8 *, void *),
+    void *arg);
+int infilfs_native_stage_block(struct super_block *sb, u64 block, const void *data);
+int infilfs_native_store_private_or_cow(
+    struct infilfs_native_pending *pending, u64 old_block,
+    const u8 data[INFILFS_DISK_BLOCK_SIZE], u64 *new_block_out);
+void infilfs_native_directory_locator_invalidate(struct infilfs_native_pending *pending);
+int infilfs_tree_dir_lookup_name(
+    struct inode *dir, const u8 *name, u16 name_len,
+    struct infilfs_dir_lookup *search);
+int infilfs_tree_dir_for_each(
+    struct inode *inode,
+    int (*visitor)(const struct infilfs_dirent_disk *, const u8 *, void *),
+    void *arg);
+int infilfs_native_tree_directory_update(
+    struct infilfs_native_pending *pending, struct inode *dir,
+    const struct qstr *remove_a, const struct qstr *remove_b,
+    const struct qstr *add_name, const u8 add_id[16], u16 add_type,
+    int link_delta, u64 *new_dir_block_out);
 
 #endif /* INFILTRATORFS_INTERNAL_H */

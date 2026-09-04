@@ -29,7 +29,6 @@
 #define INFILFS_NATIVE_UNDO_INITIAL 16u
 #define INFILFS_NATIVE_CHECKSUM_CACHE_SLOTS 256u
 #define INFILFS_NATIVE_CHECKSUM_GROUP_CACHE_SLOTS 4096u
-#define INFILFS_NATIVE_WRITER_TAIL_SLOTS 64u
 #define INFILFS_NATIVE_INDEX_LOCATOR_MIN_CAPACITY 64u
 #define INFILFS_NATIVE_DIRECTORY_LOCATOR_MIN_CAPACITY 64u
 
@@ -40,66 +39,6 @@ struct infilfs_native_index_change {
     bool add;
     bool remove;
     bool found;
-};
-
-struct infilfs_native_undo {
-    u64 block;
-    u8 data[INFILFS_DISK_BLOCK_SIZE];
-};
-
-struct infilfs_native_writer_tail {
-    u8 owner_id[16];
-    u8 object_id[16];
-    u64 object_block;
-    u64 start_logical;
-    bool valid;
-};
-
-struct infilfs_native_index_locator {
-    u8 object_id[16];
-    u32 page_index;
-    u32 entry_index;
-    bool valid;
-};
-
-struct infilfs_native_directory_locator {
-    u32 hash;
-    u16 name_len;
-    bool valid;
-    u8 name[INFILFS_NAME_MAX];
-};
-
-struct infilfs_native_pending {
-    struct list_head node;
-    struct super_block *sb;
-    struct infilfs_rw_tx tx;
-    struct infilfs_superblock_disk base_disk;
-    struct delayed_work idle_work;
-    size_t operation_allocated_count;
-    struct infilfs_superblock_disk operation_next_sb;
-    u64 operation_free_blocks;
-    size_t operation_deferred_count;
-    struct infilfs_rw_free_range operation_last_deferred;
-    bool operation_had_last;
-    struct infilfs_native_undo *undo;
-    unsigned int undo_count;
-    unsigned int undo_capacity;
-    struct infilfs_native_writer_tail
-        writer_tail[INFILFS_NATIVE_WRITER_TAIL_SLOTS];
-    struct infilfs_native_index_locator *index_locators;
-    u32 index_locator_capacity;
-    u32 index_locator_count;
-    bool index_locator_valid;
-    struct infilfs_native_directory_locator *directory_locators;
-    u8 directory_locator_owner_id[16];
-    u32 directory_locator_capacity;
-    u32 directory_locator_count;
-    bool directory_locator_valid;
-    u64 pending_bytes;
-    u64 pending_physical_bytes;
-    u64 publish_threshold;
-    bool active;
-    bool commit_failed;
 };
 
 struct infilfs_native_checksum_node {
@@ -245,7 +184,7 @@ static u32 infilfs_native_name_hash(const char *name, size_t length)
     return h;
 }
 
-static void infilfs_native_directory_locator_invalidate(
+void infilfs_native_directory_locator_invalidate(
     struct infilfs_native_pending *pending)
 {
     pending->directory_locator_valid = false;
@@ -746,7 +685,7 @@ static void infilfs_native_checksum_group_cache_store(
     spin_unlock_irqrestore(&infilfs_native_checksum_cache_lock, flags);
 }
 
-static int infilfs_native_stage_block(struct super_block *sb, u64 block,
+int infilfs_native_stage_block(struct super_block *sb, u64 block,
                                       const void *data)
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
@@ -814,7 +753,7 @@ static int infilfs_native_undo_capture(struct infilfs_native_pending *pending,
     return 0;
 }
 
-static int infilfs_native_store_private_or_cow(
+int infilfs_native_store_private_or_cow(
     struct infilfs_native_pending *pending, u64 old_block,
     const u8 data[INFILFS_DISK_BLOCK_SIZE], u64 *new_block_out)
 {

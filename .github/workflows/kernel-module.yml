@@ -101,7 +101,7 @@ jobs:
              kernel/infiltratorfs_allocation_publish.c \
              kernel/infiltratorfs_parallel_alloc.c \
              kernel/infiltratorfs_index_tree.c \
-             kernel/infiltratorfs_directory_tree.inc \
+             kernel/infiltratorfs_directory_tree.c \
              kernel/infiltratorfs_rw.inc \
              kernel/infiltratorfs_rw_legacy.inc \
              kernel/infiltratorfs_rw_data.inc \

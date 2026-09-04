@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "infiltratorfs_internal.h"
 /*
  * Native scalable directory tree.
  *
@@ -116,7 +117,7 @@ static int infilfs_tree_dir_leaf_find(
     return offset == bytes ? -ENOENT : -EFSCORRUPTED;
 }
 
-static int infilfs_tree_dir_lookup_name(
+int infilfs_tree_dir_lookup_name(
     struct inode *dir, const u8 *name, u16 name_len,
     struct infilfs_dir_lookup *search)
 {
@@ -265,7 +266,7 @@ out:
     return ret;
 }
 
-static int infilfs_tree_dir_for_each(
+int infilfs_tree_dir_for_each(
     struct inode *inode,
     int (*visitor)(const struct infilfs_dirent_disk *, const u8 *, void *),
     void *arg)
@@ -702,7 +703,7 @@ static bool infilfs_tree_dir_same_name(
     return a && b && a->len == b->len && !memcmp(a->name, b->name, a->len);
 }
 
-static int __maybe_unused infilfs_native_tree_directory_update(
+int infilfs_native_tree_directory_update(
     struct infilfs_native_pending *pending, struct inode *dir,
     const struct qstr *remove_a, const struct qstr *remove_b,
     const struct qstr *add_name, const u8 add_id[16], u16 add_type,

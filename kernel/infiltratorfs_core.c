@@ -7,10 +7,10 @@ static const u8 infilfs_disk_magic[8] = {
 static const u8 infilfs_object_magic[8] = {
     'I', 'N', 'F', 'O', 'B', 'J', '0', '1'
 };
-static const u8 infilfs_directory_page_magic[8] = {
+const u8 infilfs_directory_page_magic[8] = {
     'I', 'N', 'F', 'S', 'D', 'P', '0', '1'
 };
-static const u8 infilfs_directory_branch_page_magic[8] = {
+const u8 infilfs_directory_branch_page_magic[8] = {
     'I', 'N', 'F', 'S', 'D', 'B', '0', '1'
 };
 const u8 infilfs_index_page_magic[8] = {
@@ -30,22 +30,12 @@ static bool infilfs_linux_meta_directory_is_internal(struct super_block *sb);
 static int infilfs_linux_meta_remove_object(struct super_block *sb,
                                             const u8 object_id[16]);
 
-static int infilfs_tree_dir_lookup_name(
-    struct inode *dir, const u8 *name, u16 name_len,
-    struct infilfs_dir_lookup *search);
-static int infilfs_tree_dir_for_each(
-    struct inode *inode,
-    int (*visitor)(const struct infilfs_dirent_disk *, const u8 *, void *),
-    void *arg);
-
 static const struct inode_operations infilfs_dir_inode_operations;
 static const struct inode_operations infilfs_symlink_inode_operations;
 static const struct inode_operations infilfs_file_inode_operations;
 static const struct file_operations infilfs_dir_operations;
 static const struct file_operations infilfs_file_operations;
 
-
-static bool infilfs_rw_utf8_valid(const u8 *s, size_t len);
 
 bool infilfs_crc64_block_valid(const u8 block[INFILFS_DISK_BLOCK_SIZE],
                                       size_t checksum_offset,
@@ -1418,7 +1408,7 @@ out:
     return ret;
 }
 
-static int infilfs_walk_dir_buffer(const u8 *buffer, u32 bytes,
+int infilfs_walk_dir_buffer(const u8 *buffer, u32 bytes,
                                    int (*visitor)(const struct infilfs_dirent_disk *,
                                                   const u8 *, void *),
                                    void *arg)

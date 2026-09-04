@@ -10,13 +10,6 @@
  * immutable while the live generation advances.
  */
 
-struct infilfs_rw_sha256_ctx {
-    u32 state[8];
-    u64 total;
-    u8 block[64];
-    u32 used;
-};
-
 bool infilfs_rw_bitmap_get(const u8 *bitmap, u64 block)
 {
     return (bitmap[block >> 3] & (u8)(1u << (block & 7u))) != 0;
@@ -380,7 +373,7 @@ static void infilfs_rw_store_crc(u8 block[INFILFS_DISK_BLOCK_SIZE],
     memcpy(block + checksum_offset, &stored, sizeof(stored));
 }
 
-static int infilfs_rw_finalize_object(u8 block[INFILFS_DISK_BLOCK_SIZE])
+int infilfs_rw_finalize_object(u8 block[INFILFS_DISK_BLOCK_SIZE])
 {
     struct infilfs_object_header_disk *header =
         (struct infilfs_object_header_disk *)block;
@@ -396,7 +389,7 @@ static int infilfs_rw_finalize_object(u8 block[INFILFS_DISK_BLOCK_SIZE])
     return 0;
 }
 
-static int infilfs_rw_finalize_page(u8 block[INFILFS_DISK_BLOCK_SIZE])
+int infilfs_rw_finalize_page(u8 block[INFILFS_DISK_BLOCK_SIZE])
 {
     struct infilfs_metadata_page_disk *page =
         (struct infilfs_metadata_page_disk *)block;
@@ -514,7 +507,7 @@ static void infilfs_rw_sha256_transform(struct infilfs_rw_sha256_ctx *ctx,
     ctx->state[4]+=e; ctx->state[5]+=f; ctx->state[6]+=g; ctx->state[7]+=h;
 }
 
-static void infilfs_rw_sha256_init(struct infilfs_rw_sha256_ctx *ctx)
+void infilfs_rw_sha256_init(struct infilfs_rw_sha256_ctx *ctx)
 {
     static const u32 initial[8] = {
         0x6a09e667u,0xbb67ae85u,0x3c6ef372u,0xa54ff53au,
@@ -526,7 +519,7 @@ static void infilfs_rw_sha256_init(struct infilfs_rw_sha256_ctx *ctx)
     ctx->used = 0;
 }
 
-static void infilfs_rw_sha256_update(struct infilfs_rw_sha256_ctx *ctx,
+void infilfs_rw_sha256_update(struct infilfs_rw_sha256_ctx *ctx,
                                      const u8 *data, size_t length)
 {
     size_t take;
@@ -545,7 +538,7 @@ static void infilfs_rw_sha256_update(struct infilfs_rw_sha256_ctx *ctx,
     }
 }
 
-static void infilfs_rw_sha256_final(struct infilfs_rw_sha256_ctx *ctx,
+void infilfs_rw_sha256_final(struct infilfs_rw_sha256_ctx *ctx,
                                     u8 out[32])
 {
     u64 bits = ctx->total * 8u;
@@ -591,7 +584,7 @@ int infilfs_rw_inline_digest(const u8 *data, size_t size, u8 out[32])
     return 0;
 }
 
-static bool infilfs_rw_utf8_valid(const u8 *s, size_t len)
+bool infilfs_rw_utf8_valid(const u8 *s, size_t len)
 {
     size_t i = 0;
 
@@ -1172,7 +1165,7 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
     return 0;
 }
 
-static void infilfs_rw_init_page(u8 *block, const u8 magic[8],
+void infilfs_rw_init_page(u8 *block, const u8 magic[8],
                                  const u8 owner[16], u64 generation)
 {
     struct infilfs_metadata_page_disk *page;

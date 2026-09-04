@@ -14,8 +14,8 @@ grep -Fq 'tree_dir_remove' "$root/src/volume/namespace-directory-mutation.inc"
 printf 'Portable directory-tree core policy guard passed.\n'
 
 grep -Fq 'INFILFS_INCOMPAT_DIRECTORY_TREE' "$root/kernel/infiltratorfs_format.h"
-grep -Fq 'infilfs_tree_dir_lookup_name' "$root/kernel/infiltratorfs_directory_tree.inc"
-grep -Fq 'infilfs_native_tree_directory_update' "$root/kernel/infiltratorfs_directory_tree.inc"
+grep -Fq 'infilfs_tree_dir_lookup_name' "$root/kernel/infiltratorfs_directory_tree.c"
+grep -Fq 'infilfs_native_tree_directory_update' "$root/kernel/infiltratorfs_directory_tree.c"
 # Keep the namespace-to-tree hook enforced, but avoid grep -q false negatives
 # observed on the one-shot transformed runner.  A normal fixed-string grep has
 # the same assertion semantics under set -e and leaves the matched line visible.
