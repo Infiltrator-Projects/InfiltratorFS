@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Diagnose the native namespace integration assertion during extraction.
+# Qualify the native directory-tree extraction with the deterministic namespace guard.
 name: One-shot kernel directory-tree refactor
 
 on:
@@ -22,8 +22,6 @@ jobs:
         run: |
           set -euo pipefail
           python3 tools/kernel-directory-tree-object-refactor.py
-          echo '--- namespace tree hook after transformation ---'
-          grep -n -C 3 'tree_directory_update\|tree_dir' kernel/infiltratorfs_rw_namespace.inc || true
           rm -f tools/kernel-directory-tree-object-refactor.py
           rm -f .github/workflows/kernel-directory-tree-object-refactor.yml
           git diff --check
@@ -37,7 +35,7 @@ jobs:
         run: |
           set -euo pipefail
           bash tests/native-kernel-maintainability-policy.sh .
-          bash -x tests/directory-tree-policy.sh .
+          bash tests/directory-tree-policy.sh .
           bash tests/native-deferred-publication-policy.sh .
           bash tests/native-transaction-durability-policy.sh .
           bash tests/native-index-tree-policy.sh .
