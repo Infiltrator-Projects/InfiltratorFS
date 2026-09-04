@@ -3,31 +3,17 @@
 
 This directory contains the native Linux VFS adapter for InfiltratorFS. It is an out-of-tree kernel module built against installed kernel headers and packaged through DKMS; Linux itself does not need to be rebuilt.
 
-The native kernel driver is the current normal Linux filesystem path. The old userspace FUSE adapter has been removed from the source tree and survives only in Git history.
+This README is intentionally limited to local kernel-module guidance. Filesystem architecture belongs in `../docs/ARCHITECTURE.md`, feature completion in `../docs/ROADMAP.md`, and qualification evidence in `../docs/QUALIFICATION.md`.
 
-The current driver rejects repeated physical metadata-tree blocks during full walks, keeps large allocation-tree traversal scratch buffers off the kernel stack, permits DKMS/package upgrades to complete while an explicit administrator module-disable policy remains active, and adds object-local 64-shard volatile data-allocation reservations.
+## Role
 
-The module:
+The module registers filesystem type `infiltratorfs` and maps Linux VFS operations onto the portable Format 0.17 object, extent, transaction, checkpoint and integrity model.
 
-- registers the `infiltratorfs` filesystem type with Linux VFS;
-- mounts current Format 0.17 block devices read-only or read-write;
-- selects the highest-generation structurally valid committed checkpoint graph from the three physical checkpoint locations;
-- requires current Format 0.17 and rejects unknown incompatible feature bits;
-- resolves classic, paged and current tree object indexes/directories;
-- creates stable Linux inode identities from persistent InfiltratorFS object IDs;
-- exposes regular files, directories, symbolic links, FIFOs, sockets and character/block special-node identity through native VFS objects;
-- reads inline data, ordinary extents, sparse holes and paged extents directly from the block device;
-- performs create/mkdir/mknod, link/symlink, rename/unlink/rmdir and persistent setattr through the native transaction path;
-- supports sequential/random extent writes, large sparse growth, high-offset writes, truncate, `fallocate` and hole punching;
-- preserves open-unlinked files until final inode eviction and performs mount-time orphan recovery;
-- persists standard Linux xattr namespaces and adapter-specific special-node metadata;
-- integrates page-cache faults, readahead and shared writable `mmap` writeback;
-- preserves retained snapshot generations while live namespace/data updates continue;
-- reports logical and allocated blocks for native objects;
-- validates metadata integrity and file-data checksums on native reads; and
-- publishes pending transactions at `fsync`, `syncfs` and global sync durability boundaries using sharded CoW allocation-map leaves rather than a monolithic bitmap image;
-- reports per-file native fragmentation metrics through a bounded ioctl ABI; and
-- performs bounded online copy-on-write file defragmentation while preserving logical content, inode identity, hard links, xattrs and user-visible timestamps and reclaiming old blocks through the existing snapshot/reflink-aware path.
+The current product path is native VFS only. The former userspace FUSE implementation is not part of the current source or package path and survives only in Git history.
+
+Linux-specific metadata such as ownership/mode, xattr namespaces and special-node details is kept in adapter metadata rather than redefining the portable filesystem model.
+
+## Build
 
 Build against the running kernel when matching headers are installed:
 
@@ -35,13 +21,15 @@ Build against the running kernel when matching headers are installed:
 make -C kernel KDIR=/lib/modules/$(uname -r)/build
 ```
 
-The result is `kernel/infiltratorfs.ko`. Loading it is a normal module operation:
+The result is `kernel/infiltratorfs.ko`.
+
+Load the installed module normally:
 
 ```bash
 sudo modprobe infiltratorfs
 ```
 
-A direct native mount is then:
+Mount a current Format 0.17 volume:
 
 ```bash
 sudo mount -i -t infiltratorfs -o rw /dev/<partition> /mnt/infiltratorfs
@@ -50,40 +38,31 @@ findmnt -T /mnt/infiltratorfs -o SOURCE,FSTYPE,OPTIONS
 
 `FSTYPE` must report `infiltratorfs`.
 
-The Debian package installs the module source under `/usr/src/infiltratorfs-<version>` and registers/builds it through DKMS. The native `.run` installer does the same after its userspace build and conformance tests. Matching headers for the running kernel are mandatory; installation fails rather than falling back to another filesystem implementation.
+The Debian package and native `.run` installer install a self-contained DKMS source tree under `/usr/src/infiltratorfs-<version>`. The packaging/workflow manifests are authoritative for the exact source files copied into that tree; this README deliberately does not duplicate that list.
 
-The DKMS source root is deliberately self-contained and includes:
+Matching running-kernel headers are required for a native build. Installation must fail rather than silently substitute another filesystem implementation.
 
-- `Makefile`
-- `infiltratorfs.c`
-- `infiltratorfs_format.h`
-- `infiltratorfs_allocation_map.inc`
-- `infiltratorfs_allocation_publish.inc`
-- `infiltratorfs_parallel_alloc.inc`
-- `infiltratorfs_rw.inc`
-- `infiltratorfs_rw_legacy.inc`
-- `infiltratorfs_rw_data.inc`
-- `infiltratorfs_rw_namespace.inc`
-- `infiltratorfs_rw_read_cache.inc`
-- `infiltratorfs_index_tree.inc`
-- `infiltratorfs_directory_tree.inc`
-- `infiltratorfs_pagecache.inc`
-- `infiltratorfs_linux_meta.inc`
-- `infiltratorfs_defrag.inc`
-- `infiltratorfs_ioctl.h`
+## Source organization
 
-The dedicated `Native Linux kernel module` GitHub Actions workflow compiles the module against Ubuntu kernel headers, reproduces the DKMS source-root build, checks module metadata and, when matching running-kernel headers are available, loads the module and performs real loop-device native read/write qualification. The mounted suite covers namespace operations, random/sparse writes, high-offset sparse files, truncate, allocation reporting, `fallocate`, hole punching, xattrs, special nodes, page-cache/readahead/mmap behavior, open-unlink lifetime, snapshot-preserving writes, remount readback and offline scrub.
+The kernel implementation is assembled from the main VFS source plus focused include units for major concerns such as allocation publication, parallel reservation, read/write data paths, namespace mutation, indexes, directory trees, page cache, Linux metadata, resize, quotas and defragmentation.
 
-The same workflow also has a separate hosted scale job. After the ordinary native qualification is green, it runs `tests/native-scale-qualification.sh`: one million distinct files across 1,000 directories, 100,000 unlink/recreate operations, durable read-only remount verification and scrub, followed by a separate 1 TiB sparse loop-backed volume with non-zero data, a 900 GiB sparse high-offset file, remount verification and scrub. The helper emits `[SCALE-PERF]` timings for creation, churn, sync, scrub and large-volume I/O.
+The important design rule is separation of responsibility rather than any particular filename list:
 
-A second hosted endurance job runs `tests/native-endurance-qualification.sh` on a 4 GiB native volume. It drives the filesystem below 15 percent free space with multiple allocation-size classes, performs two fragmentation/refill passes plus an explicit hole-punch/refill cycle, then sustains a five-minute mixed metadata/data workload covering random 4 KiB overwrite/readback, append, rename churn, xattrs, sparse truncate/high-offset writes, hard/symbolic links and repeated fsync. A manifest of durable hashes and namespace state must survive an offline CLEAN scrub, read-only remount verification and a second CLEAN scrub. `[ENDURANCE-PERF]` output records workload rate, fsync latency, free-space floor and scrub timing.
+- the portable format remains canonical;
+- persistent allocation is authoritative, while reservation/placement state is volatile;
+- mutation follows the transaction/checkpoint durability model;
+- Linux sidecar metadata does not become portable identity/security semantics;
+- snapshot/reflink ownership must be respected by write, defrag and reclamation paths; and
+- malformed metadata topology must fail closed without unbounded recursion or kernel-stack use.
 
-The mounted optimizer gate deliberately fragments a regular file using committed 4 KiB CoW overwrites, records `infilfs-optimize --metrics`, invokes `infilfs-optimize --defrag`, requires fewer data extents, verifies the file and its hard link remain byte-identical with the same inode/xattr and unchanged modification time, then requires CLEAN scrub and read-only remount verification.
+As the driver grows, lock ordering and transaction ownership should be documented centrally in code comments or a dedicated developer note instead of being inferred from scattered helpers.
 
-The release publisher adds an installed-package gate: it installs the generated `.deb`, verifies `/proc/filesystems` and `modinfo`, mounts a real Format 0.17 image as `infiltratorfs`, writes and byte-compares non-zero data, syncs, unmounts, requires scrub to report CLEAN and rejects any legacy FUSE executable or process.
+## Qualification
 
-## Current release scope
+The `Native Linux kernel module` workflow is the ordinary mounted kernel qualification path for relevant kernel/core/package changes. Dedicated workflows may qualify independent capabilities such as resize, while million-file/1 TiB and endurance workloads live in the separate weekly/manual Heavy qualification workflow.
 
-The native driver has passed the major migration milestone: the current product path no longer depends on restoration of FUSE-era functionality. Scale, near-full endurance, online defragmentation and parallel allocation reservations now have dedicated mounted qualification. Follow-on work is focused on workload- and media-aware placement, further recovery depth and broader long-running stress.
+Do not copy workflow results or current feature status into this README. `../docs/QUALIFICATION.md` is the evidence ledger and `../docs/ROADMAP.md` is the feature-status source.
 
-The portable core remains the canonical on-disk transaction and validation model shared by every operating-system adapter. Linux VFS code is therefore not intended to become the definition that a future Windows, macOS, BSD or Haiku implementation must copy.
+The release publisher additionally installs the generated package and performs an installed native mount/write/read/unmount/scrub gate before publication.
+
+For a comprehensive explicitly destructive physical-media audit, use the repository's maintained `tests/native-complete-qualification.sh` harness on dedicated test media.
