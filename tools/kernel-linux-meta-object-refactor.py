@@ -22,18 +22,26 @@ if not old_meta.exists() or new_meta.exists():
     raise SystemExit('Linux metadata source state is not the expected pre-extraction tree')
 meta = old_meta.read_text()
 meta = '#include "infiltratorfs_internal.h"\n' + meta
+# The size ceiling is shared with quota because quota policy itself is stored in
+# this Linux sidecar xattr representation. Keep a single private-driver value.
+meta = meta.replace('#define INFILFS_LINUX_META_MAX (1024u * 1024u)\n', '', 1)
 for old, new in (
     ('static int infilfs_linux_meta_get_special(', 'int infilfs_linux_meta_get_special('),
     ('static bool infilfs_linux_meta_directory_is_internal(', 'bool infilfs_linux_meta_directory_is_internal('),
     ('static int infilfs_linux_meta_remove_object(', 'int infilfs_linux_meta_remove_object('),
+    ('static int infilfs_linux_xattr_get(', 'int infilfs_linux_xattr_get('),
+    ('static int infilfs_linux_xattr_set(', 'int infilfs_linux_xattr_set('),
     ('static ssize_t infilfs_linux_listxattr(', 'ssize_t infilfs_linux_listxattr('),
+    ('static const struct xattr_handler infilfs_linux_trusted_xattr_handler = {',
+     'const struct xattr_handler infilfs_linux_trusted_xattr_handler = {'),
     ('static const struct xattr_handler * const infilfs_xattr_handlers[] = {',
      'const struct xattr_handler * const infilfs_xattr_handlers[] = {'),
     ('static int infilfs_posix_mknod(', 'int infilfs_posix_mknod('),
 ):
     if old not in meta:
         raise SystemExit(f'missing Linux metadata entry point: {old}')
-    meta = meta.replace(old, new, 1)
+    # xattr_set and mknod each have two version-selected declarations; promote both.
+    meta = meta.replace(old, new)
 new_meta.write_text(meta)
 old_meta.unlink()
 
@@ -52,7 +60,7 @@ core_path.write_text(core)
 
 internal = internal_path.read_text()
 marker = '\n#endif /* INFILTRATORFS_INTERNAL_H */\n'
-api = '''\n/* Services owned by the compiled Linux sidecar-metadata adapter. */\nint infilfs_linux_meta_get_special(struct super_block *sb,\n                                   const u8 object_id[16],\n                                   umode_t *mode, dev_t *rdev);\nbool infilfs_linux_meta_directory_is_internal(struct super_block *sb);\nint infilfs_linux_meta_remove_object(struct super_block *sb,\n                                     const u8 object_id[16]);\nssize_t infilfs_linux_listxattr(struct dentry *dentry, char *list, size_t size);\nextern const struct xattr_handler * const infilfs_xattr_handlers[];\n#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)\nint infilfs_posix_mknod(struct mnt_idmap *idmap, struct inode *dir,\n                        struct dentry *dentry, umode_t mode, dev_t rdev);\n#else\nint infilfs_posix_mknod(struct user_namespace *idmap, struct inode *dir,\n                        struct dentry *dentry, umode_t mode, dev_t rdev);\n#endif\nextern const struct inode_operations infilfs_file_inode_operations;\n'''
+api = '''\n/* Services owned by the compiled Linux sidecar-metadata adapter. */\n#define INFILFS_LINUX_META_MAX (1024u * 1024u)\nint infilfs_linux_meta_get_special(struct super_block *sb,\n                                   const u8 object_id[16],\n                                   umode_t *mode, dev_t *rdev);\nbool infilfs_linux_meta_directory_is_internal(struct super_block *sb);\nint infilfs_linux_meta_remove_object(struct super_block *sb,\n                                     const u8 object_id[16]);\nint infilfs_linux_xattr_get(\n    const struct xattr_handler *handler, struct dentry *dentry,\n    struct inode *inode, const char *name, void *buffer, size_t size);\n#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)\nint infilfs_linux_xattr_set(\n    const struct xattr_handler *handler, struct mnt_idmap *idmap,\n    struct dentry *dentry, struct inode *inode, const char *name,\n    const void *value, size_t value_size, int flags);\n#else\nint infilfs_linux_xattr_set(\n    const struct xattr_handler *handler, struct user_namespace *idmap,\n    struct dentry *dentry, struct inode *inode, const char *name,\n    const void *value, size_t value_size, int flags);\n#endif\nextern const struct xattr_handler infilfs_linux_trusted_xattr_handler;\nssize_t infilfs_linux_listxattr(struct dentry *dentry, char *list, size_t size);\nextern const struct xattr_handler * const infilfs_xattr_handlers[];\n#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)\nint infilfs_posix_mknod(struct mnt_idmap *idmap, struct inode *dir,\n                        struct dentry *dentry, umode_t mode, dev_t rdev);\n#else\nint infilfs_posix_mknod(struct user_namespace *idmap, struct inode *dir,\n                        struct dentry *dentry, umode_t mode, dev_t rdev);\n#endif\nextern const struct inode_operations infilfs_file_inode_operations;\n'''
 if marker not in internal:
     raise SystemExit('internal header terminator not found')
 internal_path.write_text(internal.replace(marker, api + marker, 1))
