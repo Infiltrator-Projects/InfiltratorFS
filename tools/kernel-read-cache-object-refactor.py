@@ -87,6 +87,18 @@ for old, new in [
 ]:
     assert ct.count(old) == 1, (old, ct.count(old))
     ct = ct.replace(old, new, 1)
+
+# INFILFS_I() was another hidden same-translation-unit dependency. Move the
+# trivial inode-private accessor into the module-private header so every
+# compiled component uses one definition rather than open-coding the cast.
+inode_accessor = '''static struct infilfs_inode_info *INFILFS_I(struct inode *inode)
+{
+    return inode->i_private;
+}
+
+'''
+assert ct.count(inode_accessor) == 1
+ct = ct.replace(inode_accessor, '', 1)
 core.write_text(ct)
 
 # Build the compiled read-cache source. Only the VFS entry point must escape
@@ -102,6 +114,22 @@ old_cache.unlink()
 
 # Private header owns the cross-object read-integrity types and service API.
 h = internal.read_text()
+inode_anchor = '''struct infilfs_inode_info {
+    u64 object_block;
+    u64 data_allocation_hint;
+    u64 portable_flags;
+    u16 object_type;
+    u8 object_id[16];
+    char *symlink_target;
+};
+'''
+assert inode_anchor in h
+h = h.replace(inode_anchor, inode_anchor + '''
+static inline struct infilfs_inode_info *INFILFS_I(struct inode *inode)
+{
+    return inode->i_private;
+}
+''', 1)
 anchor = '''struct infilfs_visit_set {
     u64 *slots;
     size_t capacity;
