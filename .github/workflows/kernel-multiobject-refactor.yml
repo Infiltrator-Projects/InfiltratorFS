@@ -20,6 +20,15 @@ jobs:
       - name: Apply deterministic refactor
         run: |
           set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('tools/kernel-multiobject-refactor.py')
+          data = path.read_text()
+          old = "Path('.github/workflows/kernel-multiobject-refactor.yml')}"
+          new = "Path('.github/workflows/kernel-multiobject-refactor.yml'), Path('tests/native-kernel-maintainability-policy.sh')}"
+          assert old in data
+          path.write_text(data.replace(old, new, 1))
+          PY
           python3 tools/kernel-multiobject-refactor.py
           rm -f tools/kernel-multiobject-refactor.py
           rm -f .github/workflows/kernel-multiobject-refactor.yml
