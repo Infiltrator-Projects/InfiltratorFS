@@ -26,8 +26,10 @@ jobs:
           data = path.read_text()
           old = "path == Path('tools/kernel-resize-object-refactor.py')"
           new = "path in {Path('tools/kernel-resize-object-refactor.py'), Path('tests/native-kernel-maintainability-policy.sh')}"
-          assert data.count(old) == 1
-          path.write_text(data.replace(old, new, 1))
+          assert data.count(old) >= 2
+          index = data.rfind(old)
+          assert index >= 0
+          path.write_text(data[:index] + new + data[index + len(old):])
           PY
           python3 tools/kernel-resize-object-refactor.py
           rm -f tools/kernel-resize-object-refactor.py
