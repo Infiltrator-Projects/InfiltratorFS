@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
+# Re-run after making the existing trusted-xattr quota dependency explicit.
 name: One-shot kernel Linux metadata refactor
 
 on:
