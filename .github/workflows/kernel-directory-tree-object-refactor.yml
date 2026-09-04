@@ -1,5 +1,4 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Trace the remaining deferred-publication assertion during directory-tree extraction.
 name: One-shot kernel directory-tree refactor
 
 on:
@@ -36,7 +35,7 @@ jobs:
           set -euo pipefail
           bash tests/native-kernel-maintainability-policy.sh .
           bash tests/directory-tree-policy.sh .
-          bash -x tests/native-deferred-publication-policy.sh .
+          bash tests/native-deferred-publication-policy.sh .
           bash tests/native-transaction-durability-policy.sh .
           bash tests/native-index-tree-policy.sh .
 
