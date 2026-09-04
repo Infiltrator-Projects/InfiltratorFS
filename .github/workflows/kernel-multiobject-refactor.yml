@@ -83,6 +83,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          find kernel -maxdepth 1 -type f \( \
+            -name '*.o' -o -name '*.ko' -o -name '*.mod' -o \
+            -name '*.mod.c' -o -name '*.cmd' -o -name '.*.cmd' -o \
+            -name 'Module.symvers' -o -name 'modules.order' \
+          \) -delete
           git config user.name 'Shannon Smith'
           git config user.email 'infiltratr@yandex.com'
           git add -A
