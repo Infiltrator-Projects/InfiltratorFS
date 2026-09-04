@@ -13,10 +13,10 @@ static const u8 infilfs_directory_page_magic[8] = {
 static const u8 infilfs_directory_branch_page_magic[8] = {
     'I', 'N', 'F', 'S', 'D', 'B', '0', '1'
 };
-static const u8 infilfs_index_page_magic[8] = {
+const u8 infilfs_index_page_magic[8] = {
     'I', 'N', 'F', 'S', 'I', 'P', '0', '1'
 };
-static const u8 infilfs_index_branch_page_magic[8] = {
+const u8 infilfs_index_branch_page_magic[8] = {
     'I', 'N', 'F', 'S', 'I', 'B', '0', '1'
 };
 static const u8 infilfs_extent_page_magic[8] = {
@@ -66,7 +66,7 @@ bool infilfs_crc64_block_valid(const u8 block[INFILFS_DISK_BLOCK_SIZE],
         block, INFILFS_DISK_BLOCK_SIZE, checksum_offset, checksum_size);
 }
 
-static int infilfs_read_allocated_block(
+int infilfs_read_allocated_block(
     struct super_block *sb, u64 block, void *buffer);
 
 static u32 infilfs_extent_kind(u32 flags)
@@ -274,7 +274,7 @@ static int infilfs_resolve_media_profile(
     return 0;
 }
 
-static bool infilfs_block_allocated(struct super_block *sb, u64 block)
+bool infilfs_block_allocated(struct super_block *sb, u64 block)
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
     const u8 *bitmap;
@@ -310,12 +310,6 @@ static struct infilfs_inode_info *INFILFS_I(struct inode *inode)
  * media fails with EFSCORRUPTED instead of multiplying recursive work until a
  * kernel thread appears hung.
  */
-struct infilfs_visit_set {
-    u64 *slots;
-    size_t capacity;
-    size_t count;
-};
-
 static size_t infilfs_visit_hash(u64 key)
 {
     key ^= key >> 33;
@@ -358,7 +352,7 @@ static int infilfs_visit_grow(struct infilfs_visit_set *set)
     return 0;
 }
 
-static int infilfs_visit_claim(struct infilfs_visit_set *set, u64 block)
+int infilfs_visit_claim(struct infilfs_visit_set *set, u64 block)
 {
     u64 key;
     size_t slot;
@@ -386,7 +380,7 @@ static int infilfs_visit_claim(struct infilfs_visit_set *set, u64 block)
     }
 }
 
-static void infilfs_visit_destroy(struct infilfs_visit_set *set)
+void infilfs_visit_destroy(struct infilfs_visit_set *set)
 {
     if (!set)
         return;
@@ -419,7 +413,7 @@ int infilfs_read_block(struct super_block *sb, u64 block, void *out)
     return 0;
 }
 
-static int infilfs_read_allocated_block(struct super_block *sb, u64 block,
+int infilfs_read_allocated_block(struct super_block *sb, u64 block,
                                         void *out)
 {
     if (!infilfs_block_allocated(sb, block))
@@ -660,7 +654,7 @@ static int infilfs_read_object(struct super_block *sb, u64 object_block,
     return 0;
 }
 
-static bool infilfs_metadata_page_valid(struct super_block *sb,
+bool infilfs_metadata_page_valid(struct super_block *sb,
                                         const u8 *block,
                                         const u8 magic[8],
                                         const u8 owner_id[16])
@@ -690,7 +684,6 @@ static bool infilfs_metadata_page_valid(struct super_block *sb,
     return true;
 }
 
-#include "infiltratorfs_index_tree.inc"
 
 static u64 infilfs_object_ino(const u8 id[16])
 {

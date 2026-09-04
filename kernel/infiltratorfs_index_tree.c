@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "infiltratorfs_internal.h"
 /*
  * Native read-side support for the generation-aware object-index radix tree.
  *
@@ -17,7 +18,7 @@ static u64 infilfs_index_tree_root(
     return le64_to_cpu(root_le);
 }
 
-static bool infilfs_index_tree_branch_valid(
+bool infilfs_index_tree_branch_valid(
     struct super_block *sb, const u8 block[INFILFS_DISK_BLOCK_SIZE],
     const u8 owner_id[16], const __le64 **children_out, u32 *count_out)
 {
@@ -135,7 +136,7 @@ static int infilfs_index_tree_lookup_node(
     return ret;
 }
 
-static int infilfs_index_tree_lookup_head(
+int infilfs_index_tree_lookup_head(
     struct super_block *sb, const u8 head[INFILFS_DISK_BLOCK_SIZE],
     const u8 object_id[16], u64 *object_block_out, u16 *type_out)
 {
@@ -262,7 +263,7 @@ out:
     return ret;
 }
 
-static int infilfs_index_tree_snapshot(
+int infilfs_index_tree_snapshot(
     struct super_block *sb, const u8 head[INFILFS_DISK_BLOCK_SIZE],
     struct infilfs_index_entry_disk **entries_out, u32 *count_out)
 {

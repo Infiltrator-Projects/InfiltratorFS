@@ -183,6 +183,13 @@ struct infilfs_allocation_layout {
     size_t level2_count;
 };
 
+/* Bounded cycle/alias detector shared by metadata-tree walkers. */
+struct infilfs_visit_set {
+    u64 *slots;
+    size_t capacity;
+    size_t count;
+};
+
 static inline struct infilfs_sb_info *INFILFS_SB(struct super_block *sb)
 {
     return sb->s_fs_info;
@@ -214,6 +221,26 @@ int infilfs_allocation_map_load(
     struct super_block *sb, const struct infilfs_superblock_disk *disk,
     u8 **bitmap_out, size_t *bitmap_bytes_out,
     struct infilfs_allocation_layout *layout_out);
+
+/* Services and entry points shared with the compiled object-index tree. */
+extern const u8 infilfs_index_page_magic[8];
+extern const u8 infilfs_index_branch_page_magic[8];
+bool infilfs_block_allocated(struct super_block *sb, u64 block);
+int infilfs_read_allocated_block(struct super_block *sb, u64 block, void *out);
+bool infilfs_metadata_page_valid(
+    struct super_block *sb, const u8 *block, const u8 magic[8],
+    const u8 owner_id[16]);
+int infilfs_visit_claim(struct infilfs_visit_set *set, u64 block);
+void infilfs_visit_destroy(struct infilfs_visit_set *set);
+bool infilfs_index_tree_branch_valid(
+    struct super_block *sb, const u8 block[INFILFS_DISK_BLOCK_SIZE],
+    const u8 owner_id[16], const __le64 **children_out, u32 *count_out);
+int infilfs_index_tree_lookup_head(
+    struct super_block *sb, const u8 head[INFILFS_DISK_BLOCK_SIZE],
+    const u8 object_id[16], u64 *object_block_out, u16 *type_out);
+int infilfs_index_tree_snapshot(
+    struct super_block *sb, const u8 head[INFILFS_DISK_BLOCK_SIZE],
+    struct infilfs_index_entry_disk **entries_out, u32 *count_out);
 
 /* Services shared with the independently compiled resize component. */
 bool infilfs_rw_bitmap_get(const u8 *bitmap, u64 block);

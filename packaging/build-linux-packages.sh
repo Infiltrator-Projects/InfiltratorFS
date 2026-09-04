@@ -84,7 +84,7 @@ install -d "$dkms_root"
 for file in Makefile infiltratorfs_core.c infiltratorfs_internal.h infiltratorfs_format.h \
             infiltratorfs_allocation_map.c infiltratorfs_allocation_publish.inc \
             infiltratorfs_parallel_alloc.inc \
-            infiltratorfs_index_tree.inc infiltratorfs_directory_tree.inc \
+            infiltratorfs_index_tree.c infiltratorfs_directory_tree.inc \
             infiltratorfs_rw.inc \
             infiltratorfs_rw_legacy.inc infiltratorfs_rw_data.inc \
             infiltratorfs_rw_namespace.inc infiltratorfs_rw_read_cache.inc \

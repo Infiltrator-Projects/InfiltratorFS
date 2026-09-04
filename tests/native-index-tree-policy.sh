@@ -7,7 +7,7 @@ fmt="$root/kernel/infiltratorfs_format.h"
 core="$root/kernel/infiltratorfs_core.c"
 data="$root/kernel/infiltratorfs_rw_data.inc"
 ns="$root/kernel/infiltratorfs_rw_namespace.inc"
-tree="$root/kernel/infiltratorfs_index_tree.inc"
+tree="$root/kernel/infiltratorfs_index_tree.c"
 
 grep -Fq '#define INFILFS_OBJECT_VERSION_TREE 3u' "$fmt"
 grep -Fq 'INFILFS_INCOMPAT_INDEX_TREE' "$fmt"
