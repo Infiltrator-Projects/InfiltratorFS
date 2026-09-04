@@ -30,6 +30,29 @@ jobs:
           path.write_text(data.replace(old, new))
           PY
           python3 tools/kernel-multiobject-refactor.py
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('tests/native-parallel-allocation-policy.sh')
+          data = path.read_text()
+          data = data.replace(
+              'driver="$root/kernel/infiltratorfs_core.c"\n',
+              'driver="$root/kernel/infiltratorfs_core.c"\nstate="$root/kernel/infiltratorfs_internal.h"\n',
+              1)
+          data = data.replace(
+              'for file in "$allocator" "$driver" "$rw" "$data" "$package" "$workflow"; do',
+              'for file in "$allocator" "$driver" "$state" "$rw" "$data" "$package" "$workflow"; do',
+              1)
+          for marker in [
+              '#define INFILFS_ALLOCATION_RESERVATION_SHARDS 64u',
+              'allocation_reservation_locks',
+              'allocation_reservations',
+          ]:
+              old = f'grep -Fq \'{marker}\' "$driver"'
+              new = f'grep -Fq \'{marker}\' "$state"'
+              assert old in data, old
+              data = data.replace(old, new, 1)
+          path.write_text(data)
+          PY
           rm -f tools/kernel-multiobject-refactor.py
           rm -f .github/workflows/kernel-multiobject-refactor.yml
           git diff --check
