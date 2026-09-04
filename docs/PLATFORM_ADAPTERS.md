@@ -1,15 +1,15 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # InfiltratorFS Platform Adapters
 
-## Purpose
+This document defines the operating-system adapter boundary. It does not track release history or feature-completion evidence; use `ROADMAP.md` and `QUALIFICATION.md` for those.
 
-InfiltratorFS is intended to be one filesystem with multiple first-class operating-system adapters, not a Linux filesystem that other systems emulate.
+## Principle
+
+InfiltratorFS is one filesystem with multiple first-class operating-system adapters. It is not a Linux filesystem that other systems emulate.
 
 The on-disk format and portable core define persistent meaning. Each adapter translates native APIs, caching, security, namespace and object-lifetime rules onto that common model.
 
-## Common versus platform-specific semantics
-
-The adapter rule is:
+The rule is:
 
 ```text
 same underlying concept, different native name
@@ -19,100 +19,97 @@ similar but not identical
     -> common meaning plus preserved platform detail
 
 genuinely platform-specific
-    -> preserve as typed adapter/extension metadata
+    -> typed adapter/extension metadata
 
 unknown on another platform
     -> retain it; do not silently destroy it
 ```
 
-Examples of concepts that are fundamentally portable include regular files, directories, persistent object identity, links, logical size, allocated extents, sparse ranges, timestamps, transactions, snapshots, checksums and access-control intent.
-
-Examples of adapter work include translating Linux VFS operations, Windows I/O and cache-manager rules, macOS vnode behavior, BSD vnode/flag behavior or Haiku filesystem hooks into those portable concepts.
-
-## Adapter boundary
+## Portable-core ownership
 
 The portable core owns:
 
 - current-format validation;
-- persistent object IDs and namespace graph;
+- persistent filesystem/object identity and namespace graph;
 - allocation and extent semantics;
-- inline, sparse and shared data representations;
+- inline, sparse, shared and compressed data representations;
 - checksums and integrity rules;
 - transactions, checkpoint publication and recovery;
 - retained generations and snapshots;
 - portable attributes; and
-- scrub/forensic format interpretation.
+- scrub/forensic interpretation of the persistent format.
+
+An adapter must not redefine these concepts merely to mirror one operating system's in-memory structures.
+
+## Adapter ownership
 
 An operating-system adapter owns:
 
 - native mount/unmount registration;
-- native inode/vnode/file-object lifetime;
+- inode/vnode/file-object lifetime;
 - page/cache-manager integration;
-- native `mmap`/memory-mapping behavior;
+- native memory mapping;
 - locking/share/open/delete semantics;
 - local identity/account resolution;
 - translation of ACLs and attributes;
 - platform-specific special objects or extension points; and
-- boot/installer integration when InfiltratorFS is used as a system volume.
+- boot/installer integration where the filesystem is used as a system volume.
 
-The adapter must not redefine the persistent format merely to mirror one platform's in-memory structures.
+Adapter-only metadata must remain isolated from portable filesystem identity and should survive access from an operating system that cannot interpret it.
 
 ## Linux
 
-Linux is currently the most complete mounted adapter. Current Linux source uses `infiltratorfs.ko` and exposes current Format 0.17 through Linux VFS with native namespace mutation, random/sparse writes, truncate, `fallocate`, hole punching, extent-aware `SEEK_DATA`/`SEEK_HOLE` and FIEMAP, whole-file `FICLONE`/`remap_file_range` reflinks into an empty target, crash-safe open-unlink lifetime, standard xattr namespaces, special nodes, page-cache/readahead/shared-`mmap` integration, snapshot-preserving live writes, checkpoint fallback/replica healing, online defragmentation including opaque relocation of compressed streams, 64-shard volatile allocation reservations, bounded multi-process locking/concurrency qualification, fail-closed metadata-tree alias/cycle detection, and kernel-stack-safe allocation-tree traversal.
+Linux uses the native out-of-tree `infiltratorfs.ko` VFS adapter. Linux API vocabulary such as `fallocate`, FIEMAP, `FICLONE`, xattr namespaces, inode lifecycle and page-cache operations maps onto the portable object/extent/transaction model rather than becoming the portable model itself.
 
-These Linux implementation details are not requirements that another adapter copy line-for-line. For example, Linux `fallocate` flags are Linux API vocabulary; the underlying portable concepts are preallocation, sparse ranges and hole punching.
+The former FUSE implementation is not a current adapter path.
 
-Linux Mint's Mintstick/Nemo **USB Stick Formatter is intentionally not an
-InfiltratorFS partition-formatting adapter**. Mintstick is a whole-device
-repartitioner: it replaces the target disk's partition table and creates one
-new partition. InfiltratorFS packages therefore leave Mintstick stock and
-actively restore any historical InfiltratorFS Mintstick diversion during
-upgrade. Formatting an existing partition belongs to InfiltratorFS Manager or
-the libblockdev/UDisks/GNOME Disks path, which preserves surrounding
-partitions.
+Linux Mint's Mintstick/Nemo USB Stick Formatter is intentionally not used as an InfiltratorFS partition formatter because it is a whole-device repartitioner. Existing-partition formatting belongs to InfiltratorFS Manager or the libblockdev/UDisks/GNOME Disks path so surrounding partitions are preserved.
 
 ## Windows
 
-The repository contains Win32 image/raw-partition storage and direct transfer/scrub tooling over the portable core. Release 0.18.30 introduced an experimental driverless Explorer bridge built on Microsoft's inbox Projected File System (ProjFS). After the Windows application opens an InfiltratorFS partition, **Mount in Explorer** starts a user-mode provider and exposes a projected NTFS virtualization root. Explorer opens that root directly, rather than depending on a DOS drive alias created by the elevated raw-device process; an auxiliary drive alias is retained only when Windows exposes it in the current UAC device namespace. File data is hydrated from the portable InfiltratorFS core on demand, and Windows-created/modified/deleted/renamed files are committed back to the same InfiltratorFS volume. Provider-backed directories are created as full local NTFS directories before virtualization starts, while provider-backed files beneath them remain lazy placeholders. This is deliberate: ProjFS directory placeholders never become full directories and Windows can reject moves of those partial directories with ERROR_NOT_SUPPORTED. Before 0.18.39 that limitation surfaced when moving a folder off InfiltratorFS in Explorer. The bridge now preserves a full directory namespace, supports same-volume move-out, and recursively retires the corresponding InfiltratorFS backing tree after the move completes. InfiltratorFS ships no Windows kernel driver for this bridge; the kernel component is Microsoft's signed ProjFS filter already supplied by Windows as an optional feature.
+Windows currently has portable-core image/raw-device access plus a user-mode Explorer bridge built on Microsoft's inbox Projected File System (ProjFS).
 
-The bridge is intended for ordinary cross-platform file work while the native Windows filesystem driver remains future work. It is not equivalent to that future driver: Windows still sees a projected NTFS virtualization root, Windows-incompatible names or metadata may not have a native Explorer representation, and boot/system-volume, Cache Manager, security-descriptor, reparse-point and full native share/delete semantics still belong to the eventual filesystem driver.
+The bridge exposes a projected NTFS virtualization root, hydrates InfiltratorFS data on demand and persists the supported Windows mutations back through the portable core. Provider-backed directories may be materialized as ordinary local directories while file content remains lazily projected so normal Explorer move/rename behaviour can work around ProjFS partial-directory limitations.
 
-A true Windows filesystem driver will need Windows-native integration for I/O Manager, Cache Manager, Memory Manager, security descriptors, file-object/share/delete semantics, reparse/extension behavior and native drive mounting.
+This bridge is interoperability, not a native InfiltratorFS Windows filesystem driver. Windows still sees a projected NTFS surface, and Windows-specific kernel filesystem semantics remain outside this bridge.
 
-Where Windows and Linux express the same underlying operation differently, both adapters should call or reproduce the same portable InfiltratorFS semantic operation. Windows should not emulate Linux syscalls, and Linux should not emulate NTFS.
+A future native Windows adapter must integrate with the Windows I/O Manager, Cache Manager, Memory Manager, security descriptors, file/share/delete semantics, reparse/extension behaviour and native volume mounting while preserving the same persistent InfiltratorFS model.
+
+Windows should not emulate Linux syscalls, and Linux should not emulate NTFS. Equivalent operations on each platform should map to the same portable semantic operation.
 
 ## macOS and BSD
 
-A macOS or BSD adapter would map vnode operations, ownership/ACLs, xattrs, caching and namespace behavior to the same core. Resource forks or other named data/metadata should be represented through a generic named-stream/named-metadata facility where possible, with typed platform metadata retained when necessary.
+A macOS or BSD adapter would map vnode operations, ownership/ACLs, xattrs, caching and namespace behaviour onto the portable model.
 
-Booting a stock modern macOS installation from InfiltratorFS is a separate platform-integration problem because Apple's current boot and security chain is tied to APFS-specific volume-group and signed-system-volume machinery. That constraint does not change the filesystem's platform-neutral architecture.
+Resource forks or similar named data/metadata should prefer a generic named-stream/named-metadata representation where the underlying concept is portable, with typed platform metadata retained only for genuinely platform-specific semantics.
+
+Booting a stock modern macOS installation from InfiltratorFS is a separate integration problem because Apple's boot/security chain has APFS-specific requirements. That does not change the portable filesystem architecture.
 
 ## Haiku
 
-A Haiku adapter would map Haiku vnode/filesystem hooks and its heavy use of named attributes onto the common filesystem model. Haiku's indexed/queryable attributes may motivate generic indexed metadata in the portable core, but they should not be introduced as opaque Haiku-only structures if the underlying concept can be generalized.
+A Haiku adapter would map Haiku filesystem hooks and named attributes onto the same model. Haiku's indexed/queryable attributes may motivate generic indexed metadata, but portable concepts should not be introduced as opaque Haiku-only structures when they can be generalized.
 
-Using InfiltratorFS as a Haiku system volume would additionally require bootloader, installer and early-boot support, just as Linux system-volume use requires the driver to be available before the root filesystem is mounted.
+System-volume support would additionally require bootloader, installer and early-boot integration.
 
-## System-volume and boot support
+## System-volume support
 
 Being mountable as a data filesystem and being suitable as an operating system's root/system filesystem are different integration levels.
 
-A system-volume adapter must satisfy all ordinary filesystem semantics plus whatever the platform requires before its normal filesystem driver stack is fully available. Linux can load an InfiltratorFS driver from an initramfs and then mount InfiltratorFS as `/`. Other operating systems may have more tightly coupled boot/storage requirements.
+A system-volume adapter must satisfy normal filesystem semantics plus the platform's early-boot storage requirements. Linux can make the native driver available from initramfs before mounting `/`; other systems may have different constraints.
 
-Those boot requirements belong to platform integration unless they expose a genuinely useful generic filesystem primitive.
+Those requirements belong to platform integration unless they expose a genuinely useful generic filesystem primitive.
 
 ## Metadata preservation
 
-An adapter must never destroy metadata merely because its host operating system cannot expose it naturally.
+An adapter must not destroy metadata merely because its host operating system cannot expose it naturally.
 
-For example, a sophisticated ACL created on Windows must not be flattened irreversibly to Unix mode bits simply because the volume was mounted on Linux. Likewise, Linux-specific metadata that Windows cannot represent directly should remain intact unless an explicit cross-platform policy says otherwise.
+For example, a future Windows ACL must not be irreversibly flattened to Unix mode bits merely because the volume is mounted on Linux. Likewise, Linux-specific metadata that Windows cannot represent directly should remain intact unless an explicit cross-platform policy says otherwise.
 
-This preservation rule is central to removable/shared volumes and to using the same InfiltratorFS media across operating systems.
+This rule is central to removable/shared volumes and to using the same filesystem across operating systems.
 
-## Implementation guidance
+## Implementation test
 
-Before adding a platform-specific on-disk feature, ask:
+Before adding a platform-specific persistent feature, ask:
 
 1. What is the underlying filesystem concept?
 2. Does the portable core already represent it under another name?
