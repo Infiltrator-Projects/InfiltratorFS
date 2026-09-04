@@ -44,9 +44,11 @@ Matching running-kernel headers are required for a native build. Installation mu
 
 ## Source organization
 
-The kernel implementation is assembled from the main VFS source plus focused include units for major concerns such as allocation publication, parallel reservation, read/write data paths, namespace mutation, indexes, directory trees, page cache, Linux metadata, resize, quotas and defragmentation.
+`infiltratorfs.ko` is a composite Kbuild module rather than a single giant translation unit. `infiltratorfs_core.c` owns VFS, mount and checkpoint orchestration, while `infiltratorfs_allocation_map.c` is the first separately compiled subsystem and owns Format 0.17 allocation-map loading. Shared native-driver state and the deliberately narrow cross-object API live in the private `infiltratorfs_internal.h` header.
 
-The important design rule is separation of responsibility rather than any particular filename list:
+Some already-qualified native layers are still textually composed inside the core object, including allocation publication, parallel reservation, read/write data paths, namespace mutation, indexes, directory trees, page cache, Linux metadata, resize, quotas and defragmentation. Those include units are localized migration debt, not the module architecture and not a pattern for new features. Additional layers should move behind explicit internal APIs as independently compiled objects when their dependency boundaries are proven.
+
+The important design rules are:
 
 - the portable format remains canonical;
 - persistent allocation is authoritative, while reservation/placement state is volatile;
@@ -55,9 +57,9 @@ The important design rule is separation of responsibility rather than any partic
 - snapshot/reflink ownership must be respected by write, defrag and reclamation paths; and
 - malformed metadata topology must fail closed without unbounded recursion or kernel-stack use.
 
-The current single-translation-unit `.inc` composition is deliberately treated as constrained migration debt rather than a pattern to extend indefinitely. `kernel/Makefile` contains the canonical composition and synchronization contract, `infiltratorfs_ioctl.h` carries the synchronization rules with the DKMS source itself, and `tests/native-kernel-maintainability-policy.sh` prevents new nested `.inc` dependencies, new macro-alias layering and unbounded growth of the largest composition units.
+`kernel/Makefile` contains the canonical component and synchronization contract. `infiltratorfs_ioctl.h` carries synchronization rules with the DKMS source itself, and `tests/native-kernel-maintainability-policy.sh` requires the composite Kbuild boundary, prevents the allocation map from regressing into textual inclusion, blocks new nested `.inc` dependencies and macro-alias layering, and constrains growth of the remaining migration units.
 
-New native functionality should use explicit helper names and existing ownership boundaries. When a qualified layer is split into a normal C translation unit later, do it as a behaviour-preserving refactor with the same policy/qualification coverage rather than as part of an unrelated feature change.
+New native functionality should use explicit helper names and existing ownership boundaries. Behaviour-preserving component extraction must retain the same policy and mounted qualification coverage; structural cleanup is not a reason to mix unrelated filesystem changes into the same refactor.
 
 ## Locking contract
 
