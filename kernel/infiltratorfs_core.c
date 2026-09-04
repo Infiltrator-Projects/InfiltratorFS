@@ -2508,7 +2508,6 @@ out:
 }
 
 #include "infiltratorfs_rw.inc"
-#include "infiltratorfs_resize.inc"
 #include "infiltratorfs_quota.inc"
 #include "infiltratorfs_defrag.inc"
 

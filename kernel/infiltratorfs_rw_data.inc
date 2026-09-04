@@ -1143,7 +1143,7 @@ static int infilfs_native_pending_commit_locked(
     return 0;
 }
 
-static int infilfs_native_pending_flush_sb(struct super_block *sb)
+int infilfs_native_pending_flush_sb(struct super_block *sb)
 {
     struct infilfs_native_pending *pending =
         infilfs_native_pending_get(sb, false);

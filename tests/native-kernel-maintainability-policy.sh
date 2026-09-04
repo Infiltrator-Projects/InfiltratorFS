@@ -8,7 +8,7 @@ driver="$kernel/infiltratorfs_core.c"
 rw="$kernel/infiltratorfs_rw.inc"
 makefile="$kernel/Makefile"
 ioctl="$kernel/infiltratorfs_ioctl.h"
-resize="$kernel/infiltratorfs_resize.inc"
+resize="$kernel/infiltratorfs_resize.c"
 quota="$kernel/infiltratorfs_quota.inc"
 
 fail() {
@@ -63,6 +63,9 @@ grep -Fq 'mutex_lock(&sbi->write_lock);' "$quota" || fail 'quota write_lock acqu
 grep -Fq 'infiltratorfs-y := infiltratorfs_core.o infiltratorfs_allocation_map.o' "$makefile" ||     fail 'kernel module is no longer built from explicit component objects'
 test -f "$kernel/infiltratorfs_internal.h" || fail 'missing private kernel API header'
 test -f "$kernel/infiltratorfs_allocation_map.c" || fail 'allocation map object missing'
+test -f "$kernel/infiltratorfs_resize.c" || fail 'resize object missing'
+test ! -e "$kernel/infiltratorfs_resize.inc" || fail 'resize regressed to textual include'
+! grep -Fq 'infiltratorfs_resize.inc' "$driver" || fail 'core textually includes resize'
 test ! -e "$kernel/infiltratorfs_allocation_map.inc" || fail 'allocation map regressed to textual include'
 ! grep -Fq 'infiltratorfs_allocation_map.inc' "$driver" || fail 'core textually includes allocation map'
 

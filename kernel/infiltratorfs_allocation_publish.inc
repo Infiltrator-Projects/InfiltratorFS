@@ -141,7 +141,7 @@ static size_t infilfs_rw_allocation_dirty_count(const u8 *dirty, size_t n)
     return count;
 }
 
-static int infilfs_rw_allocation_write_page(
+int infilfs_rw_allocation_write_page(
     struct super_block *sb, u64 physical, const u8 magic[8],
     u64 generation, u64 logical, u32 level, u32 entries,
     const void *payload, u32 bytes)

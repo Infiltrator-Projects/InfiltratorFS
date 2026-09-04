@@ -109,7 +109,7 @@ jobs:
              kernel/infiltratorfs_rw_read_cache.inc \
              kernel/infiltratorfs_pagecache.inc \
              kernel/infiltratorfs_linux_meta.inc \
-             kernel/infiltratorfs_resize.inc \
+             kernel/infiltratorfs_resize.c \
              kernel/infiltratorfs_quota.inc \
              kernel/infiltratorfs_defrag.inc \
              kernel/infiltratorfs_ioctl.h \

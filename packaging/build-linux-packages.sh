@@ -89,7 +89,7 @@ for file in Makefile infiltratorfs_core.c infiltratorfs_internal.h infiltratorfs
             infiltratorfs_rw_legacy.inc infiltratorfs_rw_data.inc \
             infiltratorfs_rw_namespace.inc infiltratorfs_rw_read_cache.inc \
             infiltratorfs_pagecache.inc infiltratorfs_linux_meta.inc \
-            infiltratorfs_resize.inc infiltratorfs_quota.inc \
+            infiltratorfs_resize.c infiltratorfs_quota.inc \
             infiltratorfs_defrag.inc infiltratorfs_ioctl.h; do
     install -m 0644 "kernel/$file" "$dkms_root/$file"
 done
@@ -305,7 +305,7 @@ for required in \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_rw_read_cache.inc$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_pagecache.inc$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_linux_meta.inc$" \
-    "usr/src/infiltratorfs-${package_version}/infiltratorfs_resize.inc$" \
+    "usr/src/infiltratorfs-${package_version}/infiltratorfs_resize.c$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_quota.inc$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_defrag.inc$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_ioctl.h$"; do
@@ -406,7 +406,7 @@ verify_installer() {
         kernel/infiltratorfs_rw_legacy.inc kernel/infiltratorfs_rw_data.inc \
         kernel/infiltratorfs_rw_namespace.inc kernel/infiltratorfs_rw_read_cache.inc \
         kernel/infiltratorfs_pagecache.inc kernel/infiltratorfs_linux_meta.inc \
-        kernel/infiltratorfs_resize.inc kernel/infiltratorfs_quota.inc \
+        kernel/infiltratorfs_resize.c kernel/infiltratorfs_quota.inc \
         kernel/infiltratorfs_defrag.inc kernel/infiltratorfs_ioctl.h; do
         test -f "$verify_root/$required"
     done

@@ -42,7 +42,7 @@ static u32 infilfs_parallel_shard_for(const struct infilfs_sb_info *sbi,
         INFILFS_ALLOCATION_RESERVATION_SHARDS - 1u);
 }
 
-static void infilfs_parallel_shard_bounds(const struct infilfs_sb_info *sbi,
+void infilfs_parallel_shard_bounds(const struct infilfs_sb_info *sbi,
                                           u32 shard, u64 *start, u64 *end)
 {
     u64 total = infilfs_volume_blocks(sbi);

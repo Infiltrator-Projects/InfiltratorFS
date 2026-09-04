@@ -57,12 +57,12 @@ struct infilfs_rw_sha256_ctx {
     u32 used;
 };
 
-static bool infilfs_rw_bitmap_get(const u8 *bitmap, u64 block)
+bool infilfs_rw_bitmap_get(const u8 *bitmap, u64 block)
 {
     return (bitmap[block >> 3] & (u8)(1u << (block & 7u))) != 0;
 }
 
-static void infilfs_rw_bitmap_set(u8 *bitmap, u64 block, bool used)
+void infilfs_rw_bitmap_set(u8 *bitmap, u64 block, bool used)
 {
     u8 mask = (u8)(1u << (block & 7u));
 
@@ -299,7 +299,7 @@ static bool infilfs_rw_free_extent_choose_reverse(
     return false;
 }
 
-static int infilfs_rw_write_block(struct super_block *sb, u64 block,
+int infilfs_rw_write_block(struct super_block *sb, u64 block,
                                   const void *data)
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
@@ -452,7 +452,7 @@ static int infilfs_rw_finalize_page(u8 block[INFILFS_DISK_BLOCK_SIZE])
     return 0;
 }
 
-static int infilfs_rw_encode_superblock(
+int infilfs_rw_encode_superblock(
     const struct infilfs_superblock_disk *disk,
     u8 block[INFILFS_DISK_BLOCK_SIZE])
 {
@@ -667,7 +667,7 @@ static bool infilfs_rw_utf8_valid(const u8 *s, size_t len)
     return true;
 }
 
-static int infilfs_rw_snapshot_count(struct super_block *sb, u32 *count_out)
+int infilfs_rw_snapshot_count(struct super_block *sb, u32 *count_out)
 {
     static const u8 snapshot_id[16] = {
         'I','N','F','S','-','S','N','A','P','-','C','A','T','-','0','1'

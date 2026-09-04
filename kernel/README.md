@@ -44,7 +44,7 @@ Matching running-kernel headers are required for a native build. Installation mu
 
 ## Source organization
 
-`infiltratorfs.ko` is a composite Kbuild module rather than a single giant translation unit. `infiltratorfs_core.c` owns VFS, mount and checkpoint orchestration, while `infiltratorfs_allocation_map.c` is the first separately compiled subsystem and owns Format 0.17 allocation-map loading. Shared native-driver state and the deliberately narrow cross-object API live in the private `infiltratorfs_internal.h` header.
+`infiltratorfs.ko` is a composite Kbuild module rather than a single giant translation unit. `infiltratorfs_core.c` owns VFS, mount and checkpoint orchestration, `infiltratorfs_allocation_map.c` owns Format 0.17 allocation-map loading, and `infiltratorfs_resize.c` owns mounted geometry transitions. Shared native-driver state and the deliberately narrow cross-object API live in the private `infiltratorfs_internal.h` header.
 
 Some already-qualified native layers are still textually composed inside the core object, including allocation publication, parallel reservation, read/write data paths, namespace mutation, indexes, directory trees, page cache, Linux metadata, resize, quotas and defragmentation. Those include units are localized migration debt, not the module architecture and not a pattern for new features. Additional layers should move behind explicit internal APIs as independently compiled objects when their dependency boundaries are proven.
 

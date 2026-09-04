@@ -215,4 +215,22 @@ int infilfs_allocation_map_load(
     u8 **bitmap_out, size_t *bitmap_bytes_out,
     struct infilfs_allocation_layout *layout_out);
 
+/* Services shared with the independently compiled resize component. */
+bool infilfs_rw_bitmap_get(const u8 *bitmap, u64 block);
+void infilfs_rw_bitmap_set(u8 *bitmap, u64 block, bool allocated);
+int infilfs_rw_snapshot_count(struct super_block *sb, u32 *count_out);
+int infilfs_rw_encode_superblock(
+    const struct infilfs_superblock_disk *disk,
+    u8 block[INFILFS_DISK_BLOCK_SIZE]);
+int infilfs_rw_write_block(struct super_block *sb, u64 block, const void *data);
+int infilfs_rw_allocation_write_page(
+    struct super_block *sb, u64 physical, const u8 magic[8],
+    u64 generation, u64 logical, u32 level, u32 entries,
+    const void *payload, u32 bytes);
+void infilfs_parallel_shard_bounds(
+    const struct infilfs_sb_info *sbi, u32 shard, u64 *start, u64 *end);
+int infilfs_native_pending_flush_sb(struct super_block *sb);
+int infilfs_native_resize_volume(
+    struct super_block *sb, struct infilfs_resize_request *request);
+
 #endif /* INFILTRATORFS_INTERNAL_H */

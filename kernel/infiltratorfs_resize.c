@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "infiltratorfs_internal.h"
 /*
  * Native mounted filesystem resize.
  *
@@ -479,7 +480,7 @@ out:
     return ret;
 }
 
-static int infilfs_native_resize_volume(
+int infilfs_native_resize_volume(
     struct super_block *sb, struct infilfs_resize_request *request)
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
