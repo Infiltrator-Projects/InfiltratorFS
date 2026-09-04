@@ -393,5 +393,9 @@ int infilfs_rw_inline_digest(const u8 *data, size_t size, u8 out[32]);
 ssize_t infilfs_native_read_iter_cached(
     struct inode *inode, loff_t *position, struct iov_iter *to);
 ssize_t infilfs_file_read_iter_cached(struct kiocb *iocb, struct iov_iter *to);
+ssize_t infilfs_native_extent_write_iter(
+    struct inode *inode, loff_t *position, struct iov_iter *from,
+    size_t requested);
+extern const struct address_space_operations infilfs_aops;
 
 #endif /* INFILTRATORFS_INTERNAL_H */

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "infiltratorfs_internal.h"
 /*
  * Native Linux page-cache integration.
  *
@@ -264,7 +265,7 @@ static int infilfs_writepages(struct address_space *mapping,
     return ret;
 }
 
-static const struct address_space_operations infilfs_aops = {
+const struct address_space_operations infilfs_aops = {
     .read_folio = infilfs_read_folio,
     .readahead = infilfs_readahead,
     .writepages = infilfs_writepages,

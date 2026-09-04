@@ -184,7 +184,7 @@ make -C kernel KDIR="$KDIR"
 test "$(modinfo -F vermagic kernel/infiltratorfs.ko | awk '{print $1}')" = "$(uname -r)"
 dkms_copy="$WORK/dkms-source"
 mkdir -p "$dkms_copy"
-for file in Makefile infiltratorfs_core.c infiltratorfs_internal.h infiltratorfs_format.h     infiltratorfs_allocation_map.c infiltratorfs_allocation_publish.c     infiltratorfs_parallel_alloc.c     infiltratorfs_index_tree.c infiltratorfs_directory_tree.inc     infiltratorfs_rw.inc infiltratorfs_rw_legacy.inc infiltratorfs_rw_data.inc     infiltratorfs_rw_namespace.inc infiltratorfs_read_cache.c     infiltratorfs_pagecache.inc infiltratorfs_linux_meta.inc     infiltratorfs_defrag.inc infiltratorfs_ioctl.h; do
+for file in Makefile infiltratorfs_core.c infiltratorfs_internal.h infiltratorfs_format.h     infiltratorfs_allocation_map.c infiltratorfs_allocation_publish.c     infiltratorfs_parallel_alloc.c     infiltratorfs_index_tree.c infiltratorfs_directory_tree.inc     infiltratorfs_rw.inc infiltratorfs_rw_legacy.inc infiltratorfs_rw_data.inc     infiltratorfs_rw_namespace.inc infiltratorfs_read_cache.c     infiltratorfs_pagecache.c infiltratorfs_linux_meta.inc     infiltratorfs_defrag.inc infiltratorfs_ioctl.h; do
     cp "kernel/$file" "$dkms_copy/$file"
 done
 cp "$ROOT/include/infilfs/iac1.h" "$dkms_copy/iac1.h"

@@ -2106,7 +2106,6 @@ out:
     return ret;
 }
 
-#include "infiltratorfs_pagecache.inc"
 #include "infiltratorfs_linux_meta.inc"
 
 /*

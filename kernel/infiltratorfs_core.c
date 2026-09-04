@@ -43,7 +43,6 @@ static const struct inode_operations infilfs_symlink_inode_operations;
 static const struct inode_operations infilfs_file_inode_operations;
 static const struct file_operations infilfs_dir_operations;
 static const struct file_operations infilfs_file_operations;
-static const struct address_space_operations infilfs_aops;
 
 
 static bool infilfs_rw_utf8_valid(const u8 *s, size_t len);

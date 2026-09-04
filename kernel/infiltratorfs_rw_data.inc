@@ -4817,7 +4817,7 @@ out_unlock:
     return ret;
 }
 
-static ssize_t infilfs_native_extent_write_iter(struct inode *inode,
+ssize_t infilfs_native_extent_write_iter(struct inode *inode,
                                                 loff_t *position,
                                                 struct iov_iter *from,
                                                 size_t requested)
