@@ -21,6 +21,27 @@ jobs:
         run: |
           set -euo pipefail
           python3 tools/kernel-index-object-refactor.py
+          python3 - <<'PY'
+          from pathlib import Path
+          source = Path('kernel/infiltratorfs_index_tree.c')
+          data = source.read_text()
+          old = 'static bool infilfs_index_tree_branch_valid('
+          assert data.count(old) == 1
+          source.write_text(data.replace(old, 'bool infilfs_index_tree_branch_valid(', 1))
+
+          header = Path('kernel/infiltratorfs_internal.h')
+          data = header.read_text()
+          anchor = '''int infilfs_index_tree_lookup_head(
+              struct super_block *sb, const u8 head[INFILFS_DISK_BLOCK_SIZE],
+              const u8 object_id[16], u64 *object_block_out, u16 *type_out);
+          '''
+          assert anchor in data
+          prototype = '''bool infilfs_index_tree_branch_valid(
+              struct super_block *sb, const u8 block[INFILFS_DISK_BLOCK_SIZE],
+              const u8 owner_id[16], const __le64 **children_out, u32 *count_out);
+          '''
+          header.write_text(data.replace(anchor, prototype + anchor, 1))
+          PY
           rm -f tools/kernel-index-object-refactor.py
           rm -f .github/workflows/kernel-index-object-refactor.yml
           git diff --check
