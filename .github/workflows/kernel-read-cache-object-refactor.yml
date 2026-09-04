@@ -20,6 +20,18 @@ jobs:
       - name: Apply verified-read refactor
         run: |
           set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('tools/kernel-read-cache-object-refactor.py')
+          data = path.read_text()
+          start = data.index('# Move the two small read-integrity state records')
+          end = data.index('# Read-cache services supplied by the data path', start)
+          replacement = '''# Move the small read-integrity records using explicit source delimiters.\n'''
+          replacement += '''dt = data_path.read_text()\n\n'''
+          replacement += '''def take_before(text, start_marker, next_marker):\n    start = text.index(start_marker)\n    end = text.index(next_marker, start)\n    return text[start:end], text[:start] + text[end:]\n\n'''
+          replacement += '''payload_block, dt = take_before(\n    dt, 'struct infilfs_native_checksum_payload_disk {',\n    'struct infilfs_native_index_change {')\nentry_block, dt = take_before(\n    dt, 'struct infilfs_native_checksum_cache_entry {',\n    'struct infilfs_native_checksum_node {')\ncursor_block, dt = take_before(\n    dt, '#define INFILFS_NATIVE_READ_INTEGRITY_PARITY 1\\n',\n    'static int infilfs_native_read_expected_digest(')\n\n'''
+          path.write_text(data[:start] + replacement + data[end:])
+          PY
           python3 tools/kernel-read-cache-object-refactor.py
           rm -f tools/kernel-read-cache-object-refactor.py
           rm -f .github/workflows/kernel-read-cache-object-refactor.yml
