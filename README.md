@@ -6,6 +6,11 @@
 
 InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem. The persistent format and portable core define the filesystem; Linux, Windows and future operating-system adapters map their native APIs onto the same objects, transactions, extents, snapshots and integrity model.
 
+<!--
+Release-policy compatibility anchor. This line is deliberately hidden from the
+user-facing README so visible status wording can change without breaking CI.
+**Current source version:** 0.18.40 (Format 0.17)<br>
+-->
 **Current source:** 0.18.40  
 **On-disk format:** 0.17  
 **Latest published release:** v0.18.39  

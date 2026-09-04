@@ -55,18 +55,13 @@ The important design rule is separation of responsibility rather than any partic
 - snapshot/reflink ownership must be respected by write, defrag and reclamation paths; and
 - malformed metadata topology must fail closed without unbounded recursion or kernel-stack use.
 
+The current single-translation-unit `.inc` composition is deliberately treated as constrained migration debt rather than a pattern to extend indefinitely. `kernel/Makefile` contains the canonical composition and synchronization contract, `infiltratorfs_ioctl.h` carries the synchronization rules with the DKMS source itself, and `tests/native-kernel-maintainability-policy.sh` prevents new nested `.inc` dependencies, new macro-alias layering and unbounded growth of the largest composition units.
+
+New native functionality should use explicit helper names and existing ownership boundaries. When a qualified layer is split into a normal C translation unit later, do it as a behaviour-preserving refactor with the same policy/qualification coverage rather than as part of an unrelated feature change.
+
 ## Locking contract
 
-The native driver deliberately does not have one giant filesystem mutex. When a path needs more than one synchronization domain, preserve these ordering constraints rather than inferring a new order from a convenient call site:
-
-- `resize_lock` owns geometry-change coordination and `resize_active`. Resize sets that gate before draining writers and may then acquire `write_lock`; code holding `write_lock` must therefore not acquire `resize_lock`.
-- `quota_lock` owns quota rules, project-root topology and live quota accounting. Project/accounting transitions may acquire `write_lock` while `quota_lock` is held; ordinary write paths must not acquire `quota_lock` while holding `write_lock`. In particular, quota reservation finish/abort happens after the writer releases `write_lock`.
-- `write_lock` serializes mutation of persistent transaction/topology state. Long-running work that does not need that state should stay outside it.
-- `bitmap_lock` protects short-lived publication/visibility of allocation bitmap state. It is a non-sleeping inner lock: do not acquire mutexes or perform sleeping work while holding it.
-- allocation-reservation shard spinlocks protect only volatile reservation ranges. They are shorter-lived still; reservation code may enter bitmap protection after taking the relevant shard locks, but must not sleep or acquire filesystem mutexes while a shard spinlock is held.
-- `linux_meta_lock` serializes compound Linux sidecar operations. If a future path needs to nest it with another filesystem mutex, make that relationship explicit at the call site and update this contract rather than creating an undocumented reverse order.
-
-These are deadlock-prevention constraints, not a claim that every operation takes every lock. Comments beside exceptional nested acquisitions should explain why the nesting is safe; ordinary single-lock operations do not need narration.
+The source-level deadlock-prevention contract is intentionally not duplicated here. See the synchronization contract in `infiltratorfs_ioctl.h` and the fuller implementation/composition contract in `Makefile`. The maintainability policy guard verifies those contracts and the current acquisition/include relationships in CI.
 
 ## Qualification
 

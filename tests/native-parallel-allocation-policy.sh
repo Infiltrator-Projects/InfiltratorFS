@@ -37,4 +37,9 @@ test -n "$reserve_line"
 test -n "$lock_line"
 (( reserve_line < lock_line ))
 
+# The parallel allocator is one of the principal reasons the native driver has
+# multiple synchronization domains, so every ordinary allocation-policy pass
+# also verifies the source-level lock and composition contract.
+bash "$root/tests/native-kernel-maintainability-policy.sh" "$root"
+
 printf 'Native parallel-allocation policy guard passed.\n'

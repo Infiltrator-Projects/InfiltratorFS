@@ -5,6 +5,37 @@
 #include <linux/ioctl.h>
 #include <linux/types.h>
 
+/*
+ * Native-driver synchronization contract
+ * --------------------------------------
+ * This header is included by the kernel translation unit and is copied into
+ * every DKMS source tree, so the deadlock-prevention rules travel with the
+ * code rather than existing only in project documentation.
+ *
+ * Allowed nested acquisition directions are:
+ *
+ *     resize_lock -> write_lock
+ *     quota_lock  -> write_lock
+ *     write_lock  -> bitmap_lock
+ *     allocation-reservation shard spinlock -> bitmap_lock (when needed)
+ *
+ * The reverse directions are forbidden. bitmap_lock and reservation shard
+ * spinlocks are non-sleeping inner locks; do not acquire filesystem mutexes or
+ * perform sleeping work while holding them. linux_meta_lock owns compound
+ * Linux sidecar metadata operations and has no general nesting permission with
+ * the mutexes above: any future nesting must define one direction explicitly
+ * before it is introduced.
+ *
+ * write_lock is also the persistent transaction/checkpoint publication domain.
+ * resize_active is raised before resize drains already-started transactions and
+ * reservations. Quota reservations are preflighted outside write_lock and are
+ * finished or aborted only after that persistent mutation lock is released.
+ *
+ * Keep the fuller composition rationale in kernel/Makefile synchronized with
+ * these source-level rules. tests/native-kernel-maintainability-policy.sh makes
+ * the contract and current include layering machine-checked.
+ */
+
 #define INFILFS_IOC_MAGIC 0xf5
 
 struct infilfs_fragmentation_metrics {

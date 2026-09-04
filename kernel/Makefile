@@ -1,5 +1,53 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
+# Native driver synchronization and composition contract
+# ------------------------------------------------------
+# This is the implementation-level contract for the single translation-unit
+# Linux driver. Keep it beside the Kbuild entry so repository and DKMS builds
+# share the same rules instead of relying on tribal knowledge or README prose.
+#
+# Lock ordering / ownership:
+#   resize_lock -> write_lock
+#     resize_lock owns resize_active and geometry-change coordination. Resize
+#     raises the gate and drains already-started work before taking write_lock.
+#     A path holding write_lock must never acquire resize_lock.
+#
+#   quota_lock -> write_lock
+#     quota_lock owns quota rules, project-root topology and live accounting.
+#     Quota/project transitions may enter persistent mutation while quota_lock
+#     is held. Ordinary data writers must not acquire quota_lock while holding
+#     write_lock; reservation finish/abort occurs after write_lock is released.
+#
+#   write_lock -> bitmap_lock
+#     write_lock owns persistent transaction/topology mutation. bitmap_lock is
+#     a short non-sleeping inner lock protecting allocation visibility/publication.
+#     Never sleep or acquire a filesystem mutex while bitmap_lock is held.
+#
+#   allocation-reservation shard spinlock -> bitmap_lock (when both are needed)
+#     Reservation shard locks protect volatile reservation ranges only. They
+#     must never be held across sleeping work or filesystem-mutex acquisition.
+#
+#   linux_meta_lock
+#     Owns compound Linux sidecar metadata operations. It currently has no
+#     general nesting permission with the mutexes above. Any future nested use
+#     must document one direction here and at the call site before it lands.
+#
+# Transaction ownership:
+#   write_lock is the persistent mutation/checkpoint publication domain.
+#   resize_active gates new transactions/reservations before resize drains old
+#   work. Quota reservations are preflighted outside write_lock and reconciled
+#   only after the persistent mutation lock has been released.
+#
+# Source composition:
+#   infiltratorfs.c is the only top-level module translation unit.
+#   infiltratorfs_rw.inc is the only nested implementation compositor; leaf
+#   .inc files must not start including each other and creating hidden cycles.
+#   Existing macro-renamed legacy/data entry points are migration debt, not a
+#   pattern for new layers. New functionality must use explicit helper names.
+#   The maintainability policy test enforces include ownership, key ordering,
+#   alias-growth limits and byte ceilings so this structure cannot silently
+#   become more tangled while qualified layers are gradually retired/split.
+
 # Keep the Kbuild declaration unconditional. DKMS exports KERNELRELEASE before
 # invoking this Makefile; if all normal targets are hidden behind a
 # KERNELRELEASE conditional, the initial DKMS make terminates with
