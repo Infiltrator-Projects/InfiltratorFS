@@ -15,8 +15,8 @@
  * Allowed nested acquisition directions are:
  *
  *     resize_lock -> write_lock
- *     quota_lock  -> write_lock
- *     write_lock  -> bitmap_lock
+ *     quota_lock -> write_lock
+ *     write_lock -> bitmap_lock
  *     allocation-reservation shard spinlock -> bitmap_lock (when needed)
  *
  * The reverse directions are forbidden. bitmap_lock and reservation shard
@@ -81,28 +81,30 @@ struct infilfs_quota_request {
     __u64 hard_objects;
     __u64 used_bytes;
     __u64 used_objects;
-    __u32 flags;
-    __u32 reserved0;
-    __u64 reserved[2];
+    __u64 reserved[4];
 };
 
 struct infilfs_project_request {
     __u32 project_id;
     __u32 effective_project_id;
-    __u32 flags;
-    __u32 reserved0;
-    __u64 reserved[2];
+    __u64 reserved[4];
 };
+
 #define INFILFS_IOC_GET_FRAGMENTATION \
-    _IOR(INFILFS_IOC_MAGIC, 0x01, struct infilfs_fragmentation_metrics)
-#define INFILFS_IOC_DEFRAG_FILE \
-    _IOWR(INFILFS_IOC_MAGIC, 0x02, struct infilfs_defrag_request)
-
-#define INFILFS_IOC_RESIZE_VOLUME _IOWR(INFILFS_IOC_MAGIC, 0x03, struct infilfs_resize_request)
-
-#define INFILFS_IOC_SET_QUOTA _IOWR(INFILFS_IOC_MAGIC, 0x04, struct infilfs_quota_request)
-#define INFILFS_IOC_GET_QUOTA _IOWR(INFILFS_IOC_MAGIC, 0x05, struct infilfs_quota_request)
-#define INFILFS_IOC_SET_PROJECT _IOWR(INFILFS_IOC_MAGIC, 0x06, struct infilfs_project_request)
-#define INFILFS_IOC_GET_PROJECT _IOWR(INFILFS_IOC_MAGIC, 0x07, struct infilfs_project_request)
+    _IOR(INFILFS_IOC_MAGIC, 0x10, struct infilfs_fragmentation_metrics)
+#define INFILFS_IOC_DEFRAG \
+    _IOWR(INFILFS_IOC_MAGIC, 0x11, struct infilfs_defrag_request)
+#define INFILFS_IOC_RESIZE \
+    _IOWR(INFILFS_IOC_MAGIC, 0x12, struct infilfs_resize_request)
+#define INFILFS_IOC_GET_QUOTA \
+    _IOWR(INFILFS_IOC_MAGIC, 0x20, struct infilfs_quota_request)
+#define INFILFS_IOC_SET_QUOTA \
+    _IOWR(INFILFS_IOC_MAGIC, 0x21, struct infilfs_quota_request)
+#define INFILFS_IOC_CLEAR_QUOTA \
+    _IOWR(INFILFS_IOC_MAGIC, 0x22, struct infilfs_quota_request)
+#define INFILFS_IOC_GET_PROJECT \
+    _IOWR(INFILFS_IOC_MAGIC, 0x23, struct infilfs_project_request)
+#define INFILFS_IOC_SET_PROJECT \
+    _IOWR(INFILFS_IOC_MAGIC, 0x24, struct infilfs_project_request)
 
 #endif
