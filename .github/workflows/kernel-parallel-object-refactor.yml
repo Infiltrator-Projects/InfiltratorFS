@@ -1,0 +1,67 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: One-shot kernel parallel allocator refactor
+
+on:
+  push:
+    paths:
+      - '.github/workflows/kernel-parallel-object-refactor.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  refactor:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Apply parallel allocator refactor
+        run: |
+          set -euo pipefail
+          python3 tools/kernel-parallel-object-refactor.py
+          rm -f tools/kernel-parallel-object-refactor.py
+          rm -f .github/workflows/kernel-parallel-object-refactor.yml
+          git diff --check
+
+      - name: Install kernel build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential linux-headers-generic kmod
+
+      - name: Verify allocation and placement policies
+        run: |
+          set -euo pipefail
+          bash tests/native-kernel-maintainability-policy.sh .
+          bash tests/native-parallel-allocation-policy.sh .
+          bash tests/native-workload-placement-policy.sh .
+          bash tests/native-media-placement-policy.sh .
+          bash tests/allocation-tree-format-policy.sh .
+          bash tests/native-free-extent-index-policy.sh .
+
+      - name: Build five-object kernel module
+        shell: bash
+        run: |
+          set -euo pipefail
+          KDIR="$(find /usr/src -maxdepth 1 -type d -name 'linux-headers-*-generic' -print | sort -V | tail -n 1)"
+          test -f "$KDIR/Makefile"
+          make -C kernel KDIR="$KDIR"
+          test -s kernel/infiltratorfs.ko
+          test "$(modinfo -F name kernel/infiltratorfs.ko)" = infiltratorfs
+
+      - name: Commit qualified refactor
+        shell: bash
+        run: |
+          set -euo pipefail
+          find kernel -maxdepth 1 -type f \( \
+            -name '*.o' -o -name '*.ko' -o -name '*.mod' -o \
+            -name '*.mod.c' -o -name '*.cmd' -o -name '.*.cmd' -o \
+            -name 'Module.symvers' -o -name 'modules.order' \
+          \) -delete
+          git config user.name 'Shannon Smith'
+          git config user.email 'infiltratr@yandex.com'
+          git add -A
+          git diff --cached --check
+          git commit -m 'Kernel: split parallel allocator into Kbuild object'
+          git push origin HEAD:main
