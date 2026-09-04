@@ -7,7 +7,7 @@ on:
       - '.github/workflows/kernel-multiobject-refactor.yml'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   refactor:
@@ -79,7 +79,7 @@ jobs:
           test -s kernel/infiltratorfs.ko
           test "$(modinfo -F name kernel/infiltratorfs.ko)" = infiltratorfs
 
-      - name: Commit qualified refactor
+      - name: Prepare qualified diff
         shell: bash
         run: |
           set -euo pipefail
@@ -88,9 +88,17 @@ jobs:
             -name '*.mod.c' -o -name '*.cmd' -o -name '.*.cmd' -o \
             -name 'Module.symvers' -o -name 'modules.order' \
           \) -delete
-          git config user.name 'Shannon Smith'
-          git config user.email 'infiltratr@yandex.com'
           git add -A
           git diff --cached --check
-          git commit -m 'Kernel: split allocation map into Kbuild object'
-          git push origin HEAD:main
+          git diff --cached --binary > qualified-kernel-refactor.patch
+          git diff --cached --name-status > qualified-kernel-refactor-files.txt
+          test -s qualified-kernel-refactor.patch
+
+      - name: Upload qualified diff
+        uses: actions/upload-artifact@v4
+        with:
+          name: qualified-kernel-refactor
+          path: |
+            qualified-kernel-refactor.patch
+            qualified-kernel-refactor-files.txt
+          if-no-files-found: error
