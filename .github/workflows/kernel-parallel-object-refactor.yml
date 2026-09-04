@@ -20,6 +20,15 @@ jobs:
       - name: Apply parallel allocator refactor
         run: |
           set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('tools/kernel-parallel-object-refactor.py')
+          data = path.read_text()
+          old = "mp = mp.replace('    infiltratorfs_parallel_alloc.inc\\n', '', 1)"
+          new = "mp = mp.replace('    infiltratorfs_parallel_alloc.c\\n', '', 1)"
+          assert old in data
+          path.write_text(data.replace(old, new, 1))
+          PY
           python3 tools/kernel-parallel-object-refactor.py
           rm -f tools/kernel-parallel-object-refactor.py
           rm -f .github/workflows/kernel-parallel-object-refactor.yml
