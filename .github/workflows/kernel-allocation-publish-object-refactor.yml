@@ -21,6 +21,15 @@ jobs:
         run: |
           set -euo pipefail
           python3 tools/kernel-allocation-publish-object-refactor.py
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('tests/native-free-extent-index-policy.sh')
+          data = path.read_text()
+          old = "metadata_alloc=\"$(sed -n '/static int infilfs_rw_tx_alloc(/,/^}/p' \"$legacy\")\""
+          new = "metadata_alloc=\"$(sed -n '/^int infilfs_rw_tx_alloc(/,/^}/p' \"$legacy\")\""
+          assert old in data
+          path.write_text(data.replace(old, new, 1))
+          PY
           rm -f tools/kernel-allocation-publish-object-refactor.py
           rm -f .github/workflows/kernel-allocation-publish-object-refactor.yml
           git diff --check
