@@ -8,40 +8,53 @@ driver="$kernel/infiltratorfs.c"
 rw="$kernel/infiltratorfs_rw.inc"
 makefile="$kernel/Makefile"
 ioctl="$kernel/infiltratorfs_ioctl.h"
+resize="$kernel/infiltratorfs_resize.inc"
+quota="$kernel/infiltratorfs_quota.inc"
 
-for file in "$driver" "$rw" "$makefile" "$ioctl"; do
-    test -f "$file"
+fail() {
+    echo "native kernel maintainability policy: $*" >&2
+    exit 1
+}
+
+for file in "$driver" "$rw" "$makefile" "$ioctl" "$resize" "$quota"; do
+    test -f "$file" || fail "missing $file"
 done
 
-# The lock/transaction contract must live with the shipped kernel source, not
-# only in prose documentation. Keep the Kbuild and always-copied DKMS header in
+# The synchronization contract must live with the shipped kernel source, not
+# only in prose documentation. Keep Kbuild and the always-copied DKMS header in
 # agreement about the permitted nesting directions.
 for marker in \
     'resize_lock -> write_lock' \
     'quota_lock -> write_lock' \
     'write_lock -> bitmap_lock' \
     'allocation-reservation shard spinlock -> bitmap_lock'; do
-    grep -Fq "$marker" "$makefile"
-    grep -Fq "$marker" "$ioctl"
+    grep -Fq "$marker" "$makefile" || fail "Makefile lost lock rule: $marker"
+    grep -Fq "$marker" "$ioctl" || fail "ioctl header lost lock rule: $marker"
 done
-grep -Fq 'A path holding write_lock must never acquire resize_lock.' "$makefile"
-grep -Fq 'Ordinary data writers must not acquire quota_lock while holding' "$makefile"
-grep -Fq 'linux_meta_lock owns compound' "$ioctl"
-grep -Fq 'write_lock is also the persistent transaction/checkpoint publication domain.' "$ioctl"
+grep -Fq 'A path holding write_lock must never acquire resize_lock.' "$makefile" || \
+    fail 'write_lock -> resize_lock prohibition is undocumented'
+grep -Fq 'Ordinary data writers must not acquire quota_lock while holding' "$makefile" || \
+    fail 'write_lock -> quota_lock prohibition is undocumented'
+grep -Fq 'linux_meta_lock owns compound' "$ioctl" || \
+    fail 'linux_meta_lock ownership is undocumented'
+grep -Fq 'write_lock is also the persistent transaction/checkpoint publication domain.' "$ioctl" || \
+    fail 'transaction ownership is undocumented'
 
-# Keep the actual high-risk acquisition sites aligned with the declared order.
-resize="$kernel/infiltratorfs_resize.inc"
-quota="$kernel/infiltratorfs_quota.inc"
-grep -Fq 'mutex_lock(&sbi->resize_lock);' "$resize"
-grep -Fq 'mutex_lock(&sbi->write_lock);' "$resize"
-resize_outer="$(grep -n 'mutex_lock(&sbi->resize_lock);' "$resize" | tail -n1 | cut -d: -f1)"
-resize_inner="$(awk -v start="$resize_outer" '/mutex_lock\(&sbi->write_lock\);/ && NR > start { print NR; exit }' "$resize")"
-test -n "$resize_outer"
-test -n "$resize_inner"
-(( resize_outer < resize_inner ))
+# Keep the geometry path aligned with the declared resize_lock -> write_lock
+# order. The second lock must be acquired after resize_lock in the public resize
+# wrapper, never the reverse.
+resize_outer="$(grep -nF 'mutex_lock(&sbi->resize_lock);' "$resize" | tail -n1 | cut -d: -f1)"
+resize_inner="$(awk -v start="${resize_outer:-0}" '/mutex_lock\(&sbi->write_lock\);/ && NR > start { print NR; exit }' "$resize")"
+test -n "$resize_outer" || fail 'resize_lock acquisition not found'
+test -n "$resize_inner" || fail 'write_lock acquisition after resize_lock not found'
+(( resize_outer < resize_inner )) || fail 'resize lock order reversed'
 
-grep -Fq 'mutex_lock(&sbi->quota_lock);' "$quota"
-grep -Fq 'mutex_lock(&sbi->write_lock);' "$quota"
+# Quota administration has paths that intentionally enter persistent mutation
+# while quota_lock is held. Verify both domains remain present; deeper call-flow
+# behaviour is covered by the mounted quota qualification rather than a fragile
+# text parser.
+grep -Fq 'mutex_lock(&sbi->quota_lock);' "$quota" || fail 'quota_lock acquisition missing'
+grep -Fq 'mutex_lock(&sbi->write_lock);' "$quota" || fail 'quota write_lock acquisition missing'
 
 # Only the top-level driver and the explicit RW compositor may textually compose
 # implementation .inc units. A leaf .inc importing another leaf creates hidden
@@ -49,10 +62,7 @@ grep -Fq 'mutex_lock(&sbi->write_lock);' "$quota"
 while IFS= read -r file; do
     case "$file" in
         "$driver"|"$rw") ;;
-        *)
-            echo "Unexpected nested kernel implementation include: $file" >&2
-            exit 1
-            ;;
+        *) fail "unexpected nested kernel implementation include: $file" ;;
     esac
 done < <(grep -RIlE '#include[[:space:]]+"infiltratorfs_[^"]+\.inc"' \
     "$kernel" --include='*.c' --include='*.inc')
@@ -73,20 +83,32 @@ ordered=(
 previous=0
 for include in "${ordered[@]}"; do
     line="$(grep -nF "#include \"$include\"" "$rw" | head -n1 | cut -d: -f1)"
-    test -n "$line"
-    (( line > previous ))
+    test -n "$line" || fail "RW compositor lost $include"
+    (( line > previous )) || fail "RW compositor order changed at $include"
     previous="$line"
 done
 
-# Macro-renamed entry points are existing migration debt. Permit the currently
-# qualified bridge, but fail if another alias layer is added instead of using an
-# explicit helper name. The broad pattern deliberately ignores operation-table
-# macro continuations containing punctuation.
-alias_count="$(grep -Ec '^#define infilfs_[a-z0-9_]+[[:space:]]+(__maybe_unused[[:space:]]+)?infilfs_[a-z0-9_]+$' "$rw" || true)"
-if (( alias_count > 12 )); then
-    echo "Kernel RW macro-alias layering grew to $alias_count entries (limit 12)." >&2
-    exit 1
-fi
+# Macro-renamed entry points are migration debt. Guard the two known alias
+# bridges structurally instead of counting every macro in rw.inc (which also
+# contains operation-table construction macros and caused false positives).
+legacy_block="$(sed -n \
+    '/^#define infilfs_rw_tx_begin infilfs_rw_tx_begin_legacy$/,/^#include "infiltratorfs_rw_legacy.inc"$/p' \
+    "$rw")"
+legacy_aliases="$(grep -Ec '^#define infilfs_[a-z0-9_]+[[:space:]]+infilfs_[a-z0-9_]+_legacy$' <<<"$legacy_block" || true)"
+test "$legacy_aliases" -eq 7 || \
+    fail "legacy alias bridge changed ($legacy_aliases entries; expected 7)"
+
+data_block="$(sed -n \
+    '/^#define infilfs_rw_create __maybe_unused infilfs_rw_create_data$/,/^#include "infiltratorfs_rw_data.inc"$/p' \
+    "$rw")"
+data_aliases="$(grep -Ec '^#define infilfs_[a-z0-9_]+[[:space:]]+__maybe_unused[[:space:]]+infilfs_[a-z0-9_]+_data$' <<<"$data_block" || true)"
+test "$data_aliases" -eq 3 || \
+    fail "data alias bridge changed ($data_aliases entries; expected 3)"
+
+grep -Fq '#define infilfs_file_read_iter infilfs_file_read_iter_cached' "$rw" || \
+    fail 'read-cache alias bridge changed'
+grep -Fq '#define infilfs_rw_fill_common_attributes infilfs_posix_fill_common_attributes' "$rw" || \
+    fail 'POSIX attribute alias bridge changed'
 
 # Do not let the single-TU implementation silently become larger while it is
 # being retired layer-by-layer. These ceilings leave practical edit headroom
@@ -95,10 +117,7 @@ fi
 check_bytes() {
     local file="$1" limit="$2" bytes
     bytes="$(wc -c < "$file")"
-    if (( bytes > limit )); then
-        echo "Kernel composition unit $file is $bytes bytes (ceiling $limit)." >&2
-        exit 1
-    fi
+    (( bytes <= limit )) || fail "$file is $bytes bytes (ceiling $limit)"
 }
 check_bytes "$driver" 120000
 check_bytes "$rw" 90000
