@@ -142,7 +142,6 @@ static int infilfs_rw_tx_begin(struct super_block *sb,
 #ifdef infilfs_file_read_iter
 #undef infilfs_file_read_iter
 #endif
-#include "infiltratorfs_rw_read_cache.inc"
 #define infilfs_file_read_iter infilfs_file_read_iter_cached
 
 /*

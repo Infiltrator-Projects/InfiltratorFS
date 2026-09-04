@@ -570,7 +570,7 @@ static void infilfs_rw_sha256_final(struct infilfs_rw_sha256_ctx *ctx,
     }
 }
 
-static int infilfs_rw_inline_digest(const u8 *data, size_t size, u8 out[32])
+int infilfs_rw_inline_digest(const u8 *data, size_t size, u8 out[32])
 {
     struct infilfs_rw_sha256_ctx ctx;
     u8 zero[64] = {0};

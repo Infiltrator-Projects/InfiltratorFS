@@ -19,7 +19,7 @@ const u8 infilfs_index_page_magic[8] = {
 const u8 infilfs_index_branch_page_magic[8] = {
     'I', 'N', 'F', 'S', 'I', 'B', '0', '1'
 };
-static const u8 infilfs_extent_page_magic[8] = {
+const u8 infilfs_extent_page_magic[8] = {
     'I', 'N', 'F', 'S', 'E', 'P', '0', '1'
 };
 
@@ -67,7 +67,7 @@ bool infilfs_crc64_block_valid(const u8 block[INFILFS_DISK_BLOCK_SIZE],
 int infilfs_read_allocated_block(
     struct super_block *sb, u64 block, void *buffer);
 
-static u32 infilfs_extent_kind(u32 flags)
+u32 infilfs_extent_kind(u32 flags)
 {
     return flags & INFILFS_EXTENT_KIND_MASK;
 }
@@ -97,7 +97,7 @@ static u32 infilfs_extent_compressed_flags(u32 codec, u32 stored_bytes)
     return INFILFS_EXTENT_NORMAL | low | high | stored;
 }
 
-static bool infilfs_extent_is_compressed(u32 flags)
+bool infilfs_extent_is_compressed(u32 flags)
 {
     return infilfs_extent_kind(flags) == INFILFS_EXTENT_NORMAL &&
         infilfs_extent_codec(flags) != INFILFS_COMPRESSION_NONE;
@@ -115,7 +115,7 @@ static u64 infilfs_extent_physical_blocks(u32 logical_blocks, u32 flags)
     return DIV_ROUND_UP((u64)stored, (u64)INFILFS_DISK_BLOCK_SIZE);
 }
 
-static bool infilfs_extent_flags_valid(u32 logical_blocks, u64 physical,
+bool infilfs_extent_flags_valid(u32 logical_blocks, u64 physical,
                                        u32 flags)
 {
     u32 kind = infilfs_extent_kind(flags);
@@ -138,7 +138,7 @@ static bool infilfs_extent_flags_valid(u32 logical_blocks, u64 physical,
     return true;
 }
 
-static int infilfs_read_compressed_extent(
+int infilfs_read_compressed_extent(
     struct inode *inode, u64 physical, u32 extent_blocks, u32 flags,
     u8 *plain, size_t plain_capacity)
 {
@@ -294,11 +294,6 @@ bool infilfs_block_allocated(struct super_block *sb, u64 block)
                      (u8)(1u << (block & 7u))) != 0;
     read_unlock(&sbi->bitmap_lock);
     return allocated;
-}
-
-static struct infilfs_inode_info *INFILFS_I(struct inode *inode)
-{
-    return inode->i_private;
 }
 
 /*
@@ -637,7 +632,7 @@ static bool infilfs_object_basic_valid(struct super_block *sb,
     return true;
 }
 
-static int infilfs_read_object(struct super_block *sb, u64 object_block,
+int infilfs_read_object(struct super_block *sb, u64 object_block,
                                u16 expected_type, const u8 *expected_id,
                                u8 *out)
 {
@@ -1640,7 +1635,7 @@ static int infilfs_emit_snapshot_entry(
     return 0;
 }
 
-static int infilfs_map_file_block_detail(
+int infilfs_map_file_block_detail(
     struct inode *inode, const u8 *object, u64 logical,
     u64 *physical_out, u32 *flags_out,
     u64 *extent_logical_out, u32 *extent_blocks_out)

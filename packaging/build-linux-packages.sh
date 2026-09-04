@@ -87,7 +87,7 @@ for file in Makefile infiltratorfs_core.c infiltratorfs_internal.h infiltratorfs
             infiltratorfs_index_tree.c infiltratorfs_directory_tree.inc \
             infiltratorfs_rw.inc \
             infiltratorfs_rw_legacy.inc infiltratorfs_rw_data.inc \
-            infiltratorfs_rw_namespace.inc infiltratorfs_rw_read_cache.inc \
+            infiltratorfs_rw_namespace.inc infiltratorfs_read_cache.c \
             infiltratorfs_pagecache.inc infiltratorfs_linux_meta.inc \
             infiltratorfs_resize.c infiltratorfs_quota.inc \
             infiltratorfs_defrag.inc infiltratorfs_ioctl.h; do
@@ -302,7 +302,7 @@ for required in \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_rw_legacy.inc$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_rw_data.inc$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_rw_namespace.inc$" \
-    "usr/src/infiltratorfs-${package_version}/infiltratorfs_rw_read_cache.inc$" \
+    "usr/src/infiltratorfs-${package_version}/infiltratorfs_read_cache.c$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_pagecache.inc$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_linux_meta.inc$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_resize.c$" \
@@ -404,7 +404,7 @@ verify_installer() {
         kernel/infiltratorfs_allocation_publish.c kernel/infiltratorfs_rw.inc \
         kernel/infiltratorfs_parallel_alloc.c \
         kernel/infiltratorfs_rw_legacy.inc kernel/infiltratorfs_rw_data.inc \
-        kernel/infiltratorfs_rw_namespace.inc kernel/infiltratorfs_rw_read_cache.inc \
+        kernel/infiltratorfs_rw_namespace.inc kernel/infiltratorfs_read_cache.c \
         kernel/infiltratorfs_pagecache.inc kernel/infiltratorfs_linux_meta.inc \
         kernel/infiltratorfs_resize.c kernel/infiltratorfs_quota.inc \
         kernel/infiltratorfs_defrag.inc kernel/infiltratorfs_ioctl.h; do

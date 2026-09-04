@@ -60,13 +60,16 @@ grep -Fq 'mutex_lock(&sbi->write_lock);' "$quota" || fail 'quota write_lock acqu
 # The native driver must stay a genuine multi-object Kbuild module.  The
 # allocation map is the first extracted subsystem and must never regress into
 # textual inclusion.
-grep -Fqx 'infiltratorfs-y := infiltratorfs_core.o infiltratorfs_allocation_map.o infiltratorfs_resize.o infiltratorfs_index_tree.o infiltratorfs_parallel_alloc.o infiltratorfs_allocation_publish.o' "$makefile" || \
+grep -Fqx 'infiltratorfs-y := infiltratorfs_core.o infiltratorfs_allocation_map.o infiltratorfs_resize.o infiltratorfs_index_tree.o infiltratorfs_parallel_alloc.o infiltratorfs_allocation_publish.o infiltratorfs_read_cache.o' "$makefile" || \
     fail 'kernel module is no longer built from explicit component objects'
 test -f "$kernel/infiltratorfs_internal.h" || fail 'missing private kernel API header'
 test -f "$kernel/infiltratorfs_allocation_map.c" || fail 'allocation map object missing'
 test -f "$kernel/infiltratorfs_index_tree.c" || fail 'object-index tree object missing'
 test -f "$kernel/infiltratorfs_parallel_alloc.c" || fail 'parallel allocator object missing'
 test -f "$kernel/infiltratorfs_allocation_publish.c" || fail 'allocation publisher object missing'
+test -f "$kernel/infiltratorfs_read_cache.c" || fail 'verified-read cache object missing'
+test ! -e "$kernel/infiltratorfs_rw_read_cache.inc" || fail 'verified-read cache regressed to textual include'
+! grep -Fq 'infiltratorfs_rw_read_cache.inc' "$rw" || fail 'RW compositor textually includes verified-read cache'
 test ! -e "$kernel/infiltratorfs_allocation_publish.inc" || fail 'allocation publisher regressed to textual include'
 ! grep -Fq 'infiltratorfs_allocation_publish.inc' "$rw" || fail 'RW compositor textually includes allocation publisher'
 test ! -e "$kernel/infiltratorfs_parallel_alloc.inc" || fail 'parallel allocator regressed to textual include'
@@ -96,7 +99,6 @@ ordered=(
     infiltratorfs_rw_legacy.inc
     infiltratorfs_rw_data.inc
     infiltratorfs_directory_tree.inc
-    infiltratorfs_rw_read_cache.inc
     infiltratorfs_rw_namespace.inc
     infiltratorfs_pagecache.inc
     infiltratorfs_linux_meta.inc

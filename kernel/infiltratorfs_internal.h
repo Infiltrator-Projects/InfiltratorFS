@@ -175,6 +175,11 @@ struct infilfs_inode_info {
     char *symlink_target;
 };
 
+static inline struct infilfs_inode_info *INFILFS_I(struct inode *inode)
+{
+    return inode->i_private;
+}
+
 struct infilfs_dir_lookup {
     const char *name;
     size_t name_len;
@@ -218,6 +223,37 @@ struct infilfs_visit_set {
     size_t capacity;
     size_t count;
 };
+
+struct infilfs_native_checksum_payload_disk {
+    u8 owner_object_id[16];
+    u8 next_object_id[16];
+    __le64 start_logical_block;
+    __le32 checksum_count;
+    __le32 reserved;
+} __packed;
+
+#define INFILFS_NATIVE_CHECKSUMS_PER_OBJECT \
+    ((INFILFS_DISK_BLOCK_SIZE - sizeof(struct infilfs_object_header_disk) - \
+      sizeof(struct infilfs_native_checksum_payload_disk)) / \
+     sizeof(struct infilfs_data_checksum_disk))
+
+struct infilfs_native_checksum_cache_entry {
+    struct super_block *sb;
+    u8 owner_id[16];
+    u8 object_id[16];
+    u64 object_block;
+    u64 start_logical;
+    bool valid;
+};
+
+#define INFILFS_NATIVE_READ_INTEGRITY_PARITY 1
+struct infilfs_native_read_checksum_cursor {
+    u8 object_id[16];
+    u64 object_block;
+    u64 start_logical;
+    bool valid;
+};
+
 
 static inline struct infilfs_sb_info *INFILFS_SB(struct super_block *sb)
 {
@@ -323,5 +359,39 @@ int infilfs_rw_tx_defer_free(struct infilfs_rw_tx *tx, u64 start, u64 count);
 int infilfs_rw_tx_apply_deferred(struct infilfs_rw_tx *tx);
 int infilfs_rw_allocation_map_publish(
     struct infilfs_rw_tx *tx, struct infilfs_allocation_layout *next_layout);
+
+/* Services shared with the compiled verified-read cursor/cache layer. */
+extern const u8 infilfs_extent_page_magic[8];
+u32 infilfs_extent_kind(u32 flags);
+bool infilfs_extent_is_compressed(u32 flags);
+bool infilfs_extent_flags_valid(u32 logical_blocks, u64 physical, u32 flags);
+int infilfs_read_compressed_extent(
+    struct inode *inode, u64 physical, u32 extent_blocks, u32 flags,
+    u8 *plain, size_t plain_capacity);
+int infilfs_map_file_block_detail(
+    struct inode *inode, const u8 *object, u64 logical,
+    u64 *physical_out, u32 *flags_out,
+    u64 *extent_logical_out, u32 *extent_blocks_out);
+int infilfs_read_object(
+    struct super_block *sb, u64 object_block, u16 expected_type,
+    const u8 *expected_id, u8 *out);
+bool infilfs_native_checksum_cache_lookup(
+    struct super_block *sb, const u8 owner_id[16],
+    struct infilfs_native_checksum_cache_entry *out);
+void infilfs_native_checksum_cache_store(
+    struct super_block *sb, const u8 owner_id[16], const u8 object_id[16],
+    u64 object_block, u64 start_logical);
+int infilfs_native_read_expected_digest(
+    struct super_block *sb, const u8 owner_id[16], const u8 head_id[16],
+    u64 logical, struct infilfs_native_read_checksum_cursor *cursor,
+    u8 checksum_object[INFILFS_DISK_BLOCK_SIZE],
+    struct infilfs_data_checksum_disk *digest_out);
+void infilfs_native_block_digest(
+    const u8 data[INFILFS_DISK_BLOCK_SIZE],
+    struct infilfs_data_checksum_disk *digest);
+int infilfs_rw_inline_digest(const u8 *data, size_t size, u8 out[32]);
+ssize_t infilfs_native_read_iter_cached(
+    struct inode *inode, loff_t *position, struct iov_iter *to);
+ssize_t infilfs_file_read_iter_cached(struct kiocb *iocb, struct iov_iter *to);
 
 #endif /* INFILTRATORFS_INTERNAL_H */

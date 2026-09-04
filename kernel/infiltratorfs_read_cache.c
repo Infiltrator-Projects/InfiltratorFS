@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "infiltratorfs_internal.h"
 /*
  * Native verified-read cursor cache.
  *
@@ -192,7 +193,7 @@ static int infilfs_native_map_file_block_cached(
     return -EFSCORRUPTED;
 }
 
-static ssize_t infilfs_native_read_iter_cached(struct inode *inode,
+ssize_t infilfs_native_read_iter_cached(struct inode *inode,
                                                 loff_t *position,
                                                 struct iov_iter *to)
 {
@@ -400,7 +401,7 @@ out:
     return ret;
 }
 
-static ssize_t infilfs_file_read_iter_cached(struct kiocb *iocb,
+ssize_t infilfs_file_read_iter_cached(struct kiocb *iocb,
                                               struct iov_iter *to)
 {
     struct file *file = iocb->ki_filp;

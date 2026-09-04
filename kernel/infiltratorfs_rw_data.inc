@@ -33,19 +33,6 @@
 #define INFILFS_NATIVE_INDEX_LOCATOR_MIN_CAPACITY 64u
 #define INFILFS_NATIVE_DIRECTORY_LOCATOR_MIN_CAPACITY 64u
 
-struct infilfs_native_checksum_payload_disk {
-    u8 owner_object_id[16];
-    u8 next_object_id[16];
-    __le64 start_logical_block;
-    __le32 checksum_count;
-    __le32 reserved;
-} __packed;
-
-#define INFILFS_NATIVE_CHECKSUMS_PER_OBJECT \
-    ((INFILFS_DISK_BLOCK_SIZE - sizeof(struct infilfs_object_header_disk) - \
-      sizeof(struct infilfs_native_checksum_payload_disk)) / \
-     sizeof(struct infilfs_data_checksum_disk))
-
 struct infilfs_native_index_change {
     u8 object_id[16];
     u64 object_block;
@@ -113,15 +100,6 @@ struct infilfs_native_pending {
     u64 publish_threshold;
     bool active;
     bool commit_failed;
-};
-
-struct infilfs_native_checksum_cache_entry {
-    struct super_block *sb;
-    u8 owner_id[16];
-    u8 object_id[16];
-    u64 object_block;
-    u64 start_logical;
-    bool valid;
 };
 
 struct infilfs_native_checksum_node {
@@ -670,7 +648,7 @@ static void infilfs_native_checksum_cache_invalidate_sb(struct super_block *sb)
     spin_unlock_irqrestore(&infilfs_native_checksum_cache_lock, flags);
 }
 
-static bool infilfs_native_checksum_cache_lookup(
+bool infilfs_native_checksum_cache_lookup(
     struct super_block *sb, const u8 owner_id[16],
     struct infilfs_native_checksum_cache_entry *out)
 {
@@ -692,7 +670,7 @@ static bool infilfs_native_checksum_cache_lookup(
     return found;
 }
 
-static void infilfs_native_checksum_cache_store(
+void infilfs_native_checksum_cache_store(
     struct super_block *sb, const u8 owner_id[16], const u8 object_id[16],
     u64 object_block, u64 start_logical)
 {
@@ -1450,7 +1428,7 @@ static int infilfs_native_alloc_data_exact(
         NULL, start_out);
 }
 
-static void infilfs_native_block_digest(
+void infilfs_native_block_digest(
     const u8 data[INFILFS_DISK_BLOCK_SIZE],
     struct infilfs_data_checksum_disk *digest)
 {
@@ -5156,15 +5134,7 @@ static void infilfs_rw_mount_destroy(struct super_block *sb)
     infilfs_rw_mount_destroy_legacy(sb);
 }
 
-#define INFILFS_NATIVE_READ_INTEGRITY_PARITY 1
-struct infilfs_native_read_checksum_cursor {
-    u8 object_id[16];
-    u64 object_block;
-    u64 start_logical;
-    bool valid;
-};
-
-static int infilfs_native_read_expected_digest(
+int infilfs_native_read_expected_digest(
     struct super_block *sb, const u8 owner_id[16], const u8 head_id[16],
     u64 logical, struct infilfs_native_read_checksum_cursor *cursor,
     u8 checksum_object[INFILFS_DISK_BLOCK_SIZE],
