@@ -33,6 +33,23 @@ jobs:
           path.write_text(data[:start] + replacement + data[end:])
           PY
           python3 tools/kernel-read-cache-object-refactor.py
+          python3 - <<'PY'
+          from pathlib import Path
+          source = Path('kernel/infiltratorfs_read_cache.c')
+          data = source.read_text()
+          old = 'static ssize_t infilfs_native_read_iter_cached('
+          assert data.count(old) == 1
+          source.write_text(data.replace(old, 'ssize_t infilfs_native_read_iter_cached(', 1))
+
+          header = Path('kernel/infiltratorfs_internal.h')
+          data = header.read_text()
+          anchor = 'ssize_t infilfs_file_read_iter_cached(struct kiocb *iocb, struct iov_iter *to);\n'
+          assert anchor in data
+          proto = '''ssize_t infilfs_native_read_iter_cached(
+              struct inode *inode, loff_t *position, struct iov_iter *to);
+          '''
+          header.write_text(data.replace(anchor, proto + anchor, 1))
+          PY
           rm -f tools/kernel-read-cache-object-refactor.py
           rm -f .github/workflows/kernel-read-cache-object-refactor.yml
           git diff --check
