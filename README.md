@@ -4,102 +4,49 @@
 
 [![Build and conformance](https://github.com/Infiltrator-Projects/InfiltratorFS/actions/workflows/ci.yml/badge.svg)](https://github.com/Infiltrator-Projects/InfiltratorFS/actions/workflows/ci.yml)
 
-InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem started in 2026. The persistent format and portable core define the filesystem; operating-system adapters translate native APIs and semantics onto the same on-disk objects, transactions, extents, snapshots and integrity model.
+InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem. The persistent format and portable core define the filesystem; Linux, Windows and future operating-system adapters map their native APIs onto the same objects, transactions, extents, snapshots and integrity model.
 
-**Current source version:** 0.18.40 (Format 0.17)<br>
-**Latest published release:** v0.18.39, from commit `b1882ba2805ce4b45c14cc0bf757159fc8eb921b`.<br>
-**Published 0.18.39 release focus:** reliable Windows Explorer move-out from the driverless ProjFS bridge, including same-volume folder moves, recursive source removal and dedicated hosted-Windows regression qualification.<br>
-**Development `main`:** contains unreleased work after v0.18.39, including online resize and native user/group/project quota implementation. Resize has an independent exact-source mounted pass; the latest substantive quota-bearing source still has an unresolved mounted quota qualification timeout. Later CI/documentation-only commits do not turn that into a complete native qualification. See [`docs/QUALIFICATION.md`](docs/QUALIFICATION.md).<br>
+**Current source:** 0.18.40  
+**On-disk format:** 0.17  
+**Latest published release:** v0.18.39  
 **Shared foundation:** Infiltratr Common 1.11.0  
 **Licence:** GPL-3.0-or-later
 
-The Build and conformance badge above reports the broad portable/build workflow. It is intentionally not presented as proof that the separate mounted Native Linux kernel module workflow passed for the same source commit.
+Pre-1.0 development is current-format-only. Development-format compatibility is not promised, so test media may need reformatting after an on-disk-format revision.
 
-Pre-1.0 development intentionally does not preserve compatibility with older development formats. Test media may need to be reformatted after an on-disk-format revision.
+The badge above is the broad build/portable conformance gate. Mounted native-Linux qualification is a separate evidence boundary; see `docs/QUALIFICATION.md`.
 
 ## What exists today
 
-Format 0.17 provides 4096-byte little-endian blocks, 128-bit filesystem/object identities, three physically separated checksummed checkpoints with committed recorded locations, authoritative one-bit-per-block allocation persisted as a sharded CoW allocation tree with rebuildable runtime free-extent indexes, 1023-byte UTF-8 namespace components, copy-on-write transactions, a generation-aware object-index radix tree, hashed directory trees, paged extent metadata, inline small files, sparse files and hole extents, shared extents/reflinks, symbolic and hard links, retained historical generations and named read-only snapshots, adaptive bounded per-extent compression using the native IAC1 v1 codec with LZ4 retained as a non-default reference representation, CRC64-ECMA metadata integrity, SHA-256 logical file-data integrity, portable attributes, isolated POSIX compatibility metadata, UTF-8 namespace validation, scrub/verify and callback-based storage/durability/randomness/clock services.
+Format 0.17 provides:
 
-Linux is the most complete mounted adapter. Current source uses the native `infiltratorfs.ko` VFS driver and includes native namespace mutation, random and sparse writes, truncate, `fallocate`, hole punching, extent-aware `SEEK_DATA`/`SEEK_HOLE` and FIEMAP, whole-file `FICLONE`/`remap_file_range` reflinks into an empty target (including the `cp --reflink=always` path), hard links and symlinks, crash-safe open-unlink lifetime, mount-time orphan recovery, persistent standard Linux xattr namespaces, FIFO/socket/character/block special-node identity, page-cache and readahead integration, shared writable `mmap`, snapshot-preserving live writes, checkpoint fallback and replica healing, complete allocation reporting, bounded metadata-tree alias/cycle rejection, kernel-stack-safe allocation-tree traversal, online defragmentation including opaque relocation of compressed streams, online filesystem grow/bounded shrink, and native user/group/project quota machinery. A 64-shard volatile reservation layer lets independent writers search and reserve free data runs before the serialized metadata transaction. An in-lock workload classifier distinguishes sequential EOF growth, in-place/random CoW and direct sparse growth: sequential writes keep exact physical adjacency when possible and otherwise score nearby runs while preserving a large contiguous tail, while random and sparse writes best-fit into tighter suitable free extents so they do not unnecessarily break up large streaming runs. Per-object placement cursors and overwrite-local physical hints keep those decisions near the file being changed. Linux now adds a volatile media profile on top: auto-detected rotational devices use seek-first scoring, non-rotational SSD/NVMe-style devices preserve large free runs and use best-fit for small CoW/sparse mutations, and `media=auto|rotational|nonrotational|balanced` can override the policy per mount for qualification or unusual storage stacks. Zoned block devices are rejected until explicit zone-write-pointer allocation exists. All workload and media placement state remains volatile rather than changing Format 0.17. Sustained native writes use a writer-tail checksum path and persistent tree indexes so multi-gigabyte sequential appends no longer rescan historical checksum/index metadata. The established mounted suite also exercises the former FUSE regression surface, including six-way concurrent namespace mutation, shared-inode writes/fsync, same-inode xattr readers/writers, open-unlink contention, 4,000 random overwrites and repeated durability publication.
+- 4096-byte little-endian blocks and 128-bit filesystem/object identities;
+- three physically separated checksummed checkpoints with generation-based recovery;
+- copy-on-write transactions and retained historical generations;
+- a sharded persistent allocation tree with rebuildable runtime free-extent indexes;
+- generation-aware object and directory trees plus paged extent metadata;
+- inline, sparse and shared/reflinked file data;
+- symbolic links, hard links and named read-only snapshots;
+- adaptive bounded per-extent compression using native IAC1 v1, with LZ4 retained as a non-default reference representation;
+- CRC64-ECMA metadata integrity and SHA-256 logical file-data integrity;
+- 1023-byte UTF-8 namespace components;
+- portable attributes with operating-system-specific metadata isolated at adapter boundaries; and
+- scrub, inspection and forensic tooling.
 
-Resize separates committed filesystem geometry from backing-device capacity, rebuilds allocation-tree geometry through checkpoint publication, preserves or relocates recorded checkpoint positions as required, refuses shrink over live allocations and currently refuses resize while retained snapshots exist. Native quota code persists hard byte/object rules and project roots and covers user/group/project accounting, reflinks, hard links, rename/reparenting and remount reconstruction. The quota feature is deliberately not described as completed/qualified yet because the latest exact-source mounted quota gate timed out after 15 minutes without localizing the exact blocking sub-operation; see the roadmap and qualification record for the evidence boundary.
+Linux is the most complete mounted adapter. The normal Linux path is the native out-of-tree `infiltratorfs.ko` VFS driver installed through DKMS; there is no current FUSE filesystem implementation or FUSE runtime fallback. The native driver includes the established read/write namespace surface, random and sparse I/O, truncate, `fallocate`, hole punching, FIEMAP/SEEK_DATA/SEEK_HOLE, reflinks, xattrs, special nodes, page cache/readahead, writable `mmap`, crash-safe open-unlink handling, checkpoint fallback/healing, online defragmentation, workload/media-aware allocation policy and online grow/bounded shrink.
 
-Current Windows source includes a driverless Explorer bridge on top of Microsoft's inbox Projected File System (ProjFS). The Windows application uses a DPI-aware, Unicode native manager with Windows common-control visual styles, light/dark palette integration, a resizable storage/content layout, file-type icons, selected-volume identity, inspection and verification actions, image opening, an activity log and transfer controls. InfiltratorFS bundles the MB Corpo A Cond Regular, MB Corpo S Regular and MB Corpo S Bold faces and uses them consistently for the Linux and Windows application UI; release qualification verifies the exact font archive, packaged Linux faces and embedded Windows resources. It opens an InfiltratorFS image or raw partition through the portable core. **Mount in Explorer** starts a projected NTFS virtualization root and opens that root directly in Explorer; an auxiliary drive alias is used only when Windows exposes it in the current UAC DOS-device namespace. Linux-created files are hydrated on demand. Windows write-back now compares completed projected files at 4096-byte filesystem-block granularity and commits only changed runs instead of truncating and rewriting an entire existing file for a small edit. Explorer mutation bursts are coalesced behind a short idle durability window, while unmount/bridge shutdown still forces final publication. Direct Manager copies also publish data plus the staging rename in one CoW transaction rather than performing two durability publications per file. Provider-backed directories are materialized as ordinary full NTFS directories while their files remain lazy ProjFS placeholders. This avoids ProjFS's permanent partial-directory rename limitation: folders that originated in InfiltratorFS can now be moved out through normal same-volume Windows/Explorer rename semantics, and the corresponding backing tree is removed recursively only after Windows reports the completed move. This interim path ships no InfiltratorFS kernel driver; the true native Windows filesystem driver remains future work.
+Current development source also contains native user/group/project quota machinery. Quotas remain **unfinished as a roadmap capability until mounted qualification passes**. Resize is implemented and independently mounted-qualified. The authoritative feature status is `docs/ROADMAP.md`; exact evidence is `docs/QUALIFICATION.md`.
 
-Release 0.18.34 introduced the separation between filesystem geometry and backing-device capacity. Current development `main` builds on that foundation with the mounted resize implementation described above while retaining the bundled MB Corpo UI font policy on Linux and Windows.
+Windows currently provides native image/raw-partition access and a driverless Explorer bridge using Microsoft's inbox Projected File System (ProjFS). It is useful interoperability, but it is not a native InfiltratorFS Windows kernel driver. The native Windows filesystem driver remains future work.
 
-## Platform-neutral architecture
+## Linux quick start
 
-InfiltratorFS does not treat Linux semantics as the filesystem definition and does not intend Windows, macOS, BSD, Haiku or another operating system to be compatibility layers over Linux. The common model lives below all adapters.
-
-When operating systems expose the same underlying concept under different names, adapters map that concept to one InfiltratorFS representation. When an operating system has genuinely additional semantics, those semantics are preserved without forcing another adapter to invent support for them or destroy metadata it does not understand.
-
-See [`docs/PLATFORM_ADAPTERS.md`](docs/PLATFORM_ADAPTERS.md) for the adapter contract and [`docs/SECURITY.md`](docs/SECURITY.md) for the planned cross-platform identity/ACL model.
-
-## Linux architecture
-
-Linux mounting is performed solely by the native `infiltratorfs.ko` VFS filesystem driver. The Debian package and native `.run` installer install it through DKMS and load it with `modprobe infiltratorfs`.
-
-Normal Linux mounts are kernel mounts:
-
-```bash
-sudo modprobe infiltratorfs
-sudo mount -t infiltratorfs -o rw /dev/<partition> /mnt/infiltratorfs
-findmnt -T /mnt/infiltratorfs -o SOURCE,FSTYPE,OPTIONS
-```
-
-`FSTYPE` must be `infiltratorfs`. The current Linux source tree, package and installer contain no FUSE filesystem implementation, no `infilfs-fuse` executable and no FUSE runtime dependency. The old FUSE adapter exists only in Git history.
-
-The standard `mount.infiltratorfs` helper, InfiltratorFS Manager, Nemo/UDisks integration and direct `mount -t infiltratorfs` all target the native kernel filesystem. The helper calls util-linux `mount -i` internally so it cannot recurse back into itself.
-
-## Native durability and integrity
-
-The native writer uses Format 0.17 transactions, range-journal rollback and extent-backed data. Allocation commits rewrite only affected allocation leaves and the corresponding CoW branch paths plus the replacement root, rather than copying or rewriting the full volume bitmap. Native reads validate metadata CRC64 and file SHA-256 data checksums. `fsync`, `syncfs` and global `sync` publish pending transactions through the normal durability boundary.
-
-The dedicated native-kernel workflow builds the out-of-tree module, reproduces the DKMS source-root build and performs mounted native qualification. When a matching running kernel is available, current ordering runs the native quota qualification before the broad mounted transaction/scrub suite, online resize, media-profile and defragmentation steps. A failure in an earlier gate prevents later steps from being claimed for that exact commit. Corruption qualification includes checksummed aliased metadata graphs that must fail quickly with `EFSCORRUPTED`/`EUCLEAN` rather than permit unbounded repeated traversal. Native directory/object-index readers are serialized with deferred metadata publication so reclaimed topology cannot be observed mid-walk, and readdir snapshots persistent entries before Linux sidecar type resolution so the writer lock is never recursively acquired. Package upgrades also respect an administrator's explicit `modprobe` disable policy so an emergency blacklist can remain in force while a fixed DKMS module is installed.
-
-The latest substantive filesystem development commit `c5dd0bdb063faff4a94579b8a209b4a1e494191b` passed Build and conformance plus module/DKMS/running-kernel compilation, but its mounted quota qualification ran until the 15-minute step timeout without identifying the exact blocking sub-operation. That combined workflow therefore did not reach its ordinary mounted transaction, in-chain resize, media-profile or defragmentation steps. Resize nevertheless has separate exact-source mounted qualification from dedicated run `33818095528`; complete native qualification still requires the quota gate and full chain to pass on a later exact source.
-
-Release publication adds an installed-package gate: it installs the generated `.deb`, verifies native filesystem registration, mounts a real Format 0.17 loop image with `FSTYPE=infiltratorfs`, writes and byte-compares non-zero data, syncs, unmounts and requires a clean userspace scrub. Publication also rejects any FUSE executable, process or package dependency.
-
-A full checked-roadmap audit was completed on 2026-08-29 against source commit `075aed9c737fb38cc408d752736a97773dc2a035`: all 56 then-checked roadmap entries retained exact-source evidence, the destructive physical native-VFS harness passed 69/69 checks, four additional mounted concurrency rounds passed, and the final generation-3695 scrub checked 1,446 files and 151,580 data blocks with zero checksum or metadata errors. Detailed historical evidence and current qualification status are recorded in [docs/QUALIFICATION.md](docs/QUALIFICATION.md).
-
-## Linux desktop integration
-
-The Debian package installs **InfiltratorFS Manager** plus udev/UDisks identification rules. Manager is a persistent GTK desktop application with automatic non-system partition discovery, selected-volume identity and mount state, themed destructive-action handling, a built-in operation console and non-blocking maintenance jobs. It can create/format images, inspect, scrub, run forensic scans, mount natively, open in the desktop file manager and unmount safely.
-
-For block devices Manager uses a native kernel mount under `/media/<user>/InfiltratorFS`. For image files it uses a kernel loop mount under `~/InfiltratorFS`. The privileged helper verifies that the resulting filesystem type is exactly `infiltratorfs` and refuses a non-native mount.
-
-The source tree includes the conventional `mkfs.infiltratorfs` helper and
-version-pinned integration patches for libblockdev, UDisks and GNOME Disks.
-InfiltratorFS deliberately does **not** patch Linux Mint's Mintstick/Nemo USB
-Stick Formatter: Mintstick repartitions an entire drive rather than formatting
-one existing partition. Current packages restore any historical InfiltratorFS
-Mintstick diversion during upgrade.
-
-On Linux Mint, InfiltratorFS instead installs a separate **Format partition as
-InfiltratorFS…** Nemo action. Nemo passes the exact selected block device through
-its `%D` token to InfiltratorFS Manager. Manager resolves that path only against
-its non-system partition inventory, then the privileged helper independently
-rejects whole disks and active system partitions before `mkfs.infilfs` can run.
-The action therefore formats the selected partition only and never normalises it
-to the parent SD card, USB device, NVMe namespace or disk.
-Continuous integration applies those patches to the pinned upstream projects,
-builds the complete stack, invokes libblockdev's generic formatter with a
-label, and verifies the resulting Format 0.17 image through
-`infilfs-inspect --udev`. Distribution-provided GNOME Disks packages will not
-show the new format row until their maintainers adopt the patches; already
-formatted volumes remain identifiable and mountable through the installed
-desktop integration.
-
-## Build and test on Linux
-
-On Linux Mint, Ubuntu or another supported Debian-family host:
+Build on a Debian-family system with matching running-kernel headers:
 
 ```bash
 sudo apt install build-essential cmake dkms kmod policykit-1 util-linux \
-  xdg-utils python3 python3-gi gir1.2-gtk-3.0 udev udisks2 linux-headers-$(uname -r)
+  xdg-utils python3 python3-gi gir1.2-gtk-3.0 udev udisks2 \
+  linux-headers-$(uname -r)
 
 git clone --recurse-submodules https://github.com/Infiltrator-Projects/InfiltratorFS.git
 cd InfiltratorFS
@@ -109,22 +56,17 @@ ctest --test-dir build --output-on-failure
 make -C kernel KDIR=/lib/modules/$(uname -r)/build
 ```
 
-For the complete destructive regression and performance qualification against
-the dedicated partition 22 test device, use an exact release tag and run:
+A normal native mount is:
 
 ```bash
-bash tests/native-complete-qualification.sh
+sudo modprobe infiltratorfs
+sudo mount -t infiltratorfs -o rw /dev/<partition> /mnt/infiltratorfs
+findmnt -T /mnt/infiltratorfs -o SOURCE,FSTYPE,OPTIONS
 ```
 
-The script requires an explicit typed confirmation before erasing
-`/dev/mmcblk0p22`. It tests the installed release, all portable tests and policy
-guards, native packages, the exact running-kernel module, the full physical VFS
-surface, online defragmentation, one million files, a 1 TiB sparse volume,
-near-full mixed-workload endurance, remount persistence, scrubs and conservative
-performance-regression floors. A complete run can take several hours and needs
-at least 20 GiB free in its temporary filesystem.
+`FSTYPE` must report `infiltratorfs`.
 
-Create and inspect a regular image without mounting:
+Create and inspect an image without mounting:
 
 ```bash
 truncate -s 128M infilfs.img
@@ -134,84 +76,40 @@ truncate -s 128M infilfs.img
 ./build/infilfs-forensic --jsonl infilfs.img
 ```
 
-For a mounted native filesystem, `infilfs-optimize` reports per-file extent
-fragmentation plus the actual physical-run count and can perform bounded
-copy-on-write online defragmentation without replacing the inode. Compressed
-codec boundaries remain intact; if those streams are already one contiguous
-physical run, defrag deliberately performs no pointless relocation:
+For mounted fragmentation metrics and bounded online defragmentation:
 
 ```bash
-./build/infilfs-optimize --metrics /media/user/InfiltratorFS/file.bin
-./build/infilfs-optimize --defrag /media/user/InfiltratorFS/file.bin
-./build/infilfs-optimize --defrag --recursive /media/user/InfiltratorFS/tree
+./build/infilfs-optimize --metrics /mnt/infiltratorfs/file.bin
+./build/infilfs-optimize --defrag /mnt/infiltratorfs/file.bin
+./build/infilfs-optimize --defrag --recursive /mnt/infiltratorfs/tree
 ```
 
-The direct-image tool can exercise namespace and snapshot operations without mounting:
+The destructive physical qualification harness remains available as `tests/native-complete-qualification.sh`; it is an explicit operator test, not ordinary CI.
 
-```bash
-./build/infilfs-tool infilfs.img mkdir /docs
-./build/infilfs-tool infilfs.img put README.md /docs/README.md
-./build/infilfs-tool infilfs.img reflink /docs/README.md /docs/README-copy.md
-./build/infilfs-tool infilfs.img symlink README.md /docs/current
-./build/infilfs-tool infilfs.img link /docs/README.md /docs/README-hardlink.md
-./build/infilfs-tool infilfs.img snapshot-create before-edit
-./build/infilfs-tool infilfs.img snapshot-list
-./build/infilfs-tool infilfs.img snapshot-cat before-edit /docs/README.md
-```
+## Desktop and packaging
 
-## Native installer
+Linux packages include the native module/DKMS integration, `mkfs.infiltratorfs`, inspection/scrub/forensic tools, `mount.infiltratorfs`, `fsck.infiltratorfs`, InfiltratorFS Manager, udev/UDisks identification and the repository's formatter-integration work for libblockdev/UDisks/GNOME Disks.
 
-A release includes `infiltratorfs-<version>-linux-native.run`. It contains the tested source tree, checks host requirements, builds/tests userspace code, installs the DKMS source, builds the module for the running kernel, loads it, verifies `/proc/filesystems`, refreshes desktop storage rules and removes any obsolete `/usr/bin/infilfs-fuse` left by an older unmanaged installation.
+InfiltratorFS Manager formats and mounts selected non-system partitions through constrained privileged helpers. On Linux Mint, the project uses its own **Format partition as InfiltratorFS…** Nemo action rather than modifying Mintstick's whole-device formatting behaviour.
 
-For a published release, use the version number from that release's assets:
+Published release assets are available from the repository's GitHub Releases page. Release publication performs its own installed-package native mount/scrub gate; milestone-scale million-file/1 TiB and endurance suites remain separate weekly/manual qualification rather than an automatic requirement for every release.
 
-```bash
-chmod +x infiltratorfs-<version>-linux-native.run
-./infiltratorfs-<version>-linux-native.run --dry-run
-```
+## Documentation ownership
 
-The installer refuses to upgrade while an InfiltratorFS volume is mounted. This prevents replacing a live filesystem driver underneath active media.
+To prevent documentation drift, each kind of fact has one authoritative home:
 
-## Release assets
+- `docs/ON_DISK_FORMAT.md` — persistent Format 0.17 layout and encoding contract.
+- `docs/ARCHITECTURE.md` — design model and architectural invariants.
+- `docs/ROADMAP.md` — **the only authoritative feature-completion list**.
+- `docs/QUALIFICATION.md` — **the only authoritative exact-source qualification/evidence ledger**.
+- `docs/PLATFORM_ADAPTERS.md` — operating-system adapter boundaries.
+- `docs/SECURITY.md` — portable security/ACL design direction.
+- `docs/COMPRESSION.md` — IAC1/compressed-extent design.
+- `docs/FORENSICS.md` — forensic scanner model and use.
+- `docs/INSPIRATIONS.md` — historical design influences, not project status.
 
-A numbered release publishes only the project-built artifacts below; GitHub supplies its standard source archives automatically.
+Implementation comments and workflow comments should explain local behaviour only; they are not alternate project-status documents.
 
-| File | Purpose |
-| --- | --- |
-| `infiltratorfs_<version>_amd64.deb` | Native Linux amd64 package with self-contained DKMS source. |
-| `infiltratorfs-<version>-linux-native.run` | Native local Linux compile/test/install program. |
-| `InfiltratorFS-Windows-<version>.exe` | Windows direct-transfer/raw-volume application. |
-| `SHA256SUMS.txt` | SHA-256 checksums for all project-built release artifacts. |
+## Development rule
 
-The Linux package has no FUSE runtime dependency. Its `postinst` requires matching running-kernel headers and treats a DKMS build/load failure as an installation failure rather than silently falling back to userspace mounting.
-
-## Recovery and safety
-
-A healthy open validates checkpoint candidates, allocation and the essential committed graph. Full namespace, ownership, checksum and metadata-graph validation belongs to **Scrub / Verify**. Writable recovery only heals from a graph-valid committed generation and fails closed where durable ordering cannot be established safely.
-
-InfiltratorFS remains experimental and pre-1.0. Keep verified backups and use disposable/test media for development qualification.
-
-## Repository and release policy
-
-Development uses `main` only. Ordinary pushes run Build and conformance and the applicable path-filtered workflows but do not publish. A release-eligible commit subject begins with `Release <version>`. After Build and conformance succeeds, the publisher requires the Native Linux kernel module workflow for that exact commit to succeed, verifies that the exact commit is still current `main`, rebuilds Linux and Windows assets, installs and natively mounts the Linux `.deb`, validates the asset set and checksums, creates the exact tag and publishes the release. Heavy million-file/1 TiB and endurance qualification is currently weekly/manual milestone evidence rather than an automatic per-Release prerequisite.
-
-## Repository layout
-
-```text
-include/infilfs/          public format/storage/filesystem interfaces
-src/                      portable filesystem core
-src/infiltratr-common/    pinned Infiltratr Common submodule
-src/platform/             POSIX and Win32 storage adapters
-kernel/                   native Linux VFS adapter and DKMS source
-tools/                    formatter, inspector, scrubber, manager and transfer tools
-tests/                    conformance, recovery, crash and platform tests
-docs/                     architecture, format, security and adapter documentation
-```
-
-## Licence
-
-InfiltratorFS is free software licensed under the GNU General Public License version 3 or, at your option, any later version (`GPL-3.0-or-later`).
-
-## Driverless Windows Explorer bridge
-
-The Windows manager can expose an opened InfiltratorFS volume through Microsoft's inbox Projected File System (ProjFS). **Mount in Explorer** opens the projected virtualization root directly, so Explorer access does not depend on a DOS drive alias created by the elevated raw-device manager. When Windows can expose an auxiliary drive alias in the current UAC namespace it is retained as a convenience. Files are hydrated from the portable core on demand; existing Linux-created files can be edited in Windows, and Windows file create/write/delete/rename/hard-link operations are committed back to InfiltratorFS when handles close. This mode does not ship an InfiltratorFS kernel driver and therefore does not require InfiltratorFS driver signing; Windows' optional Microsoft-signed ProjFS component must be enabled.
+Before 1.0, prefer the cleanest long-term filesystem design over preserving obsolete development-format assumptions. A feature is marked complete only when its implementation and required qualification are both complete.
