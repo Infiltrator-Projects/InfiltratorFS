@@ -26,8 +26,8 @@ jobs:
           data = path.read_text()
           old = "Path('.github/workflows/kernel-multiobject-refactor.yml')}"
           new = "Path('.github/workflows/kernel-multiobject-refactor.yml'), Path('tests/native-kernel-maintainability-policy.sh')}"
-          assert old in data
-          path.write_text(data.replace(old, new, 1))
+          assert data.count(old) >= 2
+          path.write_text(data.replace(old, new))
           PY
           python3 tools/kernel-multiobject-refactor.py
           rm -f tools/kernel-multiobject-refactor.py
