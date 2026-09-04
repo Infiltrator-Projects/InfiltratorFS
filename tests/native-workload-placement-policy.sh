@@ -4,19 +4,20 @@ set -euo pipefail
 
 root="${1:-.}"
 driver="$root/kernel/infiltratorfs_core.c"
+state="$root/kernel/infiltratorfs_internal.h"
 allocator="$root/kernel/infiltratorfs_parallel_alloc.inc"
 data="$root/kernel/infiltratorfs_rw_data.inc"
 
-for file in "$driver" "$allocator" "$data"; do
+for file in "$driver" "$state" "$allocator" "$data"; do
     test -f "$file"
 done
 
 # The policy must distinguish streaming EOF growth, in-place/random CoW, and
 # sparse growth without changing the persistent Format 0.17 representation.
-grep -Fq 'enum infilfs_data_workload' "$driver"
-grep -Fq 'INFILFS_DATA_WORKLOAD_SEQUENTIAL' "$driver"
-grep -Fq 'INFILFS_DATA_WORKLOAD_RANDOM' "$driver"
-grep -Fq 'INFILFS_DATA_WORKLOAD_SPARSE' "$driver"
+grep -Fq 'enum infilfs_data_workload' "$state"
+grep -Fq 'INFILFS_DATA_WORKLOAD_SEQUENTIAL' "$state"
+grep -Fq 'INFILFS_DATA_WORKLOAD_RANDOM' "$state"
+grep -Fq 'INFILFS_DATA_WORKLOAD_SPARSE' "$state"
 grep -Fq 'infilfs_native_classify_write' "$data"
 grep -Fq 'if (pos == old_size)' "$data"
 grep -Fq 'if (pos > old_size)' "$data"
