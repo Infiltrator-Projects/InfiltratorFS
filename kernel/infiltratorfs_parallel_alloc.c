@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "infiltratorfs_internal.h"
 /*
  * Volatile sharded allocation reservations for the native Linux adapter.
  *
@@ -55,7 +56,7 @@ void infilfs_parallel_shard_bounds(const struct infilfs_sb_info *sbi,
         INFILFS_ALLOCATION_RESERVATION_SHARDS);
 }
 
-static u64 infilfs_parallel_object_preferred(
+u64 infilfs_parallel_object_preferred(
     const struct infilfs_sb_info *sbi, const u8 object_id[16])
 {
     u64 hash = 1469598103934665603ULL;
@@ -95,7 +96,7 @@ static void infilfs_parallel_unlock_range(struct infilfs_sb_info *sbi,
     }
 }
 
-static bool infilfs_parallel_range_reserved(
+bool infilfs_parallel_range_reserved(
     const struct infilfs_sb_info *sbi, u64 start, u64 count)
 {
     u64 block;
@@ -111,7 +112,7 @@ static bool infilfs_parallel_range_reserved(
     return false;
 }
 
-static int infilfs_parallel_allocator_mount_init(struct super_block *sb)
+int infilfs_parallel_allocator_mount_init(struct super_block *sb)
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
     u64 words;
@@ -154,7 +155,7 @@ static int infilfs_parallel_allocator_mount_init(struct super_block *sb)
     return 0;
 }
 
-static void infilfs_parallel_allocator_mount_destroy(struct super_block *sb)
+void infilfs_parallel_allocator_mount_destroy(struct super_block *sb)
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
 
@@ -212,7 +213,7 @@ static int infilfs_parallel_alloc_journal_reserve(struct infilfs_rw_tx *tx)
     return 0;
 }
 
-static int infilfs_parallel_tx_claim(struct infilfs_rw_tx *tx, u64 start,
+int infilfs_parallel_tx_claim(struct infilfs_rw_tx *tx, u64 start,
                                      u64 count, bool consume_reservation)
 {
     struct infilfs_sb_info *sbi;
@@ -291,7 +292,7 @@ static bool infilfs_parallel_range_free_locked(
     return true;
 }
 
-static void infilfs_parallel_note_workload(
+void infilfs_parallel_note_workload(
     struct infilfs_sb_info *sbi, enum infilfs_data_workload workload)
 {
     if (!sbi)
@@ -325,7 +326,7 @@ static void infilfs_parallel_note_active(struct infilfs_sb_info *sbi)
     }
 }
 
-static int infilfs_parallel_reserve_data(
+int infilfs_parallel_reserve_data(
     struct super_block *sb, u64 count, u64 preferred,
     struct infilfs_parallel_reservation *reservation)
 {
@@ -432,7 +433,7 @@ static int infilfs_parallel_reserve_data(
     return -ENOSPC;
 }
 
-static void infilfs_parallel_release_reservation(
+void infilfs_parallel_release_reservation(
     struct super_block *sb, struct infilfs_parallel_reservation *reservation)
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
@@ -452,7 +453,7 @@ static void infilfs_parallel_release_reservation(
     reservation->active = false;
 }
 
-static int infilfs_parallel_consume_reservation(
+int infilfs_parallel_consume_reservation(
     struct infilfs_rw_tx *tx, struct infilfs_parallel_reservation *reservation,
     u64 count, u64 *start_out)
 {

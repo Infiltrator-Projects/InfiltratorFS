@@ -212,7 +212,7 @@ static int infilfs_read_compressed_logical_block(
     return ret;
 }
 
-static const char *infilfs_media_profile_name(
+const char *infilfs_media_profile_name(
     enum infilfs_media_profile profile)
 {
     switch (profile) {

@@ -886,7 +886,7 @@ infilfs_native_pending_find_locked(struct super_block *sb)
  * allocation uses the ordinary transaction allocator and can consume this
  * reserve; only user data is prevented from exhausting it.
  */
-static u64 infilfs_native_metadata_reserve_blocks(
+u64 infilfs_native_metadata_reserve_blocks(
     const struct infilfs_sb_info *sbi)
 {
     u64 reserve;
@@ -909,7 +909,7 @@ static u64 infilfs_native_metadata_reserve_blocks(
  * free-block scalar itself is sampled with READ_ONCE because writers serialize
  * updates under sbi->write_lock.
  */
-static u64 infilfs_native_visible_free_blocks(struct super_block *sb)
+u64 infilfs_native_visible_free_blocks(struct super_block *sb)
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
     struct infilfs_native_pending *pending;

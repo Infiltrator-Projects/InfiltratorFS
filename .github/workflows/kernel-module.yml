@@ -99,7 +99,7 @@ jobs:
              kernel/infiltratorfs_format.h \
              kernel/infiltratorfs_allocation_map.c \
              kernel/infiltratorfs_allocation_publish.inc \
-             kernel/infiltratorfs_parallel_alloc.inc \
+             kernel/infiltratorfs_parallel_alloc.c \
              kernel/infiltratorfs_index_tree.c \
              kernel/infiltratorfs_directory_tree.inc \
              kernel/infiltratorfs_rw.inc \

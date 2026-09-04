@@ -10,46 +10,6 @@
  * immutable while the live generation advances.
  */
 
-#define INFILFS_RW_FREE_RANGES_INITIAL 32u
-#define INFILFS_RW_ALLOC_RANGES_INITIAL 64u
-
-struct infilfs_rw_free_range {
-    u64 start;
-    u64 count;
-};
-
-struct infilfs_rw_tx {
-    struct super_block *sb;
-    struct infilfs_sb_info *sbi;
-    struct infilfs_superblock_disk next_sb;
-    u8 *bitmap;
-    size_t bitmap_bytes;
-    u64 generation;
-    u64 free_blocks;
-    struct infilfs_rw_free_range *deferred;
-    size_t deferred_count;
-    size_t deferred_capacity;
-    /*
-     * Allocation journal for operation-level rollback. Native transactions
-     * only mark free blocks allocated during an operation; frees remain
-     * deferred until publication. Recording those new runs is sufficient to
-     * undo a failed syscall without cloning the whole allocation bitmap.
-     */
-    struct infilfs_rw_free_range *allocated;
-    size_t allocated_count;
-    size_t allocated_capacity;
-
-    /*
-     * Rebuildable transaction-local index of maximal free runs. The live
-     * transaction bitmap remains authoritative; this cache only avoids
-     * rescanning the whole device for every allocation.
-     */
-    struct infilfs_rw_free_range *free_extents;
-    size_t free_extent_count;
-    size_t free_extent_capacity;
-    bool free_extent_index_valid;
-};
-
 struct infilfs_rw_sha256_ctx {
     u32 state[8];
     u64 total;
@@ -72,7 +32,7 @@ void infilfs_rw_bitmap_set(u8 *bitmap, u64 block, bool used)
         bitmap[block >> 3] &= (u8)~mask;
 }
 
-static void infilfs_rw_free_extent_index_invalidate(struct infilfs_rw_tx *tx)
+void infilfs_rw_free_extent_index_invalidate(struct infilfs_rw_tx *tx)
 {
     if (tx)
         tx->free_extent_index_valid = false;
@@ -163,7 +123,7 @@ static int infilfs_rw_free_extent_index_rebuild(struct infilfs_rw_tx *tx)
     return 0;
 }
 
-static int infilfs_rw_free_extent_index_remove(struct infilfs_rw_tx *tx,
+int infilfs_rw_free_extent_index_remove(struct infilfs_rw_tx *tx,
                                                 u64 start, u64 count)
 {
     u64 end;

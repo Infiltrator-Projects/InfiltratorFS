@@ -5,7 +5,7 @@ set -euo pipefail
 root="${1:-.}"
 driver="$root/kernel/infiltratorfs_core.c"
 state="$root/kernel/infiltratorfs_internal.h"
-allocator="$root/kernel/infiltratorfs_parallel_alloc.inc"
+allocator="$root/kernel/infiltratorfs_parallel_alloc.c"
 data="$root/kernel/infiltratorfs_rw_data.inc"
 workflow="$root/.github/workflows/kernel-module.yml"
 

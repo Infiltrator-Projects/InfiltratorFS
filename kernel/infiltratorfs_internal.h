@@ -56,6 +56,35 @@ struct infilfs_parallel_reservation {
     bool active;
 };
 
+#define INFILFS_RW_FREE_RANGES_INITIAL 32u
+#define INFILFS_RW_ALLOC_RANGES_INITIAL 64u
+
+/* Private transaction/allocation state shared by compiled native components. */
+struct infilfs_rw_free_range {
+    u64 start;
+    u64 count;
+};
+
+struct infilfs_rw_tx {
+    struct super_block *sb;
+    struct infilfs_sb_info *sbi;
+    struct infilfs_superblock_disk next_sb;
+    u8 *bitmap;
+    size_t bitmap_bytes;
+    u64 generation;
+    u64 free_blocks;
+    struct infilfs_rw_free_range *deferred;
+    size_t deferred_count;
+    size_t deferred_capacity;
+    struct infilfs_rw_free_range *allocated;
+    size_t allocated_count;
+    size_t allocated_capacity;
+    struct infilfs_rw_free_range *free_extents;
+    size_t free_extent_count;
+    size_t free_extent_capacity;
+    bool free_extent_index_valid;
+};
+
 enum infilfs_data_workload {
     INFILFS_DATA_WORKLOAD_SEQUENTIAL = 0,
     INFILFS_DATA_WORKLOAD_RANDOM,
@@ -259,5 +288,31 @@ void infilfs_parallel_shard_bounds(
 int infilfs_native_pending_flush_sb(struct super_block *sb);
 int infilfs_native_resize_volume(
     struct super_block *sb, struct infilfs_resize_request *request);
+
+/* Services shared with the compiled volatile parallel allocator. */
+const char *infilfs_media_profile_name(enum infilfs_media_profile profile);
+void infilfs_rw_free_extent_index_invalidate(struct infilfs_rw_tx *tx);
+int infilfs_rw_free_extent_index_remove(
+    struct infilfs_rw_tx *tx, u64 start, u64 count);
+u64 infilfs_native_metadata_reserve_blocks(const struct infilfs_sb_info *sbi);
+u64 infilfs_native_visible_free_blocks(struct super_block *sb);
+int infilfs_parallel_allocator_mount_init(struct super_block *sb);
+void infilfs_parallel_allocator_mount_destroy(struct super_block *sb);
+int infilfs_parallel_tx_claim(
+    struct infilfs_rw_tx *tx, u64 start, u64 count, bool consume_reservation);
+bool infilfs_parallel_range_reserved(
+    const struct infilfs_sb_info *sbi, u64 start, u64 count);
+u64 infilfs_parallel_object_preferred(
+    const struct infilfs_sb_info *sbi, const u8 object_id[16]);
+void infilfs_parallel_note_workload(
+    struct infilfs_sb_info *sbi, enum infilfs_data_workload workload);
+int infilfs_parallel_reserve_data(
+    struct super_block *sb, u64 count, u64 preferred,
+    struct infilfs_parallel_reservation *reservation);
+void infilfs_parallel_release_reservation(
+    struct super_block *sb, struct infilfs_parallel_reservation *reservation);
+int infilfs_parallel_consume_reservation(
+    struct infilfs_rw_tx *tx, struct infilfs_parallel_reservation *reservation,
+    u64 count, u64 *start_out);
 
 #endif /* INFILTRATORFS_INTERNAL_H */

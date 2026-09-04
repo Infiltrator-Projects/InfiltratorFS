@@ -3,7 +3,7 @@
 set -euo pipefail
 
 root="${1:-.}"
-allocator="$root/kernel/infiltratorfs_parallel_alloc.inc"
+allocator="$root/kernel/infiltratorfs_parallel_alloc.c"
 driver="$root/kernel/infiltratorfs_core.c"
 state="$root/kernel/infiltratorfs_internal.h"
 rw="$root/kernel/infiltratorfs_rw.inc"
@@ -24,9 +24,9 @@ grep -Fq 'infilfs_parallel_consume_reservation' "$allocator"
 grep -Fq 'infilfs_parallel_tx_claim' "$allocator"
 grep -Fq 'write_lock(&sbi->bitmap_lock)' "$allocator"
 grep -Fq 'allocation_peak_active_reservations' "$allocator"
-grep -Fq '#include "infiltratorfs_parallel_alloc.inc"' "$rw"
+! grep -Fq '#include "infiltratorfs_parallel_alloc.c"' "$rw"
 grep -Fq 'data_allocation_hint' "$data"
-grep -Fq 'infiltratorfs_parallel_alloc.inc' "$package"
+grep -Fq 'infiltratorfs_parallel_alloc.c' "$package"
 grep -Fq 'parallel-allocation-ci' "$workflow"
 grep -Fq 'test "$allocator_peak" -ge 2' "$workflow"
 
