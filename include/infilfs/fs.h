@@ -6,6 +6,16 @@
 #include "infilfs/format.h"
 #include "infilfs/storage.h"
 
+/*
+ * Low-level format helpers operate on one complete filesystem block supplied
+ * by the caller. Encode/init routines overwrite the canonical fields they own;
+ * finalize routines compute the record checksum after the caller has finished
+ * populating the payload. Validation is read-only and returns nonzero only for
+ * a structurally valid current-format block, including canonical reserved
+ * bytes where the format requires them.
+ *
+ * These helpers do not perform storage I/O and do not retain caller buffers.
+ */
 infs_status infs_encode_superblock(uint8_t block[INFS_BLOCK_SIZE],
                                    const struct infs_superblock_disk *sb);
 infs_status infs_decode_superblock(const uint8_t block[INFS_BLOCK_SIZE],
@@ -40,9 +50,12 @@ int infs_validate_allocation_page(const uint8_t block[INFS_BLOCK_SIZE],
                                   uint64_t logical_index,
                                   uint32_t level);
 
-/* The original encoders intentionally remain classic single-block encoders so
- * older conformance fixtures and callers keep their established semantics.
- * Format 0.17 formatters use the paged variants below. */
+/*
+ * The classic encoders remain intentionally available for fixtures and format
+ * validation. Current Format 0.17 formatters use the tree variants. Keeping
+ * the helpers separate prevents a test fixture from silently changing shape
+ * when the normal formatter policy evolves.
+ */
 infs_status infs_encode_root_directory(uint8_t block[INFS_BLOCK_SIZE],
                                        const uint8_t object_id[16],
                                        uint64_t generation,
@@ -73,11 +86,20 @@ infs_status infs_encode_tree_object_index(uint8_t block[INFS_BLOCK_SIZE],
                                           uint64_t root_node_block,
                                           uint32_t entry_count);
 
+/*
+ * Read the checkpoint replicas discoverable from the supplied backing size and
+ * return the highest-generation structurally valid superblock. valid_copies,
+ * when non-NULL, receives the number of independently valid replicas observed;
+ * this helper selects checkpoint records only and does not validate the entire
+ * object/namespace graph behind the winning candidate.
+ */
 infs_status infs_read_best_superblock(const struct infs_storage *storage,
                                       uint64_t size_bytes,
                                       struct infs_superblock_disk *out,
                                       unsigned *valid_copies);
 
+/* out must reference at least 37 bytes; the result is canonical NUL-terminated
+ * UUID text and no pointer is retained after return. */
 void infs_uuid_to_string(const uint8_t id[16], char out[37]);
 
 #endif
