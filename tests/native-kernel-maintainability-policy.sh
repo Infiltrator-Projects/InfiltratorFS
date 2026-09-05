@@ -56,8 +56,7 @@ test -n "$resize_inner" || fail 'write_lock acquisition after resize_lock not fo
 grep -Fq 'mutex_lock(&sbi->quota_lock);' "$quota" || fail 'quota_lock acquisition missing'
 grep -Fq 'mutex_lock(&sbi->write_lock);' "$quota" || fail 'quota write_lock acquisition missing'
 
-
-# The native driver must stay a genuine multi-object Kbuild module.  The
+# The native driver must stay a genuine multi-object Kbuild module. The
 # allocation map is the first extracted subsystem and must never regress into
 # textual inclusion.
 grep -Fqx 'infiltratorfs-y := infiltratorfs_core.o infiltratorfs_allocation_map.o infiltratorfs_resize.o infiltratorfs_index_tree.o infiltratorfs_parallel_alloc.o infiltratorfs_allocation_publish.o infiltratorfs_read_cache.o infiltratorfs_pagecache.o infiltratorfs_directory_tree.o' "$makefile" || \
@@ -126,7 +125,7 @@ legacy_block="$(sed -n \
 legacy_aliases="$(grep -Ec '^#define infilfs_[a-z0-9_]+[[:space:]]+infilfs_[a-z0-9_]+_legacy$' <<<"$legacy_block" || true)"
 test "$legacy_aliases" -eq 8 || \
     fail "legacy alias bridge changed ($legacy_aliases entries; expected 8)"
-grep -Fq '#define infilfs_rw_mount_init infilfs_rw_mount_init_legacy' "$legacy_block" || \
+grep -Fq '#define infilfs_rw_mount_init infilfs_rw_mount_init_legacy' <<<"$legacy_block" || \
     fail 'POSIX ACL mount-init alias bridge changed'
 
 data_block="$(sed -n \
