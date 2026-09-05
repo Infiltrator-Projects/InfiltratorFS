@@ -5,6 +5,7 @@ set -euo pipefail
 root="${1:-.}"
 data="$root/kernel/infiltratorfs_rw_data.inc"
 ns="$root/kernel/infiltratorfs_rw_namespace.inc"
+internal="$root/kernel/infiltratorfs_internal.h"
 
 # Sequential EOF appends must stay at the checksum tail rather than collecting
 # the historical checksum chain on every group boundary.
@@ -42,8 +43,10 @@ grep -Fq 'for (n = 1; n < INFILFS_CHECKPOINT_COUNT; ++n)' <<<"$commit_body"
 
 # Deferred publication must react to excess physical CoW churn as well as
 # logical user bytes so tiny partial writes cannot consume the volume before
-# reaching the nominal logical threshold.
-grep -Fq 'u64 pending_physical_bytes;' "$data"
+# reaching the nominal logical threshold. The pending transaction state is a
+# shared kernel object now, so the state field belongs in the private header;
+# behaviour remains owned by the native data/namespace paths.
+grep -Fq 'u64 pending_physical_bytes;' "$internal"
 grep -Fq 'infilfs_native_pending_should_publish' "$data"
 grep -Fq 'max_excess_churn = 64ULL * 1024ULL * 1024ULL' "$data"
 grep -Fq 'infilfs_native_pending_should_publish(pending)' "$ns"
