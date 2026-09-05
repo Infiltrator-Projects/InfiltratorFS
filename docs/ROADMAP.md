@@ -75,7 +75,7 @@ Pre-1.0 development is current-format-only. A development format may be replaced
 ## Administration and recovery
 
 - [x] Online filesystem grow and safely bounded shrink.
-- [ ] Native user/group/project quotas. Implementation exists in `main`; mounted qualification is still unresolved, so this remains incomplete.
+- [x] Native user/group/project quotas with durable policy and remount usage reconstruction.
 - [ ] Deterministic repair-capable filesystem checker for unambiguous repair cases.
 - [ ] Snapshot restore/rollback for selected objects and whole-volume recovery to a retained generation.
 
