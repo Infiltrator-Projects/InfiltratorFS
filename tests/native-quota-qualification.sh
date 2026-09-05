@@ -5,6 +5,8 @@ set -Eeuo pipefail
 build="${1:?build directory required}"
 module="${2:?kernel module required}"
 quota="$build/infiltratorfs-quota"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$script_dir/.." && pwd)"
 work="$(mktemp -d)"
 image="$work/quota.img"
 mnt="$work/mnt"
@@ -66,6 +68,9 @@ finally:
     os.close(fd)
 PY
 }
+
+stage "static POSIX ACL policy guard"
+bash "$script_dir/native-posix-acl-policy.sh" "$repo_root"
 
 stage "format and mount"
 mkdir -p "$mnt"
@@ -243,9 +248,16 @@ test "$(timeout --foreground 90s sudo "$quota" project-get "$mnt/project-replace
         awk -F= '$1 == "effective_project_id" { print $2 }')" -eq 0
 test "$(field used_objects "$mnt" project 78)" -eq 0
 
+# POSIX ACLs are a Linux root-filesystem requirement. Exercise access ACL
+# enforcement, chmod/mask interaction, default inheritance and rsync -aA before
+# the same image is scrubbed and remounted below.
+stage "exercise POSIX ACL semantics before remount"
+sudo chmod 0755 "$work" "$mnt"
+sudo python3 "$script_dir/native-posix-acl-qualification.py" prepare "$mnt"
+
 # Policy and project-root metadata are persistent, but volatile usage is
 # deliberately rebuilt from authoritative objects after remount.
-stage "exercise quota persistence across remount"
+stage "exercise quota and POSIX ACL persistence across remount"
 before42="$(field used_bytes "$mnt" project 42)"
 sudo sync
 sudo umount "$mnt"
@@ -254,6 +266,8 @@ mounted=0
 
 sudo mount -t infiltratorfs -o rw "$loopdev" "$mnt"
 mounted=1
+sudo chmod 0755 "$mnt"
+sudo python3 "$script_dir/native-posix-acl-qualification.py" verify "$mnt"
 test "$(timeout --foreground 90s sudo "$quota" project-get "$mnt/project-a/sub" | \
         awk -F= '$1 == "effective_project_id" { print $2 }')" -eq 42
 after42="$(field used_bytes "$mnt" project 42)"
@@ -271,4 +285,4 @@ sudo umount "$mnt"
 mounted=0
 "$build/infilfs-scrub" "$image" | grep -Fq 'Result:              CLEAN'
 
-echo "native user/group/project quota qualification: PASS"
+echo "native user/group/project quota + POSIX ACL qualification: PASS"
