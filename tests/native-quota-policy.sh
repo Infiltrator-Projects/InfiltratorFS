@@ -14,7 +14,11 @@ grep -Fq 'infilfs_quota_reserve_create' "$root/kernel/infiltratorfs_quota.inc"
 grep -Fq 'infilfs_quota_prepare_identity_change' "$root/kernel/infiltratorfs_quota.inc"
 grep -Fq 'infilfs_quota_prepare_reparent_locked' "$root/kernel/infiltratorfs_quota.inc"
 grep -Fq 'return -EDQUOT' "$root/kernel/infiltratorfs_quota.inc"
+# Quota rules persist through the hidden/system Linux sidecar.  Those internal
+# files must remain ordinary regular files and must never recursively consult
+# sidecar metadata while linux_meta_lock already owns the compound operation.
 grep -Fq 'Internal Linux sidecar files must never recursively resolve sidecar' "$root/kernel/infiltratorfs_core.c"
+grep -Fq '(INFILFS_ATTR_HIDDEN | INFILFS_ATTR_SYSTEM)' "$root/kernel/infiltratorfs_core.c"
 grep -Fq 'infilfs_quota_reserve_inode(inode, quota_growth' "$root/kernel/infiltratorfs_rw_data.inc"
 grep -Fq 'infilfs_quota_reserve_create(dir, 0, 1' "$root/kernel/infiltratorfs_rw.inc"
 grep -Fq 'infilfs_quota_prepare_reparent_locked' "$root/kernel/infiltratorfs_rw_namespace.inc"
