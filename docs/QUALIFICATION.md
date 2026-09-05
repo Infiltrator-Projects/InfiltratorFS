@@ -58,6 +58,7 @@ Earlier source `c5dd0bdb063faff4a94579b8a209b4a1e494191b` remains useful histori
 | 2026-09-03 | `c5dd0bdb063faff4a94579b8a209b4a1e494191b` | Build run `33805398475`; Native run `33805398514` | Build passed; mounted quota qualification timed out on this historical source. |
 | 2026-09-06 | `4505fe828718bfa00467cc711b9147bf967f1890` | Mounted quota run `33977009426`, job `101335375795` | Full native user/group/project quota contract passed, including hard-link-safe project accounting, remount reconstruction and final CLEAN scrub. |
 | 2026-09-06 | `b078749efaf7bc76443d7c3dfd82a2c2bfcd6c38` | Build run `33977172446`; Native run `33977172394` quota step | Permanent cleaned tree passed ordinary conformance and ordinary mounted quota qualification. |
+| 2026-09-06 | `30c26c6ede56c9c72999db6c03bd04e15c0047e1` | Build run `33988573241`; Native run `33988573153` | Final Format 0.18 alias-fixture repair passed ordinary conformance and the complete native mounted suite, including quotas, read/write and scrub qualification, online grow/shrink, media-aware placement and online defragmentation. |
 
 Detailed step logs and performance telemetry remain in the corresponding GitHub Actions runs and Git history rather than being copied into multiple documentation files.
 
