@@ -41,7 +41,7 @@ Format 0.18 provides:
 
 Linux is the most complete mounted adapter. The normal Linux path is the native out-of-tree `infiltratorfs.ko` VFS driver installed through DKMS; there is no current FUSE filesystem implementation or FUSE runtime fallback. The native driver includes the established read/write namespace surface, random and sparse I/O, truncate, `fallocate`, hole punching, FIEMAP/SEEK_DATA/SEEK_HOLE, reflinks, xattrs, special nodes, page cache/readahead, writable `mmap`, crash-safe open-unlink handling, checkpoint fallback/healing, online defragmentation, workload/media-aware allocation policy and online grow/bounded shrink.
 
-Current development source also contains native user/group/project quota machinery. Quotas remain **unfinished as a roadmap capability until mounted qualification passes**. Resize is implemented and independently mounted-qualified. The authoritative feature status is `docs/ROADMAP.md`; exact evidence is `docs/QUALIFICATION.md`.
+Current development source includes native user/group/project quotas with mounted qualification. Resize is implemented and independently mounted-qualified. The authoritative feature status is `docs/ROADMAP.md`; exact evidence is `docs/QUALIFICATION.md`.
 
 Windows currently provides native image/raw-partition access and a driverless Explorer bridge using Microsoft's inbox Projected File System (ProjFS). It is useful interoperability, but it is not a native InfiltratorFS Windows kernel driver. The native Windows filesystem driver remains future work.
 
