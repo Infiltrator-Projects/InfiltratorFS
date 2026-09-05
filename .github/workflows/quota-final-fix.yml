@@ -1,0 +1,62 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: One-shot final quota repair
+
+on:
+  push:
+    paths:
+      - '.github/workflows/quota-final-fix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix-and-qualify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Apply quota repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/quota_fix_apply.py
+          bash tests/native-quota-policy.sh .
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake kmod linux-headers-$(uname -r)
+
+      - name: Build exact running-kernel module and tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel --target mkfs.infilfs infilfs-scrub infiltratorfs-quota
+          make -C kernel clean KDIR="/lib/modules/$(uname -r)/build"
+          make -C kernel KDIR="/lib/modules/$(uname -r)/build"
+
+      - name: Qualify complete mounted quotas
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash tests/native-quota-qualification.sh build kernel/infiltratorfs.ko
+
+      - name: Commit qualified filesystem fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm -f .github/quota_fix_apply.py \
+                    .github/workflows/quota-final-fix.yml \
+                    .github/workflows/quota-hardlink-project-fix.yml \
+                    .github/workflows/quota-hang-diagnostic.yml \
+                    .github/workflows/quota-capture-deadlock-fix.yml
+          git config user.name 'Shannon Smith'
+          git config user.email 'infiltratr@yandex.com'
+          git add kernel/infiltratorfs_core.c kernel/infiltratorfs_quota.inc \
+                  tests/native-quota-policy.sh tests/native-quota-qualification.sh
+          git commit -m 'Quota: complete hardlink-safe native accounting'
+          git push origin HEAD:main
