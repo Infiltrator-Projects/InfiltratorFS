@@ -29,7 +29,7 @@ jobs:
           cmake --build build --parallel --target mkfs.infilfs infiltratorfs-quota
           make -C kernel clean KDIR="/lib/modules/$(uname -r)/build"
           make -C kernel KDIR="/lib/modules/$(uname -r)/build"
-      - name: Reproduce first quota persistence with kernel-stack watchdog
+      - name: Isolate first quota-accounted data write
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -47,6 +47,53 @@ jobs:
             rm -rf "$work"
           }
           trap cleanup EXIT
+
+          dump_stuck() {
+            local label="$1"
+            local pid="$2"
+            echo "QUOTA-DIAG: STUCK label=$label pid=$pid"
+            echo '===== process tree ====='
+            ps -eLo pid,ppid,tid,stat,wchan:40,comm,args | grep -E 'infiltratorfs-quota|dd|sudo|python3' || true
+            echo '===== watched process stack ====='
+            sudo cat "/proc/$pid/stack" 2>&1 || true
+            echo '===== all blocked tasks ====='
+            ps -eLo pid,ppid,tid,stat,wchan:48,comm,args | awk '$4 ~ /^D/ {print}' || true
+            echo '===== sysrq blocked-task dump ====='
+            sudo sh -c 'echo w > /proc/sysrq-trigger' 2>/dev/null || true
+            sudo dmesg --color=never | tail -n 400 || true
+            sudo umount -l "$mnt" || true
+            mounted=0
+            exit 1
+          }
+
+          watch_ok() {
+            local label="$1"
+            shift
+            local out="$work/watch.out"
+            local err="$work/watch.err"
+            : >"$out"
+            : >"$err"
+            echo "QUOTA-DIAG: START $label"
+            "$@" >"$out" 2>"$err" &
+            local pid=$!
+            local second
+            for second in $(seq 1 20); do
+              if ! kill -0 "$pid" 2>/dev/null; then
+                set +e
+                wait "$pid"
+                local rc=$?
+                set -e
+                cat "$out"
+                cat "$err" >&2
+                echo "QUOTA-DIAG: END $label rc=$rc within=${second}s"
+                [[ "$rc" -eq 0 ]]
+                return
+              fi
+              sleep 1
+            done
+            dump_stuck "$label" "$pid"
+          }
+
           mkdir -p "$mnt"
           truncate -s 512M "$image"
           build/mkfs.infilfs --force -L QuotaDiag "$image" >/dev/null
@@ -57,29 +104,10 @@ jobs:
           loopdev="$(sudo losetup --find --show "$image")"
           sudo mount -t infiltratorfs -o rw "$loopdev" "$mnt"
           mounted=1
-          echo 'QUOTA-DIAG: launching first user quota set'
-          sudo build/infiltratorfs-quota set "$mnt" user 0 6MiB 0 &
-          qpid=$!
-          for second in $(seq 1 20); do
-            if ! kill -0 "$qpid" 2>/dev/null; then
-              wait "$qpid"
-              echo "QUOTA-DIAG: first quota set returned within ${second}s"
-              exit 0
-            fi
-            sleep 1
-          done
-          echo "QUOTA-DIAG: STUCK pid=$qpid"
-          echo '===== process tree ====='
-          ps -eLo pid,ppid,tid,stat,wchan:32,comm,args | grep -E "(^|[[:space:]])($qpid|infiltratorfs-quota|sudo)([[:space:]]|$)" || true
-          echo '===== blocked process stack ====='
-          sudo cat "/proc/$qpid/stack" 2>&1 || true
-          echo '===== blocked process status ====='
-          sudo cat "/proc/$qpid/status" 2>&1 || true
-          echo '===== all blocked tasks ====='
-          ps -eLo pid,ppid,tid,stat,wchan:40,comm,args | awk '$4 ~ /^D/ {print}' || true
-          echo '===== sysrq blocked-task dump ====='
-          sudo sh -c 'echo w > /proc/sysrq-trigger' 2>/dev/null || true
-          sudo dmesg --color=never | tail -n 300 || true
-          sudo umount -l "$mnt" || true
-          mounted=0
-          exit 1
+
+          watch_ok 'first user quota set' \
+            sudo build/infiltratorfs-quota set "$mnt" user 0 6MiB 0
+          watch_ok 'first 4MiB quota-accounted write' \
+            sudo dd if=/dev/urandom of="$mnt/user-bytes.bin" bs=1M count=4 status=none
+
+          echo 'QUOTA-DIAG: first quota set and first 4MiB write both completed'
