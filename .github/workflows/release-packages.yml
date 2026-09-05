@@ -185,7 +185,7 @@ jobs:
           grep -q 'usr/lib/infiltratorfs/os-integration/gnome-disks$' "$deb_contents_file"
           grep -q 'usr/lib/infiltratorfs/os-integration/libbd_fs.so$' "$deb_contents_file"
           grep -q 'usr/lib/infiltratorfs/os-integration/manifest$' "$deb_contents_file"
-          grep -q 'usr/share/nemo/actions/infiltratorfs-format-partition.nemo_action$' "$deb_contents_file"
+          grep -q 'usr/lib/infiltratorfs/infiltratorfs-format-partition.nemo_action$' "$deb_contents_file"
           ! grep -q 'usr/bin/infilfs-fuse$' "$deb_contents_file"
           ! dpkg-deb --field "dist/$deb" Depends | grep -Eqi '(^|[, ])(fuse3|libfuse3-3)([, ]|$)'
           for dependency in dkms kmod policykit-1 util-linux xdg-utils fontconfig python3 python3-gi gir1.2-gtk-3.0; do
