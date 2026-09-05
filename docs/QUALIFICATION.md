@@ -31,13 +31,15 @@ This evidence does not depend on the quota gate and does not include the weekly/
 
 ### Quotas
 
-Native user/group/project quota implementation exists in development source but is **not yet qualified**.
+Native user/group/project quotas are implemented and mounted-qualified.
 
-Exact source `c5dd0bdb063faff4a94579b8a209b4a1e494191b` passed Build and conformance run `33805398475`. Native Linux run `33805398514` then completed checkout, policy guards, generic module build, DKMS source-root reproduction, module metadata validation, native userspace tools and running-kernel module build before entering the mounted user/group/project quota qualification step.
+The quota implementation/test content committed as exact source `4505fe828718bfa00467cc711b9147bf967f1890` passed the complete mounted quota qualification in one-shot final quota repair run `33977009426`, job `101335375795`. The run checked out the immediately preceding deterministic repair input, applied the recorded quota transform, built the exact running-kernel module and tools from that resulting tree, exercised the complete mounted quota contract, then committed that qualified kernel/test content as `4505fe828718bfa00467cc711b9147bf967f1890` and removed the temporary diagnostic machinery.
 
-That quota step ran until the workflow-enforced 15-minute timeout and was terminated without identifying the blocking sub-operation. Later mounted steps in that ordered workflow were therefore not reached for that exact source.
+The mounted qualification covered user byte hard limits and release after truncate; user object limits with same-inode hard links not double charged; group object limits; atomic ownership-transfer rejection when the destination quota would overflow; project-root inheritance; project byte/object limits; reflink logical-byte accounting; same-project hard links with subsequent writes still quota-enforced; cross-project hard-link rejection; cross-project rename preflight; project reassignment preflight; project-root deletion/replacement accounting; durable quota rules and project roots; remount usage reconstruction from authoritative objects including multiply-linked files; and final CLEAN scrub verification.
 
-The correct evidence statement is therefore: quota code exists, but mounted quota qualification remains unresolved. No later CI-only/documentation commit converts that result into a pass.
+The hard-link reconstruction fix resolves multiply-linked file project ownership from every directory alias because such files intentionally have no single persistent `parent_id`. All aliases must resolve to one project and the observed alias count must agree with persistent `link_count`; disagreement fails closed as corruption. Internal Linux SYSTEM sidecars are excluded from quota accounting before recursive quota capture, preventing quota-policy persistence/eviction from self-deadlocking.
+
+Earlier source `c5dd0bdb063faff4a94579b8a209b4a1e494191b` remains useful historical evidence of the original unresolved hang: Build and conformance run `33805398475` passed, while Native Linux run `33805398514` timed out in the mounted quota step. That historical timeout is superseded for feature-completion purposes by the later successful mounted qualification above; it is not rewritten as a pass.
 
 ## Milestone evidence
 
@@ -51,7 +53,8 @@ The correct evidence statement is therefore: quota code exists, but mounted quot
 | 2026-09-01 | `bf123d2cc98aef8b848386c4f26cc93a04fe4dc3` | Native run `33454396842`; Heavy run `33454248279` | Rotational and non-rotational media-placement policies exercised; images scrubbed CLEAN; endurance passed. |
 | 2026-09-01 | `ba1b06561de13dfa434b5cebf2e5797022d83572` | Build run `33474719972`; Native run `33474719970` | Windows bridge small-edit write-back regression and native mounted suite passed. |
 | 2026-09-03 | `c1dd5229e9c42e01ba2d9ab93ef79a6d6521e288` | Resize run `33818095528` | Independent mounted online shrink/grow, unsafe-tail refusal, remount verification and CLEAN scrub passed. |
-| 2026-09-03 | `c5dd0bdb063faff4a94579b8a209b4a1e494191b` | Build run `33805398475`; Native run `33805398514` | Build passed; mounted quota qualification timed out and remains unresolved. |
+| 2026-09-03 | `c5dd0bdb063faff4a94579b8a209b4a1e494191b` | Build run `33805398475`; Native run `33805398514` | Build passed; mounted quota qualification timed out on this historical source. |
+| 2026-09-06 | `4505fe828718bfa00467cc711b9147bf967f1890` | Mounted quota run `33977009426`, job `101335375795` | Full native user/group/project quota contract passed, including hard-link-safe project accounting, remount reconstruction and final CLEAN scrub. |
 
 Detailed step logs and performance telemetry remain in the corresponding GitHub Actions runs and Git history rather than being copied into multiple documentation files.
 
