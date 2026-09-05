@@ -9,11 +9,11 @@ InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem. The
 <!--
 Release-policy compatibility anchor. This line is deliberately hidden from the
 user-facing README so visible status wording can change without breaking CI.
-**Current source version:** 0.18.41 (Format 0.18)<br>
+**Current source version:** 0.18.42 (Format 0.18)<br>
 -->
-**Current source:** 0.18.41  
+**Current source:** 0.18.42  
 **On-disk format:** 0.18  
-**Latest published release:** v0.18.39  
+**Latest published release:** v0.18.41  
 **Shared foundation:** Infiltratr Common 1.11.0  
 **Licence:** GPL-3.0-or-later
 

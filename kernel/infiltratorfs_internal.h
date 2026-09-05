@@ -217,8 +217,14 @@ enum infilfs_media_override {
     INFILFS_MEDIA_OVERRIDE_NONROTATIONAL,
 };
 
+enum infilfs_compression_mode {
+    INFILFS_COMPRESSION_MODE_AUTO = 0,
+    INFILFS_COMPRESSION_MODE_OFF,
+};
+
 struct infilfs_fs_context {
     enum infilfs_media_override media_override;
+    enum infilfs_compression_mode compression_mode;
 };
 
 struct infilfs_quota_rule;
@@ -274,6 +280,7 @@ struct infilfs_sb_info {
     atomic64_t allocation_media_balanced_scored;
     enum infilfs_media_profile media_profile;
     bool media_profile_overridden;
+    bool compression_enabled;
     bool rw_enabled;
     bool write_poisoned;
     bool checkpoint_repair_needed;

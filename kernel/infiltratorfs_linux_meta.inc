@@ -291,6 +291,10 @@ static int infilfs_linux_meta_validate_blob(const u8 *blob, size_t size)
         if (value_length >
             size - offset - sizeof(*record) - name_length)
             return -EFSCORRUPTED;
+        if (name_length > XATTR_NAME_MAX ||
+            value_length > XATTR_SIZE_MAX ||
+            memchr(blob + offset + sizeof(*record), '\0', name_length))
+            return -EFSCORRUPTED;
         record_size = sizeof(*record) + name_length + value_length;
         if (record_size > size - offset)
             return -EFSCORRUPTED;
@@ -607,10 +611,12 @@ static int infilfs_linux_xattr_name(const struct xattr_handler *handler,
     if (!handler || !handler->prefix || !name)
         return -EINVAL;
     prefix = strlen(handler->prefix);
-    suffix = strnlen(name, U16_MAX);
-    if (!suffix || suffix >= U16_MAX ||
-        prefix >= U16_MAX || suffix > U16_MAX - prefix)
+    suffix = strnlen(name, XATTR_NAME_MAX + 1u);
+    if (!suffix)
         return -EINVAL;
+    if (prefix > XATTR_NAME_MAX || suffix > XATTR_NAME_MAX ||
+        suffix > XATTR_NAME_MAX - prefix)
+        return -ERANGE;
     full = kmalloc(prefix + suffix + 1u, GFP_NOFS);
     if (!full)
         return -ENOMEM;
@@ -701,7 +707,7 @@ static int infilfs_linux_xattr_set(
     ret = infilfs_linux_xattr_name(handler, name, &full);
     if (ret)
         return ret;
-    if (value_size > U32_MAX) {
+    if (value_size > XATTR_SIZE_MAX || value_size > U32_MAX) {
         kfree(full);
         return -E2BIG;
     }
@@ -780,12 +786,18 @@ out:
     kfree(full);
     if (!ret) {
         struct iattr attr;
+        int ctime_ret;
+
         memset(&attr, 0, sizeof(attr));
         attr.ia_valid = ATTR_CTIME;
         attr.ia_ctime = current_time(inode);
-        ret = infilfs_posix_rewrite_inode(inode, &attr);
-        if (!ret)
+        ctime_ret = infilfs_posix_rewrite_inode(inode, &attr);
+        if (!ctime_ret)
             inode_set_ctime_to_ts(inode, attr.ia_ctime);
+        else
+            pr_warn_ratelimited(
+                "InfiltratorFS: xattr committed but ctime persistence failed for inode %lu: %d\n",
+                inode->i_ino, ctime_ret);
     }
     return ret;
 }

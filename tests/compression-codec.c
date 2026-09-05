@@ -51,6 +51,12 @@ int main(void)
     expect(source && compressed && candidate && decoded && again &&
                scratch && scratch2,
            "allocate codec buffers");
+    expect(infs_iac1_savings_worthwhile(16u, 15u),
+           "one-block saving accepted for 16-block cluster");
+    expect(!infs_iac1_savings_worthwhile(64u, 61u),
+           "shallow saving rejected for 64-block cluster");
+    expect(infs_iac1_savings_worthwhile(64u, 60u),
+           "one-sixteenth saving accepted for 64-block cluster");
 
     memset(source, 0, TEST_BYTES);
     expect(infs_iac1_should_attempt(source, TEST_BYTES),

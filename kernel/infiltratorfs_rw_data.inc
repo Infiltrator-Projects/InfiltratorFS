@@ -4087,6 +4087,7 @@ static int infilfs_native_stage_compression_candidate(
     u8 *candidate = NULL;
     u8 *stored = NULL;
     struct infs_iac1_scratch *scratch = NULL;
+    u8 predictor_mode = INFS_IAC1_MODE_IDENTITY;
     size_t compressed_bytes = 0;
     u32 stored_blocks = 0;
     u64 data_start = 0;
@@ -4101,26 +4102,31 @@ static int infilfs_native_stage_compression_candidate(
     if (workload == INFILFS_DATA_WORKLOAD_SEQUENTIAL &&
         logical_blocks >= 2u &&
         logical_blocks <= INFILFS_COMPRESSION_CLUSTER_BLOCKS &&
+        pending->tx.sbi->compression_enabled &&
         (le64_to_cpu(pending->tx.next_sb.incompat_flags) &
          INFILFS_INCOMPAT_COMPRESSED_EXTENTS) != 0 &&
         infs_iac1_should_attempt(plain, plain_bytes)) {
         bound = infs_iac1_bound(plain_bytes);
+        predictor_mode = infs_iac1_predictor_mode(plain, plain_bytes);
         compressed = kvmalloc(bound, GFP_NOFS);
-        candidate = kvmalloc(bound, GFP_NOFS);
+        if (predictor_mode != INFS_IAC1_MODE_IDENTITY)
+            candidate = kvmalloc(bound, GFP_NOFS);
         scratch = kvmalloc(sizeof(*scratch), GFP_NOFS);
-        if (!compressed || !candidate || !scratch) {
+        if (!compressed || !scratch ||
+            (predictor_mode != INFS_IAC1_MODE_IDENTITY && !candidate)) {
             ret = -ENOMEM;
             goto out;
         }
         compressed_bytes = infs_iac1_compress(
             plain, plain_bytes, compressed, bound,
-            candidate, bound, scratch);
+            candidate, candidate ? bound : 0u, scratch);
         if (compressed_bytes &&
             compressed_bytes <= INFILFS_EXTENT_STORED_BYTES_MAX) {
             stored_blocks = DIV_ROUND_UP(
                 (u32)compressed_bytes,
                 (u32)INFILFS_DISK_BLOCK_SIZE);
-            if (stored_blocks >= logical_blocks)
+            if (!infs_iac1_savings_worthwhile(
+                    logical_blocks, stored_blocks))
                 stored_blocks = 0;
         }
     }

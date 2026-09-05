@@ -267,6 +267,7 @@ static int file_store_extent_payload(
     uint8_t *compressed = NULL;
     uint8_t *candidate = NULL;
     struct infs_iac1_scratch *scratch = NULL;
+    uint8_t predictor_mode = INFS_IAC1_MODE_IDENTITY;
     size_t compressed_bytes = 0;
     uint8_t *stored = NULL;
     uint32_t stored_blocks = 0;
@@ -281,10 +282,13 @@ static int file_store_extent_payload(
         logical_blocks >= 2u &&
         infs_iac1_should_attempt(plain, plain_bytes)) {
         bound = infs_iac1_bound(plain_bytes);
+        predictor_mode = infs_iac1_predictor_mode(plain, plain_bytes);
         compressed = malloc(bound);
-        candidate = malloc(bound);
+        if (predictor_mode != INFS_IAC1_MODE_IDENTITY)
+            candidate = malloc(bound);
         scratch = malloc(sizeof(*scratch));
-        if (!compressed || !candidate || !scratch) {
+        if (!compressed || !scratch ||
+            (predictor_mode != INFS_IAC1_MODE_IDENTITY && !candidate)) {
             free(scratch);
             free(candidate);
             free(compressed);
@@ -292,13 +296,14 @@ static int file_store_extent_payload(
         }
         compressed_bytes = infs_iac1_compress(
             plain, plain_bytes, compressed, bound,
-            candidate, bound, scratch);
+            candidate, candidate ? bound : 0u, scratch);
         if (compressed_bytes &&
             compressed_bytes <= INFS_EXTENT_STORED_BYTES_MAX) {
             stored_blocks = (uint32_t)(
                 compressed_bytes / INFS_BLOCK_SIZE +
                 ((compressed_bytes % INFS_BLOCK_SIZE) != 0));
-            if (stored_blocks >= logical_blocks)
+            if (!infs_iac1_savings_worthwhile(
+                    logical_blocks, stored_blocks))
                 stored_blocks = 0;
         }
     }

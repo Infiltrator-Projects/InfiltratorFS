@@ -2589,9 +2589,12 @@ static int infilfs_show_options(struct seq_file *seq, struct dentry *root)
 {
     const struct infilfs_sb_info *sbi = INFILFS_SB(root->d_sb);
 
-    if (sbi)
+    if (sbi) {
         seq_printf(seq, ",media=%s", infilfs_media_profile_name(
             sbi->media_profile));
+        seq_printf(seq, ",compress=%s",
+                   sbi->compression_enabled ? "auto" : "off");
+    }
     return 0;
 }
 
@@ -2662,6 +2665,8 @@ static int infilfs_fill_super(struct super_block *sb, struct fs_context *fc)
     if (!sbi)
         return -ENOMEM;
     sbi->device_blocks = bytes >> INFILFS_DISK_BLOCK_SHIFT;
+    sbi->compression_enabled =
+        !ctx || ctx->compression_mode != INFILFS_COMPRESSION_MODE_OFF;
     ret = infilfs_resolve_media_profile(sb, ctx, sbi);
     if (ret) {
         kfree(sbi);
@@ -2710,12 +2715,13 @@ static int infilfs_fill_super(struct super_block *sb, struct fs_context *fc)
     if (ret)
         goto fail;
 
-    pr_info("InfiltratorFS: native %s mount Format %u.%u generation %llu media=%s media_source=%s\n",
+    pr_info("InfiltratorFS: native %s mount Format %u.%u generation %llu media=%s media_source=%s compress=%s\n",
             sb_rdonly(sb) ? "read-only" : "read-write",
             INFILFS_FORMAT_MAJOR, INFILFS_FORMAT_MINOR,
             (unsigned long long)le64_to_cpu(sbi->disk.generation),
             infilfs_media_profile_name(sbi->media_profile),
-            sbi->media_profile_overridden ? "override" : "auto");
+            sbi->media_profile_overridden ? "override" : "auto",
+            sbi->compression_enabled ? "auto" : "off");
     return 0;
 
 fail:
@@ -2732,6 +2738,7 @@ fail:
 
 enum {
     Opt_media,
+    Opt_compress,
 };
 
 static const struct constant_table infilfs_media_param_values[] = {
@@ -2742,8 +2749,15 @@ static const struct constant_table infilfs_media_param_values[] = {
     {}
 };
 
+static const struct constant_table infilfs_compression_param_values[] = {
+    { "auto", INFILFS_COMPRESSION_MODE_AUTO },
+    { "off", INFILFS_COMPRESSION_MODE_OFF },
+    {}
+};
+
 static const struct fs_parameter_spec infilfs_fs_parameters[] = {
     fsparam_enum("media", Opt_media, infilfs_media_param_values),
+    fsparam_enum("compress", Opt_compress, infilfs_compression_param_values),
     {}
 };
 
@@ -2765,6 +2779,10 @@ static int infilfs_parse_param(
     case Opt_media:
         ctx->media_override =
             (enum infilfs_media_override)result.uint_32;
+        return 0;
+    case Opt_compress:
+        ctx->compression_mode =
+            (enum infilfs_compression_mode)result.uint_32;
         return 0;
     default:
         return -EINVAL;
@@ -2796,6 +2814,7 @@ static int infilfs_init_fs_context(struct fs_context *fc)
     if (!ctx)
         return -ENOMEM;
     ctx->media_override = INFILFS_MEDIA_OVERRIDE_AUTO;
+    ctx->compression_mode = INFILFS_COMPRESSION_MODE_AUTO;
     fc->fs_private = ctx;
     fc->ops = &infilfs_context_operations;
     return 0;
