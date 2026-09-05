@@ -56,4 +56,11 @@ for path in (ROOT / 'kernel').rglob('*'):
 if changed != 11:
     raise SystemExit(f'expected 11 remaining scalar nested timestamp writes, converted {changed}')
 
+# The read-cache callback is intentionally wrapped by the Format 0.18 atime
+# persistence layer. Keep the maintainability guard strict, but point it at the
+# new final VFS alias instead of the pre-0.18 cached callback.
+replace('tests/native-kernel-maintainability-policy.sh',
+        "grep -Fq '#define infilfs_file_read_iter infilfs_file_read_iter_cached' \"$rw\" || \\\n    fail 'read-cache alias bridge changed'",
+        "grep -Fq '#define infilfs_file_read_iter infilfs_file_read_iter_atime' \"$rw\" || \\\n    fail 'read-cache/atime alias bridge changed'", 1)
+
 print('Native Format 0.18 kernel compatibility corrections applied.')
