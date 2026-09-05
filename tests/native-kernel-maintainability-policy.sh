@@ -132,8 +132,8 @@ data_aliases="$(grep -Ec '^#define infilfs_[a-z0-9_]+[[:space:]]+__maybe_unused[
 test "$data_aliases" -eq 3 || \
     fail "data alias bridge changed ($data_aliases entries; expected 3)"
 
-grep -Fq '#define infilfs_file_read_iter infilfs_file_read_iter_cached' "$rw" || \
-    fail 'read-cache alias bridge changed'
+grep -Fq '#define infilfs_file_read_iter infilfs_file_read_iter_atime' "$rw" || \
+    fail 'read-cache/atime alias bridge changed'
 grep -Fq '#define infilfs_rw_fill_common_attributes infilfs_posix_fill_common_attributes' "$rw" || \
     fail 'POSIX attribute alias bridge changed'
 

@@ -822,7 +822,7 @@ static int infilfs_ns_append_paged_directory(
 
     payload->entry_count = cpu_to_le32(directory_entries + 1u);
     payload->bytes_used = cpu_to_le32(page_count);
-    payload->attributes.modification_time = cpu_to_le64(ktime_get_real_ns());
+    infilfs_timestamp_encode_ns(&payload->attributes.modification_time, ktime_get_real_ns());
     payload->attributes.change_time = payload->attributes.modification_time;
     if (link_delta) {
         u64 links = le64_to_cpu(payload->attributes.link_count);
@@ -983,7 +983,7 @@ static int infilfs_ns_rebuild_directory(
     payload = (struct infilfs_directory_payload_disk *)(header + 1);
     header->generation = cpu_to_le64(tx->generation);
     payload->entry_count = cpu_to_le32(out_count);
-    payload->attributes.modification_time = cpu_to_le64(ktime_get_real_ns());
+    infilfs_timestamp_encode_ns(&payload->attributes.modification_time, ktime_get_real_ns());
     payload->attributes.change_time = payload->attributes.modification_time;
     if (link_delta) {
         u64 links = le64_to_cpu(payload->attributes.link_count);

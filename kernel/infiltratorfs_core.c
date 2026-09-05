@@ -2361,9 +2361,12 @@ static int infilfs_populate_inode(struct inode *inode, u64 object_block,
         goto fail_private;
     }
     ii->portable_flags = le64_to_cpu(attributes->portable_flags);
-    inode->i_atime = infilfs_timestamp_decode(&attributes->access_time);
-    inode->i_mtime = infilfs_timestamp_decode(&attributes->modification_time);
-    inode->i_ctime = infilfs_timestamp_decode(&attributes->change_time);
+    inode_set_atime_to_ts(
+        inode, infilfs_timestamp_decode(&attributes->access_time));
+    inode_set_mtime_to_ts(
+        inode, infilfs_timestamp_decode(&attributes->modification_time));
+    inode_set_ctime_to_ts(
+        inode, infilfs_timestamp_decode(&attributes->change_time));
     {
         kuid_t uid = make_kuid(&init_user_ns, le32_to_cpu(posix->uid));
         kgid_t gid = make_kgid(&init_user_ns, le32_to_cpu(posix->gid));

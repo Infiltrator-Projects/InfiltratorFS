@@ -1596,7 +1596,7 @@ static int infilfs_rw_rebuild_directory(struct infilfs_rw_tx *tx,
     payload = (struct infilfs_directory_payload_disk *)(header + 1);
     header->generation = cpu_to_le64(tx->generation);
     payload->entry_count = cpu_to_le32(count + 1u);
-    payload->attributes.modification_time = cpu_to_le64(ktime_get_real_ns());
+    infilfs_timestamp_encode_ns(&payload->attributes.modification_time, ktime_get_real_ns());
     payload->attributes.change_time = payload->attributes.modification_time;
     if (child_type == INFILFS_OBJECT_DIRECTORY)
         payload->attributes.link_count = cpu_to_le64(
@@ -1959,7 +1959,7 @@ static int infilfs_rw_replace_inline_locked(struct inode *inode,
     header->generation = cpu_to_le64(tx.generation);
     header->object_version = cpu_to_le16(INFILFS_OBJECT_VERSION_CLASSIC);
     file->attributes.logical_size = cpu_to_le64(size);
-    file->attributes.modification_time = cpu_to_le64(ktime_get_real_ns());
+    infilfs_timestamp_encode_ns(&file->attributes.modification_time, ktime_get_real_ns());
     file->attributes.change_time = file->attributes.modification_time;
     file->extent_count = 0;
     file->data_checksum_type = cpu_to_le32(INFILFS_CHECKSUM_SHA256);

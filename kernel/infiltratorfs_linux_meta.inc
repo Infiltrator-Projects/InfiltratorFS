@@ -785,7 +785,7 @@ out:
         attr.ia_ctime = current_time(inode);
         ret = infilfs_posix_rewrite_inode(inode, &attr);
         if (!ret)
-            inode->i_ctime = attr.ia_ctime;
+            inode_set_ctime_to_ts(inode, attr.ia_ctime);
     }
     return ret;
 }

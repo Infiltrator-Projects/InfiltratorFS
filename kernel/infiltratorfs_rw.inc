@@ -625,7 +625,7 @@ static int infilfs_native_truncate(struct inode *inode, u64 new_size)
         old_header->generation = cpu_to_le64(pending->tx.generation);
         old_header->object_version = cpu_to_le16(INFILFS_OBJECT_VERSION_CLASSIC);
         old_file->attributes.logical_size = cpu_to_le64(new_size);
-        old_file->attributes.modification_time = cpu_to_le64(ktime_get_real_ns());
+        infilfs_timestamp_encode_ns(&old_file->attributes.modification_time, ktime_get_real_ns());
         old_file->attributes.change_time =
             old_file->attributes.modification_time;
         old_file->extent_count = 0;
@@ -979,7 +979,7 @@ static int infilfs_native_punch_hole(struct inode *inode,
         header = (struct infilfs_object_header_disk *)new_object;
         file = (struct infilfs_file_payload_disk *)(header + 1);
         header->generation = cpu_to_le64(pending->tx.generation);
-        file->attributes.modification_time = cpu_to_le64(ktime_get_real_ns());
+        infilfs_timestamp_encode_ns(&file->attributes.modification_time, ktime_get_real_ns());
         file->attributes.change_time = file->attributes.modification_time;
         digest = (struct infilfs_data_checksum_disk *)(file + 1);
         ret = infilfs_rw_inline_digest(inline_data, (size_t)file_size,
@@ -1795,14 +1795,14 @@ static ssize_t infilfs_file_read_iter_atime(struct kiocb *iocb,
 {
     struct file *file = iocb->ki_filp;
     struct inode *inode = file_inode(file);
-    struct timespec64 before = inode->i_atime;
+    struct timespec64 before = inode_get_atime(inode);
     ssize_t result = infilfs_file_read_iter_cached(iocb, to);
 
     if (result > 0 && !sb_rdonly(inode->i_sb)) {
         struct timespec64 after;
         struct iattr attr;
         file_accessed(file);
-        after = inode->i_atime;
+        after = inode_get_atime(inode);
         if (timespec64_compare(&before, &after) != 0) {
             memset(&attr, 0, sizeof(attr));
             attr.ia_valid = ATTR_ATIME;

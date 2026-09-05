@@ -771,8 +771,7 @@ static int infilfs_native_reflink_full(
         new_header->object_version =
             cpu_to_le16(INFILFS_OBJECT_VERSION_CLASSIC);
         new_file->attributes.logical_size = cpu_to_le64(source_size);
-        new_file->attributes.modification_time =
-            cpu_to_le64(ktime_get_real_ns());
+        infilfs_timestamp_encode_ns(&new_file->attributes.modification_time, ktime_get_real_ns());
         new_file->attributes.change_time =
             new_file->attributes.modification_time;
         new_file->extent_count = 0;
