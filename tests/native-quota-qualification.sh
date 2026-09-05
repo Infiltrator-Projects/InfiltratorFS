@@ -29,16 +29,28 @@ cleanup() {
 }
 trap cleanup EXIT
 
+stage() {
+    printf 'native quota qualification: STAGE %s\n' "$1" >&2
+}
+
+quota_cmd() {
+    local label="$1"
+    shift
+    stage "$label"
+    timeout --foreground 90s sudo "$quota" "$@"
+}
+
 field() {
     local key="$1"
     shift
-    sudo "$quota" get "$@" | awk -F= -v key="$key" '$1 == key { print $2 }'
+    timeout --foreground 90s sudo "$quota" get "$@" |
+        awk -F= -v key="$key" '$1 == key { print $2 }'
 }
 
 append_once() {
     local path="$1"
     local bytes="$2"
-    sudo python3 - "$path" "$bytes" <<'PY'
+    sudo timeout --foreground 90s python3 - "$path" "$bytes" <<'PY'
 import os
 import sys
 
@@ -55,6 +67,7 @@ finally:
 PY
 }
 
+stage "format and mount"
 mkdir -p "$mnt"
 truncate -s 512M "$image"
 "$build/mkfs.infilfs" --force -L NativeQuota "$image" >/dev/null
@@ -69,7 +82,8 @@ mounted=1
 
 # User byte quota: reject growth before data is written, then release usage on
 # truncate so later growth can consume the returned allowance.
-sudo "$quota" set "$mnt" user 0 6MiB 0 >/dev/null
+quota_cmd "set initial user byte quota" set "$mnt" user 0 6MiB 0 >/dev/null
+stage "exercise user byte quota"
 sudo dd if=/dev/urandom of="$mnt/user-bytes.bin" bs=1M count=4 status=none
 if append_once "$mnt/user-bytes.bin" $((3 * 1024 * 1024)) \
         2>"$work/user-edquot"; then
@@ -85,8 +99,9 @@ test "$(stat -c '%s' "$mnt/user-bytes.bin")" -eq $((5 * 1024 * 1024))
 
 # User object quota counts persistent objects rather than directory entries:
 # a hard link must not consume a second object charge.
+stage "exercise user object quota"
 user_used="$(field used_objects "$mnt" user 0)"
-sudo "$quota" set "$mnt" user 0 0 "$((user_used + 1))" >/dev/null
+quota_cmd "replace user quota with object limit" set "$mnt" user 0 0 "$((user_used + 1))" >/dev/null
 sudo touch "$mnt/user-object-one"
 sudo ln "$mnt/user-object-one" "$mnt/user-object-link"
 if sudo touch "$mnt/user-object-two" 2>"$work/user-object-edquot"; then
@@ -96,24 +111,26 @@ fi
 grep -Eqi 'quota|Disk quota exceeded' "$work/user-object-edquot"
 test "$(stat -c '%i' "$mnt/user-object-one")" = \
      "$(stat -c '%i' "$mnt/user-object-link")"
-sudo "$quota" clear "$mnt" user 0 >/dev/null
+quota_cmd "clear user quota" clear "$mnt" user 0 >/dev/null
 
 # Group object quota uses the same native accounting path.
-sudo "$quota" set "$mnt" group 0 0 1000000 >/dev/null
+stage "exercise group object quota"
+quota_cmd "seed group quota" set "$mnt" group 0 0 1000000 >/dev/null
 group_used="$(field used_objects "$mnt" group 0)"
-sudo "$quota" set "$mnt" group 0 0 "$((group_used + 1))" >/dev/null
+quota_cmd "tighten group object quota" set "$mnt" group 0 0 "$((group_used + 1))" >/dev/null
 sudo touch "$mnt/group-object-one"
 if sudo touch "$mnt/group-object-two" 2>"$work/group-edquot"; then
     echo "group object quota allowed an extra persistent object" >&2
     exit 1
 fi
 grep -Eqi 'quota|Disk quota exceeded' "$work/group-edquot"
-sudo "$quota" clear "$mnt" group 0 >/dev/null
+quota_cmd "clear group quota" clear "$mnt" group 0 >/dev/null
 
 # chown transfers accounting. A file larger than the destination user's hard
 # limit must stay with its original owner.
+stage "exercise ownership transfer quota"
 sudo dd if=/dev/urandom of="$mnt/chown-candidate.bin" bs=1M count=2 status=none
-sudo "$quota" set "$mnt" user 12345 1MiB 0 >/dev/null
+quota_cmd "set destination user quota" set "$mnt" user 12345 1MiB 0 >/dev/null
 if sudo chown 12345:12345 "$mnt/chown-candidate.bin" \
         2>"$work/chown-edquot"; then
     echo "chown crossed a destination user quota" >&2
@@ -121,16 +138,18 @@ if sudo chown 12345:12345 "$mnt/chown-candidate.bin" \
 fi
 grep -Eqi 'quota|Disk quota exceeded' "$work/chown-edquot"
 test "$(stat -c '%u' "$mnt/chown-candidate.bin")" -eq 0
-sudo "$quota" clear "$mnt" user 12345 >/dev/null
+quota_cmd "clear destination user quota" clear "$mnt" user 12345 >/dev/null
 
 # Project IDs are directory-tree quota domains and inherit through descendants.
+stage "create project domains"
 sudo mkdir "$mnt/project-a" "$mnt/project-b" "$mnt/outside"
-sudo "$quota" project-set "$mnt/project-a" 42 >/dev/null
+quota_cmd "assign project 42" project-set "$mnt/project-a" 42 >/dev/null
 sudo mkdir "$mnt/project-a/sub"
-test "$(sudo "$quota" project-get "$mnt/project-a/sub" | \
+test "$(timeout --foreground 90s sudo "$quota" project-get "$mnt/project-a/sub" | \
         awk -F= '$1 == "effective_project_id" { print $2 }')" -eq 42
 
-sudo "$quota" set "$mnt" project 42 5MiB 32 >/dev/null
+quota_cmd "set project 42 quota" set "$mnt" project 42 5MiB 32 >/dev/null
+stage "exercise project byte and reflink quota"
 sudo dd if=/dev/urandom of="$mnt/project-a/data.bin" bs=1M count=4 status=none
 if append_once "$mnt/project-a/data.bin" $((2 * 1024 * 1024)) \
         2>"$work/project42-edquot"; then
@@ -158,8 +177,9 @@ test "$(stat -c '%i' "$mnt/project-a/data.bin")" = \
 
 # Cross-directory rename is preflighted against the destination project. It
 # must fail atomically rather than moving first and discovering overage later.
-sudo "$quota" project-set "$mnt/project-b" 43 >/dev/null
-sudo "$quota" set "$mnt" project 43 1MiB 32 >/dev/null
+stage "exercise cross-project preflight"
+quota_cmd "assign project 43" project-set "$mnt/project-b" 43 >/dev/null
+quota_cmd "set project 43 quota" set "$mnt" project 43 1MiB 32 >/dev/null
 if sudo ln "$mnt/project-a/data.bin" "$mnt/project-b/cross-project-link" \
         2>"$work/hardlink-exdev"; then
     echo "cross-project hard link unexpectedly succeeded" >&2
@@ -182,38 +202,43 @@ test ! -e "$mnt/project-b/move-me"
 
 # Changing a directory into an already-full project is also a transfer and must
 # receive the same preflight treatment.
+stage "exercise project reassignment preflight"
 sudo mkdir "$mnt/outside/project-candidate"
 sudo dd if=/dev/urandom of="$mnt/outside/project-candidate/payload.bin" \
     bs=1M count=2 status=none
-if sudo "$quota" project-set "$mnt/outside/project-candidate" 43 \
+if timeout --foreground 90s sudo "$quota" project-set \
+        "$mnt/outside/project-candidate" 43 \
         >"$work/project-set.out" 2>"$work/project-set-edquot"; then
     echo "project assignment crossed the destination project quota" >&2
     exit 1
 fi
 grep -Eqi 'quota|Disk quota exceeded' "$work/project-set-edquot"
-test "$(sudo "$quota" project-get "$mnt/outside/project-candidate" | \
+test "$(timeout --foreground 90s sudo "$quota" project-get \
+        "$mnt/outside/project-candidate" | \
         awk -F= '$1 == "effective_project_id" { print $2 }')" -eq 0
 
 # Deleting or replacing an empty project-root directory must remove the object
 # mapping and release the project's object charge.
+stage "exercise project-root deletion and replacement"
 sudo mkdir "$mnt/project-delete"
-sudo "$quota" project-set "$mnt/project-delete" 77 >/dev/null
-sudo "$quota" set "$mnt" project 77 0 4 >/dev/null
+quota_cmd "assign project 77" project-set "$mnt/project-delete" 77 >/dev/null
+quota_cmd "set project 77 quota" set "$mnt" project 77 0 4 >/dev/null
 test "$(field used_objects "$mnt" project 77)" -eq 1
 sudo rmdir "$mnt/project-delete"
 test "$(field used_objects "$mnt" project 77)" -eq 0
 
 sudo mkdir "$mnt/project-replace" "$mnt/replacement-source"
-sudo "$quota" project-set "$mnt/project-replace" 78 >/dev/null
-sudo "$quota" set "$mnt" project 78 0 4 >/dev/null
+quota_cmd "assign project 78" project-set "$mnt/project-replace" 78 >/dev/null
+quota_cmd "set project 78 quota" set "$mnt" project 78 0 4 >/dev/null
 test "$(field used_objects "$mnt" project 78)" -eq 1
 sudo mv -T "$mnt/replacement-source" "$mnt/project-replace"
-test "$(sudo "$quota" project-get "$mnt/project-replace" | \
+test "$(timeout --foreground 90s sudo "$quota" project-get "$mnt/project-replace" | \
         awk -F= '$1 == "effective_project_id" { print $2 }')" -eq 0
 test "$(field used_objects "$mnt" project 78)" -eq 0
 
 # Policy and project-root metadata are persistent, but volatile usage is
 # deliberately rebuilt from authoritative objects after remount.
+stage "exercise quota persistence across remount"
 before42="$(field used_bytes "$mnt" project 42)"
 sudo sync
 sudo umount "$mnt"
@@ -222,7 +247,7 @@ mounted=0
 
 sudo mount -t infiltratorfs -o rw "$loopdev" "$mnt"
 mounted=1
-test "$(sudo "$quota" project-get "$mnt/project-a/sub" | \
+test "$(timeout --foreground 90s sudo "$quota" project-get "$mnt/project-a/sub" | \
         awk -F= '$1 == "effective_project_id" { print $2 }')" -eq 42
 after42="$(field used_bytes "$mnt" project 42)"
 test "$after42" -eq "$before42"
@@ -234,6 +259,7 @@ fi
 grep -Eqi 'quota|Disk quota exceeded' "$work/remount-edquot"
 test "$(stat -c '%s' "$mnt/project-a/data.bin")" -eq $((4 * 1024 * 1024))
 
+stage "final unmount and scrub"
 sudo umount "$mnt"
 mounted=0
 "$build/infilfs-scrub" "$image" | grep -Fq 'Result:              CLEAN'
