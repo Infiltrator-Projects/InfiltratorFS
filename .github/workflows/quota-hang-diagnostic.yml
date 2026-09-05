@@ -15,6 +15,52 @@ jobs:
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@v6
+      - name: Apply sidecar eviction quota fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('kernel/infiltratorfs_quota.inc')
+          text = path.read_text()
+          old = '''static int infilfs_quota_capture_inode(
+              struct inode *inode, struct infilfs_quota_reservation *reservation)
+          {
+              struct infilfs_sb_info *sbi = INFILFS_SB(inode->i_sb);
+              int ret;
+
+              if (!sbi) {
+                  memset(reservation, 0, sizeof(*reservation));
+                  return 0;
+              }
+              mutex_lock(&sbi->quota_lock);
+              ret = infilfs_quota_capture_inode_locked(inode, reservation);
+              mutex_unlock(&sbi->quota_lock);
+              return ret;
+          }
+          '''
+          new = '''static int infilfs_quota_capture_inode(
+              struct inode *inode, struct infilfs_quota_reservation *reservation)
+          {
+              struct infilfs_sb_info *sbi = INFILFS_SB(inode->i_sb);
+              struct infilfs_inode_info *ii = INFILFS_I(inode);
+              int ret;
+
+              /* Internal SYSTEM sidecars are outside quota accounting. */
+              if (!sbi || !ii || (ii->portable_flags & INFILFS_ATTR_SYSTEM)) {
+                  memset(reservation, 0, sizeof(*reservation));
+                  return 0;
+              }
+              mutex_lock(&sbi->quota_lock);
+              ret = infilfs_quota_capture_inode_locked(inode, reservation);
+              mutex_unlock(&sbi->quota_lock);
+              return ret;
+          }
+          '''
+          if old not in text:
+              raise SystemExit('expected quota capture source not found')
+          path.write_text(text.replace(old, new, 1))
+          PY
       - name: Install dependencies
         shell: bash
         run: |
@@ -36,7 +82,7 @@ jobs:
           echo 'QUOTA-DIAG: launching full qualification with shell trace'
           bash -x tests/native-quota-qualification.sh build kernel/infiltratorfs.ko &
           qpid=$!
-          for second in $(seq 1 210); do
+          for second in $(seq 1 120); do
             if ! kill -0 "$qpid" 2>/dev/null; then
               set +e
               wait "$qpid"
@@ -49,10 +95,10 @@ jobs:
           done
           echo "QUOTA-DIAG: STUCK full qualification pid=$qpid"
           echo '===== process tree ====='
-          ps -eLo pid,ppid,tid,stat,wchan:48,comm,args | grep -E 'native-quota|infiltratorfs-quota|dd|truncate|touch|ln|chown|mkdir|mv|cp|sudo|python3' || true
+          ps -eLo pid,ppid,tid,stat,wchan:48,comm,args | grep -E 'native-quota|infiltratorfs-quota|dd|truncate|touch|ln|chown|mkdir|mv|cp|sudo|python3|sync|umount' || true
           echo '===== all blocked tasks ====='
           ps -eLo pid,ppid,tid,stat,wchan:48,comm,args | awk '$4 ~ /^D/ {print}' || true
           echo '===== sysrq blocked-task dump ====='
           sudo sh -c 'echo w > /proc/sysrq-trigger' 2>/dev/null || true
-          sudo dmesg --color=never | tail -n 500 || true
+          sudo dmesg --color=never | tail -n 600 || true
           exit 1
