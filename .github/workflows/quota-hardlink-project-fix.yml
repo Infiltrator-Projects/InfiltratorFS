@@ -239,51 +239,33 @@ jobs:
           if inode_old not in q:
               raise SystemExit('live inode project call not found')
           q = q.replace(inode_old, inode_new, 1)
+
+          get_old = '''ret = infilfs_quota_effective_project_locked(inode->i_sb, ii->object_id, header->parent_id,
+                                                       &request->effective_project_id);'''
+          get_new = '''ret = infilfs_quota_object_project_locked(
+                inode->i_sb, header, &request->effective_project_id);'''
+          if get_old not in q:
+              raise SystemExit('project-get effective project call not found')
+          q = q.replace(get_old, get_new, 1)
+
           quota.write_text(q)
 
           core = Path('kernel/infiltratorfs_core.c')
           c = core.read_text()
-          old_core = '''    if (reclaiming) {
-              released_bytes = (u64)i_size_read(inode);
-              ret = infilfs_quota_capture_inode(inode, &released_quota);
-              if (ret) {
-                  pr_err("InfiltratorFS: could not capture quota ownership for inode %lu: %d\\n",
-                         inode->i_ino, ret);
-                  released_quota.active = false;
-                  ret = 0;
-              }
-              ret = infilfs_linux_meta_remove_object(inode->i_sb, ii->object_id);
-              if (ret)
-                  pr_err("InfiltratorFS: could not remove Linux metadata for inode %lu: %d\\n",
-                         inode->i_ino, ret);
-          }
-          if (!ret)
-              ret = infilfs_ns_evict_unlinked_file(inode);
-          if (!ret && reclaiming)
+          first = '    if (reclaiming) {\n'
+          first_new = '    if (reclaiming && !(ii->portable_flags & INFILFS_ATTR_SYSTEM)) {\n'
+          if first not in c:
+              raise SystemExit('eviction reclaiming condition not found')
+          c = c.replace(first, first_new, 1)
+          second = '''    if (!ret && reclaiming)
               infilfs_quota_apply_release(&released_quota, released_bytes, 1);
           '''
-          new_core = '''    if (reclaiming && !(ii->portable_flags & INFILFS_ATTR_SYSTEM)) {
-              released_bytes = (u64)i_size_read(inode);
-              ret = infilfs_quota_capture_inode(inode, &released_quota);
-              if (ret) {
-                  pr_err("InfiltratorFS: could not capture quota ownership for inode %lu: %d\\n",
-                         inode->i_ino, ret);
-                  released_quota.active = false;
-                  ret = 0;
-              }
-              ret = infilfs_linux_meta_remove_object(inode->i_sb, ii->object_id);
-              if (ret)
-                  pr_err("InfiltratorFS: could not remove Linux metadata for inode %lu: %d\\n",
-                         inode->i_ino, ret);
-          }
-          if (!ret)
-              ret = infilfs_ns_evict_unlinked_file(inode);
-          if (!ret && reclaiming && !(ii->portable_flags & INFILFS_ATTR_SYSTEM))
+          second_new = '''    if (!ret && reclaiming && !(ii->portable_flags & INFILFS_ATTR_SYSTEM))
               infilfs_quota_apply_release(&released_quota, released_bytes, 1);
           '''
-          if old_core not in c:
-              raise SystemExit('core eviction source not found')
-          core.write_text(c.replace(old_core, new_core, 1))
+          if second not in c:
+              raise SystemExit('eviction release condition not found')
+          core.write_text(c.replace(second, second_new, 1))
 
           test = Path('tests/native-quota-qualification.sh')
           t = test.read_text()
@@ -305,17 +287,17 @@ jobs:
 
           policy = Path('tests/native-quota-policy.sh')
           p = policy.read_text()
-          marker = 'grep -Fq \'Internal Linux sidecar files must never recursively resolve sidecar\' "$root/kernel/infiltratorfs_core.c"\n'
-          if marker not in p:
+          policy_marker = 'grep -Fq \'Internal Linux sidecar files must never recursively resolve sidecar\' "$root/kernel/infiltratorfs_core.c"\n'
+          if policy_marker not in p:
               raise SystemExit('quota policy insertion point missing')
-          additions = marker + (
+          additions = policy_marker + (
               'grep -Fq \'Internal SYSTEM sidecars are outside quota accounting\' "$root/kernel/infiltratorfs_quota.inc"\n'
               'grep -Fq \'reclaiming && !(ii->portable_flags & INFILFS_ATTR_SYSTEM)\' "$root/kernel/infiltratorfs_core.c"\n'
               'grep -Fq \'Hard-linked files intentionally have no single parent_id\' "$root/kernel/infiltratorfs_quota.inc"\n'
               'grep -Fq \'infilfs_quota_alias_project_from_index_locked\' "$root/kernel/infiltratorfs_quota.inc"\n'
           )
           if 'Hard-linked files intentionally have no single parent_id' not in p:
-              p = p.replace(marker, additions, 1)
+              p = p.replace(policy_marker, additions, 1)
           policy.write_text(p)
           PY
           bash tests/native-quota-policy.sh .
