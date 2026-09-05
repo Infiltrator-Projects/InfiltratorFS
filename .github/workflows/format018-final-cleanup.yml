@@ -102,16 +102,17 @@ jobs:
               path = Path(filename)
               text = path.read_text()
               for old, new in pairs:
-                  if old not in text:
-                      raise SystemExit(f"Expected stale text not found in {filename}: {old}")
-                  text = text.replace(old, new)
+                  if old in text:
+                      text = text.replace(old, new)
+                  elif new not in text:
+                      raise SystemExit(
+                          f"Neither stale nor corrected text found in {filename}: {old}"
+                      )
               path.write_text(text)
 
           for filename in replace_all:
               path = Path(filename)
               text = path.read_text()
-              if "Format 0.17" not in text:
-                  raise SystemExit(f"Expected stale Format 0.17 wording not found in {filename}")
               path.write_text(text.replace("Format 0.17", "Format 0.18"))
           PY
 
@@ -123,6 +124,10 @@ jobs:
           ctest --test-dir build-cleanup --output-on-failure
 
           git add README.md docs kernel include src tools tests
+          if git diff --cached --quiet; then
+            echo 'No Format 0.18 consistency changes were required.'
+            exit 0
+          fi
           git -c user.name='Shannon Smith' -c user.email='infiltratr@yandex.com' \
               commit -m 'Docs: finish Format 0.18 consistency'
           git push origin HEAD:main
