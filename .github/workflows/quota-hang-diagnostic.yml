@@ -15,15 +15,16 @@ jobs:
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@v6
-      - name: Apply sidecar eviction quota fix
+      - name: Apply sidecar fixes and accounting diagnostics
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-          path = Path('kernel/infiltratorfs_quota.inc')
-          text = path.read_text()
-          old = '''static int infilfs_quota_capture_inode(
+
+          quota = Path('kernel/infiltratorfs_quota.inc')
+          q = quota.read_text()
+          old_q = '''static int infilfs_quota_capture_inode(
               struct inode *inode, struct infilfs_quota_reservation *reservation)
           {
               struct infilfs_sb_info *sbi = INFILFS_SB(inode->i_sb);
@@ -39,14 +40,13 @@ jobs:
               return ret;
           }
           '''
-          new = '''static int infilfs_quota_capture_inode(
+          new_q = '''static int infilfs_quota_capture_inode(
               struct inode *inode, struct infilfs_quota_reservation *reservation)
           {
               struct infilfs_sb_info *sbi = INFILFS_SB(inode->i_sb);
               struct infilfs_inode_info *ii = INFILFS_I(inode);
               int ret;
 
-              /* Internal SYSTEM sidecars are outside quota accounting. */
               if (!sbi || !ii || (ii->portable_flags & INFILFS_ATTR_SYSTEM)) {
                   memset(reservation, 0, sizeof(*reservation));
                   return 0;
@@ -57,9 +57,67 @@ jobs:
               return ret;
           }
           '''
-          if old not in text:
-              raise SystemExit('expected quota capture source not found')
-          path.write_text(text.replace(old, new, 1))
+          if old_q not in q:
+              raise SystemExit('quota patch source not found')
+          quota.write_text(q.replace(old_q, new_q, 1))
+
+          core = Path('kernel/infiltratorfs_core.c')
+          c = core.read_text()
+          old_c = '''    if (reclaiming) {
+                  released_bytes = (u64)i_size_read(inode);
+                  ret = infilfs_quota_capture_inode(inode, &released_quota);
+                  if (ret) {
+                      pr_err("InfiltratorFS: could not capture quota ownership for inode %lu: %d\\n",
+                             inode->i_ino, ret);
+                      released_quota.active = false;
+                      ret = 0;
+                  }
+                  ret = infilfs_linux_meta_remove_object(inode->i_sb, ii->object_id);
+                  if (ret)
+                      pr_err("InfiltratorFS: could not remove Linux metadata for inode %lu: %d\\n",
+                             inode->i_ino, ret);
+              }
+              if (!ret)
+                  ret = infilfs_ns_evict_unlinked_file(inode);
+              if (!ret && reclaiming)
+                  infilfs_quota_apply_release(&released_quota, released_bytes, 1);
+          '''
+          new_c = '''    if (reclaiming && !(ii->portable_flags & INFILFS_ATTR_SYSTEM)) {
+                  released_bytes = (u64)i_size_read(inode);
+                  ret = infilfs_quota_capture_inode(inode, &released_quota);
+                  if (ret) {
+                      pr_err("InfiltratorFS: could not capture quota ownership for inode %lu: %d\\n",
+                             inode->i_ino, ret);
+                      released_quota.active = false;
+                      ret = 0;
+                  }
+                  ret = infilfs_linux_meta_remove_object(inode->i_sb, ii->object_id);
+                  if (ret)
+                      pr_err("InfiltratorFS: could not remove Linux metadata for inode %lu: %d\\n",
+                             inode->i_ino, ret);
+              }
+              if (!ret)
+                  ret = infilfs_ns_evict_unlinked_file(inode);
+              if (!ret && reclaiming && !(ii->portable_flags & INFILFS_ATTR_SYSTEM))
+                  infilfs_quota_apply_release(&released_quota, released_bytes, 1);
+          '''
+          if old_c not in c:
+              raise SystemExit('core patch source not found')
+          core.write_text(c.replace(old_c, new_c, 1))
+
+          test = Path('tests/native-quota-qualification.sh')
+          t = test.read_text()
+          needle = '''after42="$(field used_bytes "$mnt" project 42)"
+          test "$after42" -eq "$before42"
+          '''
+          replacement = '''after42="$(field used_bytes "$mnt" project 42)"
+          before42_objects="$(field used_objects "$mnt" project 42)"
+          printf 'QUOTA-DIAG: project42 before_bytes=%s after_bytes=%s after_objects=%s\\n' "$before42" "$after42" "$before42_objects" >&2
+          test "$after42" -eq "$before42"
+          '''
+          if needle not in t:
+              raise SystemExit('accounting diagnostic insertion point not found')
+          test.write_text(t.replace(needle, replacement, 1))
           PY
       - name: Install dependencies
         shell: bash
@@ -75,30 +133,8 @@ jobs:
           cmake --build build --parallel --target mkfs.infilfs infilfs-scrub infiltratorfs-quota
           make -C kernel clean KDIR="/lib/modules/$(uname -r)/build"
           make -C kernel KDIR="/lib/modules/$(uname -r)/build"
-      - name: Trace full mounted quota qualification
+      - name: Run mounted quota qualification to remount comparison
         shell: bash
         run: |
-          set -Eeuo pipefail
-          echo 'QUOTA-DIAG: launching full qualification with shell trace'
-          bash -x tests/native-quota-qualification.sh build kernel/infiltratorfs.ko &
-          qpid=$!
-          for second in $(seq 1 120); do
-            if ! kill -0 "$qpid" 2>/dev/null; then
-              set +e
-              wait "$qpid"
-              rc=$?
-              set -e
-              echo "QUOTA-DIAG: full qualification exited rc=$rc within=${second}s"
-              exit "$rc"
-            fi
-            sleep 1
-          done
-          echo "QUOTA-DIAG: STUCK full qualification pid=$qpid"
-          echo '===== process tree ====='
-          ps -eLo pid,ppid,tid,stat,wchan:48,comm,args | grep -E 'native-quota|infiltratorfs-quota|dd|truncate|touch|ln|chown|mkdir|mv|cp|sudo|python3|sync|umount' || true
-          echo '===== all blocked tasks ====='
-          ps -eLo pid,ppid,tid,stat,wchan:48,comm,args | awk '$4 ~ /^D/ {print}' || true
-          echo '===== sysrq blocked-task dump ====='
-          sudo sh -c 'echo w > /proc/sysrq-trigger' 2>/dev/null || true
-          sudo dmesg --color=never | tail -n 600 || true
-          exit 1
+          set -euo pipefail
+          bash tests/native-quota-qualification.sh build kernel/infiltratorfs.ko
