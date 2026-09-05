@@ -174,6 +174,13 @@ sudo rm -f "$mnt/project-a/reflink-over-limit.bin"
 sudo ln "$mnt/project-a/data.bin" "$mnt/project-a/sub/same-project-link"
 test "$(stat -c '%i' "$mnt/project-a/data.bin")" = \
      "$(stat -c '%i' "$mnt/project-a/sub/same-project-link")"
+if append_once "$mnt/project-a/data.bin" $((2 * 1024 * 1024)) \
+        2>"$work/hardlink-project-edquot"; then
+    echo "hard-linked project file escaped byte quota" >&2
+    exit 1
+fi
+grep -Eqi 'quota|Disk quota exceeded' "$work/hardlink-project-edquot"
+test "$(stat -c '%s' "$mnt/project-a/data.bin")" -eq $((4 * 1024 * 1024))
 
 # Cross-directory rename is preflighted against the destination project. It
 # must fail atomically rather than moving first and discovering overage later.

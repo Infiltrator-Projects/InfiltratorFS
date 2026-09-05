@@ -410,6 +410,144 @@ static int infilfs_quota_effective_project_locked(
     return 0;
 }
 
+struct infilfs_quota_alias_scan {
+    u8 object_id[16];
+    u64 aliases;
+};
+
+static int infilfs_quota_alias_visitor(
+    const struct infilfs_dirent_disk *entry, const u8 *name, void *arg)
+{
+    struct infilfs_quota_alias_scan *scan = arg;
+
+    (void)name;
+    if (memcmp(entry->object_id, scan->object_id, 16) != 0)
+        return 0;
+    if (le16_to_cpu(entry->object_type) != INFILFS_OBJECT_FILE)
+        return -EFSCORRUPTED;
+    if (scan->aliases == U64_MAX)
+        return -EOVERFLOW;
+    scan->aliases++;
+    return 0;
+}
+
+/*
+ * Hard-linked files intentionally have no single parent_id. Resolve project
+ * ownership from every directory alias instead. Cross-project hard links are
+ * rejected at mutation time, so disagreeing aliases or an alias count that
+ * differs from link_count is on-disk corruption and must fail closed.
+ */
+static int infilfs_quota_alias_project_from_index_locked(
+    struct super_block *sb, const u8 object_id[16], u64 expected_links,
+    const struct infilfs_index_entry_disk *entries, u32 count,
+    u32 *project_out)
+{
+    u64 aliases = 0;
+    u32 resolved_project = 0;
+    bool have_project = false;
+    u32 i;
+
+    *project_out = 0;
+    if (!expected_links)
+        return 0;
+
+    for (i = 0; i < count; ++i) {
+        struct infilfs_quota_alias_scan scan = {0};
+        struct infilfs_object_header_disk *header;
+        struct inode *dir;
+        u8 *object;
+        u32 directory_project = 0;
+        u16 type = le16_to_cpu(entries[i].object_type);
+        int ret;
+
+        if (type != INFILFS_OBJECT_DIRECTORY)
+            continue;
+        object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+        if (!object)
+            return -ENOMEM;
+        ret = infilfs_read_object(
+            sb, le64_to_cpu(entries[i].object_block), type,
+            entries[i].object_id, object);
+        if (ret) {
+            kfree(object);
+            return ret;
+        }
+        header = (struct infilfs_object_header_disk *)object;
+        dir = infilfs_get_inode(
+            sb, le64_to_cpu(entries[i].object_block), type,
+            entries[i].object_id);
+        if (IS_ERR(dir)) {
+            ret = PTR_ERR(dir);
+            kfree(object);
+            return ret;
+        }
+        memcpy(scan.object_id, object_id, 16);
+        ret = infilfs_for_each_dirent(dir, infilfs_quota_alias_visitor, &scan);
+        iput(dir);
+        if (ret) {
+            kfree(object);
+            return ret;
+        }
+        if (!scan.aliases) {
+            kfree(object);
+            continue;
+        }
+        ret = infilfs_quota_effective_project_locked(
+            sb, header->object_id, header->parent_id, &directory_project);
+        kfree(object);
+        if (ret)
+            return ret;
+        if (have_project && directory_project != resolved_project)
+            return -EFSCORRUPTED;
+        resolved_project = directory_project;
+        have_project = true;
+        if (aliases > U64_MAX - scan.aliases)
+            return -EOVERFLOW;
+        aliases += scan.aliases;
+    }
+
+    if (!have_project || aliases != expected_links)
+        return -EFSCORRUPTED;
+    *project_out = resolved_project;
+    return 0;
+}
+
+static int infilfs_quota_object_project_from_index_locked(
+    struct super_block *sb,
+    const struct infilfs_object_header_disk *header,
+    const struct infilfs_index_entry_disk *entries, u32 count,
+    u32 *project_out)
+{
+    if (le16_to_cpu(header->object_type) == INFILFS_OBJECT_FILE) {
+        const struct infilfs_file_payload_disk *file =
+            (const struct infilfs_file_payload_disk *)(header + 1);
+        u64 links = le64_to_cpu(file->attributes.link_count);
+
+        if (links && (links > 1u || !memchr_inv(header->parent_id, 0, 16)))
+            return infilfs_quota_alias_project_from_index_locked(
+                sb, header->object_id, links, entries, count, project_out);
+    }
+    return infilfs_quota_effective_project_locked(
+        sb, header->object_id, header->parent_id, project_out);
+}
+
+static int infilfs_quota_object_project_locked(
+    struct super_block *sb,
+    const struct infilfs_object_header_disk *header,
+    u32 *project_out)
+{
+    struct infilfs_index_entry_disk *entries = NULL;
+    u32 count = 0;
+    int ret;
+
+    ret = infilfs_ns_index_snapshot(sb, &entries, &count);
+    if (!ret)
+        ret = infilfs_quota_object_project_from_index_locked(
+            sb, header, entries, count, project_out);
+    kvfree(entries);
+    return ret;
+}
+
 static int infilfs_quota_rebuild_usage_locked(struct super_block *sb)
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
@@ -455,8 +593,8 @@ static int infilfs_quota_rebuild_usage_locked(struct super_block *sb)
         bytes = le64_to_cpu(attributes->logical_size);
         uid = le32_to_cpu(posix->uid);
         gid = le32_to_cpu(posix->gid);
-        ret = infilfs_quota_effective_project_locked(
-            sb, header->object_id, header->parent_id, &project);
+        ret = infilfs_quota_object_project_from_index_locked(
+            sb, header, entries, count, &project);
         if (ret) { kfree(object); break; }
         for (r = 0; r < sbi->quota_rule_count; ++r) {
             bool match =
@@ -572,8 +710,8 @@ static int infilfs_quota_rule_usage_locked(
         uid = le32_to_cpu(posix->uid);
         gid = le32_to_cpu(posix->gid);
         if (wanted_type == INFILFS_QUOTA_PROJECT) {
-            ret = infilfs_quota_effective_project_locked(
-                sb, header->object_id, header->parent_id, &project);
+            ret = infilfs_quota_object_project_from_index_locked(
+                sb, header, entries, count, &project);
             if (ret) {
                 kfree(object);
                 break;
@@ -1100,8 +1238,8 @@ static int infilfs_quota_get_project(struct inode *inode,
     ret = infilfs_read_object(inode->i_sb, ii->object_block, ii->object_type, ii->object_id, object);
     if (!ret) {
         struct infilfs_object_header_disk *header = (struct infilfs_object_header_disk *)object;
-        ret = infilfs_quota_effective_project_locked(inode->i_sb, ii->object_id, header->parent_id,
-                                                       &request->effective_project_id);
+        ret = infilfs_quota_object_project_locked(
+            inode->i_sb, header, &request->effective_project_id);
     }
     mutex_unlock(&sbi->quota_lock);
     kfree(object);
@@ -1125,8 +1263,8 @@ static int infilfs_quota_inode_project_locked(struct inode *inode, u32 *project_
                               ii->object_id, object);
     if (!ret) {
         header = (struct infilfs_object_header_disk *)object;
-        ret = infilfs_quota_effective_project_locked(
-            inode->i_sb, ii->object_id, header->parent_id, project_out);
+        ret = infilfs_quota_object_project_locked(
+            inode->i_sb, header, project_out);
     }
     kfree(object);
     return ret;
@@ -1364,9 +1502,15 @@ static int infilfs_quota_capture_inode(
     struct inode *inode, struct infilfs_quota_reservation *reservation)
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(inode->i_sb);
+    struct infilfs_inode_info *ii = INFILFS_I(inode);
     int ret;
 
-    if (!sbi) {
+    /*
+     * Internal SYSTEM sidecars are outside quota accounting. Their eviction
+     * may occur while quota_lock is already held by quota-policy persistence,
+     * so bypass capture before taking quota_lock again.
+     */
+    if (!sbi || !ii || (ii->portable_flags & INFILFS_ATTR_SYSTEM)) {
         memset(reservation, 0, sizeof(*reservation));
         return 0;
     }

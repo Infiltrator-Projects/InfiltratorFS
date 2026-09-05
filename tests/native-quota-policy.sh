@@ -18,6 +18,10 @@ grep -Fq 'return -EDQUOT' "$root/kernel/infiltratorfs_quota.inc"
 # files must remain ordinary regular files and must never recursively consult
 # sidecar metadata while linux_meta_lock already owns the compound operation.
 grep -Fq 'Internal Linux sidecar files must never recursively resolve sidecar' "$root/kernel/infiltratorfs_core.c"
+grep -Fq 'Internal SYSTEM sidecars are outside quota accounting' "$root/kernel/infiltratorfs_quota.inc"
+grep -Fq 'reclaiming && !(ii->portable_flags & INFILFS_ATTR_SYSTEM)' "$root/kernel/infiltratorfs_core.c"
+grep -Fq 'Hard-linked files intentionally have no single parent_id' "$root/kernel/infiltratorfs_quota.inc"
+grep -Fq 'infilfs_quota_alias_project_from_index_locked' "$root/kernel/infiltratorfs_quota.inc"
 grep -Fq '(INFILFS_ATTR_HIDDEN | INFILFS_ATTR_SYSTEM)' "$root/kernel/infiltratorfs_core.c"
 grep -Fq 'infilfs_quota_reserve_inode(inode, quota_growth' "$root/kernel/infiltratorfs_rw_data.inc"
 grep -Fq 'infilfs_quota_reserve_create(dir, 0, 1' "$root/kernel/infiltratorfs_rw.inc"
