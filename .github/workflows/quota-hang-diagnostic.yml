@@ -26,88 +26,33 @@ jobs:
         run: |
           set -euo pipefail
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --parallel --target mkfs.infilfs infiltratorfs-quota
+          cmake --build build --parallel --target mkfs.infilfs infilfs-scrub infiltratorfs-quota
           make -C kernel clean KDIR="/lib/modules/$(uname -r)/build"
           make -C kernel KDIR="/lib/modules/$(uname -r)/build"
-      - name: Isolate first quota-accounted data write
+      - name: Trace full mounted quota qualification
         shell: bash
         run: |
           set -Eeuo pipefail
-          work="$(mktemp -d)"
-          image="$work/quota.img"
-          mnt="$work/mnt"
-          loopdev=""
-          mounted=0
-          loaded=0
-          cleanup() {
-            set +e
-            [[ "$mounted" = 1 ]] && sudo umount -l "$mnt" >/dev/null 2>&1
-            [[ -n "$loopdev" ]] && sudo losetup -d "$loopdev" >/dev/null 2>&1
-            [[ "$loaded" = 1 ]] && sudo rmmod infiltratorfs >/dev/null 2>&1
-            rm -rf "$work"
-          }
-          trap cleanup EXIT
-
-          dump_stuck() {
-            local label="$1"
-            local pid="$2"
-            echo "QUOTA-DIAG: STUCK label=$label pid=$pid"
-            echo '===== process tree ====='
-            ps -eLo pid,ppid,tid,stat,wchan:40,comm,args | grep -E 'infiltratorfs-quota|dd|sudo|python3' || true
-            echo '===== watched process stack ====='
-            sudo cat "/proc/$pid/stack" 2>&1 || true
-            echo '===== all blocked tasks ====='
-            ps -eLo pid,ppid,tid,stat,wchan:48,comm,args | awk '$4 ~ /^D/ {print}' || true
-            echo '===== sysrq blocked-task dump ====='
-            sudo sh -c 'echo w > /proc/sysrq-trigger' 2>/dev/null || true
-            sudo dmesg --color=never | tail -n 400 || true
-            sudo umount -l "$mnt" || true
-            mounted=0
-            exit 1
-          }
-
-          watch_ok() {
-            local label="$1"
-            shift
-            local out="$work/watch.out"
-            local err="$work/watch.err"
-            : >"$out"
-            : >"$err"
-            echo "QUOTA-DIAG: START $label"
-            "$@" >"$out" 2>"$err" &
-            local pid=$!
-            local second
-            for second in $(seq 1 20); do
-              if ! kill -0 "$pid" 2>/dev/null; then
-                set +e
-                wait "$pid"
-                local rc=$?
-                set -e
-                cat "$out"
-                cat "$err" >&2
-                echo "QUOTA-DIAG: END $label rc=$rc within=${second}s"
-                [[ "$rc" -eq 0 ]]
-                return
-              fi
-              sleep 1
-            done
-            dump_stuck "$label" "$pid"
-          }
-
-          mkdir -p "$mnt"
-          truncate -s 512M "$image"
-          build/mkfs.infilfs --force -L QuotaDiag "$image" >/dev/null
-          if ! grep -qw infiltratorfs /proc/filesystems; then
-            sudo insmod kernel/infiltratorfs.ko
-            loaded=1
-          fi
-          loopdev="$(sudo losetup --find --show "$image")"
-          sudo mount -t infiltratorfs -o rw "$loopdev" "$mnt"
-          mounted=1
-
-          watch_ok 'first user quota set' \
-            sudo build/infiltratorfs-quota set "$mnt" user 0 6MiB 0
-          watch_ok 'first 4MiB quota-accounted write' \
-            sudo dd if=/dev/urandom of="$mnt/user-bytes.bin" bs=1M count=4 status=none
-
-          echo 'QUOTA-DIAG: first quota set and first 4MiB write both completed'
+          echo 'QUOTA-DIAG: launching full qualification with shell trace'
+          bash -x tests/native-quota-qualification.sh build kernel/infiltratorfs.ko &
+          qpid=$!
+          for second in $(seq 1 210); do
+            if ! kill -0 "$qpid" 2>/dev/null; then
+              set +e
+              wait "$qpid"
+              rc=$?
+              set -e
+              echo "QUOTA-DIAG: full qualification exited rc=$rc within=${second}s"
+              exit "$rc"
+            fi
+            sleep 1
+          done
+          echo "QUOTA-DIAG: STUCK full qualification pid=$qpid"
+          echo '===== process tree ====='
+          ps -eLo pid,ppid,tid,stat,wchan:48,comm,args | grep -E 'native-quota|infiltratorfs-quota|dd|truncate|touch|ln|chown|mkdir|mv|cp|sudo|python3' || true
+          echo '===== all blocked tasks ====='
+          ps -eLo pid,ppid,tid,stat,wchan:48,comm,args | awk '$4 ~ /^D/ {print}' || true
+          echo '===== sysrq blocked-task dump ====='
+          sudo sh -c 'echo w > /proc/sysrq-trigger' 2>/dev/null || true
+          sudo dmesg --color=never | tail -n 500 || true
+          exit 1
