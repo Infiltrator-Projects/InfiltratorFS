@@ -2254,10 +2254,23 @@ static int infilfs_populate_inode(struct inode *inode, u64 object_block,
         inode->i_op = &infilfs_file_inode_operations;
         links = le64_to_cpu(attributes->link_count);
         set_nlink(inode, links ? links : 1);
-        ret = infilfs_linux_meta_get_special(inode->i_sb, ii->object_id,
-                                              &special_mode, &special_rdev);
-        if (ret)
-            goto fail_private;
+        /*
+         * Internal Linux sidecar files must never recursively resolve sidecar
+         * metadata. Quota policy is persisted as a trusted xattr, so the first
+         * quota write can create a hidden/system sidecar while linux_meta_lock
+         * is already held. Asking that sidecar inode for its own special-node
+         * sidecar would recursively acquire linux_meta_lock and deadlock.
+         * Internal sidecars are ordinary regular files by construction and
+         * never have sidecars of their own.
+         */
+        if ((le64_to_cpu(attributes->portable_flags) &
+             (INFILFS_ATTR_HIDDEN | INFILFS_ATTR_SYSTEM)) !=
+            (INFILFS_ATTR_HIDDEN | INFILFS_ATTR_SYSTEM)) {
+            ret = infilfs_linux_meta_get_special(
+                inode->i_sb, ii->object_id, &special_mode, &special_rdev);
+            if (ret)
+                goto fail_private;
+        }
         if (special_mode) {
             if (!S_ISFIFO(special_mode) && !S_ISSOCK(special_mode) &&
                 !S_ISCHR(special_mode) && !S_ISBLK(special_mode)) {
