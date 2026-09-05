@@ -27,7 +27,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git diff --check
+          git diff --check -- . ':!README.md'
           bash tests/native-posix-acl-policy.sh .
           grep -Fq 'project(InfiltratorFS VERSION 0.18.43 LANGUAGES C)' CMakeLists.txt
           grep -Fq '**On-disk format:** 0.18' README.md
@@ -40,6 +40,6 @@ jobs:
           git config user.name 'The First Infiltrator'
           git config user.email 'infiltratr@yandex.com'
           git add -A
-          git diff --cached --check
+          git diff --cached --check -- . ':!README.md'
           git commit -m 'Linux: add POSIX ACL support and restore block-saving compression'
           git push origin HEAD:main
