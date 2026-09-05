@@ -12,8 +12,8 @@ kpublish="$root/kernel/infiltratorfs_allocation_publish.c"
 krw="$root/kernel/infiltratorfs_rw_legacy.inc"
 volume="$root/include/infilfs/volume.h"
 
-grep -Fq '#define INFS_FORMAT_MINOR 17u' "$fmt"
-grep -Fq '#define INFILFS_FORMAT_MINOR 17u' "$kfmt"
+grep -Fq '#define INFS_FORMAT_MINOR 18u' "$fmt"
+grep -Fq '#define INFILFS_FORMAT_MINOR 18u' "$kfmt"
 grep -Fq 'INFS_INCOMPAT_ALLOCATION_TREE' "$fmt"
 grep -Fq 'INFS_ALLOCATION_BITS_PER_LEAF' "$fmt"
 grep -Fq 'INFS_ALLOCATION_TREE_FANOUT' "$fmt"
@@ -45,4 +45,4 @@ grep -Fq 'tx_allocated' "$volume"
 ! grep -Fq 'new_bitmap_start * INFS_BLOCK_SIZE' "$commit"
 ! grep -Fq 'new_bitmap + n' "$krw"
 
-printf 'Format 0.17 sharded allocation-tree policy guard passed.\n'
+printf 'Format 0.18 sharded allocation-tree policy guard passed.\n'
