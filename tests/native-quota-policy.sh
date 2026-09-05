@@ -16,7 +16,7 @@ grep -Fq 'infilfs_quota_reserve_create' "$root/kernel/infiltratorfs_quota.inc"
 grep -Fq 'infilfs_quota_prepare_identity_change' "$root/kernel/infiltratorfs_quota.inc"
 grep -Fq 'infilfs_quota_prepare_reparent_locked' "$root/kernel/infiltratorfs_quota.inc"
 grep -Fq 'return -EDQUOT' "$root/kernel/infiltratorfs_quota.inc"
-# Quota rules persist through the hidden/system Linux sidecar.  Those internal
+# Quota rules persist through the hidden/system Linux sidecar. Those internal
 # files must remain ordinary regular files and must never recursively consult
 # sidecar metadata while linux_meta_lock already owns the compound operation.
 grep -Fq 'Internal Linux sidecar files must never recursively resolve sidecar' "$root/kernel/infiltratorfs_core.c"
@@ -30,5 +30,10 @@ grep -Fq 'infilfs_quota_reserve_create(dir, 0, 1' "$root/kernel/infiltratorfs_rw
 grep -Fq 'infilfs_quota_prepare_reparent_locked' "$root/kernel/infiltratorfs_rw_namespace.inc"
 grep -Fq 'infiltratorfs-quota' "$root/CMakeLists.txt"
 grep -Fq 'infiltratorfs_quota.inc' "$root/packaging/build-linux-packages.sh"
-grep -Fq 'native user/group/project quota qualification: PASS' "$root/tests/native-quota-qualification.sh"
+# The quota harness now also carries mounted POSIX ACL qualification through
+# the same scrub/remount boundary. Keep the quota PASS marker explicit while
+# requiring the ACL test to remain wired into that mounted native gate.
+grep -Fq 'native user/group/project quota + POSIX ACL qualification: PASS' "$root/tests/native-quota-qualification.sh"
+grep -Fq 'native-posix-acl-qualification.py" prepare' "$root/tests/native-quota-qualification.sh"
+grep -Fq 'native-posix-acl-qualification.py" verify' "$root/tests/native-quota-qualification.sh"
 echo 'native quota policy: PASS'
