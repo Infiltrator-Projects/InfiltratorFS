@@ -1,0 +1,83 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Format 0.18 final qualification
+
+on:
+  push:
+    branches:
+      - tmp-format018-kernel
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.result.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Apply native fixes and qualify portable/core
+        id: result
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=a95770bdeb83e9dd6fe3e0f5ef438a2788ce77c1
+          cp tools/format018-kernel-fix.py /tmp/format018-kernel-fix.py
+          git reset --hard "$base"
+          python3 /tmp/format018-kernel-fix.py
+          if grep -R --line-number -E '->attributes\.(birth|access|modification|change)_time[[:space:]]*=[[:space:]]*cpu_to_le64\(ktime_get_real_ns' kernel --include='*.c' --include='*.h' --include='*.inc'; then
+            echo 'stale scalar native timestamp write remains' >&2
+            exit 1
+          fi
+          if grep -R --line-number -E 'inode->i_(atime|mtime|ctime)' kernel --include='*.c' --include='*.h' --include='*.inc'; then
+            echo 'direct inode timestamp access remains' >&2
+            exit 1
+          fi
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel
+          ctest --test-dir build --output-on-failure
+          git add -A
+          git -c user.name='Shannon Smith' -c user.email='infiltratr@yandex.com' \
+              commit -m 'Fix native Format 0.18 timestamp handling'
+          sha="$(git rev-parse HEAD)"
+          test "$(git rev-parse HEAD^)" = "$base"
+          git push --force origin "HEAD:refs/heads/tmp-format018-result"
+          printf 'sha=%s\n' "$sha" >> "$GITHUB_OUTPUT"
+
+  kernel:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+      - name: Build native kernel module against generic headers
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y build-essential linux-headers-generic
+          kdir="$(find /usr/src -maxdepth 1 -type d -name 'linux-headers-*-generic' -print | sort -V | tail -n1)"
+          test -f "$kdir/Makefile"
+          make -C kernel KDIR="$kdir"
+          bash tests/native-kernel-maintainability-policy.sh .
+
+  windows:
+    needs: prepare
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+      - name: Build and test Windows portable/core adapters
+        shell: pwsh
+        run: |
+          cmake -S . -B build -A x64
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build build --config Release --parallel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ctest --test-dir build -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
