@@ -25,9 +25,20 @@ SUPER_ROOT_ID = 116
 OBJECT_GENERATION = 16
 OBJECT_PAYLOAD_SIZE = 56
 OBJECT_HEADER_SIZE = 96
-DIRECTORY_PAYLOAD_SIZE = 112
-DIRECTORY_ENTRY_COUNT = OBJECT_HEADER_SIZE + 104
-DIRECTORY_BYTES_USED = OBJECT_HEADER_SIZE + 108
+
+# Format 0.18 widened the common attributes from 88 to 120 bytes by replacing
+# scalar nanosecond timestamps with signed epoch seconds + nanoseconds.  Keep
+# these offsets derived from the current packed structures in format.h so this
+# corruption fixture mutates the real directory-tree head rather than a stale
+# Format 0.17 location.
+ATTRIBUTES_SIZE = 120
+POSIX_COMPAT_SIZE = 16
+DIRECTORY_FIXED_FIELDS_SIZE = 8
+DIRECTORY_PAYLOAD_SIZE = (
+    ATTRIBUTES_SIZE + POSIX_COMPAT_SIZE + DIRECTORY_FIXED_FIELDS_SIZE
+)
+DIRECTORY_ENTRY_COUNT = OBJECT_HEADER_SIZE + ATTRIBUTES_SIZE + POSIX_COMPAT_SIZE
+DIRECTORY_BYTES_USED = DIRECTORY_ENTRY_COUNT + 4
 DIRECTORY_ROOT = OBJECT_HEADER_SIZE + DIRECTORY_PAYLOAD_SIZE
 
 INDEX_TREE_ROOT = OBJECT_HEADER_SIZE + 8
@@ -102,7 +113,7 @@ def file_object_blocks(image, index_block: int, excluded: set[int],
         raise ValueError("object index has invalid magic")
     obj_type, version = struct.unpack_from("<HH", index, 8)
     if obj_type != 3 or version != 3:
-        raise ValueError("object index is not the Format 0.17 radix tree")
+        raise ValueError("object index is not the current radix tree")
     root = struct.unpack_from("<Q", index, INDEX_TREE_ROOT)[0]
     if not root:
         raise ValueError("object index tree root is zero")
