@@ -1,0 +1,128 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Format 0.18 final consistency cleanup
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/format018-final-cleanup.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Correct stale current-format wording
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          exact = {
+              "README.md": [
+                  ("persistent Format 0.17 layout and encoding contract.",
+                   "persistent Format 0.18 layout and encoding contract."),
+              ],
+              "docs/ROADMAP.md": [
+                  ("Native read-only and read-write mounting of current Format 0.17.",
+                   "Native read-only and read-write mounting of current Format 0.18."),
+                  ("Linux/Windows Format 0.17 interoperability coverage.",
+                   "Linux/Windows Format 0.18 interoperability coverage."),
+              ],
+              "docs/FORENSICS.md": [
+                  ("carried forward into current Format 0.17 media",
+                   "carried forward into current Format 0.18 media"),
+              ],
+              "docs/SECURITY.md": [
+                  ("Format 0.17 already reserves a `security object ID`",
+                   "Format 0.18 reserves a `security object ID`"),
+              ],
+              "docs/INSPIRATIONS.md": [
+                  ("while Format 0.17 persists that bitset",
+                   "while Format 0.18 persists that bitset"),
+              ],
+              "docs/QUALIFICATION.md": [
+                  ("mounts a real Format 0.17 image",
+                   "mounts a real Format 0.18 image"),
+              ],
+              "include/infilfs/format.h": [
+                  ("/* Format 0.17 metadata pages are deliberately not persistent objects.",
+                   "/* Format 0.18 metadata pages are deliberately not persistent objects."),
+              ],
+              "include/infilfs/fs.h": [
+                  ("Current Format 0.17 formatters use the tree variants.",
+                   "Current Format 0.18 formatters use the tree variants."),
+              ],
+              "include/infilfs/volume.h": [
+                  ("Runtime cache of the committed Format 0.17 allocation-tree geometry.",
+                   "Runtime cache of the committed Format 0.18 allocation-tree geometry."),
+              ],
+              "src/volume.c": [
+                  ("/* Format 0.17 paged-index dispatch targets.",
+                   "/* Format 0.18 paged-index dispatch targets."),
+              ],
+              "src/volume/resize.inc": [
+                  ("Snapshot records in Format 0.17 carry an immutable allocation image",
+                   "Snapshot records in Format 0.18 carry an immutable allocation image"),
+              ],
+              "tools/mkfs.infilfs/part-02.inc": [
+                  ("Target exceeds the Format 0.17 allocation-map capacity.",
+                   "Target exceeds the Format 0.18 allocation-map capacity."),
+              ],
+              "tests/native-endurance-qualification.sh": [
+                  ("drives a 4 GiB Format 0.17 image",
+                   "drives a 4 GiB Format 0.18 image"),
+              ],
+              "tests/resize.sh": [
+                  ("Named snapshots intentionally pin historical geometry in Format 0.17.",
+                   "Named snapshots intentionally pin historical geometry in Format 0.18."),
+              ],
+              "tools/kernel-linux-meta-codec-object-refactor.py": [
+                  ("scalable Format 0.17 directory trees.",
+                   "scalable Format 0.18 directory trees."),
+              ],
+          }
+
+          replace_all = [
+              "docs/COMPRESSION.md",
+              "docs/ARCHITECTURE.md",
+              "kernel/README.md",
+              "kernel/Makefile",
+          ]
+
+          for filename, pairs in exact.items():
+              path = Path(filename)
+              text = path.read_text()
+              for old, new in pairs:
+                  if old not in text:
+                      raise SystemExit(f"Expected stale text not found in {filename}: {old}")
+                  text = text.replace(old, new)
+              path.write_text(text)
+
+          for filename in replace_all:
+              path = Path(filename)
+              text = path.read_text()
+              if "Format 0.17" not in text:
+                  raise SystemExit(f"Expected stale Format 0.17 wording not found in {filename}")
+              path.write_text(text.replace("Format 0.17", "Format 0.18"))
+          PY
+
+          git diff --check
+          bash tests/index-tree-format-policy.sh .
+          bash tests/allocation-tree-format-policy.sh .
+          cmake -S . -B build-cleanup -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-cleanup --parallel
+          ctest --test-dir build-cleanup --output-on-failure
+
+          git add README.md docs kernel include src tools tests
+          git -c user.name='Shannon Smith' -c user.email='infiltratr@yandex.com' \
+              commit -m 'Docs: finish Format 0.18 consistency'
+          git push origin HEAD:main
