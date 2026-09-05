@@ -1,0 +1,85 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: One-shot native quota hang diagnostic
+
+on:
+  push:
+    paths:
+      - '.github/workflows/quota-hang-diagnostic.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake kmod linux-headers-$(uname -r)
+      - name: Build exact running-kernel module and quota tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel --target mkfs.infilfs infiltratorfs-quota
+          make -C kernel clean KDIR="/lib/modules/$(uname -r)/build"
+          make -C kernel KDIR="/lib/modules/$(uname -r)/build"
+      - name: Reproduce first quota persistence with kernel-stack watchdog
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          work="$(mktemp -d)"
+          image="$work/quota.img"
+          mnt="$work/mnt"
+          loopdev=""
+          mounted=0
+          loaded=0
+          cleanup() {
+            set +e
+            [[ "$mounted" = 1 ]] && sudo umount -l "$mnt" >/dev/null 2>&1
+            [[ -n "$loopdev" ]] && sudo losetup -d "$loopdev" >/dev/null 2>&1
+            [[ "$loaded" = 1 ]] && sudo rmmod infiltratorfs >/dev/null 2>&1
+            rm -rf "$work"
+          }
+          trap cleanup EXIT
+          mkdir -p "$mnt"
+          truncate -s 512M "$image"
+          build/mkfs.infilfs --force -L QuotaDiag "$image" >/dev/null
+          if ! grep -qw infiltratorfs /proc/filesystems; then
+            sudo insmod kernel/infiltratorfs.ko
+            loaded=1
+          fi
+          loopdev="$(sudo losetup --find --show "$image")"
+          sudo mount -t infiltratorfs -o rw "$loopdev" "$mnt"
+          mounted=1
+          echo 'QUOTA-DIAG: launching first user quota set'
+          sudo build/infiltratorfs-quota set "$mnt" user 0 6MiB 0 &
+          qpid=$!
+          for second in $(seq 1 20); do
+            if ! kill -0 "$qpid" 2>/dev/null; then
+              wait "$qpid"
+              echo "QUOTA-DIAG: first quota set returned within ${second}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "QUOTA-DIAG: STUCK pid=$qpid"
+          echo '===== process tree ====='
+          ps -eLo pid,ppid,tid,stat,wchan:32,comm,args | grep -E "(^|[[:space:]])($qpid|infiltratorfs-quota|sudo)([[:space:]]|$)" || true
+          echo '===== blocked process stack ====='
+          sudo cat "/proc/$qpid/stack" 2>&1 || true
+          echo '===== blocked process status ====='
+          sudo cat "/proc/$qpid/status" 2>&1 || true
+          echo '===== all blocked tasks ====='
+          ps -eLo pid,ppid,tid,stat,wchan:40,comm,args | awk '$4 ~ /^D/ {print}' || true
+          echo '===== sysrq blocked-task dump ====='
+          sudo sh -c 'echo w > /proc/sysrq-trigger' 2>/dev/null || true
+          sudo dmesg --color=never | tail -n 300 || true
+          sudo umount -l "$mnt" || true
+          mounted=0
+          exit 1
