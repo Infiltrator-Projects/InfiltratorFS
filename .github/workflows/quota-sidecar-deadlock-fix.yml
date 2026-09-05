@@ -19,48 +19,30 @@ jobs:
 
       - name: Prevent recursive sidecar metadata lookup
         shell: bash
+        env:
+          OLD_BLOCK_B64: "ICAgICAgICByZXQgPSBpbmZpbGZzX2xpbnV4X21ldGFfZ2V0X3NwZWNpYWwoaW5vZGUtPmlfc2IsIGlpLT5vYmplY3RfaWQsCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAmc3BlY2lhbF9tb2RlLCAmc3BlY2lhbF9yZGV2KTsKICAgICAgICBpZiAocmV0KQogICAgICAgICAgICBnb3RvIGZhaWxfcHJpdmF0ZTsK"
+          NEW_BLOCK_B64: "ICAgICAgICAvKgogICAgICAgICAqIEludGVybmFsIExpbnV4IHNpZGVjYXIgZmlsZXMgbXVzdCBuZXZlciByZWN1cnNpdmVseSByZXNvbHZlIHNpZGVjYXIKICAgICAgICAgKiBtZXRhZGF0YS4gUXVvdGEgcG9saWN5IGlzIHBlcnNpc3RlZCBhcyBhIHRydXN0ZWQgeGF0dHIsIHNvIHRoZSBmaXJzdAogICAgICAgICAqIHF1b3RhIHdyaXRlIGNhbiBjcmVhdGUgYSBoaWRkZW4vc3lzdGVtIHNpZGVjYXIgd2hpbGUgbGludXhfbWV0YV9sb2NrCiAgICAgICAgICogaXMgYWxyZWFkeSBoZWxkLiBBc2tpbmcgdGhhdCBzaWRlY2FyIGlub2RlIGZvciBpdHMgb3duIHNwZWNpYWwtbm9kZQogICAgICAgICAqIHNpZGVjYXIgd291bGQgcmVjdXJzaXZlbHkgYWNxdWlyZSBsaW51eF9tZXRhX2xvY2sgYW5kIGRlYWRsb2NrLgogICAgICAgICAqIEludGVybmFsIHNpZGVjYXJzIGFyZSBvcmRpbmFyeSByZWd1bGFyIGZpbGVzIGJ5IGNvbnN0cnVjdGlvbiBhbmQKICAgICAgICAgKiBuZXZlciBoYXZlIHNpZGVjYXJzIG9mIHRoZWlyIG93bi4KICAgICAgICAgKi8KICAgICAgICBpZiAoKGxlNjRfdG9fY3B1KGF0dHJpYnV0ZXMtPnBvcnRhYmxlX2ZsYWdzKSAmCiAgICAgICAgICAgICAoSU5GSUxGU19BVFRSX0hJRERFTiB8IElORklMRlNfQVRUUl9TWVNURU0pKSAhPQogICAgICAgICAgICAoSU5GSUxGU19BVFRSX0hJRERFTiB8IElORklMRlNfQVRUUl9TWVNURU0pKSB7CiAgICAgICAgICAgIHJldCA9IGluZmlsZnNfbGludXhfbWV0YV9nZXRfc3BlY2lhbCgKICAgICAgICAgICAgICAgIGlub2RlLT5pX3NiLCBpaS0+b2JqZWN0X2lkLCAmc3BlY2lhbF9tb2RlLCAmc3BlY2lhbF9yZGV2KTsKICAgICAgICAgICAgaWYgKHJldCkKICAgICAgICAgICAgICAgIGdvdG8gZmFpbF9wcml2YXRlOwogICAgICAgIH0K"
         run: |
           set -euo pipefail
           python3 - <<'PY'
+          import base64
+          import os
           from pathlib import Path
-
           core_path = Path('kernel/infiltratorfs_core.c')
           core = core_path.read_text()
-          old = '''        ret = infilfs_linux_meta_get_special(inode->i_sb, ii->object_id,
-                                              &special_mode, &special_rdev);
-        if (ret)
-            goto fail_private;
-'''
-          new = '''        /*
-         * Internal Linux sidecar files must never recursively resolve sidecar
-         * metadata.  Quota policy is persisted as a trusted xattr, so the
-         * first quota write can create a hidden/system sidecar while
-         * linux_meta_lock is already held.  Asking that sidecar inode for its
-         * own special-node sidecar would recursively acquire linux_meta_lock
-         * and deadlock.  Internal sidecars are ordinary regular files by
-         * construction and never have sidecars of their own.
-         */
-        if ((le64_to_cpu(attributes->portable_flags) &
-             (INFILFS_ATTR_HIDDEN | INFILFS_ATTR_SYSTEM)) !=
-            (INFILFS_ATTR_HIDDEN | INFILFS_ATTR_SYSTEM)) {
-            ret = infilfs_linux_meta_get_special(
-                inode->i_sb, ii->object_id, &special_mode, &special_rdev);
-            if (ret)
-                goto fail_private;
-        }
-'''
+          old = base64.b64decode(os.environ['OLD_BLOCK_B64']).decode()
+          new = base64.b64decode(os.environ['NEW_BLOCK_B64']).decode()
           if core.count(old) != 1:
               raise SystemExit('expected special-metadata inode-population block not found exactly once')
           core_path.write_text(core.replace(old, new, 1))
-
           policy_path = Path('tests/native-quota-policy.sh')
           policy = policy_path.read_text()
           anchor = "grep -Fq 'return -EDQUOT' \"$root/kernel/infiltratorfs_quota.inc\"\n"
-          extra = anchor + "grep -Fq 'Internal Linux sidecar files must never recursively resolve sidecar' \"$root/kernel/infiltratorfs_core.c\"\n"
+          guard = "grep -Fq 'Internal Linux sidecar files must never recursively resolve sidecar' \"$root/kernel/infiltratorfs_core.c\"\n"
           if anchor not in policy:
               raise SystemExit('quota policy anchor not found')
-          if 'Internal Linux sidecar files must never recursively resolve sidecar' not in policy:
-              policy = policy.replace(anchor, extra, 1)
+          if guard not in policy:
+              policy = policy.replace(anchor, anchor + guard, 1)
           policy_path.write_text(policy)
           PY
           rm -f .github/workflows/quota-sidecar-deadlock-fix.yml
