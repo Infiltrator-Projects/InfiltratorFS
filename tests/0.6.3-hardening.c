@@ -96,10 +96,11 @@ static infs_status memory_random(void *context, void *buffer, size_t size)
     return INFS_STATUS_OK;
 }
 
-static infs_status memory_time(void *context, int64_t *time_ns)
+static infs_status memory_time(void *context, struct infs_timestamp *time)
 {
     (void)context;
-    *time_ns = INT64_C(1786744800000000000);
+    time->seconds = INT64_C(1786744800);
+    time->nanoseconds = UINT32_C(0);
     return INFS_STATUS_OK;
 }
 
@@ -114,7 +115,7 @@ static const struct infs_storage_ops memory_ops = {
     .flush = memory_flush,
     .get_size = memory_size,
     .random_bytes = memory_random,
-    .current_time_ns = memory_time,
+    .current_time = memory_time,
     .close = memory_close,
 };
 
@@ -184,7 +185,7 @@ static void build_valid_image(struct memory_image *image)
     memcpy(image->bytes + 2u * INFS_BLOCK_SIZE, block, sizeof(block));
 
     expect(infs_encode_root_directory(block, root_id, 1, 0755, 0, 0,
-                                      INT64_C(1786744800000000000)) ==
+                                      &(struct infs_timestamp){ INT64_C(1786744800), 0u }) ==
                INFS_STATUS_OK,
            "encode root directory");
     memcpy(image->bytes + 3u * INFS_BLOCK_SIZE, block, sizeof(block));

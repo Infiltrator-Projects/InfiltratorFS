@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-# InfiltratorFS On-Disk Format 0.17
+# InfiltratorFS On-Disk Format 0.18
 
-This document explains the persistent Format 0.17 model. Exact packed field order, sizes, constants and feature identifiers in `include/infilfs/format.h` are the byte-level authority. Architectural intent lives in `ARCHITECTURE.md`; feature completion and qualification do not belong in this specification.
+This document explains the persistent Format 0.18 model. Exact packed field order, sizes, constants and feature identifiers in `include/infilfs/format.h` are the byte-level authority. Architectural intent lives in `ARCHITECTURE.md`; feature completion and qualification do not belong in this specification.
 
 Pre-1.0 development accepts the current development format only and does not promise readers or migrations for superseded development formats.
 
@@ -31,19 +31,19 @@ A checkpoint records the generation, committed total/free block accounting, allo
 
 Filesystem UUID, root object identity and generation are nonzero.
 
-Each physical checkpoint copy is independently validated for magic, exact Format 0.17 identity, header/block geometry, feature compatibility, canonical reserved bytes, checksum and recorded checkpoint-position consistency before its referenced graph can be considered.
+Each physical checkpoint copy is independently validated for magic, exact Format 0.18 identity, header/block geometry, feature compatibility, canonical reserved bytes, checksum and recorded checkpoint-position consistency before its referenced graph can be considered.
 
 Recovery considers candidate checkpoints in descending generation order and selects the newest complete structurally valid committed graph. Structural corruption may justify fallback to an older committed generation. External I/O failures, unsupported features, memory failure or other operational errors must not be silently reclassified as corruption merely to force fallback.
 
 ## 3. Feature compatibility
 
-Format 0.17 uses separate compatible, read-only-compatible and incompatible feature classes.
+Format 0.18 uses separate compatible, read-only-compatible and incompatible feature classes.
 
 - Unknown incompatible bits prevent open.
 - Unknown read-only-compatible bits prevent writable open.
 - Unknown compatible bits may be ignored according to their contract.
 
-Current Format 0.17 requires UTF-8 names, sparse extents and the allocation-tree representation. Current formatters enable the established known feature set for inline data, shared extents, paged metadata/extents, symbolic links, hard links, snapshots, object-index tree, directory tree, allocation tree and compressed extents.
+Current Format 0.18 requires UTF-8 names, sparse extents and the allocation-tree representation. Current formatters enable the established known feature set for inline data, shared extents, paged metadata/extents, symbolic links, hard links, snapshots, object-index tree, directory tree, allocation tree and compressed extents.
 
 A representation is accepted only when its feature bit/version contract agrees with the structure actually stored. A feature bit that contradicts the selected record version is corruption.
 
@@ -51,17 +51,17 @@ A representation is accepted only when its feature bit/version contract agrees w
 
 Logical allocation ownership remains one authoritative bit per filesystem block: zero means free; one means allocated or unavailable.
 
-Format 0.17 persists that bitset as a checkpoint-rooted copy-on-write allocation tree rather than a monolithic bitmap image.
+Format 0.18 persists that bitset as a checkpoint-rooted copy-on-write allocation tree rather than a monolithic bitmap image.
 
 Allocation leaves use `INFSAL01`; branch pages use `INFSAB01`. Allocation pages carry generation, logical index, level, entry count, payload length and CRC64 metadata.
 
-The current packed allocation-page header is 72 bytes, leaving 4024 payload bytes in one 4096-byte page. Each leaf therefore represents 32,192 allocation bits except the final partially used leaf. Branch payloads contain little-endian 64-bit child block pointers with fanout 503. Format 0.17 fixes the allocation root at level 3.
+The current packed allocation-page header is 72 bytes, leaving 4024 payload bytes in one 4096-byte page. Each leaf therefore represents 32,192 allocation bits except the final partially used leaf. Branch payloads contain little-endian 64-bit child block pointers with fanout 503. Format 0.18 fixes the allocation root at level 3.
 
 The checkpoint stores the allocation root and leaf count. The declared leaf count must agree with committed `total_blocks`. Missing, duplicate, out-of-range, malformed or checkpoint-overlapping allocation pages are corruption.
 
 Allocation pages are bootstrap metadata, not persistent namespace objects, and have no object IDs. Unchanged pages may be shared by later committed generations, so a referenced page generation may be older than the selected checkpoint but never zero or newer than that checkpoint.
 
-Transactions maintain the authoritative allocation state plus rebuildable runtime free-extent acceleration. Publication rewrites only affected allocation leaves and the required replacement branch paths/root. Whole-volume bitmap cloning or whole-bitmap publication is not part of Format 0.17.
+Transactions maintain the authoritative allocation state plus rebuildable runtime free-extent acceleration. Publication rewrites only affected allocation leaves and the required replacement branch paths/root. Whole-volume bitmap cloning or whole-bitmap publication is not part of Format 0.18.
 
 Every allocated block must be accounted for by the committed graph: checkpoints, allocation pages, metadata tree pages, indexed objects, extent metadata, file data or retained snapshot state. Metadata ownership overlap is corruption. Shared ordinary file-data ownership is permitted only by the shared-extents contract.
 
@@ -86,7 +86,7 @@ Object types include directory, regular file, object index, checksum metadata, s
 
 The object index maps a persistent 128-bit object ID to the physical block containing that object's metadata plus its type.
 
-Current Format 0.17 uses a generation-aware radix/tree representation. Directory entries refer to persistent object IDs rather than physical object blocks, so metadata relocation changes the index rather than every namespace reference.
+Current Format 0.18 uses a generation-aware radix/tree representation. Directory entries refer to persistent object IDs rather than physical object blocks, so metadata relocation changes the index rather than every namespace reference.
 
 Index tree pages are independently bounds/allocation/owner/generation/checksum validated. Entries require nonzero unique object IDs, valid target blocks, matching object identity/type and canonical flags.
 
@@ -181,7 +181,7 @@ Blocks remain unavailable for reuse while referenced by the live graph or any re
 
 Snapshot reads are read-only. Live writes must copy on write rather than mutate blocks still referenced by a snapshot.
 
-Format 0.17 does not require snapshot-aware resize migration. An implementation may conservatively reject resize while retained snapshots exist.
+Format 0.18 does not require snapshot-aware resize migration. An implementation may conservatively reject resize while retained snapshots exist.
 
 ## 13. Transaction publication
 
@@ -203,7 +203,7 @@ Shrink must fail before commit if any live allocation would fall outside the req
 
 ## 15. Integrity and graph validity
 
-A structurally valid Format 0.17 graph requires:
+A structurally valid Format 0.18 graph requires:
 
 - valid checksums and canonical encodings;
 - in-range allocated physical references;
@@ -228,7 +228,7 @@ See `PLATFORM_ADAPTERS.md` and `SECURITY.md`.
 
 ## 17. Normative sources
 
-For Format 0.17 maintenance, use these sources in order:
+For Format 0.18 maintenance, use these sources in order:
 
 1. `include/infilfs/format.h` for exact persistent constants, packed layouts and compile-time size contracts.
 2. This document for the persistent structural model and acceptance intent.

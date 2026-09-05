@@ -35,7 +35,7 @@ static const uint8_t INFS_ALLOCATION_LEAF_PAGE_MAGIC[8] = {
  * exact development format. A format revision replaces its predecessor; it
  * does not add an older-format reader or migration path. */
 #define INFS_FORMAT_MAJOR 0u
-#define INFS_FORMAT_MINOR 17u
+#define INFS_FORMAT_MINOR 18u
 #define INFS_CHECKPOINT_COUNT 3u
 #define INFS_CHECKSUM_CRC64_ECMA 1u
 #define INFS_CHECKSUM_SHA256     2u
@@ -175,14 +175,20 @@ struct INFS_PACKED infs_allocation_page_disk {
     uint8_t  checksum[32];
 };
 
+struct INFS_PACKED infs_timestamp_disk {
+    int64_t  seconds;
+    uint32_t nanoseconds;
+    uint32_t reserved;
+};
+
 struct INFS_PACKED infs_attributes_disk {
     uint64_t logical_size;
     uint64_t link_count;
     uint64_t portable_flags;
-    int64_t  birth_time_ns;
-    int64_t  access_time_ns;
-    int64_t  modification_time_ns;
-    int64_t  change_time_ns;
+    struct infs_timestamp_disk birth_time;
+    struct infs_timestamp_disk access_time;
+    struct infs_timestamp_disk modification_time;
+    struct infs_timestamp_disk change_time;
     uint8_t  security_object_id[16];
     uint8_t  extended_attributes_object_id[16];
 };
@@ -225,7 +231,7 @@ struct INFS_PACKED infs_file_payload_disk {
     uint8_t  checksum_head_id[16];
 };
 
-/* Format 0.17 symbolic links store their UTF-8 target bytes directly after
+/* Format 0.18 symbolic links store their UTF-8 target bytes directly after
  * this fixed payload. Targets may be absolute or relative and are never
  * interpreted by the portable core. */
 struct INFS_PACKED infs_symlink_payload_disk {
@@ -239,7 +245,7 @@ struct INFS_PACKED infs_symlink_payload_disk {
     (INFS_BLOCK_SIZE - sizeof(struct infs_object_header_disk) - \
      sizeof(struct infs_symlink_payload_disk))
 
-/* Format 0.17 version-2 file objects keep the fixed file payload and then
+/* Format 0.18 version-2 file objects keep the fixed file payload and then
  * store this extent-head followed by little-endian uint64 physical pointers
  * to independently checksummed extent metadata pages. extent_count remains
  * the total number of extents across all pages. */
@@ -278,7 +284,7 @@ struct INFS_PACKED infs_data_checksum_disk {
       sizeof(struct infs_checksum_payload_disk)) / \
      sizeof(struct infs_data_checksum_disk))
 
-/* Format 0.17 inline files reuse the existing file object block. A non-empty
+/* Format 0.18 inline files reuse the existing file object block. A non-empty
  * inline file stores one SHA-256 digest immediately after the fixed file
  * payload, followed by logical_size bytes of data. The digest authenticates
  * the same zero-padded 4096-byte logical block used by normal data storage. */
@@ -321,7 +327,7 @@ struct INFS_PACKED infs_snapshot_catalog_payload_disk {
 
 struct INFS_PACKED infs_snapshot_record_disk {
     uint64_t generation;
-    uint64_t created_time_ns;
+    struct infs_timestamp_disk created_time;
     uint64_t bitmap_start_block;
     uint64_t bitmap_block_count;
     uint64_t free_blocks;
@@ -390,19 +396,21 @@ _Static_assert(INFS_ALLOCATION_TREE_FANOUT == 503u,
                "allocation tree fanout unexpectedly changed");
 _Static_assert(INFS_ALLOCATION_BITS_PER_LEAF == UINT64_C(32192),
                "allocation leaf coverage unexpectedly changed");
-_Static_assert(sizeof(struct infs_attributes_disk) == 88,
+_Static_assert(sizeof(struct infs_timestamp_disk) == 16,
+               "timestamp layout changed");
+_Static_assert(sizeof(struct infs_attributes_disk) == 120,
                "common attributes layout changed");
 _Static_assert(sizeof(struct infs_posix_compat_disk) == 16,
                "POSIX compatibility layout changed");
-_Static_assert(sizeof(struct infs_directory_payload_disk) == 112,
+_Static_assert(sizeof(struct infs_directory_payload_disk) == 144,
                "directory payload layout changed");
 _Static_assert(sizeof(struct infs_dirent_disk) == 24,
                "directory entry header layout changed");
 _Static_assert(INFS_DIRENT_MAX_RECORD_SIZE <= INFS_METADATA_PAGE_DATA_SIZE,
                "maximum filename no longer fits one directory leaf record");
-_Static_assert(sizeof(struct infs_file_payload_disk) == 128,
+_Static_assert(sizeof(struct infs_file_payload_disk) == 160,
                "file payload layout changed");
-_Static_assert(sizeof(struct infs_symlink_payload_disk) == 112,
+_Static_assert(sizeof(struct infs_symlink_payload_disk) == 144,
                "symbolic-link payload layout changed");
 _Static_assert(sizeof(struct infs_extent_head_disk) == 8,
                "extent head layout changed");
@@ -418,17 +426,17 @@ _Static_assert(sizeof(struct infs_index_entry_disk) == 32,
                "object index entry layout changed");
 _Static_assert(sizeof(struct infs_snapshot_catalog_payload_disk) == 8,
                "snapshot catalog payload layout changed");
-_Static_assert(sizeof(struct infs_snapshot_record_disk) == 144,
+_Static_assert(sizeof(struct infs_snapshot_record_disk) == 152,
                "snapshot record layout changed");
 _Static_assert(sizeof(INFS_SNAPSHOT_CATALOG_ID) == 17u,
                "snapshot catalog ID must contain exactly 16 bytes");
-_Static_assert(INFS_SNAPSHOTS_PER_CATALOG == 27u,
+_Static_assert(INFS_SNAPSHOTS_PER_CATALOG == 26u,
                "snapshot catalog capacity unexpectedly changed");
 _Static_assert(INFS_CHECKSUMS_PER_OBJECT >= 120,
                "checksum object capacity unexpectedly small");
-_Static_assert(INFS_INLINE_DATA_MAX == 3840u,
+_Static_assert(INFS_INLINE_DATA_MAX == 3808u,
                "inline-data capacity unexpectedly changed");
-_Static_assert(INFS_SYMLINK_TARGET_MAX == 3888u,
+_Static_assert(INFS_SYMLINK_TARGET_MAX == 3856u,
                "symbolic-link target capacity unexpectedly changed");
 _Static_assert(INFS_INDEX_ENTRIES_PER_PAGE == 125u,
                "index page capacity unexpectedly changed");
@@ -442,7 +450,7 @@ _Static_assert(INFS_DIRECTORY_PAGE_POINTERS >= 480u,
                "directory head page-pointer capacity unexpectedly small");
 _Static_assert(INFS_INDEX_PAGE_POINTERS >= 490u,
                "index head page-pointer capacity unexpectedly small");
-_Static_assert(INFS_EXTENT_PAGE_POINTERS >= 480u,
+_Static_assert(INFS_EXTENT_PAGE_POINTERS >= 479u,
                "extent head page-pointer capacity unexpectedly small");
 
 #if defined(_MSC_VER)

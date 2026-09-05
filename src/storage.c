@@ -53,13 +53,15 @@ infs_status infs_storage_random(const struct infs_storage *storage,
     return storage->ops->random_bytes(storage->context, buffer, size);
 }
 
-infs_status infs_storage_current_time_ns(const struct infs_storage *storage,
-                                         int64_t *time_ns)
+infs_status infs_storage_current_time(const struct infs_storage *storage,
+                                      struct infs_timestamp *time)
 {
-    if (!infs_storage_valid(storage) || !storage->ops->current_time_ns ||
-        !time_ns)
+    if (!infs_storage_valid(storage) || !storage->ops->current_time || !time)
         return INFS_STATUS_INVALID_ARGUMENT;
-    return storage->ops->current_time_ns(storage->context, time_ns);
+    infs_status status = storage->ops->current_time(storage->context, time);
+    if (status == INFS_STATUS_OK && !infs_timestamp_valid(time))
+        return INFS_STATUS_CORRUPT;
+    return status;
 }
 
 void infs_storage_close(struct infs_storage *storage)

@@ -18,6 +18,28 @@
 
 static const uint8_t snapshot_catalog_id[16] = INFS_SNAPSHOT_CATALOG_ID;
 
+static int timestamp_disk_valid(const struct infs_timestamp_disk *disk)
+{
+    return disk && infs_le32_to_cpu(disk->nanoseconds) < UINT32_C(1000000000) &&
+           infs_le32_to_cpu(disk->reserved) == 0;
+}
+
+static void timestamp_disk_from_value(struct infs_timestamp_disk *disk,
+                                      const struct infs_timestamp *value)
+{
+    disk->seconds = (int64_t)infs_cpu_to_le64((uint64_t)value->seconds);
+    disk->nanoseconds = infs_cpu_to_le32(value->nanoseconds);
+    disk->reserved = 0;
+}
+
+static void timestamp_value_from_disk(const struct infs_timestamp_disk *disk,
+                                      struct infs_timestamp *value)
+{
+    value->seconds = (int64_t)infs_le64_to_cpu((uint64_t)disk->seconds);
+    value->nanoseconds = infs_le32_to_cpu(disk->nanoseconds);
+}
+
+
 static infs_status transaction_next_generation(const struct infs_volume *vol,
                                                uint64_t *generation)
 {

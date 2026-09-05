@@ -443,10 +443,10 @@ static int infilfs_defrag_one(
         struct infilfs_file_payload_disk *new_file =
             (struct infilfs_file_payload_disk *)(new_header + 1);
 
-        new_file->attributes.modification_time_ns =
-            old_file->attributes.modification_time_ns;
-        new_file->attributes.change_time_ns =
-            old_file->attributes.change_time_ns;
+        new_file->attributes.modification_time =
+            old_file->attributes.modification_time;
+        new_file->attributes.change_time =
+            old_file->attributes.change_time;
         ret = infilfs_rw_finalize_object(new_object);
         if (ret)
             goto finish;
@@ -771,10 +771,10 @@ static int infilfs_native_reflink_full(
         new_header->object_version =
             cpu_to_le16(INFILFS_OBJECT_VERSION_CLASSIC);
         new_file->attributes.logical_size = cpu_to_le64(source_size);
-        new_file->attributes.modification_time_ns =
+        new_file->attributes.modification_time =
             cpu_to_le64(ktime_get_real_ns());
-        new_file->attributes.change_time_ns =
-            new_file->attributes.modification_time_ns;
+        new_file->attributes.change_time =
+            new_file->attributes.modification_time;
         new_file->extent_count = 0;
         new_file->data_checksum_type = cpu_to_le32(INFILFS_CHECKSUM_SHA256);
         memset(new_file->checksum_head_id, 0,

@@ -250,12 +250,11 @@ static int rename_tx(struct infs_volume *vol, const char *oldpath,
     if (!source_attributes)
         return INFS_STATUS_CORRUPT;
 
-    int64_t now = 0;
-    status = infs_storage_current_time_ns(&vol->storage, &now);
+    struct infs_timestamp now = {0};
+    status = infs_storage_current_time(&vol->storage, &now);
     if (status != INFS_STATUS_OK)
         return status;
-    source_attributes->change_time_ns =
-        (int64_t)infs_cpu_to_le64((uint64_t)now);
+    timestamp_disk_from_value(&source_attributes->change_time, &now);
     status = write_object(vol, current_source.block, source_block);
     if (status != INFS_STATUS_OK)
         return status;

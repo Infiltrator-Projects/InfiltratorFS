@@ -7,7 +7,7 @@ This README is intentionally limited to local kernel-module guidance. Filesystem
 
 ## Role
 
-The module registers filesystem type `infiltratorfs` and maps Linux VFS operations onto the portable Format 0.17 object, extent, transaction, checkpoint and integrity model.
+The module registers filesystem type `infiltratorfs` and maps Linux VFS operations onto the portable Format 0.18 object, extent, transaction, checkpoint and integrity model.
 
 The current product path is native VFS only. The former userspace FUSE implementation is not part of the current source or package path and survives only in Git history.
 
@@ -29,7 +29,7 @@ Load the installed module normally:
 sudo modprobe infiltratorfs
 ```
 
-Mount a current Format 0.17 volume:
+Mount a current Format 0.18 volume:
 
 ```bash
 sudo mount -i -t infiltratorfs -o rw /dev/<partition> /mnt/infiltratorfs
@@ -44,7 +44,7 @@ Matching running-kernel headers are required for a native build. Installation mu
 
 ## Source organization
 
-`infiltratorfs.ko` is a composite Kbuild module rather than a single giant translation unit. `infiltratorfs_core.c` owns VFS, mount and checkpoint orchestration, `infiltratorfs_allocation_map.c` owns Format 0.17 allocation-map loading, `infiltratorfs_resize.c` owns mounted geometry transitions, `infiltratorfs_index_tree.c` owns Format 0.17 object-index reads and snapshots, `infiltratorfs_parallel_alloc.c` owns volatile sharded data reservations, `infiltratorfs_allocation_publish.c` owns CoW allocation-tree publication, `infiltratorfs_read_cache.c` owns verified read cursor/page caching, `infiltratorfs_pagecache.c` owns Linux folio/page-cache integration, and `infiltratorfs_directory_tree.c` owns scalable Format 0.17 directory trees. Shared native-driver state and the deliberately narrow cross-object API live in the private `infiltratorfs_internal.h` header.
+`infiltratorfs.ko` is a composite Kbuild module rather than a single giant translation unit. `infiltratorfs_core.c` owns VFS, mount and checkpoint orchestration, `infiltratorfs_allocation_map.c` owns Format 0.18 allocation-map loading, `infiltratorfs_resize.c` owns mounted geometry transitions, `infiltratorfs_index_tree.c` owns Format 0.18 object-index reads and snapshots, `infiltratorfs_parallel_alloc.c` owns volatile sharded data reservations, `infiltratorfs_allocation_publish.c` owns CoW allocation-tree publication, `infiltratorfs_read_cache.c` owns verified read cursor/page caching, `infiltratorfs_pagecache.c` owns Linux folio/page-cache integration, and `infiltratorfs_directory_tree.c` owns scalable Format 0.18 directory trees. Shared native-driver state and the deliberately narrow cross-object API live in the private `infiltratorfs_internal.h` header.
 
 Some already-qualified native layers are still textually composed inside the core object, including write-data paths, namespace mutation, Linux metadata, quotas and defragmentation. Those include units are localized migration debt, not the module architecture and not a pattern for new features. Additional layers should move behind explicit internal APIs as independently compiled objects when their dependency boundaries are proven.
 

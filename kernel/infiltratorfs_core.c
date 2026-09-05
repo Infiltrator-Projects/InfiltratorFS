@@ -618,6 +618,34 @@ static bool infilfs_object_basic_valid(struct super_block *sb,
     payload = le32_to_cpu(header->payload_size);
     if (payload > INFILFS_DISK_BLOCK_SIZE - sizeof(*header))
         return false;
+    if (le16_to_cpu(header->object_type) == INFILFS_OBJECT_DIRECTORY) {
+        if (payload < sizeof(struct infilfs_directory_payload_disk) ||
+            !infilfs_common_attributes_valid(
+                &((const struct infilfs_directory_payload_disk *)(header + 1))->attributes))
+            return false;
+    } else if (le16_to_cpu(header->object_type) == INFILFS_OBJECT_FILE) {
+        if (payload < sizeof(struct infilfs_file_payload_disk) ||
+            !infilfs_common_attributes_valid(
+                &((const struct infilfs_file_payload_disk *)(header + 1))->attributes))
+            return false;
+    } else if (le16_to_cpu(header->object_type) == INFILFS_OBJECT_SYMLINK) {
+        if (payload < sizeof(struct infilfs_symlink_payload_disk) ||
+            !infilfs_common_attributes_valid(
+                &((const struct infilfs_symlink_payload_disk *)(header + 1))->attributes))
+            return false;
+    } else if (le16_to_cpu(header->object_type) == INFILFS_OBJECT_SNAPSHOT_CATALOG) {
+        const struct infilfs_snapshot_catalog_payload_disk *catalog;
+        const struct infilfs_snapshot_record_disk *records;
+        u32 count, i;
+        if (payload < sizeof(*catalog)) return false;
+        catalog = (const struct infilfs_snapshot_catalog_payload_disk *)(header + 1);
+        count = le32_to_cpu(catalog->snapshot_count);
+        if (count > 26u || payload != sizeof(*catalog) +
+            (size_t)count * sizeof(*records)) return false;
+        records = (const struct infilfs_snapshot_record_disk *)(catalog + 1);
+        for (i = 0; i < count; ++i)
+            if (!infilfs_timestamp_valid(&records[i].created_time)) return false;
+    }
     return true;
 }
 
@@ -2328,7 +2356,14 @@ static int infilfs_populate_inode(struct inode *inode, u64 object_block,
         goto fail_private;
     }
 
+    if (!infilfs_common_attributes_valid(attributes)) {
+        ret = -EFSCORRUPTED;
+        goto fail_private;
+    }
     ii->portable_flags = le64_to_cpu(attributes->portable_flags);
+    inode->i_atime = infilfs_timestamp_decode(&attributes->access_time);
+    inode->i_mtime = infilfs_timestamp_decode(&attributes->modification_time);
+    inode->i_ctime = infilfs_timestamp_decode(&attributes->change_time);
     {
         kuid_t uid = make_kuid(&init_user_ns, le32_to_cpu(posix->uid));
         kgid_t gid = make_kgid(&init_user_ns, le32_to_cpu(posix->gid));

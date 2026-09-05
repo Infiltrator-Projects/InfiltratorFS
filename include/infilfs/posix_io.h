@@ -4,6 +4,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include "infilfs/time.h"
 
 #include "infilfs/storage.h"
 
@@ -16,7 +17,7 @@ int infs_pread_full(int fd, void *buf, size_t count, uint64_t offset);
 int infs_pwrite_full(int fd, const void *buf, size_t count, uint64_t offset);
 int infs_get_size_bytes(int fd, uint64_t *size_bytes, int *is_block_device);
 int infs_random_bytes(void *buf, size_t count);
-int64_t infs_current_time_ns(void);
+int infs_current_time(struct infs_timestamp *time);
 
 infs_status infs_posix_storage_open(struct infs_storage *storage,
                                     const char *path, int writable);

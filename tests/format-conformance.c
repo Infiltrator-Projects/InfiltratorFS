@@ -77,7 +77,8 @@ static void check_layout(void)
            "payload-size offset");
     expect(offsetof(struct infs_object_header_disk, checksum) == 64,
            "object checksum offset");
-    expect(sizeof(struct infs_attributes_disk) == 88, "attributes size");
+    expect(sizeof(struct infs_timestamp_disk) == 16, "timestamp size");
+    expect(sizeof(struct infs_attributes_disk) == 120, "attributes size");
     expect(sizeof(struct infs_dirent_disk) == 24u,
            "directory entry header size");
     expect(sizeof(struct infs_allocation_page_disk) == 72u,
@@ -90,12 +91,18 @@ static void check_layout(void)
            "current component-name capacity");
     expect(INFS_DIRENT_MAX_RECORD_SIZE <= INFS_METADATA_PAGE_DATA_SIZE,
            "maximum component fits one directory leaf record");
-    expect(offsetof(struct infs_attributes_disk, birth_time_ns) == 24,
+    expect(offsetof(struct infs_attributes_disk, birth_time) == 24,
            "birth-time offset");
-    expect(offsetof(struct infs_attributes_disk, security_object_id) == 56,
+    expect(offsetof(struct infs_attributes_disk, access_time) == 40,
+           "access-time offset");
+    expect(offsetof(struct infs_attributes_disk, modification_time) == 56,
+           "modification-time offset");
+    expect(offsetof(struct infs_attributes_disk, change_time) == 72,
+           "change-time offset");
+    expect(offsetof(struct infs_attributes_disk, security_object_id) == 88,
            "security-object offset");
     expect(offsetof(struct infs_attributes_disk,
-                    extended_attributes_object_id) == 72,
+                    extended_attributes_object_id) == 104,
            "extended-attributes offset");
     expect(sizeof(struct infs_extent_disk) == 24, "extent size");
     expect(offsetof(struct infs_extent_disk, logical_block) == 0,
@@ -106,16 +113,16 @@ static void check_layout(void)
            "extent block-count offset");
     expect(offsetof(struct infs_extent_disk, flags) == 20,
            "extent flags offset");
-    expect(INFS_INLINE_DATA_MAX == 3840u, "inline-data capacity");
-    expect(sizeof(struct infs_symlink_payload_disk) == 112u,
+    expect(INFS_INLINE_DATA_MAX == 3808u, "inline-data capacity");
+    expect(sizeof(struct infs_symlink_payload_disk) == 144u,
            "symbolic-link payload size");
-    expect(INFS_SYMLINK_TARGET_MAX == 3888u,
+    expect(INFS_SYMLINK_TARGET_MAX == 3856u,
            "symbolic-link target capacity");
     expect(sizeof(struct infs_snapshot_catalog_payload_disk) == 8u,
            "snapshot catalog payload size");
-    expect(sizeof(struct infs_snapshot_record_disk) == 144u,
+    expect(sizeof(struct infs_snapshot_record_disk) == 152u,
            "snapshot record size");
-    expect(INFS_SNAPSHOTS_PER_CATALOG == 27u,
+    expect(INFS_SNAPSHOTS_PER_CATALOG == 26u,
            "snapshot catalog capacity");
 }
 

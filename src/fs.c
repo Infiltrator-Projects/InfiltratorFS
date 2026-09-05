@@ -509,21 +509,23 @@ int infs_validate_allocation_page(const uint8_t block[INFS_BLOCK_SIZE],
 }
 
 static void fill_attributes(struct infs_attributes_disk *attributes,
-                            uint64_t link_count, int64_t now_ns)
+                            uint64_t link_count,
+                            const struct infs_timestamp *now)
 {
     memset(attributes, 0, sizeof(*attributes));
     attributes->logical_size = infs_cpu_to_le64(0);
     attributes->link_count = infs_cpu_to_le64(link_count);
-    attributes->birth_time_ns = (int64_t)infs_cpu_to_le64((uint64_t)now_ns);
-    attributes->access_time_ns = (int64_t)infs_cpu_to_le64((uint64_t)now_ns);
-    attributes->modification_time_ns = (int64_t)infs_cpu_to_le64((uint64_t)now_ns);
-    attributes->change_time_ns = (int64_t)infs_cpu_to_le64((uint64_t)now_ns);
+    attributes->birth_time.seconds = (int64_t)infs_cpu_to_le64((uint64_t)now->seconds);
+    attributes->birth_time.nanoseconds = infs_cpu_to_le32(now->nanoseconds);
+    attributes->access_time = attributes->birth_time;
+    attributes->modification_time = attributes->birth_time;
+    attributes->change_time = attributes->birth_time;
 }
 
 static infs_status encode_root_directory_version(
     uint8_t block[INFS_BLOCK_SIZE], const uint8_t object_id[16],
     uint64_t generation, uint32_t permissions, uint32_t uid, uint32_t gid,
-    int64_t now_ns, uint16_t object_version)
+    const struct infs_timestamp *now, uint16_t object_version)
 {
     infs_status status = infs_object_init(
         block, INFS_OBJECT_DIRECTORY, object_id, NULL, generation,
@@ -536,7 +538,7 @@ static infs_status encode_root_directory_version(
     header->object_version = infs_cpu_to_le16(object_version);
     struct infs_directory_payload_disk *payload =
         (struct infs_directory_payload_disk *)(block + sizeof(*header));
-    fill_attributes(&payload->attributes, 2u, now_ns);
+    fill_attributes(&payload->attributes, 2u, now);
     payload->posix.permissions = infs_cpu_to_le32(permissions & 07777u);
     payload->posix.uid = infs_cpu_to_le32(uid);
     payload->posix.gid = infs_cpu_to_le32(gid);
@@ -550,10 +552,10 @@ infs_status infs_encode_root_directory(uint8_t block[INFS_BLOCK_SIZE],
                                        uint64_t generation,
                                        uint32_t permissions,
                                        uint32_t uid, uint32_t gid,
-                                       int64_t now_ns)
+                                       const struct infs_timestamp *now)
 {
     return encode_root_directory_version(
-        block, object_id, generation, permissions, uid, gid, now_ns,
+        block, object_id, generation, permissions, uid, gid, now,
         INFS_OBJECT_VERSION_CLASSIC);
 }
 
@@ -562,10 +564,10 @@ infs_status infs_encode_paged_root_directory(uint8_t block[INFS_BLOCK_SIZE],
                                              uint64_t generation,
                                              uint32_t permissions,
                                              uint32_t uid, uint32_t gid,
-                                             int64_t now_ns)
+                                             const struct infs_timestamp *now)
 {
     return encode_root_directory_version(
-        block, object_id, generation, permissions, uid, gid, now_ns,
+        block, object_id, generation, permissions, uid, gid, now,
         INFS_OBJECT_VERSION_PAGED);
 }
 
@@ -574,10 +576,10 @@ infs_status infs_encode_tree_root_directory(uint8_t block[INFS_BLOCK_SIZE],
                                             uint64_t generation,
                                             uint32_t permissions,
                                             uint32_t uid, uint32_t gid,
-                                            int64_t now_ns)
+                                            const struct infs_timestamp *now)
 {
     infs_status status = encode_root_directory_version(
-        block, object_id, generation, permissions, uid, gid, now_ns,
+        block, object_id, generation, permissions, uid, gid, now,
         INFS_OBJECT_VERSION_TREE);
     if (status != INFS_STATUS_OK)
         return status;

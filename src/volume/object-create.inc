@@ -59,14 +59,12 @@ static int create_object(struct infs_volume *vol, const char *path,
         return status;
     }
 
-    int64_t now = 0;
-    status = infs_storage_current_time_ns(&vol->storage, &now);
+    struct infs_timestamp now = {0};
+    status = infs_storage_current_time(&vol->storage, &now);
     if (status != INFS_STATUS_OK) {
         free_run(vol, object_block, 1);
         return status;
     }
-    uint64_t n = (uint64_t)now;
-
     uint8_t object[INFS_BLOCK_SIZE];
     uint32_t payload_size;
     int directory_tree =
@@ -133,10 +131,10 @@ static int create_object(struct infs_volume *vol, const char *path,
     }
     attributes->portable_flags = infs_cpu_to_le64(
         options ? options->portable_flags : 0);
-    attributes->birth_time_ns = (int64_t)infs_cpu_to_le64(n);
-    attributes->access_time_ns = (int64_t)infs_cpu_to_le64(n);
-    attributes->modification_time_ns = (int64_t)infs_cpu_to_le64(n);
-    attributes->change_time_ns = (int64_t)infs_cpu_to_le64(n);
+    timestamp_disk_from_value(&attributes->birth_time, &now);
+    timestamp_disk_from_value(&attributes->access_time, &now);
+    timestamp_disk_from_value(&attributes->modification_time, &now);
+    timestamp_disk_from_value(&attributes->change_time, &now);
     posix->permissions = infs_cpu_to_le32(
         (options ? options->posix_permissions :
          (type == INFS_OBJECT_DIRECTORY ? 0755u :

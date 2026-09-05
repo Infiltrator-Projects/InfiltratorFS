@@ -55,9 +55,11 @@ static int command_snapshot_list(struct infs_volume *vol)
     if (status != INFS_STATUS_OK)
         return die_status("snapshot-list", status);
     for (size_t i = 0; i < count; ++i)
-        printf("%s generation=%" PRIu64 " created_ns=%" PRId64 "\n",
+        printf("%s generation=%" PRIu64 " created_seconds=%" PRId64
+               " created_nanoseconds=%" PRIu32 "\n",
                snapshots[i].name, snapshots[i].generation,
-               snapshots[i].created_time_ns);
+               snapshots[i].created_time.seconds,
+               snapshots[i].created_time.nanoseconds);
     infs_free_snapshot_infos(snapshots);
     return 0;
 }

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /* Format hardening. These checks validate namespace reachability, link counts,
- * checksum ownership and the scalable Format 0.17 metadata representation. */
+ * checksum ownership and the scalable Format 0.18 metadata representation. */
 
 static int validate_common_metadata(
     const struct infs_attributes_disk *attributes,
@@ -9,7 +9,11 @@ static int validate_common_metadata(
     if (!attributes || !posix)
         return INFS_STATUS_CORRUPT;
     if ((infs_le64_to_cpu(attributes->portable_flags) &
-         ~INFS_KNOWN_ATTR_FLAGS) != 0)
+         ~INFS_KNOWN_ATTR_FLAGS) != 0 ||
+        !timestamp_disk_valid(&attributes->birth_time) ||
+        !timestamp_disk_valid(&attributes->access_time) ||
+        !timestamp_disk_valid(&attributes->modification_time) ||
+        !timestamp_disk_valid(&attributes->change_time))
         return INFS_STATUS_CORRUPT;
     if (!id_is_zero(attributes->security_object_id) ||
         !id_is_zero(attributes->extended_attributes_object_id))

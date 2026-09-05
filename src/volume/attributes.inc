@@ -21,14 +21,10 @@ infs_status infs_get_attributes(struct infs_volume *vol, const char *path,
     attributes->logical_size = infs_le64_to_cpu(disk_attributes->logical_size);
     attributes->link_count = infs_le64_to_cpu(disk_attributes->link_count);
     attributes->portable_flags = infs_le64_to_cpu(disk_attributes->portable_flags);
-    attributes->birth_time_ns = (int64_t)infs_le64_to_cpu(
-        (uint64_t)disk_attributes->birth_time_ns);
-    attributes->access_time_ns = (int64_t)infs_le64_to_cpu(
-        (uint64_t)disk_attributes->access_time_ns);
-    attributes->modification_time_ns = (int64_t)infs_le64_to_cpu(
-        (uint64_t)disk_attributes->modification_time_ns);
-    attributes->change_time_ns = (int64_t)infs_le64_to_cpu(
-        (uint64_t)disk_attributes->change_time_ns);
+    timestamp_value_from_disk(&disk_attributes->birth_time, &attributes->birth_time);
+    timestamp_value_from_disk(&disk_attributes->access_time, &attributes->access_time);
+    timestamp_value_from_disk(&disk_attributes->modification_time, &attributes->modification_time);
+    timestamp_value_from_disk(&disk_attributes->change_time, &attributes->change_time);
     memcpy(attributes->security_object_id, disk_attributes->security_object_id, 16);
     memcpy(attributes->extended_attributes_object_id,
            disk_attributes->extended_attributes_object_id, 16);

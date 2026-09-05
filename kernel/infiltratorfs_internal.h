@@ -57,6 +57,49 @@ struct infilfs_parallel_reservation {
     bool active;
 };
 
+
+static inline bool infilfs_timestamp_valid(
+    const struct infilfs_timestamp_disk *value)
+{
+    return value && le32_to_cpu(value->nanoseconds) < 1000000000u &&
+           le32_to_cpu(value->reserved) == 0;
+}
+
+static inline void infilfs_timestamp_encode(
+    struct infilfs_timestamp_disk *out, struct timespec64 value)
+{
+    out->seconds = cpu_to_le64((u64)value.tv_sec);
+    out->nanoseconds = cpu_to_le32((u32)value.tv_nsec);
+    out->reserved = 0;
+}
+
+static inline void infilfs_timestamp_encode_ns(
+    struct infilfs_timestamp_disk *out, s64 ns)
+{
+    infilfs_timestamp_encode(out, ns_to_timespec64(ns));
+}
+
+static inline struct timespec64 infilfs_timestamp_decode(
+    const struct infilfs_timestamp_disk *value)
+{
+    struct timespec64 out = {
+        .tv_sec = (s64)le64_to_cpu(value->seconds),
+        .tv_nsec = (long)le32_to_cpu(value->nanoseconds),
+    };
+    return out;
+}
+
+static inline bool infilfs_common_attributes_valid(
+    const struct infilfs_attributes_disk *attributes)
+{
+    return attributes &&
+        !(le64_to_cpu(attributes->portable_flags) & ~INFILFS_KNOWN_ATTR_FLAGS) &&
+        infilfs_timestamp_valid(&attributes->birth_time) &&
+        infilfs_timestamp_valid(&attributes->access_time) &&
+        infilfs_timestamp_valid(&attributes->modification_time) &&
+        infilfs_timestamp_valid(&attributes->change_time);
+}
+
 #define INFILFS_RW_FREE_RANGES_INITIAL 32u
 #define INFILFS_RW_ALLOC_RANGES_INITIAL 64u
 

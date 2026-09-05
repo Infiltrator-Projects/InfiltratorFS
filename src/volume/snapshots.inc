@@ -98,7 +98,8 @@ static int snapshot_record_valid(
         bitmap_blocks > total - bitmap_start || index == 0 || index >= total ||
         root == 0 || root >= total ||
         infs_le64_to_cpu(record->free_blocks) > total ||
-        id_is_zero(record->root_object_id) || name_length == 0 ||
+        id_is_zero(record->root_object_id) ||
+        !timestamp_disk_valid(&record->created_time) || name_length == 0 ||
         name_length > INFS_SNAPSHOT_NAME_MAX ||
         infs_le16_to_cpu(record->flags) != 0 ||
         infs_le32_to_cpu(record->reserved) != 0 ||
@@ -378,7 +379,7 @@ out:
 static int snapshot_catalog_append(
     struct infs_volume *vol, const char *name, size_t name_length,
     uint64_t bitmap_start, const uint8_t *snapshot_bitmap,
-    int64_t created_time_ns)
+    const struct infs_timestamp *created_time)
 {
     uint8_t catalog[INFS_BLOCK_SIZE];
     struct infs_snapshot_catalog_payload_disk *payload = NULL;
@@ -416,8 +417,7 @@ static int snapshot_catalog_append(
     struct infs_snapshot_record_disk *record = &records[count];
     memset(record, 0, sizeof(*record));
     record->generation = vol->tx_base_sb.generation;
-    record->created_time_ns = (int64_t)infs_cpu_to_le64(
-        (uint64_t)created_time_ns);
+    timestamp_disk_from_value(&record->created_time, created_time);
     record->bitmap_start_block = infs_cpu_to_le64(bitmap_start);
     record->bitmap_block_count = infs_cpu_to_le64(
         (uint64_t)(vol->bitmap_bytes / INFS_BLOCK_SIZE));
@@ -518,11 +518,11 @@ infs_status infs_snapshot_create(struct infs_volume *vol, const char *name)
         free(snapshot_bitmap);
         goto fail;
     }
-    int64_t now = 0;
-    status = infs_storage_current_time_ns(&vol->storage, &now);
+    struct infs_timestamp now = {0};
+    status = infs_storage_current_time(&vol->storage, &now);
     if (status == INFS_STATUS_OK)
         status = snapshot_catalog_append(vol, name, name_length, bitmap_start,
-                                         snapshot_bitmap, now);
+                                         snapshot_bitmap, &now);
     free(snapshot_bitmap);
     if (status != INFS_STATUS_OK)
         goto fail;
@@ -672,8 +672,7 @@ infs_status infs_snapshot_list(struct infs_volume *vol,
         memcpy(list[i].name, records[i].name, length);
         list[i].name[length] = '\0';
         list[i].generation = infs_le64_to_cpu(records[i].generation);
-        list[i].created_time_ns = (int64_t)infs_le64_to_cpu(
-            (uint64_t)records[i].created_time_ns);
+        timestamp_value_from_disk(&records[i].created_time, &list[i].created_time);
     }
     *snapshots = list;
     *count_out = count;

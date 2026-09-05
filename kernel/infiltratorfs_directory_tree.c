@@ -836,10 +836,10 @@ int infilfs_native_tree_directory_update(
     payload->entry_count = cpu_to_le32(count);
     payload->bytes_used = 0;
     infilfs_tree_dir_set_root(payload, root);
-    payload->attributes.modification_time_ns =
+    payload->attributes.modification_time =
         cpu_to_le64(ktime_get_real_ns());
-    payload->attributes.change_time_ns =
-        payload->attributes.modification_time_ns;
+    payload->attributes.change_time =
+        payload->attributes.modification_time;
     header->generation = cpu_to_le64(pending->tx.generation);
     header->payload_size = cpu_to_le32(
         sizeof(*payload) + sizeof(__le64));

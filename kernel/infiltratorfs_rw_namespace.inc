@@ -822,8 +822,8 @@ static int infilfs_ns_append_paged_directory(
 
     payload->entry_count = cpu_to_le32(directory_entries + 1u);
     payload->bytes_used = cpu_to_le32(page_count);
-    payload->attributes.modification_time_ns = cpu_to_le64(ktime_get_real_ns());
-    payload->attributes.change_time_ns = payload->attributes.modification_time_ns;
+    payload->attributes.modification_time = cpu_to_le64(ktime_get_real_ns());
+    payload->attributes.change_time = payload->attributes.modification_time;
     if (link_delta) {
         u64 links = le64_to_cpu(payload->attributes.link_count);
         if ((link_delta < 0 && links < (u64)(-link_delta)) ||
@@ -983,8 +983,8 @@ static int infilfs_ns_rebuild_directory(
     payload = (struct infilfs_directory_payload_disk *)(header + 1);
     header->generation = cpu_to_le64(tx->generation);
     payload->entry_count = cpu_to_le32(out_count);
-    payload->attributes.modification_time_ns = cpu_to_le64(ktime_get_real_ns());
-    payload->attributes.change_time_ns = payload->attributes.modification_time_ns;
+    payload->attributes.modification_time = cpu_to_le64(ktime_get_real_ns());
+    payload->attributes.change_time = payload->attributes.modification_time;
     if (link_delta) {
         u64 links = le64_to_cpu(payload->attributes.link_count);
         if ((link_delta < 0 && links < (u64)(-link_delta)) ||
@@ -1124,7 +1124,7 @@ static int infilfs_ns_cow_object(struct infilfs_native_pending *pending,
         memset(header->parent_id, 0, sizeof(header->parent_id));
     else if (new_parent_id)
         memcpy(header->parent_id, new_parent_id, 16);
-    attributes->change_time_ns = cpu_to_le64(ktime_get_real_ns());
+    infilfs_timestamp_encode_ns(&attributes->change_time, (s64)(ktime_get_real_ns()));
     header->generation = cpu_to_le64(pending->tx.generation);
     ret = infilfs_rw_finalize_object(object);
     if (ret)

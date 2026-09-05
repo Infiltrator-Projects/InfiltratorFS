@@ -122,12 +122,18 @@ int infs_random_bytes(void *buf, size_t count)
     return 0;
 }
 
-int64_t infs_current_time_ns(void)
+int infs_current_time(struct infs_timestamp *time)
 {
+    if (!time) {
+        errno = EINVAL;
+        return -1;
+    }
     struct timespec ts;
     if (clock_gettime(CLOCK_REALTIME, &ts) != 0)
-        return 0;
-    return (int64_t)ts.tv_sec * INT64_C(1000000000) + ts.tv_nsec;
+        return -1;
+    time->seconds = (int64_t)ts.tv_sec;
+    time->nanoseconds = (uint32_t)ts.tv_nsec;
+    return 0;
 }
 
 struct infs_posix_storage_context {
@@ -177,12 +183,10 @@ static infs_status posix_random(void *context, void *buffer, size_t size)
     return INFS_STATUS_OK;
 }
 
-static infs_status posix_time(void *context, int64_t *time_ns)
+static infs_status posix_time(void *context, struct infs_timestamp *time)
 {
     (void)context;
-    errno = 0;
-    *time_ns = infs_current_time_ns();
-    if (*time_ns == 0 && errno != 0)
+    if (infs_current_time(time) != 0)
         return infs_status_from_errno(errno);
     return INFS_STATUS_OK;
 }
@@ -201,7 +205,7 @@ static const struct infs_storage_ops posix_storage_ops = {
     .flush = posix_flush,
     .get_size = posix_get_size,
     .random_bytes = posix_random,
-    .current_time_ns = posix_time,
+    .current_time = posix_time,
     .close = posix_close,
 };
 

@@ -61,10 +61,11 @@ static infs_status memory_random(void *context, void *buffer, size_t size)
     return INFS_STATUS_OK;
 }
 
-static infs_status memory_time(void *context, int64_t *time_ns)
+static infs_status memory_time(void *context, struct infs_timestamp *time)
 {
     (void)context;
-    *time_ns = INT64_C(1786744800000000000);
+    time->seconds = INT64_C(1786744800);
+    time->nanoseconds = UINT32_C(0);
     return INFS_STATUS_OK;
 }
 
@@ -79,7 +80,7 @@ static const struct infs_storage_ops memory_ops = {
     .flush = memory_flush,
     .get_size = memory_size,
     .random_bytes = memory_random,
-    .current_time_ns = memory_time,
+    .current_time = memory_time,
     .close = memory_close,
 };
 
@@ -144,6 +145,20 @@ int main(int argc, char **argv)
     if (infs_create_file(&volume, invalid_path, &options) !=
         INFS_STATUS_INVALID_ARGUMENT)
         fail("reject malformed UTF-8");
+    struct infs_time_update far_future = {0};
+    far_future.birth_action = INFS_TIME_SET;
+    far_future.access_action = INFS_TIME_SET;
+    far_future.modification_action = INFS_TIME_SET;
+    far_future.change_action = INFS_TIME_SET;
+    far_future.birth_time = (struct infs_timestamp){ INT64_C(32503680000), 123456789u };
+    far_future.access_time = (struct infs_timestamp){ INT64_C(32503680001), 223456789u };
+    far_future.modification_time = (struct infs_timestamp){ INT64_C(32503680002), 323456789u };
+    far_future.change_time = (struct infs_timestamp){ INT64_C(32503680003), 423456789u };
+    if (infs_set_portable_flags(&volume, unicode_path,
+            INFS_ATTR_READ_ONLY | INFS_ATTR_HIDDEN | INFS_ATTR_NOT_CONTENT_INDEXED) != 0 ||
+        infs_set_times(&volume, unicode_path, &far_future) != 0 ||
+        infs_volume_sync(&volume) != 0)
+        fail("persist Format 0.18 portable metadata");
     infs_volume_close(&volume);
 
     storage = make_storage(&memory);
@@ -156,9 +171,14 @@ int main(int argc, char **argv)
         fail("verify persisted bytes");
     struct infs_attributes attributes;
     if (infs_get_attributes(&volume, unicode_path, &attributes) != 0 ||
-        attributes.birth_time_ns != INT64_C(1786744800000000000) ||
-        attributes.portable_flags != INFS_ATTR_ARCHIVE)
-        fail("verify portable attributes");
+        attributes.birth_time.seconds != INT64_C(32503680000) ||
+        attributes.birth_time.nanoseconds != UINT32_C(123456789) ||
+        attributes.access_time.seconds != INT64_C(32503680001) ||
+        attributes.modification_time.seconds != INT64_C(32503680002) ||
+        attributes.change_time.seconds != INT64_C(32503680003) ||
+        attributes.portable_flags != (INFS_ATTR_READ_ONLY | INFS_ATTR_HIDDEN |
+                                      INFS_ATTR_NOT_CONTENT_INDEXED))
+        fail("verify Format 0.18 portable attributes");
 
     infs_volume_close(&volume);
     free(memory.bytes);

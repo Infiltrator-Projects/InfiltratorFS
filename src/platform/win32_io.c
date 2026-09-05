@@ -333,10 +333,10 @@ static infs_status win32_random(void *context, void *buffer, size_t size)
     return INFS_STATUS_OK;
 }
 
-static infs_status win32_time(void *context, int64_t *time_ns)
+static infs_status win32_time(void *context, struct infs_timestamp *time)
 {
     (void)context;
-    if (!time_ns)
+    if (!time)
         return INFS_STATUS_INVALID_ARGUMENT;
     FILETIME file_time;
     GetSystemTimePreciseAsFileTime(&file_time);
@@ -347,9 +347,8 @@ static infs_status win32_time(void *context, int64_t *time_ns)
     if (ticks.QuadPart < unix_epoch_ticks)
         return INFS_STATUS_OVERFLOW;
     uint64_t unix_ticks = ticks.QuadPart - unix_epoch_ticks;
-    if (unix_ticks > (uint64_t)INT64_MAX / 100u)
-        return INFS_STATUS_OVERFLOW;
-    *time_ns = (int64_t)(unix_ticks * 100u);
+    time->seconds = (int64_t)(unix_ticks / UINT64_C(10000000));
+    time->nanoseconds = (uint32_t)((unix_ticks % UINT64_C(10000000)) * 100u);
     return INFS_STATUS_OK;
 }
 

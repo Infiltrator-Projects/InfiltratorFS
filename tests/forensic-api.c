@@ -116,7 +116,8 @@ int main(void)
         INFS_STATUS_OK ||
         infs_encode_paged_root_directory(
             memory.bytes + 3u * INFS_BLOCK_SIZE, root_id, 5,
-            0755, 0, 0, 1) != INFS_STATUS_OK)
+            0755, 0, 0,
+            &(struct infs_timestamp){ INT64_C(0), 1u }) != INFS_STATUS_OK)
         return fail("could not encode current objects");
 
     uint8_t *allocation = memory.bytes + 6u * INFS_BLOCK_SIZE;

@@ -12,8 +12,8 @@
 #include <string.h>
 
 #define TEST_BYTES (UINT64_C(16) * 1024u * 1024u)
-#define CLASSIC_EXTENT_COUNT 161u
-#define LOGICAL_BLOCKS 161u
+#define CLASSIC_EXTENT_COUNT 160u
+#define LOGICAL_BLOCKS 160u
 
 struct memory_image {
     uint8_t *bytes;
@@ -81,10 +81,11 @@ static infs_status memory_random(void *context, void *buffer, size_t size)
     return INFS_STATUS_OK;
 }
 
-static infs_status memory_time(void *context, int64_t *time_ns)
+static infs_status memory_time(void *context, struct infs_timestamp *time)
 {
     (void)context;
-    *time_ns = INT64_C(1787634000000000000);
+    time->seconds = INT64_C(1787634000);
+    time->nanoseconds = UINT32_C(0);
     return INFS_STATUS_OK;
 }
 
@@ -99,7 +100,7 @@ static const struct infs_storage_ops memory_ops = {
     .flush = memory_flush,
     .get_size = memory_size,
     .random_bytes = memory_random,
-    .current_time_ns = memory_time,
+    .current_time = memory_time,
     .close = memory_close,
 };
 
@@ -142,12 +143,12 @@ int main(void)
     uint8_t block[INFS_BLOCK_SIZE];
     memset(block, 0x5a, sizeof(block));
 
-    /* Write every even logical block.  After the final block (160) this is
-     * exactly 161 alternating NORMAL/HOLE extents and the tail is NORMAL.
-     * It deliberately remains a classic file right at the old inline extent
-     * capacity so that the next EOF append must perform classic->paged
+    /* Write every odd logical block.  After the final block (159) this is
+     * exactly 160 alternating HOLE/NORMAL extents and the tail is NORMAL.
+     * It deliberately remains a classic file right at the Format 0.18 inline
+     * extent capacity so that the next EOF append must perform classic->paged
      * promotion inside file_ensure_logical_blocks(). */
-    for (uint64_t logical = 0; logical < LOGICAL_BLOCKS; logical += 2u) {
+    for (uint64_t logical = 1; logical < LOGICAL_BLOCKS; logical += 2u) {
         block[0] = (uint8_t)logical;
         expect(infs_write_file_buffered(
                    &volume, "/growth.bin", block, sizeof(block),
@@ -167,7 +168,7 @@ int main(void)
                INFS_OBJECT_VERSION_CLASSIC,
            "file remains classic at exact inline extent ceiling");
     expect(infs_le32_to_cpu(file->extent_count) == CLASSIC_EXTENT_COUNT,
-           "classic file has exactly 161 extents");
+           "classic file has exactly 160 extents");
 
     memset(block, 0xa5, sizeof(block));
     expect(infs_write_file_buffered(

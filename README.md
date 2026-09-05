@@ -9,10 +9,10 @@ InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem. The
 <!--
 Release-policy compatibility anchor. This line is deliberately hidden from the
 user-facing README so visible status wording can change without breaking CI.
-**Current source version:** 0.18.40 (Format 0.17)<br>
+**Current source version:** 0.18.41 (Format 0.18)<br>
 -->
-**Current source:** 0.18.40  
-**On-disk format:** 0.17  
+**Current source:** 0.18.41  
+**On-disk format:** 0.18  
 **Latest published release:** v0.18.39  
 **Shared foundation:** Infiltratr Common 1.11.0  
 **Licence:** GPL-3.0-or-later
@@ -23,7 +23,7 @@ The badge above is the broad build/portable conformance gate. Mounted native-Lin
 
 ## What exists today
 
-Format 0.17 provides:
+Format 0.18 provides:
 
 - 4096-byte little-endian blocks and 128-bit filesystem/object identities;
 - three physically separated checksummed checkpoints with generation-based recovery;
@@ -35,7 +35,8 @@ Format 0.17 provides:
 - adaptive bounded per-extent compression using native IAC1 v1, with LZ4 retained as a non-default reference representation;
 - CRC64-ECMA metadata integrity and SHA-256 logical file-data integrity;
 - 1023-byte UTF-8 namespace components;
-- portable attributes with operating-system-specific metadata isolated at adapter boundaries; and
+- portable flags plus birth/access/modification/change timestamps stored as signed epoch seconds plus canonical nanoseconds, avoiding the old signed-64-bit nanosecond date ceiling;
+- operating-system-specific metadata isolated at adapter boundaries; and
 - scrub, inspection and forensic tooling.
 
 Linux is the most complete mounted adapter. The normal Linux path is the native out-of-tree `infiltratorfs.ko` VFS driver installed through DKMS; there is no current FUSE filesystem implementation or FUSE runtime fallback. The native driver includes the established read/write namespace surface, random and sparse I/O, truncate, `fallocate`, hole punching, FIEMAP/SEEK_DATA/SEEK_HOLE, reflinks, xattrs, special nodes, page cache/readahead, writable `mmap`, crash-safe open-unlink handling, checkpoint fallback/healing, online defragmentation, workload/media-aware allocation policy and online grow/bounded shrink.

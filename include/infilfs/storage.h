@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 #include "infilfs/status.h"
+#include "infilfs/time.h"
 
 /*
  * Portable storage contract.
@@ -15,7 +16,7 @@
  * represented as success. Offsets and sizes are byte-based and the caller
  * guarantees that buffer remains valid for the duration of the callback.
  *
- * write_at, flush, random_bytes and current_time_ns are required for writable
+ * write_at, flush, random_bytes and current_time are required for writable
  * filesystem operation. Read-only consumers may omit mutation-only services.
  * flush is the durability boundary used by checkpoint publication: success
  * means writes issued before it have reached the backend's durable medium to
@@ -36,7 +37,7 @@ struct infs_storage_ops {
     infs_status (*get_size)(void *context, uint64_t *size_bytes,
                             int *is_device);
     infs_status (*random_bytes)(void *context, void *buffer, size_t size);
-    infs_status (*current_time_ns)(void *context, int64_t *time_ns);
+    infs_status (*current_time)(void *context, struct infs_timestamp *time);
     void (*close)(void *context);
 };
 
@@ -60,8 +61,8 @@ infs_status infs_storage_get_size(const struct infs_storage *storage,
                                   uint64_t *size_bytes, int *is_device);
 infs_status infs_storage_random(const struct infs_storage *storage,
                                 void *buffer, size_t size);
-infs_status infs_storage_current_time_ns(const struct infs_storage *storage,
-                                         int64_t *time_ns);
+infs_status infs_storage_current_time(const struct infs_storage *storage,
+                                      struct infs_timestamp *time);
 void infs_storage_close(struct infs_storage *storage);
 
 #endif

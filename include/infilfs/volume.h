@@ -7,6 +7,7 @@
 
 #include "infilfs/format.h"
 #include "infilfs/storage.h"
+#include "infilfs/time.h"
 
 #define INFS_PATH_MAX 4096u
 #define INFS_DEFAULT_DEFERRED_PUBLISH_BYTES \
@@ -34,10 +35,10 @@ struct infs_attributes {
     uint64_t allocated_size;
     uint64_t link_count;
     uint64_t portable_flags;
-    int64_t birth_time_ns;
-    int64_t access_time_ns;
-    int64_t modification_time_ns;
-    int64_t change_time_ns;
+    struct infs_timestamp birth_time;
+    struct infs_timestamp access_time;
+    struct infs_timestamp modification_time;
+    struct infs_timestamp change_time;
     uint8_t security_object_id[16];
     uint8_t extended_attributes_object_id[16];
     uint32_t posix_permissions;
@@ -46,10 +47,14 @@ struct infs_attributes {
 };
 
 struct infs_time_update {
+    uint32_t birth_action;
     uint32_t access_action;
     uint32_t modification_action;
-    int64_t access_time_ns;
-    int64_t modification_time_ns;
+    uint32_t change_action;
+    struct infs_timestamp birth_time;
+    struct infs_timestamp access_time;
+    struct infs_timestamp modification_time;
+    struct infs_timestamp change_time;
 };
 
 struct infs_deferred_range {
@@ -192,7 +197,7 @@ struct infs_dir_item {
 struct infs_snapshot_info {
     char name[INFS_SNAPSHOT_NAME_MAX + 1u];
     uint64_t generation;
-    int64_t created_time_ns;
+    struct infs_timestamp created_time;
 };
 
 infs_status infs_volume_open_storage(struct infs_volume *vol,
@@ -287,6 +292,8 @@ infs_status infs_set_posix_compat(struct infs_volume *vol, const char *path,
                                   uint32_t uid, uint32_t gid);
 infs_status infs_set_times(struct infs_volume *vol, const char *path,
                            const struct infs_time_update *update);
+infs_status infs_set_portable_flags(struct infs_volume *vol, const char *path,
+                                    uint64_t portable_flags);
 
 infs_status infs_scrub(struct infs_volume *vol,
                        struct infs_scrub_report *report);

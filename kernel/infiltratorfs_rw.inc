@@ -141,7 +141,7 @@ static int infilfs_rw_tx_begin(struct super_block *sb,
 #ifdef infilfs_file_read_iter
 #undef infilfs_file_read_iter
 #endif
-#define infilfs_file_read_iter infilfs_file_read_iter_cached
+#define infilfs_file_read_iter infilfs_file_read_iter_atime
 
 /*
  * New native objects must carry the credentials of the task that created them.
@@ -202,10 +202,10 @@ static void infilfs_posix_fill_common_attributes(
     memset(attributes, 0, sizeof(*attributes));
     memset(posix, 0, sizeof(*posix));
     attributes->link_count = cpu_to_le64(links);
-    attributes->birth_time_ns = cpu_to_le64(now);
-    attributes->access_time_ns = cpu_to_le64(now);
-    attributes->modification_time_ns = cpu_to_le64(now);
-    attributes->change_time_ns = cpu_to_le64(now);
+    infilfs_timestamp_encode_ns(&attributes->birth_time, (s64)(now));
+    infilfs_timestamp_encode_ns(&attributes->access_time, (s64)(now));
+    infilfs_timestamp_encode_ns(&attributes->modification_time, (s64)(now));
+    infilfs_timestamp_encode_ns(&attributes->change_time, (s64)(now));
     posix->permissions = cpu_to_le32(mode & 07777);
     posix->uid = cpu_to_le32(uid);
     posix->gid = cpu_to_le32(gid);
@@ -625,9 +625,9 @@ static int infilfs_native_truncate(struct inode *inode, u64 new_size)
         old_header->generation = cpu_to_le64(pending->tx.generation);
         old_header->object_version = cpu_to_le16(INFILFS_OBJECT_VERSION_CLASSIC);
         old_file->attributes.logical_size = cpu_to_le64(new_size);
-        old_file->attributes.modification_time_ns = cpu_to_le64(ktime_get_real_ns());
-        old_file->attributes.change_time_ns =
-            old_file->attributes.modification_time_ns;
+        old_file->attributes.modification_time = cpu_to_le64(ktime_get_real_ns());
+        old_file->attributes.change_time =
+            old_file->attributes.modification_time;
         old_file->extent_count = 0;
         memset(old_file->checksum_head_id, 0, sizeof(old_file->checksum_head_id));
         if (new_size) {
@@ -979,8 +979,8 @@ static int infilfs_native_punch_hole(struct inode *inode,
         header = (struct infilfs_object_header_disk *)new_object;
         file = (struct infilfs_file_payload_disk *)(header + 1);
         header->generation = cpu_to_le64(pending->tx.generation);
-        file->attributes.modification_time_ns = cpu_to_le64(ktime_get_real_ns());
-        file->attributes.change_time_ns = file->attributes.modification_time_ns;
+        file->attributes.modification_time = cpu_to_le64(ktime_get_real_ns());
+        file->attributes.change_time = file->attributes.modification_time;
         digest = (struct infilfs_data_checksum_disk *)(file + 1);
         ret = infilfs_rw_inline_digest(inline_data, (size_t)file_size,
                                        digest->bytes);
@@ -1229,9 +1229,12 @@ static int infilfs_posix_object_fields(
     }
 }
 
-static __le64 infilfs_posix_encode_time(struct timespec64 value)
+static struct infilfs_timestamp_disk
+infilfs_posix_encode_time(struct timespec64 value)
 {
-    return cpu_to_le64((u64)timespec64_to_ns(&value));
+    struct infilfs_timestamp_disk encoded;
+    infilfs_timestamp_encode(&encoded, value);
+    return encoded;
 }
 
 /*
@@ -1298,19 +1301,17 @@ static int infilfs_posix_rewrite_inode(struct inode *inode,
         posix->gid = cpu_to_le32(value);
         metadata_changed = true;
     }
-    if (attr->ia_valid & ATTR_ATIME) {
-        attributes->access_time_ns = infilfs_posix_encode_time(attr->ia_atime);
-        metadata_changed = true;
-    }
+    if (attr->ia_valid & ATTR_ATIME)
+        attributes->access_time = infilfs_posix_encode_time(attr->ia_atime);
     if (attr->ia_valid & ATTR_MTIME) {
-        attributes->modification_time_ns =
+        attributes->modification_time =
             infilfs_posix_encode_time(attr->ia_mtime);
         metadata_changed = true;
     }
     if (attr->ia_valid & ATTR_CTIME) {
-        attributes->change_time_ns = infilfs_posix_encode_time(attr->ia_ctime);
+        attributes->change_time = infilfs_posix_encode_time(attr->ia_ctime);
     } else if (metadata_changed) {
-        attributes->change_time_ns = cpu_to_le64(ktime_get_real_ns());
+        infilfs_timestamp_encode_ns(&attributes->change_time, (s64)(ktime_get_real_ns()));
     }
 
     header->generation = cpu_to_le64(pending->tx.generation);
@@ -1754,6 +1755,11 @@ static int infilfs_posix_setattr(struct user_namespace *idmap,
         (ATTR_MODE | ATTR_UID | ATTR_GID | ATTR_ATIME | ATTR_MTIME | ATTR_CTIME);
     if (!disk_fields)
         return 0;
+    if ((metadata.ia_valid & (ATTR_ATIME | ATTR_MTIME)) &&
+        !(metadata.ia_valid & ATTR_CTIME)) {
+        metadata.ia_valid |= ATTR_CTIME;
+        metadata.ia_ctime = current_time(inode);
+    }
 
     if (metadata.ia_valid & (ATTR_UID | ATTR_GID)) {
         ret = infilfs_quota_prepare_identity_change(
@@ -1784,6 +1790,31 @@ static int infilfs_posix_setattr(struct user_namespace *idmap,
     return 0;
 }
 
+static ssize_t infilfs_file_read_iter_atime(struct kiocb *iocb,
+                                              struct iov_iter *to)
+{
+    struct file *file = iocb->ki_filp;
+    struct inode *inode = file_inode(file);
+    struct timespec64 before = inode->i_atime;
+    ssize_t result = infilfs_file_read_iter_cached(iocb, to);
+
+    if (result > 0 && !sb_rdonly(inode->i_sb)) {
+        struct timespec64 after;
+        struct iattr attr;
+        file_accessed(file);
+        after = inode->i_atime;
+        if (timespec64_compare(&before, &after) != 0) {
+            memset(&attr, 0, sizeof(attr));
+            attr.ia_valid = ATTR_ATIME;
+            attr.ia_atime = after;
+            if (infilfs_posix_rewrite_inode(inode, &attr))
+                pr_warn_ratelimited("InfiltratorFS: could not persist atime for inode %lu\n",
+                                    inode->i_ino);
+        }
+    }
+    return result;
+}
+
 /*
  * Native VFS metadata bridge.
  *
@@ -1812,9 +1843,10 @@ infilfs_vfs_attributes(const u8 object[INFILFS_DISK_BLOCK_SIZE])
     }
 }
 
-static struct timespec64 infilfs_vfs_decode_time(__le64 encoded)
+static struct timespec64 infilfs_vfs_decode_time(
+    const struct infilfs_timestamp_disk *encoded)
 {
-    return ns_to_timespec64((s64)le64_to_cpu(encoded));
+    return infilfs_timestamp_decode(encoded);
 }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
@@ -1855,10 +1887,10 @@ static int infilfs_getattr(struct user_namespace *idmap,
 #else
     generic_fillattr(idmap, inode, stat);
 #endif
-    stat->atime = infilfs_vfs_decode_time(attributes->access_time_ns);
-    stat->mtime = infilfs_vfs_decode_time(attributes->modification_time_ns);
-    stat->ctime = infilfs_vfs_decode_time(attributes->change_time_ns);
-    stat->btime = infilfs_vfs_decode_time(attributes->birth_time_ns);
+    stat->atime = infilfs_vfs_decode_time(&attributes->access_time);
+    stat->mtime = infilfs_vfs_decode_time(&attributes->modification_time);
+    stat->ctime = infilfs_vfs_decode_time(&attributes->change_time);
+    stat->btime = infilfs_vfs_decode_time(&attributes->birth_time);
     stat->result_mask |= STATX_ATIME | STATX_MTIME | STATX_CTIME | STATX_BTIME;
     ret = 0;
 out:

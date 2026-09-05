@@ -1596,8 +1596,8 @@ static int infilfs_rw_rebuild_directory(struct infilfs_rw_tx *tx,
     payload = (struct infilfs_directory_payload_disk *)(header + 1);
     header->generation = cpu_to_le64(tx->generation);
     payload->entry_count = cpu_to_le32(count + 1u);
-    payload->attributes.modification_time_ns = cpu_to_le64(ktime_get_real_ns());
-    payload->attributes.change_time_ns = payload->attributes.modification_time_ns;
+    payload->attributes.modification_time = cpu_to_le64(ktime_get_real_ns());
+    payload->attributes.change_time = payload->attributes.modification_time;
     if (child_type == INFILFS_OBJECT_DIRECTORY)
         payload->attributes.link_count = cpu_to_le64(
             le64_to_cpu(payload->attributes.link_count) + 1u);
@@ -1730,10 +1730,10 @@ static void infilfs_rw_fill_common_attributes(
     memset(attributes, 0, sizeof(*attributes));
     memset(posix, 0, sizeof(*posix));
     attributes->link_count = cpu_to_le64(links);
-    attributes->birth_time_ns = cpu_to_le64(now);
-    attributes->access_time_ns = cpu_to_le64(now);
-    attributes->modification_time_ns = cpu_to_le64(now);
-    attributes->change_time_ns = cpu_to_le64(now);
+    infilfs_timestamp_encode_ns(&attributes->birth_time, (s64)(now));
+    infilfs_timestamp_encode_ns(&attributes->access_time, (s64)(now));
+    infilfs_timestamp_encode_ns(&attributes->modification_time, (s64)(now));
+    infilfs_timestamp_encode_ns(&attributes->change_time, (s64)(now));
     posix->permissions = cpu_to_le32(mode & 07777);
     posix->uid = cpu_to_le32(uid);
     posix->gid = cpu_to_le32(gid);
@@ -1959,8 +1959,8 @@ static int infilfs_rw_replace_inline_locked(struct inode *inode,
     header->generation = cpu_to_le64(tx.generation);
     header->object_version = cpu_to_le16(INFILFS_OBJECT_VERSION_CLASSIC);
     file->attributes.logical_size = cpu_to_le64(size);
-    file->attributes.modification_time_ns = cpu_to_le64(ktime_get_real_ns());
-    file->attributes.change_time_ns = file->attributes.modification_time_ns;
+    file->attributes.modification_time = cpu_to_le64(ktime_get_real_ns());
+    file->attributes.change_time = file->attributes.modification_time;
     file->extent_count = 0;
     file->data_checksum_type = cpu_to_le32(INFILFS_CHECKSUM_SHA256);
     memset(file->checksum_head_id, 0, sizeof(file->checksum_head_id));

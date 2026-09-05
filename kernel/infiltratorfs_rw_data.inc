@@ -3517,8 +3517,8 @@ static int infilfs_native_build_file_object(
     file = (struct infilfs_file_payload_disk *)(header + 1);
     memcpy(file->checksum_head_id, working_file->checksum_head_id, 16);
     file->attributes.logical_size = cpu_to_le64(new_size);
-    file->attributes.modification_time_ns = cpu_to_le64(ktime_get_real_ns());
-    file->attributes.change_time_ns = file->attributes.modification_time_ns;
+    file->attributes.modification_time = cpu_to_le64(ktime_get_real_ns());
+    file->attributes.change_time = file->attributes.modification_time;
     file->extent_count = cpu_to_le32(extent_count);
     file->data_checksum_type = cpu_to_le32(INFILFS_CHECKSUM_SHA256);
     header->generation = cpu_to_le64(pending->tx.generation);
@@ -4033,9 +4033,9 @@ static int infilfs_native_try_single_paged_overwrite(
     memcpy(new_file->checksum_head_id, working_file.checksum_head_id, 16);
     new_file->extent_count = cpu_to_le32(new_extent_total);
     new_file->data_checksum_type = cpu_to_le32(INFILFS_CHECKSUM_SHA256);
-    new_file->attributes.modification_time_ns = cpu_to_le64(ktime_get_real_ns());
-    new_file->attributes.change_time_ns =
-        new_file->attributes.modification_time_ns;
+    new_file->attributes.modification_time = cpu_to_le64(ktime_get_real_ns());
+    new_file->attributes.change_time =
+        new_file->attributes.modification_time;
     new_header->generation = cpu_to_le64(pending->tx.generation);
 
     ret = infilfs_rw_finalize_object(new_object);
@@ -4849,8 +4849,8 @@ static ssize_t infilfs_native_inline_write_iter(
     header->generation = cpu_to_le64(pending->tx.generation);
     header->object_version = cpu_to_le16(INFILFS_OBJECT_VERSION_CLASSIC);
     file->attributes.logical_size = cpu_to_le64(new_size);
-    file->attributes.modification_time_ns = cpu_to_le64(ktime_get_real_ns());
-    file->attributes.change_time_ns = file->attributes.modification_time_ns;
+    file->attributes.modification_time = cpu_to_le64(ktime_get_real_ns());
+    file->attributes.change_time = file->attributes.modification_time;
     file->extent_count = 0;
     file->data_checksum_type = cpu_to_le32(INFILFS_CHECKSUM_SHA256);
     memset(file->checksum_head_id, 0, sizeof(file->checksum_head_id));

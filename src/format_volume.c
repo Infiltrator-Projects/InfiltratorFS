@@ -93,7 +93,7 @@ infs_status infs_format_storage(struct infs_storage *storage, const char *label)
 {
     if (!storage || !infs_storage_valid(storage) || !storage->ops->write_at ||
         !storage->ops->flush || !storage->ops->random_bytes ||
-        !storage->ops->current_time_ns || !label)
+        !storage->ops->current_time || !label)
         return INFS_STATUS_INVALID_ARGUMENT;
 
     size_t label_length = strlen(label);
@@ -174,8 +174,8 @@ infs_status infs_format_storage(struct infs_storage *storage, const char *label)
         return status;
     }
 
-    int64_t root_time_ns = 0;
-    status = infs_storage_current_time_ns(storage, &root_time_ns);
+    struct infs_timestamp root_time = {0};
+    status = infs_storage_current_time(storage, &root_time);
     if (status != INFS_STATUS_OK) {
         free(bitmap);
         return status;
@@ -311,7 +311,7 @@ infs_status infs_format_storage(struct infs_storage *storage, const char *label)
         goto done;
 
     status = infs_encode_tree_root_directory(
-        block, root_id, 1u, 0755u, 0u, 0u, root_time_ns);
+        block, root_id, 1u, 0755u, 0u, 0u, &root_time);
     if (status != INFS_STATUS_OK)
         goto done;
     status = infs_storage_write(storage, root_block * INFS_BLOCK_SIZE,

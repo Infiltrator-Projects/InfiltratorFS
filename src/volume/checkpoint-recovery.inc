@@ -238,7 +238,7 @@ infs_status infs_volume_open_storage(struct infs_volume *vol,
     if (vol->writable &&
         (!vol->storage.ops->write_at || !vol->storage.ops->flush ||
          !vol->storage.ops->random_bytes ||
-         !vol->storage.ops->current_time_ns)) {
+         !vol->storage.ops->current_time)) {
         status = INFS_STATUS_INVALID_ARGUMENT;
         goto fail;
     }

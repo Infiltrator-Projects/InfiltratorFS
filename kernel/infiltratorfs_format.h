@@ -31,7 +31,7 @@
 #define INFILFS_DISK_BLOCK_SIZE 4096u
 #define INFILFS_DISK_BLOCK_SHIFT 12u
 #define INFILFS_FORMAT_MAJOR 0u
-#define INFILFS_FORMAT_MINOR 17u
+#define INFILFS_FORMAT_MINOR 18u
 #define INFILFS_CHECKPOINT_COUNT 3u
 #define INFILFS_NAME_MAX 1023u
 
@@ -71,6 +71,10 @@
 #define INFILFS_ATTR_ARCHIVE             ((__u64)0x0000000000000008ULL)
 #define INFILFS_ATTR_TEMPORARY           ((__u64)0x0000000000000010ULL)
 #define INFILFS_ATTR_NOT_CONTENT_INDEXED ((__u64)0x0000000000000020ULL)
+#define INFILFS_KNOWN_ATTR_FLAGS \
+    (INFILFS_ATTR_READ_ONLY | INFILFS_ATTR_HIDDEN | INFILFS_ATTR_SYSTEM | \
+     INFILFS_ATTR_ARCHIVE | INFILFS_ATTR_TEMPORARY | \
+     INFILFS_ATTR_NOT_CONTENT_INDEXED)
 
 #define INFILFS_INCOMPAT_UTF8_NAMES ((__u64)0x0000000000000001ULL)
 #define INFILFS_INCOMPAT_SPARSE_EXTENTS ((__u64)0x0000000000000002ULL)
@@ -153,14 +157,20 @@ struct infilfs_allocation_page_disk {
     __u8 checksum[32];
 } __packed;
 
+struct infilfs_timestamp_disk {
+    __le64 seconds;
+    __le32 nanoseconds;
+    __le32 reserved;
+} __packed;
+
 struct infilfs_attributes_disk {
     __le64 logical_size;
     __le64 link_count;
     __le64 portable_flags;
-    __le64 birth_time_ns;
-    __le64 access_time_ns;
-    __le64 modification_time_ns;
-    __le64 change_time_ns;
+    struct infilfs_timestamp_disk birth_time;
+    struct infilfs_timestamp_disk access_time;
+    struct infilfs_timestamp_disk modification_time;
+    struct infilfs_timestamp_disk change_time;
     __u8 security_object_id[16];
     __u8 extended_attributes_object_id[16];
 } __packed;
@@ -240,7 +250,7 @@ struct infilfs_snapshot_catalog_payload_disk {
 
 struct infilfs_snapshot_record_disk {
     __le64 generation;
-    __le64 created_time_ns;
+    struct infilfs_timestamp_disk created_time;
     __le64 bitmap_start_block;
     __le64 bitmap_block_count;
     __le64 free_blocks;
@@ -304,17 +314,18 @@ static_assert(INFILFS_DIRENT_MAX_RECORD_SIZE <=
 static_assert(sizeof(struct infilfs_superblock_disk) == 252);
 static_assert(sizeof(struct infilfs_object_header_disk) == 96);
 static_assert(sizeof(struct infilfs_metadata_page_disk) == 80);
-static_assert(sizeof(struct infilfs_attributes_disk) == 88);
+static_assert(sizeof(struct infilfs_timestamp_disk) == 16);
+static_assert(sizeof(struct infilfs_attributes_disk) == 120);
 static_assert(sizeof(struct infilfs_posix_compat_disk) == 16);
-static_assert(sizeof(struct infilfs_directory_payload_disk) == 112);
+static_assert(sizeof(struct infilfs_directory_payload_disk) == 144);
 static_assert(sizeof(struct infilfs_dirent_disk) == 24);
-static_assert(sizeof(struct infilfs_file_payload_disk) == 128);
-static_assert(sizeof(struct infilfs_symlink_payload_disk) == 112);
+static_assert(sizeof(struct infilfs_file_payload_disk) == 160);
+static_assert(sizeof(struct infilfs_symlink_payload_disk) == 144);
 static_assert(sizeof(struct infilfs_extent_disk) == 24);
 static_assert(sizeof(struct infilfs_index_entry_disk) == 32);
 static_assert(INFILFS_INDEX_TREE_BRANCH_BYTES <= INFILFS_METADATA_PAGE_DATA_SIZE);
 static_assert(INFILFS_DIRECTORY_TREE_BRANCH_BYTES <= INFILFS_METADATA_PAGE_DATA_SIZE);
 static_assert(sizeof(struct infilfs_snapshot_catalog_payload_disk) == 8);
-static_assert(sizeof(struct infilfs_snapshot_record_disk) == 144);
+static_assert(sizeof(struct infilfs_snapshot_record_disk) == 152);
 
 #endif

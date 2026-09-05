@@ -1133,6 +1133,95 @@ static int make_child_path(const char *parent, const char *name,
     return written > 0 && written <= (int)INFS_PATH_MAX;
 }
 
+
+static int windows_ticks_to_timestamp(INT64 ticks, struct infs_timestamp *out)
+{
+    const INT64 epoch = INT64_C(116444736000000000);
+    INT64 delta = ticks - epoch;
+    INT64 seconds = delta / INT64_C(10000000);
+    INT64 remainder = delta % INT64_C(10000000);
+    if (remainder < 0) { remainder += INT64_C(10000000); --seconds; }
+    out->seconds = seconds;
+    out->nanoseconds = (uint32_t)(remainder * 100);
+    return 1;
+}
+
+static INT64 timestamp_to_windows_ticks(const struct infs_timestamp *value)
+{
+    const INT64 epoch_seconds = INT64_C(11644473600);
+    if (!infs_timestamp_valid(value) || value->seconds < -epoch_seconds)
+        return 0;
+    if (value->seconds > INT64_MAX / INT64_C(10000000) - epoch_seconds)
+        return INT64_MAX;
+    return (value->seconds + epoch_seconds) * INT64_C(10000000) +
+           (INT64)(value->nanoseconds / 100u);
+}
+
+static uint64_t windows_attributes_to_portable(DWORD attributes)
+{
+    uint64_t flags = 0;
+    if (attributes & FILE_ATTRIBUTE_READONLY) flags |= INFS_ATTR_READ_ONLY;
+    if (attributes & FILE_ATTRIBUTE_HIDDEN) flags |= INFS_ATTR_HIDDEN;
+    if (attributes & FILE_ATTRIBUTE_SYSTEM) flags |= INFS_ATTR_SYSTEM;
+    if (attributes & FILE_ATTRIBUTE_ARCHIVE) flags |= INFS_ATTR_ARCHIVE;
+    if (attributes & FILE_ATTRIBUTE_TEMPORARY) flags |= INFS_ATTR_TEMPORARY;
+    if (attributes & FILE_ATTRIBUTE_NOT_CONTENT_INDEXED)
+        flags |= INFS_ATTR_NOT_CONTENT_INDEXED;
+    return flags;
+}
+
+static DWORD portable_to_windows_attributes(uint64_t flags, int directory)
+{
+    DWORD attributes = directory ? FILE_ATTRIBUTE_DIRECTORY : 0;
+    if (flags & INFS_ATTR_READ_ONLY) attributes |= FILE_ATTRIBUTE_READONLY;
+    if (flags & INFS_ATTR_HIDDEN) attributes |= FILE_ATTRIBUTE_HIDDEN;
+    if (flags & INFS_ATTR_SYSTEM) attributes |= FILE_ATTRIBUTE_SYSTEM;
+    if (flags & INFS_ATTR_ARCHIVE) attributes |= FILE_ATTRIBUTE_ARCHIVE;
+    if (flags & INFS_ATTR_TEMPORARY) attributes |= FILE_ATTRIBUTE_TEMPORARY;
+    if (flags & INFS_ATTR_NOT_CONTENT_INDEXED)
+        attributes |= FILE_ATTRIBUTE_NOT_CONTENT_INDEXED;
+    if (!attributes && !directory) attributes = FILE_ATTRIBUTE_NORMAL;
+    return attributes;
+}
+
+static void windows_basic_to_time_update(const FILE_BASIC_INFO *basic,
+                                         struct infs_time_update *update)
+{
+    memset(update, 0, sizeof(*update));
+    update->birth_action = INFS_TIME_SET;
+    update->access_action = INFS_TIME_SET;
+    update->modification_action = INFS_TIME_SET;
+    update->change_action = INFS_TIME_SET;
+    windows_ticks_to_timestamp(basic->CreationTime.QuadPart, &update->birth_time);
+    windows_ticks_to_timestamp(basic->LastAccessTime.QuadPart, &update->access_time);
+    windows_ticks_to_timestamp(basic->LastWriteTime.QuadPart, &update->modification_time);
+    windows_ticks_to_timestamp(basic->ChangeTime.QuadPart, &update->change_time);
+}
+static int apply_host_metadata(const wchar_t *host_path, const char *dest_path)
+{
+    DWORD attrs = GetFileAttributesW(host_path);
+    if (attrs == INVALID_FILE_ATTRIBUTES) return 0;
+    HANDLE handle = CreateFileW(host_path, FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        NULL, OPEN_EXISTING,
+        (attrs & FILE_ATTRIBUTE_DIRECTORY) ? FILE_FLAG_BACKUP_SEMANTICS : 0,
+        NULL);
+    if (handle == INVALID_HANDLE_VALUE) return 0;
+    FILE_BASIC_INFO basic;
+    int okay = GetFileInformationByHandleEx(handle, FileBasicInfo,
+                                             &basic, sizeof(basic)) != 0;
+    CloseHandle(handle);
+    if (!okay) return 0;
+    struct infs_time_update update;
+    windows_basic_to_time_update(&basic, &update);
+    infs_status status = infs_set_portable_flags(
+        &g_volume, dest_path,
+        windows_attributes_to_portable(basic.FileAttributes));
+    if (status == INFS_STATUS_OK)
+        status = infs_set_times(&g_volume, dest_path, &update);
+    return status == INFS_STATUS_OK;
+}
+
 static int join_windows_path(const wchar_t *parent, const wchar_t *name,
                              wchar_t *out, size_t out_count)
 {
@@ -1370,6 +1459,10 @@ static int copy_host_file(const wchar_t *host_path, const char *dest_path)
             okay = 0;
         }
     }
+    if (okay && !apply_host_metadata(host_path, dest_path)) {
+        set_status(L"Could not preserve source file attributes or timestamps.");
+        okay = 0;
+    }
     if (okay) {
         status = infs_volume_sync(&g_volume);
         if (status != INFS_STATUS_OK) {
@@ -1446,6 +1539,8 @@ static int copy_host_path(const wchar_t *host_path, const char *parent_dest)
     DWORD error = GetLastError();
     FindClose(search);
     if (okay && error != ERROR_NO_MORE_FILES)
+        okay = 0;
+    if (okay && !apply_host_metadata(host_path, dest))
         okay = 0;
     return okay;
 }

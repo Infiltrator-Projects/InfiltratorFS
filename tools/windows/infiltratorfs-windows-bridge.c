@@ -303,8 +303,9 @@ static void bridge_fill_version(
     memcpy(version->ProviderID, bridge_provider_id,
            sizeof(bridge_provider_id));
     memcpy(version->ContentID, token, 16u);
-    memcpy(version->ContentID + 16u, &attributes->change_time_ns,
-           sizeof(attributes->change_time_ns));
+    uint64_t change_token = (uint64_t)attributes->change_time.seconds ^
+        ((uint64_t)attributes->change_time.nanoseconds << 32);
+    memcpy(version->ContentID + 16u, &change_token, sizeof(change_token));
     memcpy(version->ContentID + 24u, &attributes->logical_size,
            sizeof(attributes->logical_size));
 }
@@ -416,19 +417,69 @@ static void bridge_forget_identity_prefix(PCWSTR path)
     }
 }
 
-static INT64 unix_ns_to_filetime(int64_t ns)
+
+static int windows_ticks_to_timestamp(INT64 ticks, struct infs_timestamp *out)
 {
-    const int64_t windows_epoch_seconds = INT64_C(11644473600);
-    int64_t seconds = ns / INT64_C(1000000000);
-    int64_t remainder = ns % INT64_C(1000000000);
-    if (remainder < 0) {
-        remainder += INT64_C(1000000000);
-        --seconds;
-    }
-    if (seconds < -windows_epoch_seconds)
+    const INT64 epoch = INT64_C(116444736000000000);
+    INT64 delta = ticks - epoch;
+    INT64 seconds = delta / INT64_C(10000000);
+    INT64 remainder = delta % INT64_C(10000000);
+    if (remainder < 0) { remainder += INT64_C(10000000); --seconds; }
+    out->seconds = seconds;
+    out->nanoseconds = (uint32_t)(remainder * 100);
+    return 1;
+}
+
+static INT64 timestamp_to_windows_ticks(const struct infs_timestamp *value)
+{
+    const INT64 epoch_seconds = INT64_C(11644473600);
+    if (!infs_timestamp_valid(value) || value->seconds < -epoch_seconds)
         return 0;
-    return (seconds + windows_epoch_seconds) * INT64_C(10000000) +
-           remainder / INT64_C(100);
+    if (value->seconds > INT64_MAX / INT64_C(10000000) - epoch_seconds)
+        return INT64_MAX;
+    return (value->seconds + epoch_seconds) * INT64_C(10000000) +
+           (INT64)(value->nanoseconds / 100u);
+}
+
+static uint64_t windows_attributes_to_portable(DWORD attributes)
+{
+    uint64_t flags = 0;
+    if (attributes & FILE_ATTRIBUTE_READONLY) flags |= INFS_ATTR_READ_ONLY;
+    if (attributes & FILE_ATTRIBUTE_HIDDEN) flags |= INFS_ATTR_HIDDEN;
+    if (attributes & FILE_ATTRIBUTE_SYSTEM) flags |= INFS_ATTR_SYSTEM;
+    if (attributes & FILE_ATTRIBUTE_ARCHIVE) flags |= INFS_ATTR_ARCHIVE;
+    if (attributes & FILE_ATTRIBUTE_TEMPORARY) flags |= INFS_ATTR_TEMPORARY;
+    if (attributes & FILE_ATTRIBUTE_NOT_CONTENT_INDEXED)
+        flags |= INFS_ATTR_NOT_CONTENT_INDEXED;
+    return flags;
+}
+
+static DWORD portable_to_windows_attributes(uint64_t flags, int directory)
+{
+    DWORD attributes = directory ? FILE_ATTRIBUTE_DIRECTORY : 0;
+    if (flags & INFS_ATTR_READ_ONLY) attributes |= FILE_ATTRIBUTE_READONLY;
+    if (flags & INFS_ATTR_HIDDEN) attributes |= FILE_ATTRIBUTE_HIDDEN;
+    if (flags & INFS_ATTR_SYSTEM) attributes |= FILE_ATTRIBUTE_SYSTEM;
+    if (flags & INFS_ATTR_ARCHIVE) attributes |= FILE_ATTRIBUTE_ARCHIVE;
+    if (flags & INFS_ATTR_TEMPORARY) attributes |= FILE_ATTRIBUTE_TEMPORARY;
+    if (flags & INFS_ATTR_NOT_CONTENT_INDEXED)
+        attributes |= FILE_ATTRIBUTE_NOT_CONTENT_INDEXED;
+    if (!attributes && !directory) attributes = FILE_ATTRIBUTE_NORMAL;
+    return attributes;
+}
+
+static void windows_basic_to_time_update(const FILE_BASIC_INFO *basic,
+                                         struct infs_time_update *update)
+{
+    memset(update, 0, sizeof(*update));
+    update->birth_action = INFS_TIME_SET;
+    update->access_action = INFS_TIME_SET;
+    update->modification_action = INFS_TIME_SET;
+    update->change_action = INFS_TIME_SET;
+    windows_ticks_to_timestamp(basic->CreationTime.QuadPart, &update->birth_time);
+    windows_ticks_to_timestamp(basic->LastAccessTime.QuadPart, &update->access_time);
+    windows_ticks_to_timestamp(basic->LastWriteTime.QuadPart, &update->modification_time);
+    windows_ticks_to_timestamp(basic->ChangeTime.QuadPart, &update->change_time);
 }
 
 static void attributes_to_basic(const struct infs_attributes *attributes,
@@ -440,17 +491,16 @@ static void attributes_to_basic(const struct infs_attributes *attributes,
     basic->FileSize =
         attributes->object_type == INFS_OBJECT_DIRECTORY ? 0 :
         (INT64)attributes->logical_size;
-    basic->CreationTime.QuadPart = unix_ns_to_filetime(attributes->birth_time_ns);
-    basic->LastAccessTime.QuadPart = unix_ns_to_filetime(attributes->access_time_ns);
+    basic->CreationTime.QuadPart = timestamp_to_windows_ticks(&attributes->birth_time);
+    basic->LastAccessTime.QuadPart = timestamp_to_windows_ticks(&attributes->access_time);
     basic->LastWriteTime.QuadPart =
-        unix_ns_to_filetime(attributes->modification_time_ns);
-    basic->ChangeTime.QuadPart = unix_ns_to_filetime(attributes->change_time_ns);
-    if (attributes->object_type == INFS_OBJECT_DIRECTORY)
-        basic->FileAttributes = FILE_ATTRIBUTE_DIRECTORY;
-    else if (attributes->object_type == INFS_OBJECT_SYMLINK)
-        basic->FileAttributes = FILE_ATTRIBUTE_READONLY;
-    else
-        basic->FileAttributes = FILE_ATTRIBUTE_ARCHIVE;
+        timestamp_to_windows_ticks(&attributes->modification_time);
+    basic->ChangeTime.QuadPart = timestamp_to_windows_ticks(&attributes->change_time);
+    basic->FileAttributes = portable_to_windows_attributes(
+        attributes->portable_flags,
+        attributes->object_type == INFS_OBJECT_DIRECTORY);
+    if (attributes->object_type == INFS_OBJECT_SYMLINK)
+        basic->FileAttributes |= FILE_ATTRIBUTE_READONLY;
 }
 
 static int bridge_alias_prefix_match(PCWSTR path, PCWSTR prefix)
@@ -760,25 +810,16 @@ static int bridge_prepare_full_directory(
         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
         NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
     if (directory != INVALID_HANDLE_VALUE) {
-        FILETIME created, accessed, modified, changed;
-        created.dwLowDateTime =
-            (DWORD)unix_ns_to_filetime(attributes->birth_time_ns);
-        created.dwHighDateTime =
-            (DWORD)((UINT64)unix_ns_to_filetime(attributes->birth_time_ns) >> 32);
-        accessed.dwLowDateTime =
-            (DWORD)unix_ns_to_filetime(attributes->access_time_ns);
-        accessed.dwHighDateTime =
-            (DWORD)((UINT64)unix_ns_to_filetime(attributes->access_time_ns) >> 32);
-        modified.dwLowDateTime =
-            (DWORD)unix_ns_to_filetime(attributes->modification_time_ns);
-        modified.dwHighDateTime =
-            (DWORD)((UINT64)unix_ns_to_filetime(attributes->modification_time_ns) >> 32);
-        changed.dwLowDateTime =
-            (DWORD)unix_ns_to_filetime(attributes->change_time_ns);
-        changed.dwHighDateTime =
-            (DWORD)((UINT64)unix_ns_to_filetime(attributes->change_time_ns) >> 32);
-        (void)changed;
-        SetFileTime(directory, &created, &accessed, &modified);
+        FILE_BASIC_INFO basic;
+        memset(&basic, 0, sizeof(basic));
+        basic.CreationTime.QuadPart = timestamp_to_windows_ticks(&attributes->birth_time);
+        basic.LastAccessTime.QuadPart = timestamp_to_windows_ticks(&attributes->access_time);
+        basic.LastWriteTime.QuadPart = timestamp_to_windows_ticks(&attributes->modification_time);
+        basic.ChangeTime.QuadPart = timestamp_to_windows_ticks(&attributes->change_time);
+        basic.FileAttributes = portable_to_windows_attributes(
+            attributes->portable_flags, 1);
+        (void)SetFileInformationByHandle(directory, FileBasicInfo,
+                                         &basic, sizeof(basic));
         CloseHandle(directory);
     }
     return 1;
@@ -1276,32 +1317,15 @@ static infs_status bridge_sync_local_file(PCWSTR relative)
     if (status == INFS_STATUS_OK && old_size > offset)
         status = infs_truncate_file(g_bridge.volume, path, offset);
 
-    FILETIME creation_time, access_time, write_time;
+    FILE_BASIC_INFO local_basic;
     if (status == INFS_STATUS_OK &&
-        GetFileTime(input, &creation_time, &access_time, &write_time)) {
-        ULARGE_INTEGER ft;
-        ft.LowPart = write_time.dwLowDateTime;
-        ft.HighPart = write_time.dwHighDateTime;
-        const uint64_t epoch = UINT64_C(116444736000000000);
-        int64_t mtime_ns = 0;
-        if (ft.QuadPart >= epoch) {
-            uint64_t ticks = ft.QuadPart - epoch;
-            if (ticks > (uint64_t)INT64_MAX / UINT64_C(100))
-                status = INFS_STATUS_OVERFLOW;
-            else
-                mtime_ns = (int64_t)(ticks * UINT64_C(100));
-        } else {
-            uint64_t ticks = epoch - ft.QuadPart;
-            if (ticks > (uint64_t)INT64_MAX / UINT64_C(100))
-                status = INFS_STATUS_OVERFLOW;
-            else
-                mtime_ns = -(int64_t)(ticks * UINT64_C(100));
-        }
+        GetFileInformationByHandleEx(input, FileBasicInfo,
+                                     &local_basic, sizeof(local_basic))) {
         struct infs_time_update update;
-        memset(&update, 0, sizeof(update));
-        update.access_action = INFS_TIME_OMIT;
-        update.modification_action = INFS_TIME_SET;
-        update.modification_time_ns = mtime_ns;
+        windows_basic_to_time_update(&local_basic, &update);
+        status = infs_set_portable_flags(
+            g_bridge.volume, path,
+            windows_attributes_to_portable(local_basic.FileAttributes));
         if (status == INFS_STATUS_OK)
             status = infs_set_times(g_bridge.volume, path, &update);
     }
@@ -1423,6 +1447,27 @@ static infs_status bridge_import_local_tree(PCWSTR relative)
     FindClose(find);
     if (status == INFS_STATUS_OK && error != ERROR_NO_MORE_FILES)
         status = INFS_STATUS_IO_ERROR;
+    if (status == INFS_STATUS_OK) {
+        HANDLE directory = CreateFileW(local, FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+        if (directory == INVALID_HANDLE_VALUE)
+            return INFS_STATUS_IO_ERROR;
+        FILE_BASIC_INFO basic;
+        if (!GetFileInformationByHandleEx(directory, FileBasicInfo,
+                                          &basic, sizeof(basic))) {
+            CloseHandle(directory);
+            return INFS_STATUS_IO_ERROR;
+        }
+        CloseHandle(directory);
+        struct infs_time_update update;
+        windows_basic_to_time_update(&basic, &update);
+        status = infs_set_portable_flags(
+            g_bridge.volume, path,
+            windows_attributes_to_portable(basic.FileAttributes));
+        if (status == INFS_STATUS_OK)
+            status = infs_set_times(g_bridge.volume, path, &update);
+    }
     return status;
 }
 

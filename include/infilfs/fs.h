@@ -52,7 +52,7 @@ int infs_validate_allocation_page(const uint8_t block[INFS_BLOCK_SIZE],
 
 /*
  * The classic encoders remain intentionally available for fixtures and format
- * validation. Current Format 0.17 formatters use the tree variants. Keeping
+ * validation. Current Format 0.18 formatters use the tree variants. Keeping
  * the helpers separate prevents a test fixture from silently changing shape
  * when the normal formatter policy evolves.
  */
@@ -61,7 +61,7 @@ infs_status infs_encode_root_directory(uint8_t block[INFS_BLOCK_SIZE],
                                        uint64_t generation,
                                        uint32_t permissions,
                                        uint32_t uid, uint32_t gid,
-                                       int64_t now_ns);
+                                       const struct infs_timestamp *now);
 infs_status infs_encode_object_index(uint8_t block[INFS_BLOCK_SIZE],
                                      const uint8_t object_id[16],
                                      uint64_t generation);
@@ -70,13 +70,13 @@ infs_status infs_encode_paged_root_directory(uint8_t block[INFS_BLOCK_SIZE],
                                              uint64_t generation,
                                              uint32_t permissions,
                                              uint32_t uid, uint32_t gid,
-                                             int64_t now_ns);
+                                             const struct infs_timestamp *now);
 infs_status infs_encode_tree_root_directory(uint8_t block[INFS_BLOCK_SIZE],
                                             const uint8_t object_id[16],
                                             uint64_t generation,
                                             uint32_t permissions,
                                             uint32_t uid, uint32_t gid,
-                                            int64_t now_ns);
+                                            const struct infs_timestamp *now);
 infs_status infs_encode_paged_object_index(uint8_t block[INFS_BLOCK_SIZE],
                                            const uint8_t object_id[16],
                                            uint64_t generation);

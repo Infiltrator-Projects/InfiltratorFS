@@ -82,10 +82,11 @@ static infs_status memory_random(void *context, void *buffer, size_t size)
     return INFS_STATUS_OK;
 }
 
-static infs_status memory_time(void *context, int64_t *time_ns)
+static infs_status memory_time(void *context, struct infs_timestamp *time)
 {
     (void)context;
-    *time_ns = INT64_C(1788249600000000000);
+    time->seconds = INT64_C(1788249600);
+    time->nanoseconds = UINT32_C(0);
     return INFS_STATUS_OK;
 }
 
@@ -100,7 +101,7 @@ static const struct infs_storage_ops memory_ops = {
     .flush = memory_flush,
     .get_size = memory_size,
     .random_bytes = memory_random,
-    .current_time_ns = memory_time,
+    .current_time = memory_time,
     .close = memory_close,
 };
 

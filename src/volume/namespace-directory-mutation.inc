@@ -101,30 +101,28 @@ static struct infs_posix_compat_disk *object_posix(
 static void touch_mctime(struct infs_volume *vol,
                          struct infs_attributes_disk *attributes)
 {
-    int64_t now = 0;
-    infs_status status = infs_storage_current_time_ns(&vol->storage, &now);
+    struct infs_timestamp now = {0};
+    infs_status status = infs_storage_current_time(&vol->storage, &now);
     if (status != INFS_STATUS_OK) {
         if (vol->tx_active && vol->tx_error == INFS_STATUS_OK)
             vol->tx_error = status;
         return;
     }
-    uint64_t n = (uint64_t)now;
-    attributes->modification_time_ns = (int64_t)infs_cpu_to_le64(n);
-    attributes->change_time_ns = (int64_t)infs_cpu_to_le64(n);
+    timestamp_disk_from_value(&attributes->modification_time, &now);
+    timestamp_disk_from_value(&attributes->change_time, &now);
 }
 
 static void touch_ctime(struct infs_volume *vol,
                         struct infs_attributes_disk *attributes)
 {
-    int64_t now = 0;
-    infs_status status = infs_storage_current_time_ns(&vol->storage, &now);
+    struct infs_timestamp now = {0};
+    infs_status status = infs_storage_current_time(&vol->storage, &now);
     if (status != INFS_STATUS_OK) {
         if (vol->tx_active && vol->tx_error == INFS_STATUS_OK)
             vol->tx_error = status;
         return;
     }
-    attributes->change_time_ns =
-        (int64_t)infs_cpu_to_le64((uint64_t)now);
+    timestamp_disk_from_value(&attributes->change_time, &now);
 }
 
 static int next_component(const char **cursor, char out[INFS_NAME_MAX + 1u])

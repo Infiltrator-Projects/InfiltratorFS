@@ -112,9 +112,8 @@
         return 1;
     }
 
-    errno = 0;
-    int64_t root_time_ns = infs_current_time_ns();
-    if (root_time_ns == 0 && errno != 0) {
+    struct infs_timestamp root_time = {0};
+    if (infs_current_time(&root_time) != 0) {
         perror("clock_gettime");
         free(bitmap);
         close(fd);
@@ -125,7 +124,7 @@
     resolve_root_owner(&root_uid, &root_gid);
     if (infs_encode_tree_root_directory(
             block, root_id, 1, 0755u,
-            root_uid, root_gid, root_time_ns) !=
+            root_uid, root_gid, &root_time) !=
             INFS_STATUS_OK ||
         infs_pwrite_full(fd, block, sizeof(block),
                          (off_t)(root_block * INFS_BLOCK_SIZE)) != 0) {
