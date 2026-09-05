@@ -931,3 +931,385 @@ static int infilfs_posix_mknod(struct user_namespace *idmap, struct inode *dir,
     inode->i_op = &infilfs_file_inode_operations;
     return 0;
 }
+
+
+/*
+ * Native Linux POSIX ACL adapter.
+ *
+ * Format 0.18 deliberately keeps Linux ACLs out of the portable object
+ * layout. Store the Linux POSIX ACL xattr representation in the existing
+ * hidden Linux metadata sidecar. The VFS owns permission evaluation,
+ * idmapped-mount translation and ACL caching; this adapter supplies durable
+ * get/set plus create/chmod integration.
+ */
+static const char *infilfs_posix_acl_suffix(int type)
+{
+    switch (type) {
+    case ACL_TYPE_ACCESS:
+        return "posix_acl_access";
+    case ACL_TYPE_DEFAULT:
+        return "posix_acl_default";
+    default:
+        return NULL;
+    }
+}
+
+static struct posix_acl *infilfs_posix_acl_get(
+    struct inode *inode, int type, bool rcu)
+{
+    const char *suffix = infilfs_posix_acl_suffix(type);
+    void *value = NULL;
+    struct posix_acl *acl;
+    int size;
+    int got;
+    int ret;
+
+    if (rcu)
+        return ERR_PTR(-ECHILD);
+    if (!suffix)
+        return ERR_PTR(-EINVAL);
+    if (type == ACL_TYPE_DEFAULT && !S_ISDIR(inode->i_mode))
+        return NULL;
+
+    size = infilfs_linux_xattr_get(
+        &infilfs_linux_system_xattr_handler, NULL, inode,
+        suffix, NULL, 0);
+    if (size == -ENODATA)
+        return NULL;
+    if (size < 0)
+        return ERR_PTR(size);
+    if (!size)
+        return ERR_PTR(-EFSCORRUPTED);
+
+    value = kvmalloc((size_t)size, GFP_NOFS);
+    if (!value)
+        return ERR_PTR(-ENOMEM);
+    got = infilfs_linux_xattr_get(
+        &infilfs_linux_system_xattr_handler, NULL, inode,
+        suffix, value, (size_t)size);
+    if (got != size) {
+        kvfree(value);
+        return ERR_PTR(got < 0 ? got : -EIO);
+    }
+
+    acl = posix_acl_from_xattr(&init_user_ns, value, (size_t)size);
+    kvfree(value);
+    if (IS_ERR_OR_NULL(acl))
+        return acl ? acl : ERR_PTR(-EFSCORRUPTED);
+    ret = posix_acl_valid(&init_user_ns, acl);
+    if (ret) {
+        posix_acl_release(acl);
+        return ERR_PTR(ret == -ENOMEM ? ret : -EFSCORRUPTED);
+    }
+    return acl;
+}
+
+static int infilfs_posix_acl_encode(
+    const struct posix_acl *acl, void **value_out, size_t *size_out)
+{
+    void *value;
+    size_t size;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
+    value = posix_acl_to_xattr(&init_user_ns, acl, &size, GFP_NOFS);
+    if (!value)
+        return -ENOMEM;
+#else
+    int encoded;
+
+    encoded = posix_acl_to_xattr(&init_user_ns, acl, NULL, 0);
+    if (encoded < 0)
+        return encoded;
+    size = (size_t)encoded;
+    value = kvmalloc(size, GFP_NOFS);
+    if (!value)
+        return -ENOMEM;
+    encoded = posix_acl_to_xattr(&init_user_ns, acl, value, size);
+    if (encoded < 0 || (size_t)encoded != size) {
+        kvfree(value);
+        return encoded < 0 ? encoded : -EIO;
+    }
+#endif
+    *value_out = value;
+    *size_out = size;
+    return 0;
+}
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
+static int infilfs_posix_acl_store(
+    struct mnt_idmap *idmap, struct dentry *dentry,
+#else
+static int infilfs_posix_acl_store(
+    struct user_namespace *idmap, struct dentry *dentry,
+#endif
+    struct inode *inode, int type, const struct posix_acl *acl)
+{
+    const char *suffix = infilfs_posix_acl_suffix(type);
+    void *value = NULL;
+    size_t size = 0;
+    int ret;
+
+    if (!suffix)
+        return -EINVAL;
+    if (!acl) {
+        ret = infilfs_linux_xattr_set(
+            &infilfs_linux_system_xattr_handler, idmap, dentry,
+            inode, suffix, NULL, 0, 0);
+        return ret == -ENODATA ? 0 : ret;
+    }
+    ret = infilfs_posix_acl_encode(acl, &value, &size);
+    if (ret)
+        return ret;
+    ret = infilfs_linux_xattr_set(
+        &infilfs_linux_system_xattr_handler, idmap, dentry,
+        inode, suffix, value, size, 0);
+    kvfree(value);
+    return ret;
+}
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
+static int infilfs_posix_acl_set(
+    struct mnt_idmap *idmap, struct dentry *dentry,
+#else
+static int infilfs_posix_acl_set(
+    struct user_namespace *idmap, struct dentry *dentry,
+#endif
+    struct posix_acl *acl, int type)
+{
+    struct inode *inode = d_inode(dentry);
+    struct posix_acl *old_acl;
+    struct posix_acl *stored_acl = acl;
+    umode_t old_mode = inode->i_mode;
+    umode_t mode = old_mode;
+    struct iattr attr;
+    int rollback_ret;
+    int ret;
+
+    if (type != ACL_TYPE_ACCESS && type != ACL_TYPE_DEFAULT)
+        return -EINVAL;
+    if (type == ACL_TYPE_DEFAULT && !S_ISDIR(inode->i_mode)) {
+        if (acl)
+            return -EACCES;
+        set_cached_acl(inode, type, NULL);
+        return 0;
+    }
+    if (acl) {
+        ret = posix_acl_valid(&init_user_ns, acl);
+        if (ret)
+            return ret;
+    }
+    if (type == ACL_TYPE_ACCESS && stored_acl) {
+        ret = posix_acl_update_mode(idmap, inode, &mode, &stored_acl);
+        if (ret)
+            return ret;
+    }
+
+    old_acl = infilfs_posix_acl_get(inode, type, false);
+    if (IS_ERR(old_acl))
+        return PTR_ERR(old_acl);
+
+    ret = infilfs_posix_acl_store(idmap, dentry, inode, type, stored_acl);
+    if (ret)
+        goto out_old;
+
+    if (type == ACL_TYPE_ACCESS && mode != old_mode) {
+        memset(&attr, 0, sizeof(attr));
+        attr.ia_valid = ATTR_MODE | ATTR_CTIME;
+        attr.ia_mode = mode;
+        attr.ia_ctime = current_time(inode);
+        ret = infilfs_posix_rewrite_inode(inode, &attr);
+        if (ret) {
+            rollback_ret = infilfs_posix_acl_store(
+                idmap, dentry, inode, type, old_acl);
+            if (rollback_ret) {
+                INFILFS_SB(inode->i_sb)->write_poisoned = true;
+                pr_err("InfiltratorFS: ACL rollback failed for inode %lu: %d\n",
+                       inode->i_ino, rollback_ret);
+            }
+            goto out_old;
+        }
+        inode->i_mode = (inode->i_mode & S_IFMT) | (mode & 07777);
+    }
+    set_cached_acl(inode, type, stored_acl);
+    ret = 0;
+out_old:
+    posix_acl_release(old_acl);
+    return ret;
+}
+
+static int infilfs_posix_acl_prepare_create(
+    struct inode *dir, umode_t *mode, umode_t type,
+    struct posix_acl **default_acl, struct posix_acl **access_acl)
+{
+    umode_t acl_mode = (*mode & 07777) | type;
+    int ret;
+
+    ret = posix_acl_create(dir, &acl_mode, default_acl, access_acl);
+    if (!ret)
+        *mode = (*mode & S_IFMT) | (acl_mode & 07777);
+    return ret;
+}
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
+static int infilfs_posix_acl_finish_create(
+    struct mnt_idmap *idmap, struct inode *dir,
+#else
+static int infilfs_posix_acl_finish_create(
+    struct user_namespace *idmap, struct inode *dir,
+#endif
+    struct dentry *dentry, struct posix_acl *default_acl,
+    struct posix_acl *access_acl, bool is_directory)
+{
+    struct inode *inode = d_inode(dentry);
+    int cleanup;
+    int ret = 0;
+
+    if (!inode)
+        return -EIO;
+    if (access_acl)
+        ret = infilfs_posix_acl_store(
+            idmap, dentry, inode, ACL_TYPE_ACCESS, access_acl);
+    if (!ret && default_acl)
+        ret = infilfs_posix_acl_store(
+            idmap, dentry, inode, ACL_TYPE_DEFAULT, default_acl);
+    if (!ret) {
+        set_cached_acl(inode, ACL_TYPE_ACCESS, access_acl);
+        if (is_directory)
+            set_cached_acl(inode, ACL_TYPE_DEFAULT, default_acl);
+        return 0;
+    }
+
+    (void)infilfs_linux_meta_remove_object(
+        inode->i_sb, INFILFS_I(inode)->object_id);
+    cleanup = is_directory ?
+        infilfs_ns_rmdir(dir, dentry) : infilfs_ns_unlink(dir, dentry);
+    if (!cleanup)
+        d_drop(dentry);
+    else
+        pr_err("InfiltratorFS: could not remove object after ACL create failure: %d\n",
+               cleanup);
+    return ret;
+}
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
+static int infilfs_posix_acl_create(
+    struct mnt_idmap *idmap, struct inode *dir,
+#else
+static int infilfs_posix_acl_create(
+    struct user_namespace *idmap, struct inode *dir,
+#endif
+    struct dentry *dentry, umode_t mode, bool excl)
+{
+    struct posix_acl *default_acl = NULL;
+    struct posix_acl *access_acl = NULL;
+    int ret;
+
+    ret = infilfs_posix_acl_prepare_create(
+        dir, &mode, S_IFREG, &default_acl, &access_acl);
+    if (!ret)
+        ret = infilfs_posix_create(idmap, dir, dentry, mode, excl);
+    if (!ret)
+        ret = infilfs_posix_acl_finish_create(
+            idmap, dir, dentry, default_acl, access_acl, false);
+    posix_acl_release(access_acl);
+    posix_acl_release(default_acl);
+    return ret;
+}
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
+static struct dentry *infilfs_posix_acl_mkdir(
+    struct mnt_idmap *idmap, struct inode *dir,
+    struct dentry *dentry, umode_t mode)
+{
+    struct posix_acl *default_acl = NULL;
+    struct posix_acl *access_acl = NULL;
+    struct dentry *result;
+    int ret;
+
+    ret = infilfs_posix_acl_prepare_create(
+        dir, &mode, S_IFDIR, &default_acl, &access_acl);
+    if (ret)
+        return ERR_PTR(ret);
+    result = infilfs_posix_mkdir(idmap, dir, dentry, mode);
+    if (IS_ERR(result)) {
+        posix_acl_release(access_acl);
+        posix_acl_release(default_acl);
+        return result;
+    }
+    ret = infilfs_posix_acl_finish_create(
+        idmap, dir, dentry, default_acl, access_acl, true);
+    posix_acl_release(access_acl);
+    posix_acl_release(default_acl);
+    return ret ? ERR_PTR(ret) : result;
+}
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
+static int infilfs_posix_acl_mkdir(
+    struct mnt_idmap *idmap, struct inode *dir,
+    struct dentry *dentry, umode_t mode)
+#else
+static int infilfs_posix_acl_mkdir(
+    struct user_namespace *idmap, struct inode *dir,
+    struct dentry *dentry, umode_t mode)
+#endif
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 17, 0)
+{
+    struct posix_acl *default_acl = NULL;
+    struct posix_acl *access_acl = NULL;
+    int ret;
+
+    ret = infilfs_posix_acl_prepare_create(
+        dir, &mode, S_IFDIR, &default_acl, &access_acl);
+    if (!ret)
+        ret = infilfs_posix_mkdir(idmap, dir, dentry, mode);
+    if (!ret)
+        ret = infilfs_posix_acl_finish_create(
+            idmap, dir, dentry, default_acl, access_acl, true);
+    posix_acl_release(access_acl);
+    posix_acl_release(default_acl);
+    return ret;
+}
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
+static int infilfs_posix_acl_mknod(
+    struct mnt_idmap *idmap, struct inode *dir,
+#else
+static int infilfs_posix_acl_mknod(
+    struct user_namespace *idmap, struct inode *dir,
+#endif
+    struct dentry *dentry, umode_t mode, dev_t rdev)
+{
+    struct posix_acl *default_acl = NULL;
+    struct posix_acl *access_acl = NULL;
+    umode_t type = mode & S_IFMT;
+    int ret;
+
+    if (!type)
+        type = S_IFREG;
+    ret = infilfs_posix_acl_prepare_create(
+        dir, &mode, type, &default_acl, &access_acl);
+    if (!ret)
+        ret = infilfs_posix_mknod(idmap, dir, dentry, mode, rdev);
+    if (!ret)
+        ret = infilfs_posix_acl_finish_create(
+            idmap, dir, dentry, default_acl, access_acl, false);
+    posix_acl_release(access_acl);
+    posix_acl_release(default_acl);
+    return ret;
+}
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
+static int infilfs_posix_acl_setattr(
+    struct mnt_idmap *idmap, struct dentry *dentry,
+#else
+static int infilfs_posix_acl_setattr(
+    struct user_namespace *idmap, struct dentry *dentry,
+#endif
+    struct iattr *attr)
+{
+    bool mode_changed = (attr->ia_valid & ATTR_MODE) != 0;
+    int ret = infilfs_posix_setattr(idmap, dentry, attr);
+
+    if (!ret && mode_changed)
+        ret = posix_acl_chmod(idmap, dentry, d_inode(dentry)->i_mode);
+    return ret;
+}

@@ -4125,8 +4125,7 @@ static int infilfs_native_stage_compression_candidate(
             stored_blocks = DIV_ROUND_UP(
                 (u32)compressed_bytes,
                 (u32)INFILFS_DISK_BLOCK_SIZE);
-            if (!infs_iac1_savings_worthwhile(
-                    logical_blocks, stored_blocks))
+            if (stored_blocks >= logical_blocks)
                 stored_blocks = 0;
         }
     }

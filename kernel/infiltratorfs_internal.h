@@ -24,6 +24,8 @@
 #include <linux/mutex.h>
 #include <linux/pagevec.h>
 #include <linux/pagemap.h>
+#include <linux/posix_acl.h>
+#include <linux/posix_acl_xattr.h>
 #include <linux/random.h>
 #include <linux/sched.h>
 #include <linux/seq_file.h>

@@ -302,8 +302,7 @@ static int file_store_extent_payload(
             stored_blocks = (uint32_t)(
                 compressed_bytes / INFS_BLOCK_SIZE +
                 ((compressed_bytes % INFS_BLOCK_SIZE) != 0));
-            if (!infs_iac1_savings_worthwhile(
-                    logical_blocks, stored_blocks))
+            if (stored_blocks >= logical_blocks)
                 stored_blocks = 0;
         }
     }

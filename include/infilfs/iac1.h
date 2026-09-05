@@ -33,24 +33,6 @@ typedef size_t infs_iac1_size;
 #define INFS_IAC1_FILL_MIN 4u
 #define INFS_IAC1_FILL_MAX 65535u
 #define INFS_IAC1_WINDOW_MAX 65535u
-#define INFS_IAC1_MIN_SAVINGS_DIVISOR 16u
-
-/* Require at least 1/16 of the logical filesystem blocks to be saved.
- * For clusters up to 16 blocks this is the historical one-block minimum;
- * larger clusters must earn proportionally more space before paying the
- * ongoing decode cost. This is a write policy only, never stream metadata. */
-static inline int infs_iac1_savings_worthwhile(
-    infs_iac1_size logical_blocks, infs_iac1_size stored_blocks)
-{
-    infs_iac1_size required;
-
-    if (!logical_blocks || !stored_blocks || stored_blocks >= logical_blocks)
-        return 0;
-    required = logical_blocks / INFS_IAC1_MIN_SAVINGS_DIVISOR +
-        ((logical_blocks % INFS_IAC1_MIN_SAVINGS_DIVISOR) != 0);
-    return logical_blocks - stored_blocks >= required;
-}
-
 struct infs_iac1_scratch {
     infs_iac1_u32 latest[INFS_IAC1_HASH_SIZE];
     infs_iac1_u32 previous[INFS_IAC1_HASH_SIZE];

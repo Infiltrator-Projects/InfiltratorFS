@@ -49,10 +49,10 @@ permanent whole-volume assumption.
 Before encoding, a cheap sampler rejects high-entropy input that lacks useful
 byte, delta or four-byte repetition. If IAC1 is attempted, the writer compares
 the encoded physical block count with the uncompressed physical block count.
-The compressed representation is selected only when it saves at least
-one-sixteenth (6.25 percent) of the logical filesystem blocks in the bounded
-cluster. Clusters up to 16 blocks retain the historical one-block minimum.
-Otherwise the data is stored normally, avoiding decode cost for marginal wins.
+The compressed representation is selected whenever it consumes at least one
+fewer 4096-byte filesystem block than the uncompressed representation. Otherwise
+the data is stored normally. There is deliberately no additional percentage
+threshold: a real block saved is useful space saved.
 
 This means already-compressed media, encrypted data and other incompressible
 payloads normally avoid the full compressor and never consume extra data blocks
@@ -61,7 +61,7 @@ merely because compression is enabled.
 Linux mounted writes apply compression to eligible sequential EOF clusters.
 The native mount option `compress=auto` is the default; `compress=off` stops
 creating new compressed extents while retaining full decode support for existing
-ones. Portable-core writes use the same IAC1 format and savings rules. Persistent
+ones. Portable-core writes use the same IAC1 format and physical-block rule. Persistent
 decoding never depends on the volatile workload classifier, mount compression
 policy or media-placement policy.
 

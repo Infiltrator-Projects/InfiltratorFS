@@ -66,6 +66,7 @@ static int infilfs_quota_persist_locked(struct super_block *sb);
 #define infilfs_rw_create infilfs_rw_create_legacy
 #define infilfs_rw_mkdir infilfs_rw_mkdir_legacy
 #define infilfs_rw_setattr infilfs_rw_setattr_legacy
+#define infilfs_rw_mount_init infilfs_rw_mount_init_legacy
 #define infilfs_rw_mount_destroy infilfs_rw_mount_destroy_legacy
 #include "infiltratorfs_rw_legacy.inc"
 #undef infilfs_rw_tx_begin
@@ -74,7 +75,17 @@ static int infilfs_quota_persist_locked(struct super_block *sb);
 #undef infilfs_rw_create
 #undef infilfs_rw_mkdir
 #undef infilfs_rw_setattr
+#undef infilfs_rw_mount_init
 #undef infilfs_rw_mount_destroy
+
+static int infilfs_rw_mount_init(struct super_block *sb)
+{
+    int ret = infilfs_rw_mount_init_legacy(sb);
+
+    if (!ret)
+        sb->s_flags |= SB_POSIXACL;
+    return ret;
+}
 
 
 /*
@@ -2145,19 +2156,25 @@ out:
  * that table compact.
  */
 #define simple_statfs infilfs_statfs
-#define infilfs_rw_create infilfs_posix_create, \
-    .mknod = infilfs_posix_mknod, \
+#define infilfs_rw_create infilfs_posix_acl_create, \
+    .mknod = infilfs_posix_acl_mknod, \
+    .get_inode_acl = infilfs_posix_acl_get, \
+    .set_acl = infilfs_posix_acl_set, \
     .listxattr = infilfs_linux_listxattr
-#define infilfs_rw_mkdir infilfs_posix_mkdir, \
+#define infilfs_rw_mkdir infilfs_posix_acl_mkdir, \
     .unlink = infilfs_ns_unlink, \
     .rmdir = infilfs_ns_rmdir, \
     .link = infilfs_ns_link, \
     .symlink = infilfs_posix_symlink, \
     .rename = infilfs_ns_rename, \
-    .setattr = infilfs_posix_setattr, \
-    .getattr = infilfs_getattr
-#define infilfs_rw_setattr infilfs_posix_setattr, \
+    .setattr = infilfs_posix_acl_setattr, \
     .getattr = infilfs_getattr, \
+    .get_inode_acl = infilfs_posix_acl_get, \
+    .set_acl = infilfs_posix_acl_set
+#define infilfs_rw_setattr infilfs_posix_acl_setattr, \
+    .getattr = infilfs_getattr, \
+    .get_inode_acl = infilfs_posix_acl_get, \
+    .set_acl = infilfs_posix_acl_set, \
     .listxattr = infilfs_linux_listxattr
 #define infilfs_get_link infilfs_get_link, \
     .setattr = infilfs_posix_setattr, \
