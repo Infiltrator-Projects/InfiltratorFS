@@ -6,8 +6,6 @@ on:
   push:
     branches:
       - main
-    paths:
-      - '.github/workflows/apply-0.18.43.yml'
 
 permissions:
   contents: write
