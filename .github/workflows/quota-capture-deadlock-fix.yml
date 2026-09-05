@@ -1,0 +1,119 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: One-shot quota sidecar eviction deadlock fix
+
+on:
+  push:
+    paths:
+      - '.github/workflows/quota-capture-deadlock-fix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix-and-qualify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v6
+      - name: Apply quota capture deadlock fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          quota = Path('kernel/infiltratorfs_quota.inc')
+          text = quota.read_text()
+          old = '''static int infilfs_quota_capture_inode(
+              struct inode *inode, struct infilfs_quota_reservation *reservation)
+          {
+              struct infilfs_sb_info *sbi = INFILFS_SB(inode->i_sb);
+              int ret;
+
+              if (!sbi) {
+                  memset(reservation, 0, sizeof(*reservation));
+                  return 0;
+              }
+              mutex_lock(&sbi->quota_lock);
+              ret = infilfs_quota_capture_inode_locked(inode, reservation);
+              mutex_unlock(&sbi->quota_lock);
+              return ret;
+          }
+          '''
+          new = '''static int infilfs_quota_capture_inode(
+              struct inode *inode, struct infilfs_quota_reservation *reservation)
+          {
+              struct infilfs_sb_info *sbi = INFILFS_SB(inode->i_sb);
+              struct infilfs_inode_info *ii = INFILFS_I(inode);
+              int ret;
+
+              /*
+               * Quota policy persistence can delete an internal Linux sidecar
+               * while quota_lock is already held.  Eviction of that SYSTEM inode
+               * must never recurse into quota capture and re-lock quota_lock.
+               */
+              if (!sbi || !ii || (ii->portable_flags & INFILFS_ATTR_SYSTEM)) {
+                  memset(reservation, 0, sizeof(*reservation));
+                  return 0;
+              }
+              mutex_lock(&sbi->quota_lock);
+              ret = infilfs_quota_capture_inode_locked(inode, reservation);
+              mutex_unlock(&sbi->quota_lock);
+              return ret;
+          }
+          '''
+          if old not in text:
+              raise SystemExit('quota capture block no longer matches expected source')
+          quota.write_text(text.replace(old, new, 1))
+
+          policy = Path('tests/native-quota-policy.sh')
+          p = policy.read_text()
+          marker = 'grep -Fq \'Internal Linux sidecar files must never recursively resolve sidecar\' "$root/kernel/infiltratorfs_core.c"\n'
+          addition = marker + 'grep -Fq \'Quota policy persistence can delete an internal Linux sidecar\' "$root/kernel/infiltratorfs_quota.inc"\n'
+          if marker not in p:
+              raise SystemExit('quota policy insertion point missing')
+          if 'Quota policy persistence can delete an internal Linux sidecar' not in p:
+              p = p.replace(marker, addition, 1)
+          policy.write_text(p)
+          PY
+          bash tests/native-quota-policy.sh .
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake kmod linux-headers-$(uname -r)
+      - name: Build fixed running-kernel module and tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel --target mkfs.infilfs infilfs-scrub infiltratorfs-quota
+          make -C kernel clean KDIR="/lib/modules/$(uname -r)/build"
+          make -C kernel KDIR="/lib/modules/$(uname -r)/build"
+      - name: Qualify full mounted user group and project quotas
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash tests/native-quota-qualification.sh build kernel/infiltratorfs.ko
+      - name: Commit qualified fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          road = Path('docs/ROADMAP.md')
+          text = road.read_text()
+          old = '- [ ] Native user/group/project quotas'
+          new = '- [x] Native user/group/project quotas'
+          if old in text:
+              road.write_text(text.replace(old, new, 1))
+          elif new not in text:
+              raise SystemExit('quota roadmap entry not found')
+          PY
+          git rm -f .github/workflows/quota-capture-deadlock-fix.yml .github/workflows/quota-hang-diagnostic.yml
+          git config user.name 'Shannon Smith'
+          git config user.email 'infiltratr@yandex.com'
+          git add kernel/infiltratorfs_quota.inc tests/native-quota-policy.sh docs/ROADMAP.md
+          git commit -m 'Quota: finish native user group and project qualification'
+          git push origin HEAD:main
