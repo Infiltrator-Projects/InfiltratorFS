@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# One-shot development helper; removes itself after applying the patch.
+# One-shot development helper. Source changes are pushed without changing
+# workflow files; the helper itself is removed separately after the push.
 name: Apply 0.18.43 POSIX ACL patch
 
 on:
@@ -23,13 +24,21 @@ jobs:
       - name: Apply deterministic patch
         run: python3 tools/apply_0_18_43.py
 
-      - name: Commit source patch
+      - name: Commit source patch without workflow mutation
         shell: bash
         run: |
           set -euo pipefail
-          git rm .github/workflows/apply-0.18.43.yml tools/apply_0_18_43.py
+          # The helper prepares a permanent workflow edit as well, but the
+          # ephemeral Actions token is deliberately not allowed to update
+          # workflow files. Restore that one path and commit only source/tests.
+          git checkout HEAD -- .github/workflows/kernel-module.yml
+          git rm tools/apply_0_18_43.py
           git config user.name 'The First Infiltrator'
           git config user.email 'infiltratr@yandex.com'
-          git add -A
+          git add CMakeLists.txt README.md docs/COMPRESSION.md \
+                  include/infilfs/iac1.h kernel/infiltratorfs_internal.h \
+                  kernel/infiltratorfs_linux_meta.inc kernel/infiltratorfs_rw.inc \
+                  kernel/infiltratorfs_rw_data.inc src/volume/compression.inc \
+                  tests/compression-codec.c tests/native-posix-acl-policy.sh
           git commit -m 'Linux: add POSIX ACL support and restore block-saving compression'
           git push origin HEAD:main
