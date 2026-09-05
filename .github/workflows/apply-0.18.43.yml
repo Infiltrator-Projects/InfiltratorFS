@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
+# One-shot development helper; removes itself after applying the patch.
 name: Apply 0.18.43 POSIX ACL patch
 
 on:
