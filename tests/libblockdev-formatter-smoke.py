@@ -49,7 +49,7 @@ with tempfile.TemporaryDirectory(prefix="infiltratorfs-libblockdev-") as tmp:
     expected = {
         "ID_FS_USAGE=filesystem",
         "ID_FS_TYPE=infiltratorfs",
-        "ID_FS_VERSION=0.17",
+        "ID_FS_VERSION=0.18",
         "ID_FS_LABEL=GNOME Disks Integration",
     }
     missing = sorted(expected.difference(probe.splitlines()))
