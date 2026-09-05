@@ -15,7 +15,7 @@ jobs:
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@v6
-      - name: Apply quota capture deadlock fix
+      - name: Apply internal sidecar eviction fixes
         shell: bash
         run: |
           set -euo pipefail
@@ -48,9 +48,9 @@ jobs:
               int ret;
 
               /*
-               * Quota policy persistence can delete an internal Linux sidecar
-               * while quota_lock is already held.  Eviction of that SYSTEM inode
-               * must never recurse into quota capture and re-lock quota_lock.
+               * Internal SYSTEM sidecars are deliberately outside quota
+               * accounting. Their eviction may occur while quota_lock is owned
+               * by quota-policy persistence, so bypass capture before locking.
                */
               if (!sbi || !ii || (ii->portable_flags & INFILFS_ATTR_SYSTEM)) {
                   memset(reservation, 0, sizeof(*reservation));
@@ -66,14 +66,62 @@ jobs:
               raise SystemExit('quota capture block no longer matches expected source')
           quota.write_text(text.replace(old, new, 1))
 
+          core = Path('kernel/infiltratorfs_core.c')
+          c = core.read_text()
+          old_core = '''    if (reclaiming) {
+                  released_bytes = (u64)i_size_read(inode);
+                  ret = infilfs_quota_capture_inode(inode, &released_quota);
+                  if (ret) {
+                      pr_err("InfiltratorFS: could not capture quota ownership for inode %lu: %d\\n",
+                             inode->i_ino, ret);
+                      released_quota.active = false;
+                      ret = 0;
+                  }
+                  ret = infilfs_linux_meta_remove_object(inode->i_sb, ii->object_id);
+                  if (ret)
+                      pr_err("InfiltratorFS: could not remove Linux metadata for inode %lu: %d\\n",
+                             inode->i_ino, ret);
+              }
+              if (!ret)
+                  ret = infilfs_ns_evict_unlinked_file(inode);
+              if (!ret && reclaiming)
+                  infilfs_quota_apply_release(&released_quota, released_bytes, 1);
+          '''
+          new_core = '''    if (reclaiming && !(ii->portable_flags & INFILFS_ATTR_SYSTEM)) {
+                  released_bytes = (u64)i_size_read(inode);
+                  ret = infilfs_quota_capture_inode(inode, &released_quota);
+                  if (ret) {
+                      pr_err("InfiltratorFS: could not capture quota ownership for inode %lu: %d\\n",
+                             inode->i_ino, ret);
+                      released_quota.active = false;
+                      ret = 0;
+                  }
+                  ret = infilfs_linux_meta_remove_object(inode->i_sb, ii->object_id);
+                  if (ret)
+                      pr_err("InfiltratorFS: could not remove Linux metadata for inode %lu: %d\\n",
+                             inode->i_ino, ret);
+              }
+              if (!ret)
+                  ret = infilfs_ns_evict_unlinked_file(inode);
+              if (!ret && reclaiming && !(ii->portable_flags & INFILFS_ATTR_SYSTEM))
+                  infilfs_quota_apply_release(&released_quota, released_bytes, 1);
+          '''
+          if old_core not in c:
+              raise SystemExit('evict block no longer matches expected source')
+          core.write_text(c.replace(old_core, new_core, 1))
+
           policy = Path('tests/native-quota-policy.sh')
           p = policy.read_text()
           marker = 'grep -Fq \'Internal Linux sidecar files must never recursively resolve sidecar\' "$root/kernel/infiltratorfs_core.c"\n'
-          addition = marker + 'grep -Fq \'Quota policy persistence can delete an internal Linux sidecar\' "$root/kernel/infiltratorfs_quota.inc"\n'
+          additions = (
+              marker +
+              'grep -Fq \'Internal SYSTEM sidecars are deliberately outside quota\' "$root/kernel/infiltratorfs_quota.inc"\n' +
+              'grep -Fq \'reclaiming && !(ii->portable_flags & INFILFS_ATTR_SYSTEM)\' "$root/kernel/infiltratorfs_core.c"\n'
+          )
           if marker not in p:
               raise SystemExit('quota policy insertion point missing')
-          if 'Quota policy persistence can delete an internal Linux sidecar' not in p:
-              p = p.replace(marker, addition, 1)
+          if 'Internal SYSTEM sidecars are deliberately outside quota' not in p:
+              p = p.replace(marker, additions, 1)
           policy.write_text(p)
           PY
           bash tests/native-quota-policy.sh .
@@ -114,6 +162,6 @@ jobs:
           git rm -f .github/workflows/quota-capture-deadlock-fix.yml .github/workflows/quota-hang-diagnostic.yml
           git config user.name 'Shannon Smith'
           git config user.email 'infiltratr@yandex.com'
-          git add kernel/infiltratorfs_quota.inc tests/native-quota-policy.sh docs/ROADMAP.md
+          git add kernel/infiltratorfs_core.c kernel/infiltratorfs_quota.inc tests/native-quota-policy.sh docs/ROADMAP.md
           git commit -m 'Quota: finish native user group and project qualification'
           git push origin HEAD:main
