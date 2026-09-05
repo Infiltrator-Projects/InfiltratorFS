@@ -16,4 +16,9 @@ grep -Fq 'sb->s_flags |= SB_POSIXACL' "$rw"
 grep -Fq '#include <linux/posix_acl.h>' "$internal"
 grep -Fq '#include <linux/posix_acl_xattr.h>' "$internal"
 ! grep -Fq 'INFS_IAC1_MIN_SAVINGS_DIVISOR' "$root/include/infilfs/iac1.h"
-! grep -R -Fq 'infs_iac1_savings_worthwhile'     "$root/kernel" "$root/src" "$root/tests" "$root/include"
+# Keep the old percentage-savings helper out of production code and all other
+# regression tests. Exclude this policy file itself so the literal guard string
+# does not make the negative grep self-match and fail unconditionally.
+! grep -R -Fq --exclude='native-posix-acl-policy.sh' \
+    'infs_iac1_savings_worthwhile' \
+    "$root/kernel" "$root/src" "$root/tests" "$root/include"
