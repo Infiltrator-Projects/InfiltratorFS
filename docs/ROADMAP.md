@@ -53,7 +53,7 @@ Pre-1.0 development is current-format-only. A development format may be replaced
 
 - [x] Native out-of-tree VFS driver `infiltratorfs.ko`.
 - [x] DKMS package/build/install path.
-- [x] Native read-only and read-write mounting of current Format 0.17.
+- [x] Native read-only and read-write mounting of current Format 0.18.
 - [x] Create/mkdir/mknod, rename/unlink/rmdir and persistent setattr.
 - [x] Random, sparse and high-offset writes; truncate and `fallocate`.
 - [x] Hole punching and logical/allocated block reporting.
@@ -99,7 +99,7 @@ The intended security architecture is described in `SECURITY.md`. Current Linux 
 - [x] Native Linux VFS adapter as the current mounted reference implementation.
 - [x] Win32 image/raw-partition storage backend.
 - [x] Windows formatter, transfer/listing and scrub application.
-- [x] Linux/Windows Format 0.17 interoperability coverage.
+- [x] Linux/Windows Format 0.18 interoperability coverage.
 - [x] Driverless Windows Explorer projection using Microsoft's inbox ProjFS.
 - [ ] Windows attribute/security/filename adapter completion.
 - [ ] Native Windows filesystem driver with Cache Manager/I/O Manager integration.

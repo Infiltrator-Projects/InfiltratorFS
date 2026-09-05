@@ -41,14 +41,14 @@
 # Source composition:
 #   infiltratorfs.ko is a composite Kbuild module.
 #   infiltratorfs_core.c owns VFS/mount/checkpoint orchestration.
-#   infiltratorfs_allocation_map.c owns Format 0.17 allocation-map loading.
+#   infiltratorfs_allocation_map.c owns Format 0.18 allocation-map loading.
 #   infiltratorfs_resize.c owns mounted geometry transitions.
-#   infiltratorfs_index_tree.c owns Format 0.17 object-index reads/snapshots.
+#   infiltratorfs_index_tree.c owns Format 0.18 object-index reads/snapshots.
 #   infiltratorfs_parallel_alloc.c owns volatile sharded data reservations.
 #   infiltratorfs_allocation_publish.c owns CoW allocation-tree publication.
 #   infiltratorfs_read_cache.c owns verified read cursor/page caching.
 #   infiltratorfs_pagecache.c owns Linux folio/page-cache integration.
-#   infiltratorfs_directory_tree.c owns scalable Format 0.17 directory trees.
+#   infiltratorfs_directory_tree.c owns scalable Format 0.18 directory trees.
 #   infiltratorfs_rw.inc is the only remaining nested implementation compositor;
 #   leaf .inc files must not start including each other or creating hidden cycles.
 #   Existing macro-renamed legacy/data entry points are migration debt, not a

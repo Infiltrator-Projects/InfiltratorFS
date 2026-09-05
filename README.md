@@ -104,7 +104,7 @@ Published release assets are available from the repository's GitHub Releases pag
 
 To prevent documentation drift, each kind of fact has one authoritative home:
 
-- `docs/ON_DISK_FORMAT.md` — persistent Format 0.17 layout and encoding contract.
+- `docs/ON_DISK_FORMAT.md` — persistent Format 0.18 layout and encoding contract.
 - `docs/ARCHITECTURE.md` — design model and architectural invariants.
 - `docs/ROADMAP.md` — **the only authoritative feature-completion list**.
 - `docs/QUALIFICATION.md` — **the only authoritative exact-source qualification/evidence ledger**.

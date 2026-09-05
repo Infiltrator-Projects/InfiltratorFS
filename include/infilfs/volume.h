@@ -78,7 +78,7 @@ struct infs_volume {
     size_t bitmap_bytes;
 
     /*
-     * Runtime cache of the committed Format 0.17 allocation-tree geometry.
+     * Runtime cache of the committed Format 0.18 allocation-tree geometry.
      * The page addresses are validated while opening a checkpoint graph and
      * replaced only after a newer primary checkpoint is durably committed.
      * This avoids rereading every allocation leaf/branch on each fsync.

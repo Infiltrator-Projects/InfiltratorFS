@@ -290,7 +290,7 @@ infs_status infs_volume_resize(struct infs_volume *vol,
         return INFS_STATUS_NOT_SUPPORTED;
 
     /*
-     * Snapshot records in Format 0.17 carry an immutable allocation image but
+     * Snapshot records in Format 0.18 carry an immutable allocation image but
      * not their historical total-block geometry. Resizing that geometry
      * without rewriting the retained image would make snapshot validation
      * ambiguous. Fail closed until the snapshot image is explicitly rebased.

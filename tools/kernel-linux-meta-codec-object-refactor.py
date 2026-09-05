@@ -117,7 +117,7 @@ old_line = ('infiltratorfs-y := infiltratorfs_core.o infiltratorfs_allocation_ma
 new_line = old_line + ' infiltratorfs_linux_meta_codec.o'
 assert old_line in mk
 mk = mk.replace(old_line, new_line, 1)
-marker = '#   infiltratorfs_directory_tree.c owns scalable Format 0.17 directory trees.\n'
+marker = '#   infiltratorfs_directory_tree.c owns scalable Format 0.18 directory trees.\n'
 assert marker in mk
 mk = mk.replace(marker, marker +
     '#   infiltratorfs_linux_meta_codec.c owns Linux sidecar blob/naming codec rules.\n', 1)
@@ -179,7 +179,7 @@ maint.write_text(mp)
 # composed Linux VFS/namespace adapter.
 doc = readme.read_text()
 old = ('`infiltratorfs_pagecache.c` owns Linux folio/page-cache integration, and '
-       '`infiltratorfs_directory_tree.c` owns scalable Format 0.17 directory trees.')
+       '`infiltratorfs_directory_tree.c` owns scalable Format 0.18 directory trees.')
 new = ('`infiltratorfs_pagecache.c` owns Linux folio/page-cache integration, '
        '`infiltratorfs_directory_tree.c` owns scalable Format 0.17 directory trees, and '
        '`infiltratorfs_linux_meta_codec.c` owns Linux sidecar blob/naming codec rules.')

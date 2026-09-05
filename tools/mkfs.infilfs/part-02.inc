@@ -125,7 +125,7 @@ int main(int argc, char **argv)
 
     const uint64_t total_blocks = size_bytes / INFS_BLOCK_SIZE;
     if (!total_blocks || total_blocks > INFS_ALLOCATION_TREE_MAX_BLOCKS) {
-        fprintf(stderr, "Target exceeds the Format 0.17 allocation-map capacity.\n");
+        fprintf(stderr, "Target exceeds the Format 0.18 allocation-map capacity.\n");
         close(fd);
         return 1;
     }

@@ -13,7 +13,7 @@ Historical results apply only to the source commit on which they ran. A later gr
 - **Heavy filesystem qualification** — million-file/1 TiB scale plus near-full mixed-workload endurance. This is weekly/manual milestone evidence, not ordinary per-push CI and not an automatic prerequisite for every release.
 - **Formatter integration qualification** — pinned libblockdev/UDisks/GNOME Disks integration build and end-to-end formatter/probe checks.
 - **Physical partition qualification** — explicitly destructive operator-run qualification on dedicated media; never unattended ordinary CI.
-- **Release publication gate** — requires successful same-source release prerequisites, then installs the generated package, verifies native filesystem registration, mounts a real Format 0.17 image, performs non-zero write/read verification, syncs, unmounts and requires a CLEAN scrub. It also rejects restoration of the legacy FUSE product path.
+- **Release publication gate** — requires successful same-source release prerequisites, then installs the generated package, verifies native filesystem registration, mounts a real Format 0.18 image, performs non-zero write/read verification, syncs, unmounts and requires a CLEAN scrub. It also rejects restoration of the legacy FUSE product path.
 
 A workflow should fail closed when a qualification class claims mounted coverage but the required running-kernel environment is unavailable. Merely skipping mounted work must not be treated as equivalent evidence.
 

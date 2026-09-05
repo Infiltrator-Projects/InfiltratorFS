@@ -37,7 +37,7 @@ InfiltratorFS does not copy another filesystem's on-disk format. It treats files
 
 ### Bitmap allocation semantics plus rebuildable free-extent acceleration
 
-Allocation ownership remains the simple one-bit-per-block logical model, while Format 0.17 persists that bitset through a scalable sharded copy-on-write allocation tree. Runtime free-extent indexes are disposable accelerators that can be rebuilt from the authoritative allocation state.
+Allocation ownership remains the simple one-bit-per-block logical model, while Format 0.18 persists that bitset through a scalable sharded copy-on-write allocation tree. Runtime free-extent indexes are disposable accelerators that can be rebuilt from the authoritative allocation state.
 
 ### Persistent object identity independent of pathname and location
 

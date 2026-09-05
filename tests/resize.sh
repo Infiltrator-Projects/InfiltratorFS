@@ -32,7 +32,7 @@ PY
 "$tool" "$image" cat /payload.bin > "$readback"
 cmp "$payload" "$readback"
 
-# Named snapshots intentionally pin historical geometry in Format 0.17.
+# Named snapshots intentionally pin historical geometry in Format 0.18.
 "$tool" "$image" snapshot-create resize-held
 if "$tool" "$image" resize 96MiB >"$work/snapshot.out" 2>"$work/snapshot.err"; then
     echo "resize unexpectedly succeeded with a named snapshot" >&2

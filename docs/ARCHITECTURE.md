@@ -25,7 +25,7 @@ Filesystem and object identities are 128-bit persistent values. Paths are namesp
 
 Directories map UTF-8 names to persistent objects. Regular files may have multiple namespace references through hard links. Symbolic links are their own persistent objects with stored targets. Namespace operations are transactional and must preserve exact parent/reference/link-count invariants.
 
-Format 0.17 uses 1023-byte UTF-8 component names, byte-exact case-sensitive comparison and explicit validation of forbidden traversal/reserved forms. Future Unicode normalization or case-folding policy must be versioned rather than silently changing current semantics.
+Format 0.18 uses 1023-byte UTF-8 component names, byte-exact case-sensitive comparison and explicit validation of forbidden traversal/reserved forms. Future Unicode normalization or case-folding policy must be versioned rather than silently changing current semantics.
 
 ## 3. Transactions, generations and checkpoints
 
@@ -54,7 +54,7 @@ This preserves the simplicity of bitmap ownership while allowing scalable public
 
 Linux additionally uses volatile sharded reservation state so independent writers can search and reserve candidate data runs before the serialized metadata transaction. Reservation state is never authoritative persistent allocation.
 
-Placement policy is deliberately volatile where possible. Sequential, random/in-place and sparse workloads may select different free runs; rotational and non-rotational media may score those runs differently. These choices must not redefine persistent object identity or Format 0.17 semantics.
+Placement policy is deliberately volatile where possible. Sequential, random/in-place and sparse workloads may select different free runs; rotational and non-rotational media may score those runs differently. These choices must not redefine persistent object identity or Format 0.18 semantics.
 
 Unsupported zoned-device write-pointer semantics are rejected rather than approximated unsafely.
 
@@ -133,4 +133,4 @@ The intended long-term model uses versioned portable security objects, stable ty
 - Compression, encryption, protection classes, replication, case-folding and named streams should build on existing primitives instead of creating parallel incompatible models.
 - Fail closed when integrity, durability or recovery correctness cannot be established.
 
-For field-level Format 0.17 details, use `ON_DISK_FORMAT.md`. For what is finished, use `ROADMAP.md`. For proof, use `QUALIFICATION.md`.
+For field-level Format 0.18 details, use `ON_DISK_FORMAT.md`. For what is finished, use `ROADMAP.md`. For proof, use `QUALIFICATION.md`.

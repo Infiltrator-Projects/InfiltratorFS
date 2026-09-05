@@ -3,11 +3,11 @@
 
 ## Status
 
-Format 0.17 uses adaptive per-extent compression as a normal filesystem
+Format 0.18 uses adaptive per-extent compression as a normal filesystem
 capability. Newly formatted volumes enable `INFS_INCOMPAT_COMPRESSED_EXTENTS`.
 The automatic native codec is **IAC1 version 1** (codec identifier 2).
 
-IAC1 is the InfiltratorFS-native bounded codec selected for Format 0.17. LZ4
+IAC1 is the InfiltratorFS-native bounded codec selected for Format 0.18. LZ4
 (codec identifier 1) remains supported as a development/reference and
 interoperability codec, but new automatic writes do not select LZ4.
 
@@ -97,7 +97,7 @@ allocation, but an individual codec stream is never split.
 IAC1 predictors, ratio on simple compressible classes, deterministic output,
 cheap high-entropy rejection and malformed-stream rejection.
 
-`tests/compression-extents.c` qualifies the actual Format 0.17 extent
+`tests/compression-extents.c` qualifies the actual Format 0.18 extent
 representation, adaptive fallback, snapshots, mutation, scrub and corruption
 handling.
 
@@ -118,7 +118,7 @@ already-compressed/encrypted-style high-entropy content. It requires:
 The qualification also runs LZ4 over the same corpus and emits per-class and
 aggregate size plus encode/decode throughput telemetry. LZ4 remains the
 in-tree reference baseline. Zstandard remains useful as an external research
-baseline, but it is not a Format 0.17 codec dependency and is deliberately not
+baseline, but it is not a Format 0.18 codec dependency and is deliberately not
 required to mount or recover an InfiltratorFS volume.
 
 The native codec is not required to beat a general-purpose codec on every
@@ -129,7 +129,7 @@ small kernel implementation surface and bounded mutation amplification.
 
 ## Format discipline
 
-For Format 0.17, codec identifier 2 means IAC1 v1 and codec identifier 1 means
+For Format 0.18, codec identifier 2 means IAC1 v1 and codec identifier 1 means
 the retained LZ4 representation. The codec identifier, stored-byte count and
 logical extent length are sufficient to locate and decode each bounded stream.
 
@@ -137,6 +137,6 @@ Future codec research may allocate any unused identifier in the 11-bit Format
 0.17 codec namespace or may justify a future development-format revision. It
 must not silently change the meaning of an existing IAC1 v1 stream.
 
-Pre-1.0 development may still replace Format 0.17 as a whole, but within a
+Pre-1.0 development may still replace Format 0.18 as a whole, but within a
 given accepted format a committed compressed stream must remain deterministic,
 recoverable and independently decodable.

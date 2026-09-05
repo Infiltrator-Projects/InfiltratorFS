@@ -148,7 +148,7 @@ struct INFS_PACKED infs_object_header_disk {
     uint8_t  checksum[32];
 };
 
-/* Format 0.17 metadata pages are deliberately not persistent objects. They are
+/* Format 0.18 metadata pages are deliberately not persistent objects. They are
  * owned by one directory or by the object-index head and are reached through
  * physical block pointers stored in that head object. They nevertheless carry
  * their own generation, owner identity and checksum so scrub/recovery can

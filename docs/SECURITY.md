@@ -100,7 +100,7 @@ The same approach applies to adjacent metadata classes such as named attributes,
 
 ## On-disk direction
 
-Format 0.17 already reserves a `security object ID` in common attributes. That reference remains zero in the current portable format because the security-object record class and feature/version contract have not yet been standardized.
+Format 0.18 reserves a `security object ID` in common attributes. That reference remains zero in the current portable format because the security-object record class and feature/version contract have not yet been standardized.
 
 A future format revision should define:
 

@@ -193,7 +193,7 @@ static int snapshots_enabled(const struct infs_volume *vol)
          INFS_INCOMPAT_SNAPSHOTS) != 0;
 }
 
-/* Format 0.17 paged-index dispatch targets. core.inc owns the classic index
+/* Format 0.18 paged-index dispatch targets. core.inc owns the classic index
  * implementation and calls these when it encounters a version-2 index head. */
 static int paged_index_find(struct infs_volume *vol, const uint8_t id[16],
                             struct infs_lookup *out);

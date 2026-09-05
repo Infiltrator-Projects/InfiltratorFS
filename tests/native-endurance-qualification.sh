@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Native mounted endurance qualification:
-#   * drives a 4 GiB Format 0.17 image into a bounded near-full state;
+#   * drives a 4 GiB Format 0.18 image into a bounded near-full state;
 #   * manufactures multiple physical free-run size classes;
 #   * runs a five-minute concurrent mixed metadata/data workload;
 #   * verifies durable content after an offline scrub and read-only remount.
