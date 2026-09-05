@@ -48,13 +48,12 @@ for path in (ROOT / 'kernel').rglob('*'):
         continue
     text = path.read_text(encoding='utf-8')
     def repl(match):
-        nonlocal_dummy = None
         return f'infilfs_timestamp_encode_ns(&{match.group("lhs")}, ktime_get_real_ns());'
     out, n = pattern.subn(repl, text)
     if n:
         path.write_text(out, encoding='utf-8')
         changed += n
-if changed != 9:
-    raise SystemExit(f'expected 9 remaining scalar nested timestamp writes, converted {changed}')
+if changed != 11:
+    raise SystemExit(f'expected 11 remaining scalar nested timestamp writes, converted {changed}')
 
 print('Native Format 0.18 kernel compatibility corrections applied.')
