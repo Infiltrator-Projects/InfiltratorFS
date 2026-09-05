@@ -9,8 +9,8 @@ formatter="$root/src/format_volume.c"
 core="$root/src/volume/index-tree.inc"
 checkpoint="$root/src/volume/checkpoint-recovery.inc"
 
-grep -Fq '#define INFS_FORMAT_MINOR 17u' "$fmt"
-grep -Fq '#define INFILFS_FORMAT_MINOR 17u' "$kfmt"
+grep -Fq '#define INFS_FORMAT_MINOR 18u' "$fmt"
+grep -Fq '#define INFILFS_FORMAT_MINOR 18u' "$kfmt"
 grep -Fq 'INFS_INCOMPAT_INDEX_TREE' "$fmt"
 grep -Fq 'INFS_INCOMPAT_INDEX_TREE' "$formatter"
 grep -Fq 'infs_encode_tree_object_index(' "$formatter"
@@ -20,4 +20,4 @@ grep -Fq 'tree_index_repoint' "$core"
 grep -Fq 'tree_index_remove' "$core"
 grep -Fq 'index_tree_feature' "$checkpoint"
 
-printf 'Format 0.17 object-index tree policy guard passed.\n'
+printf 'Format 0.18 object-index tree policy guard passed.\n'
