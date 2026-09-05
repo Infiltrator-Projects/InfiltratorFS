@@ -3,6 +3,8 @@
 set -euo pipefail
 root="${1:-.}"
 
+# This policy is the permanent regression gate for the mounted-qualified
+# user/group/project quota contract, including hard-link project reconstruction.
 grep -Fq 'INFILFS_QUOTA_USER' "$root/kernel/infiltratorfs_ioctl.h"
 grep -Fq 'INFILFS_QUOTA_GROUP' "$root/kernel/infiltratorfs_ioctl.h"
 grep -Fq 'INFILFS_QUOTA_PROJECT' "$root/kernel/infiltratorfs_ioctl.h"
