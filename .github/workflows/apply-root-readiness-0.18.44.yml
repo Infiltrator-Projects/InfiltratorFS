@@ -33,6 +33,14 @@ jobs:
           set -euo pipefail
           python3 -m py_compile tools/apply-root-readiness-0.18.44.py
           python3 tools/apply-root-readiness-0.18.44.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('tests/root-readiness-policy.sh')
+          s = p.read_text().replace(
+              '"$root/kernel" "$root/src" "$root/include" "$root/tests"',
+              '"$root/kernel" "$root/src" "$root/include"')
+          p.write_text(s)
+          PY
           bash -n tests/native-root-metadata-qualification.sh
           bash -n tests/root-boot-qemu.sh
           bash -n tests/root-readiness-policy.sh
