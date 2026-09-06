@@ -18,6 +18,7 @@
 #include <linux/fs_parser.h>
 #include <linux/highmem.h>
 #include <linux/kernel.h>
+#include <linux/list.h>
 #include <linux/lz4.h>
 #include <linux/math64.h>
 #include <linux/module.h>
@@ -232,11 +233,26 @@ struct infilfs_fs_context {
 struct infilfs_quota_rule;
 struct infilfs_project_root;
 
+#define INFILFS_LINUX_META_CACHE_BUCKETS 4096u
+
+struct infilfs_linux_meta_cache_entry {
+    struct hlist_node node;
+    u8 target_object_id[16];
+    u8 sidecar_object_id[16];
+    u64 sidecar_object_block;
+};
+
 struct infilfs_sb_info {
     struct infilfs_superblock_disk disk;
     u64 device_blocks;
     struct mutex write_lock;
     struct mutex linux_meta_lock;
+    struct hlist_head *linux_meta_cache;
+    bool linux_meta_cache_valid;
+    bool linux_meta_dir_checked;
+    bool linux_meta_dir_cached;
+    u8 linux_meta_dir_object_id[16];
+    u64 linux_meta_dir_object_block;
     struct mutex resize_lock;
     bool resize_active;
     struct mutex quota_lock;

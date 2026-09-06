@@ -47,6 +47,200 @@ static void infilfs_linux_meta_init(struct infilfs_linux_meta_header *header)
     header->version = cpu_to_le32(INFILFS_LINUX_META_VERSION);
 }
 
+
+/* O(1) UUID-sidecar lookup after one bounded per-mount cache build. */
+static struct infilfs_linux_meta_cache_entry *
+infilfs_linux_meta_cache_lookup(struct infilfs_sb_info *sbi,
+                                const u8 target_object_id[16])
+{
+    struct infilfs_linux_meta_cache_entry *entry;
+    u32 bucket;
+
+    if (!sbi || !sbi->linux_meta_cache)
+        return NULL;
+    bucket = infilfs_native_id_hash(target_object_id) &
+        (INFILFS_LINUX_META_CACHE_BUCKETS - 1u);
+    hlist_for_each_entry(entry, &sbi->linux_meta_cache[bucket], node) {
+        if (memcmp(entry->target_object_id, target_object_id, 16) == 0)
+            return entry;
+    }
+    return NULL;
+}
+
+static int infilfs_linux_meta_cache_prepare(struct infilfs_sb_info *sbi)
+{
+    u32 i;
+
+    if (sbi->linux_meta_cache)
+        return 0;
+    sbi->linux_meta_cache = kvcalloc(
+        INFILFS_LINUX_META_CACHE_BUCKETS,
+        sizeof(*sbi->linux_meta_cache), GFP_NOFS);
+    if (!sbi->linux_meta_cache)
+        return -ENOMEM;
+    for (i = 0; i < INFILFS_LINUX_META_CACHE_BUCKETS; ++i)
+        INIT_HLIST_HEAD(&sbi->linux_meta_cache[i]);
+    return 0;
+}
+
+static void infilfs_linux_meta_cache_reset(struct infilfs_sb_info *sbi)
+{
+    u32 i;
+
+    if (!sbi || !sbi->linux_meta_cache)
+        return;
+    for (i = 0; i < INFILFS_LINUX_META_CACHE_BUCKETS; ++i) {
+        struct infilfs_linux_meta_cache_entry *entry;
+        struct hlist_node *tmp;
+
+        hlist_for_each_entry_safe(entry, tmp,
+                                  &sbi->linux_meta_cache[i], node) {
+            hlist_del(&entry->node);
+            kfree(entry);
+        }
+        INIT_HLIST_HEAD(&sbi->linux_meta_cache[i]);
+    }
+    sbi->linux_meta_cache_valid = false;
+}
+
+static void infilfs_linux_meta_cache_destroy(struct super_block *sb)
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
+
+    if (!sbi)
+        return;
+    infilfs_linux_meta_cache_reset(sbi);
+    kvfree(sbi->linux_meta_cache);
+    sbi->linux_meta_cache = NULL;
+    sbi->linux_meta_dir_checked = false;
+    sbi->linux_meta_dir_cached = false;
+}
+
+static int infilfs_linux_meta_cache_insert(
+    struct infilfs_sb_info *sbi, const u8 target_object_id[16],
+    const u8 sidecar_object_id[16], u64 sidecar_object_block)
+{
+    struct infilfs_linux_meta_cache_entry *entry;
+    u32 bucket;
+    int ret;
+
+    ret = infilfs_linux_meta_cache_prepare(sbi);
+    if (ret)
+        return ret;
+    entry = infilfs_linux_meta_cache_lookup(sbi, target_object_id);
+    if (entry) {
+        memcpy(entry->sidecar_object_id, sidecar_object_id, 16);
+        entry->sidecar_object_block = sidecar_object_block;
+        return 0;
+    }
+    entry = kzalloc(sizeof(*entry), GFP_NOFS);
+    if (!entry)
+        return -ENOMEM;
+    memcpy(entry->target_object_id, target_object_id, 16);
+    memcpy(entry->sidecar_object_id, sidecar_object_id, 16);
+    entry->sidecar_object_block = sidecar_object_block;
+    bucket = infilfs_native_id_hash(target_object_id) &
+        (INFILFS_LINUX_META_CACHE_BUCKETS - 1u);
+    hlist_add_head(&entry->node, &sbi->linux_meta_cache[bucket]);
+    return 0;
+}
+
+static void infilfs_linux_meta_cache_remove(
+    struct infilfs_sb_info *sbi, const u8 target_object_id[16])
+{
+    struct infilfs_linux_meta_cache_entry *entry =
+        infilfs_linux_meta_cache_lookup(sbi, target_object_id);
+
+    if (!entry)
+        return;
+    hlist_del(&entry->node);
+    kfree(entry);
+}
+
+static bool infilfs_linux_meta_parse_uuid_name(
+    const u8 *name, size_t length, u8 object_id[16])
+{
+    static const u8 hyphen_at[4] = {8, 13, 18, 23};
+    size_t i;
+    unsigned int nibble = 0;
+    unsigned int h = 0;
+
+    if (!name || length != 36)
+        return false;
+    memset(object_id, 0, 16);
+    for (i = 0; i < length; ++i) {
+        int value;
+
+        if (h < ARRAY_SIZE(hyphen_at) && i == hyphen_at[h]) {
+            if (name[i] != '-')
+                return false;
+            ++h;
+            continue;
+        }
+        value = hex_to_bin(name[i]);
+        if (value < 0 || nibble >= 32)
+            return false;
+        if ((nibble & 1u) == 0)
+            object_id[nibble >> 1] = (u8)value << 4;
+        else
+            object_id[nibble >> 1] |= (u8)value;
+        ++nibble;
+    }
+    return nibble == 32 && h == ARRAY_SIZE(hyphen_at);
+}
+
+struct infilfs_linux_meta_cache_build {
+    struct super_block *sb;
+    struct infilfs_sb_info *sbi;
+};
+
+static int infilfs_linux_meta_cache_build_visitor(
+    const struct infilfs_dirent_disk *entry, const u8 *name, void *arg)
+{
+    struct infilfs_linux_meta_cache_build *build = arg;
+    u8 target_object_id[16];
+    u64 block;
+    u16 type;
+    int ret;
+
+    if (le16_to_cpu(entry->object_type) != INFILFS_OBJECT_FILE ||
+        !infilfs_linux_meta_parse_uuid_name(
+            name, le16_to_cpu(entry->name_length), target_object_id))
+        return 0;
+    ret = infilfs_index_lookup(build->sb, entry->object_id, &block, &type);
+    if (ret)
+        return ret;
+    if (type != INFILFS_OBJECT_FILE)
+        return -EFSCORRUPTED;
+    return infilfs_linux_meta_cache_insert(
+        build->sbi, target_object_id, entry->object_id, block);
+}
+
+static int infilfs_linux_meta_cache_build(struct super_block *sb,
+                                          struct inode *dir)
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
+    struct infilfs_linux_meta_cache_build build = {.sb = sb, .sbi = sbi};
+    int ret;
+
+    if (sbi->linux_meta_cache_valid)
+        return 0;
+    ret = infilfs_linux_meta_cache_prepare(sbi);
+    if (ret)
+        return ret;
+    infilfs_linux_meta_cache_reset(sbi);
+    mutex_lock(&sbi->write_lock);
+    ret = infilfs_for_each_dirent(
+        dir, infilfs_linux_meta_cache_build_visitor, &build);
+    mutex_unlock(&sbi->write_lock);
+    if (ret < 0) {
+        infilfs_linux_meta_cache_reset(sbi);
+        return ret;
+    }
+    sbi->linux_meta_cache_valid = true;
+    return 0;
+}
+
 static int infilfs_linux_meta_find_child(
     struct inode *dir, const char *name, size_t name_len,
     u16 expected_type, struct inode **inode_out)
@@ -136,6 +330,7 @@ out:
 static int infilfs_linux_meta_get_dir(struct super_block *sb, bool create,
                                       struct inode **dir_out)
 {
+    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
     struct inode *root;
     struct inode *dir = NULL;
     struct qstr name = {
@@ -147,8 +342,27 @@ static int infilfs_linux_meta_get_dir(struct super_block *sb, bool create,
     int ret;
 
     *dir_out = NULL;
-    if (!sb->s_root)
+    if (!sbi || !sb->s_root)
         return -ENOENT;
+    if (sbi->linux_meta_dir_checked && !sbi->linux_meta_dir_cached && !create)
+        return -ENOENT;
+    if (sbi->linux_meta_dir_cached) {
+        dir = infilfs_get_inode(
+            sb, sbi->linux_meta_dir_object_block,
+            INFILFS_OBJECT_DIRECTORY, sbi->linux_meta_dir_object_id);
+        if (!IS_ERR(dir)) {
+            ret = infilfs_linux_meta_validate_internal(
+                dir, INFILFS_OBJECT_DIRECTORY);
+            if (!ret) {
+                *dir_out = dir;
+                return 0;
+            }
+            iput(dir);
+            return ret;
+        }
+        sbi->linux_meta_dir_cached = false;
+    }
+
     root = d_inode(sb->s_root);
     ret = infilfs_linux_meta_find_child(
         root, INFILFS_LINUX_META_DIRECTORY,
@@ -157,9 +371,6 @@ static int infilfs_linux_meta_get_dir(struct super_block *sb, bool create,
     if (ret == -ENOENT && create) {
         if (sb_rdonly(sb))
             return -EROFS;
-        ret = infilfs_native_pending_flush_sb(sb);
-        if (ret)
-            return ret;
         ret = infilfs_posix_create_native_named_child(
             root, &name, 0700, INFILFS_OBJECT_DIRECTORY,
             INFILFS_ATTR_HIDDEN | INFILFS_ATTR_SYSTEM, id, &block);
@@ -175,14 +386,22 @@ static int infilfs_linux_meta_get_dir(struct super_block *sb, bool create,
                 INFILFS_OBJECT_DIRECTORY, &dir);
         }
     }
-    if (ret)
+    if (ret) {
+        if (ret == -ENOENT) {
+            sbi->linux_meta_dir_checked = true;
+            sbi->linux_meta_dir_cached = false;
+        }
         return ret;
-    ret = infilfs_linux_meta_validate_internal(
-        dir, INFILFS_OBJECT_DIRECTORY);
+    }
+    ret = infilfs_linux_meta_validate_internal(dir, INFILFS_OBJECT_DIRECTORY);
     if (ret) {
         iput(dir);
         return ret;
     }
+    memcpy(sbi->linux_meta_dir_object_id, INFILFS_I(dir)->object_id, 16);
+    sbi->linux_meta_dir_object_block = INFILFS_I(dir)->object_block;
+    sbi->linux_meta_dir_checked = true;
+    sbi->linux_meta_dir_cached = true;
     *dir_out = dir;
     return 0;
 }
@@ -207,6 +426,8 @@ static int infilfs_linux_meta_get_file(
     struct super_block *sb, const u8 object_id[16], bool create,
     struct inode **dir_out, struct inode **file_out, char name_out[37])
 {
+    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
+    struct infilfs_linux_meta_cache_entry *cached;
     struct inode *dir = NULL;
     struct inode *file = NULL;
     struct qstr name;
@@ -216,31 +437,77 @@ static int infilfs_linux_meta_get_file(
 
     *dir_out = NULL;
     *file_out = NULL;
+    if (!sbi)
+        return -EINVAL;
     infilfs_linux_meta_uuid(object_id, name_out);
     ret = infilfs_linux_meta_get_dir(sb, create, &dir);
+    if (ret == -ENOENT && !create) {
+        ret = infilfs_linux_meta_cache_prepare(sbi);
+        if (!ret)
+            sbi->linux_meta_cache_valid = true;
+        return ret ? ret : -ENOENT;
+    }
     if (ret)
         return ret;
-    ret = infilfs_linux_meta_find_child(dir, name_out, 36,
-                                        INFILFS_OBJECT_FILE, &file);
-    if (ret == -ENOENT && create) {
-        ret = infilfs_native_pending_flush_sb(sb);
+
+    ret = infilfs_linux_meta_cache_build(sb, dir);
+    if (ret)
+        goto out;
+    cached = infilfs_linux_meta_cache_lookup(sbi, object_id);
+    if (cached) {
+        file = infilfs_get_inode(
+            sb, cached->sidecar_object_block, INFILFS_OBJECT_FILE,
+            cached->sidecar_object_id);
+        if (IS_ERR(file)) {
+            ret = PTR_ERR(file);
+            file = NULL;
+            goto out;
+        }
+        ret = infilfs_linux_meta_validate_internal(file, INFILFS_OBJECT_FILE);
         if (ret)
             goto out;
-        name.name = name_out;
-        name.len = 36;
-        name.hash = 0;
-        ret = infilfs_posix_create_native_named_child(
-            dir, &name, 0600, INFILFS_OBJECT_FILE,
-            INFILFS_ATTR_HIDDEN | INFILFS_ATTR_SYSTEM, id, &block);
-        if (!ret) {
-            file = infilfs_get_inode(sb, block, INFILFS_OBJECT_FILE, id);
-            if (IS_ERR(file)) {
-                ret = PTR_ERR(file);
-                file = NULL;
-            }
-        } else if (ret == -EEXIST) {
-            ret = infilfs_linux_meta_find_child(
-                dir, name_out, 36, INFILFS_OBJECT_FILE, &file);
+        *dir_out = dir;
+        *file_out = file;
+        return 0;
+    }
+    if (!create) {
+        ret = -ENOENT;
+        goto out;
+    }
+
+    name.name = name_out;
+    name.len = 36;
+    name.hash = 0;
+    ret = infilfs_posix_create_native_named_child(
+        dir, &name, 0600, INFILFS_OBJECT_FILE,
+        INFILFS_ATTR_HIDDEN | INFILFS_ATTR_SYSTEM, id, &block);
+    if (!ret) {
+        file = infilfs_get_inode(sb, block, INFILFS_OBJECT_FILE, id);
+        if (IS_ERR(file)) {
+            ret = PTR_ERR(file);
+            file = NULL;
+            goto out;
+        }
+        ret = infilfs_linux_meta_cache_insert(sbi, object_id, id, block);
+        if (ret)
+            goto out;
+    } else if (ret == -EEXIST) {
+        sbi->linux_meta_cache_valid = false;
+        ret = infilfs_linux_meta_cache_build(sb, dir);
+        if (ret)
+            goto out;
+        cached = infilfs_linux_meta_cache_lookup(sbi, object_id);
+        if (!cached) {
+            ret = -EFSCORRUPTED;
+            goto out;
+        }
+        file = infilfs_get_inode(
+            sb, cached->sidecar_object_block, INFILFS_OBJECT_FILE,
+            cached->sidecar_object_id);
+        if (IS_ERR(file)) {
+            ret = PTR_ERR(file);
+            file = NULL;
+            goto out;
         }
     }
     if (ret)
@@ -248,13 +515,17 @@ static int infilfs_linux_meta_get_file(
     ret = infilfs_linux_meta_validate_internal(file, INFILFS_OBJECT_FILE);
     if (ret)
         goto out;
+    sbi->linux_meta_dir_object_block = INFILFS_I(dir)->object_block;
+    sbi->linux_meta_dir_checked = true;
+    sbi->linux_meta_dir_cached = true;
     *dir_out = dir;
     *file_out = file;
     return 0;
 out:
     if (file)
         iput(file);
-    iput(dir);
+    if (dir)
+        iput(dir);
     return ret;
 }
 
@@ -393,9 +664,6 @@ static int infilfs_linux_meta_delete_file(struct inode *dir,
     bool retained = false;
     int ret;
 
-    ret = infilfs_native_pending_flush_sb(dir->i_sb);
-    if (ret)
-        return ret;
     ret = infilfs_ns_begin(dir->i_sb, &pending);
     if (ret)
         return ret;
@@ -429,6 +697,7 @@ static int infilfs_linux_meta_delete_file(struct inode *dir,
 static int infilfs_linux_meta_remove_object_locked(struct super_block *sb,
                                                    const u8 object_id[16])
 {
+    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
     struct inode *dir = NULL;
     struct inode *file = NULL;
     char name[37];
@@ -441,6 +710,10 @@ static int infilfs_linux_meta_remove_object_locked(struct super_block *sb,
     if (ret)
         return ret;
     ret = infilfs_linux_meta_delete_file(dir, file, name);
+    if (!ret) {
+        infilfs_linux_meta_cache_remove(sbi, object_id);
+        sbi->linux_meta_dir_object_block = INFILFS_I(dir)->object_block;
+    }
     iput(file);
     iput(dir);
     return ret;
@@ -465,8 +738,10 @@ static int infilfs_linux_meta_store(struct super_block *sb,
                                     const u8 *blob, size_t size)
 {
     const struct infilfs_linux_meta_header *header;
+    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
     struct inode *dir = NULL;
     struct inode *file = NULL;
+    struct infilfs_inode_info *ii;
     struct kvec vec;
     struct iov_iter iter;
     char name[37];
@@ -488,18 +763,26 @@ static int infilfs_linux_meta_store(struct super_block *sb,
                                       &dir, &file, name);
     if (ret)
         return ret;
-    ret = infilfs_native_truncate(file, 0);
-    if (ret)
-        goto out;
+
+    if (i_size_read(file) != 0) {
+        ret = infilfs_native_truncate(file, 0);
+        if (ret)
+            goto out;
+    }
     vec.iov_base = (void *)blob;
     vec.iov_len = size;
     iov_iter_kvec(&iter, ITER_SOURCE, &vec, 1, size);
-    written = infilfs_native_extent_write_iter(file, &position, &iter, size);
+    if (size <= INFILFS_INLINE_DATA_MAX)
+        written = infilfs_native_inline_write_iter(file, &position, &iter, size);
+    else
+        written = infilfs_native_extent_write_iter(file, &position, &iter, size);
     if (written != size) {
         ret = written < 0 ? (int)written : -EIO;
         goto out;
     }
-    ret = infilfs_native_pending_flush_sb(sb);
+    ii = INFILFS_I(file);
+    ret = ii ? infilfs_linux_meta_cache_insert(
+        sbi, object_id, ii->object_id, ii->object_block) : -EIO;
 out:
     iput(file);
     iput(dir);

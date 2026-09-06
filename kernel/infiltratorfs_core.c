@@ -2581,6 +2581,7 @@ static void infilfs_put_super(struct super_block *sb)
 {
     infilfs_quota_mount_destroy(sb);
     infilfs_rw_mount_destroy(sb);
+    infilfs_linux_meta_cache_destroy(sb);
     kfree(sb->s_fs_info);
     sb->s_fs_info = NULL;
 }
@@ -2731,6 +2732,7 @@ fail:
     }
     infilfs_quota_mount_destroy(sb);
     infilfs_rw_mount_destroy(sb);
+    infilfs_linux_meta_cache_destroy(sb);
     kfree(sbi);
     sb->s_fs_info = NULL;
     return ret;

@@ -28,3 +28,16 @@ rollback="$(sed -n '/static int infilfs_native_operation_rollback(/,/^}/p' "$dat
 grep -Fq 'infilfs_native_directory_locator_invalidate' <<<"$rollback"
 
 printf 'Native small-file scaling policy guard passed.\n'
+
+
+# Linux-only sidecar metadata must not perform a linear directory scan or a
+# checkpoint publication for every xattr. The UUID sidecar map is built once,
+# then maintained in a per-mount hash; small blobs use the inline writer.
+meta="$root/kernel/infiltratorfs_linux_meta.inc"
+internal="$root/kernel/infiltratorfs_internal.h"
+grep -Fq 'INFILFS_LINUX_META_CACHE_BUCKETS' "$internal"
+grep -Fq 'linux_meta_cache_valid' "$internal"
+grep -Fq 'infilfs_linux_meta_cache_build' "$meta"
+grep -Fq 'infilfs_linux_meta_cache_lookup' "$meta"
+grep -Fq 'infilfs_native_inline_write_iter' "$meta"
+! grep -Fq 'infilfs_native_pending_flush_sb' "$meta"
