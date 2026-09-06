@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Apply root release gate repair
+
+on:
+  push:
+    paths:
+      - '.github/workflows/apply-root-release-gate-fix.yml'
+      - 'tools/apply-root-release-gate-fix.py'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Apply repair
+        run: python3 tools/apply-root-release-gate-fix.py
+      - name: Validate policy files
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash tests/root-readiness-policy.sh .
+          source_version="$(sed -nE 's/^project\(InfiltratorFS VERSION ([0-9]+\.[0-9]+\.[0-9]+) LANGUAGES C\)$/\1/p' CMakeLists.txt)"
+          readme_version="$(sed -nE 's/^\*\*Current source version:\*\* ([0-9]+\.[0-9]+\.[0-9]+) \(Format [0-9]+\.[0-9]+\)<br>$/\1/p' README.md)"
+          test "$source_version" = "$readme_version"
+      - name: Commit validated repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo 'No repair required.'
+            exit 0
+          fi
+          git config user.name 'Shannon Smith'
+          git config user.email 'infiltratr@yandex.com'
+          git add README.md .github/workflows/release-packages.yml
+          git commit -m 'Require root qualification before release'
+          git push origin HEAD:main
