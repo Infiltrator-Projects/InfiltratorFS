@@ -1793,8 +1793,21 @@ static int infilfs_posix_setattr(struct user_namespace *idmap,
         u64 old_size;
         u64 new_size;
 
-        if (!S_ISREG(inode->i_mode))
-            return -EISDIR;
+        if (!S_ISREG(inode->i_mode)) {
+            /*
+             * Linux marks truncation requested by open(O_TRUNC) with
+             * ATTR_OPEN.  O_TRUNC is deliberately ignored for character,
+             * block, FIFO and socket inodes (for example /dev/null), while
+             * an explicit truncate(2) of a non-regular inode remains an
+             * error.  Treating every ATTR_SIZE on a special inode as EISDIR
+             * made perfectly valid device opens fail during debootstrap.
+             */
+            if (attr->ia_valid & ATTR_OPEN) {
+                metadata.ia_valid &= ~(ATTR_SIZE | ATTR_MTIME | ATTR_CTIME);
+                goto size_change_done;
+            }
+            return S_ISDIR(inode->i_mode) ? -EISDIR : -EINVAL;
+        }
         if (attr->ia_size < 0)
             return -EINVAL;
         old_size = (u64)i_size_read(inode);
@@ -1826,6 +1839,8 @@ static int infilfs_posix_setattr(struct user_namespace *idmap,
                 &release_quota, old_size - new_size, 0);
         truncate_pagecache(inode, attr->ia_size);
         metadata.ia_valid &= ~ATTR_SIZE;
+size_change_done:
+        ;
     }
 
     disk_fields = metadata.ia_valid &
