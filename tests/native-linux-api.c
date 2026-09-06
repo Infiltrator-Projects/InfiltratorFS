@@ -51,12 +51,27 @@ int main(int argc, char **argv)
     int fd = openat(dirfd, ".", O_TMPFILE | O_RDWR, 0640);
     if (fd < 0)
         die("O_TMPFILE");
+    struct stat tmp_st;
+    if (fstat(fd, &tmp_st) != 0)
+        die("fstat tmpfile");
+    if (tmp_st.st_nlink != 0) {
+        fprintf(stderr, "anonymous tmpfile has link count %lu, expected 0\n",
+                (unsigned long)tmp_st.st_nlink);
+        return 1;
+    }
     if (write(fd, "anonymous-data", 14) != 14)
         die("write tmpfile");
     if (fsync(fd) != 0)
         die("fsync tmpfile");
     if (linkat(fd, "", dirfd, "linked-tmpfile", AT_EMPTY_PATH) != 0)
         die("linkat tmpfile");
+    if (fstat(fd, &tmp_st) != 0)
+        die("fstat linked tmpfile");
+    if (tmp_st.st_nlink != 1) {
+        fprintf(stderr, "linked tmpfile has link count %lu, expected 1\n",
+                (unsigned long)tmp_st.st_nlink);
+        return 1;
+    }
     close(fd);
     close(dirfd);
 

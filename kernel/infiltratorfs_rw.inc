@@ -1575,7 +1575,14 @@ static int infilfs_posix_tmpfile(struct user_namespace *idmap,
         ret = PTR_ERR(inode);
         goto abort_quota;
     }
-    clear_nlink(inode);
+    /*
+     * infilfs_get_inode() presents a persistent link_count of zero as one
+     * until the inode is attached to the anonymous dentry.  d_tmpfile()
+     * performs the required 1 -> 0 VFS transition itself.  Clearing it here
+     * first would make d_tmpfile() underflow i_nlink; the first linkat() would
+     * then wrap it back to zero and ->evict_inode would reclaim the named file
+     * when the creating process exited.
+     */
     d_tmpfile(file, inode);
     infilfs_quota_reservation_finish(&quota, 0, 1);
     return finish_open_simple(file, 0);
