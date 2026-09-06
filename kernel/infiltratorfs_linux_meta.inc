@@ -896,8 +896,6 @@ static const struct xattr_handler * const infilfs_xattr_handlers[] = {
     &infilfs_linux_user_xattr_handler,
     &infilfs_linux_trusted_xattr_handler,
     &infilfs_linux_security_xattr_handler,
-    &posix_acl_access_xattr_handler,
-    &posix_acl_default_xattr_handler,
     &infilfs_linux_system_xattr_handler,
     NULL,
 };
