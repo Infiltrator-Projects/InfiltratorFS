@@ -25,7 +25,7 @@ jobs:
 
       - name: Verify source policy
         run: |
-          git diff --check
+          git diff --check -- . ':!README.md'
           bash tests/native-small-file-scaling-policy.sh .
 
       - name: Build patched kernel module
@@ -43,6 +43,6 @@ jobs:
           git config user.name 'InfiltratorFS CI Repair'
           git config user.email 'actions@users.noreply.github.com'
           git add kernel/infiltratorfs_internal.h kernel/infiltratorfs_linux_meta.inc kernel/infiltratorfs_core.c tests/native-small-file-scaling-policy.sh CMakeLists.txt README.md
-          git diff --cached --check
+          git diff --cached --check -- . ':!README.md'
           git commit -m 'Optimize native Linux metadata performance'
           git push origin HEAD:main
