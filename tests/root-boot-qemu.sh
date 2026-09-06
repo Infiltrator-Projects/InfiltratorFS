@@ -32,7 +32,10 @@ mkdir -p "$work" "$mnt"
 cmake -S "$root" -B "$build" -DCMAKE_BUILD_TYPE=Release
 cmake --build "$build" --parallel
 bash "$root/packaging/build-linux-packages.sh" "$build" "$work/base-dist"
-INFILTRATORFS_PACKAGE_VERSION=0.18.44+rootci1 \
+# Use the next plain package version for the disposable guest so dpkg performs
+# a real upgrade while staying inside the package builder's accepted version
+# grammar. This package is qualification-only and is never published.
+INFILTRATORFS_PACKAGE_VERSION=0.18.45 \
 INFILTRATORFS_EMIT_RUN=0 \
 bash "$root/packaging/build-linux-packages.sh" "$build" "$work/upgrade-dist"
 base_deb="$(find "$work/base-dist" -name 'infiltratorfs_*.deb' -print -quit)"
@@ -148,7 +151,7 @@ EOF
     echo "ROOT_UPGRADE_STAGED_PASS"
     systemctl reboot
 elif [[ "$phase" == 2 ]]; then
-    [[ "$(dpkg-query -W -f='${Version}' infiltratorfs)" == "0.18.44+rootci1" ]]
+    [[ "$(dpkg-query -W -f='${Version}' infiltratorfs)" == "0.18.45" ]]
     [[ "$(cat /var/lib/infiltrator-root-ci/persistent)" == root-persistent ]]
     getfacl -n /var/lib/infiltrator-root-ci/acl/file | grep -Eq '^user:12345:r--$'
     [[ "$(getfattr --only-values -n user.rootci /var/lib/infiltrator-root-ci/acl/file)" == yes ]]
@@ -164,7 +167,7 @@ elif [[ "$phase" == 2 ]]; then
     done
 else
     [[ "$(findmnt -n -o FSTYPE /)" == infiltratorfs ]]
-    [[ "$(dpkg-query -W -f='${Version}' infiltratorfs)" == "0.18.44+rootci1" ]]
+    [[ "$(dpkg-query -W -f='${Version}' infiltratorfs)" == "0.18.45" ]]
     dpkg --audit
     [[ "$(cat /var/lib/infiltrator-root-ci/persistent)" == root-persistent ]]
     getfacl -n /var/lib/infiltrator-root-ci/acl/file | grep -Eq '^user:12345:r--$'
