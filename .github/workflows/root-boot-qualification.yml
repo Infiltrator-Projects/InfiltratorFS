@@ -63,6 +63,15 @@ jobs:
           test -s kernel/infiltratorfs.ko
           test "$(modinfo -F vermagic kernel/infiltratorfs.ko | awk '{print $1}')" = "$(uname -r)"
 
+      - name: Require native device-node create, open and remount semantics
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n tests/native-device-node-open-qualification.sh
+          sudo env RUNNER_TEMP="$RUNNER_TEMP" \
+            bash tests/native-device-node-open-qualification.sh \
+              build-root-boot kernel/infiltratorfs.ko
+
       - name: Validate root-boot script before execution
         shell: bash
         run: |
