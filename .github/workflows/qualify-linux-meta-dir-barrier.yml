@@ -1,0 +1,103 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Qualify Linux metadata directory publication barrier
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/qualify-linux-meta-dir-barrier.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  qualify-and-apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            acl attr build-essential cmake kmod libcap2-bin \
+            linux-headers-$(uname -r) rsync util-linux
+
+      - name: Restore one-time metadata namespace publication barrier
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('kernel/infiltratorfs_linux_meta.inc')
+          s = p.read_text()
+          old = '''    if (ret == -ENOENT && create) {\n        if (sb_rdonly(sb))\n            return -EROFS;\n        ret = infilfs_posix_create_native_named_child(\n'''
+          new = '''    if (ret == -ENOENT && create) {\n        if (sb_rdonly(sb))\n            return -EROFS;\n        /*\n         * The hidden Linux metadata namespace is attached directly beneath\n         * the filesystem root.  Publish any older deferred root/index work\n         * before creating it, otherwise the new hidden-directory root update\n         * can be based on a transaction-private root/index generation and a\n         * later unrelated namespace operation may become unreachable after\n         * remount.  This barrier runs only when the hidden directory is first\n         * created; ordinary xattr updates remain deferred and fast.\n         */\n        ret = infilfs_native_pending_flush_sb(sb);\n        if (ret)\n            return ret;\n        ret = infilfs_posix_create_native_named_child(\n'''
+          if s.count(old) != 1:
+              raise SystemExit(f'metadata directory creation anchor count={s.count(old)}')
+          p.write_text(s.replace(old, new, 1))
+          PY
+          git diff --check
+          git diff -- kernel/infiltratorfs_linux_meta.inc
+
+      - name: Build candidate
+        run: |
+          set -euo pipefail
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel --target \
+            mkfs.infilfs infilfs-scrub infilfs-tool infiltratorfs-quota
+          make -C kernel KDIR="/lib/modules/$(uname -r)/build"
+
+      - name: Prove quota ACL remount and scrub durability
+        env:
+          INFILFS_REQUIRE_SETFACL: '1'
+        run: sudo -E bash tests/native-quota-qualification.sh build kernel/infiltratorfs.ko
+
+      - name: Prove full Linux root metadata semantics
+        run: sudo env RUNNER_TEMP="$RUNNER_TEMP" bash tests/native-root-metadata-qualification.sh build kernel/infiltratorfs.ko
+
+      - name: Prove xattr performance remains bounded and scrub-clean
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"; image="$work/perf.img"; mnt="$work/mnt"; loop=""
+          cleanup(){ set +e; sync; mountpoint -q "$mnt" && sudo umount "$mnt"; [[ -n "$loop" ]] && sudo losetup -d "$loop" 2>/dev/null; sudo rmmod infiltratorfs 2>/dev/null; rm -rf "$work"; }
+          trap cleanup EXIT
+          mkdir -p "$mnt"
+          truncate -s 2G "$image"
+          build/mkfs.infilfs "$image" >/dev/null
+          loop="$(sudo losetup --find --show "$image")"
+          sudo insmod kernel/infiltratorfs.ko
+          sudo mount -t infiltratorfs "$loop" "$mnt"
+          sudo python3 - "$mnt" <<'PY'
+          import os, sys, time
+          root=sys.argv[1]; paths=[]
+          for i in range(2000):
+              p=os.path.join(root,f'f{i:05d}')
+              with open(p,'wb',buffering=0) as f: f.write(b'x'*4096)
+              paths.append(p)
+          t=time.monotonic()
+          for p in paths: os.setxattr(p,b'user.ifsbench',b'1')
+          elapsed=time.monotonic()-t
+          print(f'InfiltratorFS 2000 xattr sets: {elapsed:.3f}s')
+          if elapsed > 30.0:
+              raise SystemExit(f'xattr path remains pathological: {elapsed:.3f}s')
+          PY
+          sync
+          sudo umount "$mnt"
+          build/infilfs-scrub "$loop" | tee "$work/scrub.txt"
+          grep -Fq 'Result:              CLEAN' "$work/scrub.txt"
+          sudo losetup -d "$loop"; loop=""
+          sudo rmmod infiltratorfs
+          trap - EXIT
+          rm -rf "$work"
+
+      - name: Commit qualified source repair
+        run: |
+          set -euo pipefail
+          git config user.name 'Shannon Smith'
+          git config user.email 'infiltratr@yandex.com'
+          git add kernel/infiltratorfs_linux_meta.inc
+          git commit -m 'Fix Linux metadata namespace publication ordering'
+          git push origin HEAD:main
