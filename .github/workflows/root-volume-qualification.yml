@@ -143,7 +143,8 @@ jobs:
           rm -rf "$control_dir"
           dpkg-deb --contents "$deb" > "$contents_file"
           grep -q 'usr/share/initramfs-tools/hooks/infiltratorfs$' "$contents_file"
-          dpkg-deb --field "$deb" Depends | grep -Eq '(^|, )initramfs-tools([ ,]|$)'
+          depends="$(dpkg-deb --field "$deb" Depends)"
+          grep -Eq '(^|, )initramfs-tools([ ,]|$)' <<<"$depends"
           dpkg-deb -e "$deb" "$control_dir"
           grep -Fq 'live root remains mounted' "$control_dir/preinst"
           grep -Fq 'root-volume upgrade staged safely' "$control_dir/postinst"
