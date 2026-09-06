@@ -372,9 +372,6 @@ if(UNIX)
     add_test(NAME infilfs-root-volume-integration-policy
         COMMAND bash ${CMAKE_SOURCE_DIR}/tests/root-volume-integration-policy.sh
                      ${CMAKE_SOURCE_DIR})
-    add_test(NAME infilfs-root-volume-integration-policy
-        COMMAND bash ${CMAKE_SOURCE_DIR}/tests/root-volume-integration-policy.sh
-                     ${CMAKE_SOURCE_DIR})
     add_test(NAME infilfs-desktop-integration
         COMMAND bash ${CMAKE_SOURCE_DIR}/tests/desktop-integration.sh
                      ${CMAKE_BINARY_DIR})
