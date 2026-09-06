@@ -123,14 +123,21 @@ jobs:
           kdir="$(find /usr/src -maxdepth 1 -type d -name 'linux-headers-*-generic' -print | sort -V | tail -n1)"
           test -f "$kdir/Makefile"
           make -C kernel KDIR="$kdir"
-      - name: Commit implementation and remove staging machinery
+      - name: Commit validated non-workflow implementation
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          kdir="$(find /usr/src -maxdepth 1 -type d -name 'linux-headers-*-generic' -print | sort -V | tail -n1)"
+          make -C kernel clean KDIR="$kdir" || true
+          rm -rf build tools/__pycache__
+          git checkout -- .github/workflows/release-packages.yml \
+                          .github/workflows/root-volume-qualification.yml
+          rm -f .github/workflows/root-boot-qualification.yml
           git rm tools/apply-root-readiness-0.18.44.py \
                  .github/workflows/apply-root-readiness-0.18.44.yml
           git add -A
+          test -z "$(git status --porcelain | grep -E 'kernel/(\.?.*\.o|\.?.*\.ko|\.?.*\.cmd|Module\.symvers|modules\.order|.*\.mod(\.c)?)|__pycache__|\.pyc$' || true)"
           git config user.name 'Shannon Smith'
           git config user.email 'infiltratr@yandex.com'
           git commit -m 'Complete Linux root readiness and compression telemetry'
