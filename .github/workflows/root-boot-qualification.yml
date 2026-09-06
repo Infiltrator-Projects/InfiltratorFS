@@ -1,0 +1,100 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Linux root boot qualification
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'kernel/**'
+      - 'src/**'
+      - 'include/**'
+      - 'tools/**'
+      - 'tests/**'
+      - 'packaging/**'
+      - 'CMakeLists.txt'
+      - '.github/release-trigger'
+      - '.github/workflows/root-boot-qualification.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  root-boot:
+    name: UEFI root boot, upgrade, crash and recovery
+    concurrency:
+      group: root-boot-${{ github.ref }}
+      cancel-in-progress: true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install root-boot qualification dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            acl attr build-essential ca-certificates cmake debootstrap dkms \
+            dosfstools e2fsprogs fontconfig grub-efi-amd64-bin grub2-common \
+            initramfs-tools kmod libcap2-bin ovmf policykit-1 \
+            python3 python3-gi qemu-system-x86 qemu-utils rsync util-linux \
+            xdg-utils gir1.2-gtk-3.0
+          sudo apt-get install -y --no-install-recommends "linux-headers-$(uname -r)"
+          test -f "/lib/modules/$(uname -r)/build/Makefile"
+          command -v qemu-system-x86_64
+          command -v debootstrap
+          command -v grub-install
+
+      - name: Build running-kernel native module
+        shell: bash
+        run: |
+          set -euo pipefail
+          kdir="/lib/modules/$(uname -r)/build"
+          make -C kernel clean KDIR="$kdir" || true
+          make -C kernel KDIR="$kdir"
+          test -s kernel/infiltratorfs.ko
+          test "$(modinfo -F vermagic kernel/infiltratorfs.ko | awk '{print $1}')" = "$(uname -r)"
+
+      - name: Validate root-boot policy before execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n tests/root-boot-qemu.sh
+          bash tests/root-readiness-policy.sh .
+          grep -Fq 'ROOT_BOOT_PASS' tests/root-boot-qemu.sh
+          grep -Fq 'ROOT_UPGRADE_STAGED_PASS' tests/root-boot-qemu.sh
+          grep -Fq 'ROOT_CRASH_READY' tests/root-boot-qemu.sh
+          grep -Fq 'ROOT_RECOVERY_PASS' tests/root-boot-qemu.sh
+
+      - name: Boot real InfiltratorFS root and qualify recovery
+        timeout-minutes: 55
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo env \
+            RUNNER_TEMP="$RUNNER_TEMP" \
+            DEBIAN_FRONTEND="$DEBIAN_FRONTEND" \
+            bash tests/root-boot-qemu.sh build-root-boot kernel/infiltratorfs.ko
+
+      - name: Preserve root-boot evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: InfiltratorFS-root-boot-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/infiltratorfs-root-boot/boot12.log
+            ${{ runner.temp }}/infiltratorfs-root-boot/boot3.log
+            ${{ runner.temp }}/infiltratorfs-root-boot/post-crash-scrub.txt
+            ${{ runner.temp }}/infiltratorfs-root-boot/final-scrub.txt
+          if-no-files-found: warn
+          retention-days: 30
