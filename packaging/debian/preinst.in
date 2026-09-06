@@ -1,0 +1,62 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+set -e
+module='infiltratorfs'
+version='@PACKAGE_VERSION@'
+
+root_fstype="$(findmnt -n -o FSTYPE / 2>/dev/null || true)"
+root_active=0
+if [ "$root_fstype" = infiltratorfs ]; then
+    root_active=1
+fi
+
+active="$(findmnt -rn -t infiltratorfs,fuse.infilfs-fuse 2>/dev/null || true)"
+if [ -n "$active" ]; then
+    echo 'InfiltratorFS: mounted volumes detected before driver upgrade.'
+    echo "$active"
+    sync
+    if [ "$root_active" -eq 1 ]; then
+        echo 'InfiltratorFS: / is an InfiltratorFS root; keeping the live root driver mounted and unloading only non-root volumes.'
+        findmnt -rn -t infiltratorfs,fuse.infilfs-fuse -o TARGET 2>/dev/null |
+            awk '$1 != "/" { print length($0), $0 }' |
+            sort -rn | cut -d' ' -f2- |
+            while IFS= read -r target; do
+                [ -n "$target" ] || continue
+                umount -- "$target" 2>/dev/null || true
+            done
+        remaining="$(findmnt -rn -t infiltratorfs,fuse.infilfs-fuse -o TARGET 2>/dev/null |
+            awk '$1 != "/"' || true)"
+        if [ -n "$remaining" ]; then
+            echo 'InfiltratorFS: non-root volumes are still busy; refusing driver upgrade.' >&2
+            echo "$remaining" >&2
+            exit 1
+        fi
+        echo 'InfiltratorFS: live root remains mounted; the replacement DKMS driver will take effect after reboot.'
+    else
+        echo 'InfiltratorFS: attempting a clean automatic unmount before upgrading the driver.'
+        umount -a -t infiltratorfs,fuse.infilfs-fuse 2>/dev/null || true
+        active="$(findmnt -rn -t infiltratorfs,fuse.infilfs-fuse 2>/dev/null || true)"
+        if [ -n "$active" ]; then
+            echo 'InfiltratorFS: clean automatic unmount could not complete because a volume is still busy.' >&2
+            echo "$active" >&2
+            echo 'Close files, terminals or applications using the volume, then retry the upgrade.' >&2
+            exit 1
+        fi
+        echo 'InfiltratorFS: clean automatic unmount complete; continuing driver upgrade.'
+    fi
+fi
+
+if [ "$root_active" -eq 0 ] && command -v dkms >/dev/null 2>&1; then
+    dkms status -m "$module" 2>/dev/null | while IFS= read -r line; do
+        case "$line" in "$module"/*) ;; *) continue ;; esac
+        head="${line%%,*}"
+        head="${head%%:*}"
+        old_version="${head#${module}/}"
+        if [ -n "$old_version" ] && [ "$old_version" != "$version" ]; then
+            echo "InfiltratorFS: removing stale DKMS registration $old_version."
+            dkms remove -m "$module" -v "$old_version" --all || true
+            rm -rf "/usr/src/$module-$old_version" "/var/lib/dkms/$module/$old_version" || true
+        fi
+    done
+fi
+exit 0

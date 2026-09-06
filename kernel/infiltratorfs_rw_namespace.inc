@@ -45,12 +45,21 @@ infilfs_ns_attributes_mut(u8 object[INFILFS_DISK_BLOCK_SIZE])
     return (struct infilfs_attributes_disk *)infilfs_ns_attributes(object);
 }
 
+static bool infilfs_ns_reserved_linux_meta_name(const struct qstr *name)
+{
+    return name &&
+        name->len == sizeof(INFILFS_LINUX_META_DIRECTORY) - 1u &&
+        memcmp(name->name, INFILFS_LINUX_META_DIRECTORY,
+               name->len) == 0;
+}
+
 static int infilfs_ns_validate_name(const struct qstr *name)
 {
     if (!name || !name->len || name->len > INFILFS_NAME_MAX ||
         !infilfs_rw_utf8_valid(name->name, name->len) ||
         (name->len == 1 && name->name[0] == '.') ||
-        (name->len == 2 && name->name[0] == '.' && name->name[1] == '.'))
+        (name->len == 2 && name->name[0] == '.' && name->name[1] == '.') ||
+        infilfs_ns_reserved_linux_meta_name(name))
         return -EINVAL;
     return 0;
 }

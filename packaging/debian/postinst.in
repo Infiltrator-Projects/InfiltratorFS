@@ -1,0 +1,80 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+set -e
+module='infiltratorfs'
+version='@PACKAGE_VERSION@'
+kernel="$(uname -r)"
+root_fstype="$(findmnt -n -o FSTYPE / 2>/dev/null || true)"
+root_active=0
+if [ "$root_fstype" = infiltratorfs ]; then
+    root_active=1
+fi
+
+if [ ! -f "/lib/modules/$kernel/build/Makefile" ]; then
+    echo "InfiltratorFS: matching kernel headers are required for $kernel." >&2
+    echo "Install linux-headers-$kernel and configure this package again." >&2
+    exit 1
+fi
+if ! dkms status -m "$module" -v "$version" 2>/dev/null | grep -q .; then
+    dkms add -m "$module" -v "$version"
+fi
+dkms build -m "$module" -v "$version" -k "$kernel"
+dkms install -m "$module" -v "$version" -k "$kernel" --force
+depmod -a
+
+# Make the native filesystem available before / is mounted.  Create
+# an initramfs when a CI/minimal host does not already have one;
+# normal Mint/Ubuntu systems update their existing image in place.
+if command -v update-initramfs >/dev/null 2>&1; then
+    if [ -e "/boot/initrd.img-$kernel" ]; then
+        update-initramfs -u -k "$kernel"
+    else
+        update-initramfs -c -k "$kernel"
+    fi
+else
+    echo 'InfiltratorFS: initramfs-tools is not installed; data-volume support is available, but Linux root-volume boot integration requires an equivalent initramfs configuration.' >&2
+fi
+
+load_plan="$(modprobe --dry-run --verbose "$module" 2>/dev/null || true)"
+load_disabled=0
+case "$load_plan" in
+    *"install /bin/false"*|*"install /usr/bin/false"*|*"install false"*)
+        load_disabled=1
+        ;;
+esac
+
+if [ "$load_disabled" -eq 1 ]; then
+    echo 'InfiltratorFS: module loading is administratively disabled; leaving the newly installed DKMS module unloaded.'
+elif [ "$root_active" -eq 1 ]; then
+    # Never unload the driver that currently owns /.  The new module
+    # and initramfs are staged for the next boot instead.
+    grep -qw infiltratorfs /proc/filesystems || {
+        echo 'InfiltratorFS: current root is InfiltratorFS but the live filesystem is not registered.' >&2
+        exit 1
+    }
+    echo 'InfiltratorFS: root-volume upgrade staged safely; live driver remains loaded until reboot.'
+    : > /run/reboot-required
+    if [ -e /run/reboot-required.pkgs ]; then
+        grep -Fxq infiltratorfs /run/reboot-required.pkgs || echo infiltratorfs >> /run/reboot-required.pkgs
+    else
+        echo infiltratorfs > /run/reboot-required.pkgs
+    fi
+else
+    modprobe -r "$module" 2>/dev/null || true
+    modprobe "$module"
+    grep -qw infiltratorfs /proc/filesystems || {
+        echo 'InfiltratorFS: native kernel filesystem did not register.' >&2
+        exit 1
+    }
+fi
+
+rm -f /usr/bin/infilfs-fuse
+if [ -x /usr/lib/infiltratorfs/infiltratorfs-os-integration ]; then
+    /usr/lib/infiltratorfs/infiltratorfs-os-integration install
+fi
+if command -v udevadm >/dev/null 2>&1; then
+    udevadm control --reload-rules || true
+    udevadm trigger --subsystem-match=block --action=change || true
+    udevadm settle --timeout=30 || true
+fi
+exit 0

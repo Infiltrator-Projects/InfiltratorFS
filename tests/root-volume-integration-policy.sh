@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+set -euo pipefail
+root="${1:?repository root required}"
+hook="$root/packaging/initramfs/infiltratorfs-hook"
+build="$root/packaging/build-linux-packages.sh"
+pre="$root/packaging/debian/preinst.in"
+post="$root/packaging/debian/postinst.in"
+prerm="$root/packaging/debian/prerm.in"
+
+bash -n "$hook" "$pre" "$post" "$prerm" "$build"
+grep -Fq '. /usr/share/initramfs-tools/hook-functions' "$hook"
+grep -Fq 'manual_add_modules infiltratorfs' "$hook"
+grep -Fq 'packaging/debian/${maintainer}.in' "$build"
+grep -Fq 'usr/share/initramfs-tools/hooks/infiltratorfs$' "$build"
+grep -Fq 'root_active=1' "$pre"
+grep -Fq 'keeping the live root driver mounted' "$pre"
+grep -Fq 'update-initramfs -u -k "$kernel"' "$post"
+grep -Fq 'update-initramfs -c -k "$kernel"' "$post"
+grep -Fq 'live driver remains loaded until reboot' "$post"
+grep -Fq '/run/reboot-required' "$post"
+grep -Fq 'refusing to remove the filesystem package while / is mounted as InfiltratorFS' "$prerm"
+grep -Fq 'MODULE_ALIAS_FS(INFILTRATORFS_NAME)' "$root/kernel/infiltratorfs_core.c"
+grep -Fq '&posix_acl_access_xattr_handler' "$root/kernel/infiltratorfs_linux_meta.inc"
+grep -Fq '&posix_acl_default_xattr_handler' "$root/kernel/infiltratorfs_linux_meta.inc"
+grep -Fq 'infilfs_ns_reserved_linux_meta_name' "$root/kernel/infiltratorfs_rw_namespace.inc"
+echo 'root-volume integration policy: PASS'

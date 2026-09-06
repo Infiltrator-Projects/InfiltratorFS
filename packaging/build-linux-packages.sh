@@ -123,7 +123,7 @@ Architecture: ${architecture}
 Maintainer: The First Infiltrator
 X-InfiltratorFS-Build: ${build_identity}
 X-InfiltratorFS-Desktop-Integration: ${desktop_identity}
-Depends: dkms, kmod, policykit-1, util-linux, xdg-utils, fontconfig, python3, python3-gi, gir1.2-gtk-3.0${desktop_depends}
+Depends: dkms, initramfs-tools, kmod, policykit-1, util-linux, xdg-utils, fontconfig, python3, python3-gi, gir1.2-gtk-3.0${desktop_depends}
 Recommends: linux-headers-generic, udev${desktop_recommends}
 Installed-Size: ${installed_size}
 Homepage: https://github.com/Infiltrator-Projects/InfiltratorFS
@@ -266,6 +266,12 @@ exit 0
 EOF
 chmod 0755 "$package_root/DEBIAN/postrm"
 
+for maintainer in preinst postinst prerm; do
+    sed "s/@PACKAGE_VERSION@/${package_version}/g" \
+        "packaging/debian/${maintainer}.in" > "$package_root/DEBIAN/$maintainer"
+    chmod 0755 "$package_root/DEBIAN/$maintainer"
+done
+
 dpkg-deb --root-owner-group --build "$package_root" "$dist_dir/$deb_name"
 contents="$dist_dir/package-contents.txt"
 dpkg-deb --contents "$dist_dir/$deb_name" > "$contents"
@@ -282,6 +288,7 @@ for required in \
     'usr/bin/mkfs.infiltratorfs$' \
     'usr/sbin/mount.infiltratorfs$' \
     'usr/sbin/fsck.infiltratorfs$' \
+    'usr/share/initramfs-tools/hooks/infiltratorfs$' \
     'usr/lib/infiltratorfs/infiltratorfs-manager-helper$' \
     'usr/lib/infiltratorfs/infiltratorfs-os-integration$' \
     'usr/lib/udev/rules.d/59-infiltratorfs.rules$' \
@@ -335,7 +342,7 @@ if grep -q 'usr/share/nemo/actions/infiltratorfs-format-partition.nemo_action$' 
 fi
 test "$(dpkg-deb --field "$dist_dir/$deb_name" Version)" = "$package_version"
 depends="$(dpkg-deb --field "$dist_dir/$deb_name" Depends)"
-for dependency in dkms kmod policykit-1 util-linux xdg-utils fontconfig python3 python3-gi gir1.2-gtk-3.0; do
+for dependency in dkms initramfs-tools kmod policykit-1 util-linux xdg-utils fontconfig python3 python3-gi gir1.2-gtk-3.0; do
     grep -Eq "(^|, )${dependency}([ ,]|$)" <<<"$depends"
 done
 if grep -Eqi '(^|[, ])(fuse3|libfuse3-3)([, ]|$)' <<<"$depends"; then

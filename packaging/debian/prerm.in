@@ -1,0 +1,19 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+set -e
+
+if [ "${1:-}" = remove ]; then
+    root_fstype="$(findmnt -n -o FSTYPE / 2>/dev/null || true)"
+    if [ "$root_fstype" = infiltratorfs ]; then
+        echo 'InfiltratorFS: refusing to remove the filesystem package while / is mounted as InfiltratorFS.' >&2
+        echo 'Boot from another root filesystem before removing the driver package.' >&2
+        exit 1
+    fi
+    if [ -x /usr/lib/infiltratorfs/infiltratorfs-os-integration ]; then
+        /usr/lib/infiltratorfs/infiltratorfs-os-integration remove
+    fi
+    if command -v dkms >/dev/null 2>&1; then
+        dkms remove -m infiltratorfs -v '@PACKAGE_VERSION@' --all || true
+    fi
+fi
+exit 0

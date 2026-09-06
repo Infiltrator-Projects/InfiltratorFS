@@ -896,6 +896,8 @@ static const struct xattr_handler * const infilfs_xattr_handlers[] = {
     &infilfs_linux_user_xattr_handler,
     &infilfs_linux_trusted_xattr_handler,
     &infilfs_linux_security_xattr_handler,
+    &posix_acl_access_xattr_handler,
+    &posix_acl_default_xattr_handler,
     &infilfs_linux_system_xattr_handler,
     NULL,
 };
@@ -1306,10 +1308,32 @@ static int infilfs_posix_acl_setattr(
 #endif
     struct iattr *attr)
 {
+    struct inode *inode = d_inode(dentry);
+    umode_t old_mode = inode->i_mode;
     bool mode_changed = (attr->ia_valid & ATTR_MODE) != 0;
     int ret = infilfs_posix_setattr(idmap, dentry, attr);
 
-    if (!ret && mode_changed)
-        ret = posix_acl_chmod(idmap, dentry, d_inode(dentry)->i_mode);
+    if (!ret && mode_changed) {
+        ret = posix_acl_chmod(idmap, dentry, inode->i_mode);
+        if (ret) {
+            struct iattr rollback;
+            int rollback_ret;
+
+            memset(&rollback, 0, sizeof(rollback));
+            rollback.ia_valid = ATTR_MODE | ATTR_CTIME;
+            rollback.ia_mode = old_mode;
+            rollback.ia_ctime = current_time(inode);
+            rollback_ret = infilfs_posix_rewrite_inode(inode, &rollback);
+            if (!rollback_ret) {
+                inode->i_mode = (inode->i_mode & S_IFMT) |
+                    (old_mode & 07777);
+                inode_set_ctime_to_ts(inode, rollback.ia_ctime);
+            } else {
+                INFILFS_SB(inode->i_sb)->write_poisoned = true;
+                pr_err("InfiltratorFS: chmod ACL rollback failed for inode %lu: %d\n",
+                       inode->i_ino, rollback_ret);
+            }
+        }
+    }
     return ret;
 }

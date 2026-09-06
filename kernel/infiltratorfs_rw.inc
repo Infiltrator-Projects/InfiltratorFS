@@ -1462,7 +1462,12 @@ static int infilfs_posix_create_native_named_child(
     const char *failure_stage = "validate-name";
     int ret;
 
-    ret = infilfs_ns_validate_name(name);
+    if (infilfs_ns_reserved_linux_meta_name(name) &&
+        (portable_flags & (INFILFS_ATTR_HIDDEN | INFILFS_ATTR_SYSTEM)) ==
+            (INFILFS_ATTR_HIDDEN | INFILFS_ATTR_SYSTEM))
+        ret = 0;
+    else
+        ret = infilfs_ns_validate_name(name);
     if (ret)
         return ret;
     failure_stage = "begin";

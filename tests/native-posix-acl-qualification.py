@@ -11,6 +11,7 @@ Linux root-filesystem qualification.
 import os
 import pwd
 import shutil
+import stat
 import struct
 import subprocess
 import sys
@@ -84,6 +85,29 @@ def assert_named_read_acl(path, uid, expected_mask=ACL_READ):
         fail(f"ACL mask mismatch on {path}: {mask_perm} != {expected_mask}")
     if other_perm != 0:
         fail(f"other permissions unexpectedly grant access on {path}: {other_perm}")
+
+
+def require_tool(name):
+    path = shutil.which(name)
+    if not path:
+        fail(f"{name} is required for POSIX ACL qualification")
+    return path
+
+
+def assert_setfacl_acl(path, uid):
+    getfacl = require_tool("getfacl")
+    result = subprocess.run(
+        [getfacl, "-cpn", path], check=True, text=True,
+        stdout=subprocess.PIPE,
+    )
+    lines = {line.strip() for line in result.stdout.splitlines()}
+    if f"user:{uid}:r--" not in lines:
+        fail(f"getfacl did not report named user {uid} on {path}")
+    if "mask::r--" not in lines:
+        fail(f"getfacl did not report ACL mask r-- on {path}")
+    mode = stat.S_IMODE(os.stat(path).st_mode)
+    if mode & 0o070 != 0o040:
+        fail(f"ACL mask is not reflected in group-class mode bits: {mode:o}")
 
 
 def can_read_as(path, uid, gid):
@@ -168,6 +192,28 @@ def prepare(root):
     if not can_read_as(access, uid, gid):
         fail("access ACL did not grant named-user read access")
 
+    setfacl = shutil.which("setfacl")
+    getfacl = shutil.which("getfacl")
+    require_real_acl = os.environ.get("INFILFS_REQUIRE_SETFACL") == "1"
+    if setfacl and getfacl:
+        real_acl = os.path.join(acl_root, "setfacl.txt")
+        fd = os.open(real_acl, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        try:
+            os.write(fd, b"real-setfacl\n")
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        subprocess.run(
+            [setfacl, "-m", f"u:{uid}:r--", real_acl], check=True,
+        )
+        assert_setfacl_acl(real_acl, uid)
+        if not can_read_as(real_acl, uid, gid):
+            fail("setfacl ACL was not enforced")
+    elif require_real_acl:
+        fail("setfacl/getfacl are required by root-volume qualification")
+    else:
+        print("native POSIX ACL qualification: setfacl/getfacl userspace check SKIP")
+
     os.chmod(access, 0o600)
     assert_named_read_acl(access, uid, expected_mask=0)
     if can_read_as(access, uid, gid):
@@ -225,6 +271,14 @@ def verify(root):
     assert_named_read_acl(access, uid)
     if not can_read_as(access, uid, gid):
         fail("access ACL was not enforced after remount")
+
+    real_acl = os.path.join(acl_root, "setfacl.txt")
+    if os.path.exists(real_acl):
+        assert_setfacl_acl(real_acl, uid)
+        if not can_read_as(real_acl, uid, gid):
+            fail("setfacl ACL was not enforced after remount")
+    elif os.environ.get("INFILFS_REQUIRE_SETFACL") == "1":
+        fail("real setfacl ACL fixture is missing after remount")
 
     inherit = os.path.join(acl_root, "inherit")
     if os.getxattr(inherit, DEFAULT_NAME) != default_acl(uid):

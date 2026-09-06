@@ -369,6 +369,12 @@ if(UNIX)
         COMMAND bash ${CMAKE_SOURCE_DIR}/tests/manager-partition-discovery.sh)
     add_test(NAME infilfs-system-utilities
         COMMAND bash ${CMAKE_SOURCE_DIR}/tests/system-utilities.sh)
+    add_test(NAME infilfs-root-volume-integration-policy
+        COMMAND bash ${CMAKE_SOURCE_DIR}/tests/root-volume-integration-policy.sh
+                     ${CMAKE_SOURCE_DIR})
+    add_test(NAME infilfs-root-volume-integration-policy
+        COMMAND bash ${CMAKE_SOURCE_DIR}/tests/root-volume-integration-policy.sh
+                     ${CMAKE_SOURCE_DIR})
     add_test(NAME infilfs-desktop-integration
         COMMAND bash ${CMAKE_SOURCE_DIR}/tests/desktop-integration.sh
                      ${CMAKE_BINARY_DIR})
@@ -382,6 +388,9 @@ if(UNIX)
             DESTINATION lib/infiltratorfs)
     install(PROGRAMS tools/mount.infiltratorfs tools/fsck.infiltratorfs
             DESTINATION sbin)
+    install(PROGRAMS packaging/initramfs/infiltratorfs-hook
+        DESTINATION share/initramfs-tools/hooks
+        RENAME infiltratorfs)
     install(FILES packaging/infiltratorfs-manager.desktop
             DESTINATION share/applications)
     # Nemo already gets a stock "Format" action from Mintstick.  Ship our
