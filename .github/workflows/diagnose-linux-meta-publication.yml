@@ -87,6 +87,35 @@ jobs:
             sudo setfattr -n user.test -v one "$1/file"
             sudo setfattr -x user.test "$1/file"
           }
+          case_interleave_root_xattr_create() {
+            for i in $(seq 1 100); do
+              sudo setfattr -n user.test -v "$i" "$1"
+              sudo sh -c 'printf x > "$1/f$2"' sh "$1" "$i"
+            done
+          }
+          case_interleave_root_xattr_dirs() {
+            for i in $(seq 1 80); do
+              sudo setfattr -n user.test -v "$i" "$1"
+              sudo mkdir "$1/d$i"
+              sudo sh -c 'printf x > "$1/d$2/f"' sh "$1" "$i"
+              if (( i % 2 == 0 )); then sudo mv "$1/d$i" "$1/r$i"; fi
+            done
+          }
+          case_interleave_root_remove() {
+            for i in $(seq 1 60); do
+              sudo setfattr -n user.test -v "$i" "$1"
+              sudo mkdir "$1/d$i"
+              sudo setfattr -x user.test "$1"
+              sudo rmdir "$1/d$i"
+            done
+          }
+          case_acl_namespace_interleave() {
+            for i in $(seq 1 80); do
+              sudo sh -c 'printf x > "$1/f$2"' sh "$1" "$i"
+              sudo setfacl -m u:12345:r-- "$1/f$i"
+              if (( i % 3 == 0 )); then sudo mv "$1/f$i" "$1/r$i"; fi
+            done
+          }
 
           run_case plain case_plain
           run_case one-user-xattr case_one_user_xattr
@@ -95,6 +124,10 @@ jobs:
           run_case many-xattr case_many_xattr
           run_case replace-xattr case_replace_xattr
           run_case remove-xattr case_remove_xattr
+          run_case interleave-root-create case_interleave_root_xattr_create
+          run_case interleave-root-dirs case_interleave_root_xattr_dirs
+          run_case interleave-root-remove case_interleave_root_remove
+          run_case acl-namespace-interleave case_acl_namespace_interleave
 
           echo '===== dmesg tail ====='
           sudo dmesg | tail -n 200 || true
