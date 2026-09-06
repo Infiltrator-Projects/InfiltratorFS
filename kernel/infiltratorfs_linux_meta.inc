@@ -1067,7 +1067,18 @@ out:
     kvfree(blob);
     mutex_unlock(&sbi->linux_meta_lock);
     kfree(full);
-    if (!ret) {
+    /*
+     * trusted.infiltratorfs.quota-db is internal filesystem bookkeeping, not
+     * user-visible inode metadata.  Rewriting the host inode ctime for every
+     * quota database update both misstates POSIX semantics and interleaves a
+     * second object rewrite with the still-deferred quota sidecar transaction.
+     * Keep normal xattr ctime semantics for every externally visible xattr, but
+     * do not manufacture a ctime change for this private quota record.
+     */
+    if (!ret &&
+        !(handler && handler->prefix &&
+          strcmp(handler->prefix, XATTR_TRUSTED_PREFIX) == 0 &&
+          strcmp(name, "infiltratorfs.quota-db") == 0)) {
         struct iattr attr;
         int ctime_ret;
 
