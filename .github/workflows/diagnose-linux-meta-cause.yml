@@ -25,7 +25,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends acl attr build-essential cmake kmod linux-headers-$(uname -r) util-linux
+          sudo apt-get install -y --no-install-recommends acl attr build-essential cmake kmod libcap2-bin linux-headers-$(uname -r) rsync util-linux
       - name: Apply diagnostic variant
         env:
           VARIANT: ${{ matrix.variant }}
@@ -42,8 +42,8 @@ jobs:
               if s.count(anchor) != 1: raise SystemExit('store out anchor changed')
               s=s.replace(anchor,repl,1)
           elif v == 'extent-no-flush':
-              anchor='''if (size <= INFILFS_INLINE_DATA_MAX &&\n        i_size_read(file) <= INFILFS_INLINE_DATA_MAX) {'''
-              repl='''if (false && size <= INFILFS_INLINE_DATA_MAX &&\n        i_size_read(file) <= INFILFS_INLINE_DATA_MAX) {'''
+              anchor='''if (size <= INFILFS_INLINE_DATA_MAX)\n        written = infilfs_native_inline_write_iter(file, &position, &iter, size);\n    else'''
+              repl='''if (false && size <= INFILFS_INLINE_DATA_MAX)\n        written = infilfs_native_inline_write_iter(file, &position, &iter, size);\n    else'''
               if s.count(anchor) != 1: raise SystemExit('inline anchor changed')
               s=s.replace(anchor,repl,1)
           elif v == 'no-ctime':
@@ -67,3 +67,6 @@ jobs:
           INFILFS_REQUIRE_SETFACL: '1'
         run: |
           sudo -E bash tests/native-quota-qualification.sh build kernel/infiltratorfs.ko
+      - name: Run full root metadata remount scrub qualification
+        run: |
+          sudo env RUNNER_TEMP="$RUNNER_TEMP" bash tests/native-root-metadata-qualification.sh build kernel/infiltratorfs.ko
