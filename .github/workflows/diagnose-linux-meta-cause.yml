@@ -1,0 +1,69 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Isolate Linux metadata corruption cause
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/diagnose-linux-meta-cause.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  variant:
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [baseline, flush, extent-no-flush, no-ctime]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends acl attr build-essential cmake kmod linux-headers-$(uname -r) util-linux
+      - name: Apply diagnostic variant
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          p=Path('kernel/infiltratorfs_linux_meta.inc')
+          s=p.read_text()
+          v=os.environ['VARIANT']
+          if v == 'flush':
+              anchor='''out:\n    iput(file);\n    iput(dir);\n    return ret;\n}\n\nstatic int infilfs_linux_meta_find_xattr'''
+              repl='''out:\n    if (!ret)\n        ret = infilfs_native_pending_flush_sb(sb);\n    iput(file);\n    iput(dir);\n    return ret;\n}\n\nstatic int infilfs_linux_meta_find_xattr'''
+              if s.count(anchor) != 1: raise SystemExit('store out anchor changed')
+              s=s.replace(anchor,repl,1)
+          elif v == 'extent-no-flush':
+              anchor='''if (size <= INFILFS_INLINE_DATA_MAX &&\n        i_size_read(file) <= INFILFS_INLINE_DATA_MAX) {'''
+              repl='''if (false && size <= INFILFS_INLINE_DATA_MAX &&\n        i_size_read(file) <= INFILFS_INLINE_DATA_MAX) {'''
+              if s.count(anchor) != 1: raise SystemExit('inline anchor changed')
+              s=s.replace(anchor,repl,1)
+          elif v == 'no-ctime':
+              anchor='''    if (!ret) {\n        struct iattr attr;'''
+              repl='''    if (false && !ret) {\n        struct iattr attr;'''
+              if s.count(anchor) != 1: raise SystemExit('ctime anchor changed')
+              s=s.replace(anchor,repl,1)
+          elif v != 'baseline':
+              raise SystemExit(v)
+          p.write_text(s)
+          print('diagnostic variant:',v)
+          PY
+      - name: Build
+        run: |
+          set -euo pipefail
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel --target mkfs.infilfs infilfs-scrub infilfs-tool infiltratorfs-quota
+          make -C kernel KDIR="/lib/modules/$(uname -r)/build"
+      - name: Run quota ACL remount scrub qualification
+        env:
+          INFILFS_REQUIRE_SETFACL: '1'
+        run: |
+          sudo -E bash tests/native-quota-qualification.sh build kernel/infiltratorfs.ko
