@@ -52,8 +52,8 @@ if [ "$root_active" -eq 0 ] && command -v dkms >/dev/null 2>&1; then
         head="${line%%,*}"
         head="${head%%:*}"
         old_version="${head#${module}/}"
-        if [ -n "$old_version" ] && [ "$old_version" != "$version" ]; then
-            echo "InfiltratorFS: removing stale DKMS registration $old_version."
+        if [ -n "$old_version" ]; then
+            echo "InfiltratorFS: removing existing DKMS registration $old_version before installing $version."
             dkms remove -m "$module" -v "$old_version" --all || true
             rm -rf "/usr/src/$module-$old_version" "/var/lib/dkms/$module/$old_version" || true
         fi

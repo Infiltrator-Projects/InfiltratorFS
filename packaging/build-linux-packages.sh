@@ -174,8 +174,8 @@ if command -v dkms >/dev/null 2>&1; then
     dkms status -m "\$module" 2>/dev/null | while IFS= read -r line; do
         case "\$line" in "\$module"/*) ;; *) continue ;; esac
         head="\${line%%,*}"; head="\${head%%:*}"; old_version="\${head#\${module}/}"
-        if [ -n "\$old_version" ] && [ "\$old_version" != "\$version" ]; then
-            echo "InfiltratorFS: removing stale DKMS registration \$old_version."
+        if [ -n "\$old_version" ]; then
+            echo "InfiltratorFS: removing existing DKMS registration \$old_version before installing \$version."
             dkms remove -m "\$module" -v "\$old_version" --all || true
             rm -rf "/usr/src/\$module-\$old_version" "/var/lib/dkms/\$module/\$old_version" || true
         fi
@@ -354,6 +354,9 @@ grep -Fq 'sync' <<<"$preinst_text"
 grep -Fq 'umount -a -t infiltratorfs,fuse.infilfs-fuse' <<<"$preinst_text"
 grep -Fq 'clean automatic unmount complete' <<<"$preinst_text"
 grep -Fq 'volume is still busy' <<<"$preinst_text"
+grep -Fq 'removing existing DKMS registration $old_version before installing $version' \
+    <<<"$preinst_text"
+! grep -Fq '[ "$old_version" != "$version" ]' <<<"$preinst_text"
 if awk '
     /^[[:space:]]*umount[[:space:]]/ {
         for (field = 2; field <= NF; ++field)
