@@ -52,7 +52,7 @@ EOF
 loop="$(losetup --find --show -P "$disk")"
 mkfs.vfat -F32 "${loop}p1" >/dev/null
 mkfs.ext4 -F "${loop}p2" >/dev/null
-"$build/mkfs.infilfs" -L RootBoot "${loop}p3" >/dev/null
+"$build/mkfs.infilfs" --force -L RootBoot "${loop}p3" >/dev/null
 
 insmod "$module"
 mount -t infiltratorfs "${loop}p3" "$mnt"
