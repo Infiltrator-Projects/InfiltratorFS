@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Apply 0.18.45 release qualification policy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-release-metadata-gate.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Require metadata qualification and isolate scheduled CI concurrency
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          release = Path('.github/workflows/release-packages.yml')
+          s = release.read_text()
+          old = '''          required=(\n            "Native Linux kernel module"\n            "Linux root-volume qualification"\n            "Linux root boot qualification"\n          )\n'''
+          new = '''          required=(\n            "Native Linux kernel module"\n            "Linux root-volume qualification"\n            "Linux root boot qualification"\n            "Linux metadata qualification"\n          )\n'''
+          if s.count(old) != 1:
+              raise SystemExit(f'release qualification anchor count={s.count(old)}')
+          s = s.replace(old, new, 1)
+          old_msg = '''              printf 'Native Linux, root-volume and root-boot qualification passed for %s.\\n' \\\n                "$EXPECTED_SHA"\n'''
+          new_msg = '''              printf 'Native Linux, root-volume, root-boot and Linux metadata qualification passed for %s.\\n' \\\n                "$EXPECTED_SHA"\n'''
+          if s.count(old_msg) != 1:
+              raise SystemExit(f'release message anchor count={s.count(old_msg)}')
+          release.write_text(s.replace(old_msg, new_msg, 1))
+
+          policy = Path('tests/root-readiness-policy.sh')
+          s = policy.read_text()
+          anchor = '''grep -Fq 'Linux root-volume qualification' "$root/.github/workflows/release-packages.yml"\n'''
+          repl = anchor + '''grep -Fq 'Linux metadata qualification' "$root/.github/workflows/release-packages.yml"\n'''
+          if s.count(anchor) != 1:
+              raise SystemExit(f'root readiness anchor count={s.count(anchor)}')
+          policy.write_text(s.replace(anchor, repl, 1))
+
+          ci = Path('.github/workflows/ci.yml')
+          s = ci.read_text()
+          old = '''  group: build-and-conformance-${{ github.ref }}\n  cancel-in-progress: true\n'''
+          new = '''  # Keep scheduled qualification from cancelling a release push on main.\n  # Pushes may still supersede older pushes, while schedule/dispatch are isolated.\n  group: build-and-conformance-${{ github.event_name }}-${{ github.ref }}\n  cancel-in-progress: true\n'''
+          if s.count(old) != 1:
+              raise SystemExit(f'CI concurrency anchor count={s.count(old)}')
+          ci.write_text(s.replace(old, new, 1))
+          PY
+          git diff --check
+          bash tests/root-readiness-policy.sh .
+          git diff -- .github/workflows/release-packages.yml .github/workflows/ci.yml tests/root-readiness-policy.sh
+      - name: Commit policy hardening
+        run: |
+          set -euo pipefail
+          git config user.name 'Shannon Smith'
+          git config user.email 'infiltratr@yandex.com'
+          git add .github/workflows/release-packages.yml .github/workflows/ci.yml tests/root-readiness-policy.sh
+          git commit -m 'Require Linux metadata qualification for releases'
+          git push origin HEAD:main
