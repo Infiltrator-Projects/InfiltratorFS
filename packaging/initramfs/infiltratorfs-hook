@@ -15,4 +15,20 @@ case "${1:-}" in
 esac
 
 . /usr/share/initramfs-tools/hook-functions
+
+# Linux root boots use rootfstype=infiltratorfs. Keep the native driver in the
+# early userspace image so VFS autoload can satisfy that mount request.
 manual_add_modules infiltratorfs
+
+# Root=UUID/root=LABEL resolution happens before the real root is mounted.
+# Stock blkid does not know the pre-1.0 signature, so include the project's
+# bounded read-only probe and its udev rule in the initramfs.
+copy_exec /usr/bin/infilfs-inspect /usr/bin
+copy_file config /usr/lib/udev/rules.d/59-infiltratorfs.rules \
+    /usr/lib/udev/rules.d/59-infiltratorfs.rules
+
+# initramfs-tools may invoke fsck.<type> before mounting /. InfiltratorFS fsck
+# is intentionally a complete read-only scrub: corruption stops the boot rather
+# than pretending an automatic repair occurred.
+copy_exec /usr/bin/infilfs-scrub /usr/bin
+copy_exec /usr/sbin/fsck.infiltratorfs /usr/sbin
