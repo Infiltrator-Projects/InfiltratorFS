@@ -157,6 +157,17 @@ static void infilfs_linux_meta_cache_remove(
     kfree(entry);
 }
 
+static int infilfs_linux_meta_hex_nibble(u8 c)
+{
+    if (c >= '0' && c <= '9')
+        return c - '0';
+    if (c >= 'a' && c <= 'f')
+        return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F')
+        return c - 'A' + 10;
+    return -EINVAL;
+}
+
 static bool infilfs_linux_meta_parse_uuid_name(
     const u8 *name, size_t length, u8 object_id[16])
 {
@@ -177,7 +188,7 @@ static bool infilfs_linux_meta_parse_uuid_name(
             ++h;
             continue;
         }
-        value = hex_to_bin(name[i]);
+        value = infilfs_linux_meta_hex_nibble(name[i]);
         if (value < 0 || nibble >= 32)
             return false;
         if ((nibble & 1u) == 0)
