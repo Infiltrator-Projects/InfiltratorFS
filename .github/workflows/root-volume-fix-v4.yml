@@ -1,0 +1,135 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Stage root-volume source fix
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/root-volume-fix-v4.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Apply already-validated v3 patch step
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+          lines = Path('.github/workflows/root-volume-fix-v3.yml').read_text().splitlines()
+          marker = next(i for i, line in enumerate(lines)
+                        if line.strip() == '- name: Apply reviewed root-volume patch')
+          run_line = next(i for i in range(marker + 1, len(lines))
+                          if lines[i].strip() == 'run: |')
+          end = next(i for i in range(run_line + 1, len(lines))
+                     if lines[i].startswith('      - name:'))
+          body = []
+          for line in lines[run_line + 1:end]:
+              body.append(line[10:] if line.startswith('          ') else line)
+          Path('/tmp/apply-root-volume.sh').write_text('\n'.join(body) + '\n')
+          PY
+          bash /tmp/apply-root-volume.sh
+
+          # The ordinary native workflow may run on hosts without the acl
+          # userspace package. Keep raw ABI/enforcement qualification there,
+          # while the dedicated root workflow below will REQUIRE real
+          # setfacl/getfacl. Do not silently skip when explicitly required.
+          python3 <<'PY'
+          from pathlib import Path
+          p = Path('tests/native-posix-acl-qualification.py')
+          text = p.read_text()
+          old = '''    setfacl = require_tool("setfacl")
+              real_acl = os.path.join(acl_root, "setfacl.txt")
+              fd = os.open(real_acl, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+              try:
+                  os.write(fd, b"real-setfacl\\n")
+                  os.fsync(fd)
+              finally:
+                  os.close(fd)
+              subprocess.run(
+                  [setfacl, "-m", f"u:{uid}:r--", real_acl], check=True,
+              )
+              assert_setfacl_acl(real_acl, uid)
+              if not can_read_as(real_acl, uid, gid):
+                  fail("setfacl ACL was not enforced")
+          '''
+          new = '''    setfacl = shutil.which("setfacl")
+              getfacl = shutil.which("getfacl")
+              require_real_acl = os.environ.get("INFILFS_REQUIRE_SETFACL") == "1"
+              if setfacl and getfacl:
+                  real_acl = os.path.join(acl_root, "setfacl.txt")
+                  fd = os.open(real_acl, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                  try:
+                      os.write(fd, b"real-setfacl\\n")
+                      os.fsync(fd)
+                  finally:
+                      os.close(fd)
+                  subprocess.run(
+                      [setfacl, "-m", f"u:{uid}:r--", real_acl], check=True,
+                  )
+                  assert_setfacl_acl(real_acl, uid)
+                  if not can_read_as(real_acl, uid, gid):
+                      fail("setfacl ACL was not enforced")
+              elif require_real_acl:
+                  fail("setfacl/getfacl are required by root-volume qualification")
+              else:
+                  print("native POSIX ACL qualification: setfacl/getfacl userspace check SKIP")
+          '''
+          if text.count(old) != 1:
+              raise SystemExit('prepare setfacl block mismatch')
+          text = text.replace(old, new, 1)
+          old = '''    real_acl = os.path.join(acl_root, "setfacl.txt")
+              assert_setfacl_acl(real_acl, uid)
+              if not can_read_as(real_acl, uid, gid):
+                  fail("setfacl ACL was not enforced after remount")
+          '''
+          new = '''    real_acl = os.path.join(acl_root, "setfacl.txt")
+              if os.path.exists(real_acl):
+                  assert_setfacl_acl(real_acl, uid)
+                  if not can_read_as(real_acl, uid, gid):
+                      fail("setfacl ACL was not enforced after remount")
+              elif os.environ.get("INFILFS_REQUIRE_SETFACL") == "1":
+                  fail("real setfacl ACL fixture is missing after remount")
+          '''
+          if text.count(old) != 1:
+              raise SystemExit('verify setfacl block mismatch')
+          p.write_text(text.replace(old, new, 1))
+          PY
+
+          python3 -m py_compile tests/native-posix-acl-qualification.py
+          bash tests/root-volume-integration-policy.sh .
+
+          # GitHub Actions' token cannot modify workflow files. Revert those
+          # two CI edits here; they will be installed separately through the
+          # repository API after this source commit lands.
+          git restore -- .github/workflows/kernel-module.yml \
+                         .github/workflows/release-packages.yml
+
+      - name: Commit non-workflow implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'The First Infiltrator'
+          git config user.email 'infiltratr@yandex.com'
+          git add CMakeLists.txt \
+                  kernel/infiltratorfs_linux_meta.inc \
+                  kernel/infiltratorfs_rw.inc \
+                  kernel/infiltratorfs_rw_namespace.inc \
+                  packaging/build-linux-packages.sh \
+                  packaging/initramfs/infiltratorfs-hook \
+                  packaging/debian/preinst.in \
+                  packaging/debian/postinst.in \
+                  packaging/debian/prerm.in \
+                  tests/native-posix-acl-qualification.py \
+                  tests/root-volume-integration-policy.sh
+          git commit -m 'linux: make InfiltratorFS root-volume safe'
+          git push origin HEAD:main
