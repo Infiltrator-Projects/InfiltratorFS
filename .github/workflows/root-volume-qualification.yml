@@ -134,11 +134,20 @@ jobs:
           bash packaging/build-linux-packages.sh build dist
           deb="$(find dist -maxdepth 1 -type f -name 'infiltratorfs_*_amd64.deb' -print -quit)"
           test -n "$deb"
-          dpkg-deb --contents "$deb" | grep -q 'usr/share/initramfs-tools/hooks/infiltratorfs$'
+
+          # Do not pipe dpkg-deb/tar producers into grep -q under pipefail:
+          # grep exits as soon as it finds a match, which can SIGPIPE the
+          # producer and turn a successful package check into a false failure.
+          contents_file="$RUNNER_TEMP/infiltratorfs-root-deb-contents.txt"
+          control_dir="$RUNNER_TEMP/infiltratorfs-root-control"
+          rm -rf "$control_dir"
+          dpkg-deb --contents "$deb" > "$contents_file"
+          grep -q 'usr/share/initramfs-tools/hooks/infiltratorfs$' "$contents_file"
           dpkg-deb --field "$deb" Depends | grep -Eq '(^|, )initramfs-tools([ ,]|$)'
-          dpkg-deb --ctrl-tarfile "$deb" | tar -xOf - ./preinst | grep -Fq 'live root remains mounted'
-          dpkg-deb --ctrl-tarfile "$deb" | tar -xOf - ./postinst | grep -Fq 'root-volume upgrade staged safely'
-          dpkg-deb --ctrl-tarfile "$deb" | tar -xOf - ./prerm | grep -Fq 'refusing to remove the filesystem package while / is mounted as InfiltratorFS'
+          dpkg-deb -e "$deb" "$control_dir"
+          grep -Fq 'live root remains mounted' "$control_dir/preinst"
+          grep -Fq 'root-volume upgrade staged safely' "$control_dir/postinst"
+          grep -Fq 'refusing to remove the filesystem package while / is mounted as InfiltratorFS' "$control_dir/prerm"
 
       - name: Install package and prove initramfs root payload
         if: steps.headers.outputs.runtime_kdir != ''
