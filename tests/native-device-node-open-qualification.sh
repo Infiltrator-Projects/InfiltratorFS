@@ -18,9 +18,14 @@ cleanup() {
 trap cleanup EXIT
 
 [[ $EUID -eq 0 ]] || { echo 'native device-node qualification requires root' >&2; exit 2; }
-for cmd in findmnt losetup mknod mount mountpoint stat umount; do
+for cmd in cmake findmnt losetup mknod mount mountpoint stat umount; do
     command -v "$cmd" >/dev/null
- done
+done
+
+if [[ ! -x "$build/mkfs.infilfs" ]]; then
+    cmake -S "$root" -B "$build" -DCMAKE_BUILD_TYPE=Release
+    cmake --build "$build" --parallel --target mkfs.infilfs
+fi
 
 rm -rf "$work"
 mkdir -p "$work" "$mnt"
