@@ -1366,7 +1366,7 @@ finish:
  */
 static int infilfs_posix_create_object_native(
     struct infilfs_native_pending *pending, struct inode *parent,
-    u16 type, umode_t mode, u64 portable_flags,
+    u16 type, umode_t mode, u64 portable_flags, u64 initial_links,
     const u8 object_id[16], u64 *block_out)
 {
     struct infilfs_inode_info *parent_ii = INFILFS_I(parent);
@@ -1405,7 +1405,7 @@ static int infilfs_posix_create_object_native(
 
         header->payload_size = cpu_to_le32(sizeof(*file));
         infilfs_posix_fill_common_attributes(&file->attributes,
-                                              &file->posix, mode, 1);
+                                              &file->posix, mode, initial_links);
         file->attributes.portable_flags = cpu_to_le64(portable_flags);
         file->data_checksum_type = cpu_to_le32(INFILFS_CHECKSUM_SHA256);
         posix = &file->posix;
@@ -1420,7 +1420,7 @@ static int infilfs_posix_create_object_native(
             (le16_to_cpu(header->object_version) == INFILFS_OBJECT_VERSION_TREE ?
              sizeof(__le64) : 0u));
         infilfs_posix_fill_common_attributes(&dir->attributes,
-                                              &dir->posix, mode, 2);
+                                              &dir->posix, mode, initial_links);
         dir->attributes.portable_flags = cpu_to_le64(portable_flags);
         posix = &dir->posix;
     } else {
@@ -1480,6 +1480,7 @@ static int infilfs_posix_create_native_named_child(
         failure_stage = "create-object";
         ret = infilfs_posix_create_object_native(
             pending, dir, type, mode, portable_flags,
+            type == INFILFS_OBJECT_DIRECTORY ? 2u : 1u,
             object_id, &object_block);
     }
     if (!ret) {
@@ -1522,6 +1523,66 @@ static int infilfs_posix_create_native_named_child(
     memcpy(object_id_out, object_id, 16);
     *block_out = object_block;
     return 0;
+}
+
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
+static int infilfs_posix_tmpfile(struct mnt_idmap *idmap,
+                                 struct inode *dir,
+                                 struct file *file, umode_t mode)
+#else
+static int infilfs_posix_tmpfile(struct user_namespace *idmap,
+                                 struct inode *dir,
+                                 struct file *file, umode_t mode)
+#endif
+{
+    struct infilfs_native_pending *pending = NULL;
+    struct infilfs_ns_index_change change;
+    struct infilfs_quota_reservation quota = {0};
+    struct inode *inode;
+    u8 object_id[16];
+    u64 object_block = 0;
+    int ret;
+
+    (void)idmap;
+    ret = infilfs_quota_reserve_create(dir, 0, 1, &quota);
+    if (ret)
+        return ret;
+    ret = infilfs_ns_begin(dir->i_sb, &pending);
+    if (ret)
+        goto abort_quota;
+    ret = infilfs_rw_generate_id(dir->i_sb, object_id);
+    if (!ret)
+        ret = infilfs_posix_create_object_native(
+            pending, dir, INFILFS_OBJECT_FILE, mode, 0, 0,
+            object_id, &object_block);
+    if (!ret) {
+        memset(&change, 0, sizeof(change));
+        memcpy(change.object_id, object_id, sizeof(change.object_id));
+        change.object_block = object_block;
+        change.object_type = INFILFS_OBJECT_FILE;
+        change.action = INFILFS_NS_ADD;
+        ret = infilfs_ns_rebuild_index(pending, &change, 1);
+    }
+    ret = infilfs_ns_finish(pending, ret);
+    pending = NULL;
+    if (ret)
+        goto abort_quota;
+
+    inode = infilfs_get_inode(dir->i_sb, object_block,
+                              INFILFS_OBJECT_FILE, object_id);
+    if (IS_ERR(inode)) {
+        ret = PTR_ERR(inode);
+        goto abort_quota;
+    }
+    clear_nlink(inode);
+    d_tmpfile(file, inode);
+    infilfs_quota_reservation_finish(&quota, 0, 1);
+    return finish_open_simple(file, 0);
+
+abort_quota:
+    infilfs_quota_reservation_abort(&quota);
+    return ret;
 }
 
 static int infilfs_posix_create_native_child(
@@ -2163,6 +2224,7 @@ out:
 #define simple_statfs infilfs_statfs
 #define infilfs_rw_create infilfs_posix_acl_create, \
     .mknod = infilfs_posix_acl_mknod, \
+    .tmpfile = infilfs_posix_acl_tmpfile, \
     .get_inode_acl = infilfs_posix_acl_get, \
     .set_acl = infilfs_posix_acl_set, \
     .listxattr = infilfs_linux_listxattr

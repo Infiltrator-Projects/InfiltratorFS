@@ -188,6 +188,18 @@ struct infs_scrub_report {
     uint64_t snapshots_checked;
 };
 
+struct infs_compression_metrics {
+    uint64_t generation;
+    uint64_t files_scanned;
+    uint64_t snapshots_scanned;
+    uint64_t referenced_logical_bytes;
+    uint64_t compressed_referenced_logical_bytes;
+    uint64_t unique_compressed_logical_bytes;
+    uint64_t unique_compressed_physical_bytes;
+    uint64_t compression_saved_bytes;
+    uint64_t unique_compressed_streams;
+};
+
 struct infs_dir_item {
     char name[INFS_NAME_MAX + 1u];
     uint8_t object_id[16];
@@ -297,6 +309,14 @@ infs_status infs_set_portable_flags(struct infs_volume *vol, const char *path,
 
 infs_status infs_scrub(struct infs_volume *vol,
                        struct infs_scrub_report *report);
+/*
+ * Report physical compression savings without conflating compression with
+ * sparse holes or reflink/snapshot sharing. The live generation and all named
+ * retained snapshots are scanned; an identical compressed physical stream is
+ * counted once in the unique/saved fields even when referenced many times.
+ */
+infs_status infs_compression_metrics(
+    struct infs_volume *vol, struct infs_compression_metrics *metrics);
 /* Scrub one immutable named snapshot. The report records the generation that
  * was actually verified. */
 infs_status infs_snapshot_scrub(struct infs_volume *vol, const char *snapshot,

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.20)
-project(InfiltratorFS VERSION 0.18.43 LANGUAGES C)
-# Development qualification anchor: 0.18.43
+project(InfiltratorFS VERSION 0.18.44 LANGUAGES C)
+# Development qualification anchor: 0.18.44
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -178,6 +178,10 @@ add_executable(infilfs-compression-qualification tests/compression-qualification
 target_link_libraries(infilfs-compression-qualification PRIVATE infilfs_core)
 infilfs_enable_warnings(infilfs-compression-qualification)
 
+add_executable(infilfs-compression-metrics tests/compression-metrics.c)
+target_link_libraries(infilfs-compression-metrics PRIVATE infilfs_core)
+infilfs_enable_warnings(infilfs-compression-metrics)
+
 add_executable(infilfs-paged-metadata tests/paged-metadata.c)
 target_link_libraries(infilfs-paged-metadata PRIVATE infilfs_core)
 infilfs_enable_warnings(infilfs-paged-metadata)
@@ -226,6 +230,7 @@ add_test(NAME infilfs-reflink COMMAND infilfs-reflink)
 add_test(NAME infilfs-compression-codec COMMAND infilfs-compression-codec)
 add_test(NAME infilfs-compression-extents COMMAND infilfs-compression-extents)
 add_test(NAME infilfs-compression-qualification COMMAND infilfs-compression-qualification)
+add_test(NAME infilfs-compression-metrics COMMAND infilfs-compression-metrics)
 add_test(NAME infilfs-paged-metadata COMMAND infilfs-paged-metadata)
 add_test(NAME infilfs-namespace-links COMMAND infilfs-namespace-links)
 add_test(NAME infilfs-snapshots COMMAND infilfs-snapshots)
@@ -316,6 +321,7 @@ if(UNIX)
     add_executable(infilfs-scrub tools/infilfs-scrub.c)
     add_executable(infilfs-forensic tools/infilfs-forensic.c)
     add_executable(infilfs-optimize tools/infilfs-optimize.c)
+    add_executable(infilfs-compression tools/infilfs-compression.c)
     add_executable(infiltratorfs-resize tools/infiltratorfs-resize.c)
     add_executable(infiltratorfs-quota tools/infiltratorfs-quota.c)
     target_include_directories(infilfs-optimize PRIVATE kernel)
@@ -323,7 +329,7 @@ if(UNIX)
     target_include_directories(infiltratorfs-quota PRIVATE kernel)
     target_compile_definitions(mkfs.infilfs PRIVATE
         INFILFS_IMPLEMENTATION_VERSION=\"${PROJECT_VERSION}\")
-    foreach(tool_target IN ITEMS mkfs.infilfs infilfs-inspect infilfs-tool infilfs-scrub infilfs-forensic infilfs-optimize infiltratorfs-resize infiltratorfs-quota)
+    foreach(tool_target IN ITEMS mkfs.infilfs infilfs-inspect infilfs-tool infilfs-scrub infilfs-forensic infilfs-optimize infilfs-compression infiltratorfs-resize infiltratorfs-quota)
         target_link_libraries(${tool_target} PRIVATE infilfs_posix)
         target_compile_definitions(${tool_target} PRIVATE _GNU_SOURCE)
         infilfs_enable_warnings(${tool_target})
@@ -372,11 +378,14 @@ if(UNIX)
     add_test(NAME infilfs-root-volume-integration-policy
         COMMAND bash ${CMAKE_SOURCE_DIR}/tests/root-volume-integration-policy.sh
                      ${CMAKE_SOURCE_DIR})
+    add_test(NAME infilfs-root-readiness-policy
+        COMMAND bash ${CMAKE_SOURCE_DIR}/tests/root-readiness-policy.sh
+                     ${CMAKE_SOURCE_DIR})
     add_test(NAME infilfs-desktop-integration
         COMMAND bash ${CMAKE_SOURCE_DIR}/tests/desktop-integration.sh
                      ${CMAKE_BINARY_DIR})
 
-    install(TARGETS mkfs.infilfs infilfs-inspect infilfs-tool infilfs-scrub infilfs-forensic infilfs-optimize infiltratorfs-resize infiltratorfs-quota
+    install(TARGETS mkfs.infilfs infilfs-inspect infilfs-tool infilfs-scrub infilfs-forensic infilfs-optimize infilfs-compression infiltratorfs-resize infiltratorfs-quota
             RUNTIME DESTINATION bin)
     install(PROGRAMS tools/infiltratorfs-manager tools/mkfs.infiltratorfs
             DESTINATION bin)

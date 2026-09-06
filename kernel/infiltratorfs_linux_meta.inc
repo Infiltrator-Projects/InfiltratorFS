@@ -1215,6 +1215,41 @@ static int infilfs_posix_acl_create(
     return ret;
 }
 
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
+static int infilfs_posix_acl_tmpfile(
+    struct mnt_idmap *idmap, struct inode *dir,
+    struct file *file, umode_t mode)
+#else
+static int infilfs_posix_acl_tmpfile(
+    struct user_namespace *idmap, struct inode *dir,
+    struct file *file, umode_t mode)
+#endif
+{
+    struct posix_acl *default_acl = NULL;
+    struct posix_acl *access_acl = NULL;
+    struct inode *inode = NULL;
+    int ret;
+
+    ret = infilfs_posix_acl_prepare_create(
+        dir, &mode, S_IFREG, &default_acl, &access_acl);
+    if (!ret)
+        ret = infilfs_posix_tmpfile(idmap, dir, file, mode);
+    if (!ret) {
+        inode = file_inode(file);
+        if (!inode)
+            ret = -EIO;
+        else if (access_acl)
+            ret = infilfs_posix_acl_store(
+                idmap, NULL, inode, ACL_TYPE_ACCESS, access_acl);
+        if (!ret && inode)
+            set_cached_acl(inode, ACL_TYPE_ACCESS, access_acl);
+    }
+    posix_acl_release(access_acl);
+    posix_acl_release(default_acl);
+    return ret;
+}
+
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
 static struct dentry *infilfs_posix_acl_mkdir(
     struct mnt_idmap *idmap, struct inode *dir,

@@ -144,3 +144,14 @@ must not silently change the meaning of an existing IAC1 v1 stream.
 Pre-1.0 development may still replace Format 0.18 as a whole, but within a
 given accepted format a committed compressed stream must remain deterministic,
 recoverable and independently decodable.
+
+
+## Physical savings reporting
+
+`infilfs-compression <unmounted-image-or-device>` reports compression separately
+from sparse-hole and reflink/snapshot savings. It scans the live generation and
+all named retained snapshots, deduplicates identical compressed physical codec
+streams, and reports unique compressed logical bytes, unique compressed
+physical bytes, and the resulting physical bytes saved. Direct-device scans
+refuse mounted block devices so the portable reader never races the native
+kernel writer.

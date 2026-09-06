@@ -278,6 +278,7 @@ static int paged_extent_replace(struct infs_volume *vol,
 #include "volume/extent-replacement.inc"
 #include "volume/ownership-validation.inc"
 #include "volume/scrub.inc"
+#include "volume/compression-metrics.inc"
 #include "volume/metadata-hardening.inc"
 #include "volume/reflink.inc"
 #include "volume/inline-files.inc"

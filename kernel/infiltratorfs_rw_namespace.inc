@@ -1977,6 +1977,66 @@ static int infilfs_ns_symlink(struct user_namespace *idmap, struct inode *dir,
     return 0;
 }
 
+
+static int infilfs_ns_rename_exchange_same_dir(
+    struct inode *dir, struct dentry *old_dentry,
+    struct dentry *new_dentry)
+{
+    struct inode *source = d_inode(old_dentry);
+    struct inode *destination = d_inode(new_dentry);
+    struct infilfs_inode_info *dir_ii = INFILFS_I(dir);
+    struct infilfs_inode_info *source_ii = source ? INFILFS_I(source) : NULL;
+    struct infilfs_inode_info *destination_ii =
+        destination ? INFILFS_I(destination) : NULL;
+    struct infilfs_native_pending *pending;
+    struct infilfs_ns_index_change change;
+    u64 first_dir_block = 0;
+    u64 final_dir_block = 0;
+    u64 original_dir_block;
+    int ret;
+
+    if (!source || !destination || !source_ii || !destination_ii || !dir_ii)
+        return -ENOENT;
+    ret = infilfs_ns_validate_name(&old_dentry->d_name);
+    if (!ret)
+        ret = infilfs_ns_validate_name(&new_dentry->d_name);
+    if (ret)
+        return ret;
+    if (source == destination)
+        return 0;
+
+    ret = infilfs_ns_begin(dir->i_sb, &pending);
+    if (ret)
+        return ret;
+    original_dir_block = dir_ii->object_block;
+    ret = infilfs_ns_rebuild_directory(
+        pending, dir, &old_dentry->d_name, &new_dentry->d_name,
+        &old_dentry->d_name, destination_ii->object_id,
+        destination_ii->object_type, 0, &first_dir_block);
+    if (!ret) {
+        dir_ii->object_block = first_dir_block;
+        ret = infilfs_ns_rebuild_directory(
+            pending, dir, NULL, NULL,
+            &new_dentry->d_name, source_ii->object_id,
+            source_ii->object_type, 0, &final_dir_block);
+    }
+    dir_ii->object_block = original_dir_block;
+    if (!ret) {
+        memset(&change, 0, sizeof(change));
+        memcpy(change.object_id, dir_ii->object_id, sizeof(change.object_id));
+        change.object_block = final_dir_block;
+        change.object_type = INFILFS_OBJECT_DIRECTORY;
+        change.action = INFILFS_NS_REPOINT;
+        ret = infilfs_ns_rebuild_index(pending, &change, 1);
+    }
+    ret = infilfs_ns_finish(pending, ret);
+    if (!ret) {
+        dir_ii->object_block = final_dir_block;
+        infilfs_refresh_inode_blocks_after_commit(dir);
+    }
+    return ret;
+}
+
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
 static int infilfs_ns_rename(struct mnt_idmap *idmap,
                              struct inode *old_dir, struct dentry *old_dentry,
@@ -2014,8 +2074,20 @@ static int infilfs_ns_rename(struct user_namespace *idmap,
     (void)idmap;
     if (!source || !source_ii)
         return -ENOENT;
-    if (flags & ~(RENAME_NOREPLACE))
+    if (flags & ~(RENAME_NOREPLACE | RENAME_EXCHANGE | RENAME_WHITEOUT))
         return -EINVAL;
+    if (flags & RENAME_WHITEOUT)
+        return -EOPNOTSUPP;
+    if (flags & RENAME_EXCHANGE) {
+        if (flags != RENAME_EXCHANGE)
+            return -EINVAL;
+        if (!destination)
+            return -ENOENT;
+        if (old_dir != new_dir)
+            return -EOPNOTSUPP;
+        return infilfs_ns_rename_exchange_same_dir(
+            old_dir, old_dentry, new_dentry);
+    }
     if ((flags & RENAME_NOREPLACE) && destination)
         return -EEXIST;
     if (destination == source)

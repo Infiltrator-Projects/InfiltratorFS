@@ -71,3 +71,15 @@ Detailed step logs and performance telemetry remain in the corresponding GitHub 
 5. Release publication must never treat a skipped mounted qualification as equivalent to a mounted pass.
 6. Exact run IDs, commit hashes and historical metrics belong here, not in the README, ROADMAP or architecture documents.
 7. Workflow YAML is executable policy. If this ledger disagrees with the workflows, fix the disagreement rather than maintaining two competing descriptions.
+
+
+### Linux system-root release gate
+
+Every release-source commit must now pass the dedicated root-volume gate and the
+real UEFI root-boot gate in addition to ordinary build/conformance and native
+kernel qualification. The boot gate constructs an EFI + ext4 `/boot` +
+InfiltratorFS `/` VM, reaches systemd with InfiltratorFS as `/`, exercises
+metadata and dpkg workloads, installs a newer InfiltratorFS package while the
+root is live, rebuilds initramfs, reboots, forces power loss during writes,
+requires an offline CLEAN scrub, boots the same root again, verifies dpkg and
+metadata state, and requires a final CLEAN scrub.
