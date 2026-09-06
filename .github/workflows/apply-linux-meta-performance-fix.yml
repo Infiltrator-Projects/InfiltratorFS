@@ -1,0 +1,660 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Apply Linux metadata performance fix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-linux-meta-performance-fix.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Apply metadata/xattr performance repair
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          def replace_once(text, old, new, label):
+              n = text.count(old)
+              if n != 1:
+                  raise SystemExit(f'{label}: expected one match, found {n}')
+              return text.replace(old, new, 1)
+
+          internal = Path('kernel/infiltratorfs_internal.h')
+          s = internal.read_text()
+          if '#include <linux/list.h>\n' not in s:
+              s = replace_once(s, '#include <linux/kernel.h>\n', '#include <linux/kernel.h>\n#include <linux/list.h>\n', 'list include')
+          marker = '''struct infilfs_quota_rule;\nstruct infilfs_project_root;\n\nstruct infilfs_sb_info {\n'''
+          cache_defs = '''struct infilfs_quota_rule;\nstruct infilfs_project_root;\n\n#define INFILFS_LINUX_META_CACHE_BUCKETS 4096u\n\nstruct infilfs_linux_meta_cache_entry {\n    struct hlist_node node;\n    u8 target_object_id[16];\n    u8 sidecar_object_id[16];\n    u64 sidecar_object_block;\n};\n\nstruct infilfs_sb_info {\n'''
+          s = replace_once(s, marker, cache_defs, 'linux metadata cache definition')
+          s = replace_once(
+              s,
+              '    struct mutex linux_meta_lock;\n    struct mutex resize_lock;\n',
+              '    struct mutex linux_meta_lock;\n'
+              '    struct hlist_head *linux_meta_cache;\n'
+              '    bool linux_meta_cache_valid;\n'
+              '    bool linux_meta_dir_checked;\n'
+              '    bool linux_meta_dir_cached;\n'
+              '    u8 linux_meta_dir_object_id[16];\n'
+              '    u64 linux_meta_dir_object_block;\n'
+              '    struct mutex resize_lock;\n',
+              'sbi linux metadata cache state')
+          internal.write_text(s)
+
+          meta = Path('kernel/infiltratorfs_linux_meta.inc')
+          s = meta.read_text()
+          init_marker = '''static void infilfs_linux_meta_init(struct infilfs_linux_meta_header *header)\n{\n    memset(header, 0, sizeof(*header));\n    memcpy(header->magic, INFILFS_LINUX_META_MAGIC, sizeof(header->magic));\n    header->version = cpu_to_le32(INFILFS_LINUX_META_VERSION);\n}\n'''
+          helpers = init_marker + r'''
+
+/*
+ * Linux xattrs live in one hidden sidecar file per portable object.  Looking
+ * up those UUID-named files by rescanning the sidecar directory made a burst
+ * of N first-time xattrs O(N^2).  Keep a bounded per-mount hash of the mapping
+ * from portable object id to current sidecar object/block.  The cache is built
+ * once on an existing volume and maintained transactionally for the rest of
+ * the mount.  It is only a lookup accelerator: the normal object validators
+ * still authenticate every inode instantiated from a cached entry.
+ */
+static struct infilfs_linux_meta_cache_entry *
+infilfs_linux_meta_cache_lookup(struct infilfs_sb_info *sbi,
+                                const u8 target_object_id[16])
+{
+    struct infilfs_linux_meta_cache_entry *entry;
+    u32 bucket;
+
+    if (!sbi || !sbi->linux_meta_cache)
+        return NULL;
+    bucket = infilfs_native_id_hash(target_object_id) &
+        (INFILFS_LINUX_META_CACHE_BUCKETS - 1u);
+    hlist_for_each_entry(entry, &sbi->linux_meta_cache[bucket], node) {
+        if (memcmp(entry->target_object_id, target_object_id, 16) == 0)
+            return entry;
+    }
+    return NULL;
+}
+
+static int infilfs_linux_meta_cache_prepare(struct infilfs_sb_info *sbi)
+{
+    u32 i;
+
+    if (sbi->linux_meta_cache)
+        return 0;
+    sbi->linux_meta_cache = kvcalloc(
+        INFILFS_LINUX_META_CACHE_BUCKETS,
+        sizeof(*sbi->linux_meta_cache), GFP_NOFS);
+    if (!sbi->linux_meta_cache)
+        return -ENOMEM;
+    for (i = 0; i < INFILFS_LINUX_META_CACHE_BUCKETS; ++i)
+        INIT_HLIST_HEAD(&sbi->linux_meta_cache[i]);
+    return 0;
+}
+
+static void infilfs_linux_meta_cache_reset(struct infilfs_sb_info *sbi)
+{
+    u32 i;
+
+    if (!sbi || !sbi->linux_meta_cache)
+        return;
+    for (i = 0; i < INFILFS_LINUX_META_CACHE_BUCKETS; ++i) {
+        struct infilfs_linux_meta_cache_entry *entry;
+        struct hlist_node *tmp;
+
+        hlist_for_each_entry_safe(entry, tmp,
+                                  &sbi->linux_meta_cache[i], node) {
+            hlist_del(&entry->node);
+            kfree(entry);
+        }
+        INIT_HLIST_HEAD(&sbi->linux_meta_cache[i]);
+    }
+    sbi->linux_meta_cache_valid = false;
+}
+
+static void infilfs_linux_meta_cache_destroy(struct super_block *sb)
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
+
+    if (!sbi)
+        return;
+    infilfs_linux_meta_cache_reset(sbi);
+    kvfree(sbi->linux_meta_cache);
+    sbi->linux_meta_cache = NULL;
+    sbi->linux_meta_dir_checked = false;
+    sbi->linux_meta_dir_cached = false;
+}
+
+static int infilfs_linux_meta_cache_insert(
+    struct infilfs_sb_info *sbi, const u8 target_object_id[16],
+    const u8 sidecar_object_id[16], u64 sidecar_object_block)
+{
+    struct infilfs_linux_meta_cache_entry *entry;
+    u32 bucket;
+    int ret;
+
+    ret = infilfs_linux_meta_cache_prepare(sbi);
+    if (ret)
+        return ret;
+    entry = infilfs_linux_meta_cache_lookup(sbi, target_object_id);
+    if (entry) {
+        memcpy(entry->sidecar_object_id, sidecar_object_id, 16);
+        entry->sidecar_object_block = sidecar_object_block;
+        return 0;
+    }
+    entry = kzalloc(sizeof(*entry), GFP_NOFS);
+    if (!entry)
+        return -ENOMEM;
+    memcpy(entry->target_object_id, target_object_id, 16);
+    memcpy(entry->sidecar_object_id, sidecar_object_id, 16);
+    entry->sidecar_object_block = sidecar_object_block;
+    bucket = infilfs_native_id_hash(target_object_id) &
+        (INFILFS_LINUX_META_CACHE_BUCKETS - 1u);
+    hlist_add_head(&entry->node, &sbi->linux_meta_cache[bucket]);
+    return 0;
+}
+
+static void infilfs_linux_meta_cache_remove(
+    struct infilfs_sb_info *sbi, const u8 target_object_id[16])
+{
+    struct infilfs_linux_meta_cache_entry *entry =
+        infilfs_linux_meta_cache_lookup(sbi, target_object_id);
+
+    if (!entry)
+        return;
+    hlist_del(&entry->node);
+    kfree(entry);
+}
+
+static bool infilfs_linux_meta_parse_uuid_name(
+    const u8 *name, size_t length, u8 object_id[16])
+{
+    static const u8 hyphen_at[4] = {8, 13, 18, 23};
+    size_t i;
+    unsigned int nibble = 0;
+    unsigned int h = 0;
+
+    if (!name || length != 36)
+        return false;
+    memset(object_id, 0, 16);
+    for (i = 0; i < length; ++i) {
+        int value;
+
+        if (h < ARRAY_SIZE(hyphen_at) && i == hyphen_at[h]) {
+            if (name[i] != '-')
+                return false;
+            ++h;
+            continue;
+        }
+        value = hex_to_bin(name[i]);
+        if (value < 0 || nibble >= 32)
+            return false;
+        if ((nibble & 1u) == 0)
+            object_id[nibble >> 1] = (u8)value << 4;
+        else
+            object_id[nibble >> 1] |= (u8)value;
+        ++nibble;
+    }
+    return nibble == 32 && h == ARRAY_SIZE(hyphen_at);
+}
+
+struct infilfs_linux_meta_cache_build {
+    struct super_block *sb;
+    struct infilfs_sb_info *sbi;
+};
+
+static int infilfs_linux_meta_cache_build_visitor(
+    const struct infilfs_dirent_disk *entry, const u8 *name, void *arg)
+{
+    struct infilfs_linux_meta_cache_build *build = arg;
+    u8 target_object_id[16];
+    u64 block;
+    u16 type;
+    int ret;
+
+    if (le16_to_cpu(entry->object_type) != INFILFS_OBJECT_FILE ||
+        !infilfs_linux_meta_parse_uuid_name(
+            name, le16_to_cpu(entry->name_length), target_object_id))
+        return 0;
+    ret = infilfs_index_lookup(
+        build->sb, entry->object_id, &block, &type);
+    if (ret)
+        return ret;
+    if (type != INFILFS_OBJECT_FILE)
+        return -EFSCORRUPTED;
+    return infilfs_linux_meta_cache_insert(
+        build->sbi, target_object_id, entry->object_id, block);
+}
+
+static int infilfs_linux_meta_cache_build(struct super_block *sb,
+                                          struct inode *dir)
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
+    struct infilfs_linux_meta_cache_build build = {
+        .sb = sb,
+        .sbi = sbi,
+    };
+    int ret;
+
+    if (sbi->linux_meta_cache_valid)
+        return 0;
+    ret = infilfs_linux_meta_cache_prepare(sbi);
+    if (ret)
+        return ret;
+    infilfs_linux_meta_cache_reset(sbi);
+    mutex_lock(&sbi->write_lock);
+    ret = infilfs_for_each_dirent(
+        dir, infilfs_linux_meta_cache_build_visitor, &build);
+    mutex_unlock(&sbi->write_lock);
+    if (ret < 0) {
+        infilfs_linux_meta_cache_reset(sbi);
+        return ret;
+    }
+    sbi->linux_meta_cache_valid = true;
+    return 0;
+}
+'''
+          s = replace_once(s, init_marker, helpers, 'linux metadata cache helpers')
+
+          get_dir = r'''static int infilfs_linux_meta_get_dir(struct super_block *sb, bool create,
+                                      struct inode **dir_out)
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
+    struct inode *root;
+    struct inode *dir = NULL;
+    struct qstr name = {
+        .name = INFILFS_LINUX_META_DIRECTORY,
+        .len = sizeof(INFILFS_LINUX_META_DIRECTORY) - 1u,
+    };
+    u8 id[16];
+    u64 block;
+    int ret;
+
+    *dir_out = NULL;
+    if (!sbi || !sb->s_root)
+        return -ENOENT;
+    if (sbi->linux_meta_dir_checked && !sbi->linux_meta_dir_cached && !create)
+        return -ENOENT;
+    if (sbi->linux_meta_dir_cached) {
+        dir = infilfs_get_inode(
+            sb, sbi->linux_meta_dir_object_block,
+            INFILFS_OBJECT_DIRECTORY, sbi->linux_meta_dir_object_id);
+        if (!IS_ERR(dir)) {
+            ret = infilfs_linux_meta_validate_internal(
+                dir, INFILFS_OBJECT_DIRECTORY);
+            if (!ret) {
+                *dir_out = dir;
+                return 0;
+            }
+            iput(dir);
+            return ret;
+        }
+        sbi->linux_meta_dir_cached = false;
+    }
+
+    root = d_inode(sb->s_root);
+    ret = infilfs_linux_meta_find_child(
+        root, INFILFS_LINUX_META_DIRECTORY,
+        sizeof(INFILFS_LINUX_META_DIRECTORY) - 1u,
+        INFILFS_OBJECT_DIRECTORY, &dir);
+    if (ret == -ENOENT && create) {
+        if (sb_rdonly(sb))
+            return -EROFS;
+        ret = infilfs_posix_create_native_named_child(
+            root, &name, 0700, INFILFS_OBJECT_DIRECTORY,
+            INFILFS_ATTR_HIDDEN | INFILFS_ATTR_SYSTEM, id, &block);
+        if (!ret) {
+            inc_nlink(root);
+            dir = infilfs_get_inode(sb, block, INFILFS_OBJECT_DIRECTORY, id);
+            if (IS_ERR(dir))
+                return PTR_ERR(dir);
+        } else if (ret == -EEXIST) {
+            ret = infilfs_linux_meta_find_child(
+                root, INFILFS_LINUX_META_DIRECTORY,
+                sizeof(INFILFS_LINUX_META_DIRECTORY) - 1u,
+                INFILFS_OBJECT_DIRECTORY, &dir);
+        }
+    }
+    if (ret) {
+        if (ret == -ENOENT) {
+            sbi->linux_meta_dir_checked = true;
+            sbi->linux_meta_dir_cached = false;
+        }
+        return ret;
+    }
+    ret = infilfs_linux_meta_validate_internal(
+        dir, INFILFS_OBJECT_DIRECTORY);
+    if (ret) {
+        iput(dir);
+        return ret;
+    }
+    memcpy(sbi->linux_meta_dir_object_id, INFILFS_I(dir)->object_id, 16);
+    sbi->linux_meta_dir_object_block = INFILFS_I(dir)->object_block;
+    sbi->linux_meta_dir_checked = true;
+    sbi->linux_meta_dir_cached = true;
+    *dir_out = dir;
+    return 0;
+}
+
+'''
+          a = s.index('static int infilfs_linux_meta_get_dir(')
+          b = s.index('static bool infilfs_linux_meta_directory_is_internal', a)
+          s = s[:a] + get_dir + s[b:]
+
+          get_file = r'''static int infilfs_linux_meta_get_file(
+    struct super_block *sb, const u8 object_id[16], bool create,
+    struct inode **dir_out, struct inode **file_out, char name_out[37])
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
+    struct infilfs_linux_meta_cache_entry *cached;
+    struct inode *dir = NULL;
+    struct inode *file = NULL;
+    struct qstr name;
+    u8 id[16];
+    u64 block;
+    int ret;
+
+    *dir_out = NULL;
+    *file_out = NULL;
+    if (!sbi)
+        return -EINVAL;
+    infilfs_linux_meta_uuid(object_id, name_out);
+    ret = infilfs_linux_meta_get_dir(sb, create, &dir);
+    if (ret == -ENOENT && !create) {
+        ret = infilfs_linux_meta_cache_prepare(sbi);
+        if (!ret)
+            sbi->linux_meta_cache_valid = true;
+        return ret ? ret : -ENOENT;
+    }
+    if (ret)
+        return ret;
+
+    ret = infilfs_linux_meta_cache_build(sb, dir);
+    if (ret)
+        goto out;
+    cached = infilfs_linux_meta_cache_lookup(sbi, object_id);
+    if (cached) {
+        file = infilfs_get_inode(
+            sb, cached->sidecar_object_block, INFILFS_OBJECT_FILE,
+            cached->sidecar_object_id);
+        if (IS_ERR(file)) {
+            ret = PTR_ERR(file);
+            file = NULL;
+            goto out;
+        }
+        ret = infilfs_linux_meta_validate_internal(
+            file, INFILFS_OBJECT_FILE);
+        if (ret)
+            goto out;
+        *dir_out = dir;
+        *file_out = file;
+        return 0;
+    }
+    if (!create) {
+        ret = -ENOENT;
+        goto out;
+    }
+
+    name.name = name_out;
+    name.len = 36;
+    name.hash = 0;
+    ret = infilfs_posix_create_native_named_child(
+        dir, &name, 0600, INFILFS_OBJECT_FILE,
+        INFILFS_ATTR_HIDDEN | INFILFS_ATTR_SYSTEM, id, &block);
+    if (ret == -EEXIST) {
+        /* A stale cache can only arise after an aborted compound operation. */
+        sbi->linux_meta_cache_valid = false;
+        ret = infilfs_linux_meta_cache_build(sb, dir);
+        if (ret)
+            goto out;
+        cached = infilfs_linux_meta_cache_lookup(sbi, object_id);
+        if (!cached) {
+            ret = -EFSCORRUPTED;
+            goto out;
+        }
+        file = infilfs_get_inode(
+            sb, cached->sidecar_object_block, INFILFS_OBJECT_FILE,
+            cached->sidecar_object_id);
+        if (IS_ERR(file)) {
+            ret = PTR_ERR(file);
+            file = NULL;
+            goto out;
+        }
+    } else if (!ret) {
+        file = infilfs_get_inode(sb, block, INFILFS_OBJECT_FILE, id);
+        if (IS_ERR(file)) {
+            ret = PTR_ERR(file);
+            file = NULL;
+            goto out;
+        }
+        ret = infilfs_linux_meta_cache_insert(
+            sbi, object_id, id, block);
+        if (ret)
+            goto out;
+    }
+    if (ret)
+        goto out;
+    ret = infilfs_linux_meta_validate_internal(file, INFILFS_OBJECT_FILE);
+    if (ret)
+        goto out;
+    sbi->linux_meta_dir_object_block = INFILFS_I(dir)->object_block;
+    sbi->linux_meta_dir_checked = true;
+    sbi->linux_meta_dir_cached = true;
+    *dir_out = dir;
+    *file_out = file;
+    return 0;
+out:
+    if (file)
+        iput(file);
+    if (dir)
+        iput(dir);
+    return ret;
+}
+
+'''
+          a = s.index('static int infilfs_linux_meta_get_file(')
+          b = s.index('static int infilfs_linux_meta_validate_blob', a)
+          s = s[:a] + get_file + s[b:]
+
+          remove_locked = r'''static int infilfs_linux_meta_remove_object_locked(struct super_block *sb,
+                                                   const u8 object_id[16])
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
+    struct inode *dir = NULL;
+    struct inode *file = NULL;
+    char name[37];
+    int ret;
+
+    ret = infilfs_linux_meta_get_file(sb, object_id, false,
+                                      &dir, &file, name);
+    if (ret == -ENOENT)
+        return 0;
+    if (ret)
+        return ret;
+    ret = infilfs_linux_meta_delete_file(dir, file, name);
+    if (!ret) {
+        infilfs_linux_meta_cache_remove(sbi, object_id);
+        sbi->linux_meta_dir_object_block = INFILFS_I(dir)->object_block;
+    }
+    iput(file);
+    iput(dir);
+    return ret;
+}
+
+'''
+          a = s.index('static int infilfs_linux_meta_remove_object_locked(')
+          b = s.index('static int infilfs_linux_meta_remove_object(', a)
+          s = s[:a] + remove_locked + s[b:]
+
+          store = r'''static int infilfs_linux_meta_store(struct super_block *sb,
+                                    const u8 object_id[16],
+                                    const u8 *blob, size_t size)
+{
+    const struct infilfs_linux_meta_header *header;
+    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
+    struct inode *dir = NULL;
+    struct inode *file = NULL;
+    struct infilfs_inode_info *ii;
+    struct kvec vec;
+    struct iov_iter iter;
+    char name[37];
+    loff_t position = 0;
+    ssize_t written;
+    bool empty;
+    int ret;
+
+    ret = infilfs_linux_meta_validate_blob(blob, size);
+    if (ret)
+        return ret;
+    header = (const struct infilfs_linux_meta_header *)blob;
+    empty = le32_to_cpu(header->special_mode) == 0 &&
+        le32_to_cpu(header->xattr_bytes) == 0;
+    if (empty)
+        return infilfs_linux_meta_remove_object_locked(sb, object_id);
+
+    ret = infilfs_linux_meta_get_file(sb, object_id, true,
+                                      &dir, &file, name);
+    if (ret)
+        return ret;
+
+    /*
+     * Sidecar blobs are normally tens or hundreds of bytes.  Keep them in the
+     * already-optimized native inline-file path instead of constructing an
+     * extent and checksum object for every setxattr(2).  Existing content is
+     * truncated only when necessary; a newly-created sidecar is already empty.
+     */
+    if (i_size_read(file) != 0) {
+        ret = infilfs_native_truncate(file, 0);
+        if (ret)
+            goto out;
+    }
+    vec.iov_base = (void *)blob;
+    vec.iov_len = size;
+    iov_iter_kvec(&iter, ITER_SOURCE, &vec, 1, size);
+    if (size <= INFILFS_INLINE_DATA_MAX)
+        written = infilfs_native_inline_write_iter(
+            file, &position, &iter, size);
+    else
+        written = infilfs_native_extent_write_iter(
+            file, &position, &iter, size);
+    if (written != size) {
+        ret = written < 0 ? (int)written : -EIO;
+        goto out;
+    }
+
+    ii = INFILFS_I(file);
+    ret = ii ? infilfs_linux_meta_cache_insert(
+        sbi, object_id, ii->object_id, ii->object_block) : -EIO;
+out:
+    iput(file);
+    iput(dir);
+    return ret;
+}
+
+'''
+          a = s.index('static int infilfs_linux_meta_store(')
+          b = s.index('static int infilfs_linux_meta_find_xattr', a)
+          s = s[:a] + store + s[b:]
+
+          old_delete_flush = '''    ret = infilfs_native_pending_flush_sb(dir->i_sb);\n    if (ret)\n        return ret;\n    ret = infilfs_ns_begin(dir->i_sb, &pending);\n'''
+          s = replace_once(
+              s, old_delete_flush,
+              '    ret = infilfs_ns_begin(dir->i_sb, &pending);\n',
+              'sidecar delete forced publication')
+          if 'infilfs_native_pending_flush_sb' in s:
+              raise SystemExit('linux metadata path still contains forced publication')
+          meta.write_text(s)
+
+          core = Path('kernel/infiltratorfs_core.c')
+          s = core.read_text()
+          s = replace_once(
+              s,
+              '    infilfs_quota_mount_destroy(sb);\n    infilfs_rw_mount_destroy(sb);\n    kfree(sb->s_fs_info);\n',
+              '    infilfs_quota_mount_destroy(sb);\n'
+              '    infilfs_rw_mount_destroy(sb);\n'
+              '    infilfs_linux_meta_cache_destroy(sb);\n'
+              '    kfree(sb->s_fs_info);\n',
+              'normal metadata cache destroy')
+          s = replace_once(
+              s,
+              '    infilfs_quota_mount_destroy(sb);\n    infilfs_rw_mount_destroy(sb);\n    kfree(sbi);\n',
+              '    infilfs_quota_mount_destroy(sb);\n'
+              '    infilfs_rw_mount_destroy(sb);\n'
+              '    infilfs_linux_meta_cache_destroy(sb);\n'
+              '    kfree(sbi);\n',
+              'failed mount metadata cache destroy')
+          core.write_text(s)
+
+          policy = Path('tests/native-small-file-scaling-policy.sh')
+          s = policy.read_text()
+          addition = r'''
+
+# Linux-only sidecar metadata must not perform a linear directory scan or a
+# checkpoint publication for every xattr.  The UUID sidecar map is built once,
+# then maintained in a per-mount hash; normal small blobs use the inline writer.
+meta="$root/kernel/infiltratorfs_linux_meta.inc"
+internal="$root/kernel/infiltratorfs_internal.h"
+grep -Fq 'INFILFS_LINUX_META_CACHE_BUCKETS' "$internal"
+grep -Fq 'linux_meta_cache_valid' "$internal"
+grep -Fq 'infilfs_linux_meta_cache_build' "$meta"
+grep -Fq 'infilfs_linux_meta_cache_lookup' "$meta"
+grep -Fq 'infilfs_native_inline_write_iter' "$meta"
+! grep -Fq 'infilfs_native_pending_flush_sb' "$meta"
+'''
+          if 'Linux-only sidecar metadata must not perform' not in s:
+              s += addition
+          policy.write_text(s)
+
+          cmake = Path('CMakeLists.txt')
+          s = cmake.read_text()
+          s = replace_once(s, 'project(InfiltratorFS VERSION 0.18.44 LANGUAGES C)',
+                           'project(InfiltratorFS VERSION 0.18.45 LANGUAGES C)',
+                           'CMake version')
+          s = replace_once(s, '# Development qualification anchor: 0.18.44',
+                           '# Development qualification anchor: 0.18.45',
+                           'CMake development anchor')
+          cmake.write_text(s)
+
+          readme = Path('README.md')
+          s = readme.read_text()
+          s = replace_once(s, '**Current source version:** 0.18.44 (Format 0.18)<br>',
+                           '**Current source version:** 0.18.45 (Format 0.18)<br>',
+                           'README hidden current version')
+          s = replace_once(s, '**Current source:** 0.18.44  ',
+                           '**Current source:** 0.18.45  ',
+                           'README visible current version')
+          readme.write_text(s)
+          PY
+
+          git diff --check
+          bash tests/native-small-file-scaling-policy.sh .
+
+      - name: Build patched kernel module
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential linux-headers-generic
+          KDIR="$(find /usr/src -maxdepth 1 -type d -name 'linux-headers-*-generic' -print | sort -V | tail -n1)"
+          test -f "$KDIR/Makefile"
+          make -C kernel clean KDIR="$KDIR"
+          make -C kernel KDIR="$KDIR"
+          test -s kernel/infiltratorfs.ko
+
+      - name: Commit repair
+        shell: bash
+        run: |
+          git config user.name 'InfiltratorFS CI Repair'
+          git config user.email 'actions@users.noreply.github.com'
+          git add kernel/infiltratorfs_internal.h kernel/infiltratorfs_linux_meta.inc kernel/infiltratorfs_core.c tests/native-small-file-scaling-policy.sh CMakeLists.txt README.md
+          git diff --cached --check
+          git commit -m 'Optimize native Linux metadata performance'
+          git push origin HEAD:main
