@@ -18,7 +18,7 @@ cleanup() {
 trap cleanup EXIT
 
 [[ $EUID -eq 0 ]] || { echo 'native device-node qualification requires root' >&2; exit 2; }
-for cmd in cmake findmnt losetup mknod mount mountpoint stat umount; do
+for cmd in cmake findmnt losetup mknod mount mountpoint python3 stat umount; do
     command -v "$cmd" >/dev/null
 done
 
@@ -40,14 +40,35 @@ node="$mnt/test-dev-null"
 mknod "$node" c 1 3
 stat -c 'Created node: type=%F mode=%f rdev-major=%t rdev-minor=%T inode=%i' "$node"
 [[ -c "$node" ]]
-printf 'device-write-probe\n' >"$node"
+NODE="$node" python3 - <<'PY'
+import os
+p = os.environ['NODE']
+fd = os.open(p, os.O_WRONLY)
+try:
+    os.write(fd, b'device-open-no-trunc-probe\n')
+finally:
+    os.close(fd)
+print('Character device O_WRONLY without O_TRUNC: PASS')
+PY
+printf 'device-write-trunc-probe\n' >"$node"
 
+echo 'Character device shell O_TRUNC open: PASS'
 umount "$mnt"
 mount -t infiltratorfs -o rw,dev,exec "$loop" "$mnt"
 node="$mnt/test-dev-null"
 stat -c 'Remounted node: type=%F mode=%f rdev-major=%t rdev-minor=%T inode=%i' "$node"
 [[ -c "$node" ]]
-printf 'device-remount-probe\n' >"$node"
+NODE="$node" python3 - <<'PY'
+import os
+p = os.environ['NODE']
+fd = os.open(p, os.O_WRONLY)
+try:
+    os.write(fd, b'device-remount-no-trunc-probe\n')
+finally:
+    os.close(fd)
+print('Remounted character device O_WRONLY without O_TRUNC: PASS')
+PY
+printf 'device-remount-trunc-probe\n' >"$node"
 rm -f "$node"
 sync
 
