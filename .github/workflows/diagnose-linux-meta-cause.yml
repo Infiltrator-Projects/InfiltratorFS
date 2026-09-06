@@ -15,9 +15,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: [baseline, flush, extent-no-flush, no-ctime]
+        variant:
+          - optimized
+          - dir-barrier
+          - precreate-64
+          - precreate-256
+          - flush-before-create
+          - flush-after-store
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
         with:
@@ -25,7 +31,10 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends acl attr build-essential cmake kmod libcap2-bin linux-headers-$(uname -r) rsync util-linux
+          sudo apt-get install -y --no-install-recommends \
+            acl attr build-essential cmake kmod libcap2-bin \
+            linux-headers-$(uname -r) rsync util-linux
+
       - name: Apply diagnostic variant
         env:
           VARIANT: ${{ matrix.variant }}
@@ -33,40 +42,172 @@ jobs:
           python3 - <<'PY'
           import os
           from pathlib import Path
-          p=Path('kernel/infiltratorfs_linux_meta.inc')
-          s=p.read_text()
-          v=os.environ['VARIANT']
-          if v == 'flush':
-              anchor='''out:\n    iput(file);\n    iput(dir);\n    return ret;\n}\n\nstatic int infilfs_linux_meta_find_xattr'''
-              repl='''out:\n    if (!ret)\n        ret = infilfs_native_pending_flush_sb(sb);\n    iput(file);\n    iput(dir);\n    return ret;\n}\n\nstatic int infilfs_linux_meta_find_xattr'''
-              if s.count(anchor) != 1: raise SystemExit('store out anchor changed')
-              s=s.replace(anchor,repl,1)
-          elif v == 'extent-no-flush':
-              anchor='''if (size <= INFILFS_INLINE_DATA_MAX)\n        written = infilfs_native_inline_write_iter(file, &position, &iter, size);\n    else'''
-              repl='''if (false && size <= INFILFS_INLINE_DATA_MAX)\n        written = infilfs_native_inline_write_iter(file, &position, &iter, size);\n    else'''
-              if s.count(anchor) != 1: raise SystemExit('inline anchor changed')
-              s=s.replace(anchor,repl,1)
-          elif v == 'no-ctime':
-              anchor='''    if (!ret) {\n        struct iattr attr;'''
-              repl='''    if (false && !ret) {\n        struct iattr attr;'''
-              if s.count(anchor) != 1: raise SystemExit('ctime anchor changed')
-              s=s.replace(anchor,repl,1)
-          elif v != 'baseline':
+
+          p = Path('kernel/infiltratorfs_linux_meta.inc')
+          s = p.read_text()
+          v = os.environ['VARIANT']
+
+          # The private quota database must not manufacture a second visible
+          # inode-ctime rewrite; that repair already proved quota/ACL remount
+          # and offline scrub clean in the preceding qualification.
+          old = '''    if (!ret) {\n        struct iattr attr;\n        int ctime_ret;\n'''
+          new = '''    if (!ret &&\n        !(handler && handler->prefix &&\n          strcmp(handler->prefix, XATTR_TRUSTED_PREFIX) == 0 &&\n          strcmp(name, "infiltratorfs.quota-db") == 0)) {\n        struct iattr attr;\n        int ctime_ret;\n'''
+          if s.count(old) != 1:
+              raise SystemExit(f'ctime anchor count={s.count(old)}')
+          s = s.replace(old, new, 1)
+
+          # Every non-optimized candidate restores the one-time root->hidden
+          # metadata-directory publication boundary from the known 0.18.44
+          # durable implementation.  Ordinary sidecar updates remain batched.
+          if v != 'optimized':
+              old = '''    if (ret == -ENOENT && create) {\n        if (sb_rdonly(sb))\n            return -EROFS;\n        ret = infilfs_posix_create_native_named_child(\n'''
+              new = '''    if (ret == -ENOENT && create) {\n        if (sb_rdonly(sb))\n            return -EROFS;\n        ret = infilfs_native_pending_flush_sb(sb);\n        if (ret)\n            return ret;\n        ret = infilfs_posix_create_native_named_child(\n'''
+              if s.count(old) != 1:
+                  raise SystemExit(f'dir barrier anchor count={s.count(old)}')
+              s = s.replace(old, new, 1)
+
+          create_anchor = '''    name.name = name_out;\n    name.len = 36;\n    name.hash = 0;\n    ret = infilfs_posix_create_native_named_child(\n'''
+
+          if v == 'flush-before-create':
+              repl = '''    name.name = name_out;\n    name.len = 36;\n    name.hash = 0;\n    ret = infilfs_native_pending_flush_sb(sb);\n    if (ret)\n        goto out;\n    ret = infilfs_posix_create_native_named_child(\n'''
+              if s.count(create_anchor) != 1:
+                  raise SystemExit(f'create anchor count={s.count(create_anchor)}')
+              s = s.replace(create_anchor, repl, 1)
+          elif v in ('precreate-64', 'precreate-256'):
+              batch = int(v.rsplit('-', 1)[1])
+              marker = '''static void infilfs_linux_meta_init(struct infilfs_linux_meta_header *header)\n{\n'''
+              diag = f'''static u32 infilfs_linux_meta_diag_creates;\n\nstatic void infilfs_linux_meta_init(struct infilfs_linux_meta_header *header)\n{{\n'''
+              if s.count(marker) != 1:
+                  raise SystemExit('init marker changed')
+              s = s.replace(marker, diag, 1)
+              repl = f'''    name.name = name_out;\n    name.len = 36;\n    name.hash = 0;\n    if (++infilfs_linux_meta_diag_creates >= {batch}u) {{\n        ret = infilfs_native_pending_flush_sb(sb);\n        if (ret)\n            goto out;\n        infilfs_linux_meta_diag_creates = 0;\n    }}\n    ret = infilfs_posix_create_native_named_child(\n'''
+              if s.count(create_anchor) != 1:
+                  raise SystemExit(f'create anchor count={s.count(create_anchor)}')
+              s = s.replace(create_anchor, repl, 1)
+          elif v == 'flush-after-store':
+              old = '''    ii = INFILFS_I(file);\n    ret = ii ? infilfs_linux_meta_cache_insert(\n        sbi, object_id, ii->object_id, ii->object_block) : -EIO;\nout:\n'''
+              new = '''    ii = INFILFS_I(file);\n    ret = ii ? infilfs_linux_meta_cache_insert(\n        sbi, object_id, ii->object_id, ii->object_block) : -EIO;\n    if (!ret)\n        ret = infilfs_native_pending_flush_sb(sb);\nout:\n'''
+              if s.count(old) != 1:
+                  raise SystemExit(f'store anchor count={s.count(old)}')
+              s = s.replace(old, new, 1)
+          elif v not in ('optimized', 'dir-barrier'):
               raise SystemExit(v)
+
           p.write_text(s)
-          print('diagnostic variant:',v)
+          print('diagnostic variant:', v)
           PY
+          git diff --check
+          git diff -- kernel/infiltratorfs_linux_meta.inc
+
       - name: Build
         run: |
           set -euo pipefail
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --parallel --target mkfs.infilfs infilfs-scrub infilfs-tool infiltratorfs-quota
+          cmake --build build --parallel --target \
+            mkfs.infilfs infilfs-inspect infilfs-scrub infilfs-tool infiltratorfs-quota
           make -C kernel KDIR="/lib/modules/$(uname -r)/build"
-      - name: Run quota ACL remount scrub qualification
+
+      - name: Run high-scale xattr durability isolation
         env:
-          INFILFS_REQUIRE_SETFACL: '1'
+          VARIANT: ${{ matrix.variant }}
         run: |
-          sudo -E bash tests/native-quota-qualification.sh build kernel/infiltratorfs.ko
-      - name: Run full root metadata remount scrub qualification
-        run: |
-          sudo env RUNNER_TEMP="$RUNNER_TEMP" bash tests/native-root-metadata-qualification.sh build kernel/infiltratorfs.ko
+          set -euo pipefail
+          work="$(mktemp -d)"
+          image="$work/meta.img"
+          mnt="$work/mnt"
+          loop=""
+          cleanup() {
+            set +e
+            sync
+            mountpoint -q "$mnt" && sudo umount "$mnt"
+            [[ -n "$loop" ]] && sudo losetup -d "$loop" 2>/dev/null
+            sudo rmmod infiltratorfs 2>/dev/null
+            rm -rf "$work"
+          }
+          trap cleanup EXIT
+          mkdir -p "$mnt"
+          truncate -s 4G "$image"
+          build/mkfs.infilfs "$image" >/dev/null
+          loop="$(sudo losetup --find --show "$image")"
+          sudo insmod kernel/infiltratorfs.ko
+          sudo mount -t infiltratorfs "$loop" "$mnt"
+
+          # The full 5000-object workload is required to reproduce the optimized
+          # scrub failure.  The two per-operation flush controls use 1800 objects
+          # so they remain a practical correctness control rather than a timeout.
+          if [[ "$VARIANT" == flush-before-create || "$VARIANT" == flush-after-store ]]; then
+            n=1800
+          else
+            n=5000
+          fi
+          sudo python3 - "$mnt" "$n" <<'PY'
+          import os, sys, time
+          root = sys.argv[1]
+          n = int(sys.argv[2])
+          paths = []
+          t = time.monotonic()
+          for i in range(n):
+              p = os.path.join(root, f'f{i:05d}')
+              with open(p, 'wb', buffering=0) as f:
+                  f.write(b'x' * 4096)
+              paths.append(p)
+          created = time.monotonic() - t
+          t = time.monotonic()
+          for p in paths:
+              os.setxattr(p, b'user.ifs-isolate', b'1')
+          xattrs = time.monotonic() - t
+          print(f'{n} create+4K: {created:.3f}s')
+          print(f'{n} xattr sets: {xattrs:.3f}s')
+          for p in paths[::113]:
+              assert os.getxattr(p, b'user.ifs-isolate') == b'1'
+          PY
+
+          sync
+          sudo umount "$mnt"
+
+          echo '===== INSPECT BEFORE REMOUNT ====='
+          set +e
+          build/infilfs-inspect "$loop" 2>&1 | tee "$work/inspect-before.txt"
+          inspect_before_rc=${PIPESTATUS[0]}
+          echo "inspect-before rc=$inspect_before_rc"
+          echo '===== SCRUB BEFORE REMOUNT ====='
+          build/infilfs-scrub "$loop" 2>&1 | tee "$work/scrub-before.txt"
+          scrub_before_rc=${PIPESTATUS[0]}
+          echo "scrub-before rc=$scrub_before_rc"
+          set -e
+
+          sudo mount -t infiltratorfs "$loop" "$mnt"
+          sudo python3 - "$mnt" "$n" <<'PY'
+          import os, sys
+          root = sys.argv[1]
+          n = int(sys.argv[2])
+          for i in range(0, n, 113):
+              assert os.getxattr(os.path.join(root, f'f{i:05d}'), b'user.ifs-isolate') == b'1'
+          print('xattr remount persistence: PASS')
+          PY
+          sync
+          sudo umount "$mnt"
+
+          echo '===== FINAL OFFLINE INSPECT ====='
+          set +e
+          build/infilfs-inspect "$loop" 2>&1 | tee "$work/inspect-final.txt"
+          inspect_final_rc=${PIPESTATUS[0]}
+          echo "inspect-final rc=$inspect_final_rc"
+          echo '===== FINAL OFFLINE SCRUB ====='
+          build/infilfs-scrub "$loop" 2>&1 | tee "$work/scrub-final.txt"
+          scrub_final_rc=${PIPESTATUS[0]}
+          echo "scrub-final rc=$scrub_final_rc"
+          set -e
+
+          if [[ $scrub_before_rc -ne 0 || $scrub_final_rc -ne 0 ]]; then
+            echo "VARIANT_RESULT=$VARIANT CORRUPT scrub_before=$scrub_before_rc scrub_final=$scrub_final_rc"
+            exit 1
+          fi
+          grep -Fq 'Result:              CLEAN' "$work/scrub-before.txt"
+          grep -Fq 'Result:              CLEAN' "$work/scrub-final.txt"
+          echo "VARIANT_RESULT=$VARIANT CLEAN"
+
+          sudo losetup -d "$loop"; loop=""
+          sudo rmmod infiltratorfs
+          trap - EXIT
+          rm -rf "$work"
