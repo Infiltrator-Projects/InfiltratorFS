@@ -1,0 +1,614 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Apply root-volume integration fix
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/root-volume-fix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Apply root-volume, ACL and reserved-namespace fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one exact anchor, found {count}")
+              p.write_text(text.replace(old, new, 1))
+
+          # Route the two POSIX ACL xattr names through the kernel ACL handlers
+          # before the generic system.* persistence handler.  This makes real
+          # setfacl(1) update mode bits/cache through ->set_acl instead of
+          # bypassing ACL semantics with a raw xattr write.
+          replace_once(
+              'kernel/infiltratorfs_linux_meta.inc',
+              '''static const struct xattr_handler * const infilfs_xattr_handlers[] = {
+              &infilfs_linux_user_xattr_handler,
+              &infilfs_linux_trusted_xattr_handler,
+              &infilfs_linux_security_xattr_handler,
+              &infilfs_linux_system_xattr_handler,
+              NULL,
+          };
+          ''',
+              '''static const struct xattr_handler * const infilfs_xattr_handlers[] = {
+              &infilfs_linux_user_xattr_handler,
+              &infilfs_linux_trusted_xattr_handler,
+              &infilfs_linux_security_xattr_handler,
+              &posix_acl_access_xattr_handler,
+              &posix_acl_default_xattr_handler,
+              &infilfs_linux_system_xattr_handler,
+              NULL,
+          };
+          ''')
+
+          # If chmod has already persisted its mode and ACL rewriting then
+          # fails, restore the previous mode.  A failed rollback poisons writes
+          # rather than silently leaving a half-applied permission change.
+          replace_once(
+              'kernel/infiltratorfs_linux_meta.inc',
+              '''static int infilfs_posix_acl_setattr(
+              struct mnt_idmap *idmap, struct dentry *dentry,
+          #else
+          static int infilfs_posix_acl_setattr(
+              struct user_namespace *idmap, struct dentry *dentry,
+          #endif
+              struct iattr *attr)
+          {
+              bool mode_changed = (attr->ia_valid & ATTR_MODE) != 0;
+              int ret = infilfs_posix_setattr(idmap, dentry, attr);
+
+              if (!ret && mode_changed)
+                  ret = posix_acl_chmod(idmap, dentry, d_inode(dentry)->i_mode);
+              return ret;
+          }
+          ''',
+              '''static int infilfs_posix_acl_setattr(
+              struct mnt_idmap *idmap, struct dentry *dentry,
+          #else
+          static int infilfs_posix_acl_setattr(
+              struct user_namespace *idmap, struct dentry *dentry,
+          #endif
+              struct iattr *attr)
+          {
+              struct inode *inode = d_inode(dentry);
+              umode_t old_mode = inode->i_mode;
+              bool mode_changed = (attr->ia_valid & ATTR_MODE) != 0;
+              int ret = infilfs_posix_setattr(idmap, dentry, attr);
+
+              if (!ret && mode_changed) {
+                  ret = posix_acl_chmod(idmap, dentry, inode->i_mode);
+                  if (ret) {
+                      struct iattr rollback;
+                      int rollback_ret;
+
+                      memset(&rollback, 0, sizeof(rollback));
+                      rollback.ia_valid = ATTR_MODE | ATTR_CTIME;
+                      rollback.ia_mode = old_mode;
+                      rollback.ia_ctime = current_time(inode);
+                      rollback_ret = infilfs_posix_rewrite_inode(inode, &rollback);
+                      if (!rollback_ret) {
+                          inode->i_mode = (inode->i_mode & S_IFMT) |
+                              (old_mode & 07777);
+                          inode_set_ctime_to_ts(inode, rollback.ia_ctime);
+                      } else {
+                          INFILFS_SB(inode->i_sb)->write_poisoned = true;
+                          pr_err("InfiltratorFS: chmod ACL rollback failed for inode %lu: %d\\n",
+                                 inode->i_ino, rollback_ret);
+                      }
+                  }
+              }
+              return ret;
+          }
+          ''')
+
+          # Permanently reserve the hidden Linux metadata directory name from
+          # ordinary namespace creation.  The internal creator is explicitly
+          # allowed through only when both HIDDEN and SYSTEM flags are set.
+          replace_once(
+              'kernel/infiltratorfs_rw_namespace.inc',
+              '''static int infilfs_ns_validate_name(const struct qstr *name)
+          {
+              if (!name || !name->len || name->len > INFILFS_NAME_MAX ||
+                  !infilfs_rw_utf8_valid(name->name, name->len) ||
+                  (name->len == 1 && name->name[0] == '.') ||
+                  (name->len == 2 && name->name[0] == '.' && name->name[1] == '.'))
+                  return -EINVAL;
+              return 0;
+          }
+          ''',
+              '''static bool infilfs_ns_reserved_linux_meta_name(const struct qstr *name)
+          {
+              return name &&
+                  name->len == sizeof(INFILFS_LINUX_META_DIRECTORY) - 1u &&
+                  memcmp(name->name, INFILFS_LINUX_META_DIRECTORY,
+                         name->len) == 0;
+          }
+
+          static int infilfs_ns_validate_name(const struct qstr *name)
+          {
+              if (!name || !name->len || name->len > INFILFS_NAME_MAX ||
+                  !infilfs_rw_utf8_valid(name->name, name->len) ||
+                  (name->len == 1 && name->name[0] == '.') ||
+                  (name->len == 2 && name->name[0] == '.' && name->name[1] == '.') ||
+                  infilfs_ns_reserved_linux_meta_name(name))
+                  return -EINVAL;
+              return 0;
+          }
+          ''')
+
+          p = Path('kernel/infiltratorfs_rw.inc')
+          text = p.read_text()
+          start = text.index('static int infilfs_posix_create_native_named_child(')
+          old = '''    ret = infilfs_ns_validate_name(name);
+              if (ret)
+                  return ret;
+          '''
+          pos = text.index(old, start)
+          if pos > start + 5000:
+              raise SystemExit('native named-child validation anchor too far from function')
+          new = '''    if (infilfs_ns_reserved_linux_meta_name(name) &&
+                  (portable_flags & (INFILFS_ATTR_HIDDEN | INFILFS_ATTR_SYSTEM)) ==
+                      (INFILFS_ATTR_HIDDEN | INFILFS_ATTR_SYSTEM))
+                  ret = 0;
+              else
+                  ret = infilfs_ns_validate_name(name);
+              if (ret)
+                  return ret;
+          '''
+          p.write_text(text[:pos] + new + text[pos + len(old):])
+
+          # Real setfacl/getfacl qualification, including mode-mask sync and
+          # remount persistence, in addition to direct ABI testing.
+          p = Path('tests/native-posix-acl-qualification.py')
+          text = p.read_text()
+          text = text.replace('import shutil\n', 'import shutil\nimport stat\n', 1)
+          anchor = '''def can_read_as(path, uid, gid):
+          '''
+          helper = '''def require_tool(name):
+              path = shutil.which(name)
+              if not path:
+                  fail(f"{name} is required for POSIX ACL qualification")
+              return path
+
+
+          def assert_setfacl_acl(path, uid):
+              getfacl = require_tool("getfacl")
+              result = subprocess.run(
+                  [getfacl, "-cpn", path], check=True, text=True,
+                  stdout=subprocess.PIPE,
+              )
+              lines = {line.strip() for line in result.stdout.splitlines()}
+              if f"user:{uid}:r--" not in lines:
+                  fail(f"getfacl did not report named user {uid} on {path}")
+              if "mask::r--" not in lines:
+                  fail(f"getfacl did not report ACL mask r-- on {path}")
+              mode = stat.S_IMODE(os.stat(path).st_mode)
+              if mode & 0o070 != 0o040:
+                  fail(f"ACL mask is not reflected in group-class mode bits: {mode:o}")
+
+
+          '''
+          if text.count(anchor) != 1:
+              raise SystemExit('ACL helper insertion anchor mismatch')
+          text = text.replace(anchor, helper + anchor, 1)
+
+          anchor = '''    os.setxattr(access, ACCESS_NAME, access_acl(uid))
+              assert_named_read_acl(access, uid)
+              if not can_read_as(access, uid, gid):
+                  fail("access ACL did not grant named-user read access")
+
+          '''
+          addition = '''    os.setxattr(access, ACCESS_NAME, access_acl(uid))
+              assert_named_read_acl(access, uid)
+              if not can_read_as(access, uid, gid):
+                  fail("access ACL did not grant named-user read access")
+
+              setfacl = require_tool("setfacl")
+              real_acl = os.path.join(acl_root, "setfacl.txt")
+              fd = os.open(real_acl, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+              try:
+                  os.write(fd, b"real-setfacl\\n")
+                  os.fsync(fd)
+              finally:
+                  os.close(fd)
+              subprocess.run(
+                  [setfacl, "-m", f"u:{uid}:r--", real_acl], check=True,
+              )
+              assert_setfacl_acl(real_acl, uid)
+              if not can_read_as(real_acl, uid, gid):
+                  fail("setfacl ACL was not enforced")
+
+          '''
+          if text.count(anchor) != 1:
+              raise SystemExit('ACL prepare insertion anchor mismatch')
+          text = text.replace(anchor, addition, 1)
+
+          anchor = '''    access = os.path.join(acl_root, "access.txt")
+              assert_named_read_acl(access, uid)
+              if not can_read_as(access, uid, gid):
+                  fail("access ACL was not enforced after remount")
+
+          '''
+          addition = '''    access = os.path.join(acl_root, "access.txt")
+              assert_named_read_acl(access, uid)
+              if not can_read_as(access, uid, gid):
+                  fail("access ACL was not enforced after remount")
+
+              real_acl = os.path.join(acl_root, "setfacl.txt")
+              assert_setfacl_acl(real_acl, uid)
+              if not can_read_as(real_acl, uid, gid):
+                  fail("setfacl ACL was not enforced after remount")
+
+          '''
+          if text.count(anchor) != 1:
+              raise SystemExit('ACL verify insertion anchor mismatch')
+          p.write_text(text.replace(anchor, addition, 1))
+
+          # initramfs-tools hook: the filesystem module has MODULE_ALIAS_FS, so
+          # inclusion in the image is sufficient for the normal root mount path
+          # to autoload it when rootfstype/probing selects InfiltratorFS.
+          Path('packaging/initramfs').mkdir(parents=True, exist_ok=True)
+          Path('packaging/initramfs/infiltratorfs-hook').write_text('''#!/bin/sh
+          # SPDX-License-Identifier: GPL-3.0-or-later
+          PREREQ=""
+
+          prereqs()
+          {
+              echo "$PREREQ"
+          }
+
+          case "${1:-}" in
+              prereqs)
+                  prereqs
+                  exit 0
+                  ;;
+          esac
+
+          . /usr/share/initramfs-tools/hook-functions
+          manual_add_modules infiltratorfs
+          ''')
+
+          Path('packaging/debian').mkdir(parents=True, exist_ok=True)
+          Path('packaging/debian/preinst.in').write_text('''#!/bin/sh
+          # SPDX-License-Identifier: GPL-3.0-or-later
+          set -e
+          module='infiltratorfs'
+          version='@PACKAGE_VERSION@'
+
+          root_fstype="$(findmnt -n -o FSTYPE / 2>/dev/null || true)"
+          root_active=0
+          if [ "$root_fstype" = infiltratorfs ]; then
+              root_active=1
+          fi
+
+          active="$(findmnt -rn -t infiltratorfs,fuse.infilfs-fuse 2>/dev/null || true)"
+          if [ -n "$active" ]; then
+              echo 'InfiltratorFS: mounted volumes detected before driver upgrade.'
+              echo "$active"
+              sync
+              if [ "$root_active" -eq 1 ]; then
+                  echo 'InfiltratorFS: / is an InfiltratorFS root; keeping the live root driver mounted and unloading only non-root volumes.'
+                  findmnt -rn -t infiltratorfs,fuse.infilfs-fuse -o TARGET 2>/dev/null |
+                      awk '$1 != "/" { print length($0), $0 }' |
+                      sort -rn | cut -d' ' -f2- |
+                      while IFS= read -r target; do
+                          [ -n "$target" ] || continue
+                          umount -- "$target" 2>/dev/null || true
+                      done
+                  remaining="$(findmnt -rn -t infiltratorfs,fuse.infilfs-fuse -o TARGET 2>/dev/null |
+                      awk '$1 != "/"' || true)"
+                  if [ -n "$remaining" ]; then
+                      echo 'InfiltratorFS: non-root volumes are still busy; refusing driver upgrade.' >&2
+                      echo "$remaining" >&2
+                      exit 1
+                  fi
+                  echo 'InfiltratorFS: live root remains mounted; the replacement DKMS driver will take effect after reboot.'
+              else
+                  echo 'InfiltratorFS: attempting a clean automatic unmount before upgrading the driver.'
+                  umount -a -t infiltratorfs,fuse.infilfs-fuse 2>/dev/null || true
+                  active="$(findmnt -rn -t infiltratorfs,fuse.infilfs-fuse 2>/dev/null || true)"
+                  if [ -n "$active" ]; then
+                      echo 'InfiltratorFS: clean automatic unmount could not complete because a volume is still busy.' >&2
+                      echo "$active" >&2
+                      echo 'Close files, terminals or applications using the volume, then retry the upgrade.' >&2
+                      exit 1
+                  fi
+                  echo 'InfiltratorFS: clean automatic unmount complete; continuing driver upgrade.'
+              fi
+          fi
+
+          if command -v dkms >/dev/null 2>&1; then
+              dkms status -m "$module" 2>/dev/null | while IFS= read -r line; do
+                  case "$line" in "$module"/*) ;; *) continue ;; esac
+                  head="${line%%,*}"
+                  head="${head%%:*}"
+                  old_version="${head#${module}/}"
+                  if [ -n "$old_version" ] && [ "$old_version" != "$version" ]; then
+                      echo "InfiltratorFS: removing stale DKMS registration $old_version."
+                      dkms remove -m "$module" -v "$old_version" --all || true
+                      rm -rf "/usr/src/$module-$old_version" "/var/lib/dkms/$module/$old_version" || true
+                  fi
+              done
+          fi
+          exit 0
+          ''')
+
+          Path('packaging/debian/postinst.in').write_text('''#!/bin/sh
+          # SPDX-License-Identifier: GPL-3.0-or-later
+          set -e
+          module='infiltratorfs'
+          version='@PACKAGE_VERSION@'
+          kernel="$(uname -r)"
+          root_fstype="$(findmnt -n -o FSTYPE / 2>/dev/null || true)"
+          root_active=0
+          if [ "$root_fstype" = infiltratorfs ]; then
+              root_active=1
+          fi
+
+          if [ ! -f "/lib/modules/$kernel/build/Makefile" ]; then
+              echo "InfiltratorFS: matching kernel headers are required for $kernel." >&2
+              echo "Install linux-headers-$kernel and configure this package again." >&2
+              exit 1
+          fi
+          if ! dkms status -m "$module" -v "$version" 2>/dev/null | grep -q .; then
+              dkms add -m "$module" -v "$version"
+          fi
+          dkms build -m "$module" -v "$version" -k "$kernel"
+          dkms install -m "$module" -v "$version" -k "$kernel" --force
+          depmod -a
+
+          # Make the native filesystem available before / is mounted.  Create
+          # an initramfs when a CI/minimal host does not already have one;
+          # normal Mint/Ubuntu systems update their existing image in place.
+          if command -v update-initramfs >/dev/null 2>&1; then
+              if [ -e "/boot/initrd.img-$kernel" ]; then
+                  update-initramfs -u -k "$kernel"
+              else
+                  update-initramfs -c -k "$kernel"
+              fi
+          else
+              echo 'InfiltratorFS: initramfs-tools is not installed; data-volume support is available, but Linux root-volume boot integration requires an equivalent initramfs configuration.' >&2
+          fi
+
+          load_plan="$(modprobe --dry-run --verbose "$module" 2>/dev/null || true)"
+          load_disabled=0
+          case "$load_plan" in
+              *"install /bin/false"*|*"install /usr/bin/false"*|*"install false"*)
+                  load_disabled=1
+                  ;;
+          esac
+
+          if [ "$load_disabled" -eq 1 ]; then
+              echo 'InfiltratorFS: module loading is administratively disabled; leaving the newly installed DKMS module unloaded.'
+          elif [ "$root_active" -eq 1 ]; then
+              # Never unload the driver that currently owns /.  The new module
+              # and initramfs are staged for the next boot instead.
+              grep -qw infiltratorfs /proc/filesystems || {
+                  echo 'InfiltratorFS: current root is InfiltratorFS but the live filesystem is not registered.' >&2
+                  exit 1
+              }
+              echo 'InfiltratorFS: root-volume upgrade staged safely; live driver remains loaded until reboot.'
+              : > /run/reboot-required
+              if [ -e /run/reboot-required.pkgs ]; then
+                  grep -Fxq infiltratorfs /run/reboot-required.pkgs || echo infiltratorfs >> /run/reboot-required.pkgs
+              else
+                  echo infiltratorfs > /run/reboot-required.pkgs
+              fi
+          else
+              modprobe -r "$module" 2>/dev/null || true
+              modprobe "$module"
+              grep -qw infiltratorfs /proc/filesystems || {
+                  echo 'InfiltratorFS: native kernel filesystem did not register.' >&2
+                  exit 1
+              }
+          fi
+
+          rm -f /usr/bin/infilfs-fuse
+          if [ -x /usr/lib/infiltratorfs/infiltratorfs-os-integration ]; then
+              /usr/lib/infiltratorfs/infiltratorfs-os-integration install
+          fi
+          if command -v udevadm >/dev/null 2>&1; then
+              udevadm control --reload-rules || true
+              udevadm trigger --subsystem-match=block --action=change || true
+              udevadm settle --timeout=30 || true
+          fi
+          exit 0
+          ''')
+
+          Path('packaging/debian/prerm.in').write_text('''#!/bin/sh
+          # SPDX-License-Identifier: GPL-3.0-or-later
+          set -e
+
+          if [ "${1:-}" = remove ]; then
+              root_fstype="$(findmnt -n -o FSTYPE / 2>/dev/null || true)"
+              if [ "$root_fstype" = infiltratorfs ]; then
+                  echo 'InfiltratorFS: refusing to remove the filesystem package while / is mounted as InfiltratorFS.' >&2
+                  echo 'Boot from another root filesystem before removing the driver package.' >&2
+                  exit 1
+              fi
+              if [ -x /usr/lib/infiltratorfs/infiltratorfs-os-integration ]; then
+                  /usr/lib/infiltratorfs/infiltratorfs-os-integration remove
+              fi
+              if command -v dkms >/dev/null 2>&1; then
+                  dkms remove -m infiltratorfs -v '@PACKAGE_VERSION@' --all || true
+              fi
+          fi
+          exit 0
+          ''')
+
+          Path('tests/root-volume-integration-policy.sh').write_text('''#!/usr/bin/env bash
+          # SPDX-License-Identifier: GPL-3.0-or-later
+          set -euo pipefail
+          root="${1:?repository root required}"
+          hook="$root/packaging/initramfs/infiltratorfs-hook"
+          build="$root/packaging/build-linux-packages.sh"
+          pre="$root/packaging/debian/preinst.in"
+          post="$root/packaging/debian/postinst.in"
+          prerm="$root/packaging/debian/prerm.in"
+
+          bash -n "$hook" "$pre" "$post" "$prerm" "$build"
+          grep -Fq '. /usr/share/initramfs-tools/hook-functions' "$hook"
+          grep -Fq 'manual_add_modules infiltratorfs' "$hook"
+          grep -Fq 'packaging/debian/${maintainer}.in' "$build"
+          grep -Fq 'usr/share/initramfs-tools/hooks/infiltratorfs$' "$build"
+          grep -Fq 'root_active=1' "$pre"
+          grep -Fq 'keeping the live root driver mounted' "$pre"
+          grep -Fq "awk '$1 != \"/\"'" "$pre"
+          grep -Fq 'update-initramfs -u -k "$kernel"' "$post"
+          grep -Fq 'update-initramfs -c -k "$kernel"' "$post"
+          grep -Fq 'live driver remains loaded until reboot' "$post"
+          grep -Fq '/run/reboot-required' "$post"
+          grep -Fq 'refusing to remove the filesystem package while / is mounted as InfiltratorFS' "$prerm"
+          grep -Fq 'MODULE_ALIAS_FS(INFILTRATORFS_NAME)' "$root/kernel/infiltratorfs_core.c"
+          grep -Fq '&posix_acl_access_xattr_handler' "$root/kernel/infiltratorfs_linux_meta.inc"
+          grep -Fq '&posix_acl_default_xattr_handler' "$root/kernel/infiltratorfs_linux_meta.inc"
+          grep -Fq 'infilfs_ns_reserved_linux_meta_name' "$root/kernel/infiltratorfs_rw_namespace.inc"
+          echo 'root-volume integration policy: PASS'
+          ''')
+
+          # CMake installs the initramfs hook and runs the root integration
+          # policy in the ordinary Linux CTest gate.
+          replace_once(
+              'CMakeLists.txt',
+              '''    add_test(NAME infilfs-system-utilities
+                  COMMAND bash ${CMAKE_SOURCE_DIR}/tests/system-utilities.sh)
+              add_test(NAME infilfs-desktop-integration
+          ''',
+              '''    add_test(NAME infilfs-system-utilities
+                  COMMAND bash ${CMAKE_SOURCE_DIR}/tests/system-utilities.sh)
+              add_test(NAME infilfs-root-volume-integration-policy
+                  COMMAND bash ${CMAKE_SOURCE_DIR}/tests/root-volume-integration-policy.sh
+                               ${CMAKE_SOURCE_DIR})
+              add_test(NAME infilfs-desktop-integration
+          ''')
+          replace_once(
+              'CMakeLists.txt',
+              '''    install(PROGRAMS tools/mount.infiltratorfs tools/fsck.infiltratorfs
+                  DESTINATION sbin)
+              install(FILES packaging/infiltratorfs-manager.desktop
+          ''',
+              '''    install(PROGRAMS tools/mount.infiltratorfs tools/fsck.infiltratorfs
+                  DESTINATION sbin)
+              install(PROGRAMS packaging/initramfs/infiltratorfs-hook
+                  DESTINATION share/initramfs-tools/hooks
+                  RENAME infiltratorfs)
+              install(FILES packaging/infiltratorfs-manager.desktop
+          ''')
+
+          # Keep the existing builder's generated scripts as fallback history,
+          # but overwrite them with the reviewed root-aware templates before
+          # dpkg-deb creates the archive.
+          p = Path('packaging/build-linux-packages.sh')
+          text = p.read_text()
+          anchor = 'dpkg-deb --root-owner-group --build "$package_root" "$dist_dir/$deb_name"\n'
+          injection = '''for maintainer in preinst postinst prerm; do
+              sed "s/@PACKAGE_VERSION@/${package_version}/g" \\
+                  "packaging/debian/${maintainer}.in" > "$package_root/DEBIAN/$maintainer"
+              chmod 0755 "$package_root/DEBIAN/$maintainer"
+          done
+
+          '''
+          if text.count(anchor) != 1:
+              raise SystemExit('package build insertion anchor mismatch')
+          text = text.replace(anchor, injection + anchor, 1)
+          required = "    'usr/sbin/fsck.infiltratorfs$' \\\n"
+          if text.count(required) != 1:
+              raise SystemExit('package required-list anchor mismatch')
+          text = text.replace(
+              required,
+              required + "    'usr/share/initramfs-tools/hooks/infiltratorfs$' \\\n",
+              1,
+          )
+          p.write_text(text)
+
+          # Native CI must carry the real ACL tools and guard root integration.
+          replace_once(
+              '.github/workflows/kernel-module.yml',
+              'sudo apt-get install -y build-essential cmake e2fsprogs kmod linux-headers-generic\n',
+              'sudo apt-get install -y acl build-essential cmake e2fsprogs initramfs-tools kmod linux-headers-generic rsync\n')
+          replace_once(
+              '.github/workflows/kernel-module.yml',
+              '''      - name: Guard native quotas
+                  run: bash tests/native-quota-policy.sh .
+
+              - name: Build InfiltratorFS kernel module
+          ''',
+              '''      - name: Guard native quotas
+                  run: bash tests/native-quota-policy.sh .
+
+              - name: Guard root-volume integration
+                  run: bash tests/root-volume-integration-policy.sh .
+
+              - name: Build InfiltratorFS kernel module
+          ''')
+
+          # Release installation must prove the postinst regenerated an
+          # initramfs containing the exact native filesystem module.
+          p = Path('.github/workflows/release-packages.yml')
+          text = p.read_text()
+          anchor = '''          sudo dpkg -i "$deb" | tee "$RUNNER_TEMP/native-release-upgrade.txt"
+              ! findmnt -rn -t infiltratorfs,fuse.infilfs-fuse | grep -q .
+          '''
+          replacement = '''          sudo dpkg -i "$deb" | tee "$RUNNER_TEMP/native-release-upgrade.txt"
+              initrd="/boot/initrd.img-$(uname -r)"
+              test -s "$initrd"
+              lsinitramfs "$initrd" | grep -Eq '(^|/)infiltratorfs\\.ko(\\.(gz|xz|zst))?$'
+              ! findmnt -rn -t infiltratorfs,fuse.infilfs-fuse | grep -q .
+          '''
+          if text.count(anchor) != 1:
+              raise SystemExit('release initramfs qualification anchor mismatch')
+          p.write_text(text.replace(anchor, replacement, 1))
+          PY
+
+          chmod +x packaging/initramfs/infiltratorfs-hook \
+                   tests/root-volume-integration-policy.sh
+          bash -n packaging/build-linux-packages.sh \
+                  packaging/initramfs/infiltratorfs-hook \
+                  packaging/debian/preinst.in \
+                  packaging/debian/postinst.in \
+                  packaging/debian/prerm.in \
+                  tests/root-volume-integration-policy.sh
+          python3 -m py_compile tests/native-posix-acl-qualification.py
+          bash tests/root-volume-integration-policy.sh .
+
+      - name: Commit fixes and remove bootstrap workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'The First Infiltrator'
+          git config user.email 'infiltratr@yandex.com'
+          git rm .github/workflows/root-volume-fix.yml
+          git add CMakeLists.txt \
+                  .github/workflows/kernel-module.yml \
+                  .github/workflows/release-packages.yml \
+                  kernel/infiltratorfs_linux_meta.inc \
+                  kernel/infiltratorfs_rw.inc \
+                  kernel/infiltratorfs_rw_namespace.inc \
+                  packaging/build-linux-packages.sh \
+                  packaging/initramfs/infiltratorfs-hook \
+                  packaging/debian/preinst.in \
+                  packaging/debian/postinst.in \
+                  packaging/debian/prerm.in \
+                  tests/native-posix-acl-qualification.py \
+                  tests/root-volume-integration-policy.sh
+          git commit -m 'linux: make InfiltratorFS root-volume safe'
+          git push origin HEAD:main
