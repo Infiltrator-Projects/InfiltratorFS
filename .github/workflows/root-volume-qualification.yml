@@ -133,7 +133,7 @@ jobs:
           dpkg-deb --ctrl-tarfile "$deb" | tar -xOf - ./postinst | grep -Fq 'root-volume upgrade staged safely'
           dpkg-deb --ctrl-tarfile "$deb" | tar -xOf - ./prerm | grep -Fq 'refusing to remove the filesystem package while / is mounted as InfiltratorFS'
 
-      - name: Install package and prove initramfs contains native module
+      - name: Install package and prove initramfs root payload
         if: steps.headers.outputs.runtime_kdir != ''
         shell: bash
         run: |
@@ -144,7 +144,12 @@ jobs:
           grep -Fq 'manual_add_modules infiltratorfs' /usr/share/initramfs-tools/hooks/infiltratorfs
           initrd="/boot/initrd.img-$(uname -r)"
           test -s "$initrd"
-          lsinitramfs "$initrd" | grep -Eq '(^|/)infiltratorfs\.ko(\.(gz|xz|zst))?$'
+          contents="$(lsinitramfs "$initrd")"
+          grep -Eq '(^|/)infiltratorfs\.ko(\.(gz|xz|zst))?$' <<<"$contents"
+          grep -Eq '(^|/)infilfs-inspect$' <<<"$contents"
+          grep -Eq '(^|/)59-infiltratorfs\.rules$' <<<"$contents"
+          grep -Eq '(^|/)infilfs-scrub$' <<<"$contents"
+          grep -Eq '(^|/)fsck\.infiltratorfs$' <<<"$contents"
           modinfo infiltratorfs >/dev/null
           grep -qw infiltratorfs /proc/filesystems
           echo 'Linux root-volume package/initramfs qualification: PASS'
