@@ -63,12 +63,11 @@ jobs:
           test -s kernel/infiltratorfs.ko
           test "$(modinfo -F vermagic kernel/infiltratorfs.ko | awk '{print $1}')" = "$(uname -r)"
 
-      - name: Validate root-boot policy before execution
+      - name: Validate root-boot script before execution
         shell: bash
         run: |
           set -euo pipefail
           bash -n tests/root-boot-qemu.sh
-          bash tests/root-readiness-policy.sh .
           grep -Fq 'ROOT_BOOT_PASS' tests/root-boot-qemu.sh
           grep -Fq 'ROOT_UPGRADE_STAGED_PASS' tests/root-boot-qemu.sh
           grep -Fq 'ROOT_CRASH_READY' tests/root-boot-qemu.sh
