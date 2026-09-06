@@ -41,6 +41,7 @@ mknod "$node" c 1 3
 stat -c 'Created node: type=%F mode=%f rdev-major=%t rdev-minor=%T inode=%i' "$node"
 [[ -c "$node" ]]
 NODE="$node" python3 - <<'PY'
+import errno
 import os
 p = os.environ['NODE']
 fd = os.open(p, os.O_WRONLY)
@@ -49,10 +50,18 @@ try:
 finally:
     os.close(fd)
 print('Character device O_WRONLY without O_TRUNC: PASS')
+try:
+    os.truncate(p, 0)
+except OSError as exc:
+    if exc.errno != errno.EINVAL:
+        raise
+else:
+    raise SystemExit('explicit truncate unexpectedly succeeded on character device')
+print('Character device explicit truncate rejected with EINVAL: PASS')
 PY
 printf 'device-write-trunc-probe\n' >"$node"
-
 echo 'Character device shell O_TRUNC open: PASS'
+
 umount "$mnt"
 mount -t infiltratorfs -o rw,dev,exec "$loop" "$mnt"
 node="$mnt/test-dev-null"
@@ -69,6 +78,7 @@ finally:
 print('Remounted character device O_WRONLY without O_TRUNC: PASS')
 PY
 printf 'device-remount-trunc-probe\n' >"$node"
+echo 'Remounted character device shell O_TRUNC open: PASS'
 rm -f "$node"
 sync
 
