@@ -24,7 +24,7 @@ jobs:
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build --parallel
           make -C kernel KDIR=/lib/modules/$(uname -r)/build -j"$(nproc)"
-      - name: Benchmark namespace, data and compression paths
+      - name: Qualify 1 TiB transaction start and small-file creation
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -41,74 +41,38 @@ jobs:
           }
           trap cleanup EXIT
           mkdir -p "$mnt"
-          truncate -s 4G "$img"
-          build/mkfs.infilfs --force -L SmallFileDiag "$img" >/dev/null
+          truncate -s 1T "$img"
+          /usr/bin/time -f 'mkfs 1TiB: %e s' build/mkfs.infilfs --force -L LargeVolumeDiag "$img" >/dev/null
           sudo insmod kernel/infiltratorfs.ko
           loop="$(sudo losetup --find --show "$img")"
+          sudo mount -t infiltratorfs -o rw,compress=auto "$loop" "$mnt"
 
-          bench_mount() {
-            local opts="$1"
-            sudo mount -t infiltratorfs -o "$opts" "$loop" "$mnt"
-            sudo python3 - "$mnt" <<'PY'
-          import os, sys, time, shutil
+          sudo python3 - "$mnt" <<'PY'
+          import os, sys, time
           root=sys.argv[1]
-          N=5000
-          payload=b'x'*4096
 
-          def run(label, fn):
-              t=time.monotonic(); fn(); dt=time.monotonic()-t
-              print(f'{label}: {dt:.3f}s ({N/dt:.1f} ops/s)', flush=True)
+          t=time.monotonic()
+          os.mkdir(os.path.join(root,'bench'))
+          first=time.monotonic()-t
+          print(f'1TiB first mkdir/transaction start: {first:.3f}s', flush=True)
+          if first > 5.0:
+              raise SystemExit(f'first transaction start too slow on 1TiB image: {first:.3f}s')
 
-          def reset(name):
-              p=os.path.join(root,name)
-              shutil.rmtree(p, ignore_errors=True)
-              os.mkdir(p)
-              return p
-
-          p=reset('empty')
-          def empty():
-              for i in range(N):
-                  fd=os.open(os.path.join(p,f'f{i:05d}'), os.O_CREAT|os.O_EXCL|os.O_WRONLY, 0o644)
-                  os.close(fd)
-          run('5000 empty create', empty)
-
-          p=reset('onebyte')
-          def onebyte():
-              for i in range(N):
-                  with open(os.path.join(p,f'f{i:05d}'),'wb',buffering=0) as f: f.write(b'x')
-          run('5000 create+1B', onebyte)
-
-          p=reset('fourk')
-          def fourk():
-              for i in range(N):
-                  with open(os.path.join(p,f'f{i:05d}'),'wb',buffering=0) as f: f.write(payload)
-          run('5000 create+4K', fourk)
-
-          p=reset('precreated')
-          for i in range(N):
-              open(os.path.join(p,f'f{i:05d}'),'wb').close()
-          def existing4k():
-              for i in range(N):
-                  with open(os.path.join(p,f'f{i:05d}'),'wb',buffering=0) as f: f.write(payload)
-          run('5000 existing-file 4K writes', existing4k)
-
-          p=reset('dirs')
-          def spread():
-              for d in range(100): os.mkdir(os.path.join(p,f'd{d:03d}'))
-              for i in range(N):
-                  q=os.path.join(p,f'd{i%100:03d}',f'f{i:05d}')
-                  with open(q,'wb',buffering=0) as f: f.write(payload)
-          run('5000 create+4K across 100 dirs', spread)
-
+          p=os.path.join(root,'bench')
+          n=1000
+          t=time.monotonic()
+          for i in range(n):
+              fd=os.open(os.path.join(p,f'f{i:05d}'), os.O_CREAT|os.O_EXCL|os.O_WRONLY, 0o644)
+              os.close(fd)
+          elapsed=time.monotonic()-t
+          print(f'1TiB 1000 empty creates: {elapsed:.3f}s ({n/elapsed:.1f} ops/s)', flush=True)
+          if elapsed > 15.0:
+              raise SystemExit(f'1000 creates too slow on 1TiB image: {elapsed:.3f}s')
           os.sync()
           PY
-            sudo umount "$mnt"
-            build/infilfs-scrub "$loop" | grep -F 'Result:'
-          }
 
-          echo '=== compress=off ==='
-          bench_mount 'rw,compress=off'
-          echo '=== reformat ==='
-          build/mkfs.infilfs --force -L SmallFileDiag "$loop" >/dev/null
-          echo '=== compress=auto ==='
-          bench_mount 'rw,compress=auto'
+          sudo umount "$mnt"
+          sudo losetup -d "$loop"
+          loop=""
+          build/infilfs-scrub "$img" | tee "$work/scrub.txt"
+          grep -Fq 'Result:              CLEAN' "$work/scrub.txt"
