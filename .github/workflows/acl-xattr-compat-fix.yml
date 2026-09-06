@@ -1,0 +1,55 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Apply POSIX ACL xattr compatibility fix
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/acl-xattr-compat-fix.yml']
+permissions:
+  contents: write
+jobs:
+  fix:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Use VFS ACL path instead of retired xattr handler symbols
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+          p = Path('kernel/infiltratorfs_linux_meta.inc')
+          text = p.read_text()
+          for line in (
+              '    &posix_acl_access_xattr_handler,\n',
+              '    &posix_acl_default_xattr_handler,\n',
+          ):
+              if text.count(line) != 1:
+                  raise SystemExit(f'expected one ACL handler line: {line!r}')
+              text = text.replace(line, '', 1)
+          p.write_text(text)
+
+          p = Path('tests/root-volume-integration-policy.sh')
+          text = p.read_text()
+          text = text.replace(
+              'grep -Fq \'&posix_acl_access_xattr_handler\' "$root/kernel/infiltratorfs_linux_meta.inc"\n'
+              'grep -Fq \'&posix_acl_default_xattr_handler\' "$root/kernel/infiltratorfs_linux_meta.inc"\n',
+              'grep -Fq \'.get_inode_acl = infilfs_posix_acl_get\' "$root/kernel/infiltratorfs_rw.inc"\n'
+              'grep -Fq \'.set_acl = infilfs_posix_acl_set\' "$root/kernel/infiltratorfs_rw.inc"\n',
+              1,
+          )
+          p.write_text(text)
+          PY
+          ! grep -q 'posix_acl_access_xattr_handler' kernel/infiltratorfs_linux_meta.inc
+          ! grep -q 'posix_acl_default_xattr_handler' kernel/infiltratorfs_linux_meta.inc
+          bash tests/native-posix-acl-policy.sh .
+          bash tests/root-volume-integration-policy.sh .
+      - name: Commit compatibility fix
+        run: |
+          set -euo pipefail
+          git config user.name 'The First Infiltrator'
+          git config user.email 'infiltratr@yandex.com'
+          git add kernel/infiltratorfs_linux_meta.inc tests/root-volume-integration-policy.sh
+          git commit -m 'linux: route POSIX ACL xattrs through VFS ACL operations'
+          git push origin HEAD:main
