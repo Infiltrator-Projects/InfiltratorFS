@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Apply 0.18.44 root readiness
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tools/apply-root-readiness-0.18.44.py'
+      - '.github/workflows/apply-root-readiness-0.18.44.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - name: Install qualification dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            acl attr build-essential cmake dkms e2fsprogs kmod libcap2-bin \
+            linux-headers-generic rsync python3
+      - name: Apply root-readiness implementation
+        run: |
+          set -euo pipefail
+          python3 -m py_compile tools/apply-root-readiness-0.18.44.py
+          python3 tools/apply-root-readiness-0.18.44.py
+          bash -n tests/native-root-metadata-qualification.sh
+          bash -n tests/root-boot-qemu.sh
+          bash -n tests/root-readiness-policy.sh
+          bash tests/root-readiness-policy.sh .
+      - name: Build and test portable code
+        run: |
+          set -euo pipefail
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build --parallel
+          ctest --test-dir build --output-on-failure
+      - name: Compile native module
+        run: |
+          set -euo pipefail
+          kdir="$(find /usr/src -maxdepth 1 -type d -name 'linux-headers-*-generic' -print | sort -V | tail -n1)"
+          test -f "$kdir/Makefile"
+          make -C kernel KDIR="$kdir"
+      - name: Commit implementation and remove staging machinery
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git rm tools/apply-root-readiness-0.18.44.py \
+                 .github/workflows/apply-root-readiness-0.18.44.yml
+          git add -A
+          git config user.name 'Shannon Smith'
+          git config user.email 'infiltratr@yandex.com'
+          git commit -m 'Complete Linux root readiness and compression telemetry'
+          git push origin HEAD:main
