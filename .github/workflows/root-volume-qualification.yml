@@ -31,6 +31,8 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v6
+        with:
+          submodules: recursive
 
       - name: Install root-volume qualification dependencies
         env:
