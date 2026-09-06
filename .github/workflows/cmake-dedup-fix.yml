@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Repair duplicate root test registration
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/cmake-dedup-fix.yml']
+permissions:
+  contents: write
+jobs:
+  fix:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Deduplicate CMake test
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('CMakeLists.txt')
+          s = p.read_text()
+          b = '''    add_test(NAME infilfs-root-volume-integration-policy
+              COMMAND bash ${CMAKE_SOURCE_DIR}/tests/root-volume-integration-policy.sh
+                           ${CMAKE_SOURCE_DIR})
+          '''
+          if s.count(b) != 2:
+              raise SystemExit(f'expected 2 copies, found {s.count(b)}')
+          p.write_text(s.replace(b + b, b, 1))
+          PY
+          test "$(grep -c 'add_test(NAME infilfs-root-volume-integration-policy' CMakeLists.txt)" -eq 1
+      - name: Commit
+        run: |
+          git config user.name 'The First Infiltrator'
+          git config user.email 'infiltratr@yandex.com'
+          git add CMakeLists.txt
+          git commit -m 'build: deduplicate root-volume policy test'
+          git push origin HEAD:main
