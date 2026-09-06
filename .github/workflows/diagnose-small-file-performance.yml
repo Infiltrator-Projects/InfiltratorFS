@@ -50,58 +50,58 @@ jobs:
             local opts="$1"
             sudo mount -t infiltratorfs -o "$opts" "$loop" "$mnt"
             sudo python3 - "$mnt" <<'PY'
-import os, sys, time, shutil
-root=sys.argv[1]
-N=5000
-payload=b'x'*4096
+          import os, sys, time, shutil
+          root=sys.argv[1]
+          N=5000
+          payload=b'x'*4096
 
-def run(label, fn):
-    t=time.monotonic(); fn(); dt=time.monotonic()-t
-    print(f'{label}: {dt:.3f}s ({N/dt:.1f} ops/s)', flush=True)
+          def run(label, fn):
+              t=time.monotonic(); fn(); dt=time.monotonic()-t
+              print(f'{label}: {dt:.3f}s ({N/dt:.1f} ops/s)', flush=True)
 
-def reset(name):
-    p=os.path.join(root,name)
-    shutil.rmtree(p, ignore_errors=True)
-    os.mkdir(p)
-    return p
+          def reset(name):
+              p=os.path.join(root,name)
+              shutil.rmtree(p, ignore_errors=True)
+              os.mkdir(p)
+              return p
 
-p=reset('empty')
-def empty():
-    for i in range(N):
-        fd=os.open(os.path.join(p,f'f{i:05d}'), os.O_CREAT|os.O_EXCL|os.O_WRONLY, 0o644)
-        os.close(fd)
-run('5000 empty create', empty)
+          p=reset('empty')
+          def empty():
+              for i in range(N):
+                  fd=os.open(os.path.join(p,f'f{i:05d}'), os.O_CREAT|os.O_EXCL|os.O_WRONLY, 0o644)
+                  os.close(fd)
+          run('5000 empty create', empty)
 
-p=reset('onebyte')
-def onebyte():
-    for i in range(N):
-        with open(os.path.join(p,f'f{i:05d}'),'wb',buffering=0) as f: f.write(b'x')
-run('5000 create+1B', onebyte)
+          p=reset('onebyte')
+          def onebyte():
+              for i in range(N):
+                  with open(os.path.join(p,f'f{i:05d}'),'wb',buffering=0) as f: f.write(b'x')
+          run('5000 create+1B', onebyte)
 
-p=reset('fourk')
-def fourk():
-    for i in range(N):
-        with open(os.path.join(p,f'f{i:05d}'),'wb',buffering=0) as f: f.write(payload)
-run('5000 create+4K', fourk)
+          p=reset('fourk')
+          def fourk():
+              for i in range(N):
+                  with open(os.path.join(p,f'f{i:05d}'),'wb',buffering=0) as f: f.write(payload)
+          run('5000 create+4K', fourk)
 
-p=reset('precreated')
-for i in range(N):
-    open(os.path.join(p,f'f{i:05d}'),'wb').close()
-def existing4k():
-    for i in range(N):
-        with open(os.path.join(p,f'f{i:05d}'),'wb',buffering=0) as f: f.write(payload)
-run('5000 existing-file 4K writes', existing4k)
+          p=reset('precreated')
+          for i in range(N):
+              open(os.path.join(p,f'f{i:05d}'),'wb').close()
+          def existing4k():
+              for i in range(N):
+                  with open(os.path.join(p,f'f{i:05d}'),'wb',buffering=0) as f: f.write(payload)
+          run('5000 existing-file 4K writes', existing4k)
 
-p=reset('dirs')
-def spread():
-    for d in range(100): os.mkdir(os.path.join(p,f'd{d:03d}'))
-    for i in range(N):
-        q=os.path.join(p,f'd{i%100:03d}',f'f{i:05d}')
-        with open(q,'wb',buffering=0) as f: f.write(payload)
-run('5000 create+4K across 100 dirs', spread)
+          p=reset('dirs')
+          def spread():
+              for d in range(100): os.mkdir(os.path.join(p,f'd{d:03d}'))
+              for i in range(N):
+                  q=os.path.join(p,f'd{i%100:03d}',f'f{i:05d}')
+                  with open(q,'wb',buffering=0) as f: f.write(payload)
+          run('5000 create+4K across 100 dirs', spread)
 
-os.sync()
-PY
+          os.sync()
+          PY
             sudo umount "$mnt"
             build/infilfs-scrub "$loop" | grep -F 'Result:'
           }
