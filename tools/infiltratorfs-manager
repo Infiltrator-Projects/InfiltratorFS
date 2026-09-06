@@ -1022,8 +1022,13 @@ class Manager(Gtk.ApplicationWindow):
     def enable(self):
         available = self.target is not None and not self.busy
         mounted = bool(self.target and self.target.mountpoint)
+        maintenance_available = available and not mounted
         for button in (self.inspect, self.scrub, self.forensic):
-            button.set_sensitive(available)
+            button.set_sensitive(maintenance_available)
+            button.set_tooltip_text(
+                "Unmount the volume before running offline filesystem maintenance."
+                if available and mounted else None
+            )
         self.format.set_sensitive(available and not mounted)
         self.mount.set_sensitive(available)
         self.unmount.set_sensitive(available and mounted)
@@ -1065,6 +1070,7 @@ class Manager(Gtk.ApplicationWindow):
             failure = ""
             for command in commands:
                 GLib.idle_add(self.log, "$ " + " ".join(command) + "\n")
+                output_tail = []
                 try:
                     process = subprocess.Popen(
                         command,
@@ -1078,8 +1084,14 @@ class Manager(Gtk.ApplicationWindow):
                     break
                 for line in process.stdout or ():
                     GLib.idle_add(self.log, line)
+                    text = line.strip()
+                    if text:
+                        output_tail.append(text)
+                        if len(output_tail) > 20:
+                            del output_tail[0]
                 if process.wait():
-                    failure = f"Command exited with status {process.returncode}."
+                    detail = output_tail[-1] if output_tail else ""
+                    failure = detail or f"Command exited with status {process.returncode}."
                     break
 
             def finish():
@@ -1292,17 +1304,35 @@ class Manager(Gtk.ApplicationWindow):
             else [tool, self.target.path]
         )
 
+    def _require_offline_maintenance(self):
+        if not self.target:
+            return False
+        self.show_target()
+        if self.target.mountpoint:
+            self.error(
+                "Unmount the volume before running inspect, verify, or forensic maintenance. "
+                "These tools examine a stable on-disk checkpoint and must not race a live mount."
+            )
+            return False
+        return True
+
     def do_inspect(self, *_):
+        if not self._require_offline_maintenance():
+            return
         command = self.tool_command("inspect-block", TOOLS["inspect"])
         if command:
             self.run("Inspect filesystem", [command], "Inspection completed.")
 
     def do_scrub(self, *_):
+        if not self._require_offline_maintenance():
+            return
         command = self.tool_command("scrub-block", TOOLS["scrub"])
         if command:
             self.run("Verify filesystem", [command], "Integrity check completed.")
 
     def do_forensic(self, *_):
+        if not self._require_offline_maintenance():
+            return
         command = self.tool_command("forensic-block", TOOLS["forensic"])
         if command:
             self.run("Forensic scan", [command], "Forensic scan completed.")
@@ -1353,7 +1383,11 @@ class Manager(Gtk.ApplicationWindow):
             return
         point = self.target.mountpoint or mountpoint_for(self.target)
         op = "unmount-block" if self.target.block else "unmount-image"
-        command = ["pkexec", HELPER, op, str(os.getuid()), point]
+        command = (
+            ["pkexec", HELPER, op, self.target.path, str(os.getuid()), point]
+            if self.target.block
+            else ["pkexec", HELPER, op, str(os.getuid()), point]
+        )
 
         def after():
             self.target.mountpoint = ""

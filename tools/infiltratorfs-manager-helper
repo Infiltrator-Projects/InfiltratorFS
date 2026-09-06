@@ -127,16 +127,19 @@ case "$operation" in
     inspect-block)
         (( $# == 1 )) || fail "inspect-block requires a target"
         validate_partition "$1"
+        [[ -z "$(findmnt -rn -S "$1")" ]] || fail "unmount the partition before running inspection"
         exec /usr/bin/infilfs-inspect "$1"
         ;;
     scrub-block)
         (( $# == 1 )) || fail "scrub-block requires a target"
         validate_partition "$1"
+        [[ -z "$(findmnt -rn -S "$1")" ]] || fail "unmount the partition before running integrity verification"
         exec /usr/bin/infilfs-scrub "$1"
         ;;
     forensic-block)
         (( $# == 1 )) || fail "forensic-block requires a target"
         validate_partition "$1"
+        [[ -z "$(findmnt -rn -S "$1")" ]] || fail "unmount the partition before running forensic maintenance"
         exec /usr/bin/infilfs-forensic "$1"
         ;;
     mount-block)
@@ -175,18 +178,31 @@ case "$operation" in
         /bin/mount -i -t infiltratorfs -o loop,rw,nodev,nosuid "$image_target" "$mount_point"
         finish_user_mount "$mount_point" "$user_id" "$group_id"
         ;;
-    unmount-block|unmount-image)
-        (( $# == 2 )) || fail "$operation requires uid and mount point"
+    unmount-block)
+        (( $# == 3 )) || fail "unmount-block requires target, uid and mount point"
+        block_target="$1"
+        user_id="$2"
+        mount_point="$3"
+        validate_partition "$block_target"
+        username=$(username_for_uid "$user_id")
+        [[ -n "$username" ]] || fail "unknown user identifier"
+        /usr/bin/mountpoint -q "$mount_point" || fail "mount point is not active"
+        [[ "$(findmnt -nro FSTYPE -T "$mount_point" 2>/dev/null || true)" == "infiltratorfs" ]] ||
+            fail "refusing to unmount a non-native filesystem"
+        mounted_source="$(findmnt -nro SOURCE -T "$mount_point" 2>/dev/null || true)"
+        [[ -n "$mounted_source" ]] || fail "could not resolve mounted source"
+        [[ "$(readlink -f -- "$mounted_source")" == "$(readlink -f -- "$block_target")" ]] ||
+            fail "mount point does not belong to the selected partition"
+        exec /bin/umount "$mount_point"
+        ;;
+    unmount-image)
+        (( $# == 2 )) || fail "unmount-image requires uid and mount point"
         user_id="$1"
         mount_point="$2"
         username=$(username_for_uid "$user_id")
         home=$(home_for_uid "$user_id")
         [[ -n "$username" ]] || fail "unknown user identifier"
-        if [[ "$operation" == "unmount-block" ]]; then
-            [[ "$mount_point" == "/media/$username/InfiltratorFS" ]] || fail "invalid mount point"
-        else
-            [[ "$mount_point" == "$home/InfiltratorFS" ]] || fail "invalid mount point"
-        fi
+        [[ "$mount_point" == "$home/InfiltratorFS" ]] || fail "invalid mount point"
         /usr/bin/mountpoint -q "$mount_point" || fail "mount point is not active"
         [[ "$(findmnt -nro FSTYPE -T "$mount_point" 2>/dev/null || true)" == "infiltratorfs" ]] ||
             fail "refusing to unmount a non-native filesystem"
