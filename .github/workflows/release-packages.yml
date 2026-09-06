@@ -43,6 +43,7 @@ jobs:
             "Native Linux kernel module"
             "Linux root-volume qualification"
             "Linux root boot qualification"
+            "Linux metadata qualification"
           )
           for attempt in $(seq 1 420); do
             json="$(gh api "$api")"
@@ -63,7 +64,7 @@ jobs:
               fi
             done
             if [[ "$all_complete" == 1 ]]; then
-              printf 'Native Linux, root-volume and root-boot qualification passed for %s.\n' \
+              printf 'Native Linux, root-volume, root-boot and Linux metadata qualification passed for %s.\n' \
                 "$EXPECTED_SHA"
               exit 0
             fi
