@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Linux metadata qualification
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'kernel/**'
+      - 'src/**'
+      - 'include/**'
+      - 'tools/**'
+      - 'tests/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/linux-metadata-qualification.yml'
+      - '.github/release-trigger'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-metadata-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  qualify:
+    name: Quota ACL and high-scale xattr durability
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            acl attr build-essential cmake kmod libcap2-bin \
+            linux-headers-$(uname -r) util-linux
+
+      - name: Build native metadata qualification targets
+        run: |
+          set -euo pipefail
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel --target \
+            mkfs.infilfs infilfs-scrub infilfs-tool infiltratorfs-quota
+          make -C kernel KDIR="/lib/modules/$(uname -r)/build"
+
+      - name: Prove quota and POSIX ACL remount durability
+        env:
+          INFILFS_REQUIRE_SETFACL: '1'
+        run: sudo -E bash tests/native-quota-qualification.sh build kernel/infiltratorfs.ko
+
+      - name: Prove high-scale Linux xattr performance and durability
+        env:
+          INFILFS_XATTR_MAX_SECONDS: '60'
+        run: sudo -E bash tests/native-linux-metadata-performance-qualification.sh build kernel/infiltratorfs.ko
