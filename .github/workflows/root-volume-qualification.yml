@@ -22,12 +22,12 @@ permissions:
 
 jobs:
   root-volume:
-    name: ACL, initramfs and root-safe package qualification
+    name: ACL, metadata, initramfs and root-safe package qualification
     concurrency:
       group: root-volume-${{ github.ref }}
       cancel-in-progress: true
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
       - name: Check out source
         uses: actions/checkout@v6
@@ -41,8 +41,8 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            acl build-essential cmake dkms e2fsprogs fontconfig initramfs-tools \
-            kmod linux-headers-generic policykit-1 rsync util-linux xdg-utils \
+            acl attr build-essential cmake dkms e2fsprogs fontconfig initramfs-tools \
+            kmod libcap2-bin linux-headers-generic policykit-1 rsync util-linux xdg-utils \
             python3 python3-gi gir1.2-gtk-3.0
 
       - name: Resolve kernel headers
@@ -71,13 +71,19 @@ jobs:
         run: |
           set -euo pipefail
           bash tests/root-volume-integration-policy.sh .
+          bash tests/root-readiness-policy.sh .
           bash -n packaging/initramfs/infiltratorfs-hook \
                   packaging/debian/preinst.in \
                   packaging/debian/postinst.in \
-                  packaging/debian/prerm.in
+                  packaging/debian/prerm.in \
+                  tests/native-root-metadata-qualification.sh
           python3 -m py_compile tests/native-posix-acl-qualification.py
           command -v setfacl
           command -v getfacl
+          command -v setfattr
+          command -v getfattr
+          command -v setcap
+          command -v getcap
           command -v rsync
           command -v update-initramfs
           command -v lsinitramfs
@@ -87,7 +93,7 @@ jobs:
           set -euo pipefail
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build --parallel --target \
-            mkfs.infilfs infilfs-scrub infilfs-tool infiltratorfs-quota
+            mkfs.infilfs infilfs-scrub infilfs-tool infiltratorfs-quota infilfs-compression
           ctest --test-dir build --output-on-failure -R \
             'infilfs-root-volume-integration-policy|infilfs-system-utilities'
 
@@ -121,6 +127,16 @@ jobs:
           bash tests/native-quota-policy.sh .
           bash -n tests/native-quota-qualification.sh
           sudo -E bash tests/native-quota-qualification.sh build kernel/infiltratorfs.ko
+
+      - name: Require full Linux root metadata and API semantics
+        if: steps.headers.outputs.runtime_kdir != ''
+        timeout-minutes: 12
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo env RUNNER_TEMP="$RUNNER_TEMP" \
+            bash tests/native-root-metadata-qualification.sh \
+              build kernel/infiltratorfs.ko
 
       - name: Build Debian package with root-volume integration
         run: |
