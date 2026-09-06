@@ -126,6 +126,11 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf dist
+          # cmake --install requires every installed target to exist. The
+          # earlier root checks intentionally build only a focused subset, so
+          # finish the configured tree before asking the packaging script to
+          # install the complete product payload.
+          cmake --build build --parallel
           bash packaging/build-linux-packages.sh build dist
           deb="$(find dist -maxdepth 1 -type f -name 'infiltratorfs_*_amd64.deb' -print -quit)"
           test -n "$deb"
