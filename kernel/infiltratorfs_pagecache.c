@@ -258,8 +258,6 @@ static int infilfs_writepages(struct address_space *mapping,
                     wbc->nr_to_write <= 0))
             break;
     }
-    if (!ret)
-        ret = infilfs_native_pending_flush_sb(mapping->host->i_sb);
     if (ret)
         mapping_set_error(mapping, ret);
     return ret;

@@ -672,6 +672,7 @@ static int infilfs_linux_meta_delete_file(struct inode *dir,
     u32 change_capacity = 0;
     u64 new_dir_block = 0;
     u64 retained_block = 0;
+    s64 dir_block_delta = 0;
     bool retained = false;
     int ret;
 
@@ -682,8 +683,9 @@ static int infilfs_linux_meta_delete_file(struct inode *dir,
                                    &change_capacity, &retained,
                                    &retained_block);
     if (!ret)
-        ret = infilfs_ns_rebuild_directory(pending, dir, &qname, NULL, NULL,
-                                           NULL, 0, 0, &new_dir_block);
+        ret = infilfs_ns_rebuild_directory_accounted(
+            pending, dir, &qname, NULL, NULL, NULL, 0, 0,
+            &new_dir_block, &dir_block_delta);
     if (!ret)
         ret = infilfs_ns_changes_append(
             &changes, &change_count, &change_capacity, dir_ii->object_id,
@@ -693,7 +695,7 @@ static int infilfs_linux_meta_delete_file(struct inode *dir,
     ret = infilfs_ns_finish(pending, ret);
     if (!ret) {
         dir_ii->object_block = new_dir_block;
-        infilfs_refresh_inode_blocks_after_commit(dir);
+        infilfs_adjust_inode_blocks_after_commit(dir, dir_block_delta);
         if (retained) {
             file_ii->object_block = retained_block;
             drop_nlink(file);

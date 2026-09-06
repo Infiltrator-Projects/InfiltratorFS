@@ -1459,6 +1459,7 @@ static int infilfs_posix_create_native_named_child(
     u8 object_id[16];
     u64 object_block = 0;
     u64 new_dir_block = 0;
+    s64 dir_block_delta = 0;
     const char *failure_stage = "validate-name";
     int ret;
 
@@ -1485,9 +1486,10 @@ static int infilfs_posix_create_native_named_child(
     }
     if (!ret) {
         failure_stage = "directory-update";
-        ret = infilfs_ns_rebuild_directory(
+        ret = infilfs_ns_rebuild_directory_accounted(
             pending, dir, NULL, NULL, name, object_id, type,
-            type == INFILFS_OBJECT_DIRECTORY ? 1 : 0, &new_dir_block);
+            type == INFILFS_OBJECT_DIRECTORY ? 1 : 0, &new_dir_block,
+            &dir_block_delta);
     }
     if (!ret) {
         memset(changes, 0, sizeof(changes));
@@ -1519,7 +1521,7 @@ static int infilfs_posix_create_native_named_child(
     }
 
     dir_ii->object_block = new_dir_block;
-    infilfs_refresh_inode_blocks_after_commit(dir);
+    infilfs_adjust_inode_blocks_after_commit(dir, dir_block_delta);
     memcpy(object_id_out, object_id, 16);
     *block_out = object_block;
     return 0;

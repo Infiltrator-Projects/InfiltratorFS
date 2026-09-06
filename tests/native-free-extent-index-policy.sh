@@ -5,6 +5,8 @@ set -euo pipefail
 root="${1:-.}"
 legacy="$root/kernel/infiltratorfs_rw_legacy.inc"
 data="$root/kernel/infiltratorfs_rw_data.inc"
+allocation="$root/kernel/infiltratorfs_allocation_map.c"
+resize="$root/kernel/infiltratorfs_resize.c"
 
 grep -Fq 'free_extent_index_valid' "$legacy"
 grep -Fq 'infilfs_rw_free_extent_index_rebuild' "$legacy"
@@ -25,6 +27,16 @@ grep -Fq 'for (scanned = 0; scanned < total - 1u; ++scanned)' <<<"$data_alloc"
 
 rollback="$(sed -n '/static int infilfs_native_operation_rollback(/,/^}/p' "$data")"
 grep -Fq 'infilfs_rw_free_extent_index_rebuild' <<<"$rollback"
+
+# Mount validation and resize accounting must count complete bitmap words.
+# Scalar per-block free-space scans add hundreds of millions of iterations on
+# a 1 TiB volume before any useful filesystem work can begin.
+mount_count="$(sed -n '/static u64 infilfs_allocation_bitmap_free_count(/,/^}/p' "$allocation")"
+resize_count="$(sed -n '/static u64 infilfs_resize_count_free(/,/^}/p' "$resize")"
+grep -Fq 'hweight_long' <<<"$mount_count"
+grep -Fq 'hweight_long' <<<"$resize_count"
+! grep -Fq 'for (bit = 0; bit < total; ++bit)' "$allocation"
+! grep -Fq 'for (block = 0; block < total; ++block)' <<<"$resize_count"
 
 printf 'Native free-extent index policy guard passed.\n'
 

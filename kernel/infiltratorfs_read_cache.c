@@ -57,6 +57,43 @@ struct infilfs_native_read_extent_cursor {
     bool valid;
 };
 
+#define INFILFS_NATIVE_READAHEAD_BLOCKS 256u
+
+static void infilfs_native_readahead_extent(
+    struct super_block *sb, u64 physical, u64 logical,
+    u64 extent_logical, u32 extent_blocks, u64 *next_logical)
+{
+    struct infilfs_sb_info *sbi;
+    u64 extent_end;
+    u64 blocks;
+    u64 i;
+
+    if (!sb || !next_logical)
+        return;
+    sbi = INFILFS_SB(sb);
+    if (!sbi || logical < *next_logical ||
+        physical >= infilfs_volume_blocks(sbi) ||
+        extent_logical > U64_MAX - extent_blocks)
+        return;
+    extent_end = extent_logical + extent_blocks;
+    if (logical >= extent_end)
+        return;
+    blocks = min_t(u64, extent_end - logical,
+                   INFILFS_NATIVE_READAHEAD_BLOCKS);
+    blocks = min_t(u64, blocks,
+                   infilfs_volume_blocks(sbi) - physical);
+
+    /*
+     * sb_bread() waits for one 4 KiB buffer at a time.  Seed a bounded run of
+     * contiguous extent blocks before waiting for the first one so the block
+     * layer can merge and queue sequential reads.  Checksum verification is
+     * unchanged and still occurs before any byte reaches userspace.
+     */
+    for (i = 0; i < blocks; ++i)
+        sb_breadahead(sb, (sector_t)(physical + i));
+    *next_logical = logical + blocks;
+}
+
 static int infilfs_native_map_file_block_cached(
     struct inode *inode, const u8 *object, u64 logical,
     u8 extent_page[INFILFS_DISK_BLOCK_SIZE],
@@ -212,6 +249,7 @@ ssize_t infilfs_native_read_iter_cached(struct inode *inode,
     u64 compressed_physical = 0, compressed_logical = 0;
     u32 compressed_blocks = 0, compressed_flags = 0;
     bool compressed_valid = false;
+    u64 readahead_next_logical = 0;
     int ret;
 
     if (pos < 0)
@@ -353,6 +391,9 @@ ssize_t infilfs_native_read_iter_cached(struct inode *inode,
                                INFILFS_DISK_BLOCK_SIZE,
                        INFILFS_DISK_BLOCK_SIZE);
             } else {
+                infilfs_native_readahead_extent(
+                    inode->i_sb, physical, logical, extent_logical,
+                    extent_blocks, &readahead_next_logical);
                 ret = infilfs_read_allocated_block(
                     inode->i_sb, physical, data_block);
             }

@@ -70,11 +70,7 @@ static uint64_t resize_pick_free_reverse(uint8_t *bitmap, uint64_t total,
 
 static uint64_t resize_count_free(const uint8_t *bitmap, uint64_t total)
 {
-    uint64_t count = 0;
-    for (uint64_t block = 0; block < total; ++block)
-        if (!bitmap_get(bitmap, block))
-            ++count;
-    return count;
+    return bitmap_count_free(bitmap, total);
 }
 
 static int resize_has_named_snapshots(struct infs_volume *vol)
@@ -320,11 +316,13 @@ infs_status infs_volume_resize(struct infs_volume *vol,
     if (!next_bitmap)
         return INFS_STATUS_NO_MEMORY;
 
-    uint64_t common =
-        old_total < new_total ? old_total : new_total;
-    for (uint64_t block = 0; block < common; ++block)
-        if (bitmap_get(vol->bitmap, block))
-            bitmap_set(next_bitmap, block, 1);
+    uint64_t common = old_total < new_total ? old_total : new_total;
+    if (common >= 8u)
+        memcpy(next_bitmap, vol->bitmap, (size_t)(common >> 3));
+    if (common & 7u) {
+        uint8_t mask = (uint8_t)((UINT8_C(1) << (common & 7u)) - 1u);
+        next_bitmap[common >> 3] = vol->bitmap[common >> 3] & mask;
+    }
     for (uint64_t block = new_total;
          block < (uint64_t)next_bitmap_bytes * UINT64_C(8); ++block)
         bitmap_set(next_bitmap, block, 1);

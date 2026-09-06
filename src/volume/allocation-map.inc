@@ -345,10 +345,7 @@ static infs_status allocation_map_load(
              bit < (uint64_t)bitmap_bytes * UINT64_C(8); ++bit)
             bitmap_set(bitmap, bit, 1);
 
-        uint64_t free_count = 0;
-        for (uint64_t bit = 0; bit < total; ++bit)
-            if (!bitmap_get(bitmap, bit))
-                ++free_count;
+        uint64_t free_count = bitmap_count_free(bitmap, total);
         if (free_count != infs_le64_to_cpu(sb->free_blocks)) {
             status = INFS_STATUS_CORRUPT;
             goto fail;

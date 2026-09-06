@@ -225,7 +225,7 @@ static int object_cache_lookup_page(struct infs_volume *vol,
                                     const uint8_t id[16],
                                     uint32_t *page_out)
     __attribute__((unused));
-static uint64_t bitmap_free_count(const struct infs_volume *vol)
+static uint64_t bitmap_count_free(const uint8_t *bitmap, uint64_t total)
     __attribute__((unused));
 static uint64_t *metadata_head_page_pointers(void *payload)
     __attribute__((unused));

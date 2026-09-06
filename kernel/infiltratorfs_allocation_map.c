@@ -133,6 +133,27 @@ static bool infilfs_allocation_bitmap_get(const u8 *bitmap, u64 block)
     return (bitmap[block >> 3] & (u8)(1u << (block & 7u))) != 0;
 }
 
+static u64 infilfs_allocation_bitmap_free_count(const u8 *bitmap, u64 total)
+{
+    const unsigned long *words = (const unsigned long *)bitmap;
+    size_t full_words = (size_t)(total / BITS_PER_LONG);
+    u64 used = 0;
+    u64 bit;
+    size_t i;
+
+    /*
+     * The runtime bitmap is word-aligned and padded to a filesystem block.
+     * Count complete machine words instead of testing every logical block.
+     * Keep the short tail byte-addressed so the persistent LSB-first bitmap
+     * representation remains correct on every architecture.
+     */
+    for (i = 0; i < full_words; ++i)
+        used += hweight_long(words[i]);
+    for (bit = (u64)full_words * BITS_PER_LONG; bit < total; ++bit)
+        used += infilfs_allocation_bitmap_get(bitmap, bit);
+    return total - used;
+}
+
 static int infilfs_allocation_u64_compare(const void *a, const void *b)
 {
     u64 av = *(const u64 *)a;
@@ -376,14 +397,12 @@ int infilfs_allocation_map_load(
     }
 
     if (bitmap) {
-        u64 free_count = 0;
+        u64 free_count;
         u64 bit;
 
         for (bit = total; bit < (u64)bitmap_bytes * 8u; ++bit)
             infilfs_allocation_bitmap_set(bitmap, bit, true);
-        for (bit = 0; bit < total; ++bit)
-            if (!infilfs_allocation_bitmap_get(bitmap, bit))
-                ++free_count;
+        free_count = infilfs_allocation_bitmap_free_count(bitmap, total);
         if (free_count != le64_to_cpu(disk->free_blocks)) {
             ret = -EFSCORRUPTED;
             goto fail;

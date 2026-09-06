@@ -89,13 +89,18 @@ static u64 infilfs_resize_pick_free_reverse(
 
 static u64 infilfs_resize_count_free(const u8 *bitmap, u64 total)
 {
+    const unsigned long *words = (const unsigned long *)bitmap;
+    size_t full_words = (size_t)(total / BITS_PER_LONG);
+    u64 used = 0;
     u64 block;
-    u64 count = 0;
+    size_t i;
 
-    for (block = 0; block < total; ++block)
-        if (!infilfs_rw_bitmap_get(bitmap, block))
-            ++count;
-    return count;
+    for (i = 0; i < full_words; ++i)
+        used += hweight_long(words[i]);
+    for (block = (u64)full_words * BITS_PER_LONG;
+         block < total; ++block)
+        used += infilfs_rw_bitmap_get(bitmap, block);
+    return total - used;
 }
 
 static int infilfs_resize_allocate_layout(
@@ -302,9 +307,13 @@ static int infilfs_native_resize_locked(
     if (!next_bitmap)
         return -ENOMEM;
     common = min_t(u64, old_total, new_total);
-    for (bit = 0; bit < common; ++bit)
-        if (infilfs_rw_bitmap_get(sbi->bitmap, bit))
-            infilfs_rw_bitmap_set(next_bitmap, bit, true);
+    if (common >= 8u)
+        memcpy(next_bitmap, sbi->bitmap, (size_t)(common >> 3));
+    if (common & 7u) {
+        u8 mask = (u8)((1u << (common & 7u)) - 1u);
+
+        next_bitmap[common >> 3] = sbi->bitmap[common >> 3] & mask;
+    }
     for (bit = new_total; bit < (u64)next_bitmap_bytes * 8u; ++bit)
         infilfs_rw_bitmap_set(next_bitmap, bit, true);
 

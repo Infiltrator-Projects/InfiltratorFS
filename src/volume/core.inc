@@ -774,13 +774,22 @@ static int tx_defer_range(struct infs_volume *vol, uint64_t start, uint64_t coun
     return INFS_STATUS_OK;
 }
 
-static uint64_t bitmap_free_count(const struct infs_volume *vol)
+static uint64_t bitmap_count_free(const uint8_t *bitmap, uint64_t total)
 {
-    uint64_t total = infs_le64_to_cpu(vol->sb.total_blocks);
     uint64_t free_count = 0;
-    for (uint64_t b = 0; b < total; ++b)
-        if (!bitmap_get(vol->bitmap, b))
-            ++free_count;
+    uint64_t full_bytes = total >> 3;
+
+    for (uint64_t byte = 0; byte < full_bytes; ++byte) {
+        uint8_t value = bitmap[byte];
+
+        value = (uint8_t)(value - ((value >> 1u) & UINT8_C(0x55)));
+        value = (uint8_t)((value & UINT8_C(0x33)) +
+                          ((value >> 2u) & UINT8_C(0x33)));
+        value = (uint8_t)((value + (value >> 4u)) & UINT8_C(0x0f));
+        free_count += 8u - value;
+    }
+    for (uint64_t bit = full_bytes << 3; bit < total; ++bit)
+        free_count += !bitmap_get(bitmap, bit);
     return free_count;
 }
 

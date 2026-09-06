@@ -6,6 +6,11 @@ root="${1:-.}"
 data="$root/kernel/infiltratorfs_rw_data.inc"
 ns="$root/kernel/infiltratorfs_rw_namespace.inc"
 internal="$root/kernel/infiltratorfs_internal.h"
+pagecache="$root/kernel/infiltratorfs_pagecache.c"
+read_cache="$root/kernel/infiltratorfs_read_cache.c"
+core="$root/kernel/infiltratorfs_core.c"
+linux_meta="$root/kernel/infiltratorfs_linux_meta.inc"
+rw="$root/kernel/infiltratorfs_rw.inc"
 
 # Sequential EOF appends must stay at the checksum tail rather than collecting
 # the historical checksum chain on every group boundary.
@@ -50,5 +55,35 @@ grep -Fq 'u64 pending_physical_bytes;' "$internal"
 grep -Fq 'infilfs_native_pending_should_publish' "$data"
 grep -Fq 'max_excess_churn = 64ULL * 1024ULL * 1024ULL' "$data"
 grep -Fq 'infilfs_native_pending_should_publish(pending)' "$ns"
+
+# VM background writeback stages dirty folios into the same deferred
+# transaction. It must not turn every writeback pass into a device-wide
+# checkpoint publication; fsync/syncfs/unmount retain the durability boundary.
+writepages="$(sed -n '/static int infilfs_writepages(/,/^}/p' "$pagecache")"
+! grep -Fq 'infilfs_native_pending_flush_sb' <<<"$writepages"
+fsync_body="$(sed -n '/static int infilfs_file_fsync(/,/^}/p' "$data")"
+grep -Fq 'file_write_and_wait_range' <<<"$fsync_body"
+grep -Fq 'infilfs_native_pending_flush_sb' <<<"$fsync_body"
+
+# Verified reads must queue a bounded contiguous extent window before the
+# synchronous 4 KiB integrity reader waits on the first buffer.
+grep -Fq '#define INFILFS_NATIVE_READAHEAD_BLOCKS 256u' "$read_cache"
+readahead_body="$(sed -n '/static void infilfs_native_readahead_extent(/,/^}/p' "$read_cache")"
+grep -Fq 'sb_breadahead' <<<"$readahead_body"
+grep -Fq 'INFILFS_NATIVE_READAHEAD_BLOCKS' <<<"$readahead_body"
+
+# Tree-directory i_blocks accounting must use the transaction's exact local
+# allocation/free delta. Recursively rereading the growing directory tree after
+# every create made both ordinary small-file creation and xattr sidecars
+# quadratic in the number of entries.
+grep -Fq 'infilfs_ns_rebuild_directory_accounted' "$ns"
+grep -Fq 'infilfs_adjust_inode_blocks_after_commit' "$core"
+create_body="$(sed -n '/static int infilfs_posix_create_native_named_child(/,/^}/p' "$rw")"
+meta_delete_body="$(sed -n '/static int infilfs_linux_meta_delete_file(/,/^}/p' "$linux_meta")"
+grep -Fq 'infilfs_ns_rebuild_directory_accounted' <<<"$create_body"
+grep -Fq 'infilfs_adjust_inode_blocks_after_commit' <<<"$create_body"
+! grep -Fq 'infilfs_refresh_inode_blocks_after_commit' <<<"$create_body"
+grep -Fq 'infilfs_ns_rebuild_directory_accounted' <<<"$meta_delete_body"
+! grep -Fq 'infilfs_refresh_inode_blocks_after_commit' <<<"$meta_delete_body"
 
 printf 'Native sequential-write scaling policy guard passed.\n'

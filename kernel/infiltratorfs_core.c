@@ -2223,6 +2223,45 @@ static void infilfs_refresh_inode_blocks_after_commit(struct inode *inode)
                inode->i_ino, ret);
 }
 
+/*
+ * Namespace mutation already journals every metadata allocation and deferred
+ * free.  Use that exact per-operation delta to maintain i_blocks instead of
+ * rereading an entire tree directory after every create, unlink, or rename.
+ * The recursive refresh remains the fail-safe for an impossible accounting
+ * overflow or a stale in-memory value.
+ */
+static void infilfs_adjust_inode_blocks_after_commit(struct inode *inode,
+                                                      s64 block_delta)
+{
+    const u64 sectors_per_block = INFILFS_DISK_BLOCK_SIZE >> 9;
+    u64 sectors;
+    u64 current = inode->i_blocks;
+
+    if (!block_delta)
+        return;
+    if (block_delta > 0) {
+        u64 blocks = (u64)block_delta;
+
+        if (blocks > U64_MAX / sectors_per_block)
+            goto refresh;
+        sectors = blocks * sectors_per_block;
+        if (current > U64_MAX - sectors)
+            goto refresh;
+        inode->i_blocks = current + sectors;
+        return;
+    }
+
+    sectors = ((u64)(-(block_delta + 1)) + 1u) * sectors_per_block;
+    if (sectors / sectors_per_block !=
+        (u64)(-(block_delta + 1)) + 1u || current < sectors)
+        goto refresh;
+    inode->i_blocks = current - sectors;
+    return;
+
+refresh:
+    infilfs_refresh_inode_blocks_after_commit(inode);
+}
+
 static int infilfs_populate_inode(struct inode *inode, u64 object_block,
                                   u16 expected_type, const u8 expected_id[16])
 {

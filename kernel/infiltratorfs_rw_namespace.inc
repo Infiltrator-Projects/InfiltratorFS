@@ -1092,6 +1092,89 @@ out:
     return ret;
 }
 
+static int infilfs_ns_added_range_blocks(
+    const struct infilfs_rw_free_range *ranges, size_t first, size_t count,
+    u64 *blocks)
+{
+    size_t i;
+
+    for (i = first; i < count; ++i) {
+        if (*blocks > U64_MAX - ranges[i].count)
+            return -EOVERFLOW;
+        *blocks += ranges[i].count;
+    }
+    return 0;
+}
+
+/*
+ * Return the exact net number of live directory metadata blocks introduced by
+ * this rebuild.  Allocation journal entries only append.  Deferred ranges may
+ * coalesce into the previous final entry, so preserve that entry's old length
+ * and include only its growth.  This keeps accounting O(blocks changed) even
+ * while many namespace operations share one pending transaction.
+ */
+static int infilfs_ns_rebuild_directory_accounted(
+    struct infilfs_native_pending *pending, struct inode *dir,
+    const struct qstr *remove_a, const struct qstr *remove_b,
+    const struct qstr *add_name, const u8 add_id[16], u16 add_type,
+    int link_delta, u64 *new_dir_block_out, s64 *block_delta_out)
+{
+    struct infilfs_rw_tx *tx = &pending->tx;
+    size_t allocated_before = tx->allocated_count;
+    size_t deferred_before = tx->deferred_count;
+    struct infilfs_rw_free_range deferred_last = {0};
+    u64 allocated = 0;
+    u64 deferred = 0;
+    int ret;
+
+    if (!block_delta_out)
+        return -EINVAL;
+    if (deferred_before)
+        deferred_last = tx->deferred[deferred_before - 1u];
+
+    ret = infilfs_ns_rebuild_directory(
+        pending, dir, remove_a, remove_b, add_name, add_id, add_type,
+        link_delta, new_dir_block_out);
+    if (ret)
+        return ret;
+    if (tx->allocated_count < allocated_before ||
+        tx->deferred_count < deferred_before)
+        return -EFSCORRUPTED;
+
+    ret = infilfs_ns_added_range_blocks(
+        tx->allocated, allocated_before, tx->allocated_count, &allocated);
+    if (ret)
+        return ret;
+    if (deferred_before) {
+        const struct infilfs_rw_free_range *last =
+            &tx->deferred[deferred_before - 1u];
+
+        if (last->start != deferred_last.start ||
+            last->count < deferred_last.count)
+            return -EFSCORRUPTED;
+        deferred = last->count - deferred_last.count;
+    }
+    ret = infilfs_ns_added_range_blocks(
+        tx->deferred, deferred_before, tx->deferred_count, &deferred);
+    if (ret)
+        return ret;
+
+    if (allocated >= deferred) {
+        u64 delta = allocated - deferred;
+
+        if (delta > S64_MAX)
+            return -EOVERFLOW;
+        *block_delta_out = (s64)delta;
+    } else {
+        u64 delta = deferred - allocated;
+
+        if (delta > S64_MAX)
+            return -EOVERFLOW;
+        *block_delta_out = -(s64)delta;
+    }
+    return 0;
+}
+
 static int infilfs_ns_cow_object(struct infilfs_native_pending *pending,
                                  struct inode *inode,
                                  const u8 new_parent_id[16],
@@ -1734,6 +1817,7 @@ static int infilfs_ns_unlink(struct inode *dir, struct dentry *dentry)
     u32 change_count = 0, change_capacity = 0;
     u64 new_dir_block = 0, retained_block = 0;
     u64 released_bytes = 0;
+    s64 dir_block_delta = 0;
     bool retained = false;
     bool quota_locked = false;
     int ret;
@@ -1759,8 +1843,9 @@ static int infilfs_ns_unlink(struct inode *dir, struct dentry *dentry)
     ret = infilfs_ns_delete_object(pending, inode, &changes, &change_count,
                                    &change_capacity, &retained, &retained_block);
     if (!ret)
-        ret = infilfs_ns_rebuild_directory(pending, dir, &dentry->d_name, NULL,
-                                           NULL, NULL, 0, 0, &new_dir_block);
+        ret = infilfs_ns_rebuild_directory_accounted(
+            pending, dir, &dentry->d_name, NULL, NULL, NULL, 0, 0,
+            &new_dir_block, &dir_block_delta);
     if (!ret)
         ret = infilfs_ns_changes_append(&changes, &change_count, &change_capacity,
                                         dir_ii->object_id, INFILFS_NS_REPOINT,
@@ -1790,7 +1875,7 @@ static int infilfs_ns_unlink(struct inode *dir, struct dentry *dentry)
     }
     if (!ret) {
         dir_ii->object_block = new_dir_block;
-        infilfs_refresh_inode_blocks_after_commit(dir);
+        infilfs_adjust_inode_blocks_after_commit(dir, dir_block_delta);
         if (retained) {
             ii->object_block = retained_block;
             drop_nlink(inode);
@@ -1813,6 +1898,7 @@ static int infilfs_ns_rmdir(struct inode *dir, struct dentry *dentry)
     u32 change_count = 0, change_capacity = 0;
     u64 new_dir_block = 0, retained_block = 0;
     u64 released_bytes = 0;
+    s64 dir_block_delta = 0;
     bool retained = false;
     bool quota_locked = false;
     int ret;
@@ -1837,8 +1923,9 @@ static int infilfs_ns_rmdir(struct inode *dir, struct dentry *dentry)
     ret = infilfs_ns_delete_object(pending, inode, &changes, &change_count,
                                    &change_capacity, &retained, &retained_block);
     if (!ret)
-        ret = infilfs_ns_rebuild_directory(pending, dir, &dentry->d_name, NULL,
-                                           NULL, NULL, 0, -1, &new_dir_block);
+        ret = infilfs_ns_rebuild_directory_accounted(
+            pending, dir, &dentry->d_name, NULL, NULL, NULL, 0, -1,
+            &new_dir_block, &dir_block_delta);
     if (!ret)
         ret = infilfs_ns_changes_append(&changes, &change_count, &change_capacity,
                                         dir_ii->object_id, INFILFS_NS_REPOINT,
@@ -1856,7 +1943,7 @@ static int infilfs_ns_rmdir(struct inode *dir, struct dentry *dentry)
     }
     if (!ret) {
         dir_ii->object_block = new_dir_block;
-        infilfs_refresh_inode_blocks_after_commit(dir);
+        infilfs_adjust_inode_blocks_after_commit(dir, dir_block_delta);
         drop_nlink(dir);
         clear_nlink(inode);
     }
@@ -1873,6 +1960,7 @@ static int infilfs_ns_link(struct dentry *old_dentry, struct inode *dir,
     struct infilfs_native_pending *pending;
     struct infilfs_ns_index_change changes[2];
     u64 new_file_block = 0, new_dir_block = 0;
+    s64 dir_block_delta = 0;
     int ret;
 
     if (!inode || !ii || ii->object_type != INFILFS_OBJECT_FILE)
@@ -1891,10 +1979,9 @@ static int infilfs_ns_link(struct dentry *old_dentry, struct inode *dir,
         return ret;
     ret = infilfs_ns_cow_object(pending, inode, NULL, 1, true, &new_file_block);
     if (!ret)
-        ret = infilfs_ns_rebuild_directory(pending, dir, NULL, NULL,
-                                           &dentry->d_name, ii->object_id,
-                                           INFILFS_OBJECT_FILE, 0,
-                                           &new_dir_block);
+        ret = infilfs_ns_rebuild_directory_accounted(
+            pending, dir, NULL, NULL, &dentry->d_name, ii->object_id,
+            INFILFS_OBJECT_FILE, 0, &new_dir_block, &dir_block_delta);
     if (!ret) {
         memset(changes, 0, sizeof(changes));
         memcpy(changes[0].object_id, ii->object_id, 16);
@@ -1911,7 +1998,7 @@ static int infilfs_ns_link(struct dentry *old_dentry, struct inode *dir,
     if (!ret) {
         ii->object_block = new_file_block;
         dir_ii->object_block = new_dir_block;
-        infilfs_refresh_inode_blocks_after_commit(dir);
+        infilfs_adjust_inode_blocks_after_commit(dir, dir_block_delta);
         inc_nlink(inode);
         ihold(inode);
         d_instantiate(dentry, inode);
@@ -1933,6 +2020,7 @@ static int infilfs_ns_symlink(struct user_namespace *idmap, struct inode *dir,
     struct inode *inode;
     u8 object_id[16];
     u64 object_block = 0, new_dir_block = 0;
+    s64 dir_block_delta = 0;
     int ret;
 
     (void)idmap;
@@ -1948,10 +2036,9 @@ static int infilfs_ns_symlink(struct user_namespace *idmap, struct inode *dir,
     ret = infilfs_ns_create_symlink_object(pending, dir, target,
                                            object_id, &object_block);
     if (!ret)
-        ret = infilfs_ns_rebuild_directory(pending, dir, NULL, NULL,
-                                           &dentry->d_name, object_id,
-                                           INFILFS_OBJECT_SYMLINK, 0,
-                                           &new_dir_block);
+        ret = infilfs_ns_rebuild_directory_accounted(
+            pending, dir, NULL, NULL, &dentry->d_name, object_id,
+            INFILFS_OBJECT_SYMLINK, 0, &new_dir_block, &dir_block_delta);
     if (!ret) {
         memset(changes, 0, sizeof(changes));
         memcpy(changes[0].object_id, dir_ii->object_id, 16);
@@ -1968,7 +2055,7 @@ static int infilfs_ns_symlink(struct user_namespace *idmap, struct inode *dir,
     if (ret)
         return ret;
     dir_ii->object_block = new_dir_block;
-    infilfs_refresh_inode_blocks_after_commit(dir);
+    infilfs_adjust_inode_blocks_after_commit(dir, dir_block_delta);
     inode = infilfs_get_inode(dir->i_sb, object_block,
                               INFILFS_OBJECT_SYMLINK, object_id);
     if (IS_ERR(inode))
@@ -1993,6 +2080,8 @@ static int infilfs_ns_rename_exchange_same_dir(
     u64 first_dir_block = 0;
     u64 final_dir_block = 0;
     u64 original_dir_block;
+    s64 first_block_delta = 0;
+    s64 second_block_delta = 0;
     int ret;
 
     if (!source || !destination || !source_ii || !destination_ii || !dir_ii)
@@ -2009,16 +2098,18 @@ static int infilfs_ns_rename_exchange_same_dir(
     if (ret)
         return ret;
     original_dir_block = dir_ii->object_block;
-    ret = infilfs_ns_rebuild_directory(
+    ret = infilfs_ns_rebuild_directory_accounted(
         pending, dir, &old_dentry->d_name, &new_dentry->d_name,
         &old_dentry->d_name, destination_ii->object_id,
-        destination_ii->object_type, 0, &first_dir_block);
+        destination_ii->object_type, 0, &first_dir_block,
+        &first_block_delta);
     if (!ret) {
         dir_ii->object_block = first_dir_block;
-        ret = infilfs_ns_rebuild_directory(
+        ret = infilfs_ns_rebuild_directory_accounted(
             pending, dir, NULL, NULL,
             &new_dentry->d_name, source_ii->object_id,
-            source_ii->object_type, 0, &final_dir_block);
+            source_ii->object_type, 0, &final_dir_block,
+            &second_block_delta);
     }
     dir_ii->object_block = original_dir_block;
     if (!ret) {
@@ -2032,7 +2123,8 @@ static int infilfs_ns_rename_exchange_same_dir(
     ret = infilfs_ns_finish(pending, ret);
     if (!ret) {
         dir_ii->object_block = final_dir_block;
-        infilfs_refresh_inode_blocks_after_commit(dir);
+        infilfs_adjust_inode_blocks_after_commit(dir, first_block_delta);
+        infilfs_adjust_inode_blocks_after_commit(dir, second_block_delta);
     }
     return ret;
 }
@@ -2064,6 +2156,8 @@ static int infilfs_ns_rename(struct user_namespace *idmap,
     u64 old_dir_block = 0, new_dir_block = 0, source_block = 0;
     u64 retained_destination_block = 0;
     u64 destination_bytes = 0;
+    s64 old_dir_block_delta = 0;
+    s64 new_dir_block_delta = 0;
     bool retained_destination = false;
     bool destination_sync_delete = false;
     bool same_parent;
@@ -2174,11 +2268,12 @@ finish:
     if (same_parent) {
         int delta = destination &&
             destination_ii->object_type == INFILFS_OBJECT_DIRECTORY ? -1 : 0;
-        ret = infilfs_ns_rebuild_directory(
+        ret = infilfs_ns_rebuild_directory_accounted(
             pending, old_dir, &old_dentry->d_name,
             destination ? &new_dentry->d_name : NULL,
             &new_dentry->d_name, source_ii->object_id,
-            source_ii->object_type, delta, &old_dir_block);
+            source_ii->object_type, delta, &old_dir_block,
+            &old_dir_block_delta);
         if (!ret) {
             new_dir_block = old_dir_block;
             ret = infilfs_ns_changes_append(
@@ -2192,15 +2287,17 @@ finish:
         old_delta = source_ii->object_type == INFILFS_OBJECT_DIRECTORY ? -1 : 0;
         new_delta = (source_ii->object_type == INFILFS_OBJECT_DIRECTORY ? 1 : 0) -
             (destination && destination_ii->object_type == INFILFS_OBJECT_DIRECTORY ? 1 : 0);
-        ret = infilfs_ns_rebuild_directory(
+        ret = infilfs_ns_rebuild_directory_accounted(
             pending, old_dir, &old_dentry->d_name, NULL,
-            NULL, NULL, 0, old_delta, &old_dir_block);
+            NULL, NULL, 0, old_delta, &old_dir_block,
+            &old_dir_block_delta);
         if (!ret)
-            ret = infilfs_ns_rebuild_directory(
+            ret = infilfs_ns_rebuild_directory_accounted(
                 pending, new_dir,
                 destination ? &new_dentry->d_name : NULL, NULL,
                 &new_dentry->d_name, source_ii->object_id,
-                source_ii->object_type, new_delta, &new_dir_block);
+                source_ii->object_type, new_delta, &new_dir_block,
+                &new_dir_block_delta);
         if (!ret)
             ret = infilfs_ns_changes_append(
                 &changes, &change_count, &change_capacity,
@@ -2264,11 +2361,13 @@ finish2:
     if (!ret) {
         source_ii->object_block = source_block;
         old_dir_ii->object_block = old_dir_block;
-        infilfs_refresh_inode_blocks_after_commit(old_dir);
+        infilfs_adjust_inode_blocks_after_commit(
+            old_dir, old_dir_block_delta);
         if (!same_parent)
             new_dir_ii->object_block = new_dir_block;
         if (!same_parent)
-            infilfs_refresh_inode_blocks_after_commit(new_dir);
+            infilfs_adjust_inode_blocks_after_commit(
+                new_dir, new_dir_block_delta);
         if (destination) {
             if (retained_destination) {
                 destination_ii->object_block = retained_destination_block;
