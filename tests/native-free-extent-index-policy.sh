@@ -8,6 +8,10 @@ data="$root/kernel/infiltratorfs_rw_data.inc"
 
 grep -Fq 'free_extent_index_valid' "$legacy"
 grep -Fq 'infilfs_rw_free_extent_index_rebuild' "$legacy"
+rebuild="$(sed -n '/static int infilfs_rw_free_extent_index_rebuild(/,/^}/p' "$legacy")"
+grep -Fq 'find_next_zero_bit' <<<"$rebuild"
+grep -Fq 'find_next_bit' <<<"$rebuild"
+! grep -Fq 'infilfs_rw_bitmap_get(tx->bitmap, block)' <<<"$rebuild"
 grep -Fq 'infilfs_rw_free_extent_choose_forward' "$legacy"
 grep -Fq 'infilfs_rw_free_extent_choose_reverse' "$legacy"
 

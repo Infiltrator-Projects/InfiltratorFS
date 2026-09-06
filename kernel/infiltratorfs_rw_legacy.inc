@@ -69,23 +69,33 @@ static int infilfs_rw_free_extent_index_reserve(struct infilfs_rw_tx *tx,
 
 static int infilfs_rw_free_extent_index_rebuild(struct infilfs_rw_tx *tx)
 {
-    u64 total;
-    u64 block = 0;
+    const unsigned long *bitmap;
+    unsigned long total;
+    unsigned long block = 0;
     size_t count = 0;
     int ret;
 
     if (!tx || !tx->bitmap || !tx->sbi)
         return -EINVAL;
-    total = infilfs_volume_blocks(tx->sbi);
+    if (infilfs_volume_blocks(tx->sbi) > ULONG_MAX)
+        return -EOVERFLOW;
+    total = (unsigned long)infilfs_volume_blocks(tx->sbi);
+    bitmap = (const unsigned long *)tx->bitmap;
 
+    /*
+     * The allocation bitmap is already a kernel bitmap.  The old rebuild
+     * called infilfs_rw_bitmap_get() once for every filesystem block, twice.
+     * On a 1 TiB/4 KiB volume that meant more than half a billion scalar bit
+     * tests whenever a deferred transaction started.  Use the kernel's
+     * word-at-a-time bitmap scanners instead; work now scales with bitmap
+     * words and free-run boundaries rather than logical block count.
+     */
     while (block < total) {
-        while (block < total && infilfs_rw_bitmap_get(tx->bitmap, block))
-            block++;
-        if (block == total)
+        block = find_next_zero_bit(bitmap, total, block);
+        if (block >= total)
             break;
         count++;
-        while (block < total && !infilfs_rw_bitmap_get(tx->bitmap, block))
-            block++;
+        block = find_next_bit(bitmap, total, block);
     }
 
     ret = infilfs_rw_free_extent_index_reserve(tx, count ? count : 1u);
@@ -97,17 +107,15 @@ static int infilfs_rw_free_extent_index_rebuild(struct infilfs_rw_tx *tx)
     block = 0;
     count = 0;
     while (block < total) {
-        u64 start;
+        unsigned long start;
 
-        while (block < total && infilfs_rw_bitmap_get(tx->bitmap, block))
-            block++;
-        if (block == total)
+        block = find_next_zero_bit(bitmap, total, block);
+        if (block >= total)
             break;
         start = block;
-        while (block < total && !infilfs_rw_bitmap_get(tx->bitmap, block))
-            block++;
-        tx->free_extents[count].start = start;
-        tx->free_extents[count].count = block - start;
+        block = find_next_bit(bitmap, total, block);
+        tx->free_extents[count].start = (u64)start;
+        tx->free_extents[count].count = (u64)(block - start);
         count++;
     }
 
