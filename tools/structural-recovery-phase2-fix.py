@@ -169,4 +169,14 @@ grep -Fq 'extent_bytes + sizeof(encoded)' "$root/src/volume/paged-extents.inc"
 """
     policy.write_text(p, encoding="utf-8")
 
+# Staging-only diagnostic: report the exact fragmented write/status that still
+# trips conformance. This file is not added by the qualification commit step.
+test_path = ROOT / "tests/large-files.c"
+test = test_path.read_text(encoding="utf-8")
+old = '''        expect(infs_write_file_buffered(\n                   &volume, "/fragmented.bin", fragmented_block,\n                   sizeof(fragmented_block), offset) ==\n                   (int64_t)sizeof(fragmented_block),\n               "write alternating fragmented data block");\n'''
+new = '''        {\n            int64_t write_rc = infs_write_file_buffered(\n                &volume, "/fragmented.bin", fragmented_block,\n                sizeof(fragmented_block), offset);\n            if (write_rc != (int64_t)sizeof(fragmented_block)) {\n                fprintf(stderr,\n                        "large-files diagnostic: i=%llu logical=%llu rc=%lld tx_error=%d tx_active=%d\\n",\n                        (unsigned long long)i,\n                        (unsigned long long)logical,\n                        (long long)write_rc, (int)volume.tx_error,\n                        volume.tx_active);\n                fail("write alternating fragmented data block");\n            }\n        }\n'''
+if old not in test:
+    raise SystemExit("large-files diagnostic anchor mismatch")
+test_path.write_text(test.replace(old, new, 1), encoding="utf-8")
+
 print("Structural recovery phase 2 chain-link finalization fix applied.")
