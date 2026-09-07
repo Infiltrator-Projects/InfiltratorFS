@@ -96,7 +96,7 @@ jobs:
           os.sync()
           PY
           sudo umount "$mnt"
-          build/infilfs-scrub "$loop" | tee "$work/scrub.txt"
+          sudo build/infilfs-scrub "$loop" | tee "$work/scrub.txt"
           grep -Fq 'Result:              CLEAN' "$work/scrub.txt"
           sudo losetup -d "$loop"
           loop=""
