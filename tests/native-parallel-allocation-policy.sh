@@ -40,7 +40,10 @@ test -n "$lock_line"
 
 # The parallel allocator is one of the principal reasons the native driver has
 # multiple synchronization domains, so every ordinary allocation-policy pass
-# also verifies the source-level lock and composition contract.
+# also verifies the source-level lock and composition contract. Reclamation is
+# part of the same scaling contract: never regress unshared unlink back to a
+# whole-filesystem ownership scan per extent.
 bash "$root/tests/native-kernel-maintainability-policy.sh" "$root"
+bash "$root/tests/native-unlink-ownership-index-policy.sh" "$root"
 
 printf 'Native parallel-allocation policy guard passed.\n'
