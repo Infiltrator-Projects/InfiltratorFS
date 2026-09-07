@@ -204,25 +204,48 @@ static int claim_file_extent_metadata_pages(struct infs_volume *vol,
                                             uint64_t object_block)
 {
     uint8_t object[INFS_BLOCK_SIZE];
+    struct infs_file_payload_disk *file;
+    struct infs_object_header_disk *hdr;
+    struct infs_extent_head_disk *head;
+    uint64_t block;
+    uint32_t pages;
     infs_status status = read_object(vol, object_block, object);
+
     if (status != INFS_STATUS_OK)
         return status;
-    struct infs_file_payload_disk *file;
     status = file_validate_volume(vol, object, &file, NULL);
     if (status != INFS_STATUS_OK)
         return status;
     if (!file_has_paged_extents(object))
         return INFS_STATUS_OK;
-    struct infs_extent_head_disk *head = file_extent_head(file);
-    uint32_t pages = infs_le32_to_cpu(head->page_count);
-    uint64_t *ptr = file_extent_page_pointers(file);
+    status = paged_extent_head_validate(vol, object, file);
+    if (status != INFS_STATUS_OK)
+        return status;
+    hdr = (struct infs_object_header_disk *)object;
+    head = file_extent_head(file);
+    pages = infs_le32_to_cpu(head->page_count);
+    block = infs_le64_to_cpu(file_extent_page_pointers(file)[0]);
     for (uint32_t i = 0; i < pages; ++i) {
-        status = ownership_claim(owners, total, infs_le64_to_cpu(ptr[i]));
+        uint8_t page_data[INFS_BLOCK_SIZE];
+        uint64_t next;
+        status = ownership_claim(owners, total, block);
         if (status != INFS_STATUS_OK)
             return status;
+        status = read_block(vol, block, page_data);
+        if (status != INFS_STATUS_OK)
+            return status;
+        status = extent_page_validate(vol, page_data, hdr->object_id, NULL, NULL);
+        if (status != INFS_STATUS_OK)
+            return status;
+        next = extent_page_next_block(page_data);
+        if ((i + 1u < pages && (!next || next >= total)) ||
+            (i + 1u == pages && next))
+            return INFS_STATUS_CORRUPT;
+        block = next;
     }
     return INFS_STATUS_OK;
 }
+
 
 static int build_live_ownership_bitmap(
     struct infs_volume *vol, const struct infs_index_entry_disk *entries,

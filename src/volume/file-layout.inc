@@ -63,12 +63,13 @@ static int file_validate(uint8_t block[INFS_BLOCK_SIZE],
             return INFS_STATUS_CORRUPT;
         struct infs_extent_head_disk *head = file_extent_head(p);
         uint32_t pages = infs_le32_to_cpu(head->page_count);
-        if (!pages || pages > INFS_EXTENT_PAGE_POINTERS ||
+        if (!pages || pages > count ||
             infs_le32_to_cpu(head->reserved) != 0)
             return INFS_STATUS_CORRUPT;
-        size_t need = sizeof(*p) + sizeof(*head) +
-            (size_t)pages * sizeof(uint64_t);
+        size_t need = sizeof(*p) + sizeof(*head) + sizeof(uint64_t);
         if (need != payload_size || need > INFS_BLOCK_SIZE - sizeof(*hdr))
+            return INFS_STATUS_CORRUPT;
+        if (infs_le64_to_cpu(file_extent_page_pointers(p)[0]) == 0)
             return INFS_STATUS_CORRUPT;
         if (payload_out)
             *payload_out = p;
