@@ -1334,6 +1334,248 @@ out:
     return ret;
 }
 
+/*
+ * Volatile shared-range accelerator.
+ *
+ * The exact ownership scan below is authoritative but historically made every
+ * unshared unlink walk every other live file. Build a compact sweep-line index
+ * once from the same authoritative live-file extents. Only physical ranges
+ * observed with at least two live file owners are retained. Absence from this
+ * index therefore proves a range was unshared when the index was built.
+ *
+ * Ordinary CoW writes, truncates, deletes and defrag only retire references and
+ * allocate fresh unique ranges. They can make this index over-conservative
+ * (a formerly shared range may become unique) but cannot create a false
+ * negative. A possibly shared range still uses the exact scan. The current
+ * native VFS exposes no reflink/clone creation operation; any future operation
+ * that introduces a second live owner must update or invalidate this index.
+ * Snapshots are protected independently by the retained-snapshot allocation
+ * union used when deferred frees are applied.
+ */
+struct infilfs_ns_shared_event {
+    u64 position;
+    s8 delta;
+};
+
+static int infilfs_ns_shared_event_compare(const void *a, const void *b)
+{
+    const struct infilfs_ns_shared_event *left = a;
+    const struct infilfs_ns_shared_event *right = b;
+
+    if (left->position < right->position)
+        return -1;
+    if (left->position > right->position)
+        return 1;
+    return 0;
+}
+
+static int infilfs_ns_shared_event_append(
+    struct infilfs_ns_shared_event **events, size_t *count, size_t *capacity,
+    u64 position, s8 delta)
+{
+    struct infilfs_ns_shared_event *grown;
+    size_t next;
+
+    if (*count == *capacity) {
+        next = *capacity ? *capacity * 2u : 256u;
+        if (next < *capacity || next > SIZE_MAX / sizeof(*grown))
+            return -EOVERFLOW;
+        grown = kvmalloc_array(next, sizeof(*grown), GFP_NOFS);
+        if (!grown)
+            return -ENOMEM;
+        if (*count)
+            memcpy(grown, *events, *count * sizeof(*grown));
+        kvfree(*events);
+        *events = grown;
+        *capacity = next;
+    }
+    (*events)[*count].position = position;
+    (*events)[*count].delta = delta;
+    (*count)++;
+    return 0;
+}
+
+static int infilfs_ns_shared_range_append(
+    struct infilfs_native_shared_range **ranges, size_t *count,
+    size_t *capacity, u64 start, u64 end)
+{
+    struct infilfs_native_shared_range *grown;
+    size_t next;
+
+    if (start >= end)
+        return -EFSCORRUPTED;
+    if (*count && (*ranges)[*count - 1u].end >= start) {
+        if (end > (*ranges)[*count - 1u].end)
+            (*ranges)[*count - 1u].end = end;
+        return 0;
+    }
+    if (*count == *capacity) {
+        next = *capacity ? *capacity * 2u : 64u;
+        if (next < *capacity || next > SIZE_MAX / sizeof(*grown))
+            return -EOVERFLOW;
+        grown = kvmalloc_array(next, sizeof(*grown), GFP_NOFS);
+        if (!grown)
+            return -ENOMEM;
+        if (*count)
+            memcpy(grown, *ranges, *count * sizeof(*grown));
+        kvfree(*ranges);
+        *ranges = grown;
+        *capacity = next;
+    }
+    (*ranges)[*count].start = start;
+    (*ranges)[*count].end = end;
+    (*count)++;
+    return 0;
+}
+
+static int infilfs_ns_shared_range_index_build(
+    struct infilfs_native_pending *pending)
+{
+    struct infilfs_index_entry_disk *entries = NULL;
+    struct infilfs_ns_shared_event *events = NULL;
+    struct infilfs_native_shared_range *ranges = NULL;
+    size_t event_count = 0, event_capacity = 0;
+    size_t range_count = 0, range_capacity = 0;
+    s64 coverage = 0;
+    u32 count = 0, i;
+    size_t e = 0;
+    u64 previous = 0;
+    int ret;
+
+    if (pending->shared_range_index_valid)
+        return 0;
+
+    ret = infilfs_ns_index_snapshot(pending->sb, &entries, &count);
+    if (ret)
+        goto out;
+
+    for (i = 0; i < count; ++i) {
+        struct infilfs_extent_disk *extents = NULL;
+        u32 extent_count = 0, j;
+
+        if (le16_to_cpu(entries[i].object_type) != INFILFS_OBJECT_FILE)
+            continue;
+        ret = infilfs_ns_read_file_extents(
+            pending->sb, le64_to_cpu(entries[i].object_block),
+            entries[i].object_id, &extents, &extent_count);
+        if (ret) {
+            kvfree(extents);
+            goto out;
+        }
+        for (j = 0; j < extent_count; ++j) {
+            u32 flags = le32_to_cpu(extents[j].flags);
+            u32 logical_blocks = le32_to_cpu(extents[j].block_count);
+            u64 physical;
+            u64 blocks;
+            u64 end;
+
+            if (infilfs_extent_kind(flags) != INFILFS_EXTENT_NORMAL)
+                continue;
+            physical = le64_to_cpu(extents[j].physical_block);
+            blocks = infilfs_extent_physical_blocks(logical_blocks, flags);
+            if (!physical || !blocks || physical > U64_MAX - blocks) {
+                ret = -EFSCORRUPTED;
+                break;
+            }
+            end = physical + blocks;
+            ret = infilfs_ns_shared_event_append(
+                &events, &event_count, &event_capacity, physical, 1);
+            if (!ret)
+                ret = infilfs_ns_shared_event_append(
+                    &events, &event_count, &event_capacity, end, -1);
+            if (ret)
+                break;
+        }
+        kvfree(extents);
+        if (ret)
+            goto out;
+    }
+
+    if (!event_count) {
+        kvfree(pending->shared_ranges);
+        pending->shared_ranges = NULL;
+        pending->shared_range_count = 0;
+        pending->shared_range_index_valid = true;
+        ret = 0;
+        goto out;
+    }
+
+    sort(events, event_count, sizeof(*events),
+         infilfs_ns_shared_event_compare, NULL);
+    previous = events[0].position;
+    while (e < event_count) {
+        u64 position = events[e].position;
+        s64 delta = 0;
+
+        if (position < previous) {
+            ret = -EFSCORRUPTED;
+            goto out;
+        }
+        if (position > previous && coverage >= 2) {
+            ret = infilfs_ns_shared_range_append(
+                &ranges, &range_count, &range_capacity,
+                previous, position);
+            if (ret)
+                goto out;
+        }
+        while (e < event_count && events[e].position == position) {
+            delta += events[e].delta;
+            e++;
+        }
+        if ((delta < 0 && coverage < -delta) ||
+            (delta > 0 && coverage > S64_MAX - delta)) {
+            ret = -EFSCORRUPTED;
+            goto out;
+        }
+        coverage += delta;
+        if (coverage < 0) {
+            ret = -EFSCORRUPTED;
+            goto out;
+        }
+        previous = position;
+    }
+    if (coverage != 0) {
+        ret = -EFSCORRUPTED;
+        goto out;
+    }
+
+    kvfree(pending->shared_ranges);
+    pending->shared_ranges = ranges;
+    pending->shared_range_count = range_count;
+    pending->shared_range_index_valid = true;
+    ranges = NULL;
+    ret = 0;
+out:
+    kvfree(ranges);
+    kvfree(events);
+    kvfree(entries);
+    if (ret) {
+        pending->shared_range_index_valid = false;
+        pending->shared_range_count = 0;
+    }
+    return ret;
+}
+
+static bool infilfs_ns_shared_range_maybe_shared(
+    const struct infilfs_native_pending *pending, u64 start, u64 end)
+{
+    size_t low = 0;
+    size_t high = pending->shared_range_count;
+
+    while (low < high) {
+        size_t middle = low + (high - low) / 2u;
+        const struct infilfs_native_shared_range *range =
+            &pending->shared_ranges[middle];
+
+        if (range->end <= start)
+            low = middle + 1u;
+        else
+            high = middle;
+    }
+    return low < pending->shared_range_count &&
+        pending->shared_ranges[low].start < end;
+}
+
 static int infilfs_ns_other_reference_cover(
     struct super_block *sb, const u8 owner_id[16], u64 cursor, u64 end,
     u64 *cover_end, u64 *next_start)
@@ -1399,6 +1641,14 @@ static int infilfs_ns_free_unshared_run(
         return -EOVERFLOW;
     cursor = start;
     end = start + count;
+
+    ret = infilfs_ns_shared_range_index_build(pending);
+    if (!ret &&
+        !infilfs_ns_shared_range_maybe_shared(pending, start, end))
+        return infilfs_rw_tx_defer_free(&pending->tx, start, count);
+    if (ret && ret != -ENOMEM && ret != -EOVERFLOW)
+        return ret;
+
     while (cursor < end) {
         u64 cover_end, next_start;
         ret = infilfs_ns_other_reference_cover(

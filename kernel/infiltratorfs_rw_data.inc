@@ -967,6 +967,8 @@ static int infilfs_native_operation_rollback(
     infilfs_native_writer_tail_invalidate(pending);
     infilfs_native_index_locator_invalidate(pending);
     infilfs_native_directory_locator_invalidate(pending);
+    pending->shared_range_index_valid = false;
+    pending->shared_range_count = 0;
     if (first_error) {
         pending->commit_failed = true;
         sbi->write_poisoned = true;
@@ -1136,6 +1138,7 @@ static void infilfs_native_pending_destroy(struct super_block *sb)
     kvfree(pending->undo);
     kvfree(pending->index_locators);
     kvfree(pending->directory_locators);
+    kvfree(pending->shared_ranges);
     kfree(pending);
 }
 

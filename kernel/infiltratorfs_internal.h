@@ -167,6 +167,11 @@ struct infilfs_native_directory_locator {
     u8 name[INFILFS_NAME_MAX];
 };
 
+struct infilfs_native_shared_range {
+    u64 start;
+    u64 end;
+};
+
 struct infilfs_native_pending {
     struct list_head node;
     struct super_block *sb;
@@ -193,6 +198,9 @@ struct infilfs_native_pending {
     u32 directory_locator_capacity;
     u32 directory_locator_count;
     bool directory_locator_valid;
+    struct infilfs_native_shared_range *shared_ranges;
+    size_t shared_range_count;
+    bool shared_range_index_valid;
     u64 pending_bytes;
     u64 pending_physical_bytes;
     u64 publish_threshold;
