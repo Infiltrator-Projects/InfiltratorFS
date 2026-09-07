@@ -823,6 +823,19 @@ static int infilfs_native_reflink_full(
         if (ret)
             goto finish;
     }
+
+    /*
+     * A non-inline reflink has just introduced a second live owner for the
+     * source physical ranges.  Any ownership snapshot built before this clone
+     * can now contain false negatives, so it must never survive the operation.
+     * Rebuild lazily on the next release/free query under write_lock.
+     */
+    if (!source_inline) {
+        kvfree(pending->shared_ranges);
+        pending->shared_ranges = NULL;
+        pending->shared_range_count = 0;
+        pending->shared_range_index_valid = false;
+    }
     pending->tx.next_sb.generation = cpu_to_le64(pending->tx.generation);
 
 finish:

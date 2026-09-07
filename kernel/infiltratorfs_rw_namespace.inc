@@ -1346,10 +1346,11 @@ out:
  * Ordinary CoW writes, truncates, deletes and defrag only retire references and
  * allocate fresh unique ranges. They can make this index over-conservative
  * (a formerly shared range may become unique) but cannot create a false
- * negative. A possibly shared range still uses the exact scan. The current
- * native VFS exposes no reflink/clone creation operation; any future operation
- * that introduces a second live owner must update or invalidate this index.
- * Snapshots are protected independently by the retained-snapshot allocation
+ * negative. A possibly shared range still uses the exact scan. Native
+ * reflink/clone creation is the operation that introduces a second live owner;
+ * it invalidates this index before the transaction becomes visible so the next
+ * ownership query rebuilds from authoritative metadata. Snapshots are protected
+ * independently by the retained-snapshot allocation
  * union used when deferred frees are applied.
  */
 struct infilfs_ns_shared_event {
