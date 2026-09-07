@@ -27,3 +27,10 @@ grep -Fq 'extent_bytes + sizeof(encoded)' "$root/src/volume/paged-extents.inc"
 grep -Fq 'pages > count' "$root/src/volume/file-layout.inc"
 grep -Fq 'sizeof(*p) + sizeof(*head) + sizeof(uint64_t)' "$root/src/volume/file-layout.inc"
 ! grep -Fq 'pages > INFS_EXTENT_PAGE_POINTERS' "$root/src/volume/file-layout.inc"
+
+# The native kernel must not retain the bounded extent head vector semantics.
+! grep -Fq 'INFILFS_EXTENT_PAGE_POINTERS' "$root/kernel/infiltratorfs_read_cache.c"
+! grep -Fq 'INFILFS_EXTENT_PAGE_POINTERS' "$root/kernel/infiltratorfs_core.c"
+! grep -Fq 'INFILFS_EXTENT_PAGE_POINTERS' "$root/kernel/infiltratorfs_rw_data.inc"
+! grep -Fq 'INFILFS_EXTENT_PAGE_POINTERS' "$root/kernel/infiltratorfs_rw_namespace.inc"
+grep -Fq 'infilfs_extent_page_shape_valid' "$root/kernel/infiltratorfs_internal.h"

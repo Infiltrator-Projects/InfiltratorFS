@@ -1278,11 +1278,15 @@ static int infilfs_ns_read_file_extents(
     } else if (le16_to_cpu(header->object_version) == INFILFS_OBJECT_VERSION_PAGED) {
         struct infilfs_extent_head_disk *head =
             (struct infilfs_extent_head_disk *)(file + 1);
-        __le64 *pages = (__le64 *)(head + 1);
+        __le64 *root_ptr = (__le64 *)(head + 1);
         u32 page_count = le32_to_cpu(head->page_count);
+        u64 block = le64_to_cpu(*root_ptr);
         u32 p;
-        if (!page_count || page_count > INFILFS_EXTENT_PAGE_POINTERS ||
-            le32_to_cpu(head->reserved) != 0) {
+
+        if (!page_count || page_count > count || !block ||
+            le32_to_cpu(head->reserved) != 0 ||
+            sizeof(*file) + sizeof(*head) + sizeof(*root_ptr) !=
+                le32_to_cpu(header->payload_size)) {
             ret = -EFSCORRUPTED;
             goto out;
         }
@@ -1294,26 +1298,28 @@ static int infilfs_ns_read_file_extents(
         for (p = 0; p < page_count; ++p) {
             struct infilfs_metadata_page_disk *page;
             u32 n;
-            ret = infilfs_read_allocated_block(
-                sb, le64_to_cpu(pages[p]), page_block);
+            u64 next;
+
+            ret = infilfs_read_allocated_block(sb, block, page_block);
             if (ret)
                 goto out;
-            if (!infilfs_metadata_page_valid(sb, page_block,
-                                             infilfs_extent_page_magic,
-                                             object_id)) {
+            if (!infilfs_metadata_page_valid(
+                    sb, page_block, infilfs_extent_page_magic, object_id) ||
+                !infilfs_extent_page_shape_valid(page_block, &n) ||
+                copied > count || n > count - copied) {
                 ret = -EFSCORRUPTED;
                 goto out;
             }
             page = (struct infilfs_metadata_page_disk *)page_block;
-            n = le32_to_cpu(page->entry_count);
-            if (!n || n > INFILFS_EXTENTS_PER_PAGE || copied > count ||
-                n > count - copied ||
-                le32_to_cpu(page->bytes_used) != n * sizeof(*extents)) {
+            memcpy(extents + copied, page + 1, (size_t)n * sizeof(*extents));
+            copied += n;
+            next = infilfs_extent_page_next_block(page_block);
+            if ((p + 1u < page_count && !next) ||
+                (p + 1u == page_count && next)) {
                 ret = -EFSCORRUPTED;
                 goto out;
             }
-            memcpy(extents + copied, page + 1, (size_t)n * sizeof(*extents));
-            copied += n;
+            block = next;
         }
     } else {
         ret = -EFSCORRUPTED;
@@ -1333,6 +1339,7 @@ out:
     kfree(object);
     return ret;
 }
+
 
 static int infilfs_ns_other_reference_cover(
     struct super_block *sb, const u8 owner_id[16], u64 cursor, u64 end,
@@ -1540,27 +1547,55 @@ static int infilfs_ns_delete_file_resources(
             goto out;
     }
 
-    if (le16_to_cpu(header->object_version) ==
-        INFILFS_OBJECT_VERSION_PAGED) {
+    if (le16_to_cpu(header->object_version) == INFILFS_OBJECT_VERSION_PAGED) {
         struct infilfs_extent_head_disk *head =
             (struct infilfs_extent_head_disk *)(file + 1);
-        __le64 *pages = (__le64 *)(head + 1);
+        __le64 *root_ptr = (__le64 *)(head + 1);
         u32 page_count = le32_to_cpu(head->page_count);
+        u64 block = le64_to_cpu(*root_ptr);
+        u8 *page_block = NULL;
+        u32 p;
 
-        if (!page_count || page_count > INFILFS_EXTENT_PAGE_POINTERS ||
+        if (!page_count || page_count > extent_count || !block ||
             le32_to_cpu(head->reserved) != 0 ||
-            sizeof(*file) + sizeof(*head) +
-                (size_t)page_count * sizeof(__le64) !=
-                    le32_to_cpu(header->payload_size)) {
+            sizeof(*file) + sizeof(*head) + sizeof(*root_ptr) !=
+                le32_to_cpu(header->payload_size)) {
             ret = -EFSCORRUPTED;
             goto out;
         }
-        for (i = 0; i < page_count; ++i) {
-            ret = infilfs_rw_tx_defer_free(
-                &pending->tx, le64_to_cpu(pages[i]), 1);
-            if (ret)
-                goto out;
+        page_block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+        if (!page_block) {
+            ret = -ENOMEM;
+            goto out;
         }
+        for (p = 0; p < page_count; ++p) {
+            u32 n;
+            u64 next;
+
+            ret = infilfs_read_allocated_block(pending->sb, block, page_block);
+            if (ret)
+                break;
+            if (!infilfs_metadata_page_valid(
+                    pending->sb, page_block, infilfs_extent_page_magic,
+                    ii->object_id) ||
+                !infilfs_extent_page_shape_valid(page_block, &n)) {
+                ret = -EFSCORRUPTED;
+                break;
+            }
+            next = infilfs_extent_page_next_block(page_block);
+            if ((p + 1u < page_count && !next) ||
+                (p + 1u == page_count && next)) {
+                ret = -EFSCORRUPTED;
+                break;
+            }
+            ret = infilfs_rw_tx_defer_free(&pending->tx, block, 1);
+            if (ret)
+                break;
+            block = next;
+        }
+        kfree(page_block);
+        if (ret)
+            goto out;
     }
 
     ret = infilfs_rw_tx_defer_free(&pending->tx, ii->object_block, 1);
@@ -1574,6 +1609,7 @@ out:
     kfree(object);
     return ret;
 }
+
 
 static int infilfs_ns_defer_directory_pages(
     struct infilfs_native_pending *pending, struct inode *inode)

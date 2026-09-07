@@ -52,6 +52,8 @@ static void infilfs_native_read_cursor_publish(
 
 struct infilfs_native_read_extent_cursor {
     u32 page_index;
+    u64 page_block;
+    u64 next_page_block;
     u64 first_logical;
     u64 last_logical;
     bool valid;
@@ -106,7 +108,7 @@ static int infilfs_native_map_file_block_cached(
     const struct infilfs_file_payload_disk *file =
         (const struct infilfs_file_payload_disk *)(header + 1);
     const struct infilfs_extent_head_disk *head;
-    const __le64 *pages;
+    const __le64 *root_ptr;
     const struct infilfs_metadata_page_disk *page;
     const struct infilfs_extent_disk *ext;
     u16 version = le16_to_cpu(header->object_version);
@@ -114,6 +116,9 @@ static int infilfs_native_map_file_block_cached(
     u32 count;
     u32 lo;
     u32 hi;
+    u32 p;
+    u64 block;
+    u64 root;
     int ret;
 
     if (version != INFILFS_OBJECT_VERSION_PAGED)
@@ -122,73 +127,72 @@ static int infilfs_native_map_file_block_cached(
             extent_logical_out, extent_blocks_out);
 
     head = (const struct infilfs_extent_head_disk *)(file + 1);
-    pages = (const __le64 *)(head + 1);
+    root_ptr = (const __le64 *)(head + 1);
     page_count = le32_to_cpu(head->page_count);
-    if (!page_count || page_count > INFILFS_EXTENT_PAGE_POINTERS ||
-        le32_to_cpu(head->reserved) != 0 ||
-        sizeof(*file) + sizeof(*head) +
-            (size_t)page_count * sizeof(*pages) !=
-                le32_to_cpu(header->payload_size))
+    root = le64_to_cpu(*root_ptr);
+    if (!page_count || page_count > le32_to_cpu(file->extent_count) ||
+        le32_to_cpu(head->reserved) != 0 || !root ||
+        sizeof(*file) + sizeof(*head) + sizeof(*root_ptr) !=
+            le32_to_cpu(header->payload_size))
         return -EFSCORRUPTED;
 
-    /*
-     * Sequential reads normally stay inside one extent page for many data
-     * blocks.  Keep that already-authenticated page resident for this
-     * read_iter() call instead of rereading it for every 4 KiB block.
-     * Random/backward access falls through to the binary page search.
-     */
-    if (!cursor->valid ||
-        logical < cursor->first_logical ||
-        logical >= cursor->last_logical) {
-        lo = 0;
-        hi = page_count;
-        cursor->valid = false;
+    if (cursor->valid && logical >= cursor->first_logical &&
+        logical < cursor->last_logical)
+        goto have_page;
 
-        while (lo < hi) {
-            u32 mid = lo + (hi - lo) / 2u;
-            u64 first;
-            u64 last;
-
-            ret = infilfs_read_allocated_block(
-                inode->i_sb, le64_to_cpu(pages[mid]), extent_page);
-            if (ret)
-                return ret;
-            if (!infilfs_metadata_page_valid(
-                    inode->i_sb, extent_page, infilfs_extent_page_magic,
-                    header->object_id))
-                return -EFSCORRUPTED;
-
-            page = (const struct infilfs_metadata_page_disk *)extent_page;
-            count = le32_to_cpu(page->entry_count);
-            if (!count || count > INFILFS_EXTENTS_PER_PAGE ||
-                le32_to_cpu(page->bytes_used) !=
-                    count * sizeof(struct infilfs_extent_disk))
-                return -EFSCORRUPTED;
-            ext = (const struct infilfs_extent_disk *)(page + 1);
-            first = le64_to_cpu(ext[0].logical_block);
-            last = le64_to_cpu(ext[count - 1u].logical_block) +
-                le32_to_cpu(ext[count - 1u].block_count);
-            if (last <= first)
-                return -EFSCORRUPTED;
-
-            if (logical < first) {
-                hi = mid;
-            } else if (logical >= last) {
-                lo = mid + 1u;
-            } else {
-                cursor->page_index = mid;
-                cursor->first_logical = first;
-                cursor->last_logical = last;
-                cursor->valid = true;
-                break;
-            }
-        }
-        if (!cursor->valid)
-            return -EFSCORRUPTED;
+    if (cursor->valid && logical >= cursor->last_logical &&
+        cursor->page_index + 1u < page_count && cursor->next_page_block) {
+        p = cursor->page_index + 1u;
+        block = cursor->next_page_block;
+    } else {
+        p = 0;
+        block = root;
     }
+    cursor->valid = false;
 
+    for (; p < page_count; ++p) {
+        u64 first;
+        u64 last;
+        u64 next;
+
+        ret = infilfs_read_allocated_block(inode->i_sb, block, extent_page);
+        if (ret)
+            return ret;
+        if (!infilfs_metadata_page_valid(
+                inode->i_sb, extent_page, infilfs_extent_page_magic,
+                header->object_id) ||
+            !infilfs_extent_page_shape_valid(extent_page, &count))
+            return -EFSCORRUPTED;
+        page = (const struct infilfs_metadata_page_disk *)extent_page;
+        ext = (const struct infilfs_extent_disk *)(page + 1);
+        first = le64_to_cpu(ext[0].logical_block);
+        last = le64_to_cpu(ext[count - 1u].logical_block) +
+            le32_to_cpu(ext[count - 1u].block_count);
+        next = infilfs_extent_page_next_block(extent_page);
+        if (last <= first ||
+            (p + 1u < page_count && !next) ||
+            (p + 1u == page_count && next))
+            return -EFSCORRUPTED;
+        if (logical < first)
+            return -EFSCORRUPTED;
+        if (logical < last) {
+            cursor->page_index = p;
+            cursor->page_block = block;
+            cursor->next_page_block = next;
+            cursor->first_logical = first;
+            cursor->last_logical = last;
+            cursor->valid = true;
+            break;
+        }
+        block = next;
+    }
+    if (!cursor->valid)
+        return -EFSCORRUPTED;
+
+have_page:
     page = (const struct infilfs_metadata_page_disk *)extent_page;
-    count = le32_to_cpu(page->entry_count);
+    if (!infilfs_extent_page_shape_valid(extent_page, &count))
+        return -EFSCORRUPTED;
     ext = (const struct infilfs_extent_disk *)(page + 1);
     lo = 0;
     hi = count;
@@ -229,6 +233,7 @@ static int infilfs_native_map_file_block_cached(
     }
     return -EFSCORRUPTED;
 }
+
 
 ssize_t infilfs_native_read_iter_cached(struct inode *inode,
                                                 loff_t *position,

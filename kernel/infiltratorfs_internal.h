@@ -53,6 +53,66 @@
 #define INFILFS_ALLOCATION_RESERVATION_SHARDS 64u
 #define INFILFS_LINUX_META_DIRECTORY ".infilfs-posix-meta"
 
+
+static inline bool infilfs_extent_page_shape_valid(
+    const u8 block[INFILFS_DISK_BLOCK_SIZE], u32 *count_out)
+{
+    const struct infilfs_metadata_page_disk *page =
+        (const struct infilfs_metadata_page_disk *)block;
+    u32 count = le32_to_cpu(page->entry_count);
+    size_t extent_bytes;
+
+    if (!count || count > INFILFS_EXTENTS_PER_PAGE)
+        return false;
+    extent_bytes = (size_t)count * sizeof(struct infilfs_extent_disk);
+    if (extent_bytes > INFILFS_METADATA_PAGE_DATA_SIZE - sizeof(__le64) ||
+        le32_to_cpu(page->bytes_used) != extent_bytes + sizeof(__le64))
+        return false;
+    if (count_out)
+        *count_out = count;
+    return true;
+}
+
+static inline u64 infilfs_extent_page_next_block(
+    const u8 block[INFILFS_DISK_BLOCK_SIZE])
+{
+    const struct infilfs_metadata_page_disk *page =
+        (const struct infilfs_metadata_page_disk *)block;
+    u32 count = le32_to_cpu(page->entry_count);
+    size_t offset;
+    __le64 encoded = 0;
+
+    if (!count || count > INFILFS_EXTENTS_PER_PAGE)
+        return 0;
+    offset = sizeof(*page) +
+        (size_t)count * sizeof(struct infilfs_extent_disk);
+    if (offset > INFILFS_DISK_BLOCK_SIZE - sizeof(encoded))
+        return 0;
+    memcpy(&encoded, block + offset, sizeof(encoded));
+    return le64_to_cpu(encoded);
+}
+
+static inline int infilfs_extent_page_set_next_block(
+    u8 block[INFILFS_DISK_BLOCK_SIZE], u64 next)
+{
+    struct infilfs_metadata_page_disk *page =
+        (struct infilfs_metadata_page_disk *)block;
+    u32 count = le32_to_cpu(page->entry_count);
+    size_t extent_bytes;
+    size_t offset;
+    __le64 encoded = cpu_to_le64(next);
+
+    if (!count || count > INFILFS_EXTENTS_PER_PAGE)
+        return -EINVAL;
+    extent_bytes = (size_t)count * sizeof(struct infilfs_extent_disk);
+    if (extent_bytes > INFILFS_METADATA_PAGE_DATA_SIZE - sizeof(encoded))
+        return -EOVERFLOW;
+    offset = sizeof(*page) + extent_bytes;
+    memcpy(block + offset, &encoded, sizeof(encoded));
+    page->bytes_used = cpu_to_le32(extent_bytes + sizeof(encoded));
+    return 0;
+}
+
 struct infilfs_parallel_reservation {
     u64 start;
     u64 count;
