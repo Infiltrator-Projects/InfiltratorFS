@@ -114,7 +114,6 @@ jobs:
             kernel/infiltratorfs_rw_data.inc \
             kernel/infiltratorfs_rw_namespace.inc \
             tests/native-unlink-ownership-index-policy.sh \
-            tests/native-complete-qualification.sh \
-            .github/workflows/ci.yml
+            tests/native-complete-qualification.sh
           git commit -m 'Accelerate native shared-extent ownership lookup'
           git push origin HEAD:main
