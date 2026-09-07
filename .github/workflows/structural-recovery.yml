@@ -1,0 +1,66 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Structural recovery staging
+
+on:
+  push:
+    branches:
+      - finish-structural-overhaul
+    paths:
+      - tools/structural-recovery-phase1.py
+      - .github/workflows/structural-recovery.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: structural-recovery-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  qualify-and-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out exact staging branch
+        uses: actions/checkout@v6
+        with:
+          ref: finish-structural-overhaul
+          fetch-depth: 0
+          submodules: recursive
+      - name: Apply deterministic recovery migration
+        run: python3 tools/structural-recovery-phase1.py
+      - name: Install qualification dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake libssl-dev linux-headers-generic
+      - name: Check generated diff
+        run: |
+          git diff --check
+          bash tests/structural-overhaul-policy.sh .
+      - name: Configure userspace
+        run: cmake -S . -B build-recovery -DCMAKE_BUILD_TYPE=Release
+      - name: Build userspace
+        run: cmake --build build-recovery --parallel
+      - name: Run userspace conformance
+        run: ctest --test-dir build-recovery --output-on-failure
+      - name: Build native kernel module against installed generic headers
+        shell: bash
+        run: |
+          set -euo pipefail
+          headers="$(find /usr/src -maxdepth 1 -type d -name 'linux-headers-*-generic' | sort -V | tail -n1)"
+          test -n "$headers"
+          make -C kernel KDIR="$headers" all
+      - name: Commit only after qualification passes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "InfiltratorFS recovery automation"
+          git config user.email "actions@users.noreply.github.com"
+          git add CMakeLists.txt include/infilfs/volume.h src/checksum.c src/volume.c \
+            src/volume/core.inc src/volume/reflink.inc src/volume/shared-ref-index.inc \
+            kernel/Makefile kernel/infiltratorfs_internal.h kernel/infiltratorfs_core.c \
+            kernel/infiltratorfs_rw_data.inc kernel/infiltratorfs_rw_legacy.inc \
+            kernel/infiltratorfs_crypto.c tests/structural-overhaul-policy.sh
+          git diff --cached --quiet && { echo 'Migration produced no changes'; exit 1; }
+          git commit -m "structural: accelerate integrity and shared ownership"
+          git push origin HEAD:finish-structural-overhaul
