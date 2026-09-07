@@ -9,6 +9,7 @@ on:
       - tools/structural-recovery-phase1.py
       - tools/structural-recovery-phase2.py
       - tools/structural-recovery-phase2-fix.py
+      - tools/structural-recovery-phase3.py
       - tools/structural-recovery-fixups.py
       - .github/workflows/structural-recovery.yml
 
@@ -37,6 +38,7 @@ jobs:
           python3 tools/structural-recovery-fixups.py post
           python3 tools/structural-recovery-phase2.py
           python3 tools/structural-recovery-phase2-fix.py
+          python3 tools/structural-recovery-phase3.py
       - name: Install qualification dependencies
         run: |
           sudo apt-get update
@@ -45,6 +47,7 @@ jobs:
         run: |
           git diff --check
           bash tests/structural-overhaul-policy.sh .
+          bash tests/native-random-write-optimization-policy.sh .
       - name: Configure userspace
         run: cmake -S . -B build-recovery -DCMAKE_BUILD_TYPE=Release
       - name: Build userspace
@@ -69,8 +72,10 @@ jobs:
             src/volume/checkpoint-recovery.inc src/volume/file-layout.inc \
             src/volume/paged-extents.inc src/volume/ownership-validation.inc \
             kernel/Makefile kernel/infiltratorfs_internal.h kernel/infiltratorfs_core.c \
-            kernel/infiltratorfs_rw_data.inc kernel/infiltratorfs_rw_legacy.inc \
-            kernel/infiltratorfs_crypto.c tests/structural-overhaul-policy.sh
+            kernel/infiltratorfs_read_cache.c kernel/infiltratorfs_rw_data.inc \
+            kernel/infiltratorfs_rw_namespace.inc kernel/infiltratorfs_rw_legacy.inc \
+            kernel/infiltratorfs_crypto.c tests/native-random-write-optimization-policy.sh \
+            tests/structural-overhaul-policy.sh
           git diff --cached --quiet && { echo 'Migration produced no changes'; exit 1; }
-          git commit -m "structural: remove portable extent page ceiling"
+          git commit -m "structural: align native extent chains"
           git push origin HEAD:finish-structural-overhaul
