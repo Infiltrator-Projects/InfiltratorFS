@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Repair extent-chain link placement so metadata finalization preserves it."""
+"""Repair extent-chain link placement and scalable file-head validation."""
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -157,6 +157,16 @@ text = replace_function(text, "static int extent_page_validate(", r'''static int
 
 path.write_text(text, encoding="utf-8")
 
+# file_validate() is format-only validation and must understand that paged
+# files now carry exactly one root pointer regardless of chain length.
+layout_path = ROOT / "src/volume/file-layout.inc"
+layout = layout_path.read_text(encoding="utf-8")
+old_layout = '''    if (version == INFS_OBJECT_VERSION_PAGED) {\n        if (!count || logical_size == 0)\n            return INFS_STATUS_CORRUPT;\n        struct infs_extent_head_disk *head = file_extent_head(p);\n        uint32_t pages = infs_le32_to_cpu(head->page_count);\n        if (!pages || pages > INFS_EXTENT_PAGE_POINTERS ||\n            infs_le32_to_cpu(head->reserved) != 0)\n            return INFS_STATUS_CORRUPT;\n        size_t need = sizeof(*p) + sizeof(*head) +\n            (size_t)pages * sizeof(uint64_t);\n        if (need != payload_size || need > INFS_BLOCK_SIZE - sizeof(*hdr))\n            return INFS_STATUS_CORRUPT;\n        if (payload_out)\n            *payload_out = p;\n        if (extents_out)\n            *extents_out = NULL;\n        return INFS_STATUS_OK;\n    }\n'''
+new_layout = '''    if (version == INFS_OBJECT_VERSION_PAGED) {\n        if (!count || logical_size == 0)\n            return INFS_STATUS_CORRUPT;\n        struct infs_extent_head_disk *head = file_extent_head(p);\n        uint32_t pages = infs_le32_to_cpu(head->page_count);\n        if (!pages || pages > count ||\n            infs_le32_to_cpu(head->reserved) != 0)\n            return INFS_STATUS_CORRUPT;\n        size_t need = sizeof(*p) + sizeof(*head) + sizeof(uint64_t);\n        if (need != payload_size || need > INFS_BLOCK_SIZE - sizeof(*hdr))\n            return INFS_STATUS_CORRUPT;\n        if (infs_le64_to_cpu(file_extent_page_pointers(p)[0]) == 0)\n            return INFS_STATUS_CORRUPT;\n        if (payload_out)\n            *payload_out = p;\n        if (extents_out)\n            *extents_out = NULL;\n        return INFS_STATUS_OK;\n    }\n'''
+if old_layout not in layout:
+    raise SystemExit("extent-chain file-layout validation anchor mismatch")
+layout_path.write_text(layout.replace(old_layout, new_layout, 1), encoding="utf-8")
+
 policy = ROOT / "tests/structural-overhaul-policy.sh"
 p = policy.read_text(encoding="utf-8")
 needle = "bytes != extent_bytes + sizeof(uint64_t)"
@@ -167,10 +177,16 @@ if needle not in p:
 grep -Fq 'bytes != extent_bytes + sizeof(uint64_t)' "$root/src/volume/paged-extents.inc"
 grep -Fq 'extent_bytes + sizeof(encoded)' "$root/src/volume/paged-extents.inc"
 """
-    policy.write_text(p, encoding="utf-8")
+if "file-layout.inc" not in p or "pages > count" not in p:
+    p += """
+# File-head validation must scale with chain length and retain one root pointer.
+grep -Fq 'pages > count' "$root/src/volume/file-layout.inc"
+grep -Fq 'sizeof(*p) + sizeof(*head) + sizeof(uint64_t)' "$root/src/volume/file-layout.inc"
+! grep -Fq 'pages > INFS_EXTENT_PAGE_POINTERS' "$root/src/volume/file-layout.inc"
+"""
+policy.write_text(p, encoding="utf-8")
 
-# Staging-only diagnostic: report the exact fragmented write/status that still
-# trips conformance. This file is not added by the qualification commit step.
+# Staging-only diagnostic: report exact write/status if conformance still trips.
 test_path = ROOT / "tests/large-files.c"
 test = test_path.read_text(encoding="utf-8")
 old = '''        expect(infs_write_file_buffered(\n                   &volume, "/fragmented.bin", fragmented_block,\n                   sizeof(fragmented_block), offset) ==\n                   (int64_t)sizeof(fragmented_block),\n               "write alternating fragmented data block");\n'''
@@ -179,4 +195,4 @@ if old not in test:
     raise SystemExit("large-files diagnostic anchor mismatch")
 test_path.write_text(test.replace(old, new, 1), encoding="utf-8")
 
-print("Structural recovery phase 2 chain-link finalization fix applied.")
+print("Structural recovery phase 2 chain-link and file-head fixes applied.")
