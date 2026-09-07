@@ -695,7 +695,9 @@ static void mutation_scope_fail(struct infs_volume *vol,
 static void mutation_scope_success(struct infs_volume *vol)
 {
     tx_operation_commit(vol);
+    shared_ref_index_invalidate(vol);
 }
+
 
 static void tx_abort(struct infs_volume *vol)
 {

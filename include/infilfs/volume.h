@@ -63,6 +63,7 @@ struct infs_deferred_range {
 };
 
 struct infs_free_extent;
+struct infs_shared_ref_run;
 
 struct infs_volume {
     struct infs_storage storage;
@@ -142,6 +143,11 @@ struct infs_volume {
     size_t free_extent_count;
     size_t free_extent_capacity;
     int free_extent_index_valid;
+    /* Rebuildable live physical-reference interval index. */
+    struct infs_shared_ref_run *shared_refs;
+    size_t shared_ref_count;
+    size_t shared_ref_capacity;
+    int shared_ref_index_valid;
     struct infs_object_cache_entry *object_cache;
     size_t object_cache_slots;
     int object_cache_complete;

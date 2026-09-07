@@ -1,76 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-static infs_status file_other_reference_cover(
-    struct infs_volume *vol, const uint8_t owner_id[16],
-    uint64_t cursor, uint64_t end, uint64_t *cover_end,
-    uint64_t *next_start)
-{
-    *cover_end = cursor;
-    *next_start = end;
 
-    struct infs_index_entry_disk *entries = NULL;
-    uint32_t count = 0;
-    infs_status status = index_snapshot(vol, &entries, &count);
-    if (status != INFS_STATUS_OK)
-        return status;
-
-    for (uint32_t i = 0; i < count; ++i) {
-        if (infs_le16_to_cpu(entries[i].object_type) != INFS_OBJECT_FILE ||
-            memcmp(entries[i].object_id, owner_id, 16) == 0)
-            continue;
-
-        uint8_t object[INFS_BLOCK_SIZE];
-        status = read_object(vol, infs_le64_to_cpu(entries[i].object_block),
-                             object);
-        if (status != INFS_STATUS_OK) {
-            free(entries);
-            return status;
-        }
-        struct infs_file_payload_disk *file;
-        struct infs_extent_disk *ext;
-        status = file_validate_volume(vol, object, &file, &ext);
-        if (status != INFS_STATUS_OK) {
-            free(entries);
-            return status;
-        }
-
-        struct infs_extent_disk *all = NULL;
-        uint32_t extent_count = 0;
-        int owned = 0;
-        status = file_extent_snapshot(vol, object, file, ext,
-                                      &all, &extent_count, &owned);
-        if (status != INFS_STATUS_OK) {
-            free(entries);
-            return status;
-        }
-        for (uint32_t j = 0; j < extent_count; ++j) {
-            uint32_t flags = infs_le32_to_cpu(all[j].flags);
-            uint32_t logical_blocks = infs_le32_to_cpu(all[j].block_count);
-            if (extent_kind(flags) != INFS_EXTENT_NORMAL)
-                continue;
-            uint64_t physical = infs_le64_to_cpu(all[j].physical_block);
-            uint64_t blocks = extent_physical_blocks(logical_blocks, flags);
-            uint64_t extent_end = physical + blocks;
-            if (extent_end <= cursor || physical >= end)
-                continue;
-            if (physical <= cursor) {
-                uint64_t candidate = extent_end < end ? extent_end : end;
-                if (candidate > *cover_end)
-                    *cover_end = candidate;
-            } else if (physical < *next_start) {
-                *next_start = physical;
-            }
-        }
-        if (owned)
-            free(all);
-    }
-    free(entries);
-    return INFS_STATUS_OK;
-}
 
 static infs_status file_free_unshared_run(
     struct infs_volume *vol, const uint8_t owner_id[16],
     uint64_t start, uint64_t count)
 {
+    uint64_t cursor, end;
+
+    (void)owner_id;
     if (!count)
         return INFS_STATUS_OK;
     if ((infs_le64_to_cpu(vol->sb.incompat_flags) &
@@ -81,27 +18,27 @@ static infs_status file_free_unshared_run(
     if (start > UINT64_MAX - count)
         return INFS_STATUS_OVERFLOW;
 
-    uint64_t cursor = start;
-    uint64_t end = start + count;
+    cursor = start;
+    end = start + count;
     while (cursor < end) {
-        uint64_t cover_end, next_start;
-        infs_status status = file_other_reference_cover(
-            vol, owner_id, cursor, end, &cover_end, &next_start);
+        uint64_t interval_end;
+        uint32_t refs;
+        infs_status status = shared_ref_index_lookup(
+            vol, cursor, end, &interval_end, &refs);
         if (status != INFS_STATUS_OK)
             return status;
-        if (cover_end > cursor) {
-            cursor = cover_end;
-            continue;
-        }
-        if (next_start <= cursor || next_start > end)
+        if (interval_end <= cursor || refs == 0)
             return INFS_STATUS_CORRUPT;
-        free_run(vol, cursor, next_start - cursor);
-        if (vol->tx_error != INFS_STATUS_OK)
-            return vol->tx_error;
-        cursor = next_start;
+        if (refs == 1) {
+            free_run(vol, cursor, interval_end - cursor);
+            if (vol->tx_error != INFS_STATUS_OK)
+                return vol->tx_error;
+        }
+        cursor = interval_end;
     }
     return INFS_STATUS_OK;
 }
+
 
 static infs_status reflink_copy_checksums(
     struct infs_volume *vol,

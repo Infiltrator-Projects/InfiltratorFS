@@ -1373,10 +1373,13 @@ void infilfs_native_block_digest(
 {
     struct infilfs_rw_sha256_ctx ctx;
 
+    if (!infilfs_crypto_sha256(data, INFILFS_DISK_BLOCK_SIZE, digest->bytes))
+        return;
     infilfs_rw_sha256_init(&ctx);
     infilfs_rw_sha256_update(&ctx, data, INFILFS_DISK_BLOCK_SIZE);
     infilfs_rw_sha256_final(&ctx, digest->bytes);
 }
+
 
 static int infilfs_native_collect_extents(
     struct infilfs_native_pending *pending, struct inode *inode,

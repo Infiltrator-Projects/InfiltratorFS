@@ -128,6 +128,20 @@ add_library(infilfs_core STATIC
 )
 target_include_directories(infilfs_core PUBLIC include)
 target_link_libraries(infilfs_core PUBLIC InfiltratrCommon::Portable lz4_static)
+
+# Integrity hashing is on every data path. Prefer the host crypto provider so
+# SHA-NI/ARMv8 SHA and provider acceleration are used automatically. The
+# known-answer-tested scalar code remains a fail-safe fallback.
+if(WIN32)
+    target_link_libraries(infilfs_core PUBLIC bcrypt)
+    target_compile_definitions(infilfs_core PRIVATE INFS_HAVE_BCRYPT_SHA256=1)
+else()
+    find_package(OpenSSL QUIET COMPONENTS Crypto)
+    if(OpenSSL_FOUND)
+        target_link_libraries(infilfs_core PUBLIC OpenSSL::Crypto)
+        target_compile_definitions(infilfs_core PRIVATE INFS_HAVE_OPENSSL_SHA256=1)
+    endif()
+endif()
 infilfs_enable_warnings(infilfs_core)
 
 add_executable(infilfs-checksum-test tests/checksum-test.c)

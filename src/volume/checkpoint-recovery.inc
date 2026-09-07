@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 static void discard_candidate_state(struct infs_volume *vol)
 {
+    shared_ref_index_destroy(vol);
     free_extent_index_destroy(vol);
     directory_cache_destroy(vol);
     object_cache_destroy(vol);

@@ -2881,6 +2881,7 @@ static int __init infilfs_init(void)
 
 static void __exit infilfs_exit(void)
 {
+    infilfs_crypto_exit();
     unregister_filesystem(&infilfs_type);
     pr_info("InfiltratorFS: native Linux VFS unloaded\n");
 }

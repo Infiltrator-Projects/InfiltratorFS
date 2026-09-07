@@ -63,6 +63,8 @@ static infs_status generate_unique_object_id(struct infs_volume *vol,
 static infs_status file_free_unshared_run(
     struct infs_volume *vol, const uint8_t owner_id[16],
     uint64_t start, uint64_t count);
+static void shared_ref_index_invalidate(struct infs_volume *vol);
+static void shared_ref_index_destroy(struct infs_volume *vol);
 static infs_status file_read_small_content(
     struct infs_volume *vol, uint8_t object[INFS_BLOCK_SIZE],
     uint8_t data[INFS_INLINE_DATA_MAX]);
@@ -277,6 +279,7 @@ static int paged_extent_replace(struct infs_volume *vol,
 #include "volume/checksum-update.inc"
 #include "volume/extent-replacement.inc"
 #include "volume/ownership-validation.inc"
+#include "volume/shared-ref-index.inc"
 #include "volume/scrub.inc"
 #include "volume/compression-metrics.inc"
 #include "volume/metadata-hardening.inc"
