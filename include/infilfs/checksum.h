@@ -2,6 +2,8 @@
 #ifndef INFILFS_CHECKSUM_H
 #define INFILFS_CHECKSUM_H
 
+/* Release qualification is filesystem-only; distro boot is tested manually. */
+
 #include <stddef.h>
 #include <stdint.h>
 
