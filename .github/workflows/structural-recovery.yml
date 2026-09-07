@@ -7,6 +7,7 @@ on:
       - finish-structural-overhaul
     paths:
       - tools/structural-recovery-phase1.py
+      - tools/structural-recovery-phase2.py
       - tools/structural-recovery-fixups.py
       - .github/workflows/structural-recovery.yml
 
@@ -28,11 +29,12 @@ jobs:
           ref: finish-structural-overhaul
           fetch-depth: 0
           submodules: recursive
-      - name: Apply deterministic recovery migration
+      - name: Apply deterministic recovery migrations
         run: |
           python3 tools/structural-recovery-fixups.py pre
           python3 tools/structural-recovery-phase1.py
           python3 tools/structural-recovery-fixups.py post
+          python3 tools/structural-recovery-phase2.py
       - name: Install qualification dependencies
         run: |
           sudo apt-get update
@@ -62,10 +64,11 @@ jobs:
           git config user.email "actions@users.noreply.github.com"
           git add CMakeLists.txt include/infilfs/volume.h src/checksum.c src/volume.c \
             src/volume/core.inc src/volume/reflink.inc src/volume/shared-ref-index.inc \
-            src/volume/checkpoint-recovery.inc \
+            src/volume/checkpoint-recovery.inc src/volume/paged-extents.inc \
+            src/volume/ownership-validation.inc \
             kernel/Makefile kernel/infiltratorfs_internal.h kernel/infiltratorfs_core.c \
             kernel/infiltratorfs_rw_data.inc kernel/infiltratorfs_rw_legacy.inc \
             kernel/infiltratorfs_crypto.c tests/structural-overhaul-policy.sh
           git diff --cached --quiet && { echo 'Migration produced no changes'; exit 1; }
-          git commit -m "structural: accelerate integrity and shared ownership"
+          git commit -m "structural: remove portable extent page ceiling"
           git push origin HEAD:finish-structural-overhaul
