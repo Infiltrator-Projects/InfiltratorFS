@@ -8,6 +8,7 @@ on:
     paths:
       - tools/structural-recovery-phase1.py
       - tools/structural-recovery-phase2.py
+      - tools/structural-recovery-phase2-fix.py
       - tools/structural-recovery-fixups.py
       - .github/workflows/structural-recovery.yml
 
@@ -35,6 +36,7 @@ jobs:
           python3 tools/structural-recovery-phase1.py
           python3 tools/structural-recovery-fixups.py post
           python3 tools/structural-recovery-phase2.py
+          python3 tools/structural-recovery-phase2-fix.py
       - name: Install qualification dependencies
         run: |
           sudo apt-get update
