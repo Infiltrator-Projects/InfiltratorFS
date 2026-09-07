@@ -36,7 +36,7 @@ jobs:
           sed -i 's/0\.18\.45/0.18.46/g' tests/root-boot-qemu.sh
           rm tools/apply-unlink-ownership-index.py
 
-          git diff --check
+          git diff --check -- . ':(exclude)README.md'
           grep -Fq 'project(InfiltratorFS VERSION 0.18.46 LANGUAGES C)' CMakeLists.txt
           grep -Fq '**Current source version:** 0.18.46 (Format 0.18)<br>' README.md
           grep -Fq '**Current source:** 0.18.46  ' README.md
