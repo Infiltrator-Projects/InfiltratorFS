@@ -3,8 +3,7 @@ name: Apply IAC1 stage-one selected encoder
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
 
 permissions:
   contents: write
@@ -27,14 +26,16 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          def replace_once(text, old, new, label):
-              count = text.count(old)
-              if count != 1:
-                  raise SystemExit(f"{label}: expected exactly one match, found {count}")
+          def once(text, old, new, label):
+              n = text.count(old)
+              if n != 1:
+                  raise SystemExit(f"{label}: expected 1 match, found {n}")
               return text.replace(old, new, 1)
 
-          path = Path('include/infilfs/iac1.h')
-          text = path.read_text()
+          # IAC1 v1 stream semantics stay unchanged. Add an encoder entry point
+          # that can stop once output can no longer save a filesystem block.
+          p = Path('include/infilfs/iac1.h')
+          s = p.read_text()
           old = '''static inline infs_iac1_size infs_iac1_compress_mode(
               const infs_iac1_u8 *src, infs_iac1_size input_size,
               infs_iac1_u8 *dst, infs_iac1_size capacity,
@@ -60,7 +61,7 @@ jobs:
                   mode > INFS_IAC1_MODE_XOR4 || capacity < INFS_IAC1_HEADER_SIZE)
                   return 0;
           '''
-          text = replace_once(text, old, new, 'iac1 compress-mode signature')
+          s = once(s, old, new, 'compress-mode signature')
 
           marker = '''    return out;
           }
@@ -81,28 +82,23 @@ jobs:
 
           static inline int infs_iac1_should_attempt(
           '''
-          text = replace_once(text, marker, wrapper, 'iac1 legacy wrapper insertion')
+          s = once(s, marker, wrapper, 'legacy wrapper insertion')
 
           marker = '''static inline infs_iac1_size infs_iac1_compress(
               const infs_iac1_u8 *src, infs_iac1_size input_size,
           '''
-          selected = '''/*
-           * Filesystem writers already classify the input and select a predictor.
-           * Encode that predictor once, with a storage-usefulness ceiling. If a
-           * non-identity predictor cannot save the required space, make one
-           * identity fallback attempt before giving up. The stream format and
-           * decoder are unchanged; only encoder work selection changes.
-           */
+          selected = '''/* Filesystem hot path: one selected full encode by default. */
           static inline infs_iac1_size infs_iac1_compress_selected(
               const infs_iac1_u8 *src, infs_iac1_size input_size,
               infs_iac1_u8 *dst, infs_iac1_size capacity,
               struct infs_iac1_scratch *scratch, infs_iac1_u8 mode,
               infs_iac1_size useful_limit)
           {
-              infs_iac1_size stored;
-
-              stored = infs_iac1_compress_mode_limit(
+              infs_iac1_size stored = infs_iac1_compress_mode_limit(
                   src, input_size, dst, capacity, scratch, mode, useful_limit);
+
+              /* Predictor selection is heuristic. Preserve a safe identity
+               * fallback if the selected non-identity mode cannot save a block. */
               if (!stored && mode != INFS_IAC1_MODE_IDENTITY)
                   stored = infs_iac1_compress_mode_limit(
                       src, input_size, dst, capacity, scratch,
@@ -113,12 +109,14 @@ jobs:
           static inline infs_iac1_size infs_iac1_compress(
               const infs_iac1_u8 *src, infs_iac1_size input_size,
           '''
-          text = replace_once(text, marker, selected, 'iac1 selected encoder insertion')
-          path.write_text(text)
+          s = once(s, marker, selected, 'selected encoder insertion')
+          p.write_text(s)
 
-          path = Path('kernel/infiltratorfs_rw_data.inc')
-          text = path.read_text()
-          text = replace_once(text, '    u8 *candidate = NULL;\n', '', 'native candidate declaration')
+          # Native mounted writer: use its already-computed predictor and remove
+          # the second full-size candidate allocation/encode.
+          p = Path('kernel/infiltratorfs_rw_data.inc')
+          s = p.read_text()
+          s = once(s, '    u8 *candidate = NULL;\n', '', 'native candidate declaration')
           old = '''        predictor_mode = infs_iac1_predictor_mode(plain, plain_bytes);
                   compressed = kvmalloc(bound, GFP_NOFS);
                   if (predictor_mode != INFS_IAC1_MODE_IDENTITY)
@@ -145,13 +143,17 @@ jobs:
                       predictor_mode,
                       (size_t)(logical_blocks - 1u) * INFILFS_DISK_BLOCK_SIZE);
           '''
-          text = replace_once(text, old, new, 'native selected encoder block')
-          text = replace_once(text, '    kvfree(candidate);\n', '', 'native candidate free')
-          path.write_text(text)
+          s = once(s, old, new, 'native encoder block')
+          s = once(s, '    kvfree(candidate);\n', '', 'native candidate cleanup')
+          if 'candidate' in s[s.find('static int infilfs_native_stage_compression_candidate'):s.find('static int infilfs_native_append_chunk_locked')]:
+              raise SystemExit('native compression candidate plumbing remains')
+          p.write_text(s)
 
-          path = Path('src/volume/compression.inc')
-          text = path.read_text()
-          text = replace_once(text, '    uint8_t *candidate = NULL;\n', '', 'portable candidate declaration')
+          # Portable writer gets the same encoder policy. There are four cleanup
+          # paths for the one candidate buffer in file_store_extent_payload().
+          p = Path('src/volume/compression.inc')
+          s = p.read_text()
+          s = once(s, '    uint8_t *candidate = NULL;\n', '', 'portable candidate declaration')
           old = '''        predictor_mode = infs_iac1_predictor_mode(plain, plain_bytes);
                   compressed = malloc(bound);
                   if (predictor_mode != INFS_IAC1_MODE_IDENTITY)
@@ -181,21 +183,23 @@ jobs:
                       predictor_mode,
                       (size_t)(logical_blocks - 1u) * INFS_BLOCK_SIZE);
           '''
-          text = replace_once(text, old, new, 'portable selected encoder block')
-          candidate_frees = text.count('        free(candidate);\n') + text.count('    free(candidate);\n')
-          text = text.replace('        free(candidate);\n', '')
-          text = text.replace('    free(candidate);\n', '')
-          if candidate_frees != 3:
-              raise SystemExit(f'portable candidate frees: expected 3, found {candidate_frees}')
-          path.write_text(text)
-
-          for p in (Path('kernel/infiltratorfs_rw_data.inc'), Path('src/volume/compression.inc')):
-              body = p.read_text()
-              if 'candidate ? bound : 0u' in body:
-                  raise SystemExit(f'{p}: stale candidate compression call remains')
+          s = once(s, old, new, 'portable encoder block')
+          n = s.count('free(candidate);')
+          if n != 3:
+              # One occurrence was part of the replaced allocation-failure block;
+              # the remaining three are stored-buffer failure, compressed success,
+              # and uncompressed fallback cleanup paths.
+              raise SystemExit(f'portable remaining candidate cleanups: expected 3, found {n}')
+          s = s.replace('            free(candidate);\n', '')
+          s = s.replace('        free(candidate);\n', '')
+          s = s.replace('    free(candidate);\n', '')
+          lo = s.find('static int file_store_extent_payload(')
+          if lo < 0 or 'candidate' in s[lo:]:
+              raise SystemExit('portable compression candidate plumbing remains')
+          p.write_text(s)
           PY
 
-      - name: Build and run compression qualifications before committing
+      - name: Qualify exact staged source before commit
         shell: bash
         run: |
           set -euo pipefail
@@ -208,7 +212,7 @@ jobs:
             -R 'infilfs-compression-(codec|extents|qualification)'
           ./build/infilfs-compression-qualification
 
-      - name: Commit exact guarded result
+      - name: Commit only qualified source edits
         shell: bash
         run: |
           set -euo pipefail
