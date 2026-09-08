@@ -305,22 +305,27 @@ def verify_write_semantics(root):
     os.close(fd)
     os.chown(privilege_path, 65534, 65534)
     os.chmod(privilege_path, 0o6755)
-    child = os.fork()
-    if child == 0:
-        try:
-            os.setgroups([])
-            os.setgid(65534)
-            os.setuid(65534)
-            fd = os.open(privilege_path, os.O_WRONLY | os.O_APPEND)
+    root_mode = stat.S_IMODE(os.stat(root).st_mode)
+    os.chmod(root, root_mode | stat.S_IXGRP | stat.S_IXOTH)
+    try:
+        child = os.fork()
+        if child == 0:
             try:
-                if os.write(fd, b"unprivileged-write") != 18:
-                    os._exit(2)
-            finally:
-                os.close(fd)
-            os._exit(0)
-        except BaseException:
-            os._exit(3)
-    _, status = os.waitpid(child, 0)
+                os.setgroups([])
+                os.setgid(65534)
+                os.setuid(65534)
+                fd = os.open(privilege_path, os.O_WRONLY | os.O_APPEND)
+                try:
+                    if os.write(fd, b"unprivileged-write") != 18:
+                        os._exit(2)
+                finally:
+                    os.close(fd)
+                os._exit(0)
+            except BaseException:
+                os._exit(3)
+        _, status = os.waitpid(child, 0)
+    finally:
+        os.chmod(root, root_mode)
     if not os.WIFEXITED(status) or os.WEXITSTATUS(status) != 0:
         raise AssertionError(f"privilege-strip child failed: status={status}")
     mode = stat.S_IMODE(os.stat(privilege_path).st_mode)
