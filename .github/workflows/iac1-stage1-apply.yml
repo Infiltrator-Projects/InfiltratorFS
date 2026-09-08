@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   apply:
-    if: github.event.head_commit.message == 'ci: apply IAC1 stage-one selected encoder'
+    if: "github.event.head_commit.message == 'ci: apply IAC1 stage-one selected encoder'"
     runs-on: ubuntu-latest
     steps:
       - name: Check out exact main
@@ -33,8 +33,6 @@ jobs:
                   raise SystemExit(f"{label}: expected exactly one match, found {count}")
               return text.replace(old, new, 1)
 
-          # Add a bounded-output encoder primitive while preserving the existing
-          # generic IAC1 encoder API and IAC1 v1 decode format.
           path = Path('include/infilfs/iac1.h')
           text = path.read_text()
           old = '''static inline infs_iac1_size infs_iac1_compress_mode(
@@ -90,9 +88,9 @@ jobs:
           '''
           selected = '''/*
            * Filesystem writers already classify the input and select a predictor.
-           * Encode that predictor once, with a storage-usefulness ceiling.  If a
+           * Encode that predictor once, with a storage-usefulness ceiling. If a
            * non-identity predictor cannot save the required space, make one
-           * identity fallback attempt before giving up.  The stream format and
+           * identity fallback attempt before giving up. The stream format and
            * decoder are unchanged; only encoder work selection changes.
            */
           static inline infs_iac1_size infs_iac1_compress_selected(
@@ -118,9 +116,6 @@ jobs:
           text = replace_once(text, marker, selected, 'iac1 selected encoder insertion')
           path.write_text(text)
 
-          # Native Linux: remove the second candidate buffer and use the predictor
-          # the caller already computed.  The output ceiling is exactly the most
-          # bytes that can still save at least one 4 KiB filesystem block.
           path = Path('kernel/infiltratorfs_rw_data.inc')
           text = path.read_text()
           text = replace_once(text, '    u8 *candidate = NULL;\n', '', 'native candidate declaration')
@@ -154,7 +149,6 @@ jobs:
           text = replace_once(text, '    kvfree(candidate);\n', '', 'native candidate free')
           path.write_text(text)
 
-          # Portable core: keep the same physical-block policy and stream format.
           path = Path('src/volume/compression.inc')
           text = path.read_text()
           text = replace_once(text, '    uint8_t *candidate = NULL;\n', '', 'portable candidate declaration')
@@ -195,8 +189,6 @@ jobs:
               raise SystemExit(f'portable candidate frees: expected 3, found {candidate_frees}')
           path.write_text(text)
 
-          # Fail closed if any candidate-buffer plumbing survived in filesystem
-          # compression paths.
           for p in (Path('kernel/infiltratorfs_rw_data.inc'), Path('src/volume/compression.inc')):
               body = p.read_text()
               if 'candidate ? bound : 0u' in body:
