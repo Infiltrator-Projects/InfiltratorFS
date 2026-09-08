@@ -3,6 +3,7 @@
 #define INFILFS_IAC1_H
 
 #ifdef __KERNEL__
+#include <linux/string.h>
 #include <linux/types.h>
 typedef u8 infs_iac1_u8;
 typedef u16 infs_iac1_u16;
@@ -12,6 +13,7 @@ typedef size_t infs_iac1_size;
 #else
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 typedef uint8_t infs_iac1_u8;
 typedef uint16_t infs_iac1_u16;
 typedef uint32_t infs_iac1_u32;
@@ -45,24 +47,58 @@ static inline infs_iac1_size infs_iac1_bound(infs_iac1_size input_size)
                INFS_IAC1_LITERAL_MAX;
 }
 
+static inline infs_iac1_u8 infs_iac1_delta_byte(
+    const infs_iac1_u8 *src, infs_iac1_size pos)
+{
+    return pos ? (infs_iac1_u8)(src[pos] - src[pos - 1u]) : src[pos];
+}
+
+static inline infs_iac1_u8 infs_iac1_xor4_byte(
+    const infs_iac1_u8 *src, infs_iac1_size pos)
+{
+    return pos >= 4u ? (infs_iac1_u8)(src[pos] ^ src[pos - 4u]) : src[pos];
+}
+
 static inline infs_iac1_u8 infs_iac1_transform_byte(
     const infs_iac1_u8 *src, infs_iac1_size pos, infs_iac1_u8 mode)
 {
     if (mode == INFS_IAC1_MODE_DELTA8)
-        return pos ? (infs_iac1_u8)(src[pos] - src[pos - 1u]) : src[pos];
+        return infs_iac1_delta_byte(src, pos);
     if (mode == INFS_IAC1_MODE_XOR4)
-        return pos >= 4u ? (infs_iac1_u8)(src[pos] ^ src[pos - 4u]) : src[pos];
+        return infs_iac1_xor4_byte(src, pos);
     return src[pos];
 }
 
 static inline infs_iac1_u32 infs_iac1_hash4(
     const infs_iac1_u8 *src, infs_iac1_size pos, infs_iac1_u8 mode)
 {
-    infs_iac1_u32 value =
-        (infs_iac1_u32)infs_iac1_transform_byte(src, pos, mode) |
-        ((infs_iac1_u32)infs_iac1_transform_byte(src, pos + 1u, mode) << 8) |
-        ((infs_iac1_u32)infs_iac1_transform_byte(src, pos + 2u, mode) << 16) |
-        ((infs_iac1_u32)infs_iac1_transform_byte(src, pos + 3u, mode) << 24);
+    infs_iac1_u8 b0;
+    infs_iac1_u8 b1;
+    infs_iac1_u8 b2;
+    infs_iac1_u8 b3;
+    infs_iac1_u32 value;
+
+    if (mode == INFS_IAC1_MODE_IDENTITY) {
+        b0 = src[pos];
+        b1 = src[pos + 1u];
+        b2 = src[pos + 2u];
+        b3 = src[pos + 3u];
+    } else if (mode == INFS_IAC1_MODE_DELTA8) {
+        b0 = infs_iac1_delta_byte(src, pos);
+        b1 = infs_iac1_delta_byte(src, pos + 1u);
+        b2 = infs_iac1_delta_byte(src, pos + 2u);
+        b3 = infs_iac1_delta_byte(src, pos + 3u);
+    } else {
+        b0 = infs_iac1_xor4_byte(src, pos);
+        b1 = infs_iac1_xor4_byte(src, pos + 1u);
+        b2 = infs_iac1_xor4_byte(src, pos + 2u);
+        b3 = infs_iac1_xor4_byte(src, pos + 3u);
+    }
+
+    value = (infs_iac1_u32)b0 |
+            ((infs_iac1_u32)b1 << 8) |
+            ((infs_iac1_u32)b2 << 16) |
+            ((infs_iac1_u32)b3 << 24);
     value ^= value >> 15;
     value *= 0x2c1b3c6du;
     value ^= value >> 12;
@@ -71,11 +107,7 @@ static inline infs_iac1_u32 infs_iac1_hash4(
 
 static inline void infs_iac1_clear_scratch(struct infs_iac1_scratch *scratch)
 {
-    infs_iac1_size i;
-    for (i = 0; i < INFS_IAC1_HASH_SIZE; ++i) {
-        scratch->latest[i] = 0;
-        scratch->previous[i] = 0;
-    }
+    memset(scratch, 0, sizeof(*scratch));
 }
 
 static inline void infs_iac1_insert_position(
@@ -103,10 +135,22 @@ static inline infs_iac1_size infs_iac1_candidate_match(
     limit = input_size - pos;
     if (limit > INFS_IAC1_MATCH_MAX)
         limit = INFS_IAC1_MATCH_MAX;
-    while (length < limit &&
-           infs_iac1_transform_byte(src, pos + length, mode) ==
-               infs_iac1_transform_byte(src, candidate + length, mode))
-        ++length;
+
+    if (mode == INFS_IAC1_MODE_IDENTITY) {
+        while (length < limit &&
+               src[pos + length] == src[candidate + length])
+            ++length;
+    } else if (mode == INFS_IAC1_MODE_DELTA8) {
+        while (length < limit &&
+               infs_iac1_delta_byte(src, pos + length) ==
+                   infs_iac1_delta_byte(src, candidate + length))
+            ++length;
+    } else {
+        while (length < limit &&
+               infs_iac1_xor4_byte(src, pos + length) ==
+                   infs_iac1_xor4_byte(src, candidate + length))
+            ++length;
+    }
     return length >= INFS_IAC1_MATCH_MIN ? length : 0;
 }
 
@@ -146,14 +190,27 @@ static inline infs_iac1_size infs_iac1_fill_run(
     const infs_iac1_u8 *src, infs_iac1_size input_size,
     infs_iac1_size pos, infs_iac1_u8 mode)
 {
-    infs_iac1_u8 value = infs_iac1_transform_byte(src, pos, mode);
+    infs_iac1_u8 value;
     infs_iac1_size length = 1u;
     infs_iac1_size limit = input_size - pos;
     if (limit > INFS_IAC1_FILL_MAX)
         limit = INFS_IAC1_FILL_MAX;
-    while (length < limit &&
-           infs_iac1_transform_byte(src, pos + length, mode) == value)
-        ++length;
+
+    if (mode == INFS_IAC1_MODE_IDENTITY) {
+        value = src[pos];
+        while (length < limit && src[pos + length] == value)
+            ++length;
+    } else if (mode == INFS_IAC1_MODE_DELTA8) {
+        value = infs_iac1_delta_byte(src, pos);
+        while (length < limit &&
+               infs_iac1_delta_byte(src, pos + length) == value)
+            ++length;
+    } else {
+        value = infs_iac1_xor4_byte(src, pos);
+        while (length < limit &&
+               infs_iac1_xor4_byte(src, pos + length) == value)
+            ++length;
+    }
     return length >= INFS_IAC1_FILL_MIN ? length : 0;
 }
 
@@ -234,9 +291,18 @@ static inline infs_iac1_size infs_iac1_compress_mode(
                 if (out + 1u + literal_length > capacity)
                     return 0;
                 dst[out++] = (infs_iac1_u8)(literal_length - 1u);
-                while (literal_start < pos)
-                    dst[out++] = infs_iac1_transform_byte(
-                        src, literal_start++, mode);
+                if (mode == INFS_IAC1_MODE_IDENTITY) {
+                    memcpy(dst + out, src + literal_start, literal_length);
+                    out += literal_length;
+                } else if (mode == INFS_IAC1_MODE_DELTA8) {
+                    while (literal_start < pos)
+                        dst[out++] = infs_iac1_delta_byte(
+                            src, literal_start++);
+                } else {
+                    while (literal_start < pos)
+                        dst[out++] = infs_iac1_xor4_byte(
+                            src, literal_start++);
+                }
             }
         }
     }
@@ -300,10 +366,9 @@ static inline infs_iac1_u8 infs_iac1_predictor_mode(
             (infs_iac1_u8)(src[i - 1u] - src[i - 2u]);
         if (a == b)
             ++delta_hits;
-    }
-    for (i = 4u; i < input_size; ++i)
-        if (src[i] == src[i - 4u])
+        if (i >= 4u && src[i] == src[i - 4u])
             ++xor_hits;
+    }
 
     if (xor_hits > delta_hits && xor_hits > input_size / 16u)
         return INFS_IAC1_MODE_XOR4;
@@ -326,9 +391,7 @@ static inline infs_iac1_size infs_iac1_compress(
         infs_iac1_size alternate = infs_iac1_compress_mode(
             src, input_size, candidate, candidate_capacity, scratch, mode);
         if (alternate && (!best || alternate < best)) {
-            infs_iac1_size i;
-            for (i = 0; i < alternate; ++i)
-                dst[i] = candidate[i];
+            memcpy(dst, candidate, alternate);
             best = alternate;
         }
     }
