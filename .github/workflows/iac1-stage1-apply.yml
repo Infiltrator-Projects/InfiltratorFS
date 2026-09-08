@@ -145,12 +145,16 @@ jobs:
           '''
           s = once(s, old, new, 'native encoder block')
           s = once(s, '    kvfree(candidate);\n', '', 'native candidate cleanup')
-          if 'candidate' in s[s.find('static int infilfs_native_stage_compression_candidate'):s.find('static int infilfs_native_append_chunk_locked')]:
-              raise SystemExit('native compression candidate plumbing remains')
+          lo = s.find('static int infilfs_native_stage_compression_candidate')
+          hi = s.find('static int infilfs_native_append_chunk_locked', lo)
+          region = s[lo:hi]
+          for token in ('u8 *candidate', 'candidate = kvmalloc', '!candidate',
+                        'candidate ? bound', 'kvfree(candidate)'):
+              if token in region:
+                  raise SystemExit(f'native compression variable plumbing remains: {token}')
           p.write_text(s)
 
-          # Portable writer gets the same encoder policy. There are four cleanup
-          # paths for the one candidate buffer in file_store_extent_payload().
+          # Portable writer gets the same encoder policy.
           p = Path('src/volume/compression.inc')
           s = p.read_text()
           s = once(s, '    uint8_t *candidate = NULL;\n', '', 'portable candidate declaration')
@@ -186,16 +190,16 @@ jobs:
           s = once(s, old, new, 'portable encoder block')
           n = s.count('free(candidate);')
           if n != 3:
-              # One occurrence was part of the replaced allocation-failure block;
-              # the remaining three are stored-buffer failure, compressed success,
-              # and uncompressed fallback cleanup paths.
               raise SystemExit(f'portable remaining candidate cleanups: expected 3, found {n}')
           s = s.replace('            free(candidate);\n', '')
           s = s.replace('        free(candidate);\n', '')
           s = s.replace('    free(candidate);\n', '')
           lo = s.find('static int file_store_extent_payload(')
-          if lo < 0 or 'candidate' in s[lo:]:
-              raise SystemExit('portable compression candidate plumbing remains')
+          region = s[lo:]
+          for token in ('uint8_t *candidate', 'candidate = malloc', '!candidate',
+                        'candidate ? bound', 'free(candidate)'):
+              if token in region:
+                  raise SystemExit(f'portable compression variable plumbing remains: {token}')
           p.write_text(s)
           PY
 
