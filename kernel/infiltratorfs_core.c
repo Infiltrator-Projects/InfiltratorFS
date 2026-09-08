@@ -119,8 +119,7 @@ bool infilfs_extent_flags_valid(u32 logical_blocks, u64 physical,
         return false;
     if (codec == INFILFS_COMPRESSION_NONE)
         return flags == INFILFS_EXTENT_NORMAL;
-    if ((codec != INFILFS_COMPRESSION_LZ4 &&
-         codec != INFILFS_COMPRESSION_IAC1) || !stored ||
+    if (codec != INFILFS_COMPRESSION_IAC1 || !stored ||
         logical_blocks > INFILFS_COMPRESSION_CLUSTER_BLOCKS ||
         (u64)stored >= (u64)logical_blocks * INFILFS_DISK_BLOCK_SIZE)
         return false;
@@ -156,11 +155,7 @@ int infilfs_read_compressed_extent(
         if (ret)
             goto out;
     }
-    if (infilfs_extent_codec(flags) == INFILFS_COMPRESSION_LZ4) {
-        decoded = LZ4_decompress_safe(
-            (const char *)compressed, (char *)plain,
-            (int)stored, (int)plain_bytes);
-    } else if (infilfs_extent_codec(flags) == INFILFS_COMPRESSION_IAC1) {
+    if (infilfs_extent_codec(flags) == INFILFS_COMPRESSION_IAC1) {
         decoded = (int)infs_iac1_decompress(
             compressed, stored, plain, plain_bytes);
     } else {
@@ -2283,15 +2278,22 @@ static int infilfs_populate_inode(struct inode *inode, u64 object_block,
         goto out;
 
     header = (const struct infilfs_object_header_disk *)object;
-    ii = kzalloc(sizeof(*ii), GFP_KERNEL);
+    ii = INFILFS_I(inode);
     if (!ii) {
-        ret = -ENOMEM;
-        goto out;
+        ii = kzalloc(sizeof(*ii), GFP_KERNEL);
+        if (!ii) {
+            ret = -ENOMEM;
+            goto out;
+        }
+        memcpy(ii->object_id, expected_id, 16);
+        inode->i_private = ii;
+    } else if (memcmp(ii->object_id, expected_id, 16) != 0) {
+        ret = -EFSCORRUPTED;
+        goto fail_private;
     }
     ii->object_block = object_block;
     ii->object_type = le16_to_cpu(header->object_type);
     memcpy(ii->object_id, header->object_id, 16);
-    inode->i_private = ii;
 
     if (ii->object_type == INFILFS_OBJECT_DIRECTORY) {
         const struct infilfs_directory_payload_disk *payload =
@@ -2424,15 +2426,53 @@ out:
     return ret;
 }
 
+struct infilfs_iget_args {
+    u64 ino;
+    const u8 *object_id;
+};
+
+static int infilfs_inode_matches_id(struct inode *inode, void *opaque)
+{
+    const struct infilfs_iget_args *args = opaque;
+    const struct infilfs_inode_info *ii = INFILFS_I(inode);
+
+    return ii && memcmp(ii->object_id, args->object_id, 16) == 0;
+}
+
+static int infilfs_inode_set_id(struct inode *inode, void *opaque)
+{
+    const struct infilfs_iget_args *args = opaque;
+    struct infilfs_inode_info *ii;
+
+    ii = kzalloc(sizeof(*ii), GFP_ATOMIC);
+    if (!ii)
+        return -ENOMEM;
+    memcpy(ii->object_id, args->object_id, 16);
+    inode->i_ino = args->ino;
+    inode->i_private = ii;
+    return 0;
+}
+
 static struct inode *infilfs_get_inode(struct super_block *sb, u64 object_block,
                                        u16 expected_type,
                                        const u8 expected_id[16])
 {
     struct inode *inode;
     u64 ino = infilfs_object_ino(expected_id);
+    struct infilfs_iget_args args = {
+        .ino = ino,
+        .object_id = expected_id,
+    };
     int ret;
 
-    inode = iget_locked(sb, ino);
+    /*
+     * i_ino is a compact Linux presentation value, not the filesystem's
+     * identity. Keep the hash for lookup speed but compare the complete
+     * 128-bit object ID so a hash collision cannot alias two live objects.
+     */
+    inode = iget5_locked(sb, (unsigned long)ino,
+                         infilfs_inode_matches_id,
+                         infilfs_inode_set_id, &args);
     if (!inode)
         return ERR_PTR(-ENOMEM);
     if (!infilfs_inode_is_new(inode))
@@ -2882,6 +2922,7 @@ static int __init infilfs_init(void)
 static void __exit infilfs_exit(void)
 {
     unregister_filesystem(&infilfs_type);
+    infilfs_crypto_exit();
     pr_info("InfiltratorFS: native Linux VFS unloaded\n");
 }
 

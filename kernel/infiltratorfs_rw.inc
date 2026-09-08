@@ -1852,6 +1852,20 @@ size_change_done:
         ;
     }
 
+    /*
+     * file_remove_privs() asks ->setattr to clear set-user-ID/set-group-ID
+     * through ATTR_KILL_* rather than always supplying ATTR_MODE. Convert that
+     * request into the portable mode update that this filesystem persists.
+     */
+    if (metadata.ia_valid & (ATTR_KILL_SUID | ATTR_KILL_SGID)) {
+        metadata.ia_mode = inode->i_mode;
+        if (metadata.ia_valid & ATTR_KILL_SUID)
+            metadata.ia_mode &= ~S_ISUID;
+        if (metadata.ia_valid & ATTR_KILL_SGID)
+            metadata.ia_mode &= ~S_ISGID;
+        metadata.ia_valid |= ATTR_MODE;
+    }
+
     disk_fields = metadata.ia_valid &
         (ATTR_MODE | ATTR_UID | ATTR_GID | ATTR_ATIME | ATTR_MTIME | ATTR_CTIME);
     if (!disk_fields)
@@ -1962,7 +1976,9 @@ static int infilfs_getattr(struct user_namespace *idmap,
 {
     struct inode *inode = d_inode(path->dentry);
     struct infilfs_inode_info *ii = INFILFS_I(inode);
+    struct infilfs_sb_info *sbi = INFILFS_SB(inode->i_sb);
     const struct infilfs_attributes_disk *attributes;
+    u64 object_block;
     u8 *object;
     int ret;
 
@@ -1973,8 +1989,17 @@ static int infilfs_getattr(struct user_namespace *idmap,
     object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_KERNEL);
     if (!object)
         return -ENOMEM;
-    ret = infilfs_read_object(inode->i_sb, ii->object_block,
+
+    /*
+     * A CoW writer can replace ii->object_block while publishing a new object.
+     * Read one coherent topology snapshot instead of racing the pointer update
+     * and then reporting metadata from a reclaimed block.
+     */
+    mutex_lock(&sbi->write_lock);
+    object_block = ii->object_block;
+    ret = infilfs_read_object(inode->i_sb, object_block,
                               ii->object_type, ii->object_id, object);
+    mutex_unlock(&sbi->write_lock);
     if (ret)
         goto out;
     attributes = infilfs_vfs_attributes(object);

@@ -37,8 +37,8 @@ static size_t roundtrip(const uint8_t *source, size_t size,
 
 int main(void)
 {
+    static uint8_t source[TEST_BYTES];
     size_t bound = infs_iac1_bound(TEST_BYTES);
-    uint8_t *source = malloc(TEST_BYTES);
     uint8_t *compressed = malloc(bound);
     uint8_t *candidate = malloc(bound);
     uint8_t *decoded = malloc(TEST_BYTES);
@@ -48,11 +48,9 @@ int main(void)
     uint32_t random_state = UINT32_C(0x12345678);
     size_t stored;
 
-    expect(source && compressed && candidate && decoded && again &&
-               scratch && scratch2,
+    expect(compressed && candidate && decoded && again && scratch && scratch2,
            "allocate codec buffers");
 
-    memset(source, 0, TEST_BYTES);
     expect(infs_iac1_should_attempt(source, TEST_BYTES),
            "zero-heavy input selected");
     stored = roundtrip(source, TEST_BYTES, compressed, candidate,
@@ -129,6 +127,5 @@ int main(void)
     free(decoded);
     free(candidate);
     free(compressed);
-    free(source);
     return 0;
 }

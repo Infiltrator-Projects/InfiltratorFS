@@ -48,6 +48,7 @@ check_requirements() {
     command -v dpkg >/dev/null 2>&1 || add_missing_package dpkg
     command -v dpkg-deb >/dev/null 2>&1 || add_missing_package dpkg
     command -v apt-get >/dev/null 2>&1 || add_missing_package apt
+    [[ -f /usr/include/openssl/evp.h ]] || add_missing_package libssl-dev
     command -v pkexec >/dev/null 2>&1 || add_missing_package policykit-1
     command -v findmnt >/dev/null 2>&1 || add_missing_package util-linux
     command -v mount >/dev/null 2>&1 || add_missing_package util-linux
@@ -172,6 +173,7 @@ cmake -S "$ROOT" -B "$BUILD_DIR" \
     -DCMAKE_C_FLAGS_RELEASE="-O3 -DNDEBUG -march=native -mtune=native"
 cmake --build "$BUILD_DIR" --parallel
 ctest --test-dir "$BUILD_DIR" --output-on-failure
+ldd "$BUILD_DIR/infilfs-checksum-test" | grep -Fq libcrypto
 
 rm -rf "$PACKAGE_DIR"
 INFILTRATORFS_PACKAGE_VERSION="$NATIVE_PACKAGE_VERSION" \

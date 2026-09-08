@@ -81,7 +81,7 @@ fi
 # though the repository build itself succeeds.
 dkms_root="$package_root/usr/src/infiltratorfs-$package_version"
 install -d "$dkms_root"
-for file in Makefile infiltratorfs_core.c infiltratorfs_internal.h infiltratorfs_format.h \
+for file in Makefile infiltratorfs_core.c infiltratorfs_crypto.c infiltratorfs_internal.h infiltratorfs_format.h \
             infiltratorfs_allocation_map.c infiltratorfs_allocation_publish.c \
             infiltratorfs_parallel_alloc.c \
             infiltratorfs_index_tree.c infiltratorfs_directory_tree.c \
@@ -123,7 +123,7 @@ Architecture: ${architecture}
 Maintainer: The First Infiltrator
 X-InfiltratorFS-Build: ${build_identity}
 X-InfiltratorFS-Desktop-Integration: ${desktop_identity}
-Depends: dkms, initramfs-tools, kmod, policykit-1, util-linux, xdg-utils, fontconfig, python3, python3-gi, gir1.2-gtk-3.0${desktop_depends}
+Depends: dkms, initramfs-tools, kmod, policykit-1, util-linux, xdg-utils, fontconfig, libssl3t64 | libssl3, python3, python3-gi, gir1.2-gtk-3.0${desktop_depends}
 Recommends: linux-headers-generic, udev${desktop_recommends}
 Installed-Size: ${installed_size}
 Homepage: https://github.com/Infiltrator-Projects/InfiltratorFS
@@ -299,6 +299,7 @@ for required in \
     'usr/share/infiltratorfs/fonts/mb_corpo_s_regular.ttf$' \
     "usr/src/infiltratorfs-${package_version}/dkms.conf$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_core.c$" \
+    "usr/src/infiltratorfs-${package_version}/infiltratorfs_crypto.c$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_internal.h$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_format.h$" \
     "usr/src/infiltratorfs-${package_version}/iac1.h$" \
@@ -410,6 +411,7 @@ verify_installer() {
         packaging/build-linux-packages.sh packaging/infiltratorfs-os-integration \
         packaging/patch-mintstick.py \
         src/infiltratr-common/CMakeLists.txt kernel/Makefile kernel/infiltratorfs_core.c \
+        kernel/infiltratorfs_crypto.c \
         kernel/infiltratorfs_format.h include/infilfs/iac1.h kernel/infiltratorfs_allocation_map.c \
         kernel/infiltratorfs_allocation_publish.c kernel/infiltratorfs_rw.inc \
         kernel/infiltratorfs_parallel_alloc.c \

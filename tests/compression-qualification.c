@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "infilfs/iac1.h"
 
-#include <lz4.h>
-
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,7 +14,6 @@
 struct totals {
     uint64_t logical;
     uint64_t iac1_physical;
-    uint64_t lz4_physical;
     unsigned attempted;
     unsigned selected;
     unsigned cases;
@@ -171,29 +168,23 @@ static void qualify_case(const char *name, uint8_t *plain, size_t bytes,
                          int expect_attempt, struct totals *total)
 {
     size_t bound = infs_iac1_bound(bytes);
-    int lz4_bound = LZ4_compressBound((int)bytes);
     uint8_t *iac1 = malloc(bound);
     uint8_t *iac1_again = malloc(bound);
-    uint8_t *candidate = malloc(bound);
     uint8_t *decoded = malloc(bytes);
-    char *lz4 = malloc((size_t)lz4_bound);
-    char *lz4_decoded = malloc(bytes);
     struct infs_iac1_scratch *scratch = malloc(sizeof(*scratch));
     size_t iac1_bytes = 0;
-    int lz4_bytes;
+    size_t selected_limit = bytes > FS_BLOCK ? bytes - FS_BLOCK : 0;
+    uint8_t predictor_mode;
     int attempt;
     uint64_t iac1_physical;
-    uint64_t lz4_physical;
     clock_t start;
     clock_t stop;
     double iac1_encode_mibs = 0.0;
     double iac1_decode_mibs = 0.0;
-    double lz4_encode_mibs;
-    double lz4_decode_mibs;
     unsigned loop;
 
-    expect(iac1 && iac1_again && candidate && decoded && lz4 &&
-           lz4_decoded && scratch, "allocate qualification buffers");
+    expect(iac1 && iac1_again && decoded && scratch,
+           "allocate qualification buffers");
 
     attempt = infs_iac1_should_attempt(plain, bytes);
     if (expect_attempt >= 0)
@@ -201,8 +192,10 @@ static void qualify_case(const char *name, uint8_t *plain, size_t bytes,
                "adaptive attempt classifier disagrees with corpus expectation");
 
     if (attempt) {
-        iac1_bytes = infs_iac1_compress(
-            plain, bytes, iac1, bound, candidate, bound, scratch);
+        predictor_mode = infs_iac1_predictor_mode(plain, bytes);
+        iac1_bytes = infs_iac1_compress_selected(
+            plain, bytes, iac1, bound, scratch, predictor_mode,
+            selected_limit);
         expect(iac1_bytes != 0, "IAC1 failed to encode selected input");
         expect(infs_iac1_decompress(
                    iac1, iac1_bytes, decoded, bytes) == bytes,
@@ -211,8 +204,9 @@ static void qualify_case(const char *name, uint8_t *plain, size_t bytes,
                "IAC1 roundtrip changed logical bytes");
 
         {
-            size_t second = infs_iac1_compress(
-                plain, bytes, iac1_again, bound, candidate, bound, scratch);
+            size_t second = infs_iac1_compress_selected(
+                plain, bytes, iac1_again, bound, scratch, predictor_mode,
+                selected_limit);
             expect(second == iac1_bytes &&
                    memcmp(iac1, iac1_again, iac1_bytes) == 0,
                    "IAC1 output is not deterministic");
@@ -220,9 +214,9 @@ static void qualify_case(const char *name, uint8_t *plain, size_t bytes,
 
         start = clock();
         for (loop = 0; loop < BENCH_LOOPS; ++loop)
-            expect(infs_iac1_compress(
-                       plain, bytes, iac1_again, bound,
-                       candidate, bound, scratch) != 0,
+            expect(infs_iac1_compress_selected(
+                       plain, bytes, iac1_again, bound, scratch,
+                       predictor_mode, selected_limit) != 0,
                    "IAC1 benchmark encode failed");
         stop = clock();
         iac1_encode_mibs = mib_per_second(bytes, BENCH_LOOPS, start, stop);
@@ -236,58 +230,24 @@ static void qualify_case(const char *name, uint8_t *plain, size_t bytes,
         iac1_decode_mibs = mib_per_second(bytes, BENCH_LOOPS, start, stop);
     }
 
-    lz4_bytes = LZ4_compress_default(
-        (const char *)plain, lz4, (int)bytes, lz4_bound);
-    expect(lz4_bytes > 0, "LZ4 baseline encode failed");
-    expect(LZ4_decompress_safe(
-               lz4, lz4_decoded, lz4_bytes, (int)bytes) == (int)bytes,
-           "LZ4 baseline decode failed");
-    expect(memcmp(plain, lz4_decoded, bytes) == 0,
-           "LZ4 baseline roundtrip changed logical bytes");
-
-    start = clock();
-    for (loop = 0; loop < BENCH_LOOPS; ++loop)
-        expect(LZ4_compress_default(
-                   (const char *)plain, lz4, (int)bytes, lz4_bound) > 0,
-               "LZ4 benchmark encode failed");
-    stop = clock();
-    lz4_encode_mibs = mib_per_second(bytes, BENCH_LOOPS, start, stop);
-
-    start = clock();
-    for (loop = 0; loop < BENCH_LOOPS; ++loop)
-        expect(LZ4_decompress_safe(
-                   lz4, lz4_decoded, lz4_bytes, (int)bytes) == (int)bytes,
-               "LZ4 benchmark decode failed");
-    stop = clock();
-    lz4_decode_mibs = mib_per_second(bytes, BENCH_LOOPS, start, stop);
-
     iac1_physical = attempt ? physical_bytes(iac1_bytes, bytes) :
                               physical_bytes(0, bytes);
-    lz4_physical = physical_bytes((size_t)lz4_bytes, bytes);
 
     total->logical += physical_bytes(0, bytes);
     total->iac1_physical += iac1_physical;
-    total->lz4_physical += lz4_physical;
     total->attempted += attempt ? 1u : 0u;
     total->selected += iac1_physical < physical_bytes(0, bytes) ? 1u : 0u;
     total->cases++;
 
     printf("[COMPRESSION-QUAL] case=%s attempt=%d "
            "iac1_bytes=%zu iac1_physical=%llu "
-           "lz4_bytes=%d lz4_physical=%llu "
-           "iac1_enc_mib_s=%.2f iac1_dec_mib_s=%.2f "
-           "lz4_enc_mib_s=%.2f lz4_dec_mib_s=%.2f\n",
+           "iac1_enc_mib_s=%.2f iac1_dec_mib_s=%.2f\n",
            name, attempt, iac1_bytes,
            (unsigned long long)iac1_physical,
-           lz4_bytes, (unsigned long long)lz4_physical,
-           iac1_encode_mibs, iac1_decode_mibs,
-           lz4_encode_mibs, lz4_decode_mibs);
+           iac1_encode_mibs, iac1_decode_mibs);
 
     free(scratch);
-    free(lz4_decoded);
-    free(lz4);
     free(decoded);
-    free(candidate);
     free(iac1_again);
     free(iac1);
 }
@@ -333,14 +293,12 @@ int main(void)
            "native codec corpus savings are below the 30 percent qualification floor");
 
     printf("[COMPRESSION-QUAL] aggregate cases=%u attempted=%u selected=%u "
-           "logical_physical=%llu iac1_physical=%llu lz4_physical=%llu "
-           "iac1_saving_pct=%.2f lz4_saving_pct=%.2f scratch_bytes=%zu\n",
+           "logical_physical=%llu iac1_physical=%llu "
+           "iac1_saving_pct=%.2f scratch_bytes=%zu\n",
            total.cases, total.attempted, total.selected,
            (unsigned long long)total.logical,
            (unsigned long long)total.iac1_physical,
-           (unsigned long long)total.lz4_physical,
            100.0 * (1.0 - (double)total.iac1_physical / (double)total.logical),
-           100.0 * (1.0 - (double)total.lz4_physical / (double)total.logical),
            sizeof(struct infs_iac1_scratch));
 
     free(plain);

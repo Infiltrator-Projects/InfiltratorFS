@@ -19,7 +19,6 @@
 #include <linux/highmem.h>
 #include <linux/kernel.h>
 #include <linux/list.h>
-#include <linux/lz4.h>
 #include <linux/math64.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
@@ -304,6 +303,10 @@ struct infilfs_sb_info {
     atomic64_t allocation_media_rotational_scored;
     atomic64_t allocation_media_nonrotational_scored;
     atomic64_t allocation_media_balanced_scored;
+    atomic64_t prepared_append_attempts;
+    atomic64_t prepared_append_successes;
+    atomic64_t prepared_append_bytes;
+    atomic64_t prepared_paged_append_successes;
     enum infilfs_media_profile media_profile;
     bool media_profile_overridden;
     bool compression_enabled;
@@ -415,6 +418,10 @@ bool infilfs_crc64_block_valid(
     const u8 block[INFILFS_DISK_BLOCK_SIZE],
     size_t checksum_offset, size_t checksum_size);
 int infilfs_read_block(struct super_block *sb, u64 block, void *out);
+int infilfs_crypto_sha256(const u8 *data, size_t len, u8 out[32]);
+int infilfs_crypto_sha256_zeropad(const u8 *data, size_t len,
+                                  size_t padded_len, u8 out[32]);
+void infilfs_crypto_exit(void);
 
 void infilfs_allocation_layout_destroy(struct infilfs_allocation_layout *layout);
 void infilfs_allocation_cache_destroy(struct infilfs_sb_info *sbi);

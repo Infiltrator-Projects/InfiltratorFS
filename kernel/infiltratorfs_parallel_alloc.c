@@ -140,6 +140,10 @@ int infilfs_parallel_allocator_mount_init(struct super_block *sb)
     atomic64_set(&sbi->allocation_media_rotational_scored, 0);
     atomic64_set(&sbi->allocation_media_nonrotational_scored, 0);
     atomic64_set(&sbi->allocation_media_balanced_scored, 0);
+    atomic64_set(&sbi->prepared_append_attempts, 0);
+    atomic64_set(&sbi->prepared_append_successes, 0);
+    atomic64_set(&sbi->prepared_append_bytes, 0);
+    atomic64_set(&sbi->prepared_paged_append_successes, 0);
 
     if (sb_rdonly(sb))
         return 0;
@@ -162,7 +166,7 @@ void infilfs_parallel_allocator_mount_destroy(struct super_block *sb)
     if (!sbi)
         return;
     if (sbi->allocation_reservations)
-        pr_info("InfiltratorFS: allocator reservations=%lld peak_active=%lld conflicts=%lld workload_seq=%lld workload_random=%lld workload_sparse=%lld locality_scored=%lld best_fit=%lld media=%s media_source=%s media_rotational_scored=%lld media_nonrotational_scored=%lld media_balanced_scored=%lld\n",
+        pr_info("InfiltratorFS: allocator reservations=%lld peak_active=%lld conflicts=%lld workload_seq=%lld workload_random=%lld workload_sparse=%lld locality_scored=%lld best_fit=%lld media=%s media_source=%s media_rotational_scored=%lld media_nonrotational_scored=%lld media_balanced_scored=%lld prepared_append_attempts=%lld prepared_append_successes=%lld prepared_append_bytes=%lld prepared_paged_append_successes=%lld\n",
                 (long long)atomic64_read(
                     &sbi->allocation_reservation_successes),
                 (long long)atomic64_read(
@@ -186,7 +190,15 @@ void infilfs_parallel_allocator_mount_destroy(struct super_block *sb)
                 (long long)atomic64_read(
                     &sbi->allocation_media_nonrotational_scored),
                 (long long)atomic64_read(
-                    &sbi->allocation_media_balanced_scored));
+                    &sbi->allocation_media_balanced_scored),
+                (long long)atomic64_read(
+                    &sbi->prepared_append_attempts),
+                (long long)atomic64_read(
+                    &sbi->prepared_append_successes),
+                (long long)atomic64_read(
+                    &sbi->prepared_append_bytes),
+                (long long)atomic64_read(
+                    &sbi->prepared_paged_append_successes));
     kvfree(sbi->allocation_reservations);
     sbi->allocation_reservations = NULL;
     sbi->allocation_reservation_bytes = 0;

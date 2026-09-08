@@ -22,6 +22,22 @@ grep -Fq 'start_block == old_blocks' "$data"
 append_body="$(sed -n '/static int infilfs_native_checksum_append_tail(/,/^}/p' "$data")"
 ! grep -Fq 'infilfs_native_checksum_collect' <<<"$append_body"
 
+# Aligned sequential appends must prepare user bytes, integrity digests, the
+# production IAC1 selection and unreachable reserved blocks before entering
+# the filesystem-wide publication lock. Paged files must update only the tail
+# leaf instead of flattening every historical extent page.
+grep -Fq 'infilfs_native_prepare_append' "$data"
+grep -Fq 'infs_iac1_compress_selected' "$data"
+prepared_line="$(grep -n 'infilfs_native_prepare_append(' "$data" | tail -n1 | cut -d: -f1)"
+lock_line="$(awk -v start="$prepared_line" '/mutex_lock\(&sbi->write_lock\);/ && NR > start { print NR; exit }' "$data")"
+test -n "$prepared_line" && test -n "$lock_line" && test "$prepared_line" -lt "$lock_line"
+
+paged_append="$(sed -n '/static int infilfs_native_try_prepared_paged_append(/,/^}/p' "$data")"
+grep -Fq 'old_pointers[old_page_count - 1u]' <<<"$paged_append"
+grep -Fq 'infilfs_native_store_extent_page' <<<"$paged_append"
+! grep -Fq 'infilfs_native_collect_extents' <<<"$paged_append"
+grep -Fq 'prepared_paged_append_successes' "$internal"
+
 # Paged index repoints/additions must resolve through the complete volatile
 # locator rather than scanning every historical index page for every write.
 grep -Fq 'infilfs_native_index_locator_build' "$data"

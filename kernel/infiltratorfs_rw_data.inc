@@ -1376,6 +1376,8 @@ void infilfs_native_block_digest(
 {
     struct infilfs_rw_sha256_ctx ctx;
 
+    if (!infilfs_crypto_sha256(data, INFILFS_DISK_BLOCK_SIZE, digest->bytes))
+        return;
     infilfs_rw_sha256_init(&ctx);
     infilfs_rw_sha256_update(&ctx, data, INFILFS_DISK_BLOCK_SIZE);
     infilfs_rw_sha256_final(&ctx, digest->bytes);
@@ -3685,6 +3687,18 @@ static int infilfs_native_build_extent_page(
     return infilfs_rw_finalize_page(page_block);
 }
 
+struct infilfs_native_prepared_append {
+    struct infilfs_parallel_reservation reservation;
+    struct infilfs_data_checksum_disk *digests;
+    u64 data_start;
+    u32 logical_blocks;
+    u32 physical_blocks;
+    u32 extent_flags;
+    bool valid;
+    bool used;
+    bool paged_fast;
+};
+
 /*
  * Fast path for the workload that exposed the mounted random-write scaling
  * defect: one aligned 4 KiB overwrite inside an existing paged file.
@@ -4077,12 +4091,264 @@ out:
     return ret;
 }
 
-static int infilfs_native_stage_compression_candidate(
+static int infilfs_native_try_prepared_paged_append(
     struct infilfs_native_pending *pending, struct inode *inode,
-    const u8 *plain, u32 logical_blocks, u64 preferred,
-    enum infilfs_data_workload workload,
-    struct infilfs_parallel_reservation *reservation,
-    u64 *data_start_out, u32 *extent_flags_out)
+    u64 pos, size_t bytes, const u8 old_object[INFILFS_DISK_BLOCK_SIZE],
+    struct infilfs_native_prepared_append *prepared,
+    u64 *new_file_block_out, u64 *new_size_out,
+    u64 *allocated_blocks_out, u8 final_tail_id[16],
+    u64 *final_tail_block, u64 *final_tail_start)
+{
+    struct infilfs_inode_info *ii = INFILFS_I(inode);
+    const struct infilfs_object_header_disk *old_header =
+        (const struct infilfs_object_header_disk *)old_object;
+    const struct infilfs_file_payload_disk *old_file =
+        (const struct infilfs_file_payload_disk *)(old_header + 1);
+    const struct infilfs_extent_head_disk *old_head;
+    const __le64 *old_pointers;
+    struct infilfs_native_index_change *changes = NULL;
+    struct infilfs_file_payload_disk working_file;
+    struct infilfs_extent_disk *local = NULL;
+    struct infilfs_extent_disk *entries;
+    struct infilfs_metadata_page_disk *page;
+    struct infilfs_object_header_disk *new_header;
+    struct infilfs_file_payload_disk *new_file;
+    struct infilfs_extent_head_disk *new_head;
+    __le64 *new_pointers;
+    u8 *page_block = NULL;
+    u8 *new_object = NULL;
+    u64 old_size;
+    u64 old_blocks;
+    u64 old_page_block;
+    u64 replacement_page = 0;
+    u64 data_start;
+    u64 previous_end;
+    u64 old_allocated;
+    u32 old_page_count;
+    u32 page_entries;
+    u32 old_extent_total;
+    u32 local_count;
+    u32 change_count = 0;
+    u32 i;
+    bool file_repoint;
+    int ret;
+
+    if (!prepared || !prepared->valid || !bytes ||
+        le16_to_cpu(old_header->object_version) !=
+            INFILFS_OBJECT_VERSION_PAGED)
+        return -EOPNOTSUPP;
+    old_size = le64_to_cpu(old_file->attributes.logical_size);
+    if (pos != old_size ||
+        (pos & (INFILFS_DISK_BLOCK_SIZE - 1u)) != 0 ||
+        (bytes & (INFILFS_DISK_BLOCK_SIZE - 1u)) != 0 ||
+        bytes > U64_MAX - pos ||
+        prepared->logical_blocks !=
+            (bytes >> INFILFS_DISK_BLOCK_SHIFT))
+        return -EOPNOTSUPP;
+
+    old_head = (const struct infilfs_extent_head_disk *)(old_file + 1);
+    old_page_count = le32_to_cpu(old_head->page_count);
+    old_extent_total = le32_to_cpu(old_file->extent_count);
+    if (!old_page_count || old_page_count > INFILFS_EXTENT_PAGE_POINTERS ||
+        !old_extent_total || le32_to_cpu(old_head->reserved) != 0 ||
+        sizeof(*old_file) + sizeof(*old_head) +
+            (size_t)old_page_count * sizeof(__le64) !=
+                le32_to_cpu(old_header->payload_size))
+        return -EFSCORRUPTED;
+    old_pointers = (const __le64 *)(old_head + 1);
+    old_page_block = le64_to_cpu(old_pointers[old_page_count - 1u]);
+    old_blocks = pos >> INFILFS_DISK_BLOCK_SHIFT;
+    old_allocated = inode->i_blocks /
+        (INFILFS_DISK_BLOCK_SIZE >> 9);
+    if (old_allocated > U64_MAX - prepared->physical_blocks)
+        return -EOVERFLOW;
+
+    page_block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+    new_object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+    local = kvmalloc_array(INFILFS_EXTENTS_PER_PAGE + 1u,
+                           sizeof(*local), GFP_NOFS);
+    changes = kcalloc(32u, sizeof(*changes), GFP_NOFS);
+    if (!page_block || !new_object || !local || !changes) {
+        ret = -ENOMEM;
+        goto out;
+    }
+    ret = infilfs_read_allocated_block(
+        inode->i_sb, old_page_block, page_block);
+    if (ret)
+        goto out;
+    if (!infilfs_metadata_page_valid(
+            inode->i_sb, page_block, infilfs_extent_page_magic,
+            ii->object_id)) {
+        ret = -EFSCORRUPTED;
+        goto out;
+    }
+    page = (struct infilfs_metadata_page_disk *)page_block;
+    page_entries = le32_to_cpu(page->entry_count);
+    if (!page_entries || page_entries > INFILFS_EXTENTS_PER_PAGE ||
+        old_extent_total < page_entries ||
+        le32_to_cpu(page->bytes_used) !=
+            page_entries * sizeof(*local)) {
+        ret = -EFSCORRUPTED;
+        goto out;
+    }
+    entries = (struct infilfs_extent_disk *)(page + 1);
+    previous_end = le64_to_cpu(entries[0].logical_block);
+    for (i = 0; i < page_entries; ++i) {
+        u64 logical = le64_to_cpu(entries[i].logical_block);
+        u64 physical = le64_to_cpu(entries[i].physical_block);
+        u32 blocks = le32_to_cpu(entries[i].block_count);
+        u32 flags = le32_to_cpu(entries[i].flags);
+
+        if (!blocks || logical != previous_end ||
+            logical > U64_MAX - blocks ||
+            !infilfs_extent_flags_valid(blocks, physical, flags)) {
+            ret = -EFSCORRUPTED;
+            goto out;
+        }
+        previous_end = logical + blocks;
+    }
+    if (previous_end != old_blocks) {
+        ret = -EFSCORRUPTED;
+        goto out;
+    }
+
+    memcpy(local, entries, (size_t)page_entries * sizeof(*local));
+    local_count = page_entries;
+    ret = infilfs_native_extent_append(
+        local, INFILFS_EXTENTS_PER_PAGE + 1u, &local_count,
+        old_blocks, prepared->data_start, prepared->logical_blocks,
+        prepared->extent_flags);
+    if (ret)
+        goto out;
+    if (local_count > page_entries &&
+        old_extent_total > U32_MAX - (local_count - page_entries)) {
+        ret = -EFBIG;
+        goto out;
+    }
+    if (local_count > INFILFS_EXTENTS_PER_PAGE &&
+        old_page_count >= INFILFS_EXTENT_PAGE_POINTERS) {
+        ret = -EFBIG;
+        goto out;
+    }
+
+    ret = infilfs_native_alloc_data_exact_reserved(
+        pending, prepared->physical_blocks, prepared->data_start,
+        INFILFS_DATA_WORKLOAD_SEQUENTIAL, &prepared->reservation,
+        &data_start);
+    if (ret)
+        goto out;
+    if (data_start != prepared->data_start) {
+        ret = -EAGAIN;
+        goto out;
+    }
+
+    memcpy(&working_file, old_file, sizeof(working_file));
+    ret = infilfs_native_checksum_append_tail(
+        pending, &working_file, ii->object_id,
+        old_blocks, prepared->logical_blocks, prepared->digests,
+        changes, 32u, &change_count,
+        final_tail_id, final_tail_block, final_tail_start);
+    if (ret == -EOPNOTSUPP)
+        ret = infilfs_native_checksum_append(
+            pending, &working_file, ii->object_id,
+            old_blocks, prepared->logical_blocks, prepared->digests,
+            changes, 32u, &change_count,
+            final_tail_id, final_tail_block, final_tail_start);
+    if (ret)
+        goto out;
+
+    memcpy(new_object, old_object, INFILFS_DISK_BLOCK_SIZE);
+    new_header = (struct infilfs_object_header_disk *)new_object;
+    new_file = (struct infilfs_file_payload_disk *)(new_header + 1);
+    new_head = (struct infilfs_extent_head_disk *)(new_file + 1);
+    new_pointers = (__le64 *)(new_head + 1);
+
+    if (local_count <= INFILFS_EXTENTS_PER_PAGE) {
+        ret = infilfs_native_build_extent_page(
+            pending, ii->object_id, local, local_count, page_block);
+        if (ret)
+            goto out;
+        ret = infilfs_native_store_extent_page(
+            pending, old_page_block, page_block, &replacement_page);
+        if (ret)
+            goto out;
+        new_pointers[old_page_count - 1u] =
+            cpu_to_le64(replacement_page);
+    } else {
+        u32 appended = local_count - page_entries;
+
+        if (!appended || appended > INFILFS_EXTENTS_PER_PAGE) {
+            ret = -EFSCORRUPTED;
+            goto out;
+        }
+        ret = infilfs_native_build_extent_page(
+            pending, ii->object_id, local + page_entries,
+            appended, page_block);
+        if (ret)
+            goto out;
+        ret = infilfs_native_store_extent_page(
+            pending, 0, page_block, &replacement_page);
+        if (ret)
+            goto out;
+        new_pointers[old_page_count] = cpu_to_le64(replacement_page);
+        old_page_count++;
+        new_head->page_count = cpu_to_le32(old_page_count);
+        new_header->payload_size = cpu_to_le32(
+            sizeof(*new_file) + sizeof(*new_head) +
+            (size_t)old_page_count * sizeof(*new_pointers));
+    }
+
+    memcpy(new_file->checksum_head_id, working_file.checksum_head_id, 16);
+    new_file->extent_count = cpu_to_le32(
+        old_extent_total - page_entries + local_count);
+    new_file->data_checksum_type = cpu_to_le32(INFILFS_CHECKSUM_SHA256);
+    new_file->attributes.logical_size = cpu_to_le64(pos + bytes);
+    infilfs_timestamp_encode_ns(
+        &new_file->attributes.modification_time, ktime_get_real_ns());
+    new_file->attributes.change_time =
+        new_file->attributes.modification_time;
+    new_header->generation = cpu_to_le64(pending->tx.generation);
+
+    ret = infilfs_rw_finalize_object(new_object);
+    if (ret)
+        goto out;
+    ret = infilfs_native_store_private_or_cow(
+        pending, ii->object_block, new_object, new_file_block_out);
+    if (ret)
+        goto out;
+    file_repoint = *new_file_block_out != ii->object_block;
+    if (file_repoint) {
+        if (change_count >= 32u) {
+            ret = -ENOSPC;
+            goto out;
+        }
+        memcpy(changes[change_count].object_id, ii->object_id, 16);
+        changes[change_count].object_block = *new_file_block_out;
+        changes[change_count].object_type = INFILFS_OBJECT_FILE;
+        changes[change_count].add = false;
+        change_count++;
+    }
+    ret = infilfs_native_index_update(pending, changes, change_count);
+    if (ret)
+        goto out;
+
+    pending->tx.next_sb.generation = cpu_to_le64(pending->tx.generation);
+    *new_size_out = pos + bytes;
+    *allocated_blocks_out = old_allocated + prepared->physical_blocks;
+    prepared->used = true;
+    prepared->paged_fast = true;
+    ret = 0;
+out:
+    kfree(changes);
+    kvfree(local);
+    kfree(new_object);
+    kfree(page_block);
+    return ret;
+}
+
+static int infilfs_native_encode_compression_candidate(
+    const struct infilfs_sb_info *sbi, const u8 *plain, u32 logical_blocks,
+    u8 **stored_out, u32 *stored_blocks_out, u32 *extent_flags_out)
 {
     size_t plain_bytes;
     size_t bound = 0;
@@ -4091,21 +4357,21 @@ static int infilfs_native_stage_compression_candidate(
     struct infs_iac1_scratch *scratch = NULL;
     u8 predictor_mode = INFS_IAC1_MODE_IDENTITY;
     size_t compressed_bytes = 0;
-    u32 stored_blocks = 0;
-    u64 data_start = 0;
-    u32 i;
+    u32 stored_blocks = logical_blocks;
     int ret;
 
-    if (!plain || !logical_blocks || !data_start_out || !extent_flags_out)
+    if (!sbi || !plain || !logical_blocks || !stored_out ||
+        !stored_blocks_out || !extent_flags_out)
         return -EINVAL;
     plain_bytes = (size_t)logical_blocks * INFILFS_DISK_BLOCK_SIZE;
+    *stored_out = NULL;
+    *stored_blocks_out = logical_blocks;
     *extent_flags_out = INFILFS_EXTENT_NORMAL;
 
-    if (workload == INFILFS_DATA_WORKLOAD_SEQUENTIAL &&
-        logical_blocks >= 2u &&
+    if (logical_blocks >= 2u &&
         logical_blocks <= INFILFS_COMPRESSION_CLUSTER_BLOCKS &&
-        pending->tx.sbi->compression_enabled &&
-        (le64_to_cpu(pending->tx.next_sb.incompat_flags) &
+        READ_ONCE(sbi->compression_enabled) &&
+        (le64_to_cpu(READ_ONCE(sbi->disk.incompat_flags)) &
          INFILFS_INCOMPAT_COMPRESSED_EXTENTS) != 0 &&
         infs_iac1_should_attempt(plain, plain_bytes)) {
         bound = infs_iac1_bound(plain_bytes);
@@ -4122,55 +4388,32 @@ static int infilfs_native_stage_compression_candidate(
             (size_t)(logical_blocks - 1u) * INFILFS_DISK_BLOCK_SIZE);
         if (compressed_bytes &&
             compressed_bytes <= INFILFS_EXTENT_STORED_BYTES_MAX) {
-            stored_blocks = DIV_ROUND_UP(
+            u32 compressed_blocks = DIV_ROUND_UP(
                 (u32)compressed_bytes,
                 (u32)INFILFS_DISK_BLOCK_SIZE);
-            if (stored_blocks >= logical_blocks)
-                stored_blocks = 0;
+
+            if (compressed_blocks < logical_blocks)
+                stored_blocks = compressed_blocks;
         }
     }
 
-    if (stored_blocks) {
+    if (stored_blocks < logical_blocks) {
         size_t stored_span =
             (size_t)stored_blocks * INFILFS_DISK_BLOCK_SIZE;
 
-        infilfs_parallel_release_reservation(inode->i_sb, reservation);
         stored = kvzalloc(stored_span, GFP_NOFS);
         if (!stored) {
             ret = -ENOMEM;
             goto out;
         }
         memcpy(stored, compressed, compressed_bytes);
-        ret = infilfs_native_alloc_data_exact_reserved(
-            pending, stored_blocks, preferred, workload,
-            NULL, &data_start);
-        if (ret)
-            goto out;
-        for (i = 0; i < stored_blocks; ++i) {
-            ret = infilfs_native_stage_block(
-                inode->i_sb, data_start + i,
-                stored + (size_t)i * INFILFS_DISK_BLOCK_SIZE);
-            if (ret)
-                goto out;
-        }
         *extent_flags_out = infilfs_extent_compressed_flags(
             INFILFS_COMPRESSION_IAC1, (u32)compressed_bytes);
-    } else {
-        ret = infilfs_native_alloc_data_exact_reserved(
-            pending, logical_blocks, preferred, workload,
-            reservation, &data_start);
-        if (ret)
-            goto out;
-        for (i = 0; i < logical_blocks; ++i) {
-            ret = infilfs_native_stage_block(
-                inode->i_sb, data_start + i,
-                plain + (size_t)i * INFILFS_DISK_BLOCK_SIZE);
-            if (ret)
-                goto out;
-        }
     }
 
-    *data_start_out = data_start;
+    *stored_out = stored;
+    *stored_blocks_out = stored_blocks;
+    stored = NULL;
     ret = 0;
 out:
     kvfree(stored);
@@ -4179,10 +4422,134 @@ out:
     return ret;
 }
 
+static int infilfs_native_stage_compression_candidate(
+    struct infilfs_native_pending *pending, struct inode *inode,
+    const u8 *plain, u32 logical_blocks, u64 preferred,
+    enum infilfs_data_workload workload,
+    struct infilfs_parallel_reservation *reservation,
+    u64 *data_start_out, u32 *extent_flags_out)
+{
+    u8 *stored = NULL;
+    const u8 *source;
+    u32 stored_blocks;
+    u32 i;
+    int ret;
+
+    ret = infilfs_native_encode_compression_candidate(
+        pending->tx.sbi, plain, logical_blocks, &stored, &stored_blocks,
+        extent_flags_out);
+    if (ret)
+        return ret;
+
+    if (stored_blocks < logical_blocks)
+        infilfs_parallel_release_reservation(inode->i_sb, reservation);
+    ret = infilfs_native_alloc_data_exact_reserved(
+        pending, stored_blocks, preferred, workload,
+        stored_blocks == logical_blocks ? reservation : NULL,
+        data_start_out);
+    if (ret)
+        goto out;
+
+    source = stored ? stored : plain;
+    for (i = 0; i < stored_blocks; ++i) {
+        ret = infilfs_native_stage_block(
+            inode->i_sb, *data_start_out + i,
+            source + (size_t)i * INFILFS_DISK_BLOCK_SIZE);
+        if (ret)
+            goto out;
+    }
+out:
+    kvfree(stored);
+    return ret;
+}
+
+/*
+ * Aligned sequential appends have no dependency on old file data. Prepare
+ * their plaintext digests, IAC1/raw choice and reserved physical blocks before
+ * entering the global publication lock. The blocks remain unreachable until
+ * the reservation is claimed and the file/index replacement is committed.
+ */
+static void infilfs_native_prepared_append_destroy(
+    struct inode *inode, struct infilfs_native_prepared_append *prepared)
+{
+    if (!prepared)
+        return;
+    if (inode)
+        infilfs_parallel_release_reservation(
+            inode->i_sb, &prepared->reservation);
+    kvfree(prepared->digests);
+    memset(prepared, 0, sizeof(*prepared));
+}
+
+static int infilfs_native_prepare_append(
+    struct inode *inode, const u8 *plain, size_t bytes, u64 preferred,
+    struct infilfs_native_prepared_append *prepared)
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(inode->i_sb);
+    u8 *stored = NULL;
+    const u8 *source;
+    u32 logical_blocks;
+    u32 physical_blocks;
+    u32 extent_flags;
+    u32 i;
+    int ret;
+
+    if (!sbi || !plain || !prepared || !bytes ||
+        (bytes & (INFILFS_DISK_BLOCK_SIZE - 1u)) != 0)
+        return -EINVAL;
+    logical_blocks = bytes >> INFILFS_DISK_BLOCK_SHIFT;
+    if (logical_blocks < 2u ||
+        logical_blocks > INFILFS_COMPRESSION_CLUSTER_BLOCKS)
+        return -EINVAL;
+
+    memset(prepared, 0, sizeof(*prepared));
+    prepared->digests = kvmalloc_array(
+        logical_blocks, sizeof(*prepared->digests), GFP_NOFS);
+    if (!prepared->digests)
+        return -ENOMEM;
+    for (i = 0; i < logical_blocks; ++i)
+        infilfs_native_block_digest(
+            plain + (size_t)i * INFILFS_DISK_BLOCK_SIZE,
+            &prepared->digests[i]);
+
+    ret = infilfs_native_encode_compression_candidate(
+        sbi, plain, logical_blocks, &stored, &physical_blocks,
+        &extent_flags);
+    if (ret)
+        goto fail;
+    ret = infilfs_parallel_reserve_data(
+        inode->i_sb, physical_blocks, preferred, &prepared->reservation);
+    if (ret)
+        goto fail;
+
+    prepared->data_start = prepared->reservation.start;
+    source = stored ? stored : plain;
+    for (i = 0; i < physical_blocks; ++i) {
+        ret = infilfs_native_stage_block(
+            inode->i_sb, prepared->data_start + i,
+            source + (size_t)i * INFILFS_DISK_BLOCK_SIZE);
+        if (ret)
+            goto fail;
+    }
+
+    prepared->logical_blocks = logical_blocks;
+    prepared->physical_blocks = physical_blocks;
+    prepared->extent_flags = extent_flags;
+    prepared->valid = true;
+    kvfree(stored);
+    return 0;
+
+fail:
+    kvfree(stored);
+    infilfs_native_prepared_append_destroy(inode, prepared);
+    return ret;
+}
+
 static int infilfs_native_append_chunk_locked(
     struct infilfs_native_pending *pending, struct inode *inode,
     struct iov_iter *from, u64 pos, size_t bytes, bool allow_compression,
     struct infilfs_parallel_reservation *reservation,
+    struct infilfs_native_prepared_append *prepared,
     size_t *consumed_out,
     u64 *new_file_block_out, u64 *new_size_out, u64 *allocated_blocks_out,
     u8 final_tail_id[16], u64 *final_tail_block, u64 *final_tail_start)
@@ -4234,6 +4601,18 @@ static int infilfs_native_append_chunk_locked(
         goto out;
     old_header = (struct infilfs_object_header_disk *)old_object;
     old_file = (struct infilfs_file_payload_disk *)(old_header + 1);
+    ret = infilfs_native_try_prepared_paged_append(
+        pending, inode, pos, bytes, old_object, prepared,
+        new_file_block_out, new_size_out, allocated_blocks_out,
+        final_tail_id, final_tail_block, final_tail_start);
+    if (!ret) {
+        iov_iter_advance(from, bytes);
+        consumed = bytes;
+        goto out;
+    }
+    if (ret != -EOPNOTSUPP)
+        goto out;
+
     if (bytes == INFILFS_DISK_BLOCK_SIZE &&
         (pos & (INFILFS_DISK_BLOCK_SIZE - 1u)) == 0 &&
         le16_to_cpu(old_header->object_version) ==
@@ -4376,6 +4755,31 @@ generic_extent_write:
      * It has no old-data dependency, which lets us compress the complete
      * plaintext before choosing the smaller physical allocation.
      */
+    if (prepared && prepared->valid && allow_compression &&
+        workload == INFILFS_DATA_WORKLOAD_SEQUENTIAL &&
+        pos == old_size &&
+        (pos & (INFILFS_DISK_BLOCK_SIZE - 1u)) == 0 &&
+        bytes == touched_blocks * INFILFS_DISK_BLOCK_SIZE &&
+        start_block == old_blocks &&
+        prepared->logical_blocks == touched_blocks) {
+        ret = infilfs_native_alloc_data_exact_reserved(
+            pending, prepared->physical_blocks, preferred, workload,
+            &prepared->reservation, &data_start);
+        if (ret)
+            goto out;
+        if (data_start != prepared->data_start) {
+            ret = -EAGAIN;
+            goto out;
+        }
+        memcpy(digests, prepared->digests,
+               (size_t)touched_blocks * sizeof(*digests));
+        replacement_flags = prepared->extent_flags;
+        iov_iter_advance(from, bytes);
+        consumed = bytes;
+        prepared->used = true;
+        goto data_staged;
+    }
+
     if (allow_compression &&
         workload == INFILFS_DATA_WORKLOAD_SEQUENTIAL &&
         pos == old_size &&
@@ -4568,7 +4972,6 @@ static ssize_t infilfs_native_extent_write_iter_mode(
     struct infilfs_sb_info *sbi = INFILFS_SB(inode->i_sb);
     struct infilfs_inode_info *ii = INFILFS_I(inode);
     struct infilfs_native_pending *pending;
-    struct infilfs_parallel_reservation reservation = {0};
     size_t done = 0;
     loff_t pos = *position;
     int ret = 0;
@@ -4581,101 +4984,142 @@ static ssize_t infilfs_native_extent_write_iter_mode(
     if (!pending)
         return -ENOMEM;
 
-    /*
-     * Reserve the first bounded data chunk before entering write_lock.  Many
-     * independent writers can search and reserve separate allocation arenas
-     * concurrently; the serialized metadata transaction later consumes the
-     * reservation atomically.  Failure simply falls back to the authoritative
-     * transaction allocator, preserving near-full behaviour.
-     */
-    {
-        size_t first_bytes = min_t(size_t, requested,
-                                   INFILFS_NATIVE_WRITE_CHUNK);
+    while (done < requested) {
+        struct infilfs_parallel_reservation reservation = {0};
+        struct infilfs_native_prepared_append prepared = {0};
+        struct iov_iter staged_iter;
+        struct iov_iter *input = from;
+        struct kvec staged_vec;
+        u8 *staged_plain = NULL;
+        size_t chunk = min_t(size_t, requested - done,
+                             INFILFS_NATIVE_WRITE_CHUNK);
+        size_t staged_bytes = 0;
+        size_t consumed = 0;
+        u64 current_pos = (u64)pos + done;
         u64 old_size = (u64)i_size_read(inode);
         u64 compression_bytes =
             (u64)INFILFS_COMPRESSION_CLUSTER_BLOCKS *
             INFILFS_DISK_BLOCK_SIZE;
-        u64 first_end;
-        u64 first_block;
-        u64 last_block;
+        u64 new_file_block = 0;
+        u64 new_size = 0;
+        u64 allocated_blocks = 0;
+        u8 tail_id[16] = {0};
+        u64 tail_block = 0;
+        u64 tail_start = 0;
+        enum infilfs_data_workload workload;
+        u64 preferred;
 
         if (allow_compression &&
-            (u64)pos == old_size &&
-            ((u64)pos & (INFILFS_DISK_BLOCK_SIZE - 1u)) == 0 &&
-            (le64_to_cpu(sbi->disk.incompat_flags) &
+            current_pos == old_size &&
+            (current_pos & (INFILFS_DISK_BLOCK_SIZE - 1u)) == 0 &&
+            (le64_to_cpu(READ_ONCE(sbi->disk.incompat_flags)) &
              INFILFS_INCOMPAT_COMPRESSED_EXTENTS) != 0)
-            first_bytes = min_t(size_t, first_bytes,
-                                (size_t)compression_bytes);
-        first_end = (u64)pos + first_bytes;
-        first_block = (u64)pos >> INFILFS_DISK_BLOCK_SHIFT;
-        last_block = (first_end - 1u) >> INFILFS_DISK_BLOCK_SHIFT;
-        enum infilfs_data_workload workload =
-            infilfs_native_classify_write((u64)pos, first_bytes, old_size);
-        u64 preferred = READ_ONCE(ii->data_allocation_hint);
-
+            chunk = min_t(size_t, chunk, (size_t)compression_bytes);
+        workload = infilfs_native_classify_write(
+            current_pos, chunk, old_size);
+        preferred = READ_ONCE(ii->data_allocation_hint);
         if (preferred < 1u || preferred >= infilfs_volume_blocks(sbi))
             preferred = infilfs_parallel_object_preferred(
                 sbi, ii->object_id);
 
         /*
-         * Keep lockless multi-writer reservations for streaming growth. Small
-         * random/sparse CoW writes enter the scored transaction allocator so
-         * they can best-fit into existing holes instead of consuming the head
-         * of a large free run.
+         * Aligned sequential appends dominate filesystem migration. Copy user
+         * bytes, calculate SHA-256, make the unchanged IAC1/raw choice, reserve
+         * the exact physical span and stage it before taking write_lock.
+         * Only the allocation claim and metadata publication remain exclusive.
          */
-        if (workload == INFILFS_DATA_WORKLOAD_SEQUENTIAL &&
-            first_end >= (u64)pos &&
-            infilfs_parallel_reserve_data(
-                inode->i_sb, last_block - first_block + 1u, preferred,
-                &reservation) == 0)
-            WRITE_ONCE(ii->data_allocation_hint,
-                reservation.start + reservation.count <
-                        infilfs_volume_blocks(sbi) ?
-                    reservation.start + reservation.count : 1u);
-    }
-
-    mutex_lock(&sbi->write_lock);
-    ret = infilfs_native_pending_begin_locked(pending);
-    if (ret)
-        goto out_unlock;
-
-    while (done < requested) {
-        size_t chunk = min_t(size_t, requested - done,
-                             INFILFS_NATIVE_WRITE_CHUNK);
-        u64 current_pos = (u64)pos + done;
-        u64 compression_bytes =
-            (u64)INFILFS_COMPRESSION_CLUSTER_BLOCKS *
-            INFILFS_DISK_BLOCK_SIZE;
-        size_t consumed = 0;
-
         if (allow_compression &&
-            current_pos == (u64)i_size_read(inode) &&
+            workload == INFILFS_DATA_WORKLOAD_SEQUENTIAL &&
+            current_pos == old_size &&
             (current_pos & (INFILFS_DISK_BLOCK_SIZE - 1u)) == 0 &&
-            (le64_to_cpu(pending->tx.next_sb.incompat_flags) &
-             INFILFS_INCOMPAT_COMPRESSED_EXTENTS) != 0)
-            chunk = min_t(size_t, chunk, (size_t)compression_bytes);
-        u64 new_file_block = 0;
-        u64 new_size = 0;
-        u64 allocated_blocks = 0;
-        u8 tail_id[16];
-        u64 tail_block = 0;
-        u64 tail_start = 0;
+            (chunk & (INFILFS_DISK_BLOCK_SIZE - 1u)) == 0 &&
+            (chunk >> INFILFS_DISK_BLOCK_SHIFT) >= 2u &&
+            (chunk >> INFILFS_DISK_BLOCK_SHIFT) <=
+                INFILFS_COMPRESSION_CLUSTER_BLOCKS) {
+            atomic64_inc(&sbi->prepared_append_attempts);
+            staged_plain = kvmalloc(chunk, GFP_NOFS);
+            if (staged_plain) {
+                size_t copied = copy_from_iter(
+                    staged_plain, chunk, from);
+
+                if (copied != chunk) {
+                    if (copied)
+                        iov_iter_revert(from, copied);
+                    ret = -EFAULT;
+                    kvfree(staged_plain);
+                    break;
+                }
+                staged_bytes = chunk;
+                if (infilfs_native_prepare_append(
+                        inode, staged_plain, chunk, preferred,
+                        &prepared) == 0) {
+                    WRITE_ONCE(ii->data_allocation_hint,
+                        prepared.data_start + prepared.physical_blocks <
+                                infilfs_volume_blocks(sbi) ?
+                            prepared.data_start +
+                                prepared.physical_blocks : 1u);
+                }
+                staged_vec.iov_base = staged_plain;
+                staged_vec.iov_len = staged_bytes;
+                iov_iter_kvec(&staged_iter, ITER_SOURCE, &staged_vec, 1,
+                              staged_bytes);
+                input = &staged_iter;
+            }
+        }
+
+        /*
+         * Preserve lockless reservation for other sequential writes. Random
+         * and sparse CoW writes still use the scored transaction allocator.
+         */
+        if (!prepared.valid &&
+            workload == INFILFS_DATA_WORKLOAD_SEQUENTIAL) {
+            u64 first_block =
+                current_pos >> INFILFS_DISK_BLOCK_SHIFT;
+            u64 last_block =
+                (current_pos + chunk - 1u) >>
+                INFILFS_DISK_BLOCK_SHIFT;
+
+            if (infilfs_parallel_reserve_data(
+                    inode->i_sb, last_block - first_block + 1u,
+                    preferred, &reservation) == 0)
+                WRITE_ONCE(ii->data_allocation_hint,
+                    reservation.start + reservation.count <
+                            infilfs_volume_blocks(sbi) ?
+                        reservation.start + reservation.count : 1u);
+        }
+
+        mutex_lock(&sbi->write_lock);
+        ret = infilfs_native_pending_begin_locked(pending);
+        if (ret)
+            goto chunk_unlock;
 
         for (;;) {
+            struct infilfs_native_prepared_append *prepared_input =
+                prepared.valid && chunk == staged_bytes ?
+                    &prepared : NULL;
+
+            if (staged_bytes) {
+                staged_vec.iov_len = chunk;
+                iov_iter_kvec(&staged_iter, ITER_SOURCE, &staged_vec, 1,
+                              chunk);
+            }
             ret = infilfs_native_operation_snapshot(pending);
             if (ret)
                 break;
             ret = infilfs_native_append_chunk_locked(
-                pending, inode, from, (u64)pos + done, chunk,
+                pending, inode, input, current_pos, chunk,
                 allow_compression,
-                reservation.active ? &reservation : NULL, &consumed,
+                reservation.active ? &reservation : NULL,
+                prepared_input, &consumed,
                 &new_file_block, &new_size, &allocated_blocks, tail_id,
                 &tail_block, &tail_start);
             if (!ret)
                 break;
 
             {
-                int rollback = infilfs_native_operation_rollback(pending);
+                int rollback =
+                    infilfs_native_operation_rollback(pending);
+
                 if (rollback) {
                     ret = rollback;
                     break;
@@ -4683,20 +5127,17 @@ static ssize_t infilfs_native_extent_write_iter_mode(
             }
 
             /*
-             * Total free space can remain healthy while fragmentation leaves
-             * no run large enough for the preferred write chunk. Retry the
-             * same userspace write with progressively smaller contiguous
-             * pieces. The one-block-boundary floor guarantees we eventually
-             * ask only for one physical filesystem block before reporting a
-             * genuine ENOSPC.
+             * Fragmentation may leave no run large enough for the preferred
+             * chunk. Retry with progressively smaller pieces down to one
+             * filesystem block.
              */
             if (ret != -ENOSPC)
                 break;
             {
-                size_t offset =
-                    ((size_t)((u64)pos + done)) &
+                size_t offset = (size_t)current_pos &
                     (INFILFS_DISK_BLOCK_SIZE - 1u);
-                size_t one_block = INFILFS_DISK_BLOCK_SIZE - offset;
+                size_t one_block =
+                    INFILFS_DISK_BLOCK_SIZE - offset;
                 size_t next;
 
                 if (chunk <= one_block)
@@ -4706,6 +5147,10 @@ static ssize_t infilfs_native_extent_write_iter_mode(
                     next = one_block;
                 if (next >= chunk)
                     break;
+                infilfs_native_prepared_append_destroy(
+                    inode, &prepared);
+                infilfs_parallel_release_reservation(
+                    inode->i_sb, &reservation);
                 chunk = next;
                 consumed = 0;
                 new_file_block = 0;
@@ -4717,14 +5162,21 @@ static ssize_t infilfs_native_extent_write_iter_mode(
             }
         }
         if (ret)
-            break;
+            goto chunk_unlock;
 
         infilfs_native_operation_commit(pending);
+        if (prepared.used) {
+            atomic64_inc(&sbi->prepared_append_successes);
+            atomic64_add(consumed, &sbi->prepared_append_bytes);
+        }
+        if (prepared.paged_fast)
+            atomic64_inc(&sbi->prepared_paged_append_successes);
         ii->object_block = new_file_block;
         i_size_write(inode, new_size);
         inode->i_blocks = allocated_blocks *
             (INFILFS_DISK_BLOCK_SIZE >> 9);
-        pending->tx.next_sb.generation = cpu_to_le64(pending->tx.generation);
+        pending->tx.next_sb.generation =
+            cpu_to_le64(pending->tx.generation);
         sbi->disk = pending->tx.next_sb;
         infilfs_native_checksum_cache_store(
             inode->i_sb, ii->object_id, tail_id, tail_block, tail_start);
@@ -4734,29 +5186,41 @@ static ssize_t infilfs_native_extent_write_iter_mode(
         pending->pending_bytes += consumed;
 
         if (infilfs_native_pending_should_publish(pending)) {
-            int publish = infilfs_native_pending_commit_locked(pending);
+            int publish =
+                infilfs_native_pending_commit_locked(pending);
+
             if (publish) {
                 ret = publish;
-                break;
-            }
-            if (done < requested) {
-                ret = infilfs_native_pending_begin_locked(pending);
-                if (ret)
-                    break;
+                goto chunk_unlock;
             }
         }
+        if (pending->active && !pending->commit_failed)
+            mod_delayed_work(system_wq, &pending->idle_work,
+                             INFILFS_NATIVE_IDLE_DELAY);
+
+chunk_unlock:
+        mutex_unlock(&sbi->write_lock);
+
+        if (staged_bytes) {
+            size_t keep = min(consumed, staged_bytes);
+
+            if (keep < staged_bytes)
+                iov_iter_revert(from, staged_bytes - keep);
+        }
+        infilfs_native_prepared_append_destroy(inode, &prepared);
+        infilfs_parallel_release_reservation(
+            inode->i_sb, &reservation);
+        kvfree(staged_plain);
+
+        if (ret)
+            break;
+        cond_resched();
     }
 
-    if (pending->active && !pending->commit_failed)
-        mod_delayed_work(system_wq, &pending->idle_work,
-                         INFILFS_NATIVE_IDLE_DELAY);
     if (done) {
         *position = pos + done;
         ret = (ssize_t)done;
     }
-out_unlock:
-    mutex_unlock(&sbi->write_lock);
-    infilfs_parallel_release_reservation(inode->i_sb, &reservation);
     return ret;
 }
 
@@ -4921,44 +5385,63 @@ static ssize_t infilfs_file_write_iter_common(struct kiocb *iocb,
     struct inode *inode = file_inode(filep);
     struct address_space *mapping = inode->i_mapping;
     struct infilfs_quota_reservation quota = {0};
-    size_t requested = iov_iter_count(from);
-    loff_t pos = iocb->ki_pos;
+    size_t requested;
+    loff_t pos;
     loff_t old_size;
     loff_t end;
     u64 quota_growth = 0;
     ssize_t ret;
 
-    if (pos < 0)
-        return -EINVAL;
-    if (!requested)
+    if (!iov_iter_count(from))
         return 0;
-    if (filep->f_flags & O_APPEND)
-        pos = i_size_read(inode);
-    if (requested - 1u > LLONG_MAX - pos)
-        return -EFBIG;
+
+    /*
+     * Match the generic Linux write contract. The inode lock makes the EOF
+     * selection and data publication one atomic operation for O_APPEND while
+     * still allowing prepared writes to different inodes to run in parallel.
+     */
+    inode_lock(inode);
+    ret = generic_write_checks(iocb, from);
+    if (ret <= 0)
+        goto out_inode;
+    requested = (size_t)ret;
+    pos = iocb->ki_pos;
+    if (pos < 0) {
+        ret = -EINVAL;
+        goto out_inode;
+    }
+    if ((u64)requested - 1u > (u64)LLONG_MAX - (u64)pos) {
+        ret = -EFBIG;
+        goto out_inode;
+    }
+
+    ret = file_remove_privs(filep);
+    if (ret)
+        goto out_inode;
+
     end = pos + requested - 1u;
     old_size = i_size_read(inode);
     if (end + 1 > old_size)
         quota_growth = (u64)(end + 1 - old_size);
     ret = infilfs_quota_reserve_inode(inode, quota_growth, 0, &quota);
     if (ret)
-        return ret;
+        goto out_inode;
 
     /*
      * mmap uses the page cache while read(2)/write(2) retain the qualified
-     * direct verified path.  Serialize direct writes against faults, publish
+     * direct verified path. Serialize direct writes against faults, publish
      * dirty mapped data first, then evict the affected cache range so a mapped
      * reader refaults the newly committed blocks.
      */
     filemap_invalidate_lock(mapping);
     ret = file_write_and_wait_range(filep, pos, end);
     if (ret)
-        goto out_unlock;
+        goto out_mapping;
     unmap_mapping_range(mapping, pos, requested, 0);
     ret = invalidate_inode_pages2_range(mapping, pos >> PAGE_SHIFT,
                                         end >> PAGE_SHIFT);
     if (ret)
-        goto out_unlock;
+        goto out_mapping;
 
     if ((u64)pos <= INFILFS_INLINE_DATA_MAX &&
         requested <= INFILFS_INLINE_DATA_MAX - (size_t)pos &&
@@ -4967,19 +5450,24 @@ static ssize_t infilfs_file_write_iter_common(struct kiocb *iocb,
         ret = infilfs_native_inline_write_iter(
             inode, &iocb->ki_pos, from, requested);
         if (ret != -EOPNOTSUPP)
-            goto out_unlock;
+            goto out_mapping;
     }
 
     iocb->ki_pos = pos;
     ret = infilfs_native_extent_write_iter_mode(
         inode, &iocb->ki_pos, from, requested, allow_compression);
-out_unlock:
+
+out_mapping:
     filemap_invalidate_unlock(mapping);
     if (ret > 0 && pos + ret > old_size)
         infilfs_quota_reservation_finish(
             &quota, min_t(u64, quota_growth, (u64)(pos + ret - old_size)), 0);
     else
         infilfs_quota_reservation_abort(&quota);
+out_inode:
+    inode_unlock(inode);
+    if (ret > 0)
+        ret = generic_write_sync(iocb, ret);
     return ret;
 }
 

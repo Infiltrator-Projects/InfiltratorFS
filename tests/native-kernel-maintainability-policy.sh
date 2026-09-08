@@ -6,6 +6,7 @@ root="${1:-.}"
 kernel="$root/kernel"
 driver="$kernel/infiltratorfs_core.c"
 rw="$kernel/infiltratorfs_rw.inc"
+data="$kernel/infiltratorfs_rw_data.inc"
 makefile="$kernel/Makefile"
 ioctl="$kernel/infiltratorfs_ioctl.h"
 resize="$kernel/infiltratorfs_resize.c"
@@ -16,7 +17,7 @@ fail() {
     exit 1
 }
 
-for file in "$driver" "$rw" "$makefile" "$ioctl" "$resize" "$quota"; do
+for file in "$driver" "$rw" "$data" "$makefile" "$ioctl" "$resize" "$quota"; do
     test -f "$file" || fail "missing $file"
 done
 
@@ -59,9 +60,10 @@ grep -Fq 'mutex_lock(&sbi->write_lock);' "$quota" || fail 'quota write_lock acqu
 # The native driver must stay a genuine multi-object Kbuild module. The
 # allocation map is the first extracted subsystem and must never regress into
 # textual inclusion.
-grep -Fqx 'infiltratorfs-y := infiltratorfs_core.o infiltratorfs_allocation_map.o infiltratorfs_resize.o infiltratorfs_index_tree.o infiltratorfs_parallel_alloc.o infiltratorfs_allocation_publish.o infiltratorfs_read_cache.o infiltratorfs_pagecache.o infiltratorfs_directory_tree.o' "$makefile" || \
+grep -Fqx 'infiltratorfs-y := infiltratorfs_core.o infiltratorfs_crypto.o infiltratorfs_allocation_map.o infiltratorfs_resize.o infiltratorfs_index_tree.o infiltratorfs_parallel_alloc.o infiltratorfs_allocation_publish.o infiltratorfs_read_cache.o infiltratorfs_pagecache.o infiltratorfs_directory_tree.o' "$makefile" || \
     fail 'kernel module is no longer built from explicit component objects'
 test -f "$kernel/infiltratorfs_internal.h" || fail 'missing private kernel API header'
+test -f "$kernel/infiltratorfs_crypto.c" || fail 'accelerated integrity object missing'
 test -f "$kernel/infiltratorfs_allocation_map.c" || fail 'allocation map object missing'
 test -f "$kernel/infiltratorfs_index_tree.c" || fail 'object-index tree object missing'
 test -f "$kernel/infiltratorfs_parallel_alloc.c" || fail 'parallel allocator object missing'
@@ -86,6 +88,22 @@ test ! -e "$kernel/infiltratorfs_resize.inc" || fail 'resize regressed to textua
 ! grep -Fq 'infiltratorfs_resize.inc' "$driver" || fail 'core textually includes resize'
 test ! -e "$kernel/infiltratorfs_allocation_map.inc" || fail 'allocation map regressed to textual include'
 ! grep -Fq 'infiltratorfs_allocation_map.inc' "$driver" || fail 'core textually includes allocation map'
+
+# Linux VFS identity and write semantics must remain explicit in the native
+# adapter. The on-disk 128-bit object ID, not the compact i_ino hash, is the
+# inode-cache identity; append selection, privilege removal and sync flags use
+# the standard VFS helpers.
+grep -Fq 'iget5_locked' "$driver" || fail 'inode cache no longer matches full object identity'
+grep -Fq 'memcmp(ii->object_id, args->object_id, 16)' "$driver" || \
+    fail 'inode cache does not compare the full 128-bit object ID'
+write_common="$(sed -n '/static ssize_t infilfs_file_write_iter_common(/,/^}/p' "$data")"
+grep -Fq 'inode_lock(inode)' <<<"$write_common" || fail 'same-inode writes are not serialized'
+grep -Fq 'generic_write_checks(iocb, from)' <<<"$write_common" || fail 'generic write contract is bypassed'
+grep -Fq 'file_remove_privs(filep)' <<<"$write_common" || fail 'writes do not strip file privileges'
+grep -Fq 'generic_write_sync(iocb, ret)' <<<"$write_common" || fail 'sync write flags are ignored'
+getattr_body="$(sed -n '/static int infilfs_getattr(/,/^}/p' "$rw")"
+grep -Fq 'mutex_lock(&sbi->write_lock)' <<<"$getattr_body" || fail 'getattr topology read is unlocked'
+grep -Fq 'ATTR_KILL_SUID | ATTR_KILL_SGID' "$rw" || fail 'set-ID stripping is not persisted'
 
 # Only the core object and the explicit RW compositor may textually compose
 # remaining implementation .inc units. A leaf .inc importing another leaf creates hidden

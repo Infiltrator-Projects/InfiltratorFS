@@ -219,9 +219,11 @@ The number of active workers should be dynamically bounded by online CPUs and me
 
 Rejected as a product direction. `compress=off` is useful as an A/B diagnostic, but it gives up a core InfiltratorFS feature rather than fixing it.
 
-### Make LZ4 the automatic default
+### Replace IAC1 with another codec
 
-Rejected as the first response to this profile. LZ4 remains a useful in-tree reference codec, but the evidence does not show that IAC1's on-disk design is invalid. It shows that IAC1's current encoder and synchronous kernel integration are expensive.
+Rejected. The evidence does not show that IAC1's on-disk design is invalid. It
+shows that IAC1's current encoder and synchronous kernel integration are
+expensive.
 
 A future codec change remains possible if measurement after optimisation shows IAC1 cannot meet the required filesystem-level ratio/throughput goals. That decision should be evidence-driven, not made from the current profile alone.
 

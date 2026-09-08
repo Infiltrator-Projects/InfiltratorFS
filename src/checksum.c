@@ -1,7 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "infilfs/checksum.h"
 
+#include <limits.h>
 #include <string.h>
+
+#if defined(INFS_HAVE_BCRYPT_SHA256)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <bcrypt.h>
+#elif defined(INFS_HAVE_OPENSSL_SHA256)
+#include <openssl/evp.h>
+#endif
 
 static const uint64_t crc64_ecma_table[256] = {
     UINT64_C(0x0000000000000000), UINT64_C(0x42F0E1EBA9EA3693), UINT64_C(0x85E1C3D753D46D26), UINT64_C(0xC711223CFA3E5BB5),
@@ -145,7 +154,7 @@ static void sha256_compress(uint32_t state[8], const uint8_t block[64])
     state[4] += e; state[5] += f; state[6] += g; state[7] += h;
 }
 
-void infs_sha256(const void *data, size_t len, uint8_t out[32])
+static void infs_sha256_scalar(const void *data, size_t len, uint8_t out[32])
 {
     const uint8_t *p = (const uint8_t *)data;
     uint32_t state[8] = {
@@ -174,4 +183,47 @@ void infs_sha256(const void *data, size_t len, uint8_t out[32])
 
     for (unsigned i = 0; i < 8; ++i)
         store_be32(out + i * 4u, state[i]);
+}
+
+static int infs_sha256_accelerated(const void *data, size_t len,
+                                   uint8_t out[32])
+{
+#if defined(INFS_HAVE_BCRYPT_SHA256)
+    BCRYPT_ALG_HANDLE algorithm = NULL;
+    NTSTATUS status;
+
+    if (len > ULONG_MAX)
+        return 0;
+    status = BCryptOpenAlgorithmProvider(
+        &algorithm, BCRYPT_SHA256_ALGORITHM, NULL, 0);
+    if (status < 0)
+        return 0;
+    status = BCryptHash(algorithm, NULL, 0,
+                        (PUCHAR)(uintptr_t)data, (ULONG)len, out, 32);
+    BCryptCloseAlgorithmProvider(algorithm, 0);
+    return status >= 0;
+#elif defined(INFS_HAVE_OPENSSL_SHA256)
+    unsigned int produced = 0;
+
+    return EVP_Digest(data, len, out, &produced, EVP_sha256(), NULL) == 1 &&
+        produced == 32u;
+#else
+    (void)data;
+    (void)len;
+    (void)out;
+    return 0;
+#endif
+}
+
+void infs_sha256(const void *data, size_t len, uint8_t out[32])
+{
+    if (!out)
+        return;
+    if (!data && len) {
+        memset(out, 0, 32);
+        return;
+    }
+    if (infs_sha256_accelerated(data, len, out))
+        return;
+    infs_sha256_scalar(data, len, out);
 }

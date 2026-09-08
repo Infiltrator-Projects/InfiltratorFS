@@ -577,8 +577,11 @@ int infilfs_rw_inline_digest(const u8 *data, size_t size, u8 out[32])
     u8 zero[64] = {0};
     size_t left;
 
-    if (size > INFILFS_INLINE_DATA_MAX)
+    if (size > INFILFS_DISK_BLOCK_SIZE)
         return -EINVAL;
+    if (!infilfs_crypto_sha256_zeropad(
+            data, size, INFILFS_DISK_BLOCK_SIZE, out))
+        return 0;
     infilfs_rw_sha256_init(&ctx);
     if (size)
         infilfs_rw_sha256_update(&ctx, data, size);

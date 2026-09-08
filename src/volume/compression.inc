@@ -96,11 +96,7 @@ static int file_decompress_extent(struct infs_volume *vol,
         free(plain);
         return status;
     }
-    if (extent_codec(flags) == INFS_COMPRESSION_LZ4) {
-        decoded = LZ4_decompress_safe(
-            (const char *)compressed, (char *)plain,
-            (int)stored, (int)logical_bytes);
-    } else if (extent_codec(flags) == INFS_COMPRESSION_IAC1) {
+    if (extent_codec(flags) == INFS_COMPRESSION_IAC1) {
         decoded = (int)infs_iac1_decompress(
             compressed, stored, plain, logical_bytes);
     } else {

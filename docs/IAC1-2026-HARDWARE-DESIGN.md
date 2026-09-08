@@ -193,11 +193,12 @@ Optimised decoders are welcome, but the simple portable decoder remains the comp
 
 This asymmetric philosophy is intentional: **aggressive modern encoder, conservative universal decoder, stable recoverable stream.**
 
-## Relationship to LZ4 and other codecs
+## Relationship to other codecs
 
-LZ4 remains useful as an in-tree reference and interoperability/development codec. It should continue to provide a benchmark baseline for ratio, encode throughput and decode throughput.
-
-It is not the design target for InfiltratorFS automatic compression. The purpose of IAC1 is not to recreate an older general-purpose codec under a new name. IAC1 should justify itself at filesystem level by combining:
+IAC1 is the only compressed on-disk representation. Comparative codecs may be
+used by external research tooling, but they are not dependencies, accepted
+extent formats, or release qualification baselines. IAC1 should justify itself
+at filesystem level by combining:
 
 - useful physical block savings;
 - low CPU work per logical byte;

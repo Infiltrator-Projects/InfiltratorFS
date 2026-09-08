@@ -65,8 +65,6 @@ jobs:
             sudo rmmod infiltratorfs 2>/dev/null || true
           }
           trap cleanup EXIT
-          sudo modprobe lz4_compress 2>/dev/null || true
-          sudo modprobe lz4_decompress 2>/dev/null || true
           if ! sudo insmod kernel/infiltratorfs.ko; then
             sudo dmesg | tail -n 80 >&2 || true
             exit 1
@@ -121,8 +119,6 @@ jobs:
             sudo rmmod infiltratorfs 2>/dev/null || true
           }
           trap cleanup EXIT
-          sudo modprobe lz4_compress 2>/dev/null || true
-          sudo modprobe lz4_decompress 2>/dev/null || true
           if ! sudo insmod kernel/infiltratorfs.ko; then
             sudo dmesg | tail -n 80 >&2 || true
             exit 1

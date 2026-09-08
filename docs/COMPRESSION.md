@@ -7,9 +7,7 @@ Format 0.18 uses adaptive per-extent compression as a normal filesystem
 capability. Newly formatted volumes enable `INFS_INCOMPAT_COMPRESSED_EXTENTS`.
 The automatic native codec is **IAC1 version 1** (codec identifier 2).
 
-IAC1 is the InfiltratorFS-native bounded codec selected for Format 0.18. LZ4
-(codec identifier 1) remains supported as a development/reference and
-interoperability codec, but new automatic writes do not select LZ4.
+IAC1 is the sole bounded compression codec accepted by Format 0.18.
 
 Compression is a storage representation beneath the logical file-data
 contract. SHA-256 continues to protect the exact uncompressed logical bytes.
@@ -119,11 +117,11 @@ already-compressed/encrypted-style high-entropy content. It requires:
   corpus; and
 - the IAC1 scratch-memory bound to remain at or below 128 KiB.
 
-The qualification also runs LZ4 over the same corpus and emits per-class and
-aggregate size plus encode/decode throughput telemetry. LZ4 remains the
-in-tree reference baseline. Zstandard remains useful as an external research
-baseline, but it is not a Format 0.18 codec dependency and is deliberately not
-required to mount or recover an InfiltratorFS volume.
+The qualification runs the production selected-mode IAC1 encoder over the same
+corpus and emits per-class and aggregate size plus encode/decode throughput
+telemetry. Comparative codecs may be measured by external research tooling,
+but they are not Format 0.18 dependencies and are not required to mount or
+recover an InfiltratorFS volume.
 
 The native codec is not required to beat a general-purpose codec on every
 individual corpus member. Its selection is justified at filesystem level by
@@ -133,9 +131,9 @@ small kernel implementation surface and bounded mutation amplification.
 
 ## Format discipline
 
-For Format 0.18, codec identifier 2 means IAC1 v1 and codec identifier 1 means
-the retained LZ4 representation. The codec identifier, stored-byte count and
-logical extent length are sufficient to locate and decode each bounded stream.
+For Format 0.18, codec identifier 2 means IAC1 v1. Every other nonzero codec
+identifier is invalid. The codec identifier, stored-byte count and logical
+extent length are sufficient to locate and decode each bounded stream.
 
 Future codec research may allocate any unused identifier in the 11-bit Format
 0.17 codec namespace or may justify a future development-format revision. It

@@ -291,6 +291,9 @@ static inline infs_iac1_size infs_iac1_compress_mode_limit(
             }
             {
                 infs_iac1_size literal_length = pos - literal_start;
+                if (!literal_length || literal_start > input_size ||
+                    literal_length > input_size - literal_start)
+                    return 0;
                 if (out + 1u + literal_length > capacity)
                     return 0;
                 dst[out++] = (infs_iac1_u8)(literal_length - 1u);

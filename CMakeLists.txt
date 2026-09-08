@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.20)
-project(InfiltratorFS VERSION 0.18.46 LANGUAGES C)
-# Development qualification anchor: 0.18.46
+project(InfiltratorFS VERSION 0.18.47 LANGUAGES C)
+# Development qualification anchor: 0.18.47
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -40,21 +40,6 @@ if(NOT TARGET InfiltratrCommon::Portable OR
     message(FATAL_ERROR
         "Infiltratr Common ${INFILTRATR_COMMON_REQUIRED_VERSION} is required")
 endif()
-
-# Per-extent compression is a portable-format feature. Pin LZ4 so Linux,
-# Windows and future adapters encode the same byte stream without relying on
-# a distribution-specific shared library version.
-include(FetchContent)
-set(LZ4_BUILD_CLI OFF CACHE BOOL "" FORCE)
-set(LZ4_BUNDLED_MODE ON CACHE BOOL "" FORCE)
-set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-set(BUILD_STATIC_LIBS ON CACHE BOOL "" FORCE)
-FetchContent_Declare(infilfs_lz4
-    GIT_REPOSITORY https://github.com/lz4/lz4.git
-    GIT_TAG v1.10.0
-    SOURCE_SUBDIR build/cmake
-    GIT_SHALLOW TRUE)
-FetchContent_MakeAvailable(infilfs_lz4)
 
 # Release 0.18.34 standardises InfiltratorFS desktop applications on the
 # same bundled MB Corpo typography on Linux and Windows. Keep the archive immutable and verify
@@ -127,7 +112,21 @@ add_library(infilfs_core STATIC
     src/format_volume.c
 )
 target_include_directories(infilfs_core PUBLIC include)
-target_link_libraries(infilfs_core PUBLIC InfiltratrCommon::Portable lz4_static)
+target_link_libraries(infilfs_core PUBLIC InfiltratrCommon::Portable)
+
+# Integrity hashing is on every data path. Prefer the host crypto provider so
+# SHA-NI/ARMv8 SHA and provider acceleration are used automatically. The
+# known-answer-tested scalar code remains a fail-safe fallback.
+if(WIN32)
+    target_link_libraries(infilfs_core PUBLIC bcrypt)
+    target_compile_definitions(infilfs_core PRIVATE INFS_HAVE_BCRYPT_SHA256=1)
+else()
+    find_package(OpenSSL QUIET COMPONENTS Crypto)
+    if(OpenSSL_FOUND)
+        target_link_libraries(infilfs_core PUBLIC OpenSSL::Crypto)
+        target_compile_definitions(infilfs_core PRIVATE INFS_HAVE_OPENSSL_SHA256=1)
+    endif()
+endif()
 infilfs_enable_warnings(infilfs_core)
 
 add_executable(infilfs-checksum-test tests/checksum-test.c)

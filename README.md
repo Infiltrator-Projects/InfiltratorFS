@@ -9,12 +9,12 @@ InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem. The
 <!--
 Release-policy compatibility anchor. This line is deliberately hidden from the
 user-facing README so visible status wording can change without breaking CI.
-**Current source version:** 0.18.46 (Format 0.18)<br>
+**Current source version:** 0.18.47 (Format 0.18)<br>
 -->
-**Current source:** 0.18.46  
-**On-disk format:** 0.18  
-**Latest published release:** v0.18.46  
-**Shared foundation:** Infiltratr Common 1.11.0  
+**Current source:** 0.18.47<br>
+**On-disk format:** 0.18<br>
+**Latest published release:** v0.18.47<br>
+**Shared foundation:** Infiltratr Common 1.11.0<br>
 **Licence:** GPL-3.0-or-later
 
 Pre-1.0 development is current-format-only. Development-format compatibility is not promised, so test media may need reformatting after an on-disk-format revision.
@@ -32,7 +32,7 @@ Format 0.18 provides:
 - generation-aware object and directory trees plus paged extent metadata;
 - inline, sparse and shared/reflinked file data;
 - symbolic links, hard links and named read-only snapshots;
-- adaptive bounded per-extent compression using native IAC1 v1, with LZ4 retained as a non-default reference representation;
+- adaptive bounded per-extent compression using native IAC1 v1;
 - CRC64-ECMA metadata integrity and SHA-256 logical file-data integrity;
 - 1023-byte UTF-8 namespace components;
 - portable flags plus birth/access/modification/change timestamps stored as signed epoch seconds plus canonical nanoseconds, avoiding the old signed-64-bit nanosecond date ceiling;
@@ -50,7 +50,7 @@ Windows currently provides native image/raw-partition access and a driverless Ex
 Build on a Debian-family system with matching running-kernel headers:
 
 ```bash
-sudo apt install build-essential cmake dkms kmod policykit-1 util-linux \
+sudo apt install build-essential cmake dkms kmod libssl-dev policykit-1 util-linux \
   xdg-utils python3 python3-gi gir1.2-gtk-3.0 udev udisks2 \
   linux-headers-$(uname -r)
 

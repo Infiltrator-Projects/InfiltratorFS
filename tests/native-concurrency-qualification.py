@@ -5,6 +5,7 @@
 import hashlib
 import multiprocessing as mp
 import os
+import stat
 import sys
 import traceback
 import subprocess
@@ -14,6 +15,8 @@ FILES_PER_WORKER = 24
 FILE_BYTES = 32 * 1024
 REGION_BYTES = 1024 * 1024
 CHUNK_BYTES = 64 * 1024
+APPEND_RECORD_BYTES = 128
+APPEND_RECORDS = 256
 
 
 def fail(queue, phase, worker):
@@ -84,6 +87,28 @@ def shared_file_worker(path, worker, start, errors):
             os.close(fd)
     except BaseException:
         fail(errors, "shared-file", worker)
+
+
+def append_record(worker, sequence):
+    header = f"{worker:02d}:{sequence:04d}:".encode("ascii")
+    return header + bytes([65 + worker]) * (APPEND_RECORD_BYTES - len(header))
+
+
+def append_worker(path, worker, start, errors):
+    try:
+        start.wait()
+        fd = os.open(path, os.O_WRONLY | os.O_APPEND)
+        try:
+            for sequence in range(APPEND_RECORDS):
+                record = append_record(worker, sequence)
+                if os.write(fd, record) != len(record):
+                    raise OSError("short atomic append")
+                if sequence % 64 == 63:
+                    os.fdatasync(fd)
+        finally:
+            os.close(fd)
+    except BaseException:
+        fail(errors, "atomic-append", worker)
 
 
 def xattr_writer_worker(path, worker, start, errors):
@@ -241,6 +266,68 @@ def verify_shared_file(path):
         os.close(fd)
 
 
+def verify_atomic_appends(path):
+    with open(path, "rb", buffering=0) as stream:
+        data = stream.read()
+    expected_size = WORKERS * APPEND_RECORDS * APPEND_RECORD_BYTES
+    if len(data) != expected_size:
+        raise AssertionError(
+            f"atomic append size {len(data)} != expected {expected_size}")
+    actual = {
+        data[offset:offset + APPEND_RECORD_BYTES]
+        for offset in range(0, len(data), APPEND_RECORD_BYTES)
+    }
+    expected = {
+        append_record(worker, sequence)
+        for worker in range(WORKERS)
+        for sequence in range(APPEND_RECORDS)
+    }
+    if actual != expected or len(actual) != WORKERS * APPEND_RECORDS:
+        raise AssertionError("atomic append records overlapped or were lost")
+
+
+def verify_write_semantics(root):
+    sync_path = os.path.join(root, "sync-flags.bin")
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_SYNC
+    if hasattr(os, "O_DSYNC"):
+        flags |= os.O_DSYNC
+    fd = os.open(sync_path, flags, 0o600)
+    try:
+        write_all(fd, b"synchronous-write-contract")
+    finally:
+        os.close(fd)
+    with open(sync_path, "rb") as stream:
+        if stream.read() != b"synchronous-write-contract":
+            raise AssertionError("synchronous write readback mismatch")
+
+    privilege_path = os.path.join(root, "privilege-strip.bin")
+    fd = os.open(privilege_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    os.close(fd)
+    os.chown(privilege_path, 65534, 65534)
+    os.chmod(privilege_path, 0o6755)
+    child = os.fork()
+    if child == 0:
+        try:
+            os.setgroups([])
+            os.setgid(65534)
+            os.setuid(65534)
+            fd = os.open(privilege_path, os.O_WRONLY | os.O_APPEND)
+            try:
+                if os.write(fd, b"unprivileged-write") != 18:
+                    os._exit(2)
+            finally:
+                os.close(fd)
+            os._exit(0)
+        except BaseException:
+            os._exit(3)
+    _, status = os.waitpid(child, 0)
+    if not os.WIFEXITED(status) or os.WEXITSTATUS(status) != 0:
+        raise AssertionError(f"privilege-strip child failed: status={status}")
+    mode = stat.S_IMODE(os.stat(privilege_path).st_mode)
+    if mode & (stat.S_ISUID | stat.S_ISGID):
+        raise AssertionError(f"write retained set-ID privilege bits: {mode:o}")
+
+
 def main():
     if len(sys.argv) != 2:
         raise SystemExit(
@@ -329,6 +416,17 @@ def main():
     drain_errors(errors)
     verify_shared_file(shared_file)
 
+    append_file = os.path.join(root, "atomic-append.bin")
+    fd = os.open(append_file, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    os.close(fd)
+    run_group(
+        ctx, "atomic-append", append_worker,
+        [(append_file, worker) for worker in range(WORKERS)], errors)
+    drain_errors(errors)
+    verify_atomic_appends(append_file)
+
+    verify_write_semantics(root)
+
     run_group(
         ctx, "open-unlink", open_unlink_worker,
         [(root, worker) for worker in range(WORKERS)], errors)
@@ -354,7 +452,8 @@ def main():
         "Native concurrency qualification: PASS "
         f"({WORKERS} mutators, {WORKERS * FILES_PER_WORKER} files, "
         f"{WORKERS} shared-inode writers, 3 xattr writers/readers, "
-        f"{WORKERS} open-unlink writers)")
+        f"{WORKERS * APPEND_RECORDS} atomic append records, sync flags, "
+        f"privilege stripping, {WORKERS} open-unlink writers)")
 
 
 if __name__ == "__main__":
