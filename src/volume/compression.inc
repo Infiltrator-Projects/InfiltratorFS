@@ -265,7 +265,6 @@ static int file_store_extent_payload(
     size_t plain_bytes = (size_t)logical_blocks * INFS_BLOCK_SIZE;
     size_t bound = 0;
     uint8_t *compressed = NULL;
-    uint8_t *candidate = NULL;
     struct infs_iac1_scratch *scratch = NULL;
     uint8_t predictor_mode = INFS_IAC1_MODE_IDENTITY;
     size_t compressed_bytes = 0;
@@ -284,19 +283,16 @@ static int file_store_extent_payload(
         bound = infs_iac1_bound(plain_bytes);
         predictor_mode = infs_iac1_predictor_mode(plain, plain_bytes);
         compressed = malloc(bound);
-        if (predictor_mode != INFS_IAC1_MODE_IDENTITY)
-            candidate = malloc(bound);
         scratch = malloc(sizeof(*scratch));
-        if (!compressed || !scratch ||
-            (predictor_mode != INFS_IAC1_MODE_IDENTITY && !candidate)) {
+        if (!compressed || !scratch) {
             free(scratch);
-            free(candidate);
             free(compressed);
             return INFS_STATUS_NO_MEMORY;
         }
-        compressed_bytes = infs_iac1_compress(
-            plain, plain_bytes, compressed, bound,
-            candidate, candidate ? bound : 0u, scratch);
+        compressed_bytes = infs_iac1_compress_selected(
+            plain, plain_bytes, compressed, bound, scratch,
+            predictor_mode,
+            (size_t)(logical_blocks - 1u) * INFS_BLOCK_SIZE);
         if (compressed_bytes &&
             compressed_bytes <= INFS_EXTENT_STORED_BYTES_MAX) {
             stored_blocks = (uint32_t)(
@@ -312,7 +308,6 @@ static int file_store_extent_payload(
         stored = calloc(1u, span);
         if (!stored) {
             free(scratch);
-            free(candidate);
             free(compressed);
             return INFS_STATUS_NO_MEMORY;
         }
@@ -324,7 +319,6 @@ static int file_store_extent_payload(
                 &vol->storage, physical * INFS_BLOCK_SIZE, stored, span);
         free(stored);
         free(scratch);
-        free(candidate);
         free(compressed);
         if (status != INFS_STATUS_OK)
             return status;
@@ -335,7 +329,6 @@ static int file_store_extent_payload(
     }
 
     free(scratch);
-    free(candidate);
     free(compressed);
     status = compression_alloc_data_exact(vol, logical_blocks, &physical);
     if (status != INFS_STATUS_OK)

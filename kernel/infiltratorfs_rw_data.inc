@@ -4087,7 +4087,6 @@ static int infilfs_native_stage_compression_candidate(
     size_t plain_bytes;
     size_t bound = 0;
     u8 *compressed = NULL;
-    u8 *candidate = NULL;
     u8 *stored = NULL;
     struct infs_iac1_scratch *scratch = NULL;
     u8 predictor_mode = INFS_IAC1_MODE_IDENTITY;
@@ -4112,17 +4111,15 @@ static int infilfs_native_stage_compression_candidate(
         bound = infs_iac1_bound(plain_bytes);
         predictor_mode = infs_iac1_predictor_mode(plain, plain_bytes);
         compressed = kvmalloc(bound, GFP_NOFS);
-        if (predictor_mode != INFS_IAC1_MODE_IDENTITY)
-            candidate = kvmalloc(bound, GFP_NOFS);
         scratch = kvmalloc(sizeof(*scratch), GFP_NOFS);
-        if (!compressed || !scratch ||
-            (predictor_mode != INFS_IAC1_MODE_IDENTITY && !candidate)) {
+        if (!compressed || !scratch) {
             ret = -ENOMEM;
             goto out;
         }
-        compressed_bytes = infs_iac1_compress(
-            plain, plain_bytes, compressed, bound,
-            candidate, candidate ? bound : 0u, scratch);
+        compressed_bytes = infs_iac1_compress_selected(
+            plain, plain_bytes, compressed, bound, scratch,
+            predictor_mode,
+            (size_t)(logical_blocks - 1u) * INFILFS_DISK_BLOCK_SIZE);
         if (compressed_bytes &&
             compressed_bytes <= INFILFS_EXTENT_STORED_BYTES_MAX) {
             stored_blocks = DIV_ROUND_UP(
@@ -4178,7 +4175,6 @@ static int infilfs_native_stage_compression_candidate(
 out:
     kvfree(stored);
     kvfree(scratch);
-    kvfree(candidate);
     kvfree(compressed);
     return ret;
 }

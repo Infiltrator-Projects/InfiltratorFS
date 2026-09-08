@@ -214,13 +214,16 @@ static inline infs_iac1_size infs_iac1_fill_run(
     return length >= INFS_IAC1_FILL_MIN ? length : 0;
 }
 
-static inline infs_iac1_size infs_iac1_compress_mode(
+static inline infs_iac1_size infs_iac1_compress_mode_limit(
     const infs_iac1_u8 *src, infs_iac1_size input_size,
     infs_iac1_u8 *dst, infs_iac1_size capacity,
-    struct infs_iac1_scratch *scratch, infs_iac1_u8 mode)
+    struct infs_iac1_scratch *scratch, infs_iac1_u8 mode,
+    infs_iac1_size output_limit)
 {
     infs_iac1_size pos = 0;
     infs_iac1_size out = 0;
+    if (output_limit && output_limit < capacity)
+        capacity = output_limit;
     if (!src || !dst || !scratch || !input_size ||
         mode > INFS_IAC1_MODE_XOR4 || capacity < INFS_IAC1_HEADER_SIZE)
         return 0;
@@ -309,6 +312,15 @@ static inline infs_iac1_size infs_iac1_compress_mode(
     return out;
 }
 
+static inline infs_iac1_size infs_iac1_compress_mode(
+    const infs_iac1_u8 *src, infs_iac1_size input_size,
+    infs_iac1_u8 *dst, infs_iac1_size capacity,
+    struct infs_iac1_scratch *scratch, infs_iac1_u8 mode)
+{
+    return infs_iac1_compress_mode_limit(
+        src, input_size, dst, capacity, scratch, mode, capacity);
+}
+
 static inline int infs_iac1_should_attempt(
     const infs_iac1_u8 *src, infs_iac1_size input_size)
 {
@@ -375,6 +387,25 @@ static inline infs_iac1_u8 infs_iac1_predictor_mode(
     if (delta_hits > input_size / 16u)
         return INFS_IAC1_MODE_DELTA8;
     return INFS_IAC1_MODE_IDENTITY;
+}
+
+/* Filesystem hot path: one selected full encode by default. */
+static inline infs_iac1_size infs_iac1_compress_selected(
+    const infs_iac1_u8 *src, infs_iac1_size input_size,
+    infs_iac1_u8 *dst, infs_iac1_size capacity,
+    struct infs_iac1_scratch *scratch, infs_iac1_u8 mode,
+    infs_iac1_size useful_limit)
+{
+    infs_iac1_size stored = infs_iac1_compress_mode_limit(
+        src, input_size, dst, capacity, scratch, mode, useful_limit);
+
+    /* Predictor selection is heuristic. Preserve a safe identity
+     * fallback if the selected non-identity mode cannot save a block. */
+    if (!stored && mode != INFS_IAC1_MODE_IDENTITY)
+        stored = infs_iac1_compress_mode_limit(
+            src, input_size, dst, capacity, scratch,
+            INFS_IAC1_MODE_IDENTITY, useful_limit);
+    return stored;
 }
 
 static inline infs_iac1_size infs_iac1_compress(
