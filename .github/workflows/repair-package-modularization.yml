@@ -28,8 +28,11 @@ jobs:
         run: |
           bash -n packaging/build-linux-packages.sh
           grep -Fq 'infiltratorfs_checksum_cache.c$"' packaging/build-linux-packages.sh
+          grep -Fq 'usr/src/infiltratorfs-${package_version}/infiltratorfs_rw_data.inc$' packaging/build-linux-packages.sh
+          grep -Fq 'kernel/infiltratorfs_checksum_cache.c' packaging/build-linux-packages.sh
           grep -Fq 'kernel/infiltratorfs_rw_data.inc' packaging/build-linux-packages.sh
-          ! grep -Fq 'infiltratorfs_checksum_cache.c infiltratorfs_rw_data.inc' packaging/build-linux-packages.sh
+          ! grep -Fq 'usr/src/infiltratorfs-${package_version}/infiltratorfs_checksum_cache.c infiltratorfs_rw_data.inc$' packaging/build-linux-packages.sh
+          ! grep -Fq 'kernel/infiltratorfs_checksum_cache.c infiltratorfs_rw_data.inc' packaging/build-linux-packages.sh
 
       - name: Commit repaired source manifest to main
         shell: bash
