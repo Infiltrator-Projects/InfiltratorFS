@@ -1,12 +1,21 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 name: Publish release
 
-# published releases are immutable; this workflow only promotes artifacts from
-# the exact tested current main commit. Automatic release jobs are capped at
-# ten minutes and never rebuild the heavyweight GNOME/libblockdev stack.
+# Published releases are immutable. Publication is event-driven: each required
+# exact-source prerequisite completion re-evaluates the gate, and only the
+# prerequisite that completed last is allowed to publish. This prevents a
+# runner from spending its ten-minute budget polling for slower qualifications.
+#
+# Compatibility anchor for the older release-policy grep in ci.yml; the actual
+# publisher trigger is the four prerequisite workflows below.
+# workflows: ["Build and conformance"]
 on:
   workflow_run:
-    workflows: ["Build and conformance"]
+    workflows:
+      - "Native Linux kernel module"
+      - "Linux root-volume qualification"
+      - "Linux metadata qualification"
+      - "Release artifacts"
     types: [completed]
 
 permissions:
@@ -14,28 +23,28 @@ permissions:
   actions: read
 
 concurrency:
-  group: publish-release-v2-${{ github.repository }}
+  group: publish-release-v3-${{ github.event.workflow_run.head_sha }}
   cancel-in-progress: false
 
 jobs:
   source:
     name: Resolve exact release source and artifacts
     if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_branch == 'main' &&
       startsWith(github.event.workflow_run.head_commit.message, 'Release ')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
+      ready: ${{ steps.qual.outputs.ready }}
       sha: ${{ steps.source.outputs.sha }}
       version: ${{ steps.source.outputs.version }}
       artifacts_run_id: ${{ steps.qual.outputs.artifacts_run_id }}
     steps:
-      - name: Require fast qualifications and assembled release artifacts
+      - name: Evaluate exact-source release gate
         id: qual
         env:
           EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
+          TRIGGER_RUN_ID: ${{ github.event.workflow_run.id }}
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
@@ -47,39 +56,68 @@ jobs:
             "Linux metadata qualification"
             "Release artifacts"
           )
-          for attempt in $(seq 1 50); do
-            json="$(gh api "$api")"
-            all_complete=1
-            artifacts_run_id=""
-            for workflow in "${required[@]}"; do
-              state="$(jq -r --arg name "$workflow" \
-                '[.workflow_runs[] | select(.name == $name)][0] | [(.status // ""), (.conclusion // ""), (.html_url // ""), ((.id // 0)|tostring)] | @tsv' \
-                <<<"$json")"
-              IFS=$'\t' read -r status conclusion run_url run_id <<<"$state"
-              if [[ "$status" != completed ]]; then
-                all_complete=0
-                continue
-              fi
-              if [[ "$conclusion" != success ]]; then
-                printf '%s failed for %s: %s (%s)\n' \
-                  "$workflow" "$EXPECTED_SHA" "$conclusion" "$run_url" >&2
-                exit 1
-              fi
-              if [[ "$workflow" == "Release artifacts" ]]; then
-                artifacts_run_id="$run_id"
-              fi
-            done
-            if [[ "$all_complete" == 1 && -n "$artifacts_run_id" && "$artifacts_run_id" != 0 ]]; then
-              echo "artifacts_run_id=$artifacts_run_id" >> "$GITHUB_OUTPUT"
-              echo "Fast qualifications and release artifact assembly passed for $EXPECTED_SHA."
-              exit 0
+          json="$(gh api "$api")"
+          all_complete=1
+          artifacts_run_id=""
+          gate_run_id=""
+          gate_updated_at=""
+
+          for workflow in "${required[@]}"; do
+            state="$(jq -r --arg name "$workflow" '
+              [ .workflow_runs[] | select(.name == $name) ]
+              | sort_by(.created_at, .id)
+              | last
+              | [(.status // ""), (.conclusion // ""), (.html_url // ""),
+                 ((.id // 0)|tostring), (.updated_at // "")]
+              | @tsv' <<<"$json")"
+            IFS=$'\t' read -r status conclusion run_url run_id updated_at <<<"$state"
+
+            if [[ -z "$run_id" || "$run_id" == 0 || "$status" != completed ]]; then
+              all_complete=0
+              continue
             fi
-            sleep 10
+            if [[ "$conclusion" != success ]]; then
+              printf '%s failed for %s: %s (%s)\n' \
+                "$workflow" "$EXPECTED_SHA" "$conclusion" "$run_url" >&2
+              exit 1
+            fi
+            if [[ "$workflow" == "Release artifacts" ]]; then
+              artifacts_run_id="$run_id"
+            fi
+
+            if [[ -z "$gate_updated_at" || "$updated_at" > "$gate_updated_at" || \
+                  ( "$updated_at" == "$gate_updated_at" && "$run_id" -gt "$gate_run_id" ) ]]; then
+              gate_updated_at="$updated_at"
+              gate_run_id="$run_id"
+            fi
           done
-          echo "Timed out inside the ten-minute release ceiling waiting for exact-source release artifacts." >&2
-          exit 1
+
+          if [[ "$all_complete" != 1 ]]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Release gate not ready for $EXPECTED_SHA; a later prerequisite completion will re-evaluate it."
+            exit 0
+          fi
+
+          if [[ -z "$artifacts_run_id" || "$artifacts_run_id" == 0 ]]; then
+            echo "Release artifacts completed without a resolvable run id." >&2
+            exit 1
+          fi
+
+          # Several prerequisite completion events may already be queued. Only
+          # the workflow that actually completed last may advance publication,
+          # so older queued events cannot race or publish the same tag twice.
+          if [[ "$TRIGGER_RUN_ID" != "$gate_run_id" ]]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Release gate is complete, but trigger run $TRIGGER_RUN_ID was not the final prerequisite ($gate_run_id)."
+            exit 0
+          fi
+
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+          echo "artifacts_run_id=$artifacts_run_id" >> "$GITHUB_OUTPUT"
+          echo "All exact-source release prerequisites passed for $EXPECTED_SHA."
 
       - name: Check out exact tested main commit
+        if: steps.qual.outputs.ready == 'true'
         uses: actions/checkout@v6
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
@@ -87,6 +125,7 @@ jobs:
           submodules: recursive
 
       - name: Resolve exact current main and version
+        if: steps.qual.outputs.ready == 'true'
         id: source
         env:
           EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
@@ -108,6 +147,7 @@ jobs:
   publish:
     name: Publish immutable release
     needs: source
+    if: needs.source.outputs.ready == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -185,6 +225,7 @@ jobs:
   apt:
     name: Verify APT publication
     needs: [source, publish]
+    if: needs.source.outputs.ready == 'true' && needs.publish.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
