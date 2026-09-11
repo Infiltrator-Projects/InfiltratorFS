@@ -122,14 +122,14 @@ jobs:
                   logical_blocks > INFILFS_COMPRESSION_CLUSTER_BLOCKS ||''')
           replace('kernel/infiltratorfs_core.c',
                   '''    if (infilfs_extent_codec(flags) == INFILFS_COMPRESSION_IAC1) {
-                  decoded = (int)infs_iac1_decompress(
+                  decoded = (int)infilfs_iac1_decompress(
                       compressed, stored, plain, plain_bytes);''',
                   '''    if (infilfs_extent_codec(flags) == INFILFS_COMPRESSION_LZ4) {
                   decoded = LZ4_decompress_safe(
                       (const char *)compressed, (char *)plain,
                       (int)stored, (int)plain_bytes);
               } else if (infilfs_extent_codec(flags) == INFILFS_COMPRESSION_IAC1) {
-                  decoded = (int)infs_iac1_decompress(
+                  decoded = (int)infilfs_iac1_decompress(
                       compressed, stored, plain, plain_bytes);''')
 
           Path('tests/lz4-compat.c').write_text(r'''// SPDX-License-Identifier: GPL-3.0-or-later
@@ -167,8 +167,6 @@ jobs:
           }
           '''.replace('          ', ''))
 
-          # Keep documentation aligned with the actual codec contract without
-          # making documentation wording a build-time source patch dependency.
           p = Path('README.md')
           t = p.read_text()
           t = t.replace(
@@ -267,7 +265,15 @@ jobs:
           git rm .github/workflows/one-shot-lz4-restore.yml
           git config user.name 'Shannon Smith'
           git config user.email 'infiltratr@yandex.com'
-          git add CMakeLists.txt README.md docs include kernel src tests .github/workflows
+          # Stage only tracked source modifications/deletions plus the one new
+          # compatibility test. Kbuild creates untracked .cmd files that must
+          # never enter a source commit.
+          git add -u
+          git add tests/lz4-compat.c
+          if git diff --cached --name-only | grep -Eq '^kernel/\.'; then
+            echo 'Refusing to commit generated Kbuild dotfiles.' >&2
+            exit 1
+          fi
           git diff --cached --check
           git commit -m 'Restore LZ4 as retained non-default codec'
           git push origin HEAD:main
