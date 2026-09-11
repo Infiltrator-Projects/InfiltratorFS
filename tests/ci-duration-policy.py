@@ -169,7 +169,7 @@ if 'name: Native Linux kernel module' not in kernel:
     raise SystemExit('native kernel workflow identity changed')
 if 'workflow_dispatch:' not in kernel:
     raise SystemExit('native kernel workflow must remain manually dispatchable')
-if 'push:' not in on_triggers(kernel):
+if 'push' not in on_triggers(kernel):
     raise SystemExit('native kernel workflow automatic trigger unexpectedly removed')
 
 for name in obsolete:
