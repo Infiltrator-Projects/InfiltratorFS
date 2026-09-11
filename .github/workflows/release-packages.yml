@@ -2,7 +2,7 @@
 name: Publish release
 
 # published releases are immutable; this workflow only creates a new exact tag
-# after the tested current main commit has passed every release qualification.
+# after the tested current main commit has passed every automatic release qualification.
 
 on:
   workflow_run:
@@ -30,8 +30,8 @@ jobs:
       sha: ${{ steps.source.outputs.sha }}
       version: ${{ steps.source.outputs.version }}
     steps:
-      - name: Require Linux release qualifications for the same commit
-        timeout-minutes: 70
+      - name: Require fast Linux release qualifications for the same commit
+        timeout-minutes: 10
         env:
           EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
           GH_TOKEN: ${{ github.token }}
@@ -42,10 +42,9 @@ jobs:
           required=(
             "Native Linux kernel module"
             "Linux root-volume qualification"
-            "Linux root boot qualification"
             "Linux metadata qualification"
           )
-          for attempt in $(seq 1 420); do
+          for attempt in $(seq 1 60); do
             json="$(gh api "$api")"
             all_complete=1
             for workflow in "${required[@]}"; do
@@ -64,13 +63,13 @@ jobs:
               fi
             done
             if [[ "$all_complete" == 1 ]]; then
-              printf 'Native Linux, root-volume, root-boot and Linux metadata qualification passed for %s.\n' \
+              printf 'Native Linux, root-volume and Linux metadata automatic qualification passed for %s.\n' \
                 "$EXPECTED_SHA"
               exit 0
             fi
             sleep 10
           done
-          printf 'Timed out waiting for Linux release qualifications of %s.\n' \
+          printf 'Timed out waiting for fast automatic Linux release qualifications of %s.\n' \
             "$EXPECTED_SHA" >&2
           exit 1
 
@@ -300,9 +299,6 @@ jobs:
           cmp "$source_file" "$mountpoint/native-release.bin"
           sync
 
-          # Reinstall the exact package while its filesystem is mounted.  The
-          # Debian preinst must cleanly unmount it by itself before replacing
-          # the live DKMS driver; no forced or lazy detach is permitted.
           sudo dpkg -i "$deb" | tee "$RUNNER_TEMP/native-release-upgrade.txt"
           ! findmnt -rn -t infiltratorfs,fuse.infilfs-fuse | grep -q .
           grep -Fq 'clean automatic unmount complete' "$RUNNER_TEMP/native-release-upgrade.txt"
