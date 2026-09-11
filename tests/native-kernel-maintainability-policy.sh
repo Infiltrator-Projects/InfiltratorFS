@@ -60,7 +60,7 @@ grep -Fq 'mutex_lock(&sbi->write_lock);' "$quota" || fail 'quota write_lock acqu
 # The native driver must stay a genuine multi-object Kbuild module. The
 # allocation map is the first extracted subsystem and must never regress into
 # textual inclusion.
-grep -Fqx 'infiltratorfs-y := infiltratorfs_core.o infiltratorfs_crypto.o infiltratorfs_allocation_map.o infiltratorfs_resize.o infiltratorfs_index_tree.o infiltratorfs_parallel_alloc.o infiltratorfs_allocation_publish.o infiltratorfs_read_cache.o infiltratorfs_pagecache.o infiltratorfs_directory_tree.o' "$makefile" || \
+grep -Fqx 'infiltratorfs-y := infiltratorfs_core.o infiltratorfs_crypto.o infiltratorfs_allocation_map.o infiltratorfs_resize.o infiltratorfs_index_tree.o infiltratorfs_parallel_alloc.o infiltratorfs_allocation_publish.o infiltratorfs_read_cache.o infiltratorfs_pagecache.o infiltratorfs_directory_tree.o infiltratorfs_checksum_cache.o infiltratorfs_linux_meta_codec.o' "$makefile" || \
     fail 'kernel module is no longer built from explicit component objects'
 test -f "$kernel/infiltratorfs_internal.h" || fail 'missing private kernel API header'
 test -f "$kernel/infiltratorfs_crypto.c" || fail 'accelerated integrity object missing'
@@ -69,8 +69,10 @@ test -f "$kernel/infiltratorfs_index_tree.c" || fail 'object-index tree object m
 test -f "$kernel/infiltratorfs_parallel_alloc.c" || fail 'parallel allocator object missing'
 test -f "$kernel/infiltratorfs_allocation_publish.c" || fail 'allocation publisher object missing'
 test -f "$kernel/infiltratorfs_read_cache.c" || fail 'verified-read cache object missing'
+test -f "$kernel/infiltratorfs_checksum_cache.c" || fail 'checksum cache object missing'
 test -f "$kernel/infiltratorfs_pagecache.c" || fail 'page-cache object missing'
 test -f "$kernel/infiltratorfs_directory_tree.c" || fail 'directory-tree object missing'
+test -f "$kernel/infiltratorfs_linux_meta_codec.c" || fail 'Linux metadata codec object missing'
 test ! -e "$kernel/infiltratorfs_directory_tree.inc" || fail 'directory tree regressed to textual include'
 ! grep -Fq 'infiltratorfs_directory_tree.inc' "$rw" || fail 'RW compositor textually includes directory tree'
 test ! -e "$kernel/infiltratorfs_pagecache.inc" || fail 'page-cache regressed to textual include'

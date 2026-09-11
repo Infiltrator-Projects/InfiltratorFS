@@ -53,6 +53,29 @@
 #define INFILFS_ALLOCATION_RESERVATION_SHARDS 64u
 #define INFILFS_LINUX_META_DIRECTORY ".infilfs-posix-meta"
 
+#define INFILFS_LINUX_META_MAGIC "INPSXM01"
+#define INFILFS_LINUX_META_VERSION 1u
+#define INFILFS_LINUX_META_MAX (1024u * 1024u)
+
+struct infilfs_linux_meta_header {
+    u8 magic[8];
+    __le32 version;
+    __le32 special_mode;
+    __le64 special_rdev;
+    __le32 xattr_bytes;
+    __le32 reserved;
+} __packed;
+
+struct infilfs_linux_xattr_record {
+    __le16 name_length;
+    __le16 reserved;
+    __le32 value_length;
+} __packed;
+
+static_assert(sizeof(struct infilfs_linux_meta_header) == 32);
+static_assert(sizeof(struct infilfs_linux_xattr_record) == 8);
+
+
 struct infilfs_parallel_reservation {
     u64 start;
     u64 count;
@@ -538,6 +561,13 @@ bool infilfs_native_checksum_cache_lookup(
 void infilfs_native_checksum_cache_store(
     struct super_block *sb, const u8 owner_id[16], const u8 object_id[16],
     u64 object_block, u64 start_logical);
+void infilfs_native_checksum_cache_invalidate_sb(struct super_block *sb);
+bool infilfs_native_checksum_group_cache_lookup(
+    struct super_block *sb, const u8 owner_id[16], u64 start_logical,
+    struct infilfs_native_checksum_cache_entry *out);
+void infilfs_native_checksum_group_cache_store(
+    struct super_block *sb, const u8 owner_id[16], const u8 object_id[16],
+    u64 object_block, u64 start_logical);
 int infilfs_native_read_expected_digest(
     struct super_block *sb, const u8 owner_id[16], const u8 head_id[16],
     u64 logical, struct infilfs_native_read_checksum_cursor *cursor,
@@ -583,6 +613,17 @@ int infilfs_tree_dir_for_each(
     struct inode *inode,
     int (*visitor)(const struct infilfs_dirent_disk *, const u8 *, void *),
     void *arg);
+/* Pure Linux sidecar metadata codec; no namespace or locking ownership. */
+void infilfs_linux_meta_uuid(const u8 id[16], char out[37]);
+void infilfs_linux_meta_init(struct infilfs_linux_meta_header *header);
+int infilfs_linux_meta_validate_blob(const u8 *blob, size_t size);
+int infilfs_linux_meta_find_xattr(
+    const u8 *blob, size_t size, const char *name, size_t *offset_out,
+    size_t *record_size_out, size_t *value_offset_out,
+    size_t *value_length_out);
+int infilfs_linux_xattr_name(
+    const struct xattr_handler *handler, const char *name, char **full_out);
+
 int infilfs_native_tree_directory_update(
     struct infilfs_native_pending *pending, struct inode *dir,
     const struct qstr *remove_a, const struct qstr *remove_b,

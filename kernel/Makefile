@@ -48,8 +48,10 @@
 #   infiltratorfs_parallel_alloc.c owns volatile sharded data reservations.
 #   infiltratorfs_allocation_publish.c owns CoW allocation-tree publication.
 #   infiltratorfs_read_cache.c owns verified read cursor/page caching.
+#   infiltratorfs_checksum_cache.c owns bounded checksum cursor/group caches.
 #   infiltratorfs_pagecache.c owns Linux folio/page-cache integration.
 #   infiltratorfs_directory_tree.c owns scalable Format 0.18 directory trees.
+#   infiltratorfs_linux_meta_codec.c owns Linux sidecar blob/naming codec rules.
 #   infiltratorfs_rw.inc is the only remaining nested implementation compositor;
 #   leaf .inc files must not start including each other or creating hidden cycles.
 #   Existing macro-renamed legacy/data entry points are migration debt, not a
@@ -63,7 +65,7 @@
 # KERNELRELEASE conditional, the initial DKMS make terminates with
 # "make: *** No targets. Stop." before Kbuild is ever entered.
 obj-m += infiltratorfs.o
-infiltratorfs-y := infiltratorfs_core.o infiltratorfs_crypto.o infiltratorfs_allocation_map.o infiltratorfs_resize.o infiltratorfs_index_tree.o infiltratorfs_parallel_alloc.o infiltratorfs_allocation_publish.o infiltratorfs_read_cache.o infiltratorfs_pagecache.o infiltratorfs_directory_tree.o
+infiltratorfs-y := infiltratorfs_core.o infiltratorfs_crypto.o infiltratorfs_allocation_map.o infiltratorfs_resize.o infiltratorfs_index_tree.o infiltratorfs_parallel_alloc.o infiltratorfs_allocation_publish.o infiltratorfs_read_cache.o infiltratorfs_pagecache.o infiltratorfs_directory_tree.o infiltratorfs_checksum_cache.o infiltratorfs_linux_meta_codec.o
 ccflags-y += -I$(src)/../include/infilfs
 
 KDIR ?= /lib/modules/$(shell uname -r)/build
