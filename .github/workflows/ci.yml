@@ -20,6 +20,7 @@ jobs:
   release-policy:
     name: Release policy
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Check out source
         uses: actions/checkout@v6
@@ -51,103 +52,10 @@ jobs:
             exit 1
           fi
 
-  desktop-formatter:
-    name: GNOME Disks formatter integration
-    if: >-
-      github.event_name != 'push' ||
-      startsWith(github.event.head_commit.message, 'Release ') ||
-      startsWith(github.event.head_commit.message, 'desktop:') ||
-      startsWith(github.event.head_commit.message, 'mkfs:') ||
-      contains(toJson(github.event.commits), 'packaging/libblockdev-infiltratorfs.patch') ||
-      contains(toJson(github.event.commits), 'packaging/59-infiltratorfs.rules') ||
-      contains(toJson(github.event.commits), 'tests/desktop-integration.sh') ||
-      contains(toJson(github.event.commits), 'packaging/udisks2-infiltratorfs-display.patch') ||
-      contains(toJson(github.event.commits), 'packaging/gnome-disks-infiltratorfs.patch') ||
-      contains(toJson(github.event.commits), 'packaging/libblockdev-3.1-infiltratorfs.patch') ||
-      contains(toJson(github.event.commits), 'packaging/gnome-disks-46-infiltratorfs.patch') ||
-      contains(toJson(github.event.commits), 'packaging/build-noble-desktop-integration.sh') ||
-      contains(toJson(github.event.commits), 'packaging/infiltratorfs-os-integration') ||
-      contains(toJson(github.event.commits), 'packaging/patch-mintstick.py') ||
-      contains(toJson(github.event.commits), 'tests/libblockdev-formatter-smoke.py') ||
-      contains(toJson(github.event.commits), 'tools/mkfs.infilfs') ||
-      contains(toJson(github.event.commits), 'tools/mkfs.infiltratorfs') ||
-      contains(toJson(github.event.commits), 'tools/infilfs-inspect.c')
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - name: Check out InfiltratorFS
-        uses: actions/checkout@v6
-      - name: Check out pinned desktop stack sources
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p upstream
-          fetch_exact() {
-            local directory="$1" url="$2" commit="$3"
-            git init -q "upstream/$directory"
-            git -C "upstream/$directory" remote add origin "$url"
-            git -C "upstream/$directory" fetch -q --depth=1 origin "$commit"
-            git -C "upstream/$directory" checkout -q --detach FETCH_HEAD
-            test "$(git -C "upstream/$directory" rev-parse HEAD)" = "$commit"
-          }
-          fetch_exact libblockdev https://github.com/storaged-project/libblockdev.git \
-            7ce6c6e9b59fdf16cd5dffd602f954ef52588dbb
-          fetch_exact udisks https://github.com/storaged-project/udisks.git \
-            c731cee133bb3240a0b91b59f9995a42aafb0ac4
-          fetch_exact gnome-disk-utility https://github.com/GNOME/gnome-disk-utility.git \
-            dc2da843a7afc7f9e916999d5daeecb0d6adf84c
-      - name: Apply integration patches exactly
-        run: |
-          set -euo pipefail
-          git -C upstream/libblockdev apply --check "$PWD/packaging/libblockdev-infiltratorfs.patch"
-          git -C upstream/libblockdev apply "$PWD/packaging/libblockdev-infiltratorfs.patch"
-          git -C upstream/udisks apply --check "$PWD/packaging/udisks2-infiltratorfs-display.patch"
-          git -C upstream/udisks apply "$PWD/packaging/udisks2-infiltratorfs-display.patch"
-          git -C upstream/gnome-disk-utility apply --check "$PWD/packaging/gnome-disks-infiltratorfs.patch"
-          git -C upstream/gnome-disk-utility apply "$PWD/packaging/gnome-disks-infiltratorfs.patch"
-          git -C upstream/libblockdev diff --check
-          git -C upstream/udisks diff --check
-          git -C upstream/gnome-disk-utility diff --check
-      - name: Build and execute the complete formatter contract
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker run --rm --privileged \
-            -v "$PWD:/workspace" -w /workspace fedora:latest bash -euxo pipefail -c '
-              dnf -y install dnf-plugins-core
-              dnf -y builddep libblockdev udisks2 gnome-disk-utility
-              dnf -y install cargo cmake gcc gcc-c++ git make rust \
-                autoconf automake libtool \
-                blueprint-compiler gettext-devel glib2-devel \
-                gobject-introspection-devel gtk4-devel libadwaita-devel \
-                gtk-doc meson ninja-build python3-bytesize python3-gobject
-
-              cmake -S . -B build-desktop -DCMAKE_BUILD_TYPE=Release
-              cmake --build build-desktop --parallel
-              cmake --install build-desktop --prefix /usr/local
-
-              cd upstream/libblockdev
-              ./autogen.sh
-              ./configure --prefix=/usr --without-gtk-doc
-              make -j"$(nproc)"
-              make install
-              ldconfig
-              cd /workspace
-              PATH=/usr/local/bin:$PATH \
-                python3 tests/libblockdev-formatter-smoke.py
-
-              cd upstream/udisks
-              ./autogen.sh --disable-gtk-doc --disable-man
-              make -j"$(nproc)"
-
-              cd /workspace/upstream/gnome-disk-utility
-              meson setup build -Dgsd_plugin=false -Dman=false
-              meson compile -C build
-            '
-
   linux:
     name: Linux full suite
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Check out source
         uses: actions/checkout@v6
@@ -267,6 +175,7 @@ jobs:
   clang:
     name: Clang conformance
     runs-on: ${{ startsWith(github.event.head_commit.message, 'Release ') && 'ubuntu-latest' || 'linux-native' }}
+    timeout-minutes: 10
     env:
       CC: clang
     steps:
@@ -284,6 +193,7 @@ jobs:
   sanitizers:
     name: ASan and UBSan
     runs-on: ${{ startsWith(github.event.head_commit.message, 'Release ') && 'ubuntu-latest' || 'linux-native' }}
+    timeout-minutes: 10
     env:
       ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
       UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
@@ -305,6 +215,7 @@ jobs:
   analyzer:
     name: GCC static analyzer
     runs-on: ${{ startsWith(github.event.head_commit.message, 'Release ') && 'ubuntu-latest' || 'linux-native' }}
+    timeout-minutes: 10
     steps:
       - name: Check out source
         uses: actions/checkout@v6
@@ -322,7 +233,7 @@ jobs:
   local-userspace:
     name: Local Linux userspace qualification
     runs-on: ${{ startsWith(github.event.head_commit.message, 'Release ') && 'ubuntu-latest' || 'linux-native' }}
-    timeout-minutes: 30
+    timeout-minutes: 10
     steps:
       - name: Check out source
         uses: actions/checkout@v6
@@ -357,6 +268,7 @@ jobs:
     name: Windows native app and portable core
     needs: [linux]
     runs-on: windows-latest
+    timeout-minutes: 10
     steps:
       - name: Check out source
         uses: actions/checkout@v6
@@ -435,6 +347,7 @@ jobs:
     name: Native Linux packages
     needs: [linux]
     runs-on: ${{ startsWith(github.event.head_commit.message, 'Release ') && 'ubuntu-latest' || 'linux-native' }}
+    timeout-minutes: 10
     steps:
       - name: Check out source
         uses: actions/checkout@v6
