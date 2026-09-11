@@ -1,0 +1,91 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: GNOME Disks formatter qualification
+
+# Full pinned libblockdev/UDisks/GNOME Disks compilation intentionally exceeds
+# the ten-minute automatic CI ceiling. Run manually when desktop/formatter
+# integration changes justify the full qualification.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-formatter-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  desktop-formatter:
+    name: GNOME Disks formatter integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out InfiltratorFS
+        uses: actions/checkout@v6
+      - name: Check out pinned desktop stack sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p upstream
+          fetch_exact() {
+            local directory="$1" url="$2" commit="$3"
+            git init -q "upstream/$directory"
+            git -C "upstream/$directory" remote add origin "$url"
+            git -C "upstream/$directory" fetch -q --depth=1 origin "$commit"
+            git -C "upstream/$directory" checkout -q --detach FETCH_HEAD
+            test "$(git -C "upstream/$directory" rev-parse HEAD)" = "$commit"
+          }
+          fetch_exact libblockdev https://github.com/storaged-project/libblockdev.git \
+            7ce6c6e9b59fdf16cd5dffd602f954ef52588dbb
+          fetch_exact udisks https://github.com/storaged-project/udisks.git \
+            c731cee133bb3240a0b91b59f9995a42aafb0ac4
+          fetch_exact gnome-disk-utility https://github.com/GNOME/gnome-disk-utility.git \
+            dc2da843a7afc7f9e916999d5daeecb0d6adf84c
+      - name: Apply integration patches exactly
+        run: |
+          set -euo pipefail
+          git -C upstream/libblockdev apply --check "$PWD/packaging/libblockdev-infiltratorfs.patch"
+          git -C upstream/libblockdev apply "$PWD/packaging/libblockdev-infiltratorfs.patch"
+          git -C upstream/udisks apply --check "$PWD/packaging/udisks2-infiltratorfs-display.patch"
+          git -C upstream/udisks apply "$PWD/packaging/udisks2-infiltratorfs-display.patch"
+          git -C upstream/gnome-disk-utility apply --check "$PWD/packaging/gnome-disks-infiltratorfs.patch"
+          git -C upstream/gnome-disk-utility apply "$PWD/packaging/gnome-disks-infiltratorfs.patch"
+          git -C upstream/libblockdev diff --check
+          git -C upstream/udisks diff --check
+          git -C upstream/gnome-disk-utility diff --check
+      - name: Build and execute the complete formatter contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --privileged \
+            -v "$PWD:/workspace" -w /workspace fedora:latest bash -euxo pipefail -c '
+              dnf -y install dnf-plugins-core
+              dnf -y builddep libblockdev udisks2 gnome-disk-utility
+              dnf -y install cargo cmake gcc gcc-c++ git make rust \
+                autoconf automake libtool \
+                blueprint-compiler gettext-devel glib2-devel \
+                gobject-introspection-devel gtk4-devel libadwaita-devel \
+                gtk-doc meson ninja-build python3-bytesize python3-gobject
+
+              cmake -S . -B build-desktop -DCMAKE_BUILD_TYPE=Release
+              cmake --build build-desktop --parallel
+              cmake --install build-desktop --prefix /usr/local
+
+              cd upstream/libblockdev
+              ./autogen.sh
+              ./configure --prefix=/usr --without-gtk-doc
+              make -j"$(nproc)"
+              make install
+              ldconfig
+              cd /workspace
+              PATH=/usr/local/bin:$PATH \
+                python3 tests/libblockdev-formatter-smoke.py
+
+              cd upstream/udisks
+              ./autogen.sh --disable-gtk-doc --disable-man
+              make -j"$(nproc)"
+
+              cd /workspace/upstream/gnome-disk-utility
+              meson setup build -Dgsd_plugin=false -Dman=false
+              meson compile -C build
+            '
