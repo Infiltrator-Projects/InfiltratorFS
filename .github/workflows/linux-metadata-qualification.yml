@@ -27,7 +27,7 @@ jobs:
   qualify:
     name: Quota ACL and high-scale xattr durability
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
       - name: Check out source
         uses: actions/checkout@v6
