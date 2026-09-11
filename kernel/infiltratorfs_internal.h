@@ -161,10 +161,10 @@ struct infilfs_native_index_locator {
 };
 
 struct infilfs_native_directory_locator {
+    size_t name_offset;
     u32 hash;
     u16 name_len;
     bool valid;
-    u8 name[INFILFS_NAME_MAX];
 };
 
 struct infilfs_native_shared_range {
@@ -194,6 +194,9 @@ struct infilfs_native_pending {
     u32 index_locator_count;
     bool index_locator_valid;
     struct infilfs_native_directory_locator *directory_locators;
+    u8 *directory_locator_names;
+    size_t directory_locator_names_bytes;
+    size_t directory_locator_names_capacity;
     u8 directory_locator_owner_id[16];
     u32 directory_locator_capacity;
     u32 directory_locator_count;

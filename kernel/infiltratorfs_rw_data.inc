@@ -189,8 +189,44 @@ void infilfs_native_directory_locator_invalidate(
 {
     pending->directory_locator_valid = false;
     pending->directory_locator_count = 0;
+    pending->directory_locator_names_bytes = 0;
     memset(pending->directory_locator_owner_id, 0,
            sizeof(pending->directory_locator_owner_id));
+}
+
+static int infilfs_native_directory_locator_names_reserve(
+    struct infilfs_native_pending *pending, size_t extra)
+{
+    u8 *fresh;
+    size_t needed;
+    size_t capacity;
+
+    if (extra > (size_t)-1 - pending->directory_locator_names_bytes)
+        return -EOVERFLOW;
+    needed = pending->directory_locator_names_bytes + extra;
+    if (needed <= pending->directory_locator_names_capacity)
+        return 0;
+
+    capacity = pending->directory_locator_names_capacity;
+    if (capacity < 4096u)
+        capacity = 4096u;
+    while (capacity < needed) {
+        if (capacity > (size_t)-1 / 2u) {
+            capacity = needed;
+            break;
+        }
+        capacity <<= 1;
+    }
+    fresh = kvmalloc(capacity, GFP_NOFS);
+    if (!fresh)
+        return -ENOMEM;
+    if (pending->directory_locator_names_bytes)
+        memcpy(fresh, pending->directory_locator_names,
+               pending->directory_locator_names_bytes);
+    kvfree(pending->directory_locator_names);
+    pending->directory_locator_names = fresh;
+    pending->directory_locator_names_capacity = capacity;
+    return 0;
 }
 
 static int infilfs_native_directory_locator_resize(
@@ -289,7 +325,11 @@ static bool infilfs_native_directory_locator_lookup(
         if (!entry->valid)
             return false;
         if (entry->hash == hash && entry->name_len == name_len &&
-            memcmp(entry->name, name, name_len) == 0)
+            entry->name_offset <= pending->directory_locator_names_bytes &&
+            name_len <= pending->directory_locator_names_bytes -
+                entry->name_offset &&
+            memcmp(pending->directory_locator_names + entry->name_offset,
+                   name, name_len) == 0)
             return true;
     }
     return false;
@@ -329,14 +369,25 @@ static int infilfs_native_directory_locator_insert(
             (slot + probes) & (pending->directory_locator_capacity - 1u)];
         if (entry->valid) {
             if (entry->hash == hash && entry->name_len == name_len &&
-                memcmp(entry->name, name, name_len) == 0)
+                entry->name_offset <= pending->directory_locator_names_bytes &&
+                name_len <= pending->directory_locator_names_bytes -
+                    entry->name_offset &&
+                memcmp(pending->directory_locator_names + entry->name_offset,
+                       name, name_len) == 0)
                 return -EEXIST;
             continue;
         }
+        ret = infilfs_native_directory_locator_names_reserve(
+            pending, name_len);
+        if (ret)
+            return ret;
         memset(entry, 0, sizeof(*entry));
+        entry->name_offset = pending->directory_locator_names_bytes;
         entry->hash = hash;
         entry->name_len = (u16)name_len;
-        memcpy(entry->name, name, name_len);
+        memcpy(pending->directory_locator_names + entry->name_offset,
+               name, name_len);
+        pending->directory_locator_names_bytes += name_len;
         entry->valid = true;
         pending->directory_locator_count++;
         return 0;
@@ -1138,6 +1189,7 @@ static void infilfs_native_pending_destroy(struct super_block *sb)
     kvfree(pending->undo);
     kvfree(pending->index_locators);
     kvfree(pending->directory_locators);
+    kvfree(pending->directory_locator_names);
     kvfree(pending->shared_ranges);
     kfree(pending);
 }
