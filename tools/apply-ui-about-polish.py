@@ -112,10 +112,10 @@ about_css = '''
 }
 '''
 if ".link-about-dialog {" not in manager:
-    css_end = '\n"""\n\n\ndef install_css()'
+    css_end = '\n"""\n\n\nclass Manager(Gtk.ApplicationWindow):'
     if css_end not in manager:
         raise SystemExit("could not locate CSS terminator")
-    manager = manager.replace(css_end, "\n" + about_css + '"""\n\n\ndef install_css()', 1)
+    manager = manager.replace(css_end, "\n" + about_css + '"""\n\n\nclass Manager(Gtk.ApplicationWindow):', 1)
 
 pattern = re.compile(
     r"\n    def about\(self, \*_\):\n"
