@@ -1,1 +1,0 @@
-savedcmd_/home/runner/work/InfiltratorFS/InfiltratorFS/kernel/Module.symvers :=  scripts/mod/modpost -M -m -a      -o /home/runner/work/InfiltratorFS/InfiltratorFS/kernel/Module.symvers -T /home/runner/work/InfiltratorFS/InfiltratorFS/kernel/modules.order -i Module.symvers -e 

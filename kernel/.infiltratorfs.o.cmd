@@ -1,1 +1,0 @@
-savedcmd_/home/runner/work/InfiltratorFS/InfiltratorFS/kernel/infiltratorfs.o := ld -m elf_x86_64 -z noexecstack --no-warn-rwx-segments   -r -o /home/runner/work/InfiltratorFS/InfiltratorFS/kernel/infiltratorfs.o @/home/runner/work/InfiltratorFS/InfiltratorFS/kernel/infiltratorfs.mod 
