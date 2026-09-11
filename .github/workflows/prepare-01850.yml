@@ -1,0 +1,50 @@
+name: Prepare 0.18.50 release
+
+on:
+  push:
+    paths:
+      - '.github/workflows/prepare-01850.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Prepare version metadata
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('CMakeLists.txt')
+          s = p.read_text(encoding='utf-8')
+          s = s.replace('project(InfiltratorFS VERSION 0.18.49 LANGUAGES C)', 'project(InfiltratorFS VERSION 0.18.50 LANGUAGES C)')
+          s = s.replace('# Development qualification anchor: 0.18.49', '# Development qualification anchor: 0.18.50')
+          p.write_text(s, encoding='utf-8')
+
+          p = Path('README.md')
+          s = p.read_text(encoding='utf-8')
+          s = s.replace('**Current source version:** 0.18.49 (Format 0.18)<br>', '**Current source version:** 0.18.50 (Format 0.18)<br>')
+          s = s.replace('**Current source:** 0.18.49<br>', '**Current source:** 0.18.50<br>')
+          s = s.replace('**Latest published release:** v0.18.48<br>', '**Latest published release:** v0.18.49<br>')
+          p.write_text(s, encoding='utf-8')
+
+          Path('.github/release-trigger').write_text('0.18.50\nqualification=656acbc5641dba6cd737fdfcb371488a305340e1\n', encoding='utf-8')
+          PY
+          grep -Fq 'project(InfiltratorFS VERSION 0.18.50 LANGUAGES C)' CMakeLists.txt
+          grep -Fq '**Current source version:** 0.18.50 (Format 0.18)<br>' README.md
+          grep -Fq 'qualification=656acbc5641dba6cd737fdfcb371488a305340e1' .github/release-trigger
+      - name: Commit preparation and remove applicator
+        run: |
+          set -euo pipefail
+          git config user.name 'Shannon Smith'
+          git config user.email 'infiltratr@yandex.com'
+          git rm .github/workflows/prepare-01850.yml
+          git add CMakeLists.txt README.md .github/release-trigger
+          git commit -m 'Prepare 0.18.50 release metadata'
+          git push origin HEAD:main
