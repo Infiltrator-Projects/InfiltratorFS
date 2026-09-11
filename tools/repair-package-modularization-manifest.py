@@ -86,11 +86,24 @@ if h.count(old) != 1:
 helper.write_text(h.replace(old, new, 1))
 
 fixed = pkg.read_text()
-for bad in (
-    'infiltratorfs_checksum_cache.c infiltratorfs_rw_data.inc',
-    'kernel/infiltratorfs_checksum_cache.c infiltratorfs_rw_data.inc',
-):
-    if bad in fixed:
-        raise SystemExit(f'broken concatenated package path remains: {bad}')
+# Only reject the impossible quoted package-content filename and the native
+# installer path that lost its kernel/ prefix.  A shell source list may
+# legitimately place checksum_cache.c and rw_data.inc beside one another.
+invalid_required = 'usr/src/infiltratorfs-${package_version}/infiltratorfs_checksum_cache.c infiltratorfs_rw_data.inc$'
+invalid_run = 'kernel/infiltratorfs_checksum_cache.c infiltratorfs_rw_data.inc'
+if invalid_required in fixed:
+    raise SystemExit('broken Debian contents validation path remains')
+if invalid_run in fixed:
+    raise SystemExit('broken native installer validation path remains')
+
+required_checks = (
+    'usr/src/infiltratorfs-${package_version}/infiltratorfs_checksum_cache.c$',
+    'usr/src/infiltratorfs-${package_version}/infiltratorfs_rw_data.inc$',
+    'kernel/infiltratorfs_checksum_cache.c',
+    'kernel/infiltratorfs_rw_data.inc',
+)
+for marker in required_checks:
+    if marker not in fixed:
+        raise SystemExit(f'expected repaired package marker missing: {marker}')
 
 print('Package modularization manifests repaired.')
