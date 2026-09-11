@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: CI duration policy
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/**'
+      - 'tests/ci-duration-policy.py'
+      - 'docs/QUALIFICATION.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-duration-policy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  policy:
+    name: Enforce automatic/manual qualification boundary
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+      - name: Enforce qualification duration policy
+        run: python3 tests/ci-duration-policy.py
