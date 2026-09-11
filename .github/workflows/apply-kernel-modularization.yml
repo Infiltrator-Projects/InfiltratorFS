@@ -23,27 +23,8 @@ jobs:
       - name: Extract checksum cache object
         run: python3 tools/kernel-checksum-cache-object-refactor.py
 
-      - name: Adapt and extract Linux metadata codec object
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('tools/kernel-linux-meta-codec-object-refactor.py')
-          s = p.read_text()
-          base = ('infiltratorfs-y := infiltratorfs_core.o infiltratorfs_allocation_map.o '
-                  'infiltratorfs_resize.o infiltratorfs_index_tree.o '
-                  'infiltratorfs_parallel_alloc.o infiltratorfs_allocation_publish.o '
-                  'infiltratorfs_read_cache.o infiltratorfs_pagecache.o '
-                  'infiltratorfs_directory_tree.o')
-          with_cache = base + ' infiltratorfs_checksum_cache.o'
-          s = s.replace("old_line = ('infiltratorfs-y := infiltratorfs_core.o infiltratorfs_allocation_map.o '\n            'infiltratorfs_resize.o infiltratorfs_index_tree.o '\n            'infiltratorfs_parallel_alloc.o infiltratorfs_allocation_publish.o '\n            'infiltratorfs_read_cache.o infiltratorfs_pagecache.o '\n            'infiltratorfs_directory_tree.o')", "old_line = " + repr(with_cache))
-          old_guard = "grep -Fqx 'infiltratorfs-y := infiltratorfs_core.o infiltratorfs_allocation_map.o infiltratorfs_resize.o infiltratorfs_index_tree.o infiltratorfs_parallel_alloc.o infiltratorfs_allocation_publish.o infiltratorfs_read_cache.o infiltratorfs_pagecache.o infiltratorfs_directory_tree.o' \\\"$makefile\\\" || \\\\\\n"
-          new_guard = "grep -Fqx '" + with_cache + "' \\\"$makefile\\\" || \\\\\\n"
-          s = s.replace("old_guard = \"grep -Fqx 'infiltratorfs-y := infiltratorfs_core.o infiltratorfs_allocation_map.o infiltratorfs_resize.o infiltratorfs_index_tree.o infiltratorfs_parallel_alloc.o infiltratorfs_allocation_publish.o infiltratorfs_read_cache.o infiltratorfs_pagecache.o infiltratorfs_directory_tree.o' \\\\\\\"$makefile\\\\\\\" || \\\\\\\\\\\\\\n\"", "old_guard = " + repr(new_guard))
-          p.write_text(s)
-          PY
-          python3 tools/kernel-linux-meta-codec-object-refactor.py
-          git checkout -- tools/kernel-linux-meta-codec-object-refactor.py
+      - name: Extract Linux metadata codec object
+        run: python3 tools/kernel-linux-meta-codec-object-refactor.py
 
       - name: Enforce kernel maintainability policy
         run: bash tests/native-kernel-maintainability-policy.sh .
