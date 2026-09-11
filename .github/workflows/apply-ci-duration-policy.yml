@@ -247,7 +247,7 @@ jobs:
               marker = '## CI duration policy'
               section = '''\n\n## CI duration policy\n\nAutomatic qualification and conformance jobs are hard-capped at 10 minutes. Tests that intentionally exceed that ceiling are manual-only and are run only when their coverage is warranted. The manual long-running set is the real UEFI/root crash-recovery qualification, the full GNOME/libblockdev/UDisks formatter build, and the million-file/1 TiB plus endurance qualification. A release is finalized only after a manually dispatched root-boot qualification succeeds for the exact Release commit; the shorter automatic Linux qualifications must already be green for that same commit.\n'''
               if marker not in d:
-                  docs.write_text(d.rstrip() + section + '\n')
+                  docs.write_text(d.rstrip() + section.rstrip() + '\n')
 
           self_path = workflows / 'apply-ci-duration-policy.yml'
           if self_path.exists():
