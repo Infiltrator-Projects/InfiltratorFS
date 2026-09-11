@@ -16,6 +16,8 @@ automatic = {
     'resize-qualification.yml',
     'root-volume-qualification.yml',
     'windows-bridge.yml',
+    'release-artifacts.yml',
+    'release-packages.yml',
 }
 obsolete = {
     'apply-ci-duration-policy.yml',
@@ -26,6 +28,7 @@ obsolete = {
     'kernel-checksum-cache-object-refactor.yml',
     'qualify-posix-private-inplace.yml',
     'qualify-quota-ctime-isolation.yml',
+    'release-0.18.48.yml',
 }
 
 for name in manual_long:
@@ -61,6 +64,45 @@ for name in automatic:
         if minutes > 10:
             raise SystemExit(f'{name}:{job}: automatic timeout is {minutes} minutes')
 
+# Automatic publication promotes tested artifacts. It must never sneak the
+# heavyweight desktop-stack build back into the release path.
+release_artifacts = (wf / 'release-artifacts.yml').read_text()
+for required in (
+    'git diff --quiet v0.18.47',
+    'gh release download v0.18.47',
+    'INFILTRATORFS_REQUIRE_OS_INTEGRATION',
+    'gh run download',
+    'X-InfiltratorFS-Desktop-Integration',
+):
+    if required not in release_artifacts:
+        raise SystemExit(f'release artifact promotion policy missing: {required}')
+for forbidden in (
+    'apt-get build-dep',
+    'bash packaging/build-noble-desktop-integration.sh',
+    'timeout-minutes: 12',
+):
+    if forbidden in release_artifacts:
+        raise SystemExit(f'automatic release artifact workflow contains heavyweight path: {forbidden}')
+
+release = (wf / 'release-packages.yml').read_text()
+for required in (
+    'workflows: ["Build and conformance"]',
+    '"Release artifacts"',
+    'gh run download',
+    'published releases are immutable',
+    'git tag --annotate',
+):
+    if required not in release:
+        raise SystemExit(f'release promotion policy missing: {required}')
+for forbidden in (
+    'apt-get build-dep',
+    'build-noble-desktop-integration.sh',
+    'cmake --build',
+    'timeout-minutes: 12',
+):
+    if forbidden in release:
+        raise SystemExit(f'automatic publisher is rebuilding instead of promoting: {forbidden}')
+
 # The native kernel workflow deliberately retains deeper mounted steps with
 # longer internal diagnostic allowances. Automatic runs are bounded externally:
 # only manual workflow_dispatch executions may continue beyond ten minutes.
@@ -77,7 +119,7 @@ for required in (
         raise SystemExit(f'automatic kernel watchdog policy missing: {required}')
 
 kernel = (wf / 'kernel-module.yml').read_text()
-if "name: Native Linux kernel module" not in kernel:
+if 'name: Native Linux kernel module' not in kernel:
     raise SystemExit('native kernel workflow identity changed')
 if 'workflow_dispatch:' not in kernel:
     raise SystemExit('native kernel workflow must remain manually dispatchable')
