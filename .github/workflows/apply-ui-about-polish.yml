@@ -6,7 +6,7 @@ on:
     paths:
       - '.github/workflows/apply-ui-about-polish.yml'
 
-# Retry after adapting the one-shot helper to the current Manager CSS layout.
+# Retry after adapting the helper to the current layout and fixing generated licence text.
 permissions:
   contents: write
 
