@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 name: Publish release
 
-# Published releases are immutable. Publication is event-driven: each required
+# published releases are immutable. Publication is event-driven: each required
 # exact-source prerequisite completion re-evaluates the gate, and only the
 # prerequisite that completed last is allowed to publish. This prevents a
 # runner from spending its ten-minute budget polling for slower qualifications.
