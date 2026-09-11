@@ -103,8 +103,6 @@ jobs:
              kernel/infiltratorfs_parallel_alloc.c \
              kernel/infiltratorfs_index_tree.c \
              kernel/infiltratorfs_directory_tree.c \
-             kernel/infiltratorfs_checksum_cache.c \
-             kernel/infiltratorfs_linux_meta_codec.c \
              kernel/infiltratorfs_rw.inc \
              kernel/infiltratorfs_rw_legacy.inc \
              kernel/infiltratorfs_rw_data.inc \
@@ -706,8 +704,8 @@ jobs:
           PY
           cp "$compressed_mutation_src" "$compressed_truncate_expected"
           cp "$compressed_mutation_src" "$compressed_punch_expected"
-          sudo dd if="$compressed_mutation_src" of="$mountpoint/native-rw/compressed-truncate.bin" bs=1M status=none
-          sudo dd if="$compressed_mutation_src" of="$mountpoint/native-rw/compressed-punch.bin" bs=1M status=none
+          sudo dd if="$compressed_mutation_src"               of="$mountpoint/native-rw/compressed-truncate.bin"               bs=1M status=none
+          sudo dd if="$compressed_mutation_src"               of="$mountpoint/native-rw/compressed-punch.bin"               bs=1M status=none
           for compressed_file in compressed-truncate.bin compressed-punch.bin; do
             logical="$(stat -c '%s' "$mountpoint/native-rw/$compressed_file")"
             allocated="$(( $(stat -c '%b' "$mountpoint/native-rw/$compressed_file") * 512 ))"
@@ -715,33 +713,33 @@ jobs:
           done
 
           compressed_truncate_size="$((41 * 4096 + 123))"
-          sudo truncate -s "$compressed_truncate_size" "$mountpoint/native-rw/compressed-truncate.bin"
+          sudo truncate -s "$compressed_truncate_size"               "$mountpoint/native-rw/compressed-truncate.bin"
           python3 - "$compressed_truncate_expected" "$compressed_truncate_size" <<'PY'
           import sys
           with open(sys.argv[1], 'r+b') as stream:
               stream.truncate(int(sys.argv[2]))
           PY
-          cmp "$compressed_truncate_expected" "$mountpoint/native-rw/compressed-truncate.bin"
+          cmp "$compressed_truncate_expected"               "$mountpoint/native-rw/compressed-truncate.bin"
           compressed_regrow_size=600000
-          sudo truncate -s "$compressed_regrow_size" "$mountpoint/native-rw/compressed-truncate.bin"
+          sudo truncate -s "$compressed_regrow_size"               "$mountpoint/native-rw/compressed-truncate.bin"
           python3 - "$compressed_truncate_expected" "$compressed_regrow_size" <<'PY'
           import sys
           with open(sys.argv[1], 'r+b') as stream:
               stream.truncate(int(sys.argv[2]))
           PY
-          cmp "$compressed_truncate_expected" "$mountpoint/native-rw/compressed-truncate.bin"
+          cmp "$compressed_truncate_expected"               "$mountpoint/native-rw/compressed-truncate.bin"
 
           compressed_punch_offset=12345
           compressed_punch_length=700000
-          sudo fallocate -p -o "$compressed_punch_offset" -l "$compressed_punch_length" "$mountpoint/native-rw/compressed-punch.bin"
-          python3 - "$compressed_punch_expected" "$compressed_punch_offset" "$compressed_punch_length" <<'PY'
+          sudo fallocate -p -o "$compressed_punch_offset"               -l "$compressed_punch_length"               "$mountpoint/native-rw/compressed-punch.bin"
+          python3 - "$compressed_punch_expected"               "$compressed_punch_offset" "$compressed_punch_length" <<'PY'
           import sys
           path, offset, length = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
           with open(path, 'r+b') as stream:
               stream.seek(offset)
               stream.write(bytes(length))
           PY
-          cmp "$compressed_punch_expected" "$mountpoint/native-rw/compressed-punch.bin"
+          cmp "$compressed_punch_expected"               "$mountpoint/native-rw/compressed-punch.bin"
 
           # Native parity: extent-backed files must permit bounded random
           # overwrite without changing their length or invalidating checksums.
@@ -766,7 +764,8 @@ jobs:
                   os.close(fd)
           PY
           large_source_sha="$(sha256sum "$large_src" | awk '{print $1}')"
-          test "$(sha256sum "$mountpoint/native-rw/large.bin" | awk '{print $1}')" = "$large_source_sha"
+          test "$(sha256sum "$mountpoint/native-rw/large.bin" | awk '{print $1}')" = \
+               "$large_source_sha"
 
           # Reinstate the former 4,000-write mounted stress workload with
           # deterministic 4 KiB overwrites and periodic durability barriers.
@@ -811,7 +810,8 @@ jobs:
                 f"({4000.0/elapsed:.1f} writes/s)")
           PY
           large_source_sha="$(sha256sum "$large_src" | awk '{print $1}')"
-          test "$(sha256sum "$mountpoint/native-rw/large.bin" | awk '{print $1}')" = "$large_source_sha"
+          test "$(sha256sum "$mountpoint/native-rw/large.bin" | awk '{print $1}')" = \
+               "$large_source_sha"
 
           # Hyper-V qualification formerly published 200 explicit fsync
           # generations.  Preserve that exact mounted durability pressure.
@@ -844,6 +844,7 @@ jobs:
                 f"({200.0/elapsed:.1f} fsyncs/s)")
           PY
 
+
           # Standard sparse-discovery and FIEMAP interfaces must expose the
           # InfiltratorFS extent map rather than generic byte-only fallbacks.
           sudo python3 - "$mountpoint/native-rw/seek-map.bin" <<'PY'
@@ -863,8 +864,10 @@ jobs:
           finally:
               os.close(fd)
           PY
-          sudo filefrag -v "$mountpoint/native-rw/seek-map.bin" | tee "$RUNNER_TEMP/infiltratorfs-fiemap.txt"
-          grep -Eq '[0-9]+ extent(s)? found|extent found' "$RUNNER_TEMP/infiltratorfs-fiemap.txt"
+          sudo filefrag -v "$mountpoint/native-rw/seek-map.bin" |
+            tee "$RUNNER_TEMP/infiltratorfs-fiemap.txt"
+          grep -Eq '[0-9]+ extent(s)? found|extent found' \
+            "$RUNNER_TEMP/infiltratorfs-fiemap.txt"
 
           # Standard Linux whole-file reflink exposure. --reflink=always must
           # fail rather than silently copy if FICLONE is unsupported, so this
@@ -881,8 +884,8 @@ jobs:
               os.fsync(f.fileno())
           PY
           reflink_source_hash="$(sudo sha256sum "$mountpoint/native-rw/reflink-source.bin" | awk '{print $1}')"
-          sudo cp --reflink=always "$mountpoint/native-rw/reflink-source.bin" "$mountpoint/native-rw/reflink-clone.bin"
-          sudo cmp "$mountpoint/native-rw/reflink-source.bin" "$mountpoint/native-rw/reflink-clone.bin"
+          sudo cp --reflink=always             "$mountpoint/native-rw/reflink-source.bin"             "$mountpoint/native-rw/reflink-clone.bin"
+          sudo cmp "$mountpoint/native-rw/reflink-source.bin"             "$mountpoint/native-rw/reflink-clone.bin"
           sudo python3 - "$mountpoint/native-rw/reflink-clone.bin" <<'PY'
           import os
           import sys
@@ -893,19 +896,23 @@ jobs:
           finally:
               os.close(fd)
           PY
-          test "$(sudo sha256sum "$mountpoint/native-rw/reflink-source.bin" | awk '{print $1}')" = "$reflink_source_hash"
-          if sudo cmp -s "$mountpoint/native-rw/reflink-source.bin" "$mountpoint/native-rw/reflink-clone.bin"; then
+          test "$(sudo sha256sum "$mountpoint/native-rw/reflink-source.bin" | awk '{print $1}')" =             "$reflink_source_hash"
+          if sudo cmp -s "$mountpoint/native-rw/reflink-source.bin"               "$mountpoint/native-rw/reflink-clone.bin"; then
             echo "Native reflink clone did not CoW after mutation." >&2
             exit 1
           fi
 
           # Native parity: sparse high-offset growth, extent truncate,
           # preallocation and hole punching must survive the offline scrub.
+          # Keep these values visible in the hosted log: this path is both a
+          # correctness gate and the fastest way to distinguish logical-size,
+          # allocation-accounting and high-offset-write regressions.
           printf 'Qualifying 1 TiB sparse growth/truncate...\n'
           sudo truncate -s 1T "$mountpoint/native-rw/sparse-1t.bin"
           sparse_size="$(stat -c '%s' "$mountpoint/native-rw/sparse-1t.bin")"
           sparse_blocks="$(stat -c '%b' "$mountpoint/native-rw/sparse-1t.bin")"
-          printf 'Sparse growth state: size=%s bytes blocks=%s (512-byte units)\n' "$sparse_size" "$sparse_blocks"
+          printf 'Sparse growth state: size=%s bytes blocks=%s (512-byte units)\n' \
+              "$sparse_size" "$sparse_blocks"
           if [[ "$sparse_size" != 1099511627776 ]]; then
             echo "Sparse growth logical-size regression: $sparse_size" >&2
             diagnostics
@@ -916,8 +923,11 @@ jobs:
             diagnostics
             exit 1
           fi
-          printf 'sparse-tail\n' | sudo dd of="$mountpoint/native-rw/sparse-1t.bin" bs=1 seek=1099511623680 conv=notrunc status=none
-          sparse_tail="$(sudo dd if="$mountpoint/native-rw/sparse-1t.bin" bs=1 skip=1099511623680 count=12 status=none)"
+          printf 'sparse-tail\n' | sudo dd \
+              of="$mountpoint/native-rw/sparse-1t.bin" bs=1 seek=1099511623680 \
+              conv=notrunc status=none
+          sparse_tail="$(sudo dd if="$mountpoint/native-rw/sparse-1t.bin" bs=1 \
+              skip=1099511623680 count=12 status=none)"
           if [[ "$sparse_tail" != 'sparse-tail' ]]; then
             echo "Sparse high-offset data regression: '$sparse_tail'" >&2
             diagnostics
@@ -925,7 +935,9 @@ jobs:
           fi
           sudo truncate -s 134217728 "$mountpoint/native-rw/sparse-1t.bin"
           sparse_truncated_size="$(stat -c '%s' "$mountpoint/native-rw/sparse-1t.bin")"
-          printf 'Sparse truncated state: size=%s bytes blocks=%s (512-byte units)\n' "$sparse_truncated_size" "$(stat -c '%b' "$mountpoint/native-rw/sparse-1t.bin")"
+          printf 'Sparse truncated state: size=%s bytes blocks=%s (512-byte units)\n' \
+              "$sparse_truncated_size" \
+              "$(stat -c '%b' "$mountpoint/native-rw/sparse-1t.bin")"
           if [[ "$sparse_truncated_size" != 134217728 ]]; then
             echo "Sparse truncate logical-size regression: $sparse_truncated_size" >&2
             diagnostics
@@ -933,6 +945,8 @@ jobs:
           fi
 
           # Exercise the allocator's true write-beyond-EOF workload class.
+          # Unlike truncate-then-write, this reaches the in-lock SPARSE
+          # classifier with pos > old_size and must survive remount/scrub.
           sudo python3 - "$mountpoint/native-rw/direct-sparse.bin" <<'PY'
           import os
           import sys
@@ -954,10 +968,12 @@ jobs:
           sudo fallocate -l 16M "$mountpoint/native-rw/preallocated.bin"
           preallocated_blocks="$(stat -c '%b' "$mountpoint/native-rw/preallocated.bin")"
           test "$preallocated_blocks" -ge 32768
-          sudo fallocate -p -o 4M -l 8M "$mountpoint/native-rw/preallocated.bin"
+          sudo fallocate -p -o 4M -l 8M \
+              "$mountpoint/native-rw/preallocated.bin"
           punched_blocks="$(stat -c '%b' "$mountpoint/native-rw/preallocated.bin")"
           test "$punched_blocks" -lt "$preallocated_blocks"
-          test "$(sudo dd if="$mountpoint/native-rw/preallocated.bin" bs=1M skip=4 count=8 status=none | tr -d '\0' | wc -c)" -eq 0
+          test "$(sudo dd if="$mountpoint/native-rw/preallocated.bin" bs=1M \
+              skip=4 count=8 status=none | tr -d '\0' | wc -c)" -eq 0
 
           sudo chmod 000 "$mountpoint/native-rw/post-unlink.txt"
           test "$(stat -c '%a' "$mountpoint/native-rw/post-unlink.txt")" = 0
@@ -967,7 +983,10 @@ jobs:
           sudo mv "$mountpoint/native-rw/large-hard.bin" "$mountpoint/native-rw/large.bin"
 
           # statfs must account for the live deferred transaction, not merely
-          # the last committed checkpoint.
+          # the last committed checkpoint. Keep this probe below the minimum
+          # 16 MiB publication threshold and use deterministic high-entropy data:
+          # a zero-filled probe is legitimately compressed now and therefore no
+          # longer consumes its logical byte count in physical free space.
           sudo python3 - "$mountpoint/native-rw" <<'PY'
           import os
           import sys
@@ -997,7 +1016,11 @@ jobs:
           os.sync()
           PY
 
-          # Drive allocator near bounded free-space floor and qualify reuse.
+          # Drive the allocator close to a bounded free-space floor, punch
+          # alternating 4 MiB holes into that population, then refill with
+          # smaller extents. This qualifies split/merge/reuse behaviour under
+          # realistic mounted fragmentation without risking an intentional
+          # ENOSPC against the CI image.
           sudo mkdir "$mountpoint/native-rw/allocator-stress"
           sudo python3 - "$mountpoint/native-rw/allocator-stress" <<'PY'
           import os
@@ -1007,7 +1030,8 @@ jobs:
           reserve = 128 * 1024 * 1024
           coarse_size = 4 * 1024 * 1024
           refill_size = 2 * 1024 * 1024
-          payload = bytes((index * 47 + 13) & 0xff for index in range(1024 * 1024))
+          payload = bytes((index * 47 + 13) & 0xff
+                          for index in range(1024 * 1024))
 
           def free_bytes():
               stat = os.statvfs(root)
@@ -1034,6 +1058,9 @@ jobs:
               coarse.append(path)
           assert len(coarse) >= 8
           os.sync()
+
+          # Free alternating allocations so the free-space cache must split,
+          # merge and select among many physical runs.
           for path in coarse[::2]:
               os.unlink(path)
           os.sync()
@@ -1048,6 +1075,9 @@ jobs:
           assert refill
           os.sync()
 
+          # Leave one deterministic extent alive through offline scrub and the
+          # final read-only remount; remove the churn population first so those
+          # frees are also committed and reusable.
           proof = os.path.join(root, 'proof.bin')
           write_file(proof, 8 * 1024 * 1024)
           os.sync()
@@ -1058,11 +1088,16 @@ jobs:
               os.unlink(path)
           os.sync()
 
-          print(f'allocator stress: coarse={len(coarse)} refill={len(refill)} free_after_cleanup={free_bytes()}')
+          print(f'allocator stress: coarse={len(coarse)} refill={len(refill)} '
+                f'free_after_cleanup={free_bytes()}')
           PY
-          allocator_stress_sha="$(sudo sha256sum "$mountpoint/native-rw/allocator-stress/proof.bin" | awk '{print $1}')"
+          allocator_stress_sha="$(sudo sha256sum               "$mountpoint/native-rw/allocator-stress/proof.bin" | awk '{print $1}')"
           test -n "$allocator_stress_sha"
 
+          # A compile-time sharding check cannot establish parallelism. Start
+          # sixteen writers together, verify their disjoint data, and after
+          # unmount require the driver's peak-active counter to prove that at
+          # least two volatile reservations overlapped before write_lock.
           sudo python3 - "$mountpoint/native-rw/parallel-allocation-ci" <<'PY'
           import hashlib
           import multiprocessing as mp
@@ -1083,7 +1118,8 @@ jobs:
                   stream.write(byte * size)
                   os.fsync(stream.fileno())
 
-          processes = [mp.Process(target=writer, args=(index,)) for index in range(workers)]
+          processes = [mp.Process(target=writer, args=(index,))
+                       for index in range(workers)]
           for process in processes:
               process.start()
           start.set()
@@ -1095,7 +1131,8 @@ jobs:
               path = os.path.join(root, f'writer-{index:02d}.bin')
               with open(path, 'rb') as stream:
                   actual = stream.read()
-              assert hashlib.sha256(actual).digest() == hashlib.sha256(expected).digest()
+              assert hashlib.sha256(actual).digest() == \
+                  hashlib.sha256(expected).digest()
           PY
 
           printf 'Publishing durability barrier...\n'
@@ -1114,19 +1151,33 @@ jobs:
           printf 'Unmounting and scrubbing native result...\n'
           sudo umount "$mountpoint"
           mounted=0
-          allocator_log="$(sudo dmesg | grep 'InfiltratorFS: allocator reservations=' | tail -n1 || true)"
+          allocator_log="$(sudo dmesg | \
+              grep 'InfiltratorFS: allocator reservations=' | tail -n1 || true)"
           printf '%s\n' "$allocator_log"
-          allocator_peak="$(sed -nE 's/.*peak_active=([0-9]+).*/\1/p' <<<"$allocator_log")"
-          workload_seq="$(sed -nE 's/.*workload_seq=([0-9]+).*/\1/p' <<<"$allocator_log")"
-          workload_random="$(sed -nE 's/.*workload_random=([0-9]+).*/\1/p' <<<"$allocator_log")"
-          workload_sparse="$(sed -nE 's/.*workload_sparse=([0-9]+).*/\1/p' <<<"$allocator_log")"
-          locality_scored="$(sed -nE 's/.*locality_scored=([0-9]+).*/\1/p' <<<"$allocator_log")"
-          best_fit="$(sed -nE 's/.*best_fit=([0-9]+).*/\1/p' <<<"$allocator_log")"
-          media_profile="$(sed -nE 's/.*media=([^ ]+).*/\1/p' <<<"$allocator_log")"
-          media_rotational_scored="$(sed -nE 's/.*media_rotational_scored=([0-9]+).*/\1/p' <<<"$allocator_log")"
-          media_nonrotational_scored="$(sed -nE 's/.*media_nonrotational_scored=([0-9]+).*/\1/p' <<<"$allocator_log")"
-          media_balanced_scored="$(sed -nE 's/.*media_balanced_scored=([0-9]+).*/\1/p' <<<"$allocator_log")"
-          for value in "$allocator_peak" "$workload_seq" "$workload_random" "$workload_sparse" "$locality_scored" "$best_fit" "$media_profile" "$media_rotational_scored" "$media_nonrotational_scored" "$media_balanced_scored"; do
+          allocator_peak="$(sed -nE \
+              's/.*peak_active=([0-9]+).*/\1/p' <<<"$allocator_log")"
+          workload_seq="$(sed -nE \
+              's/.*workload_seq=([0-9]+).*/\1/p' <<<"$allocator_log")"
+          workload_random="$(sed -nE \
+              's/.*workload_random=([0-9]+).*/\1/p' <<<"$allocator_log")"
+          workload_sparse="$(sed -nE \
+              's/.*workload_sparse=([0-9]+).*/\1/p' <<<"$allocator_log")"
+          locality_scored="$(sed -nE \
+              's/.*locality_scored=([0-9]+).*/\1/p' <<<"$allocator_log")"
+          best_fit="$(sed -nE \
+              's/.*best_fit=([0-9]+).*/\1/p' <<<"$allocator_log")"
+          media_profile="$(sed -nE \
+              's/.*media=([^ ]+).*/\1/p' <<<"$allocator_log")"
+          media_rotational_scored="$(sed -nE \
+              's/.*media_rotational_scored=([0-9]+).*/\1/p' <<<"$allocator_log")"
+          media_nonrotational_scored="$(sed -nE \
+              's/.*media_nonrotational_scored=([0-9]+).*/\1/p' <<<"$allocator_log")"
+          media_balanced_scored="$(sed -nE \
+              's/.*media_balanced_scored=([0-9]+).*/\1/p' <<<"$allocator_log")"
+          for value in "$allocator_peak" "$workload_seq" "$workload_random" \
+                       "$workload_sparse" "$locality_scored" "$best_fit" \
+                       "$media_profile" "$media_rotational_scored" \
+                       "$media_nonrotational_scored" "$media_balanced_scored"; do
             test -n "$value"
           done
           test "$allocator_peak" -ge 2
@@ -1152,15 +1203,20 @@ jobs:
               ;;
           esac
           test "$(build/infilfs-tool "$image" cat /native-rw/created.txt)" = 'rewritte'
-          test "$(build/infilfs-tool "$image" cat /docs/inline.txt)" = 'native-snapshot-live-edit'
+          test "$(build/infilfs-tool "$image" cat /docs/inline.txt)" = \
+               'native-snapshot-live-edit'
           cmp "$extent_src" <(build/infilfs-tool "$image" cat /docs/extent-moved.bin)
-          test "$(build/infilfs-tool "$image" snapshot-cat before-native-rw /docs/inline.txt)" = 'native-kernel-inline'
-          cmp "$extent_src" <(build/infilfs-tool "$image" snapshot-cat before-native-rw /docs/extent.bin)
+          test "$(build/infilfs-tool "$image" snapshot-cat before-native-rw \
+              /docs/inline.txt)" = 'native-kernel-inline'
+          cmp "$extent_src" <(build/infilfs-tool "$image" snapshot-cat \
+              before-native-rw /docs/extent.bin)
           build/infilfs-scrub "$image" | tee "$RUNNER_TEMP/native-rw-scrub.txt"
           grep -Fq 'Result:              CLEAN' "$RUNNER_TEMP/native-rw-scrub.txt"
           build/infilfs-forensic "$image" > "$RUNNER_TEMP/native-tree-records.tsv"
-          grep -Fq $'current\tindex-branch-page' "$RUNNER_TEMP/native-tree-records.tsv"
-          grep -Fq $'current\tdirectory-branch-page' "$RUNNER_TEMP/native-tree-records.tsv"
+          grep -Fq $'current\tindex-branch-page' \
+              "$RUNNER_TEMP/native-tree-records.tsv"
+          grep -Fq $'current\tdirectory-branch-page' \
+              "$RUNNER_TEMP/native-tree-records.tsv"
 
           printf 'Recovering the crash-cloned open-file orphan...\n'
           mkdir -p "$crash_mount"
@@ -1168,14 +1224,21 @@ jobs:
           sudo mount -t infiltratorfs -o rw "$crash_loopdev" "$crash_mount"
           crash_mounted=1
           test ! -e "$crash_mount/native-rw/crash-held-unlinked"
-          printf 'post-crash-recovery\n' | sudo tee "$crash_mount/native-rw/post-crash-recovery" >/dev/null
+          printf 'post-crash-recovery\n' | sudo tee \
+            "$crash_mount/native-rw/post-crash-recovery" >/dev/null
           sudo umount "$crash_mount"
           crash_mounted=0
           sudo losetup -d "$crash_loopdev"
           crash_loopdev=""
-          build/infilfs-scrub "$crash_image" | tee "$RUNNER_TEMP/native-crash-recovery-scrub.txt"
-          grep -Fq 'Result:              CLEAN' "$RUNNER_TEMP/native-crash-recovery-scrub.txt"
+          build/infilfs-scrub "$crash_image" | \
+            tee "$RUNNER_TEMP/native-crash-recovery-scrub.txt"
+          grep -Fq 'Result:              CLEAN' \
+            "$RUNNER_TEMP/native-crash-recovery-scrub.txt"
 
+          # Manufacture a structurally valid, higher-generation checkpoint
+          # whose declared root points at the checkpoint block itself.  The
+          # native mount must reject that graph, select an older good replica,
+          # and heal all three checkpoint locations byte-for-byte.
           cp --reflink=auto --sparse=always "$image" "$checkpoint_image"
           python3 - "$checkpoint_image" <<'PY'
           import struct
@@ -1197,7 +1260,8 @@ jobs:
               for byte in block:
                   crc ^= byte << 56
                   for _ in range(8):
-                      crc = ((crc << 1) ^ polynomial) & 0xffffffffffffffff if crc & (1 << 63) else (crc << 1) & 0xffffffffffffffff
+                      crc = ((crc << 1) ^ polynomial) & 0xffffffffffffffff \
+                          if crc & (1 << 63) else (crc << 1) & 0xffffffffffffffff
               struct.pack_into('<Q', block, checksum_offset, crc)
               image.seek(0)
               image.write(block)
@@ -1229,9 +1293,14 @@ jobs:
           assert checkpoints[0] == checkpoints[1] == checkpoints[2]
           assert struct.unpack_from('<Q', checkpoints[0], 68)[0] != 0
           PY
-          build/infilfs-scrub "$checkpoint_image" | tee "$RUNNER_TEMP/native-checkpoint-recovery-scrub.txt"
-          grep -Fq 'Result:              CLEAN' "$RUNNER_TEMP/native-checkpoint-recovery-scrub.txt"
+          build/infilfs-scrub "$checkpoint_image" | \
+            tee "$RUNNER_TEMP/native-checkpoint-recovery-scrub.txt"
+          grep -Fq 'Result:              CLEAN' \
+            "$RUNNER_TEMP/native-checkpoint-recovery-scrub.txt"
 
+          # A higher candidate can pass checkpoint/root validation while one
+          # non-root index leaf is marked free.  Candidate selection must walk
+          # the complete tree, fall back, and heal before exposing a RW mount.
           python3 tests/native-checkpoint-free-child.py "$checkpoint_image"
           checkpoint_loopdev="$(sudo losetup --find --show "$checkpoint_image")"
           sudo mount -t infiltratorfs -o rw "$checkpoint_loopdev" "$checkpoint_mount"
@@ -1256,15 +1325,23 @@ jobs:
                   checkpoints.append(image.read(block_size))
           assert checkpoints[0] == checkpoints[1] == checkpoints[2]
           PY
-          build/infilfs-scrub "$checkpoint_image" | tee "$RUNNER_TEMP/native-deep-checkpoint-recovery-scrub.txt"
-          grep -Fq 'Result:              CLEAN' "$RUNNER_TEMP/native-deep-checkpoint-recovery-scrub.txt"
+          build/infilfs-scrub "$checkpoint_image" | \
+            tee "$RUNNER_TEMP/native-deep-checkpoint-recovery-scrub.txt"
+          grep -Fq 'Result:              CLEAN' \
+            "$RUNNER_TEMP/native-deep-checkpoint-recovery-scrub.txt"
 
+          # All three checkpoints can agree while a deeper checksummed metadata
+          # graph is still malicious. Manufacture a heavily aliased directory
+          # DAG that used to make full native tree walkers revisit the same
+          # blocks millions of times. The mount must fail quickly with
+          # corruption rather than wedge the kernel.
           cp --reflink=auto --sparse=always "$image" "$cycle_image"
           python3 tests/native-tree-alias-corruption.py "$cycle_image"
           mkdir -p "$cycle_mount"
           cycle_loopdev="$(sudo losetup --find --show "$cycle_image")"
           set +e
-          timeout --signal=TERM --kill-after=5s 10s sudo mount -t infiltratorfs -o ro "$cycle_loopdev" "$cycle_mount"
+          timeout --signal=TERM --kill-after=5s 10s \
+            sudo mount -t infiltratorfs -o ro "$cycle_loopdev" "$cycle_mount"
           cycle_rc=$?
           set -e
           if [[ "$cycle_rc" -eq 0 ]]; then
@@ -1312,8 +1389,9 @@ jobs:
           PY
           test "$(stat -c '%b' "$mountpoint/native-rw/allocation-persist")" -eq 8
           test "$(stat -c '%b' "$mountpoint/native-rw/allocation-link")" -eq 8
-          test "$(find "$mountpoint/native-rw/tree-persist" -mindepth 1 -maxdepth 1 -type f | wc -l)" -eq 180
-          test "$(sudo sha256sum "$mountpoint/native-rw/allocator-stress/proof.bin" | awk '{print $1}')" = "$allocator_stress_sha"
+          test "$(find "$mountpoint/native-rw/tree-persist" -mindepth 1 \
+              -maxdepth 1 -type f | wc -l)" -eq 180
+          test "$(sudo sha256sum               "$mountpoint/native-rw/allocator-stress/proof.bin" | awk '{print $1}')" =               "$allocator_stress_sha"
           test -p "$mountpoint/native-rw/native.fifo"
           test -S "$mountpoint/native-rw/native.socket"
           test -c "$mountpoint/native-rw/native.char"
@@ -1338,15 +1416,19 @@ jobs:
                   assert hashlib.sha256(mapped).digest() == hashlib.sha256(expected).digest()
           PY
 
+          # Unmount invalidates the checksum cache.  Time a second hash after a
+          # fresh read-only mount to prove the fix does not depend on the writer
+          # having pre-populated the cache.
           remount_read_start="$(date +%s%N)"
-          if ! remounted_sha="$(sudo timeout --signal=TERM --kill-after=10s 90s sha256sum "$mountpoint/native-rw/large.bin" | awk '{print $1}')"; then
+          if ! remounted_sha="$(sudo timeout --signal=TERM --kill-after=10s 90s \
+              sha256sum "$mountpoint/native-rw/large.bin" | awk '{print $1}')"; then
             diagnostics
             exit 1
           fi
           remount_read_end="$(date +%s%N)"
           test "$remounted_sha" = "$large_source_sha"
-          cmp "$compressed_truncate_expected" "$mountpoint/native-rw/compressed-truncate.bin"
-          cmp "$compressed_punch_expected" "$mountpoint/native-rw/compressed-punch.bin"
+          cmp "$compressed_truncate_expected"               "$mountpoint/native-rw/compressed-truncate.bin"
+          cmp "$compressed_punch_expected"               "$mountpoint/native-rw/compressed-punch.bin"
           sudo python3 - "$mountpoint/native-rw/fsync-publications.bin" <<'PY'
           import os
           import sys
@@ -1355,7 +1437,8 @@ jobs:
               data = stream.read()
           assert len(data) == 200 * 4096
           for iteration in range(200):
-              expected = bytes(((iteration * 23 + i * 7 + 3) & 0xff) for i in range(4096))
+              expected = bytes(((iteration * 23 + i * 7 + 3) & 0xff)
+                               for i in range(4096))
               offset = iteration * 4096
               assert data[offset:offset + 4096] == expected
           PY
@@ -1401,7 +1484,6 @@ jobs:
       - name: Report runtime mount test availability
         if: steps.headers.outputs.runtime_kdir == ''
         run: echo 'Native module compiled successfully; runtime load/mount skipped because matching hosted-runner kernel headers were unavailable.'
-
   local-kernel-compile:
     # This is intentionally an opt-in check for Shannon's exact local kernel.
     # Normal push/release qualification must not depend on a home runner.
