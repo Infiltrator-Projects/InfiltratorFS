@@ -38,6 +38,26 @@ done
 ! grep -Fq '@theme_' "$manager"
 ! grep -Fq '@borders' "$manager"
 
+
+# The selected storage row must remain dark/metallic. Mercedes blue is an
+# accent edge, never a full-row system selection fill.
+grep -Fq 'background-color: #11161b;' "$manager"
+grep -Fq 'background-image: linear-gradient(to right, #161c21, #0d1014);' "$manager"
+grep -Fq 'border-left-width: 3px;' "$manager"
+! grep -Fq 'rgba(0,173,239,0.14)' "$manager"
+
+# Linux mirrors LINK's LinkAboutInfo contract even though this manager is
+# Python/GTK3 rather than LINK's C shell. Keep the same rich About facts,
+# explicit emblem and family style instead of falling back to a bare dialog.
+grep -Fq 'class AboutInfo:' "$manager"
+grep -Fq "mirror of LINK's LinkAboutInfo presentation contract" "$manager"
+grep -Fq 'def show_common_about(' "$manager"
+grep -Fq 'link-about-dialog' "$manager"
+grep -Fq 'dialog.set_logo(logo)' "$manager"
+grep -Fq 'theme.load_icon(name, 96' "$manager"
+grep -Fq 'website_label="Project website"' "$manager"
+grep -Fq 'INFILTRATORFS · NATIVE FILESYSTEM' "$manager"
+
 grep -Fq 'AddFontMemResourceEx' "$windows"
 grep -Fq 'RemoveFontMemResourceEx' "$windows"
 grep -Fq 'MB Corpo S Title WEB' "$windows"

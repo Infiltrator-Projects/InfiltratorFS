@@ -106,6 +106,22 @@ class Target:
         return self.kind == "block"
 
 
+@dataclass(frozen=True)
+class AboutInfo:
+    """Python GTK3 mirror of LINK's LinkAboutInfo presentation contract."""
+
+    product_name: str
+    subtitle: str
+    version: str
+    description: str
+    release_date: str = ""
+    authors: tuple[str, ...] = ()
+    copyright: str = ""
+    website: str = ""
+    license_name: str = ""
+    license_text: str = ""
+    credits: str = ""
+
 def discover_partitions() -> list[Target]:
     result = capture("lsblk", "-J", "-b", "-o",
                      "NAME,PATH,SIZE,TYPE,RM,PKNAME,TRAN,FSTYPE,LABEL,MOUNTPOINTS")
@@ -378,6 +394,58 @@ except RuntimeError as exc:
     raise SystemExit(1) from exc
 
 
+def _about_logo():
+    """Return the explicit product emblem used by the shared LINK-style About UI."""
+    theme = Gtk.IconTheme.get_default()
+    if theme is None:
+        return None
+    for name in ("drive-harddisk", "drive-harddisk-symbolic", "media-floppy"):
+        try:
+            return theme.load_icon(name, 96, Gtk.IconLookupFlags.FORCE_SIZE)
+        except GLib.Error:
+            continue
+    return None
+
+
+def show_common_about(parent, info: AboutInfo) -> None:
+    """Render the LINK About contract with the native GTK3 shell."""
+    comments = [part for part in (info.subtitle, info.description) if part]
+    if info.release_date:
+        comments.append(f"Released: {info.release_date}")
+    if info.credits:
+        comments.append(f"Credits: {info.credits}")
+
+    dialog = Gtk.AboutDialog(
+        transient_for=parent,
+        modal=True,
+        program_name=info.product_name,
+        version=info.version,
+        comments="\n\n".join(comments),
+        website=info.website or None,
+        website_label="Project website" if info.website else None,
+        copyright=info.copyright or None,
+    )
+    dialog.set_title(f"About {info.product_name}")
+    dialog.set_destroy_with_parent(True)
+    dialog.set_resizable(True)
+    dialog.set_default_size(560, 520)
+    dialog.set_size_request(520, 480)
+    dialog.get_style_context().add_class("link-about-dialog")
+    if info.authors:
+        dialog.set_authors(list(info.authors))
+    if info.license_text:
+        dialog.set_license(info.license_text)
+        dialog.set_wrap_license(True)
+    elif info.license_name:
+        dialog.set_license(info.license_name)
+    logo = _about_logo()
+    if logo is not None:
+        dialog.set_logo(logo)
+    dialog.run()
+    dialog.destroy()
+
+
+
 CSS = b"""
 * {
     font-family: "MB Corpo S Title WEB";
@@ -501,13 +569,16 @@ separator { background-color: #353a40; }
 .device-list row:hover {
     background: rgba(255,255,255,0.028);
 }
-.device-list row:selected {
-    background-image: linear-gradient(to right, rgba(0,173,239,0.14), rgba(0,173,239,0.035));
+.device-list row:selected,
+.device-list row:selected:hover {
+    background-color: #11161b;
+    background-image: linear-gradient(to right, #161c21, #0d1014);
     border-color: #293943;
+    border-left-width: 3px;
     border-left-color: #00adef;
 }
 .device-list row:selected .device-name { color: #eef1f3; }
-.device-list row:selected .device-meta { color: #9fdcf1; }
+.device-list row:selected .device-meta { color: #98a1a9; }
 .device-row { padding: 11px 12px; }
 .device-row image { color: #c7cdd2; opacity: 0.90; }
 .device-list row:selected .device-row image { color: #00adef; opacity: 1; }
@@ -618,6 +689,18 @@ separator { background-color: #353a40; }
     background: #0a0d10;
 }
 .status-text { color: #7f8991; font-size: 11px; }
+
+.link-about-dialog {
+    background-color: #050608;
+    color: #eef1f3;
+}
+.link-about-dialog label {
+    color: #eef1f3;
+}
+.link-about-dialog image {
+    margin-top: 12px;
+    margin-bottom: 8px;
+}
 """
 
 
@@ -1548,21 +1631,28 @@ class Manager(Gtk.ApplicationWindow):
             False,
         )
 
+
     def about(self, *_):
-        dialog = Gtk.AboutDialog(
-            transient_for=self,
-            modal=True,
-            program_name=APP_NAME,
+        info = AboutInfo(
+            product_name=APP_NAME,
+            subtitle="INFILTRATORFS · NATIVE FILESYSTEM",
             version=package_version(),
-            comments=(
-                "Native Linux management for InfiltratorFS volumes.\n"
+            description=(
+                "Native Linux management for InfiltratorFS volumes. "
                 "Uses the native VFS/DKMS driver; FUSE is not the product path."
             ),
+            authors=("Shannon Smith",),
+            copyright="Copyright © 2026 Shannon Smith",
             website="https://github.com/Infiltrator-Projects/InfiltratorFS",
-            license_type=Gtk.License.GPL_3_0,
+            license_name="GPL-3.0-or-later",
+            license_text=(
+                "InfiltratorFS is free software licensed under the GNU General Public "
+                "License version 3 or, at your option, any later version "
+                "(GPL-3.0-or-later). See LICENSE in the source package for the complete licence text."
+            ),
+            credits="Shannon Smith — Author and project maintainer",
         )
-        dialog.run()
-        dialog.destroy()
+        show_common_about(self, info)
 
 
 class Application(Gtk.Application):
