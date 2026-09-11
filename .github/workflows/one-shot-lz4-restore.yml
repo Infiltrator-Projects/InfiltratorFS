@@ -41,7 +41,7 @@ jobs:
               p = Path(path)
               s = p.read_text()
               if old not in s:
-                  raise SystemExit(f"guard failed in {path}: {old[:100]!r}")
+                  raise SystemExit(f"guard failed in {path}: {old[:120]!r}")
               s2 = s.replace(old, new, count)
               if s2 == s:
                   raise SystemExit(f"no change made in {path}")
@@ -49,20 +49,8 @@ jobs:
 
           cmake = Path('CMakeLists.txt')
           s = cmake.read_text()
-          anchor = '''if(NOT TARGET InfiltratrCommon::Portable OR
-             NOT TARGET InfiltratrCommon::Gui)
-              message(FATAL_ERROR
-                  "Infiltratr Common ${INFILTRATR_COMMON_REQUIRED_VERSION} is required")
-          endif()
-
-          # Release 0.18.34'''
-          block = '''if(NOT TARGET InfiltratrCommon::Portable OR
-             NOT TARGET InfiltratrCommon::Gui)
-              message(FATAL_ERROR
-                  "Infiltratr Common ${INFILTRATR_COMMON_REQUIRED_VERSION} is required")
-          endif()
-
-          # LZ4 codec identifier 1 remains a retained, non-default Format 0.18
+          marker = '# Release 0.18.34 standardises InfiltratorFS desktop applications on the'
+          lz4_block = '''# LZ4 codec identifier 1 remains a retained, non-default Format 0.18
           # interoperability representation. Pin it so every userspace adapter
           # decodes the same byte stream; automatic writes continue to use IAC1.
           include(FetchContent)
@@ -77,26 +65,24 @@ jobs:
               GIT_SHALLOW TRUE)
           FetchContent_MakeAvailable(infilfs_lz4)
 
-          # Release 0.18.34'''
+          '''
           if 'FetchContent_Declare(infilfs_lz4' not in s:
-              if anchor not in s:
-                  raise SystemExit('CMake Infiltratr Common anchor changed')
-              s = s.replace(anchor, block, 1)
+              if marker not in s:
+                  raise SystemExit('CMake LZ4 insertion anchor changed')
+              s = s.replace(marker, lz4_block + marker, 1)
           old_link = 'target_link_libraries(infilfs_core PUBLIC InfiltratrCommon::Portable)'
           new_link = 'target_link_libraries(infilfs_core PUBLIC InfiltratrCommon::Portable lz4_static)'
           if old_link in s:
               s = s.replace(old_link, new_link, 1)
           elif new_link not in s:
               raise SystemExit('infilfs_core link line changed')
-          test_block = '''
-          add_executable(infilfs-lz4-compat-test tests/lz4-compat.c)
+          if 'infilfs-lz4-compat-test' not in s:
+              s += '''\nadd_executable(infilfs-lz4-compat-test tests/lz4-compat.c)
           target_include_directories(infilfs-lz4-compat-test PRIVATE include)
           target_link_libraries(infilfs-lz4-compat-test PRIVATE lz4_static)
           infilfs_enable_warnings(infilfs-lz4-compat-test)
           add_test(NAME lz4-compat COMMAND infilfs-lz4-compat-test)
           '''
-          if 'infilfs-lz4-compat-test' not in s:
-              s += test_block
           cmake.write_text(s)
 
           replace('include/infilfs/format.h',
@@ -106,8 +92,7 @@ jobs:
                   '#define INFILFS_COMPRESSION_NONE 0u\n#define INFILFS_COMPRESSION_IAC1 2u',
                   '#define INFILFS_COMPRESSION_NONE 0u\n#define INFILFS_COMPRESSION_LZ4 1u\n#define INFILFS_COMPRESSION_IAC1 2u')
 
-          replace('src/volume.c',
-                  '#include <string.h>\n',
+          replace('src/volume.c', '#include <string.h>\n',
                   '#include <string.h>\n#include <lz4.h>\n')
           replace('src/volume.c',
                   '''    if (codec != INFS_COMPRESSION_IAC1 || !stored ||
@@ -127,8 +112,7 @@ jobs:
                   decoded = (int)infs_iac1_decompress(
                       compressed, stored, plain, logical_bytes);''')
 
-          replace('kernel/infiltratorfs_internal.h',
-                  '#include <linux/list.h>\n',
+          replace('kernel/infiltratorfs_internal.h', '#include <linux/list.h>\n',
                   '#include <linux/list.h>\n#include <linux/lz4.h>\n')
           replace('kernel/infiltratorfs_core.c',
                   '''    if (codec != INFILFS_COMPRESSION_IAC1 || !stored ||
@@ -158,8 +142,8 @@ jobs:
           int main(void)
           {
               uint8_t input[8192];
-              char encoded[LZ4_COMPRESSBOUND(sizeof(input))];
-              char decoded[sizeof(input)];
+              char encoded[LZ4_COMPRESSBOUND(8192)];
+              char decoded[8192];
               int encoded_bytes;
               int decoded_bytes;
               size_t i;
@@ -183,83 +167,82 @@ jobs:
           }
           '''.replace('          ', ''))
 
-          readme = Path('README.md')
-          rs = readme.read_text()
-          rs = rs.replace(
+          # Keep documentation aligned with the actual codec contract without
+          # making documentation wording a build-time source patch dependency.
+          p = Path('README.md')
+          t = p.read_text()
+          t = t.replace(
               '- adaptive bounded per-extent compression using native IAC1 v1;',
               '- adaptive bounded per-extent compression using native IAC1 v1, with LZ4 retained as a non-default interoperability/reference representation;')
-          readme.write_text(rs)
+          p.write_text(t)
 
-          comp = Path('docs/COMPRESSION.md')
-          cs = comp.read_text()
-          pairs = [
-              ('IAC1 is the sole bounded compression codec accepted by Format 0.18.',
-               'IAC1 is the InfiltratorFS-native bounded codec selected for Format 0.18. LZ4\n(codec identifier 1) remains supported as a development/reference and\ninteroperability codec, but new automatic writes do not select LZ4.'),
-              ('The qualification runs the production selected-mode IAC1 encoder over the same\ncorpus and emits per-class and aggregate size plus encode/decode throughput\ntelemetry. Comparative codecs may be measured by external research tooling,\nbut they are not Format 0.18 dependencies and are not required to mount or\nrecover an InfiltratorFS volume.',
-               'The qualification also runs LZ4 over the same corpus and emits per-class and\naggregate size plus encode/decode throughput telemetry. LZ4 remains the\nin-tree reference baseline. Zstandard remains useful as an external research\nbaseline, but it is not a Format 0.18 codec dependency and is deliberately not\nrequired to mount or recover an InfiltratorFS volume.'),
-              ('For Format 0.18, codec identifier 2 means IAC1 v1. Every other nonzero codec\nidentifier is invalid. The codec identifier, stored-byte count and logical\nextent length are sufficient to locate and decode each bounded stream.',
-               'For Format 0.18, codec identifier 2 means IAC1 v1 and codec identifier 1 means\nthe retained LZ4 representation. The codec identifier, stored-byte count and\nlogical extent length are sufficient to locate and decode each bounded stream.'),
-              ('## Relationship to other codecs\n\nIAC1 is the only compressed on-disk representation. Comparative codecs may be\nused by external research tooling, but they are not dependencies, accepted\nextent formats, or release qualification baselines. IAC1 should justify itself\nat filesystem level by combining:',
-               '## Relationship to LZ4 and other codecs\n\nLZ4 remains useful as an in-tree reference and interoperability/development codec. It should continue to provide a benchmark baseline for ratio, encode throughput and decode throughput.\n\nIt is not the design target for InfiltratorFS automatic compression. The purpose of IAC1 is not to recreate an older general-purpose codec under a new name. IAC1 should justify itself at filesystem level by combining:'),
-              ('### Replace IAC1 with another codec\n\nRejected. The evidence does not show that IAC1\'s on-disk design is invalid. It\nshows that IAC1\'s current encoder and synchronous kernel integration are\nexpensive.',
-               '### Make LZ4 the automatic default\n\nRejected as the first response to this profile. LZ4 remains a useful in-tree reference codec, but the evidence does not show that IAC1\'s on-disk design is invalid. It shows that IAC1\'s current encoder and synchronous kernel integration are expensive.')
-          ]
-          for old, new in pairs:
-              if old not in cs:
-                  raise SystemExit(f'compression doc guard changed: {old[:60]}')
-              cs = cs.replace(old, new, 1)
-          comp.write_text(cs)
+          p = Path('docs/COMPRESSION.md')
+          t = p.read_text()
+          t = t.replace(
+              'IAC1 is the sole bounded compression codec accepted by Format 0.18.',
+              'IAC1 is the InfiltratorFS-native bounded codec selected for Format 0.18. LZ4\n(codec identifier 1) remains supported as a development/reference and\ninteroperability codec, but new automatic writes do not select LZ4.')
+          t = t.replace(
+              'For Format 0.18, codec identifier 2 means IAC1 v1. Every other nonzero codec\nidentifier is invalid.',
+              'For Format 0.18, codec identifier 2 means IAC1 v1 and codec identifier 1 means\nthe retained LZ4 representation.')
+          t = t.replace('## Relationship to other codecs', '## Relationship to LZ4 and other codecs')
+          p.write_text(t)
 
           for p in Path('docs').glob('*.md'):
-              ds = p.read_text()
-              old = 'Format 0.18 accepts IAC1 v1 (codec ID 2) as its sole compressed representation; other codec IDs are invalid.'
-              if old in ds:
-                  ds = ds.replace(old, 'Current automatic writes use IAC1 v1 (codec ID 2); LZ4 (codec ID 1) remains a supported non-default representation.')
-                  p.write_text(ds)
+              t = p.read_text()
+              t = t.replace(
+                  'Format 0.18 accepts IAC1 v1 (codec ID 2) as its sole compressed representation; other codec IDs are invalid.',
+                  'Current automatic writes use IAC1 v1 (codec ID 2); LZ4 (codec ID 1) remains a supported non-default representation.')
+              p.write_text(t)
 
           policy = Path('tests/root-readiness-policy.sh')
-          ps = policy.read_text()
+          t = policy.read_text()
           marker = "grep -Fq 'infilfs-compression' \"$root/CMakeLists.txt\"\n"
-          if 'INFS_COMPRESSION_LZ4' not in ps:
-              if marker not in ps:
+          if 'INFS_COMPRESSION_LZ4' not in t:
+              if marker not in t:
                   raise SystemExit('root-readiness compression anchor changed')
-              ps = ps.replace(marker, marker + "grep -Fq 'INFS_COMPRESSION_LZ4' \"$root/include/infilfs/format.h\"\n", 1)
-          policy.write_text(ps)
+              t = t.replace(marker, marker +
+                  "grep -Fq 'INFS_COMPRESSION_LZ4' \"$root/include/infilfs/format.h\"\n", 1)
+          policy.write_text(t)
 
-          def inject_before(path, needle, root_mode=False):
+          def add_modprobes(path, needle, root_mode=False, all_sites=False):
               p = Path(path)
-              s = p.read_text()
-              if 'modprobe lz4_decompress' in s:
-                  return
-              idx = s.find(needle)
-              if idx < 0:
-                  raise SystemExit(f'insmod anchor missing in {path}')
-              line_start = s.rfind('\n', 0, idx) + 1
-              indent = s[line_start:idx]
+              t = p.read_text()
               prefix = '' if root_mode else 'sudo '
-              insert = (f'{indent}{prefix}modprobe lz4_compress 2>/dev/null || true\n'
-                        f'{indent}{prefix}modprobe lz4_decompress 2>/dev/null || true\n')
-              s = s[:line_start] + insert + s[line_start:]
-              p.write_text(s)
+              pos = 0
+              changed = False
+              while True:
+                  idx = t.find(needle, pos)
+                  if idx < 0:
+                      break
+                  line_start = t.rfind('\n', 0, idx) + 1
+                  before = t[max(0, line_start - 180):line_start]
+                  if 'modprobe lz4_decompress' not in before:
+                      indent = t[line_start:idx]
+                      ins = (f'{indent}{prefix}modprobe lz4_compress 2>/dev/null || true\n'
+                             f'{indent}{prefix}modprobe lz4_decompress 2>/dev/null || true\n')
+                      t = t[:line_start] + ins + t[line_start:]
+                      pos = line_start + len(ins) + len(needle)
+                      changed = True
+                  else:
+                      pos = idx + len(needle)
+                  if not all_sites:
+                      break
+              if needle not in t:
+                  raise SystemExit(f'insmod anchor missing in {path}')
+              if changed:
+                  p.write_text(t)
 
-          inject_before('.github/workflows/heavy-qualification.yml', 'if ! sudo insmod kernel/infiltratorfs.ko; then')
-          # Heavy qualification has a second independent insmod site; patch it too.
-          hp = Path('.github/workflows/heavy-qualification.yml')
-          hs = hp.read_text()
-          target = '          if ! sudo insmod kernel/infiltratorfs.ko; then'
-          first = hs.find(target)
-          second = hs.find(target, first + 1)
-          if second >= 0:
-              before = hs[max(0, second-180):second]
-              if 'modprobe lz4_decompress' not in before:
-                  insert = '          sudo modprobe lz4_compress 2>/dev/null || true\n          sudo modprobe lz4_decompress 2>/dev/null || true\n'
-                  hs = hs[:second] + insert + hs[second:]
-                  hp.write_text(hs)
-          inject_before('.github/workflows/kernel-module.yml', 'if ! sudo insmod kernel/infiltratorfs.ko; then')
-          inject_before('tests/native-complete-qualification.sh', 'if ! sudo insmod "$ROOT/kernel/infiltratorfs.ko"; then')
-          inject_before('tests/native-defrag-qualification.sh', 'if ! sudo insmod "$MODULE"; then')
-          inject_before('tests/native-media-placement-qualification.sh', 'if ! sudo insmod "$MODULE"; then')
-          inject_before('tests/root-boot-qemu.sh', 'insmod "$module"', root_mode=True)
+          add_modprobes('.github/workflows/heavy-qualification.yml',
+                        'if ! sudo insmod kernel/infiltratorfs.ko; then', all_sites=True)
+          add_modprobes('.github/workflows/kernel-module.yml',
+                        'if ! sudo insmod kernel/infiltratorfs.ko; then', all_sites=True)
+          add_modprobes('tests/native-complete-qualification.sh',
+                        'if ! sudo insmod "$ROOT/kernel/infiltratorfs.ko"; then')
+          add_modprobes('tests/native-defrag-qualification.sh',
+                        'if ! sudo insmod "$MODULE"; then')
+          add_modprobes('tests/native-media-placement-qualification.sh',
+                        'if ! sudo insmod "$MODULE"; then')
+          add_modprobes('tests/root-boot-qemu.sh', 'insmod "$module"', root_mode=True)
           PY
 
       - name: Build and test restored codec
@@ -274,7 +257,8 @@ jobs:
           kdir="/lib/modules/$(uname -r)/build"
           make -C kernel clean KDIR="$kdir" || true
           make -C kernel KDIR="$kdir"
-          modinfo kernel/infiltratorfs.ko | grep -Eq 'lz4|depends:'
+          grep -Fq 'LZ4_decompress_safe' kernel/infiltratorfs_core.c
+          grep -Fq 'INFS_COMPRESSION_LZ4' include/infilfs/format.h
 
       - name: Commit restored codec and remove one-shot workflow
         shell: bash
