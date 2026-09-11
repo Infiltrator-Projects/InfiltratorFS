@@ -7,15 +7,20 @@ Historical results apply only to the source commit on which they ran. A later gr
 
 ## Qualification classes
 
-- **Build and conformance** — ordinary broad CI: GCC/Linux, Clang, sanitizers, static analysis, Windows portability/interoperability, policy guards and package construction.
+- **Build and conformance** — ordinary broad CI: GCC/Linux, Clang, sanitizers, static analysis, Windows portability/interoperability, policy guards and package construction. Every automatic job is capped at 10 minutes.
 - **Native Linux kernel module** — mounted kernel qualification for relevant kernel/core/package changes. It builds the module/DKMS source and, when the running-kernel environment is available, exercises native mounted behaviour.
-- **Native resize qualification** — dedicated mounted grow/shrink qualification independent of the quota gate.
-- **Heavy filesystem qualification** — million-file/1 TiB scale plus near-full mixed-workload endurance. This is weekly/manual milestone evidence, not ordinary per-push CI and not an automatic prerequisite for every release.
-- **Formatter integration qualification** — pinned libblockdev/UDisks/GNOME Disks integration build and end-to-end formatter/probe checks.
+- **Native resize qualification** — dedicated mounted grow/shrink qualification independent of the quota gate; automatic execution is capped at 10 minutes.
+- **Heavy filesystem qualification** — million-file/1 TiB scale plus near-full mixed-workload endurance. This is manual-only milestone evidence because it intentionally exceeds the automatic CI ceiling.
+- **Real root-boot qualification** — real UEFI boot, live-root package upgrade, forced power-loss recovery and repeated scrub. This is manual-only and is run when root/boot/recovery risk warrants it.
+- **Formatter integration qualification** — pinned libblockdev/UDisks/GNOME Disks integration build and end-to-end formatter/probe checks. The full upstream-stack build is manual-only because it intentionally exceeds the automatic CI ceiling.
 - **Physical partition qualification** — explicitly destructive operator-run qualification on dedicated media; never unattended ordinary CI.
-- **Release publication gate** — requires successful same-source release prerequisites, then installs the generated package, verifies native filesystem registration, mounts a real Format 0.18 image, performs non-zero write/read verification, syncs, unmounts and requires a CLEAN scrub. It also rejects restoration of the legacy FUSE product path.
+- **Release publication gate** — requires successful same-source automatic release prerequisites, then installs the generated package, verifies native filesystem registration, mounts a real Format 0.18 image, performs non-zero write/read verification, syncs, unmounts and requires a CLEAN scrub. It also rejects restoration of the legacy FUSE product path. Long manual qualifications are supporting evidence, not mandatory automatic release blockers.
 
 A workflow should fail closed when a qualification class claims mounted coverage but the required running-kernel environment is unavailable. Merely skipping mounted work must not be treated as equivalent evidence.
+
+## CI duration policy
+
+Automatic qualification and conformance jobs are hard-capped at 10 minutes where they are part of the ordinary CI set. A test that intrinsically needs more than 10 minutes must be a manual-only qualification and is launched deliberately when its coverage is warranted. The current long-running manual set is the real UEFI/root crash-recovery qualification, the full GNOME/libblockdev/UDisks formatter build, and the million-file/1 TiB plus endurance qualification.
 
 ## Current development evidence boundary
 
@@ -27,7 +32,7 @@ Exact source `c1dd5229e9c42e01ba2d9ab93ef79a6d6521e288` passed dedicated **Nativ
 
 The run built the running-kernel module and resize tools, shrank a 256 MiB filesystem to 128 MiB, verified committed geometry, wrote and hash-recorded live data, grew back to 256 MiB, wrote additional data, refused an unsafe 64 MiB shrink with live allocation beyond the requested boundary, preserved geometry after refusal, unmounted, scrubbed CLEAN, remounted read-only and reverified both data hashes.
 
-This evidence does not depend on the quota gate and does not include the weekly/manual million-file/1 TiB or endurance workloads.
+This evidence does not depend on the quota gate and does not include the manual million-file/1 TiB or endurance workloads.
 
 ### Quotas
 
@@ -67,19 +72,13 @@ Detailed step logs and performance telemetry remain in the corresponding GitHub 
 1. A checked roadmap capability needs implementation plus the qualification appropriate to that capability.
 2. Portable/build CI, mounted native qualification, heavy stress and destructive physical-media qualification are distinct evidence classes.
 3. A failure or timeout in an ordered mounted gate prevents later skipped steps from being claimed for that exact source.
-4. Heavy qualification remains weekly/manual unless project policy is deliberately changed; it must not be quietly reintroduced as ordinary per-release work.
-5. Release publication must never treat a skipped mounted qualification as equivalent to a mounted pass.
+4. Long qualification must remain manual-only when it intrinsically exceeds 10 minutes; it must not be quietly reintroduced as ordinary push, scheduled or per-release work.
+5. Release publication must never treat a skipped mounted automatic qualification as equivalent to a mounted pass.
 6. Exact run IDs, commit hashes and historical metrics belong here, not in the README, ROADMAP or architecture documents.
 7. Workflow YAML is executable policy. If this ledger disagrees with the workflows, fix the disagreement rather than maintaining two competing descriptions.
 
+### Linux system-root qualification
 
-### Linux system-root release gate
+The real UEFI root-boot workflow constructs an EFI + ext4 `/boot` + InfiltratorFS `/` VM, reaches systemd with InfiltratorFS as `/`, exercises metadata and dpkg workloads, installs a newer InfiltratorFS package while the root is live, rebuilds initramfs, reboots, forces power loss during writes, requires an offline CLEAN scrub, boots the same root again, verifies dpkg and metadata state, and requires a final CLEAN scrub.
 
-Every release-source commit must now pass the dedicated root-volume gate and the
-real UEFI root-boot gate in addition to ordinary build/conformance and native
-kernel qualification. The boot gate constructs an EFI + ext4 `/boot` +
-InfiltratorFS `/` VM, reaches systemd with InfiltratorFS as `/`, exercises
-metadata and dpkg workloads, installs a newer InfiltratorFS package while the
-root is live, rebuilds initramfs, reboots, forces power loss during writes,
-requires an offline CLEAN scrub, boots the same root again, verifies dpkg and
-metadata state, and requires a final CLEAN scrub.
+Because this qualification intentionally exceeds 10 minutes, it is manual-only. Run it deliberately for changes that materially affect root mounting, boot/initramfs, package upgrade semantics, crash recovery, checkpoint recovery or similarly high-risk paths. Historical root-boot evidence remains valid only for the exact source on which it ran; ordinary fast CI does not silently inherit it.
