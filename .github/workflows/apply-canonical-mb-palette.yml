@@ -1,0 +1,42 @@
+name: Apply canonical MB palette repair
+
+on:
+  push:
+    paths:
+      - '.github/workflows/apply-canonical-mb-palette.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Restore exact MBLINK palette constants
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('tools/infiltratorfs-manager')
+          s = p.read_text(encoding='utf-8')
+          s = s.replace('#17191d', '#171b20')
+          s = s.replace('#0c0f13', '#0e1115')
+          s = s.replace('#8f979e', '#98a1a9')
+          s = s.replace('#9ca4ab', '#98a1a9')
+          p.write_text(s, encoding='utf-8')
+          PY
+          bash tests/ui-font-policy.sh .
+          python3 -m py_compile tools/infiltratorfs-manager
+      - name: Commit repair and remove applicator
+        run: |
+          set -euo pipefail
+          git config user.name 'Shannon Smith'
+          git config user.email 'infiltratr@yandex.com'
+          git rm .github/workflows/apply-canonical-mb-palette.yml
+          git add tools/infiltratorfs-manager
+          git commit -m 'Restore canonical MBLINK palette constants'
+          git push origin HEAD:main
