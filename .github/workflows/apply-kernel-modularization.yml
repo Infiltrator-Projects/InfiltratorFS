@@ -10,7 +10,7 @@ permissions:
   contents: write
 
 jobs:
-  refactor:
+  stage-workflow-blob:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -20,34 +20,32 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Extract checksum cache object
-        run: python3 tools/kernel-checksum-cache-object-refactor.py
-
-      - name: Extract Linux metadata codec object
-        run: python3 tools/kernel-linux-meta-codec-object-refactor.py
-
-      - name: Enforce kernel maintainability policy
-        run: bash tests/native-kernel-maintainability-policy.sh .
-
-      - name: Show structural delta
-        run: |
-          git diff --stat
-          grep '^infiltratorfs-y :=' kernel/Makefile
-          wc -c kernel/infiltratorfs_rw_data.inc kernel/infiltratorfs_linux_meta.inc kernel/infiltratorfs_rw.inc
-
-      - name: Commit behaviour-preserving extraction to main
+      - name: Generate exact kernel workflow with extracted sources
         shell: bash
         run: |
-          # GITHUB_TOKEN cannot update another workflow file. Keep that one
-          # manifest change for the connector to apply immediately afterward;
-          # the source/Kbuild extraction itself is committed here unchanged.
-          git checkout -- .github/workflows/kernel-module.yml
-          if git diff --quiet; then
-            echo 'No modularization changes produced.'
-            exit 1
-          fi
+          python3 - <<'PY'
+          from pathlib import Path
+          source = Path('.github/workflows/kernel-module.yml').read_text()
+          anchor = '             kernel/infiltratorfs_directory_tree.c \\\n'
+          addition = (
+              anchor +
+              '             kernel/infiltratorfs_checksum_cache.c \\\n' +
+              '             kernel/infiltratorfs_linux_meta_codec.c \\\n'
+          )
+          if 'kernel/infiltratorfs_checksum_cache.c' in source:
+              raise SystemExit('kernel workflow already contains extracted source entries')
+          if source.count(anchor) != 1:
+              raise SystemExit('expected DKMS copy anchor exactly once')
+          generated = source.replace(anchor, addition, 1)
+          Path('tools/generated-kernel-module.yml').write_text(generated)
+          PY
+          diff -u .github/workflows/kernel-module.yml tools/generated-kernel-module.yml || true
+
+      - name: Commit staged blob outside workflows
+        shell: bash
+        run: |
           git config user.name 'Shannon Smith'
           git config user.email 'infiltratr@yandex.com'
-          git add -A
-          git commit -m 'Extract kernel checksum and Linux metadata codec objects'
+          git add tools/generated-kernel-module.yml
+          git commit -m 'Stage exact kernel workflow manifest blob'
           git push origin HEAD:main
