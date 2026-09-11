@@ -2,11 +2,9 @@
 name: Heavy filesystem qualification
 
 # Million-file/1 TiB and long endurance testing is milestone evidence, not
-# ordinary development CI. Run it weekly for regression coverage or explicitly
-# when a maintainer wants a new heavy qualification record.
+# ordinary development CI. It is manual-only because it intentionally exceeds
+# the ten-minute automatic CI ceiling.
 on:
-  schedule:
-    - cron: "43 2 * * 0"
   workflow_dispatch:
 
 permissions:
