@@ -1,20 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 name: Linux root boot qualification
 
+# Real UEFI boot, live-root package upgrade, forced power-loss recovery and
+# repeated scrub intentionally exceed the ten-minute automatic CI ceiling.
+# Run this workflow manually when root/boot/recovery risk warrants it.
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'kernel/**'
-      - 'src/**'
-      - 'include/**'
-      - 'tools/**'
-      - 'tests/**'
-      - 'packaging/**'
-      - 'CMakeLists.txt'
-      - '.github/release-trigger'
-      - '.github/workflows/root-boot-qualification.yml'
   workflow_dispatch:
 
 permissions:
