@@ -1,0 +1,12 @@
+/home/runner/work/InfiltratorFS/InfiltratorFS/kernel/infiltratorfs_core.o
+/home/runner/work/InfiltratorFS/InfiltratorFS/kernel/infiltratorfs_crypto.o
+/home/runner/work/InfiltratorFS/InfiltratorFS/kernel/infiltratorfs_allocation_map.o
+/home/runner/work/InfiltratorFS/InfiltratorFS/kernel/infiltratorfs_resize.o
+/home/runner/work/InfiltratorFS/InfiltratorFS/kernel/infiltratorfs_index_tree.o
+/home/runner/work/InfiltratorFS/InfiltratorFS/kernel/infiltratorfs_parallel_alloc.o
+/home/runner/work/InfiltratorFS/InfiltratorFS/kernel/infiltratorfs_allocation_publish.o
+/home/runner/work/InfiltratorFS/InfiltratorFS/kernel/infiltratorfs_read_cache.o
+/home/runner/work/InfiltratorFS/InfiltratorFS/kernel/infiltratorfs_pagecache.o
+/home/runner/work/InfiltratorFS/InfiltratorFS/kernel/infiltratorfs_directory_tree.o
+/home/runner/work/InfiltratorFS/InfiltratorFS/kernel/infiltratorfs_checksum_cache.o
+/home/runner/work/InfiltratorFS/InfiltratorFS/kernel/infiltratorfs_linux_meta_codec.o

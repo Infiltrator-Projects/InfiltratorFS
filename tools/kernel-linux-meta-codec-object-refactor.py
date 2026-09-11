@@ -35,7 +35,7 @@ layout_block, text = take_before(
 uuid_block, text = take_before(
     text,
     'static void infilfs_linux_meta_uuid(',
-    'static int infilfs_linux_meta_find_child(')
+    '/* O(1) UUID-sidecar lookup after one bounded per-mount cache build. */')
 validate_block, text = take_before(
     text,
     'static int infilfs_linux_meta_validate_blob(',
