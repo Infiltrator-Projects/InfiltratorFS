@@ -38,6 +38,10 @@ jobs:
       - name: Commit behaviour-preserving extraction to main
         shell: bash
         run: |
+          # GITHUB_TOKEN cannot update another workflow file. Keep that one
+          # manifest change for the connector to apply immediately afterward;
+          # the source/Kbuild extraction itself is committed here unchanged.
+          git checkout -- .github/workflows/kernel-module.yml
           if git diff --quiet; then
             echo 'No modularization changes produced.'
             exit 1
