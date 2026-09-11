@@ -16,9 +16,10 @@ test "$(grep -Fc 'sync_blockdev(tx->sb->s_bdev)' <<<"$commit_body")" -eq 2
 grep -Fq 'infilfs_rw_allocation_map_publish(tx, &next_allocation)' <<<"$commit_body"
 grep -Fq 'for (n = 1; n < INFILFS_CHECKPOINT_COUNT; ++n)' <<<"$commit_body"
 
-# Transaction durability and synchronization ownership are one contract: make
-# the Native workflow reject undocumented lock-order or composition growth at
-# the same policy boundary that protects checkpoint publication semantics.
+# Transaction durability, synchronization ownership and source-tree hygiene are
+# one contract: automatic native qualification rejects composition growth and
+# any generated Kbuild output accidentally committed beside the driver source.
 bash "$root/tests/native-kernel-maintainability-policy.sh" "$root"
+bash "$root/tests/native-kernel-repository-hygiene-policy.sh" "$root"
 
 printf 'Native transaction durability policy guard passed.\n'
