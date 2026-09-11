@@ -39,6 +39,68 @@ static HANDLE WINAPI infs_discovery_CreateFileW(
     return handle;
 }
 
+/*
+ * Canonical MBLINK visual contract for the native Windows shell.
+ *
+ * The UI implementation in infiltratorfs-windows.c intentionally uses a
+ * small set of platform colours and native controls.  Keep the implementation
+ * untouched and map those platform colour slots onto the same fixed Mercedes
+ * palette used by MBLINK instead of inheriting the user's Windows light/dark
+ * application theme.
+ *
+ *   background  #050608
+ *   chrome      #0E1115
+ *   panel       #171B20
+ *   silver      #EEF1F3
+ *   muted       #98A1A9
+ *   border      #353A40
+ *   active      #00ADEF
+ */
+static COLORREF infs_mb_rgb(BYTE red, BYTE green, BYTE blue)
+{
+    return (COLORREF)((DWORD)red |
+                      ((DWORD)green << 8u) |
+                      ((DWORD)blue << 16u));
+}
+
+static COLORREF infs_mb_rgb_map(BYTE red, BYTE green, BYTE blue)
+{
+    if ((red == 31u && green == 31u && blue == 31u) ||
+        (red == 246u && green == 247u && blue == 249u))
+        return infs_mb_rgb(5u, 6u, 8u);          /* #050608 background */
+    if ((red == 43u && green == 43u && blue == 43u) ||
+        (red == 255u && green == 255u && blue == 255u))
+        return infs_mb_rgb(23u, 27u, 32u);       /* #171B20 panel */
+    if ((red == 245u && green == 245u && blue == 245u) ||
+        (red == 32u && green == 33u && blue == 36u))
+        return infs_mb_rgb(238u, 241u, 243u);    /* #EEF1F3 silver */
+    if ((red == 184u && green == 184u && blue == 184u) ||
+        (red == 95u && green == 99u && blue == 104u))
+        return infs_mb_rgb(152u, 161u, 169u);    /* #98A1A9 muted */
+    return infs_mb_rgb(red, green, blue);
+}
+
+/* Force only the app-theme query to dark. Other registry reads retain their
+ * normal behaviour if the included Windows shell adds any in the future. */
+static LONG WINAPI infs_mb_RegGetValueW(
+    HKEY key,
+    LPCWSTR subkey,
+    LPCWSTR value_name,
+    DWORD flags,
+    LPDWORD type,
+    PVOID data,
+    LPDWORD data_size)
+{
+    LONG status = RegGetValueW(key, subkey, value_name, flags,
+                               type, data, data_size);
+    if (status == ERROR_SUCCESS && value_name != NULL && data != NULL &&
+        data_size != NULL && *data_size >= sizeof(DWORD) &&
+        wcscmp(value_name, L"AppsUseLightTheme") == 0) {
+        *(DWORD *)data = 0u;
+    }
+    return status;
+}
+
 /* The transfer application is a bulk-copy adapter, so keep a much larger
  * bounded transaction open than the interactive Linux/FUSE default. Without
  * this policy, infs_write_file_buffered() immediately publishes every 4 MiB
@@ -67,6 +129,10 @@ static infs_status infs_windows_volume_open_storage(
 }
 
 #define CreateFileW infs_discovery_CreateFileW
+#define RegGetValueW infs_mb_RegGetValueW
+#undef RGB
+#define RGB(red, green, blue) \
+    infs_mb_rgb_map((BYTE)(red), (BYTE)(green), (BYTE)(blue))
 #define infs_win32_storage_open_region infs_win32_storage_open_partition_region
 #define infs_volume_open_storage infs_windows_volume_open_storage
 #include "infiltratorfs-windows.c"
