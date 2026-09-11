@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 from pathlib import Path
 
 root = Path('.')
@@ -63,10 +64,13 @@ if anchor not in internal:
 internal_path.write_text(internal.replace(anchor, extra, 1))
 
 make = make_path.read_text()
-old_line = 'infiltratorfs-y := infiltratorfs_core.o infiltratorfs_allocation_map.o infiltratorfs_resize.o infiltratorfs_index_tree.o infiltratorfs_parallel_alloc.o infiltratorfs_allocation_publish.o infiltratorfs_read_cache.o infiltratorfs_pagecache.o infiltratorfs_directory_tree.o'
-new_line = old_line + ' infiltratorfs_checksum_cache.o'
-if old_line not in make:
+old_line = next((line for line in make.splitlines()
+                 if line.startswith('infiltratorfs-y := ')), None)
+if not old_line:
     raise SystemExit('Kbuild object list not found')
+if 'infiltratorfs_checksum_cache.o' in old_line:
+    raise SystemExit('checksum cache object already present in Kbuild')
+new_line = old_line + ' infiltratorfs_checksum_cache.o'
 make = make.replace(old_line, new_line, 1)
 make = make.replace('#   infiltratorfs_read_cache.c owns verified read cursor/page caching.\n',
                     '#   infiltratorfs_read_cache.c owns verified read cursor/page caching.\n#   infiltratorfs_checksum_cache.c owns bounded checksum cursor/group caches.\n', 1)
