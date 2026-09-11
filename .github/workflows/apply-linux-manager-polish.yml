@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'tools/apply-linux-manager-polish.py'
+      - '.github/workflows/apply-linux-manager-polish.yml'
   workflow_dispatch:
 
 permissions:
