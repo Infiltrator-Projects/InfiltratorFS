@@ -1,0 +1,53 @@
+name: Prepare 0.18.51 release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/prepare-0.18.51.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Prepare exact 0.18.51 release source
+        shell: bash
+        run: |
+          set -euo pipefail
+          sed -i 's/project(InfiltratorFS VERSION 0\.18\.50 LANGUAGES C)/project(InfiltratorFS VERSION 0.18.51 LANGUAGES C)/' CMakeLists.txt
+          sed -i 's/# Development qualification anchor: 0\.18\.50/# Development qualification anchor: 0.18.51/' CMakeLists.txt
+          sed -i 's/\*\*Current source version:\*\* 0\.18\.50 (Format 0\.18)<br>/\*\*Current source version:\*\* 0.18.51 (Format 0.18)<br>/' README.md
+          sed -i 's/\*\*Current source:\*\* 0\.18\.50<br>/\*\*Current source:\*\* 0.18.51<br>/' README.md
+          sed -i 's/\*\*Latest published release:\*\* v0\.18\.49<br>/\*\*Latest published release:\*\* v0.18.50<br>/' README.md
+          cat > .github/release-trigger <<'EOF'
+          0.18.51
+          qualification=898bd918db1fe891db9afc299ab495e1f6ed9746
+          publication-gate=event-driven-v4
+          EOF
+          git rm .github/workflows/prepare-0.18.51.yml
+          grep -Fq 'project(InfiltratorFS VERSION 0.18.51 LANGUAGES C)' CMakeLists.txt
+          grep -Fq '**Current source version:** 0.18.51 (Format 0.18)<br>' README.md
+          grep -Fq '**Current source:** 0.18.51<br>' README.md
+          grep -Fq '**Latest published release:** v0.18.50<br>' README.md
+          grep -Fq 'qualification=898bd918db1fe891db9afc299ab495e1f6ed9746' .github/release-trigger
+
+      - name: Commit release source to main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add CMakeLists.txt README.md .github/release-trigger .github/workflows/prepare-0.18.51.yml
+          git diff --cached --check
+          git commit -m 'Release 0.18.51: polish About and storage selection'
+          git push origin HEAD:main
