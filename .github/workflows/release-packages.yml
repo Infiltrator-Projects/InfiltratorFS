@@ -76,6 +76,16 @@ jobs:
               all_complete=0
               continue
             fi
+
+            # workflow_run may create a completed/skipped shell run before its
+            # upstream condition is eligible. That means "not produced yet",
+            # not "qualification failed". A later real completion re-evaluates
+            # this gate without consuming a runner in a polling loop.
+            if [[ "$conclusion" == skipped ]]; then
+              all_complete=0
+              continue
+            fi
+
             if [[ "$conclusion" != success ]]; then
               printf '%s failed for %s: %s (%s)\n' \
                 "$workflow" "$EXPECTED_SHA" "$conclusion" "$run_url" >&2
