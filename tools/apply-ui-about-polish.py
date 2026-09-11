@@ -141,8 +141,7 @@ replacement = '''
             license_text=(
                 "InfiltratorFS is free software licensed under the GNU General Public "
                 "License version 3 or, at your option, any later version "
-                "(GPL-3.0-or-later).\n\n"
-                "See LICENSE in the source package for the complete licence text."
+                "(GPL-3.0-or-later). See LICENSE in the source package for the complete licence text."
             ),
             credits="Shannon Smith — Author and project maintainer",
         )
