@@ -30,7 +30,7 @@ layout_block, text = take_before(
     '#define INFILFS_LINUX_META_MAGIC "INPSXM01"',
     'static void infilfs_linux_meta_uuid(')
 
-# Pure codec/naming helpers become independently compiled services.  They do
+# Pure codec/naming helpers become independently compiled services. They do
 # not perform namespace mutation, take filesystem locks or publish transactions.
 uuid_block, text = take_before(
     text,
@@ -49,23 +49,6 @@ name_block, text = take_before(
     'static int infilfs_linux_xattr_name(',
     'static int infilfs_linux_xattr_get(')
 
-for old, new in [
-    ('static void infilfs_linux_meta_uuid(', 'void infilfs_linux_meta_uuid('),
-    ('static void infilfs_linux_meta_init(', 'void infilfs_linux_meta_init('),
-    ('static int infilfs_linux_meta_validate_blob(', 'int infilfs_linux_meta_validate_blob('),
-    ('static int infilfs_linux_meta_find_xattr(', 'int infilfs_linux_meta_find_xattr('),
-    ('static int infilfs_linux_xattr_name(', 'int infilfs_linux_xattr_name('),
-]:
-    for block_name in ('uuid_block', 'validate_block', 'find_block', 'name_block'):
-        value = locals()[block_name]
-        if old in value:
-            locals()[block_name] = value.replace(old, new, 1)
-            break
-    else:
-        raise AssertionError(old)
-
-# Python's locals() assignment is not guaranteed to update local variables;
-# perform the linkage replacements explicitly on the composed source as well.
 codec_body = uuid_block + validate_block + find_block + name_block
 for old, new in [
     ('static void infilfs_linux_meta_uuid(', 'void infilfs_linux_meta_uuid('),
@@ -90,8 +73,6 @@ assert anchor in h
 h = h.replace(anchor, anchor + '\n' + layout_block, 1)
 api_anchor = 'int infilfs_native_tree_directory_update(\n'
 api_pos = h.index(api_anchor)
-# Put codec declarations immediately before the directory-tree API tail so the
-# private interface remains grouped by compiled component.
 api = '''/* Pure Linux sidecar metadata codec; no namespace or locking ownership. */
 void infilfs_linux_meta_uuid(const u8 id[16], char out[37]);
 void infilfs_linux_meta_init(struct infilfs_linux_meta_header *header);
@@ -107,15 +88,14 @@ int infilfs_linux_xattr_name(
 h = h[:api_pos] + api + h[api_pos:]
 internal.write_text(h)
 
-# Kbuild object ten.
+# Add the new object to whatever current Kbuild object list is present. This
+# deliberately avoids baking historical component lists into a refactor tool.
 mk = makefile.read_text()
-old_line = ('infiltratorfs-y := infiltratorfs_core.o infiltratorfs_allocation_map.o '
-            'infiltratorfs_resize.o infiltratorfs_index_tree.o '
-            'infiltratorfs_parallel_alloc.o infiltratorfs_allocation_publish.o '
-            'infiltratorfs_read_cache.o infiltratorfs_pagecache.o '
-            'infiltratorfs_directory_tree.o')
+old_line = next((line for line in mk.splitlines()
+                 if line.startswith('infiltratorfs-y := ')), None)
+assert old_line, 'Kbuild object list not found'
+assert 'infiltratorfs_linux_meta_codec.o' not in old_line
 new_line = old_line + ' infiltratorfs_linux_meta_codec.o'
-assert old_line in mk
 mk = mk.replace(old_line, new_line, 1)
 marker = '#   infiltratorfs_directory_tree.c owns scalable Format 0.18 directory trees.\n'
 assert marker in mk
@@ -123,7 +103,7 @@ mk = mk.replace(marker, marker +
     '#   infiltratorfs_linux_meta_codec.c owns Linux sidecar blob/naming codec rules.\n', 1)
 makefile.write_text(mk)
 
-# Update DKMS/package source manifests.  Keep linux_meta.inc itself because the
+# Update DKMS/package source manifests. Keep linux_meta.inc itself because the
 # VFS/namespace adapter remains textually composed for now; add the codec source
 # beside every shipped occurrence without disturbing quoted one-path checks.
 manifest_paths = [
@@ -145,8 +125,6 @@ for path in manifest_paths:
         idx = line.index(filename)
         left_quote = line.rfind('"', 0, idx)
         right_quote = line.find('"', idx + len(filename))
-        # Exact quoted path/pattern lines are safest duplicated, preserving all
-        # shell quoting and regex suffixes.
         if left_quote >= 0 and right_quote >= 0:
             out.append(line.replace(filename, codec_name, 1))
             out.append(line)
@@ -154,7 +132,7 @@ for path in manifest_paths:
             continue
         def pair(match):
             prefix = match.group('prefix') or ''
-            return (prefix + codec_name + ' ' + prefix + filename)
+            return prefix + codec_name + ' ' + prefix + filename
         replaced, count = path_pattern.subn(pair, line)
         assert count >= 1, (path, line)
         out.append(replaced)
@@ -162,11 +140,10 @@ for path in manifest_paths:
     assert changed, f'no Linux metadata manifest entry found in {path}'
     path.write_text(''.join(out))
 
-# Maintainability guard knows object ten exists while the Linux metadata adapter
-# intentionally remains in the compositor.
+# Maintainability guard follows the current Kbuild list rather than a stale one.
 mp = maint.read_text()
-old_guard = "grep -Fqx 'infiltratorfs-y := infiltratorfs_core.o infiltratorfs_allocation_map.o infiltratorfs_resize.o infiltratorfs_index_tree.o infiltratorfs_parallel_alloc.o infiltratorfs_allocation_publish.o infiltratorfs_read_cache.o infiltratorfs_pagecache.o infiltratorfs_directory_tree.o' \"$makefile\" || \\\n"
-new_guard = "grep -Fqx 'infiltratorfs-y := infiltratorfs_core.o infiltratorfs_allocation_map.o infiltratorfs_resize.o infiltratorfs_index_tree.o infiltratorfs_parallel_alloc.o infiltratorfs_allocation_publish.o infiltratorfs_read_cache.o infiltratorfs_pagecache.o infiltratorfs_directory_tree.o infiltratorfs_linux_meta_codec.o' \"$makefile\" || \\\n"
+old_guard = "grep -Fqx '" + old_line + "' \"$makefile\" || \\\n"
+new_guard = "grep -Fqx '" + new_line + "' \"$makefile\" || \\\n"
 assert old_guard in mp
 mp = mp.replace(old_guard, new_guard, 1)
 anchor = "test -f \"$kernel/infiltratorfs_directory_tree.c\" || fail 'directory-tree object missing'\n"
@@ -181,17 +158,14 @@ doc = readme.read_text()
 old = ('`infiltratorfs_pagecache.c` owns Linux folio/page-cache integration, and '
        '`infiltratorfs_directory_tree.c` owns scalable Format 0.18 directory trees.')
 new = ('`infiltratorfs_pagecache.c` owns Linux folio/page-cache integration, '
-       '`infiltratorfs_directory_tree.c` owns scalable Format 0.17 directory trees, and '
+       '`infiltratorfs_directory_tree.c` owns scalable Format 0.18 directory trees, and '
        '`infiltratorfs_linux_meta_codec.c` owns Linux sidecar blob/naming codec rules.')
 assert old in doc
-doc = doc.replace(old, new, 1)
-doc = doc.replace(
+readme.write_text(doc.replace(old, new, 1).replace(
     'including write-data paths, namespace mutation, Linux metadata, quotas and defragmentation.',
     'including write-data paths, namespace mutation, the Linux metadata VFS/namespace adapter, quotas and defragmentation.',
-    1)
-readme.write_text(doc)
+    1))
 
-# The moved pure helpers must not remain duplicated in the adapter.
 remaining = meta.read_text()
 for forbidden in [
     'static void infilfs_linux_meta_uuid(',
