@@ -1,0 +1,76 @@
+name: Apply transaction journal vmalloc fix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-transaction-journal-vmalloc-fix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Replace high-order journal growth
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          allocator = Path('kernel/infiltratorfs_parallel_alloc.c')
+          text = allocator.read_text()
+          old = '''    grown = krealloc(tx->allocated, next * sizeof(*grown), GFP_NOFS);\n    if (!grown)\n        return -ENOMEM;\n    tx->allocated = grown;\n'''
+          new = '''    /*\n     * This journal can grow into hundreds of KiB during long-running CoW\n     * workloads.  krealloc() eventually requires high-order physically\n     * contiguous pages and can fail from fragmentation while the machine\n     * still has abundant memory.  It is ordinary CPU-only metadata, so use\n     * kvmalloc-backed growth and allow vmalloc fallback.\n     */\n    grown = kvmalloc_array(next, sizeof(*grown), GFP_NOFS);\n    if (!grown)\n        return -ENOMEM;\n    if (tx->allocated_count)\n        memcpy(grown, tx->allocated,\n               tx->allocated_count * sizeof(*grown));\n    kvfree(tx->allocated);\n    tx->allocated = grown;\n'''
+          if old not in text:
+              raise SystemExit('allocated-journal growth pattern not found')
+          allocator.write_text(text.replace(old, new, 1))
+
+          legacy = Path('kernel/infiltratorfs_rw_legacy.inc')
+          text = legacy.read_text()
+          old = '''        grown = krealloc(tx->deferred, next * sizeof(*grown), GFP_NOFS);\n        if (!grown)\n            return -ENOMEM;\n        tx->deferred = grown;\n'''
+          new = '''        /*\n         * Deferred-free journals may reach hundreds of KiB or more during a\n         * long CoW transaction.  Do not require a high-order physically\n         * contiguous allocation merely to grow this CPU-only metadata.\n         */\n        grown = kvmalloc_array(next, sizeof(*grown), GFP_NOFS);\n        if (!grown)\n            return -ENOMEM;\n        if (tx->deferred_count)\n            memcpy(grown, tx->deferred,\n                   tx->deferred_count * sizeof(*grown));\n        kvfree(tx->deferred);\n        tx->deferred = grown;\n'''
+          if old not in text:
+              raise SystemExit('deferred-journal growth pattern not found')
+          text = text.replace(old, new, 1)
+          text = text.replace('kfree(tx->deferred);', 'kvfree(tx->deferred);')
+          text = text.replace('kfree(tx->allocated);', 'kvfree(tx->allocated);')
+          legacy.write_text(text)
+
+          policy = Path('tests/native-parallel-allocation-policy.sh')
+          text = policy.read_text()
+          old = 'data="$root/kernel/infiltratorfs_rw_data.inc"\n'
+          new = 'data="$root/kernel/infiltratorfs_rw_data.inc"\nlegacy="$root/kernel/infiltratorfs_rw_legacy.inc"\n'
+          if old not in text:
+              raise SystemExit('policy variable insertion point not found')
+          text = text.replace(old, new, 1)
+          old = 'for file in "$allocator" "$driver" "$state" "$rw" "$data" "$package" "$workflow"; do\n'
+          new = 'for file in "$allocator" "$driver" "$state" "$rw" "$data" "$legacy" "$package" "$workflow"; do\n'
+          if old not in text:
+              raise SystemExit('policy file list pattern not found')
+          text = text.replace(old, new, 1)
+          marker = "grep -Fq 'allocation_peak_active_reservations' \"$allocator\"\n"
+          guard = """grep -Fq 'allocation_peak_active_reservations' \"$allocator\"\n! grep -Fq 'krealloc(tx->allocated' \"$allocator\"\ngrep -Fq 'kvmalloc_array(next, sizeof(*grown), GFP_NOFS)' \"$allocator\"\ngrep -Fq 'kvfree(tx->allocated)' \"$allocator\"\n! grep -Fq 'krealloc(tx->deferred' \"$legacy\"\ngrep -Fq 'kvfree(tx->deferred)' \"$legacy\"\ngrep -Fq 'kvfree(tx->allocated)' \"$legacy\"\n"""
+          if marker not in text:
+              raise SystemExit('policy guard insertion point not found')
+          policy.write_text(text.replace(marker, guard, 1))
+          PY
+
+      - name: Validate targeted policy
+        run: |
+          git diff --check
+          bash tests/native-parallel-allocation-policy.sh .
+
+      - name: Commit to main
+        run: |
+          git config user.name 'Shannon Smith'
+          git config user.email 'infiltratr@yandex.com'
+          git add kernel/infiltratorfs_parallel_alloc.c kernel/infiltratorfs_rw_legacy.inc tests/native-parallel-allocation-policy.sh
+          git commit -m 'Avoid high-order transaction journal allocations'
+          git push origin HEAD:main
