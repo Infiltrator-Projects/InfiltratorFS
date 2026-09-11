@@ -1,0 +1,40 @@
+name: Apply UI About polish
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-ui-about-polish.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Apply presentation cleanup
+        run: python3 tools/apply-ui-about-polish.py
+
+      - name: Validate source and UI contract
+        run: |
+          python3 -m py_compile tools/infiltratorfs-manager
+          bash tests/ui-font-policy.sh .
+
+      - name: Commit presentation cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tools/infiltratorfs-manager tests/ui-font-policy.sh
+          git diff --cached --check
+          git diff --cached --quiet && exit 0
+          git commit -m 'Polish Linux selection and adopt LINK-style About contract'
+          git push origin HEAD:main
