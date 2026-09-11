@@ -26,6 +26,7 @@ jobs:
   bridge:
     name: Same-volume Explorer move-out
     runs-on: windows-latest
+    timeout-minutes: 10
     steps:
       - name: Check out source
         uses: actions/checkout@v6
