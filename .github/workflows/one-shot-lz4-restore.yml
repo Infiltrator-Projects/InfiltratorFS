@@ -202,38 +202,22 @@ jobs:
                   "grep -Fq 'INFS_COMPRESSION_LZ4' \"$root/include/infilfs/format.h\"\n", 1)
           policy.write_text(t)
 
-          def add_modprobes(path, needle, root_mode=False, all_sites=False):
+          def add_modprobes(path, needle, root_mode=False):
               p = Path(path)
               t = p.read_text()
-              prefix = '' if root_mode else 'sudo '
-              pos = 0
-              changed = False
-              while True:
-                  idx = t.find(needle, pos)
-                  if idx < 0:
-                      break
-                  line_start = t.rfind('\n', 0, idx) + 1
-                  before = t[max(0, line_start - 180):line_start]
-                  if 'modprobe lz4_decompress' not in before:
-                      indent = t[line_start:idx]
-                      ins = (f'{indent}{prefix}modprobe lz4_compress 2>/dev/null || true\n'
-                             f'{indent}{prefix}modprobe lz4_decompress 2>/dev/null || true\n')
-                      t = t[:line_start] + ins + t[line_start:]
-                      pos = line_start + len(ins) + len(needle)
-                      changed = True
-                  else:
-                      pos = idx + len(needle)
-                  if not all_sites:
-                      break
-              if needle not in t:
+              idx = t.find(needle)
+              if idx < 0:
                   raise SystemExit(f'insmod anchor missing in {path}')
-              if changed:
-                  p.write_text(t)
+              line_start = t.rfind('\n', 0, idx) + 1
+              before = t[max(0, line_start - 180):line_start]
+              if 'modprobe lz4_decompress' in before:
+                  return
+              indent = t[line_start:idx]
+              prefix = '' if root_mode else 'sudo '
+              ins = (f'{indent}{prefix}modprobe lz4_compress 2>/dev/null || true\n'
+                     f'{indent}{prefix}modprobe lz4_decompress 2>/dev/null || true\n')
+              p.write_text(t[:line_start] + ins + t[line_start:])
 
-          add_modprobes('.github/workflows/heavy-qualification.yml',
-                        'if ! sudo insmod kernel/infiltratorfs.ko; then', all_sites=True)
-          add_modprobes('.github/workflows/kernel-module.yml',
-                        'if ! sudo insmod kernel/infiltratorfs.ko; then', all_sites=True)
           add_modprobes('tests/native-complete-qualification.sh',
                         'if ! sudo insmod "$ROOT/kernel/infiltratorfs.ko"; then')
           add_modprobes('tests/native-defrag-qualification.sh',
@@ -258,17 +242,20 @@ jobs:
           grep -Fq 'LZ4_decompress_safe' kernel/infiltratorfs_core.c
           grep -Fq 'INFS_COMPRESSION_LZ4' include/infilfs/format.h
 
-      - name: Commit restored codec and remove one-shot workflow
+      - name: Commit tested source
         shell: bash
         run: |
           set -euo pipefail
-          git rm .github/workflows/one-shot-lz4-restore.yml
           git config user.name 'Shannon Smith'
           git config user.email 'infiltratr@yandex.com'
-          git add -u
+          git add -u -- ':!.github/workflows/*'
           git add tests/lz4-compat.c
           if git diff --cached --name-only | grep -Eq '^kernel/\.'; then
             echo 'Refusing to commit generated Kbuild dotfiles.' >&2
+            exit 1
+          fi
+          if git diff --cached --name-only | grep -Eq '^\.github/workflows/'; then
+            echo 'Refusing workflow-file changes from Actions token.' >&2
             exit 1
           fi
           git diff --cached --check
