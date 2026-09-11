@@ -40,172 +40,176 @@ jobs:
               p = Path(path)
               text = p.read_text()
               if old not in text:
-                  raise SystemExit(f'guard failed in {path}: {old[:100]!r}')
-              p.write_text(text.replace(old, new, count))
+                  raise SystemExit(f'guard failed in {path}: {old[:120]!r}')
+              changed = text.replace(old, new, count)
+              if changed == text:
+                  raise SystemExit(f'no replacement in {path}')
+              p.write_text(changed)
 
-          replace('kernel/infiltratorfs_internal.h',
-          '''struct infilfs_native_directory_locator {
-              u32 hash;
-              u16 name_len;
-              bool valid;
-              u8 name[INFILFS_NAME_MAX];
-          };''',
-          '''struct infilfs_native_directory_locator {
-              size_t name_offset;
-              u32 hash;
-              u16 name_len;
-              bool valid;
-          };''')
+          replace(
+              'kernel/infiltratorfs_internal.h',
+              'struct infilfs_native_directory_locator {\n'
+              '    u32 hash;\n'
+              '    u16 name_len;\n'
+              '    bool valid;\n'
+              '    u8 name[INFILFS_NAME_MAX];\n'
+              '};',
+              'struct infilfs_native_directory_locator {\n'
+              '    size_t name_offset;\n'
+              '    u32 hash;\n'
+              '    u16 name_len;\n'
+              '    bool valid;\n'
+              '};')
 
-          replace('kernel/infiltratorfs_internal.h',
-          '''    struct infilfs_native_directory_locator *directory_locators;
-              u8 directory_locator_owner_id[16];
-              u32 directory_locator_capacity;
-              u32 directory_locator_count;
-              bool directory_locator_valid;''',
-          '''    struct infilfs_native_directory_locator *directory_locators;
-              u8 *directory_locator_names;
-              size_t directory_locator_names_bytes;
-              size_t directory_locator_names_capacity;
-              u8 directory_locator_owner_id[16];
-              u32 directory_locator_capacity;
-              u32 directory_locator_count;
-              bool directory_locator_valid;''')
+          replace(
+              'kernel/infiltratorfs_internal.h',
+              '    struct infilfs_native_directory_locator *directory_locators;\n'
+              '    u8 directory_locator_owner_id[16];\n'
+              '    u32 directory_locator_capacity;\n'
+              '    u32 directory_locator_count;\n'
+              '    bool directory_locator_valid;',
+              '    struct infilfs_native_directory_locator *directory_locators;\n'
+              '    u8 *directory_locator_names;\n'
+              '    size_t directory_locator_names_bytes;\n'
+              '    size_t directory_locator_names_capacity;\n'
+              '    u8 directory_locator_owner_id[16];\n'
+              '    u32 directory_locator_capacity;\n'
+              '    u32 directory_locator_count;\n'
+              '    bool directory_locator_valid;')
 
-          replace('kernel/infiltratorfs_rw_data.inc',
-          '''void infilfs_native_directory_locator_invalidate(
-              struct infilfs_native_pending *pending)
-          {
-              pending->directory_locator_valid = false;
-              pending->directory_locator_count = 0;
-              memset(pending->directory_locator_owner_id, 0,
-                     sizeof(pending->directory_locator_owner_id));
-          }
+          replace(
+              'kernel/infiltratorfs_rw_data.inc',
+              'void infilfs_native_directory_locator_invalidate(\n'
+              '    struct infilfs_native_pending *pending)\n'
+              '{\n'
+              '    pending->directory_locator_valid = false;\n'
+              '    pending->directory_locator_count = 0;\n'
+              '    memset(pending->directory_locator_owner_id, 0,\n'
+              '           sizeof(pending->directory_locator_owner_id));\n'
+              '}\n\n'
+              'static int infilfs_native_directory_locator_resize(',
+              'void infilfs_native_directory_locator_invalidate(\n'
+              '    struct infilfs_native_pending *pending)\n'
+              '{\n'
+              '    pending->directory_locator_valid = false;\n'
+              '    pending->directory_locator_count = 0;\n'
+              '    pending->directory_locator_names_bytes = 0;\n'
+              '    memset(pending->directory_locator_owner_id, 0,\n'
+              '           sizeof(pending->directory_locator_owner_id));\n'
+              '}\n\n'
+              'static int infilfs_native_directory_locator_names_reserve(\n'
+              '    struct infilfs_native_pending *pending, size_t extra)\n'
+              '{\n'
+              '    u8 *fresh;\n'
+              '    size_t needed;\n'
+              '    size_t capacity;\n\n'
+              '    if (extra > (size_t)-1 - pending->directory_locator_names_bytes)\n'
+              '        return -EOVERFLOW;\n'
+              '    needed = pending->directory_locator_names_bytes + extra;\n'
+              '    if (needed <= pending->directory_locator_names_capacity)\n'
+              '        return 0;\n\n'
+              '    capacity = pending->directory_locator_names_capacity;\n'
+              '    if (capacity < 4096u)\n'
+              '        capacity = 4096u;\n'
+              '    while (capacity < needed) {\n'
+              '        if (capacity > (size_t)-1 / 2u) {\n'
+              '            capacity = needed;\n'
+              '            break;\n'
+              '        }\n'
+              '        capacity <<= 1;\n'
+              '    }\n'
+              '    fresh = kvmalloc(capacity, GFP_NOFS);\n'
+              '    if (!fresh)\n'
+              '        return -ENOMEM;\n'
+              '    if (pending->directory_locator_names_bytes)\n'
+              '        memcpy(fresh, pending->directory_locator_names,\n'
+              '               pending->directory_locator_names_bytes);\n'
+              '    kvfree(pending->directory_locator_names);\n'
+              '    pending->directory_locator_names = fresh;\n'
+              '    pending->directory_locator_names_capacity = capacity;\n'
+              '    return 0;\n'
+              '}\n\n'
+              'static int infilfs_native_directory_locator_resize(')
 
-          static int infilfs_native_directory_locator_resize(''',
-          '''void infilfs_native_directory_locator_invalidate(
-              struct infilfs_native_pending *pending)
-          {
-              pending->directory_locator_valid = false;
-              pending->directory_locator_count = 0;
-              pending->directory_locator_names_bytes = 0;
-              memset(pending->directory_locator_owner_id, 0,
-                     sizeof(pending->directory_locator_owner_id));
-          }
+          replace(
+              'kernel/infiltratorfs_rw_data.inc',
+              '        if (!entry->valid)\n'
+              '            return false;\n'
+              '        if (entry->hash == hash && entry->name_len == name_len &&\n'
+              '            memcmp(entry->name, name, name_len) == 0)\n'
+              '            return true;',
+              '        if (!entry->valid)\n'
+              '            return false;\n'
+              '        if (entry->hash == hash && entry->name_len == name_len &&\n'
+              '            entry->name_offset <= pending->directory_locator_names_bytes &&\n'
+              '            name_len <= pending->directory_locator_names_bytes -\n'
+              '                entry->name_offset &&\n'
+              '            memcmp(pending->directory_locator_names + entry->name_offset,\n'
+              '                   name, name_len) == 0)\n'
+              '            return true;')
 
-          static int infilfs_native_directory_locator_names_reserve(
-              struct infilfs_native_pending *pending, size_t extra)
-          {
-              u8 *fresh;
-              size_t needed;
-              size_t capacity;
+          replace(
+              'kernel/infiltratorfs_rw_data.inc',
+              '        if (entry->valid) {\n'
+              '            if (entry->hash == hash && entry->name_len == name_len &&\n'
+              '                memcmp(entry->name, name, name_len) == 0)\n'
+              '                return -EEXIST;\n'
+              '            continue;\n'
+              '        }\n'
+              '        memset(entry, 0, sizeof(*entry));\n'
+              '        entry->hash = hash;\n'
+              '        entry->name_len = (u16)name_len;\n'
+              '        memcpy(entry->name, name, name_len);\n'
+              '        entry->valid = true;\n'
+              '        pending->directory_locator_count++;\n'
+              '        return 0;',
+              '        if (entry->valid) {\n'
+              '            if (entry->hash == hash && entry->name_len == name_len &&\n'
+              '                entry->name_offset <= pending->directory_locator_names_bytes &&\n'
+              '                name_len <= pending->directory_locator_names_bytes -\n'
+              '                    entry->name_offset &&\n'
+              '                memcmp(pending->directory_locator_names + entry->name_offset,\n'
+              '                       name, name_len) == 0)\n'
+              '                return -EEXIST;\n'
+              '            continue;\n'
+              '        }\n'
+              '        ret = infilfs_native_directory_locator_names_reserve(\n'
+              '            pending, name_len);\n'
+              '        if (ret)\n'
+              '            return ret;\n'
+              '        memset(entry, 0, sizeof(*entry));\n'
+              '        entry->name_offset = pending->directory_locator_names_bytes;\n'
+              '        entry->hash = hash;\n'
+              '        entry->name_len = (u16)name_len;\n'
+              '        memcpy(pending->directory_locator_names + entry->name_offset,\n'
+              '               name, name_len);\n'
+              '        pending->directory_locator_names_bytes += name_len;\n'
+              '        entry->valid = true;\n'
+              '        pending->directory_locator_count++;\n'
+              '        return 0;')
 
-              if (extra > SIZE_MAX - pending->directory_locator_names_bytes)
-                  return -EOVERFLOW;
-              needed = pending->directory_locator_names_bytes + extra;
-              if (needed <= pending->directory_locator_names_capacity)
-                  return 0;
-
-              capacity = pending->directory_locator_names_capacity;
-              if (capacity < 4096u)
-                  capacity = 4096u;
-              while (capacity < needed) {
-                  if (capacity > SIZE_MAX / 2u) {
-                      capacity = needed;
-                      break;
-                  }
-                  capacity <<= 1;
-              }
-              fresh = kvmalloc(capacity, GFP_NOFS);
-              if (!fresh)
-                  return -ENOMEM;
-              if (pending->directory_locator_names_bytes)
-                  memcpy(fresh, pending->directory_locator_names,
-                         pending->directory_locator_names_bytes);
-              kvfree(pending->directory_locator_names);
-              pending->directory_locator_names = fresh;
-              pending->directory_locator_names_capacity = capacity;
-              return 0;
-          }
-
-          static int infilfs_native_directory_locator_resize(''')
-
-          replace('kernel/infiltratorfs_rw_data.inc',
-          '''        if (!entry->valid)
-                  return false;
-              if (entry->hash == hash && entry->name_len == name_len &&
-                  memcmp(entry->name, name, name_len) == 0)
-                  return true;''',
-          '''        if (!entry->valid)
-                  return false;
-              if (entry->hash == hash && entry->name_len == name_len &&
-                  entry->name_offset <= pending->directory_locator_names_bytes &&
-                  name_len <= pending->directory_locator_names_bytes -
-                      entry->name_offset &&
-                  memcmp(pending->directory_locator_names + entry->name_offset,
-                         name, name_len) == 0)
-                  return true;''')
-
-          replace('kernel/infiltratorfs_rw_data.inc',
-          '''        if (entry->valid) {
-                  if (entry->hash == hash && entry->name_len == name_len &&
-                      memcmp(entry->name, name, name_len) == 0)
-                      return -EEXIST;
-                  continue;
-              }
-              memset(entry, 0, sizeof(*entry));
-              entry->hash = hash;
-              entry->name_len = (u16)name_len;
-              memcpy(entry->name, name, name_len);
-              entry->valid = true;
-              pending->directory_locator_count++;
-              return 0;''',
-          '''        if (entry->valid) {
-                  if (entry->hash == hash && entry->name_len == name_len &&
-                      entry->name_offset <= pending->directory_locator_names_bytes &&
-                      name_len <= pending->directory_locator_names_bytes -
-                          entry->name_offset &&
-                      memcmp(pending->directory_locator_names + entry->name_offset,
-                             name, name_len) == 0)
-                      return -EEXIST;
-                  continue;
-              }
-              ret = infilfs_native_directory_locator_names_reserve(
-                  pending, name_len);
-              if (ret)
-                  return ret;
-              memset(entry, 0, sizeof(*entry));
-              entry->name_offset = pending->directory_locator_names_bytes;
-              entry->hash = hash;
-              entry->name_len = (u16)name_len;
-              memcpy(pending->directory_locator_names + entry->name_offset,
-                     name, name_len);
-              pending->directory_locator_names_bytes += name_len;
-              entry->valid = true;
-              pending->directory_locator_count++;
-              return 0;''')
-
-          replace('kernel/infiltratorfs_rw_data.inc',
-          '''    kvfree(pending->index_locators);
-              kvfree(pending->directory_locators);
-              kvfree(pending->shared_ranges);''',
-          '''    kvfree(pending->index_locators);
-              kvfree(pending->directory_locators);
-              kvfree(pending->directory_locator_names);
-              kvfree(pending->shared_ranges);''')
+          replace(
+              'kernel/infiltratorfs_rw_data.inc',
+              '    kvfree(pending->index_locators);\n'
+              '    kvfree(pending->directory_locators);\n'
+              '    kvfree(pending->shared_ranges);',
+              '    kvfree(pending->index_locators);\n'
+              '    kvfree(pending->directory_locators);\n'
+              '    kvfree(pending->directory_locator_names);\n'
+              '    kvfree(pending->shared_ranges);')
 
           policy = Path('tests/native-scale-policy.sh')
           ptext = policy.read_text()
           anchor = "grep -Fq '[SCALE-PERF]' \"$stress\"\n"
-          addition = '''grep -Fq 'directory_locator_names' "$root/kernel/infiltratorfs_internal.h"
-          ! grep -Fq 'u8 name[INFILFS_NAME_MAX]' "$root/kernel/infiltratorfs_internal.h"
-          grep -Fq 'infilfs_native_directory_locator_names_reserve' "$root/kernel/infiltratorfs_rw_data.inc"
-          '''
+          addition = (
+              "grep -Fq 'directory_locator_names' \"$root/kernel/infiltratorfs_internal.h\"\n"
+              "! grep -Fq 'u8 name[INFILFS_NAME_MAX]' \"$root/kernel/infiltratorfs_internal.h\"\n"
+              "grep -Fq 'infilfs_native_directory_locator_names_reserve' \"$root/kernel/infiltratorfs_rw_data.inc\"\n"
+          )
           if 'directory_locator_names' not in ptext:
               if anchor not in ptext:
                   raise SystemExit('native scale policy anchor changed')
-              ptext = ptext.replace(anchor, anchor + addition, 1)
-              policy.write_text(ptext)
+              policy.write_text(ptext.replace(anchor, anchor + addition, 1))
           PY
 
       - name: Qualify compact locator
