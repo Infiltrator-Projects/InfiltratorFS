@@ -8,10 +8,11 @@ driver="$root/kernel/infiltratorfs_core.c"
 state="$root/kernel/infiltratorfs_internal.h"
 rw="$root/kernel/infiltratorfs_rw.inc"
 data="$root/kernel/infiltratorfs_rw_data.inc"
+legacy="$root/kernel/infiltratorfs_rw_legacy.inc"
 package="$root/packaging/build-linux-packages.sh"
 workflow="$root/.github/workflows/kernel-module.yml"
 
-for file in "$allocator" "$driver" "$state" "$rw" "$data" "$package" "$workflow"; do
+for file in "$allocator" "$driver" "$state" "$rw" "$data" "$legacy" "$package" "$workflow"; do
     test -f "$file"
 done
 
@@ -24,6 +25,12 @@ grep -Fq 'infilfs_parallel_consume_reservation' "$allocator"
 grep -Fq 'infilfs_parallel_tx_claim' "$allocator"
 grep -Fq 'write_lock(&sbi->bitmap_lock)' "$allocator"
 grep -Fq 'allocation_peak_active_reservations' "$allocator"
+! grep -Fq 'krealloc(tx->allocated' "$allocator"
+grep -Fq 'kvmalloc_array(next, sizeof(*grown), GFP_NOFS)' "$allocator"
+grep -Fq 'kvfree(tx->allocated)' "$allocator"
+! grep -Fq 'krealloc(tx->deferred' "$legacy"
+grep -Fq 'kvfree(tx->deferred)' "$legacy"
+grep -Fq 'kvfree(tx->allocated)' "$legacy"
 ! grep -Fq '#include "infiltratorfs_parallel_alloc.c"' "$rw"
 grep -Fq 'data_allocation_hint' "$data"
 grep -Fq 'infiltratorfs_parallel_alloc.c' "$package"

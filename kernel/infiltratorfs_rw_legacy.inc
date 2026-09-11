@@ -917,8 +917,8 @@ static void infilfs_rw_tx_abort(struct infilfs_rw_tx *tx)
         write_unlock(&tx->sbi->bitmap_lock);
     }
     tx->bitmap = NULL;
-    kfree(tx->deferred);
-    kfree(tx->allocated);
+    kvfree(tx->deferred);
+    kvfree(tx->allocated);
     kvfree(tx->free_extents);
     memset(tx, 0, sizeof(*tx));
 }
@@ -943,9 +943,18 @@ int infilfs_rw_tx_defer_free(struct infilfs_rw_tx *tx,
         size_t next = tx->deferred_capacity * 2u;
         if (next < tx->deferred_capacity)
             return -EOVERFLOW;
-        grown = krealloc(tx->deferred, next * sizeof(*grown), GFP_NOFS);
+        /*
+         * Deferred-free journals may reach hundreds of KiB or more during a
+         * long CoW transaction.  Do not require a high-order physically
+         * contiguous allocation merely to grow this CPU-only metadata.
+         */
+        grown = kvmalloc_array(next, sizeof(*grown), GFP_NOFS);
         if (!grown)
             return -ENOMEM;
+        if (tx->deferred_count)
+            memcpy(grown, tx->deferred,
+                   tx->deferred_count * sizeof(*grown));
+        kvfree(tx->deferred);
         tx->deferred = grown;
         tx->deferred_capacity = next;
     }
@@ -1159,11 +1168,11 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
     } else {
         sbi->checkpoint_repair_needed = false;
     }
-    kfree(tx->deferred);
+    kvfree(tx->deferred);
     tx->deferred = NULL;
     tx->deferred_count = 0;
     tx->deferred_capacity = 0;
-    kfree(tx->allocated);
+    kvfree(tx->allocated);
     tx->allocated = NULL;
     tx->allocated_count = 0;
     tx->allocated_capacity = 0;

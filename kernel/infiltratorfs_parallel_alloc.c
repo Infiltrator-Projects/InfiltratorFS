@@ -217,9 +217,20 @@ static int infilfs_parallel_alloc_journal_reserve(struct infilfs_rw_tx *tx)
     if (next < tx->allocated_capacity ||
         next > SIZE_MAX / sizeof(*grown))
         return -EOVERFLOW;
-    grown = krealloc(tx->allocated, next * sizeof(*grown), GFP_NOFS);
+    /*
+     * This journal can grow into hundreds of KiB during long-running CoW
+     * workloads.  krealloc() eventually requires high-order physically
+     * contiguous pages and can fail from fragmentation while the machine
+     * still has abundant memory.  It is ordinary CPU-only metadata, so use
+     * kvmalloc-backed growth and allow vmalloc fallback.
+     */
+    grown = kvmalloc_array(next, sizeof(*grown), GFP_NOFS);
     if (!grown)
         return -ENOMEM;
+    if (tx->allocated_count)
+        memcpy(grown, tx->allocated,
+               tx->allocated_count * sizeof(*grown));
+    kvfree(tx->allocated);
     tx->allocated = grown;
     tx->allocated_capacity = next;
     return 0;
