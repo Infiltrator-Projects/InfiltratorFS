@@ -5,20 +5,22 @@ import re
 root = Path(__file__).resolve().parents[1]
 wf = root / '.github' / 'workflows'
 
+# These are intentionally heavyweight and may exceed ten minutes, but only
+# because they are manual-only qualifications. Any new long workflow must be
+# deliberately added here and must still pass the dispatch-only trigger check.
 manual_long = {
     'heavy-qualification.yml',
     'root-boot-qualification.yml',
     'desktop-formatter-qualification.yml',
 }
-automatic = {
-    'ci.yml',
-    'linux-metadata-qualification.yml',
-    'resize-qualification.yml',
-    'root-volume-qualification.yml',
-    'windows-bridge.yml',
-    'release-artifacts.yml',
-    'release-packages.yml',
+
+# The native kernel workflow is the one automatic exception to an in-file job
+# timeout because manual runs are intentionally allowed to continue deeply.
+# Automatic executions are bounded by automatic-ci-watchdog.yml at 570 seconds.
+external_watchdog = {
+    'kernel-module.yml',
 }
+
 obsolete = {
     'apply-ci-duration-policy.yml',
     'apply-linux-meta-empty-sidecar-fix.yml',
@@ -31,19 +33,26 @@ obsolete = {
     'release-0.18.48.yml',
 }
 
-for name in manual_long:
-    text = (wf / name).read_text()
-    on_block = text.split('on:\n', 1)[1].split('\npermissions:', 1)[0]
-    if 'workflow_dispatch:' not in on_block:
-        raise SystemExit(f'{name}: manual dispatch missing')
-    for trigger in ('push:', 'schedule:', 'pull_request:', 'workflow_run:'):
-        if trigger in on_block:
-            raise SystemExit(f'{name}: long qualification has automatic trigger {trigger}')
 
-for name in automatic:
-    text = (wf / name).read_text()
+def on_triggers(text: str) -> set[str]:
+    try:
+        on_block = text.split('on:\n', 1)[1].split('\npermissions:', 1)[0]
+    except IndexError as exc:
+        raise SystemExit('workflow trigger block could not be parsed') from exc
+    return {
+        match.group(1)
+        for line in on_block.splitlines()
+        if (match := re.match(r'^  ([A-Za-z0-9_-]+):\s*$', line))
+    }
+
+
+def enforce_runner_timeouts(name: str, text: str) -> None:
     lines = text.splitlines()
-    jobs = lines.index('jobs:')
+    try:
+        jobs = lines.index('jobs:')
+    except ValueError as exc:
+        raise SystemExit(f'{name}: jobs block missing') from exc
+
     starts = [
         i for i in range(jobs + 1, len(lines))
         if re.match(r'^  [A-Za-z0-9_-]+:\s*$', lines[i])
@@ -59,10 +68,47 @@ for name in automatic:
             None,
         )
         if timeout is None:
-            raise SystemExit(f'{name}:{job}: automatic job has no timeout')
+            raise SystemExit(f'{name}:{job}: runner job has no timeout')
         minutes = int(timeout.split(':', 1)[1].strip())
         if minutes > 10:
-            raise SystemExit(f'{name}:{job}: automatic timeout is {minutes} minutes')
+            raise SystemExit(f'{name}:{job}: automatic-capable timeout is {minutes} minutes')
+
+
+# Fail closed over the entire workflow directory. A brand-new workflow is
+# automatically checked; it cannot escape just because somebody forgot to add
+# its filename to a hand-maintained "automatic" list.
+workflow_paths = sorted(wf.glob('*.yml')) + sorted(wf.glob('*.yaml'))
+if not workflow_paths:
+    raise SystemExit('no workflows found')
+
+workflow_names = {path.name for path in workflow_paths}
+missing_manual = manual_long - workflow_names
+if missing_manual:
+    raise SystemExit(f'manual long workflow(s) missing: {sorted(missing_manual)}')
+missing_watchdog = external_watchdog - workflow_names
+if missing_watchdog:
+    raise SystemExit(f'externally watched workflow(s) missing: {sorted(missing_watchdog)}')
+
+for path in workflow_paths:
+    name = path.name
+    text = path.read_text()
+    triggers = on_triggers(text)
+
+    if name in manual_long:
+        if triggers != {'workflow_dispatch'}:
+            raise SystemExit(
+                f'{name}: heavyweight qualification must be workflow_dispatch-only; '
+                f'found triggers {sorted(triggers)}'
+            )
+        continue
+
+    if name in external_watchdog:
+        continue
+
+    # Every other current or future runner-backed workflow is capped at ten
+    # minutes, regardless of whether its trigger is push, schedule,
+    # workflow_run, repository_dispatch, workflow_dispatch, or something new.
+    enforce_runner_timeouts(name, text)
 
 # Automatic publication promotes tested artifacts. It must never sneak the
 # heavyweight desktop-stack build back into the release path.
@@ -123,6 +169,8 @@ if 'name: Native Linux kernel module' not in kernel:
     raise SystemExit('native kernel workflow identity changed')
 if 'workflow_dispatch:' not in kernel:
     raise SystemExit('native kernel workflow must remain manually dispatchable')
+if 'push:' not in on_triggers(kernel):
+    raise SystemExit('native kernel workflow automatic trigger unexpectedly removed')
 
 for name in obsolete:
     if (wf / name).exists():
