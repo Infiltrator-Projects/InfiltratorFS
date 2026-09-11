@@ -25,6 +25,8 @@ grep -Fq 'infilfs_parallel_consume_reservation' "$allocator"
 grep -Fq 'infilfs_parallel_tx_claim' "$allocator"
 grep -Fq 'write_lock(&sbi->bitmap_lock)' "$allocator"
 grep -Fq 'allocation_peak_active_reservations' "$allocator"
+# Long CoW/rsync workloads must never require high-order physically contiguous
+# growth for the allocation or deferred-free transaction journals.
 ! grep -Fq 'krealloc(tx->allocated' "$allocator"
 grep -Fq 'kvmalloc_array(next, sizeof(*grown), GFP_NOFS)' "$allocator"
 grep -Fq 'kvfree(tx->allocated)' "$allocator"
