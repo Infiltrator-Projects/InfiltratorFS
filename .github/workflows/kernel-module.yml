@@ -103,6 +103,8 @@ jobs:
              kernel/infiltratorfs_parallel_alloc.c \
              kernel/infiltratorfs_index_tree.c \
              kernel/infiltratorfs_directory_tree.c \
+             kernel/infiltratorfs_checksum_cache.c \
+             kernel/infiltratorfs_linux_meta_codec.c \
              kernel/infiltratorfs_rw.inc \
              kernel/infiltratorfs_rw_legacy.inc \
              kernel/infiltratorfs_rw_data.inc \
