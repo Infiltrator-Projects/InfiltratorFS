@@ -7,7 +7,9 @@ Format 0.18 uses adaptive per-extent compression as a normal filesystem
 capability. Newly formatted volumes enable `INFS_INCOMPAT_COMPRESSED_EXTENTS`.
 The automatic native codec is **IAC1 version 1** (codec identifier 2).
 
-IAC1 is the sole bounded compression codec accepted by Format 0.18.
+IAC1 is the InfiltratorFS-native bounded codec selected for Format 0.18. LZ4
+(codec identifier 1) remains supported as a development/reference and
+interoperability codec, but new automatic writes do not select LZ4.
 
 Compression is a storage representation beneath the logical file-data
 contract. SHA-256 continues to protect the exact uncompressed logical bytes.
@@ -131,8 +133,8 @@ small kernel implementation surface and bounded mutation amplification.
 
 ## Format discipline
 
-For Format 0.18, codec identifier 2 means IAC1 v1. Every other nonzero codec
-identifier is invalid. The codec identifier, stored-byte count and logical
+For Format 0.18, codec identifier 2 means IAC1 v1 and codec identifier 1 means
+the retained LZ4 representation. The codec identifier, stored-byte count and logical
 extent length are sufficient to locate and decode each bounded stream.
 
 Future codec research may allocate any unused identifier in the 11-bit Format

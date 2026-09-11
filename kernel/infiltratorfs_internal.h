@@ -19,6 +19,7 @@
 #include <linux/highmem.h>
 #include <linux/kernel.h>
 #include <linux/list.h>
+#include <linux/lz4.h>
 #include <linux/math64.h>
 #include <linux/module.h>
 #include <linux/mutex.h>

@@ -159,7 +159,7 @@ Shared normal extents implement reflinks. Writes break sharing through copy-on-w
 
 ### Compressed extents
 
-Compressed extents record codec identity, stored-byte length and logical extent length. Format 0.18 accepts IAC1 v1 (codec ID 2) as its sole compressed representation; other codec IDs are invalid.
+Compressed extents record codec identity, stored-byte length and logical extent length. Current automatic writes use IAC1 v1 (codec ID 2); LZ4 (codec ID 1) remains a supported non-default representation.
 
 Compression is selected only when it saves filesystem blocks. Logical SHA-256 covers the uncompressed logical bytes. Operations that would slice a compressed stream must materialize or replace the affected bounded cluster rather than pretending compressed logical blocks map one-for-one to physical blocks.
 

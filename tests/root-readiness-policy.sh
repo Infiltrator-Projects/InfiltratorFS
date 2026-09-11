@@ -5,6 +5,7 @@ grep -Fq '.tmpfile = infilfs_posix_acl_tmpfile' "$root/kernel/infiltratorfs_rw.i
 grep -Fq 'RENAME_EXCHANGE' "$root/kernel/infiltratorfs_rw_namespace.inc"
 grep -Fq 'infs_compression_metrics' "$root/include/infilfs/volume.h"
 grep -Fq 'infilfs-compression' "$root/CMakeLists.txt"
+grep -Fq 'INFS_COMPRESSION_LZ4' "$root/include/infilfs/format.h"
 grep -Fq 'Linux root boot qualification' "$root/.github/workflows/release-packages.yml"
 grep -Fq 'Linux root-volume qualification' "$root/.github/workflows/release-packages.yml"
 grep -Fq 'ROOT_RECOVERY_PASS' "$root/tests/root-boot-qemu.sh"

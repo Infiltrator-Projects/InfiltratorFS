@@ -12,6 +12,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#include <lz4.h>
 
 #define INFS_DIRENT_ALIGN 8u
 
@@ -141,7 +142,8 @@ static int extent_flags_valid(uint32_t logical_blocks, uint64_t physical,
         return 0;
     if (codec == INFS_COMPRESSION_NONE)
         return flags == INFS_EXTENT_NORMAL;
-    if (codec != INFS_COMPRESSION_IAC1 || !stored ||
+    if ((codec != INFS_COMPRESSION_LZ4 &&
+         codec != INFS_COMPRESSION_IAC1) || !stored ||
         logical_blocks > INFS_COMPRESSION_CLUSTER_BLOCKS ||
         stored > INFS_EXTENT_STORED_BYTES_MAX ||
         (uint64_t)stored >= (uint64_t)logical_blocks * INFS_BLOCK_SIZE)

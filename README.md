@@ -32,7 +32,7 @@ Format 0.18 provides:
 - generation-aware object and directory trees plus paged extent metadata;
 - inline, sparse and shared/reflinked file data;
 - symbolic links, hard links and named read-only snapshots;
-- adaptive bounded per-extent compression using native IAC1 v1;
+- adaptive bounded per-extent compression using native IAC1 v1, with LZ4 retained as a non-default interoperability/reference representation;
 - CRC64-ECMA metadata integrity and SHA-256 logical file-data integrity;
 - 1023-byte UTF-8 namespace components;
 - portable flags plus birth/access/modification/change timestamps stored as signed epoch seconds plus canonical nanoseconds, avoiding the old signed-64-bit nanosecond date ceiling;

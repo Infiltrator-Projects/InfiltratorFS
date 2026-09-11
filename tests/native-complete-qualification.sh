@@ -229,6 +229,8 @@ section "Exact-source online fragmentation and defragmentation"
 run_timed "native online-defrag qualification" 30m     bash tests/native-defrag-qualification.sh "$BUILD" "$ROOT/kernel/infiltratorfs.ko"
 
 section "Exact-source million-file and 1 TiB mounted scale"
+sudo modprobe lz4_compress 2>/dev/null || true
+sudo modprobe lz4_decompress 2>/dev/null || true
 if ! sudo insmod "$ROOT/kernel/infiltratorfs.ko"; then
     sudo dmesg | tail -n 80 >&2 || true
     exit 1

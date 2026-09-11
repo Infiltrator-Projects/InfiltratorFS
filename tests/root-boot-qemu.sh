@@ -54,6 +54,8 @@ mkfs.vfat -F32 "${loop}p1" >/dev/null
 mkfs.ext4 -F "${loop}p2" >/dev/null
 "$build/mkfs.infilfs" --force -L RootBoot "${loop}p3" >/dev/null
 
+modprobe lz4_compress 2>/dev/null || true
+modprobe lz4_decompress 2>/dev/null || true
 insmod "$module"
 mount -t infiltratorfs "${loop}p3" "$mnt"
 mkdir -p "$mnt/boot"

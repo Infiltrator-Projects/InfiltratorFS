@@ -119,7 +119,8 @@ bool infilfs_extent_flags_valid(u32 logical_blocks, u64 physical,
         return false;
     if (codec == INFILFS_COMPRESSION_NONE)
         return flags == INFILFS_EXTENT_NORMAL;
-    if (codec != INFILFS_COMPRESSION_IAC1 || !stored ||
+    if ((codec != INFILFS_COMPRESSION_LZ4 &&
+         codec != INFILFS_COMPRESSION_IAC1) || !stored ||
         logical_blocks > INFILFS_COMPRESSION_CLUSTER_BLOCKS ||
         (u64)stored >= (u64)logical_blocks * INFILFS_DISK_BLOCK_SIZE)
         return false;
@@ -155,7 +156,11 @@ int infilfs_read_compressed_extent(
         if (ret)
             goto out;
     }
-    if (infilfs_extent_codec(flags) == INFILFS_COMPRESSION_IAC1) {
+    if (infilfs_extent_codec(flags) == INFILFS_COMPRESSION_LZ4) {
+        decoded = LZ4_decompress_safe(
+            (const char *)compressed, (char *)plain,
+            (int)stored, (int)plain_bytes);
+    } else if (infilfs_extent_codec(flags) == INFILFS_COMPRESSION_IAC1) {
         decoded = (int)infs_iac1_decompress(
             compressed, stored, plain, plain_bytes);
     } else {
