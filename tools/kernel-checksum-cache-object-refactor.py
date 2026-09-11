@@ -98,6 +98,9 @@ rp = rp.replace("grep -Fq 'INFILFS_NATIVE_CHECKSUM_GROUP_CACHE_SLOTS' \"$data\""
 rwp.write_text(rp)
 
 # Ensure DKMS/package/native qualification source copies include the new object.
+# Source-manifest updates must remain path-aware. Do not globally prefix the
+# rw_data token: quoted package validation patterns require distinct path
+# entries, and concatenating filenames there creates an impossible check.
 for p in [
     root / 'packaging/build-linux-packages.sh',
     root / '.github/workflows/kernel-module.yml',
@@ -107,6 +110,24 @@ for p in [
         continue
     text = p.read_text()
     if 'infiltratorfs_checksum_cache.c' in text:
+        continue
+    if p.name == 'build-linux-packages.sh':
+        install_anchor = '            infiltratorfs_rw_legacy.inc infiltratorfs_rw_data.inc \\n'
+        install_repl = ('            infiltratorfs_rw_legacy.inc infiltratorfs_checksum_cache.c \\n'
+                        '            infiltratorfs_rw_data.inc \\n')
+        required_anchor = '    "usr/src/infiltratorfs-${package_version}/infiltratorfs_rw_data.inc$" \\n'
+        required_repl = ('    "usr/src/infiltratorfs-${package_version}/infiltratorfs_checksum_cache.c$" \\n'
+                         '    "usr/src/infiltratorfs-${package_version}/infiltratorfs_rw_data.inc$" \\n')
+        run_anchor = '        kernel/infiltratorfs_rw_legacy.inc kernel/infiltratorfs_rw_data.inc \\n'
+        run_repl = ('        kernel/infiltratorfs_rw_legacy.inc kernel/infiltratorfs_checksum_cache.c \\n'
+                    '        kernel/infiltratorfs_rw_data.inc \\n')
+        for anchor, repl in ((install_anchor, install_repl),
+                             (required_anchor, required_repl),
+                             (run_anchor, run_repl)):
+            if anchor not in text:
+                raise SystemExit(f'cannot add checksum cache to package manifest {p}: {anchor!r}')
+            text = text.replace(anchor, repl, 1)
+        p.write_text(text)
         continue
     marker = 'infiltratorfs_rw_data.inc'
     if marker not in text:

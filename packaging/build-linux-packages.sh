@@ -308,7 +308,8 @@ for required in \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_parallel_alloc.c$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_rw.inc$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_rw_legacy.inc$" \
-    "usr/src/infiltratorfs-${package_version}/infiltratorfs_checksum_cache.c infiltratorfs_rw_data.inc$" \
+    "usr/src/infiltratorfs-${package_version}/infiltratorfs_checksum_cache.c$" \
+    "usr/src/infiltratorfs-${package_version}/infiltratorfs_rw_data.inc$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_rw_namespace.inc$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_read_cache.c$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_pagecache.c$" \
@@ -416,7 +417,8 @@ verify_installer() {
         kernel/infiltratorfs_format.h include/infilfs/iac1.h kernel/infiltratorfs_allocation_map.c \
         kernel/infiltratorfs_allocation_publish.c kernel/infiltratorfs_rw.inc \
         kernel/infiltratorfs_parallel_alloc.c \
-        kernel/infiltratorfs_rw_legacy.inc kernel/infiltratorfs_checksum_cache.c infiltratorfs_rw_data.inc \
+        kernel/infiltratorfs_rw_legacy.inc kernel/infiltratorfs_checksum_cache.c \
+        kernel/infiltratorfs_rw_data.inc \
         kernel/infiltratorfs_rw_namespace.inc kernel/infiltratorfs_read_cache.c \
         kernel/infiltratorfs_pagecache.c kernel/infiltratorfs_linux_meta_codec.c kernel/infiltratorfs_linux_meta.inc \
         kernel/infiltratorfs_resize.c kernel/infiltratorfs_quota.inc \
