@@ -390,7 +390,7 @@ window, dialog, messagedialog, filechooser {
 }
 headerbar {
     min-height: 42px;
-    background-image: linear-gradient(to bottom, #24262a, #17191d);
+    background-image: linear-gradient(to bottom, #24262a, #171b20);
     color: #eef1f3;
     border-bottom: 1px solid #3a4046;
 }
@@ -457,7 +457,7 @@ entry selection, textview text selection {
 stackswitcher button {
     background-image: none;
     background-color: transparent;
-    color: #8f979e;
+    color: #98a1a9;
     border-color: transparent;
     border-radius: 0;
     padding: 0 14px;
@@ -475,7 +475,7 @@ scrollbar slider:hover { background-color: #4a525b; }
 separator { background-color: #353a40; }
 
 .sidebar {
-    background-image: linear-gradient(to right, #11151a, #0c0f13);
+    background-image: linear-gradient(to right, #11151a, #0e1115);
     border-right: 1px solid #343a40;
 }
 .sidebar-header {
@@ -516,7 +516,7 @@ separator { background-color: #353a40; }
     font-weight: 700;
     color: #eef1f3;
 }
-.device-meta { color: #8f979e; font-size: 12px; }
+.device-meta { color: #98a1a9; font-size: 12px; }
 
 .content { padding: 30px 34px 24px 34px; }
 .hero { margin-bottom: 6px; }
@@ -535,13 +535,13 @@ separator { background-color: #353a40; }
     font-size: 27px;
     font-weight: 400;
 }
-.hero-path { color: #8f979e; font-size: 12px; }
+.hero-path { color: #98a1a9; font-size: 12px; }
 .badge {
     padding: 4px 9px;
     border-radius: 999px;
     background: #14181c;
     border: 1px solid #3b4147;
-    color: #9ca4ab;
+    color: #98a1a9;
     font-size: 11px;
     font-weight: 700;
 }
@@ -552,7 +552,7 @@ separator { background-color: #353a40; }
 }
 
 .section-title { color: #edf0f2; font-size: 16px; font-weight: 700; }
-.section-subtitle { color: #8f979e; font-size: 12px; }
+.section-subtitle { color: #98a1a9; font-size: 12px; }
 .card {
     padding: 18px;
     border: 1px solid #353c43;
@@ -574,7 +574,7 @@ separator { background-color: #353a40; }
 .action-row:hover { background: rgba(255,255,255,0.025); }
 .action-row image { color: #aeb6bd; }
 .action-title { color: #eef1f3; font-weight: 700; }
-.action-description { color: #8f979e; font-size: 12px; }
+.action-description { color: #98a1a9; font-size: 12px; }
 .danger-zone {
     padding: 16px;
     border: 1px solid #663239;
@@ -599,7 +599,7 @@ separator { background-color: #353a40; }
     font-size: 30px;
     font-weight: 400;
 }
-.empty-copy { color: #9ca4ab; font-size: 13px; }
+.empty-copy { color: #98a1a9; font-size: 13px; }
 
 .activity-frame {
     border: 1px solid #353c43;
