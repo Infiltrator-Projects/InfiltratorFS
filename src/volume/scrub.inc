@@ -107,26 +107,57 @@ infs_status infs_scrub(struct infs_volume *vol,
                     continue;
                 }
             }
-            for (uint32_t k = 0; k < blocks; ++k) {
-                ++report->data_blocks_checked;
-                uint8_t data[INFS_BLOCK_SIZE];
-                if (plain) {
-                    memcpy(data, plain + (size_t)k * INFS_BLOCK_SIZE,
-                           INFS_BLOCK_SIZE);
-                } else if (read_block(vol, physical + k, data) !=
-                           INFS_STATUS_OK) {
-                    ++report->metadata_errors;
+
+            /* One checksum object holds a run of adjacent digests.  The old
+             * scrub called checksum_get() for every data block, repeatedly
+             * locating and rereading the same checksum object.  Resolve each
+             * checksum object once and verify its whole overlapping run. */
+            for (uint32_t k = 0; k < blocks;) {
+                uint64_t current_logical = logical + k;
+                uint64_t checksum_offset =
+                    current_logical % INFS_CHECKSUMS_PER_OBJECT;
+                uint64_t available =
+                    INFS_CHECKSUMS_PER_OBJECT - checksum_offset;
+                uint32_t chunk = blocks - k;
+                if ((uint64_t)chunk > available)
+                    chunk = (uint32_t)available;
+
+                uint8_t checksum_block[INFS_BLOCK_SIZE];
+                struct infs_checksum_payload_disk *checksum;
+                struct infs_data_checksum_disk *expected;
+                infs_status checksum_status = checksum_locate(
+                    vol, file, hdr->object_id, current_logical, 0, NULL,
+                    checksum_block, &checksum, &expected);
+                uint32_t checksum_count = checksum_status == INFS_STATUS_OK ?
+                    infs_le32_to_cpu(checksum->checksum_count) : 0;
+                if (checksum_status != INFS_STATUS_OK ||
+                    checksum_offset + chunk > checksum_count) {
+                    report->metadata_errors += chunk;
+                    report->data_blocks_checked += chunk;
+                    k += chunk;
                     continue;
                 }
-                struct infs_data_checksum_disk expected, actual;
-                if (checksum_get(vol, file, hdr->object_id, logical + k,
-                                 &expected) != INFS_STATUS_OK) {
-                    ++report->metadata_errors;
-                    continue;
+
+                for (uint32_t n = 0; n < chunk; ++n) {
+                    ++report->data_blocks_checked;
+                    uint8_t data[INFS_BLOCK_SIZE];
+                    uint32_t block_index = k + n;
+                    if (plain) {
+                        memcpy(data,
+                               plain + (size_t)block_index * INFS_BLOCK_SIZE,
+                               INFS_BLOCK_SIZE);
+                    } else if (read_block(vol, physical + block_index, data) !=
+                               INFS_STATUS_OK) {
+                        ++report->metadata_errors;
+                        continue;
+                    }
+                    struct infs_data_checksum_disk actual;
+                    data_block_checksum(data, &actual);
+                    if (memcmp(&expected[checksum_offset + n], &actual,
+                               sizeof(actual)) != 0)
+                        ++report->checksum_errors;
                 }
-                data_block_checksum(data, &actual);
-                if (memcmp(&expected, &actual, sizeof(expected)) != 0)
-                    ++report->checksum_errors;
+                k += chunk;
             }
             free(plain);
         }
