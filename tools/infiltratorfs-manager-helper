@@ -134,7 +134,7 @@ case "$operation" in
         (( $# == 1 )) || fail "scrub-block requires a target"
         validate_partition "$1"
         [[ -z "$(findmnt -rn -S "$1")" ]] || fail "unmount the partition before running integrity verification"
-        exec /usr/bin/infilfs-scrub "$1"
+        exec /usr/sbin/fsck.infiltratorfs --scrub "$1"
         ;;
     forensic-block)
         (( $# == 1 )) || fail "forensic-block requires a target"

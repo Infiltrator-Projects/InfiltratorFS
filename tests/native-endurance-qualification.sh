@@ -22,7 +22,7 @@ SECONDS="${INFS_ENDURANCE_SECONDS:-300}"
 WORKERS="${INFS_ENDURANCE_WORKERS:-4}"
 RESERVE_MIB="${INFS_ENDURANCE_RESERVE_MIB:-384}"
 
-for path in "$BUILD/mkfs.infilfs" "$BUILD/infilfs-scrub" "$BUILD/infilfs-inspect" "$STRESS"; do
+for path in "$BUILD/mkfs.infilfs" "$BUILD/fsck.infiltratorfs" "$BUILD/infilfs-inspect" "$STRESS"; do
     [[ -e "$path" ]] || { echo "Missing qualification input: $path" >&2; exit 1; }
 done
 
@@ -141,7 +141,7 @@ MOUNTED=0
 
 start="$(date +%s%N)"
 set +e
-timeout --signal=TERM --kill-after=30s 1800s "$BUILD/infilfs-scrub" "$IMAGE" | tee "$SCRUB1"
+timeout --signal=TERM --kill-after=30s 1800s "$BUILD/fsck.infiltratorfs" --scrub "$IMAGE" | tee "$SCRUB1"
 rc=${PIPESTATUS[0]}
 set -e
 end="$(date +%s%N)"
@@ -166,7 +166,7 @@ MOUNTED=0
 echo "=== Final offline scrub ==="
 start="$(date +%s%N)"
 set +e
-timeout --signal=TERM --kill-after=30s 1800s "$BUILD/infilfs-scrub" "$IMAGE" | tee "$SCRUB2"
+timeout --signal=TERM --kill-after=30s 1800s "$BUILD/fsck.infiltratorfs" --scrub "$IMAGE" | tee "$SCRUB2"
 rc=${PIPESTATUS[0]}
 set -e
 end="$(date +%s%N)"

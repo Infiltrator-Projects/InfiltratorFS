@@ -6,7 +6,7 @@ build_dir="${1:-build}"
 mkfs="$build_dir/mkfs.infilfs"
 inspect="$build_dir/infilfs-inspect"
 tool="$build_dir/infilfs-tool"
-scrub="$build_dir/infilfs-scrub"
+fsck="$build_dir/fsck.infiltratorfs"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -54,7 +54,7 @@ for stage in before-bitmap after-bitmap; do
     cp "$base" "$image"
     expect_crash "$stage" "$tool" "$image" write "$payload" /sparse "$high_offset"
     assert_stat "$image" 0 0
-    "$scrub" "$image" | grep -Fq 'Data blocks checked: 0'
+    "$fsck" --scrub "$image" | grep -Fq 'Data blocks checked: 0'
 done
 
 # Checkpoint publication atomically exposes the huge logical hole, one data
@@ -65,7 +65,7 @@ expect_crash after-checkpoint "$tool" "$committed" write "$payload" /sparse "$hi
 assert_stat "$committed" "$logical_size" 4096
 [[ "$($tool "$committed" map /sparse 1)" == hole ]]
 [[ "$($tool "$committed" map /sparse "$high_block")" != hole ]]
-"$scrub" "$committed" | grep -Fq 'Data blocks checked: 1'
+"$fsck" --scrub "$committed" | grep -Fq 'Data blocks checked: 1'
 
 # Hole punching follows the same commit rule.
 for stage in before-bitmap after-bitmap; do
@@ -73,7 +73,7 @@ for stage in before-bitmap after-bitmap; do
     cp "$committed" "$image"
     expect_crash "$stage" "$tool" "$image" punch /sparse "$block_start" 4096
     assert_stat "$image" "$logical_size" 4096
-    "$scrub" "$image" | grep -Fq 'Data blocks checked: 1'
+    "$fsck" --scrub "$image" | grep -Fq 'Data blocks checked: 1'
 done
 
 punched="$tmp/punch-committed.img"
@@ -81,7 +81,7 @@ cp "$committed" "$punched"
 expect_crash after-checkpoint "$tool" "$punched" punch /sparse "$block_start" 4096
 assert_stat "$punched" "$logical_size" 0
 [[ "$($tool "$punched" map /sparse "$high_block")" == hole ]]
-"$scrub" "$punched" | grep -Fq 'Data blocks checked: 0'
+"$fsck" --scrub "$punched" | grep -Fq 'Data blocks checked: 0'
 
 # Repeated allocation and reclamation must not leak data, checksum or CoW
 # metadata blocks.

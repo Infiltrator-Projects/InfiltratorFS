@@ -332,7 +332,7 @@ if(UNIX)
     add_executable(mkfs.infilfs tools/mkfs.infilfs.c)
     add_executable(infilfs-inspect tools/infilfs-inspect.c)
     add_executable(infilfs-tool tools/infilfs-tool.c)
-    add_executable(infilfs-scrub tools/infilfs-scrub.c)
+    add_executable(fsck.infiltratorfs tools/fsck.infiltratorfs.c)
     add_executable(infilfs-forensic tools/infilfs-forensic.c)
     add_executable(infilfs-optimize tools/infilfs-optimize.c)
     add_executable(infilfs-compression tools/infilfs-compression.c)
@@ -343,7 +343,7 @@ if(UNIX)
     target_include_directories(infiltratorfs-quota PRIVATE kernel)
     target_compile_definitions(mkfs.infilfs PRIVATE
         INFILFS_IMPLEMENTATION_VERSION=\"${PROJECT_VERSION}\")
-    foreach(tool_target IN ITEMS mkfs.infilfs infilfs-inspect infilfs-tool infilfs-scrub infilfs-forensic infilfs-optimize infilfs-compression infiltratorfs-resize infiltratorfs-quota)
+    foreach(tool_target IN ITEMS mkfs.infilfs infilfs-inspect infilfs-tool fsck.infiltratorfs infilfs-forensic infilfs-optimize infilfs-compression infiltratorfs-resize infiltratorfs-quota)
         target_link_libraries(${tool_target} PRIVATE infilfs_posix)
         target_compile_definitions(${tool_target} PRIVATE _GNU_SOURCE)
         infilfs_enable_warnings(${tool_target})
@@ -399,14 +399,16 @@ if(UNIX)
         COMMAND bash ${CMAKE_SOURCE_DIR}/tests/desktop-integration.sh
                      ${CMAKE_BINARY_DIR})
 
-    install(TARGETS mkfs.infilfs infilfs-inspect infilfs-tool infilfs-scrub infilfs-forensic infilfs-optimize infilfs-compression infiltratorfs-resize infiltratorfs-quota
+    install(TARGETS mkfs.infilfs infilfs-inspect infilfs-tool infilfs-forensic infilfs-optimize infilfs-compression infiltratorfs-resize infiltratorfs-quota
             RUNTIME DESTINATION bin)
+    install(TARGETS fsck.infiltratorfs
+            RUNTIME DESTINATION sbin)
     install(PROGRAMS tools/infiltratorfs-manager tools/mkfs.infiltratorfs
             DESTINATION bin)
     install(PROGRAMS tools/infiltratorfs-manager-helper
                      packaging/infiltratorfs-os-integration
             DESTINATION lib/infiltratorfs)
-    install(PROGRAMS tools/mount.infiltratorfs tools/fsck.infiltratorfs
+    install(PROGRAMS tools/mount.infiltratorfs
             DESTINATION sbin)
     install(PROGRAMS packaging/initramfs/infiltratorfs-hook
         DESTINATION share/initramfs-tools/hooks

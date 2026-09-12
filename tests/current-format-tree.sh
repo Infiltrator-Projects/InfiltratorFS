@@ -8,7 +8,7 @@ volume="$root/src/volume.c"
 volume_dir="$root/src/volume"
 mkfs="$build_dir/mkfs.infilfs"
 tool="$build_dir/infilfs-tool"
-scrub="$build_dir/infilfs-scrub"
+fsck="$build_dir/fsck.infiltratorfs"
 forensic="$build_dir/infilfs-forensic"
 
 # Portable-core maintainability is a structural invariant.  Historical phase
@@ -44,7 +44,7 @@ grep -Fq '#include "volume/file-read.inc"' "$volume"
 grep -Fq '#include "volume/file-write.inc"' "$volume"
 grep -Fq '#include "volume/namespace-replace.inc"' "$volume"
 
-for program in "$mkfs" "$tool" "$scrub" "$forensic"; do
+for program in "$mkfs" "$tool" "$fsck" "$forensic"; do
     [[ -x "$program" ]] || {
         echo "current-format-tree: missing executable: $program" >&2
         exit 2
@@ -72,7 +72,7 @@ for index in $(seq -w 0 219); do
         >/dev/null
 done
 [[ "$("$tool" "$image" ls / | wc -l)" -eq 220 ]]
-"$scrub" "$image" | grep -Fq 'Result:              CLEAN'
+"$fsck" --scrub "$image" | grep -Fq 'Result:              CLEAN'
 "$forensic" "$image" > "$records"
 grep -Fq $'current\tdirectory-branch-page' "$records"
 grep -Fq $'current\tindex-branch-page' "$records"

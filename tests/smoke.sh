@@ -6,10 +6,9 @@ build_dir="${1:-build}"
 mkfs="$build_dir/mkfs.infilfs"
 inspect="$build_dir/infilfs-inspect"
 tool="$build_dir/infilfs-tool"
-scrub="$build_dir/infilfs-scrub"
+fsck="$build_dir/fsck.infiltratorfs"
 api_test="$build_dir/infilfs-phase1-api"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-fsck_helper="$repo_root/tools/fsck.infiltratorfs"
 expected_version="$(sed -nE 's/^project\(InfiltratorFS VERSION ([0-9]+\.[0-9]+\.[0-9]+) LANGUAGES C\)$/\1/p' "$repo_root/CMakeLists.txt")"
 test -n "$expected_version"
 
@@ -26,9 +25,9 @@ truncate -s 64M "$image"
 grep -Fq "Implementation: $expected_version" "$mkfs_output"
 "$inspect" "$image" >/dev/null
 # Normal fsck is the fast structural check. Deep payload verification is only
-# selected explicitly with --scrub.
-INFILFS_CHECK="$inspect" "$fsck_helper" -n "$image" >/dev/null
-INFILFS_SCRUB="$scrub" "$fsck_helper" --scrub -n "$image" >/dev/null
+# selected explicitly with --scrub on the same native fsck executable.
+"$fsck" -n "$image" >/dev/null
+"$fsck" --scrub -n "$image" >/dev/null
 "$api_test" "$image" >/dev/null
 
 # Reformat and exercise the command-line persistence path independently.
@@ -82,7 +81,7 @@ cmp "$source_file" "$out_file"
 "$tool" "$image" rmdir /docs
 "$tool" "$image" snapshot-delete before-removal
 "$inspect" "$image" >/dev/null
-INFILFS_CHECK="$inspect" "$fsck_helper" -n "$image" >/dev/null
+"$fsck" -n "$image" >/dev/null
 
 # Corrupt the currently referenced root metadata block and require a hard
 # rejection. The root is copy-on-write and is not required to remain at the
@@ -100,7 +99,7 @@ if "$tool" "$corrupt" ls / >/dev/null 2>&1; then
     exit 1
 fi
 set +e
-INFILFS_CHECK="$inspect" "$fsck_helper" -n "$corrupt" >/dev/null 2>&1
+"$fsck" -n "$corrupt" >/dev/null 2>&1
 fsck_corrupt_status=$?
 set -e
 [[ "$fsck_corrupt_status" == 4 ]]

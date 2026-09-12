@@ -5,7 +5,7 @@ set -euo pipefail
 build="${1:?build directory required}"
 mkfs="$build/mkfs.infilfs"
 tool="$build/infilfs-tool"
-scrub="$build/infilfs-scrub"
+fsck="$build/fsck.infiltratorfs"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 image="$work/resize.img"
@@ -52,5 +52,5 @@ grep -Fqi 'busy' "$work/occupied.err"
 "$tool" "$image" cat /payload.bin > "$readback"
 cmp "$payload" "$readback"
 
-"$scrub" "$image" | grep -Fq 'Result:              CLEAN'
+"$fsck" --scrub "$image" | grep -Fq 'Result:              CLEAN'
 echo "resize qualification: ok"
