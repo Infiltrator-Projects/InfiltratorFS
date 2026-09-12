@@ -136,7 +136,7 @@ jobs:
         if: steps.headers.outputs.runtime_kdir != ''
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --parallel --target mkfs.infilfs infilfs-tool infilfs-scrub infilfs-forensic infilfs-optimize infiltratorfs-resize infiltratorfs-quota
+          cmake --build build --parallel --target mkfs.infilfs infilfs-tool fsck.infiltratorfs infilfs-forensic infilfs-optimize infiltratorfs-resize infiltratorfs-quota
 
       - name: Build module for the running kernel
         if: steps.headers.outputs.runtime_kdir != ''
@@ -1212,7 +1212,7 @@ jobs:
               /docs/inline.txt)" = 'native-kernel-inline'
           cmp "$extent_src" <(build/infilfs-tool "$image" snapshot-cat \
               before-native-rw /docs/extent.bin)
-          build/infilfs-scrub "$image" | tee "$RUNNER_TEMP/native-rw-scrub.txt"
+          build/fsck.infiltratorfs --scrub "$image" | tee "$RUNNER_TEMP/native-rw-scrub.txt"
           grep -Fq 'Result:              CLEAN' "$RUNNER_TEMP/native-rw-scrub.txt"
           build/infilfs-forensic "$image" > "$RUNNER_TEMP/native-tree-records.tsv"
           grep -Fq $'current\tindex-branch-page' \
@@ -1232,7 +1232,7 @@ jobs:
           crash_mounted=0
           sudo losetup -d "$crash_loopdev"
           crash_loopdev=""
-          build/infilfs-scrub "$crash_image" | \
+          build/fsck.infiltratorfs --scrub "$crash_image" | \
             tee "$RUNNER_TEMP/native-crash-recovery-scrub.txt"
           grep -Fq 'Result:              CLEAN' \
             "$RUNNER_TEMP/native-crash-recovery-scrub.txt"
@@ -1295,7 +1295,7 @@ jobs:
           assert checkpoints[0] == checkpoints[1] == checkpoints[2]
           assert struct.unpack_from('<Q', checkpoints[0], 68)[0] != 0
           PY
-          build/infilfs-scrub "$checkpoint_image" | \
+          build/fsck.infiltratorfs --scrub "$checkpoint_image" | \
             tee "$RUNNER_TEMP/native-checkpoint-recovery-scrub.txt"
           grep -Fq 'Result:              CLEAN' \
             "$RUNNER_TEMP/native-checkpoint-recovery-scrub.txt"
@@ -1327,7 +1327,7 @@ jobs:
                   checkpoints.append(image.read(block_size))
           assert checkpoints[0] == checkpoints[1] == checkpoints[2]
           PY
-          build/infilfs-scrub "$checkpoint_image" | \
+          build/fsck.infiltratorfs --scrub "$checkpoint_image" | \
             tee "$RUNNER_TEMP/native-deep-checkpoint-recovery-scrub.txt"
           grep -Fq 'Result:              CLEAN' \
             "$RUNNER_TEMP/native-deep-checkpoint-recovery-scrub.txt"
