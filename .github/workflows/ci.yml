@@ -164,7 +164,7 @@ jobs:
           build/mkfs.infilfs -L LinuxCrossPlatform build/linux-cross-platform.img
           printf 'linux-to-windows-cross-platform\n' > build/linux-cross-platform.txt
           build/infilfs-tool build/linux-cross-platform.img put build/linux-cross-platform.txt /linux-cross-platform.txt
-          build/infilfs-scrub build/linux-cross-platform.img
+          build/fsck.infiltratorfs --scrub build/linux-cross-platform.img
       - name: Upload Linux-created cross-platform image
         uses: actions/upload-artifact@v4
         with:
@@ -260,7 +260,7 @@ jobs:
           build-local/mkfs.infilfs -L LocalCrossPlatform build-local/local-cross-platform.img
           printf 'local-linux-cross-platform\n' > build-local/local-cross-platform.txt
           build-local/infilfs-tool build-local/local-cross-platform.img put build-local/local-cross-platform.txt /local-cross-platform.txt
-          build-local/infilfs-scrub build-local/local-cross-platform.img
+          build-local/fsck.infiltratorfs --scrub build-local/local-cross-platform.img
       - name: Reject FUSE build artifacts
         run: test ! -e build-local/infilfs-fuse
 
