@@ -31,19 +31,66 @@ static const char *scrub_phase_name(uint32_t phase)
     }
 }
 
+static const char *scrub_metadata_stage_name(uint32_t stage)
+{
+    switch (stage) {
+    case INFS_SCRUB_METADATA_INDEX_OBJECTS:
+        return "index-objects";
+    case INFS_SCRUB_METADATA_OWNERSHIP_OBJECTS:
+        return "ownership-objects";
+    case INFS_SCRUB_METADATA_SNAPSHOT_BITMAP:
+        return "snapshot-bitmap";
+    case INFS_SCRUB_METADATA_SNAPSHOT_UNION:
+        return "snapshot-union";
+    case INFS_SCRUB_METADATA_OWNERSHIP_BITMAP:
+        return "ownership-bitmap";
+    case INFS_SCRUB_METADATA_INTEGRITY_OBJECTS:
+        return "integrity-objects";
+    case INFS_SCRUB_METADATA_NAMESPACE_DIRECTORIES:
+        return "namespace-directories";
+    case INFS_SCRUB_METADATA_NAMESPACE_LINKS:
+        return "namespace-links";
+    case INFS_SCRUB_METADATA_NAMESPACE_REACHABILITY:
+        return "namespace-reachability";
+    case INFS_SCRUB_METADATA_CHECKSUM_FILES:
+        return "checksum-files";
+    case INFS_SCRUB_METADATA_SNAPSHOT_GENERATIONS:
+        return "snapshot-generations";
+    case INFS_SCRUB_METADATA_OWNERSHIP_DATA_BLOCKS:
+        return "ownership-data-blocks";
+    default:
+        return "starting";
+    }
+}
+
 static void scrub_progress(const struct infs_scrub_progress *progress,
                            void *context)
 {
     (void)context;
     if (!progress)
         return;
-    fprintf(stderr,
-            "\rInfiltratorFS scrub: %-9s  files=%" PRIu64
-            "  blocks=%" PRIu64 "  snapshots=%" PRIu64
-            "  errors=%" PRIu64,
-            scrub_phase_name(progress->phase), progress->files_checked,
-            progress->data_blocks_checked, progress->snapshots_checked,
-            progress->checksum_errors + progress->metadata_errors);
+
+    uint64_t errors = progress->checksum_errors + progress->metadata_errors;
+    if (progress->phase == INFS_SCRUB_PHASE_METADATA) {
+        double percent = progress->metadata_items_total ?
+            (100.0 * (double)progress->metadata_items_checked /
+             (double)progress->metadata_items_total) : 0.0;
+        fprintf(stderr,
+                "\rInfiltratorFS scrub: metadata/%-24s gen=%" PRIu64
+                "  %" PRIu64 "/%" PRIu64 "  %6.2f%%  errors=%" PRIu64,
+                scrub_metadata_stage_name(progress->metadata_stage),
+                progress->metadata_generation,
+                progress->metadata_items_checked,
+                progress->metadata_items_total, percent, errors);
+    } else {
+        fprintf(stderr,
+                "\rInfiltratorFS scrub: %-9s  files=%" PRIu64
+                "  blocks=%" PRIu64 "  snapshots=%" PRIu64
+                "  errors=%" PRIu64,
+                scrub_phase_name(progress->phase), progress->files_checked,
+                progress->data_blocks_checked, progress->snapshots_checked,
+                errors);
+    }
     if (progress->phase == INFS_SCRUB_PHASE_COMPLETE)
         fputc('\n', stderr);
     fflush(stderr);
@@ -79,7 +126,7 @@ int main(int argc, char **argv)
             &vol, &report, scrub_progress, NULL);
     }
     if (status != INFS_STATUS_OK) {
-        fprintf(stderr, "infilfs-scrub: scrub: %s\n",
+        fprintf(stderr, "\ninfilfs-scrub: scrub: %s\n",
                 infs_status_string(status));
         infs_volume_close(&vol);
         return 1;
