@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Generate converted kernel fsck workflow
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/generate-kernel-fsck-workflow.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Generate converted workflow as ordinary repository data
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p migration
+          python3 - <<'PY'
+          from pathlib import Path
+          source = Path('.github/workflows/kernel-module.yml').read_text(encoding='utf-8')
+          old_target = 'infilfs-tool infilfs-scrub infilfs-forensic'
+          if old_target not in source:
+              raise SystemExit('kernel workflow build target no longer matches expected source')
+          source = source.replace(old_target, 'infilfs-tool fsck.infiltratorfs infilfs-forensic')
+          old_call = 'build/infilfs-scrub '
+          if old_call not in source:
+              raise SystemExit('kernel workflow has no deep-scrub calls to convert')
+          source = source.replace(old_call, 'build/fsck.infiltratorfs --scrub ')
+          if 'infilfs-scrub' in source:
+              raise SystemExit('kernel workflow still refers to retired infilfs-scrub')
+          Path('migration/kernel-module.yml.transformed').write_text(source, encoding='utf-8')
+          PY
+          git diff --no-index --check /dev/null migration/kernel-module.yml.transformed || test $? -eq 1
+      - name: Publish generated ordinary file
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Shannon Smith'
+          git config user.email 'infiltratr@yandex.com'
+          git add migration/kernel-module.yml.transformed
+          git commit -m 'Generate converted kernel qualification workflow'
+          git push origin HEAD:main
