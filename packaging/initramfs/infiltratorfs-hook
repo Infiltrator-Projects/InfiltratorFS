@@ -22,13 +22,15 @@ manual_add_modules infiltratorfs
 
 # Root=UUID/root=LABEL resolution happens before the real root is mounted.
 # Stock blkid does not know the pre-1.0 signature, so include the project's
-# bounded read-only probe and its udev rule in the initramfs.
+# bounded read-only probe and its udev rule in the initramfs. The same inspector
+# provides --check for the normal fast structural fsck path.
 copy_exec /usr/bin/infilfs-inspect /usr/bin
 copy_file config /usr/lib/udev/rules.d/59-infiltratorfs.rules \
     /usr/lib/udev/rules.d/59-infiltratorfs.rules
 
-# initramfs-tools may invoke fsck.<type> before mounting /. InfiltratorFS fsck
-# is intentionally a complete read-only scrub: corruption stops the boot rather
-# than pretending an automatic repair occurred.
+# initramfs-tools may invoke fsck.<type> before mounting /. Plain
+# fsck.infiltratorfs performs the fast structural check. Keep the deep scrubber
+# available only for the explicit fsck.infiltratorfs --scrub mode; boot-time
+# fsck must never silently read and checksum every user-data block.
 copy_exec /usr/bin/infilfs-scrub /usr/bin
 copy_exec /usr/sbin/fsck.infiltratorfs /usr/sbin
