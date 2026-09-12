@@ -9,11 +9,11 @@ InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem. The
 <!--
 Release-policy compatibility anchor. This line is deliberately hidden from the
 user-facing README so visible status wording can change without breaking CI.
-**Current source version:** 0.18.53 (Format 0.18)<br>
+**Current source version:** 0.18.54 (Format 0.18)<br>
 -->
-**Current source:** 0.18.53<br>
+**Current source:** 0.18.54<br>
 **On-disk format:** 0.18<br>
-**Latest published release:** v0.18.52<br>
+**Latest published release:** v0.18.53<br>
 **Shared foundation:** Infiltratr Common 1.11.0<br>
 **Licence:** GPL-3.0-or-later
 
@@ -37,7 +37,7 @@ Format 0.18 provides:
 - 1023-byte UTF-8 namespace components;
 - portable flags plus birth/access/modification/change timestamps stored as signed epoch seconds plus canonical nanoseconds, avoiding the old signed-64-bit nanosecond date ceiling;
 - operating-system-specific metadata isolated at adapter boundaries; and
-- scrub, inspection and forensic tooling.
+- fast structural filesystem checking plus explicit deep scrub, inspection and forensic tooling.
 
 Linux is the most complete mounted adapter. The normal Linux path is the native out-of-tree `infiltratorfs.ko` VFS driver installed through DKMS; there is no current FUSE filesystem implementation or FUSE runtime fallback. The native driver includes the established read/write namespace surface, random and sparse I/O, truncate, `fallocate`, hole punching, FIEMAP/SEEK_DATA/SEEK_HOLE, reflinks, xattrs, special nodes, page cache/readahead, writable `mmap`, crash-safe open-unlink handling, checkpoint fallback/healing, online defragmentation, workload/media-aware allocation policy and online grow/bounded shrink.
 
@@ -78,9 +78,26 @@ Create and inspect an image without mounting:
 truncate -s 128M infilfs.img
 ./build/mkfs.infilfs -L test-volume infilfs.img
 ./build/infilfs-inspect infilfs.img
-./build/infilfs-scrub infilfs.img
 ./build/infilfs-forensic --jsonl infilfs.img
 ```
+
+## Filesystem checking and scrub
+
+The normal filesystem checker is intentionally fast and structural:
+
+```bash
+sudo fsck.infiltratorfs /dev/<partition>
+```
+
+It validates checkpoints, allocation/ownership metadata, the object index, namespace/reference consistency and checksum metadata. It does **not** read every user-data block or recompute every payload checksum. On a freshly formatted empty filesystem it should complete essentially immediately.
+
+The exhaustive data-integrity scan is opt-in:
+
+```bash
+sudo fsck.infiltratorfs --scrub /dev/<partition>
+```
+
+`--scrub` invokes the deep scrub path, which can read file payload data, recompute checksums and verify retained generations. It can therefore take a long time on a populated filesystem. The standalone `infilfs-scrub` command remains available for forensic, qualification and deliberate deep-integrity work. See `docs/FSCK-SCRUB-SEPARATION.md` for the command contract and rationale.
 
 For mounted fragmentation metrics and bounded online defragmentation:
 
@@ -112,6 +129,7 @@ To prevent documentation drift, each kind of fact has one authoritative home:
 - `docs/SECURITY.md` — portable security/ACL design direction.
 - `docs/COMPRESSION.md` — IAC1/compressed-extent design.
 - `docs/FORENSICS.md` — forensic scanner model and use.
+- `docs/FSCK-SCRUB-SEPARATION.md` — fast structural fsck versus explicit deep scrub contract.
 - `docs/INSPIRATIONS.md` — historical design influences, not project status.
 
 Implementation comments and workflow comments should explain local behaviour only; they are not alternate project-status documents.
