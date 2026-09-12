@@ -5,7 +5,7 @@ set -Eeuo pipefail
 build="${1:?build directory required}"
 module="${2:?kernel module required}"
 mkfs="$build/mkfs.infilfs"
-scrub="$build/infilfs-scrub"
+fsck="$build/fsck.infiltratorfs"
 max_xattr_seconds="${INFILFS_XATTR_MAX_SECONDS:-60}"
 work="$(mktemp -d)"
 image="$work/linux-meta.img"
@@ -36,7 +36,7 @@ stage() {
     printf 'native Linux metadata performance qualification: STAGE %s\n' "$1" >&2
 }
 
-for tool in "$mkfs" "$scrub" "$module"; do
+for tool in "$mkfs" "$fsck" "$module"; do
     test -s "$tool"
 done
 
@@ -45,9 +45,6 @@ mkdir -p "$mnt"
 truncate -s 4G "$image"
 "$mkfs" --force -L NativeLinuxMetadata "$image" >/dev/null
 
-# Hosted runners occasionally inherit a module from an earlier local step.
-# Qualify the exact module supplied to this script rather than silently using
-# whatever happens to be loaded already.
 if grep -qw infiltratorfs /proc/filesystems; then
     sudo rmmod infiltratorfs
 fi
@@ -97,7 +94,7 @@ stage "offline scrub after first publication"
 sync
 sudo umount "$mnt"
 mounted=0
-sudo "$scrub" "$loopdev" | tee "$work/scrub-before-remount.txt"
+sudo "$fsck" --scrub "$loopdev" | tee "$work/scrub-before-remount.txt"
 grep -Fq 'Result:              CLEAN' "$work/scrub-before-remount.txt"
 
 stage "remount and verify persisted xattrs"
@@ -118,7 +115,7 @@ stage "final unmount and offline scrub"
 sync
 sudo umount "$mnt"
 mounted=0
-sudo "$scrub" "$loopdev" | tee "$work/scrub-final.txt"
+sudo "$fsck" --scrub "$loopdev" | tee "$work/scrub-final.txt"
 grep -Fq 'Result:              CLEAN' "$work/scrub-final.txt"
 
 sudo losetup -d "$loopdev"
