@@ -7,11 +7,12 @@ on:
       - main
     paths:
       - '.github/workflows/**'
-      - 'tools/apply-buffered-writeback-repair.py'
+      - 'tests/ci-duration-policy.py'
+      - 'docs/QUALIFICATION.md'
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: ci-duration-policy-${{ github.ref }}
@@ -19,27 +20,11 @@ concurrency:
 
 jobs:
   policy:
-    name: Apply buffered writeback repair
+    name: Enforce automatic/manual qualification boundary
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
       - name: Check out source
         uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-      - name: Apply repair
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 tools/apply-buffered-writeback-repair.py
-          git checkout -- .github/workflows/temp-buffered-writeback-repair.yml 2>/dev/null || true
-          rm -f tools/apply-buffered-writeback-repair.py
-          git diff --check
-          bash tests/native-sequential-write-scaling-policy.sh .
-          bash tests/native-small-file-scaling-policy.sh .
-          bash tests/native-deferred-publication-policy.sh .
-          git config user.name "Shannon Smith"
-          git config user.email "infiltratr@yandex.com"
-          git add -A ':!.github/workflows'
-          git commit -m "Use buffered clustered native writeback"
-          git push origin HEAD:main
+      - name: Enforce qualification duration policy
+        run: python3 tests/ci-duration-policy.py
