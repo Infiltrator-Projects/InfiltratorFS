@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "infilfs/check.h"
 #include "infilfs/format.h"
 #include "infilfs/fs.h"
 #include "infilfs/posix_io.h"
@@ -25,9 +26,92 @@ static void print_udev_label(const uint8_t label[INFS_LABEL_MAX])
         printf("ID_FS_LABEL=%s\n", clean);
 }
 
+static const char *check_stage_name(uint32_t stage)
+{
+    switch (stage) {
+    case INFS_CHECK_STAGE_CHECKPOINTS:
+        return "checkpoint replicas";
+    case INFS_CHECK_STAGE_OBJECT_INDEX:
+        return "object index";
+    case INFS_CHECK_STAGE_ALLOCATION_OWNERSHIP:
+        return "allocation/ownership metadata";
+    case INFS_CHECK_STAGE_NAMESPACE:
+        return "namespace/reference metadata";
+    case INFS_CHECK_STAGE_CHECKSUM_METADATA:
+        return "checksum metadata";
+    case INFS_CHECK_STAGE_COMPLETE:
+        return "complete";
+    default:
+        return "unknown";
+    }
+}
+
+static const char *check_word(int valid, uint32_t failed_stage,
+                              uint32_t this_stage)
+{
+    if (valid)
+        return "OK";
+    if (failed_stage == this_stage)
+        return "FAILED";
+    return "NOT CHECKED";
+}
+
+static int run_structural_check(const char *target)
+{
+    struct infs_volume vol;
+    infs_status status = infs_posix_volume_open(&vol, target, 0);
+    if (status != INFS_STATUS_OK) {
+        fprintf(stderr, "infilfs-inspect --check: open: %s\n",
+                infs_status_string(status));
+        return status == INFS_STATUS_CORRUPT ? 2 : 1;
+    }
+
+    struct infs_check_report report;
+    status = infs_check(&vol, &report);
+    infs_volume_close(&vol);
+
+    printf("InfiltratorFS filesystem check\n");
+    printf("  Generation:            %" PRIu64 "\n", report.check_generation);
+    printf("  Checkpoint replicas:   %u/%u %s\n",
+           report.checkpoint_replicas_valid, INFS_CHECKPOINT_COUNT,
+           report.checkpoint_replicas_valid == INFS_CHECKPOINT_COUNT ?
+               "OK" : "DEGRADED");
+    printf("  Object index:          %s\n",
+           check_word(report.object_index_valid, report.failed_stage,
+                      INFS_CHECK_STAGE_OBJECT_INDEX));
+    printf("  Allocation/ownership:  %s\n",
+           check_word(report.allocation_ownership_valid, report.failed_stage,
+                      INFS_CHECK_STAGE_ALLOCATION_OWNERSHIP));
+    printf("  Namespace/references:  %s\n",
+           check_word(report.namespace_valid, report.failed_stage,
+                      INFS_CHECK_STAGE_NAMESPACE));
+    printf("  Checksum metadata:     %s\n",
+           check_word(report.checksum_metadata_valid, report.failed_stage,
+                      INFS_CHECK_STAGE_CHECKSUM_METADATA));
+    puts("  User-data checksum scan: NOT REQUESTED (--scrub for deep verification)");
+
+    if (status == INFS_STATUS_OK) {
+        puts("  Result:                CLEAN");
+        return 0;
+    }
+
+    if (status == INFS_STATUS_CORRUPT || status == INFS_STATUS_NOT_FOUND ||
+        status == INFS_STATUS_LOOP_DETECTED) {
+        printf("  Failed stage:          %s\n",
+               check_stage_name(report.failed_stage));
+        puts("  Result:                FILESYSTEM ERRORS DETECTED");
+        return 2;
+    }
+
+    fprintf(stderr, "infilfs-inspect --check: %s\n",
+            infs_status_string(status));
+    return 1;
+}
+
 int main(int argc, char **argv)
 {
     int udev_mode = 0;
+    int check_mode = 0;
     const char *target = NULL;
 
     if (argc == 2) {
@@ -35,12 +119,18 @@ int main(int argc, char **argv)
     } else if (argc == 3 && strcmp(argv[1], "--udev") == 0) {
         udev_mode = 1;
         target = argv[2];
+    } else if (argc == 3 && strcmp(argv[1], "--check") == 0) {
+        check_mode = 1;
+        target = argv[2];
     } else {
         fprintf(stderr,
-                "Usage: %s [--udev] <image-or-block-device>\n",
+                "Usage: %s [--udev|--check] <image-or-block-device>\n",
                 argv[0]);
         return 2;
     }
+
+    if (check_mode)
+        return run_structural_check(target);
 
     struct infs_storage storage = {0};
     infs_status status = infs_posix_storage_open(&storage, target, 0);
