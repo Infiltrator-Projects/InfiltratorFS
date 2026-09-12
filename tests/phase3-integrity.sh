@@ -57,7 +57,6 @@ if [[ "$old_physical" == "$new_physical" ]]; then
 fi
 "$scrub" "$committed" | grep -Fq 'Result:              CLEAN'
 
-
 # A partial overwrite must preserve surrounding bytes while still replacing the
 # whole physical block and checksum atomically.
 head -c 137 /dev/zero | tr '\000' 'C' > "$tmp/patch.bin"
@@ -87,7 +86,9 @@ if [[ "$free_before" != "$free_after" ]]; then
     exit 1
 fi
 
-# Cross multiple hidden checksum objects and verify every block.
+# Cross multiple hidden checksum objects and verify every block. Capture stderr
+# separately and prove metadata progress is real: named sub-stages must report
+# non-zero completed/total counters before payload verification begins.
 large="$tmp/large.img"
 truncate -s 128M "$large"
 "$mkfs" -L ChecksumChain "$large" >/dev/null
@@ -95,9 +96,15 @@ dd if=/dev/urandom of="$tmp/large.bin" bs=1M count=3 status=none
 "$tool" "$large" put "$tmp/large.bin" /large
 "$tool" "$large" cat /large > "$tmp/large-out.bin"
 cmp "$tmp/large.bin" "$tmp/large-out.bin"
-scrub_out="$($scrub "$large")"
+"$scrub" "$large" >"$tmp/large-scrub.out" 2>"$tmp/large-progress.raw"
+scrub_out="$(cat "$tmp/large-scrub.out")"
+tr '\r' '\n' <"$tmp/large-progress.raw" >"$tmp/large-progress.txt"
 grep -Fq 'Data blocks checked: 768' <<<"$scrub_out"
 grep -Fq 'Result:              CLEAN' <<<"$scrub_out"
+grep -Eq 'metadata/index-objects[[:space:]]+gen=[0-9]+[[:space:]]+[1-9][0-9]*/[1-9][0-9]*' "$tmp/large-progress.txt"
+grep -Eq 'metadata/ownership-bitmap[[:space:]]+gen=[0-9]+[[:space:]]+[1-9][0-9]*/[1-9][0-9]*' "$tmp/large-progress.txt"
+grep -Eq 'metadata/namespace-directories[[:space:]]+gen=[0-9]+[[:space:]]+[1-9][0-9]*/[1-9][0-9]*' "$tmp/large-progress.txt"
+grep -Eq 'metadata/checksum-files[[:space:]]+gen=[0-9]+[[:space:]]+[1-9][0-9]*/[1-9][0-9]*' "$tmp/large-progress.txt"
 
 # Deliberately corrupt one data byte. The scrubber and normal read path must
 # both detect the silent corruption from the independently stored checksum.
