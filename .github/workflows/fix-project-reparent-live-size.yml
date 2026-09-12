@@ -1,0 +1,83 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Fix project reparent live size
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/fix-project-reparent-live-size.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Use live inode size for project transfer preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('kernel/infiltratorfs_quota.inc')
+          text = p.read_text(encoding='utf-8')
+          old = '''        logical = le64_to_cpu(attributes->logical_size);
+        if (bytes > U64_MAX - logical || objects == U64_MAX) {
+'''
+          new = '''        logical = le64_to_cpu(attributes->logical_size);
+        if (type == INFILFS_OBJECT_FILE) {
+            struct infilfs_iget_args live_args = {
+                .ino = infilfs_object_ino(entries[i].object_id),
+                .object_id = entries[i].object_id,
+            };
+            struct inode *live_inode;
+
+            /*
+             * Buffered writes may have advanced i_size before writeback has
+             * published the new logical_size to the object block. Project
+             * reparent quota admission must use the live logical size or a
+             * dirty subtree can cross the destination project limit. Dirty
+             * mappings keep their inode resident, so ilookup5() observes the
+             * authoritative VFS size without instantiating a new inode. If the
+             * inode is not resident there can be no dirty page-cache state and
+             * the persisted logical size above is authoritative.
+             */
+            live_inode = ilookup5(
+                source->i_sb, (unsigned long)live_args.ino,
+                infilfs_inode_matches_id, &live_args);
+            if (live_inode) {
+                loff_t live_size = i_size_read(live_inode);
+
+                if (live_size < 0) {
+                    iput(live_inode);
+                    kfree(object);
+                    ret = -EFSCORRUPTED;
+                    break;
+                }
+                logical = (u64)live_size;
+                iput(live_inode);
+            }
+        }
+        if (bytes > U64_MAX - logical || objects == U64_MAX) {
+'''
+          count = text.count(old)
+          if count != 1:
+              raise SystemExit(f'project reparent logical-size site: expected one match, got {count}')
+          p.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+          rm -f .github/workflows/fix-project-reparent-live-size.yml
+          git diff --check
+          grep -Fq 'live_inode = ilookup5(' kernel/infiltratorfs_quota.inc
+          grep -Fq 'Buffered writes may have advanced i_size' kernel/infiltratorfs_quota.inc
+          bash tests/native-quota-policy.sh .
+          bash tests/native-kernel-maintainability-policy.sh .
+          git config user.name 'Shannon Smith'
+          git config user.email 'infiltratr@yandex.com'
+          git add -A
+          git commit -m 'Account dirty buffered data in project reparent quotas'
+          git push origin HEAD:main
