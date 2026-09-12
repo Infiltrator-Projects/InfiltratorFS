@@ -369,25 +369,39 @@ static inline int infs_iac1_should_attempt(
 static inline infs_iac1_u8 infs_iac1_predictor_mode(
     const infs_iac1_u8 *src, infs_iac1_size input_size)
 {
+    infs_iac1_size available;
+    infs_iac1_size samples;
+    infs_iac1_size stride;
+    infs_iac1_size n;
     infs_iac1_size delta_hits = 0;
     infs_iac1_size xor_hits = 0;
-    infs_iac1_size i;
+
     if (input_size < 8u)
         return INFS_IAC1_MODE_IDENTITY;
-    for (i = 2u; i < input_size; ++i) {
-        infs_iac1_u8 a =
-            (infs_iac1_u8)(src[i] - src[i - 1u]);
-        infs_iac1_u8 b =
-            (infs_iac1_u8)(src[i - 1u] - src[i - 2u]);
+    available = input_size - 2u;
+    samples = available < 1024u ? available : 1024u;
+    stride = available / samples;
+    if (!stride)
+        stride = 1u;
+
+    for (n = 0; n < samples; ++n) {
+        infs_iac1_size i = 2u + n * stride;
+        infs_iac1_u8 a;
+        infs_iac1_u8 b;
+
+        if (i >= input_size)
+            i = input_size - 1u;
+        a = (infs_iac1_u8)(src[i] - src[i - 1u]);
+        b = (infs_iac1_u8)(src[i - 1u] - src[i - 2u]);
         if (a == b)
             ++delta_hits;
         if (i >= 4u && src[i] == src[i - 4u])
             ++xor_hits;
     }
 
-    if (xor_hits > delta_hits && xor_hits > input_size / 16u)
+    if (xor_hits > delta_hits && xor_hits > samples / 16u)
         return INFS_IAC1_MODE_XOR4;
-    if (delta_hits > input_size / 16u)
+    if (delta_hits > samples / 16u)
         return INFS_IAC1_MODE_DELTA8;
     return INFS_IAC1_MODE_IDENTITY;
 }

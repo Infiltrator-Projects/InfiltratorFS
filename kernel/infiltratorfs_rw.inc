@@ -12,30 +12,8 @@
 
 struct infilfs_rw_tx;
 
-struct infilfs_quota_subject {
-    u32 type;
-    u32 id;
-};
-
-struct infilfs_quota_reservation {
-    struct super_block *sb;
-    struct infilfs_quota_subject subject[3];
-    u32 subject_count;
-    u64 bytes;
-    u64 objects;
-    bool active;
-};
-
-static int infilfs_quota_reserve_inode(
-    struct inode *inode, u64 bytes, u64 objects,
-    struct infilfs_quota_reservation *reservation);
 static int infilfs_quota_reserve_create(
     struct inode *parent, u64 bytes, u64 objects,
-    struct infilfs_quota_reservation *reservation);
-static void infilfs_quota_reservation_finish(
-    struct infilfs_quota_reservation *reservation,
-    u64 actual_bytes, u64 actual_objects);
-static void infilfs_quota_reservation_abort(
     struct infilfs_quota_reservation *reservation);
 static int infilfs_quota_capture_inode(
     struct inode *inode, struct infilfs_quota_reservation *reservation);
@@ -828,6 +806,7 @@ finish:
     ret = infilfs_ns_finish(pending, ret);
     if (!ret) {
         ii->object_block = new_file_block;
+        WRITE_ONCE(ii->persisted_size, new_size);
         i_size_write(inode, new_size);
         inode->i_blocks = infilfs_native_extent_allocated_blocks(
             new_extents, new_extent_count) *

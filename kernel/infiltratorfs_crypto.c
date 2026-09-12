@@ -8,14 +8,16 @@ static struct crypto_shash *infilfs_sha256_tfm;
 
 static struct crypto_shash *infilfs_crypto_get_sha256(void)
 {
-    struct crypto_shash *tfm;
+    struct crypto_shash *tfm = READ_ONCE(infilfs_sha256_tfm);
 
+    if (likely(tfm))
+        return tfm;
     mutex_lock(&infilfs_crypto_lock);
     tfm = infilfs_sha256_tfm;
     if (!tfm) {
         tfm = crypto_alloc_shash("sha256", 0, 0);
         if (!IS_ERR(tfm))
-            infilfs_sha256_tfm = tfm;
+            WRITE_ONCE(infilfs_sha256_tfm, tfm);
     }
     mutex_unlock(&infilfs_crypto_lock);
     return tfm;

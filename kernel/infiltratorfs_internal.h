@@ -7,6 +7,8 @@
 #include <linux/bitops.h>
 #include <linux/buffer_head.h>
 #include <linux/capability.h>
+#include <linux/completion.h>
+#include <linux/cpumask.h>
 #include <linux/cred.h>
 #include <linux/delay.h>
 #include <linux/dirent.h>
@@ -51,6 +53,7 @@
 #define INFILTRATORFS_NAME "infiltratorfs"
 #define INFILTRATORFS_MAGIC 0x494e4653u
 #define INFILFS_ALLOCATION_RESERVATION_SHARDS 64u
+#define INFILFS_NATIVE_WRITEBACK_BATCH_BYTES (1024u * 1024u)
 #define INFILFS_LINUX_META_DIRECTORY ".infilfs-posix-meta"
 
 #define INFILFS_LINUX_META_MAGIC "INPSXM01"
@@ -264,6 +267,20 @@ struct infilfs_fs_context {
     enum infilfs_compression_mode compression_mode;
 };
 
+struct infilfs_quota_subject {
+    u32 type;
+    u32 id;
+};
+
+struct infilfs_quota_reservation {
+    struct super_block *sb;
+    struct infilfs_quota_subject subject[3];
+    u32 subject_count;
+    u64 bytes;
+    u64 objects;
+    bool active;
+};
+
 struct infilfs_quota_rule;
 struct infilfs_project_root;
 
@@ -344,6 +361,7 @@ struct infilfs_sb_info {
 
 struct infilfs_inode_info {
     u64 object_block;
+    u64 persisted_size;
     u64 data_allocation_hint;
     u64 portable_flags;
     u16 object_type;
@@ -583,6 +601,17 @@ ssize_t infilfs_file_read_iter_cached(struct kiocb *iocb, struct iov_iter *to);
 ssize_t infilfs_native_extent_write_iter(
     struct inode *inode, loff_t *position, struct iov_iter *from,
     size_t requested);
+ssize_t infilfs_native_writeback_iter(
+    struct inode *inode, loff_t *position, struct iov_iter *from,
+    size_t requested);
+int infilfs_quota_reserve_inode(
+    struct inode *inode, u64 bytes, u64 objects,
+    struct infilfs_quota_reservation *reservation);
+void infilfs_quota_reservation_finish(
+    struct infilfs_quota_reservation *reservation,
+    u64 actual_bytes, u64 actual_objects);
+void infilfs_quota_reservation_abort(
+    struct infilfs_quota_reservation *reservation);
 extern const struct address_space_operations infilfs_aops;
 
 /* Services shared with the compiled Format 0.17 directory-tree layer. */

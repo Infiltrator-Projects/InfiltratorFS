@@ -4925,7 +4925,7 @@ static ssize_t infilfs_native_extent_write_iter_mode(
         size_t staged_bytes = 0;
         size_t consumed = 0;
         u64 current_pos = (u64)pos + done;
-        u64 old_size = (u64)i_size_read(inode);
+        u64 old_size = READ_ONCE(ii->persisted_size);
         u64 compression_bytes =
             (u64)INFILFS_COMPRESSION_CLUSTER_BLOCKS *
             INFILFS_DISK_BLOCK_SIZE;
@@ -5101,7 +5101,9 @@ static ssize_t infilfs_native_extent_write_iter_mode(
         if (prepared.paged_fast)
             atomic64_inc(&sbi->prepared_paged_append_successes);
         ii->object_block = new_file_block;
-        i_size_write(inode, new_size);
+        WRITE_ONCE(ii->persisted_size, new_size);
+        if ((u64)i_size_read(inode) < new_size)
+            i_size_write(inode, new_size);
         inode->i_blocks = allocated_blocks *
             (INFILFS_DISK_BLOCK_SIZE >> 9);
         pending->tx.next_sb.generation =
@@ -5276,7 +5278,9 @@ static ssize_t infilfs_native_inline_write_iter(
 
     infilfs_native_operation_commit(pending);
     ii->object_block = new_block;
-    i_size_write(inode, new_size);
+    WRITE_ONCE(ii->persisted_size, new_size);
+    if ((u64)i_size_read(inode) < new_size)
+        i_size_write(inode, new_size);
     pending->tx.next_sb.generation = cpu_to_le64(pending->tx.generation);
     sbi->disk = pending->tx.next_sb;
     pending->pending_bytes += copied;
@@ -5304,6 +5308,27 @@ out_free:
     kfree(old_object);
     kfree(data);
     return ret;
+}
+
+ssize_t infilfs_native_writeback_iter(
+    struct inode *inode, loff_t *position, struct iov_iter *from,
+    size_t requested)
+{
+    struct infilfs_inode_info *ii = INFILFS_I(inode);
+    u64 persisted = ii ? READ_ONCE(ii->persisted_size) : 0;
+    loff_t pos = *position;
+
+    if (pos >= 0 && (u64)pos <= INFILFS_INLINE_DATA_MAX &&
+        requested <= INFILFS_INLINE_DATA_MAX - (size_t)pos &&
+        persisted <= INFILFS_INLINE_DATA_MAX) {
+        ssize_t ret = infilfs_native_inline_write_iter(
+            inode, position, from, requested);
+
+        if (ret != -EOPNOTSUPP)
+            return ret;
+    }
+    return infilfs_native_extent_write_iter(
+        inode, position, from, requested);
 }
 
 static ssize_t infilfs_file_write_iter_common(struct kiocb *iocb,
@@ -5403,7 +5428,12 @@ out_inode:
 static ssize_t infilfs_file_write_iter(struct kiocb *iocb,
                                        struct iov_iter *from)
 {
-    return infilfs_file_write_iter_common(iocb, from, true);
+    /*
+     * Ordinary Linux writes use the page cache.  Integrity/compression and
+     * CoW publication happen from clustered writeback, so a userspace writer
+     * no longer serially performs codec and metadata work in write(2).
+     */
+    return generic_file_write_iter(iocb, from);
 }
 
 /*

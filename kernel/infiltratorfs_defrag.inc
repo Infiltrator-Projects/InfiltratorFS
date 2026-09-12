@@ -848,6 +848,7 @@ finish:
     }
     if (!ret) {
         destination_ii->object_block = new_file_block;
+        WRITE_ONCE(destination_ii->persisted_size, source_size);
         i_size_write(destination_inode, source_size);
         destination_inode->i_blocks =
             infilfs_native_extent_allocated_blocks(

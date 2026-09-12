@@ -1347,7 +1347,7 @@ static int infilfs_quota_reserve_candidates_locked(
     return 0;
 }
 
-static int infilfs_quota_reserve_inode(
+int infilfs_quota_reserve_inode(
     struct inode *inode, u64 bytes, u64 objects,
     struct infilfs_quota_reservation *reservation)
 {
@@ -1436,7 +1436,7 @@ static void infilfs_quota_adjust_locked(
     }
 }
 
-static void infilfs_quota_reservation_finish(
+void infilfs_quota_reservation_finish(
     struct infilfs_quota_reservation *reservation,
     u64 actual_bytes, u64 actual_objects)
 {
@@ -1457,7 +1457,7 @@ static void infilfs_quota_reservation_finish(
     reservation->active = false;
 }
 
-static void infilfs_quota_reservation_abort(
+void infilfs_quota_reservation_abort(
     struct infilfs_quota_reservation *reservation)
 {
     struct infilfs_sb_info *sbi;

@@ -2324,6 +2324,8 @@ static int infilfs_populate_inode(struct inode *inode, u64 object_block,
 
         attributes = &payload->attributes;
         posix = &payload->posix;
+        WRITE_ONCE(ii->persisted_size,
+                   le64_to_cpu(attributes->logical_size));
         permissions = le32_to_cpu(posix->permissions) & 07777;
         inode->i_op = &infilfs_file_inode_operations;
         links = le64_to_cpu(attributes->link_count);
@@ -2720,7 +2722,7 @@ static const struct file_operations infilfs_dir_operations = {
 static const struct file_operations infilfs_file_operations = {
     .owner = THIS_MODULE,
     .llseek = infilfs_file_llseek,
-    .read_iter = infilfs_file_read_iter,
+    .read_iter = generic_file_read_iter,
     .write_iter = infilfs_file_write_iter,
     .mmap = generic_file_mmap,
     .fallocate = infilfs_file_fallocate,

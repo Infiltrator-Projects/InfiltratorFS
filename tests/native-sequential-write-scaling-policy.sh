@@ -72,6 +72,19 @@ grep -Fq 'infilfs_native_pending_should_publish' "$data"
 grep -Fq 'max_excess_churn = 64ULL * 1024ULL * 1024ULL' "$data"
 grep -Fq 'infilfs_native_pending_should_publish(pending)' "$ns"
 
+
+# Ordinary write(2) must enter the Linux page cache; the application thread
+# must not synchronously run the native codec/CoW path. Read(2) shares that
+# cache so freshly dirtied data remains coherent before writeback.
+write_entry="$(sed -n '/static ssize_t infilfs_file_write_iter(/,/^}/p' "$data")"
+grep -Fq 'generic_file_write_iter(iocb, from)' <<<"$write_entry"
+grep -Fq '.read_iter = generic_file_read_iter' "$core"
+grep -Fq 'INFILFS_NATIVE_WRITEBACK_BATCH_BYTES' "$pagecache"
+grep -Fq 'infilfs_writeback_cluster_submit' "$pagecache"
+grep -Fq 'infilfs_native_writeback_iter' "$pagecache"
+grep -Fq 'u64 persisted_size;' "$internal"
+grep -Fq 'READ_ONCE(ii->persisted_size)' "$data"
+
 # VM background writeback stages dirty folios into the same deferred
 # transaction. It must not turn every writeback pass into a device-wide
 # checkpoint publication; fsync/syncfs/unmount retain the durability boundary.
