@@ -24,7 +24,7 @@ LARGE_IMAGE_SIZE="${INFS_SCALE_LARGE_IMAGE_SIZE:-1T}"
 LARGE_PROBE_BYTES="${INFS_SCALE_LARGE_PROBE_BYTES:-268435456}"
 LARGE_SPARSE_BYTES="${INFS_SCALE_LARGE_SPARSE_BYTES:-966367641600}"
 
-for path in "$BUILD/mkfs.infilfs" "$BUILD/infilfs-scrub" "$BUILD/infilfs-inspect" "$STRESS_PY"; do
+for path in "$BUILD/mkfs.infilfs" "$BUILD/fsck.infiltratorfs" "$BUILD/infilfs-inspect" "$STRESS_PY"; do
     [[ -e "$path" ]] || { echo "Missing qualification input: $path" >&2; exit 1; }
 done
 for cmd in python3 sudo losetup mount umount truncate findmnt timeout df du awk grep sync tee; do
@@ -87,10 +87,6 @@ mkdir -p "$FILE_MOUNT"
 truncate -s "$FILE_IMAGE_SIZE" "$FILE_IMAGE"
 timed "million-volume-format" sudo env SUDO_UID="$(id -u)" SUDO_GID="$(id -g)" \
     "$BUILD/mkfs.infilfs" -L MillionFileScale "$FILE_IMAGE"
-# The hosted qualification uses a sparse regular file as a synthetic block
-# device. Direct I/O prevents every filesystem block from being cached a
-# second time by the loop backing file, so the million-file test measures the
-# filesystem/VFS working set rather than an artificial double page cache.
 FILE_LOOP="$(sudo losetup --direct-io=on --find --show "$FILE_IMAGE")"
 timed "million-volume-mount-rw" sudo mount -t infiltratorfs -o rw "$FILE_LOOP" "$FILE_MOUNT"
 FILE_MOUNTED=1
@@ -111,7 +107,7 @@ FILE_MOUNTED=0
 million_scrub="$WORK/million-scrub.txt"
 start="$(date +%s%N)"
 set +e
-timeout --signal=TERM --kill-after=30s 3600s "$BUILD/infilfs-scrub" "$FILE_IMAGE" | tee "$million_scrub"
+timeout --signal=TERM --kill-after=30s 3600s "$BUILD/fsck.infiltratorfs" --scrub "$FILE_IMAGE" | tee "$million_scrub"
 rc=${PIPESTATUS[0]}
 set -e
 end="$(date +%s%N)"
@@ -155,7 +151,6 @@ statvfs = os.statvfs(root)
 total_bytes = statvfs.f_blocks * statvfs.f_frsize
 assert total_bytes == 1 << 40, total_bytes
 assert statvfs.f_namemax == 1023
-
 work = os.path.join(root, 'large-volume')
 os.mkdir(work)
 pattern = bytes((index * 29 + 7) & 0xff for index in range(1024 * 1024))
@@ -173,7 +168,6 @@ with open(path, 'xb', buffering=0) as stream:
 elapsed = time.monotonic() - started
 print(f'[SCALE-PERF] large-volume sequential write bytes={probe_bytes} '
       f'elapsed={elapsed:.3f}s rate={probe_bytes / 1048576 / elapsed:.2f} MiB/s')
-
 sparse = os.path.join(work, 'sparse-high-offset.bin')
 fd = os.open(sparse, os.O_CREAT | os.O_RDWR | os.O_EXCL, 0o600)
 try:
@@ -183,16 +177,13 @@ try:
     os.fsync(fd)
 finally:
     os.close(fd)
-
 for d in range(64):
     directory = os.path.join(work, f'd{d:02d}')
     os.mkdir(directory)
     for f in range(64):
-        fd = os.open(os.path.join(directory, f'f{f:02d}'),
-                     os.O_CREAT | os.O_WRONLY | os.O_EXCL, 0o600)
+        fd = os.open(os.path.join(directory, f'f{f:02d}'), os.O_CREAT | os.O_WRONLY | os.O_EXCL, 0o600)
         os.close(fd)
 os.sync()
-
 with open(os.path.join(work, 'expected.sha256'), 'w', encoding='ascii') as stream:
     stream.write(digest.hexdigest() + '\n')
     stream.flush()
@@ -208,7 +199,7 @@ LARGE_MOUNTED=0
 large_scrub="$WORK/large-scrub.txt"
 start="$(date +%s%N)"
 set +e
-timeout --signal=TERM --kill-after=30s 1800s "$BUILD/infilfs-scrub" "$LARGE_IMAGE" | tee "$large_scrub"
+timeout --signal=TERM --kill-after=30s 1800s "$BUILD/fsck.infiltratorfs" --scrub "$LARGE_IMAGE" | tee "$large_scrub"
 rc=${PIPESTATUS[0]}
 set -e
 end="$(date +%s%N)"
@@ -223,7 +214,6 @@ python3 - "$LARGE_MOUNT" "$LARGE_PROBE_BYTES" "$LARGE_SPARSE_BYTES" <<'PY'
 import hashlib
 import os
 import sys
-
 root = sys.argv[1]
 probe_bytes = int(sys.argv[2])
 sparse_bytes = int(sys.argv[3])
