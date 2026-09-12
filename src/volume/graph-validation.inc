@@ -1,4 +1,37 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+
+/* Internal scrub instrumentation shared by the validation fragments in this
+ * translation unit. It is deliberately runtime-only and does not affect the
+ * on-disk format or normal validation callers. */
+struct scrub_metadata_progress_context {
+    infs_scrub_progress_fn callback;
+    void *callback_context;
+    struct infs_scrub_report *report;
+    uint32_t stage;
+    uint64_t generation;
+    uint64_t done;
+    uint64_t total;
+    uint64_t stride;
+    uint64_t next_emit;
+};
+
+static void scrub_metadata_progress_begin(
+    struct scrub_metadata_progress_context *progress,
+    const struct infs_volume *vol, uint32_t stage, uint64_t total);
+static void scrub_metadata_progress_begin_generation(
+    struct scrub_metadata_progress_context *progress,
+    uint64_t generation, uint32_t stage, uint64_t total);
+static void scrub_metadata_progress_update(
+    struct scrub_metadata_progress_context *progress, uint64_t done);
+
+static int validate_integrity_metadata_progress(
+    struct infs_volume *vol, struct scrub_metadata_progress_context *progress,
+    int validate_snapshots);
+static int validate_namespace_graph_progress(
+    struct infs_volume *vol, struct scrub_metadata_progress_context *progress);
+static int validate_checksum_graph_progress(
+    struct infs_volume *vol, struct scrub_metadata_progress_context *progress);
+
 static int index_entry_id_compare(const void *left, const void *right)
 {
     const struct infs_index_entry_disk *a = left;
@@ -6,7 +39,8 @@ static int index_entry_id_compare(const void *left, const void *right)
     return memcmp(a->object_id, b->object_id, sizeof(a->object_id));
 }
 
-static int validate_index_entries(struct infs_volume *vol)
+static int validate_index_entries_progress(
+    struct infs_volume *vol, struct scrub_metadata_progress_context *progress)
 {
     uint8_t index_block[INFS_BLOCK_SIZE];
     struct infs_index_payload_disk *payload;
@@ -29,11 +63,14 @@ static int validate_index_entries(struct infs_volume *vol)
     }
 
     /* The old duplicate-ID check compared every entry with every earlier
-     * entry, making a scrub quadratic in the object count.  Sort the private
+     * entry, making a scrub quadratic in the object count. Sort the private
      * snapshot once and duplicate detection becomes adjacent and O(N log N).
      * No persistent ordering is changed. */
     if (count > 1u)
         qsort(entries, count, sizeof(*entries), index_entry_id_compare);
+
+    scrub_metadata_progress_begin(
+        progress, vol, INFS_SCRUB_METADATA_INDEX_OBJECTS, count);
 
     uint64_t total = infs_le64_to_cpu(vol->sb.total_blocks);
     int root_seen = 0;
@@ -81,11 +118,17 @@ static int validate_index_entries(struct infs_volume *vol)
             }
             ++root_seen;
         }
+        scrub_metadata_progress_update(progress, (uint64_t)i + 1u);
     }
     free(entries);
     if (root_seen != 1)
         return INFS_STATUS_CORRUPT;
     return INFS_STATUS_OK;
+}
+
+static int validate_index_entries(struct infs_volume *vol)
+{
+    return validate_index_entries_progress(vol, NULL);
 }
 
 static int checkpoint_matches(struct infs_volume *vol, uint64_t block_no,
