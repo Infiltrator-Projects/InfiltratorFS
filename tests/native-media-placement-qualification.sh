@@ -9,7 +9,7 @@ fi
 
 BUILD="$(readlink -f "$1")"
 MODULE="$(readlink -f "$2")"
-for path in "$BUILD/mkfs.infilfs" "$BUILD/infilfs-scrub" "$MODULE"; do
+for path in "$BUILD/mkfs.infilfs" "$BUILD/fsck.infiltratorfs" "$MODULE"; do
     [[ -e "$path" ]] || { echo "Missing qualification input: $path" >&2; exit 1; }
 done
 
@@ -118,7 +118,7 @@ PY
     test -n "$scored"
     test "$scored" -ge 1
 
-    "$BUILD/infilfs-scrub" "$image" | tee "$WORK/$profile-scrub.txt"
+    "$BUILD/fsck.infiltratorfs" --scrub "$image" | tee "$WORK/$profile-scrub.txt"
     grep -Fq 'Result:              CLEAN' "$WORK/$profile-scrub.txt"
     sudo losetup -d "$LOOPDEV"
     LOOPDEV=""
