@@ -35,8 +35,9 @@
 # Transaction ownership:
 #   write_lock is the persistent mutation/checkpoint publication domain.
 #   resize_active gates new transactions/reservations before resize drains old
-#   work. Quota reservations are preflighted outside write_lock and reconciled
-#   only after the persistent mutation lock has been released.
+#   work. Buffered writes perform whole-request quota admission under inode_lock
+#   before page-cache copying; per-folio reservations remain the authoritative
+#   live accounting path and are reconciled without holding write_lock.
 #
 # Source composition:
 #   infiltratorfs.ko is a composite Kbuild module.
