@@ -325,6 +325,28 @@ static int build_live_ownership_bitmap_progress(
                                       &all, &extent_count, &owned);
         if (status != INFS_STATUS_OK)
             goto out;
+
+        uint64_t file_physical_total = 0;
+        for (uint32_t j = 0; j < extent_count; ++j) {
+            uint32_t flags = infs_le32_to_cpu(all[j].flags);
+            if (extent_kind(flags) != INFS_EXTENT_NORMAL)
+                continue;
+            uint32_t logical_blocks = infs_le32_to_cpu(all[j].block_count);
+            uint64_t blocks = extent_physical_blocks(logical_blocks, flags);
+            if (UINT64_MAX - file_physical_total < blocks) {
+                if (owned) free(all);
+                status = INFS_STATUS_OVERFLOW;
+                goto out;
+            }
+            file_physical_total += blocks;
+        }
+        int detailed_blocks = progress && file_physical_total >= 1024u;
+        if (detailed_blocks)
+            scrub_metadata_progress_begin(
+                progress, vol, INFS_SCRUB_METADATA_OWNERSHIP_DATA_BLOCKS,
+                file_physical_total);
+        uint64_t file_blocks_done = 0;
+
         for (uint32_t j = 0; j < extent_count; ++j) {
             uint32_t flags = infs_le32_to_cpu(all[j].flags);
             uint32_t logical_blocks = infs_le32_to_cpu(all[j].block_count);
@@ -339,9 +361,15 @@ static int build_live_ownership_bitmap_progress(
                     if (owned) free(all);
                     goto out;
                 }
+                ++file_blocks_done;
+                if (detailed_blocks)
+                    scrub_metadata_progress_update(progress, file_blocks_done);
             }
         }
         if (owned) free(all);
+        if (detailed_blocks)
+            scrub_metadata_progress_begin(
+                progress, vol, INFS_SCRUB_METADATA_OWNERSHIP_OBJECTS, count);
         scrub_metadata_progress_update(progress, (uint64_t)i + 1u);
     }
 
@@ -356,6 +384,58 @@ static int build_live_ownership_bitmap(
 {
     return build_live_ownership_bitmap_progress(
         vol, entries, count, owners, NULL);
+}
+
+static infs_status snapshot_read_bitmap_progress(
+    struct infs_volume *vol, const struct infs_snapshot_record_disk *record,
+    uint8_t **bitmap_out, struct scrub_metadata_progress_context *progress,
+    uint64_t generation)
+{
+    if (!progress)
+        return snapshot_read_bitmap(vol, record, bitmap_out);
+    if (!bitmap_out)
+        return INFS_STATUS_INVALID_ARGUMENT;
+    *bitmap_out = NULL;
+    uint8_t *bitmap = malloc(vol->bitmap_bytes);
+    if (!bitmap)
+        return INFS_STATUS_NO_MEMORY;
+    uint64_t start = infs_le64_to_cpu(record->bitmap_start_block);
+    infs_status status = infs_storage_read(
+        &vol->storage, start * INFS_BLOCK_SIZE, bitmap, vol->bitmap_bytes);
+    if (status != INFS_STATUS_OK) {
+        free(bitmap);
+        return status;
+    }
+
+    uint64_t total = infs_le64_to_cpu(vol->sb.total_blocks);
+    scrub_metadata_progress_begin_generation(
+        progress, generation, INFS_SCRUB_METADATA_SNAPSHOT_BITMAP, total);
+    uint64_t free_count = 0;
+    for (uint64_t b = 0; b < total; ++b) {
+        if (!bitmap_get(bitmap, b))
+            ++free_count;
+        scrub_metadata_progress_update(progress, b + 1u);
+    }
+    if (free_count != infs_le64_to_cpu(record->free_blocks)) {
+        free(bitmap);
+        return INFS_STATUS_CORRUPT;
+    }
+    for (uint64_t b = total; b < (uint64_t)vol->bitmap_bytes * 8u; ++b) {
+        if (!bitmap_get(bitmap, b)) {
+            free(bitmap);
+            return INFS_STATUS_CORRUPT;
+        }
+    }
+    uint64_t blocks = infs_le64_to_cpu(record->bitmap_block_count);
+    for (uint64_t i = 0; i < blocks; ++i) {
+        if (!bitmap_get(vol->bitmap, start + i) ||
+            !bitmap_get(bitmap, start + i)) {
+            free(bitmap);
+            return INFS_STATUS_CORRUPT;
+        }
+    }
+    *bitmap_out = bitmap;
+    return INFS_STATUS_OK;
 }
 
 static infs_status snapshot_union_bitmap_progress(
@@ -390,21 +470,18 @@ static infs_status snapshot_union_bitmap_progress(
         progress, vol, INFS_SCRUB_METADATA_SNAPSHOT_UNION, count);
 
     for (uint32_t i = 0; i < count; ++i) {
-        uint64_t generation = infs_le64_to_cpu(records[i].generation);
-        scrub_metadata_progress_begin_generation(
-            progress, generation, INFS_SCRUB_METADATA_SNAPSHOT_BITMAP, 1u);
         uint8_t *bitmap = NULL;
-        status = snapshot_read_bitmap(vol, &records[i], &bitmap);
+        status = snapshot_read_bitmap_progress(
+            vol, &records[i], &bitmap, progress,
+            infs_le64_to_cpu(records[i].generation));
         if (status != INFS_STATUS_OK) {
             free(*union_out);
             *union_out = NULL;
             return status;
         }
-        scrub_metadata_progress_update(progress, 1u);
 
-        scrub_metadata_progress_begin_generation(
-            progress, infs_le64_to_cpu(vol->sb.generation),
-            INFS_SCRUB_METADATA_SNAPSHOT_UNION, count);
+        scrub_metadata_progress_begin(
+            progress, vol, INFS_SCRUB_METADATA_SNAPSHOT_UNION, count);
         for (size_t j = 0; j < vol->bitmap_bytes; ++j)
             (*union_out)[j] |= bitmap[j];
         free(bitmap);
