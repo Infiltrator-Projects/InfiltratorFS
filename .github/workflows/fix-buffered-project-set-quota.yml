@@ -18,73 +18,14 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - name: Account live buffered file sizes in authoritative quota scans
-        shell: bash
+      - name: Apply buffered project quota repair
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path('kernel/infiltratorfs_quota.inc')
-          text = p.read_text(encoding='utf-8')
-
-          live = '''        logical = le64_to_cpu(attributes->logical_size);
-        if (type == INFILFS_OBJECT_FILE) {
-            struct infilfs_iget_args live_args = {
-                .ino = infilfs_object_ino(entries[i].object_id),
-                .object_id = entries[i].object_id,
-            };
-            struct inode *live_inode;
-
-            /*
-             * Buffered writes may have advanced i_size while the persistent
-             * object still carries the previous logical_size. Admission and
-             * project-domain transfer must charge the VFS-visible size. A
-             * dirty mapping keeps its inode resident; when no live inode is
-             * present, the persisted logical size is authoritative.
-             */
-            live_inode = ilookup5(
-                root->i_sb, (unsigned long)live_args.ino,
-                infilfs_inode_matches_id, &live_args);
-            if (live_inode) {
-                loff_t live_size = i_size_read(live_inode);
-
-                if (live_size < 0) {
-                    iput(live_inode);
-                    kfree(object);
-                    ret = -EFSCORRUPTED;
-                    break;
-                }
-                logical = (u64)live_size;
-                iput(live_inode);
-            }
-        }
-'''
-          start = text.index('static int infilfs_quota_domain_usage_locked(')
-          end = text.index('\nstatic int ', start + 1)
-          section = text[start:end]
-          old = '        logical = le64_to_cpu(attributes->logical_size);\n'
-          if section.count(old) != 1:
-              raise SystemExit(f'domain usage logical-size site: expected one match, got {section.count(old)}')
-          section = section.replace(old, live, 1)
-          text = text[:start] + section + text[end:]
-
-          # A newly introduced quota rule also snapshots the authoritative
-          # graph. Use live buffered sizes there for user/group/project rules.
-          live_rule = live.replace('root->i_sb', 'sb')
-          start = text.index('static int infilfs_quota_rule_usage_locked(')
-          end = text.index('\nstatic int ', start + 1)
-          section = text[start:end]
-          if section.count(old) != 1:
-              raise SystemExit(f'rule usage logical-size site: expected one match, got {section.count(old)}')
-          section = section.replace(old, live_rule, 1)
-          text = text[:start] + section + text[end:]
-
-          p.write_text(text, encoding='utf-8')
-          PY
+          python3 .github/fix-buffered-project-set-quota.py
+          rm -f .github/fix-buffered-project-set-quota.py
           rm -f .github/workflows/fix-buffered-project-set-quota.yml
           git diff --check
-          grep -Fq 'dirty mapping keeps its inode resident' kernel/infiltratorfs_quota.inc
+          grep -Fq 'Quota admission and project-domain' kernel/infiltratorfs_quota.inc
           bash tests/native-quota-policy.sh .
           bash tests/native-kernel-maintainability-policy.sh .
           git config user.name 'Shannon Smith'
