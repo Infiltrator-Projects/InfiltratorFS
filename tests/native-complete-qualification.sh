@@ -245,7 +245,7 @@ sudo rmmod infiltratorfs
 MODULE_LOADED=0
 
 section "Final physical-media scrub and kernel diagnostics"
-sudo "$BUILD/infilfs-scrub" "$TARGET" | tee "$WORK/final-partition22-scrub.txt"
+sudo "$BUILD/fsck.infiltratorfs" --scrub "$TARGET" | tee "$WORK/final-partition22-scrub.txt"
 grep -Fq 'Result:              CLEAN' "$WORK/final-partition22-scrub.txt"
 kernel_failures="$(sudo dmesg --since "$START_TIME" 2>/dev/null |
     grep -E 'EUCLEAN|Structure needs cleaning|BUG:|Oops:|Kernel panic|hung task|soft lockup|hard LOCKUP|general protection fault' || true)"

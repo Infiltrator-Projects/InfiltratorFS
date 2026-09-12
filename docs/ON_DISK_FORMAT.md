@@ -216,7 +216,7 @@ A structurally valid Format 0.18 graph requires:
 
 Unknown or malformed metadata must not be accepted merely because its CRC happens to validate.
 
-`infilfs-scrub` validates the authoritative reachable graph. `infilfs-forensic` may discover recognizable authenticated metadata physically, but forensic discovery alone is not committed state.
+`fsck.infiltratorfs --scrub` validates the authoritative reachable graph. `infilfs-forensic` may discover recognizable authenticated metadata physically, but forensic discovery alone is not committed state.
 
 ## 16. Adapter metadata
 

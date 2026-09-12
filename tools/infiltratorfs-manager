@@ -24,7 +24,7 @@ HELPER = "/usr/lib/infiltratorfs/infiltratorfs-manager-helper"
 TOOLS = {
     "mkfs": "/usr/bin/mkfs.infilfs",
     "inspect": "/usr/bin/infilfs-inspect",
-    "scrub": "/usr/bin/infilfs-scrub",
+    "fsck": "/usr/sbin/fsck.infiltratorfs",
     "forensic": "/usr/bin/infilfs-forensic",
 }
 
@@ -987,12 +987,20 @@ class Manager(Gtk.ApplicationWindow):
             "Inspect",
             self.do_inspect,
         )
-        self.scrub = self._action_row(
+        self.check = self._action_row(
             maintenance,
             "emblem-ok-symbolic",
-            "Verify integrity",
-            "Run the read-only scrub and integrity checker.",
-            "Verify",
+            "Check filesystem",
+            "Run the fast structural consistency check without reading every file payload.",
+            "Check",
+            self.do_check,
+        )
+        self.scrub = self._action_row(
+            maintenance,
+            "system-run-symbolic",
+            "Deep scrub",
+            "Read file payloads, recompute checksums and verify retained generations.",
+            "Scrub",
             self.do_scrub,
         )
         self.forensic = self._action_row(
@@ -1251,7 +1259,7 @@ class Manager(Gtk.ApplicationWindow):
         available = self.target is not None and not self.busy
         mounted = bool(self.target and self.target.mountpoint)
         maintenance_available = available and not mounted
-        for button in (self.inspect, self.scrub, self.forensic):
+        for button in (self.inspect, self.check, self.scrub, self.forensic):
             button.set_sensitive(maintenance_available)
             button.set_tooltip_text(
                 "Unmount the volume before running offline filesystem maintenance."
@@ -1523,13 +1531,13 @@ class Manager(Gtk.ApplicationWindow):
             after,
         )
 
-    def tool_command(self, blockop, tool):
+    def tool_command(self, blockop, tool, *tool_args):
         if not self.target:
             return None
         return (
             ["pkexec", HELPER, blockop, self.target.path]
             if self.target.block
-            else [tool, self.target.path]
+            else [tool, *tool_args, self.target.path]
         )
 
     def _require_offline_maintenance(self):
@@ -1551,12 +1559,19 @@ class Manager(Gtk.ApplicationWindow):
         if command:
             self.run("Inspect filesystem", [command], "Inspection completed.")
 
+    def do_check(self, *_):
+        if not self._require_offline_maintenance():
+            return
+        command = self.tool_command("check-block", TOOLS["fsck"])
+        if command:
+            self.run("Check filesystem", [command], "Structural filesystem check completed.")
+
     def do_scrub(self, *_):
         if not self._require_offline_maintenance():
             return
-        command = self.tool_command("scrub-block", TOOLS["scrub"])
+        command = self.tool_command("scrub-block", TOOLS["fsck"], "--scrub")
         if command:
-            self.run("Verify filesystem", [command], "Integrity check completed.")
+            self.run("Deep scrub", [command], "Deep integrity scrub completed.")
 
     def do_forensic(self, *_):
         if not self._require_offline_maintenance():

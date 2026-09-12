@@ -32,7 +32,7 @@ When no trustworthy current checkpoint/allocation-tree pair is available, authen
 
 ## Relationship to recovery and scrub
 
-Forensic discovery is intentionally separate from normal mount recovery. The normal opener selects from structurally valid committed checkpoint graphs. `infilfs-scrub` validates the live and retained snapshot graphs. `infilfs-forensic` instead scans physical blocks for independently authentic records, including material that may no longer be reachable from the selected live graph.
+Forensic discovery is intentionally separate from normal mount recovery. The normal opener selects from structurally valid committed checkpoint graphs. `fsck.infiltratorfs --scrub` validates the live and retained snapshot graphs. `infilfs-forensic` instead scans physical blocks for independently authentic records, including material that may no longer be reachable from the selected live graph.
 
 A forensic hit therefore proves that a block satisfies the record-level authentication contract; it does not by itself prove that the block belongs to the authoritative current namespace or that its referenced file payload is complete.
 

@@ -128,8 +128,8 @@ timed "mkfs.infilfs partition 22" mkfs.infilfs --force -L "$LABEL" "$TARGET"
 sync
 pass "Partition formatted as InfiltratorFS"
 if command -v infilfs-inspect >/dev/null 2>&1; then timed "infilfs-inspect after format" infilfs-inspect "$TARGET" || fail "infilfs-inspect rejected newly formatted volume"; fi
-if command -v infilfs-scrub >/dev/null 2>&1; then timed "initial unmounted scrub" infilfs-scrub "$TARGET" && pass "Initial scrub is clean" || fail "Initial scrub failed"; fi
-if command -v fsck.infiltratorfs >/dev/null 2>&1; then timed "initial fsck.infiltratorfs" fsck.infiltratorfs -n "$TARGET" && pass "Initial fsck wrapper is clean" || fail "Initial fsck wrapper failed"; fi
+if command -v fsck.infiltratorfs >/dev/null 2>&1; then timed "initial unmounted scrub" fsck.infiltratorfs --scrub "$TARGET" && pass "Initial scrub is clean" || fail "Initial scrub failed"; fi
+if command -v fsck.infiltratorfs >/dev/null 2>&1; then timed "initial fsck.infiltratorfs" fsck.infiltratorfs -n "$TARGET" && pass "Initial structural fsck is clean" || fail "Initial structural fsck failed"; fi
 
 printf 'snapshot-before-native\n' >"$WORKDIR/snapshot-before.txt"
 infilfs-tool "$TARGET" put "$WORKDIR/snapshot-before.txt" /snapshot-live.txt
@@ -488,8 +488,8 @@ parallel_peak="$(sed -nE 's/.*peak_active=([0-9]+).*/\1/p' <<<"$parallel_log")"
 [[ "$(infilfs-tool "$TARGET" snapshot-cat before-native-rw /snapshot-live.txt)" == snapshot-before-native ]] && pass "Retained snapshot preserved its original generation" || fail "Retained snapshot content changed"
 infilfs-tool "$TARGET" snapshot-cat before-online-defrag /defrag-live.bin >"$WORKDIR/defrag-snapshot.bin"
 [[ "$(sha256sum "$WORKDIR/defrag-snapshot.bin" | awk '{print $1}')" == "$defrag_hash_before" ]] && pass "Pre-defrag retained snapshot still owns the original file data" || fail "Online defrag damaged retained snapshot data"
-if command -v infilfs-scrub >/dev/null 2>&1; then timed "post-write offline scrub" infilfs-scrub "$TARGET" && pass "Post-write scrub is clean" || fail "Post-write scrub found corruption"; fi
-if command -v fsck.infiltratorfs >/dev/null 2>&1; then timed "post-write fsck.infiltratorfs" fsck.infiltratorfs -n "$TARGET" && pass "Post-write fsck wrapper is clean" || fail "Post-write fsck wrapper failed"; fi
+if command -v fsck.infiltratorfs >/dev/null 2>&1; then timed "post-write offline scrub" fsck.infiltratorfs --scrub "$TARGET" && pass "Post-write scrub is clean" || fail "Post-write scrub found corruption"; fi
+if command -v fsck.infiltratorfs >/dev/null 2>&1; then timed "post-write fsck.infiltratorfs" fsck.infiltratorfs -n "$TARGET" && pass "Post-write structural fsck is clean" || fail "Post-write structural fsck failed"; fi
 
 section "Read-only remount persistence verification"
 timed "read-only remount" mount -t infiltratorfs -o ro "$TARGET" "$MOUNTPOINT"; MOUNTED=1
@@ -522,7 +522,7 @@ rc=$?
 set -e
 (( rc != 0 )) && pass "Write is rejected on read-only mount" || fail "Write unexpectedly succeeded on read-only mount"
 timed "final unmount" umount "$MOUNTPOINT"; MOUNTED=0
-if command -v infilfs-scrub >/dev/null 2>&1; then timed "final offline scrub" infilfs-scrub "$TARGET" && pass "Final scrub is clean" || fail "Final scrub found corruption"; fi
+if command -v fsck.infiltratorfs >/dev/null 2>&1; then timed "final offline scrub" fsck.infiltratorfs --scrub "$TARGET" && pass "Final scrub is clean" || fail "Final scrub found corruption"; fi
 
 section "Kernel diagnostics"
 if command -v journalctl >/dev/null 2>&1; then

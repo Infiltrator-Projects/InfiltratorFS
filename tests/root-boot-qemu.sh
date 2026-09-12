@@ -235,7 +235,7 @@ wait "$qemu_pid" 2>/dev/null || true
 qemu_pid=""
 
 loop="$(losetup --find --show -P "$disk")"
-"$build/infilfs-scrub" "${loop}p3" | tee "$work/post-crash-scrub.txt"
+"$build/fsck.infiltratorfs" --scrub "${loop}p3" | tee "$work/post-crash-scrub.txt"
 grep -Fq 'Result:              CLEAN' "$work/post-crash-scrub.txt"
 losetup -d "$loop"; loop=""
 
@@ -253,6 +253,6 @@ wait "$qemu_pid" 2>/dev/null || true
 qemu_pid=""
 
 loop="$(losetup --find --show -P "$disk")"
-"$build/infilfs-scrub" "${loop}p3" | tee "$work/final-scrub.txt"
+"$build/fsck.infiltratorfs" --scrub "${loop}p3" | tee "$work/final-scrub.txt"
 grep -Fq 'Result:              CLEAN' "$work/final-scrub.txt"
 echo 'Real UEFI InfiltratorFS root boot/upgrade/crash/recovery qualification: PASS'

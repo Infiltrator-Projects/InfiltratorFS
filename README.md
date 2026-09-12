@@ -97,7 +97,7 @@ The exhaustive data-integrity scan is opt-in:
 sudo fsck.infiltratorfs --scrub /dev/<partition>
 ```
 
-`--scrub` invokes the deep scrub path, which can read file payload data, recompute checksums and verify retained generations. It can therefore take a long time on a populated filesystem. The standalone `infilfs-scrub` command remains available for forensic, qualification and deliberate deep-integrity work. See `docs/FSCK-SCRUB-SEPARATION.md` for the command contract and rationale.
+`--scrub` invokes the deep scrub path, which can read file payload data, recompute checksums and verify retained generations. It can therefore take a long time on a populated filesystem. There is no separate scrub executable: deep verification is intentionally a secondary mode of `fsck.infiltratorfs`. See `docs/FSCK-SCRUB-SEPARATION.md` for the command contract and rationale.
 
 For mounted fragmentation metrics and bounded online defragmentation:
 
@@ -111,7 +111,7 @@ The destructive physical qualification harness remains available as `tests/nativ
 
 ## Desktop and packaging
 
-Linux packages include the native module/DKMS integration, `mkfs.infiltratorfs`, inspection/scrub/forensic tools, `mount.infiltratorfs`, `fsck.infiltratorfs`, InfiltratorFS Manager, udev/UDisks identification and the repository's formatter-integration work for libblockdev/UDisks/GNOME Disks.
+Linux packages include the native module/DKMS integration, `mkfs.infiltratorfs`, inspection/forensic tools, the unified `fsck.infiltratorfs` checker with optional `--scrub`, `mount.infiltratorfs`, InfiltratorFS Manager, udev/UDisks identification and the repository's formatter-integration work for libblockdev/UDisks/GNOME Disks.
 
 InfiltratorFS Manager formats and mounts selected non-system partitions through constrained privileged helpers. On Linux Mint, the project uses its own **Format partition as InfiltratorFS…** Nemo action rather than modifying Mintstick's whole-device formatting behaviour.
 

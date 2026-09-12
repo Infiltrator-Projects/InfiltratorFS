@@ -130,10 +130,16 @@ case "$operation" in
         [[ -z "$(findmnt -rn -S "$1")" ]] || fail "unmount the partition before running inspection"
         exec /usr/bin/infilfs-inspect "$1"
         ;;
+    check-block)
+        (( $# == 1 )) || fail "check-block requires a target"
+        validate_partition "$1"
+        [[ -z "$(findmnt -rn -S "$1")" ]] || fail "unmount the partition before running filesystem checking"
+        exec /usr/sbin/fsck.infiltratorfs "$1"
+        ;;
     scrub-block)
         (( $# == 1 )) || fail "scrub-block requires a target"
         validate_partition "$1"
-        [[ -z "$(findmnt -rn -S "$1")" ]] || fail "unmount the partition before running integrity verification"
+        [[ -z "$(findmnt -rn -S "$1")" ]] || fail "unmount the partition before running deep integrity verification"
         exec /usr/sbin/fsck.infiltratorfs --scrub "$1"
         ;;
     forensic-block)
