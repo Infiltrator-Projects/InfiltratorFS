@@ -1,0 +1,220 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Finish fsck command consolidation
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/finish-fsck-consolidation.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Finish repository-wide fsck/scrub consolidation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def read(path):
+              return Path(path).read_text(encoding="utf-8")
+
+          def write(path, text):
+              Path(path).write_text(text, encoding="utf-8")
+
+          def replace_required(text, old, new, label):
+              if old not in text:
+                  raise SystemExit(f"required migration pattern missing: {label}")
+              return text.replace(old, new)
+
+          # Native hosted qualification: build the unified fsck executable and
+          # explicitly select its deep scrub mode wherever exhaustive checking
+          # is required.
+          path = ".github/workflows/kernel-module.yml"
+          text = read(path)
+          text = replace_required(
+              text,
+              "infilfs-tool infilfs-scrub infilfs-forensic",
+              "infilfs-tool fsck.infiltratorfs infilfs-forensic",
+              "kernel workflow build target",
+          )
+          text = replace_required(
+              text,
+              "build/infilfs-scrub ",
+              "build/fsck.infiltratorfs --scrub ",
+              "kernel workflow deep scrub calls",
+          )
+          write(path, text)
+
+          # Root-boot and destructive qualification scripts must exercise the
+          # public command contract rather than a retired helper binary.
+          path = "tests/root-boot-qemu.sh"
+          text = read(path)
+          text = replace_required(
+              text,
+              '"$build/infilfs-scrub" ',
+              '"$build/fsck.infiltratorfs" --scrub ',
+              "root boot deep scrub calls",
+          )
+          write(path, text)
+
+          path = "tests/native-complete-qualification.sh"
+          text = read(path)
+          text = replace_required(
+              text,
+              '"$BUILD/infilfs-scrub" ',
+              '"$BUILD/fsck.infiltratorfs" --scrub ',
+              "complete qualification deep scrub call",
+          )
+          write(path, text)
+
+          path = "tests/native-partition22-qualification.sh"
+          text = read(path)
+          text = replace_required(
+              text,
+              "command -v infilfs-scrub",
+              "command -v fsck.infiltratorfs",
+              "partition qualification scrub command discovery",
+          )
+          text = replace_required(
+              text,
+              'timed "initial unmounted scrub" infilfs-scrub "$TARGET"',
+              'timed "initial deep scrub" fsck.infiltratorfs --scrub "$TARGET"',
+              "partition qualification initial scrub",
+          )
+          text = text.replace(
+              'pass "Initial fsck wrapper is clean"',
+              'pass "Initial structural fsck is clean"',
+          ).replace(
+              'fail "Initial fsck wrapper failed"',
+              'fail "Initial structural fsck failed"',
+          )
+          text = replace_required(
+              text,
+              'timed "final offline scrub" infilfs-scrub "$TARGET"',
+              'timed "final offline scrub" fsck.infiltratorfs --scrub "$TARGET"',
+              "partition qualification final scrub",
+          )
+          write(path, text)
+
+          # Manager exposes the fast structural check as the primary integrity
+          # action and the exhaustive scrub as a separate explicit action. Both
+          # are modes of the same fsck executable.
+          path = "tools/infiltratorfs-manager-helper"
+          text = read(path)
+          marker = '''    scrub-block)\n        (( $# == 1 )) || fail "scrub-block requires a target"\n        validate_partition "$1"\n        [[ -z "$(findmnt -rn -S "$1")" ]] || fail "unmount the partition before running integrity verification"\n        exec /usr/sbin/fsck.infiltratorfs --scrub "$1"\n        ;;\n'''
+          replacement = '''    check-block)\n        (( $# == 1 )) || fail "check-block requires a target"\n        validate_partition "$1"\n        [[ -z "$(findmnt -rn -S "$1")" ]] || fail "unmount the partition before running filesystem checking"\n        exec /usr/sbin/fsck.infiltratorfs "$1"\n        ;;\n    scrub-block)\n        (( $# == 1 )) || fail "scrub-block requires a target"\n        validate_partition "$1"\n        [[ -z "$(findmnt -rn -S "$1")" ]] || fail "unmount the partition before running deep integrity verification"\n        exec /usr/sbin/fsck.infiltratorfs --scrub "$1"\n        ;;\n'''
+          text = replace_required(text, marker, replacement, "manager helper check/scrub split")
+          write(path, text)
+
+          path = "tools/infiltratorfs-manager"
+          text = read(path)
+          text = replace_required(
+              text,
+              '    "scrub": "/usr/bin/infilfs-scrub",',
+              '    "fsck": "/usr/sbin/fsck.infiltratorfs",',
+              "manager tool map",
+          )
+          old_actions = '''        self.scrub = self._action_row(\n            maintenance,\n            "emblem-ok-symbolic",\n            "Verify integrity",\n            "Run the read-only scrub and integrity checker.",\n            "Verify",\n            self.do_scrub,\n        )\n'''
+          new_actions = '''        self.check = self._action_row(\n            maintenance,\n            "emblem-ok-symbolic",\n            "Check filesystem",\n            "Run the fast structural consistency check without reading every file payload.",\n            "Check",\n            self.do_check,\n        )\n        self.scrub = self._action_row(\n            maintenance,\n            "system-run-symbolic",\n            "Deep scrub",\n            "Read file payloads, recompute checksums and verify retained generations.",\n            "Scrub",\n            self.do_scrub,\n        )\n'''
+          text = replace_required(text, old_actions, new_actions, "manager maintenance actions")
+          text = replace_required(
+              text,
+              "        for button in (self.inspect, self.scrub, self.forensic):",
+              "        for button in (self.inspect, self.check, self.scrub, self.forensic):",
+              "manager maintenance enable list",
+          )
+          old_tool_command = '''    def tool_command(self, blockop, tool):\n        if not self.target:\n            return None\n        return (\n            ["pkexec", HELPER, blockop, self.target.path]\n            if self.target.block\n            else [tool, self.target.path]\n        )\n'''
+          new_tool_command = '''    def tool_command(self, blockop, tool, *tool_args):\n        if not self.target:\n            return None\n        return (\n            ["pkexec", HELPER, blockop, self.target.path]\n            if self.target.block\n            else [tool, *tool_args, self.target.path]\n        )\n'''
+          text = replace_required(text, old_tool_command, new_tool_command, "manager tool command arguments")
+          old_method = '''    def do_scrub(self, *_):\n        if not self._require_offline_maintenance():\n            return\n        command = self.tool_command("scrub-block", TOOLS["scrub"])\n        if command:\n            self.run("Verify filesystem", [command], "Integrity check completed.")\n'''
+          new_method = '''    def do_check(self, *_):\n        if not self._require_offline_maintenance():\n            return\n        command = self.tool_command("check-block", TOOLS["fsck"])\n        if command:\n            self.run("Check filesystem", [command], "Structural filesystem check completed.")\n\n    def do_scrub(self, *_):\n        if not self._require_offline_maintenance():\n            return\n        command = self.tool_command("scrub-block", TOOLS["fsck"], "--scrub")\n        if command:\n            self.run("Deep scrub", [command], "Deep integrity scrub completed.")\n'''
+          text = replace_required(text, old_method, new_method, "manager check/scrub methods")
+          write(path, text)
+
+          # User-facing and format documentation must describe the actual public
+          # command contract rather than resurrecting a retired standalone CLI.
+          path = "README.md"
+          text = read(path)
+          text = replace_required(
+              text,
+              "`--scrub` invokes the deep scrub path, which can read file payload data, recompute checksums and verify retained generations. It can therefore take a long time on a populated filesystem. The standalone `infilfs-scrub` command remains available for forensic, qualification and deliberate deep-integrity work. See `docs/FSCK-SCRUB-SEPARATION.md` for the command contract and rationale.",
+              "`--scrub` invokes the deep scrub path, which can read file payload data, recompute checksums and verify retained generations. It can therefore take a long time on a populated filesystem. There is no separate scrub executable: deep verification is intentionally a secondary mode of `fsck.infiltratorfs`. See `docs/FSCK-SCRUB-SEPARATION.md` for the command contract and rationale.",
+              "README standalone scrub wording",
+          )
+          text = text.replace(
+              "Linux packages include the native module/DKMS integration, `mkfs.infiltratorfs`, inspection/scrub/forensic tools, `mount.infiltratorfs`, `fsck.infiltratorfs`, InfiltratorFS Manager, udev/UDisks identification and the repository's formatter-integration work for libblockdev/UDisks/GNOME Disks.",
+              "Linux packages include the native module/DKMS integration, `mkfs.infiltratorfs`, inspection/forensic tools, the unified `fsck.infiltratorfs` checker with optional `--scrub`, `mount.infiltratorfs`, InfiltratorFS Manager, udev/UDisks identification and the repository's formatter-integration work for libblockdev/UDisks/GNOME Disks.",
+          )
+          write(path, text)
+
+          for path in ("docs/FORENSICS.md", "docs/ON_DISK_FORMAT.md"):
+              text = read(path)
+              text = replace_required(
+                  text,
+                  "`infilfs-scrub`",
+                  "`fsck.infiltratorfs --scrub`",
+                  f"{path} scrub command name",
+              )
+              write(path, text)
+
+          # Only intentional historical/negative assertions may retain the old
+          # executable name after this migration.
+          allowed = {
+              "docs/FSCK-SCRUB-SEPARATION.md",
+              "tests/root-volume-integration-policy.sh",
+              "tests/system-utilities.sh",
+              ".github/workflows/root-volume-qualification.yml",
+              ".github/workflows/finish-fsck-consolidation.yml",
+          }
+          unexpected = []
+          for candidate in Path(".").rglob("*"):
+              if not candidate.is_file() or ".git" in candidate.parts:
+                  continue
+              try:
+                  content = candidate.read_text(encoding="utf-8")
+              except (UnicodeDecodeError, OSError):
+                  continue
+              if "infilfs-scrub" in content:
+                  rel = candidate.as_posix().removeprefix("./")
+                  if rel not in allowed:
+                      unexpected.append(rel)
+          if unexpected:
+              raise SystemExit("unexpected retired scrub references: " + ", ".join(sorted(unexpected)))
+          PY
+
+          python3 -m py_compile tools/infiltratorfs-manager
+          bash -n tools/infiltratorfs-manager-helper \
+            tests/root-boot-qemu.sh \
+            tests/native-complete-qualification.sh \
+            tests/native-partition22-qualification.sh
+          git diff --check
+
+      - name: Commit migration to main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Shannon Smith"
+          git config user.email "infiltratr@yandex.com"
+          git add .github/workflows/kernel-module.yml \
+                  tests/root-boot-qemu.sh \
+                  tests/native-complete-qualification.sh \
+                  tests/native-partition22-qualification.sh \
+                  tools/infiltratorfs-manager \
+                  tools/infiltratorfs-manager-helper \
+                  README.md docs/FORENSICS.md docs/ON_DISK_FORMAT.md
+          git diff --cached --quiet && { echo 'No migration changes were required.'; exit 0; }
+          git commit -m "Finish fsck scrub command consolidation"
+          git push origin HEAD:main
