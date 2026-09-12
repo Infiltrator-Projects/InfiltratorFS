@@ -1,4 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+static int index_entry_id_compare(const void *left, const void *right)
+{
+    const struct infs_index_entry_disk *a = left;
+    const struct infs_index_entry_disk *b = right;
+    return memcmp(a->object_id, b->object_id, sizeof(a->object_id));
+}
+
 static int validate_index_entries(struct infs_volume *vol)
 {
     uint8_t index_block[INFS_BLOCK_SIZE];
@@ -21,6 +28,13 @@ static int validate_index_entries(struct infs_volume *vol)
         return INFS_STATUS_CORRUPT;
     }
 
+    /* The old duplicate-ID check compared every entry with every earlier
+     * entry, making a scrub quadratic in the object count.  Sort the private
+     * snapshot once and duplicate detection becomes adjacent and O(N log N).
+     * No persistent ordering is changed. */
+    if (count > 1u)
+        qsort(entries, count, sizeof(*entries), index_entry_id_compare);
+
     uint64_t total = infs_le64_to_cpu(vol->sb.total_blocks);
     int root_seen = 0;
 
@@ -41,11 +55,10 @@ static int validate_index_entries(struct infs_volume *vol)
             free(entries);
             return INFS_STATUS_CORRUPT;
         }
-        for (uint32_t j = 0; j < i; ++j) {
-            if (memcmp(entries[i].object_id, entries[j].object_id, 16) == 0) {
-                free(entries);
-                return INFS_STATUS_CORRUPT;
-            }
+        if (i != 0 &&
+            memcmp(entries[i - 1u].object_id, entries[i].object_id, 16) == 0) {
+            free(entries);
+            return INFS_STATUS_CORRUPT;
         }
         uint8_t object[INFS_BLOCK_SIZE];
         status = read_object(vol, b, object);
