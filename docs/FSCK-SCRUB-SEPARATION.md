@@ -1,6 +1,6 @@
 # InfiltratorFS fsck / scrub separation
 
-Status: implementation correction in progress after 0.18.54 exposed an incomplete consolidation.
+Status: corrected for 0.18.55; fsck is the single maintenance command and deep scrub is an explicit mode.
 
 ## Incident that exposed the defect
 
