@@ -68,12 +68,21 @@ struct infs_volume {
     struct infs_storage storage;
     int writable;
     int checkpoint_repair_needed;
+    /* Nonzero after the commit checkpoint may have reached storage but its
+     * durability could not be established. No further mutation is safe until
+     * the volume is closed and recovered from its physical checkpoints. */
     infs_status reopen_required_status;
     uint64_t size_bytes;
     struct infs_superblock_disk sb;
     uint8_t *bitmap;
     size_t bitmap_bytes;
 
+    /*
+     * Runtime cache of the committed Format 0.18 allocation-tree geometry.
+     * The page addresses are validated while opening a checkpoint graph and
+     * replaced only after a newer primary checkpoint is durably committed.
+     * This avoids rereading every allocation leaf/branch on each fsync.
+     */
     uint64_t *allocation_leaf_blocks;
     uint64_t *allocation_branch_blocks;
     size_t allocation_leaf_count;
@@ -81,16 +90,24 @@ struct infs_volume {
     size_t allocation_level1_count;
     size_t allocation_level2_count;
 
+    /* Transaction state. Adapters may deliberately leave a transaction open
+     * across buffered mutations and publish it with infs_volume_sync(). */
     int tx_active;
     infs_status tx_error;
     struct infs_superblock_disk tx_base_sb;
     struct infs_deferred_range *tx_deferred;
     size_t tx_deferred_count;
     size_t tx_deferred_capacity;
+    /* Allocation journal replaces the former full-volume bitmap clone.
+     * Frees remain deferred until publication, so rollback only needs to
+     * clear blocks allocated since the transaction/savepoint began. */
     struct infs_deferred_range *tx_allocated;
     size_t tx_allocated_count;
     size_t tx_allocated_capacity;
 
+    /* Savepoint for one externally visible mutation inside a deferred
+     * transaction. Earlier successful syscalls remain intact if this one
+     * fails. */
     int tx_operation_active;
     struct infs_superblock_disk tx_operation_sb;
     size_t tx_operation_allocated_count;
@@ -101,12 +118,26 @@ struct infs_volume {
     uint64_t tx_operation_data_cursor;
     uint64_t tx_operation_metadata_cursor;
 
+    /* Generic publication policy. With deferred publication enabled, normal
+     * mutators remain in the active transaction until the approximate dirty
+     * byte threshold is reached. Explicit infs_volume_sync() always publishes
+     * immediately. This is an adapter policy, not an on-disk format feature. */
     int deferred_publish;
     uint64_t deferred_publish_threshold_bytes;
     uint64_t tx_pending_bytes;
 
+    /* Runtime-only performance hints. These never appear on disk and are
+     * shared by every adapter. File data grows upward while metadata grows
+     * downward, preventing checksum/CoW bookkeeping from fragmenting an
+     * otherwise sequential file. object_cache accelerates stable object-id
+     * to block lookups for the paged index. */
     uint64_t data_allocation_cursor;
     uint64_t metadata_allocation_cursor;
+    /*
+     * Rebuildable runtime index of maximal free runs. The allocation bitmap
+     * remains authoritative on disk and in memory; this cache exists only to
+     * avoid rescanning the whole volume for every allocation.
+     */
     struct infs_free_extent *free_extents;
     size_t free_extent_count;
     size_t free_extent_capacity;
@@ -119,6 +150,8 @@ struct infs_volume {
     struct infs_directory_cache_state *directory_cache_states;
     size_t directory_cache_state_slots;
 
+    /* Runtime-only checksum-chain cursor. Sequential growth must not restart
+     * lookup from the persistent chain head for every checksum group. */
     uint8_t checksum_cursor_owner_id[16];
     uint8_t checksum_cursor_object_id[16];
     uint64_t checksum_cursor_start;
@@ -126,9 +159,15 @@ struct infs_volume {
     uint64_t checksum_cursor_hits;
     uint64_t checksum_chain_steps;
 
+    /* Internal recursion contexts shared by ephemeral read-only snapshot
+     * views. They prevent repeated traversal of the same retained generation
+     * in the bounded catalog DAG and are never persistent. */
     void *snapshot_validation_context;
     void *snapshot_scrub_context;
 
+    /* Ephemeral ownership context for a retained-generation view. Snapshot
+     * records keep a flat immutable ownership image even though the live
+     * generation uses the Format 0.17 allocation tree. */
     int snapshot_view;
     uint64_t snapshot_bitmap_start_block;
     uint64_t snapshot_bitmap_block_count;
@@ -221,8 +260,16 @@ infs_status infs_volume_open_storage(struct infs_volume *vol,
                                      int writable);
 void infs_volume_close(struct infs_volume *vol);
 infs_status infs_volume_sync(struct infs_volume *vol);
+/* Resize the filesystem geometry inside an already-sized backing store.
+ * Grow requires the backing file/device to be enlarged first. Shrink is
+ * fail-closed: it succeeds only when every block outside the requested
+ * geometry is relocatable format bookkeeping; live user/metadata allocation
+ * or named snapshots make the operation return BUSY rather than risk data. */
 infs_status infs_volume_resize(struct infs_volume *vol,
                                uint64_t new_size_bytes);
+/* Enable or disable bounded deferred publication for normal mutators.
+ * threshold_bytes == 0 selects INFS_DEFAULT_DEFERRED_PUBLISH_BYTES.
+ * Explicit infs_volume_sync() remains a forced durability boundary. */
 infs_status infs_volume_set_deferred_publish(struct infs_volume *vol,
                                              int enabled,
                                              uint64_t threshold_bytes);
@@ -254,8 +301,12 @@ infs_status infs_rename(struct infs_volume *vol, const char *oldpath,
 
 int64_t infs_read_file(struct infs_volume *vol, const char *path, void *buf,
                        size_t size, uint64_t offset);
+/* Durable convenience write: the successful call publishes the transaction. */
 int64_t infs_write_file(struct infs_volume *vol, const char *path,
                         const void *buf, size_t size, uint64_t offset);
+/* Adapter-oriented write: with deferred publication enabled, successful calls
+ * remain in the active transaction until the configured threshold or an
+ * explicit infs_volume_sync(); otherwise this behaves like a durable write. */
 int64_t infs_write_file_buffered(struct infs_volume *vol, const char *path,
                                  const void *buf, size_t size,
                                  uint64_t offset);
@@ -308,10 +359,22 @@ infs_status infs_scrub(struct infs_volume *vol,
 infs_status infs_scrub_with_progress(
     struct infs_volume *vol, struct infs_scrub_report *report,
     infs_scrub_progress_fn progress, void *context);
+/*
+ * Report physical compression savings without conflating compression with
+ * sparse holes or reflink/snapshot sharing. The live generation and all named
+ * retained snapshots are scanned; an identical compressed physical stream is
+ * counted once in the unique/saved fields even when referenced many times.
+ */
 infs_status infs_compression_metrics(
     struct infs_volume *vol, struct infs_compression_metrics *metrics);
+/* Scrub one immutable named snapshot. The report records the generation that
+ * was actually verified. */
 infs_status infs_snapshot_scrub(struct infs_volume *vol, const char *snapshot,
                                 struct infs_scrub_report *report);
+/* Capture the current committed generation as a temporary retained snapshot,
+ * scrub that immutable view, then remove the temporary retention record. This
+ * gives adapters a stable scrub target without holding the live namespace at a
+ * moving generation. */
 infs_status infs_scrub_online(struct infs_volume *vol,
                               struct infs_scrub_report *report);
 
