@@ -192,7 +192,8 @@ static int directory_blob_duplicate_status(const uint8_t *base, size_t bytes)
     return status;
 }
 
-static int validate_namespace_graph(struct infs_volume *vol)
+static int validate_namespace_graph_progress(
+    struct infs_volume *vol, struct scrub_metadata_progress_context *progress)
 {
     struct infs_index_entry_disk *entries = NULL;
     uint32_t count = 0;
@@ -204,6 +205,16 @@ static int validate_namespace_graph(struct infs_volume *vol)
         return INFS_STATUS_CORRUPT;
     }
     qsort(entries, count, sizeof(*entries), index_entry_id_compare);
+
+    uint32_t directory_total = 0;
+    uint32_t namespace_total = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        uint16_t type = infs_le16_to_cpu(entries[i].object_type);
+        if (type == INFS_OBJECT_DIRECTORY)
+            ++directory_total;
+        if (namespace_object_type(type))
+            ++namespace_total;
+    }
 
     uint32_t *references = calloc(count, sizeof(*references));
     uint32_t *child_directories = calloc(count, sizeof(*child_directories));
@@ -228,6 +239,10 @@ static int validate_namespace_graph(struct infs_volume *vol)
         goto out;
     }
 
+    scrub_metadata_progress_begin(
+        progress, vol, INFS_SCRUB_METADATA_NAMESPACE_DIRECTORIES,
+        directory_total);
+    uint64_t directory_done = 0;
     for (uint32_t i = 0; i < count; ++i) {
         if (infs_le16_to_cpu(entries[i].object_type) != INFS_OBJECT_DIRECTORY)
             continue;
@@ -314,8 +329,13 @@ static int validate_namespace_graph(struct infs_volume *vol)
             status = INFS_STATUS_CORRUPT;
             goto out;
         }
+        scrub_metadata_progress_update(progress, ++directory_done);
     }
 
+    scrub_metadata_progress_begin(
+        progress, vol, INFS_SCRUB_METADATA_NAMESPACE_LINKS,
+        namespace_total);
+    uint64_t namespace_done = 0;
     for (uint32_t i = 0; i < count; ++i) {
         uint16_t type = infs_le16_to_cpu(entries[i].object_type);
         if (!namespace_object_type(type))
@@ -363,12 +383,17 @@ static int validate_namespace_graph(struct infs_volume *vol)
             status = INFS_STATUS_CORRUPT;
             goto out;
         }
+        scrub_metadata_progress_update(progress, ++namespace_done);
     }
 
     /* Reachability used to rescan the complete object array once per graph
-     * level.  A queue visits each reachable directory exactly once. */
+     * level. A queue visits each reachable directory exactly once. */
+    scrub_metadata_progress_begin(
+        progress, vol, INFS_SCRUB_METADATA_NAMESPACE_REACHABILITY,
+        directory_total);
     size_t queue_head = 0;
     size_t queue_tail = 0;
+    uint64_t reachable_directories = 0;
     reachable[root_index] = 1;
     queue[queue_tail++] = root_index;
     while (queue_head < queue_tail) {
@@ -424,6 +449,7 @@ static int validate_namespace_graph(struct infs_volume *vol)
             status = INFS_STATUS_CORRUPT;
             goto out;
         }
+        scrub_metadata_progress_update(progress, ++reachable_directories);
     }
 
     for (uint32_t i = 0; i < count; ++i) {
@@ -444,7 +470,13 @@ out:
     return status;
 }
 
-static int validate_checksum_graph(struct infs_volume *vol)
+static int validate_namespace_graph(struct infs_volume *vol)
+{
+    return validate_namespace_graph_progress(vol, NULL);
+}
+
+static int validate_checksum_graph_progress(
+    struct infs_volume *vol, struct scrub_metadata_progress_context *progress)
 {
     struct infs_index_entry_disk *entries = NULL;
     uint32_t count = 0;
@@ -454,11 +486,21 @@ static int validate_checksum_graph(struct infs_volume *vol)
     if (count > 1u)
         qsort(entries, count, sizeof(*entries), index_entry_id_compare);
 
+    uint32_t file_total = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        if (infs_le16_to_cpu(entries[i].object_type) == INFS_OBJECT_FILE)
+            ++file_total;
+    }
+
     uint8_t *seen = calloc(count ? count : 1u, 1);
     if (!seen) {
         free(entries);
         return INFS_STATUS_NO_MEMORY;
     }
+
+    scrub_metadata_progress_begin(
+        progress, vol, INFS_SCRUB_METADATA_CHECKSUM_FILES, file_total);
+    uint64_t files_done = 0;
 
     for (uint32_t i = 0; i < count; ++i) {
         if (infs_le16_to_cpu(entries[i].object_type) != INFS_OBJECT_FILE)
@@ -487,6 +529,7 @@ static int validate_checksum_graph(struct infs_volume *vol)
                 status = INFS_STATUS_CORRUPT;
                 goto out;
             }
+            scrub_metadata_progress_update(progress, ++files_done);
             continue;
         }
         if (id_is_zero(file->checksum_head_id)) {
@@ -536,6 +579,7 @@ static int validate_checksum_graph(struct infs_volume *vol)
             have_previous = 1;
             memcpy(current, checksum->next_object_id, 16);
         }
+        scrub_metadata_progress_update(progress, ++files_done);
     }
 
     for (uint32_t i = 0; i < count; ++i) {
@@ -551,4 +595,9 @@ out:
     free(entries);
     free(seen);
     return status;
+}
+
+static int validate_checksum_graph(struct infs_volume *vol)
+{
+    return validate_checksum_graph_progress(vol, NULL);
 }
