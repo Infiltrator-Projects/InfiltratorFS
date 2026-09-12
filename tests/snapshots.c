@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "infilfs/check.h"
 #include "infilfs/endian.h"
 #include "infilfs/format.h"
 #include "infilfs/format_volume.h"
@@ -325,6 +326,9 @@ int main(void)
     expect(infs_volume_open_storage(&corrupt_volume, &storage, 0) ==
                INFS_STATUS_OK,
            "metadata-valid snapshot opens before data scrub");
+    struct infs_check_report quick_report;
+    expect(infs_check(&corrupt_volume, &quick_report) == INFS_STATUS_OK,
+           "fast structural check does not deep-read payload data");
     expect(infs_scrub(&corrupt_volume, &report) == INFS_STATUS_OK &&
            report.checksum_errors != 0,
            "scrub detects retained-generation data corruption");
