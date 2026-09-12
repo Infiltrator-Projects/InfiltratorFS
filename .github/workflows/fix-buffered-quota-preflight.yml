@@ -1,0 +1,116 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Fix buffered quota preflight
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fix-buffered-quota-preflight.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Repair buffered write quota semantics
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "92148e3e9173dc0691629b5ac3bfa4d912b5c7f7"
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('kernel/infiltratorfs_rw_data.inc')
+          text = p.read_text(encoding='utf-8')
+          old = '''static ssize_t infilfs_file_write_iter(struct kiocb *iocb,
+                                       struct iov_iter *from)
+{
+    /*
+     * Ordinary Linux writes use the page cache.  Integrity/compression and
+     * CoW publication happen from clustered writeback, so a userspace writer
+     * no longer serially performs codec and metadata work in write(2).
+     */
+    return generic_file_write_iter(iocb, from);
+}
+'''
+          new = '''static ssize_t infilfs_file_write_iter(struct kiocb *iocb,
+                                       struct iov_iter *from)
+{
+    struct file *filep = iocb->ki_filp;
+    struct inode *inode = file_inode(filep);
+    struct infilfs_quota_reservation preflight = {0};
+    size_t requested;
+    loff_t pos;
+    loff_t old_size;
+    u64 quota_growth = 0;
+    ssize_t ret;
+
+    if (!iov_iter_count(from))
+        return 0;
+
+    /*
+     * Keep ordinary writes buffered, but perform the same whole-request quota
+     * admission check the old direct path provided.  Without this preflight a
+     * multi-folio write can fill the remaining allowance and then return a
+     * short write when a later write_begin() sees EDQUOT.  That both changes
+     * the established quota contract and can leave part of an over-limit
+     * append visible.  The per-folio reservations in write_begin() remain the
+     * authoritative accounting path; this reservation is released before the
+     * buffered copy starts and exists only to reject a request that is already
+     * impossible in its entirety.
+     */
+    inode_lock(inode);
+    ret = generic_write_checks(iocb, from);
+    if (ret <= 0)
+        goto out_unlock;
+    requested = (size_t)ret;
+    pos = iocb->ki_pos;
+    if (pos < 0 || (u64)requested > (u64)LLONG_MAX - (u64)pos) {
+        ret = -EFBIG;
+        goto out_unlock;
+    }
+    old_size = i_size_read(inode);
+    if (pos + (loff_t)requested > old_size)
+        quota_growth = (u64)(pos + (loff_t)requested - old_size);
+
+    ret = infilfs_quota_reserve_inode(
+        inode, quota_growth, 0, &preflight);
+    if (ret)
+        goto out_unlock;
+    infilfs_quota_reservation_abort(&preflight);
+
+    /*
+     * This is generic_file_write_iter() with quota admission inserted after
+     * generic_write_checks().  __generic_file_write_iter() keeps the page-cache
+     * data path, including file privilege/time handling and write_begin/end.
+     */
+    ret = __generic_file_write_iter(iocb, from);
+
+out_unlock:
+    inode_unlock(inode);
+    if (ret > 0)
+        ret = generic_write_sync(iocb, ret);
+    return ret;
+}
+'''
+          if text.count(old) != 1:
+              raise SystemExit(f'buffered write function: expected one match, got {text.count(old)}')
+          p.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+          rm -f .github/workflows/fix-buffered-quota-preflight.yml
+          git diff --check
+          grep -Fq '__generic_file_write_iter(iocb, from)' kernel/infiltratorfs_rw_data.inc
+          grep -Fq 'struct infilfs_quota_reservation preflight' kernel/infiltratorfs_rw_data.inc
+          bash tests/native-quota-policy.sh .
+          bash tests/native-sequential-write-scaling-policy.sh .
+          bash tests/native-deferred-publication-policy.sh .
+          git config user.name 'Shannon Smith'
+          git config user.email 'infiltratr@yandex.com'
+          git add -A
+          git commit -m 'Preserve quota rejection with buffered writes'
+          git push origin HEAD:main
