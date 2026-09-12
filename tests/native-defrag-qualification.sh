@@ -10,7 +10,7 @@ fi
 BUILD="$(readlink -f "$1")"
 MODULE="$(readlink -f "$2")"
 
-for path in "$BUILD/mkfs.infilfs" "$BUILD/infilfs-scrub" "$BUILD/infilfs-tool" "$BUILD/infilfs-optimize" "$MODULE"; do
+for path in "$BUILD/mkfs.infilfs" "$BUILD/fsck.infiltratorfs" "$BUILD/infilfs-tool" "$BUILD/infilfs-optimize" "$MODULE"; do
     [[ -e "$path" ]] || { echo "Missing qualification input: $path" >&2; exit 1; }
 done
 
@@ -220,7 +220,7 @@ sudo umount "$MOUNTPOINT"
 MOUNTED=0
 
 SCRUB="$WORK/scrub.txt"
-"$BUILD/infilfs-scrub" "$IMAGE" | tee "$SCRUB"
+"$BUILD/fsck.infiltratorfs" --scrub "$IMAGE" | tee "$SCRUB"
 grep -Fq 'Result:              CLEAN' "$SCRUB"
 
 SNAPSHOT_COPY="$WORK/snapshot-before-defrag.bin"
