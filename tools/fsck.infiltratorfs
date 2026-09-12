@@ -50,9 +50,11 @@ fi
 if (( deep_scrub )); then
     program="${INFILFS_SCRUB:-/usr/bin/infilfs-scrub}"
     description="scrub utility"
+    args=("${targets[0]}")
 else
-    program="${INFILFS_CHECK:-/usr/bin/infilfs-check}"
+    program="${INFILFS_CHECK:-/usr/bin/infilfs-inspect}"
     description="filesystem checker"
+    args=(--check "${targets[0]}")
 fi
 
 if [[ ! -x "$program" ]]; then
@@ -60,7 +62,7 @@ if [[ ! -x "$program" ]]; then
     exit 8
 fi
 
-"$program" "${targets[0]}"
+"$program" "${args[@]}"
 status=$?
 case "$status" in
     0) exit 0 ;;
