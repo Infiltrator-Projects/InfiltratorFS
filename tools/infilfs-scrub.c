@@ -15,6 +15,40 @@ static void usage(const char *program)
             program, program, program);
 }
 
+static const char *scrub_phase_name(uint32_t phase)
+{
+    switch (phase) {
+    case INFS_SCRUB_PHASE_METADATA:
+        return "metadata";
+    case INFS_SCRUB_PHASE_DATA:
+        return "data";
+    case INFS_SCRUB_PHASE_SNAPSHOTS:
+        return "snapshots";
+    case INFS_SCRUB_PHASE_COMPLETE:
+        return "complete";
+    default:
+        return "working";
+    }
+}
+
+static void scrub_progress(const struct infs_scrub_progress *progress,
+                           void *context)
+{
+    (void)context;
+    if (!progress)
+        return;
+    fprintf(stderr,
+            "\rInfiltratorFS scrub: %-9s  files=%" PRIu64
+            "  blocks=%" PRIu64 "  snapshots=%" PRIu64
+            "  errors=%" PRIu64,
+            scrub_phase_name(progress->phase), progress->files_checked,
+            progress->data_blocks_checked, progress->snapshots_checked,
+            progress->checksum_errors + progress->metadata_errors);
+    if (progress->phase == INFS_SCRUB_PHASE_COMPLETE)
+        fputc('\n', stderr);
+    fflush(stderr);
+}
+
 int main(int argc, char **argv)
 {
     int online = argc == 3 && strcmp(argv[1], "--online") == 0;
@@ -34,12 +68,16 @@ int main(int argc, char **argv)
     }
 
     struct infs_scrub_report report;
-    if (online)
+    if (online) {
+        fprintf(stderr, "InfiltratorFS scrub: preparing stable online view...\n");
         status = infs_scrub_online(&vol, &report);
-    else if (snapshot)
+    } else if (snapshot) {
+        fprintf(stderr, "InfiltratorFS scrub: checking snapshot %s...\n", argv[2]);
         status = infs_snapshot_scrub(&vol, argv[2], &report);
-    else
-        status = infs_scrub(&vol, &report);
+    } else {
+        status = infs_scrub_with_progress(
+            &vol, &report, scrub_progress, NULL);
+    }
     if (status != INFS_STATUS_OK) {
         fprintf(stderr, "infilfs-scrub: scrub: %s\n",
                 infs_status_string(status));

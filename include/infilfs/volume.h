@@ -188,6 +188,25 @@ struct infs_scrub_report {
     uint64_t snapshots_checked;
 };
 
+enum infs_scrub_phase {
+    INFS_SCRUB_PHASE_METADATA = 1,
+    INFS_SCRUB_PHASE_DATA = 2,
+    INFS_SCRUB_PHASE_SNAPSHOTS = 3,
+    INFS_SCRUB_PHASE_COMPLETE = 4
+};
+
+struct infs_scrub_progress {
+    uint32_t phase;
+    uint64_t files_checked;
+    uint64_t data_blocks_checked;
+    uint64_t snapshots_checked;
+    uint64_t checksum_errors;
+    uint64_t metadata_errors;
+};
+
+typedef void (*infs_scrub_progress_fn)(
+    const struct infs_scrub_progress *progress, void *context);
+
 struct infs_compression_metrics {
     uint64_t generation;
     uint64_t files_scanned;
@@ -309,6 +328,11 @@ infs_status infs_set_portable_flags(struct infs_volume *vol, const char *path,
 
 infs_status infs_scrub(struct infs_volume *vol,
                        struct infs_scrub_report *report);
+/* Run the same authoritative scrub while reporting real work completed.
+ * Progress callbacks are advisory and never alter on-disk state. */
+infs_status infs_scrub_with_progress(
+    struct infs_volume *vol, struct infs_scrub_report *report,
+    infs_scrub_progress_fn progress, void *context);
 /*
  * Report physical compression savings without conflating compression with
  * sparse holes or reflink/snapshot sharing. The live generation and all named
