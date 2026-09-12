@@ -60,7 +60,7 @@ test "$(stat -f -c '%b' "$mnt")" -eq 65536
 
 sudo umount "$mnt"
 mounted=0
-"$build/infilfs-scrub" "$image" | grep -Fq 'Result:              CLEAN'
+"$build/fsck.infiltratorfs" --scrub "$image" | grep -Fq 'Result:              CLEAN'
 
 sudo mount -t infiltratorfs -o ro "$loopdev" "$mnt"
 mounted=1
