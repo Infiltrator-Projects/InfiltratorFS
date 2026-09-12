@@ -1,0 +1,60 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Prepare 0.18.56 buffered writeback release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/prepare-0.18.56.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Prepare 0.18.56 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "92f31da5341791fa349f5f414684218d2a986c8b"
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              if text.count(old) != 1:
+                  raise SystemExit(f'{path}: expected exactly one {old!r}')
+              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          replace_once('CMakeLists.txt',
+                       'project(InfiltratorFS VERSION 0.18.55 LANGUAGES C)',
+                       'project(InfiltratorFS VERSION 0.18.56 LANGUAGES C)')
+          replace_once('CMakeLists.txt',
+                       '# Development qualification anchor: 0.18.55',
+                       '# Development qualification anchor: 0.18.56')
+          replace_once('README.md',
+                       '**Current source version:** 0.18.55 (Format 0.18)<br>',
+                       '**Current source version:** 0.18.56 (Format 0.18)<br>')
+          replace_once('README.md',
+                       '**Current source:** 0.18.55<br>',
+                       '**Current source:** 0.18.56<br>')
+          replace_once('README.md',
+                       '**Latest published release:** v0.18.54<br>',
+                       '**Latest published release:** v0.18.55<br>')
+          PY
+          rm -f .github/workflows/prepare-0.18.56.yml
+          git diff --check
+          grep -Fq 'project(InfiltratorFS VERSION 0.18.56 LANGUAGES C)' CMakeLists.txt
+          grep -Fq '**Current source:** 0.18.56<br>' README.md
+          grep -Fq '**Latest published release:** v0.18.55<br>' README.md
+          git config user.name 'Shannon Smith'
+          git config user.email 'infiltratr@yandex.com'
+          git add -A
+          git commit -m 'Prepare 0.18.56 buffered writeback release'
+          git push origin HEAD:main
