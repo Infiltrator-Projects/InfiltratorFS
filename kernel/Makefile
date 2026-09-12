@@ -38,6 +38,8 @@
 #   work. Buffered writes perform whole-request quota admission under inode_lock
 #   before page-cache copying; per-folio reservations remain the authoritative
 #   live accounting path and are reconciled without holding write_lock.
+#   Cross-project preflight uses resident inode sizes when present so dirty
+#   buffered data cannot evade destination project quota transfer accounting.
 #
 # Source composition:
 #   infiltratorfs.ko is a composite Kbuild module.
