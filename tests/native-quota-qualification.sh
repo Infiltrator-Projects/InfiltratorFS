@@ -262,7 +262,7 @@ before42="$(field used_bytes "$mnt" project 42)"
 sudo sync
 sudo umount "$mnt"
 mounted=0
-"$build/infilfs-scrub" "$image" | grep -Fq 'Result:              CLEAN'
+"$build/fsck.infiltratorfs" --scrub "$image" | grep -Fq 'Result:              CLEAN'
 
 sudo mount -t infiltratorfs -o rw "$loopdev" "$mnt"
 mounted=1
@@ -283,6 +283,6 @@ test "$(stat -c '%s' "$mnt/project-a/data.bin")" -eq $((4 * 1024 * 1024))
 stage "final unmount and scrub"
 sudo umount "$mnt"
 mounted=0
-"$build/infilfs-scrub" "$image" | grep -Fq 'Result:              CLEAN'
+"$build/fsck.infiltratorfs" --scrub "$image" | grep -Fq 'Result:              CLEAN'
 
 echo "native user/group/project quota + POSIX ACL qualification: PASS"
