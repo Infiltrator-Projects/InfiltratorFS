@@ -1770,6 +1770,39 @@ static int infilfs_quota_prepare_reparent_locked(
         }
 
         logical = le64_to_cpu(attributes->logical_size);
+        if (type == INFILFS_OBJECT_FILE) {
+            struct infilfs_iget_args live_args = {
+                .ino = infilfs_object_ino(entries[i].object_id),
+                .object_id = entries[i].object_id,
+            };
+            struct inode *live_inode;
+
+            /*
+             * Buffered writes may have advanced i_size before writeback has
+             * published the new logical_size to the object block. Project
+             * reparent quota admission must use the live logical size or a
+             * dirty subtree can cross the destination project limit. Dirty
+             * mappings keep their inode resident, so ilookup5() observes the
+             * authoritative VFS size without instantiating a new inode. If the
+             * inode is not resident there can be no dirty page-cache state and
+             * the persisted logical size above is authoritative.
+             */
+            live_inode = ilookup5(
+                source->i_sb, (unsigned long)live_args.ino,
+                infilfs_inode_matches_id, &live_args);
+            if (live_inode) {
+                loff_t live_size = i_size_read(live_inode);
+
+                if (live_size < 0) {
+                    iput(live_inode);
+                    kfree(object);
+                    ret = -EFSCORRUPTED;
+                    break;
+                }
+                logical = (u64)live_size;
+                iput(live_inode);
+            }
+        }
         if (bytes > U64_MAX - logical || objects == U64_MAX) {
             kfree(object);
             ret = -EOVERFLOW;
