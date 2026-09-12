@@ -25,7 +25,10 @@ truncate -s 64M "$image"
 "$mkfs" -L SmokeTest "$image" >"$mkfs_output"
 grep -Fq "Implementation: $expected_version" "$mkfs_output"
 "$inspect" "$image" >/dev/null
-INFILFS_SCRUB="$scrub" "$fsck_helper" -n "$image" >/dev/null
+# Normal fsck is the fast structural check. Deep payload verification is only
+# selected explicitly with --scrub.
+INFILFS_CHECK="$inspect" "$fsck_helper" -n "$image" >/dev/null
+INFILFS_SCRUB="$scrub" "$fsck_helper" --scrub -n "$image" >/dev/null
 "$api_test" "$image" >/dev/null
 
 # Reformat and exercise the command-line persistence path independently.
@@ -79,6 +82,7 @@ cmp "$source_file" "$out_file"
 "$tool" "$image" rmdir /docs
 "$tool" "$image" snapshot-delete before-removal
 "$inspect" "$image" >/dev/null
+INFILFS_CHECK="$inspect" "$fsck_helper" -n "$image" >/dev/null
 
 # Corrupt the currently referenced root metadata block and require a hard
 # rejection. The root is copy-on-write and is not required to remain at the
@@ -95,5 +99,10 @@ if "$tool" "$corrupt" ls / >/dev/null 2>&1; then
     echo "corruption test failed: damaged root was accepted" >&2
     exit 1
 fi
+set +e
+INFILFS_CHECK="$inspect" "$fsck_helper" -n "$corrupt" >/dev/null 2>&1
+fsck_corrupt_status=$?
+set -e
+[[ "$fsck_corrupt_status" == 4 ]]
 
 echo "InfiltratorFS smoke test: PASS"
