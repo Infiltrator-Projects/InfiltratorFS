@@ -14,6 +14,10 @@ static void scrub_emit_progress(infs_scrub_progress_fn progress, void *context,
         return;
     struct infs_scrub_progress state = {
         .phase = phase,
+        .metadata_stage = INFS_SCRUB_METADATA_NONE,
+        .metadata_generation = report->scrub_generation,
+        .metadata_items_checked = 0,
+        .metadata_items_total = 0,
         .files_checked = report->files_checked,
         .data_blocks_checked = report->data_blocks_checked,
         .snapshots_checked = report->snapshots_checked,
@@ -23,29 +27,153 @@ static void scrub_emit_progress(infs_scrub_progress_fn progress, void *context,
     progress(&state, context);
 }
 
-static infs_status scrub_validate_full_metadata(
-    struct infs_volume *vol, struct infs_scrub_report *report)
+static void scrub_metadata_progress_emit(
+    struct scrub_metadata_progress_context *progress)
 {
-    infs_status status = validate_index_entries(vol);
+    if (!progress || !progress->callback || !progress->report)
+        return;
+    struct infs_scrub_progress state = {
+        .phase = INFS_SCRUB_PHASE_METADATA,
+        .metadata_stage = progress->stage,
+        .metadata_generation = progress->generation,
+        .metadata_items_checked = progress->done,
+        .metadata_items_total = progress->total,
+        .files_checked = progress->report->files_checked,
+        .data_blocks_checked = progress->report->data_blocks_checked,
+        .snapshots_checked = progress->report->snapshots_checked,
+        .checksum_errors = progress->report->checksum_errors,
+        .metadata_errors = progress->report->metadata_errors,
+    };
+    progress->callback(&state, progress->callback_context);
+}
+
+static void scrub_metadata_progress_begin_generation(
+    struct scrub_metadata_progress_context *progress,
+    uint64_t generation, uint32_t stage, uint64_t total)
+{
+    if (!progress)
+        return;
+    progress->stage = stage;
+    progress->generation = generation;
+    progress->done = 0;
+    progress->total = total;
+    /* Bound callbacks to roughly 200 per sub-stage while still making tiny
+     * jobs visibly move one item at a time. */
+    progress->stride = total > 200u ? (total + 199u) / 200u : 1u;
+    progress->next_emit = progress->stride;
+    scrub_metadata_progress_emit(progress);
+}
+
+static void scrub_metadata_progress_begin(
+    struct scrub_metadata_progress_context *progress,
+    const struct infs_volume *vol, uint32_t stage, uint64_t total)
+{
+    scrub_metadata_progress_begin_generation(
+        progress, vol ? infs_le64_to_cpu(vol->sb.generation) : 0,
+        stage, total);
+}
+
+static void scrub_metadata_progress_update(
+    struct scrub_metadata_progress_context *progress, uint64_t done)
+{
+    if (!progress)
+        return;
+    if (progress->total && done > progress->total)
+        done = progress->total;
+    progress->done = done;
+    if (done < progress->next_emit &&
+        (!progress->total || done != progress->total))
+        return;
+    scrub_metadata_progress_emit(progress);
+    if (UINT64_MAX - done < progress->stride)
+        progress->next_emit = UINT64_MAX;
+    else
+        progress->next_emit = done + progress->stride;
+}
+
+static infs_status scrub_validate_generation_metadata(
+    struct infs_volume *vol, struct infs_scrub_report *report,
+    struct scrub_metadata_progress_context *progress)
+{
+    infs_status status = validate_index_entries_progress(vol, progress);
     if (status == INFS_STATUS_OK)
-        status = validate_integrity_metadata(vol);
+        status = validate_integrity_metadata_progress(vol, progress, 0);
     if (status == INFS_STATUS_OK)
-        status = validate_namespace_graph(vol);
+        status = validate_namespace_graph_progress(vol, progress);
     if (status == INFS_STATUS_OK)
-        status = validate_checksum_graph(vol);
+        status = validate_checksum_graph_progress(vol, progress);
 
     if (status == INFS_STATUS_OK)
         return INFS_STATUS_OK;
     if (scrub_reportable_metadata_status(status)) {
         ++report->metadata_errors;
+        if (progress)
+            scrub_metadata_progress_emit(progress);
         return INFS_STATUS_OK;
     }
     return status;
 }
 
-/* Verify file payloads for one already metadata-validated generation.  Report
+/* Walk retained generations explicitly during scrub instead of allowing the
+ * generic integrity validator to recurse invisibly. This gives every retained
+ * generation the same detailed metadata progress instrumentation and keeps the
+ * visited-generation guard that prevents duplicate DAG traversal. */
+static infs_status scrub_validate_snapshot_metadata(
+    struct infs_volume *vol, struct infs_scrub_report *report,
+    struct snapshot_visit_context *visit,
+    struct scrub_metadata_progress_context *progress)
+{
+    if (!snapshots_enabled(vol))
+        return INFS_STATUS_OK;
+
+    uint8_t catalog[INFS_BLOCK_SIZE];
+    struct infs_snapshot_catalog_payload_disk *payload;
+    infs_status status = snapshot_catalog_load(vol, catalog, &payload, NULL);
+    if (status == INFS_STATUS_NOT_FOUND)
+        return INFS_STATUS_OK;
+    if (status != INFS_STATUS_OK)
+        return status;
+
+    uint32_t count = infs_le32_to_cpu(payload->snapshot_count);
+    struct infs_snapshot_record_disk *records =
+        (struct infs_snapshot_record_disk *)(payload + 1);
+
+    for (uint32_t i = 0; i < count; ++i) {
+        int first_visit = 0;
+        status = snapshot_visit_once(visit, &records[i], &first_visit);
+        if (status != INFS_STATUS_OK)
+            return status;
+        if (!first_visit)
+            continue;
+
+        uint64_t generation = infs_le64_to_cpu(records[i].generation);
+        scrub_metadata_progress_begin_generation(
+            progress, generation, INFS_SCRUB_METADATA_SNAPSHOT_GENERATIONS,
+            count);
+        scrub_metadata_progress_update(progress, (uint64_t)i + 1u);
+
+        char name[INFS_SNAPSHOT_NAME_MAX + 1u] = {0};
+        uint16_t length = infs_le16_to_cpu(records[i].name_length);
+        memcpy(name, records[i].name, length);
+        struct infs_volume view;
+        status = snapshot_open_view(vol, name, &view);
+        if (status != INFS_STATUS_OK)
+            return status;
+
+        status = scrub_validate_generation_metadata(&view, report, progress);
+        if (status == INFS_STATUS_OK && report->metadata_errors == 0)
+            status = scrub_validate_snapshot_metadata(
+                &view, report, visit, progress);
+        snapshot_close_view(&view);
+        if (status != INFS_STATUS_OK || report->metadata_errors != 0)
+            return status;
+    }
+    return INFS_STATUS_OK;
+}
+
+/* Verify file payloads for one already metadata-validated generation. Report
  * counters are additive so the caller can accumulate live and snapshot work
- * without recursively repeating the expensive graph validators. */
+ * without recursively repeating graph validators. */
 static infs_status scrub_verify_data(
     struct infs_volume *vol, struct infs_scrub_report *report,
     infs_scrub_progress_fn progress, void *context, uint32_t phase)
@@ -125,9 +253,6 @@ static infs_status scrub_verify_data(
                 }
             }
 
-            /* Resolve one checksum object per digest run rather than once per
-             * data block. This removes repeated index walks and checksum-page
-             * reads from sequential scrub I/O. */
             for (uint32_t k = 0; k < blocks;) {
                 uint64_t current_logical = logical + k;
                 uint64_t checksum_offset =
@@ -200,10 +325,6 @@ static infs_status scrub_verify_data(
     return INFS_STATUS_OK;
 }
 
-/* Metadata validation already recursively checks every retained generation.
- * Walk the retained-generation DAG again only for payload verification, so a
- * full scrub does not repeat all index/ownership/namespace validation for each
- * snapshot. */
 static infs_status scrub_verify_snapshot_data(
     struct infs_volume *vol, struct infs_scrub_report *report,
     struct snapshot_visit_context *visit, infs_scrub_progress_fn progress,
@@ -264,16 +385,32 @@ static infs_status scrub_run(struct infs_volume *vol,
     memset(report, 0, sizeof(*report));
     report->scrub_generation = infs_le64_to_cpu(vol->sb.generation);
 
-    scrub_emit_progress(progress, context, INFS_SCRUB_PHASE_METADATA, report);
+    struct scrub_metadata_progress_context metadata_progress = {
+        .callback = progress,
+        .callback_context = context,
+        .report = report,
+        .generation = report->scrub_generation,
+    };
 
-    /* Whole-volume graph validation belongs here rather than in the normal
-     * device-open path. Scrub is explicitly the expensive consistency pass:
-     * verify index/object agreement, bitmap ownership, namespace reachability,
-     * link counts, checksum ownership and checksum-chain structure before
-     * reading every allocated data block below. */
-    infs_status status = scrub_validate_full_metadata(vol, report);
+    /* Validate the live generation and every reachable retained generation
+     * with sub-stage progress. The generic integrity validator's historical
+     * recursion is deliberately disabled here so no expensive work is hidden
+     * behind a static progress line. */
+    infs_status status = scrub_validate_generation_metadata(
+        vol, report, &metadata_progress);
     if (status != INFS_STATUS_OK || report->metadata_errors != 0)
         return status;
+
+    if (snapshots_enabled(vol)) {
+        struct snapshot_visit_context *visit = calloc(1, sizeof(*visit));
+        if (!visit)
+            return INFS_STATUS_NO_MEMORY;
+        status = scrub_validate_snapshot_metadata(
+            vol, report, visit, &metadata_progress);
+        snapshot_visit_context_destroy(visit);
+        if (status != INFS_STATUS_OK || report->metadata_errors != 0)
+            return status;
+    }
 
     scrub_emit_progress(progress, context, INFS_SCRUB_PHASE_DATA, report);
     status = scrub_verify_data(vol, report, progress, context,
