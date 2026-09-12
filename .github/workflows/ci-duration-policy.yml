@@ -27,12 +27,12 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - name: Apply repair and restore workflow
+      - name: Apply repair
         shell: bash
         run: |
           set -euo pipefail
           python3 tools/apply-buffered-writeback-repair.py
-          git checkout HEAD^ -- .github/workflows/ci-duration-policy.yml
+          git checkout -- .github/workflows/temp-buffered-writeback-repair.yml 2>/dev/null || true
           rm -f tools/apply-buffered-writeback-repair.py
           git diff --check
           bash tests/native-sequential-write-scaling-policy.sh .
@@ -40,6 +40,6 @@ jobs:
           bash tests/native-deferred-publication-policy.sh .
           git config user.name "Shannon Smith"
           git config user.email "infiltratr@yandex.com"
-          git add -A
+          git add -A ':!.github/workflows'
           git commit -m "Use buffered clustered native writeback"
           git push origin HEAD:main
