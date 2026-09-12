@@ -5428,12 +5428,50 @@ out_inode:
 static ssize_t infilfs_file_write_iter(struct kiocb *iocb,
                                        struct iov_iter *from)
 {
+    struct file *filep = iocb->ki_filp;
+    struct inode *inode = file_inode(filep);
+    struct infilfs_quota_reservation preflight = {0};
+    size_t requested;
+    loff_t pos;
+    loff_t old_size;
+    u64 quota_growth = 0;
+    ssize_t ret;
+
+    if (!iov_iter_count(from))
+        return 0;
+
     /*
-     * Ordinary Linux writes use the page cache.  Integrity/compression and
-     * CoW publication happen from clustered writeback, so a userspace writer
-     * no longer serially performs codec and metadata work in write(2).
+     * Keep ordinary writes buffered, but retain whole-request quota admission.
+     * Per-folio reservations remain authoritative; this preflight only rejects
+     * an append that is already impossible before any part becomes visible.
      */
-    return generic_file_write_iter(iocb, from);
+    inode_lock(inode);
+    ret = generic_write_checks(iocb, from);
+    if (ret <= 0)
+        goto out_unlock;
+    requested = (size_t)ret;
+    pos = iocb->ki_pos;
+    if (pos < 0 || (u64)requested > (u64)LLONG_MAX - (u64)pos) {
+        ret = -EFBIG;
+        goto out_unlock;
+    }
+    old_size = i_size_read(inode);
+    if (pos + (loff_t)requested > old_size)
+        quota_growth = (u64)(pos + (loff_t)requested - old_size);
+
+    ret = infilfs_quota_reserve_inode(inode, quota_growth, 0, &preflight);
+    if (ret)
+        goto out_unlock;
+    infilfs_quota_reservation_abort(&preflight);
+
+    /* generic_file_write_iter(), with quota admission after write checks. */
+    ret = __generic_file_write_iter(iocb, from);
+
+out_unlock:
+    inode_unlock(inode);
+    if (ret > 0)
+        ret = generic_write_sync(iocb, ret);
+    return ret;
 }
 
 /*
