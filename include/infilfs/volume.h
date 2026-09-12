@@ -195,8 +195,31 @@ enum infs_scrub_phase {
     INFS_SCRUB_PHASE_COMPLETE = 4
 };
 
+/* Metadata scrub sub-stages are deliberately explicit. A full metadata pass
+ * performs several independently expensive graph walks; exposing the active
+ * sub-stage plus a real completed/total counter makes a slow pass diagnosable
+ * instead of presenting a motionless "metadata 0/0" line. */
+enum infs_scrub_metadata_stage {
+    INFS_SCRUB_METADATA_NONE = 0,
+    INFS_SCRUB_METADATA_INDEX_OBJECTS = 1,
+    INFS_SCRUB_METADATA_OWNERSHIP_OBJECTS = 2,
+    INFS_SCRUB_METADATA_SNAPSHOT_BITMAP = 3,
+    INFS_SCRUB_METADATA_SNAPSHOT_UNION = 4,
+    INFS_SCRUB_METADATA_OWNERSHIP_BITMAP = 5,
+    INFS_SCRUB_METADATA_INTEGRITY_OBJECTS = 6,
+    INFS_SCRUB_METADATA_NAMESPACE_DIRECTORIES = 7,
+    INFS_SCRUB_METADATA_NAMESPACE_LINKS = 8,
+    INFS_SCRUB_METADATA_NAMESPACE_REACHABILITY = 9,
+    INFS_SCRUB_METADATA_CHECKSUM_FILES = 10,
+    INFS_SCRUB_METADATA_SNAPSHOT_GENERATIONS = 11
+};
+
 struct infs_scrub_progress {
     uint32_t phase;
+    uint32_t metadata_stage;
+    uint64_t metadata_generation;
+    uint64_t metadata_items_checked;
+    uint64_t metadata_items_total;
     uint64_t files_checked;
     uint64_t data_blocks_checked;
     uint64_t snapshots_checked;
@@ -329,7 +352,9 @@ infs_status infs_set_portable_flags(struct infs_volume *vol, const char *path,
 infs_status infs_scrub(struct infs_volume *vol,
                        struct infs_scrub_report *report);
 /* Run the same authoritative scrub while reporting real work completed.
- * Progress callbacks are advisory and never alter on-disk state. */
+ * Metadata progress includes the active graph-validation sub-stage, retained
+ * generation, and an actual completed/total work counter. Progress callbacks
+ * are advisory and never alter on-disk state. */
 infs_status infs_scrub_with_progress(
     struct infs_volume *vol, struct infs_scrub_report *report,
     infs_scrub_progress_fn progress, void *context);
