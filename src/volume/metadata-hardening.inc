@@ -47,16 +47,27 @@ static infs_status generate_unique_object_id(struct infs_volume *vol,
     return INFS_STATUS_ERROR;
 }
 
+/* Validation callers sort their private index snapshot by object id once.
+ * Lookups are therefore logarithmic instead of repeatedly scanning the whole
+ * index for every namespace entry and checksum object. */
 static int index_entry_index(const struct infs_index_entry_disk *entries,
                              uint32_t count, const uint8_t id[16],
                              uint32_t *index_out)
 {
-    for (uint32_t i = 0; i < count; ++i) {
-        if (memcmp(entries[i].object_id, id, 16) == 0) {
-            if (index_out)
-                *index_out = i;
-            return INFS_STATUS_OK;
-        }
+    uint32_t low = 0;
+    uint32_t high = count;
+    while (low < high) {
+        uint32_t mid = low + (high - low) / 2u;
+        int cmp = memcmp(entries[mid].object_id, id, 16);
+        if (cmp < 0)
+            low = mid + 1u;
+        else
+            high = mid;
+    }
+    if (low < count && memcmp(entries[low].object_id, id, 16) == 0) {
+        if (index_out)
+            *index_out = low;
+        return INFS_STATUS_OK;
     }
     return INFS_STATUS_NOT_FOUND;
 }
@@ -112,33 +123,73 @@ static int directory_entries_snapshot(
     return INFS_STATUS_OK;
 }
 
-static int directory_blob_has_duplicate_names(const uint8_t *base,
-                                               size_t bytes)
-{
-    size_t first_off = 0;
-    while (first_off < bytes) {
-        const struct infs_dirent_disk *first =
-            (const struct infs_dirent_disk *)(base + first_off);
-        uint16_t first_rec = infs_le16_to_cpu(first->record_size);
-        uint16_t first_len = infs_le16_to_cpu(first->name_length);
-        const uint8_t *first_name = (const uint8_t *)first + sizeof(*first);
+struct directory_name_ref {
+    const uint8_t *name;
+    uint16_t length;
+};
 
-        size_t second_off = first_off + first_rec;
-        while (second_off < bytes) {
-            const struct infs_dirent_disk *second =
-                (const struct infs_dirent_disk *)(base + second_off);
-            uint16_t second_rec = infs_le16_to_cpu(second->record_size);
-            uint16_t second_len = infs_le16_to_cpu(second->name_length);
-            const uint8_t *second_name =
-                (const uint8_t *)second + sizeof(*second);
-            if (first_len == second_len &&
-                memcmp(first_name, second_name, first_len) == 0)
-                return 1;
-            second_off += second_rec;
-        }
-        first_off += first_rec;
-    }
+static int directory_name_ref_compare(const void *left, const void *right)
+{
+    const struct directory_name_ref *a = left;
+    const struct directory_name_ref *b = right;
+    uint16_t common = a->length < b->length ? a->length : b->length;
+    int cmp = memcmp(a->name, b->name, common);
+    if (cmp != 0)
+        return cmp;
+    if (a->length < b->length)
+        return -1;
+    if (a->length > b->length)
+        return 1;
     return 0;
+}
+
+static int directory_blob_duplicate_status(const uint8_t *base, size_t bytes)
+{
+    if (!base && bytes)
+        return INFS_STATUS_INVALID_ARGUMENT;
+
+    size_t offset = 0;
+    size_t count = 0;
+    while (offset < bytes) {
+        const struct infs_dirent_disk *entry =
+            (const struct infs_dirent_disk *)(base + offset);
+        uint16_t rec = infs_le16_to_cpu(entry->record_size);
+        if (rec < sizeof(*entry) || rec > bytes - offset)
+            return INFS_STATUS_CORRUPT;
+        ++count;
+        offset += rec;
+    }
+    if (count < 2u)
+        return INFS_STATUS_OK;
+    if (count > SIZE_MAX / sizeof(struct directory_name_ref))
+        return INFS_STATUS_NO_MEMORY;
+
+    struct directory_name_ref *names = malloc(count * sizeof(*names));
+    if (!names)
+        return INFS_STATUS_NO_MEMORY;
+    offset = 0;
+    size_t at = 0;
+    while (offset < bytes) {
+        const struct infs_dirent_disk *entry =
+            (const struct infs_dirent_disk *)(base + offset);
+        uint16_t rec = infs_le16_to_cpu(entry->record_size);
+        names[at].length = infs_le16_to_cpu(entry->name_length);
+        names[at].name = (const uint8_t *)entry + sizeof(*entry);
+        ++at;
+        offset += rec;
+    }
+
+    qsort(names, count, sizeof(*names), directory_name_ref_compare);
+    int status = INFS_STATUS_OK;
+    for (size_t i = 1; i < count; ++i) {
+        if (names[i - 1u].length == names[i].length &&
+            memcmp(names[i - 1u].name, names[i].name, names[i].length) == 0) {
+            status = INFS_STATUS_CORRUPT;
+            break;
+        }
+    }
+    free(names);
+    return status;
 }
 
 static int validate_namespace_graph(struct infs_volume *vol)
@@ -152,17 +203,18 @@ static int validate_namespace_graph(struct infs_volume *vol)
         free(entries);
         return INFS_STATUS_CORRUPT;
     }
+    qsort(entries, count, sizeof(*entries), index_entry_id_compare);
 
     uint32_t *references = calloc(count, sizeof(*references));
     uint32_t *child_directories = calloc(count, sizeof(*child_directories));
     uint8_t *reachable = calloc(count, 1);
-    uint8_t *expanded = calloc(count, 1);
-    if (!references || !child_directories || !reachable || !expanded) {
+    uint32_t *queue = malloc((size_t)count * sizeof(*queue));
+    if (!references || !child_directories || !reachable || !queue) {
         free(entries);
         free(references);
         free(child_directories);
         free(reachable);
-        free(expanded);
+        free(queue);
         return INFS_STATUS_NO_MEMORY;
     }
 
@@ -195,9 +247,9 @@ static int validate_namespace_graph(struct infs_volume *vol)
             free(owned);
             goto out;
         }
-        if (directory_blob_has_duplicate_names(base, bytes)) {
+        status = directory_blob_duplicate_status(base, bytes);
+        if (status != INFS_STATUS_OK) {
             free(owned);
-            status = INFS_STATUS_CORRUPT;
             goto out;
         }
 
@@ -313,57 +365,65 @@ static int validate_namespace_graph(struct infs_volume *vol)
         }
     }
 
+    /* Reachability used to rescan the complete object array once per graph
+     * level.  A queue visits each reachable directory exactly once. */
+    size_t queue_head = 0;
+    size_t queue_tail = 0;
     reachable[root_index] = 1;
-    for (;;) {
-        int progress = 0;
-        for (uint32_t i = 0; i < count; ++i) {
-            if (!reachable[i] || expanded[i] ||
-                infs_le16_to_cpu(entries[i].object_type) !=
-                    INFS_OBJECT_DIRECTORY)
-                continue;
-            expanded[i] = 1;
-            progress = 1;
+    queue[queue_tail++] = root_index;
+    while (queue_head < queue_tail) {
+        uint32_t i = queue[queue_head++];
+        if (infs_le16_to_cpu(entries[i].object_type) != INFS_OBJECT_DIRECTORY)
+            continue;
 
-            uint8_t directory[INFS_BLOCK_SIZE];
-            status = read_object(
-                vol, infs_le64_to_cpu(entries[i].object_block), directory);
-            if (status != INFS_STATUS_OK)
-                goto out;
-            uint8_t *owned = NULL;
-            const uint8_t *base = NULL;
-            size_t bytes = 0;
-            uint32_t dir_count = 0;
-            status = directory_entries_snapshot(vol, directory, &owned, &base,
-                                                &bytes, &dir_count);
-            if (status != INFS_STATUS_OK) {
-                free(owned);
-                goto out;
-            }
-            size_t offset = 0;
-            uint32_t seen = 0;
-            while (offset < bytes) {
-                struct infs_dirent_disk *entry =
-                    (struct infs_dirent_disk *)(base + offset);
-                uint16_t rec = infs_le16_to_cpu(entry->record_size);
-                uint32_t target = 0;
-                if (index_entry_index(entries, count, entry->object_id,
-                                      &target) != INFS_STATUS_OK) {
-                    free(owned);
-                    status = INFS_STATUS_CORRUPT;
-                    goto out;
-                }
-                reachable[target] = 1;
-                offset += rec;
-                ++seen;
-            }
+        uint8_t directory[INFS_BLOCK_SIZE];
+        status = read_object(
+            vol, infs_le64_to_cpu(entries[i].object_block), directory);
+        if (status != INFS_STATUS_OK)
+            goto out;
+        uint8_t *owned = NULL;
+        const uint8_t *base = NULL;
+        size_t bytes = 0;
+        uint32_t dir_count = 0;
+        status = directory_entries_snapshot(vol, directory, &owned, &base,
+                                            &bytes, &dir_count);
+        if (status != INFS_STATUS_OK) {
             free(owned);
-            if (seen != dir_count) {
+            goto out;
+        }
+        size_t offset = 0;
+        uint32_t seen = 0;
+        while (offset < bytes) {
+            struct infs_dirent_disk *entry =
+                (struct infs_dirent_disk *)(base + offset);
+            uint16_t rec = infs_le16_to_cpu(entry->record_size);
+            uint32_t target = 0;
+            if (index_entry_index(entries, count, entry->object_id,
+                                  &target) != INFS_STATUS_OK) {
+                free(owned);
                 status = INFS_STATUS_CORRUPT;
                 goto out;
             }
+            if (!reachable[target]) {
+                reachable[target] = 1;
+                if (infs_le16_to_cpu(entries[target].object_type) ==
+                    INFS_OBJECT_DIRECTORY) {
+                    if (queue_tail >= count) {
+                        free(owned);
+                        status = INFS_STATUS_CORRUPT;
+                        goto out;
+                    }
+                    queue[queue_tail++] = target;
+                }
+            }
+            offset += rec;
+            ++seen;
         }
-        if (!progress)
-            break;
+        free(owned);
+        if (seen != dir_count) {
+            status = INFS_STATUS_CORRUPT;
+            goto out;
+        }
     }
 
     for (uint32_t i = 0; i < count; ++i) {
@@ -380,7 +440,7 @@ out:
     free(references);
     free(child_directories);
     free(reachable);
-    free(expanded);
+    free(queue);
     return status;
 }
 
@@ -391,6 +451,8 @@ static int validate_checksum_graph(struct infs_volume *vol)
     int status = index_snapshot(vol, &entries, &count);
     if (status != INFS_STATUS_OK)
         return status;
+    if (count > 1u)
+        qsort(entries, count, sizeof(*entries), index_entry_id_compare);
 
     uint8_t *seen = calloc(count ? count : 1u, 1);
     if (!seen) {
