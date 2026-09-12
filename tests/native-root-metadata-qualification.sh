@@ -123,6 +123,6 @@ getfacl -n "$mountpoint/meta/owner" | grep -Eq '^user:12345:r--$'
 sync
 umount "$mountpoint"
 
-"$build_dir/infilfs-scrub" "$loop" | tee "$work/scrub.txt"
+"$build_dir/fsck.infiltratorfs" --scrub "$loop" | tee "$work/scrub.txt"
 grep -Fq 'Result:              CLEAN' "$work/scrub.txt"
 echo 'Native Linux full root metadata qualification: PASS'
