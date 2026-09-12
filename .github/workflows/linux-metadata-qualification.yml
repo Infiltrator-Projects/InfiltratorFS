@@ -44,7 +44,7 @@ jobs:
           set -euo pipefail
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build --parallel --target \
-            mkfs.infilfs infilfs-scrub infilfs-tool infiltratorfs-quota
+            mkfs.infilfs fsck.infiltratorfs infilfs-tool infiltratorfs-quota
           make -C kernel KDIR="/lib/modules/$(uname -r)/build"
 
       - name: Prove quota and POSIX ACL remount durability
