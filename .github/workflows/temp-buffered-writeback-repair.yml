@@ -1,0 +1,642 @@
+name: Apply native buffered writeback performance repair
+
+on:
+  push:
+    paths:
+      - .github/workflows/temp-buffered-writeback-repair.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify exact starting source
+        run: |
+          test "$(git rev-parse HEAD^)" = "a452511ab12af1c3c156720a97c6eb35ed9ba24b"
+      - name: Apply buffered writeback architecture
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          def one(text, old, new, label):
+              n = text.count(old)
+              if n != 1:
+                  raise SystemExit(f"{label}: expected one match, got {n}")
+              return text.replace(old, new, 1)
+
+          # Shared kernel state/prototypes.
+          p = Path('kernel/infiltratorfs_internal.h')
+          t = p.read_text()
+          t = one(t, '#include <linux/capability.h>\n',
+                  '#include <linux/capability.h>\n#include <linux/completion.h>\n#include <linux/cpumask.h>\n',
+                  'internal includes')
+          t = one(t, '#define INFILFS_ALLOCATION_RESERVATION_SHARDS 64u\n',
+                  '#define INFILFS_ALLOCATION_RESERVATION_SHARDS 64u\n#define INFILFS_NATIVE_WRITEBACK_BATCH_BYTES (1024u * 1024u)\n',
+                  'writeback batch constant')
+          t = one(t,
+                  'struct infilfs_quota_rule;\nstruct infilfs_project_root;\n',
+                  '''struct infilfs_quota_subject {\n    u32 type;\n    u32 id;\n};\n\nstruct infilfs_quota_reservation {\n    struct super_block *sb;\n    struct infilfs_quota_subject subject[3];\n    u32 subject_count;\n    u64 bytes;\n    u64 objects;\n    bool active;\n};\n\nstruct infilfs_quota_rule;\nstruct infilfs_project_root;\n''',
+                  'quota shared structs')
+          t = one(t,
+                  'struct infilfs_inode_info {\n    u64 object_block;\n',
+                  'struct infilfs_inode_info {\n    u64 object_block;\n    u64 persisted_size;\n',
+                  'persisted size')
+          t = one(t,
+                  '''ssize_t infilfs_native_extent_write_iter(\n    struct inode *inode, loff_t *position, struct iov_iter *from,\n    size_t requested);\nextern const struct address_space_operations infilfs_aops;\n''',
+                  '''ssize_t infilfs_native_extent_write_iter(\n    struct inode *inode, loff_t *position, struct iov_iter *from,\n    size_t requested);\nssize_t infilfs_native_writeback_iter(\n    struct inode *inode, loff_t *position, struct iov_iter *from,\n    size_t requested);\nint infilfs_quota_reserve_inode(\n    struct inode *inode, u64 bytes, u64 objects,\n    struct infilfs_quota_reservation *reservation);\nvoid infilfs_quota_reservation_finish(\n    struct infilfs_quota_reservation *reservation,\n    u64 actual_bytes, u64 actual_objects);\nvoid infilfs_quota_reservation_abort(\n    struct infilfs_quota_reservation *reservation);\nextern const struct address_space_operations infilfs_aops;\n''',
+                  'shared writeback/quota prototypes')
+          p.write_text(t)
+
+          # Remove translation-unit-only quota declarations now shared with pagecache.
+          p = Path('kernel/infiltratorfs_rw.inc')
+          t = p.read_text()
+          t = one(t,
+                  '''struct infilfs_quota_subject {\n    u32 type;\n    u32 id;\n};\n\nstruct infilfs_quota_reservation {\n    struct super_block *sb;\n    struct infilfs_quota_subject subject[3];\n    u32 subject_count;\n    u64 bytes;\n    u64 objects;\n    bool active;\n};\n\n''', '', 'remove local quota structs')
+          for old, label in [
+              ('''static int infilfs_quota_reserve_inode(\n    struct inode *inode, u64 bytes, u64 objects,\n    struct infilfs_quota_reservation *reservation);\n''', 'reserve prototype'),
+              ('''static void infilfs_quota_reservation_finish(\n    struct infilfs_quota_reservation *reservation,\n    u64 actual_bytes, u64 actual_objects);\n''', 'finish prototype'),
+              ('''static void infilfs_quota_reservation_abort(\n    struct infilfs_quota_reservation *reservation);\n''', 'abort prototype')]:
+              t = one(t, old, '', label)
+          start = t.index('static int infilfs_native_truncate(')
+          end = t.index('static int infilfs_native_punch_partial_locked(', start)
+          region = t[start:end]
+          region = one(region,
+                       '''        ii->object_block = new_file_block;\n        i_size_write(inode, new_size);\n''',
+                       '''        ii->object_block = new_file_block;\n        WRITE_ONCE(ii->persisted_size, new_size);\n        i_size_write(inode, new_size);\n''',
+                       'truncate persisted size')
+          t = t[:start] + region + t[end:]
+          p.write_text(t)
+
+          # Quota accounting helpers are now callable by page-cache write_begin/end.
+          p = Path('kernel/infiltratorfs_quota.inc')
+          t = p.read_text()
+          for old, new, label in [
+              ('static int infilfs_quota_reserve_inode(\n', 'int infilfs_quota_reserve_inode(\n', 'quota reserve linkage'),
+              ('static void infilfs_quota_reservation_finish(\n', 'void infilfs_quota_reservation_finish(\n', 'quota finish linkage'),
+              ('static void infilfs_quota_reservation_abort(\n', 'void infilfs_quota_reservation_abort(\n', 'quota abort linkage')]:
+              t = one(t, old, new, label)
+          p.write_text(t)
+
+          # Persisted logical size separates dirty page-cache EOF from on-disk EOF.
+          p = Path('kernel/infiltratorfs_core.c')
+          t = p.read_text()
+          t = one(t,
+                  '''        attributes = &payload->attributes;\n        posix = &payload->posix;\n        permissions = le32_to_cpu(posix->permissions) & 07777;\n        inode->i_op = &infilfs_file_inode_operations;\n''',
+                  '''        attributes = &payload->attributes;\n        posix = &payload->posix;\n        WRITE_ONCE(ii->persisted_size,\n                   le64_to_cpu(attributes->logical_size));\n        permissions = le32_to_cpu(posix->permissions) & 07777;\n        inode->i_op = &infilfs_file_inode_operations;\n''',
+                  'populate persisted size')
+          t = one(t,
+                  '    .read_iter = infilfs_file_read_iter,\n    .write_iter = infilfs_file_write_iter,\n',
+                  '    .read_iter = generic_file_read_iter,\n    .write_iter = infilfs_file_write_iter,\n',
+                  'generic buffered read')
+          p.write_text(t)
+
+          # Data path: normal write(2) becomes buffered; writeback retains native verified CoW.
+          p = Path('kernel/infiltratorfs_rw_data.inc')
+          t = p.read_text()
+          t = one(t, '        u64 old_size = (u64)i_size_read(inode);\n',
+                  '        u64 old_size = READ_ONCE(ii->persisted_size);\n',
+                  'extent persisted EOF')
+          t = one(t,
+                  '''        ii->object_block = new_file_block;\n        i_size_write(inode, new_size);\n        inode->i_blocks = allocated_blocks *\n''',
+                  '''        ii->object_block = new_file_block;\n        WRITE_ONCE(ii->persisted_size, new_size);\n        if ((u64)i_size_read(inode) < new_size)\n            i_size_write(inode, new_size);\n        inode->i_blocks = allocated_blocks *\n''',
+                  'extent publish persisted EOF')
+          t = one(t,
+                  '''    ii->object_block = new_block;\n    i_size_write(inode, new_size);\n    pending->tx.next_sb.generation = cpu_to_le64(pending->tx.generation);\n''',
+                  '''    ii->object_block = new_block;\n    WRITE_ONCE(ii->persisted_size, new_size);\n    if ((u64)i_size_read(inode) < new_size)\n        i_size_write(inode, new_size);\n    pending->tx.next_sb.generation = cpu_to_le64(pending->tx.generation);\n''',
+                  'inline publish persisted EOF')
+          marker = 'static ssize_t infilfs_file_write_iter_common(struct kiocb *iocb,\n'
+          if t.count(marker) != 1:
+              raise SystemExit('writeback helper insertion marker mismatch')
+          helper = '''ssize_t infilfs_native_writeback_iter(\n    struct inode *inode, loff_t *position, struct iov_iter *from,\n    size_t requested)\n{\n    struct infilfs_inode_info *ii = INFILFS_I(inode);\n    u64 persisted = ii ? READ_ONCE(ii->persisted_size) : 0;\n    loff_t pos = *position;\n\n    if (pos >= 0 && (u64)pos <= INFILFS_INLINE_DATA_MAX &&\n        requested <= INFILFS_INLINE_DATA_MAX - (size_t)pos &&\n        persisted <= INFILFS_INLINE_DATA_MAX) {\n        ssize_t ret = infilfs_native_inline_write_iter(\n            inode, position, from, requested);\n\n        if (ret != -EOPNOTSUPP)\n            return ret;\n    }\n    return infilfs_native_extent_write_iter(\n        inode, position, from, requested);\n}\n\n'''
+          t = t.replace(marker, helper + marker, 1)
+          old = '''static ssize_t infilfs_file_write_iter(struct kiocb *iocb,\n                                       struct iov_iter *from)\n{\n    return infilfs_file_write_iter_common(iocb, from, true);\n}\n'''
+          new = '''static ssize_t infilfs_file_write_iter(struct kiocb *iocb,\n                                       struct iov_iter *from)\n{\n    /*\n     * Ordinary Linux writes use the page cache.  Integrity/compression and\n     * CoW publication happen from clustered writeback, so a userspace writer\n     * no longer serially performs codec and metadata work in write(2).\n     */\n    return generic_file_write_iter(iocb, from);\n}\n'''
+          t = one(t, old, new, 'generic buffered write')
+          p.write_text(t)
+
+          # Reflink produces immediately persisted file contents.
+          p = Path('kernel/infiltratorfs_defrag.inc')
+          t = p.read_text()
+          t = one(t,
+                  '''        destination_ii->object_block = new_file_block;\n        i_size_write(destination_inode, source_size);\n''',
+                  '''        destination_ii->object_block = new_file_block;\n        WRITE_ONCE(destination_ii->persisted_size, source_size);\n        i_size_write(destination_inode, source_size);\n''',
+                  'reflink persisted EOF')
+          p.write_text(t)
+
+          # Fast uncontended SHA transform lookup: allocation remains serialized once.
+          p = Path('kernel/infiltratorfs_crypto.c')
+          t = p.read_text()
+          old = '''static struct crypto_shash *infilfs_crypto_get_sha256(void)\n{\n    struct crypto_shash *tfm;\n\n    mutex_lock(&infilfs_crypto_lock);\n    tfm = infilfs_sha256_tfm;\n    if (!tfm) {\n        tfm = crypto_alloc_shash("sha256", 0, 0);\n        if (!IS_ERR(tfm))\n            infilfs_sha256_tfm = tfm;\n    }\n    mutex_unlock(&infilfs_crypto_lock);\n    return tfm;\n}\n'''
+          new = '''static struct crypto_shash *infilfs_crypto_get_sha256(void)\n{\n    struct crypto_shash *tfm = READ_ONCE(infilfs_sha256_tfm);\n\n    if (likely(tfm))\n        return tfm;\n    mutex_lock(&infilfs_crypto_lock);\n    tfm = infilfs_sha256_tfm;\n    if (!tfm) {\n        tfm = crypto_alloc_shash("sha256", 0, 0);\n        if (!IS_ERR(tfm))\n            WRITE_ONCE(infilfs_sha256_tfm, tfm);\n    }\n    mutex_unlock(&infilfs_crypto_lock);\n    return tfm;\n}\n'''
+          t = one(t, old, new, 'crypto fast path')
+          p.write_text(t)
+
+          # Bound predictor classification cost instead of rescanning every 256 KiB byte.
+          p = Path('include/infilfs/iac1.h')
+          t = p.read_text()
+          pattern = re.compile(r'static inline infs_iac1_u8 infs_iac1_predictor_mode\(\n.*?\n\}\n\n/\* Filesystem hot path:', re.S)
+          m = pattern.search(t)
+          if not m:
+              raise SystemExit('IAC1 predictor function not found')
+          predictor = '''static inline infs_iac1_u8 infs_iac1_predictor_mode(\n    const infs_iac1_u8 *src, infs_iac1_size input_size)\n{\n    infs_iac1_size available;\n    infs_iac1_size samples;\n    infs_iac1_size stride;\n    infs_iac1_size n;\n    infs_iac1_size delta_hits = 0;\n    infs_iac1_size xor_hits = 0;\n\n    if (input_size < 8u)\n        return INFS_IAC1_MODE_IDENTITY;\n    available = input_size - 2u;\n    samples = available < 1024u ? available : 1024u;\n    stride = available / samples;\n    if (!stride)\n        stride = 1u;\n\n    for (n = 0; n < samples; ++n) {\n        infs_iac1_size i = 2u + n * stride;\n        infs_iac1_u8 a;\n        infs_iac1_u8 b;\n\n        if (i >= input_size)\n            i = input_size - 1u;\n        a = (infs_iac1_u8)(src[i] - src[i - 1u]);\n        b = (infs_iac1_u8)(src[i - 1u] - src[i - 2u]);\n        if (a == b)\n            ++delta_hits;\n        if (i >= 4u && src[i] == src[i - 4u])\n            ++xor_hits;\n    }\n\n    if (xor_hits > delta_hits && xor_hits > samples / 16u)\n        return INFS_IAC1_MODE_XOR4;\n    if (delta_hits > samples / 16u)\n        return INFS_IAC1_MODE_DELTA8;\n    return INFS_IAC1_MODE_IDENTITY;\n}\n\n/* Filesystem hot path:'''
+          t = t[:m.start()] + predictor + t[m.end():]
+          p.write_text(t)
+
+          # Replace page-cache writeback with bounded contiguous clustered writeback.
+          p = Path('kernel/infiltratorfs_pagecache.c')
+          p.write_text(r'''// SPDX-License-Identifier: GPL-3.0-or-later
+#include "infiltratorfs_internal.h"
+/*
+ * Native Linux page-cache integration.
+ *
+ * Ordinary read(2)/write(2), mmap and readahead share the page cache. Dirty
+ * folios are coalesced into bounded contiguous batches and handed to the
+ * verified CoW writer; fsync/sync/unmount remain publication/durability
+ * boundaries. This keeps codec/integrity work out of the application syscall.
+ */
+
+struct infilfs_pagecache_write_ctx {
+    struct infilfs_quota_reservation quota;
+    loff_t old_size;
+};
+
+struct infilfs_writeback_cluster {
+    u8 *buffer;
+    struct folio **folios;
+    size_t *lengths;
+    unsigned int count;
+    unsigned int capacity;
+    loff_t position;
+    size_t bytes;
+};
+
+static int infilfs_pagecache_fill_folio(struct folio *folio)
+{
+    struct inode *inode = folio->mapping->host;
+    struct infilfs_inode_info *ii = INFILFS_I(inode);
+    loff_t start = folio_pos(folio);
+    u64 persisted = ii ? READ_ONCE(ii->persisted_size) : 0;
+    size_t wanted = 0;
+    size_t offset;
+    int ret = 0;
+
+    if (start >= 0 && (u64)start < persisted)
+        wanted = min_t(u64, folio_size(folio), persisted - (u64)start);
+    for (offset = 0; offset < folio_size(folio); offset += PAGE_SIZE) {
+        struct page *page = folio_page(folio, offset >> PAGE_SHIFT);
+        struct kvec vec;
+        struct iov_iter iter;
+        loff_t position = start + offset;
+        size_t chunk = offset < wanted ?
+            min_t(size_t, PAGE_SIZE, wanted - offset) : 0;
+        void *address = kmap_local_page(page);
+        ssize_t got = 0;
+
+        if (chunk) {
+            vec.iov_base = address;
+            vec.iov_len = chunk;
+            iov_iter_kvec(&iter, ITER_DEST, &vec, 1, chunk);
+            got = infilfs_native_read_iter_cached(inode, &position, &iter);
+        }
+        if (got != chunk) {
+            ret = got < 0 ? (int)got : -EIO;
+            kunmap_local(address);
+            break;
+        }
+        if (chunk < PAGE_SIZE)
+            memset(address + chunk, 0, PAGE_SIZE - chunk);
+        kunmap_local(address);
+    }
+    if (!ret) {
+        flush_dcache_folio(folio);
+        folio_mark_uptodate(folio);
+    }
+    return ret;
+}
+
+static int infilfs_read_folio(struct file *file, struct folio *folio)
+{
+    int ret;
+
+    (void)file;
+    ret = infilfs_pagecache_fill_folio(folio);
+    if (ret)
+        mapping_set_error(folio->mapping, ret);
+    folio_unlock(folio);
+    return ret;
+}
+
+static void infilfs_readahead(struct readahead_control *rac)
+{
+    struct folio *folio;
+
+    while ((folio = readahead_folio(rac)) != NULL)
+        infilfs_read_folio(rac->file, folio);
+}
+
+static int infilfs_pagecache_prepare_folio(struct address_space *mapping,
+                                           loff_t pos, unsigned int len,
+                                           struct folio **folio_out)
+{
+    struct folio *folio;
+    int ret = 0;
+
+    folio = __filemap_get_folio(mapping, pos >> PAGE_SHIFT, FGP_WRITEBEGIN,
+                                mapping_gfp_mask(mapping));
+    if (IS_ERR(folio))
+        return PTR_ERR(folio);
+    if (!folio_test_uptodate(folio)) {
+        if (pos == folio_pos(folio) && len >= folio_size(folio))
+            folio_mark_uptodate(folio);
+        else
+            ret = infilfs_pagecache_fill_folio(folio);
+        if (ret) {
+            folio_unlock(folio);
+            folio_put(folio);
+            return ret;
+        }
+    }
+    *folio_out = folio;
+    return 0;
+}
+
+static int infilfs_pagecache_write_begin_common(
+    struct address_space *mapping, loff_t pos, unsigned int len,
+    struct folio **folio_out, void **fsdata)
+{
+    struct inode *inode = mapping->host;
+    struct infilfs_pagecache_write_ctx *ctx = NULL;
+    loff_t old_size = i_size_read(inode);
+    u64 growth = 0;
+    int ret;
+
+    *fsdata = NULL;
+    if (len && pos >= 0 && (u64)len <= (u64)LLONG_MAX - (u64)pos &&
+        pos + len > old_size)
+        growth = (u64)(pos + len - old_size);
+    if (growth) {
+        ctx = kzalloc(sizeof(*ctx), GFP_NOFS);
+        if (!ctx)
+            return -ENOMEM;
+        ctx->old_size = old_size;
+        ret = infilfs_quota_reserve_inode(inode, growth, 0, &ctx->quota);
+        if (ret) {
+            kfree(ctx);
+            return ret;
+        }
+    }
+
+    ret = infilfs_pagecache_prepare_folio(mapping, pos, len, folio_out);
+    if (ret) {
+        if (ctx) {
+            infilfs_quota_reservation_abort(&ctx->quota);
+            kfree(ctx);
+        }
+        return ret;
+    }
+    *fsdata = ctx;
+    return 0;
+}
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
+static int infilfs_write_begin(const struct kiocb *iocb,
+                               struct address_space *mapping, loff_t pos,
+                               unsigned int len, struct folio **foliop,
+                               void **fsdata)
+{
+    (void)iocb;
+    return infilfs_pagecache_write_begin_common(
+        mapping, pos, len, foliop, fsdata);
+}
+
+static int infilfs_write_end(const struct kiocb *iocb,
+                             struct address_space *mapping, loff_t pos,
+                             unsigned int len, unsigned int copied,
+                             struct folio *folio, void *fsdata)
+#else
+static int infilfs_write_begin(struct file *file,
+                               struct address_space *mapping, loff_t pos,
+                               unsigned int len, struct page **pagep,
+                               void **fsdata)
+{
+    struct folio *folio;
+    int ret;
+
+    (void)file;
+    ret = infilfs_pagecache_write_begin_common(
+        mapping, pos, len, &folio, fsdata);
+    if (!ret)
+        *pagep = &folio->page;
+    return ret;
+}
+
+static int infilfs_write_end(struct file *file,
+                             struct address_space *mapping, loff_t pos,
+                             unsigned int len, unsigned int copied,
+                             struct page *page, void *fsdata)
+#endif
+{
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
+    struct inode *inode = mapping->host;
+
+    (void)iocb;
+#else
+    struct folio *folio = page_folio(page);
+    struct inode *inode = mapping->host;
+
+    (void)file;
+#endif
+    struct infilfs_pagecache_write_ctx *ctx = fsdata;
+    u64 actual_growth = 0;
+
+    (void)len;
+    if (copied) {
+        loff_t end = pos + copied;
+
+        if (end > i_size_read(inode))
+            i_size_write(inode, end);
+        folio_mark_dirty(folio);
+        if (ctx && end > ctx->old_size)
+            actual_growth = (u64)(end - ctx->old_size);
+    }
+    if (ctx) {
+        if (copied)
+            infilfs_quota_reservation_finish(
+                &ctx->quota, actual_growth, 0);
+        else
+            infilfs_quota_reservation_abort(&ctx->quota);
+        kfree(ctx);
+    }
+    folio_unlock(folio);
+    folio_put(folio);
+    return copied;
+}
+
+static int infilfs_writeback_folio(struct folio *folio,
+                                   struct writeback_control *wbc)
+{
+    struct address_space *mapping = folio->mapping;
+    struct inode *inode;
+    loff_t position;
+    loff_t file_size;
+    size_t length;
+    size_t done = 0;
+    int ret = 0;
+
+    if (!mapping)
+        return 0;
+    inode = mapping->host;
+    folio_lock(folio);
+    if (folio->mapping != mapping || !folio_test_dirty(folio))
+        goto unlock;
+    folio_wait_writeback(folio);
+    if (!folio_clear_dirty_for_io(folio))
+        goto unlock;
+
+    position = folio_pos(folio);
+    file_size = i_size_read(inode);
+    if (position >= file_size) {
+        folio_start_writeback(folio);
+        folio_end_writeback(folio);
+        goto unlock;
+    }
+    length = min_t(loff_t, folio_size(folio), file_size - position);
+    folio_start_writeback(folio);
+    while (done < length) {
+        struct page *page = folio_page(folio, done >> PAGE_SHIFT);
+        struct kvec vec;
+        struct iov_iter iter;
+        loff_t write_position = position + done;
+        size_t chunk = min_t(size_t, PAGE_SIZE, length - done);
+        void *address = kmap_local_page(page);
+        ssize_t written;
+
+        vec.iov_base = address;
+        vec.iov_len = chunk;
+        iov_iter_kvec(&iter, ITER_SOURCE, &vec, 1, chunk);
+        written = infilfs_native_writeback_iter(
+            inode, &write_position, &iter, chunk);
+        kunmap_local(address);
+        if (written != chunk) {
+            ret = written < 0 ? (int)written : -EIO;
+            break;
+        }
+        done += chunk;
+    }
+    if (ret) {
+        mapping_set_error(mapping, ret);
+        folio_redirty_for_writepage(wbc, folio);
+    }
+    folio_end_writeback(folio);
+unlock:
+    folio_unlock(folio);
+    return ret;
+}
+
+static int infilfs_writeback_cluster_submit(
+    struct address_space *mapping, struct writeback_control *wbc,
+    struct infilfs_writeback_cluster *cluster)
+{
+    struct inode *inode = mapping->host;
+    struct kvec vec;
+    struct iov_iter iter;
+    loff_t position;
+    ssize_t written;
+    int ret = 0;
+    unsigned int i;
+
+    if (!cluster->count)
+        return 0;
+    vec.iov_base = cluster->buffer;
+    vec.iov_len = cluster->bytes;
+    iov_iter_kvec(&iter, ITER_SOURCE, &vec, 1, cluster->bytes);
+    position = cluster->position;
+    written = infilfs_native_writeback_iter(
+        inode, &position, &iter, cluster->bytes);
+    if (written != cluster->bytes)
+        ret = written < 0 ? (int)written : -EIO;
+    if (ret)
+        mapping_set_error(mapping, ret);
+
+    for (i = 0; i < cluster->count; ++i) {
+        struct folio *folio = cluster->folios[i];
+
+        if (ret)
+            folio_redirty_for_writepage(wbc, folio);
+        folio_end_writeback(folio);
+        folio_unlock(folio);
+        folio_put(folio);
+    }
+    cluster->count = 0;
+    cluster->bytes = 0;
+    cluster->position = 0;
+    return ret;
+}
+
+static int infilfs_writepages(struct address_space *mapping,
+                              struct writeback_control *wbc)
+{
+    struct infilfs_writeback_cluster cluster = {0};
+    struct folio_batch fbatch;
+    pgoff_t index = wbc->range_start >> PAGE_SHIFT;
+    pgoff_t end = wbc->range_end == LLONG_MAX ? (pgoff_t)-1 :
+        wbc->range_end >> PAGE_SHIFT;
+    unsigned int max_folios =
+        DIV_ROUND_UP(INFILFS_NATIVE_WRITEBACK_BATCH_BYTES, PAGE_SIZE) + 1u;
+    int ret = 0;
+
+    cluster.buffer = kvmalloc(INFILFS_NATIVE_WRITEBACK_BATCH_BYTES, GFP_NOFS);
+    cluster.folios = kvmalloc_array(max_folios, sizeof(*cluster.folios), GFP_NOFS);
+    cluster.lengths = kvmalloc_array(max_folios, sizeof(*cluster.lengths), GFP_NOFS);
+    cluster.capacity = max_folios;
+    if (!cluster.buffer || !cluster.folios || !cluster.lengths) {
+        ret = -ENOMEM;
+        goto out;
+    }
+
+    folio_batch_init(&fbatch);
+    while (index <= end && filemap_get_folios_tag(
+               mapping, &index, end, PAGECACHE_TAG_DIRTY, &fbatch)) {
+        unsigned int i;
+
+        for (i = 0; i < folio_batch_count(&fbatch); ++i) {
+            struct folio *folio = fbatch.folios[i];
+            loff_t position = folio_pos(folio);
+            loff_t file_size = i_size_read(mapping->host);
+            size_t length = position < file_size ?
+                min_t(loff_t, folio_size(folio), file_size - position) : 0;
+            size_t copied = 0;
+
+            if (folio_size(folio) > INFILFS_NATIVE_WRITEBACK_BATCH_BYTES) {
+                ret = infilfs_writeback_cluster_submit(mapping, wbc, &cluster);
+                if (!ret)
+                    ret = infilfs_writeback_folio(folio, wbc);
+                if (ret)
+                    break;
+                continue;
+            }
+
+            if (cluster.count &&
+                (position != cluster.position + cluster.bytes ||
+                 cluster.bytes + length > INFILFS_NATIVE_WRITEBACK_BATCH_BYTES)) {
+                ret = infilfs_writeback_cluster_submit(mapping, wbc, &cluster);
+                if (ret)
+                    break;
+            }
+
+            folio_lock(folio);
+            if (folio->mapping != mapping || !folio_test_dirty(folio)) {
+                folio_unlock(folio);
+                continue;
+            }
+            folio_wait_writeback(folio);
+            if (!folio_clear_dirty_for_io(folio)) {
+                folio_unlock(folio);
+                continue;
+            }
+            position = folio_pos(folio);
+            file_size = i_size_read(mapping->host);
+            if (position >= file_size) {
+                folio_start_writeback(folio);
+                folio_end_writeback(folio);
+                folio_unlock(folio);
+                continue;
+            }
+            length = min_t(loff_t, folio_size(folio), file_size - position);
+            if (!cluster.count)
+                cluster.position = position;
+            if (position != cluster.position + cluster.bytes ||
+                cluster.bytes + length > INFILFS_NATIVE_WRITEBACK_BATCH_BYTES ||
+                cluster.count >= cluster.capacity) {
+                folio_redirty_for_writepage(wbc, folio);
+                folio_unlock(folio);
+                ret = infilfs_writeback_cluster_submit(mapping, wbc, &cluster);
+                if (ret)
+                    break;
+                continue;
+            }
+
+            folio_start_writeback(folio);
+            while (copied < length) {
+                struct page *page = folio_page(folio, copied >> PAGE_SHIFT);
+                size_t chunk = min_t(size_t, PAGE_SIZE, length - copied);
+                void *address = kmap_local_page(page);
+
+                memcpy(cluster.buffer + cluster.bytes + copied,
+                       address, chunk);
+                kunmap_local(address);
+                copied += chunk;
+            }
+            folio_get(folio);
+            cluster.folios[cluster.count] = folio;
+            cluster.lengths[cluster.count] = length;
+            cluster.count++;
+            cluster.bytes += length;
+
+            if (cluster.bytes == INFILFS_NATIVE_WRITEBACK_BATCH_BYTES ||
+                (wbc->sync_mode == WB_SYNC_NONE && --wbc->nr_to_write <= 0)) {
+                ret = infilfs_writeback_cluster_submit(mapping, wbc, &cluster);
+                if (ret || (wbc->sync_mode == WB_SYNC_NONE &&
+                            wbc->nr_to_write <= 0))
+                    break;
+            }
+        }
+        folio_batch_release(&fbatch);
+        cond_resched();
+        if (ret || (wbc->sync_mode == WB_SYNC_NONE &&
+                    wbc->nr_to_write <= 0))
+            break;
+    }
+    if (!ret)
+        ret = infilfs_writeback_cluster_submit(mapping, wbc, &cluster);
+    else if (cluster.count)
+        (void)infilfs_writeback_cluster_submit(mapping, wbc, &cluster);
+out:
+    if (ret)
+        mapping_set_error(mapping, ret);
+    kvfree(cluster.lengths);
+    kvfree(cluster.folios);
+    kvfree(cluster.buffer);
+    return ret;
+}
+
+const struct address_space_operations infilfs_aops = {
+    .read_folio = infilfs_read_folio,
+    .readahead = infilfs_readahead,
+    .writepages = infilfs_writepages,
+    .write_begin = infilfs_write_begin,
+    .write_end = infilfs_write_end,
+    .dirty_folio = filemap_dirty_folio,
+};
+''')
+
+          # Add policy guards for the architecture we just repaired.
+          p = Path('tests/native-sequential-write-scaling-policy.sh')
+          t = p.read_text()
+          insert = '''\n# Ordinary write(2) must enter the Linux page cache; the application thread\n# must not synchronously run the native codec/CoW path. Read(2) shares that\n# cache so freshly dirtied data remains coherent before writeback.\nwrite_entry="$(sed -n '/static ssize_t infilfs_file_write_iter(/,/^}/p' "$data")"\ngrep -Fq 'generic_file_write_iter(iocb, from)' <<<"$write_entry"\ngrep -Fq '.read_iter = generic_file_read_iter' "$core"\ngrep -Fq 'INFILFS_NATIVE_WRITEBACK_BATCH_BYTES' "$pagecache"\ngrep -Fq 'infilfs_writeback_cluster_submit' "$pagecache"\ngrep -Fq 'infilfs_native_writeback_iter' "$pagecache"\ngrep -Fq 'u64 persisted_size;' "$internal"\ngrep -Fq 'READ_ONCE(ii->persisted_size)' "$data"\n\n'''
+          anchor = '# VM background writeback stages dirty folios into the same deferred\n'
+          if t.count(anchor) != 1:
+              raise SystemExit('policy insertion anchor mismatch')
+          t = t.replace(anchor, insert + anchor, 1)
+          p.write_text(t)
+          PY
+
+          rm -f .github/workflows/temp-buffered-writeback-repair.yml
+          git diff --check
+          bash tests/native-sequential-write-scaling-policy.sh .
+          bash tests/native-small-file-scaling-policy.sh .
+          bash tests/native-deferred-publication-policy.sh .
+      - name: Commit repaired native I/O path
+        run: |
+          git config user.name "Shannon Smith"
+          git config user.email "infiltratr@yandex.com"
+          git add -A
+          git commit -m "Use buffered clustered native writeback"
+          git push origin HEAD:main
