@@ -45,7 +45,7 @@ jobs:
       - name: Build scale qualification userspace tools
         run: |
           cmake -S . -B build-scale -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-scale --parallel --target mkfs.infilfs infilfs-scrub infilfs-inspect
+          cmake --build build-scale --parallel --target mkfs.infilfs fsck.infiltratorfs infilfs-inspect
       - name: Build exact module for running kernel
         env:
           KDIR: ${{ steps.scale_headers.outputs.kdir }}
@@ -99,7 +99,7 @@ jobs:
       - name: Build endurance userspace tools
         run: |
           cmake -S . -B build-endurance -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-endurance --parallel --target mkfs.infilfs infilfs-scrub infilfs-inspect
+          cmake --build build-endurance --parallel --target mkfs.infilfs fsck.infiltratorfs infilfs-inspect
       - name: Build exact module for running kernel
         env:
           KDIR: ${{ steps.endurance_headers.outputs.kdir }}
