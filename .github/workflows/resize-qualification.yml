@@ -60,7 +60,7 @@ jobs:
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build --parallel --target \
-            mkfs.infilfs infilfs-scrub infiltratorfs-resize
+            mkfs.infilfs fsck.infiltratorfs infiltratorfs-resize
 
       - name: Build module for running kernel
         if: steps.headers.outputs.runtime_kdir != ''
