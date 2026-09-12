@@ -728,6 +728,36 @@ static int infilfs_quota_rule_usage_locked(
         }
 
         logical = le64_to_cpu(attributes->logical_size);
+        if (type == INFILFS_OBJECT_FILE) {
+            struct infilfs_iget_args live_args = {
+                .ino = infilfs_object_ino(entries[i].object_id),
+                .object_id = entries[i].object_id,
+            };
+            struct inode *live_inode;
+
+            /*
+             * Buffered writes can advance i_size before the persistent object
+             * carries the new logical_size. Quota admission and project-domain
+             * transfer must therefore charge the VFS-visible size. Dirty page
+             * cache keeps the inode resident; otherwise the persisted size is
+             * authoritative.
+             */
+            live_inode = ilookup5(
+                sb, (unsigned long)live_args.ino,
+                infilfs_inode_matches_id, &live_args);
+            if (live_inode) {
+                loff_t live_size = i_size_read(live_inode);
+
+                if (live_size < 0) {
+                    iput(live_inode);
+                    kfree(object);
+                    ret = -EFSCORRUPTED;
+                    break;
+                }
+                logical = (u64)live_size;
+                iput(live_inode);
+            }
+        }
         if (bytes > U64_MAX - logical || objects == U64_MAX) {
             kfree(object);
             ret = -EOVERFLOW;
@@ -883,6 +913,36 @@ static int infilfs_quota_domain_usage_locked(
         }
 
         logical = le64_to_cpu(attributes->logical_size);
+        if (type == INFILFS_OBJECT_FILE) {
+            struct infilfs_iget_args live_args = {
+                .ino = infilfs_object_ino(entries[i].object_id),
+                .object_id = entries[i].object_id,
+            };
+            struct inode *live_inode;
+
+            /*
+             * Buffered writes can advance i_size before the persistent object
+             * carries the new logical_size. Quota admission and project-domain
+             * transfer must therefore charge the VFS-visible size. Dirty page
+             * cache keeps the inode resident; otherwise the persisted size is
+             * authoritative.
+             */
+            live_inode = ilookup5(
+                root->i_sb, (unsigned long)live_args.ino,
+                infilfs_inode_matches_id, &live_args);
+            if (live_inode) {
+                loff_t live_size = i_size_read(live_inode);
+
+                if (live_size < 0) {
+                    iput(live_inode);
+                    kfree(object);
+                    ret = -EFSCORRUPTED;
+                    break;
+                }
+                logical = (u64)live_size;
+                iput(live_inode);
+            }
+        }
         if (bytes > U64_MAX - logical || objects == U64_MAX) {
             kfree(object);
             ret = -EOVERFLOW;
