@@ -230,6 +230,71 @@ static int infilfs_native_map_file_block_cached(
     return -EFSCORRUPTED;
 }
 
+/*
+ * infilfs_native_read_expected_digest() authenticates and decodes the checksum
+ * metadata object that contains a logical block.  A normal read_iter() then
+ * consumes several neighbouring 4 KiB blocks from that same checksum object.
+ * Re-reading and re-validating the identical metadata block for every data
+ * block is pure duplicate work and was enough to make large verified reads hit
+ * the qualification timeout.
+ *
+ * Keep the already-authenticated checksum object resident for the remainder of
+ * this read_iter() call.  Every data block is still SHA-256 hashed and compared
+ * with its stored digest; the optimisation removes only repeated metadata I/O
+ * and validation for a checksum group that has already been authenticated.
+ */
+static int infilfs_native_read_expected_digest_cached(
+    struct super_block *sb, const u8 owner_id[16], const u8 head_id[16],
+    u64 logical, struct infilfs_native_read_checksum_cursor *cursor,
+    u8 object[INFILFS_DISK_BLOCK_SIZE],
+    u64 *loaded_start, u32 *loaded_count, bool *loaded_valid,
+    struct infilfs_data_checksum_disk *expected)
+{
+    const struct infilfs_object_header_disk *header;
+    const struct infilfs_native_checksum_payload_disk *payload;
+    const struct infilfs_data_checksum_disk *values;
+    u64 target = (logical / INFILFS_NATIVE_CHECKSUMS_PER_OBJECT) *
+                 INFILFS_NATIVE_CHECKSUMS_PER_OBJECT;
+    u64 offset;
+    u32 count;
+    int ret;
+
+    if (*loaded_valid && *loaded_start == target) {
+        if (logical < target)
+            return -EFSCORRUPTED;
+        offset = logical - target;
+        if (offset >= *loaded_count)
+            return -EFSCORRUPTED;
+        header = (const struct infilfs_object_header_disk *)object;
+        payload = (const struct infilfs_native_checksum_payload_disk *)(header + 1);
+        values = (const struct infilfs_data_checksum_disk *)(payload + 1);
+        *expected = values[offset];
+        return 0;
+    }
+
+    ret = infilfs_native_read_expected_digest(
+        sb, owner_id, head_id, logical, cursor, object, expected);
+    if (ret) {
+        *loaded_valid = false;
+        return ret;
+    }
+
+    header = (const struct infilfs_object_header_disk *)object;
+    payload = (const struct infilfs_native_checksum_payload_disk *)(header + 1);
+    count = le32_to_cpu(payload->checksum_count);
+    if (!cursor->valid || cursor->start_logical != target ||
+        le64_to_cpu(payload->start_logical_block) != target || !count ||
+        count > INFILFS_NATIVE_CHECKSUMS_PER_OBJECT) {
+        *loaded_valid = false;
+        return -EFSCORRUPTED;
+    }
+
+    *loaded_start = target;
+    *loaded_count = count;
+    *loaded_valid = true;
+    return 0;
+}
+
 ssize_t infilfs_native_read_iter_cached(struct inode *inode,
                                                 loff_t *position,
                                                 struct iov_iter *to)
@@ -249,6 +314,9 @@ ssize_t infilfs_native_read_iter_cached(struct inode *inode,
     u64 compressed_physical = 0, compressed_logical = 0;
     u32 compressed_blocks = 0, compressed_flags = 0;
     bool compressed_valid = false;
+    u64 checksum_loaded_start = 0;
+    u32 checksum_loaded_count = 0;
+    bool checksum_loaded_valid = false;
     u64 readahead_next_logical = 0;
     int ret;
 
@@ -293,24 +361,27 @@ ssize_t infilfs_native_read_iter_cached(struct inode *inode,
 
     if (le32_to_cpu(file->extent_count) == 0 &&
         file_size <= INFILFS_INLINE_DATA_MAX) {
-        const struct infilfs_data_checksum_disk *expected;
+        const struct infilfs_data_checksum_disk *expected_inline;
         const u8 *inline_bytes;
-        u8 actual[32];
+        u8 actual_inline[32];
         size_t need, copied;
 
         if (!file_size) {
             ret = 0;
             goto out;
         }
-        expected = (const struct infilfs_data_checksum_disk *)(file + 1);
-        inline_bytes = (const u8 *)(expected + 1);
-        need = sizeof(*file) + sizeof(*expected) + (size_t)file_size;
+        expected_inline =
+            (const struct infilfs_data_checksum_disk *)(file + 1);
+        inline_bytes = (const u8 *)(expected_inline + 1);
+        need = sizeof(*file) + sizeof(*expected_inline) + (size_t)file_size;
         if (need > le32_to_cpu(header->payload_size)) {
             ret = -EFSCORRUPTED;
             goto out;
         }
-        ret = infilfs_rw_inline_digest(inline_bytes, (size_t)file_size, actual);
-        if (ret || memcmp(expected->bytes, actual, sizeof(actual)) != 0) {
+        ret = infilfs_rw_inline_digest(
+            inline_bytes, (size_t)file_size, actual_inline);
+        if (ret || memcmp(expected_inline->bytes, actual_inline,
+                          sizeof(actual_inline)) != 0) {
             ret = -EFSCORRUPTED;
             goto out;
         }
@@ -399,9 +470,10 @@ ssize_t infilfs_native_read_iter_cached(struct inode *inode,
             }
             if (ret)
                 goto partial;
-            ret = infilfs_native_read_expected_digest(
+            ret = infilfs_native_read_expected_digest_cached(
                 inode->i_sb, ii->object_id, file->checksum_head_id, logical,
-                &cursor, checksum_object, &expected);
+                &cursor, checksum_object, &checksum_loaded_start,
+                &checksum_loaded_count, &checksum_loaded_valid, &expected);
             if (ret)
                 goto partial;
             infilfs_native_block_digest(data_block, &actual);
