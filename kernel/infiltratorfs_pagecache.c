@@ -24,6 +24,15 @@ struct infilfs_writeback_cluster {
     size_t bytes;
 };
 
+struct infilfs_readahead_cluster {
+    u8 *buffer;
+    struct folio **folios;
+    unsigned int count;
+    unsigned int capacity;
+    loff_t position;
+    size_t bytes;
+};
+
 static int infilfs_pagecache_fill_folio(struct folio *folio)
 {
     struct inode *inode = folio->mapping->host;
@@ -42,23 +51,23 @@ static int infilfs_pagecache_fill_folio(struct folio *folio)
         struct iov_iter iter;
         loff_t position = start + offset;
         size_t chunk = offset < wanted ?
-  min_t(size_t, PAGE_SIZE, wanted - offset) : 0;
+            min_t(size_t, PAGE_SIZE, wanted - offset) : 0;
         void *address = kmap_local_page(page);
         ssize_t got = 0;
 
         if (chunk) {
-  vec.iov_base = address;
-  vec.iov_len = chunk;
-  iov_iter_kvec(&iter, ITER_DEST, &vec, 1, chunk);
-  got = infilfs_native_read_iter_cached(inode, &position, &iter);
+            vec.iov_base = address;
+            vec.iov_len = chunk;
+            iov_iter_kvec(&iter, ITER_DEST, &vec, 1, chunk);
+            got = infilfs_native_read_iter_cached(inode, &position, &iter);
         }
         if (got != chunk) {
-  ret = got < 0 ? (int)got : -EIO;
-  kunmap_local(address);
-  break;
+            ret = got < 0 ? (int)got : -EIO;
+            kunmap_local(address);
+            break;
         }
         if (chunk < PAGE_SIZE)
-  memset(address + chunk, 0, PAGE_SIZE - chunk);
+            memset(address + chunk, 0, PAGE_SIZE - chunk);
         kunmap_local(address);
     }
     if (!ret) {
@@ -80,12 +89,153 @@ static int infilfs_read_folio(struct file *file, struct folio *folio)
     return ret;
 }
 
+/*
+ * The verified native reader amortises object lookup, extent-page validation,
+ * checksum-object decoding and compressed-extent expansion across one
+ * read_iter call. Feeding it one 4 KiB folio at a time throws that work away
+ * between pages and is especially expensive for compressed 256 KiB clusters.
+ *
+ * Readahead already hands us a contiguous run of locked folios. Collapse that
+ * run into the same 1 MiB bounded unit used by native writeback, perform one
+ * fully verified native read, then populate the page cache. Integrity semantics
+ * are unchanged: every data block is still SHA-256 checked before any folio is
+ * marked uptodate.
+ */
+static int infilfs_readahead_cluster_submit(
+    struct infilfs_readahead_cluster *cluster)
+{
+    struct folio *first;
+    struct inode *inode;
+    struct infilfs_inode_info *ii;
+    struct kvec vec;
+    struct iov_iter iter;
+    loff_t position;
+    u64 persisted;
+    size_t wanted = 0;
+    ssize_t got = 0;
+    unsigned int i;
+    int ret = 0;
+
+    if (!cluster->count)
+        return 0;
+
+    first = cluster->folios[0];
+    inode = first->mapping->host;
+    ii = INFILFS_I(inode);
+    persisted = ii ? READ_ONCE(ii->persisted_size) : 0;
+    position = cluster->position;
+
+    if (position >= 0 && (u64)position < persisted)
+        wanted = min_t(u64, cluster->bytes, persisted - (u64)position);
+    if (wanted) {
+        vec.iov_base = cluster->buffer;
+        vec.iov_len = wanted;
+        iov_iter_kvec(&iter, ITER_DEST, &vec, 1, wanted);
+        got = infilfs_native_read_iter_cached(inode, &position, &iter);
+        if (got != wanted)
+            ret = got < 0 ? (int)got : -EIO;
+    }
+    if (!ret && wanted < cluster->bytes)
+        memset(cluster->buffer + wanted, 0, cluster->bytes - wanted);
+
+    for (i = 0; i < cluster->count; ++i) {
+        struct folio *folio = cluster->folios[i];
+
+        if (!ret) {
+            size_t source = (size_t)(folio_pos(folio) - cluster->position);
+            size_t copied = 0;
+
+            while (copied < folio_size(folio)) {
+                struct page *page = folio_page(folio, copied >> PAGE_SHIFT);
+                size_t chunk = min_t(size_t, PAGE_SIZE,
+                                     folio_size(folio) - copied);
+                void *address = kmap_local_page(page);
+
+                memcpy(address, cluster->buffer + source + copied, chunk);
+                kunmap_local(address);
+                copied += chunk;
+            }
+            flush_dcache_folio(folio);
+            folio_mark_uptodate(folio);
+        } else {
+            mapping_set_error(folio->mapping, ret);
+        }
+        folio_unlock(folio);
+    }
+
+    cluster->count = 0;
+    cluster->bytes = 0;
+    cluster->position = 0;
+    return ret;
+}
+
 static void infilfs_readahead(struct readahead_control *rac)
 {
+    struct infilfs_readahead_cluster cluster = {0};
+    unsigned int max_folios =
+        DIV_ROUND_UP(INFILFS_NATIVE_WRITEBACK_BATCH_BYTES, PAGE_SIZE) + 1u;
     struct folio *folio;
+    int ret = 0;
 
+    cluster.buffer = kvmalloc(INFILFS_NATIVE_WRITEBACK_BATCH_BYTES, GFP_NOFS);
+    cluster.folios = kvmalloc_array(max_folios, sizeof(*cluster.folios),
+                                    GFP_NOFS);
+    cluster.capacity = max_folios;
+    if (!cluster.buffer || !cluster.folios)
+        goto fallback;
+
+    while ((folio = readahead_folio(rac)) != NULL) {
+        loff_t position = folio_pos(folio);
+        size_t bytes = folio_size(folio);
+
+        if (bytes > INFILFS_NATIVE_WRITEBACK_BATCH_BYTES) {
+            ret = infilfs_readahead_cluster_submit(&cluster);
+            if (ret) {
+                infilfs_read_folio(rac->file, folio);
+                goto fallback_remaining;
+            }
+            infilfs_read_folio(rac->file, folio);
+            continue;
+        }
+
+        if (cluster.count &&
+            (position != cluster.position + cluster.bytes ||
+             bytes > INFILFS_NATIVE_WRITEBACK_BATCH_BYTES - cluster.bytes ||
+             cluster.count >= cluster.capacity)) {
+            ret = infilfs_readahead_cluster_submit(&cluster);
+            if (ret) {
+                infilfs_read_folio(rac->file, folio);
+                goto fallback_remaining;
+            }
+        }
+
+        if (!cluster.count)
+            cluster.position = position;
+        cluster.folios[cluster.count++] = folio;
+        cluster.bytes += bytes;
+
+        if (cluster.bytes == INFILFS_NATIVE_WRITEBACK_BATCH_BYTES) {
+            ret = infilfs_readahead_cluster_submit(&cluster);
+            if (ret)
+                goto fallback_remaining;
+        }
+    }
+    (void)infilfs_readahead_cluster_submit(&cluster);
+    goto out;
+
+fallback:
+    kvfree(cluster.folios);
+    kvfree(cluster.buffer);
     while ((folio = readahead_folio(rac)) != NULL)
         infilfs_read_folio(rac->file, folio);
+    return;
+
+fallback_remaining:
+    while ((folio = readahead_folio(rac)) != NULL)
+        infilfs_read_folio(rac->file, folio);
+out:
+    kvfree(cluster.folios);
+    kvfree(cluster.buffer);
 }
 
 static int infilfs_pagecache_prepare_folio(struct address_space *mapping,
@@ -101,13 +251,13 @@ static int infilfs_pagecache_prepare_folio(struct address_space *mapping,
         return PTR_ERR(folio);
     if (!folio_test_uptodate(folio)) {
         if (pos == folio_pos(folio) && len >= folio_size(folio))
-  folio_mark_uptodate(folio);
+            folio_mark_uptodate(folio);
         else
-  ret = infilfs_pagecache_fill_folio(folio);
+            ret = infilfs_pagecache_fill_folio(folio);
         if (ret) {
-  folio_unlock(folio);
-  folio_put(folio);
-  return ret;
+            folio_unlock(folio);
+            folio_put(folio);
+            return ret;
         }
     }
     *folio_out = folio;
@@ -131,20 +281,20 @@ static int infilfs_pagecache_write_begin_common(
     if (growth) {
         ctx = kzalloc(sizeof(*ctx), GFP_NOFS);
         if (!ctx)
-  return -ENOMEM;
+            return -ENOMEM;
         ctx->old_size = old_size;
         ret = infilfs_quota_reserve_inode(inode, growth, 0, &ctx->quota);
         if (ret) {
-  kfree(ctx);
-  return ret;
+            kfree(ctx);
+            return ret;
         }
     }
 
     ret = infilfs_pagecache_prepare_folio(mapping, pos, len, folio_out);
     if (ret) {
         if (ctx) {
-  infilfs_quota_reservation_abort(&ctx->quota);
-  kfree(ctx);
+            infilfs_quota_reservation_abort(&ctx->quota);
+            kfree(ctx);
         }
         return ret;
     }
@@ -208,17 +358,17 @@ static int infilfs_write_end(struct file *file,
         loff_t end = pos + copied;
 
         if (end > i_size_read(inode))
-  i_size_write(inode, end);
+            i_size_write(inode, end);
         folio_mark_dirty(folio);
         if (ctx && end > ctx->old_size)
-  actual_growth = (u64)(end - ctx->old_size);
+            actual_growth = (u64)(end - ctx->old_size);
     }
     if (ctx) {
         if (copied)
-  infilfs_quota_reservation_finish(
-      &ctx->quota, actual_growth, 0);
+            infilfs_quota_reservation_finish(
+                &ctx->quota, actual_growth, 0);
         else
-  infilfs_quota_reservation_abort(&ctx->quota);
+            infilfs_quota_reservation_abort(&ctx->quota);
         kfree(ctx);
     }
     folio_unlock(folio);
@@ -269,11 +419,11 @@ static int infilfs_writeback_folio(struct folio *folio,
         vec.iov_len = chunk;
         iov_iter_kvec(&iter, ITER_SOURCE, &vec, 1, chunk);
         written = infilfs_native_writeback_iter(
-  inode, &write_position, &iter, chunk);
+            inode, &write_position, &iter, chunk);
         kunmap_local(address);
         if (written != chunk) {
-  ret = written < 0 ? (int)written : -EIO;
-  break;
+            ret = written < 0 ? (int)written : -EIO;
+            break;
         }
         done += chunk;
     }
@@ -316,7 +466,7 @@ static int infilfs_writeback_cluster_submit(
         struct folio *folio = cluster->folios[i];
 
         if (ret)
-  folio_redirty_for_writepage(wbc, folio);
+            folio_redirty_for_writepage(wbc, folio);
         folio_end_writeback(folio);
         folio_unlock(folio);
         folio_put(folio);
@@ -350,96 +500,96 @@ static int infilfs_writepages(struct address_space *mapping,
 
     folio_batch_init(&fbatch);
     while (index <= end && filemap_get_folios_tag(
-     mapping, &index, end, PAGECACHE_TAG_DIRTY, &fbatch)) {
+             mapping, &index, end, PAGECACHE_TAG_DIRTY, &fbatch)) {
         unsigned int i;
 
         for (i = 0; i < folio_batch_count(&fbatch); ++i) {
-  struct folio *folio = fbatch.folios[i];
-  loff_t position = folio_pos(folio);
-  loff_t file_size = i_size_read(mapping->host);
-  size_t length = position < file_size ?
-      min_t(loff_t, folio_size(folio), file_size - position) : 0;
-  size_t copied = 0;
+            struct folio *folio = fbatch.folios[i];
+            loff_t position = folio_pos(folio);
+            loff_t file_size = i_size_read(mapping->host);
+            size_t length = position < file_size ?
+                min_t(loff_t, folio_size(folio), file_size - position) : 0;
+            size_t copied = 0;
 
-  if (folio_size(folio) > INFILFS_NATIVE_WRITEBACK_BATCH_BYTES) {
-      ret = infilfs_writeback_cluster_submit(mapping, wbc, &cluster);
-      if (!ret)
-          ret = infilfs_writeback_folio(folio, wbc);
-      if (ret)
-          break;
-      continue;
-  }
+            if (folio_size(folio) > INFILFS_NATIVE_WRITEBACK_BATCH_BYTES) {
+                ret = infilfs_writeback_cluster_submit(mapping, wbc, &cluster);
+                if (!ret)
+                    ret = infilfs_writeback_folio(folio, wbc);
+                if (ret)
+                    break;
+                continue;
+            }
 
-  if (cluster.count &&
-      (position != cluster.position + cluster.bytes ||
-       cluster.bytes + length > INFILFS_NATIVE_WRITEBACK_BATCH_BYTES)) {
-      ret = infilfs_writeback_cluster_submit(mapping, wbc, &cluster);
-      if (ret)
-          break;
-  }
+            if (cluster.count &&
+                (position != cluster.position + cluster.bytes ||
+                 cluster.bytes + length > INFILFS_NATIVE_WRITEBACK_BATCH_BYTES)) {
+                ret = infilfs_writeback_cluster_submit(mapping, wbc, &cluster);
+                if (ret)
+                    break;
+            }
 
-  folio_lock(folio);
-  if (folio->mapping != mapping || !folio_test_dirty(folio)) {
-      folio_unlock(folio);
-      continue;
-  }
-  folio_wait_writeback(folio);
-  if (!folio_clear_dirty_for_io(folio)) {
-      folio_unlock(folio);
-      continue;
-  }
-  position = folio_pos(folio);
-  file_size = i_size_read(mapping->host);
-  if (position >= file_size) {
-      folio_start_writeback(folio);
-      folio_end_writeback(folio);
-      folio_unlock(folio);
-      continue;
-  }
-  length = min_t(loff_t, folio_size(folio), file_size - position);
-  if (!cluster.count)
-      cluster.position = position;
-  if (position != cluster.position + cluster.bytes ||
-      cluster.bytes + length > INFILFS_NATIVE_WRITEBACK_BATCH_BYTES ||
-      cluster.count >= cluster.capacity) {
-      folio_redirty_for_writepage(wbc, folio);
-      folio_unlock(folio);
-      ret = infilfs_writeback_cluster_submit(mapping, wbc, &cluster);
-      if (ret)
-          break;
-      continue;
-  }
+            folio_lock(folio);
+            if (folio->mapping != mapping || !folio_test_dirty(folio)) {
+                folio_unlock(folio);
+                continue;
+            }
+            folio_wait_writeback(folio);
+            if (!folio_clear_dirty_for_io(folio)) {
+                folio_unlock(folio);
+                continue;
+            }
+            position = folio_pos(folio);
+            file_size = i_size_read(mapping->host);
+            if (position >= file_size) {
+                folio_start_writeback(folio);
+                folio_end_writeback(folio);
+                folio_unlock(folio);
+                continue;
+            }
+            length = min_t(loff_t, folio_size(folio), file_size - position);
+            if (!cluster.count)
+                cluster.position = position;
+            if (position != cluster.position + cluster.bytes ||
+                cluster.bytes + length > INFILFS_NATIVE_WRITEBACK_BATCH_BYTES ||
+                cluster.count >= cluster.capacity) {
+                folio_redirty_for_writepage(wbc, folio);
+                folio_unlock(folio);
+                ret = infilfs_writeback_cluster_submit(mapping, wbc, &cluster);
+                if (ret)
+                    break;
+                continue;
+            }
 
-  folio_start_writeback(folio);
-  while (copied < length) {
-      struct page *page = folio_page(folio, copied >> PAGE_SHIFT);
-      size_t chunk = min_t(size_t, PAGE_SIZE, length - copied);
-      void *address = kmap_local_page(page);
+            folio_start_writeback(folio);
+            while (copied < length) {
+                struct page *page = folio_page(folio, copied >> PAGE_SHIFT);
+                size_t chunk = min_t(size_t, PAGE_SIZE, length - copied);
+                void *address = kmap_local_page(page);
 
-      memcpy(cluster.buffer + cluster.bytes + copied,
-             address, chunk);
-      kunmap_local(address);
-      copied += chunk;
-  }
-  folio_get(folio);
-  cluster.folios[cluster.count] = folio;
-  cluster.lengths[cluster.count] = length;
-  cluster.count++;
-  cluster.bytes += length;
+                memcpy(cluster.buffer + cluster.bytes + copied,
+                       address, chunk);
+                kunmap_local(address);
+                copied += chunk;
+            }
+            folio_get(folio);
+            cluster.folios[cluster.count] = folio;
+            cluster.lengths[cluster.count] = length;
+            cluster.count++;
+            cluster.bytes += length;
 
-  if (cluster.bytes == INFILFS_NATIVE_WRITEBACK_BATCH_BYTES ||
-      (wbc->sync_mode == WB_SYNC_NONE && --wbc->nr_to_write <= 0)) {
-      ret = infilfs_writeback_cluster_submit(mapping, wbc, &cluster);
-      if (ret || (wbc->sync_mode == WB_SYNC_NONE &&
-                  wbc->nr_to_write <= 0))
-          break;
-  }
+            if (cluster.bytes == INFILFS_NATIVE_WRITEBACK_BATCH_BYTES ||
+                (wbc->sync_mode == WB_SYNC_NONE && --wbc->nr_to_write <= 0)) {
+                ret = infilfs_writeback_cluster_submit(mapping, wbc, &cluster);
+                if (ret || (wbc->sync_mode == WB_SYNC_NONE &&
+                            wbc->nr_to_write <= 0))
+                    break;
+            }
         }
         folio_batch_release(&fbatch);
         cond_resched();
         if (ret || (wbc->sync_mode == WB_SYNC_NONE &&
-          wbc->nr_to_write <= 0))
-  break;
+                    wbc->nr_to_write <= 0))
+            break;
     }
     if (!ret)
         ret = infilfs_writeback_cluster_submit(mapping, wbc, &cluster);
