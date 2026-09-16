@@ -1772,6 +1772,19 @@ static int infilfs_posix_setattr(struct user_namespace *idmap,
     metadata = *attr;
 
     /*
+     * The native data writer timestamps its persisted object at writeback.
+     * Drain earlier buffered writes before an explicit timestamp update so
+     * delayed writeback cannot overwrite touch/cp -p metadata after remount.
+     * ATTR_SIZE already drains the mapping below before changing the object.
+     */
+    if (S_ISREG(inode->i_mode) && (attr->ia_valid & ATTR_MTIME) &&
+        !(attr->ia_valid & ATTR_SIZE)) {
+        ret = filemap_write_and_wait(inode->i_mapping);
+        if (ret)
+            return ret;
+    }
+
+    /*
      * Size changes use the extent-aware native transaction.  Metadata fields
      * that accompany ATTR_SIZE are persisted immediately afterwards.
      */

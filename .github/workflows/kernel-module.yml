@@ -1454,6 +1454,8 @@ jobs:
           mib = 512.0
           print(f"Native 512 MiB cold-cursor remount read: {elapsed:.3f} s ({mib/elapsed:.2f} MiB/s)")
           PY
+          stat -c 'Remounted user file: owner=%u:%g mode=%a mtime=%Y' \
+            "$mountpoint/user-owned/file.txt"
           test "$(stat -c '%u:%g' "$mountpoint/user-owned/file.txt")" = "$(id -u):$(id -g)"
           test "$(stat -c '%a' "$mountpoint/user-owned/file.txt")" = 640
           test "$(stat -c '%Y' "$mountpoint/user-owned/file.txt")" = 1767323045
