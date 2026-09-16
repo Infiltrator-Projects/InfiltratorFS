@@ -2760,6 +2760,8 @@ static int infilfs_fill_super(struct super_block *sb, struct fs_context *fc)
         return ret;
     }
     mutex_init(&sbi->write_lock);
+    spin_lock_init(&sbi->pagecache_accounting_lock);
+    atomic64_set(&sbi->pagecache_pending_blocks, 0);
     mutex_init(&sbi->linux_meta_lock);
     mutex_init(&sbi->resize_lock);
     mutex_init(&sbi->quota_lock);

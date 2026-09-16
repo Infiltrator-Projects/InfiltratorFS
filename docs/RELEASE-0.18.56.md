@@ -6,4 +6,6 @@ Normal Linux writes now enter the page cache instead of forcing the calling user
 
 Qualification of the buffered path also exposed and repaired two quota regressions before release: whole-request quota admission again rejects writes that would cross a limit, and cross-project reparenting accounts for dirty page-cache file sizes instead of stale persisted sizes.
 
+Free-space reporting now includes dirty page-cache CoW demand before physical allocation. The estimate is released after successful writeback or full invalidation; repeated dirtying is counted once, and failed writeback retains the demand. This preserves asynchronous buffered writes while making statfs reflect pending data.
+
 The on-disk format remains 0.18.

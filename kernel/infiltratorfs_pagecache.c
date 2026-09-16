@@ -9,6 +9,67 @@
  * boundaries. This keeps codec/integrity work out of the application syscall.
  */
 
+/*
+ * Dirty folios have not reached the physical allocator yet. Account their
+ * uncompressed CoW demand exactly once until successful writeback or discard.
+ * This is a conservative statfs estimate, not an allocation reservation: the
+ * verified writer continues to own physical admission and compression savings.
+ *
+ * dirty_folio may run without the folio lock (under a page-table lock), so the
+ * private marker and counter share a short superblock spinlock. The only nested
+ * locks are those taken by filemap_dirty_folio; never acquire this lock while
+ * holding mapping->i_pages or inode->i_lock.
+ */
+static bool infilfs_dirty_folio(struct address_space *mapping,
+                              struct folio *folio)
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(mapping->host->i_sb);
+    unsigned long flags;
+    bool changed;
+
+    spin_lock_irqsave(&sbi->pagecache_accounting_lock, flags);
+    if (!folio_test_private(folio)) {
+        folio_attach_private(folio, sbi);
+        atomic64_add(folio_size(folio) >> INFILFS_DISK_BLOCK_SHIFT,
+                     &sbi->pagecache_pending_blocks);
+    }
+    changed = filemap_dirty_folio(mapping, folio);
+    spin_unlock_irqrestore(&sbi->pagecache_accounting_lock, flags);
+    return changed;
+}
+
+static void infilfs_pagecache_unaccount(struct folio *folio, bool discard)
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(folio->mapping->host->i_sb);
+    unsigned long flags;
+
+    spin_lock_irqsave(&sbi->pagecache_accounting_lock, flags);
+    /* A concurrent mmap dirtying must retain the next writeback's demand. */
+    if (folio_test_private(folio) &&
+        (discard || !folio_test_dirty(folio))) {
+        atomic64_sub(folio_size(folio) >> INFILFS_DISK_BLOCK_SHIFT,
+                     &sbi->pagecache_pending_blocks);
+        folio_detach_private(folio);
+    }
+    spin_unlock_irqrestore(&sbi->pagecache_accounting_lock, flags);
+}
+
+static void infilfs_invalidate_folio(struct folio *folio, size_t offset,
+                                   size_t length)
+{
+    if (!offset && length == folio_size(folio))
+        infilfs_pagecache_unaccount(folio, true);
+}
+
+static bool infilfs_release_folio(struct folio *folio, gfp_t gfp)
+{
+    (void)gfp;
+    if (folio_test_dirty(folio) || folio_test_writeback(folio))
+        return false;
+    infilfs_pagecache_unaccount(folio, false);
+    return !folio_test_private(folio);
+}
+
 struct infilfs_pagecache_write_ctx {
     struct infilfs_quota_reservation quota;
     loff_t old_size;
@@ -401,6 +462,7 @@ static int infilfs_writeback_folio(struct folio *folio,
     file_size = i_size_read(inode);
     if (position >= file_size) {
         folio_start_writeback(folio);
+        infilfs_pagecache_unaccount(folio, true);
         folio_end_writeback(folio);
         goto unlock;
     }
@@ -431,6 +493,8 @@ static int infilfs_writeback_folio(struct folio *folio,
         mapping_set_error(mapping, ret);
         folio_redirty_for_writepage(wbc, folio);
     }
+    if (!ret)
+        infilfs_pagecache_unaccount(folio, false);
     folio_end_writeback(folio);
 unlock:
     folio_unlock(folio);
@@ -467,6 +531,8 @@ static int infilfs_writeback_cluster_submit(
 
         if (ret)
             folio_redirty_for_writepage(wbc, folio);
+        else
+            infilfs_pagecache_unaccount(folio, false);
         folio_end_writeback(folio);
         folio_unlock(folio);
         folio_put(folio);
@@ -542,6 +608,7 @@ static int infilfs_writepages(struct address_space *mapping,
             file_size = i_size_read(mapping->host);
             if (position >= file_size) {
                 folio_start_writeback(folio);
+                infilfs_pagecache_unaccount(folio, true);
                 folio_end_writeback(folio);
                 folio_unlock(folio);
                 continue;
@@ -610,5 +677,7 @@ const struct address_space_operations infilfs_aops = {
     .writepages = infilfs_writepages,
     .write_begin = infilfs_write_begin,
     .write_end = infilfs_write_end,
-    .dirty_folio = filemap_dirty_folio,
+    .dirty_folio = infilfs_dirty_folio,
+    .invalidate_folio = infilfs_invalidate_folio,
+    .release_folio = infilfs_release_folio,
 };

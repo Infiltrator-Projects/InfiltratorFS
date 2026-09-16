@@ -2014,6 +2014,8 @@ static int infilfs_statfs(struct dentry *dentry, struct kstatfs *buf)
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
     u64 total;
     u64 free_blocks;
+    u64 pending_blocks;
+    u64 reserve;
 
     if (!sbi)
         return -EIO;
@@ -2022,13 +2024,18 @@ static int infilfs_statfs(struct dentry *dentry, struct kstatfs *buf)
     if (!total || free_blocks > total)
         return -EFSCORRUPTED;
 
+    pending_blocks = (u64)atomic64_read(&sbi->pagecache_pending_blocks);
+    free_blocks = free_blocks > pending_blocks ?
+        free_blocks - pending_blocks : 0;
+    reserve = infilfs_native_metadata_reserve_blocks(sbi);
+
     memset(buf, 0, sizeof(*buf));
     buf->f_type = INFILTRATORFS_MAGIC;
     buf->f_bsize = INFILFS_DISK_BLOCK_SIZE;
     buf->f_frsize = INFILFS_DISK_BLOCK_SIZE;
     buf->f_blocks = total;
     buf->f_bfree = free_blocks;
-    buf->f_bavail = infilfs_native_available_data_blocks(sb);
+    buf->f_bavail = free_blocks > reserve ? free_blocks - reserve : 0;
     /*
      * Object count has no fixed inode table; these are conservative upper
      * bounds used only for generic VFS reporting.

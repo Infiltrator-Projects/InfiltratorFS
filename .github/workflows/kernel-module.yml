@@ -1016,6 +1016,10 @@ jobs:
           assert before - after >= (8 * 1024 * 1024) // 4096, (before, after)
           os.unlink(path)
           os.sync()
+          # Dropping dirty folios must also release the volatile statfs charge.
+          # Allow 2 MiB for CoW metadata; an 8 MiB leaked charge must fail.
+          recovered = os.statvfs(root).f_bavail
+          assert recovered >= before - (2 * 1024 * 1024) // 4096, (before, after, recovered)
           PY
 
           # Drive the allocator close to a bounded free-space floor, punch

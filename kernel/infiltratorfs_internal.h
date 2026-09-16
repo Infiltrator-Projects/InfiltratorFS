@@ -297,6 +297,8 @@ struct infilfs_sb_info {
     struct infilfs_superblock_disk disk;
     u64 device_blocks;
     struct mutex write_lock;
+    spinlock_t pagecache_accounting_lock;
+    atomic64_t pagecache_pending_blocks;
     struct mutex linux_meta_lock;
     struct hlist_head *linux_meta_cache;
     bool linux_meta_cache_valid;

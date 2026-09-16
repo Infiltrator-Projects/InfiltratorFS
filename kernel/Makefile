@@ -32,6 +32,10 @@
 #     general nesting permission with the mutexes above. Any future nested use
 #     must document one direction here and at the call site before it lands.
 #
+#   pagecache_accounting_lock -> mapping page-cache/inode dirtying locks
+#     Owns folio private accounting markers. It never nests filesystem mutexes
+#     and is never acquired while holding mapping->i_pages or inode->i_lock.
+#
 # Transaction ownership:
 #   write_lock is the persistent mutation/checkpoint publication domain.
 #   resize_active gates new transactions/reservations before resize drains old
