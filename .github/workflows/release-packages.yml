@@ -250,17 +250,22 @@ jobs:
           set -euo pipefail
           payload="$(jq -nc --arg repository "$GITHUB_REPOSITORY" --arg sha "$RELEASE_SHA" \
             '{event_type:"application-release",client_payload:{repository:$repository,sha:$sha}}')"
-          if [[ -z "${DISPATCH_TOKEN:-}" ]]; then
-            echo '::error::APT_REPOSITORY_DISPATCH_TOKEN is unavailable. Configure an Actions secret with Contents: write access to Infiltrator-Projects/Infiltrator-Repository. The automatic APT trigger was NOT sent.'
-            exit 1
+          # Cross-repository dispatch accelerates publication when configured.
+          # The central scheduled importer also publishes releases without a PAT.
+          if [[ -n "${DISPATCH_TOKEN:-}" ]]; then
+            if curl --fail-with-body --silent --show-error --connect-timeout 10 --max-time 30 --request POST \
+              --header "Authorization: Bearer $DISPATCH_TOKEN" \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              --data "$payload" \
+              https://api.github.com/repos/Infiltrator-Projects/Infiltrator-Repository/dispatches; then
+              echo 'APT repository dispatch accepted; verifying publication.'
+            else
+              echo '::warning::Immediate APT dispatch failed; verifying scheduled repository publication instead.'
+            fi
+          else
+            echo 'Immediate dispatch is not configured; verifying scheduled repository publication.'
           fi
-          curl --fail-with-body --silent --show-error --connect-timeout 10 --max-time 30 --request POST \
-            --header "Authorization: Bearer $DISPATCH_TOKEN" \
-            --header "Accept: application/vnd.github+json" \
-            --header "X-GitHub-Api-Version: 2022-11-28" \
-            --data "$payload" \
-            https://api.github.com/repos/Infiltrator-Projects/Infiltrator-Repository/dispatches
-          echo 'APT repository dispatch accepted; verifying publication.'
           catalogue='https://infiltrator-projects.github.io/Infiltrator-Repository/catalogue/apps.json'
           for attempt in $(seq 1 42); do
             if curl -fsS --retry 2 --retry-delay 1 "$catalogue?release=$RELEASE_SHA&attempt=$attempt" \
