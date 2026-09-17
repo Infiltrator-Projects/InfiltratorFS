@@ -101,15 +101,17 @@ verify_native_mount()
 prepare_user_mountpoint()
 {
     local mount_point="$1" user_id="$2" group_id="$3"
+    [[ ! -L "$mount_point" ]] || fail "mount point is a symbolic link"
+    /usr/bin/mountpoint -q "$mount_point" && fail "mount point is already active"
     /usr/bin/install -d -m 0755 -o "$user_id" -g "$group_id" "$mount_point"
 }
 
 finish_user_mount()
 {
-    local mount_point="$1" user_id="$2" group_id="$3"
+    local mount_point="$1"
+    # The mounted root belongs to the filesystem. Preserve its stored owner,
+    # mode and ACLs, including those of cloned operating systems.
     verify_native_mount "$mount_point"
-    /bin/chown "$user_id:$group_id" "$mount_point"
-    /bin/chmod 0755 "$mount_point"
 }
 
 require_root
