@@ -265,6 +265,8 @@ enum infilfs_compression_mode {
 struct infilfs_fs_context {
     enum infilfs_media_override media_override;
     enum infilfs_compression_mode compression_mode;
+    bool media_specified;
+    bool compression_specified;
 };
 
 struct infilfs_quota_subject {
@@ -533,6 +535,7 @@ int infilfs_rw_free_extent_index_remove(
 u64 infilfs_native_metadata_reserve_blocks(const struct infilfs_sb_info *sbi);
 u64 infilfs_native_visible_free_blocks(struct super_block *sb);
 int infilfs_parallel_allocator_mount_init(struct super_block *sb);
+int infilfs_parallel_allocator_enable(struct super_block *sb);
 void infilfs_parallel_allocator_mount_destroy(struct super_block *sb);
 int infilfs_parallel_tx_claim(
     struct infilfs_rw_tx *tx, u64 start, u64 count, bool consume_reservation);

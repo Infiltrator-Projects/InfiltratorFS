@@ -756,17 +756,44 @@ out:
     return ret;
 }
 
-static int infilfs_rw_mount_init(struct super_block *sb)
+/* Prepare the writer once, including an initially read-only mount's promotion.
+ * Do not reload the live allocation map or reinitialise reader-visible locks.
+ */
+static int infilfs_rw_enable(struct super_block *sb)
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
-    struct infilfs_allocation_layout committed_layout = {0};
     u64 total = infilfs_volume_blocks(sbi);
     u32 snapshots = 0;
     int ret;
 
-    if (!sb_rdonly(sb) &&
-        !(le64_to_cpu(sbi->disk.incompat_flags) & INFILFS_INCOMPAT_INLINE_DATA))
+    if (sbi->write_poisoned)
+        return -EIO;
+    if (sbi->rw_enabled)
+        return 0;
+    if (!(le64_to_cpu(sbi->disk.incompat_flags) & INFILFS_INCOMPAT_INLINE_DATA))
         return -EOPNOTSUPP;
+
+    ret = infilfs_parallel_allocator_enable(sb);
+    if (ret)
+        return ret;
+    ret = infilfs_rw_snapshot_count(sb, &snapshots);
+    if (!ret)
+        ret = infilfs_rw_snapshot_union(sb, snapshots);
+    if (ret) {
+        infilfs_parallel_allocator_mount_destroy(sb);
+        return ret;
+    }
+    sbi->data_alloc_hint = 1;
+    sbi->metadata_alloc_hint = total > 1 ? total - 1u : 1u;
+    sbi->rw_enabled = true;
+    return 0;
+}
+
+static int infilfs_rw_mount_init(struct super_block *sb)
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
+    struct infilfs_allocation_layout committed_layout = {0};
+    int ret;
 
     ret = infilfs_allocation_map_load(
         sb, &sbi->disk, &sbi->bitmap, &sbi->bitmap_bytes,
@@ -786,15 +813,9 @@ static int infilfs_rw_mount_init(struct super_block *sb)
     if (sb_rdonly(sb))
         return 0;
 
-    ret = infilfs_rw_snapshot_count(sb, &snapshots);
+    ret = infilfs_rw_enable(sb);
     if (ret)
         goto fail;
-    ret = infilfs_rw_snapshot_union(sb, snapshots);
-    if (ret)
-        goto fail;
-    sbi->data_alloc_hint = 1;
-    sbi->metadata_alloc_hint = total > 1 ? total - 1u : 1u;
-    sbi->rw_enabled = true;
     return 0;
 
 fail:

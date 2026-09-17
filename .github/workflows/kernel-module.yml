@@ -147,6 +147,11 @@ jobs:
           make -C kernel KDIR="$KDIR"
           test "$(modinfo -F vermagic kernel/infiltratorfs.ko | awk '{print $1}')" = "$(uname -r)"
 
+      - name: Native live read-only and read-write remount qualification
+        if: steps.headers.outputs.runtime_kdir != ''
+        timeout-minutes: 10
+        run: sudo bash tests/native-remount-qualification.sh build kernel/infiltratorfs.ko
+
       - name: Native user group and project quota qualification
         if: steps.headers.outputs.runtime_kdir != ''
         timeout-minutes: 15

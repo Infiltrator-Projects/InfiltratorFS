@@ -219,8 +219,10 @@ static void infilfs_posix_fill_common_attributes(
 static int infilfs_native_recover_unlinked_files(struct super_block *sb)
 {
     struct infilfs_index_entry_disk *entries = NULL;
-    u32 count = 0;
+    u8 *object = NULL;
+    u32 count = 0, orphans = 0, files = 0;
     u32 i;
+    u64 started = ktime_get_ns();
     int ret;
 
     if (sb_rdonly(sb))
@@ -228,57 +230,83 @@ static int infilfs_native_recover_unlinked_files(struct super_block *sb)
     ret = infilfs_ns_index_snapshot(sb, &entries, &count);
     if (ret)
         return ret;
+    object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+    if (!object) {
+        ret = -ENOMEM;
+        goto out;
+    }
+
+    /* Mount/reconfigure has not exposed writers. Inspect the snapshot's
+     * verified object locations directly instead of walking the index again
+     * for every regular file. Do all discovery before any recovery mutation:
+     * reclaim can otherwise invalidate snapshot block locations.
+     */
     for (i = 0; i < count; ++i) {
         struct infilfs_object_header_disk *header;
         struct infilfs_file_payload_disk *file;
+        u32 j;
+
+        /* Bound speculative reads to 64 entries and preserve all validation
+         * in infilfs_read_object. This overlaps cold metadata I/O on NVMe.
+         */
+        if (!(i % 64u)) {
+            for (j = i; j < count && j - i < 64u; ++j) {
+                u64 block = le64_to_cpu(entries[j].object_block);
+
+                if (le16_to_cpu(entries[j].object_type) == INFILFS_OBJECT_FILE &&
+                    infilfs_block_allocated(sb, block))
+                    sb_breadahead(sb, (sector_t)block);
+            }
+            cond_resched();
+        }
+        if (le16_to_cpu(entries[i].object_type) != INFILFS_OBJECT_FILE)
+            continue;
+        ret = infilfs_read_object(sb, le64_to_cpu(entries[i].object_block),
+                                  INFILFS_OBJECT_FILE, entries[i].object_id,
+                                  object);
+        if (ret)
+            goto out;
+        files++;
+        header = (struct infilfs_object_header_disk *)object;
+        if (le32_to_cpu(header->payload_size) < sizeof(*file)) {
+            ret = -EFSCORRUPTED;
+            goto out;
+        }
+        file = (struct infilfs_file_payload_disk *)(header + 1);
+        if (le64_to_cpu(file->attributes.link_count) == 0)
+            entries[orphans++] = entries[i];
+    }
+
+    for (i = 0; i < orphans; ++i) {
         struct inode *inode;
         u64 live_block;
         u16 live_type;
-        u8 *object;
 
-        if (le16_to_cpu(entries[i].object_type) != INFILFS_OBJECT_FILE)
-            continue;
+        /* Earlier recoveries may move metadata; resolve only actual orphans
+         * against the current index immediately before reclaiming them.
+         */
         ret = infilfs_index_lookup(sb, entries[i].object_id, &live_block,
                                    &live_type);
-        if (ret == -ENOENT)
+        if (ret == -ENOENT) {
+            ret = 0;
             continue;
+        }
         if (ret)
-            break;
+            goto out;
         if (live_type != INFILFS_OBJECT_FILE) {
             ret = -EFSCORRUPTED;
-            break;
+            goto out;
         }
-        object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
-        if (!object) {
-            ret = -ENOMEM;
-            break;
-        }
-        ret = infilfs_read_object(sb, live_block,
-                                  INFILFS_OBJECT_FILE, entries[i].object_id,
-                                  object);
-        if (ret) {
-            kfree(object);
-            break;
-        }
-        header = (struct infilfs_object_header_disk *)object;
-        file = (struct infilfs_file_payload_disk *)(header + 1);
-        if (le64_to_cpu(file->attributes.link_count) != 0) {
-            kfree(object);
-            continue;
-        }
-        kfree(object);
-
-        inode = infilfs_get_inode(sb, live_block,
-                                  INFILFS_OBJECT_FILE,
+        inode = infilfs_get_inode(sb, live_block, INFILFS_OBJECT_FILE,
                                   entries[i].object_id);
         if (IS_ERR(inode)) {
             ret = PTR_ERR(inode);
-            break;
+            goto out;
         }
         ret = infilfs_linux_meta_remove_object(sb, entries[i].object_id);
         if (ret) {
             iput(inode);
-            break;
+            goto out;
         }
         clear_nlink(inode);
         ret = infilfs_ns_evict_unlinked_file(inode);
@@ -286,8 +314,14 @@ static int infilfs_native_recover_unlinked_files(struct super_block *sb)
             set_nlink(inode, 1); /* prevent a second reclaim during iput */
         iput(inode);
         if (ret)
-            break;
+            goto out;
     }
+    ret = 0;
+out:
+    pr_info("InfiltratorFS: orphan scan files=%u candidates=%u elapsed_ms=%llu result=%d\n",
+            files, orphans,
+            (unsigned long long)div_u64(ktime_get_ns() - started, 1000000), ret);
+    kfree(object);
     kvfree(entries);
     return ret;
 }

@@ -2869,10 +2869,12 @@ static int infilfs_parse_param(
     case Opt_media:
         ctx->media_override =
             (enum infilfs_media_override)result.uint_32;
+        ctx->media_specified = true;
         return 0;
     case Opt_compress:
         ctx->compression_mode =
             (enum infilfs_compression_mode)result.uint_32;
+        ctx->compression_specified = true;
         return 0;
     default:
         return -EINVAL;
@@ -2890,10 +2892,116 @@ static int infilfs_get_tree(struct fs_context *fc)
     return get_tree_bdev(fc, infilfs_fill_super);
 }
 
+static int infilfs_reconfigure(struct fs_context *fc)
+{
+    struct super_block *sb = fc->root->d_sb;
+    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
+    const struct infilfs_fs_context *ctx = fc->fs_private;
+    struct infilfs_checkpoint_candidates *set;
+    bool readonly = sb_rdonly(sb);
+    bool wanted_readonly = (fc->sb_flags_mask & SB_RDONLY) ?
+        !!(fc->sb_flags & SB_RDONLY) : readonly;
+    bool matches = false;
+    unsigned int i;
+    int ret, flush_ret;
+
+    /* Do not silently accept a policy change that this remount cannot apply.
+     * Explicit repetitions (including mount(8)'s saved options) are harmless.
+     * Omitted options retain the live policy, not fs_context's defaults.
+     */
+    if (ctx->compression_specified &&
+        (ctx->compression_mode != INFILFS_COMPRESSION_MODE_OFF) !=
+            sbi->compression_enabled)
+        return -EINVAL;
+    if (ctx->media_specified) {
+        switch (ctx->media_override) {
+        case INFILFS_MEDIA_OVERRIDE_AUTO:
+            matches = !sbi->media_profile_overridden;
+            break;
+        case INFILFS_MEDIA_OVERRIDE_BALANCED:
+            matches = sbi->media_profile == INFILFS_MEDIA_BALANCED;
+            break;
+        case INFILFS_MEDIA_OVERRIDE_ROTATIONAL:
+            matches = sbi->media_profile == INFILFS_MEDIA_ROTATIONAL;
+            break;
+        case INFILFS_MEDIA_OVERRIDE_NONROTATIONAL:
+            matches = sbi->media_profile == INFILFS_MEDIA_NONROTATIONAL;
+            break;
+        }
+        if (!matches)
+            return -EINVAL;
+    }
+
+    if (wanted_readonly == readonly)
+        return 0;
+    if (wanted_readonly) {
+        /* VFS has blocked new writers. Drain dirty folios and deferred CoW
+         * publication before SB_RDONLY changes. Keep initialized resources:
+         * a later RW promotion must not recover still-open unlinked files.
+         */
+        return sync_filesystem(sb);
+    }
+    if (sbi->write_poisoned)
+        return -EIO;
+    if (sbi->rw_enabled)
+        return 0;
+
+    /* RO mounts tolerate checkpoint read errors for inspection. Promotion
+     * must meet the writable-mount I/O requirements before healing replicas.
+     * Never switch the checkpoint underneath already-instantiated inodes.
+     */
+    set = kzalloc(sizeof(*set), GFP_KERNEL);
+    if (!set)
+        return -ENOMEM;
+    ret = infilfs_read_checkpoint_candidates(sb, set);
+    if (!ret)
+        ret = set->first_read_error;
+    matches = false;
+    for (i = 0; !ret && i < INFILFS_CHECKPOINT_COUNT; ++i)
+        if (set->valid[i] &&
+            !memcmp(&set->disks[i], &sbi->disk, sizeof(sbi->disk)))
+            matches = true;
+    kfree(set);
+    if (ret)
+        return ret;
+    if (!matches)
+        return -EFSCORRUPTED;
+    ret = infilfs_rw_enable(sb);
+    if (ret)
+        return ret;
+
+    /* reconfigure_super holds s_umount and the VFS RO-change gate, preventing
+     * userspace writes while the same recovery as a fresh RW mount runs.
+     * Temporarily clear SB_RDONLY for internal transactions, then restore it;
+     * VFS publishes the requested flags only after this callback succeeds.
+     */
+    WRITE_ONCE(sb->s_flags, sb->s_flags & ~SB_RDONLY);
+    ret = infilfs_rw_heal_checkpoints(sb);
+    if (!ret)
+        ret = infilfs_native_recover_unlinked_files(sb);
+    if (!ret)
+        ret = infilfs_quota_mount_init(sb);
+    flush_ret = infilfs_native_pending_flush_sb(sb);
+    if (!ret)
+        ret = flush_ret;
+    WRITE_ONCE(sb->s_flags, sb->s_flags | SB_RDONLY);
+    if (ret) {
+        /* Recovery may have committed some work. Keep the readable live map,
+         * but require a fresh mount before trying to write after a failure.
+         */
+        sbi->rw_enabled = false;
+        sbi->write_poisoned = true;
+        return ret;
+    }
+    pr_info("InfiltratorFS: read-only mount promoted to read-write\n");
+    return 0;
+}
+
 static const struct fs_context_operations infilfs_context_operations = {
     .free = infilfs_free_fs_context,
     .parse_param = infilfs_parse_param,
     .get_tree = infilfs_get_tree,
+    .reconfigure = infilfs_reconfigure,
 };
 
 static int infilfs_init_fs_context(struct fs_context *fc)
@@ -2942,3 +3050,5 @@ MODULE_DESCRIPTION("InfiltratorFS native Linux VFS driver with read-write suppor
 MODULE_AUTHOR("The First Infiltrator");
 MODULE_LICENSE("GPL");
 MODULE_ALIAS_FS(INFILTRATORFS_NAME);
+
+MODULE_INFO(infiltratorfs_hotfix, "mount-scan-20260917");

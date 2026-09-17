@@ -112,10 +112,30 @@ bool infilfs_parallel_range_reserved(
     return false;
 }
 
-int infilfs_parallel_allocator_mount_init(struct super_block *sb)
+int infilfs_parallel_allocator_enable(struct super_block *sb)
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
     u64 words;
+
+    if (sbi->allocation_reservations)
+        return 0;
+    words = DIV_ROUND_UP_ULL(infilfs_volume_blocks(sbi), BITS_PER_LONG);
+    if (words > SIZE_MAX / sizeof(unsigned long))
+        return -EOVERFLOW;
+    sbi->allocation_reservation_bytes =
+        (size_t)words * sizeof(unsigned long);
+    sbi->allocation_reservations = kvzalloc(
+        sbi->allocation_reservation_bytes, GFP_KERNEL);
+    if (!sbi->allocation_reservations) {
+        sbi->allocation_reservation_bytes = 0;
+        return -ENOMEM;
+    }
+    return 0;
+}
+
+int infilfs_parallel_allocator_mount_init(struct super_block *sb)
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
     u32 shard;
 
     for (shard = 0; shard < INFILFS_ALLOCATION_RESERVATION_SHARDS; ++shard) {
@@ -147,16 +167,7 @@ int infilfs_parallel_allocator_mount_init(struct super_block *sb)
 
     if (sb_rdonly(sb))
         return 0;
-    words = DIV_ROUND_UP_ULL(infilfs_volume_blocks(sbi), BITS_PER_LONG);
-    if (words > SIZE_MAX / sizeof(unsigned long))
-        return -EOVERFLOW;
-    sbi->allocation_reservation_bytes =
-        (size_t)words * sizeof(unsigned long);
-    sbi->allocation_reservations = kvzalloc(
-        sbi->allocation_reservation_bytes, GFP_KERNEL);
-    if (!sbi->allocation_reservations)
-        return -ENOMEM;
-    return 0;
+    return infilfs_parallel_allocator_enable(sb);
 }
 
 void infilfs_parallel_allocator_mount_destroy(struct super_block *sb)
