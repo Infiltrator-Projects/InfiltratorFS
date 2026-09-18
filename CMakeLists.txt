@@ -149,7 +149,6 @@ add_library(infilfs_core STATIC
     src/checksum.c
     src/status.c
     src/storage.c
-    src/utf8.c
     src/fs.c
     src/forensic.c
     src/volume.c
