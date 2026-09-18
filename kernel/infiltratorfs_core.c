@@ -2,8 +2,8 @@
 #include "infiltratorfs_internal.h"
 
 static struct workqueue_struct *infilfs_cpu_wq;
-static struct semaphore infilfs_cpu_slots;
-static unsigned int infilfs_cpu_budget_value;
+static atomic_t infilfs_cpu_active;
+static DECLARE_WAIT_QUEUE_HEAD(infilfs_cpu_wait);
 
 unsigned int infilfs_cpu_budget(void)
 {
@@ -21,29 +21,52 @@ bool infilfs_queue_cpu_work(struct work_struct *work)
     return infilfs_cpu_wq && queue_work(infilfs_cpu_wq, work);
 }
 
+static bool infilfs_cpu_try_enter(void)
+{
+    int active;
+    unsigned int budget;
+
+    for (;;) {
+        active = atomic_read(&infilfs_cpu_active);
+        budget = infilfs_cpu_budget();
+        if ((unsigned int)active >= budget)
+            return false;
+        if (atomic_cmpxchg(&infilfs_cpu_active, active, active + 1) == active)
+            return true;
+        cpu_relax();
+    }
+}
+
 void infilfs_cpu_work_enter(void)
 {
-    down(&infilfs_cpu_slots);
+    wait_event(infilfs_cpu_wait, infilfs_cpu_try_enter());
 }
 
 void infilfs_cpu_work_exit(void)
 {
-    up(&infilfs_cpu_slots);
+    atomic_dec(&infilfs_cpu_active);
+    wake_up(&infilfs_cpu_wait);
 }
 
 static int infilfs_cpu_pool_init(void)
 {
     unsigned int online = num_online_cpus();
+    unsigned int possible = num_possible_cpus();
+    unsigned int max_active = possible > 1u ? possible - 1u : 1u;
     unsigned int budget = online > 1u ? online - 1u : 1u;
 
+    /*
+     * max_active follows possible CPUs so later CPU onlining is not trapped by
+     * the module-load count. The live atomic gate below enforces online-1 at
+     * execution time, including CPU hotplug in either direction.
+     */
     infilfs_cpu_wq = alloc_workqueue(
-        "infiltratorfs-cpu", WQ_UNBOUND | WQ_MEM_RECLAIM, budget);
+        "infiltratorfs-cpu", WQ_UNBOUND | WQ_MEM_RECLAIM, max_active);
     if (!infilfs_cpu_wq)
         return -ENOMEM;
-    sema_init(&infilfs_cpu_slots, budget);
-    WRITE_ONCE(infilfs_cpu_budget_value, budget);
-    pr_info("InfiltratorFS: CPU pool online_logical_cpus=%u filesystem_budget=%u reserved_for_os=%u\n",
-            online, budget, online > 1u ? 1u : 0u);
+    atomic_set(&infilfs_cpu_active, 0);
+    pr_info("InfiltratorFS: CPU pool online_logical_cpus=%u filesystem_budget=%u reserved_for_os=%u possible=%u\n",
+            online, budget, online > 1u ? 1u : 0u, possible);
     return 0;
 }
 
@@ -54,7 +77,6 @@ static void infilfs_cpu_pool_exit(void)
     infilfs_cpu_wq = NULL;
     if (wq)
         destroy_workqueue(wq);
-    WRITE_ONCE(infilfs_cpu_budget_value, 0u);
 }
 
 static const u8 infilfs_disk_magic[8] = {
@@ -2959,7 +2981,7 @@ static int infilfs_fill_super(struct super_block *sb, struct fs_context *fc)
             infilfs_media_profile_name(sbi->media_profile),
             sbi->media_profile_overridden ? "override" : "auto",
             sbi->compression_enabled ? "auto" : "off",
-            READ_ONCE(infilfs_cpu_budget_value));
+            infilfs_cpu_budget());
     return 0;
 
 fail:
