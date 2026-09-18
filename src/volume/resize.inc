@@ -98,13 +98,17 @@ static infs_status resize_allocate_layout(
         total, &leaves, &level1, &level2, &branches);
     if (status != INFS_STATUS_OK)
         return status;
-    if (leaves > SIZE_MAX / sizeof(uint64_t) ||
-        branches > SIZE_MAX / sizeof(uint64_t))
+    size_t leaf_bytes = 0;
+    size_t branch_bytes = 0;
+    if (!infiltratr_size_multiply_checked(
+            leaves, sizeof(uint64_t), &leaf_bytes) ||
+        !infiltratr_size_multiply_checked(
+            branches, sizeof(uint64_t), &branch_bytes))
         return INFS_STATUS_OVERFLOW;
 
     memset(layout, 0, sizeof(*layout));
-    layout->leaf_blocks = calloc(leaves, sizeof(uint64_t));
-    layout->branch_blocks = calloc(branches, sizeof(uint64_t));
+    layout->leaf_blocks = calloc(1u, leaf_bytes);
+    layout->branch_blocks = calloc(1u, branch_bytes);
     if (!layout->leaf_blocks || !layout->branch_blocks) {
         allocation_map_layout_destroy(layout);
         return INFS_STATUS_NO_MEMORY;
