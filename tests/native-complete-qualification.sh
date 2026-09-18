@@ -157,6 +157,7 @@ section "All source, format, native and workload policy guards"
 bash tests/native-random-write-optimization-policy.sh .
 bash tests/native-unlink-ownership-index-policy.sh .
 bash tests/native-sequential-write-scaling-policy.sh .
+bash tests/native-cpu-parallelism-policy.sh .
 bash tests/native-small-file-scaling-policy.sh .
 bash tests/native-free-extent-index-policy.sh .
 bash tests/native-parallel-allocation-policy.sh .
