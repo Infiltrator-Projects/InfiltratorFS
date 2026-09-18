@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "infilfs/time.h"
+#include "infiltratr/posix_io.h"
 
 #include "infilfs/storage.h"
 
@@ -13,8 +14,8 @@ struct infs_volume;
 infs_status infs_status_from_errno(int error_number);
 int infs_status_to_errno(infs_status status);
 
-int infs_pread_full(int fd, void *buf, size_t count, uint64_t offset);
-int infs_pwrite_full(int fd, const void *buf, size_t count, uint64_t offset);
+#define infs_pread_full infiltratr_pread_full
+#define infs_pwrite_full infiltratr_pwrite_full
 int infs_get_size_bytes(int fd, uint64_t *size_bytes, int *is_block_device);
 int infs_random_bytes(void *buf, size_t count);
 int infs_current_time(struct infs_timestamp *time);
