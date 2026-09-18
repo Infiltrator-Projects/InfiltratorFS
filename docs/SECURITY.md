@@ -5,6 +5,49 @@
 
 This document defines the intended cross-platform security architecture. Current source does **not** yet implement the final portable security-object format. Current POSIX mode/UID/GID compatibility metadata and Linux adapter metadata must therefore not be mistaken for the future canonical cross-platform identity model.
 
+## Threat model and trust boundaries
+
+InfiltratorFS treats persistent media as untrusted input. A malformed, partially
+written or deliberately crafted image/device must not be able to bypass format
+bounds, graph ownership rules, checksum validation or canonical-encoding rules.
+Readers, scrubbers and adapters are expected to reject structures whose
+integrity or interpretation cannot be established.
+
+The portable core trusts the storage callback implementation to perform the
+requested I/O against the intended target and to honour successful durability
+operations. It does not treat a successful device read as proof that the bytes
+are valid filesystem metadata. Operating-system adapters additionally trust
+their host kernel/runtime for process isolation, credential enforcement and the
+correct implementation of native privilege boundaries.
+
+Administrative raw-device operations are privileged by design. The filesystem
+cannot protect a mounted or offline volume from an actor who already has
+sufficient host privilege to overwrite the underlying block device or replace
+the running kernel/module.
+
+The current integrity model primarily addresses accidental corruption,
+torn/incomplete publication and malformed persistent state. CRC64 metadata
+checksums and SHA-256 logical data digests are integrity mechanisms, not keyed
+authentication. They do not establish that bytes came from a trusted writer.
+
+## Current guarantees and non-goals
+
+Current Format 0.18 provides structural validation, checksummed metadata,
+logical-data digest verification, copy-on-write publication, checkpoint
+recovery and fail-closed handling of unsupported/malformed persistent
+structures.
+
+Current Format 0.18 does **not** provide confidentiality for offline media.
+Whole-volume/per-file encryption, key wrapping and authenticated encrypted
+metadata remain roadmap work. An attacker who can read the raw medium can read
+unencrypted file data and metadata; an attacker who can arbitrarily rewrite the
+medium is outside the guarantees of unkeyed checksums.
+
+Availability under hostile resource-exhaustion input is bounded where practical
+through explicit record limits, traversal guards and malformed-topology
+rejection, but the project does not claim resistance to every denial-of-service
+strategy available to a privileged local attacker or a failing storage device.
+
 ## Design rule
 
 InfiltratorFS security belongs to InfiltratorFS, not to Linux, Windows or another operating system.
