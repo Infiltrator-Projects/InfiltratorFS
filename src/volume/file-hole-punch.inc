@@ -109,8 +109,7 @@ static int punch_hole_tx(struct infs_volume *vol, const char *path,
     uint64_t tail = file_size % INFS_BLOCK_SIZE;
     if (tail) {
         uint64_t padding = INFS_BLOCK_SIZE - tail;
-        logical_end = file_size > UINT64_MAX - padding ?
-            UINT64_MAX : file_size + padding;
+        logical_end = infiltratr_u64_add_saturating(file_size, padding);
     }
     end = offset + length;
     if (end > logical_end)
