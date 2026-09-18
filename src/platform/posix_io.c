@@ -73,16 +73,6 @@ int infs_status_to_errno(infs_status status)
     }
 }
 
-int infs_pread_full(int fd, void *buf, size_t count, uint64_t offset)
-{
-    return infiltratr_pread_full(fd, buf, count, offset);
-}
-
-int infs_pwrite_full(int fd, const void *buf, size_t count, uint64_t offset)
-{
-    return infiltratr_pwrite_full(fd, buf, count, offset);
-}
-
 int infs_get_size_bytes(int fd, uint64_t *size_bytes, int *is_block_device)
 {
     struct stat st;
