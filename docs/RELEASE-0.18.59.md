@@ -15,6 +15,14 @@ catalogue briefly, inspects it in bounded lock batches, revalidates candidates
 before reclaim, and fences candidates to the checkpoint generation that existed
 when the writable mount began.
 
+A second Linux stall was confirmed by the previous-boot kernel log: deferred
+idle publication repeatedly triggered the kernel workqueue CPU-hog detector.
+Idle publication performs allocation-map staging and durability barriers while
+holding the filesystem's persistent writer domain. It now runs on the kernel's
+long-running unbound system workqueue instead of system_wq, preserving the same
+transaction and durability semantics without monopolising an ordinary per-CPU
+system worker.
+
 The consolidation covers:
 
 - userspace numeric, range and binary-size parsing in administration/image tools;
