@@ -1,13 +1,23 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-# IAC1 / Native Write Performance Handoff
+# Historical analysis: IAC1 / native write performance
+
+**Document class:** historical performance evidence and design rationale, not
+current implementation status.
 
 ## Scope
 
-This document records the first real-machine performance failure that remained after the native unlink ownership fix in InfiltratorFS 0.18.46, together with the implementation direction that should be preserved if work is interrupted.
-
-The evidence below was collected against the exact released 0.18.46 source commit:
+This document records the real-machine write-path performance failure observed
+after the native unlink ownership fix in InfiltratorFS 0.18.46. The evidence is
+version-scoped to the exact released source commit:
 
 `ebe283e2b6251ad7e72ba56ee3204c5f30b8c215`
+
+Later releases implemented substantial parts of the corrective direction,
+including buffered clustered native writeback. Current behaviour and
+qualification must therefore be established from current source,
+`ARCHITECTURE.md`, `COMPRESSION.md`, release notes and
+`QUALIFICATION.md`; present-tense statements below describe the 0.18.46
+baseline unless explicitly stated otherwise.
 
 The test workload was a real Linux Mint root migration with:
 
@@ -291,7 +301,7 @@ Performance qualification should separately measure:
 
 A successful result is not merely 'all CPUs are busy'. The desired result is substantially lower CPU work per byte **and** useful parallel scaling until storage, memory bandwidth or a later filesystem stage becomes the real bottleneck.
 
-## Current conclusion
+## Conclusion at the 0.18.46 baseline
 
 IAC1 should be treated as **promising but not performance-finished**.
 
