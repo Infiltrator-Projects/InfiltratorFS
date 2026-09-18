@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # InfiltratorFS fsck / scrub separation
 
 Status: corrected for 0.18.55; fsck is the single maintenance command and deep scrub is an explicit mode.
