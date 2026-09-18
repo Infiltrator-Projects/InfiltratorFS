@@ -42,6 +42,7 @@
 #include <linux/uio.h>
 #include <linux/user_namespace.h>
 #include <linux/version.h>
+#include <linux/wait.h>
 #include <linux/vmalloc.h>
 #include <linux/writeback.h>
 #include <linux/workqueue.h>
