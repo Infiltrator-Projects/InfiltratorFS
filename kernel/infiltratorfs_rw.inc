@@ -2071,52 +2071,27 @@ static int infilfs_getattr(struct user_namespace *idmap,
 {
     struct inode *inode = d_inode(path->dentry);
     struct infilfs_inode_info *ii = INFILFS_I(inode);
-    struct infilfs_sb_info *sbi = INFILFS_SB(inode->i_sb);
-    const struct infilfs_attributes_disk *attributes;
-    u64 object_block;
-    u8 *object;
-    int ret;
 
     (void)query_flags;
     if (!ii)
         return -EIO;
 
-    object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_KERNEL);
-    if (!object)
-        return -ENOMEM;
-
     /*
-     * A CoW writer can replace ii->object_block while publishing a new object.
-     * Read one coherent topology snapshot instead of racing the pointer update
-     * and then reporting metadata from a reclaimed block.
+     * All ordinary stat data is already maintained in the VFS inode and the
+     * persistent birth time is immutable on the native Linux adapter.  Do not
+     * reread the object or enter the filesystem-wide topology rwsem merely to
+     * answer statx(2): process scanners such as fuser must remain responsive
+     * while an unrelated writer is reclaiming or publishing metadata.
      */
-    down_read(&sbi->write_lock);
-    object_block = ii->object_block;
-    ret = infilfs_read_object(inode->i_sb, object_block,
-                              ii->object_type, ii->object_id, object);
-    up_read(&sbi->write_lock);
-    if (ret)
-        goto out;
-    attributes = infilfs_vfs_attributes(object);
-    if (!attributes) {
-        ret = -EOPNOTSUPP;
-        goto out;
-    }
-
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
     generic_fillattr(idmap, request_mask, inode, stat);
 #else
     generic_fillattr(idmap, inode, stat);
 #endif
-    stat->atime = infilfs_vfs_decode_time(&attributes->access_time);
-    stat->mtime = infilfs_vfs_decode_time(&attributes->modification_time);
-    stat->ctime = infilfs_vfs_decode_time(&attributes->change_time);
-    stat->btime = infilfs_vfs_decode_time(&attributes->birth_time);
-    stat->result_mask |= STATX_ATIME | STATX_MTIME | STATX_CTIME | STATX_BTIME;
-    ret = 0;
-out:
-    kfree(object);
-    return ret;
+    stat->btime = READ_ONCE(ii->birth_time);
+    stat->result_mask |=
+        STATX_ATIME | STATX_MTIME | STATX_CTIME | STATX_BTIME;
+    return 0;
 }
 
 /*
