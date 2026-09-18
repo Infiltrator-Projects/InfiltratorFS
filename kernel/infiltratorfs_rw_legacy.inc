@@ -1862,7 +1862,7 @@ static int infilfs_rw_create_named_child(
         (name->len == 2 && name->name[0] == '.' && name->name[1] == '.'))
         return -EINVAL;
 
-    mutex_lock(&sbi->write_lock);
+    down_write(&sbi->write_lock);
     ret = infilfs_rw_generate_id(dir->i_sb, object_id);
     if (ret)
         goto unlock;
@@ -1889,12 +1889,12 @@ static int infilfs_rw_create_named_child(
     infilfs_refresh_inode_blocks_after_commit(dir);
     memcpy(object_id_out, object_id, 16);
     *block_out = object_block;
-    mutex_unlock(&sbi->write_lock);
+    up_write(&sbi->write_lock);
     return 0;
 abort:
     infilfs_rw_tx_abort(&tx);
 unlock:
-    mutex_unlock(&sbi->write_lock);
+    up_write(&sbi->write_lock);
     return ret;
 }
 
@@ -2070,7 +2070,7 @@ static ssize_t infilfs_file_write_iter(struct kiocb *iocb, struct iov_iter *from
     data = kzalloc(INFILFS_INLINE_DATA_MAX, GFP_NOFS);
     if (!data)
         return -ENOMEM;
-    mutex_lock(&sbi->write_lock);
+    down_write(&sbi->write_lock);
     ret = infilfs_rw_load_inline(inode, data, &old_size);
     if (ret)
         goto out;
@@ -2086,7 +2086,7 @@ static ssize_t infilfs_file_write_iter(struct kiocb *iocb, struct iov_iter *from
     iocb->ki_pos += copied;
     ret = copied;
 out:
-    mutex_unlock(&sbi->write_lock);
+    up_write(&sbi->write_lock);
     kfree(data);
     return ret;
 }
@@ -2195,7 +2195,7 @@ static int infilfs_rw_setattr(struct user_namespace *idmap, struct dentry *dentr
     data = kzalloc(INFILFS_INLINE_DATA_MAX, GFP_NOFS);
     if (!data)
         return -ENOMEM;
-    mutex_lock(&sbi->write_lock);
+    down_write(&sbi->write_lock);
     ret = infilfs_rw_load_inline(inode, data, &old_size);
     if (ret)
         goto out;
@@ -2204,7 +2204,7 @@ static int infilfs_rw_setattr(struct user_namespace *idmap, struct dentry *dentr
         memset(data + old_size, 0, new_size - old_size);
     ret = infilfs_rw_replace_inline_locked(inode, data, new_size);
 out:
-    mutex_unlock(&sbi->write_lock);
+    up_write(&sbi->write_lock);
     kfree(data);
     return ret;
 }
