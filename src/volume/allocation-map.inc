@@ -118,16 +118,18 @@ static infs_status allocation_map_counts(uint64_t total_blocks,
 static infs_status allocation_map_runtime_bytes(uint64_t total_blocks,
                                                 size_t *bytes_out)
 {
-    if (!bytes_out || total_blocks > UINT64_MAX - 7u)
+    if (!bytes_out)
         return INFS_STATUS_INVALID_ARGUMENT;
-    uint64_t raw = (total_blocks + 7u) / 8u;
+    uint64_t rounded_bits = 0;
+    if (!infiltratr_u64_add_checked(total_blocks, 7u, &rounded_bits))
+        return INFS_STATUS_INVALID_ARGUMENT;
+    uint64_t raw = rounded_bits / 8u;
     uint64_t rounded = raw;
     uint64_t rem = rounded % INFS_BLOCK_SIZE;
     if (rem) {
         uint64_t add = INFS_BLOCK_SIZE - rem;
-        if (rounded > UINT64_MAX - add)
+        if (!infiltratr_u64_add_checked(rounded, add, &rounded))
             return INFS_STATUS_OVERFLOW;
-        rounded += add;
     }
     if (!rounded || rounded > SIZE_MAX)
         return INFS_STATUS_OVERFLOW;
@@ -591,14 +593,14 @@ static infs_status allocation_map_publish(
             allocation_map_dirty_count(dirty_level1, old.level1_count);
         size_t dirty_l2_count =
             allocation_map_dirty_count(dirty_level2, old.level2_count);
-        if (dirty_leaf_count > SIZE_MAX - dirty_l1_count ||
-            dirty_leaf_count + dirty_l1_count > SIZE_MAX - dirty_l2_count ||
-            dirty_leaf_count + dirty_l1_count + dirty_l2_count >
-                SIZE_MAX - 1u) {
+        if (!infiltratr_size_add_checked(
+                dirty_leaf_count, dirty_l1_count, &needed) ||
+            !infiltratr_size_add_checked(
+                needed, dirty_l2_count, &needed) ||
+            !infiltratr_size_add_checked(needed, 1u, &needed)) {
             status = INFS_STATUS_OVERFLOW;
             goto out;
         }
-        needed = dirty_leaf_count + dirty_l1_count + dirty_l2_count + 1u;
         if (needed > old.leaf_count + old.branch_count) {
             status = INFS_STATUS_CORRUPT;
             goto out;
@@ -637,15 +639,15 @@ static infs_status allocation_map_publish(
             allocation_map_dirty_count(dirty_level1, old.level1_count);
         dirty_l2_count =
             allocation_map_dirty_count(dirty_level2, old.level2_count);
-        if (dirty_leaf_count > SIZE_MAX - dirty_l1_count ||
-            dirty_leaf_count + dirty_l1_count > SIZE_MAX - dirty_l2_count ||
-            dirty_leaf_count + dirty_l1_count + dirty_l2_count >
-                SIZE_MAX - 1u) {
+        size_t after = 0;
+        if (!infiltratr_size_add_checked(
+                dirty_leaf_count, dirty_l1_count, &after) ||
+            !infiltratr_size_add_checked(
+                after, dirty_l2_count, &after) ||
+            !infiltratr_size_add_checked(after, 1u, &after)) {
             status = INFS_STATUS_OVERFLOW;
             goto out;
         }
-        size_t after =
-            dirty_leaf_count + dirty_l1_count + dirty_l2_count + 1u;
         if (after == before && reserved_count >= after) {
             needed = after;
             break;
