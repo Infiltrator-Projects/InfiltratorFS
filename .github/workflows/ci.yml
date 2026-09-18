@@ -24,6 +24,8 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v6
+        with:
+          submodules: recursive
       - name: Enforce main-only automatic immutable publishing
         shell: bash
         run: |
@@ -59,6 +61,8 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v6
+        with:
+          submodules: recursive
       - name: Install Linux native adapter dependencies
         if: runner.environment == 'github-hosted'
         run: |
@@ -181,6 +185,8 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v6
+        with:
+          submodules: recursive
       - name: Configure native-only userspace
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
       - name: Build
@@ -200,6 +206,8 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v6
+        with:
+          submodules: recursive
       - name: Configure sanitizers
         run: >-
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
@@ -219,6 +227,8 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v6
+        with:
+          submodules: recursive
       - name: Configure analyzer
         run: >-
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
@@ -237,6 +247,8 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v6
+        with:
+          submodules: recursive
       - name: Guard native allocation and transaction policies
         run: |
           bash tests/native-random-write-optimization-policy.sh .
@@ -272,6 +284,8 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v6
+        with:
+          submodules: recursive
       - name: Download Linux-created cross-platform image
         uses: actions/download-artifact@v4
         with:
