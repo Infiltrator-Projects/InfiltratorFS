@@ -191,11 +191,15 @@ static infs_status allocation_map_load(
     struct infs_allocation_layout local = {0};
     struct infs_allocation_layout *layout = layout_out ? layout_out : &local;
     allocation_map_layout_destroy(layout);
-    if (leaves > SIZE_MAX / sizeof(uint64_t) ||
-        branches > SIZE_MAX / sizeof(uint64_t))
+    size_t leaf_bytes = 0;
+    size_t branch_bytes = 0;
+    if (!infiltratr_size_multiply_checked(
+            leaves, sizeof(uint64_t), &leaf_bytes) ||
+        !infiltratr_size_multiply_checked(
+            branches, sizeof(uint64_t), &branch_bytes))
         return INFS_STATUS_OVERFLOW;
-    layout->leaf_blocks = calloc(leaves, sizeof(uint64_t));
-    layout->branch_blocks = calloc(branches, sizeof(uint64_t));
+    layout->leaf_blocks = calloc(1u, leaf_bytes);
+    layout->branch_blocks = calloc(1u, branch_bytes);
     if (!layout->leaf_blocks || !layout->branch_blocks) {
         allocation_map_layout_destroy(layout);
         return INFS_STATUS_NO_MEMORY;
