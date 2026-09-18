@@ -62,10 +62,10 @@ static int validate_index_entries_progress(
         return INFS_STATUS_CORRUPT;
     }
 
-    /* The old duplicate-ID check compared every entry with every earlier
-     * entry, making a scrub quadratic in the object count. Sort the private
-     * snapshot once and duplicate detection becomes adjacent and O(N log N).
-     * No persistent ordering is changed. */
+    /* Sort the private snapshot before duplicate-ID detection so validation is
+     * O(N log N) rather than quadratic in the object count. This is an
+     * in-memory validation strategy only; persistent index ordering is
+     * unchanged. */
     if (count > 1u)
         qsort(entries, count, sizeof(*entries), index_entry_id_compare);
 
