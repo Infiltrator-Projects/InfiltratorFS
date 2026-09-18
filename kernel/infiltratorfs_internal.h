@@ -365,27 +365,21 @@ struct infilfs_sb_info {
 
     /*
      * Crash-orphan discovery can be proportional to the number of files.
-     * Keep it off the mount(2) critical path while preventing namespace
-     * mutation from creating a new zero-link object during discovery.
+     * Keep it off the mount(2) critical path without globally stalling live
+     * namespace mutation. orphan_recovery_generation is the committed mount
+     * generation: only zero-link objects at or below that generation can be
+     * leftovers from the previous boot. New unlink activity necessarily
+     * publishes a newer object generation and is therefore never reclaimed by
+     * the background recovery pass.
      */
     struct super_block *orphan_recovery_sb;
     struct delayed_work orphan_recovery_work;
     struct completion orphan_recovery_done;
     struct task_struct *orphan_recovery_task;
+    u64 orphan_recovery_generation;
     bool orphan_recovery_pending;
     bool orphan_recovery_failed;
 };
-
-static inline int infilfs_wait_for_orphan_recovery(
-    struct infilfs_sb_info *sbi)
-{
-    if (!sbi)
-        return -EINVAL;
-    if (READ_ONCE(sbi->orphan_recovery_pending) &&
-        READ_ONCE(sbi->orphan_recovery_task) != get_current())
-        wait_for_completion(&sbi->orphan_recovery_done);
-    return READ_ONCE(sbi->orphan_recovery_failed) ? -EIO : 0;
-}
 
 struct infilfs_inode_info {
     u64 object_block;
