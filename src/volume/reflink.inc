@@ -78,11 +78,11 @@ static infs_status file_free_unshared_run(
         free_run(vol, start, count);
         return vol->tx_error;
     }
-    if (start > UINT64_MAX - count)
+    uint64_t end = 0;
+    if (!infiltratr_u64_add_checked(start, count, &end))
         return INFS_STATUS_OVERFLOW;
 
     uint64_t cursor = start;
-    uint64_t end = start + count;
     while (cursor < end) {
         uint64_t cover_end, next_start;
         infs_status status = file_other_reference_cover(
