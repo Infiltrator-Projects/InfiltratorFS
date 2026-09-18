@@ -37,13 +37,39 @@ if not (clone < free_ranges < clear_ptr < clear_count < invalidate < finish):
     raise SystemExit('reflink ownership index is not invalidated before publication')
 PY
 
+grep -Fq 'struct mutex shared_range_build_lock;' "$state" || fail 'ownership-index build mutex missing'
+grep -Fq 'infilfs_ns_prepare_shared_range_index' "$ns" || fail 'read-side ownership-index preparation missing'
+
 python3 - "$ns" <<'PY'
 from pathlib import Path
 import sys
+
 s = Path(sys.argv[1]).read_text()
-start = s.index('static int infilfs_ns_free_unshared_run(')
-end = s.index('\nstatic int ', start + 1)
-body = s[start:end]
+
+prep_start = s.index('static int infilfs_ns_prepare_shared_range_index(')
+prep_end = s.index('\nstatic bool infilfs_ns_shared_range_maybe_shared(', prep_start)
+prep = s[prep_start:prep_end]
+if 'mutex_lock(&sbi->shared_range_build_lock);' not in prep:
+    raise SystemExit('ownership-index build is not serialized')
+if 'down_read(&sbi->write_lock);' not in prep or 'up_read(&sbi->write_lock);' not in prep:
+    raise SystemExit('ownership-index build lost read-side topology snapshot')
+if 'down_write(&sbi->write_lock);' in prep:
+    raise SystemExit('ownership-index discovery regressed under writer lock')
+
+evict_start = s.index('static int infilfs_ns_evict_unlinked_file(')
+evict_end = s.index('\nstatic int ', evict_start + 1)
+evict = s[evict_start:evict_end]
+prepare = evict.find('infilfs_ns_prepare_shared_range_index(pending)')
+begin = evict.find('infilfs_ns_begin(inode->i_sb, &pending)')
+valid = evict.find('pending->shared_range_index_valid')
+if min(prepare, begin, valid) < 0:
+    raise SystemExit('eviction ownership-index preflight/revalidation incomplete')
+if not (prepare < begin < valid):
+    raise SystemExit('eviction does not prepare ownership index before writer acquisition')
+
+free_start = s.index('static int infilfs_ns_free_unshared_run(')
+free_end = s.index('\nstatic int ', free_start + 1)
+body = s[free_start:free_end]
 build = body.find('infilfs_ns_shared_range_index_build(pending)')
 query = body.find('infilfs_ns_shared_range_maybe_shared')
 fastfree = body.find('return infilfs_rw_tx_defer_free(&pending->tx, start, count)')
