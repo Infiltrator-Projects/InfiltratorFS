@@ -2088,7 +2088,7 @@ static int infilfs_getattr(struct user_namespace *idmap,
 #else
     generic_fillattr(idmap, inode, stat);
 #endif
-    stat->btime = READ_ONCE(ii->birth_time);
+    stat->btime = ii->birth_time;
     stat->result_mask |=
         STATX_ATIME | STATX_MTIME | STATX_CTIME | STATX_BTIME;
     return 0;
