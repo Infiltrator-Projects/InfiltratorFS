@@ -1558,13 +1558,8 @@ out:
 }
 
 /*
- * A shared-range rebuild can be proportional to the complete live file/extent
- * population.  Never perform that discovery while holding write_lock for
- * mutation: it can otherwise block every unrelated topology reader behind one
- * rm(1)/evict_inode operation.  Build from a coherent read-side topology
- * snapshot instead.  shared_range_build_lock prevents duplicate concurrent
- * builders while write_lock read-side protection prevents any mutation from
- * invalidating or replacing the topology being scanned.
+ * Ownership discovery may scan every live file. Serialize builders, but take
+ * only write_lock read-side so an eviction cannot monopolize topology access.
  */
 static int infilfs_ns_prepare_shared_range_index(
     struct infilfs_native_pending *pending)
@@ -1781,15 +1776,9 @@ static int infilfs_ns_collect_checksum_removals(
 }
 
 /*
- * Final unlinked-file eviction enters this path only after
- * infilfs_ns_prepare_shared_range_index() has built a coherent ownership map
- * while holding write_lock read-side.  The map records physical intervals
- * with at least two live file references, including the file being evicted.
- *
- * Therefore a subrange outside shared_ranges is owned only by this file and
- * may be deferred for free; a subrange inside shared_ranges must be retained
- * because at least one other live file still references it.  This avoids the
- * old exact whole-filesystem rescan while write_lock is held.
+ * Eviction arrives with a coherent read-side ownership snapshot. Ranges absent
+ * from shared_ranges are owner-private; ranges present there retain another
+ * live reference and must not be freed.
  */
 static int infilfs_ns_evict_free_prepared_run(
     struct infilfs_native_pending *pending, u64 start, u64 count)
@@ -2056,11 +2045,8 @@ static int infilfs_ns_evict_unlinked_file(struct inode *inode)
         return 0;
 
     /*
-     * Final eviction can need shared-block ownership information for every
-     * extent in this file.  Build the expensive global ownership accelerator
-     * before entering the writer domain.  A writer may invalidate it in the
-     * small gap before ns_begin(); detect that race after taking write_lock and
-     * retry rather than rebuilding underneath the writer lock.
+     * Build ownership before writer acquisition; if another writer invalidates
+     * it in the gap, retry rather than rebuilding under the writer lock.
      */
     pending = infilfs_native_pending_get(inode->i_sb, true);
     if (!pending)
@@ -2088,12 +2074,7 @@ static int infilfs_ns_evict_unlinked_file(struct inode *inode)
     if (!ret)
         ret = infilfs_ns_rebuild_index(pending, changes, change_count);
     if (!ret) {
-        /*
-         * Removing this owner changes reference multiplicity.  The old map may
-         * now contain conservative false positives (2 owners became 1), so it
-         * must not survive into the next eviction.  Rebuild happens outside
-         * writer-side mutation on the next reclaim.
-         */
+        /* Owner removal changes multiplicity; force a read-side rebuild. */
         pending->shared_range_index_valid = false;
         pending->shared_range_count = 0;
     }
