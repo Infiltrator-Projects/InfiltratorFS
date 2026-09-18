@@ -44,7 +44,7 @@ grep -Fq 'preferred = old_physical;' "$data"
 # Parallel pre-reservations remain enabled for streaming growth. Random/sparse
 # writes deliberately enter the scored free-extent path so they cannot consume
 # the first available chunk of an otherwise large contiguous run.
-reserve_body="$(sed -n '/Aligned sequential appends dominate/,/mutex_lock(&sbi->write_lock)/p' "$data")"
+reserve_body="$(sed -n '/Aligned sequential appends dominate/,/down_write(&sbi->write_lock)/p' "$data")"
 grep -Fq 'workload == INFILFS_DATA_WORKLOAD_SEQUENTIAL' <<<"$reserve_body"
 grep -Fq 'infilfs_parallel_reserve_data' <<<"$reserve_body"
 grep -Fq 'infilfs_native_prepare_append' <<<"$reserve_body"
