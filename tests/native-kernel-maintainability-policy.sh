@@ -38,8 +38,10 @@ grep -Fq 'Ordinary data writers must not acquire quota_lock while holding' "$mak
     fail 'write_lock -> quota_lock prohibition is undocumented'
 grep -Fq 'linux_meta_lock owns compound' "$ioctl" || \
     fail 'linux_meta_lock ownership is undocumented'
-grep -Fq 'write_lock is also the persistent transaction/checkpoint publication domain.' "$ioctl" || \
-    fail 'transaction ownership is undocumented'
+grep -Fq 'write_lock is the authoritative pending-transaction merge/checkpoint' "$ioctl" || \
+    fail 'transaction/publication ownership is undocumented'
+grep -Fq 'max(1, online logical CPUs - 1)' "$ioctl" || \
+    fail 'N-1 native CPU budget is missing from shipped synchronization contract'
 
 # Keep the geometry path aligned with the declared resize_lock -> write_lock
 # order. The second lock must be acquired after resize_lock in the public resize
