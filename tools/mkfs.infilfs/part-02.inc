@@ -246,15 +246,29 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    const uint64_t bitmap_bytes = (total_blocks + 7u) / 8u;
-    const uint64_t bitmap_blocks =
-        (bitmap_bytes + INFS_BLOCK_SIZE - 1u) / INFS_BLOCK_SIZE;
-    if (!bitmap_blocks || bitmap_blocks > SIZE_MAX / INFS_BLOCK_SIZE) {
+    uint64_t rounded_bitmap_bits = 0;
+    uint64_t rounded_bitmap_bytes = 0;
+    if (!infiltratr_u64_add_checked(
+            total_blocks, UINT64_C(7), &rounded_bitmap_bits) ||
+        !infiltratr_u64_add_checked(
+            rounded_bitmap_bits / UINT64_C(8), INFS_BLOCK_SIZE - 1u,
+            &rounded_bitmap_bytes)) {
         fprintf(stderr, "Target allocation bitmap is too large for this build.\n");
         close(fd);
         return 1;
     }
-    size_t bitmap_alloc = (size_t)(bitmap_blocks * INFS_BLOCK_SIZE);
+    const uint64_t bitmap_bytes = rounded_bitmap_bits / UINT64_C(8);
+    const uint64_t bitmap_blocks =
+        rounded_bitmap_bytes / INFS_BLOCK_SIZE;
+    size_t bitmap_alloc = 0;
+    if (!bitmap_blocks || bitmap_blocks > SIZE_MAX ||
+        !infiltratr_size_multiply_checked(
+            (size_t)bitmap_blocks, (size_t)INFS_BLOCK_SIZE,
+            &bitmap_alloc)) {
+        fprintf(stderr, "Target allocation bitmap is too large for this build.\n");
+        close(fd);
+        return 1;
+    }
     uint8_t *bitmap = calloc(1, bitmap_alloc);
     if (!bitmap) {
         perror("calloc");
