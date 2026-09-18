@@ -167,7 +167,7 @@ struct infs_volume {
 
     /* Ephemeral ownership context for a retained-generation view. Snapshot
      * records keep a flat immutable ownership image even though the live
-     * generation uses the Format 0.17 allocation tree. */
+     * generation uses the Format 0.18 sharded allocation tree. */
     int snapshot_view;
     uint64_t snapshot_bitmap_start_block;
     uint64_t snapshot_bitmap_block_count;
@@ -255,6 +255,20 @@ struct infs_snapshot_info {
     struct infs_timestamp created_time;
 };
 
+/* Public portable-volume contract:
+ * - a successful open transfers the supplied storage context into the volume;
+ *   infs_volume_close() releases all owned runtime/storage resources;
+ * - the volume object is mutable session state. Direct concurrent callers must
+ *   provide the serialization required by their adapter rather than assuming
+ *   implicit locking in the portable core;
+ * - namespace/path operations validate InfiltratorFS path/name rules and do
+ *   not inherit host-platform pathname semantics;
+ * - list operations allocate result arrays owned by the caller, which must be
+ *   released with the corresponding infs_free_* helper;
+ * - byte-count APIs return a non-negative count on success or a negative
+ *   infs_status value on failure;
+ * - infs_volume_sync() is the explicit publication/durability boundary for
+ *   work retained by deferred-publication policy. */
 infs_status infs_volume_open_storage(struct infs_volume *vol,
                                      struct infs_storage *storage,
                                      int writable);
@@ -278,6 +292,9 @@ infs_status infs_lookup_path(struct infs_volume *vol, const char *path,
                              struct infs_lookup *out);
 infs_status infs_get_attributes(struct infs_volume *vol, const char *path,
                                 struct infs_attributes *attributes);
+/* On success, list_dir stores a heap-owned array in *items (or NULL for an
+ * empty result) and its element count in *count. Release it with
+ * infs_free_dir_items(). */
 infs_status infs_list_dir(struct infs_volume *vol, const char *path,
                           struct infs_dir_item **items, size_t *count);
 void infs_free_dir_items(struct infs_dir_item *items);
@@ -319,6 +336,8 @@ infs_status infs_reflink_file(struct infs_volume *vol, const char *source_path,
 
 infs_status infs_snapshot_create(struct infs_volume *vol, const char *name);
 infs_status infs_snapshot_delete(struct infs_volume *vol, const char *name);
+/* Snapshot-list ownership mirrors list_dir: on success the caller owns the
+ * returned array and releases it with infs_free_snapshot_infos(). */
 infs_status infs_snapshot_list(struct infs_volume *vol,
                                struct infs_snapshot_info **snapshots,
                                size_t *count);
