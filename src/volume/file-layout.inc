@@ -114,10 +114,12 @@ static int file_validate(uint8_t block[INFS_BLOCK_SIZE],
         uint64_t physical = infs_le64_to_cpu(ext[i].physical_block);
         uint32_t blocks = infs_le32_to_cpu(ext[i].block_count);
         uint32_t flags = infs_le32_to_cpu(ext[i].flags);
-        if (!blocks || logical != next_logical || logical > UINT64_MAX - blocks ||
+        uint64_t logical_end = 0;
+        if (!blocks || logical != next_logical ||
+            !infiltratr_u64_add_checked(logical, blocks, &logical_end) ||
             !extent_flags_valid(blocks, physical, flags))
             return INFS_STATUS_CORRUPT;
-        next_logical += blocks;
+        next_logical = logical_end;
     }
     uint64_t required_blocks = logical_size / INFS_BLOCK_SIZE +
         ((logical_size % INFS_BLOCK_SIZE) != 0);
