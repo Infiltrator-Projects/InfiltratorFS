@@ -1,6 +1,10 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # InfiltratorFS fsck / scrub separation
 
+**Document class:** current maintenance-command contract with historical
+incident rationale. The command semantics below are normative; release-specific
+chronology is explanatory context only.
+
 Status: corrected for 0.18.55; fsck is the single maintenance command and deep scrub is an explicit mode.
 
 ## Incident that exposed the defect
