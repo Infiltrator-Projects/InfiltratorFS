@@ -286,7 +286,11 @@ for required in \
     grep -q "$required" "$contents"
 done
 test "$(dpkg-deb --field "$dist_dir/$deb_name" X-InfiltratorFS-Desktop-Integration)" = managed-packages
-if grep -Eq 'usr/lib/infiltratorfs/os-integration/(gnome-disks|libbd_fs\.so|manifest)if grep -q 'usr/bin/infilfs-fuse$' "$contents"; then
+if grep -Eq 'usr/lib/infiltratorfs/os-integration/(gnome-disks|libbd_fs\.so|manifest)$' "$contents"; then
+    echo 'Core InfiltratorFS package must not carry replacement desktop-stack binaries.' >&2
+    exit 1
+fi
+if grep -q 'usr/bin/infilfs-fuse$' "$contents"; then
     echo 'Native release package unexpectedly contains infilfs-fuse.' >&2
     exit 1
 fi
