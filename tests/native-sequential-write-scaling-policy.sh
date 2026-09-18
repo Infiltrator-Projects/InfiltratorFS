@@ -29,7 +29,7 @@ append_body="$(sed -n '/static int infilfs_native_checksum_append_tail(/,/^}/p' 
 grep -Fq 'infilfs_native_prepare_append' "$data"
 grep -Fq 'infs_iac1_compress_selected' "$data"
 prepared_line="$(grep -n 'infilfs_native_prepare_append(' "$data" | tail -n1 | cut -d: -f1)"
-lock_line="$(awk -v start="$prepared_line" '/mutex_lock\(&sbi->write_lock\);/ && NR > start { print NR; exit }' "$data")"
+lock_line="$(awk -v start="$prepared_line" '/down_write\(&sbi->write_lock\);/ && NR > start { print NR; exit }' "$data")"
 test -n "$prepared_line" && test -n "$lock_line" && test "$prepared_line" -lt "$lock_line"
 
 paged_append="$(sed -n '/static int infilfs_native_try_prepared_paged_append(/,/^}/p' "$data")"
