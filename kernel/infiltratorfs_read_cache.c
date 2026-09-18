@@ -58,7 +58,6 @@ struct infilfs_native_read_extent_cursor {
 };
 
 #define INFILFS_NATIVE_READAHEAD_BLOCKS 256u
-#define INFILFS_NATIVE_READ_HASH_WORKERS 4u
 #define INFILFS_NATIVE_READ_HASH_MIN_BLOCKS 16u
 
 struct infilfs_native_read_hash_work {
@@ -76,11 +75,13 @@ static void infilfs_native_read_hash_workfn(struct work_struct *work)
         work, struct infilfs_native_read_hash_work, work);
     u32 i;
 
+    infilfs_cpu_work_enter();
     for (i = 0; i < item->count; ++i)
         infilfs_native_block_digest(
             item->data +
                 (size_t)(item->first + i) * INFILFS_DISK_BLOCK_SIZE,
             &item->digests[item->first + i]);
+    infilfs_cpu_work_exit();
     complete(&item->done);
 }
 
@@ -88,13 +89,13 @@ static void infilfs_native_digest_run(
     const u8 *data, u32 blocks,
     struct infilfs_data_checksum_disk *digests)
 {
-    struct infilfs_native_read_hash_work
-        work[INFILFS_NATIVE_READ_HASH_WORKERS];
+    struct infilfs_native_read_hash_work *work;
     u32 workers;
     u32 first = 0;
     u32 i;
 
-    if (blocks < INFILFS_NATIVE_READ_HASH_MIN_BLOCKS) {
+    if (blocks < INFILFS_NATIVE_READ_HASH_MIN_BLOCKS ||
+        infilfs_cpu_budget() <= 1u) {
         for (i = 0; i < blocks; ++i)
             infilfs_native_block_digest(
                 data + (size_t)i * INFILFS_DISK_BLOCK_SIZE,
@@ -102,8 +103,16 @@ static void infilfs_native_digest_run(
         return;
     }
 
-    workers = min_t(u32, INFILFS_NATIVE_READ_HASH_WORKERS, blocks);
-    memset(work, 0, sizeof(work));
+    workers = min_t(u32, infilfs_cpu_budget(), blocks);
+    work = kcalloc(workers, sizeof(*work), GFP_NOFS);
+    if (!work) {
+        for (i = 0; i < blocks; ++i)
+            infilfs_native_block_digest(
+                data + (size_t)i * INFILFS_DISK_BLOCK_SIZE,
+                &digests[i]);
+        return;
+    }
+
     for (i = 0; i < workers; ++i) {
         u32 remaining = blocks - first;
         u32 slots = workers - i;
@@ -115,13 +124,21 @@ static void infilfs_native_digest_run(
         work[i].digests = digests;
         work[i].first = first;
         work[i].count = count;
-        queue_work(system_unbound_wq, &work[i].work);
+        if (!infilfs_queue_cpu_work(&work[i].work)) {
+            u32 j;
+
+            for (j = 0; j < count; ++j)
+                infilfs_native_block_digest(
+                    data + (size_t)(first + j) * INFILFS_DISK_BLOCK_SIZE,
+                    &digests[first + j]);
+            complete(&work[i].done);
+        }
         first += count;
     }
     for (i = 0; i < workers; ++i)
         wait_for_completion(&work[i].done);
+    kfree(work);
 }
-
 
 static void infilfs_native_readahead_extent(
     struct super_block *sb, u64 physical, u64 logical,
