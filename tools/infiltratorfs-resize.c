@@ -14,11 +14,6 @@
 #include "infiltratorfs_ioctl.h"
 #include "infiltratr/quantity.h"
 
-static int parse_size(const char *text, uint64_t *bytes)
-{
-    return infiltratr_parse_binary_quantity_u64(text, bytes) ? 0 : -1;
-}
-
 int main(int argc, char **argv)
 {
     struct infilfs_resize_request request;
@@ -33,7 +28,8 @@ int main(int argc, char **argv)
     memset(&request, 0, sizeof(request));
     if (strcasecmp(argv[2], "max") == 0) {
         request.flags = INFILFS_RESIZE_TO_DEVICE_MAX;
-    } else if (parse_size(argv[2], &parsed_size) != 0) {
+    } else if (!infiltratr_parse_binary_quantity_u64(
+                   argv[2], &parsed_size)) {
         fprintf(stderr,
                 "Invalid size: %s (use bytes, KiB, MiB, GiB, TiB or max)\n",
                 argv[2]);
