@@ -25,6 +25,35 @@ if(NOT TARGET InfiltratrCommon::Portable)
     set(INFILTRATR_COMMON_WARNINGS_AS_ERRORS OFF CACHE BOOL
         "Treat vendored Infiltratr Common warnings as errors" FORCE)
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/infiltratr-common/CMakeLists.txt")
+        file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/infiltratr-common/VERSION"
+             INFILTRATR_COMMON_SOURCE_VERSION)
+        string(STRIP "${INFILTRATR_COMMON_SOURCE_VERSION}"
+               INFILTRATR_COMMON_SOURCE_VERSION)
+        if(NOT INFILTRATR_COMMON_SOURCE_VERSION STREQUAL
+               INFILTRATR_COMMON_REQUIRED_VERSION)
+            message(FATAL_ERROR
+                "Stale Infiltratr Common submodule: expected ${INFILTRATR_COMMON_REQUIRED_VERSION}, "
+                "found ${INFILTRATR_COMMON_SOURCE_VERSION}. Update submodules before building.")
+        endif()
+        find_package(Git QUIET)
+        if(Git_FOUND AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.git")
+            execute_process(
+                COMMAND "${GIT_EXECUTABLE}" -C
+                        "${CMAKE_CURRENT_SOURCE_DIR}/src/infiltratr-common"
+                        rev-parse HEAD
+                RESULT_VARIABLE INFILTRATR_COMMON_GIT_RESULT
+                OUTPUT_VARIABLE INFILTRATR_COMMON_SOURCE_COMMIT
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+                ERROR_QUIET)
+            if(INFILTRATR_COMMON_GIT_RESULT EQUAL 0 AND
+               NOT INFILTRATR_COMMON_SOURCE_COMMIT STREQUAL
+                   INFILTRATR_COMMON_REQUIRED_COMMIT)
+                message(FATAL_ERROR
+                    "Stale Infiltratr Common submodule commit: expected "
+                    "${INFILTRATR_COMMON_REQUIRED_COMMIT}, found "
+                    "${INFILTRATR_COMMON_SOURCE_COMMIT}. Update submodules before building.")
+            endif()
+        endif()
         add_subdirectory(src/infiltratr-common EXCLUDE_FROM_ALL)
     else()
         include(FetchContent)
