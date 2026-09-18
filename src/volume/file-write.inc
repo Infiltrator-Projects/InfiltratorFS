@@ -6,7 +6,9 @@ static int64_t write_file_tx(struct infs_volume *vol, const char *path,
         return INFS_STATUS_INVALID_ARGUMENT;
     if (!vol->writable)
         return INFS_STATUS_READ_ONLY;
-    if ((uint64_t)size > INT64_MAX || offset > UINT64_MAX - size)
+    uint64_t write_end = 0;
+    if ((uint64_t)size > INT64_MAX ||
+        !infiltratr_u64_add_checked(offset, (uint64_t)size, &write_end))
         return INFS_STATUS_OVERFLOW;
     if (size == 0)
         return 0;
@@ -29,7 +31,7 @@ static int64_t write_file_tx(struct infs_volume *vol, const char *path,
         return status;
 
     uint64_t old_size = infs_le64_to_cpu(p->attributes.logical_size);
-    uint64_t end = offset + size;
+    uint64_t end = write_end;
     int inline_enabled =
         (infs_le64_to_cpu(vol->sb.incompat_flags) &
          INFS_INCOMPAT_INLINE_DATA) != 0;
@@ -310,7 +312,9 @@ static int64_t write_file_common(struct infs_volume *vol, const char *path,
         return INFS_STATUS_INVALID_ARGUMENT;
     if (!vol->writable)
         return INFS_STATUS_READ_ONLY;
-    if ((uint64_t)size > INT64_MAX || offset > UINT64_MAX - size)
+    uint64_t write_end = 0;
+    if ((uint64_t)size > INT64_MAX ||
+        !infiltratr_u64_add_checked(offset, (uint64_t)size, &write_end))
         return INFS_STATUS_OVERFLOW;
     if (size == 0)
         return 0;
