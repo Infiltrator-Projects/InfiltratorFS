@@ -39,7 +39,7 @@ static HANDLE WINAPI infs_discovery_CreateFileW(
     return handle;
 }
 
-/* The transfer application is a bulk-copy adapter/* The transfer application is a bulk-copy adapter, so keep a much larger
+/* The transfer application is a bulk-copy adapter, so keep a much larger
  * bounded transaction open than the interactive Linux/FUSE default. Without
  * this policy, infs_write_file_buffered() immediately publishes every 4 MiB
  * copy chunk and rewrites the multi-megabyte allocation bitmap each time.

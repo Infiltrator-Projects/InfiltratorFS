@@ -189,7 +189,6 @@ static void initialise_visual_theme(void)
 }
 
 static void apply_window_visual_theme(HWND hwnd)
-static void apply_window_visual_theme(HWND hwnd)
 {
     BOOL dark = g_dark_mode ? TRUE : FALSE;
     DwmSetWindowAttribute(hwnd, 20, &dark, sizeof(dark));
