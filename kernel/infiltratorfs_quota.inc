@@ -1005,11 +1005,11 @@ static int infilfs_quota_set_rule(struct super_block *sb,
      * their live reservation-aware counters and therefore must not be rebuilt.
      */
     if (idx < 0 && (request->hard_bytes || request->hard_objects)) {
-        mutex_lock(&sbi->write_lock);
+        down_read(&sbi->write_lock);
         ret = infilfs_quota_rule_usage_locked(
             sb, request->type, request->id,
             &initial_bytes, &initial_objects);
-        mutex_unlock(&sbi->write_lock);
+        up_read(&sbi->write_lock);
         if (ret)
             goto rollback;
     }
@@ -1167,10 +1167,10 @@ static int infilfs_quota_set_project(struct inode *inode,
          * its reservation, so this scan observes its committed bytes while
          * its conservative reservation remains visible in the old counter.
          */
-        mutex_lock(&sbi->write_lock);
+        down_read(&sbi->write_lock);
         ret = infilfs_quota_domain_usage_locked(
             inode, &transfer_bytes, &transfer_objects);
-        mutex_unlock(&sbi->write_lock);
+        up_read(&sbi->write_lock);
         if (ret)
             goto rollback;
 
