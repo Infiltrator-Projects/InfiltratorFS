@@ -142,10 +142,12 @@ static int paged_extent_snapshot(struct infs_volume *vol,
     if (status != INFS_STATUS_OK)
         return status;
     uint32_t total_count = infs_le32_to_cpu(file->extent_count);
-    if ((size_t)total_count > SIZE_MAX / sizeof(struct infs_extent_disk))
+    size_t extent_bytes = 0;
+    if (!infiltratr_size_multiply_checked(
+            (size_t)total_count, sizeof(struct infs_extent_disk),
+            &extent_bytes))
         return INFS_STATUS_OVERFLOW;
-    struct infs_extent_disk *all = malloc(
-        (size_t)total_count * sizeof(*all));
+    struct infs_extent_disk *all = malloc(extent_bytes);
     if (!all)
         return INFS_STATUS_NO_MEMORY;
     struct infs_object_header_disk *hdr =
