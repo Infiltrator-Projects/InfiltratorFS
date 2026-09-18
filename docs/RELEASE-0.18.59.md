@@ -7,6 +7,14 @@
 reduces duplicate generic code or makes an existing boundary safer. It does not
 move filesystem semantics into Common.
 
+The Linux native driver also fixes a large-volume startup regression found on
+a real million-file system. Crash-orphan recovery remains asynchronous, but no
+longer blocks live namespace mutation until the complete scan finishes or holds
+the topology rwsem across the whole catalogue. Recovery now snapshots the
+catalogue briefly, inspects it in bounded lock batches, revalidates candidates
+before reclaim, and fences candidates to the checkpoint generation that existed
+when the writable mount began.
+
 The consolidation covers:
 
 - userspace numeric, range and binary-size parsing in administration/image tools;
