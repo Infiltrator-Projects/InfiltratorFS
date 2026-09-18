@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #ifdef _WIN32
 #include "infilfs/win32_partition_io.h"
+#include "infiltratr/core.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -55,9 +56,9 @@ static infs_status checked_offset(
     if (offset > ctx->region_size ||
         (uint64_t)size > ctx->region_size - offset)
         return INFS_STATUS_INVALID_ARGUMENT;
-    if (ctx->base_offset > UINT64_MAX - offset)
+    if (!infiltratr_u64_add_checked(
+            ctx->base_offset, offset, absolute))
         return INFS_STATUS_OVERFLOW;
-    *absolute = ctx->base_offset + offset;
     if (*absolute > INT64_MAX)
         return INFS_STATUS_OVERFLOW;
     return INFS_STATUS_OK;
