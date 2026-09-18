@@ -161,10 +161,12 @@ static int directory_blob_duplicate_status(const uint8_t *base, size_t bytes)
     }
     if (count < 2u)
         return INFS_STATUS_OK;
-    if (count > SIZE_MAX / sizeof(struct directory_name_ref))
+    size_t names_bytes = 0;
+    if (!infiltratr_size_multiply_checked(
+            count, sizeof(struct directory_name_ref), &names_bytes))
         return INFS_STATUS_NO_MEMORY;
 
-    struct directory_name_ref *names = malloc(count * sizeof(*names));
+    struct directory_name_ref *names = malloc(names_bytes);
     if (!names)
         return INFS_STATUS_NO_MEMORY;
     offset = 0;
