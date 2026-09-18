@@ -622,13 +622,11 @@ ssize_t infilfs_native_read_iter_cached(struct inode *inode,
                         goto partial;
                     }
 
+                    ret = infilfs_read_allocated_blocks(
+                        inode->i_sb, physical, run_blocks, run_data);
+                    if (ret)
+                        goto partial;
                     for (j = 0; j < run_blocks; ++j) {
-                        ret = infilfs_read_allocated_block(
-                            inode->i_sb, physical + j,
-                            run_data +
-                                (size_t)j * INFILFS_DISK_BLOCK_SIZE);
-                        if (ret)
-                            goto partial;
                         ret = infilfs_native_read_expected_digest_cached(
                             inode->i_sb, ii->object_id,
                             file->checksum_head_id, logical + j,
