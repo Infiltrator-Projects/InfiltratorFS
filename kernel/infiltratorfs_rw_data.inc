@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /*
- * Native Linux extent-backed data path for Format 0.17.
+ * Native Linux extent-backed data path for Format 0.18.
  *
  * The original RW bring-up deliberately stopped at inline files.  This layer
  * keeps that proven implementation as the small-file path and adds a bounded,
