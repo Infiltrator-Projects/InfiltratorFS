@@ -39,13 +39,13 @@ static uint64_t resize_pick_free_near(uint8_t *bitmap, uint64_t total,
                 return block;
             }
         }
-        if (distance && preferred <= UINT64_MAX - distance) {
-            uint64_t block = preferred + distance;
-            if (block < total && block != 0 &&
-                !bitmap_get(bitmap, block)) {
-                bitmap_set(bitmap, block, 1);
-                return block;
-            }
+        uint64_t block = 0;
+        if (distance &&
+            infiltratr_u64_add_checked(preferred, distance, &block) &&
+            block < total && block != 0 &&
+            !bitmap_get(bitmap, block)) {
+            bitmap_set(bitmap, block, 1);
+            return block;
         }
     }
     return 0;
