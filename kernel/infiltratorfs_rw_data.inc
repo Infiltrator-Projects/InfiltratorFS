@@ -794,8 +794,8 @@ infilfs_native_pending_get(struct super_block *sb, bool create)
     if (!pending && create) {
         struct infilfs_sb_info *sbi = INFILFS_SB(sb);
         u64 bytes = infilfs_volume_blocks(sbi) << INFILFS_DISK_BLOCK_SHIFT;
-        u64 threshold = bytes / 64u;
-        const u64 min_publish = 16ULL * 1024ULL * 1024ULL;
+        u64 threshold = bytes / 32u;
+        const u64 min_publish = 64ULL * 1024ULL * 1024ULL;
         const u64 max_publish = 512ULL * 1024ULL * 1024ULL;
 
         if (threshold < min_publish)
