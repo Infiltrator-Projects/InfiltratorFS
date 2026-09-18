@@ -1,12 +1,23 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-# InfiltratorFS unlink performance handoff
+# Historical analysis: native unlink performance
 
-Status: confirmed live performance defect on the 0.18.45 native Linux VFS path.
-Baseline release commit: `99432398db9bae78d638637538c4c9076179dba1` (`v0.18.45`).
+**Document class:** historical performance evidence, not current implementation
+status or normative architecture.
+
+**Observed baseline:** InfiltratorFS 0.18.45, exact release commit
+`99432398db9bae78d638637538c4c9076179dba1`.
+
+The defect described below was subsequently addressed by the native
+shared-range ownership acceleration work. This document is retained because it
+records the workload, measurements, asymptotic diagnosis and correctness
+requirements that should remain regression evidence.
 
 ## Why this document exists
 
-This is the recovery point before changing the kernel implementation. If the implementation attempt is interrupted or fails, resume from this document and the baseline commit above.
+This analysis captures the evidence that justified replacing repeated
+whole-filesystem ownership discovery in the 0.18.45 unlink/reclaim path. Any
+present-day performance claim must be remeasured on current source; the numbers
+below are version-scoped historical evidence.
 
 ## Reproduction
 
@@ -59,7 +70,7 @@ Therefore reclaiming one extent may require a whole-filesystem ownership scan. R
 
 This is the previously identified structural weakness: reflink/snapshot correctness is preserved by scan-based shared-block ownership discovery, but ownership lookup is too expensive for real delete-heavy workloads.
 
-## Required fix
+## Required properties of the corrective design
 
 Replace repeated whole-filesystem shared-range discovery in the native Linux delete/reclaim path with a volatile kernel shared-extent ownership/refcount index.
 
@@ -73,7 +84,7 @@ Correctness requirements:
 6. Allocation/free accounting and crash-consistency semantics must not change.
 7. If memory allocation for the acceleration index fails, correctness must be preserved by a safe fallback rather than freeing uncertain blocks.
 
-## Implementation strategy
+## Proposed implementation strategy at the baseline
 
 Preferred first implementation for the 0.18.x format:
 
@@ -100,7 +111,7 @@ At minimum:
 
 Practical success target: bulk unlink should fall from ~219 ms/file by orders of magnitude on an unshared 14k-file volume. Exact throughput is hardware/workload dependent, so CI should assert algorithmic behaviour/counters rather than a fragile wall-clock threshold.
 
-## Recovery / continuation instructions
+## Historical continuation notes
 
 If work is interrupted:
 
