@@ -39,12 +39,11 @@ static int file_ensure_logical_blocks(struct infs_volume *vol,
             }
         }
 
-        /* Format 0.12 has scalable extent pages, so a classic file reaching
+        /* Format 0.18 has scalable extent pages, so a classic file reaching
          * its inline vector limit during EOF growth is not a large-file
          * boundary. Promote the complete vector transactionally and continue
-         * the growth through the paged representation. The old code returned
-         * FILE_TOO_LARGE here, which made ordinary multi-gigabyte sequential
-         * copies fail once allocation fragmentation consumed 161 extents. */
+         * through the paged representation rather than treating metadata-vector
+         * capacity as a file-size limit. */
         if (count >= max_extents) {
             status = paged_extent_rewrite_all(
                 vol, block, p, ext, count, 1);
