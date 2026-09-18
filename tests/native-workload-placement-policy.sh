@@ -13,7 +13,7 @@ for file in "$driver" "$state" "$allocator" "$data"; do
 done
 
 # The policy must distinguish streaming EOF growth, in-place/random CoW, and
-# sparse growth without changing the persistent Format 0.17 representation.
+# sparse growth without changing the persistent Format 0.18 representation.
 grep -Fq 'enum infilfs_data_workload' "$state"
 grep -Fq 'INFILFS_DATA_WORKLOAD_SEQUENTIAL' "$state"
 grep -Fq 'INFILFS_DATA_WORKLOAD_RANDOM' "$state"
