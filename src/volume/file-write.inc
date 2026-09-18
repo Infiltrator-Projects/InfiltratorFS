@@ -260,10 +260,10 @@ static int64_t write_file_tx(struct infs_volume *vol, const char *path,
         struct infs_data_checksum_disk digest;
         data_block_checksum(data, &digest);
 
-        /* One FUSE write commonly contains tens of 4 KiB blocks. Updating the
-         * checksum object for every block separately forced repeated object
-         * index walks and metadata writes. Accumulate consecutive digests and
-         * let checksum_set_range update each checksum object in bulk. */
+        /* A buffered write can cover many 4 KiB blocks. Updating one checksum
+         * entry at a time would repeat object-index walks and metadata writes.
+         * Accumulate consecutive digests so checksum_set_range updates each
+         * checksum object in one bounded operation. */
         if (pending_count != 0 &&
             logical != pending_start + pending_count) {
             status = checksum_set_range(vol, p, file_hdr->object_id,
