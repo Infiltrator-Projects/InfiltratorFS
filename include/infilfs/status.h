@@ -29,6 +29,9 @@ typedef int32_t infs_status;
 #define INFS_STATUS_INTERRUPTED      -INT32_C(18)
 #define INFS_STATUS_BUSY             -INT32_C(19)
 
+/* Return a process-lifetime immutable diagnostic string. The returned pointer
+ * is library-owned, requires no release and is suitable for logging rather
+ * than programmatic status classification. */
 const char *infs_status_string(infs_status status);
 
 #endif
