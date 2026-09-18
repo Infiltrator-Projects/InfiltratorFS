@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "infilfs/checksum.h"
+#include "infiltratr/endian.h"
 
 #include <limits.h>
 #include <string.h>
@@ -95,20 +96,6 @@ static uint32_t rotr32(uint32_t v, unsigned n)
     return (v >> n) | (v << (32u - n));
 }
 
-static uint32_t load_be32(const uint8_t *p)
-{
-    return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
-           ((uint32_t)p[2] << 8) | (uint32_t)p[3];
-}
-
-static void store_be32(uint8_t *p, uint32_t v)
-{
-    p[0] = (uint8_t)(v >> 24);
-    p[1] = (uint8_t)(v >> 16);
-    p[2] = (uint8_t)(v >> 8);
-    p[3] = (uint8_t)v;
-}
-
 static void sha256_compress(uint32_t state[8], const uint8_t block[64])
 {
     static const uint32_t k[64] = {
@@ -131,7 +118,7 @@ static void sha256_compress(uint32_t state[8], const uint8_t block[64])
     };
     uint32_t w[64];
     for (unsigned i = 0; i < 16; ++i)
-        w[i] = load_be32(block + i * 4u);
+        w[i] = infiltratr_load_be32(block + i * 4u);
     for (unsigned i = 16; i < 64; ++i) {
         uint32_t s0 = rotr32(w[i - 15], 7) ^ rotr32(w[i - 15], 18) ^ (w[i - 15] >> 3);
         uint32_t s1 = rotr32(w[i - 2], 17) ^ rotr32(w[i - 2], 19) ^ (w[i - 2] >> 10);
@@ -175,14 +162,13 @@ static void infs_sha256_scalar(const void *data, size_t len, uint8_t out[32])
     tail[len] = 0x80;
     size_t padded = len < 56 ? 64 : 128;
     uint64_t bit_len = (uint64_t)original_len * UINT64_C(8);
-    for (unsigned i = 0; i < 8; ++i)
-        tail[padded - 1u - i] = (uint8_t)(bit_len >> (i * 8u));
+    infiltratr_store_be64(tail + padded - 8u, bit_len);
     sha256_compress(state, tail);
     if (padded == 128)
         sha256_compress(state, tail + 64);
 
     for (unsigned i = 0; i < 8; ++i)
-        store_be32(out + i * 4u, state[i]);
+        infiltratr_store_be32(out + i * 4u, state[i]);
 }
 
 static int infs_sha256_accelerated(const void *data, size_t len,
