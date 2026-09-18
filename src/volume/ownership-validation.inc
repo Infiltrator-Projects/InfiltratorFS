@@ -333,12 +333,12 @@ static int build_live_ownership_bitmap_progress(
                 continue;
             uint32_t logical_blocks = infs_le32_to_cpu(all[j].block_count);
             uint64_t blocks = extent_physical_blocks(logical_blocks, flags);
-            if (UINT64_MAX - file_physical_total < blocks) {
+            if (!infiltratr_u64_add_checked(
+                    file_physical_total, blocks, &file_physical_total)) {
                 if (owned) free(all);
                 status = INFS_STATUS_OVERFLOW;
                 goto out;
             }
-            file_physical_total += blocks;
         }
         int detailed_blocks = progress && file_physical_total >= 1024u;
         if (detailed_blocks)
