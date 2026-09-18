@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #ifdef _WIN32
 #include "infilfs/win32_io.h"
+#include "infiltratr/core.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -77,9 +78,9 @@ static infs_status checked_absolute_offset(
         if (offset > win->region_size ||
             (uint64_t)size > win->region_size - offset)
             return INFS_STATUS_INVALID_ARGUMENT;
-        if (win->base_offset > UINT64_MAX - offset)
+        if (!infiltratr_u64_add_checked(
+                win->base_offset, offset, absolute))
             return INFS_STATUS_OVERFLOW;
-        *absolute = win->base_offset + offset;
     } else {
         *absolute = offset;
     }
@@ -222,11 +223,12 @@ static infs_status volume_size_from_extents(HANDLE handle,
             DWORD count = extents->NumberOfDiskExtents;
             for (DWORD i = 0; i < count; ++i) {
                 LONGLONG length = extents->Extents[i].ExtentLength.QuadPart;
-                if (length <= 0 || (uint64_t)length > UINT64_MAX - total) {
+                if (length <= 0 ||
+                    !infiltratr_u64_add_checked(
+                        total, (uint64_t)length, &total)) {
                     free(extents);
                     return INFS_STATUS_CORRUPT;
                 }
-                total += (uint64_t)length;
             }
             free(extents);
             if (!total)
