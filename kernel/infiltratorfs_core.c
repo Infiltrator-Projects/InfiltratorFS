@@ -2673,7 +2673,7 @@ static void infilfs_orphan_recovery_worker(struct work_struct *work)
     if (!sb)
         goto complete;
 
-    WRITE_ONCE(sbi->orphan_recovery_task, current);
+    WRITE_ONCE(sbi->orphan_recovery_task, get_current());
     ret = infilfs_native_recover_unlinked_files(sb);
     WRITE_ONCE(sbi->orphan_recovery_task, NULL);
     if (ret) {
