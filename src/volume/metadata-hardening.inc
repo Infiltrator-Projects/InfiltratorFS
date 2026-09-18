@@ -218,10 +218,16 @@ static int validate_namespace_graph_progress(
             ++namespace_total;
     }
 
+    size_t queue_bytes = 0;
+    if (!infiltratr_size_multiply_checked(
+            (size_t)count, sizeof(uint32_t), &queue_bytes)) {
+        free(entries);
+        return INFS_STATUS_NO_MEMORY;
+    }
     uint32_t *references = calloc(count, sizeof(*references));
     uint32_t *child_directories = calloc(count, sizeof(*child_directories));
     uint8_t *reachable = calloc(count, 1);
-    uint32_t *queue = malloc((size_t)count * sizeof(*queue));
+    uint32_t *queue = malloc(queue_bytes);
     if (!references || !child_directories || !reachable || !queue) {
         free(entries);
         free(references);
