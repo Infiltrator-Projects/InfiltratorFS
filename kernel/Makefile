@@ -27,6 +27,12 @@
 #     Reservation shard locks protect volatile reservation ranges only. They
 #     must never be held across sleeping work or filesystem-mutex acquisition.
 #
+#   shared_range_build_lock -> write_lock (read side only)
+#     Shared ownership-index construction may scan the live file population.
+#     It is serialized by shared_range_build_lock while holding only the
+#     topology read side, never write_lock writer-side, so discovery cannot
+#     freeze unrelated stat/lookup/readdir readers behind an rm/eviction.
+#
 #   linux_meta_lock
 #     Owns compound Linux sidecar metadata operations. It currently has no
 #     general nesting permission with the mutexes above. Any future nested use
