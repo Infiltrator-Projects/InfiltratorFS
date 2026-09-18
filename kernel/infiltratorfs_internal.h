@@ -32,6 +32,7 @@
 #include <linux/random.h>
 #include <linux/rwsem.h>
 #include <linux/sched.h>
+#include <linux/semaphore.h>
 #include <linux/seq_file.h>
 #include <linux/slab.h>
 #include <linux/sort.h>
@@ -55,6 +56,31 @@
 #define INFILTRATORFS_MAGIC 0x494e4653u
 #define INFILFS_ALLOCATION_RESERVATION_SHARDS 64u
 #define INFILFS_NATIVE_WRITEBACK_BATCH_BYTES (1024u * 1024u)
+
+/*
+ * Native CPU parallelism is module-wide, not per mount.  All mounted volumes
+ * share one execution budget so multiple InfiltratorFS mounts cannot each
+ * consume N-1 CPUs independently.  The implementation in infiltratorfs_core.c
+ * derives the budget exactly as max(1, online logical CPUs - 1).
+ */
+unsigned int infilfs_cpu_budget(void);
+bool infilfs_queue_cpu_work(struct work_struct *work);
+void infilfs_cpu_work_enter(void);
+void infilfs_cpu_work_exit(void);
+
+static inline size_t infilfs_native_writeback_batch_bytes(void)
+{
+    const size_t cluster_bytes =
+        (size_t)INFILFS_COMPRESSION_CLUSTER_BLOCKS * INFILFS_DISK_BLOCK_SIZE;
+    unsigned int budget = infilfs_cpu_budget();
+    size_t scaled;
+
+    if (budget > SIZE_MAX / cluster_bytes)
+        scaled = SIZE_MAX & ~((size_t)INFILFS_DISK_BLOCK_SIZE - 1u);
+    else
+        scaled = cluster_bytes * budget;
+    return max_t(size_t, INFILFS_NATIVE_WRITEBACK_BATCH_BYTES, scaled);
+}
 #define INFILFS_LINUX_META_DIRECTORY ".infilfs-posix-meta"
 
 #define INFILFS_LINUX_META_MAGIC "INPSXM01"
