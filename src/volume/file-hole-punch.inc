@@ -176,8 +176,10 @@ infs_status infs_punch_hole(struct infs_volume *vol, const char *path,
         return INFS_STATUS_INVALID_ARGUMENT;
     if (length == 0)
         return INFS_STATUS_OK;
-    if (offset > UINT64_MAX - length)
+    uint64_t range_end = 0;
+    if (!infiltratr_u64_add_checked(offset, length, &range_end))
         return INFS_STATUS_OVERFLOW;
+    (void)range_end;
 
     struct infs_attributes attributes;
     infs_status status = infs_get_attributes(vol, path, &attributes);
