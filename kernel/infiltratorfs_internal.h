@@ -32,7 +32,6 @@
 #include <linux/random.h>
 #include <linux/rwsem.h>
 #include <linux/sched.h>
-#include <linux/semaphore.h>
 #include <linux/seq_file.h>
 #include <linux/slab.h>
 #include <linux/sort.h>
