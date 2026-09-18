@@ -3,10 +3,10 @@
  * Linux-only metadata compatibility.
  *
  * Format 0.18 deliberately keeps portable objects independent of Linux VFS
- * details.  The final FUSE adapter stored xattrs and special-node type/rdev in
- * hidden, system-marked ordinary files below /.infilfs-posix-meta.  Reuse that
- * exact representation so native mounts preserve existing metadata without
- * changing the portable object layout.
+ * details. Linux xattrs and special-node type/rdev are stored in hidden,
+ * system-marked ordinary files below /.infilfs-posix-meta. The native adapter
+ * uses that representation so Linux metadata remains durable without changing
+ * portable object identity or layout.
  */
 
 /* O(1) UUID-sidecar lookup after one bounded per-mount cache build. */
