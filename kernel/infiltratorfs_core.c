@@ -2539,6 +2539,7 @@ static int infilfs_populate_inode(struct inode *inode, u64 object_block,
         goto fail_private;
     }
     ii->portable_flags = le64_to_cpu(attributes->portable_flags);
+    ii->birth_time = infilfs_timestamp_decode(&attributes->birth_time);
     inode_set_atime_to_ts(
         inode, infilfs_timestamp_decode(&attributes->access_time));
     inode_set_mtime_to_ts(
@@ -2929,6 +2930,7 @@ static int infilfs_fill_super(struct super_block *sb, struct fs_context *fc)
         return ret;
     }
     init_rwsem(&sbi->write_lock);
+    mutex_init(&sbi->shared_range_build_lock);
     spin_lock_init(&sbi->pagecache_accounting_lock);
     atomic64_set(&sbi->pagecache_pending_blocks, 0);
     mutex_init(&sbi->linux_meta_lock);
