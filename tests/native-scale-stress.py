@@ -17,7 +17,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("root", help="stress directory below an already-mounted filesystem")
     parser.add_argument("--files", type=int, default=1_000_000)
     parser.add_argument("--directories", type=int, default=1_000)
-    parser.add_argument("--workers", type=int, default=min(8, os.cpu_count() or 1))
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=max(1, (os.cpu_count() or 1) - 1),
+        help="parallel workers (default: online logical CPUs minus one, minimum one)",
+    )
     parser.add_argument("--churn-files", type=int, default=100_000)
     parser.add_argument("--batch-directories", type=int, default=64)
     parser.add_argument("--reclaim-vfs-cache", action="store_true")
