@@ -18,6 +18,7 @@
  *     quota_lock -> write_lock
  *     write_lock -> bitmap_lock
  *     allocation-reservation shard spinlock -> bitmap_lock (when needed)
+ *     shared_range_build_lock -> write_lock (read side only)
  *
  * The reverse directions are forbidden. bitmap_lock and reservation shard
  * spinlocks are non-sleeping inner locks; do not acquire filesystem mutexes or
