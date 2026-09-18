@@ -3,8 +3,8 @@
  * Native Linux user/group/project quotas.
  *
  * Quota policy is Linux-adapter metadata, not portable object identity. The
- * policy database is stored as one trusted root sidecar xattr so Format 0.17
- * objects remain unchanged. Project quotas are directory-tree quotas: a
+ * policy database is stored as one trusted root sidecar xattr so portable
+ * Format 0.18 objects remain unchanged. Project quotas are directory-tree quotas: a
  * project root assigns its project ID to that directory and descendants until
  * a nested project root overrides it. Usage is rebuilt from authoritative
  * objects at mount and whenever project topology changes; counters never need
