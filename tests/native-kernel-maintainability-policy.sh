@@ -106,7 +106,10 @@ grep -Fq 'generic_write_checks(iocb, from)' <<<"$write_common" || fail 'generic 
 grep -Fq 'file_remove_privs(filep)' <<<"$write_common" || fail 'writes do not strip file privileges'
 grep -Fq 'generic_write_sync(iocb, ret)' <<<"$write_common" || fail 'sync write flags are ignored'
 getattr_body="$(sed -n '/static int infilfs_getattr(/,/^}/p' "$rw")"
-grep -Fq 'down_read(&sbi->write_lock)' <<<"$getattr_body" || fail 'getattr topology read is unlocked'
+! grep -Fq 'write_lock' <<<"$getattr_body" || fail 'getattr regressed onto filesystem-wide topology lock'
+! grep -Fq 'infilfs_read_object' <<<"$getattr_body" || fail 'getattr regressed to synchronous object reread'
+grep -Fq 'stat->btime = ii->birth_time;' <<<"$getattr_body" || fail 'getattr lost cached persistent birth time'
+grep -Fq 'struct timespec64 birth_time;' "$kernel/infiltratorfs_internal.h" || fail 'inode birth-time cache missing'
 grep -Fq 'ATTR_KILL_SUID | ATTR_KILL_SGID' "$rw" || fail 'set-ID stripping is not persisted'
 
 # Writable mount latency must not scale with every regular-file object. Crash
