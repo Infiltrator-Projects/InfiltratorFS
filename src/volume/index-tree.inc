@@ -12,16 +12,13 @@
 static uint64_t tree_index_root(
     const struct infs_index_payload_disk *payload)
 {
-    uint64_t root_le = 0;
-    memcpy(&root_le, payload + 1, sizeof(root_le));
-    return infs_le64_to_cpu(root_le);
+    return infs_load_le64(payload + 1);
 }
 
 static void tree_index_set_root(
     struct infs_index_payload_disk *payload, uint64_t root)
 {
-    uint64_t root_le = infs_cpu_to_le64(root);
-    memcpy(payload + 1, &root_le, sizeof(root_le));
+    infs_store_le64(payload + 1, root);
 }
 
 static int tree_branch_validate(
