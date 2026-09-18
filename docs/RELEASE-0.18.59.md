@@ -23,6 +23,16 @@ long-running unbound system workqueue instead of system_wq, preserving the same
 transaction and durability semantics without monopolising an ordinary per-CPU
 system worker.
 
+Live mounted qualification also exposed a separate architectural gap: the
+intended filesystem CPU policy had never been made explicit or enforced.
+The architecture now records the required native Linux concurrency budget as
+`max(1, online_logical_cpus - 1)`: one logical CPU is left for the rest of
+the operating system whenever possible, while InfiltratorFS must be able to use
+all remaining logical CPUs when sufficient independent work exists. The roadmap
+keeps this item incomplete until the implementation and qualification enforce
+that rule; documenting the policy does not claim that 0.18.59 already satisfies
+it.
+
 The consolidation covers:
 
 - userspace numeric, range and binary-size parsing in administration/image tools;
