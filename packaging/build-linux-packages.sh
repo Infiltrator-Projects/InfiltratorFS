@@ -40,8 +40,8 @@ trap 'rm -rf "$package_root" "$payload"' EXIT
 chmod 0755 "$package_root"
 
 cmake --install "$build_dir" --prefix "$package_root/usr"
-# Native Linux is the product path from 0.17.0 onward. Never allow an
-# opportunistically-built legacy FUSE adapter into a release package.
+# Native Linux is the product path. Never allow an opportunistically-built
+# legacy FUSE adapter into a release package.
 rm -f "$package_root/usr/bin/infilfs-fuse"
 install -d "$package_root/usr/share/doc/infiltratorfs"
 install -m 0644 LICENSE "$package_root/usr/share/doc/infiltratorfs/copyright"
