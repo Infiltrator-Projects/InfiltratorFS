@@ -111,9 +111,9 @@ static int infilfs_fragmentation_metrics(
 
     if (!S_ISREG(inode->i_mode))
         return -EINVAL;
-    mutex_lock(&sbi->write_lock);
+    down_write(&sbi->write_lock);
     ret = infilfs_fragmentation_metrics_locked(inode, metrics);
-    mutex_unlock(&sbi->write_lock);
+    up_write(&sbi->write_lock);
     return ret;
 }
 
@@ -334,7 +334,7 @@ static int infilfs_defrag_one(
 
     if (was_inline || before.data_extents <= 1) {
         ret = infilfs_native_operation_rollback(pending);
-        mutex_unlock(&sbi->write_lock);
+        up_write(&sbi->write_lock);
         pending = NULL;
         if (!ret)
             ret = infilfs_native_pending_flush_sb(inode->i_sb);
@@ -358,7 +358,7 @@ static int infilfs_defrag_one(
         preserve_boundaries = true;
     } else {
         ret = infilfs_native_operation_rollback(pending);
-        mutex_unlock(&sbi->write_lock);
+        up_write(&sbi->write_lock);
         pending = NULL;
         if (!ret)
             ret = infilfs_native_pending_flush_sb(inode->i_sb);
