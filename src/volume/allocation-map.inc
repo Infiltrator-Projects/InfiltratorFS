@@ -606,20 +606,18 @@ static infs_status allocation_map_publish(
 
         while (reserved_count < needed) {
             if (reserved_count == reserved_capacity) {
-                size_t next = reserved_capacity ? reserved_capacity * 2u : 32u;
-                if (next < reserved_capacity ||
-                    next > SIZE_MAX / sizeof(*reserved)) {
+                size_t required;
+                if (!infiltratr_size_add_checked(
+                        reserved_count, 1u, &required)) {
                     status = INFS_STATUS_OVERFLOW;
                     goto out;
                 }
-                uint64_t *grown = realloc(
-                    reserved, next * sizeof(*reserved));
-                if (!grown) {
+                if (!infiltratr_array_reserve(
+                        (void **)&reserved, &reserved_capacity,
+                        sizeof(*reserved), required, 32u)) {
                     status = INFS_STATUS_NO_MEMORY;
                     goto out;
                 }
-                reserved = grown;
-                reserved_capacity = next;
             }
             uint64_t block = 0;
             status = alloc_exact_run_uninitialized(vol, 1u, &block);
