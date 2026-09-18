@@ -240,7 +240,7 @@ static int infilfs_native_recover_unlinked_files(struct super_block *sb)
     discovery_locked = true;
     ret = infilfs_ns_index_snapshot(sb, &entries, &count);
     if (ret)
-        return ret;
+        goto out;
     object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
     if (!object) {
         ret = -ENOMEM;
