@@ -569,16 +569,17 @@ headerbar .subtitle {{ color: {p["muted"]}; font-size: 11px; }}
 button {{
     min-height: 30px;
     padding: 0 12px;
-    background: {p["operation"]};
-    color: {p["text"]};
+    background: {p["button_background"]};
+    color: {p["button_foreground"]};
     border: 1px solid {p["border"]};
     border-radius: 6px;
     font-family: "MB Corpo S Title WEB";
     font-weight: 700;
 }}
-button:hover {{ background: {p["operation_hover"]}; }}
+button:hover {{ background: {p["neutral_accent"]}; }}
 button:active, button:checked {{
-    background: {p["surface"]};
+    background: {p["selection_background"]};
+    color: {p["selection_foreground"]};
     border-color: {accent};
 }}
 button:disabled {{
