@@ -39,11 +39,11 @@ static HANDLE WINAPI infs_discovery_CreateFileW(
     return handle;
 }
 
-/* The transfer application is a bulk-copy adapter, so keep a much larger
- * bounded transaction open than the interactive Linux/FUSE default. Without
- * this policy, infs_write_file_buffered() immediately publishes every 4 MiB
- * copy chunk and rewrites the multi-megabyte allocation bitmap each time.
- * A 256 MiB publication window keeps the generic crash-consistent transaction
+/* The transfer application is a bulk-copy adapter, so use a larger bounded
+ * publication window than the interactive/default portable-core policy.
+ * Otherwise infs_write_file_buffered() can publish each 4 MiB copy chunk and
+ * repeatedly rewrite allocation metadata. A 256 MiB publication window keeps
+ * the generic crash-consistent transaction
  * machinery intact while removing that pathological Windows write
  * amplification. copy_host_file() still performs an explicit sync at the end
  * of each file, so a completed file is durable before the next one starts. */
