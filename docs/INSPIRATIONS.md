@@ -5,6 +5,27 @@ This file records design influences only. It is not a feature-status or qualific
 
 InfiltratorFS does not copy another filesystem's on-disk format. It treats filesystem history as a catalogue of mechanisms that can be accepted, changed, generalized or rejected independently.
 
+## Reference discipline
+
+The table below records design influence rather than claiming implementation
+equivalence. Where an architectural comparison matters, primary papers,
+specifications or maintainer documentation should be preferred over secondary
+summaries. Useful starting points include:
+
+- Adam Sweeney et al., *Scalability in the XFS File System*, USENIX 1996;
+- Ohad Rodeh, Josef Bacik and Chris Mason, *BTRFS: The Linux B-Tree
+  Filesystem*, ACM Transactions on Storage, 2013;
+- Changman Lee et al., *F2FS: A New File System for Flash Storage*, FAST 2015;
+- the OpenZFS design/administration documentation for ZFS integrity, CoW,
+  snapshots and scrub;
+- the Linux kernel documentation for ext4 and bcachefs;
+- Apple's APFS reference material; and
+- Microsoft's filesystem documentation for NTFS/ReFS semantics.
+
+These sources provide historical and comparative context. InfiltratorFS's
+actual contract is defined by its own format, architecture and qualification
+documents.
+
 | Source | Idea retained or reconsidered |
 | --- | --- |
 | Amiga OFS/FFS | Bitmap-style allocation truth and simple explicit on-disk structures. |
