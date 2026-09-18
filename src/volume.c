@@ -7,6 +7,7 @@
 #include "infilfs/iac1.h"
 #include "infilfs/storage.h"
 #include "infilfs/utf8.h"
+#include "infiltratr/arithmetic.h"
 #include "infiltratr/core.h"
 
 #include <stdbool.h>

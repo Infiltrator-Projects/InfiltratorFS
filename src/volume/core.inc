@@ -44,23 +44,11 @@ static void free_extent_index_destroy(struct infs_volume *vol)
 
 static int free_extent_index_reserve(struct infs_volume *vol, size_t needed)
 {
-    if (needed <= vol->free_extent_capacity)
-        return 1;
-    size_t next = vol->free_extent_capacity ? vol->free_extent_capacity : 64u;
-    while (next < needed) {
-        if (next > SIZE_MAX / 2u)
-            return 0;
-        next *= 2u;
-    }
-    if (next > SIZE_MAX / sizeof(*vol->free_extents))
+    if (!vol)
         return 0;
-    struct infs_free_extent *grown = realloc(
-        vol->free_extents, next * sizeof(*grown));
-    if (!grown)
-        return 0;
-    vol->free_extents = grown;
-    vol->free_extent_capacity = next;
-    return 1;
+    return infiltratr_array_reserve(
+        (void **)&vol->free_extents, &vol->free_extent_capacity,
+        sizeof(*vol->free_extents), needed, 64u) ? 1 : 0;
 }
 
 static int free_extent_index_rebuild(struct infs_volume *vol)
@@ -562,19 +550,10 @@ static int tx_record_allocated(struct infs_volume *vol,
     if (!vol || !vol->tx_active || !count ||
         start > UINT64_MAX - count)
         return INFS_STATUS_INVALID_ARGUMENT;
-    if (vol->tx_allocated_count == vol->tx_allocated_capacity) {
-        size_t next = vol->tx_allocated_capacity ?
-            vol->tx_allocated_capacity * 2u : 32u;
-        if (next < vol->tx_allocated_capacity ||
-            next > SIZE_MAX / sizeof(*vol->tx_allocated))
-            return INFS_STATUS_NO_MEMORY;
-        struct infs_deferred_range *grown = realloc(
-            vol->tx_allocated, next * sizeof(*grown));
-        if (!grown)
-            return INFS_STATUS_NO_MEMORY;
-        vol->tx_allocated = grown;
-        vol->tx_allocated_capacity = next;
-    }
+    if (!infiltratr_array_reserve(
+            (void **)&vol->tx_allocated, &vol->tx_allocated_capacity,
+            sizeof(*vol->tx_allocated), vol->tx_allocated_count + 1u, 32u))
+        return INFS_STATUS_NO_MEMORY;
     vol->tx_allocated[vol->tx_allocated_count].start = start;
     vol->tx_allocated[vol->tx_allocated_count].count = count;
     ++vol->tx_allocated_count;
@@ -751,23 +730,10 @@ static int tx_defer_range(struct infs_volume *vol, uint64_t start, uint64_t coun
         }
     }
 
-    if (vol->tx_deferred_count == vol->tx_deferred_capacity) {
-        size_t next = vol->tx_deferred_capacity ?
-            vol->tx_deferred_capacity * 2u : 16u;
-        if (next < vol->tx_deferred_capacity ||
-            next > SIZE_MAX / sizeof(*vol->tx_deferred)) {
-            vol->tx_error = INFS_STATUS_NO_MEMORY;
-            return vol->tx_error;
-        }
-        struct infs_deferred_range *grown =
-            realloc(vol->tx_deferred, next * sizeof(*grown));
-        if (!grown) {
-            vol->tx_error = INFS_STATUS_NO_MEMORY;
-            return vol->tx_error;
-        }
-        vol->tx_deferred = grown;
-        vol->tx_deferred_capacity = next;
-    }
+    if (!infiltratr_array_reserve(
+            (void **)&vol->tx_deferred, &vol->tx_deferred_capacity,
+            sizeof(*vol->tx_deferred), vol->tx_deferred_count + 1u, 16u))
+        return INFS_STATUS_NO_MEMORY;
     vol->tx_deferred[vol->tx_deferred_count].start = start;
     vol->tx_deferred[vol->tx_deferred_count].count = count;
     ++vol->tx_deferred_count;

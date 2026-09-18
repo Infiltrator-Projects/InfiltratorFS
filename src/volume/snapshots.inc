@@ -34,18 +34,10 @@ static int snapshot_visit_once(
             return INFS_STATUS_OK;
         }
     }
-    if (ctx->count == ctx->capacity) {
-        size_t next = ctx->capacity ? ctx->capacity * 2u : 32u;
-        if (next < ctx->capacity ||
-            next > SIZE_MAX / sizeof(*ctx->entries))
-            return INFS_STATUS_NO_MEMORY;
-        struct snapshot_visit_entry *grown = realloc(
-            ctx->entries, next * sizeof(*grown));
-        if (!grown)
-            return INFS_STATUS_NO_MEMORY;
-        ctx->entries = grown;
-        ctx->capacity = next;
-    }
+    if (!infiltratr_array_reserve(
+            (void **)&ctx->entries, &ctx->capacity, sizeof(*ctx->entries),
+            ctx->count + 1u, 32u))
+        return INFS_STATUS_NO_MEMORY;
     ctx->entries[ctx->count].generation = generation;
     ctx->entries[ctx->count].object_index_block = index;
     ++ctx->count;
