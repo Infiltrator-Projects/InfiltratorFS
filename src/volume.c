@@ -204,7 +204,7 @@ static int paged_index_add(struct infs_volume *vol, const uint8_t id[16],
                            uint64_t object_block, uint16_t type);
 static int paged_index_remove(struct infs_volume *vol, const uint8_t id[16]);
 
-/* Format 0.17 scalable object-index radix tree. */
+/* Format 0.18 scalable object-index radix tree. */
 static int tree_index_find(struct infs_volume *vol, const uint8_t id[16],
                            struct infs_lookup *out);
 static int tree_index_repoint(struct infs_volume *vol, const uint8_t id[16],
