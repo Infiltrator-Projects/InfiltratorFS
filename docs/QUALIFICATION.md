@@ -24,6 +24,24 @@ Automatic qualification and conformance jobs are hard-capped at 10 minutes where
 
 ## Current development evidence boundary
 
+### Current 0.18.59 implementation baseline
+
+Exact implementation source `49dfae888cf2077bfb871207e2190030936aa6d3`
+passed all ordinary push qualification workflows on 2026-09-18:
+
+- **Build and conformance** run `35335992730`;
+- **Native Linux kernel module** run `35335992738`;
+- **Linux metadata qualification** run `35335992618`;
+- **Linux root-volume qualification** run `35335992785`; and
+- **Native resize qualification** run `35335992674`.
+
+All five workflows completed successfully. This commit is the qualified
+implementation baseline immediately before the documentation/comment-quality
+pass. Documentation-only successor commits do not retroactively extend this
+evidence to changed executable source; any later implementation change requires
+its own applicable qualification.
+
+
 ### Resize
 
 Online resize is implemented and independently mounted-qualified.
