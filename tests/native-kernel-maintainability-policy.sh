@@ -55,7 +55,7 @@ test -n "$resize_inner" || fail 'write_lock acquisition after resize_lock not fo
 # behaviour is covered by the mounted quota qualification rather than a fragile
 # text parser.
 grep -Fq 'mutex_lock(&sbi->quota_lock);' "$quota" || fail 'quota_lock acquisition missing'
-grep -Fq 'mutex_lock(&sbi->write_lock);' "$quota" || fail 'quota write_lock acquisition missing'
+grep -Fq 'down_read(&sbi->write_lock);' "$quota" || fail 'quota write_lock acquisition missing'
 
 # The native driver must stay a genuine multi-object Kbuild module. The
 # allocation map is the first extracted subsystem and must never regress into
@@ -117,7 +117,7 @@ fill_super_body="$(sed -n '/static int infilfs_fill_super(/,/^}/p' "$driver")"
     fail 'full orphan scan regressed onto the synchronous mount path'
 grep -Fq 'infilfs_wait_for_orphan_recovery(sbi)' "$kernel/infiltratorfs_rw_namespace.inc" || \
     fail 'namespace mutation is not gated during deferred orphan recovery'
-grep -Fq 'mutex_lock(&sbi->write_lock);' "$rw" || \
+grep -Fq 'down_read(&sbi->write_lock);' "$rw" || \
     fail 'orphan discovery is not serialized with CoW/index publication'
 
 # Only the core object and the explicit RW compositor may textually compose
