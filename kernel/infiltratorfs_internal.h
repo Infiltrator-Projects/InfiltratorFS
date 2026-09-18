@@ -325,6 +325,12 @@ struct infilfs_sb_info {
     struct infilfs_superblock_disk disk;
     u64 device_blocks;
     struct rw_semaphore write_lock;
+    /*
+     * Serializes construction of the volatile shared-range ownership index.
+     * Builders run under write_lock read-side topology protection, never the
+     * writer side, so a million-file rebuild cannot block unrelated readers.
+     */
+    struct mutex shared_range_build_lock;
     spinlock_t pagecache_accounting_lock;
     atomic64_t pagecache_pending_blocks;
     struct mutex linux_meta_lock;
@@ -407,6 +413,7 @@ struct infilfs_inode_info {
     u64 persisted_size;
     u64 data_allocation_hint;
     u64 portable_flags;
+    struct timespec64 birth_time;
     u16 object_type;
     u8 object_id[16];
     char *symlink_target;
