@@ -527,9 +527,9 @@ int infilfs_native_resize_volume(
     if (!ret)
         ret = infilfs_resize_wait_for_reservations(sbi);
     if (!ret) {
-        mutex_lock(&sbi->write_lock);
+        down_write(&sbi->write_lock);
         ret = infilfs_native_resize_locked(sb, requested, request);
-        mutex_unlock(&sbi->write_lock);
+        up_write(&sbi->write_lock);
     }
 
     WRITE_ONCE(sbi->resize_active, false);
