@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #include "infiltratorfs_ioctl.h"
+#include "infiltratr/core.h"
 
 struct optimize_options {
     bool defrag;
@@ -43,15 +44,7 @@ static void usage(const char *program)
 
 static int parse_u64(const char *text, uint64_t *value)
 {
-    char *end = NULL;
-    unsigned long long parsed;
-
-    errno = 0;
-    parsed = strtoull(text, &end, 10);
-    if (errno || !end || *end != '\0')
-        return -1;
-    *value = (uint64_t)parsed;
-    return 0;
+    return infiltratr_parse_u64(text, 10, value) ? 0 : -1;
 }
 
 static int get_metrics(int fd, struct infilfs_fragmentation_metrics *metrics)

@@ -5,6 +5,7 @@
 #include "infilfs/utf8.h"
 
 #include "infilfs/endian.h"
+#include "infiltratr/core.h"
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -28,14 +29,9 @@ static void usage(const char *prog)
 
 static int parse_identity_component(const char *text, uint32_t *value)
 {
-    char *end = NULL;
-    unsigned long long parsed;
-
-    if (!text || !*text || !value)
-        return -1;
-    errno = 0;
-    parsed = strtoull(text, &end, 10);
-    if (errno || !end || *end != '\0' || parsed > UINT32_MAX)
+    uint64_t parsed = 0;
+    if (!value ||
+        !infiltratr_parse_u64_range(text, 10, 0, UINT32_MAX, &parsed))
         return -1;
     *value = (uint32_t)parsed;
     return 0;

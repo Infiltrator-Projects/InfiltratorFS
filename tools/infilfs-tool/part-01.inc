@@ -4,6 +4,9 @@
 #include "infilfs/posix_io.h"
 
 #include "infilfs/endian.h"
+#include "infiltratr/core.h"
+#include "infiltratr/posix_io.h"
+#include "infiltratr/quantity.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>

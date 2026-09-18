@@ -12,37 +12,11 @@
 #include <unistd.h>
 
 #include "infiltratorfs_ioctl.h"
+#include "infiltratr/quantity.h"
 
 static int parse_size(const char *text, uint64_t *bytes)
 {
-    char *end = NULL;
-    unsigned long long value;
-    uint64_t multiplier = 1;
-
-    if (!text || !*text)
-        return -1;
-    errno = 0;
-    value = strtoull(text, &end, 10);
-    if (errno || end == text)
-        return -1;
-
-    if (*end) {
-        if (strcmp(end, "KiB") == 0 || strcmp(end, "K") == 0)
-            multiplier = UINT64_C(1024);
-        else if (strcmp(end, "MiB") == 0 || strcmp(end, "M") == 0)
-            multiplier = UINT64_C(1024) * 1024;
-        else if (strcmp(end, "GiB") == 0 || strcmp(end, "G") == 0)
-            multiplier = UINT64_C(1024) * 1024 * 1024;
-        else if (strcmp(end, "TiB") == 0 || strcmp(end, "T") == 0)
-            multiplier = UINT64_C(1024) * 1024 * 1024 * 1024;
-        else
-            return -1;
-    }
-
-    if ((uint64_t)value > UINT64_MAX / multiplier)
-        return -1;
-    *bytes = (uint64_t)value * multiplier;
-    return 0;
+    return infiltratr_parse_binary_quantity_u64(text, bytes) ? 0 : -1;
 }
 
 int main(int argc, char **argv)

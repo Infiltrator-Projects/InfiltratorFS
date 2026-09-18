@@ -2,10 +2,9 @@
 static int command_write(struct infs_volume *vol, const char *host,
                          const char *dest, const char *offset_text)
 {
-    char *endp = NULL;
-    errno = 0;
-    unsigned long long off64 = strtoull(offset_text, &endp, 0);
-    if (errno || !endp || *endp != '\0' || off64 > (unsigned long long)INT64_MAX) {
+    uint64_t off64 = 0;
+    if (!infiltratr_parse_u64_range(
+            offset_text, 0, 0, (uint64_t)INT64_MAX, &off64)) {
         errno = EINVAL;
         return die_errno("write offset");
     }
@@ -24,17 +23,10 @@ static int command_write(struct infs_volume *vol, const char *host,
         close(input);
         return die_errno("allocate host buffer");
     }
-    size_t done = 0;
-    while (done < size) {
-        ssize_t n = read(input, buf + done, size - done);
-        if (n < 0 && errno == EINTR) continue;
-        if (n <= 0) {
-            free(buf);
-            close(input);
-            if (n == 0) errno = EIO;
-            return die_errno("read host file");
-        }
-        done += (size_t)n;
+    if (size && infiltratr_read_full(input, buf, size) != 0) {
+        free(buf);
+        close(input);
+        return die_errno("read host file");
     }
     close(input);
     int64_t written = infs_write_file(vol, dest, buf, size, (uint64_t)off64);
@@ -65,28 +57,9 @@ static int parse_resize_size(struct infs_volume *vol, const char *text,
         return 1;
     }
 
-    errno = 0;
-    char *end = NULL;
-    unsigned long long value = strtoull(text, &end, 10);
-    if (errno || end == text)
+    uint64_t bytes = 0;
+    if (!infiltratr_parse_binary_quantity_u64(text, &bytes))
         return 0;
-
-    uint64_t multiplier = 1u;
-    if (*end != '\0') {
-        if (strcmp(end, "KiB") == 0)
-            multiplier = UINT64_C(1024);
-        else if (strcmp(end, "MiB") == 0)
-            multiplier = UINT64_C(1024) * 1024u;
-        else if (strcmp(end, "GiB") == 0)
-            multiplier = UINT64_C(1024) * 1024u * 1024u;
-        else if (strcmp(end, "TiB") == 0)
-            multiplier = UINT64_C(1024) * 1024u * 1024u * 1024u;
-        else
-            return 0;
-    }
-    if ((uint64_t)value > UINT64_MAX / multiplier)
-        return 0;
-    uint64_t bytes = (uint64_t)value * multiplier;
     if ((bytes % INFS_BLOCK_SIZE) != 0)
         return 0;
     *bytes_out = bytes;
@@ -112,10 +85,8 @@ static int command_resize(struct infs_volume *vol, const char *size_text)
 static int command_map(struct infs_volume *vol, const char *path,
                        const char *logical_text)
 {
-    char *endp = NULL;
-    errno = 0;
-    unsigned long long logical = strtoull(logical_text, &endp, 0);
-    if (errno || !endp || *endp != '\0') {
+    uint64_t logical = 0;
+    if (!infiltratr_parse_u64(logical_text, 0, &logical)) {
         errno = EINVAL;
         return die_errno("map logical block");
     }
@@ -140,13 +111,13 @@ static int command_map(struct infs_volume *vol, const char *path,
     for (uint32_t i = 0; i < count; ++i) {
         uint64_t l = infs_le64_to_cpu(ext[i].logical_block);
         uint32_t n = infs_le32_to_cpu(ext[i].block_count);
-        if ((uint64_t)logical >= l && (uint64_t)logical < l + n) {
+        if (logical >= l && logical < l + n) {
             if (infs_le32_to_cpu(ext[i].flags) == INFS_EXTENT_HOLE) {
                 puts("hole");
                 return 0;
             }
             printf("%" PRIu64 "\n", infs_le64_to_cpu(ext[i].physical_block) +
-                   ((uint64_t)logical - l));
+                   (logical - l));
             return 0;
         }
     }
@@ -156,21 +127,16 @@ static int command_map(struct infs_volume *vol, const char *path,
 static int command_punch(struct infs_volume *vol, const char *path,
                          const char *offset_text, const char *length_text)
 {
-    char *offset_end = NULL;
-    char *length_end = NULL;
-    errno = 0;
-    unsigned long long offset = strtoull(offset_text, &offset_end, 0);
-    if (errno || !offset_end || *offset_end != '\0') {
+    uint64_t offset = 0;
+    uint64_t length = 0;
+    if (!infiltratr_parse_u64(offset_text, 0, &offset)) {
         errno = EINVAL;
         return die_errno("punch offset");
     }
-    errno = 0;
-    unsigned long long length = strtoull(length_text, &length_end, 0);
-    if (errno || !length_end || *length_end != '\0') {
+    if (!infiltratr_parse_u64(length_text, 0, &length)) {
         errno = EINVAL;
         return die_errno("punch length");
     }
-    infs_status status = infs_punch_hole(vol, path, (uint64_t)offset,
-                                         (uint64_t)length);
+    infs_status status = infs_punch_hole(vol, path, offset, length);
     return status == INFS_STATUS_OK ? 0 : die_status("punch", status);
 }

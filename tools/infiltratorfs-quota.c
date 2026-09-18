@@ -11,57 +11,27 @@
 #include <unistd.h>
 
 #include "infiltratorfs_ioctl.h"
+#include "infiltratr/core.h"
+#include "infiltratr/quantity.h"
 
 static int parse_u32(const char *text, uint32_t *value)
 {
-    char *end = NULL;
-    unsigned long v;
-    errno = 0;
-    v = strtoul(text, &end, 10);
-    if (errno || !text[0] || !end || *end || v > UINT32_MAX)
+    uint64_t parsed = 0;
+    if (!value ||
+        !infiltratr_parse_u64_range(text, 10, 0, UINT32_MAX, &parsed))
         return -1;
-    *value = (uint32_t)v;
+    *value = (uint32_t)parsed;
     return 0;
 }
 
 static int parse_u64(const char *text, uint64_t *value)
 {
-    char *end = NULL;
-    unsigned long long v;
-    errno = 0;
-    v = strtoull(text, &end, 10);
-    if (errno || !text[0] || !end || *end)
-        return -1;
-    *value = (uint64_t)v;
-    return 0;
+    return infiltratr_parse_u64(text, 10, value) ? 0 : -1;
 }
 
 static int parse_size(const char *text, uint64_t *bytes)
 {
-    char *end = NULL;
-    unsigned long long value;
-    uint64_t multiplier = 1;
-
-    errno = 0;
-    value = strtoull(text, &end, 10);
-    if (errno || !text[0] || end == text)
-        return -1;
-    if (*end) {
-        if (!strcmp(end, "KiB") || !strcmp(end, "K"))
-            multiplier = UINT64_C(1024);
-        else if (!strcmp(end, "MiB") || !strcmp(end, "M"))
-            multiplier = UINT64_C(1024) * 1024;
-        else if (!strcmp(end, "GiB") || !strcmp(end, "G"))
-            multiplier = UINT64_C(1024) * 1024 * 1024;
-        else if (!strcmp(end, "TiB") || !strcmp(end, "T"))
-            multiplier = UINT64_C(1024) * 1024 * 1024 * 1024;
-        else
-            return -1;
-    }
-    if ((uint64_t)value > UINT64_MAX / multiplier)
-        return -1;
-    *bytes = (uint64_t)value * multiplier;
-    return 0;
+    return infiltratr_parse_binary_quantity_u64(text, bytes) ? 0 : -1;
 }
 
 static int quota_type(const char *text, uint32_t *type)
