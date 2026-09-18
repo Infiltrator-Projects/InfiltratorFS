@@ -82,8 +82,11 @@ static int extent_page_encode(struct infs_volume *vol,
 {
     if (!count || count > INFS_EXTENTS_PER_PAGE)
         return INFS_STATUS_INVALID_ARGUMENT;
-    uint64_t generation = infs_le64_to_cpu(vol->tx_base_sb.generation) + 1u;
-    infs_status status = infs_metadata_page_init(
+    uint64_t generation = 0;
+    infs_status status = transaction_next_generation(vol, &generation);
+    if (status != INFS_STATUS_OK)
+        return status;
+    status = infs_metadata_page_init(
         block, INFS_EXTENT_PAGE_MAGIC, owner_id, generation);
     if (status != INFS_STATUS_OK)
         return status;
