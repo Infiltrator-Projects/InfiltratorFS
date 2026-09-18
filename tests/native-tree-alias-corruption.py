@@ -30,7 +30,7 @@ OBJECT_HEADER_SIZE = 96
 # scalar nanosecond timestamps with signed epoch seconds + nanoseconds.  Keep
 # these offsets derived from the current packed structures in format.h so this
 # corruption fixture mutates the real directory-tree head rather than a stale
-# Format 0.17 location.
+# superseded development-format location.
 ATTRIBUTES_SIZE = 120
 POSIX_COMPAT_SIZE = 16
 DIRECTORY_FIXED_FIELDS_SIZE = 8
