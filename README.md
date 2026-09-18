@@ -119,7 +119,9 @@ Published release assets are available from the repository's GitHub Releases pag
 
 ## Documentation ownership
 
-To prevent documentation drift, each kind of fact has one authoritative home:
+The full documentation taxonomy and change discipline are defined in
+`docs/README.md`. To prevent documentation drift, each kind of fact has one
+authoritative home:
 
 - `docs/ON_DISK_FORMAT.md` — persistent Format 0.18 layout and encoding contract.
 - `docs/ARCHITECTURE.md` — design model and architectural invariants.
