@@ -2749,6 +2749,8 @@ static void infilfs_schedule_orphan_recovery(struct super_block *sb)
     reinit_completion(&sbi->orphan_recovery_done);
     WRITE_ONCE(sbi->orphan_recovery_failed, false);
     WRITE_ONCE(sbi->orphan_recovery_task, NULL);
+    WRITE_ONCE(sbi->orphan_recovery_generation,
+               le64_to_cpu(sbi->disk.generation));
     WRITE_ONCE(sbi->orphan_recovery_pending, true);
     mod_delayed_work(system_long_wq, &sbi->orphan_recovery_work, 1);
 }
