@@ -28,7 +28,8 @@ for marker in \
     'resize_lock -> write_lock' \
     'quota_lock -> write_lock' \
     'write_lock -> bitmap_lock' \
-    'allocation-reservation shard spinlock -> bitmap_lock'; do
+    'allocation-reservation shard spinlock -> bitmap_lock' \
+    'shared_range_build_lock -> write_lock (read side only)'; do
     grep -Fq "$marker" "$makefile" || fail "Makefile lost lock rule: $marker"
     grep -Fq "$marker" "$ioctl" || fail "ioctl header lost lock rule: $marker"
 done
