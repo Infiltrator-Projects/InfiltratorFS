@@ -34,12 +34,13 @@ The stream header records the IAC1 version and predictor mode. Unknown versions,
 invalid modes, zero-distance matches, malformed fills, truncated streams and
 output-length mismatches are rejected.
 
-The current format keeps codec identification in each compressed extent. The
-legacy low two codec bits remain unchanged for identifiers 0-3, while previously
-unused high flag bits extend the namespace to 11 bits (0-2047). Existing Format
-0.17 compressed extents therefore retain byte-for-byte interpretation, while
-future codecs can receive new identifiers without changing file identity or
-requiring every extent on a volume to use the same representation.
+Format 0.18 keeps codec identification in each compressed extent. The low two
+codec bits encode identifiers 0-3 and additional flag bits extend the codec
+namespace to 11 bits (0-2047). This permits future Format 0.18 codec identifiers
+without changing file identity or requiring every extent on a volume to use the
+same representation. Pre-1.0 development does not promise backward readers for
+superseded development formats; the compatibility requirement here is that a
+committed stream retains one unambiguous meaning within the accepted format.
 
 ## Adaptive selection policy
 
@@ -138,7 +139,7 @@ the retained LZ4 representation. The codec identifier, stored-byte count and log
 extent length are sufficient to locate and decode each bounded stream.
 
 Future codec research may allocate any unused identifier in the 11-bit Format
-0.17 codec namespace or may justify a future development-format revision. It
+0.18 codec namespace or may justify a future development-format revision. It
 must not silently change the meaning of an existing IAC1 v1 stream.
 
 Pre-1.0 development may still replace Format 0.18 as a whole, but within a
