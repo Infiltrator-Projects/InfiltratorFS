@@ -201,10 +201,10 @@ static int infilfs_linux_meta_cache_build(struct super_block *sb,
     if (ret)
         return ret;
     infilfs_linux_meta_cache_reset(sbi);
-    mutex_lock(&sbi->write_lock);
+    down_read(&sbi->write_lock);
     ret = infilfs_for_each_dirent(
         dir, infilfs_linux_meta_cache_build_visitor, &build);
-    mutex_unlock(&sbi->write_lock);
+    up_read(&sbi->write_lock);
     if (ret < 0) {
         infilfs_linux_meta_cache_reset(sbi);
         return ret;
@@ -235,7 +235,7 @@ static int infilfs_linux_meta_find_child(
      * an older tree path between those reads.  Release before get_inode():
      * inode population can inspect sidecar metadata recursively.
      */
-    mutex_lock(&INFILFS_SB(dir->i_sb)->write_lock);
+    down_read(&INFILFS_SB(dir->i_sb)->write_lock);
     ret = infilfs_for_each_dirent(dir, infilfs_lookup_visitor, &search);
     if (ret < 0)
         goto unlock;
@@ -255,7 +255,7 @@ static int infilfs_linux_meta_find_child(
         ret = -EFSCORRUPTED;
         goto unlock;
     }
-    mutex_unlock(&INFILFS_SB(dir->i_sb)->write_lock);
+    up_read(&INFILFS_SB(dir->i_sb)->write_lock);
     inode = infilfs_get_inode(dir->i_sb, block, indexed_type,
                               search.object_id);
     if (IS_ERR(inode))
@@ -264,7 +264,7 @@ static int infilfs_linux_meta_find_child(
     return 0;
 
 unlock:
-    mutex_unlock(&INFILFS_SB(dir->i_sb)->write_lock);
+    up_read(&INFILFS_SB(dir->i_sb)->write_lock);
     return ret;
 }
 
