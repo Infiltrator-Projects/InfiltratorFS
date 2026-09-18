@@ -5090,7 +5090,13 @@ static ssize_t infilfs_native_parallel_append_batch(
             ret = publish;
     }
     if (pending->active && !pending->commit_failed)
-        mod_delayed_work(system_wq, &pending->idle_work,
+        /*
+         * Publication performs allocation-map staging plus durability
+         * barriers while holding the persistent writer domain.  It is
+         * deliberately long-running kernel work; keep it off system_wq so a
+         * checkpoint cannot starve unrelated per-CPU system work.
+         */
+        mod_delayed_work(system_long_wq, &pending->idle_work,
                          INFILFS_NATIVE_IDLE_DELAY);
 
     up_write(&sbi->write_lock);
