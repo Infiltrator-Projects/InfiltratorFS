@@ -322,9 +322,13 @@ infs_status infs_win32_storage_open_partition_region(
     uint64_t region_size,
     int writable)
 {
-    if (!storage || !path || !path[0] || !region_size ||
-        base_offset > UINT64_MAX - region_size)
+    if (!storage || !path || !path[0] || !region_size)
         return INFS_STATUS_INVALID_ARGUMENT;
+    uint64_t region_end = 0;
+    if (!infiltratr_u64_add_checked(
+            base_offset, region_size, &region_end))
+        return INFS_STATUS_INVALID_ARGUMENT;
+    (void)region_end;
     storage->ops = NULL;
     storage->context = NULL;
 
