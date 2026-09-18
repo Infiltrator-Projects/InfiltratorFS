@@ -73,9 +73,6 @@ static int infilfs_ns_begin(struct super_block *sb,
 
     if (!sbi || !sbi->rw_enabled || sb_rdonly(sb))
         return -EROFS;
-    ret = infilfs_wait_for_orphan_recovery(sbi);
-    if (ret)
-        return ret;
     pending = infilfs_native_pending_get(sb, true);
     if (!pending)
         return -ENOMEM;
