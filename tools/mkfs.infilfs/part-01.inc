@@ -6,6 +6,7 @@
 
 #include "infilfs/endian.h"
 #include "infiltratr/core.h"
+#include "infiltratr/posix.h"
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -170,7 +171,8 @@ static int block_device_in_use(int fd)
     char target_real[PATH_MAX];
     snprintf(target_link, sizeof(target_link), "/sys/dev/block/%u:%u",
              major(st.st_rdev), minor(st.st_rdev));
-    if (!realpath(target_link, target_real))
+    if (!infiltratr_realpath_copy(target_link, target_real,
+                                  sizeof(target_real)))
         return -1;
 
     FILE *mountinfo = fopen("/proc/self/mountinfo", "r");
@@ -185,7 +187,8 @@ static int block_device_in_use(int fd)
         char mount_real[PATH_MAX];
         snprintf(mount_link, sizeof(mount_link), "/sys/dev/block/%u:%u",
                  mount_major, mount_minor);
-        if (realpath(mount_link, mount_real) &&
+        if (infiltratr_realpath_copy(mount_link, mount_real,
+                                     sizeof(mount_real)) &&
             same_or_descendant_path(target_real, mount_real)) {
             fclose(mountinfo);
             return 1;
@@ -209,7 +212,8 @@ static int block_device_in_use(int fd)
         char class_real[PATH_MAX];
         if (snprintf(class_path, sizeof(class_path), "/sys/class/block/%s",
                      entry->d_name) >= (int)sizeof(class_path) ||
-            !realpath(class_path, class_real))
+            !infiltratr_realpath_copy(class_path, class_real,
+                                      sizeof(class_real)))
             continue;
         if (!same_or_descendant_path(target_real, class_real))
             continue;
