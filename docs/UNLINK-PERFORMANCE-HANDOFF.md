@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # InfiltratorFS unlink performance handoff
 
 Status: confirmed live performance defect on the 0.18.45 native Linux VFS path.
