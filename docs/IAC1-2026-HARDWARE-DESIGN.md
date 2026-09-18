@@ -1,6 +1,10 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # IAC1 2026 Hardware Design Principle
 
+**Document class:** implementation/performance design constraints. Persistent
+codec semantics are normative in `COMPRESSION.md`; historical measurements
+are version-scoped evidence and do not override current qualification.
+
 ## Purpose
 
 This document records a permanent design rule for InfiltratorFS compression:
