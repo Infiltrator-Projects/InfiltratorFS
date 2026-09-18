@@ -211,9 +211,10 @@ static void infilfs_posix_fill_common_attributes(
 
 /*
  * A crash can occur after the final directory name is removed but before the
- * last open VFS reference reaches ->evict_inode.  Such files are deliberately
- * retained in the object index with link_count zero.  Reclaim that persistent
- * orphan list before a writable mount is exposed.
+ * last open VFS reference reaches ->evict_inode. Such files are deliberately
+ * retained in the object index with link_count zero. Recover crash leftovers
+ * in the background, fenced to the generation that was committed at mount, so
+ * live post-mount unlinks keep their normal VFS lifetime.
  */
 static int infilfs_native_recover_unlinked_files(struct super_block *sb)
 {
