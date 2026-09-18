@@ -85,10 +85,8 @@ static void scrub_metadata_progress_update(
         (!progress->total || done != progress->total))
         return;
     scrub_metadata_progress_emit(progress);
-    if (UINT64_MAX - done < progress->stride)
-        progress->next_emit = UINT64_MAX;
-    else
-        progress->next_emit = done + progress->stride;
+    progress->next_emit =
+        infiltratr_u64_add_saturating(done, progress->stride);
 }
 
 static infs_status scrub_validate_generation_metadata(
