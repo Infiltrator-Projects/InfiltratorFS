@@ -107,6 +107,19 @@ getattr_body="$(sed -n '/static int infilfs_getattr(/,/^}/p' "$rw")"
 grep -Fq 'mutex_lock(&sbi->write_lock)' <<<"$getattr_body" || fail 'getattr topology read is unlocked'
 grep -Fq 'ATTR_KILL_SUID | ATTR_KILL_SGID' "$rw" || fail 'set-ID stripping is not persisted'
 
+# Writable mount latency must not scale with every regular-file object. Crash
+# orphan discovery runs after mount, while namespace mutation waits for that
+# recovery barrier so newly created zero-link files cannot be misidentified.
+grep -Fq 'infilfs_schedule_orphan_recovery(sb);' "$driver" || \
+    fail 'writable mount lost deferred orphan recovery'
+fill_super_body="$(sed -n '/static int infilfs_fill_super(/,/^}/p' "$driver")"
+! grep -Fq 'ret = infilfs_native_recover_unlinked_files(sb);' <<<"$fill_super_body" || \
+    fail 'full orphan scan regressed onto the synchronous mount path'
+grep -Fq 'infilfs_wait_for_orphan_recovery(sbi)' "$kernel/infiltratorfs_rw_namespace.inc" || \
+    fail 'namespace mutation is not gated during deferred orphan recovery'
+grep -Fq 'mutex_lock(&sbi->write_lock);' "$rw" || \
+    fail 'orphan discovery is not serialized with CoW/index publication'
+
 # Only the core object and the explicit RW compositor may textually compose
 # remaining implementation .inc units. A leaf .inc importing another leaf creates hidden
 # ordering/cycle dependencies and is rejected.

@@ -2663,8 +2663,59 @@ static void infilfs_evict_inode(struct inode *inode)
     }
 }
 
+static void infilfs_orphan_recovery_worker(struct work_struct *work)
+{
+    struct infilfs_sb_info *sbi = container_of(
+        to_delayed_work(work), struct infilfs_sb_info, orphan_recovery_work);
+    struct super_block *sb = READ_ONCE(sbi->orphan_recovery_sb);
+    int ret = 0;
+
+    if (!sb)
+        goto complete;
+
+    WRITE_ONCE(sbi->orphan_recovery_task, current);
+    ret = infilfs_native_recover_unlinked_files(sb);
+    WRITE_ONCE(sbi->orphan_recovery_task, NULL);
+    if (ret) {
+        WRITE_ONCE(sbi->orphan_recovery_failed, true);
+        WRITE_ONCE(sbi->write_poisoned, true);
+        pr_err("InfiltratorFS: asynchronous crash-orphan recovery failed: %d; writes disabled\n",
+               ret);
+    }
+
+complete:
+    WRITE_ONCE(sbi->orphan_recovery_pending, false);
+    complete_all(&sbi->orphan_recovery_done);
+}
+
+static void infilfs_schedule_orphan_recovery(struct super_block *sb)
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
+
+    if (!sbi || sb_rdonly(sb))
+        return;
+    reinit_completion(&sbi->orphan_recovery_done);
+    WRITE_ONCE(sbi->orphan_recovery_failed, false);
+    WRITE_ONCE(sbi->orphan_recovery_task, NULL);
+    WRITE_ONCE(sbi->orphan_recovery_pending, true);
+    mod_delayed_work(system_long_wq, &sbi->orphan_recovery_work, 1);
+}
+
+static void infilfs_cancel_orphan_recovery(struct super_block *sb)
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
+
+    if (!sbi)
+        return;
+    cancel_delayed_work_sync(&sbi->orphan_recovery_work);
+    WRITE_ONCE(sbi->orphan_recovery_task, NULL);
+    WRITE_ONCE(sbi->orphan_recovery_pending, false);
+    complete_all(&sbi->orphan_recovery_done);
+}
+
 static void infilfs_put_super(struct super_block *sb)
 {
+    infilfs_cancel_orphan_recovery(sb);
     infilfs_quota_mount_destroy(sb);
     infilfs_rw_mount_destroy(sb);
     infilfs_linux_meta_cache_destroy(sb);
@@ -2766,6 +2817,10 @@ static int infilfs_fill_super(struct super_block *sb, struct fs_context *fc)
     mutex_init(&sbi->resize_lock);
     mutex_init(&sbi->quota_lock);
     rwlock_init(&sbi->bitmap_lock);
+    sbi->orphan_recovery_sb = sb;
+    init_completion(&sbi->orphan_recovery_done);
+    INIT_DELAYED_WORK(&sbi->orphan_recovery_work,
+                      infilfs_orphan_recovery_worker);
     sb->s_fs_info = sbi;
 
     ret = infilfs_select_checkpoint(sb, &sbi->disk);
@@ -2797,12 +2852,10 @@ static int infilfs_fill_super(struct super_block *sb, struct fs_context *fc)
         ret = -ENOMEM;
         goto fail;
     }
-    ret = infilfs_native_recover_unlinked_files(sb);
-    if (ret)
-        goto fail;
     ret = infilfs_quota_mount_init(sb);
     if (ret)
         goto fail;
+    infilfs_schedule_orphan_recovery(sb);
 
     pr_info("InfiltratorFS: native %s mount Format %u.%u generation %llu media=%s media_source=%s compress=%s\n",
             sb_rdonly(sb) ? "read-only" : "read-write",

@@ -218,15 +218,27 @@ static void infilfs_posix_fill_common_attributes(
  */
 static int infilfs_native_recover_unlinked_files(struct super_block *sb)
 {
+    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
     struct infilfs_index_entry_disk *entries = NULL;
     u8 *object = NULL;
     u32 count = 0, orphans = 0, files = 0;
     u32 i;
     u64 started = ktime_get_ns();
+    bool discovery_locked = false;
     int ret;
 
     if (sb_rdonly(sb))
         return 0;
+
+    /*
+     * Namespace mutation is gated while the asynchronous recovery worker is
+     * active. Data writes may still complete, so serialize the discovery
+     * snapshot with their CoW/index publication. Release write_lock before
+     * reclaiming candidates because reclaim itself enters the namespace
+     * transaction path.
+     */
+    mutex_lock(&sbi->write_lock);
+    discovery_locked = true;
     ret = infilfs_ns_index_snapshot(sb, &entries, &count);
     if (ret)
         return ret;
@@ -277,6 +289,9 @@ static int infilfs_native_recover_unlinked_files(struct super_block *sb)
             entries[orphans++] = entries[i];
     }
 
+    mutex_unlock(&sbi->write_lock);
+    discovery_locked = false;
+
     for (i = 0; i < orphans; ++i) {
         struct inode *inode;
         u64 live_block;
@@ -318,6 +333,8 @@ static int infilfs_native_recover_unlinked_files(struct super_block *sb)
     }
     ret = 0;
 out:
+    if (discovery_locked)
+        mutex_unlock(&sbi->write_lock);
     pr_info("InfiltratorFS: orphan scan files=%u candidates=%u elapsed_ms=%llu result=%d\n",
             files, orphans,
             (unsigned long long)div_u64(ktime_get_ns() - started, 1000000), ret);
