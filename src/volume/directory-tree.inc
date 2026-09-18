@@ -245,11 +245,14 @@ static int tree_dir_build_subtree(
 {
     if (!entries || !bytes || !count || !root_out)
         return INFS_STATUS_INVALID_ARGUMENT;
+    uint64_t generation = 0;
+    int status = transaction_next_generation(vol, &generation);
+    if (status != INFS_STATUS_OK)
+        return status;
     if (bytes <= INFS_METADATA_PAGE_DATA_SIZE) {
         uint8_t leaf[INFS_BLOCK_SIZE];
-        int status = infs_metadata_page_init(
-            leaf, INFS_DIRECTORY_PAGE_MAGIC, owner_id,
-            infs_le64_to_cpu(vol->tx_base_sb.generation) + 1u);
+        status = infs_metadata_page_init(
+            leaf, INFS_DIRECTORY_PAGE_MAGIC, owner_id, generation);
         if (status != INFS_STATUS_OK)
             return status;
         struct infs_metadata_page_disk *page =
@@ -263,9 +266,8 @@ static int tree_dir_build_subtree(
         return INFS_STATUS_NO_SPACE;
 
     uint8_t branch[INFS_BLOCK_SIZE];
-    int status = infs_metadata_page_init(
-        branch, INFS_DIRECTORY_BRANCH_PAGE_MAGIC, owner_id,
-        infs_le64_to_cpu(vol->tx_base_sb.generation) + 1u);
+    status = infs_metadata_page_init(
+        branch, INFS_DIRECTORY_BRANCH_PAGE_MAGIC, owner_id, generation);
     if (status != INFS_STATUS_OK)
         return status;
     struct infs_metadata_page_disk *page =
