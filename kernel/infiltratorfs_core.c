@@ -3143,4 +3143,4 @@ MODULE_AUTHOR("The First Infiltrator");
 MODULE_LICENSE("GPL");
 MODULE_ALIAS_FS(INFILTRATORFS_NAME);
 
-MODULE_INFO(infiltratorfs_hotfix, "orphan-cooperative-20260919");
+MODULE_INFO(infiltratorfs_hotfix, "stall-recovery-20260919");
