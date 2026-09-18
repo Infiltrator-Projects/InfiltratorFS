@@ -35,6 +35,8 @@ sources of truth.
 - `kernel/README.md` — local native-Linux module build/ownership guidance.
 - `IAC1-2026-HARDWARE-DESIGN.md` — performance-design constraints for modern
   hardware. Normative codec semantics remain in `COMPRESSION.md`.
+- `INSPIRATIONS.md` — comparative design context and primary-reference
+  starting points; it is neither a specification nor a status document.
 
 ## Historical and analytical records
 
