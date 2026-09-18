@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # InfiltratorFS 0.18.57
 
 Fix Linux native read-only to read-write remount initialization, preserve mount policy across remounts, and synchronize writes before read-only transitions. Add native remount regression qualification.
