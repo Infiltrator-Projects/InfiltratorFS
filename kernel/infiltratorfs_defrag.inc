@@ -111,9 +111,9 @@ static int infilfs_fragmentation_metrics(
 
     if (!S_ISREG(inode->i_mode))
         return -EINVAL;
-    down_write(&sbi->write_lock);
+    down_read(&sbi->write_lock);
     ret = infilfs_fragmentation_metrics_locked(inode, metrics);
-    up_write(&sbi->write_lock);
+    up_read(&sbi->write_lock);
     return ret;
 }
 
