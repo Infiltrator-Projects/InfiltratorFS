@@ -518,6 +518,8 @@ extern const u8 infilfs_index_page_magic[8];
 extern const u8 infilfs_index_branch_page_magic[8];
 bool infilfs_block_allocated(struct super_block *sb, u64 block);
 int infilfs_read_allocated_block(struct super_block *sb, u64 block, void *out);
+int infilfs_read_allocated_blocks(
+    struct super_block *sb, u64 start, u32 count, void *out);
 bool infilfs_metadata_page_valid(
     struct super_block *sb, const u8 *block, const u8 magic[8],
     const u8 owner_id[16]);
