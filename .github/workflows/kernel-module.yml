@@ -263,7 +263,7 @@ jobs:
           test "$(stat -f -c '%l' "$mountpoint")" = 1023
           test "$(stat -c '%u:%g' "$mountpoint")" = "$(id -u):$(id -g)"
 
-          # Format 0.17 namespace boundary: native VFS must match the portable
+          # Format 0.18 namespace boundary: native VFS must match the portable
           # 1023-byte component limit and reject byte 1024 with ENAMETOOLONG.
           python3 - "$mountpoint" <<'PY'
           import errno
