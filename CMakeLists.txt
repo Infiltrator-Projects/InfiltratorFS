@@ -367,6 +367,9 @@ if(UNIX)
     add_executable(infilfs-compression tools/infilfs-compression.c)
     add_executable(infiltratorfs-resize tools/infiltratorfs-resize.c)
     add_executable(infiltratorfs-quota tools/infiltratorfs-quota.c)
+    add_executable(infiltratorfs-theme tools/infiltratorfs-theme.c)
+    target_link_libraries(infiltratorfs-theme PRIVATE InfiltratrCommon::Portable)
+    infilfs_enable_warnings(infiltratorfs-theme)
     target_include_directories(infilfs-optimize PRIVATE kernel)
     target_include_directories(infiltratorfs-resize PRIVATE kernel)
     target_include_directories(infiltratorfs-quota PRIVATE kernel)
@@ -428,7 +431,7 @@ if(UNIX)
         COMMAND bash ${CMAKE_SOURCE_DIR}/tests/desktop-integration.sh
                      ${CMAKE_BINARY_DIR})
 
-    install(TARGETS mkfs.infilfs infilfs-inspect infilfs-tool infilfs-forensic infilfs-optimize infilfs-compression infiltratorfs-resize infiltratorfs-quota
+    install(TARGETS mkfs.infilfs infilfs-inspect infilfs-tool infilfs-forensic infilfs-optimize infilfs-compression infiltratorfs-resize infiltratorfs-quota infiltratorfs-theme
             RUNTIME DESTINATION bin)
     install(TARGETS fsck.infiltratorfs
             RUNTIME DESTINATION sbin)

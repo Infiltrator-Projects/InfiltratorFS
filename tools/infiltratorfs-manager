@@ -446,262 +446,271 @@ def show_common_about(parent, info: AboutInfo) -> None:
 
 
 
-CSS = b"""
-* {
+THEME_MODES = ("system", "day", "night")
+THEME_ACCENT = "#00adef"
+
+
+def _system_prefers_dark() -> bool:
+    settings = Gtk.Settings.get_default()
+    if settings is None:
+        return False
+    try:
+        if bool(settings.get_property("gtk-application-prefer-dark-theme")):
+            return True
+    except (TypeError, AttributeError):
+        pass
+    try:
+        return "dark" in str(settings.get_property("gtk-theme-name") or "").lower()
+    except (TypeError, AttributeError):
+        return False
+
+
+def _theme_config_path() -> Path:
+    root = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config")))
+    return root / "infiltratorfs" / "theme"
+
+
+def _load_theme_mode() -> str:
+    try:
+        mode = _theme_config_path().read_text(encoding="utf-8").strip().lower()
+    except OSError:
+        return "system"
+    return mode if mode in THEME_MODES else "system"
+
+
+def _save_theme_mode(mode: str) -> None:
+    path = _theme_config_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(mode + "\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _common_theme_from_source(mode: str) -> dict[str, str] | None:
+    contract = (
+        Path(__file__).resolve().parent.parent
+        / "src" / "infiltratr-common" / "design" / "infiltrator-design-v1.json"
+    )
+    if not contract.is_file():
+        return None
+    try:
+        data = json.loads(contract.read_text(encoding="utf-8"))
+        effective = mode
+        if mode == "system":
+            effective = "night" if _system_prefers_dark() else "day"
+        palette = data["theme"]["palettes"][effective]
+        return {key: str(value).lower() for key, value in palette.items()}
+    except (OSError, KeyError, TypeError, json.JSONDecodeError):
+        return None
+
+
+def _theme_helper() -> str | None:
+    installed = shutil.which("infiltratorfs-theme")
+    if installed:
+        return installed
+    build = Path(__file__).resolve().parent.parent / "build" / "infiltratorfs-theme"
+    return str(build) if build.is_file() and os.access(build, os.X_OK) else None
+
+
+def _theme_palette(mode: str) -> dict[str, str]:
+    helper = _theme_helper()
+    system_state = "dark" if _system_prefers_dark() else "light"
+    if helper:
+        result = capture(helper, mode, system_state)
+        if result.returncode == 0:
+            palette: dict[str, str] = {}
+            for line in result.stdout.splitlines():
+                key, sep, value = line.partition("=")
+                if sep:
+                    palette[key.strip()] = value.strip().lower()
+            required = {
+                "background", "panel", "card", "surface", "input", "border",
+                "text", "title", "muted", "subtle", "button_background",
+                "button_foreground", "selection_background",
+                "selection_foreground", "neutral_accent", "success", "warning",
+                "fault", "info", "operation", "card_hover", "surface_hover",
+                "operation_hover", "equals_hover",
+            }
+            if required.issubset(palette):
+                return palette
+
+    palette = _common_theme_from_source(mode)
+    if palette is not None:
+        return palette
+    raise RuntimeError("Infiltratr Common theme contract is unavailable")
+
+
+def _css_for_palette(p: dict[str, str]) -> bytes:
+    accent = THEME_ACCENT
+    css = f"""
+* {{
     font-family: "MB Corpo S Title WEB";
     font-weight: 400;
-    color: #eef1f3;
-}
-window, dialog, messagedialog, filechooser {
-    background: #050608;
-    color: #eef1f3;
-}
-headerbar {
+    color: {p["text"]};
+}}
+window, dialog, messagedialog, filechooser {{
+    background: {p["background"]};
+    color: {p["text"]};
+}}
+headerbar {{
     min-height: 42px;
-    background-image: linear-gradient(to bottom, #24262a, #171b20);
-    color: #eef1f3;
-    border-bottom: 1px solid #3a4046;
-}
-headerbar .title {
+    background: {p["panel"]};
+    color: {p["title"]};
+    border-bottom: 1px solid {p["border"]};
+}}
+headerbar .title {{
     font-family: "MB Corpo A Title Cond WEB";
     font-size: 16px;
     font-weight: 400;
-    color: #f1f3f5;
-}
-headerbar .subtitle {
-    color: #aeb6bd;
-    font-size: 11px;
-}
-button {
+    color: {p["title"]};
+}}
+headerbar .subtitle {{ color: {p["muted"]}; font-size: 11px; }}
+button {{
     min-height: 30px;
     padding: 0 12px;
-    background-image: linear-gradient(to bottom, #1d2227, #14181c);
-    color: #eef1f3;
-    border: 1px solid #3b4249;
-    border-radius: 4px;
+    background: {p["operation"]};
+    color: {p["text"]};
+    border: 1px solid {p["border"]};
+    border-radius: 6px;
     font-family: "MB Corpo S Title WEB";
     font-weight: 700;
-}
-button:hover {
-    background-image: linear-gradient(to bottom, #252b31, #191e23);
-    border-color: #56606a;
-}
-button:active, button:checked {
-    background-image: none;
-    background-color: #0c1014;
-    border-color: #00adef;
-}
-button:disabled {
-    background-image: none;
-    background-color: #0d1014;
-    color: #626a72;
-    border-color: #262b30;
-}
-button.suggested-action {
-    background-image: linear-gradient(to bottom, #17b8f3, #00a4e4);
+}}
+button:hover {{ background: {p["operation_hover"]}; }}
+button:active, button:checked {{
+    background: {p["surface"]};
+    border-color: {accent};
+}}
+button:disabled {{
+    background: {p["surface"]};
+    color: {p["subtle"]};
+    border-color: {p["border"]};
+}}
+button.suggested-action {{
+    background: {accent};
     color: #031018;
-    border-color: #2dc1f5;
-}
-button.suggested-action:hover {
-    background-image: linear-gradient(to bottom, #39c7f7, #0aafea);
-    border-color: #54cef8;
-}
-button.destructive-action {
-    background-image: linear-gradient(to bottom, #2c171b, #1e1013);
-    color: #f0c7ca;
-    border-color: #71343a;
-}
-entry, spinbutton, textview, textview text {
-    background-image: none;
-    background-color: #0b0e11;
-    color: #eef1f3;
-    border-color: #353a40;
-    caret-color: #00adef;
-}
-entry selection, textview text selection {
-    background-color: #00adef;
-    color: #031018;
-}
-stackswitcher button {
-    background-image: none;
-    background-color: transparent;
-    color: #98a1a9;
+    border-color: {accent};
+}}
+button.destructive-action {{
+    background: {p["surface"]};
+    color: {p["fault"]};
+    border-color: {p["fault"]};
+}}
+entry, spinbutton, textview, textview text {{
+    background: {p["input"]};
+    color: {p["text"]};
+    border-color: {p["border"]};
+    caret-color: {accent};
+}}
+entry selection, textview text selection {{
+    background: {p["selection_background"]};
+    color: {p["selection_foreground"]};
+}}
+stackswitcher button {{
+    background: transparent;
+    color: {p["muted"]};
     border-color: transparent;
     border-radius: 0;
     padding: 0 14px;
-}
-stackswitcher button:checked {
-    color: #eef1f3;
-    border-bottom: 2px solid #00adef;
-}
-scrollbar trough { background-color: #090c0f; }
-scrollbar slider {
-    background-color: #353a40;
-    border-color: #353a40;
-}
-scrollbar slider:hover { background-color: #4a525b; }
-separator { background-color: #353a40; }
+}}
+stackswitcher button:checked {{
+    color: {p["title"]};
+    border-bottom: 2px solid {accent};
+}}
+scrollbar trough {{ background: {p["surface"]}; }}
+scrollbar slider {{ background: {p["border"]}; border-color: {p["border"]}; }}
+scrollbar slider:hover {{ background: {p["neutral_accent"]}; }}
+separator {{ background: {p["border"]}; }}
 
-.sidebar {
-    background-image: linear-gradient(to right, #11151a, #0e1115);
-    border-right: 1px solid #343a40;
-}
-.sidebar-header {
-    padding: 20px 18px 12px 18px;
-}
-.sidebar-title {
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.10em;
-    color: #b7bec4;
-}
-.sidebar-count {
-    padding: 10px 18px 14px 18px;
-    color: #79828a;
-    font-size: 11px;
-}
-.device-list { background: transparent; }
-.device-list row {
-    border: 1px solid transparent;
-    border-radius: 5px;
-    margin: 3px 10px;
-}
-.device-list row:hover {
-    background: rgba(255,255,255,0.028);
-}
+.sidebar {{ background: {p["panel"]}; border-right: 1px solid {p["border"]}; }}
+.sidebar-header {{ padding: 20px 18px 12px 18px; }}
+.sidebar-title {{
+    font-size: 11px; font-weight: 700; letter-spacing: 0.10em;
+    color: {p["muted"]};
+}}
+.sidebar-count {{ padding: 10px 18px 14px 18px; color: {p["subtle"]}; font-size: 11px; }}
+.device-list {{ background: transparent; }}
+.device-list row {{
+    border: 1px solid transparent; border-radius: 6px; margin: 3px 10px;
+}}
+.device-list row:hover {{ background: {p["card_hover"]}; }}
 .device-list row:selected,
-.device-list row:selected:hover {
-    background-color: #11161b;
-    background-image: linear-gradient(to right, #161c21, #0d1014);
-    border-color: #293943;
+.device-list row:selected:hover {{
+    background: {p["selection_background"]};
+    border-color: {p["border"]};
     border-left-width: 3px;
-    border-left-color: #00adef;
-}
-.device-list row:selected .device-name { color: #eef1f3; }
-.device-list row:selected .device-meta { color: #98a1a9; }
-.device-row { padding: 11px 12px; }
-.device-row image { color: #c7cdd2; opacity: 0.90; }
-.device-list row:selected .device-row image { color: #00adef; opacity: 1; }
-.device-name {
-    font-size: 14px;
-    font-weight: 700;
-    color: #eef1f3;
-}
-.device-meta { color: #98a1a9; font-size: 12px; }
+    border-left-color: {accent};
+}}
+.device-list row:selected .device-name {{ color: {p["selection_foreground"]}; }}
+.device-list row:selected .device-meta {{ color: {p["muted"]}; }}
+.device-row {{ padding: 11px 12px; }}
+.device-row image {{ color: {p["neutral_accent"]}; opacity: 0.90; }}
+.device-list row:selected .device-row image {{ color: {accent}; opacity: 1; }}
+.device-name {{ font-size: 14px; font-weight: 700; color: {p["text"]}; }}
+.device-meta {{ color: {p["muted"]}; font-size: 12px; }}
 
-.content { padding: 30px 34px 24px 34px; }
-.hero { margin-bottom: 6px; }
-.hero-icon {
-    min-width: 54px;
-    min-height: 54px;
-    padding: 11px;
-    border: 1px solid #3e464f;
-    border-radius: 8px;
-    background-image: linear-gradient(155deg, #20262c, #11161b 58%, #080a0d);
-    color: #00adef;
-}
-.hero-title {
-    color: #f1f3f5;
-    font-family: "MB Corpo A Title Cond WEB";
-    font-size: 27px;
-    font-weight: 400;
-}
-.hero-path { color: #98a1a9; font-size: 12px; }
-.badge {
-    padding: 4px 9px;
-    border-radius: 999px;
-    background: #14181c;
-    border: 1px solid #3b4147;
-    color: #98a1a9;
-    font-size: 11px;
-    font-weight: 700;
-}
-.badge-mounted {
-    background: rgba(0,173,239,0.10);
-    border-color: rgba(0,173,239,0.46);
-    color: #00adef;
-}
-
-.section-title { color: #edf0f2; font-size: 16px; font-weight: 700; }
-.section-subtitle { color: #98a1a9; font-size: 12px; }
-.card {
-    padding: 18px;
-    border: 1px solid #353c43;
-    border-radius: 8px;
-    background-image: linear-gradient(155deg, #171c21, #0b0e11);
-}
-.stat-card {
-    padding: 15px 16px;
-    border: 1px solid #394149;
-    border-radius: 7px;
-    background-image: linear-gradient(155deg, #20262c, #11161b 58%, #080a0d);
-}
-.stat-caption { color: #7f8991; font-size: 10px; font-weight: 700; }
-.stat-value { color: #f0f2f4; font-size: 17px; font-weight: 700; }
-.detail-caption { color: #7e858c; font-size: 11px; }
-.detail-value { color: #eef1f3; font-weight: 700; }
-
-.action-row { padding: 12px 12px; border-radius: 5px; }
-.action-row:hover { background: rgba(255,255,255,0.025); }
-.action-row image { color: #aeb6bd; }
-.action-title { color: #eef1f3; font-weight: 700; }
-.action-description { color: #98a1a9; font-size: 12px; }
-.danger-zone {
-    padding: 16px;
-    border: 1px solid #663239;
-    border-radius: 7px;
-    background-image: linear-gradient(to right, #1b0f12, #120a0c);
-}
-
-.empty-state {
-    min-width: 460px;
-    padding: 36px 46px;
-    border: 1px solid #3a424a;
-    border-radius: 10px;
-    background-image: linear-gradient(155deg, #181d22, #0d1115 62%, #080a0d);
-}
-.empty-state image {
-    color: #cfd4d8;
-    opacity: 0.92;
-}
-.empty-title {
-    color: #f1f3f5;
-    font-family: "MB Corpo A Title Cond WEB";
-    font-size: 30px;
-    font-weight: 400;
-}
-.empty-copy { color: #98a1a9; font-size: 13px; }
-
-.activity-frame {
-    border: 1px solid #353c43;
-    border-radius: 7px;
-    background: #0b0e11;
-}
-.activity, .activity text {
-    background: #0b0e11;
-    color: #e8ecef;
-    font-family: "MB Corpo S Title WEB";
-    font-weight: 400;
-}
-.statusbar {
-    padding: 8px 12px;
-    border-top: 1px solid #2d3339;
-    background: #0a0d10;
-}
-.status-text { color: #7f8991; font-size: 11px; }
-
-.link-about-dialog {
-    background-color: #050608;
-    color: #eef1f3;
-}
-.link-about-dialog label {
-    color: #eef1f3;
-}
-.link-about-dialog image {
-    margin-top: 12px;
-    margin-bottom: 8px;
-}
+.content {{ padding: 30px 34px 24px 34px; }}
+.hero {{ margin-bottom: 6px; }}
+.hero-icon {{
+    min-width: 54px; min-height: 54px; padding: 11px;
+    border: 1px solid {p["border"]}; border-radius: 10px;
+    background: {p["card"]}; color: {accent};
+}}
+.hero-title {{
+    color: {p["title"]}; font-family: "MB Corpo A Title Cond WEB";
+    font-size: 27px; font-weight: 400;
+}}
+.hero-path {{ color: {p["muted"]}; font-size: 12px; }}
+.badge {{
+    padding: 4px 9px; border-radius: 999px;
+    background: {p["surface"]}; border: 1px solid {p["border"]};
+    color: {p["muted"]}; font-size: 11px; font-weight: 700;
+}}
+.badge-mounted {{ border-color: {accent}; color: {accent}; }}
+.section-title {{ color: {p["title"]}; font-size: 16px; font-weight: 700; }}
+.section-subtitle {{ color: {p["muted"]}; font-size: 12px; }}
+.card, .stat-card, .empty-state {{
+    border: 1px solid {p["border"]}; background: {p["card"]};
+}}
+.card {{ padding: 18px; border-radius: 10px; }}
+.stat-card {{ padding: 15px 16px; border-radius: 10px; }}
+.stat-caption {{ color: {p["subtle"]}; font-size: 10px; font-weight: 700; }}
+.stat-value {{ color: {p["title"]}; font-size: 17px; font-weight: 700; }}
+.detail-caption {{ color: {p["subtle"]}; font-size: 11px; }}
+.detail-value {{ color: {p["text"]}; font-weight: 700; }}
+.action-row {{ padding: 12px; border-radius: 6px; }}
+.action-row:hover {{ background: {p["surface_hover"]}; }}
+.action-row image {{ color: {p["muted"]}; }}
+.action-title {{ color: {p["text"]}; font-weight: 700; }}
+.action-description {{ color: {p["muted"]}; font-size: 12px; }}
+.danger-zone {{
+    padding: 16px; border: 1px solid {p["fault"]};
+    border-radius: 10px; background: {p["surface"]};
+}}
+.empty-state {{ min-width: 460px; padding: 36px 46px; border-radius: 12px; }}
+.empty-state image {{ color: {p["neutral_accent"]}; opacity: 0.92; }}
+.empty-title {{
+    color: {p["title"]}; font-family: "MB Corpo A Title Cond WEB";
+    font-size: 30px; font-weight: 400;
+}}
+.empty-copy {{ color: {p["muted"]}; font-size: 13px; }}
+.activity-frame {{
+    border: 1px solid {p["border"]}; border-radius: 10px; background: {p["input"]};
+}}
+.activity, .activity text {{
+    background: {p["input"]}; color: {p["text"]};
+    font-family: "MB Corpo S Title WEB"; font-weight: 400;
+}}
+.statusbar {{
+    padding: 8px 12px; border-top: 1px solid {p["border"]};
+    background: {p["panel"]};
+}}
+.status-text {{ color: {p["subtle"]}; font-size: 11px; }}
+.link-about-dialog {{ background: {p["background"]}; color: {p["text"]}; }}
+.link-about-dialog label {{ color: {p["text"]}; }}
+.link-about-dialog image {{ margin-top: 12px; margin-bottom: 8px; }}
 """
+    return css.encode("utf-8")
 
 
 class Manager(Gtk.ApplicationWindow):
@@ -713,6 +722,18 @@ class Manager(Gtk.ApplicationWindow):
         self.target: Target | None = None
         self.busy = False
         self.rows: dict[str, Gtk.ListBoxRow] = {}
+        self.theme_mode = _load_theme_mode()
+        self._css_provider = None
+        self._gtk_settings = Gtk.Settings.get_default()
+        if self._gtk_settings is not None:
+            self._gtk_settings.connect(
+                "notify::gtk-application-prefer-dark-theme",
+                self._system_theme_changed,
+            )
+            self._gtk_settings.connect(
+                "notify::gtk-theme-name",
+                self._system_theme_changed,
+            )
 
         self._install_css()
         self._header()
@@ -725,13 +746,29 @@ class Manager(Gtk.ApplicationWindow):
             GLib.idle_add(self._select_requested_device, args.format_device, True)
 
     def _install_css(self):
+        screen = Gdk.Screen.get_default()
+        if screen is None:
+            return
+        if self._css_provider is not None:
+            Gtk.StyleContext.remove_provider_for_screen(screen, self._css_provider)
         provider = Gtk.CssProvider()
-        provider.load_from_data(CSS)
+        provider.load_from_data(_css_for_palette(_theme_palette(self.theme_mode)))
         Gtk.StyleContext.add_provider_for_screen(
-            Gdk.Screen.get_default(),
-            provider,
-            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+            screen, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
         )
+        self._css_provider = provider
+
+    def _system_theme_changed(self, *_):
+        if self.theme_mode == "system":
+            self._install_css()
+
+    def _cycle_theme(self, *_):
+        index = THEME_MODES.index(self.theme_mode)
+        self.theme_mode = THEME_MODES[(index + 1) % len(THEME_MODES)]
+        _save_theme_mode(self.theme_mode)
+        self._install_css()
+        if hasattr(self, "theme_button"):
+            self.theme_button.set_label(f"Theme: {self.theme_mode.title()}")
 
     @staticmethod
     def _icon(name: str, size=Gtk.IconSize.BUTTON) -> Gtk.Image:
@@ -774,6 +811,13 @@ class Manager(Gtk.ApplicationWindow):
         refresh.set_tooltip_text("Refresh storage devices")
         refresh.connect("clicked", lambda *_: self.refresh_devices())
         bar.pack_end(refresh)
+
+        self.theme_button = Gtk.Button(label=f"Theme: {self.theme_mode.title()}")
+        self.theme_button.set_tooltip_text(
+            "Cycle Infiltratr Common System, Day and Night themes"
+        )
+        self.theme_button.connect("clicked", self._cycle_theme)
+        bar.pack_end(self.theme_button)
 
         about = Gtk.Button()
         about.add(self._icon("help-about-symbolic"))

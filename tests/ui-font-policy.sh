@@ -30,21 +30,14 @@ grep -Fq 'font-weight: 700' "$manager"
 ! grep -Fq 'font-family: monospace' "$manager"
 ! grep -Fq 'set_monospace(True)' "$manager"
 
-# The Linux UI must not inherit the desktop theme. These are the canonical
-# MBLINK/Mercedes colours used by the application presentation layer.
-for colour in '#050608' '#0e1115' '#171b20' '#0d1014' '#eef1f3' '#98a1a9' '#353a40' '#00adef'; do
-    grep -Fiq "$colour" "$manager"
-done
-! grep -Fq '@theme_' "$manager"
-! grep -Fq '@borders' "$manager"
-
-
-# The selected storage row must remain dark/metallic. Mercedes blue is an
-# accent edge, never a full-row system selection fill.
-grep -Fq 'background-color: #11161b;' "$manager"
-grep -Fq 'background-image: linear-gradient(to right, #161c21, #0d1014);' "$manager"
-grep -Fq 'border-left-width: 3px;' "$manager"
-! grep -Fq 'rgba(0,173,239,0.14)' "$manager"
+# The Linux UI consumes Common's System/Day/Night semantic palette while
+# retaining the product-local blue accent and bundled typography.
+grep -Fq 'THEME_MODES = ("system", "day", "night")' "$manager"
+grep -Fq 'infiltrator-design-v1.json' "$manager"
+grep -Fq 'infiltratorfs-theme' "$manager"
+grep -Fq 'Cycle Infiltratr Common System, Day and Night themes' "$manager"
+grep -Fq 'border-left-color: {accent};' "$manager"
+grep -Fq 'THEME_ACCENT = "#00adef"' "$manager"
 
 # Linux mirrors LINK's LinkAboutInfo contract even though this manager is
 # Python/GTK3 rather than LINK's C shell. Keep the same rich About facts,
