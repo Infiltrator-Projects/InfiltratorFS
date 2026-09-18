@@ -1557,6 +1557,40 @@ out:
     return ret;
 }
 
+/*
+ * A shared-range rebuild can be proportional to the complete live file/extent
+ * population.  Never perform that discovery while holding write_lock for
+ * mutation: it can otherwise block every unrelated topology reader behind one
+ * rm(1)/evict_inode operation.  Build from a coherent read-side topology
+ * snapshot instead.  shared_range_build_lock prevents duplicate concurrent
+ * builders while write_lock read-side protection prevents any mutation from
+ * invalidating or replacing the topology being scanned.
+ */
+static int infilfs_ns_prepare_shared_range_index(
+    struct infilfs_native_pending *pending)
+{
+    struct infilfs_sb_info *sbi;
+    int ret = 0;
+
+    if (!pending || !pending->sb)
+        return -EINVAL;
+    if (READ_ONCE(pending->shared_range_index_valid))
+        return 0;
+
+    sbi = INFILFS_SB(pending->sb);
+    if (!sbi)
+        return -EIO;
+
+    mutex_lock(&sbi->shared_range_build_lock);
+    if (!READ_ONCE(pending->shared_range_index_valid)) {
+        down_read(&sbi->write_lock);
+        ret = infilfs_ns_shared_range_index_build(pending);
+        up_read(&sbi->write_lock);
+    }
+    mutex_unlock(&sbi->shared_range_build_lock);
+    return ret;
+}
+
 static bool infilfs_ns_shared_range_maybe_shared(
     const struct infilfs_native_pending *pending, u64 start, u64 end)
 {
@@ -1946,9 +1980,34 @@ static int infilfs_ns_evict_unlinked_file(struct inode *inode)
         sb_rdonly(inode->i_sb))
         return 0;
 
-    ret = infilfs_ns_begin(inode->i_sb, &pending);
-    if (ret)
-        return ret;
+    /*
+     * Final eviction can need shared-block ownership information for every
+     * extent in this file.  Build the expensive global ownership accelerator
+     * before entering the writer domain.  A writer may invalidate it in the
+     * small gap before ns_begin(); detect that race after taking write_lock and
+     * retry rather than rebuilding underneath the writer lock.
+     */
+    pending = infilfs_native_pending_get(inode->i_sb, true);
+    if (!pending)
+        return -ENOMEM;
+
+    for (;;) {
+        ret = infilfs_ns_prepare_shared_range_index(pending);
+        if (ret)
+            return ret;
+
+        ret = infilfs_ns_begin(inode->i_sb, &pending);
+        if (ret)
+            return ret;
+        if (likely(pending->shared_range_index_valid))
+            break;
+
+        ret = infilfs_ns_finish(pending, -EAGAIN);
+        if (ret != -EAGAIN)
+            return ret;
+        cond_resched();
+    }
+
     ret = infilfs_ns_delete_file_resources(
         pending, inode, &changes, &change_count, &change_capacity);
     if (!ret)
