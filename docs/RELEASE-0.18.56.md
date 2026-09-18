@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # InfiltratorFS 0.18.56
 
 This release carries the Linux native buffered clustered writeback repair introduced after 0.18.55.
