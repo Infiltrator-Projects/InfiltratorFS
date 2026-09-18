@@ -45,7 +45,7 @@ grep -Fq 'write_lock is also the persistent transaction/checkpoint publication d
 # order. The second lock must be acquired after resize_lock in the public resize
 # wrapper, never the reverse.
 resize_outer="$(grep -nF 'mutex_lock(&sbi->resize_lock);' "$resize" | tail -n1 | cut -d: -f1)"
-resize_inner="$(awk -v start="${resize_outer:-0}" '/mutex_lock\(&sbi->write_lock\);/ && NR > start { print NR; exit }' "$resize")"
+resize_inner="$(awk -v start="${resize_outer:-0}" '/down_write\(&sbi->write_lock\);/ && NR > start { print NR; exit }' "$resize")"
 test -n "$resize_outer" || fail 'resize_lock acquisition not found'
 test -n "$resize_inner" || fail 'write_lock acquisition after resize_lock not found'
 (( resize_outer < resize_inner )) || fail 'resize lock order reversed'
@@ -55,7 +55,7 @@ test -n "$resize_inner" || fail 'write_lock acquisition after resize_lock not fo
 # behaviour is covered by the mounted quota qualification rather than a fragile
 # text parser.
 grep -Fq 'mutex_lock(&sbi->quota_lock);' "$quota" || fail 'quota_lock acquisition missing'
-grep -Fq 'down_read(&sbi->write_lock);' "$quota" || fail 'quota write_lock acquisition missing'
+grep -Fq 'down_read(&sbi->write_lock);' "$quota" || fail 'quota topology read lock acquisition missing'
 
 # The native driver must stay a genuine multi-object Kbuild module. The
 # allocation map is the first extracted subsystem and must never regress into
@@ -104,7 +104,7 @@ grep -Fq 'generic_write_checks(iocb, from)' <<<"$write_common" || fail 'generic 
 grep -Fq 'file_remove_privs(filep)' <<<"$write_common" || fail 'writes do not strip file privileges'
 grep -Fq 'generic_write_sync(iocb, ret)' <<<"$write_common" || fail 'sync write flags are ignored'
 getattr_body="$(sed -n '/static int infilfs_getattr(/,/^}/p' "$rw")"
-grep -Fq 'mutex_lock(&sbi->write_lock)' <<<"$getattr_body" || fail 'getattr topology read is unlocked'
+grep -Fq 'down_read(&sbi->write_lock)' <<<"$getattr_body" || fail 'getattr topology read is unlocked'
 grep -Fq 'ATTR_KILL_SUID | ATTR_KILL_SGID' "$rw" || fail 'set-ID stripping is not persisted'
 
 # Writable mount latency must not scale with every regular-file object. Crash
