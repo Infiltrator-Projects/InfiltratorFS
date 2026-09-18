@@ -15,7 +15,7 @@ readback="$work/readback.bin"
 truncate -s 128M "$image"
 "$mkfs" --force -L resize-test "$image"
 
-# Empty Format 0.17 geometry can safely shrink: allocation-tree/checkpoint
+# Empty Format 0.18 geometry can safely shrink: allocation-tree/checkpoint
 # bookkeeping is relocated below the new boundary before block zero commits it.
 "$tool" "$image" resize 64MiB | grep -Fq 'resized=67108864'
 
