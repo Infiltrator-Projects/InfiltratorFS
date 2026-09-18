@@ -18,13 +18,11 @@ static int dir_validate(uint8_t block[INFS_BLOCK_SIZE],
     uint32_t count = infs_le32_to_cpu(payload->entry_count);
     uint16_t version = infs_le16_to_cpu(hdr->object_version);
     if (version == INFS_OBJECT_VERSION_TREE) {
-        uint64_t root_le = 0;
         if (infs_le32_to_cpu(hdr->payload_size) !=
-                sizeof(*payload) + sizeof(root_le) ||
+                sizeof(*payload) + sizeof(uint64_t) ||
             infs_le32_to_cpu(payload->bytes_used) != 0)
             return INFS_STATUS_CORRUPT;
-        memcpy(&root_le, payload + 1, sizeof(root_le));
-        uint64_t root = infs_le64_to_cpu(root_le);
+        uint64_t root = infs_load_le64(payload + 1);
         if ((count == 0) != (root == 0))
             return INFS_STATUS_CORRUPT;
         if (payload_out)
