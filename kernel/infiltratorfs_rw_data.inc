@@ -11,7 +11,7 @@
  * Continuous writers share one transaction per mounted superblock.  The
  * working object-index/root pointers are visible to the live mount while the
  * committed allocation-map tree state remains untouched.  Publication occurs at the same
- * adaptive 16 MiB..512 MiB bound used by the native writer, on fsync, five
+ * adaptive 64 MiB..512 MiB bound used by the native writer, on fsync, five
  * seconds after the writer becomes idle, or during unmount.  Transaction-
  * private metadata blocks are safely reused between syscalls; a small undo log
  * plus a transaction-local in-memory allocation-bit snapshot gives each write
