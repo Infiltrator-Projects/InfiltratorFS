@@ -146,24 +146,13 @@ static int tree_dir_append_snapshot(
     uint8_t **buffer, size_t *length, size_t *capacity,
     const uint8_t *entries, uint32_t bytes)
 {
-    if (SIZE_MAX - *length < bytes)
+    size_t needed;
+    if (!infiltratr_size_add_checked(*length, bytes, &needed))
         return INFS_STATUS_OVERFLOW;
-    size_t needed = *length + bytes;
-    if (needed > *capacity) {
-        size_t next = *capacity ? *capacity : INFS_METADATA_PAGE_DATA_SIZE;
-        while (next < needed) {
-            if (next > SIZE_MAX / 2u) {
-                next = needed;
-                break;
-            }
-            next *= 2u;
-        }
-        uint8_t *grown = realloc(*buffer, next);
-        if (!grown)
-            return INFS_STATUS_NO_MEMORY;
-        *buffer = grown;
-        *capacity = next;
-    }
+    if (!infiltratr_array_reserve(
+            (void **)buffer, capacity, sizeof(**buffer), needed,
+            INFS_METADATA_PAGE_DATA_SIZE))
+        return INFS_STATUS_NO_MEMORY;
     if (bytes)
         memcpy(*buffer + *length, entries, bytes);
     *length = needed;
