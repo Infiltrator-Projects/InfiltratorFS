@@ -9,7 +9,12 @@ data="$root/kernel/infiltratorfs_rw_data.inc"
 
 grep -Fq 'INFILFS_NATIVE_METADATA_PUBLISH_CHARGE' "$ns"
 grep -Fq 'pending->pending_bytes += INFILFS_NATIVE_METADATA_PUBLISH_CHARGE' "$ns"
-grep -Fq 'mod_delayed_work(system_wq, &pending->idle_work' "$ns"
+grep -Fq 'mod_delayed_work(system_long_wq, &pending->idle_work' "$ns"
+grep -Fq 'mod_delayed_work(system_long_wq, &pending->idle_work' "$data"
+! grep -Fq 'mod_delayed_work(system_wq, &pending->idle_work' "$ns" || \
+    fail 'metadata idle publication regressed onto system_wq'
+! grep -Fq 'mod_delayed_work(system_wq, &pending->idle_work' "$data" || \
+    fail 'data idle publication regressed onto system_wq'
 # Namespace owns the metadata charge and asks the shared deferred-transaction
 # policy whether that charge now crosses a publication boundary.  The actual
 # threshold/churn calculation belongs to the data transaction layer.
