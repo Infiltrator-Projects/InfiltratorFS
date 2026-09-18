@@ -41,7 +41,7 @@ grep -Fq 'test "$allocator_peak" -ge 2' "$workflow"
 
 reserve_line="$(grep -n 'infilfs_parallel_reserve_data(' "$data" | tail -n1 | cut -d: -f1)"
 lock_line="$(awk -v reserve="$reserve_line" '
-    /mutex_lock\(&sbi->write_lock\)/ && NR > reserve { print NR; exit }
+    /down_write\(&sbi->write_lock\)/ && NR > reserve { print NR; exit }
 ' "$data")"
 test -n "$reserve_line"
 test -n "$lock_line"
