@@ -67,6 +67,17 @@ if min(prepare, begin, valid) < 0:
 if not (prepare < begin < valid):
     raise SystemExit('eviction does not prepare ownership index before writer acquisition')
 
+delete_start = s.index('static int infilfs_ns_delete_file_resources(')
+delete_end = s.index('\nstatic int ', delete_start + 1)
+delete_body = s[delete_start:delete_end]
+if 'infilfs_ns_evict_free_prepared_run(' not in delete_body:
+    raise SystemExit('final eviction is not using prepared ownership intervals')
+if 'infilfs_ns_free_unshared_run(' in delete_body:
+    raise SystemExit('final eviction regressed to generic ownership scanner')
+
+if 'pending->shared_range_index_valid = false;' not in evict:
+    raise SystemExit('final eviction does not invalidate changed ownership multiplicity')
+
 free_start = s.index('static int infilfs_ns_free_unshared_run(')
 free_end = s.index('\nstatic int ', free_start + 1)
 body = s[free_start:free_end]
