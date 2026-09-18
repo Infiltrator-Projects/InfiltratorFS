@@ -72,7 +72,9 @@ jobs:
           sudo cmake --install build-integration --prefix /usr
           dir="$RUNNER_TEMP/desktop-integration"
           sudo apt-get install -y             "$(find "$dir" -maxdepth 1 -name 'infiltratorfs-libblockdev-fs3_*.deb' -print -quit)"             "$(find "$dir" -maxdepth 1 -name 'infiltratorfs-gnome-disk-utility_*.deb' -print -quit)"             "$(find "$dir" -maxdepth 1 -name 'infiltratorfs-desktop-integration_*.deb' -print -quit)"
-          python3 -c 'import gi; gi.require_version("BlockDev","3.0"); from gi.repository import BlockDev; p=BlockDev.plugin_specs_from_names(("fs",)); ok=BlockDev.init(p,None) if not BlockDev.is_initialized() else BlockDev.reinit(p,True,None); assert ok; assert "infiltratorfs" in BlockDev.fs_supported_filesystems(); available,_flags,utility=BlockDev.fs_can_mkfs("infiltratorfs"); assert available, utility'
+          # UDisks is the real consumer of libblockdev here. Testing its D-Bus
+          # capability exercises the installed C plugin without depending on
+          # optional Python GI override helpers.
           sudo systemctl restart udisks2.service
           gdbus call --system --dest org.freedesktop.UDisks2 --object-path /org/freedesktop/UDisks2/Manager --method org.freedesktop.UDisks2.Manager.CanFormat infiltratorfs | grep -Fq true
           gdbus call --system --dest org.freedesktop.UDisks2 --object-path /org/freedesktop/UDisks2/Manager --method org.freedesktop.DBus.Properties.Get org.freedesktop.UDisks2.Manager SupportedFilesystems | grep -Fq infiltratorfs
