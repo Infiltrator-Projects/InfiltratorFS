@@ -374,11 +374,7 @@ struct infilfs_sb_info {
      */
     struct super_block *orphan_recovery_sb;
     struct delayed_work orphan_recovery_work;
-    struct completion orphan_recovery_done;
-    struct task_struct *orphan_recovery_task;
     u64 orphan_recovery_generation;
-    bool orphan_recovery_pending;
-    bool orphan_recovery_failed;
 };
 
 struct infilfs_inode_info {
