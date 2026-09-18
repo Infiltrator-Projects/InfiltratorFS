@@ -24,16 +24,6 @@ static int parse_u32(const char *text, uint32_t *value)
     return 0;
 }
 
-static int parse_u64(const char *text, uint64_t *value)
-{
-    return infiltratr_parse_u64(text, 10, value) ? 0 : -1;
-}
-
-static int parse_size(const char *text, uint64_t *bytes)
-{
-    return infiltratr_parse_binary_quantity_u64(text, bytes) ? 0 : -1;
-}
-
 static int quota_type(const char *text, uint32_t *type)
 {
     if (!strcmp(text, "user")) *type = INFILFS_QUOTA_USER;
@@ -90,8 +80,10 @@ int main(int argc, char **argv)
             return 2;
         }
         if (!strcmp(argv[1], "set")) {
-            if (parse_size(argv[5], &parsed_bytes) ||
-                parse_u64(argv[6], &parsed_objects)) {
+            if (!infiltratr_parse_binary_quantity_u64(
+                    argv[5], &parsed_bytes) ||
+                !infiltratr_parse_u64(
+                    argv[6], 10, &parsed_objects)) {
                 fprintf(stderr, "Invalid quota limit.\n");
                 return 2;
             }
