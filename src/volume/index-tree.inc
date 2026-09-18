@@ -170,8 +170,12 @@ static int tree_build_subtree(
     struct infs_metadata_page_disk *page =
         (struct infs_metadata_page_disk *)block;
     uint64_t *children = (uint64_t *)(page + 1);
-    struct infs_index_entry_disk *group = malloc(
-        (size_t)count * sizeof(*group));
+    size_t group_bytes = 0;
+    if (!infiltratr_size_multiply_checked(
+            (size_t)count, sizeof(struct infs_index_entry_disk),
+            &group_bytes))
+        return INFS_STATUS_OVERFLOW;
+    struct infs_index_entry_disk *group = malloc(group_bytes);
     if (!group)
         return INFS_STATUS_NO_MEMORY;
 
