@@ -34,9 +34,12 @@ static int snapshot_visit_once(
             return INFS_STATUS_OK;
         }
     }
+    size_t required = 0;
+    if (!infiltratr_size_add_checked(ctx->count, 1u, &required))
+        return INFS_STATUS_OVERFLOW;
     if (!infiltratr_array_reserve(
             (void **)&ctx->entries, &ctx->capacity, sizeof(*ctx->entries),
-            ctx->count + 1u, 32u))
+            required, 32u))
         return INFS_STATUS_NO_MEMORY;
     ctx->entries[ctx->count].generation = generation;
     ctx->entries[ctx->count].object_index_block = index;
