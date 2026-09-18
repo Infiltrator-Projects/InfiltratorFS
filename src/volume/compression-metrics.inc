@@ -121,11 +121,11 @@ static infs_status infs_metric_scan_view(
             physical_blocks =
                 extent_physical_blocks((uint32_t)logical_blocks, flags);
             if (!physical_blocks ||
-                logical_blocks > UINT64_MAX / INFS_BLOCK_SIZE) {
+                !infiltratr_u64_multiply_checked(
+                    logical_blocks, INFS_BLOCK_SIZE, &logical_bytes)) {
                 status = INFS_STATUS_CORRUPT;
                 break;
             }
-            logical_bytes = logical_blocks * INFS_BLOCK_SIZE;
             status = infs_metric_add_checked(
                 &scan->metrics->compressed_referenced_logical_bytes,
                 logical_bytes);
@@ -199,17 +199,17 @@ infs_status infs_compression_metrics(
                 }
                 continue;
             }
-            if (scan.streams[i].logical_blocks >
-                    UINT64_MAX / INFS_BLOCK_SIZE ||
-                scan.streams[i].physical_blocks >
-                    UINT64_MAX / INFS_BLOCK_SIZE) {
+            uint64_t logical = 0;
+            uint64_t physical = 0;
+            if (!infiltratr_u64_multiply_checked(
+                    scan.streams[i].logical_blocks, INFS_BLOCK_SIZE,
+                    &logical) ||
+                !infiltratr_u64_multiply_checked(
+                    scan.streams[i].physical_blocks, INFS_BLOCK_SIZE,
+                    &physical)) {
                 status = INFS_STATUS_OVERFLOW;
                 goto out;
             }
-            uint64_t logical =
-                scan.streams[i].logical_blocks * INFS_BLOCK_SIZE;
-            uint64_t physical =
-                scan.streams[i].physical_blocks * INFS_BLOCK_SIZE;
             if (physical >= logical) {
                 status = INFS_STATUS_CORRUPT;
                 goto out;
