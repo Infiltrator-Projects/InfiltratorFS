@@ -19,16 +19,9 @@ static int command_cat(struct infs_volume *vol, const char *path)
             return die_status("read file", (infs_status)n);
         if (n == 0)
             return die_status("short read", INFS_STATUS_IO_ERROR);
-        size_t done = 0;
-        while (done < (size_t)n) {
-            ssize_t w = write(STDOUT_FILENO, buf + done, (size_t)n - done);
-            if (w < 0) {
-                if (errno == EINTR)
-                    continue;
-                return die_errno("stdout");
-            }
-            done += (size_t)w;
-        }
+        if (infiltratr_write_full(
+                STDOUT_FILENO, buf, (size_t)n) != 0)
+            return die_errno("stdout");
         off += n;
     }
     return 0;
@@ -42,7 +35,9 @@ static int command_readlink(struct infs_volume *vol, const char *path)
         vol, path, target, sizeof(target), &length);
     if (status != INFS_STATUS_OK)
         return die_status("readlink", status);
-    if (fwrite(target, 1, length, stdout) != length || putchar('\n') == EOF)
+    static const char newline = '\n';
+    if (infiltratr_write_full(STDOUT_FILENO, target, length) != 0 ||
+        infiltratr_write_full(STDOUT_FILENO, &newline, 1u) != 0)
         return die_errno("stdout");
     return 0;
 }
@@ -120,7 +115,8 @@ static int command_snapshot_cat(struct infs_volume *vol,
         if (n <= 0)
             return die_status("snapshot-cat",
                               n < 0 ? (infs_status)n : INFS_STATUS_IO_ERROR);
-        if (fwrite(buf, 1, (size_t)n, stdout) != (size_t)n)
+        if (infiltratr_write_full(
+                STDOUT_FILENO, buf, (size_t)n) != 0)
             return die_errno("stdout");
         off += (uint64_t)n;
     }
@@ -136,7 +132,9 @@ static int command_snapshot_readlink(struct infs_volume *vol,
         vol, snapshot, path, target, sizeof(target), &length);
     if (status != INFS_STATUS_OK)
         return die_status("snapshot-readlink", status);
-    if (fwrite(target, 1, length, stdout) != length || putchar('\n') == EOF)
+    static const char newline = '\n';
+    if (infiltratr_write_full(STDOUT_FILENO, target, length) != 0 ||
+        infiltratr_write_full(STDOUT_FILENO, &newline, 1u) != 0)
         return die_errno("stdout");
     return 0;
 }
