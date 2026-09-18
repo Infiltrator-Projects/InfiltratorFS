@@ -19,6 +19,23 @@ The common layer owns:
 
 Operating-system adapters translate native APIs into that model. Equivalent concepts should map to one portable representation. Truly platform-specific semantics may be preserved in isolated adapter metadata rather than forcing every platform to imitate them.
 
+```mermaid
+flowchart TB
+    Linux[Linux VFS adapter] --> Core[Portable InfiltratorFS core]
+    Windows[Windows / ProjFS tools] --> Core
+    Future[Future native adapters] --> Core
+    Core --> Format[Format 0.18 objects, extents, allocation, checkpoints]
+    Core --> Storage[Storage service contract]
+    Storage --> Media[Image / partition / block device]
+    LinuxMeta[Linux-only sidecar metadata] --> Linux
+    WindowsMeta[Windows-specific adapter metadata] --> Windows
+```
+
+The diagram is an ownership map, not a call graph: persistent meaning flows
+through the portable core, while adapters own native API, cache, security and
+lifetime semantics.
+
+
 ## 2. Persistent identity and namespace
 
 Filesystem and object identities are 128-bit persistent values. Paths are namespace mappings, not object identity.
@@ -41,6 +58,22 @@ The commit boundary is fail-closed:
 4. remaining checkpoint replicas may then be refreshed.
 
 If durability of the first publication cannot be established, further mutation must not continue as though the transaction definitely committed.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Committed: open selected generation
+    Committed --> Private: begin mutation / CoW replacements
+    Private --> Prepared: replacement graph and allocation state written
+    Prepared --> Published: first new checkpoint durably committed
+    Published --> Replicated: remaining checkpoint replicas refreshed
+    Replicated --> Committed
+    Private --> Committed: operation rollback before publication
+    Prepared --> Committed: crash before commit selects prior generation
+    Prepared --> ReopenRequired: commit durability cannot be established
+```
+
+The important distinction is between *prepared* state and a durably published
+checkpoint. Replacement blocks alone do not make a generation authoritative.
 
 Recovery selects the newest complete structurally valid committed graph. Structural corruption can justify fallback to an older committed generation; unrelated I/O, unsupported-format or resource failures must not be misclassified as corruption.
 
