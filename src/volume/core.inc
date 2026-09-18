@@ -1149,10 +1149,10 @@ static int write_object(struct infs_volume *vol, uint64_t block_no,
 
     uint16_t type = infs_le16_to_cpu(hdr->object_type);
 
-    /* Once a COW object has been created inside the current transaction it is
+    /* Once a CoW object has been created inside the current transaction it is
      * unreachable from the committed checkpoint. Reusing that transaction-
      * private block avoids another allocation, index-page rewrite and free for
-     * every buffered FUSE write to the same file. */
+     * each subsequent buffered mutation of the same file. */
     if (block_no < infs_le64_to_cpu(vol->sb.total_blocks) &&
         tx_block_private(vol, block_no)) {
         status = write_block(vol, block_no, block);
