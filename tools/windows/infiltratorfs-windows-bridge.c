@@ -11,6 +11,7 @@
 #include "infiltratorfs-windows-bridge.h"
 #include "infilfs/format.h"
 #include "infilfs/status.h"
+#include "infiltratr/arithmetic.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -629,7 +630,9 @@ typedef int (*bridge_namespace_visit_fn)(
 
 static char *bridge_strdup_alloc(const char *value)
 {
-    size_t length = strlen(value) + 1u;
+    size_t length = 0;
+    if (!infiltratr_size_add_checked(strlen(value), 1u, &length))
+        return NULL;
     char *copy = malloc(length);
     if (copy)
         memcpy(copy, value, length);
@@ -638,10 +641,15 @@ static char *bridge_strdup_alloc(const char *value)
 
 static wchar_t *bridge_wcsdup_alloc(PCWSTR value)
 {
-    size_t length = wcslen(value) + 1u;
-    wchar_t *copy = malloc(length * sizeof(*copy));
+    size_t length = 0;
+    size_t bytes = 0;
+    if (!infiltratr_size_add_checked(wcslen(value), 1u, &length) ||
+        !infiltratr_size_multiply_checked(
+            length, sizeof(wchar_t), &bytes))
+        return NULL;
+    wchar_t *copy = malloc(bytes);
     if (copy)
-        memcpy(copy, value, length * sizeof(*copy));
+        memcpy(copy, value, bytes);
     return copy;
 }
 
@@ -649,12 +657,19 @@ static wchar_t *bridge_join_relative(PCWSTR parent, PCWSTR name)
 {
     size_t parent_length = parent ? wcslen(parent) : 0u;
     size_t name_length = wcslen(name);
-    size_t length = parent_length + (parent_length ? 1u : 0u) +
-                    name_length + 1u;
-    if (length > INFS_PATH_MAX + 1u)
+    size_t length = parent_length;
+    if ((parent_length &&
+         !infiltratr_size_add_checked(length, 1u, &length)) ||
+        !infiltratr_size_add_checked(length, name_length, &length) ||
+        !infiltratr_size_add_checked(length, 1u, &length) ||
+        length > (size_t)INFS_PATH_MAX + 1u)
         return NULL;
 
-    wchar_t *joined = malloc(length * sizeof(*joined));
+    size_t bytes = 0;
+    if (!infiltratr_size_multiply_checked(
+            length, sizeof(wchar_t), &bytes))
+        return NULL;
+    wchar_t *joined = malloc(bytes);
     if (!joined)
         return NULL;
     if (parent_length)
