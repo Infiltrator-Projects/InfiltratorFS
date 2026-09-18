@@ -3,7 +3,7 @@
 /*
  * Native mounted filesystem resize.
  *
- * Format 0.17 keeps physical backing capacity separate from committed
+ * Format 0.18 keeps physical backing capacity separate from committed
  * filesystem geometry. Online grow and bounded shrink therefore rebuild only
  * allocation-tree/checkpoint geometry. Shrink fails closed if any ordinary
  * live allocation would cross the requested boundary.
