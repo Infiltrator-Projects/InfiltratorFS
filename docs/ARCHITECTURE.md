@@ -145,6 +145,46 @@ The standard `mount.infiltratorfs` helper and InfiltratorFS Manager both request
 
 Kernel locking and transaction ownership must remain explicit. As the driver grows, lock-order and deferred-publication rules should be centralized rather than inferred from scattered call paths.
 
+### Linux CPU-parallelism invariant
+
+The native Linux filesystem has a fixed filesystem-wide CPU concurrency policy:
+
+```text
+filesystem_cpu_budget = max(1, online_logical_cpus - 1)
+```
+
+One online logical CPU is deliberately left outside the InfiltratorFS concurrency
+budget for the rest of the operating system whenever more than one logical CPU
+is online. A one-CPU machine necessarily gives InfiltratorFS that one CPU.
+
+Examples are normative:
+
+```text
+1 online logical CPU   -> filesystem budget 1
+2 online logical CPUs  -> filesystem budget 1
+3 online logical CPUs  -> filesystem budget 2
+14 online logical CPUs -> filesystem budget 13
+255 online logical CPUs -> filesystem budget 254
+```
+
+This is a concurrency-budget rule, not CPU pinning: Linux remains free to
+schedule work on any online CPU. When enough independent filesystem work exists
+and CPU is the limiting resource, the implementation must be capable of using
+the full budget. Actual utilisation may be lower when there is insufficient
+independent work or when storage, memory bandwidth, memory pressure, durability
+or another resource is the real bottleneck. No fixed small worker count may
+replace or silently cap this N-1 policy.
+
+Independent data preparation, compression, integrity hashing, allocation
+search/reservation, CoW branch construction, writeback and metadata preparation
+must be able to proceed concurrently up to this budget where their dependencies
+permit. A mount-wide/global lock must not turn those stages into a single-writer
+pipeline. Global serialization is reserved for the shortest correctness-critical
+coordination needed to atomically publish authoritative transaction/checkpoint
+state; expensive preparation work must occur outside that publication critical
+section.
+
+
 ## 11. Windows adapter
 
 Windows currently has portable-core image/raw-device access and a user-mode ProjFS Explorer bridge. The bridge projects InfiltratorFS content through an NTFS virtualization root and persists supported Windows mutations back through the portable core.
