@@ -90,9 +90,7 @@ static int claim_index_metadata_pages(struct infs_volume *vol,
             infs_le32_to_cpu(header->payload_size) !=
                 sizeof(*payload) + sizeof(uint64_t))
             return INFS_STATUS_CORRUPT;
-        uint64_t root_le = 0;
-        memcpy(&root_le, payload + 1, sizeof(root_le));
-        uint64_t root = infs_le64_to_cpu(root_le);
+        uint64_t root = infs_load_le64(payload + 1);
         if (!root || root >= total || !bitmap_get(vol->bitmap, root))
             return INFS_STATUS_CORRUPT;
         return claim_index_tree_node(
@@ -174,9 +172,7 @@ static int claim_directory_metadata_pages(struct infs_volume *vol,
         (struct infs_object_header_disk *)object;
     if (infs_le16_to_cpu(header->object_version) ==
         INFS_OBJECT_VERSION_TREE) {
-        uint64_t root_le = 0;
-        memcpy(&root_le, payload + 1, sizeof(root_le));
-        uint64_t root = infs_le64_to_cpu(root_le);
+        uint64_t root = infs_load_le64(payload + 1);
         if (infs_le32_to_cpu(payload->entry_count) == 0)
             return root == 0 ? INFS_STATUS_OK : INFS_STATUS_CORRUPT;
         if (!root || root >= total || !bitmap_get(vol->bitmap, root))
