@@ -41,6 +41,7 @@ Pre-1.0 development is current-format-only. A development format may be replaced
 
 - [x] Sequential-allocation and checksum hot-path optimization.
 - [x] Parallel native allocation reservations.
+- [ ] Filesystem-wide native Linux concurrency budget of `max(1, online logical CPUs - 1)`, with independent data/metadata work able to scale to that budget and only short atomic publication coordination globally serialized.
 - [x] Locality scoring and workload-aware placement.
 - [x] Media-aware placement with rotational/non-rotational policy.
 - [x] Mounted million-file and 1 TiB scale qualification.
