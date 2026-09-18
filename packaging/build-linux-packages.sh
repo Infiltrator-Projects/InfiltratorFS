@@ -192,7 +192,7 @@ else
 fi
 rm -f /usr/bin/infilfs-fuse
 if [ -x /usr/lib/infiltratorfs/infiltratorfs-os-integration ]; then
-    /usr/lib/infiltratorfs/infiltratorfs-os-integration install
+    /usr/lib/infiltratorfs/infiltratorfs-os-integration repair-legacy || true
 fi
 if command -v udevadm >/dev/null 2>&1; then
     udevadm control --reload-rules || true
@@ -208,7 +208,7 @@ cat > "$package_root/DEBIAN/prerm" <<EOF
 set -e
 if [ "\${1:-}" = remove ]; then
     if [ -x /usr/lib/infiltratorfs/infiltratorfs-os-integration ]; then
-        /usr/lib/infiltratorfs/infiltratorfs-os-integration remove
+        /usr/lib/infiltratorfs/infiltratorfs-os-integration repair-legacy || true
     fi
     if command -v dkms >/dev/null 2>&1; then
         dkms remove -m infiltratorfs -v '${package_version}' --all || true
@@ -336,160 +336,6 @@ grep -Fq 'modprobe "$module"' <<<"$postinst_text"
 grep -Fq 'infiltratorfs-os-integration repair-legacy' <<<"$postinst_text"
 prerm_text="$(dpkg-deb --ctrl-tarfile "$dist_dir/$deb_name" | tar -xOf - ./prerm)"
 grep -Fq 'infiltratorfs-os-integration repair-legacy' <<<"$prerm_text"
-grep -Fq 'modprobe --dry-run --verbose "$module"' <<<"$postinst_text"
-grep -Fq 'module loading is administratively disabled' <<<"$postinst_text"
-rm -f "$contents"
-
-if [[ "$emit_run" = 0 ]]; then
-    printf 'Built InfiltratorFS Debian package:\n  %s\n' "$deb_name"
-    exit 0
-fi
-
-# The .run payload contains source, but its bootstrap deliberately disables the
-# optional PkgConfig/FUSE discovery and removes any legacy infilfs-fuse binary.
-source_epoch="$(git log -1 --format=%ct 2>/dev/null || date +%s)"
-tar --sort=name --mtime="@${source_epoch}" --owner=0 --group=0 --numeric-owner \
-    --exclude='./.git' --exclude='*/.git' --exclude='./build*' --exclude='./dist' \
-    -czf "$payload" .
-
-cat > "$dist_dir/$run_name" <<'RUN_HEADER'
-#!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
-set -Eeuo pipefail
-self="$0"
-marker='__INFILTRATORFS_NATIVE_PAYLOAD__'
-payload_start="$(awk -v marker="$marker" '$0 == marker { print NR + 1; exit }' "$self")"
-[[ -n "$payload_start" ]] || { echo "Installer payload marker not found." >&2; exit 1; }
-
-verify_installer() {
-    local verify_root
-    test "$(head -n 1 "$self")" = '#!/usr/bin/env bash'
-    tail -n +"$payload_start" "$self" | gzip -t
-    verify_root="$(mktemp -d)"
-    trap 'rm -rf "$verify_root"' RETURN
-    tail -n +"$payload_start" "$self" | tar --no-same-owner -xzf - -C "$verify_root"
-    for required in CMakeLists.txt README.md support/installer/bootstrap.sh \
-        packaging/build-linux-packages.sh packaging/infiltratorfs-os-integration \
-        packaging/patch-mintstick.py \
-        src/infiltratr-common/CMakeLists.txt kernel/Makefile kernel/infiltratorfs_core.c \
-        kernel/infiltratorfs_crypto.c \
-        kernel/infiltratorfs_format.h include/infilfs/iac1.h kernel/infiltratorfs_allocation_map.c \
-        kernel/infiltratorfs_allocation_publish.c kernel/infiltratorfs_rw.inc \
-        kernel/infiltratorfs_parallel_alloc.c \
-        kernel/infiltratorfs_rw_legacy.inc kernel/infiltratorfs_checksum_cache.c \
-        kernel/infiltratorfs_rw_data.inc \
-        kernel/infiltratorfs_rw_namespace.inc kernel/infiltratorfs_read_cache.c \
-        kernel/infiltratorfs_pagecache.c kernel/infiltratorfs_linux_meta_codec.c kernel/infiltratorfs_linux_meta.inc \
-        kernel/infiltratorfs_resize.c kernel/infiltratorfs_quota.inc \
-        kernel/infiltratorfs_defrag.inc kernel/infiltratorfs_ioctl.h; do
-        test -f "$verify_root/$required"
-    done
-    test -x "$verify_root/support/installer/bootstrap.sh"
-    bash -n "$verify_root/support/installer/bootstrap.sh"
-    bash -n "$verify_root/packaging/build-linux-packages.sh"
-    grep -Fq 'bash "$ROOT/packaging/build-linux-packages.sh"' \
-        "$verify_root/support/installer/bootstrap.sh"
-    rm -rf "$verify_root"
-    trap - RETURN
-}
-
-case "${1:-}" in
-    --verify)
-        [[ $# -eq 1 ]] || exit 2
-        verify_installer
-        echo 'InfiltratorFS native installer verified.'
-        exit 0
-        ;;
-    --dry-run)
-        [[ $# -eq 1 ]] || exit 2
-        ;;
-    --build-only)
-        [[ $# -eq 2 ]] || { echo 'Usage: infiltratorfs-<version>-linux-native.run --build-only OUTPUT.deb' >&2; exit 2; }
-        ;;
-    '')
-        [[ $# -eq 0 ]] || exit 2
-        ;;
-    --help|-h)
-        echo 'Usage: infiltratorfs-<version>-linux-native.run [--verify|--dry-run|--build-only OUTPUT.deb]'
-        exit 0
-        ;;
-    *) exit 2 ;;
-esac
-verify_installer
-work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
-mkdir -p "$work/source"
-tail -n +"$payload_start" "$self" | tar --no-same-owner -xzf - -C "$work/source"
-"$work/source/support/installer/bootstrap.sh" "$@"
-exit 0
-__INFILTRATORFS_NATIVE_PAYLOAD__
-RUN_HEADER
-cat "$payload" >> "$dist_dir/$run_name"
-chmod 0755 "$dist_dir/$run_name"
-
-"$dist_dir/$run_name" --verify
-"$dist_dir/$run_name" --dry-run > "$dist_dir/native-installer-dry-run.txt"
-grep -Fq 'Dry run only; no packages will be installed' "$dist_dir/native-installer-dry-run.txt"
-grep -Fq 'Native kernel module commands:' "$dist_dir/native-installer-dry-run.txt"
-grep -Fq 'The completed installation is Debian-managed as infiltratorfs' "$dist_dir/native-installer-dry-run.txt"
-rm -f "$dist_dir/native-installer-dry-run.txt"
-
-(
-    cd "$dist_dir"
-    sha256sum "$deb_name" > "$deb_name.sha256"
-    sha256sum "$run_name" > "$run_name.sha256"
-)
-printf 'Built native Linux release packages:\n  %s\n  %s\n' "$deb_name" "$run_name"
- "$contents"; then
-    echo 'Core InfiltratorFS package must not carry replacement desktop-stack binaries.' >&2
-    exit 1
-fi
-if grep -q 'usr/bin/infilfs-fuse$' "$contents"; then
-    echo 'Native release package unexpectedly contains infilfs-fuse.' >&2
-    exit 1
-fi
-if grep -q 'usr/lib/infiltratorfs/patch-mintstick.py$' "$contents"; then
-    echo 'Release package must not install the retired whole-device Mintstick patcher.' >&2
-    exit 1
-fi
-if grep -q 'usr/share/nemo/actions/infiltratorfs-format-partition.nemo_action$' "$contents"; then
-    echo 'Release package must not install a second visible Nemo Format action.' >&2
-    exit 1
-fi
-test "$(dpkg-deb --field "$dist_dir/$deb_name" Version)" = "$package_version"
-depends="$(dpkg-deb --field "$dist_dir/$deb_name" Depends)"
-for dependency in dkms initramfs-tools kmod policykit-1 util-linux xdg-utils fontconfig python3 python3-gi gir1.2-gtk-3.0; do
-    grep -Eq "(^|, )${dependency}([ ,]|$)" <<<"$depends"
-done
-if grep -Eqi '(^|[, ])(fuse3|libfuse3-3)([, ]|$)' <<<"$depends"; then
-    echo 'Native release package unexpectedly depends on FUSE.' >&2
-    exit 1
-fi
-preinst_text="$(dpkg-deb --ctrl-tarfile "$dist_dir/$deb_name" | tar -xOf - ./preinst)"
-grep -Fq 'sync' <<<"$preinst_text"
-grep -Fq 'umount -a -t infiltratorfs,fuse.infilfs-fuse' <<<"$preinst_text"
-grep -Fq 'clean automatic unmount complete' <<<"$preinst_text"
-grep -Fq 'volume is still busy' <<<"$preinst_text"
-grep -Fq 'removing existing DKMS registration $old_version before installing $version' \
-    <<<"$preinst_text"
-! grep -Fq '[ "$old_version" != "$version" ]' <<<"$preinst_text"
-if awk '
-    /^[[:space:]]*umount[[:space:]]/ {
-        for (field = 2; field <= NF; ++field)
-            if ($field ~ /^-[^-]*[fl]/ || $field == "--force" ||
-                $field == "--lazy")
-                unsafe = 1
-    }
-    END { exit unsafe ? 0 : 1 }
-' <<<"$preinst_text"; then
-    echo 'Debian preinst must never force or lazily detach mounted InfiltratorFS volumes.' >&2
-    exit 1
-fi
-postinst_text="$(dpkg-deb --ctrl-tarfile "$dist_dir/$deb_name" | tar -xOf - ./postinst)"
-grep -Fq 'modprobe "$module"' <<<"$postinst_text"
-grep -Fq 'infiltratorfs-os-integration install' <<<"$postinst_text"
-prerm_text="$(dpkg-deb --ctrl-tarfile "$dist_dir/$deb_name" | tar -xOf - ./prerm)"
-grep -Fq 'infiltratorfs-os-integration remove' <<<"$prerm_text"
 grep -Fq 'modprobe --dry-run --verbose "$module"' <<<"$postinst_text"
 grep -Fq 'module loading is administratively disabled' <<<"$postinst_text"
 rm -f "$contents"
