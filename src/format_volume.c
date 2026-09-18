@@ -5,6 +5,8 @@
 #include "infilfs/format.h"
 #include "infilfs/fs.h"
 #include "infilfs/utf8.h"
+#include "infiltratr/arithmetic.h"
+#include "infiltratr/core.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -134,12 +136,23 @@ infs_status infs_format_storage(struct infs_storage *storage, const char *label)
     if (index_page_block >= checkpoints[1])
         return INFS_STATUS_NO_SPACE;
 
-    uint64_t raw_bitmap_bytes = (total_blocks + 7u) / 8u;
-    uint64_t bitmap_blocks =
-        (raw_bitmap_bytes + INFS_BLOCK_SIZE - 1u) / INFS_BLOCK_SIZE;
-    if (!bitmap_blocks || bitmap_blocks > SIZE_MAX / INFS_BLOCK_SIZE)
+    uint64_t rounded_bitmap_bits = 0;
+    if (!infiltratr_u64_add_checked(
+            total_blocks, UINT64_C(7), &rounded_bitmap_bits))
         return INFS_STATUS_OVERFLOW;
-    size_t bitmap_alloc = (size_t)(bitmap_blocks * INFS_BLOCK_SIZE);
+    uint64_t raw_bitmap_bytes = rounded_bitmap_bits / UINT64_C(8);
+    uint64_t rounded_bitmap_bytes = 0;
+    if (!infiltratr_u64_add_checked(
+            raw_bitmap_bytes, INFS_BLOCK_SIZE - 1u,
+            &rounded_bitmap_bytes))
+        return INFS_STATUS_OVERFLOW;
+    uint64_t bitmap_blocks = rounded_bitmap_bytes / INFS_BLOCK_SIZE;
+    if (!bitmap_blocks || bitmap_blocks > SIZE_MAX)
+        return INFS_STATUS_OVERFLOW;
+    size_t bitmap_alloc = 0;
+    if (!infiltratr_size_multiply_checked(
+            (size_t)bitmap_blocks, (size_t)INFS_BLOCK_SIZE, &bitmap_alloc))
+        return INFS_STATUS_OVERFLOW;
     uint8_t *bitmap = calloc(1u, bitmap_alloc);
     if (!bitmap)
         return INFS_STATUS_NO_MEMORY;
