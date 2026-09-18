@@ -351,14 +351,15 @@ static infs_status link_file_tx(struct infs_volume *vol,
     uint64_t links = infs_le64_to_cpu(file->attributes.link_count);
     if (links == 0)
         return INFS_STATUS_CORRUPT;
-    if (links == UINT64_MAX)
+    uint64_t next_links = 0;
+    if (!infiltratr_u64_add_checked(links, 1u, &next_links))
         return INFS_STATUS_OVERFLOW;
 
     status = dir_add_volume(
         vol, parent_block, name, source.object_id, INFS_OBJECT_FILE);
     if (status != INFS_STATUS_OK)
         return status;
-    file->attributes.link_count = infs_cpu_to_le64(links + 1u);
+    file->attributes.link_count = infs_cpu_to_le64(next_links);
     struct infs_object_header_disk *source_header =
         (struct infs_object_header_disk *)source_block;
     memset(source_header->parent_id, 0, sizeof(source_header->parent_id));
