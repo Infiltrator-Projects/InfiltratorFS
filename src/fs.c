@@ -94,9 +94,7 @@ static int index_payload_shape_valid(const uint8_t block[INFS_BLOCK_SIZE],
         if (infs_le32_to_cpu(payload->reserved) != 0 || count == 0 ||
             payload_size != sizeof(*payload) + sizeof(uint64_t))
             return 0;
-        uint64_t root_le = 0;
-        memcpy(&root_le, payload + 1, sizeof(root_le));
-        return infs_le64_to_cpu(root_le) != 0;
+        return infs_load_le64(payload + 1) != 0;
     }
 
     uint32_t page_count = infs_le32_to_cpu(payload->reserved);
@@ -588,13 +586,11 @@ infs_status infs_encode_tree_root_directory(uint8_t block[INFS_BLOCK_SIZE],
         (struct infs_object_header_disk *)block;
     struct infs_directory_payload_disk *payload =
         (struct infs_directory_payload_disk *)(header + 1);
-    uint64_t root_le = infs_cpu_to_le64(0);
-
     payload->entry_count = infs_cpu_to_le32(0);
     payload->bytes_used = infs_cpu_to_le32(0);
-    memcpy(payload + 1, &root_le, sizeof(root_le));
+    infs_store_le64(payload + 1, 0);
     header->payload_size = infs_cpu_to_le32(
-        (uint32_t)(sizeof(*payload) + sizeof(root_le)));
+        (uint32_t)(sizeof(*payload) + sizeof(uint64_t)));
     return infs_object_finalize(block);
 }
 
@@ -652,14 +648,12 @@ infs_status infs_encode_tree_object_index(uint8_t block[INFS_BLOCK_SIZE],
         (struct infs_object_header_disk *)block;
     struct infs_index_payload_disk *payload =
         (struct infs_index_payload_disk *)(header + 1);
-    uint64_t root_le = infs_cpu_to_le64(root_node_block);
-
     header->object_version = infs_cpu_to_le16(INFS_OBJECT_VERSION_TREE);
     payload->entry_count = infs_cpu_to_le32(entry_count);
     payload->reserved = infs_cpu_to_le32(0);
-    memcpy(payload + 1, &root_le, sizeof(root_le));
+    infs_store_le64(payload + 1, root_node_block);
     header->payload_size = infs_cpu_to_le32(
-        (uint32_t)(sizeof(*payload) + sizeof(root_le)));
+        (uint32_t)(sizeof(*payload) + sizeof(uint64_t)));
     return infs_object_finalize(block);
 }
 
