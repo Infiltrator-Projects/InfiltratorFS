@@ -59,12 +59,14 @@ grep -Fq 'FW_BOLD' "$windows"
 ! grep -Fq 'L"Segoe UI"' "$windows"
 ! grep -Fq 'L"Consolas"' "$windows"
 
-# The Win32 shell is compiled through the entry adapter. It must force the
-# fixed dark MB palette rather than inheriting AppsUseLightTheme.
-grep -Fq 'infs_mb_rgb_map' "$windows_entry"
-grep -Fq 'infs_mb_rgb(5u, 6u, 8u)' "$windows_entry"
-grep -Fq 'infs_mb_rgb(23u, 27u, 32u)' "$windows_entry"
-grep -Fq 'infs_mb_rgb(238u, 241u, 243u)' "$windows_entry"
-grep -Fq 'infs_mb_rgb(152u, 161u, 169u)' "$windows_entry"
-grep -Fq 'L"AppsUseLightTheme"' "$windows_entry"
-grep -Fq '#define RegGetValueW infs_mb_RegGetValueW' "$windows_entry"
+# The Win32 shell resolves System/Day/Night through Common and leaves only
+# the product-local filesystem UI policy in the Windows adapter.
+grep -Fq '#include "infiltratr/design.h"' "$windows"
+grep -Fq 'infiltratr_theme_resolve' "$windows"
+grep -Fq 'INFILTRATR_THEME_SYSTEM' "$windows"
+grep -Fq 'INFILTRATR_THEME_DAY' "$windows"
+grep -Fq 'INFILTRATR_THEME_NIGHT' "$windows"
+grep -Fq 'L"ThemeMode"' "$windows"
+grep -Fq 'IDM_VIEW_THEME_SYSTEM' "$windows"
+! grep -Fq 'infs_mb_rgb_map' "$windows_entry"
+! grep -Fq '#define RegGetValueW' "$windows_entry"

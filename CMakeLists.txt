@@ -328,7 +328,8 @@ if(WIN32)
         ${CMAKE_CURRENT_BINARY_DIR}/infiltratorfs-windows-fonts.rc)
     target_include_directories(infiltratorfs-windows PRIVATE tools/windows)
     target_link_libraries(infiltratorfs-windows PRIVATE
-        infilfs_windows_bridge comdlg32 comctl32 dwmapi uxtheme advapi32)
+        infilfs_windows_bridge InfiltratrCommon::Portable
+        comdlg32 comctl32 dwmapi uxtheme advapi32)
     target_compile_definitions(infiltratorfs-windows PRIVATE
         INFILFS_VERSION_W=L\"${PROJECT_VERSION}\")
 

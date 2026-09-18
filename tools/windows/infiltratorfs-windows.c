@@ -20,6 +20,7 @@
 #include "infilfs/volume.h"
 #include "infilfs/win32_io.h"
 #include "infiltratorfs-windows-bridge.h"
+#include "infiltratr/design.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -65,6 +66,9 @@
 #define IDM_FILE_EXIT       2003
 #define IDM_FILE_OPEN_IMAGE 2004
 #define IDM_HELP_ABOUT      2101
+#define IDM_VIEW_THEME_SYSTEM 2201
+#define IDM_VIEW_THEME_DAY    2202
+#define IDM_VIEW_THEME_NIGHT  2203
 
 #define IDR_FONT_CORPO_A_COND_REGULAR 301
 #define IDR_FONT_CORPO_S_BOLD          302
@@ -106,6 +110,7 @@ static HFONT g_activity_font = NULL;
 static HANDLE g_private_fonts[3] = { NULL, NULL, NULL };
 static LONG g_copy_sequence = 0;
 static int g_dark_mode = 0;
+static InfiltratrThemeMode g_theme_mode = INFILTRATR_THEME_SYSTEM;
 static COLORREF g_background_color;
 static COLORREF g_panel_color;
 static COLORREF g_text_color;
@@ -128,24 +133,62 @@ static int system_prefers_dark_mode(void)
     return status == ERROR_SUCCESS && value == 0;
 }
 
-static void initialise_visual_theme(void)
+static InfiltratrThemeMode load_theme_mode(void)
 {
-    g_dark_mode = system_prefers_dark_mode();
-    if (g_dark_mode) {
-        g_background_color = RGB(31, 31, 31);
-        g_panel_color = RGB(43, 43, 43);
-        g_text_color = RGB(245, 245, 245);
-        g_muted_color = RGB(184, 184, 184);
-    } else {
-        g_background_color = RGB(246, 247, 249);
-        g_panel_color = RGB(255, 255, 255);
-        g_text_color = RGB(32, 33, 36);
-        g_muted_color = RGB(95, 99, 104);
-    }
-    g_background_brush = CreateSolidBrush(g_background_color);
-    g_panel_brush = CreateSolidBrush(g_panel_color);
+    DWORD value = (DWORD)INFILTRATR_THEME_SYSTEM;
+    DWORD size = sizeof(value);
+    LONG status = RegGetValueW(
+        HKEY_CURRENT_USER,
+        L"Software\\InfiltratorProjects\\InfiltratorFS",
+        L"ThemeMode", RRF_RT_REG_DWORD, NULL, &value, &size);
+    if (status == ERROR_SUCCESS && value <= (DWORD)INFILTRATR_THEME_NIGHT)
+        return (InfiltratrThemeMode)value;
+    return INFILTRATR_THEME_SYSTEM;
 }
 
+static void save_theme_mode(InfiltratrThemeMode mode)
+{
+    DWORD value = (DWORD)mode;
+    (void)RegSetKeyValueW(
+        HKEY_CURRENT_USER,
+        L"Software\\InfiltratorProjects\\InfiltratorFS",
+        L"ThemeMode", REG_DWORD, &value, sizeof(value));
+}
+
+static COLORREF common_rgb(uint32_t rgb)
+{
+    return RGB((BYTE)((rgb >> 16) & 0xffu),
+               (BYTE)((rgb >> 8) & 0xffu),
+               (BYTE)(rgb & 0xffu));
+}
+
+static void initialise_visual_theme(void)
+{
+    const int system_dark = system_prefers_dark_mode();
+    const InfiltratrThemePalette *palette =
+        infiltratr_theme_resolve(g_theme_mode, system_dark != 0);
+    if (!palette)
+        return;
+
+    g_dark_mode =
+        g_theme_mode == INFILTRATR_THEME_NIGHT ||
+        (g_theme_mode == INFILTRATR_THEME_SYSTEM && system_dark);
+
+    HBRUSH old_background = g_background_brush;
+    HBRUSH old_panel = g_panel_brush;
+    g_background_color = common_rgb(palette->background_rgb);
+    g_panel_color = common_rgb(palette->panel_rgb);
+    g_text_color = common_rgb(palette->text_rgb);
+    g_muted_color = common_rgb(palette->muted_rgb);
+    g_background_brush = CreateSolidBrush(g_background_color);
+    g_panel_brush = CreateSolidBrush(g_panel_color);
+    if (old_background)
+        DeleteObject(old_background);
+    if (old_panel)
+        DeleteObject(old_panel);
+}
+
+static void apply_window_visual_theme(HWND hwnd)
 static void apply_window_visual_theme(HWND hwnd)
 {
     BOOL dark = g_dark_mode ? TRUE : FALSE;
@@ -160,6 +203,58 @@ static void theme_control(HWND control)
         return;
     SetWindowTheme(control,
                    g_dark_mode ? L"DarkMode_Explorer" : L"Explorer", NULL);
+}
+
+static void update_theme_menu(HWND hwnd)
+{
+    HMENU menu = GetMenu(hwnd);
+    HMENU view = menu ? GetSubMenu(menu, 1) : NULL;
+    HMENU theme = view ? GetSubMenu(view, 0) : NULL;
+    if (!theme)
+        return;
+    UINT selected = IDM_VIEW_THEME_SYSTEM;
+    if (g_theme_mode == INFILTRATR_THEME_DAY)
+        selected = IDM_VIEW_THEME_DAY;
+    else if (g_theme_mode == INFILTRATR_THEME_NIGHT)
+        selected = IDM_VIEW_THEME_NIGHT;
+    CheckMenuRadioItem(theme, IDM_VIEW_THEME_SYSTEM, IDM_VIEW_THEME_NIGHT,
+                       selected, MF_BYCOMMAND);
+}
+
+static void apply_current_theme(HWND hwnd)
+{
+    initialise_visual_theme();
+    apply_window_visual_theme(hwnd);
+
+    HWND list = GetDlgItem(hwnd, IDC_CONTENTS);
+    if (list) {
+        ListView_SetBkColor(list, g_panel_color);
+        ListView_SetTextBkColor(list, g_panel_color);
+        ListView_SetTextColor(list, g_text_color);
+        theme_control(list);
+        theme_control(ListView_GetHeader(list));
+    }
+
+    int themed_ids[] = {
+        IDC_TARGET, IDC_REFRESH, IDC_LABEL, IDC_FORMAT, IDC_OPEN_IMAGE,
+        IDC_OPEN, IDC_INSPECT, IDC_ADD_FILES, IDC_ADD_FOLDER, IDC_SCRUB,
+        IDC_MOUNT_DRIVE, IDC_UNMOUNT_DRIVE, IDC_ACTIVITY_CLEAR, IDC_ACTIVITY
+    };
+    for (size_t i = 0;
+         i < sizeof(themed_ids) / sizeof(themed_ids[0]); ++i)
+        theme_control(GetDlgItem(hwnd, themed_ids[i]));
+
+    update_theme_menu(hwnd);
+    SetClassLongPtrW(hwnd, GCLP_HBRBACKGROUND, (LONG_PTR)g_background_brush);
+    RedrawWindow(hwnd, NULL, NULL,
+                 RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+}
+
+static void set_theme_mode(HWND hwnd, InfiltratrThemeMode mode)
+{
+    g_theme_mode = mode;
+    save_theme_mode(mode);
+    apply_current_theme(hwnd);
 }
 
 static int add_stock_icon(HIMAGELIST list, SHSTOCKICONID stock)
@@ -1914,16 +2009,23 @@ static HMENU create_main_menu(void)
 {
     HMENU menu = CreateMenu();
     HMENU file = CreatePopupMenu();
+    HMENU view = CreatePopupMenu();
+    HMENU theme = CreatePopupMenu();
     HMENU help = CreatePopupMenu();
-    if (!menu || !file || !help)
+    if (!menu || !file || !view || !theme || !help)
         return menu;
     AppendMenuW(file, MF_STRING, IDM_FILE_REFRESH, L"&Refresh Volumes\tF5");
     AppendMenuW(file, MF_STRING, IDM_FILE_OPEN, L"&Open Selected Volume");
     AppendMenuW(file, MF_STRING, IDM_FILE_OPEN_IMAGE, L"Open &Image...");
     AppendMenuW(file, MF_SEPARATOR, 0, NULL);
     AppendMenuW(file, MF_STRING, IDM_FILE_EXIT, L"E&xit");
+    AppendMenuW(theme, MF_STRING, IDM_VIEW_THEME_SYSTEM, L"&System");
+    AppendMenuW(theme, MF_STRING, IDM_VIEW_THEME_DAY, L"&Day");
+    AppendMenuW(theme, MF_STRING, IDM_VIEW_THEME_NIGHT, L"&Night");
+    AppendMenuW(view, MF_POPUP, (UINT_PTR)theme, L"&Theme");
     AppendMenuW(help, MF_STRING, IDM_HELP_ABOUT, L"&About InfiltratorFS");
     AppendMenuW(menu, MF_POPUP, (UINT_PTR)file, L"&File");
+    AppendMenuW(menu, MF_POPUP, (UINT_PTR)view, L"&View");
     AppendMenuW(menu, MF_POPUP, (UINT_PTR)help, L"&Help");
     return menu;
 }
@@ -1965,6 +2067,7 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message,
     case WM_CREATE: {
         g_main_window = hwnd;
         SetMenu(hwnd, create_main_menu());
+        update_theme_menu(hwnd);
 
         g_ui_font = create_ui_font(
             hwnd, 10, FW_NORMAL, L"MB Corpo S Title WEB");
@@ -2173,10 +2276,20 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message,
         case IDC_SCRUB: scrub_volume(); return 0;
         case IDC_MOUNT_DRIVE: mount_windows_drive(); return 0;
         case IDC_UNMOUNT_DRIVE: unmount_windows_drive(); return 0;
+        case IDM_VIEW_THEME_SYSTEM:
+            set_theme_mode(hwnd, INFILTRATR_THEME_SYSTEM); return 0;
+        case IDM_VIEW_THEME_DAY:
+            set_theme_mode(hwnd, INFILTRATR_THEME_DAY); return 0;
+        case IDM_VIEW_THEME_NIGHT:
+            set_theme_mode(hwnd, INFILTRATR_THEME_NIGHT); return 0;
         case IDM_HELP_ABOUT: show_about(); return 0;
         case IDM_FILE_EXIT: DestroyWindow(hwnd); return 0;
         default: break;
         }
+        break;
+    case WM_SETTINGCHANGE:
+        if (g_theme_mode == INFILTRATR_THEME_SYSTEM)
+            apply_current_theme(hwnd);
         break;
     case WM_DROPFILES:
         handle_drop((HDROP)wparam);
@@ -2217,6 +2330,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous,
     (void)command_line;
     CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    g_theme_mode = load_theme_mode();
     initialise_visual_theme();
     INITCOMMONCONTROLSEX controls = {
         sizeof(INITCOMMONCONTROLSEX),
