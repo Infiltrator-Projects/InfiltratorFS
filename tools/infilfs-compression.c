@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "infilfs/posix_io.h"
 #include "infilfs/volume.h"
+#include "infiltratr/core.h"
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -100,13 +101,10 @@ int main(int argc, char **argv)
                 metrics.compression_saved_bytes);
     printf("  Unique compressed streams:         %" PRIu64 "\n",
            metrics.unique_compressed_streams);
-    if (metrics.unique_compressed_logical_bytes) {
-        double pct = 100.0 * (double)metrics.compression_saved_bytes /
-            (double)metrics.unique_compressed_logical_bytes;
-        printf("  Compression saving on compressed data: %.2f%%\n", pct);
-    } else {
-        puts("  Compression saving on compressed data: 0.00%");
-    }
+    double pct = infiltratr_percent_u64(
+        metrics.compression_saved_bytes,
+        metrics.unique_compressed_logical_bytes);
+    printf("  Compression saving on compressed data: %.2f%%\n", pct);
     puts("  Note: savings exclude sparse holes and reflink/snapshot sharing.");
     return 0;
 }
