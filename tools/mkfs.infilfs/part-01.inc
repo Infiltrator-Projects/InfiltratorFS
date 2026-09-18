@@ -134,7 +134,7 @@ static int generate_id(uint8_t id[16], const uint8_t avoid1[16],
 static int same_or_descendant_path(const char *parent, const char *candidate)
 {
     size_t length = strlen(parent);
-    if (strncmp(parent, candidate, length) != 0)
+    if (!infiltratr_string_starts_with(candidate, parent))
         return 0;
     return candidate[length] == '\0' || candidate[length] == '/';
 }
