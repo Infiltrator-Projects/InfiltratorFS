@@ -1,10 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 name: Release artifacts
 
-# Release construction is automatic, but every job is hard-capped at ten minutes.
-# Reuse the already-qualified desktop integration bundle when its source inputs
-# are unchanged; a changed desktop integration requires the manual heavyweight
-# GNOME formatter qualification instead of rebuilding it in automatic release CI.
 on:
   workflow_run:
     workflows: ["Build and conformance"]
@@ -36,7 +32,7 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      - name: Verify exact main and reusable desktop integration inputs
+      - name: Verify exact main and release identity
         env:
           EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
         shell: bash
@@ -49,17 +45,6 @@ jobs:
           version="$(sed -nE 's/^project\(InfiltratorFS VERSION ([0-9]+\.[0-9]+\.[0-9]+) LANGUAGES C\)$/\1/p' CMakeLists.txt)"
           test -n "$version"
           [[ "$subject" == "Release ${version}" || "$subject" == "Release ${version}:"* ]]
-          integration_inputs=(
-            packaging/libblockdev-infiltratorfs.patch
-            packaging/udisks2-infiltratorfs-display.patch
-            packaging/gnome-disks-infiltratorfs.patch
-            packaging/build-noble-desktop-integration.sh
-            packaging/infiltratorfs-os-integration
-          )
-          if ! git diff --quiet v0.18.47 "$EXPECTED_SHA" -- "${integration_inputs[@]}"; then
-            echo 'Desktop integration inputs changed since v0.18.47; run the manual GNOME formatter qualification and establish a new qualified bundle baseline.' >&2
-            exit 1
-          fi
           echo "VERSION=$version" >> "$GITHUB_ENV"
 
       - name: Install fast package build dependencies
@@ -84,28 +69,30 @@ jobs:
           chmod 0755 "$installer"
           test -s "$RUNNER_TEMP/build-windows/InfiltratorFS-Windows-${VERSION}.exe"
 
-      - name: Reuse qualified v0.18.47 desktop integration bundle
+      - name: Download qualified managed desktop integration packages
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          baseline="$RUNNER_TEMP/integration-baseline"
-          root="$RUNNER_TEMP/integration-root"
-          bundle="$RUNNER_TEMP/infiltratorfs-os-integration"
-          mkdir -p "$baseline" "$root" "$bundle"
-          gh release download v0.18.47 --pattern 'infiltratorfs_0.18.47_amd64.deb' --dir "$baseline"
-          dpkg-deb -x "$baseline/infiltratorfs_0.18.47_amd64.deb" "$root"
-          for file in gnome-disks libbd_fs.so manifest; do
-            test -s "$root/usr/lib/infiltratorfs/os-integration/$file"
-            cp "$root/usr/lib/infiltratorfs/os-integration/$file" "$bundle/$file"
+          tag="$(gh release list --limit 100 --json tagName,isPrerelease,publishedAt --jq '[.[] | select(.isPrerelease == true and (.tagName | startswith("desktop-integration-ubuntu24.04-")))] | sort_by(.publishedAt) | last | .tagName')"
+          test -n "$tag"
+          dir="$RUNNER_TEMP/desktop-integration"
+          mkdir -p "$dir"
+          gh release download "$tag" --dir "$dir"             --pattern 'infiltratorfs-libblockdev-fs3_*.deb'             --pattern 'infiltratorfs-gnome-disk-utility_*.deb'             --pattern 'infiltratorfs-desktop-integration_*.deb'             --pattern 'infiltratorfs-desktop-integration.manifest'
+          manifest="$dir/infiltratorfs-desktop-integration.manifest"
+          test -s "$manifest"
+          expected_patch="$(cat packaging/libblockdev-3.1-infiltratorfs.patch packaging/gnome-disks-46-infiltratorfs.patch packaging/build-noble-desktop-packages.sh | sha256sum | awk '{print $1}')"
+          test "$(sed -n 's/^patch_sha256=//p' "$manifest")" = "$expected_patch"
+          test "$(sed -n 's/^target=//p' "$manifest")" = ubuntu-24.04-linuxmint-22.x
+          for pattern in 'infiltratorfs-libblockdev-fs3_*.deb' 'infiltratorfs-gnome-disk-utility_*.deb' 'infiltratorfs-desktop-integration_*.deb'; do
+            file="$(find "$dir" -maxdepth 1 -name "$pattern" -print -quit)"
+            test -s "$file"
+            dpkg-deb --info "$file" >/dev/null
           done
-          chmod 0755 "$bundle/gnome-disks"
 
-      - name: Build current integrated Debian package
+      - name: Build current core Debian package
         env:
-          INFILTRATORFS_OS_INTEGRATION_BUNDLE_DIR: ${{ runner.temp }}/infiltratorfs-os-integration
-          INFILTRATORFS_REQUIRE_OS_INTEGRATION: "1"
           INFILTRATORFS_EMIT_RUN: "0"
         shell: bash
         run: |
@@ -126,15 +113,17 @@ jobs:
           cp "dist/$deb" release-assets/
           cp "$RUNNER_TEMP/build-linux/$installer" release-assets/
           cp "$RUNNER_TEMP/build-windows/$windows" release-assets/
+          cp "$RUNNER_TEMP/desktop-integration/"*.deb release-assets/
+          cp "$RUNNER_TEMP/desktop-integration/infiltratorfs-desktop-integration.manifest" release-assets/
           chmod 0755 "release-assets/$installer"
           test "$(dpkg-deb --field "release-assets/$deb" Version)" = "$VERSION"
-          test "$(dpkg-deb --field "release-assets/$deb" X-InfiltratorFS-Desktop-Integration)" = ubuntu24.04-mint22-bundled
+          test "$(dpkg-deb --field "release-assets/$deb" X-InfiltratorFS-Desktop-Integration)" = managed-packages
           contents="$RUNNER_TEMP/release-contents.txt"
           dpkg-deb --contents "release-assets/$deb" > "$contents"
-          grep -q 'usr/lib/infiltratorfs/os-integration/gnome-disks$' "$contents"
-          grep -q 'usr/lib/infiltratorfs/os-integration/libbd_fs.so$' "$contents"
-          grep -q 'usr/lib/infiltratorfs/os-integration/manifest$' "$contents"
+          ! grep -q 'usr/lib/infiltratorfs/os-integration/gnome-disks$' "$contents"
+          ! grep -q 'usr/lib/infiltratorfs/os-integration/libbd_fs.so$' "$contents"
           ! grep -q 'usr/bin/infilfs-fuse$' "$contents"
+          dpkg-deb --field "release-assets/$deb" Recommends | grep -Fq infiltratorfs-desktop-integration
           "release-assets/$installer" --verify
           test -s "release-assets/$windows"
 
@@ -142,9 +131,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: InfiltratorFS-release-assets
-          path: |
-            release-assets/infiltratorfs_${{ env.VERSION }}_amd64.deb
-            release-assets/infiltratorfs-${{ env.VERSION }}-linux-native.run
-            release-assets/InfiltratorFS-Windows-${{ env.VERSION }}.exe
+          path: release-assets/*
           if-no-files-found: error
           retention-days: 30

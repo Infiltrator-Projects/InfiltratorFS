@@ -205,30 +205,32 @@ jobs:
           installer="infiltratorfs-${VERSION}-linux-native.run"
           windows="InfiltratorFS-Windows-${VERSION}.exe"
           for asset in "$deb" "$installer" "$windows"; do test -s "release-assets/$asset"; done
+          test -s release-assets/infiltratorfs-desktop-integration.manifest
+          test -n "$(find release-assets -maxdepth 1 -name 'infiltratorfs-libblockdev-fs3_*.deb' -print -quit)"
+          test -n "$(find release-assets -maxdepth 1 -name 'infiltratorfs-gnome-disk-utility_*.deb' -print -quit)"
+          test -n "$(find release-assets -maxdepth 1 -name 'infiltratorfs-desktop-integration_*.deb' -print -quit)"
           test "$(dpkg-deb --field "release-assets/$deb" Version)" = "$VERSION"
-          test "$(dpkg-deb --field "release-assets/$deb" X-InfiltratorFS-Desktop-Integration)" = ubuntu24.04-mint22-bundled
+          test "$(dpkg-deb --field "release-assets/$deb" X-InfiltratorFS-Desktop-Integration)" = managed-packages
           contents="$RUNNER_TEMP/published-deb-contents.txt"
           dpkg-deb --contents "release-assets/$deb" > "$contents"
           ! grep -q 'usr/bin/infilfs-fuse$' "$contents"
           for font in mb_corpo_a_cond_regular.ttf mb_corpo_s_bold.ttf mb_corpo_s_regular.ttf; do
             grep -q "usr/share/infiltratorfs/fonts/$font$" "$contents"
           done
-          (cd release-assets && sha256sum "$deb" "$installer" "$windows" > SHA256SUMS.txt)
+          mapfile -t release_files < <(find release-assets -maxdepth 1 -type f ! -name SHA256SUMS.txt -printf '%f\n' | sort)
+          (cd release-assets && sha256sum "${release_files[@]}" > SHA256SUMS.txt)
 
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git tag --annotate "$tag" "$EXPECTED_SHA" --message "InfiltratorFS $VERSION"
           test "$(git cat-file -t "refs/tags/${tag}")" = tag
           git push origin "$tag"
-          gh release create "$tag" \
-            "release-assets/$deb" \
-            "release-assets/$installer" \
-            "release-assets/$windows" \
-            "release-assets/SHA256SUMS.txt" \
+          mapfile -t publish_assets < <(find release-assets -maxdepth 1 -type f -printf '%p\n' | sort)
+          gh release create "$tag" "${publish_assets[@]}" \
             --verify-tag --target "$EXPECTED_SHA" \
             --title "InfiltratorFS $VERSION" --generate-notes --latest
 
-          expected_assets="$(printf '%s\n%s\n%s\n%s\n' "$deb" "$installer" "$windows" SHA256SUMS.txt | sort)"
+          expected_assets="$(find release-assets -maxdepth 1 -type f -printf '%f\n' | sort)"
           published_assets="$(gh release view "$tag" --json assets --jq '.assets[].name' | sort)"
           test "$published_assets" = "$expected_assets"
 

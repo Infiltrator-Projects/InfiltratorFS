@@ -114,7 +114,9 @@ fi
 
 rm -f /usr/bin/infilfs-fuse
 if [ -x /usr/lib/infiltratorfs/infiltratorfs-os-integration ]; then
-    /usr/lib/infiltratorfs/infiltratorfs-os-integration install
+    if ! /usr/lib/infiltratorfs/infiltratorfs-os-integration repair-legacy; then
+        echo 'InfiltratorFS: warning: legacy desktop-stack cleanup did not complete; core filesystem installation remains valid.' >&2
+    fi
 fi
 if command -v udevadm >/dev/null 2>&1; then
     udevadm control --reload-rules || true

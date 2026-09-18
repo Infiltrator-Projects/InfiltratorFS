@@ -14,6 +14,10 @@ manual_long = {
     'desktop-formatter-qualification.yml',
 }
 
+automatic_long = {
+    'desktop-integration-packages.yml',
+}
+
 # The native kernel workflow is the one automatic exception to an in-file job
 # timeout because manual runs are intentionally allowed to continue deeply.
 # Automatic executions are bounded by automatic-ci-watchdog.yml at 570 seconds.
@@ -88,6 +92,9 @@ if missing_manual:
 missing_watchdog = external_watchdog - workflow_names
 if missing_watchdog:
     raise SystemExit(f'externally watched workflow(s) missing: {sorted(missing_watchdog)}')
+missing_automatic_long = automatic_long - workflow_names
+if missing_automatic_long:
+    raise SystemExit(f'automatic long workflow(s) missing: {sorted(missing_automatic_long)}')
 
 for path in workflow_paths:
     name = path.name
@@ -105,30 +112,37 @@ for path in workflow_paths:
     if name in external_watchdog:
         continue
 
+    if name in automatic_long:
+        if 'push' not in triggers or 'workflow_dispatch' not in triggers or 'paths:' not in text:
+            raise SystemExit(f'{name}: heavyweight automatic integration build must be path-gated and manually dispatchable')
+        continue
+
     # Every other current or future runner-backed workflow is capped at ten
     # minutes, regardless of whether its trigger is push, schedule,
     # workflow_run, repository_dispatch, workflow_dispatch, or something new.
     enforce_runner_timeouts(name, text)
 
-# Automatic publication promotes tested artifacts. It must never sneak the
-# heavyweight desktop-stack build back into the release path.
+# Automatic publication promotes tested artifacts and a separately qualified
+# managed desktop-stack prerelease. It must never rebuild or inject raw
+# desktop binaries into the core package.
 release_artifacts = (wf / 'release-artifacts.yml').read_text()
 for required in (
-    'git diff --quiet v0.18.47',
-    'gh release download v0.18.47',
-    'INFILTRATORFS_REQUIRE_OS_INTEGRATION',
+    'desktop-integration-ubuntu24.04-',
+    'infiltratorfs-desktop-integration.manifest',
+    'managed-packages',
     'gh run download',
-    'X-InfiltratorFS-Desktop-Integration',
 ):
     if required not in release_artifacts:
         raise SystemExit(f'release artifact promotion policy missing: {required}')
 for forbidden in (
     'apt-get build-dep',
+    'INFILTRATORFS_OS_INTEGRATION_BUNDLE_DIR',
+    'INFILTRATORFS_REQUIRE_OS_INTEGRATION',
+    'gh release download v0.18.47',
     'bash packaging/build-noble-desktop-integration.sh',
-    'timeout-minutes: 12',
 ):
     if forbidden in release_artifacts:
-        raise SystemExit(f'automatic release artifact workflow contains heavyweight path: {forbidden}')
+        raise SystemExit(f'automatic release artifact workflow contains retired desktop injection path: {forbidden}')
 
 release = (wf / 'release-packages.yml').read_text()
 for required in (

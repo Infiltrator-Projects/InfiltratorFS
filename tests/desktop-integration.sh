@@ -17,7 +17,7 @@ mint_guard="$repo_root/packaging/patch-mintstick.py"
 nemo_action="$repo_root/packaging/infiltratorfs-format-partition.nemo_action"
 noble_libblockdev_patch="$repo_root/packaging/libblockdev-3.1-infiltratorfs.patch"
 noble_gnome_patch="$repo_root/packaging/gnome-disks-46-infiltratorfs.patch"
-noble_bundle_builder="$repo_root/packaging/build-noble-desktop-integration.sh"
+noble_bundle_builder="$repo_root/packaging/build-noble-desktop-packages.sh"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
@@ -92,8 +92,9 @@ grep -Fq 'options->label' "$libblockdev_patch"
 grep -Fq 'GDU_OTHER_FS_TYPE_INFILTRATORFS' "$gnome_disks_patch"
 grep -Fq '"infiltratorfs"' "$gnome_disks_patch"
 
-# Public Ubuntu 24.04 / Linux Mint 22.x packages carry ABI-matched downstream
-# desktop binaries and restore the distro originals with dpkg-divert.
+# Public Ubuntu 24.04 / Linux Mint 22.x desktop integration is delivered
+# as explicit managed Debian replacement packages. The core helper is
+# cleanup-only and may never add diversions or install replacement binaries.
 for integration_file in "$os_helper" "$mint_guard" "$noble_libblockdev_patch" \
                         "$noble_gnome_patch" "$noble_bundle_builder"; do
     test -s "$integration_file"
@@ -106,21 +107,25 @@ import pathlib
 import sys
 ast.parse(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 PY
-grep -Fq 'dpkg-divert --package "$OWNER" --add --rename' "$os_helper"
+grep -Fq 'repair-legacy' "$os_helper"
 grep -Fq 'dpkg-divert --package "$OWNER" --remove --rename' "$os_helper"
-grep -Fq 'restart_udisks' "$os_helper"
-grep -Fq 'systemctl restart udisks2.service' "$os_helper"
-grep -Fq 'require_udisks_formatter' "$os_helper"
-grep -Fq 'org.freedesktop.UDisks2.Manager.CanFormat infiltratorfs' "$os_helper"
-grep -Fq 'SupportedFilesystems' "$os_helper"
-grep -Fq 'libblockdev-fs3' "$os_helper"
+if grep -Fq 'dpkg-divert --package "$OWNER" --add --rename' "$os_helper"; then
+    echo 'desktop-integration: core helper must never add a system diversion' >&2
+    exit 1
+fi
+grep -Fq 'infiltratorfs-libblockdev-fs3' "$noble_bundle_builder"
+grep -Fq 'infiltratorfs-gnome-disk-utility' "$noble_bundle_builder"
+grep -Fq 'infiltratorfs-desktop-integration' "$noble_bundle_builder"
+grep -Fq 'Provides' "$noble_bundle_builder"
+grep -Fq 'Conflicts' "$noble_bundle_builder"
+grep -Fq 'Replaces' "$noble_bundle_builder"
+grep -Fq 'BD_FS_TECH_INFILTRATORFS' "$noble_libblockdev_patch"
 grep -Fq 'InfiltratorFS formatter service is unavailable' "$noble_gnome_patch"
 grep -Fq 'src/disks/gducreateotherpage.c' "$noble_gnome_patch"
 grep -Fq '{"infiltratorfs", N_("InfiltratorFS' "$noble_gnome_patch"
 grep -Fq 'src/disks/gduwindow.c' "$noble_gnome_patch"
 grep -Fq 'src/disks/gduvolumegrid.c' "$noble_gnome_patch"
 grep -Fq 'InfiltratorFS (format %s)' "$noble_gnome_patch"
-grep -Fq 'BD_FS_TECH_INFILTRATORFS' "$noble_libblockdev_patch"
 
 # Mintstick/Nemo's USB Stick Formatter is intentionally NOT an InfiltratorFS
 # formatter. It repartitions the entire target device, so a selected partition
@@ -154,8 +159,7 @@ if grep -Fqi 'mintstick' "$nemo_action"; then
     exit 1
 fi
 grep -Fq 'MINT_NEMO_FORMAT="/usr/share/nemo/actions/mintstick-format.nemo_action"' "$os_helper"
-grep -Fq 'divert_path "$MINT_NEMO_FORMAT" "$MINT_NEMO_FORMAT_STOCK"' "$os_helper"
-grep -Fq 'install -m 0644 "$INFILTRATOR_NEMO_FORMAT" "$MINT_NEMO_FORMAT"' "$os_helper"
+grep -Fq 'restore_path "$MINT_NEMO_FORMAT" "$MINT_NEMO_FORMAT_STOCK"' "$os_helper"
 grep -Fq 'rm -f -- "$LEGACY_INFILTRATOR_NEMO_FORMAT"' "$os_helper"
 
 # Prove the conventional helper expected by libblockdev forwards every

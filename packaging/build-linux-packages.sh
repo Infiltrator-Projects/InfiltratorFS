@@ -13,10 +13,6 @@ version="$(sed -n 's/^project(InfiltratorFS VERSION \([^ ]*\) LANGUAGES C)$/\1/p
 package_version="${INFILTRATORFS_PACKAGE_VERSION:-$version}"
 build_identity="${INFILTRATORFS_BUILD_IDENTITY:-generic-apt}"
 emit_run="${INFILTRATORFS_EMIT_RUN:-1}"
-integration_bundle="${INFILTRATORFS_OS_INTEGRATION_BUNDLE_DIR:-}"
-require_integration="${INFILTRATORFS_REQUIRE_OS_INTEGRATION:-0}"
-integration_enabled=0
-
 [[ "$package_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\+native[0-9]+)?$ ]] || {
     echo "Invalid InfiltratorFS package version: $package_version" >&2
     exit 1
@@ -29,22 +25,6 @@ case "$emit_run" in
     0|1) ;;
     *) echo "INFILTRATORFS_EMIT_RUN must be 0 or 1." >&2; exit 1 ;;
 esac
-case "$require_integration" in
-    0|1) ;;
-    *) echo "INFILTRATORFS_REQUIRE_OS_INTEGRATION must be 0 or 1." >&2; exit 1 ;;
-esac
-if [[ -n "$integration_bundle" ]]; then
-    for required in gnome-disks libbd_fs.so manifest; do
-        [[ -s "$integration_bundle/$required" ]] || {
-            echo "Desktop integration bundle is missing $required." >&2
-            exit 1
-        }
-    done
-    integration_enabled=1
-elif [[ "$require_integration" = 1 ]]; then
-    echo "This package build requires the Ubuntu/Mint desktop integration bundle." >&2
-    exit 1
-fi
 [[ -f src/infiltratr-common/CMakeLists.txt ]] || {
     echo "The pinned Infiltratr Common submodule is not initialised." >&2
     exit 1
@@ -66,16 +46,6 @@ rm -f "$package_root/usr/bin/infilfs-fuse"
 install -d "$package_root/usr/share/doc/infiltratorfs"
 install -m 0644 LICENSE "$package_root/usr/share/doc/infiltratorfs/copyright"
 install -m 0644 README.md "$package_root/usr/share/doc/infiltratorfs/README.md"
-if [[ "$integration_enabled" = 1 ]]; then
-    install -d "$package_root/usr/lib/infiltratorfs/os-integration"
-    install -m 0755 "$integration_bundle/gnome-disks" \
-        "$package_root/usr/lib/infiltratorfs/os-integration/gnome-disks"
-    install -m 0644 "$integration_bundle/libbd_fs.so" \
-        "$package_root/usr/lib/infiltratorfs/os-integration/libbd_fs.so"
-    install -m 0644 "$integration_bundle/manifest" \
-        "$package_root/usr/lib/infiltratorfs/os-integration/manifest"
-fi
-
 # DKMS source must be self-contained. Every RW composition file is required;
 # omitting an implementation include makes host-side DKMS builds fail even
 # though the repository build itself succeeds.
@@ -106,14 +76,8 @@ EOF
 
 install -d "$package_root/DEBIAN"
 installed_size="$(du -sk "$package_root/usr" | cut -f1)"
-desktop_depends=""
-desktop_recommends=", udisks2"
-desktop_identity="core-only"
-if [[ "$integration_enabled" = 1 ]]; then
-    desktop_depends=", udisks2, gnome-disk-utility (>= 46~), gnome-disk-utility (<< 47~), libblockdev-fs3 (>= 3.1~), libblockdev-fs3 (<< 3.2~)"
-    desktop_recommends=""
-    desktop_identity="ubuntu24.04-mint22-bundled"
-fi
+desktop_recommends=", udisks2, infiltratorfs-desktop-integration"
+desktop_identity="managed-packages"
 cat > "$package_root/DEBIAN/control" <<EOF
 Package: infiltratorfs
 Version: ${package_version}
@@ -123,7 +87,7 @@ Architecture: ${architecture}
 Maintainer: The First Infiltrator
 X-InfiltratorFS-Build: ${build_identity}
 X-InfiltratorFS-Desktop-Integration: ${desktop_identity}
-Depends: dkms, initramfs-tools, kmod, policykit-1, util-linux, xdg-utils, fontconfig, libssl3t64 | libssl3, python3, python3-gi, gir1.2-gtk-3.0${desktop_depends}
+Depends: dkms, initramfs-tools, kmod, policykit-1, util-linux, xdg-utils, fontconfig, libssl3t64 | libssl3, python3, python3-gi, gir1.2-gtk-3.0
 Recommends: linux-headers-generic, udev${desktop_recommends}
 Installed-Size: ${installed_size}
 Homepage: https://github.com/Infiltrator-Projects/InfiltratorFS
@@ -321,15 +285,160 @@ for required in \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_ioctl.h$"; do
     grep -q "$required" "$contents"
 done
-if [[ "$integration_enabled" = 1 ]]; then
-    for required in \
-        'usr/lib/infiltratorfs/os-integration/gnome-disks$' \
-        'usr/lib/infiltratorfs/os-integration/libbd_fs.so$' \
-        'usr/lib/infiltratorfs/os-integration/manifest$'; do
-        grep -q "$required" "$contents"
+test "$(dpkg-deb --field "$dist_dir/$deb_name" X-InfiltratorFS-Desktop-Integration)" = managed-packages
+if grep -Eq 'usr/lib/infiltratorfs/os-integration/(gnome-disks|libbd_fs\.so|manifest)if grep -q 'usr/bin/infilfs-fuse$' "$contents"; then
+    echo 'Native release package unexpectedly contains infilfs-fuse.' >&2
+    exit 1
+fi
+if grep -q 'usr/lib/infiltratorfs/patch-mintstick.py$' "$contents"; then
+    echo 'Release package must not install the retired whole-device Mintstick patcher.' >&2
+    exit 1
+fi
+if grep -q 'usr/share/nemo/actions/infiltratorfs-format-partition.nemo_action$' "$contents"; then
+    echo 'Release package must not install a second visible Nemo Format action.' >&2
+    exit 1
+fi
+test "$(dpkg-deb --field "$dist_dir/$deb_name" Version)" = "$package_version"
+depends="$(dpkg-deb --field "$dist_dir/$deb_name" Depends)"
+for dependency in dkms initramfs-tools kmod policykit-1 util-linux xdg-utils fontconfig python3 python3-gi gir1.2-gtk-3.0; do
+    grep -Eq "(^|, )${dependency}([ ,]|$)" <<<"$depends"
+done
+if grep -Eqi '(^|[, ])(fuse3|libfuse3-3)([, ]|$)' <<<"$depends"; then
+    echo 'Native release package unexpectedly depends on FUSE.' >&2
+    exit 1
+fi
+preinst_text="$(dpkg-deb --ctrl-tarfile "$dist_dir/$deb_name" | tar -xOf - ./preinst)"
+grep -Fq 'sync' <<<"$preinst_text"
+grep -Fq 'umount -a -t infiltratorfs,fuse.infilfs-fuse' <<<"$preinst_text"
+grep -Fq 'clean automatic unmount complete' <<<"$preinst_text"
+grep -Fq 'volume is still busy' <<<"$preinst_text"
+grep -Fq 'removing existing DKMS registration $old_version before installing $version' \
+    <<<"$preinst_text"
+! grep -Fq '[ "$old_version" != "$version" ]' <<<"$preinst_text"
+if awk '
+    /^[[:space:]]*umount[[:space:]]/ {
+        for (field = 2; field <= NF; ++field)
+            if ($field ~ /^-[^-]*[fl]/ || $field == "--force" ||
+                $field == "--lazy")
+                unsafe = 1
+    }
+    END { exit unsafe ? 0 : 1 }
+' <<<"$preinst_text"; then
+    echo 'Debian preinst must never force or lazily detach mounted InfiltratorFS volumes.' >&2
+    exit 1
+fi
+postinst_text="$(dpkg-deb --ctrl-tarfile "$dist_dir/$deb_name" | tar -xOf - ./postinst)"
+grep -Fq 'modprobe "$module"' <<<"$postinst_text"
+grep -Fq 'infiltratorfs-os-integration repair-legacy' <<<"$postinst_text"
+prerm_text="$(dpkg-deb --ctrl-tarfile "$dist_dir/$deb_name" | tar -xOf - ./prerm)"
+grep -Fq 'infiltratorfs-os-integration repair-legacy' <<<"$prerm_text"
+grep -Fq 'modprobe --dry-run --verbose "$module"' <<<"$postinst_text"
+grep -Fq 'module loading is administratively disabled' <<<"$postinst_text"
+rm -f "$contents"
+
+if [[ "$emit_run" = 0 ]]; then
+    printf 'Built InfiltratorFS Debian package:\n  %s\n' "$deb_name"
+    exit 0
+fi
+
+# The .run payload contains source, but its bootstrap deliberately disables the
+# optional PkgConfig/FUSE discovery and removes any legacy infilfs-fuse binary.
+source_epoch="$(git log -1 --format=%ct 2>/dev/null || date +%s)"
+tar --sort=name --mtime="@${source_epoch}" --owner=0 --group=0 --numeric-owner \
+    --exclude='./.git' --exclude='*/.git' --exclude='./build*' --exclude='./dist' \
+    -czf "$payload" .
+
+cat > "$dist_dir/$run_name" <<'RUN_HEADER'
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+set -Eeuo pipefail
+self="$0"
+marker='__INFILTRATORFS_NATIVE_PAYLOAD__'
+payload_start="$(awk -v marker="$marker" '$0 == marker { print NR + 1; exit }' "$self")"
+[[ -n "$payload_start" ]] || { echo "Installer payload marker not found." >&2; exit 1; }
+
+verify_installer() {
+    local verify_root
+    test "$(head -n 1 "$self")" = '#!/usr/bin/env bash'
+    tail -n +"$payload_start" "$self" | gzip -t
+    verify_root="$(mktemp -d)"
+    trap 'rm -rf "$verify_root"' RETURN
+    tail -n +"$payload_start" "$self" | tar --no-same-owner -xzf - -C "$verify_root"
+    for required in CMakeLists.txt README.md support/installer/bootstrap.sh \
+        packaging/build-linux-packages.sh packaging/infiltratorfs-os-integration \
+        packaging/patch-mintstick.py \
+        src/infiltratr-common/CMakeLists.txt kernel/Makefile kernel/infiltratorfs_core.c \
+        kernel/infiltratorfs_crypto.c \
+        kernel/infiltratorfs_format.h include/infilfs/iac1.h kernel/infiltratorfs_allocation_map.c \
+        kernel/infiltratorfs_allocation_publish.c kernel/infiltratorfs_rw.inc \
+        kernel/infiltratorfs_parallel_alloc.c \
+        kernel/infiltratorfs_rw_legacy.inc kernel/infiltratorfs_checksum_cache.c \
+        kernel/infiltratorfs_rw_data.inc \
+        kernel/infiltratorfs_rw_namespace.inc kernel/infiltratorfs_read_cache.c \
+        kernel/infiltratorfs_pagecache.c kernel/infiltratorfs_linux_meta_codec.c kernel/infiltratorfs_linux_meta.inc \
+        kernel/infiltratorfs_resize.c kernel/infiltratorfs_quota.inc \
+        kernel/infiltratorfs_defrag.inc kernel/infiltratorfs_ioctl.h; do
+        test -f "$verify_root/$required"
     done
-    test "$(dpkg-deb --field "$dist_dir/$deb_name" X-InfiltratorFS-Desktop-Integration)" = \
-        ubuntu24.04-mint22-bundled
+    test -x "$verify_root/support/installer/bootstrap.sh"
+    bash -n "$verify_root/support/installer/bootstrap.sh"
+    bash -n "$verify_root/packaging/build-linux-packages.sh"
+    grep -Fq 'bash "$ROOT/packaging/build-linux-packages.sh"' \
+        "$verify_root/support/installer/bootstrap.sh"
+    rm -rf "$verify_root"
+    trap - RETURN
+}
+
+case "${1:-}" in
+    --verify)
+        [[ $# -eq 1 ]] || exit 2
+        verify_installer
+        echo 'InfiltratorFS native installer verified.'
+        exit 0
+        ;;
+    --dry-run)
+        [[ $# -eq 1 ]] || exit 2
+        ;;
+    --build-only)
+        [[ $# -eq 2 ]] || { echo 'Usage: infiltratorfs-<version>-linux-native.run --build-only OUTPUT.deb' >&2; exit 2; }
+        ;;
+    '')
+        [[ $# -eq 0 ]] || exit 2
+        ;;
+    --help|-h)
+        echo 'Usage: infiltratorfs-<version>-linux-native.run [--verify|--dry-run|--build-only OUTPUT.deb]'
+        exit 0
+        ;;
+    *) exit 2 ;;
+esac
+verify_installer
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+mkdir -p "$work/source"
+tail -n +"$payload_start" "$self" | tar --no-same-owner -xzf - -C "$work/source"
+"$work/source/support/installer/bootstrap.sh" "$@"
+exit 0
+__INFILTRATORFS_NATIVE_PAYLOAD__
+RUN_HEADER
+cat "$payload" >> "$dist_dir/$run_name"
+chmod 0755 "$dist_dir/$run_name"
+
+"$dist_dir/$run_name" --verify
+"$dist_dir/$run_name" --dry-run > "$dist_dir/native-installer-dry-run.txt"
+grep -Fq 'Dry run only; no packages will be installed' "$dist_dir/native-installer-dry-run.txt"
+grep -Fq 'Native kernel module commands:' "$dist_dir/native-installer-dry-run.txt"
+grep -Fq 'The completed installation is Debian-managed as infiltratorfs' "$dist_dir/native-installer-dry-run.txt"
+rm -f "$dist_dir/native-installer-dry-run.txt"
+
+(
+    cd "$dist_dir"
+    sha256sum "$deb_name" > "$deb_name.sha256"
+    sha256sum "$run_name" > "$run_name.sha256"
+)
+printf 'Built native Linux release packages:\n  %s\n  %s\n' "$deb_name" "$run_name"
+ "$contents"; then
+    echo 'Core InfiltratorFS package must not carry replacement desktop-stack binaries.' >&2
+    exit 1
 fi
 if grep -q 'usr/bin/infilfs-fuse$' "$contents"; then
     echo 'Native release package unexpectedly contains infilfs-fuse.' >&2
