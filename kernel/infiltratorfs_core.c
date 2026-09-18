@@ -149,13 +149,10 @@ int infilfs_read_compressed_extent(
     compressed = kvmalloc(stored_span, GFP_NOFS);
     if (!compressed)
         return -ENOMEM;
-    for (i = 0; i < physical_blocks; ++i) {
-        ret = infilfs_read_allocated_block(
-            inode->i_sb, physical + i,
-            compressed + (size_t)i * INFILFS_DISK_BLOCK_SIZE);
-        if (ret)
-            goto out;
-    }
+    ret = infilfs_read_allocated_blocks(
+        inode->i_sb, physical, (u32)physical_blocks, compressed);
+    if (ret)
+        goto out;
     if (infilfs_extent_codec(flags) == INFILFS_COMPRESSION_LZ4) {
         decoded = LZ4_decompress_safe(
             (const char *)compressed, (char *)plain,
@@ -395,12 +392,67 @@ int infilfs_read_block(struct super_block *sb, u64 block, void *out)
     return 0;
 }
 
+int infilfs_read_allocated_blocks(
+    struct super_block *sb, u64 start, u32 count, void *out)
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
+    const u8 *bitmap;
+    size_t bytes;
+    u32 i;
+    int ret = 0;
+
+    if (!sbi || !out || !count ||
+        start >= infilfs_volume_blocks(sbi) ||
+        count > infilfs_volume_blocks(sbi) - start)
+        return -EIO;
+
+    /*
+     * A contiguous data run is immutable for the lifetime of the topology
+     * read lock held by callers such as readahead. Validate the allocation
+     * bitmap once for the whole run instead of taking bitmap_lock once per
+     * 4 KiB block.
+     */
+    read_lock(&sbi->bitmap_lock);
+    if (sbi->validation_bitmap) {
+        bitmap = sbi->validation_bitmap;
+        bytes = sbi->validation_bitmap_bytes;
+    } else {
+        bitmap = sbi->visible_bitmap;
+        bytes = sbi->visible_bitmap_bytes;
+    }
+    if (!bitmap) {
+        ret = -EFSCORRUPTED;
+        goto unlock;
+    }
+    for (i = 0; i < count; ++i) {
+        u64 block = start + i;
+
+        if ((block >> 3) >= bytes ||
+            (READ_ONCE(bitmap[block >> 3]) &
+             (u8)(1u << (block & 7u))) == 0) {
+            ret = -EFSCORRUPTED;
+            goto unlock;
+        }
+    }
+unlock:
+    read_unlock(&sbi->bitmap_lock);
+    if (ret)
+        return ret;
+
+    for (i = 0; i < count; ++i) {
+        ret = infilfs_read_block(
+            sb, start + i,
+            (u8 *)out + (size_t)i * INFILFS_DISK_BLOCK_SIZE);
+        if (ret)
+            return ret;
+    }
+    return 0;
+}
+
 int infilfs_read_allocated_block(struct super_block *sb, u64 block,
                                         void *out)
 {
-    if (!infilfs_block_allocated(sb, block))
-        return -EFSCORRUPTED;
-    return infilfs_read_block(sb, block, out);
+    return infilfs_read_allocated_blocks(sb, block, 1u, out);
 }
 
 
