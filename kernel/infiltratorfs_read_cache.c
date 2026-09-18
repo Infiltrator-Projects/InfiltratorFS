@@ -58,6 +58,70 @@ struct infilfs_native_read_extent_cursor {
 };
 
 #define INFILFS_NATIVE_READAHEAD_BLOCKS 256u
+#define INFILFS_NATIVE_READ_HASH_WORKERS 4u
+#define INFILFS_NATIVE_READ_HASH_MIN_BLOCKS 16u
+
+struct infilfs_native_read_hash_work {
+    struct work_struct work;
+    struct completion done;
+    const u8 *data;
+    struct infilfs_data_checksum_disk *digests;
+    u32 first;
+    u32 count;
+};
+
+static void infilfs_native_read_hash_workfn(struct work_struct *work)
+{
+    struct infilfs_native_read_hash_work *item = container_of(
+        work, struct infilfs_native_read_hash_work, work);
+    u32 i;
+
+    for (i = 0; i < item->count; ++i)
+        infilfs_native_block_digest(
+            item->data +
+                (size_t)(item->first + i) * INFILFS_DISK_BLOCK_SIZE,
+            &item->digests[item->first + i]);
+    complete(&item->done);
+}
+
+static void infilfs_native_digest_run(
+    const u8 *data, u32 blocks,
+    struct infilfs_data_checksum_disk *digests)
+{
+    struct infilfs_native_read_hash_work
+        work[INFILFS_NATIVE_READ_HASH_WORKERS];
+    u32 workers;
+    u32 first = 0;
+    u32 i;
+
+    if (blocks < INFILFS_NATIVE_READ_HASH_MIN_BLOCKS) {
+        for (i = 0; i < blocks; ++i)
+            infilfs_native_block_digest(
+                data + (size_t)i * INFILFS_DISK_BLOCK_SIZE,
+                &digests[i]);
+        return;
+    }
+
+    workers = min_t(u32, INFILFS_NATIVE_READ_HASH_WORKERS, blocks);
+    memset(work, 0, sizeof(work));
+    for (i = 0; i < workers; ++i) {
+        u32 remaining = blocks - first;
+        u32 slots = workers - i;
+        u32 count = DIV_ROUND_UP(remaining, slots);
+
+        INIT_WORK(&work[i].work, infilfs_native_read_hash_workfn);
+        init_completion(&work[i].done);
+        work[i].data = data;
+        work[i].digests = digests;
+        work[i].first = first;
+        work[i].count = count;
+        queue_work(system_unbound_wq, &work[i].work);
+        first += count;
+    }
+    for (i = 0; i < workers; ++i)
+        wait_for_completion(&work[i].done);
+}
+
 
 static void infilfs_native_readahead_extent(
     struct super_block *sb, u64 physical, u64 logical,
@@ -310,6 +374,9 @@ ssize_t infilfs_native_read_iter_cached(struct inode *inode,
     size_t requested, done = 0;
     u8 *object = NULL, *data_block = NULL, *checksum_object = NULL;
     u8 *extent_page = NULL, *compressed_plain = NULL;
+    u8 *run_data = NULL;
+    struct infilfs_data_checksum_disk *run_expected = NULL;
+    struct infilfs_data_checksum_disk *run_actual = NULL;
     size_t compressed_capacity = 0;
     u64 compressed_physical = 0, compressed_logical = 0;
     u32 compressed_blocks = 0, compressed_flags = 0;
@@ -422,6 +489,20 @@ ssize_t infilfs_native_read_iter_cached(struct inode *inode,
             memset(data_block, 0, INFILFS_DISK_BLOCK_SIZE);
         } else if (infilfs_extent_kind(flags) == INFILFS_EXTENT_NORMAL) {
             struct infilfs_data_checksum_disk expected, actual;
+            u64 extent_end = extent_logical + extent_blocks;
+            u64 available_blocks = extent_end > logical ?
+                extent_end - logical : 0;
+            u32 run_blocks = 0;
+
+            if (within == 0 &&
+                requested - done >= 2u * INFILFS_DISK_BLOCK_SIZE &&
+                available_blocks >= 2u) {
+                run_blocks = min_t(
+                    u64, available_blocks,
+                    (requested - done) >> INFILFS_DISK_BLOCK_SHIFT);
+                run_blocks = min_t(
+                    u32, run_blocks, INFILFS_NATIVE_READAHEAD_BLOCKS);
+            }
 
             if (infilfs_extent_is_compressed(flags)) {
                 size_t plain_bytes =
@@ -456,6 +537,61 @@ ssize_t infilfs_native_read_iter_cached(struct inode *inode,
                     compressed_valid = true;
                 }
 
+                if (run_blocks >= 2u) {
+                    const u8 *run_source =
+                        compressed_plain +
+                        (size_t)(logical - extent_logical) *
+                            INFILFS_DISK_BLOCK_SIZE;
+                    u32 j;
+
+                    if (!run_expected)
+                        run_expected = kvmalloc_array(
+                            INFILFS_NATIVE_READAHEAD_BLOCKS,
+                            sizeof(*run_expected), GFP_NOFS);
+                    if (!run_actual)
+                        run_actual = kvmalloc_array(
+                            INFILFS_NATIVE_READAHEAD_BLOCKS,
+                            sizeof(*run_actual), GFP_NOFS);
+                    if (!run_expected || !run_actual) {
+                        ret = -ENOMEM;
+                        goto partial;
+                    }
+
+                    for (j = 0; j < run_blocks; ++j) {
+                        ret = infilfs_native_read_expected_digest_cached(
+                            inode->i_sb, ii->object_id,
+                            file->checksum_head_id, logical + j,
+                            &cursor, checksum_object,
+                            &checksum_loaded_start,
+                            &checksum_loaded_count,
+                            &checksum_loaded_valid,
+                            &run_expected[j]);
+                        if (ret)
+                            goto partial;
+                    }
+                    infilfs_native_digest_run(
+                        run_source, run_blocks, run_actual);
+                    for (j = 0; j < run_blocks; ++j) {
+                        if (memcmp(&run_expected[j], &run_actual[j],
+                                   sizeof(run_expected[j])) != 0) {
+                            ret = -EFSCORRUPTED;
+                            goto partial;
+                        }
+                    }
+                    {
+                        size_t run_bytes =
+                            (size_t)run_blocks *
+                            INFILFS_DISK_BLOCK_SIZE;
+                        size_t run_copied =
+                            copy_to_iter(run_source, run_bytes, to);
+
+                        done += run_copied;
+                        if (run_copied != run_bytes)
+                            break;
+                    }
+                    continue;
+                }
+
                 memcpy(data_block,
                        compressed_plain +
                            (size_t)(logical - extent_logical) *
@@ -465,6 +601,68 @@ ssize_t infilfs_native_read_iter_cached(struct inode *inode,
                 infilfs_native_readahead_extent(
                     inode->i_sb, physical, logical, extent_logical,
                     extent_blocks, &readahead_next_logical);
+
+                if (run_blocks >= 2u) {
+                    u32 j;
+
+                    if (!run_data)
+                        run_data = kvmalloc(
+                            (size_t)INFILFS_NATIVE_READAHEAD_BLOCKS *
+                            INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+                    if (!run_expected)
+                        run_expected = kvmalloc_array(
+                            INFILFS_NATIVE_READAHEAD_BLOCKS,
+                            sizeof(*run_expected), GFP_NOFS);
+                    if (!run_actual)
+                        run_actual = kvmalloc_array(
+                            INFILFS_NATIVE_READAHEAD_BLOCKS,
+                            sizeof(*run_actual), GFP_NOFS);
+                    if (!run_data || !run_expected || !run_actual) {
+                        ret = -ENOMEM;
+                        goto partial;
+                    }
+
+                    for (j = 0; j < run_blocks; ++j) {
+                        ret = infilfs_read_allocated_block(
+                            inode->i_sb, physical + j,
+                            run_data +
+                                (size_t)j * INFILFS_DISK_BLOCK_SIZE);
+                        if (ret)
+                            goto partial;
+                        ret = infilfs_native_read_expected_digest_cached(
+                            inode->i_sb, ii->object_id,
+                            file->checksum_head_id, logical + j,
+                            &cursor, checksum_object,
+                            &checksum_loaded_start,
+                            &checksum_loaded_count,
+                            &checksum_loaded_valid,
+                            &run_expected[j]);
+                        if (ret)
+                            goto partial;
+                    }
+                    infilfs_native_digest_run(
+                        run_data, run_blocks, run_actual);
+                    for (j = 0; j < run_blocks; ++j) {
+                        if (memcmp(&run_expected[j], &run_actual[j],
+                                   sizeof(run_expected[j])) != 0) {
+                            ret = -EFSCORRUPTED;
+                            goto partial;
+                        }
+                    }
+                    {
+                        size_t run_bytes =
+                            (size_t)run_blocks *
+                            INFILFS_DISK_BLOCK_SIZE;
+                        size_t run_copied =
+                            copy_to_iter(run_data, run_bytes, to);
+
+                        done += run_copied;
+                        if (run_copied != run_bytes)
+                            break;
+                    }
+                    continue;
+                }
+
                 ret = infilfs_read_allocated_block(
                     inode->i_sb, physical, data_block);
             }
@@ -506,6 +704,9 @@ out:
                 inode->i_sb, ii->object_id, &cursor);
         mutex_unlock(&sbi->write_lock);
     }
+    kvfree(run_actual);
+    kvfree(run_expected);
+    kvfree(run_data);
     kvfree(compressed_plain);
     kfree(extent_page);
     kfree(checksum_object);
