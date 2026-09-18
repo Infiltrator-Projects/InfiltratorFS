@@ -103,13 +103,16 @@ static int free_extent_index_remove(struct infs_volume *vol,
 {
     if (!vol || !vol->free_extent_index_valid || !count)
         return 0;
-    if (start > UINT64_MAX - count)
+    uint64_t end = 0;
+    if (!infiltratr_u64_add_checked(start, count, &end))
         return 0;
-    uint64_t end = start + count;
 
     for (size_t i = 0; i < vol->free_extent_count; ++i) {
         uint64_t e_start = vol->free_extents[i].start;
-        uint64_t e_end = e_start + vol->free_extents[i].count;
+        uint64_t e_end = 0;
+        if (!infiltratr_u64_add_checked(
+                e_start, vol->free_extents[i].count, &e_end))
+            return 0;
         if (start < e_start || end > e_end)
             continue;
 
@@ -130,7 +133,10 @@ static int free_extent_index_remove(struct infs_volume *vol,
             return 1;
         }
 
-        if (!free_extent_index_reserve(vol, vol->free_extent_count + 1u))
+        size_t required = 0;
+        if (!infiltratr_size_add_checked(
+                vol->free_extent_count, 1u, &required) ||
+            !free_extent_index_reserve(vol, required))
             return 0;
         memmove(&vol->free_extents[i + 2u], &vol->free_extents[i + 1u],
                 (vol->free_extent_count - i - 1u) *
@@ -149,18 +155,28 @@ static int free_extent_index_add(struct infs_volume *vol,
 {
     if (!vol || !vol->free_extent_index_valid || !count)
         return 0;
-    if (start > UINT64_MAX - count)
+    uint64_t end = 0;
+    if (!infiltratr_u64_add_checked(start, count, &end))
         return 0;
-    uint64_t end = start + count;
     size_t i = 0;
 
-    while (i < vol->free_extent_count &&
-           vol->free_extents[i].start + vol->free_extents[i].count < start)
+    while (i < vol->free_extent_count) {
+        uint64_t existing_end = 0;
+        if (!infiltratr_u64_add_checked(
+                vol->free_extents[i].start, vol->free_extents[i].count,
+                &existing_end))
+            return 0;
+        if (existing_end >= start)
+            break;
         ++i;
+    }
 
     if (i > 0) {
-        uint64_t prev_end = vol->free_extents[i - 1u].start +
-            vol->free_extents[i - 1u].count;
+        uint64_t prev_end = 0;
+        if (!infiltratr_u64_add_checked(
+                vol->free_extents[i - 1u].start,
+                vol->free_extents[i - 1u].count, &prev_end))
+            return 0;
         if (prev_end >= start) {
             i--;
             start = vol->free_extents[i].start;
@@ -173,7 +189,10 @@ static int free_extent_index_add(struct infs_volume *vol,
     while (i < vol->free_extent_count &&
            vol->free_extents[i].start <= end) {
         uint64_t e_start = vol->free_extents[i].start;
-        uint64_t e_end = e_start + vol->free_extents[i].count;
+        uint64_t e_end = 0;
+        if (!infiltratr_u64_add_checked(
+                e_start, vol->free_extents[i].count, &e_end))
+            return 0;
         if (e_start < start)
             start = e_start;
         if (e_end > end)
@@ -193,7 +212,10 @@ static int free_extent_index_add(struct infs_volume *vol,
         return 1;
     }
 
-    if (!free_extent_index_reserve(vol, vol->free_extent_count + 1u))
+    size_t required = 0;
+    if (!infiltratr_size_add_checked(
+            vol->free_extent_count, 1u, &required) ||
+        !free_extent_index_reserve(vol, required))
         return 0;
     memmove(&vol->free_extents[first + 1u], &vol->free_extents[first],
             (vol->free_extent_count - first) * sizeof(*vol->free_extents));
@@ -547,13 +569,19 @@ static int tx_begin(struct infs_volume *vol)
 static int tx_record_allocated(struct infs_volume *vol,
                                uint64_t start, uint64_t count)
 {
+    uint64_t end = 0;
+    size_t required = 0;
     if (!vol || !vol->tx_active || !count ||
-        start > UINT64_MAX - count)
+        !infiltratr_u64_add_checked(start, count, &end))
         return INFS_STATUS_INVALID_ARGUMENT;
+    if (!infiltratr_size_add_checked(
+            vol->tx_allocated_count, 1u, &required))
+        return INFS_STATUS_OVERFLOW;
     if (!infiltratr_array_reserve(
             (void **)&vol->tx_allocated, &vol->tx_allocated_capacity,
-            sizeof(*vol->tx_allocated), vol->tx_allocated_count + 1u, 32u))
+            sizeof(*vol->tx_allocated), required, 32u))
         return INFS_STATUS_NO_MEMORY;
+    (void)end;
     vol->tx_allocated[vol->tx_allocated_count].start = start;
     vol->tx_allocated[vol->tx_allocated_count].count = count;
     ++vol->tx_allocated_count;
@@ -719,20 +747,28 @@ static int tx_defer_range(struct infs_volume *vol, uint64_t start, uint64_t coun
     if (vol->tx_deferred_count) {
         struct infs_deferred_range *last =
             &vol->tx_deferred[vol->tx_deferred_count - 1u];
-        if (last->start <= UINT64_MAX - last->count &&
-            last->start + last->count == start) {
-            if (count > UINT64_MAX - last->count) {
+        uint64_t last_end = 0;
+        if (infiltratr_u64_add_checked(
+                last->start, last->count, &last_end) &&
+            last_end == start) {
+            uint64_t merged_count = 0;
+            if (!infiltratr_u64_add_checked(
+                    last->count, count, &merged_count)) {
                 vol->tx_error = INFS_STATUS_OVERFLOW;
                 return vol->tx_error;
             }
-            last->count += count;
+            last->count = merged_count;
             return INFS_STATUS_OK;
         }
     }
 
+    size_t required = 0;
+    if (!infiltratr_size_add_checked(
+            vol->tx_deferred_count, 1u, &required))
+        return INFS_STATUS_OVERFLOW;
     if (!infiltratr_array_reserve(
             (void **)&vol->tx_deferred, &vol->tx_deferred_capacity,
-            sizeof(*vol->tx_deferred), vol->tx_deferred_count + 1u, 16u))
+            sizeof(*vol->tx_deferred), required, 16u))
         return INFS_STATUS_NO_MEMORY;
     vol->tx_deferred[vol->tx_deferred_count].start = start;
     vol->tx_deferred[vol->tx_deferred_count].count = count;
