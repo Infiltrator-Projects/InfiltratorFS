@@ -1,18 +1,18 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.20)
-project(InfiltratorFS VERSION 0.18.57 LANGUAGES C)
-# Development qualification anchor: 0.18.57
+project(InfiltratorFS VERSION 0.18.58 LANGUAGES C)
+# Development qualification anchor: 0.18.58
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
-set(INFILTRATR_COMMON_REQUIRED_VERSION "1.11.0")
+set(INFILTRATR_COMMON_REQUIRED_VERSION "1.19.2")
 set(INFILTRATR_COMMON_REQUIRED_COMMIT
-    "6c1a6c239e51dcf7946b6303a9bad639e8455a17")
+    "44409af17c89b6ece6b4bcb2c0c133213c695c23")
 
 # InfiltratorFS consumes the same Common contract as the other Infiltrator
-# projects. Prefer a parent-provided/installed 1.11.0 package, then the pinned
+# projects. Prefer a parent-provided/installed 1.19.2 package, then the pinned
 # submodule. A source checkout without initialised submodules still remains
 # buildable by fetching the exact immutable Common commit.
 if(NOT TARGET InfiltratrCommon::Portable)
