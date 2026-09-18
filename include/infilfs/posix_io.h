@@ -11,6 +11,15 @@
 
 struct infs_volume;
 
+/* POSIX adapter contract:
+ * - exact-I/O aliases return 0 on complete transfer and -1 with errno set;
+ * - status conversion is intentionally lossy where POSIX lacks a distinct
+ *   errno for a portable filesystem status;
+ * - storage_open() acquires a non-blocking shared/read-only or exclusive/
+ *   writable advisory lock and owns the descriptor until storage_close();
+ * - volume_open() transfers the opened storage context into the volume on
+ *   success; infs_volume_close() then releases it. */
+
 infs_status infs_status_from_errno(int error_number);
 int infs_status_to_errno(infs_status status);
 
