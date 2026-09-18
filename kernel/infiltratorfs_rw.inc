@@ -236,7 +236,7 @@ static int infilfs_native_recover_unlinked_files(struct super_block *sb)
      * reclaiming candidates because reclaim itself enters the namespace
      * transaction path.
      */
-    mutex_lock(&sbi->write_lock);
+    down_read(&sbi->write_lock);
     discovery_locked = true;
     ret = infilfs_ns_index_snapshot(sb, &entries, &count);
     if (ret)
@@ -288,7 +288,7 @@ static int infilfs_native_recover_unlinked_files(struct super_block *sb)
             entries[orphans++] = entries[i];
     }
 
-    mutex_unlock(&sbi->write_lock);
+    up_read(&sbi->write_lock);
     discovery_locked = false;
 
     for (i = 0; i < orphans; ++i) {
@@ -333,7 +333,7 @@ static int infilfs_native_recover_unlinked_files(struct super_block *sb)
     ret = 0;
 out:
     if (discovery_locked)
-        mutex_unlock(&sbi->write_lock);
+        up_read(&sbi->write_lock);
     pr_info("InfiltratorFS: orphan scan files=%u candidates=%u elapsed_ms=%llu result=%d\n",
             files, orphans,
             (unsigned long long)div_u64(ktime_get_ns() - started, 1000000), ret);
@@ -2037,11 +2037,11 @@ static int infilfs_getattr(struct user_namespace *idmap,
      * Read one coherent topology snapshot instead of racing the pointer update
      * and then reporting metadata from a reclaimed block.
      */
-    mutex_lock(&sbi->write_lock);
+    down_read(&sbi->write_lock);
     object_block = ii->object_block;
     ret = infilfs_read_object(inode->i_sb, object_block,
                               ii->object_type, ii->object_id, object);
-    mutex_unlock(&sbi->write_lock);
+    up_read(&sbi->write_lock);
     if (ret)
         goto out;
     attributes = infilfs_vfs_attributes(object);
@@ -2146,7 +2146,7 @@ static loff_t infilfs_file_llseek(struct file *file, loff_t offset, int whence)
     if (!object)
         return -ENOMEM;
 
-    mutex_lock(&sbi->write_lock);
+    down_read(&sbi->write_lock);
     ret = infilfs_native_collect_extents(
         NULL, inode, object, &extents, &count, &blocks, &was_inline);
     if (ret)
@@ -2202,7 +2202,7 @@ set:
     result = vfs_setpos(file, result, inode->i_sb->s_maxbytes);
     ret = 0;
 out:
-    mutex_unlock(&sbi->write_lock);
+    up_read(&sbi->write_lock);
     kvfree(extents);
     kfree(object);
     return ret ? ret : result;
@@ -2235,7 +2235,7 @@ static int infilfs_file_fiemap(
     if (!object)
         return -ENOMEM;
 
-    mutex_lock(&sbi->write_lock);
+    down_read(&sbi->write_lock);
     ret = infilfs_native_collect_extents(
         NULL, inode, object, &extents, &count, &blocks, &was_inline);
     if (ret)
@@ -2306,7 +2306,7 @@ static int infilfs_file_fiemap(
     }
     ret = 0;
 out:
-    mutex_unlock(&sbi->write_lock);
+    up_read(&sbi->write_lock);
     kvfree(extents);
     kfree(object);
     return ret;
