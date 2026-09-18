@@ -551,11 +551,12 @@ static int infilfs_writepages(struct address_space *mapping,
     pgoff_t index = wbc->range_start >> PAGE_SHIFT;
     pgoff_t end = wbc->range_end == LLONG_MAX ? (pgoff_t)-1 :
         wbc->range_end >> PAGE_SHIFT;
+    size_t batch_bytes = infilfs_native_writeback_batch_bytes();
     unsigned int max_folios =
-        DIV_ROUND_UP(INFILFS_NATIVE_WRITEBACK_BATCH_BYTES, PAGE_SIZE) + 1u;
+        DIV_ROUND_UP(batch_bytes, PAGE_SIZE) + 1u;
     int ret = 0;
 
-    cluster.buffer = kvmalloc(INFILFS_NATIVE_WRITEBACK_BATCH_BYTES, GFP_NOFS);
+    cluster.buffer = kvmalloc(batch_bytes, GFP_NOFS);
     cluster.folios = kvmalloc_array(max_folios, sizeof(*cluster.folios), GFP_NOFS);
     cluster.lengths = kvmalloc_array(max_folios, sizeof(*cluster.lengths), GFP_NOFS);
     cluster.capacity = max_folios;
@@ -577,7 +578,7 @@ static int infilfs_writepages(struct address_space *mapping,
                 min_t(loff_t, folio_size(folio), file_size - position) : 0;
             size_t copied = 0;
 
-            if (folio_size(folio) > INFILFS_NATIVE_WRITEBACK_BATCH_BYTES) {
+            if (folio_size(folio) > batch_bytes) {
                 ret = infilfs_writeback_cluster_submit(mapping, wbc, &cluster);
                 if (!ret)
                     ret = infilfs_writeback_folio(folio, wbc);
@@ -588,7 +589,7 @@ static int infilfs_writepages(struct address_space *mapping,
 
             if (cluster.count &&
                 (position != cluster.position + cluster.bytes ||
-                 cluster.bytes + length > INFILFS_NATIVE_WRITEBACK_BATCH_BYTES)) {
+                 cluster.bytes + length > batch_bytes)) {
                 ret = infilfs_writeback_cluster_submit(mapping, wbc, &cluster);
                 if (ret)
                     break;
@@ -617,7 +618,7 @@ static int infilfs_writepages(struct address_space *mapping,
             if (!cluster.count)
                 cluster.position = position;
             if (position != cluster.position + cluster.bytes ||
-                cluster.bytes + length > INFILFS_NATIVE_WRITEBACK_BATCH_BYTES ||
+                cluster.bytes + length > batch_bytes ||
                 cluster.count >= cluster.capacity) {
                 folio_redirty_for_writepage(wbc, folio);
                 folio_unlock(folio);
@@ -644,7 +645,7 @@ static int infilfs_writepages(struct address_space *mapping,
             cluster.count++;
             cluster.bytes += length;
 
-            if (cluster.bytes == INFILFS_NATIVE_WRITEBACK_BATCH_BYTES ||
+            if (cluster.bytes == batch_bytes ||
                 (wbc->sync_mode == WB_SYNC_NONE && --wbc->nr_to_write <= 0)) {
                 ret = infilfs_writeback_cluster_submit(mapping, wbc, &cluster);
                 if (ret || (wbc->sync_mode == WB_SYNC_NONE &&
