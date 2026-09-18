@@ -16,5 +16,11 @@
 #define infs_le16_to_cpu(value) infiltratr_le16_to_cpu(value)
 #define infs_le32_to_cpu(value) infiltratr_le32_to_cpu(value)
 #define infs_le64_to_cpu(value) infiltratr_le64_to_cpu(value)
+#define infs_load_le16(bytes) infiltratr_load_le16(bytes)
+#define infs_load_le32(bytes) infiltratr_load_le32(bytes)
+#define infs_load_le64(bytes) infiltratr_load_le64(bytes)
+#define infs_store_le16(bytes, value) infiltratr_store_le16((bytes), (uint16_t)(value))
+#define infs_store_le32(bytes, value) infiltratr_store_le32((bytes), (uint32_t)(value))
+#define infs_store_le64(bytes, value) infiltratr_store_le64((bytes), (uint64_t)(value))
 
 #endif
