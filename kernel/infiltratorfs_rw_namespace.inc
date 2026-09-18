@@ -80,12 +80,12 @@ static int infilfs_ns_begin(struct super_block *sb,
     if (!pending)
         return -ENOMEM;
     cancel_delayed_work_sync(&pending->idle_work);
-    mutex_lock(&sbi->write_lock);
+    down_write(&sbi->write_lock);
     ret = infilfs_native_pending_begin_locked(pending);
     if (!ret)
         ret = infilfs_native_operation_snapshot(pending);
     if (ret) {
-        mutex_unlock(&sbi->write_lock);
+        up_write(&sbi->write_lock);
         return ret;
     }
     *pending_out = pending;
@@ -114,7 +114,7 @@ static int infilfs_ns_finish(struct infilfs_native_pending *pending, int ret)
 
     if (ret) {
         rollback_ret = infilfs_native_operation_rollback(pending);
-        mutex_unlock(&sbi->write_lock);
+        up_write(&sbi->write_lock);
         return rollback_ret ? rollback_ret : ret;
     }
 
@@ -129,7 +129,7 @@ static int infilfs_ns_finish(struct infilfs_native_pending *pending, int ret)
         mod_delayed_work(system_wq, &pending->idle_work,
                          INFILFS_NATIVE_IDLE_DELAY);
     }
-    mutex_unlock(&sbi->write_lock);
+    up_write(&sbi->write_lock);
     return ret;
 }
 
