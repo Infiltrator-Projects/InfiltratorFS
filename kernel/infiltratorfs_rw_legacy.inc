@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /*
- * Initial native Linux write path retained by Format 0.17.
+ * Foundational native Linux write transaction layer.
  *
- * This file retains the original synchronous copy-on-write transaction engine
+ * This file retains the synchronous copy-on-write transaction primitives
  * used by the native bring-up.  The composed native layers add extent and
  * namespace operations over it while preserving the same allocation-ownership and
  * three-checkpoint commit protocol as the portable core.  Snapshot ownership
