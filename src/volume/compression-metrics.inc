@@ -32,17 +32,13 @@ static infs_status infs_metric_append_stream(
     struct infs_metric_scan *scan, uint64_t physical,
     uint64_t physical_blocks, uint64_t logical_blocks, uint32_t codec)
 {
-    if (scan->count == scan->capacity) {
-        size_t next = scan->capacity ? scan->capacity * 2u : 256u;
-        if (next < scan->capacity ||
-            next > SIZE_MAX / sizeof(*scan->streams))
-            return INFS_STATUS_OVERFLOW;
-        void *grown = realloc(scan->streams, next * sizeof(*scan->streams));
-        if (!grown)
-            return INFS_STATUS_NO_MEMORY;
-        scan->streams = grown;
-        scan->capacity = next;
-    }
+    size_t required;
+    if (!infiltratr_size_add_checked(scan->count, 1u, &required))
+        return INFS_STATUS_OVERFLOW;
+    if (!infiltratr_array_reserve(
+            (void **)&scan->streams, &scan->capacity,
+            sizeof(*scan->streams), required, 256u))
+        return INFS_STATUS_NO_MEMORY;
     scan->streams[scan->count++] = (struct infs_metric_stream) {
         .physical = physical,
         .physical_blocks = physical_blocks,
@@ -54,10 +50,8 @@ static infs_status infs_metric_append_stream(
 
 static infs_status infs_metric_add_checked(uint64_t *value, uint64_t add)
 {
-    if (*value > UINT64_MAX - add)
-        return INFS_STATUS_OVERFLOW;
-    *value += add;
-    return INFS_STATUS_OK;
+    return infiltratr_u64_add_checked(*value, add, value) ?
+        INFS_STATUS_OK : INFS_STATUS_OVERFLOW;
 }
 
 static infs_status infs_metric_scan_view(
