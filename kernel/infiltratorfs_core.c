@@ -1,6 +1,62 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "infiltratorfs_internal.h"
 
+static struct workqueue_struct *infilfs_cpu_wq;
+static struct semaphore infilfs_cpu_slots;
+static unsigned int infilfs_cpu_budget_value;
+
+unsigned int infilfs_cpu_budget(void)
+{
+    unsigned int online_logical_cpus = num_online_cpus();
+
+    /*
+     * Architectural invariant: leave exactly one logical CPU worth of
+     * concurrency to the rest of the OS whenever a second CPU exists.
+     */
+    return online_logical_cpus > 1u ? online_logical_cpus - 1u : 1u;
+}
+
+bool infilfs_queue_cpu_work(struct work_struct *work)
+{
+    return infilfs_cpu_wq && queue_work(infilfs_cpu_wq, work);
+}
+
+void infilfs_cpu_work_enter(void)
+{
+    down(&infilfs_cpu_slots);
+}
+
+void infilfs_cpu_work_exit(void)
+{
+    up(&infilfs_cpu_slots);
+}
+
+static int infilfs_cpu_pool_init(void)
+{
+    unsigned int online = num_online_cpus();
+    unsigned int budget = online > 1u ? online - 1u : 1u;
+
+    infilfs_cpu_wq = alloc_workqueue(
+        "infiltratorfs-cpu", WQ_UNBOUND | WQ_MEM_RECLAIM, budget);
+    if (!infilfs_cpu_wq)
+        return -ENOMEM;
+    sema_init(&infilfs_cpu_slots, budget);
+    WRITE_ONCE(infilfs_cpu_budget_value, budget);
+    pr_info("InfiltratorFS: CPU pool online_logical_cpus=%u filesystem_budget=%u reserved_for_os=%u\n",
+            online, budget, online > 1u ? 1u : 0u);
+    return 0;
+}
+
+static void infilfs_cpu_pool_exit(void)
+{
+    struct workqueue_struct *wq = infilfs_cpu_wq;
+
+    infilfs_cpu_wq = NULL;
+    if (wq)
+        destroy_workqueue(wq);
+    WRITE_ONCE(infilfs_cpu_budget_value, 0u);
+}
+
 static const u8 infilfs_disk_magic[8] = {
     'I', 'N', 'F', 'S', '2', '0', '2', '6'
 };
@@ -2896,13 +2952,14 @@ static int infilfs_fill_super(struct super_block *sb, struct fs_context *fc)
         goto fail;
     infilfs_schedule_orphan_recovery(sb);
 
-    pr_info("InfiltratorFS: native %s mount Format %u.%u generation %llu media=%s media_source=%s compress=%s\n",
+    pr_info("InfiltratorFS: native %s mount Format %u.%u generation %llu media=%s media_source=%s compress=%s cpu_budget=%u\n",
             sb_rdonly(sb) ? "read-only" : "read-write",
             INFILFS_FORMAT_MAJOR, INFILFS_FORMAT_MINOR,
             (unsigned long long)le64_to_cpu(sbi->disk.generation),
             infilfs_media_profile_name(sbi->media_profile),
             sbi->media_profile_overridden ? "override" : "auto",
-            sbi->compression_enabled ? "auto" : "off");
+            sbi->compression_enabled ? "auto" : "off",
+            READ_ONCE(infilfs_cpu_budget_value));
     return 0;
 
 fail:
@@ -3121,16 +3178,25 @@ static struct file_system_type infilfs_type = {
 
 static int __init infilfs_init(void)
 {
-    int status = register_filesystem(&infilfs_type);
+    int status;
 
-    if (status == 0)
-        pr_info("InfiltratorFS: native Linux VFS registered with read-write support\n");
-    return status;
+    status = infilfs_cpu_pool_init();
+    if (status)
+        return status;
+    status = register_filesystem(&infilfs_type);
+    if (status) {
+        infilfs_cpu_pool_exit();
+        return status;
+    }
+
+    pr_info("InfiltratorFS: native Linux VFS registered with read-write support\n");
+    return 0;
 }
 
 static void __exit infilfs_exit(void)
 {
     unregister_filesystem(&infilfs_type);
+    infilfs_cpu_pool_exit();
     infilfs_crypto_exit();
     pr_info("InfiltratorFS: native Linux VFS unloaded\n");
 }
