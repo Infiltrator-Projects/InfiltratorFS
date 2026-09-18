@@ -5,6 +5,7 @@
 #include "infilfs/utf8.h"
 
 #include "infilfs/endian.h"
+#include "infiltratr/arithmetic.h"
 #include "infiltratr/core.h"
 #include "infiltratr/posix.h"
 #include <dirent.h>
