@@ -144,10 +144,14 @@ static int tree_build_subtree(
 
     uint8_t block[INFS_BLOCK_SIZE];
     infs_status status;
+    uint64_t generation = 0;
+    status = transaction_next_generation(vol, &generation);
+    if (status != INFS_STATUS_OK)
+        return status;
     if (count <= INFS_INDEX_ENTRIES_PER_PAGE) {
         status = infs_metadata_page_init(
             block, INFS_INDEX_PAGE_MAGIC, owner_id,
-            infs_le64_to_cpu(vol->tx_base_sb.generation) + 1u);
+            generation);
         if (status != INFS_STATUS_OK)
             return status;
         struct infs_metadata_page_disk *page =
@@ -163,7 +167,7 @@ static int tree_build_subtree(
 
     status = infs_metadata_page_init(
         block, INFS_INDEX_BRANCH_PAGE_MAGIC, owner_id,
-        infs_le64_to_cpu(vol->tx_base_sb.generation) + 1u);
+        generation);
     if (status != INFS_STATUS_OK)
         return status;
     struct infs_metadata_page_disk *page =
