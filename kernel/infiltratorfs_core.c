@@ -2526,7 +2526,7 @@ static struct dentry *infilfs_lookup(struct inode *dir, struct dentry *dentry,
      * drop the lock before inode instantiation because that may consult Linux
      * sidecar metadata and re-enter read-only namespace helpers.
      */
-    mutex_lock(&INFILFS_SB(dir->i_sb)->write_lock);
+    down_read(&INFILFS_SB(dir->i_sb)->write_lock);
     ret = infilfs_tree_dir_lookup_name(
         dir, search.name, (u16)search.name_len, &search);
     if (ret == -EOPNOTSUPP)
@@ -2538,11 +2538,11 @@ static struct dentry *infilfs_lookup(struct inode *dir, struct dentry *dentry,
                    (unsigned long long)le64_to_cpu(
                        INFILFS_SB(dir->i_sb)->disk.generation),
                    search.name_len);
-        mutex_unlock(&INFILFS_SB(dir->i_sb)->write_lock);
+        up_read(&INFILFS_SB(dir->i_sb)->write_lock);
         return ERR_PTR(ret);
     }
     if (!search.found) {
-        mutex_unlock(&INFILFS_SB(dir->i_sb)->write_lock);
+        up_read(&INFILFS_SB(dir->i_sb)->write_lock);
         d_add(dentry, NULL);
         return NULL;
     }
@@ -2554,14 +2554,14 @@ static struct dentry *infilfs_lookup(struct inode *dir, struct dentry *dentry,
             pr_err("InfiltratorFS: lookup object-index traversal saw corrupt metadata (generation=%llu)\n",
                    (unsigned long long)le64_to_cpu(
                        INFILFS_SB(dir->i_sb)->disk.generation));
-        mutex_unlock(&INFILFS_SB(dir->i_sb)->write_lock);
+        up_read(&INFILFS_SB(dir->i_sb)->write_lock);
         return ERR_PTR(ret);
     }
     if (indexed_type != search.object_type) {
-        mutex_unlock(&INFILFS_SB(dir->i_sb)->write_lock);
+        up_read(&INFILFS_SB(dir->i_sb)->write_lock);
         return ERR_PTR(-EFSCORRUPTED);
     }
-    mutex_unlock(&INFILFS_SB(dir->i_sb)->write_lock);
+    up_read(&INFILFS_SB(dir->i_sb)->write_lock);
 
     inode = infilfs_get_inode(dir->i_sb, object_block, indexed_type,
                               search.object_id);
@@ -2602,10 +2602,10 @@ static int infilfs_iterate_shared(struct file *file, struct dir_context *ctx)
      * recursively acquire write_lock.  Emitting from copied entries after the
      * lock is released preserves both topology safety and lock ordering.
      */
-    mutex_lock(&INFILFS_SB(file_inode(file)->i_sb)->write_lock);
+    down_read(&INFILFS_SB(file_inode(file)->i_sb)->write_lock);
     ret = infilfs_for_each_dirent(file_inode(file),
                                   infilfs_snapshot_visitor, &snapshot);
-    mutex_unlock(&INFILFS_SB(file_inode(file)->i_sb)->write_lock);
+    up_read(&INFILFS_SB(file_inode(file)->i_sb)->write_lock);
     if (ret < 0)
         goto out;
 
@@ -2810,7 +2810,7 @@ static int infilfs_fill_super(struct super_block *sb, struct fs_context *fc)
         kfree(sbi);
         return ret;
     }
-    mutex_init(&sbi->write_lock);
+    init_rwsem(&sbi->write_lock);
     spin_lock_init(&sbi->pagecache_accounting_lock);
     atomic64_set(&sbi->pagecache_pending_blocks, 0);
     mutex_init(&sbi->linux_meta_lock);
