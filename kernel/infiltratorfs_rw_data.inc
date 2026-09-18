@@ -29,6 +29,7 @@
 #define INFILFS_NATIVE_UNDO_INITIAL 16u
 #define INFILFS_NATIVE_INDEX_LOCATOR_MIN_CAPACITY 64u
 #define INFILFS_NATIVE_DIRECTORY_LOCATOR_MIN_CAPACITY 64u
+#define INFILFS_NATIVE_PREP_BATCH_MAX 4u
 
 struct infilfs_native_index_change {
     u8 object_id[16];
@@ -4474,6 +4475,28 @@ fail:
     return ret;
 }
 
+struct infilfs_native_prepare_work {
+    struct work_struct work;
+    struct completion done;
+    struct inode *inode;
+    const u8 *plain;
+    size_t bytes;
+    u64 preferred;
+    struct infilfs_native_prepared_append prepared;
+    int ret;
+};
+
+static void infilfs_native_prepare_workfn(struct work_struct *work)
+{
+    struct infilfs_native_prepare_work *item = container_of(
+        work, struct infilfs_native_prepare_work, work);
+
+    item->ret = infilfs_native_prepare_append(
+        item->inode, item->plain, item->bytes, item->preferred,
+        &item->prepared);
+    complete(&item->done);
+}
+
 static int infilfs_native_append_chunk_locked(
     struct infilfs_native_pending *pending, struct inode *inode,
     struct iov_iter *from, u64 pos, size_t bytes, bool allow_compression,
@@ -4894,6 +4917,208 @@ out:
     return ret;
 }
 
+static ssize_t infilfs_native_parallel_append_batch(
+    struct inode *inode, loff_t *position, struct iov_iter *from,
+    size_t requested, bool allow_compression)
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(inode->i_sb);
+    struct infilfs_inode_info *ii = INFILFS_I(inode);
+    struct infilfs_native_pending *pending;
+    struct infilfs_native_prepare_work *items = NULL;
+    u8 *plain = NULL;
+    const size_t compression_bytes =
+        (size_t)INFILFS_COMPRESSION_CLUSTER_BLOCKS *
+        INFILFS_DISK_BLOCK_SIZE;
+    size_t copied;
+    size_t offset = 0;
+    size_t committed = 0;
+    u64 base_preferred;
+    unsigned int count;
+    unsigned int i;
+    int ret = -EOPNOTSUPP;
+
+    if (!allow_compression || !sbi || !ii || !requested ||
+        requested > INFILFS_NATIVE_WRITEBACK_BATCH_BYTES ||
+        requested < compression_bytes * 2u ||
+        (*position & (INFILFS_DISK_BLOCK_SIZE - 1u)) != 0 ||
+        (requested & (INFILFS_DISK_BLOCK_SIZE - 1u)) != 0 ||
+        (u64)*position != READ_ONCE(ii->persisted_size) ||
+        !READ_ONCE(sbi->compression_enabled) ||
+        (le64_to_cpu(READ_ONCE(sbi->disk.incompat_flags)) &
+         INFILFS_INCOMPAT_COMPRESSED_EXTENTS) == 0)
+        return -EOPNOTSUPP;
+
+    count = DIV_ROUND_UP(requested, compression_bytes);
+    if (count < 2u || count > INFILFS_NATIVE_PREP_BATCH_MAX)
+        return -EOPNOTSUPP;
+    if (requested - (size_t)(count - 1u) * compression_bytes <
+        2u * INFILFS_DISK_BLOCK_SIZE)
+        return -EOPNOTSUPP;
+
+    pending = infilfs_native_pending_get(inode->i_sb, true);
+    if (!pending)
+        return -ENOMEM;
+
+    plain = kvmalloc(requested, GFP_NOFS);
+    items = kcalloc(count, sizeof(*items), GFP_NOFS);
+    if (!plain || !items) {
+        ret = -ENOMEM;
+        goto out;
+    }
+
+    copied = copy_from_iter(plain, requested, from);
+    if (copied != requested) {
+        if (copied)
+            iov_iter_revert(from, copied);
+        ret = -EFAULT;
+        goto out;
+    }
+
+    base_preferred = READ_ONCE(ii->data_allocation_hint);
+    if (base_preferred < 1u ||
+        base_preferred >= infilfs_volume_blocks(sbi))
+        base_preferred = infilfs_parallel_object_preferred(
+            sbi, ii->object_id);
+
+    offset = 0;
+    for (i = 0; i < count; ++i) {
+        size_t bytes = min_t(size_t, compression_bytes,
+                             requested - offset);
+        u64 preferred = base_preferred +
+            (offset >> INFILFS_DISK_BLOCK_SHIFT);
+
+        if (preferred >= infilfs_volume_blocks(sbi))
+            preferred = 1u +
+                (preferred - 1u) % (infilfs_volume_blocks(sbi) - 1u);
+
+        INIT_WORK(&items[i].work, infilfs_native_prepare_workfn);
+        init_completion(&items[i].done);
+        items[i].inode = inode;
+        items[i].plain = plain + offset;
+        items[i].bytes = bytes;
+        items[i].preferred = preferred;
+        atomic64_inc(&sbi->prepared_append_attempts);
+        queue_work(system_unbound_wq, &items[i].work);
+        offset += bytes;
+    }
+
+    for (i = 0; i < count; ++i)
+        wait_for_completion(&items[i].done);
+
+    for (i = 0; i < count; ++i) {
+        if (items[i].ret || !items[i].prepared.valid) {
+            ret = -EOPNOTSUPP;
+            goto revert_all;
+        }
+    }
+
+    mutex_lock(&sbi->write_lock);
+    if ((u64)*position != READ_ONCE(ii->persisted_size)) {
+        ret = -EOPNOTSUPP;
+        goto unlock_revert;
+    }
+    ret = infilfs_native_pending_begin_locked(pending);
+    if (ret)
+        goto unlock_revert;
+
+    offset = 0;
+    for (i = 0; i < count; ++i) {
+        struct kvec vec;
+        struct iov_iter iter;
+        size_t bytes = items[i].bytes;
+        size_t consumed = 0;
+        u64 new_file_block = 0;
+        u64 new_size = 0;
+        u64 allocated_blocks = 0;
+        u8 tail_id[16] = {0};
+        u64 tail_block = 0;
+        u64 tail_start = 0;
+
+        vec.iov_base = plain + offset;
+        vec.iov_len = bytes;
+        iov_iter_kvec(&iter, ITER_SOURCE, &vec, 1, bytes);
+
+        ret = infilfs_native_operation_snapshot(pending);
+        if (!ret)
+            ret = infilfs_native_append_chunk_locked(
+                pending, inode, &iter, (u64)*position + committed,
+                bytes, true, NULL, &items[i].prepared, &consumed,
+                &new_file_block, &new_size, &allocated_blocks,
+                tail_id, &tail_block, &tail_start);
+        if (ret) {
+            int rollback = infilfs_native_operation_rollback(pending);
+
+            if (rollback)
+                ret = rollback;
+            break;
+        }
+        if (consumed != bytes) {
+            (void)infilfs_native_operation_rollback(pending);
+            ret = -EIO;
+            break;
+        }
+
+        infilfs_native_operation_commit(pending);
+        if (items[i].prepared.used) {
+            atomic64_inc(&sbi->prepared_append_successes);
+            atomic64_add(consumed, &sbi->prepared_append_bytes);
+        }
+        if (items[i].prepared.paged_fast)
+            atomic64_inc(&sbi->prepared_paged_append_successes);
+        ii->object_block = new_file_block;
+        WRITE_ONCE(ii->persisted_size, new_size);
+        if ((u64)i_size_read(inode) < new_size)
+            i_size_write(inode, new_size);
+        inode->i_blocks = allocated_blocks *
+            (INFILFS_DISK_BLOCK_SIZE >> 9);
+        pending->tx.next_sb.generation =
+            cpu_to_le64(pending->tx.generation);
+        sbi->disk = pending->tx.next_sb;
+        infilfs_native_checksum_cache_store(
+            inode->i_sb, ii->object_id, tail_id, tail_block, tail_start);
+        infilfs_native_writer_tail_store(
+            pending, ii->object_id, tail_id, tail_block, tail_start);
+        pending->pending_bytes += consumed;
+        committed += consumed;
+        offset += bytes;
+    }
+
+    if (committed && infilfs_native_pending_should_publish(pending)) {
+        int publish = infilfs_native_pending_commit_locked(pending);
+
+        if (publish && !ret)
+            ret = publish;
+    }
+    if (pending->active && !pending->commit_failed)
+        mod_delayed_work(system_wq, &pending->idle_work,
+                         INFILFS_NATIVE_IDLE_DELAY);
+
+    mutex_unlock(&sbi->write_lock);
+
+    if (committed < requested)
+        iov_iter_revert(from, requested - committed);
+    if (committed) {
+        *position += committed;
+        ret = (ssize_t)committed;
+        goto out;
+    }
+    goto out;
+
+unlock_revert:
+    mutex_unlock(&sbi->write_lock);
+revert_all:
+    iov_iter_revert(from, requested);
+out:
+    if (items) {
+        for (i = 0; i < count; ++i)
+            infilfs_native_prepared_append_destroy(
+                inode, &items[i].prepared);
+    }
+    kfree(items);
+    kvfree(plain);
+    return ret;
+}
+
 static ssize_t infilfs_native_extent_write_iter_mode(
     struct inode *inode, loff_t *position, struct iov_iter *from,
     size_t requested, bool allow_compression)
@@ -4909,6 +5134,13 @@ static ssize_t infilfs_native_extent_write_iter_mode(
         return -EINVAL;
     if (!requested)
         return 0;
+    if (allow_compression) {
+        ssize_t batched = infilfs_native_parallel_append_batch(
+            inode, position, from, requested, true);
+
+        if (batched != -EOPNOTSUPP)
+            return batched;
+    }
     pending = infilfs_native_pending_get(inode->i_sb, true);
     if (!pending)
         return -ENOMEM;
