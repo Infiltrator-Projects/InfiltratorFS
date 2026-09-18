@@ -408,7 +408,7 @@ ssize_t infilfs_native_read_iter_cached(struct inode *inode,
      * sequential readers yield between syscalls rather than monopolising the
      * writer lock for the lifetime of the open file.
      */
-    mutex_lock(&sbi->write_lock);
+    down_read(&sbi->write_lock);
     ret = infilfs_read_object(inode->i_sb, ii->object_block,
                               INFILFS_OBJECT_FILE, ii->object_id, object);
     if (ret)
@@ -702,7 +702,7 @@ out:
         if (ii)
             infilfs_native_read_cursor_publish(
                 inode->i_sb, ii->object_id, &cursor);
-        mutex_unlock(&sbi->write_lock);
+        up_read(&sbi->write_lock);
     }
     kvfree(run_actual);
     kvfree(run_expected);
