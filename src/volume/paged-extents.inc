@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-/* Format 0.12 scalable extent pages. Low-fragmentation files stay in the
+/* Format 0.18 scalable extent pages. Low-fragmentation files stay in the
  * compact classic representation. When an edit would overflow the file
  * object, its extent vector is promoted to independently checksummed pages.
  * The file object remains the stable head and owns an ordered page-pointer
