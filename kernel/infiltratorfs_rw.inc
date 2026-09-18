@@ -101,12 +101,11 @@ static int infilfs_rw_tx_begin(struct super_block *sb,
 /*
  * The data layer already wraps create/mkdir/setattr to flush a deferred data
  * transaction before entering the original synchronous metadata path.  Keep
- * those qualified wrappers available under private names so the final POSIX
- * layer can add ownership and general setattr semantics without duplicating
- * the data-path ordering rules.  The data-layer setattr wrapper and its old
- * checksum-tail walker are retained only as qualified implementation history;
- * mark them unused until that layer is retired rather than generating kernel
- * build warnings for intentionally unreachable helpers.
+ * those qualified wrappers available under private names so the POSIX layer
+ * can add ownership and general setattr semantics without duplicating the
+ * data-path ordering rules. Helpers not reachable from the active composition
+ * remain private and explicitly unused until their owning layer is extracted
+ * or retired; they must not become a second public mutation path.
  */
 #define infilfs_rw_create __maybe_unused infilfs_rw_create_data
 #define infilfs_rw_mkdir __maybe_unused infilfs_rw_mkdir_data
