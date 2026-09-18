@@ -116,8 +116,8 @@ static int infilfs_rw_tx_begin(struct super_block *sb,
 #undef infilfs_rw_setattr
 
 /*
- * Format 0.17 directory-tree code is composed here: legacy SHA-256 helpers
- * and the native CoW transaction primitives are both available at this point.
+ * Format 0.18 directory-tree code is composed here: checksum helpers and
+ * native CoW transaction primitives are both available at this point.
  */
 
 /*
