@@ -108,17 +108,27 @@ grep -Fq 'down_read(&sbi->write_lock)' <<<"$getattr_body" || fail 'getattr topol
 grep -Fq 'ATTR_KILL_SUID | ATTR_KILL_SGID' "$rw" || fail 'set-ID stripping is not persisted'
 
 # Writable mount latency must not scale with every regular-file object. Crash
-# orphan discovery runs after mount, while namespace mutation waits for that
-# recovery barrier so newly created zero-link files cannot be misidentified.
+# orphan discovery runs after mount, is fenced to the committed mount
+# generation, and may only hold the topology read lock for bounded batches.
+# Live namespace mutation must never wait for the complete background scan.
 grep -Fq 'infilfs_schedule_orphan_recovery(sb);' "$driver" || \
     fail 'writable mount lost deferred orphan recovery'
 fill_super_body="$(sed -n '/static int infilfs_fill_super(/,/^}/p' "$driver")"
 ! grep -Fq 'ret = infilfs_native_recover_unlinked_files(sb);' <<<"$fill_super_body" || \
     fail 'full orphan scan regressed onto the synchronous mount path'
-grep -Fq 'infilfs_wait_for_orphan_recovery(sbi)' "$kernel/infiltratorfs_rw_namespace.inc" || \
-    fail 'namespace mutation is not gated during deferred orphan recovery'
-grep -Fq 'down_read(&sbi->write_lock);' "$rw" || \
-    fail 'orphan discovery is not serialized with CoW/index publication'
+! grep -Fq 'infilfs_wait_for_orphan_recovery' "$kernel/infiltratorfs_rw_namespace.inc" || \
+    fail 'namespace mutation waits for complete orphan recovery'
+grep -Fq 'orphan_recovery_generation' "$kernel/infiltratorfs_internal.h" || \
+    fail 'orphan recovery lost its mount-generation fence'
+recovery_body="$(sed -n '/static int infilfs_native_recover_unlinked_files(/,/^}/p' "$rw")"
+grep -Fq 'le64_to_cpu(header->generation) <= recovery_generation' <<<"$recovery_body" || \
+    fail 'orphan recovery does not reject post-mount zero-link objects'
+grep -Fq 'u32 end = min_t(u32, count, i + 64u);' <<<"$recovery_body" || \
+    fail 'orphan discovery no longer yields the topology lock in bounded batches'
+test "$(grep -Fc 'down_read(&sbi->write_lock);' <<<"$recovery_body")" -ge 2 || \
+    fail 'orphan discovery/revalidation lost topology serialization'
+test "$(grep -Fc 'up_read(&sbi->write_lock);' <<<"$recovery_body")" -ge 3 || \
+    fail 'orphan recovery no longer releases topology locks between phases'
 
 # Only the core object and the explicit RW compositor may textually compose
 # remaining implementation .inc units. A leaf .inc importing another leaf creates hidden
