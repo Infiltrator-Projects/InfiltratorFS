@@ -1002,10 +1002,10 @@ int infilfs_native_pending_flush_sb(struct super_block *sb)
     if (!pending)
         return sync_blockdev(sb->s_bdev);
     cancel_delayed_work_sync(&pending->idle_work);
-    mutex_lock(&sbi->write_lock);
+    down_write(&sbi->write_lock);
     committed = pending->active;
     ret = infilfs_native_pending_commit_locked(pending);
-    mutex_unlock(&sbi->write_lock);
+    up_write(&sbi->write_lock);
 
     /*
      * A successful active transaction already ended with the checkpoint
@@ -1027,9 +1027,9 @@ static void infilfs_native_idle_work(struct work_struct *work)
 
     if (!sbi)
         return;
-    mutex_lock(&sbi->write_lock);
+    down_write(&sbi->write_lock);
     ret = infilfs_native_pending_commit_locked(pending);
-    mutex_unlock(&sbi->write_lock);
+    up_write(&sbi->write_lock);
     if (ret)
         pr_err("InfiltratorFS: native idle publication failed: %d\n", ret);
 }
@@ -1056,11 +1056,11 @@ static void infilfs_native_pending_destroy(struct super_block *sb)
 
     cancel_delayed_work_sync(&pending->idle_work);
     if (sbi) {
-        mutex_lock(&sbi->write_lock);
+        down_write(&sbi->write_lock);
         if (pending->active &&
             infilfs_native_pending_commit_locked(pending) != 0)
             pr_err("InfiltratorFS: unmount could not publish pending native writes\n");
-        mutex_unlock(&sbi->write_lock);
+        up_write(&sbi->write_lock);
     }
     if (pending->active)
         infilfs_rw_tx_abort(&pending->tx);
@@ -5012,7 +5012,7 @@ static ssize_t infilfs_native_parallel_append_batch(
         }
     }
 
-    mutex_lock(&sbi->write_lock);
+    down_write(&sbi->write_lock);
     if ((u64)*position != READ_ONCE(ii->persisted_size)) {
         ret = -EOPNOTSUPP;
         goto unlock_revert;
@@ -5093,7 +5093,7 @@ static ssize_t infilfs_native_parallel_append_batch(
         mod_delayed_work(system_wq, &pending->idle_work,
                          INFILFS_NATIVE_IDLE_DELAY);
 
-    mutex_unlock(&sbi->write_lock);
+    up_write(&sbi->write_lock);
 
     if (committed < requested)
         iov_iter_revert(from, requested - committed);
@@ -5105,7 +5105,7 @@ static ssize_t infilfs_native_parallel_append_batch(
     goto out;
 
 unlock_revert:
-    mutex_unlock(&sbi->write_lock);
+    up_write(&sbi->write_lock);
 revert_all:
     iov_iter_revert(from, requested);
 out:
@@ -5249,7 +5249,7 @@ static ssize_t infilfs_native_extent_write_iter_mode(
                         reservation.start + reservation.count : 1u);
         }
 
-        mutex_lock(&sbi->write_lock);
+        down_write(&sbi->write_lock);
         ret = infilfs_native_pending_begin_locked(pending);
         if (ret)
             goto chunk_unlock;
@@ -5362,7 +5362,7 @@ static ssize_t infilfs_native_extent_write_iter_mode(
                              INFILFS_NATIVE_IDLE_DELAY);
 
 chunk_unlock:
-        mutex_unlock(&sbi->write_lock);
+        up_write(&sbi->write_lock);
 
         if (staged_bytes) {
             size_t keep = min(consumed, staged_bytes);
@@ -5442,7 +5442,7 @@ static ssize_t infilfs_native_inline_write_iter(
         goto out_free;
     }
 
-    mutex_lock(&sbi->write_lock);
+    down_write(&sbi->write_lock);
     ret = infilfs_native_pending_begin_locked(pending);
     if (ret)
         goto out_unlock;
@@ -5534,7 +5534,7 @@ rollback_operation:
     if (rollback)
         ret = rollback;
 out_unlock:
-    mutex_unlock(&sbi->write_lock);
+    up_write(&sbi->write_lock);
 out_free:
     kfree(new_object);
     kfree(old_object);
