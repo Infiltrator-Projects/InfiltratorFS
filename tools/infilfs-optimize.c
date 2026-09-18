@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #include "infiltratorfs_ioctl.h"
+#include "infiltratr/arithmetic.h"
 #include "infiltratr/core.h"
 
 struct optimize_options {
@@ -40,11 +41,6 @@ static void usage(const char *program)
         "Usage: %s [--metrics|--defrag] [--recursive] "
         "[--max-mib N] [--passes N] PATH\n",
         program);
-}
-
-static int parse_u64(const char *text, uint64_t *value)
-{
-    return infiltratr_parse_u64(text, 10, value) ? 0 : -1;
 }
 
 static int get_metrics(int fd, struct infilfs_fragmentation_metrics *metrics)
@@ -187,18 +183,19 @@ int main(int argc, char **argv)
         } else if (strcmp(argv[i], "--recursive") == 0) {
             g_options.recursive = true;
         } else if (strcmp(argv[i], "--max-mib") == 0 && i + 1 < argc) {
-            uint64_t mib;
-            if (parse_u64(argv[++i], &mib) != 0 ||
-                !mib || mib > 512u ||
-                mib > UINT64_MAX / (1024u * 1024u)) {
+            uint64_t mib = 0;
+            if (!infiltratr_parse_u64_range(
+                    argv[++i], 10, 1u, 512u, &mib) ||
+                !infiltratr_u64_multiply_checked(
+                    mib, UINT64_C(1024) * UINT64_C(1024),
+                    &g_options.max_bytes)) {
                 usage(argv[0]);
                 return 2;
             }
-            g_options.max_bytes = mib * 1024u * 1024u;
         } else if (strcmp(argv[i], "--passes") == 0 && i + 1 < argc) {
-            uint64_t passes;
-            if (parse_u64(argv[++i], &passes) != 0 ||
-                !passes || passes > 100000u) {
+            uint64_t passes = 0;
+            if (!infiltratr_parse_u64_range(
+                    argv[++i], 10, 1u, 100000u, &passes)) {
                 usage(argv[0]);
                 return 2;
             }
