@@ -39,7 +39,7 @@ The encoder is allowed, and expected, to be much more aggressive internally:
 - asynchronous/buffered writeback;
 - batched allocation and metadata preparation;
 - memory-bandwidth-aware algorithms; and
-- dynamic concurrency based on online CPUs, memory pressure and storage capability.
+- filesystem-wide concurrency governed by the N-1 online-logical-CPU budget, with memory/storage conditions controlling how much useful work is actually runnable within that budget.
 
 A modern encoder may therefore be very different internally while still emitting fully valid IAC1 v1 streams that the small portable decoder can read.
 
@@ -57,6 +57,40 @@ The design should assume that many target systems have:
 - enough RAM to trade a bounded amount of memory for substantially better storage throughput.
 
 These are opportunities, not mandatory mount requirements. InfiltratorFS must still function correctly on a machine without a particular acceleration feature. Fast paths must have portable fallbacks.
+
+## Filesystem-wide CPU budget
+
+The CPU policy is explicit and applies to InfiltratorFS as a filesystem, not
+only to IAC1 compression:
+
+```text
+filesystem_cpu_budget = max(1, online_logical_cpus - 1)
+```
+
+For systems with more than one online logical CPU, exactly one logical CPU worth
+of concurrency is reserved for the rest of the operating system and the
+filesystem may use the remaining N-1 logical CPUs. On a one-CPU system the
+filesystem may use that one CPU because there is no second CPU to reserve.
+
+```text
+1 CPU   -> use up to 1 for InfiltratorFS
+2 CPUs  -> use up to 1 for InfiltratorFS
+3 CPUs  -> use up to 2 for InfiltratorFS
+14 CPUs -> use up to 13 for InfiltratorFS
+255 CPUs -> use up to 254 for InfiltratorFS
+```
+
+This is not an instruction to pin a particular processor or to manufacture busy
+work. It is the required concurrency ceiling and scaling target. When enough
+independent filesystem work exists and CPU is the active bottleneck, the
+implementation must be able to occupy the full N-1 budget. Storage saturation,
+memory bandwidth, memory pressure, latency/durability requirements or a lack of
+independent work may naturally leave some of that budget unused.
+
+Fixed low worker limits are forbidden as a substitute for this policy. Worker
+pools, writeback preparation, compression, integrity work, allocation and
+metadata preparation must derive their CPU ceiling from the online logical CPU
+count and must not impose an unrelated cap such as 4 or 8 workers.
 
 ## Core performance rule
 
@@ -92,7 +126,7 @@ NVMe
 
 This lets a single-threaded program such as rsync benefit from multiple CPUs without changing the IAC1 stream format.
 
-Parallelism must be bounded. The goal is not to keep every CPU busy at any cost. The goal is to reduce wall-clock latency and CPU work per byte while keeping the storage device fed.
+Parallelism is bounded by the filesystem-wide N-1 CPU budget above. The implementation should use that budget when independent work is available, while avoiding artificial work once storage, memory bandwidth or another stage is the actual bottleneck.
 
 ## IAC1 encoder direction
 
@@ -165,20 +199,25 @@ This does not mean forcing maximum queue depth at all times. Small synchronous w
 
 The scheduler should adapt rather than assume that one queue depth or one worker count is correct everywhere.
 
-## Dynamic scaling rather than hard-coded thread counts
+## Dynamic scaling without arbitrary worker caps
 
-Do not encode assumptions such as 'four compression threads' into the design.
+Do not encode assumptions such as 'four compression threads' or 'eight
+filesystem workers' into the design. The maximum active filesystem concurrency
+is derived from the online logical CPU count by the N-1 rule.
 
-Worker concurrency should be bounded dynamically by factors including:
+Within that ceiling, the amount of work actually dispatched at a moment in time
+may respond to:
 
-- online CPU count and available CPU capacity;
 - memory pressure;
 - number and size of in-flight dirty clusters;
 - whether the workload is actually compressible;
 - storage latency and observed queue utilisation; and
 - foreground latency/durability constraints.
 
-A 4-core machine and a 64-core workstation should both behave sensibly. More CPUs should be useful when independent work exists, but concurrency should stop increasing when another resource becomes the real bottleneck.
+These factors may reduce runnable work because doing more would not improve
+useful throughput, but they must not redefine the CPU ceiling to an arbitrary
+smaller fixed pool. A 4-logical-CPU machine has a filesystem budget of 3; a
+64-logical-CPU machine has a filesystem budget of 63.
 
 ## Decoder policy
 
