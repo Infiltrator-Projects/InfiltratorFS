@@ -221,7 +221,14 @@ The worker design must:
 - avoid waiting for compression workers while holding the filesystem metadata write lock; and
 - use memory-reclaim-safe workqueue semantics if the queue is reachable from writeback/reclaim paths.
 
-The number of active workers should be dynamically bounded by online CPUs and memory pressure rather than hard-coded to one or to every CPU unconditionally.
+The worker ceiling follows the filesystem-wide CPU invariant:
+`max(1, online_logical_cpus - 1)`. With more than one logical CPU online,
+InfiltratorFS deliberately leaves one logical CPU worth of concurrency for the
+rest of the operating system and may use all remaining logical CPUs when enough
+independent work exists. Thus 1/2/3/14/255 online logical CPUs yield filesystem
+budgets of 1/1/2/13/254 respectively. Memory pressure, storage saturation or a
+lack of independent work may reduce actual runnable workers, but no fixed low
+worker count may silently replace or cap the N-1 policy.
 
 ## Options considered and rejected
 
@@ -295,6 +302,7 @@ Performance qualification should separately measure:
 - small-file and mixed-tree throughput;
 - average and tail write syscall latency;
 - CPU utilisation and number of CPUs used during compressible writes;
+- verification that sufficient CPU-bound independent work can scale to the `max(1, online_logical_cpus - 1)` filesystem budget without consuming the reserved OS CPU budget;
 - NVMe utilisation/queue depth during the workload;
 - physical block savings; and
 - aggregate CPU time per logical GiB written.
