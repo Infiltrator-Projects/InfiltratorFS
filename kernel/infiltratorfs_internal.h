@@ -381,7 +381,7 @@ static inline int infilfs_wait_for_orphan_recovery(
     if (!sbi)
         return -EINVAL;
     if (READ_ONCE(sbi->orphan_recovery_pending) &&
-        READ_ONCE(sbi->orphan_recovery_task) != current)
+        READ_ONCE(sbi->orphan_recovery_task) != get_current())
         wait_for_completion(&sbi->orphan_recovery_done);
     return READ_ONCE(sbi->orphan_recovery_failed) ? -EIO : 0;
 }
