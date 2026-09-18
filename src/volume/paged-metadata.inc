@@ -15,9 +15,10 @@ static int metadata_page_generation_valid(struct infs_volume *vol,
     const struct infs_metadata_page_disk *page =
         (const struct infs_metadata_page_disk *)block;
     uint64_t generation = infs_le64_to_cpu(page->generation);
-    uint64_t limit = vol->tx_active ?
-        infs_le64_to_cpu(vol->tx_base_sb.generation) + 1u :
-        infs_le64_to_cpu(vol->sb.generation);
+    uint64_t limit = infs_le64_to_cpu(vol->sb.generation);
+    if (vol->tx_active &&
+        transaction_next_generation(vol, &limit) != INFS_STATUS_OK)
+        return 0;
     return generation != 0 && generation <= limit;
 }
 
@@ -147,10 +148,13 @@ static int metadata_page_store(struct infs_volume *vol, uint64_t old_block,
     if (status != INFS_STATUS_OK)
         return status;
 
+    uint64_t generation = 0;
+    status = transaction_next_generation(vol, &generation);
+    if (status != INFS_STATUS_OK)
+        return status;
     struct infs_metadata_page_disk *page =
         (struct infs_metadata_page_disk *)block;
-    page->generation = infs_cpu_to_le64(
-        infs_le64_to_cpu(vol->tx_base_sb.generation) + 1u);
+    page->generation = infs_cpu_to_le64(generation);
     status = infs_metadata_page_finalize(block);
     if (status != INFS_STATUS_OK)
         return status;
@@ -321,9 +325,12 @@ static int paged_index_add(struct infs_volume *vol, const uint8_t id[16],
     if (page_count == 0 || count == INFS_INDEX_ENTRIES_PER_PAGE) {
         if (page_count >= INFS_INDEX_PAGE_POINTERS)
             return INFS_STATUS_NO_SPACE;
+        uint64_t generation = 0;
+        status = transaction_next_generation(vol, &generation);
+        if (status != INFS_STATUS_OK)
+            return status;
         status = infs_metadata_page_init(
-            page_data, INFS_INDEX_PAGE_MAGIC, header->object_id,
-            infs_le64_to_cpu(vol->tx_base_sb.generation) + 1u);
+            page_data, INFS_INDEX_PAGE_MAGIC, header->object_id, generation);
         if (status != INFS_STATUS_OK)
             return status;
         struct infs_metadata_page_disk *page =
@@ -685,9 +692,13 @@ static int paged_dir_add(struct infs_volume *vol,
         record_size > INFS_METADATA_PAGE_DATA_SIZE - bytes) {
         if (page_count >= INFS_DIRECTORY_PAGE_POINTERS)
             return INFS_STATUS_NO_SPACE;
+        uint64_t generation = 0;
+        status = transaction_next_generation(vol, &generation);
+        if (status != INFS_STATUS_OK)
+            return status;
         status = infs_metadata_page_init(
             page_data, INFS_DIRECTORY_PAGE_MAGIC, header->object_id,
-            infs_le64_to_cpu(vol->tx_base_sb.generation) + 1u);
+            generation);
         if (status != INFS_STATUS_OK)
             return status;
         struct infs_metadata_page_disk *page =
