@@ -1780,6 +1780,82 @@ static int infilfs_ns_collect_checksum_removals(
     return memchr_inv(current, 0, 16) ? -ELOOP : 0;
 }
 
+/*
+ * Final unlinked-file eviction enters this path only after
+ * infilfs_ns_prepare_shared_range_index() has built a coherent ownership map
+ * while holding write_lock read-side.  The map records physical intervals
+ * with at least two live file references, including the file being evicted.
+ *
+ * Therefore a subrange outside shared_ranges is owned only by this file and
+ * may be deferred for free; a subrange inside shared_ranges must be retained
+ * because at least one other live file still references it.  This avoids the
+ * old exact whole-filesystem rescan while write_lock is held.
+ */
+static int infilfs_ns_evict_free_prepared_run(
+    struct infilfs_native_pending *pending, u64 start, u64 count)
+{
+    u64 cursor;
+    u64 end;
+    size_t low = 0;
+    size_t high;
+
+    if (!count)
+        return 0;
+    if (start > U64_MAX - count)
+        return -EOVERFLOW;
+    if (!pending->shared_range_index_valid)
+        return -EAGAIN;
+
+    cursor = start;
+    end = start + count;
+    high = pending->shared_range_count;
+
+    /* Find the first shared interval whose end is after this run starts. */
+    while (low < high) {
+        size_t middle = low + (high - low) / 2u;
+
+        if (pending->shared_ranges[middle].end <= cursor)
+            low = middle + 1u;
+        else
+            high = middle;
+    }
+
+    while (cursor < end) {
+        const struct infilfs_native_shared_range *shared;
+        u64 free_end;
+        int ret;
+
+        if (low >= pending->shared_range_count)
+            return infilfs_rw_tx_defer_free(
+                &pending->tx, cursor, end - cursor);
+
+        shared = &pending->shared_ranges[low];
+        if (shared->start >= end)
+            return infilfs_rw_tx_defer_free(
+                &pending->tx, cursor, end - cursor);
+
+        if (shared->end <= cursor) {
+            low++;
+            continue;
+        }
+
+        if (shared->start > cursor) {
+            free_end = min_t(u64, shared->start, end);
+            ret = infilfs_rw_tx_defer_free(
+                &pending->tx, cursor, free_end - cursor);
+            if (ret)
+                return ret;
+            cursor = free_end;
+            continue;
+        }
+
+        /* This portion remains owned by at least one other live file. */
+        cursor = min_t(u64, shared->end, end);
+        low++;
+    }
+    return 0;
+}
+
 static int infilfs_ns_delete_file_resources(
     struct infilfs_native_pending *pending, struct inode *inode,
     struct infilfs_ns_index_change **changes, u32 *change_count,
@@ -1817,9 +1893,8 @@ static int infilfs_ns_delete_file_resources(
 
         if (infilfs_extent_kind(flags) != INFILFS_EXTENT_NORMAL)
             continue;
-        ret = infilfs_ns_free_unshared_run(
-            pending, ii->object_id,
-            le64_to_cpu(extents[i].physical_block),
+        ret = infilfs_ns_evict_free_prepared_run(
+            pending, le64_to_cpu(extents[i].physical_block),
             infilfs_extent_physical_blocks(logical_blocks, flags));
         if (ret)
             goto out;
@@ -2012,6 +2087,16 @@ static int infilfs_ns_evict_unlinked_file(struct inode *inode)
         pending, inode, &changes, &change_count, &change_capacity);
     if (!ret)
         ret = infilfs_ns_rebuild_index(pending, changes, change_count);
+    if (!ret) {
+        /*
+         * Removing this owner changes reference multiplicity.  The old map may
+         * now contain conservative false positives (2 owners became 1), so it
+         * must not survive into the next eviction.  Rebuild happens outside
+         * writer-side mutation on the next reclaim.
+         */
+        pending->shared_range_index_valid = false;
+        pending->shared_range_count = 0;
+    }
     ret = infilfs_ns_finish(pending, ret);
     kvfree(changes);
     return ret;
