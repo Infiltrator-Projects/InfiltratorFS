@@ -72,7 +72,7 @@ jobs:
       - name: Guard native media-aware placement
         run: bash tests/native-media-placement-policy.sh .
 
-      - name: Guard Format 0.17 sharded allocation tree
+      - name: Guard Format 0.18 sharded allocation tree
         run: bash tests/allocation-tree-format-policy.sh .
       - name: Guard native transaction durability
         run: bash tests/native-transaction-durability-policy.sh .
@@ -326,7 +326,7 @@ jobs:
           test "$(stat -c '%a' "$mountpoint")" = 700
           chmod 0755 "$mountpoint"
 
-          # Persist the FUSE-era Linux metadata surface through the native VFS.
+          # Persist the Linux sidecar metadata surface through the native VFS.
           if ! python3 - "$mountpoint/user-owned/file.txt" <<'PY'
           import os
           import sys
