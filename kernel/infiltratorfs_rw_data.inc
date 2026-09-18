@@ -29,7 +29,6 @@
 #define INFILFS_NATIVE_UNDO_INITIAL 16u
 #define INFILFS_NATIVE_INDEX_LOCATOR_MIN_CAPACITY 64u
 #define INFILFS_NATIVE_DIRECTORY_LOCATOR_MIN_CAPACITY 64u
-#define INFILFS_NATIVE_PREP_BATCH_MAX 4u
 
 struct infilfs_native_index_change {
     u8 object_id[16];
@@ -4491,9 +4490,11 @@ static void infilfs_native_prepare_workfn(struct work_struct *work)
     struct infilfs_native_prepare_work *item = container_of(
         work, struct infilfs_native_prepare_work, work);
 
+    infilfs_cpu_work_enter();
     item->ret = infilfs_native_prepare_append(
         item->inode, item->plain, item->bytes, item->preferred,
         &item->prepared);
+    infilfs_cpu_work_exit();
     complete(&item->done);
 }
 
@@ -4938,7 +4939,7 @@ static ssize_t infilfs_native_parallel_append_batch(
     int ret = -EOPNOTSUPP;
 
     if (!allow_compression || !sbi || !ii || !requested ||
-        requested > INFILFS_NATIVE_WRITEBACK_BATCH_BYTES ||
+        requested > infilfs_native_writeback_batch_bytes() ||
         requested < compression_bytes * 2u ||
         (*position & (INFILFS_DISK_BLOCK_SIZE - 1u)) != 0 ||
         (requested & (INFILFS_DISK_BLOCK_SIZE - 1u)) != 0 ||
@@ -4949,7 +4950,7 @@ static ssize_t infilfs_native_parallel_append_batch(
         return -EOPNOTSUPP;
 
     count = DIV_ROUND_UP(requested, compression_bytes);
-    if (count < 2u || count > INFILFS_NATIVE_PREP_BATCH_MAX)
+    if (count < 2u)
         return -EOPNOTSUPP;
     if (requested - (size_t)(count - 1u) * compression_bytes <
         2u * INFILFS_DISK_BLOCK_SIZE)
@@ -4998,7 +4999,7 @@ static ssize_t infilfs_native_parallel_append_batch(
         items[i].bytes = bytes;
         items[i].preferred = preferred;
         atomic64_inc(&sbi->prepared_append_attempts);
-        queue_work(system_unbound_wq, &items[i].work);
+        infilfs_queue_cpu_work(&items[i].work);
         offset += bytes;
     }
 
@@ -5364,7 +5365,7 @@ static ssize_t infilfs_native_extent_write_iter_mode(
             }
         }
         if (pending->active && !pending->commit_failed)
-            mod_delayed_work(system_wq, &pending->idle_work,
+            mod_delayed_work(system_long_wq, &pending->idle_work,
                              INFILFS_NATIVE_IDLE_DELAY);
 
 chunk_unlock:
@@ -5526,7 +5527,7 @@ static ssize_t infilfs_native_inline_write_iter(
     if (infilfs_native_pending_should_publish(pending))
         (void)infilfs_native_pending_commit_locked(pending);
     if (pending->active && !pending->commit_failed)
-        mod_delayed_work(system_wq, &pending->idle_work,
+        mod_delayed_work(system_long_wq, &pending->idle_work,
                          INFILFS_NATIVE_IDLE_DELAY);
 
     *position = pos + copied;
