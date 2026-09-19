@@ -52,6 +52,10 @@ transactions, snapshots/reflinks, IAC1 and kernel locking remain owned by
 InfiltratorFS. Managed Linux desktop-integration packaging is also kept separate
 from the core DKMS package and validated by the release artifact gate.
 
+The ABI-matched Ubuntu 24.04 / Linux Mint 22.x libblockdev and GNOME Disks
+replacement packages were rebuilt from the current patch/build contract and
+passed the installed real-stack qualification before this release commit.
+
 Publication of `v0.18.60` is fail-closed: the exact release commit must pass
 Build and conformance, native Linux mounted qualification, Linux metadata/root
 qualification and release-artifact assembly before the immutable tag and assets
