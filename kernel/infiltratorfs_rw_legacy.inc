@@ -1248,9 +1248,6 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
         return ret;
     }
     kfree(sb_block);
-        return ret;
-    }
-    kfree(sb_block);
 
     /*
      * The primary checkpoint is now durable, which is the atomic publication
