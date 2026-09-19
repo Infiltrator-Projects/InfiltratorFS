@@ -77,7 +77,7 @@ static int run_structural_check(const char *target)
     printf("  Object index:          %s\n",
            check_word(report.object_index_valid, report.failed_stage,
                       INFS_CHECK_STAGE_OBJECT_INDEX));
-    printf("  Allocation/ownership:  %s\n",
+    printf("  Allocation structure:  %s\n",
            check_word(report.allocation_ownership_valid, report.failed_stage,
                       INFS_CHECK_STAGE_ALLOCATION_OWNERSHIP));
     printf("  Namespace/references:  %s\n",
