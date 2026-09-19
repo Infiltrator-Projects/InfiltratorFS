@@ -56,7 +56,7 @@ for file in Makefile infiltratorfs_core.c infiltratorfs_crypto.c infiltratorfs_i
             infiltratorfs_parallel_alloc.c \
             infiltratorfs_index_tree.c infiltratorfs_directory_tree.c \
             infiltratorfs_rw.inc \
-            infiltratorfs_rw_legacy.inc infiltratorfs_checksum_cache.c infiltratorfs_rw_data.inc \
+            infiltratorfs_rw_legacy.inc infiltratorfs_checksum_cache.c infiltratorfs_locator_cache.c infiltratorfs_rw_data.inc \
             infiltratorfs_rw_namespace.inc infiltratorfs_read_cache.c \
             infiltratorfs_pagecache.c infiltratorfs_linux_meta_codec.c infiltratorfs_shared_ownership.c infiltratorfs_linux_meta.inc \
             infiltratorfs_resize.c infiltratorfs_quota.inc \
@@ -275,6 +275,7 @@ for required in \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_rw.inc$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_rw_legacy.inc$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_checksum_cache.c$" \
+    "usr/src/infiltratorfs-${package_version}/infiltratorfs_locator_cache.c$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_rw_data.inc$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_rw_namespace.inc$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_read_cache.c$" \
@@ -378,7 +379,7 @@ verify_installer() {
         kernel/infiltratorfs_format.h include/infilfs/iac1.h kernel/infiltratorfs_allocation_map.c \
         kernel/infiltratorfs_allocation_publish.c kernel/infiltratorfs_rw.inc \
         kernel/infiltratorfs_parallel_alloc.c \
-        kernel/infiltratorfs_rw_legacy.inc kernel/infiltratorfs_checksum_cache.c \
+        kernel/infiltratorfs_rw_legacy.inc kernel/infiltratorfs_checksum_cache.c kernel/infiltratorfs_locator_cache.c \
         kernel/infiltratorfs_rw_data.inc \
         kernel/infiltratorfs_rw_namespace.inc kernel/infiltratorfs_read_cache.c \
         kernel/infiltratorfs_pagecache.c kernel/infiltratorfs_linux_meta_codec.c kernel/infiltratorfs_linux_meta.inc \
