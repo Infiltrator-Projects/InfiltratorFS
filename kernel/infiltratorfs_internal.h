@@ -669,6 +669,18 @@ int infilfs_rw_allocation_map_publish(
 
 /* Services shared with the compiled verified-read cursor/cache layer. */
 extern const u8 infilfs_extent_page_magic[8];
+extern const u8 infilfs_extent_index_page_magic[8];
+u32 infilfs_extent_pointer_tree_levels(u32 page_count);
+bool infilfs_extent_pointer_page_valid(
+    struct super_block *sb, const u8 block[INFILFS_DISK_BLOCK_SIZE],
+    const u8 owner_id[16], u32 expected_level,
+    const __le64 **pointers_out, u32 *count_out);
+int infilfs_extent_layout_validate(
+    struct super_block *sb, const u8 object[INFILFS_DISK_BLOCK_SIZE],
+    u32 *page_count_out);
+int infilfs_extent_page_block(
+    struct super_block *sb, const u8 object[INFILFS_DISK_BLOCK_SIZE],
+    u32 page_index, u64 *block_out);
 u32 infilfs_extent_kind(u32 flags);
 u64 infilfs_extent_physical_blocks(u32 logical_blocks, u32 flags);
 bool infilfs_extent_is_compressed(u32 flags);

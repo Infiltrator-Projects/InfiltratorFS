@@ -64,6 +64,7 @@
 #   infiltratorfs_allocation_map.c owns Format 0.18 allocation-map loading.
 #   infiltratorfs_resize.c owns mounted geometry transitions.
 #   infiltratorfs_index_tree.c owns Format 0.18 object-index reads/snapshots.
+#   infiltratorfs_extent_tree.c owns scalable file extent-page indirection.
 #   infiltratorfs_parallel_alloc.c owns volatile sharded data reservations.
 #   infiltratorfs_allocation_publish.c owns CoW allocation-tree publication.
 #   infiltratorfs_read_cache.c owns verified read cursor/page caching.
@@ -87,7 +88,7 @@
 # KERNELRELEASE conditional, the initial DKMS make terminates with
 # "make: *** No targets. Stop." before Kbuild is ever entered.
 obj-m += infiltratorfs.o
-infiltratorfs-y := infiltratorfs_core.o infiltratorfs_crypto.o infiltratorfs_allocation_map.o infiltratorfs_resize.o infiltratorfs_index_tree.o infiltratorfs_parallel_alloc.o infiltratorfs_allocation_publish.o infiltratorfs_read_cache.o infiltratorfs_pagecache.o infiltratorfs_directory_tree.o infiltratorfs_checksum_cache.o infiltratorfs_checksum_store.o infiltratorfs_locator_cache.o infiltratorfs_linux_meta_codec.o infiltratorfs_shared_ownership.o
+infiltratorfs-y := infiltratorfs_core.o infiltratorfs_crypto.o infiltratorfs_allocation_map.o infiltratorfs_resize.o infiltratorfs_index_tree.o infiltratorfs_extent_tree.o infiltratorfs_parallel_alloc.o infiltratorfs_allocation_publish.o infiltratorfs_read_cache.o infiltratorfs_pagecache.o infiltratorfs_directory_tree.o infiltratorfs_checksum_cache.o infiltratorfs_checksum_store.o infiltratorfs_locator_cache.o infiltratorfs_linux_meta_codec.o infiltratorfs_shared_ownership.o
 ccflags-y += -I$(src)/../include/infilfs
 
 KDIR ?= /lib/modules/$(shell uname -r)/build

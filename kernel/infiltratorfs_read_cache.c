@@ -175,6 +175,7 @@ static void infilfs_native_readahead_extent(
     *next_logical = logical + blocks;
 }
 
+
 static int infilfs_native_map_file_block_cached(
     struct inode *inode, const u8 *object, u64 logical,
     u8 extent_page[INFILFS_DISK_BLOCK_SIZE],
@@ -184,40 +185,24 @@ static int infilfs_native_map_file_block_cached(
 {
     const struct infilfs_object_header_disk *header =
         (const struct infilfs_object_header_disk *)object;
-    const struct infilfs_file_payload_disk *file =
-        (const struct infilfs_file_payload_disk *)(header + 1);
-    const struct infilfs_extent_head_disk *head;
-    const __le64 *pages;
     const struct infilfs_metadata_page_disk *page;
     const struct infilfs_extent_disk *ext;
     u16 version = le16_to_cpu(header->object_version);
-    u32 page_count;
-    u32 count;
-    u32 lo;
-    u32 hi;
+    u32 page_count, count, lo, hi;
     int ret;
 
-    if (version != INFILFS_OBJECT_VERSION_PAGED)
+    if (version == INFILFS_OBJECT_VERSION_CLASSIC)
         return infilfs_map_file_block_detail(
             inode, object, logical, physical_out, flags_out,
             extent_logical_out, extent_blocks_out);
-
-    head = (const struct infilfs_extent_head_disk *)(file + 1);
-    pages = (const __le64 *)(head + 1);
-    page_count = le32_to_cpu(head->page_count);
-    if (!page_count || page_count > INFILFS_EXTENT_PAGE_POINTERS ||
-        le32_to_cpu(head->reserved) != 0 ||
-        sizeof(*file) + sizeof(*head) +
-            (size_t)page_count * sizeof(*pages) !=
-                le32_to_cpu(header->payload_size))
+    if (version != INFILFS_OBJECT_VERSION_PAGED &&
+        version != INFILFS_OBJECT_VERSION_TREE)
         return -EFSCORRUPTED;
 
-    /*
-     * Sequential reads normally stay inside one extent page for many data
-     * blocks.  Keep that already-authenticated page resident for this
-     * read_iter() call instead of rereading it for every 4 KiB block.
-     * Random/backward access falls through to the binary page search.
-     */
+    ret = infilfs_extent_layout_validate(inode->i_sb, object, &page_count);
+    if (ret)
+        return ret;
+
     if (!cursor->valid ||
         logical < cursor->first_logical ||
         logical >= cursor->last_logical) {
@@ -227,11 +212,14 @@ static int infilfs_native_map_file_block_cached(
 
         while (lo < hi) {
             u32 mid = lo + (hi - lo) / 2u;
-            u64 first;
-            u64 last;
+            u64 first, last, page_no;
 
+            ret = infilfs_extent_page_block(
+                inode->i_sb, object, mid, &page_no);
+            if (ret)
+                return ret;
             ret = infilfs_read_allocated_block(
-                inode->i_sb, le64_to_cpu(pages[mid]), extent_page);
+                inode->i_sb, page_no, extent_page);
             if (ret)
                 return ret;
             if (!infilfs_metadata_page_valid(
@@ -251,12 +239,11 @@ static int infilfs_native_map_file_block_cached(
                 le32_to_cpu(ext[count - 1u].block_count);
             if (last <= first)
                 return -EFSCORRUPTED;
-
-            if (logical < first) {
+            if (logical < first)
                 hi = mid;
-            } else if (logical >= last) {
+            else if (logical >= last)
                 lo = mid + 1u;
-            } else {
+            else {
                 cursor->page_index = mid;
                 cursor->first_logical = first;
                 cursor->last_logical = last;
@@ -310,6 +297,7 @@ static int infilfs_native_map_file_block_cached(
     }
     return -EFSCORRUPTED;
 }
+
 
 /*
  * infilfs_native_read_expected_digest() authenticates and decodes the checksum

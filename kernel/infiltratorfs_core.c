@@ -1241,6 +1241,7 @@ static int infilfs_validate_checkpoint_extents(
     return 0;
 }
 
+
 static int infilfs_validate_checkpoint_file(
     struct super_block *sb,
     const u8 object[INFILFS_DISK_BLOCK_SIZE])
@@ -1295,22 +1296,14 @@ static int infilfs_validate_checkpoint_file(
                 (has_normal == has_checksum_head ? 0 : -EFSCORRUPTED);
         }
     }
-    if (version == INFILFS_OBJECT_VERSION_PAGED) {
-        const struct infilfs_extent_head_disk *head =
-            (const struct infilfs_extent_head_disk *)(file + 1);
-        const __le64 *pages = (const __le64 *)(head + 1);
-        u32 page_count = le32_to_cpu(head->page_count);
-        u32 copied = 0;
+    if (version == INFILFS_OBJECT_VERSION_PAGED ||
+        version == INFILFS_OBJECT_VERSION_TREE) {
+        u32 page_count = 0, copied = 0, p;
         u8 *page_block;
-        u32 p;
-        int ret = 0;
+        int ret = infilfs_extent_layout_validate(sb, object, &page_count);
 
-        if (!page_count || page_count > INFILFS_EXTENT_PAGE_POINTERS ||
-            le32_to_cpu(head->reserved) != 0 ||
-            sizeof(*file) + sizeof(*head) +
-                (size_t)page_count * sizeof(*pages) !=
-                    le32_to_cpu(header->payload_size))
-            return -EFSCORRUPTED;
+        if (ret)
+            return ret;
         page_block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
         if (!page_block)
             return -ENOMEM;
@@ -1318,9 +1311,12 @@ static int infilfs_validate_checkpoint_file(
             const struct infilfs_metadata_page_disk *page;
             const struct infilfs_extent_disk *extents;
             u32 count;
+            u64 block;
 
-            ret = infilfs_read_allocated_block(
-                sb, le64_to_cpu(pages[p]), page_block);
+            ret = infilfs_extent_page_block(sb, object, p, &block);
+            if (ret)
+                break;
+            ret = infilfs_read_allocated_block(sb, block, page_block);
             if (ret)
                 break;
             if (!infilfs_metadata_page_valid(
@@ -1356,6 +1352,7 @@ static int infilfs_validate_checkpoint_file(
     }
     return -EFSCORRUPTED;
 }
+
 
 static int infilfs_validate_checkpoint_index_tree(
     struct super_block *sb,
@@ -1790,6 +1787,7 @@ static int infilfs_emit_snapshot_entry(
     return 0;
 }
 
+
 int infilfs_map_file_block_detail(
     struct inode *inode, const u8 *object, u64 logical,
     u64 *physical_out, u32 *flags_out,
@@ -1838,52 +1836,44 @@ int infilfs_map_file_block_detail(
         return -EFSCORRUPTED;
     }
 
-    if (version == INFILFS_OBJECT_VERSION_PAGED) {
-        const struct infilfs_extent_head_disk *head =
-            (const struct infilfs_extent_head_disk *)(file + 1);
-        const __le64 *pages = (const __le64 *)(head + 1);
-        u32 page_count = le32_to_cpu(head->page_count);
+    if (version == INFILFS_OBJECT_VERSION_PAGED ||
+        version == INFILFS_OBJECT_VERSION_TREE) {
+        u32 page_count = 0;
         u8 *page_block;
-        u32 lo = 0, hi = page_count;
-        int ret = -EFSCORRUPTED;
+        u32 lo = 0, hi;
+        int ret = infilfs_extent_layout_validate(
+            inode->i_sb, object, &page_count);
 
-        if (page_count == 0 || page_count > INFILFS_EXTENT_PAGE_POINTERS ||
-            le32_to_cpu(head->reserved) != 0 ||
-            sizeof(*file) + sizeof(*head) +
-                (size_t)page_count * sizeof(__le64) !=
-                    le32_to_cpu(header->payload_size))
-            return -EFSCORRUPTED;
+        if (ret)
+            return ret;
+        hi = page_count;
         page_block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_KERNEL);
         if (!page_block)
             return -ENOMEM;
 
-        /*
-         * Extent pages are stored in logical order.  The original native
-         * mapper restarted at page zero for every 4 KiB data block, making a
-         * sequential read of a fragmented file O(data_blocks * extent_pages).
-         * Locate the one candidate page with a binary search instead.
-         */
         while (lo < hi) {
             const struct infilfs_metadata_page_disk *page;
             const struct infilfs_extent_disk *ext;
-            u32 count;
-            u32 mid = lo + (hi - lo) / 2u;
-            u64 first;
-            u64 last;
+            u32 count, mid = lo + (hi - lo) / 2u;
+            u64 first, last, page_no;
 
-            ret = infilfs_read_allocated_block(
-                inode->i_sb, le64_to_cpu(pages[mid]), page_block);
+            ret = infilfs_extent_page_block(
+                inode->i_sb, object, mid, &page_no);
             if (ret)
                 break;
-            if (!infilfs_metadata_page_valid(inode->i_sb, page_block,
-                                             infilfs_extent_page_magic,
-                                             header->object_id)) {
+            ret = infilfs_read_allocated_block(
+                inode->i_sb, page_no, page_block);
+            if (ret)
+                break;
+            if (!infilfs_metadata_page_valid(
+                    inode->i_sb, page_block, infilfs_extent_page_magic,
+                    header->object_id)) {
                 ret = -EFSCORRUPTED;
                 break;
             }
             page = (const struct infilfs_metadata_page_disk *)page_block;
             count = le32_to_cpu(page->entry_count);
-            if (count == 0 || count > INFILFS_EXTENTS_PER_PAGE ||
+            if (!count || count > INFILFS_EXTENTS_PER_PAGE ||
                 le32_to_cpu(page->bytes_used) !=
                     count * sizeof(struct infilfs_extent_disk)) {
                 ret = -EFSCORRUPTED;
@@ -1906,10 +1896,8 @@ int infilfs_map_file_block_detail(
                 continue;
             }
 
-            /* The target is inside this page; binary-search its extents. */
             {
                 u32 elo = 0, ehi = count;
-
                 while (elo < ehi) {
                     u32 emid = elo + (ehi - elo) / 2u;
                     u64 start = le64_to_cpu(ext[emid].logical_block);
@@ -1964,6 +1952,7 @@ paged_out:
 
     return -EFSCORRUPTED;
 }
+
 
 static int infilfs_map_file_block(
     struct inode *inode, const u8 *object, u64 logical,
@@ -2094,6 +2083,7 @@ static const char *infilfs_get_link(struct dentry *dentry, struct inode *inode,
     return ii->symlink_target;
 }
 
+
 static int infilfs_file_allocated_blocks(
     struct inode *inode, const u8 object[INFILFS_DISK_BLOCK_SIZE],
     u64 *allocated_out)
@@ -2105,13 +2095,14 @@ static int infilfs_file_allocated_blocks(
     u32 extent_count = le32_to_cpu(file->extent_count);
     u64 allocated = 0;
     u32 copied = 0;
+    u16 version = le16_to_cpu(header->object_version);
     int ret = 0;
 
     if (!extent_count) {
         *allocated_out = 0;
         return 0;
     }
-    if (le16_to_cpu(header->object_version) == INFILFS_OBJECT_VERSION_CLASSIC) {
+    if (version == INFILFS_OBJECT_VERSION_CLASSIC) {
         const struct infilfs_extent_disk *extents =
             (const struct infilfs_extent_disk *)(file + 1);
         u32 i;
@@ -2119,41 +2110,39 @@ static int infilfs_file_allocated_blocks(
         if (sizeof(*file) + (size_t)extent_count * sizeof(*extents) !=
             le32_to_cpu(header->payload_size))
             return -EFSCORRUPTED;
-        for (i = 0; i < extent_count; ++i) {
-            u32 flags = le32_to_cpu(extents[i].flags);
-            u32 logical_blocks = le32_to_cpu(extents[i].block_count);
-
+        for (i = 0; i < extent_count; ++i)
             allocated += infilfs_extent_physical_blocks(
-                logical_blocks, flags);
-        }
-    } else if (le16_to_cpu(header->object_version) ==
-               INFILFS_OBJECT_VERSION_PAGED) {
-        const struct infilfs_extent_head_disk *head =
-            (const struct infilfs_extent_head_disk *)(file + 1);
-        const __le64 *pages = (const __le64 *)(head + 1);
-        u32 page_count = le32_to_cpu(head->page_count);
+                le32_to_cpu(extents[i].block_count),
+                le32_to_cpu(extents[i].flags));
+    } else if (version == INFILFS_OBJECT_VERSION_PAGED ||
+               version == INFILFS_OBJECT_VERSION_TREE) {
+        u32 page_count = 0, p;
         u8 *page_block;
-        u32 p;
 
-        if (!page_count || page_count > INFILFS_EXTENT_PAGE_POINTERS ||
-            le32_to_cpu(head->reserved) != 0)
-            return -EFSCORRUPTED;
+        ret = infilfs_extent_layout_validate(
+            inode->i_sb, object, &page_count);
+        if (ret)
+            return ret;
         page_block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_KERNEL);
         if (!page_block)
             return -ENOMEM;
         for (p = 0; p < page_count; ++p) {
             const struct infilfs_metadata_page_disk *page;
             const struct infilfs_extent_disk *extents;
-            u32 count;
-            u32 i;
+            u32 count, i;
+            u64 page_no;
 
-            ret = infilfs_read_allocated_block(
-                inode->i_sb, le64_to_cpu(pages[p]), page_block);
+            ret = infilfs_extent_page_block(
+                inode->i_sb, object, p, &page_no);
             if (ret)
                 break;
-            if (!infilfs_metadata_page_valid(inode->i_sb, page_block,
-                                             infilfs_extent_page_magic,
-                                             header->object_id)) {
+            ret = infilfs_read_allocated_block(
+                inode->i_sb, page_no, page_block);
+            if (ret)
+                break;
+            if (!infilfs_metadata_page_valid(
+                    inode->i_sb, page_block, infilfs_extent_page_magic,
+                    header->object_id)) {
                 ret = -EFSCORRUPTED;
                 break;
             }
@@ -2161,19 +2150,15 @@ static int infilfs_file_allocated_blocks(
             count = le32_to_cpu(page->entry_count);
             if (!count || count > INFILFS_EXTENTS_PER_PAGE ||
                 copied > extent_count || count > extent_count - copied ||
-                le32_to_cpu(page->bytes_used) !=
-                    count * sizeof(*extents)) {
+                le32_to_cpu(page->bytes_used) != count * sizeof(*extents)) {
                 ret = -EFSCORRUPTED;
                 break;
             }
             extents = (const struct infilfs_extent_disk *)(page + 1);
-            for (i = 0; i < count; ++i) {
-                u32 flags = le32_to_cpu(extents[i].flags);
-                u32 logical_blocks = le32_to_cpu(extents[i].block_count);
-
+            for (i = 0; i < count; ++i)
                 allocated += infilfs_extent_physical_blocks(
-                    logical_blocks, flags);
-            }
+                    le32_to_cpu(extents[i].block_count),
+                    le32_to_cpu(extents[i].flags));
             copied += count;
         }
         kfree(page_block);
@@ -2187,6 +2172,7 @@ static int infilfs_file_allocated_blocks(
     *allocated_out = allocated;
     return 0;
 }
+
 
 static int infilfs_tree_directory_allocated_node(
     struct super_block *sb, const u8 owner_id[16], u64 node,

@@ -1241,6 +1241,7 @@ out:
     return ret;
 }
 
+
 static int infilfs_ns_read_file_extents(
     struct super_block *sb, u64 object_block, const u8 object_id[16],
     struct infilfs_extent_disk **extents_out, u32 *count_out)
@@ -1281,17 +1282,15 @@ static int infilfs_ns_read_file_extents(
         }
         memcpy(extents, file + 1, (size_t)count * sizeof(*extents));
         copied = count;
-    } else if (le16_to_cpu(header->object_version) == INFILFS_OBJECT_VERSION_PAGED) {
-        struct infilfs_extent_head_disk *head =
-            (struct infilfs_extent_head_disk *)(file + 1);
-        __le64 *pages = (__le64 *)(head + 1);
-        u32 page_count = le32_to_cpu(head->page_count);
-        u32 p;
-        if (!page_count || page_count > INFILFS_EXTENT_PAGE_POINTERS ||
-            le32_to_cpu(head->reserved) != 0) {
-            ret = -EFSCORRUPTED;
+    } else if (le16_to_cpu(header->object_version) ==
+                   INFILFS_OBJECT_VERSION_PAGED ||
+               le16_to_cpu(header->object_version) ==
+                   INFILFS_OBJECT_VERSION_TREE) {
+        u32 page_count = 0, p;
+
+        ret = infilfs_extent_layout_validate(sb, object, &page_count);
+        if (ret)
             goto out;
-        }
         page_block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
         if (!page_block) {
             ret = -ENOMEM;
@@ -1300,13 +1299,16 @@ static int infilfs_ns_read_file_extents(
         for (p = 0; p < page_count; ++p) {
             struct infilfs_metadata_page_disk *page;
             u32 n;
-            ret = infilfs_read_allocated_block(
-                sb, le64_to_cpu(pages[p]), page_block);
+            u64 block;
+
+            ret = infilfs_extent_page_block(sb, object, p, &block);
             if (ret)
                 goto out;
-            if (!infilfs_metadata_page_valid(sb, page_block,
-                                             infilfs_extent_page_magic,
-                                             object_id)) {
+            ret = infilfs_read_allocated_block(sb, block, page_block);
+            if (ret)
+                goto out;
+            if (!infilfs_metadata_page_valid(
+                    sb, page_block, infilfs_extent_page_magic, object_id)) {
                 ret = -EFSCORRUPTED;
                 goto out;
             }
@@ -1339,6 +1341,7 @@ out:
     kfree(object);
     return ret;
 }
+
 
 /*
  * Volatile shared-range accelerator.

@@ -291,6 +291,9 @@ struct infilfs_snapshot_record_disk {
     (INFILFS_DIRECTORY_TREE_FANOUT * sizeof(__le64))
 #define INFILFS_EXTENTS_PER_PAGE \
     (INFILFS_METADATA_PAGE_DATA_SIZE / sizeof(struct infilfs_extent_disk))
+#define INFILFS_EXTENT_INDEX_POINTERS_PER_PAGE \
+    (INFILFS_METADATA_PAGE_DATA_SIZE / sizeof(__le64))
+#define INFILFS_EXTENT_INDEX_MAX_LEVELS 3u
 #define INFILFS_DIRECTORY_PAGE_POINTERS \
     ((INFILFS_DISK_BLOCK_SIZE - sizeof(struct infilfs_object_header_disk) - \
       sizeof(struct infilfs_directory_payload_disk)) / sizeof(__le64))
@@ -322,6 +325,7 @@ static_assert(sizeof(struct infilfs_dirent_disk) == 24);
 static_assert(sizeof(struct infilfs_file_payload_disk) == 160);
 static_assert(sizeof(struct infilfs_symlink_payload_disk) == 144);
 static_assert(sizeof(struct infilfs_extent_disk) == 24);
+static_assert(INFILFS_EXTENT_INDEX_POINTERS_PER_PAGE == 502u);
 static_assert(sizeof(struct infilfs_index_entry_disk) == 32);
 static_assert(INFILFS_INDEX_TREE_BRANCH_BYTES <= INFILFS_METADATA_PAGE_DATA_SIZE);
 static_assert(INFILFS_DIRECTORY_TREE_BRANCH_BYTES <= INFILFS_METADATA_PAGE_DATA_SIZE);

@@ -790,6 +790,7 @@ void infilfs_native_block_digest(
     infilfs_rw_sha256_final(&ctx, digest->bytes);
 }
 
+
 int infilfs_native_collect_extents(
     struct infilfs_native_pending *pending, struct inode *inode,
     u8 object[INFILFS_DISK_BLOCK_SIZE],
@@ -837,20 +838,16 @@ int infilfs_native_collect_extents(
         }
         memcpy(extents, file + 1, (size_t)count * sizeof(*extents));
     } else if (le16_to_cpu(header->object_version) ==
-               INFILFS_OBJECT_VERSION_PAGED) {
-        struct infilfs_extent_head_disk *head =
-            (struct infilfs_extent_head_disk *)(file + 1);
-        __le64 *pages = (__le64 *)(head + 1);
-        u32 page_count = le32_to_cpu(head->page_count);
-        u32 copied = 0;
+                   INFILFS_OBJECT_VERSION_PAGED ||
+               le16_to_cpu(header->object_version) ==
+                   INFILFS_OBJECT_VERSION_TREE) {
+        u32 page_count = 0, copied = 0, p;
         u8 *page_block;
-        u32 p;
 
-        if (!page_count || page_count > INFILFS_EXTENT_PAGE_POINTERS ||
-            le32_to_cpu(head->reserved) != 0) {
-            ret = -EFSCORRUPTED;
+        ret = infilfs_extent_layout_validate(
+            inode->i_sb, object, &page_count);
+        if (ret)
             goto fail;
-        }
         page_block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
         if (!page_block) {
             ret = -ENOMEM;
@@ -859,14 +856,19 @@ int infilfs_native_collect_extents(
         for (p = 0; p < page_count; ++p) {
             struct infilfs_metadata_page_disk *page;
             u32 n;
-            u64 block = le64_to_cpu(pages[p]);
+            u64 block;
 
-            ret = infilfs_read_allocated_block(inode->i_sb, block, page_block);
+            ret = infilfs_extent_page_block(
+                inode->i_sb, object, p, &block);
             if (ret)
                 break;
-            if (!infilfs_metadata_page_valid(inode->i_sb, page_block,
-                                             infilfs_extent_page_magic,
-                                             ii->object_id)) {
+            ret = infilfs_read_allocated_block(
+                inode->i_sb, block, page_block);
+            if (ret)
+                break;
+            if (!infilfs_metadata_page_valid(
+                    inode->i_sb, page_block, infilfs_extent_page_magic,
+                    ii->object_id)) {
                 ret = -EFSCORRUPTED;
                 break;
             }
@@ -920,6 +922,7 @@ fail:
     kvfree(extents);
     return ret;
 }
+
 
 static int infilfs_native_map_extent_detail(
     const struct infilfs_extent_disk *extents, u32 count, u64 logical,
