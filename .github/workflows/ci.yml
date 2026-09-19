@@ -98,6 +98,8 @@ jobs:
           grep -Fq 'EXPECTED_PARTNO="22"' tests/native-partition22-full-test.sh
           grep -Fq 'TARGET="/dev/mmcblk0p22"' tests/native-complete-qualification.sh
           grep -Fq 'ERASE /dev/mmcblk0p22 AND RUN COMPLETE QUALIFICATION' tests/native-complete-qualification.sh
+      - name: Guard fast fsck structural mode
+        run: bash tests/fsck-structural-policy.sh .
       - name: Guard native random-write optimizations
         run: bash tests/native-random-write-optimization-policy.sh .
       - name: Guard native sequential-write scaling
