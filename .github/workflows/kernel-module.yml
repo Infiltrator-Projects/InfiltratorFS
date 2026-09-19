@@ -102,6 +102,7 @@ jobs:
              kernel/infiltratorfs_allocation_publish.c \
              kernel/infiltratorfs_parallel_alloc.c \
              kernel/infiltratorfs_index_tree.c \
+             kernel/infiltratorfs_extent_tree.c \
              kernel/infiltratorfs_directory_tree.c \
              kernel/infiltratorfs_checksum_cache.c \
              kernel/infiltratorfs_checksum_store.c \
