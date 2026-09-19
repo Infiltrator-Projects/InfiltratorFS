@@ -2947,8 +2947,10 @@ static int infilfs_native_build_file_object(
     file = (struct infilfs_file_payload_disk *)(header + 1);
     memcpy(file->checksum_head_id, working_file->checksum_head_id, 16);
     file->attributes.logical_size = cpu_to_le64(new_size);
-    infilfs_timestamp_encode_ns(&file->attributes.modification_time, ktime_get_real_ns());
-    file->attributes.change_time = file->attributes.modification_time;
+    infilfs_timestamp_encode(
+        &file->attributes.modification_time, inode_get_mtime(inode));
+    infilfs_timestamp_encode(
+        &file->attributes.change_time, inode_get_ctime(inode));
     file->extent_count = cpu_to_le32(extent_count);
     file->data_checksum_type = cpu_to_le32(INFILFS_CHECKSUM_SHA256);
     header->generation = cpu_to_le64(pending->tx.generation);
@@ -3475,9 +3477,10 @@ static int infilfs_native_try_single_paged_overwrite(
     memcpy(new_file->checksum_head_id, working_file.checksum_head_id, 16);
     new_file->extent_count = cpu_to_le32(new_extent_total);
     new_file->data_checksum_type = cpu_to_le32(INFILFS_CHECKSUM_SHA256);
-    infilfs_timestamp_encode_ns(&new_file->attributes.modification_time, ktime_get_real_ns());
-    new_file->attributes.change_time =
-        new_file->attributes.modification_time;
+    infilfs_timestamp_encode(
+        &new_file->attributes.modification_time, inode_get_mtime(inode));
+    infilfs_timestamp_encode(
+        &new_file->attributes.change_time, inode_get_ctime(inode));
     new_header->generation = cpu_to_le64(pending->tx.generation);
 
     ret = infilfs_rw_finalize_object(new_object);
@@ -3728,10 +3731,10 @@ static int infilfs_native_try_prepared_paged_append(
         old_extent_total - page_entries + local_count);
     new_file->data_checksum_type = cpu_to_le32(INFILFS_CHECKSUM_SHA256);
     new_file->attributes.logical_size = cpu_to_le64(pos + bytes);
-    infilfs_timestamp_encode_ns(
-        &new_file->attributes.modification_time, ktime_get_real_ns());
-    new_file->attributes.change_time =
-        new_file->attributes.modification_time;
+    infilfs_timestamp_encode(
+        &new_file->attributes.modification_time, inode_get_mtime(inode));
+    infilfs_timestamp_encode(
+        &new_file->attributes.change_time, inode_get_ctime(inode));
     new_header->generation = cpu_to_le64(pending->tx.generation);
 
     ret = infilfs_rw_finalize_object(new_object);
@@ -4983,8 +4986,10 @@ static ssize_t infilfs_native_inline_write_iter(
     header->generation = cpu_to_le64(pending->tx.generation);
     header->object_version = cpu_to_le16(INFILFS_OBJECT_VERSION_CLASSIC);
     file->attributes.logical_size = cpu_to_le64(new_size);
-    infilfs_timestamp_encode_ns(&file->attributes.modification_time, ktime_get_real_ns());
-    file->attributes.change_time = file->attributes.modification_time;
+    infilfs_timestamp_encode(
+        &file->attributes.modification_time, inode_get_mtime(inode));
+    infilfs_timestamp_encode(
+        &file->attributes.change_time, inode_get_ctime(inode));
     file->extent_count = 0;
     file->data_checksum_type = cpu_to_le32(INFILFS_CHECKSUM_SHA256);
     memset(file->checksum_head_id, 0, sizeof(file->checksum_head_id));
@@ -5107,6 +5112,9 @@ static ssize_t infilfs_file_write_iter_common(struct kiocb *iocb,
     ret = file_remove_privs(filep);
     if (ret)
         goto out_inode;
+    ret = file_update_time(filep);
+    if (ret)
+        goto out_inode;
 
     end = pos + requested - 1u;
     old_size = i_size_read(inode);
@@ -5190,6 +5198,14 @@ static ssize_t infilfs_file_write_iter(struct kiocb *iocb,
         ret = -EFBIG;
         goto out_unlock;
     }
+
+    ret = file_remove_privs(filep);
+    if (ret)
+        goto out_unlock;
+    ret = file_update_time(filep);
+    if (ret)
+        goto out_unlock;
+
     old_size = i_size_read(inode);
     if (pos + (loff_t)requested > old_size)
         quota_growth = (u64)(pos + (loff_t)requested - old_size);
