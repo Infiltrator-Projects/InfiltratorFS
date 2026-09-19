@@ -280,6 +280,37 @@ int infilfs_rw_write_block(struct super_block *sb, u64 block,
     return 0;
 }
 
+static int infilfs_rw_write_block_sync(struct super_block *sb, u64 block,
+                                       const void *data)
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
+    struct buffer_head *bh;
+    int ret = 0;
+
+    if (!sbi || block >= sbi->device_blocks)
+        return -EIO;
+    bh = sb_getblk(sb, (sector_t)block);
+    if (!bh)
+        return -EIO;
+
+    lock_buffer(bh);
+    memcpy(bh->b_data, data, INFILFS_DISK_BLOCK_SIZE);
+    set_buffer_uptodate(bh);
+    mark_buffer_dirty(bh);
+    unlock_buffer(bh);
+
+    /*
+     * Checkpoint blocks are tiny publication records.  Write and wait for the
+     * exact buffers here; the device-cache flush after all replicas then forms
+     * the stable-media boundary without a second whole-device writeback walk.
+     */
+    sync_dirty_buffer(bh);
+    if (!buffer_uptodate(bh))
+        ret = -EIO;
+    brelse(bh);
+    return ret;
+}
+
 static const u64 infilfs_rw_crc64_table[256] = {
     0x0000000000000000ULL, 0x42F0E1EBA9EA3693ULL, 0x85E1C3D753D46D26ULL, 0xC711223CFA3E5BB5ULL,
     0x493366450E42ECDFULL, 0x0BC387AEA7A8DA4CULL, 0xCCD2A5925D9681F9ULL, 0x8E224479F47CB76AULL,
@@ -1184,7 +1215,7 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
      * complete generation-N+1 checkpoint; either is safe because every N+1
      * dependency was flushed before checkpoint writes began.
      */
-    ret = infilfs_rw_write_block(tx->sb,
+    ret = infilfs_rw_write_block_sync(tx->sb,
         le64_to_cpu(tx->next_sb.checkpoint_block[first]), sb_block);
     if (ret) {
         sbi->write_poisoned = true;
@@ -1197,24 +1228,26 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
 
     for (n = 1; n < INFILFS_CHECKPOINT_COUNT; ++n) {
         unsigned int idx = (first + n) % INFILFS_CHECKPOINT_COUNT;
-        ret = infilfs_rw_write_block(tx->sb,
+        ret = infilfs_rw_write_block_sync(tx->sb,
             le64_to_cpu(tx->next_sb.checkpoint_block[idx]), sb_block);
         if (ret && !replica_error)
             replica_error = ret;
     }
 
-    ret = sync_blockdev(tx->sb->s_bdev);
+    ret = blkdev_issue_flush(tx->sb->s_bdev);
     if (ret) {
         /*
-         * At least the primary checkpoint write was issued. A failed flush
-         * cannot prove whether generation N+1 reached stable storage, so keep
-         * the existing fail-closed remount/recovery rule.
+         * Checkpoint buffers were submitted synchronously above, but without a
+         * successful cache flush their stable-media state is indeterminate.
          */
         sbi->write_poisoned = true;
         sbi->checkpoint_repair_needed = true;
         pr_warn("InfiltratorFS: checkpoint durability indeterminate; further writes disabled until remount\n");
         infilfs_allocation_layout_destroy(&next_allocation);
         kfree(sb_block);
+        return ret;
+    }
+    kfree(sb_block);
         return ret;
     }
     kfree(sb_block);
