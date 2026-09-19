@@ -39,6 +39,18 @@ grep -Fq 'Cycle Infiltratr Common System, Day and Night themes' "$manager"
 grep -Fq 'border-left-color: {accent};' "$manager"
 grep -Fq 'THEME_ACCENT = "#00adef"' "$manager"
 
+# GTK child labels/images must inherit each button state's foreground.  A
+# universal direct colour caused the night headerbar to render pale text/icons
+# on the pale Common button surface, making the top bar effectively unreadable.
+if sed -n '/^\* {{$/,/^}}$/p' "$manager" | grep -Fq 'color:'; then
+    echo 'ui-font-policy: universal GTK foreground overrides button contrast' >&2
+    exit 1
+fi
+grep -Fq 'button, button label, button image {{' "$manager"
+grep -Fq 'headerbar button label, headerbar button image {{' "$manager"
+grep -Fq 'headerbar .title, headerbar label.title {{' "$manager"
+grep -Fq 'headerbar .subtitle, headerbar label.subtitle {{' "$manager"
+
 # Linux mirrors LINK's LinkAboutInfo contract even though this manager is
 # Python/GTK3 rather than LINK's C shell. Keep the same rich About facts,
 # explicit emblem and family style instead of falling back to a bare dialog.

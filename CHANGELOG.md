@@ -4,7 +4,13 @@ This file records user-visible, compatibility, architecture and validation chang
 
 ## Unreleased
 
-No unreleased changes are recorded after the 0.18.60 release candidate.
+No unreleased changes are recorded after the 0.18.61 release candidate.
+
+## 0.18.61 — 2026-09-19
+
+- Fix GTK3 headerbar contrast by allowing button child labels/icons to inherit the active button foreground instead of forcing the global text colour onto every child CSS node.
+- Strengthen InfiltratorFS title/subtitle readability and keep header controls fully opaque in System/Day/Night themes.
+- Add a UI policy guard so a universal foreground cannot silently reintroduce the contrast regression.
 
 ## 0.18.60 — 2026-09-19
 

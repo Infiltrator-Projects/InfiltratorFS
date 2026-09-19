@@ -547,55 +547,87 @@ def _css_for_palette(p: dict[str, str]) -> bytes:
 * {{
     font-family: "MB Corpo S Title WEB";
     font-weight: 400;
-    color: {p["text"]};
 }}
+/*
+ * Do not set a foreground on the universal selector.  GTK labels/images
+ * inside buttons are real child CSS nodes; a direct '*' colour prevents them
+ * from inheriting the button's state-specific foreground.  In the night
+ * palette that produced pale text/icons on pale header buttons.
+ */
 window, dialog, messagedialog, filechooser {{
     background: {p["background"]};
     color: {p["text"]};
 }}
 headerbar {{
-    min-height: 42px;
+    min-height: 44px;
     background: {p["panel"]};
     color: {p["title"]};
     border-bottom: 1px solid {p["border"]};
 }}
-headerbar .title {{
+headerbar .title, headerbar label.title {{
     font-family: "MB Corpo A Title Cond WEB";
-    font-size: 16px;
-    font-weight: 400;
+    font-size: 18px;
+    font-weight: 700;
     color: {p["title"]};
 }}
-headerbar .subtitle {{ color: {p["muted"]}; font-size: 11px; }}
+headerbar .subtitle, headerbar label.subtitle {{
+    color: {p["muted"]};
+    font-size: 12px;
+    font-weight: 700;
+}}
 button {{
     min-height: 30px;
     padding: 0 12px;
     background: {p["button_background"]};
-    color: {p["button_foreground"]};
     border: 1px solid {p["border"]};
     border-radius: 6px;
     font-family: "MB Corpo S Title WEB";
     font-weight: 700;
 }}
+button, button label, button image {{
+    color: {p["button_foreground"]};
+}}
+headerbar button {{
+    min-height: 32px;
+}}
+headerbar button label, headerbar button image {{
+    color: {p["button_foreground"]};
+    opacity: 1;
+}}
 button:hover {{ background: {p["neutral_accent"]}; }}
+button:hover label, button:hover image {{
+    color: {p["button_foreground"]};
+}}
 button:active, button:checked {{
     background: {p["selection_background"]};
-    color: {p["selection_foreground"]};
     border-color: {accent};
+}}
+button:active, button:active label, button:active image,
+button:checked, button:checked label, button:checked image {{
+    color: {p["selection_foreground"]};
 }}
 button:disabled {{
     background: {p["surface"]};
-    color: {p["subtle"]};
     border-color: {p["border"]};
+}}
+button:disabled, button:disabled label, button:disabled image {{
+    color: {p["subtle"]};
 }}
 button.suggested-action {{
     background: {accent};
-    color: #031018;
     border-color: {accent};
+}}
+button.suggested-action, button.suggested-action label,
+button.suggested-action image {{
+    color: #031018;
 }}
 button.destructive-action {{
     background: {p["surface"]};
-    color: {p["fault"]};
     border-color: {p["fault"]};
+}}
+button.destructive-action, button.destructive-action label,
+button.destructive-action image {{
+    color: {p["fault"]};
 }}
 entry, spinbutton, textview, textview text {{
     background: {p["input"]};
