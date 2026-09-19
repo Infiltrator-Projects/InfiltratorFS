@@ -1471,7 +1471,8 @@ static int infilfs_ns_shared_range_drop_owner(
     u32 extent_count = 0;
     u64 old_blocks = 0;
     bool was_inline = false;
-    u32 i;
+    u32 extent_index;
+    size_t range_index;
     int ret = 0;
 
     if (!pending->shared_range_index_valid || !pending->shared_range_count)
@@ -1496,15 +1497,15 @@ static int infilfs_ns_shared_range_drop_owner(
         }
     }
 
-    for (i = 0; i < extent_count; ++i) {
-        u32 flags = le32_to_cpu(extents[i].flags);
-        u32 logical_blocks = le32_to_cpu(extents[i].block_count);
+    for (extent_index = 0; extent_index < extent_count; ++extent_index) {
+        u32 flags = le32_to_cpu(extents[extent_index].flags);
+        u32 logical_blocks = le32_to_cpu(extents[extent_index].block_count);
         u64 start;
         u64 blocks;
 
         if (infilfs_extent_kind(flags) != INFILFS_EXTENT_NORMAL)
             continue;
-        start = le64_to_cpu(extents[i].physical_block);
+        start = le64_to_cpu(extents[extent_index].physical_block);
         blocks = infilfs_extent_physical_blocks(logical_blocks, flags);
         if (!start || !blocks || start > U64_MAX - blocks) {
             ret = -EFSCORRUPTED;
@@ -1526,20 +1527,21 @@ static int infilfs_ns_shared_range_drop_owner(
     {
         size_t write = 0;
 
-        for (i = 0; i < owned_count; ++i) {
-            if (write && owned[i].start <= owned[write - 1u].end) {
-                if (owned[i].end > owned[write - 1u].end)
-                    owned[write - 1u].end = owned[i].end;
+        for (range_index = 0; range_index < owned_count; ++range_index) {
+            if (write && owned[range_index].start <= owned[write - 1u].end) {
+                if (owned[range_index].end > owned[write - 1u].end)
+                    owned[write - 1u].end = owned[range_index].end;
                 continue;
             }
-            owned[write++] = owned[i];
+            owned[write++] = owned[range_index];
         }
         owned_count = write;
     }
 
-    for (i = 0; i < pending->shared_range_count; ++i) {
+    for (range_index = 0; range_index < pending->shared_range_count;
+         ++range_index) {
         const struct infilfs_native_shared_range *shared =
-            &pending->shared_ranges[i];
+            &pending->shared_ranges[range_index];
         size_t k;
         u64 cursor;
 
@@ -2062,9 +2064,9 @@ static int infilfs_ns_delete_file_resources(
         pending, file, ii->object_id, changes, change_count, change_capacity);
     if (ret)
         goto out;
-    for (i = 0; i < extent_count; ++i) {
-        u32 flags = le32_to_cpu(extents[i].flags);
-        u32 logical_blocks = le32_to_cpu(extents[i].block_count);
+    for (extent_index = 0; extent_index < extent_count; ++extent_index) {
+        u32 flags = le32_to_cpu(extents[extent_index].flags);
+        u32 logical_blocks = le32_to_cpu(extents[extent_index].block_count);
 
         if (infilfs_extent_kind(flags) != INFILFS_EXTENT_NORMAL)
             continue;
