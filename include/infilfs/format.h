@@ -24,6 +24,9 @@ static const uint8_t INFS_INDEX_BRANCH_PAGE_MAGIC[8] = {
 static const uint8_t INFS_EXTENT_PAGE_MAGIC[8] = {
     'I', 'N', 'F', 'S', 'E', 'P', '0', '1'
 };
+static const uint8_t INFS_EXTENT_INDEX_PAGE_MAGIC[8] = {
+    'I', 'N', 'F', 'S', 'E', 'I', '0', '1'
+};
 static const uint8_t INFS_ALLOCATION_BRANCH_PAGE_MAGIC[8] = {
     'I', 'N', 'F', 'S', 'A', 'B', '0', '1'
 };
@@ -373,6 +376,9 @@ struct INFS_PACKED infs_snapshot_record_disk {
     (INFS_DIRECTORY_TREE_FANOUT * sizeof(uint64_t))
 #define INFS_EXTENTS_PER_PAGE \
     (INFS_METADATA_PAGE_DATA_SIZE / sizeof(struct infs_extent_disk))
+#define INFS_EXTENT_INDEX_POINTERS_PER_PAGE \
+    (INFS_METADATA_PAGE_DATA_SIZE / sizeof(uint64_t))
+#define INFS_EXTENT_INDEX_MAX_LEVELS 3u
 #define INFS_DIRECTORY_PAGE_POINTERS \
     ((INFS_BLOCK_SIZE - sizeof(struct infs_object_header_disk) - \
       sizeof(struct infs_directory_payload_disk)) / sizeof(uint64_t))
@@ -446,6 +452,8 @@ _Static_assert(INFS_DIRECTORY_TREE_BRANCH_BYTES <= INFS_METADATA_PAGE_DATA_SIZE,
                "directory tree branch page does not fit in one metadata block");
 _Static_assert(INFS_EXTENTS_PER_PAGE == 167u,
                "extent page capacity unexpectedly changed");
+_Static_assert(INFS_EXTENT_INDEX_POINTERS_PER_PAGE == 502u,
+               "extent pointer-index fanout unexpectedly changed");
 _Static_assert(INFS_DIRECTORY_PAGE_POINTERS >= 480u,
                "directory head page-pointer capacity unexpectedly small");
 _Static_assert(INFS_INDEX_PAGE_POINTERS >= 490u,

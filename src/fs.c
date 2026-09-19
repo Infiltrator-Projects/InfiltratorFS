@@ -64,7 +64,8 @@ static int object_version_valid(uint16_t type, uint16_t version)
         return type == INFS_OBJECT_DIRECTORY || type == INFS_OBJECT_INDEX ||
             type == INFS_OBJECT_FILE;
     return version == INFS_OBJECT_VERSION_TREE &&
-        (type == INFS_OBJECT_INDEX || type == INFS_OBJECT_DIRECTORY);
+        (type == INFS_OBJECT_INDEX || type == INFS_OBJECT_DIRECTORY ||
+         type == INFS_OBJECT_FILE);
 }
 
 static int index_payload_shape_valid(const uint8_t block[INFS_BLOCK_SIZE],

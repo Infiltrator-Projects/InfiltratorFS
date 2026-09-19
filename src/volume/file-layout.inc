@@ -46,7 +46,8 @@ static int file_validate(uint8_t block[INFS_BLOCK_SIZE],
         return INFS_STATUS_CORRUPT;
     uint16_t version = infs_le16_to_cpu(hdr->object_version);
     if (version != INFS_OBJECT_VERSION_CLASSIC &&
-        version != INFS_OBJECT_VERSION_PAGED)
+        version != INFS_OBJECT_VERSION_PAGED &&
+        version != INFS_OBJECT_VERSION_TREE)
         return INFS_STATUS_CORRUPT;
     struct infs_file_payload_disk *p =
         (struct infs_file_payload_disk *)(block + sizeof(*hdr));
@@ -58,16 +59,29 @@ static int file_validate(uint8_t block[INFS_BLOCK_SIZE],
     uint32_t payload_size = infs_le32_to_cpu(hdr->payload_size);
     struct infs_extent_disk *ext = (struct infs_extent_disk *)(p + 1);
 
-    if (version == INFS_OBJECT_VERSION_PAGED) {
+    if (version == INFS_OBJECT_VERSION_PAGED ||
+        version == INFS_OBJECT_VERSION_TREE) {
         if (!count || logical_size == 0)
             return INFS_STATUS_CORRUPT;
         struct infs_extent_head_disk *head = file_extent_head(p);
         uint32_t pages = infs_le32_to_cpu(head->page_count);
-        if (!pages || pages > INFS_EXTENT_PAGE_POINTERS ||
-            infs_le32_to_cpu(head->reserved) != 0)
+        size_t need;
+        if (!pages || pages > count)
             return INFS_STATUS_CORRUPT;
-        size_t need = sizeof(*p) + sizeof(*head) +
-            (size_t)pages * sizeof(uint64_t);
+        if (version == INFS_OBJECT_VERSION_PAGED) {
+            if (pages > INFS_EXTENT_PAGE_POINTERS ||
+                infs_le32_to_cpu(head->reserved) != 0)
+                return INFS_STATUS_CORRUPT;
+            need = sizeof(*p) + sizeof(*head) +
+                (size_t)pages * sizeof(uint64_t);
+        } else {
+            uint32_t levels = infs_le32_to_cpu(head->reserved);
+            if (pages <= INFS_EXTENT_PAGE_POINTERS ||
+                levels != extent_pointer_tree_levels(pages) ||
+                infs_le64_to_cpu(file_extent_page_pointers(p)[0]) == 0)
+                return INFS_STATUS_CORRUPT;
+            need = sizeof(*p) + sizeof(*head) + sizeof(uint64_t);
+        }
         if (need != payload_size || need > INFS_BLOCK_SIZE - sizeof(*hdr))
             return INFS_STATUS_CORRUPT;
         if (payload_out)

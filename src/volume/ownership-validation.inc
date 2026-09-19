@@ -195,30 +195,83 @@ static int claim_directory_metadata_pages(struct infs_volume *vol,
     return INFS_STATUS_OK;
 }
 
-static int claim_file_extent_metadata_pages(struct infs_volume *vol,
-                                            uint8_t *owners, uint64_t total,
-                                            uint64_t object_block)
+
+
+static int claim_extent_pointer_tree_pages(
+    struct infs_volume *vol, uint8_t *owners, uint64_t total,
+    const uint8_t owner_id[16], uint64_t node, uint32_t level)
 {
-    uint8_t object[INFS_BLOCK_SIZE];
-    infs_status status = read_object(vol, object_block, object);
+    uint8_t page_data[INFS_BLOCK_SIZE];
+    uint64_t *ptr;
+    uint32_t count;
+    infs_status status = ownership_claim(owners, total, node);
+
     if (status != INFS_STATUS_OK)
         return status;
-    struct infs_file_payload_disk *file;
-    status = file_validate_volume(vol, object, &file, NULL);
+    status = read_block(vol, node, page_data);
     if (status != INFS_STATUS_OK)
         return status;
-    if (!file_has_paged_extents(object))
+    status = extent_pointer_page_validate(
+        vol, page_data, owner_id, level, &ptr, &count);
+    if (status != INFS_STATUS_OK)
+        return status;
+    if (!level)
         return INFS_STATUS_OK;
-    struct infs_extent_head_disk *head = file_extent_head(file);
-    uint32_t pages = infs_le32_to_cpu(head->page_count);
-    uint64_t *ptr = file_extent_page_pointers(file);
-    for (uint32_t i = 0; i < pages; ++i) {
-        status = ownership_claim(owners, total, infs_le64_to_cpu(ptr[i]));
+    for (uint32_t i = 0; i < count; ++i) {
+        status = claim_extent_pointer_tree_pages(
+            vol, owners, total, owner_id,
+            infs_le64_to_cpu(ptr[i]), level - 1u);
         if (status != INFS_STATUS_OK)
             return status;
     }
     return INFS_STATUS_OK;
 }
+
+static int claim_file_extent_metadata_pages(struct infs_volume *vol,
+                                            uint8_t *owners, uint64_t total,
+                                            uint64_t object_block)
+{
+    uint8_t object[INFS_BLOCK_SIZE];
+    struct infs_file_payload_disk *file;
+    struct infs_object_header_disk *hdr;
+    uint64_t *extent_pages = NULL;
+    uint32_t pages = 0;
+    infs_status status = read_object(vol, object_block, object);
+
+    if (status != INFS_STATUS_OK)
+        return status;
+    status = file_validate_volume(vol, object, &file, NULL);
+    if (status != INFS_STATUS_OK)
+        return status;
+    if (!file_has_paged_extents(object))
+        return INFS_STATUS_OK;
+    status = paged_extent_head_validate(vol, object, file);
+    if (status != INFS_STATUS_OK)
+        return status;
+    hdr = (struct infs_object_header_disk *)object;
+    status = paged_extent_collect_page_blocks(
+        vol, object, file, &extent_pages, &pages);
+    if (status != INFS_STATUS_OK)
+        return status;
+    for (uint32_t i = 0; i < pages; ++i) {
+        status = ownership_claim(owners, total, extent_pages[i]);
+        if (status != INFS_STATUS_OK) {
+            free(extent_pages);
+            return status;
+        }
+    }
+    free(extent_pages);
+
+    if (infs_le16_to_cpu(hdr->object_version) == INFS_OBJECT_VERSION_TREE) {
+        struct infs_extent_head_disk *head = file_extent_head(file);
+        return claim_extent_pointer_tree_pages(
+            vol, owners, total, hdr->object_id,
+            infs_le64_to_cpu(file_extent_page_pointers(file)[0]),
+            infs_le32_to_cpu(head->reserved) - 1u);
+    }
+    return INFS_STATUS_OK;
+}
+
 
 static int build_live_ownership_bitmap_progress(
     struct infs_volume *vol, const struct infs_index_entry_disk *entries,

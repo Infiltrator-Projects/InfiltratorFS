@@ -1,16 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-/* Format 0.18 scalable extent pages. Low-fragmentation files stay in the
- * compact classic representation. When an edit would overflow the file
- * object, its extent vector is promoted to independently checksummed pages.
- * The file object remains the stable head and owns an ordered page-pointer
- * array. */
+/* Scalable extent metadata. Low-fragmentation files stay in the compact
+ * classic representation. Paged files retain the direct page-pointer layout
+ * while it fits in the file object. Files that exceed that representation are
+ * promoted to a checksummed extent-pointer tree whose leaves reference the
+ * ordinary extent pages. This keeps random page replacement bounded without a
+ * fixed file-head pointer ceiling. */
 
 static int file_has_paged_extents(const uint8_t object[INFS_BLOCK_SIZE])
 {
     const struct infs_object_header_disk *hdr =
         (const struct infs_object_header_disk *)object;
+    uint16_t version = infs_le16_to_cpu(hdr->object_version);
     return infs_le16_to_cpu(hdr->object_type) == INFS_OBJECT_FILE &&
-           infs_le16_to_cpu(hdr->object_version) == INFS_OBJECT_VERSION_PAGED;
+           (version == INFS_OBJECT_VERSION_PAGED ||
+            version == INFS_OBJECT_VERSION_TREE);
 }
 
 static struct infs_extent_head_disk *file_extent_head(
@@ -23,6 +26,269 @@ static uint64_t *file_extent_page_pointers(struct infs_file_payload_disk *file)
 {
     return (uint64_t *)(file_extent_head(file) + 1);
 }
+
+
+static uint32_t extent_pointer_tree_levels(uint32_t page_count)
+{
+    uint64_t capacity = INFS_EXTENT_INDEX_POINTERS_PER_PAGE;
+    uint32_t levels = 1;
+
+    if (!page_count)
+        return 0;
+    while (capacity < page_count && levels < INFS_EXTENT_INDEX_MAX_LEVELS) {
+        if (capacity > UINT64_MAX / INFS_EXTENT_INDEX_POINTERS_PER_PAGE)
+            return 0;
+        capacity *= INFS_EXTENT_INDEX_POINTERS_PER_PAGE;
+        ++levels;
+    }
+    return capacity >= page_count ? levels : 0;
+}
+
+static int extent_pointer_page_validate(
+    struct infs_volume *vol, const uint8_t block[INFS_BLOCK_SIZE],
+    const uint8_t owner_id[16], uint32_t expected_level,
+    uint64_t **pointers_out, uint32_t *count_out)
+{
+    const struct infs_metadata_page_disk *page;
+    uint32_t count, bytes;
+    uint64_t *pointers;
+    uint64_t total;
+
+    if (!infs_validate_metadata_page(
+            block, INFS_EXTENT_INDEX_PAGE_MAGIC, owner_id) ||
+        !metadata_page_generation_valid(vol, block))
+        return INFS_STATUS_CORRUPT;
+    page = (const struct infs_metadata_page_disk *)block;
+    count = infs_le32_to_cpu(page->entry_count);
+    bytes = infs_le32_to_cpu(page->bytes_used);
+    if (!count || count > INFS_EXTENT_INDEX_POINTERS_PER_PAGE ||
+        bytes != count * sizeof(uint64_t) ||
+        infs_le32_to_cpu(page->reserved) != expected_level)
+        return INFS_STATUS_CORRUPT;
+    pointers = (uint64_t *)((uint8_t *)block + sizeof(*page));
+    total = infs_le64_to_cpu(vol->sb.total_blocks);
+    for (uint32_t i = 0; i < count; ++i) {
+        uint64_t child = infs_le64_to_cpu(pointers[i]);
+        if (!child || child >= total || !bitmap_get(vol->bitmap, child))
+            return INFS_STATUS_CORRUPT;
+    }
+    if (pointers_out)
+        *pointers_out = pointers;
+    if (count_out)
+        *count_out = count;
+    return INFS_STATUS_OK;
+}
+
+static int extent_pointer_tree_resolve(
+    struct infs_volume *vol, const uint8_t owner_id[16], uint64_t root,
+    uint32_t levels, uint32_t page_index, uint64_t *block_out)
+{
+    uint64_t node = root;
+    uint64_t index = page_index;
+
+    if (!block_out || !levels || levels > INFS_EXTENT_INDEX_MAX_LEVELS)
+        return INFS_STATUS_CORRUPT;
+    while (levels) {
+        uint32_t level = levels - 1u;
+        uint64_t span = 1;
+        uint8_t page_data[INFS_BLOCK_SIZE];
+        uint64_t *pointers;
+        uint32_t count;
+        infs_status status;
+
+        for (uint32_t i = 0; i < level; ++i) {
+            if (span > UINT64_MAX / INFS_EXTENT_INDEX_POINTERS_PER_PAGE)
+                return INFS_STATUS_CORRUPT;
+            span *= INFS_EXTENT_INDEX_POINTERS_PER_PAGE;
+        }
+        status = read_block(vol, node, page_data);
+        if (status != INFS_STATUS_OK)
+            return status;
+        status = extent_pointer_page_validate(
+            vol, page_data, owner_id, level, &pointers, &count);
+        if (status != INFS_STATUS_OK)
+            return status;
+        uint64_t slot = index / span;
+        if (slot >= count)
+            return INFS_STATUS_CORRUPT;
+        node = infs_le64_to_cpu(pointers[slot]);
+        index %= span;
+        if (!level) {
+            *block_out = node;
+            return INFS_STATUS_OK;
+        }
+        --levels;
+    }
+    return INFS_STATUS_CORRUPT;
+}
+
+static int extent_pointer_tree_build(
+    struct infs_volume *vol, const uint8_t owner_id[16],
+    const uint64_t *extent_pages, uint32_t page_count,
+    uint64_t *root_out, uint32_t *levels_out)
+{
+    uint64_t *current = NULL;
+    uint32_t current_count = page_count;
+    uint32_t level = 0;
+    infs_status status = INFS_STATUS_OK;
+
+    if (!extent_pages || !page_count || !root_out || !levels_out)
+        return INFS_STATUS_INVALID_ARGUMENT;
+    if (!extent_pointer_tree_levels(page_count))
+        return INFS_STATUS_FILE_TOO_LARGE;
+    current = malloc((size_t)page_count * sizeof(*current));
+    if (!current)
+        return INFS_STATUS_NO_MEMORY;
+    memcpy(current, extent_pages, (size_t)page_count * sizeof(*current));
+
+    for (;;) {
+        uint32_t parent_count =
+            current_count / INFS_EXTENT_INDEX_POINTERS_PER_PAGE +
+            ((current_count % INFS_EXTENT_INDEX_POINTERS_PER_PAGE) != 0);
+        uint64_t *parents = calloc(parent_count, sizeof(*parents));
+        uint32_t at = 0;
+
+        if (!parents) {
+            status = INFS_STATUS_NO_MEMORY;
+            goto out;
+        }
+        for (uint32_t p = 0; p < parent_count; ++p) {
+            uint8_t page_data[INFS_BLOCK_SIZE];
+            struct infs_metadata_page_disk *page;
+            uint64_t *slots;
+            uint32_t count = current_count - at;
+            uint64_t stored = 0;
+            uint64_t generation = 0;
+
+            if (count > INFS_EXTENT_INDEX_POINTERS_PER_PAGE)
+                count = INFS_EXTENT_INDEX_POINTERS_PER_PAGE;
+            status = transaction_next_generation(vol, &generation);
+            if (status != INFS_STATUS_OK) {
+                free(parents);
+                goto out;
+            }
+            status = infs_metadata_page_init(
+                page_data, INFS_EXTENT_INDEX_PAGE_MAGIC, owner_id, generation);
+            if (status != INFS_STATUS_OK) {
+                free(parents);
+                goto out;
+            }
+            page = (struct infs_metadata_page_disk *)page_data;
+            page->entry_count = infs_cpu_to_le32(count);
+            page->bytes_used = infs_cpu_to_le32(count * sizeof(uint64_t));
+            page->reserved = infs_cpu_to_le32(level);
+            slots = (uint64_t *)(page + 1);
+            for (uint32_t i = 0; i < count; ++i)
+                slots[i] = infs_cpu_to_le64(current[at + i]);
+            status = metadata_page_store(vol, 0, page_data, &stored);
+            if (status != INFS_STATUS_OK) {
+                free(parents);
+                goto out;
+            }
+            parents[p] = stored;
+            at += count;
+        }
+        free(current);
+        current = parents;
+        current_count = parent_count;
+        ++level;
+        if (current_count == 1u) {
+            *root_out = current[0];
+            *levels_out = level;
+            status = INFS_STATUS_OK;
+            goto out;
+        }
+        if (level >= INFS_EXTENT_INDEX_MAX_LEVELS) {
+            status = INFS_STATUS_FILE_TOO_LARGE;
+            goto out;
+        }
+    }
+out:
+    free(current);
+    return status;
+}
+
+static int extent_pointer_tree_free_node(
+    struct infs_volume *vol, const uint8_t owner_id[16],
+    uint64_t block, uint32_t level)
+{
+    uint8_t page_data[INFS_BLOCK_SIZE];
+    uint64_t *pointers;
+    uint32_t count;
+    infs_status status;
+
+    status = read_block(vol, block, page_data);
+    if (status != INFS_STATUS_OK)
+        return status;
+    status = extent_pointer_page_validate(
+        vol, page_data, owner_id, level, &pointers, &count);
+    if (status != INFS_STATUS_OK)
+        return status;
+    if (level) {
+        for (uint32_t i = 0; i < count; ++i) {
+            status = extent_pointer_tree_free_node(
+                vol, owner_id, infs_le64_to_cpu(pointers[i]), level - 1u);
+            if (status != INFS_STATUS_OK)
+                return status;
+        }
+    }
+    free_run(vol, block, 1);
+    return vol->tx_error;
+}
+
+static int paged_extent_page_block(
+    struct infs_volume *vol, uint8_t object[INFS_BLOCK_SIZE],
+    struct infs_file_payload_disk *file, uint32_t page_index,
+    uint64_t *block_out)
+{
+    struct infs_object_header_disk *hdr =
+        (struct infs_object_header_disk *)object;
+    struct infs_extent_head_disk *head = file_extent_head(file);
+    uint32_t pages = infs_le32_to_cpu(head->page_count);
+    uint16_t version = infs_le16_to_cpu(hdr->object_version);
+
+    if (!block_out || page_index >= pages)
+        return INFS_STATUS_CORRUPT;
+    if (version == INFS_OBJECT_VERSION_PAGED) {
+        *block_out = infs_le64_to_cpu(file_extent_page_pointers(file)[page_index]);
+        return INFS_STATUS_OK;
+    }
+    if (version == INFS_OBJECT_VERSION_TREE) {
+        uint32_t levels = infs_le32_to_cpu(head->reserved);
+        uint64_t root = infs_le64_to_cpu(file_extent_page_pointers(file)[0]);
+        return extent_pointer_tree_resolve(
+            vol, hdr->object_id, root, levels, page_index, block_out);
+    }
+    return INFS_STATUS_CORRUPT;
+}
+
+static int paged_extent_collect_page_blocks(
+    struct infs_volume *vol, uint8_t object[INFS_BLOCK_SIZE],
+    struct infs_file_payload_disk *file, uint64_t **blocks_out,
+    uint32_t *count_out)
+{
+    struct infs_extent_head_disk *head = file_extent_head(file);
+    uint32_t count = infs_le32_to_cpu(head->page_count);
+    uint64_t *blocks;
+
+    if (!blocks_out || !count_out || !count)
+        return INFS_STATUS_INVALID_ARGUMENT;
+    blocks = malloc((size_t)count * sizeof(*blocks));
+    if (!blocks)
+        return INFS_STATUS_NO_MEMORY;
+    for (uint32_t i = 0; i < count; ++i) {
+        infs_status status = paged_extent_page_block(
+            vol, object, file, i, &blocks[i]);
+        if (status != INFS_STATUS_OK) {
+            free(blocks);
+            return status;
+        }
+    }
+    *blocks_out = blocks;
+    *count_out = count;
+    return INFS_STATUS_OK;
+}
+
 
 static int extent_page_validate(struct infs_volume *vol,
                                 const uint8_t block[INFS_BLOCK_SIZE],
@@ -98,35 +364,65 @@ static int extent_page_encode(struct infs_volume *vol,
     return INFS_STATUS_OK;
 }
 
+
 static int paged_extent_head_validate(struct infs_volume *vol,
                                       uint8_t object[INFS_BLOCK_SIZE],
                                       struct infs_file_payload_disk *file)
 {
     struct infs_object_header_disk *hdr =
         (struct infs_object_header_disk *)object;
-    if ((infs_le64_to_cpu(vol->sb.incompat_flags) &
-         INFS_INCOMPAT_PAGED_EXTENTS) == 0)
-        return INFS_STATUS_CORRUPT;
     struct infs_extent_head_disk *head = file_extent_head(file);
     uint32_t pages = infs_le32_to_cpu(head->page_count);
     uint32_t total_extents = infs_le32_to_cpu(file->extent_count);
-    if (!pages || pages > INFS_EXTENT_PAGE_POINTERS || !total_extents ||
-        infs_le32_to_cpu(head->reserved) != 0)
-        return INFS_STATUS_CORRUPT;
-    size_t need = sizeof(*file) + sizeof(*head) +
-        (size_t)pages * sizeof(uint64_t);
-    if (need != infs_le32_to_cpu(hdr->payload_size) ||
-        need > INFS_BLOCK_SIZE - sizeof(*hdr))
-        return INFS_STATUS_CORRUPT;
+    uint16_t version = infs_le16_to_cpu(hdr->object_version);
     uint64_t total = infs_le64_to_cpu(vol->sb.total_blocks);
-    uint64_t *ptr = file_extent_page_pointers(file);
-    for (uint32_t i = 0; i < pages; ++i) {
-        uint64_t block = infs_le64_to_cpu(ptr[i]);
-        if (!block || block >= total || !bitmap_get(vol->bitmap, block))
+    size_t need;
+
+    if ((infs_le64_to_cpu(vol->sb.incompat_flags) &
+         INFS_INCOMPAT_PAGED_EXTENTS) == 0 ||
+        !pages || !total_extents || pages > total_extents)
+        return INFS_STATUS_CORRUPT;
+
+    if (version == INFS_OBJECT_VERSION_PAGED) {
+        uint64_t *ptr;
+        if (pages > INFS_EXTENT_PAGE_POINTERS ||
+            infs_le32_to_cpu(head->reserved) != 0)
             return INFS_STATUS_CORRUPT;
+        need = sizeof(*file) + sizeof(*head) +
+            (size_t)pages * sizeof(uint64_t);
+        if (need != infs_le32_to_cpu(hdr->payload_size) ||
+            need > INFS_BLOCK_SIZE - sizeof(*hdr))
+            return INFS_STATUS_CORRUPT;
+        ptr = file_extent_page_pointers(file);
+        for (uint32_t i = 0; i < pages; ++i) {
+            uint64_t block = infs_le64_to_cpu(ptr[i]);
+            if (!block || block >= total || !bitmap_get(vol->bitmap, block))
+                return INFS_STATUS_CORRUPT;
+        }
+        return INFS_STATUS_OK;
     }
-    return INFS_STATUS_OK;
+
+    if (version == INFS_OBJECT_VERSION_TREE) {
+        uint32_t levels = infs_le32_to_cpu(head->reserved);
+        uint64_t root = infs_le64_to_cpu(file_extent_page_pointers(file)[0]);
+        uint8_t root_page[INFS_BLOCK_SIZE];
+        if (pages <= INFS_EXTENT_PAGE_POINTERS ||
+            levels != extent_pointer_tree_levels(pages) ||
+            !root || root >= total || !bitmap_get(vol->bitmap, root))
+            return INFS_STATUS_CORRUPT;
+        need = sizeof(*file) + sizeof(*head) + sizeof(uint64_t);
+        if (need != infs_le32_to_cpu(hdr->payload_size))
+            return INFS_STATUS_CORRUPT;
+        infs_status status = read_block(vol, root, root_page);
+        if (status != INFS_STATUS_OK)
+            return status;
+        return extent_pointer_page_validate(
+            vol, root_page, hdr->object_id, levels - 1u, NULL, NULL);
+    }
+    return INFS_STATUS_CORRUPT;
 }
+
+
 
 static int paged_extent_snapshot(struct infs_volume *vol,
                                  uint8_t object[INFS_BLOCK_SIZE],
@@ -134,38 +430,45 @@ static int paged_extent_snapshot(struct infs_volume *vol,
                                  struct infs_extent_disk **entries_out,
                                  uint32_t *count_out)
 {
+    infs_status status;
+    uint32_t total_count, page_count, at = 0;
+    size_t extent_bytes = 0;
+    struct infs_extent_disk *all;
+    struct infs_object_header_disk *hdr;
+    uint64_t next_logical = 0;
+
     if (!entries_out || !count_out)
         return INFS_STATUS_INVALID_ARGUMENT;
     *entries_out = NULL;
     *count_out = 0;
-    infs_status status = paged_extent_head_validate(vol, object, file);
+    status = paged_extent_head_validate(vol, object, file);
     if (status != INFS_STATUS_OK)
         return status;
-    uint32_t total_count = infs_le32_to_cpu(file->extent_count);
-    size_t extent_bytes = 0;
+    total_count = infs_le32_to_cpu(file->extent_count);
     if (!infiltratr_size_multiply_checked(
             (size_t)total_count, sizeof(struct infs_extent_disk),
             &extent_bytes))
         return INFS_STATUS_OVERFLOW;
-    struct infs_extent_disk *all = malloc(extent_bytes);
+    all = malloc(extent_bytes);
     if (!all)
         return INFS_STATUS_NO_MEMORY;
-    struct infs_object_header_disk *hdr =
-        (struct infs_object_header_disk *)object;
-    struct infs_extent_head_disk *head = file_extent_head(file);
-    uint32_t page_count = infs_le32_to_cpu(head->page_count);
-    uint64_t *pages = file_extent_page_pointers(file);
-    uint32_t at = 0;
-    uint64_t next_logical = 0;
+    hdr = (struct infs_object_header_disk *)object;
+    page_count = infs_le32_to_cpu(file_extent_head(file)->page_count);
+
     for (uint32_t p = 0; p < page_count; ++p) {
         uint8_t page_data[INFS_BLOCK_SIZE];
-        status = read_block(vol, infs_le64_to_cpu(pages[p]), page_data);
-        if (status != INFS_STATUS_OK)
-            goto fail;
         struct infs_extent_disk *ext;
         uint32_t count;
-        status = extent_page_validate(vol, page_data, hdr->object_id,
-                                      &ext, &count);
+        uint64_t page_block;
+
+        status = paged_extent_page_block(vol, object, file, p, &page_block);
+        if (status != INFS_STATUS_OK)
+            goto fail;
+        status = read_block(vol, page_block, page_data);
+        if (status != INFS_STATUS_OK)
+            goto fail;
+        status = extent_page_validate(
+            vol, page_data, hdr->object_id, &ext, &count);
         if (status != INFS_STATUS_OK)
             goto fail;
         if (count > total_count - at ||
@@ -175,20 +478,21 @@ static int paged_extent_snapshot(struct infs_volume *vol,
         }
         memcpy(&all[at], ext, (size_t)count * sizeof(*ext));
         at += count;
-        const struct infs_extent_disk *last = &ext[count - 1u];
-        next_logical = infs_le64_to_cpu(last->logical_block) +
-            infs_le32_to_cpu(last->block_count);
+        next_logical = infs_le64_to_cpu(ext[count - 1u].logical_block) +
+            infs_le32_to_cpu(ext[count - 1u].block_count);
     }
     if (at != total_count) {
         status = INFS_STATUS_CORRUPT;
         goto fail;
     }
-    uint64_t logical_size = infs_le64_to_cpu(file->attributes.logical_size);
-    uint64_t required = logical_size / INFS_BLOCK_SIZE +
-        ((logical_size % INFS_BLOCK_SIZE) != 0);
-    if (next_logical != required) {
-        status = INFS_STATUS_CORRUPT;
-        goto fail;
+    {
+        uint64_t logical_size = infs_le64_to_cpu(file->attributes.logical_size);
+        uint64_t required = logical_size / INFS_BLOCK_SIZE +
+            ((logical_size % INFS_BLOCK_SIZE) != 0);
+        if (next_logical != required) {
+            status = INFS_STATUS_CORRUPT;
+            goto fail;
+        }
     }
     *entries_out = all;
     *count_out = total_count;
@@ -198,6 +502,8 @@ fail:
     return status;
 }
 
+
+
 static int paged_extent_load_page(struct infs_volume *vol,
                                   uint8_t object[INFS_BLOCK_SIZE],
                                   struct infs_file_payload_disk *file,
@@ -206,20 +512,20 @@ static int paged_extent_load_page(struct infs_volume *vol,
                                   struct infs_extent_disk **ext_out,
                                   uint32_t *count_out)
 {
-    struct infs_extent_head_disk *head = file_extent_head(file);
-    uint32_t pages = infs_le32_to_cpu(head->page_count);
-    if (page_index >= pages)
-        return INFS_STATUS_CORRUPT;
-    uint64_t *ptr = file_extent_page_pointers(file);
-    infs_status status = read_block(
-        vol, infs_le64_to_cpu(ptr[page_index]), page_data);
-    if (status != INFS_STATUS_OK)
-        return status;
     struct infs_object_header_disk *hdr =
         (struct infs_object_header_disk *)object;
-    return extent_page_validate(vol, page_data, hdr->object_id,
-                                ext_out, count_out);
+    uint64_t block;
+    infs_status status = paged_extent_page_block(
+        vol, object, file, page_index, &block);
+    if (status != INFS_STATUS_OK)
+        return status;
+    status = read_block(vol, block, page_data);
+    if (status != INFS_STATUS_OK)
+        return status;
+    return extent_page_validate(
+        vol, page_data, hdr->object_id, ext_out, count_out);
 }
+
 
 static int paged_extent_find_page(struct infs_volume *vol,
                                   uint8_t object[INFS_BLOCK_SIZE],
@@ -338,87 +644,156 @@ static int extent_emit_capacity(struct infs_extent_disk *out, uint32_t *count,
     return INFS_STATUS_OK;
 }
 
+
 static int paged_extent_rewrite_all(struct infs_volume *vol,
                                     uint8_t object[INFS_BLOCK_SIZE],
                                     struct infs_file_payload_disk *file,
                                     const struct infs_extent_disk *entries,
                                     uint32_t count, int converting)
 {
-    if (!count)
-        return INFS_STATUS_INVALID_ARGUMENT;
-    uint32_t new_pages =
-        (count + INFS_EXTENTS_PER_PAGE - 1u) / INFS_EXTENTS_PER_PAGE;
-    if (!new_pages || new_pages > INFS_EXTENT_PAGE_POINTERS)
-        return INFS_STATUS_FILE_TOO_LARGE;
     struct infs_object_header_disk *hdr =
         (struct infs_object_header_disk *)object;
+    uint64_t *old_ptr = NULL, *new_ptr = NULL;
     uint32_t old_pages = 0;
-    uint64_t old_ptr[INFS_EXTENT_PAGE_POINTERS];
-    memset(old_ptr, 0, sizeof(old_ptr));
+    uint32_t new_pages;
+    uint16_t old_version = infs_le16_to_cpu(hdr->object_version);
+    infs_status status = INFS_STATUS_OK;
+
+    if (!count)
+        return INFS_STATUS_INVALID_ARGUMENT;
+    new_pages = count / INFS_EXTENTS_PER_PAGE +
+        ((count % INFS_EXTENTS_PER_PAGE) != 0);
+    if (!new_pages || !extent_pointer_tree_levels(new_pages))
+        return INFS_STATUS_FILE_TOO_LARGE;
+
     if (!converting && file_has_paged_extents(object)) {
-        struct infs_extent_head_disk *old_head = file_extent_head(file);
-        old_pages = infs_le32_to_cpu(old_head->page_count);
-        uint64_t *ptr = file_extent_page_pointers(file);
-        for (uint32_t i = 0; i < old_pages; ++i)
-            old_ptr[i] = infs_le64_to_cpu(ptr[i]);
+        status = paged_extent_head_validate(vol, object, file);
+        if (status != INFS_STATUS_OK)
+            return status;
+        status = paged_extent_collect_page_blocks(
+            vol, object, file, &old_ptr, &old_pages);
+        if (status != INFS_STATUS_OK)
+            return status;
     }
-    uint64_t new_ptr[INFS_EXTENT_PAGE_POINTERS];
-    memset(new_ptr, 0, sizeof(new_ptr));
+
+    new_ptr = calloc(new_pages, sizeof(*new_ptr));
+    if (!new_ptr) {
+        free(old_ptr);
+        return INFS_STATUS_NO_MEMORY;
+    }
     uint32_t at = 0;
     for (uint32_t p = 0; p < new_pages; ++p) {
         uint32_t chunk = count - at;
+        uint8_t page_data[INFS_BLOCK_SIZE];
+        uint64_t replacement = 0;
         if (chunk > INFS_EXTENTS_PER_PAGE)
             chunk = INFS_EXTENTS_PER_PAGE;
-        uint8_t page_data[INFS_BLOCK_SIZE];
-        infs_status status = extent_page_encode(
+        status = extent_page_encode(
             vol, hdr->object_id, &entries[at], chunk, page_data);
         if (status != INFS_STATUS_OK)
-            return status;
-        uint64_t replacement = 0;
+            goto out;
         status = metadata_page_store(
             vol, p < old_pages ? old_ptr[p] : 0, page_data, &replacement);
         if (status != INFS_STATUS_OK)
-            return status;
+            goto out;
         new_ptr[p] = replacement;
         at += chunk;
     }
     for (uint32_t p = new_pages; p < old_pages; ++p) {
         free_run(vol, old_ptr[p], 1);
-        if (vol->tx_error != INFS_STATUS_OK)
-            return vol->tx_error;
+        if (vol->tx_error != INFS_STATUS_OK) {
+            status = vol->tx_error;
+            goto out;
+        }
     }
+
+    /* The old pointer tree becomes unreachable from the replacement head. */
+    if (!converting && old_version == INFS_OBJECT_VERSION_TREE) {
+        struct infs_extent_head_disk *old_head = file_extent_head(file);
+        uint32_t old_levels = infs_le32_to_cpu(old_head->reserved);
+        uint64_t old_root = infs_le64_to_cpu(file_extent_page_pointers(file)[0]);
+        status = extent_pointer_tree_free_node(
+            vol, hdr->object_id, old_root, old_levels - 1u);
+        if (status != INFS_STATUS_OK)
+            goto out;
+    }
+
     memset(file + 1, 0,
            INFS_BLOCK_SIZE - sizeof(*hdr) - sizeof(*file));
-    hdr->object_version = infs_cpu_to_le16(INFS_OBJECT_VERSION_PAGED);
     struct infs_extent_head_disk *head = file_extent_head(file);
     head->page_count = infs_cpu_to_le32(new_pages);
-    head->reserved = 0;
-    uint64_t *ptr = file_extent_page_pointers(file);
-    for (uint32_t p = 0; p < new_pages; ++p)
-        ptr[p] = infs_cpu_to_le64(new_ptr[p]);
     file->extent_count = infs_cpu_to_le32(count);
-    hdr->payload_size = infs_cpu_to_le32((uint32_t)(
-        sizeof(*file) + sizeof(*head) +
-        (size_t)new_pages * sizeof(uint64_t)));
-    return INFS_STATUS_OK;
+
+    if (new_pages <= INFS_EXTENT_PAGE_POINTERS) {
+        uint64_t *ptr = file_extent_page_pointers(file);
+        hdr->object_version = infs_cpu_to_le16(INFS_OBJECT_VERSION_PAGED);
+        head->reserved = 0;
+        for (uint32_t p = 0; p < new_pages; ++p)
+            ptr[p] = infs_cpu_to_le64(new_ptr[p]);
+        hdr->payload_size = infs_cpu_to_le32((uint32_t)(
+            sizeof(*file) + sizeof(*head) +
+            (size_t)new_pages * sizeof(uint64_t)));
+    } else {
+        uint64_t root = 0;
+        uint32_t levels = 0;
+        status = extent_pointer_tree_build(
+            vol, hdr->object_id, new_ptr, new_pages, &root, &levels);
+        if (status != INFS_STATUS_OK)
+            goto out;
+        hdr->object_version = infs_cpu_to_le16(INFS_OBJECT_VERSION_TREE);
+        head->reserved = infs_cpu_to_le32(levels);
+        file_extent_page_pointers(file)[0] = infs_cpu_to_le64(root);
+        hdr->payload_size = infs_cpu_to_le32((uint32_t)(
+            sizeof(*file) + sizeof(*head) + sizeof(uint64_t)));
+    }
+    status = INFS_STATUS_OK;
+out:
+    free(new_ptr);
+    free(old_ptr);
+    return status;
 }
+
+
 
 static int paged_extent_destroy_pages(struct infs_volume *vol,
                                       uint8_t object[INFS_BLOCK_SIZE],
                                       struct infs_file_payload_disk *file)
 {
+    struct infs_object_header_disk *hdr =
+        (struct infs_object_header_disk *)object;
+    uint64_t *blocks = NULL;
+    uint32_t pages = 0;
+    uint16_t version;
+    infs_status status;
+
     if (!file_has_paged_extents(object))
         return INFS_STATUS_OK;
-    struct infs_extent_head_disk *head = file_extent_head(file);
-    uint32_t pages = infs_le32_to_cpu(head->page_count);
-    uint64_t *ptr = file_extent_page_pointers(file);
+    status = paged_extent_head_validate(vol, object, file);
+    if (status != INFS_STATUS_OK)
+        return status;
+    version = infs_le16_to_cpu(hdr->object_version);
+    status = paged_extent_collect_page_blocks(
+        vol, object, file, &blocks, &pages);
+    if (status != INFS_STATUS_OK)
+        return status;
     for (uint32_t i = 0; i < pages; ++i) {
-        free_run(vol, infs_le64_to_cpu(ptr[i]), 1);
-        if (vol->tx_error != INFS_STATUS_OK)
+        free_run(vol, blocks[i], 1);
+        if (vol->tx_error != INFS_STATUS_OK) {
+            free(blocks);
             return vol->tx_error;
+        }
+    }
+    free(blocks);
+    if (version == INFS_OBJECT_VERSION_TREE) {
+        struct infs_extent_head_disk *head = file_extent_head(file);
+        uint32_t levels = infs_le32_to_cpu(head->reserved);
+        uint64_t root = infs_le64_to_cpu(file_extent_page_pointers(file)[0]);
+        return extent_pointer_tree_free_node(
+            vol, hdr->object_id, root, levels - 1u);
     }
     return INFS_STATUS_OK;
 }
+
 
 static int paged_extent_replace_rebuild(
     struct infs_volume *vol, uint8_t object[INFS_BLOCK_SIZE],
@@ -515,6 +890,14 @@ static int paged_extent_replace(struct infs_volume *vol,
                                 uint64_t logical_start, uint64_t block_count,
                                 uint64_t new_physical, uint32_t new_flags)
 {
+    struct infs_object_header_disk *object_header =
+        (struct infs_object_header_disk *)object;
+    if (infs_le16_to_cpu(object_header->object_version) ==
+        INFS_OBJECT_VERSION_TREE)
+        return paged_extent_replace_rebuild(
+            vol, object, file, logical_start, block_count,
+            new_physical, new_flags);
+
     uint64_t replace_end = logical_start + block_count;
     uint8_t page_data[INFS_BLOCK_SIZE];
     struct infs_extent_disk *old;
@@ -607,7 +990,9 @@ static int paged_extent_replace(struct infs_volume *vol,
         pages[page_index] = infs_cpu_to_le64(replacement);
     } else {
         if (pages_count >= INFS_EXTENT_PAGE_POINTERS)
-            return INFS_STATUS_FILE_TOO_LARGE;
+            return paged_extent_replace_rebuild(
+                vol, object, file, logical_start, block_count,
+                new_physical, new_flags);
         uint32_t left_count = new_count / 2u;
         uint32_t right_count = new_count - left_count;
         uint8_t left[INFS_BLOCK_SIZE], right[INFS_BLOCK_SIZE];
