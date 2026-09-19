@@ -1398,17 +1398,22 @@ static int infilfs_ns_shared_event_append(
 
 static int infilfs_ns_shared_range_append(
     struct infilfs_native_shared_range **ranges, size_t *count,
-    size_t *capacity, u64 start, u64 end)
+    size_t *capacity, u64 start, u64 end, u32 refs)
 {
     struct infilfs_native_shared_range *grown;
     size_t next;
 
-    if (start >= end)
+    if (start >= end || refs < 2u)
         return -EFSCORRUPTED;
-    if (*count && (*ranges)[*count - 1u].end >= start) {
-        if (end > (*ranges)[*count - 1u].end)
-            (*ranges)[*count - 1u].end = end;
-        return 0;
+    if (*count) {
+        struct infilfs_native_shared_range *last = &(*ranges)[*count - 1u];
+
+        if (start < last->end)
+            return -EFSCORRUPTED;
+        if (start == last->end && last->refs == refs) {
+            last->end = end;
+            return 0;
+        }
     }
     if (*count == *capacity) {
         next = *capacity ? *capacity * 2u : 64u;
@@ -1425,6 +1430,7 @@ static int infilfs_ns_shared_range_append(
     }
     (*ranges)[*count].start = start;
     (*ranges)[*count].end = end;
+    (*ranges)[*count].refs = refs;
     (*count)++;
     return 0;
 }
@@ -1513,9 +1519,13 @@ static int infilfs_ns_shared_range_index_build(
             goto out;
         }
         if (position > previous && coverage >= 2) {
+            if (coverage > U32_MAX) {
+                ret = -EOVERFLOW;
+                goto out;
+            }
             ret = infilfs_ns_shared_range_append(
                 &ranges, &range_count, &range_capacity,
-                previous, position);
+                previous, position, (u32)coverage);
             if (ret)
                 goto out;
         }
