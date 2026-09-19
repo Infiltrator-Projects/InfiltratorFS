@@ -17,6 +17,16 @@ grep -Fq 'check_allocation_structure' "$check" || \
     fail 'fast allocation structural validator missing'
 grep -Fq 'allocation_map_load(' "$check" || \
     fail 'fast fsck does not authenticate allocation-tree structure'
+grep -Fq 'check_index_structure' "$check" || \
+    fail 'fast object-index structural validator missing'
+grep -Fq 'check_namespace_structure' "$check" || \
+    fail 'fast namespace structural validator missing'
+! grep -Fq 'validate_index_entries(vol)' "$check" || \
+    fail 'plain fsck regressed to rereading every indexed object'
+! grep -Fq 'validate_namespace_graph(vol)' "$check" || \
+    fail 'plain fsck regressed to exhaustive namespace object validation'
+! grep -Fq 'validate_checksum_graph(vol)' "$check" || \
+    fail 'plain fsck regressed to walking every file checksum chain'
 ! grep -Fq 'validate_integrity_metadata(vol)' "$check" || \
     fail 'plain fsck regressed to exhaustive live ownership validation'
 grep -Fq 'validate_integrity_metadata_progress(vol, progress, 0)' "$scrub" || \
