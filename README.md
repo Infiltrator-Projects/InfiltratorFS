@@ -21,6 +21,16 @@ Pre-1.0 development is current-format-only. Development-format compatibility is 
 
 The badge above is the broad build/portable conformance gate. Mounted native-Linux qualification is a separate evidence boundary; see `docs/QUALIFICATION.md`.
 
+## Engineering ethos
+
+What happens when you build a filesystem from first principles?
+
+InfiltratorFS is where questions about storage become code: what survives a crash, how old versions are retained, and what it takes to boot and run a real Linux installation.
+
+The persistent format, transaction model, recovery rules, namespace, allocation policy, integrity model and history semantics are owned by this project rather than delegated to another filesystem implementation. Operating systems and carefully pinned first-party shared code provide interfaces and neutral primitives; they do not define InfiltratorFS semantics. External filesystems, papers and tools are evidence to compare against, not authorities that can silently change the meaning of the format.
+
+The project does not equate newer with better. Proven ideas are retained when they remain the strongest design, and new mechanisms are accepted only when they improve correctness, crash behaviour, performance, resilience or explainability. A feature is not complete because it works once: its failure, recovery and qualification boundaries are part of the feature.
+
 ## What exists today
 
 Format 0.18 provides:
