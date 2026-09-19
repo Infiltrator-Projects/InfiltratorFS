@@ -89,7 +89,7 @@ The normal filesystem checker is intentionally fast and structural:
 sudo fsck.infiltratorfs /dev/<partition>
 ```
 
-It validates checkpoints, allocation/ownership metadata, the object index, namespace/reference consistency and checksum metadata. It does **not** read every user-data block or recompute every payload checksum. On a freshly formatted empty filesystem it should complete essentially immediately.
+It validates checkpoints, allocation-tree structure/accounting, the object index, namespace/reference consistency and checksum metadata. It does **not** reconstruct exact block ownership by walking every file/data block, read every user-data block, or recompute every payload checksum; those exhaustive checks belong to `--scrub`. On a freshly formatted empty filesystem it should complete essentially immediately.
 
 The exhaustive data-integrity scan is opt-in:
 
