@@ -24,7 +24,23 @@ Automatic qualification and conformance jobs are hard-capped at 10 minutes where
 
 ## Current development evidence boundary
 
-### Current 0.18.59 implementation baseline
+### 0.18.60 pre-release implementation baseline
+
+Exact implementation source `ee716fc61310ed6c3d9e07852b72883518793d5e`
+passed the complete ordinary automatic qualification set on 2026-09-19:
+
+- **Build and conformance** run `35430162303`;
+- **Native Linux kernel module** run `35430162314`;
+- **Linux metadata qualification** run `35430162323`;
+- **Linux root-volume qualification** run `35430162302`; and
+- **Native resize qualification** run `35430162431`.
+
+This is the implementation baseline immediately before the 0.18.60 release
+metadata/version commit. The immutable release publisher still requires the
+exact release commit to pass its same-source automatic gates before creating
+`v0.18.60`; these results are not substituted for that release gate.
+
+### 0.18.59 qualified implementation baseline
 
 Exact implementation source `49dfae888cf2077bfb871207e2190030936aa6d3`
 passed all ordinary push qualification workflows on 2026-09-18:

@@ -1,55 +1,18 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # InfiltratorFS 0.18.59
 
-**Status: draft / not yet published.**
+**Published:** 2026-09-18.
 
-0.18.59 deepens use of Infiltratr Common 1.19.2 only where the shared primitive
-reduces duplicate generic code or makes an existing boundary safer. It does not
-move filesystem semantics into Common.
+Use Infiltratr Common 1.19.2 more deeply only where it improves InfiltratorFS
+itself.
 
-The Linux native driver also fixes a large-volume startup regression found on
-a real million-file system. Crash-orphan recovery remains asynchronous, but no
-longer blocks live namespace mutation until the complete scan finishes or holds
-the topology rwsem across the whole catalogue. Recovery now snapshots the
-catalogue briefly, inspects it in bounded lock batches, revalidates candidates
-before reclaim, and fences candidates to the checkpoint generation that existed
-when the writable mount began.
+This release removes duplicate userspace numeric and binary-size parsing from
+the resize, quota, optimize, mkfs and image tools, replaces the image tool's
+hand-written exact-read loop with Common's EINTR-safe exact I/O helper, and uses
+Common's overflow-safe dynamic-array reserve primitive for the portable
+free-extent index, transaction allocation/deferred journals and snapshot
+traversal state.
 
-A second Linux stall was confirmed by the previous-boot kernel log: deferred
-idle publication repeatedly triggered the kernel workqueue CPU-hog detector.
-Idle publication performs allocation-map staging and durability barriers while
-holding the filesystem's persistent writer domain. It now runs on the kernel's
-long-running unbound system workqueue instead of system_wq, preserving the same
-transaction and durability semantics without monopolising an ordinary per-CPU
-system worker.
-
-Live mounted qualification also exposed a separate architectural gap: the
-intended filesystem CPU policy had never been made explicit or enforced.
-The architecture now records the required native Linux concurrency budget as
-`max(1, online_logical_cpus - 1)`: one logical CPU is left for the rest of
-the operating system whenever possible, while InfiltratorFS must be able to use
-all remaining logical CPUs when sufficient independent work exists. The roadmap
-keeps this item incomplete until the implementation and qualification enforce
-that rule; documenting the policy does not claim that 0.18.59 already satisfies
-it.
-
-The consolidation covers:
-
-- userspace numeric, range and binary-size parsing in administration/image tools;
-- exact EINTR-safe userspace I/O and portable POSIX path canonicalisation;
-- UTF-8 validation and endian byte-load/store primitives;
-- checked integer/size arithmetic for generation growth, extent/range validation,
-  bitmap/layout sizing, Windows partition ranges and dynamic allocations;
-- overflow-safe dynamic-array reserve for runtime indexes, transaction journals
-  and snapshot traversal state;
-- shared percentage/reporting helpers where their units and semantics match the
-  InfiltratorFS contract; and
-- Windows bridge allocation sizing without changing ProjFS behaviour.
-
-The work deliberately leaves filesystem-specific responsibilities local:
-allocation and placement policy, copy-on-write publication, persistent-format
-validation semantics, checkpoint/recovery policy, snapshots/reflinks, IAC1,
-kernel-only code, realtime timestamp policy and platform-specific locking remain
-owned by InfiltratorFS.
-
-No on-disk format migration is introduced. The on-disk format remains 0.18.
+Filesystem-specific code remains local: the Linux kernel module, allocation
+policy, copy-on-write machinery, persistent structures, integrity/checksum paths
+and compression are unchanged. The on-disk Format 0.18 contract is unchanged.
