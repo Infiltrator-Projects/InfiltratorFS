@@ -475,7 +475,7 @@ int infilfs_native_pending_flush_sb(struct super_block *sb)
     int ret;
 
     if (!pending)
-        return sync_blockdev(sb->s_bdev);
+        return 0;
     cancel_delayed_work_sync(&pending->idle_work);
     down_write(&sbi->write_lock);
     committed = pending->active;
@@ -483,13 +483,13 @@ int infilfs_native_pending_flush_sb(struct super_block *sb)
     up_write(&sbi->write_lock);
 
     /*
-     * A successful active transaction already ended with the checkpoint
-     * durability barrier in infilfs_rw_tx_commit(). Repeating sync_blockdev()
-     * immediately adds latency but no stronger persistence guarantee. Retain
-     * the standalone sync when there was no transaction to publish.
+     * file_write_and_wait_range()/sync_filesystem() have already drained VFS
+     * page-cache work before arriving here.  If no native transaction was
+     * active, InfiltratorFS has no private metadata dependency or checkpoint
+     * to publish.  A whole-device sync in that case only turns clean fsync()
+     * traffic into device-wide stalls.
      */
-    if (!ret && !committed)
-        ret = sync_blockdev(sb->s_bdev);
+    (void)committed;
     return ret;
 }
 
