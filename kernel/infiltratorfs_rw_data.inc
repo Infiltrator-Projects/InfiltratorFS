@@ -5097,7 +5097,7 @@ static ssize_t infilfs_native_parallel_append_batch(
          * deliberately long-running kernel work; keep it off system_wq so a
          * checkpoint cannot starve unrelated per-CPU system work.
          */
-        mod_delayed_work(system_long_wq, &pending->idle_work,
+        infilfs_mod_delayed_cpu_work(&pending->idle_work,
                          INFILFS_NATIVE_IDLE_DELAY);
 
     up_write(&sbi->write_lock);
@@ -5365,7 +5365,7 @@ static ssize_t infilfs_native_extent_write_iter_mode(
             }
         }
         if (pending->active && !pending->commit_failed)
-            mod_delayed_work(system_long_wq, &pending->idle_work,
+            infilfs_mod_delayed_cpu_work(&pending->idle_work,
                              INFILFS_NATIVE_IDLE_DELAY);
 
 chunk_unlock:
@@ -5527,7 +5527,7 @@ static ssize_t infilfs_native_inline_write_iter(
     if (infilfs_native_pending_should_publish(pending))
         (void)infilfs_native_pending_commit_locked(pending);
     if (pending->active && !pending->commit_failed)
-        mod_delayed_work(system_long_wq, &pending->idle_work,
+        infilfs_mod_delayed_cpu_work(&pending->idle_work,
                          INFILFS_NATIVE_IDLE_DELAY);
 
     *position = pos + copied;
