@@ -267,6 +267,14 @@ struct infilfs_native_pending {
     bool commit_failed;
 };
 
+int infilfs_native_collect_extents(
+    struct infilfs_native_pending *pending, struct inode *inode,
+    u8 object[INFILFS_DISK_BLOCK_SIZE],
+    struct infilfs_extent_disk **extents_out, u32 *count_out,
+    u64 *old_blocks_out, bool *was_inline_out);
+int infilfs_shared_ownership_drop_owner(
+    struct infilfs_native_pending *pending, struct inode *inode);
+
 
 enum infilfs_data_workload {
     INFILFS_DATA_WORKLOAD_SEQUENTIAL = 0,
