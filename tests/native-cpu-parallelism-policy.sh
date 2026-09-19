@@ -80,6 +80,16 @@ grep -Fq 'size_t batch_bytes = infilfs_native_writeback_batch_bytes();' "$pageca
     fail 'read hashing regressed to generic system_unbound_wq'
 ! grep -Fq 'mod_delayed_work(system_wq, &pending->idle_work' "$data" || \
     fail 'idle publication regressed to system_wq'
+grep -Fq 'infilfs_mod_delayed_cpu_work(&pending->idle_work' "$data" || \
+    fail 'idle publication bypasses native unbound CPU pool'
+grep -Fq 'infilfs_cpu_work_enter();' "$data" || \
+    fail 'idle publication/write preparation lost N-1 execution gating'
+grep -Fq 'infilfs_mod_delayed_cpu_work(&sbi->orphan_recovery_work, 1);' "$core" || \
+    fail 'orphan recovery bypasses native unbound CPU pool'
+grep -Fq 'infilfs_cpu_work_enter();' "$core" || \
+    fail 'orphan recovery lost N-1 execution gating'
+! grep -Fq 'mod_delayed_work(system_long_wq, &pending->idle_work' "$data" || \
+    fail 'idle publication regressed to system_long_wq'
 
 python3 - <<'PY'
 def budget(n):
