@@ -359,6 +359,24 @@ if(UNIX)
     target_compile_definitions(infilfs_posix PRIVATE _GNU_SOURCE)
     infilfs_enable_warnings(infilfs_posix)
 
+    # The Linux Manager is a native C/GTK3 application. Keep GTK optional for
+    # headless/core-only source builds, but release/package builders install the
+    # development package and therefore must produce this target.
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(GTK3 QUIET IMPORTED_TARGET gtk+-3.0)
+    endif()
+    if(GTK3_FOUND)
+        add_executable(infiltratorfs-manager tools/infiltratorfs-manager.c)
+        target_link_libraries(infiltratorfs-manager PRIVATE
+            InfiltratrCommon::Common PkgConfig::GTK3)
+        target_compile_definitions(infiltratorfs-manager PRIVATE
+            INFILFS_IMPLEMENTATION_VERSION=\"${PROJECT_VERSION}\")
+        infilfs_enable_warnings(infiltratorfs-manager)
+    else()
+        message(STATUS "GTK3 development files not found; native Manager target disabled")
+    endif()
+
     add_executable(mkfs.infilfs tools/mkfs.infilfs.c)
     add_executable(infilfs-inspect tools/infilfs-inspect.c)
     add_executable(infilfs-tool tools/infilfs-tool.c)
@@ -410,16 +428,17 @@ if(UNIX)
         COMMAND bash ${CMAKE_SOURCE_DIR}/tests/forensic-scan.sh ${CMAKE_BINARY_DIR})
     add_test(NAME infilfs-current-format-tree
         COMMAND bash ${CMAKE_SOURCE_DIR}/tests/current-format-tree.sh ${CMAKE_BINARY_DIR})
-    add_test(NAME infilfs-manager-python-syntax
-        COMMAND python3 -c
-            "import ast,pathlib; ast.parse(pathlib.Path(r'${CMAKE_SOURCE_DIR}/tools/infiltratorfs-manager').read_text(encoding='utf-8'))")
     add_test(NAME infilfs-ui-font-policy
         COMMAND bash ${CMAKE_SOURCE_DIR}/tests/ui-font-policy.sh
                      ${CMAKE_SOURCE_DIR})
     add_test(NAME infilfs-manager-helper-shell-syntax
         COMMAND bash -n ${CMAKE_SOURCE_DIR}/tools/infiltratorfs-manager-helper)
-    add_test(NAME infilfs-manager-partition-discovery
-        COMMAND bash ${CMAKE_SOURCE_DIR}/tests/manager-partition-discovery.sh)
+    if(TARGET infiltratorfs-manager)
+        add_test(NAME infilfs-manager-partition-discovery
+            COMMAND bash ${CMAKE_SOURCE_DIR}/tests/manager-partition-discovery.sh
+                         ${CMAKE_SOURCE_DIR}
+                         $<TARGET_FILE:infiltratorfs-manager>)
+    endif()
     add_test(NAME infilfs-system-utilities
         COMMAND bash ${CMAKE_SOURCE_DIR}/tests/system-utilities.sh)
     add_test(NAME infilfs-root-volume-integration-policy
@@ -434,9 +453,13 @@ if(UNIX)
 
     install(TARGETS mkfs.infilfs infilfs-inspect infilfs-tool infilfs-forensic infilfs-optimize infilfs-compression infiltratorfs-resize infiltratorfs-quota infiltratorfs-theme
             RUNTIME DESTINATION bin)
+    if(TARGET infiltratorfs-manager)
+        install(TARGETS infiltratorfs-manager
+                RUNTIME DESTINATION bin)
+    endif()
     install(TARGETS fsck.infiltratorfs
             RUNTIME DESTINATION sbin)
-    install(PROGRAMS tools/infiltratorfs-manager tools/mkfs.infiltratorfs
+    install(PROGRAMS tools/mkfs.infiltratorfs
             DESTINATION bin)
     install(PROGRAMS tools/infiltratorfs-manager-helper
                      packaging/infiltratorfs-os-integration
@@ -454,8 +477,10 @@ if(UNIX)
     # this one in its place on supported Linux Mint systems.
     install(FILES packaging/infiltratorfs-format-partition.nemo_action
             DESTINATION lib/infiltratorfs)
+    # Install the verified bundled faces in the normal fontconfig tree. The
+    # native Manager can use them directly without a Python registration shim.
     install(FILES ${INFILFS_FONT_FILES}
-            DESTINATION share/infiltratorfs/fonts)
+            DESTINATION share/fonts/truetype/infiltratorfs)
     install(FILES packaging/59-infiltratorfs.rules
             DESTINATION lib/udev/rules.d)
 endif()

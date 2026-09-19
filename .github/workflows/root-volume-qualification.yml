@@ -42,8 +42,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             acl attr build-essential cmake dkms e2fsprogs fontconfig initramfs-tools \
-            kmod libcap2-bin linux-headers-generic policykit-1 rsync util-linux xdg-utils \
-            python3 python3-gi gir1.2-gtk-3.0
+            kmod libcap2-bin libgtk-3-dev linux-headers-generic pkg-config policykit-1 \
+            rsync util-linux xdg-utils python3
 
       - name: Resolve kernel headers
         id: headers

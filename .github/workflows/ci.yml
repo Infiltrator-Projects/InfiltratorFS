@@ -91,29 +91,18 @@ jobs:
         if: runner.environment == 'github-hosted'
         run: |
           sudo apt-get update
-          sudo apt-get install -y desktop-file-utils policykit-1 xdg-utils python3-gi gir1.2-gtk-3.0 xvfb
+          sudo apt-get install -y desktop-file-utils libgtk-3-dev pkg-config policykit-1 xdg-utils xvfb
       - name: Validate Mint desktop integration
         run: desktop-file-validate packaging/infiltratorfs-manager.desktop
-      - name: Validate Manager partition enumeration
+      - name: Validate native Manager source policy
         run: |
-          grep -Fq '"lsblk", "-J", "-b", "-o"' tools/infiltratorfs-manager
-          grep -Fq '"NAME,PATH,SIZE,TYPE,RM,PKNAME,TRAN,FSTYPE,LABEL,MOUNTPOINTS"' tools/infiltratorfs-manager
-          grep -Fq 'if node.get("type") != "part":' tools/infiltratorfs-manager
-          grep -Fq -- '--list-partitions' tools/infiltratorfs-manager
-          ! grep -Fqi 'zenity' tools/infiltratorfs-manager
-          tools/infiltratorfs-manager --list-partitions >/dev/null
-      - name: Launch GTK Manager
-        run: |
-          set -uo pipefail
-          set +e
-          output="$(xvfb-run -a tools/infiltratorfs-manager --startup-check 2>&1)"
-          rc=$?
-          set -e
-          printf '%s\n' "$output"
-          test "$rc" -eq 0
-          grep -Fq 'infiltratorfs-manager: GTK startup PASS' <<<"$output"
-          ! grep -Fq 'PyGIWarning' <<<"$output"
-          ! grep -Fq 'install python3-gi and gir1.2-gtk-3.0' <<<"$output"
+          test -f tools/infiltratorfs-manager.c
+          grep -Fq '"lsblk", "-P", "-b", "-n", "-p", "-o"' tools/infiltratorfs-manager.c
+          grep -Fq '"PATH,SIZE,TYPE,RM,PKNAME,TRAN,FSTYPE,LABEL,MOUNTPOINTS"' tools/infiltratorfs-manager.c
+          grep -Fq 'gtk_application_window_new' tools/infiltratorfs-manager.c
+          grep -Fq '#include "infiltratr/design.h"' tools/infiltratorfs-manager.c
+          ! grep -Fqi 'zenity' tools/infiltratorfs-manager.c
+          test ! -e tools/infiltratorfs-manager
       - name: Validate partition 22 torture-test shell syntax and safety gate
         run: |
           bash -n tests/native-partition22-full-test.sh
@@ -184,6 +173,13 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
       - name: Build
         run: cmake --build build --parallel
+      - name: Launch native GTK Manager
+        run: |
+          test -x build/infiltratorfs-manager
+          build/infiltratorfs-manager --list-partitions >/dev/null
+          output="$(xvfb-run -a build/infiltratorfs-manager --startup-check 2>&1)"
+          printf '%s\n' "$output"
+          grep -Fq 'infiltratorfs-manager: GTK startup PASS' <<<"$output"
       - name: Test
         run: ctest --test-dir build --output-on-failure
       - name: Record compression qualification telemetry
@@ -401,7 +397,7 @@ jobs:
         if: runner.environment == 'github-hosted'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake desktop-file-utils libssl-dev policykit-1 xdg-utils python3 python3-gi gir1.2-gtk-3.0
+          sudo apt-get install -y build-essential cmake desktop-file-utils libgtk-3-dev libssl-dev pkg-config policykit-1 xdg-utils python3
       - name: Configure native-only userspace
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
       - name: Build
@@ -433,9 +429,10 @@ jobs:
           dpkg-deb --contents "$deb" > "$deb_contents_file"
           ! grep -q 'usr/bin/infilfs-fuse$' "$deb_contents_file"
           depends="$(dpkg-deb --field "$deb" Depends)"
-          for dependency in dkms kmod policykit-1 util-linux xdg-utils python3 python3-gi gir1.2-gtk-3.0; do
-            grep -Eq "(^|, )${dependency}([ ,]|$)" <<<"$depends"
+          for dependency in dkms kmod policykit-1 util-linux xdg-utils fontconfig libgtk-3-0t64 libglib2.0-0t64; do
+            grep -Eq "(^|, )${dependency}([ ,|]|$)" <<<"$depends"
           done
+          ! grep -Eq '(^|, )python3([ ,]|$)|python3-gi|gir1\.2-gtk-3\.0' <<<"$depends"
           ! grep -Eqi '(^|[, ])(fuse3|libfuse3-3)([, ]|$)' <<<"$depends"
           test "$(dpkg-deb --field "$deb" X-InfiltratorFS-Build)" = generic-apt
           grep -Fq '+native1' support/installer/bootstrap.sh

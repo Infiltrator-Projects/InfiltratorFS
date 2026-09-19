@@ -9,7 +9,7 @@ expected_archive="bdb6063f838a7fab22b4d6b412170640c69511df53aa3dfa9a4ea8431c9d82
 test -f "$archive"
 test "$(sha256sum "$archive" | awk '{print $1}')" = "$expected_archive"
 
-manager="$root/tools/infiltratorfs-manager"
+manager="$root/tools/infiltratorfs-manager.c"
 windows="$root/tools/windows/infiltratorfs-windows.c"
 windows_entry="$root/tools/windows/infiltratorfs-windows-entry.c"
 resource="$root/tools/windows/infiltratorfs-windows-fonts.rc.in"
@@ -18,49 +18,36 @@ cmake="$root/CMakeLists.txt"
 for file in mb_corpo_a_cond_regular.ttf mb_corpo_s_bold.ttf mb_corpo_s_regular.ttf; do
     grep -Fq "$file" "$cmake"
 done
-
+grep -Fq 'DESTINATION share/fonts/truetype/infiltratorfs' "$cmake"
 grep -Fq '@INFILFS_FONT_A_COND_REGULAR_RC@' "$resource"
 grep -Fq '@INFILFS_FONT_S_BOLD_RC@' "$resource"
 grep -Fq '@INFILFS_FONT_S_REGULAR_RC@' "$resource"
 
-grep -Fq 'FcConfigAppFontAddFile' "$manager"
+grep -Fq '#include <gtk/gtk.h>' "$manager"
+grep -Fq '#include "infiltratr/design.h"' "$manager"
+grep -Fq '#include "infiltratr/format.h"' "$manager"
+grep -Fq 'infiltratr_theme_resolve' "$manager"
+grep -Fq 'infiltratr_theme_mode_next' "$manager"
+grep -Fq 'infiltratr_format_disk_capacity' "$manager"
 grep -Fq 'MB Corpo S Title WEB' "$manager"
 grep -Fq 'MB Corpo A Title Cond WEB' "$manager"
 grep -Fq 'font-weight: 700' "$manager"
-! grep -Fq 'font-family: monospace' "$manager"
-! grep -Fq 'set_monospace(True)' "$manager"
-
-# The Linux UI consumes Common's System/Day/Night semantic palette while
-# retaining the product-local blue accent and bundled typography.
-grep -Fq 'THEME_MODES = ("system", "day", "night")' "$manager"
-grep -Fq 'infiltrator-design-v1.json' "$manager"
-grep -Fq 'infiltratorfs-theme' "$manager"
+grep -Fq '#define ACCENT_HEX "#00adef"' "$manager"
 grep -Fq 'Cycle Infiltratr Common System, Day and Night themes' "$manager"
-grep -Fq 'border-left-color: {accent};' "$manager"
-grep -Fq 'THEME_ACCENT = "#00adef"' "$manager"
+grep -Fq 'border-left-color:' "$manager"
+grep -Fq 'button, button label, button image' "$manager"
+grep -Fq 'headerbar button label, headerbar button image' "$manager"
+! grep -Fq 'font-family: monospace' "$manager"
+! grep -Fq 'Segoe UI' "$manager"
+! grep -Fq 'Sans' "$manager"
+! grep -Eq 'python3|PyGObject|gi\.repository|FcConfigAppFontAddFile' "$manager"
+! grep -Fq 'infiltratorfs-theme' "$manager"
 
-# GTK child labels/images must inherit each button state's foreground.  A
-# universal direct colour caused the night headerbar to render pale text/icons
-# on the pale Common button surface, making the top bar effectively unreadable.
-if sed -n '/^\* {{$/,/^}}$/p' "$manager" | grep -Fq 'color:'; then
-    echo 'ui-font-policy: universal GTK foreground overrides button contrast' >&2
-    exit 1
-fi
-grep -Fq 'button, button label, button image {{' "$manager"
-grep -Fq 'headerbar button label, headerbar button image {{' "$manager"
-grep -Fq 'headerbar .title, headerbar label.title {{' "$manager"
-grep -Fq 'headerbar .subtitle, headerbar label.subtitle {{' "$manager"
-
-# Linux mirrors LINK's LinkAboutInfo contract even though this manager is
-# Python/GTK3 rather than LINK's C shell. Keep the same rich About facts,
-# explicit emblem and family style instead of falling back to a bare dialog.
-grep -Fq 'class AboutInfo:' "$manager"
-grep -Fq "mirror of LINK's LinkAboutInfo presentation contract" "$manager"
-grep -Fq 'def show_common_about(' "$manager"
+grep -Fq 'gtk_about_dialog_set_logo' "$manager"
+grep -Fq 'gtk_icon_theme_load_icon' "$manager"
+grep -Fq '"drive-harddisk", 96' "$manager"
+grep -Fq 'gtk_about_dialog_set_website_label' "$manager"
 grep -Fq 'link-about-dialog' "$manager"
-grep -Fq 'dialog.set_logo(logo)' "$manager"
-grep -Fq 'theme.load_icon(name, 96' "$manager"
-grep -Fq 'website_label="Project website"' "$manager"
 grep -Fq 'INFILTRATORFS · NATIVE FILESYSTEM' "$manager"
 
 grep -Fq 'AddFontMemResourceEx' "$windows"
@@ -71,8 +58,6 @@ grep -Fq 'FW_BOLD' "$windows"
 ! grep -Fq 'L"Segoe UI"' "$windows"
 ! grep -Fq 'L"Consolas"' "$windows"
 
-# The Win32 shell resolves System/Day/Night through Common and leaves only
-# the product-local filesystem UI policy in the Windows adapter.
 grep -Fq '#include "infiltratr/design.h"' "$windows"
 grep -Fq 'infiltratr_theme_resolve' "$windows"
 grep -Fq 'INFILTRATR_THEME_SYSTEM' "$windows"

@@ -215,7 +215,7 @@ jobs:
           dpkg-deb --contents "release-assets/$deb" > "$contents"
           ! grep -q 'usr/bin/infilfs-fuse$' "$contents"
           for font in mb_corpo_a_cond_regular.ttf mb_corpo_s_bold.ttf mb_corpo_s_regular.ttf; do
-            grep -q "usr/share/infiltratorfs/fonts/$font$" "$contents"
+            grep -q "usr/share/fonts/truetype/infiltratorfs/$font$" "$contents"
           done
           mapfile -t release_files < <(find release-assets -maxdepth 1 -type f ! -name SHA256SUMS.txt -printf '%f\n' | sort)
           (cd release-assets && sha256sum "${release_files[@]}" > SHA256SUMS.txt)

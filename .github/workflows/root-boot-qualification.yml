@@ -34,9 +34,9 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             acl attr build-essential ca-certificates cmake debootstrap dkms \
             dosfstools e2fsprogs fontconfig grub-efi-amd64-bin grub2-common \
-            initramfs-tools kmod libcap2-bin libssl-dev ovmf policykit-1 \
-            python3 python3-gi qemu-system-x86 qemu-utils rsync util-linux \
-            xdg-utils gir1.2-gtk-3.0
+            initramfs-tools kmod libcap2-bin libgtk-3-dev libssl-dev ovmf \
+            pkg-config policykit-1 python3 qemu-system-x86 qemu-utils rsync \
+            util-linux xdg-utils
           sudo apt-get install -y --no-install-recommends "linux-headers-$(uname -r)"
           test -f "/lib/modules/$(uname -r)/build/Makefile"
           command -v qemu-system-x86_64

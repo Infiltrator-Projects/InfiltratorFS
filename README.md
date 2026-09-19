@@ -63,7 +63,7 @@ Build on a Debian-family system with matching running-kernel headers:
 
 ```bash
 sudo apt install build-essential cmake dkms kmod libssl-dev policykit-1 util-linux \
-  xdg-utils python3 python3-gi gir1.2-gtk-3.0 udev udisks2 \
+  xdg-utils libgtk-3-dev pkg-config python3 udev udisks2 \
   linux-headers-$(uname -r)
 
 git clone --recurse-submodules https://github.com/Infiltrator-Projects/InfiltratorFS.git
@@ -123,7 +123,7 @@ The destructive physical qualification harness remains available as `tests/nativ
 
 ## Desktop and packaging
 
-Linux packages include the native module/DKMS integration, `mkfs.infiltratorfs`, inspection/forensic tools, the unified `fsck.infiltratorfs` checker with optional `--scrub`, `mount.infiltratorfs`, InfiltratorFS Manager, udev/UDisks identification and the repository's formatter-integration work for libblockdev/UDisks/GNOME Disks.
+Linux packages include the native module/DKMS integration, `mkfs.infiltratorfs`, inspection/forensic tools, the unified `fsck.infiltratorfs` checker with optional `--scrub`, `mount.infiltratorfs`, the native C/GTK3 InfiltratorFS Manager, udev/UDisks identification and the repository's formatter-integration work for libblockdev/UDisks/GNOME Disks.
 
 InfiltratorFS Manager formats and mounts selected non-system partitions through constrained privileged helpers. On Linux Mint, the project uses its own **Format partition as InfiltratorFS…** Nemo action rather than modifying Mintstick's whole-device formatting behaviour.
 

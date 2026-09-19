@@ -87,7 +87,7 @@ Architecture: ${architecture}
 Maintainer: The First Infiltrator
 X-InfiltratorFS-Build: ${build_identity}
 X-InfiltratorFS-Desktop-Integration: ${desktop_identity}
-Depends: dkms, initramfs-tools, kmod, policykit-1, util-linux, xdg-utils, fontconfig, libssl3t64 | libssl3, python3, python3-gi, gir1.2-gtk-3.0
+Depends: dkms, initramfs-tools, kmod, policykit-1, util-linux, xdg-utils, fontconfig, libssl3t64 | libssl3, libgtk-3-0t64 | libgtk-3-0, libglib2.0-0t64 | libglib2.0-0
 Recommends: linux-headers-generic, udev${desktop_recommends}
 Installed-Size: ${installed_size}
 Homepage: https://github.com/Infiltrator-Projects/InfiltratorFS
@@ -259,9 +259,9 @@ for required in \
     'usr/lib/udev/rules.d/59-infiltratorfs.rules$' \
     'usr/share/applications/infiltratorfs-manager.desktop$' \
     'usr/lib/infiltratorfs/infiltratorfs-format-partition.nemo_action$' \
-    'usr/share/infiltratorfs/fonts/mb_corpo_a_cond_regular.ttf$' \
-    'usr/share/infiltratorfs/fonts/mb_corpo_s_bold.ttf$' \
-    'usr/share/infiltratorfs/fonts/mb_corpo_s_regular.ttf$' \
+    'usr/share/fonts/truetype/infiltratorfs/mb_corpo_a_cond_regular.ttf$' \
+    'usr/share/fonts/truetype/infiltratorfs/mb_corpo_s_bold.ttf$' \
+    'usr/share/fonts/truetype/infiltratorfs/mb_corpo_s_regular.ttf$' \
     "usr/src/infiltratorfs-${package_version}/dkms.conf$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_core.c$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_shared_ownership.c$" \
@@ -308,9 +308,13 @@ if grep -q 'usr/share/nemo/actions/infiltratorfs-format-partition.nemo_action$' 
 fi
 test "$(dpkg-deb --field "$dist_dir/$deb_name" Version)" = "$package_version"
 depends="$(dpkg-deb --field "$dist_dir/$deb_name" Depends)"
-for dependency in dkms initramfs-tools kmod policykit-1 util-linux xdg-utils fontconfig python3 python3-gi gir1.2-gtk-3.0; do
-    grep -Eq "(^|, )${dependency}([ ,]|$)" <<<"$depends"
+for dependency in dkms initramfs-tools kmod policykit-1 util-linux xdg-utils fontconfig libgtk-3-0t64 libglib2.0-0t64; do
+    grep -Eq "(^|, )${dependency}([ ,|]|$)" <<<"$depends"
 done
+if grep -Eq '(^|, )python3([ ,]|$)|python3-gi|gir1\.2-gtk-3\.0' <<<"$depends"; then
+    echo 'Native release package must not depend on Python/PyGObject for its Manager.' >&2
+    exit 1
+fi
 if grep -Eqi '(^|[, ])(fuse3|libfuse3-3)([, ]|$)' <<<"$depends"; then
     echo 'Native release package unexpectedly depends on FUSE.' >&2
     exit 1

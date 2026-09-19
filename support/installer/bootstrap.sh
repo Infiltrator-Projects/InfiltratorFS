@@ -55,11 +55,11 @@ check_requirements() {
     command -v umount >/dev/null 2>&1 || add_missing_package util-linux
     command -v xdg-open >/dev/null 2>&1 || add_missing_package xdg-utils
     command -v python3 >/dev/null 2>&1 || add_missing_package python3
-    if command -v python3 >/dev/null 2>&1; then
-        python3 -c 'import gi; gi.require_version("Gtk", "3.0"); from gi.repository import Gtk' >/dev/null 2>&1 || {
-            add_missing_package python3-gi
-            add_missing_package gir1.2-gtk-3.0
-        }
+    command -v pkg-config >/dev/null 2>&1 || add_missing_package pkg-config
+    if command -v pkg-config >/dev/null 2>&1; then
+        pkg-config --exists gtk+-3.0 || add_missing_package libgtk-3-dev
+    else
+        add_missing_package libgtk-3-dev
     fi
     command -v dkms >/dev/null 2>&1 || add_missing_package dkms
     command -v modprobe >/dev/null 2>&1 || add_missing_package kmod
