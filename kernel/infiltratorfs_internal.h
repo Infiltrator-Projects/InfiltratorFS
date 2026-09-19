@@ -225,6 +225,7 @@ struct infilfs_native_directory_locator {
 struct infilfs_native_shared_range {
     u64 start;
     u64 end;
+    u32 refs;
 };
 
 struct infilfs_native_pending {
