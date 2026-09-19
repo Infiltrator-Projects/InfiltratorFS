@@ -765,6 +765,7 @@ void infilfs_quota_reservation_abort(
 extern const struct address_space_operations infilfs_aops;
 
 /* Services shared with the compiled Format 0.18 directory-tree layer. */
+extern const u8 infilfs_object_magic[8];
 extern const u8 infilfs_directory_page_magic[8];
 extern const u8 infilfs_directory_branch_page_magic[8];
 void infilfs_rw_sha256_init(struct infilfs_rw_sha256_ctx *ctx);

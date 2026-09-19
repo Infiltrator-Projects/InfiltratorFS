@@ -90,7 +90,7 @@ static void infilfs_cpu_pool_exit(void)
 static const u8 infilfs_disk_magic[8] = {
     'I', 'N', 'F', 'S', '2', '0', '2', '6'
 };
-static const u8 infilfs_object_magic[8] = {
+const u8 infilfs_object_magic[8] = {
     'I', 'N', 'F', 'O', 'B', 'J', '0', '1'
 };
 const u8 infilfs_directory_page_magic[8] = {
