@@ -62,6 +62,176 @@ bool infilfs_extent_pointer_page_valid(
     return true;
 }
 
+
+int infilfs_extent_pointer_tree_build(
+    struct infilfs_native_pending *pending, const u8 owner_id[16],
+    const u64 *extent_pages, u32 page_count,
+    u64 *root_out, u32 *levels_out)
+{
+    u64 *current = NULL;
+    u32 current_count = page_count;
+    u32 level = 0;
+    int ret = 0;
+
+    if (!pending || !owner_id || !extent_pages || !page_count ||
+        !root_out || !levels_out)
+        return -EINVAL;
+    if (!infilfs_extent_pointer_tree_levels(page_count))
+        return -EFBIG;
+
+    current = kvmalloc_array(page_count, sizeof(*current), GFP_NOFS);
+    if (!current)
+        return -ENOMEM;
+    memcpy(current, extent_pages, (size_t)page_count * sizeof(*current));
+
+    for (;;) {
+        u32 parent_count = DIV_ROUND_UP(
+            current_count, INFILFS_EXTENT_INDEX_POINTERS_PER_PAGE);
+        u64 *parents = kvmalloc_array(parent_count, sizeof(*parents), GFP_NOFS);
+        u32 at = 0;
+        u32 parent;
+
+        if (!parents) {
+            ret = -ENOMEM;
+            goto out;
+        }
+
+        for (parent = 0; parent < parent_count; ++parent) {
+            u8 page_data[INFILFS_DISK_BLOCK_SIZE];
+            struct infilfs_metadata_page_disk *page =
+                (struct infilfs_metadata_page_disk *)page_data;
+            __le64 *pointers = (__le64 *)(page + 1);
+            u32 count = min_t(
+                u32, INFILFS_EXTENT_INDEX_POINTERS_PER_PAGE,
+                current_count - at);
+            u64 block;
+            u32 i;
+
+            infilfs_rw_init_page(
+                page_data, infilfs_extent_index_page_magic, owner_id,
+                pending->tx.generation);
+            page->entry_count = cpu_to_le32(count);
+            page->bytes_used = cpu_to_le32(count * sizeof(*pointers));
+            page->reserved = cpu_to_le32(level);
+            for (i = 0; i < count; ++i)
+                pointers[i] = cpu_to_le64(current[at + i]);
+
+            ret = infilfs_rw_finalize_page(page_data);
+            if (ret)
+                break;
+            ret = infilfs_rw_tx_alloc(&pending->tx, 1, &block);
+            if (ret)
+                break;
+            ret = infilfs_native_stage_block(pending->sb, block, page_data);
+            if (ret)
+                break;
+            parents[parent] = block;
+            at += count;
+        }
+
+        kvfree(current);
+        current = parents;
+        if (ret)
+            goto out;
+        if (parent_count == 1u) {
+            *root_out = current[0];
+            *levels_out = level + 1u;
+            ret = 0;
+            goto out;
+        }
+        current_count = parent_count;
+        ++level;
+        if (level >= INFILFS_EXTENT_INDEX_MAX_LEVELS) {
+            ret = -EFBIG;
+            goto out;
+        }
+    }
+
+out:
+    kvfree(current);
+    return ret;
+}
+
+static int infilfs_extent_pointer_tree_defer_nodes(
+    struct infilfs_native_pending *pending, const u8 owner_id[16],
+    u64 node, u32 level)
+{
+    u8 *page_data;
+    const __le64 *pointers;
+    u32 count;
+    u32 i;
+    int ret;
+
+    page_data = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+    if (!page_data)
+        return -ENOMEM;
+    ret = infilfs_read_allocated_block(pending->sb, node, page_data);
+    if (ret)
+        goto out;
+    if (!infilfs_extent_pointer_page_valid(
+            pending->sb, page_data, owner_id, level, &pointers, &count)) {
+        ret = -EFSCORRUPTED;
+        goto out;
+    }
+    if (level) {
+        for (i = 0; i < count; ++i) {
+            ret = infilfs_extent_pointer_tree_defer_nodes(
+                pending, owner_id, le64_to_cpu(pointers[i]), level - 1u);
+            if (ret)
+                goto out;
+        }
+    }
+    ret = infilfs_rw_tx_defer_free(&pending->tx, node, 1);
+out:
+    kfree(page_data);
+    return ret;
+}
+
+int infilfs_extent_layout_defer_free(
+    struct infilfs_native_pending *pending,
+    const u8 object[INFILFS_DISK_BLOCK_SIZE])
+{
+    const struct infilfs_object_header_disk *header =
+        (const struct infilfs_object_header_disk *)object;
+    const struct infilfs_file_payload_disk *file =
+        (const struct infilfs_file_payload_disk *)(header + 1);
+    const struct infilfs_extent_head_disk *head =
+        (const struct infilfs_extent_head_disk *)(file + 1);
+    u32 page_count = 0;
+    u32 p;
+    int ret;
+
+    if (!pending || !object)
+        return -EINVAL;
+    if (le16_to_cpu(header->object_version) != INFILFS_OBJECT_VERSION_PAGED &&
+        le16_to_cpu(header->object_version) != INFILFS_OBJECT_VERSION_TREE)
+        return 0;
+
+    ret = infilfs_extent_layout_validate(pending->sb, object, &page_count);
+    if (ret)
+        return ret;
+    for (p = 0; p < page_count; ++p) {
+        u64 block;
+
+        ret = infilfs_extent_page_block(pending->sb, object, p, &block);
+        if (ret)
+            return ret;
+        ret = infilfs_rw_tx_defer_free(&pending->tx, block, 1);
+        if (ret)
+            return ret;
+    }
+    if (le16_to_cpu(header->object_version) == INFILFS_OBJECT_VERSION_TREE) {
+        const __le64 *root = (const __le64 *)(head + 1);
+        u32 levels = le32_to_cpu(head->reserved);
+
+        if (!levels)
+            return -EFSCORRUPTED;
+        ret = infilfs_extent_pointer_tree_defer_nodes(
+            pending, header->object_id, le64_to_cpu(root[0]), levels - 1u);
+    }
+    return ret;
+}
+
 int infilfs_extent_layout_validate(
     struct super_block *sb, const u8 object[INFILFS_DISK_BLOCK_SIZE],
     u32 *page_count_out)
