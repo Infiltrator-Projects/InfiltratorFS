@@ -123,7 +123,7 @@ static int infilfs_ns_finish(struct infilfs_native_pending *pending, int ret)
     if (infilfs_native_pending_should_publish(pending)) {
         ret = infilfs_native_pending_commit_locked(pending);
     } else if (pending->active && !pending->commit_failed) {
-        mod_delayed_work(system_long_wq, &pending->idle_work,
+        infilfs_mod_delayed_cpu_work(&pending->idle_work,
                          INFILFS_NATIVE_IDLE_DELAY);
     }
     up_write(&sbi->write_lock);
