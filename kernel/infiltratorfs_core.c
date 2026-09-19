@@ -21,6 +21,14 @@ bool infilfs_queue_cpu_work(struct work_struct *work)
     return infilfs_cpu_wq && queue_work(infilfs_cpu_wq, work);
 }
 
+void infilfs_mod_delayed_cpu_work(struct delayed_work *work,
+                                  unsigned long delay)
+{
+    if (WARN_ON_ONCE(!infilfs_cpu_wq))
+        return;
+    mod_delayed_work(infilfs_cpu_wq, work, delay);
+}
+
 static bool infilfs_cpu_try_enter(void)
 {
     int active;
@@ -2804,7 +2812,9 @@ static void infilfs_orphan_recovery_worker(struct work_struct *work)
     if (!sb)
         return;
 
+    infilfs_cpu_work_enter();
     ret = infilfs_native_recover_unlinked_files(sb);
+    infilfs_cpu_work_exit();
     if (ret) {
         WRITE_ONCE(sbi->write_poisoned, true);
         pr_err("InfiltratorFS: asynchronous crash-orphan recovery failed: %d; writes disabled\n",
@@ -2820,7 +2830,7 @@ static void infilfs_schedule_orphan_recovery(struct super_block *sb)
         return;
     WRITE_ONCE(sbi->orphan_recovery_generation,
                le64_to_cpu(sbi->disk.generation));
-    mod_delayed_work(system_long_wq, &sbi->orphan_recovery_work, 1);
+    infilfs_mod_delayed_cpu_work(&sbi->orphan_recovery_work, 1);
 }
 
 static void infilfs_cancel_orphan_recovery(struct super_block *sb)
