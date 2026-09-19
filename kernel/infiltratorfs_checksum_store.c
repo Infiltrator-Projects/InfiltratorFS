@@ -23,7 +23,7 @@ struct infilfs_native_checksum_node {
     bool dirty;
 };
 
-static int infilfs_native_random_id(u8 id[16])
+int infilfs_native_random_id(u8 id[16])
 {
     unsigned int attempt;
 
@@ -544,7 +544,7 @@ out:
     return ret;
 }
 
-static int infilfs_native_checksum_append_tail(
+int infilfs_native_checksum_append_tail(
     struct infilfs_native_pending *pending,
     struct infilfs_file_payload_disk *file, const u8 owner_id[16],
     u64 touched_start, u64 touched_count,

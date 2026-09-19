@@ -699,6 +699,7 @@ bool infilfs_native_checksum_group_cache_lookup(
 void infilfs_native_checksum_group_cache_store(
     struct super_block *sb, const u8 owner_id[16], const u8 object_id[16],
     u64 object_block, u64 start_logical);
+int infilfs_native_random_id(u8 id[16]);
 int infilfs_native_checksum_decode(
     struct super_block *sb, const u8 owner_id[16], const u8 object_id[16],
     u64 object_block, u8 block[INFILFS_DISK_BLOCK_SIZE],
@@ -712,6 +713,14 @@ int infilfs_native_checksum_update_existing_group(
     u32 *change_count, u8 final_tail_id[16], u64 *final_tail_block,
     u64 *final_tail_start);
 int infilfs_native_checksum_set_range(
+    struct infilfs_native_pending *pending,
+    struct infilfs_file_payload_disk *file, const u8 owner_id[16],
+    u64 touched_start, u64 touched_count,
+    const struct infilfs_data_checksum_disk *digests,
+    struct infilfs_native_index_change *changes, u32 change_capacity,
+    u32 *change_count, u8 final_tail_id[16], u64 *final_tail_block,
+    u64 *final_tail_start);
+int infilfs_native_checksum_append_tail(
     struct infilfs_native_pending *pending,
     struct infilfs_file_payload_disk *file, const u8 owner_id[16],
     u64 touched_start, u64 touched_count,
