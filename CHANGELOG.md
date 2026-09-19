@@ -4,10 +4,16 @@ This file records user-visible, compatibility, architecture and validation chang
 
 ## Unreleased
 
-## Unreleased — 0.18.62
+## 0.18.62 — 2026-09-19
 
 - Fix the native prepared-append queue-failure path so a failed workqueue enqueue cannot strand a completion waiter.
-- Continue forensic scalability, snapshot and native-write-path hardening after 0.18.61.
+- Replace the fixed direct extent-page ceiling with scalable extent-pointer trees while retaining the compact direct representation for smaller extent maps.
+- Retain snapshots by immutable allocation-tree root instead of copying a whole-volume allocation bitmap at snapshot creation.
+- Page the snapshot catalogue beyond the former single-object 26-record capacity and validate paged catalogue records in both portable and native paths.
+- Accept snapshot and extent-index metadata pages in the central portable finalizer and account for paged snapshot-catalogue blocks in exhaustive ownership validation.
+- Ship the extracted native extent-tree component in DKMS qualification and Linux packages.
+- Remove obsolete one-shot source-rewrite helpers left behind by earlier refactors.
+- Keep the development on-disk format identifier at 0.18 while replacing the prior development representation; backward compatibility is not claimed before format freeze.
 
 
 ## 0.18.61 — 2026-09-19
