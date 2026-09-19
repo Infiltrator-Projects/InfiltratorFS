@@ -315,12 +315,15 @@ static infs_status allocation_map_load(
         goto fail;
     }
 
-    size_t page_count = leaves + branches;
-    if (page_count > SIZE_MAX / sizeof(uint64_t)) {
+    size_t page_count = 0;
+    size_t page_bytes = 0;
+    if (!infiltratr_size_add_checked(leaves, branches, &page_count) ||
+        !infiltratr_size_multiply_checked(
+            page_count, sizeof(uint64_t), &page_bytes)) {
         status = INFS_STATUS_OVERFLOW;
         goto fail;
     }
-    uint64_t *all_pages = malloc(page_count * sizeof(uint64_t));
+    uint64_t *all_pages = malloc(page_bytes);
     if (!all_pages) {
         status = INFS_STATUS_NO_MEMORY;
         goto fail;
@@ -658,16 +661,23 @@ static infs_status allocation_map_publish(
         }
     }
 
-    new_leaves = malloc(old.leaf_count * sizeof(*new_leaves));
-    new_branches = malloc(old.branch_count * sizeof(*new_branches));
+    size_t new_leaves_bytes = 0;
+    size_t new_branches_bytes = 0;
+    if (!infiltratr_size_multiply_checked(
+            old.leaf_count, sizeof(*new_leaves), &new_leaves_bytes) ||
+        !infiltratr_size_multiply_checked(
+            old.branch_count, sizeof(*new_branches), &new_branches_bytes)) {
+        status = INFS_STATUS_OVERFLOW;
+        goto out;
+    }
+    new_leaves = malloc(new_leaves_bytes);
+    new_branches = malloc(new_branches_bytes);
     if (!new_leaves || !new_branches) {
         status = INFS_STATUS_NO_MEMORY;
         goto out;
     }
-    memcpy(new_leaves, old.leaf_blocks,
-           old.leaf_count * sizeof(*new_leaves));
-    memcpy(new_branches, old.branch_blocks,
-           old.branch_count * sizeof(*new_branches));
+    memcpy(new_leaves, old.leaf_blocks, new_leaves_bytes);
+    memcpy(new_branches, old.branch_blocks, new_branches_bytes);
 
     size_t r = 0;
     for (size_t i = 0; i < old.leaf_count; ++i)

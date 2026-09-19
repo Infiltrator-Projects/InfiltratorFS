@@ -21,6 +21,7 @@
 #include "infilfs/win32_io.h"
 #include "infiltratorfs-windows-bridge.h"
 #include "infiltratorfs-windows-metadata.h"
+#include "infiltratr/arithmetic.h"
 #include "infiltratr/design.h"
 #include "infiltratr/format.h"
 
@@ -437,13 +438,23 @@ static void set_control_font(HWND hwnd, int id, HFONT font)
         SendMessageW(control, WM_SETFONT, (WPARAM)font, TRUE);
 }
 
-static int format_capacity_wide(uint64_t bytes, wchar_t *out,
-                                size_t out_count)
+static int format_gib_wide(uint64_t bytes, wchar_t *out, size_t out_count)
 {
+    static const char *const units[] = {"B", "KiB", "MiB", "GiB"};
+    InfiltratrScaleOptions options = INFILTRATR_SCALE_OPTIONS_INIT;
     char text[64];
+
     if (!out || !out_count)
         return 0;
-    infiltratr_format_disk_capacity(bytes, text, sizeof(text));
+    options.minimum_unit = 3u;
+    options.maximum_unit = 3u;
+    options.decimal_places = 2u;
+    options.integer_threshold = 0.0L;
+    options.integer_at_minimum_unit = false;
+    if (!infiltratr_format_scaled_quantity(
+            (long double)bytes, units, INFILTRATR_ARRAY_LENGTH(units),
+            "", &options, text, sizeof(text)))
+        return 0;
     return MultiByteToWideChar(
                CP_UTF8, MB_ERR_INVALID_CHARS, text, -1,
                out, (int)out_count) > 0;
@@ -465,10 +476,11 @@ static void update_target_summary(void)
     }
 
     wchar_t size_text[64];
-    if (!format_capacity_wide(
+    if (!format_gib_wide(
             target->size_bytes, size_text,
             sizeof(size_text) / sizeof(size_text[0])))
-        wcscpy_s(size_text, sizeof(size_text) / sizeof(size_text[0]), L"0 B");
+        wcscpy_s(size_text, sizeof(size_text) / sizeof(size_text[0]),
+                 L"0.00 GiB");
 
     wchar_t text[512];
     const wchar_t *label = target->infs_label[0] ?
@@ -713,7 +725,12 @@ static int query_volume_extents(const wchar_t *device_path,
         free(extents);
         if (error != ERROR_MORE_DATA)
             break;
-        capacity *= 2u;
+        size_t next_capacity = 0;
+        if (!infiltratr_size_multiply_checked(
+                capacity, 2u, &next_capacity) ||
+            next_capacity > UINT32_MAX)
+            break;
+        capacity = next_capacity;
     }
     CloseHandle(handle);
     return 0;
@@ -897,19 +914,23 @@ static int add_volume_target(HWND combo, const wchar_t *volume_name,
     }
 
     wchar_t display[448];
-    double gib = (double)candidate.size_bytes /
-                 (1024.0 * 1024.0 * 1024.0);
+    wchar_t size_text[64];
+    if (!format_gib_wide(
+            candidate.size_bytes, size_text,
+            sizeof(size_text) / sizeof(size_text[0])))
+        wcscpy_s(size_text, sizeof(size_text) / sizeof(size_text[0]),
+                 L"0.00 GiB");
     if (candidate.is_infiltrator) {
         _snwprintf_s(display, sizeof(display) / sizeof(display[0]), _TRUNCATE,
-                     L"[InfiltratorFS %u.%u]  %s  %.2f GiB  %s",
+                     L"[InfiltratorFS %u.%u]  %s  %s  %s",
                      (unsigned)candidate.format_major,
                      (unsigned)candidate.format_minor,
-                     location, gib,
+                     location, size_text,
                      candidate.infs_label[0] ? candidate.infs_label : L"InfiltratorFS");
     } else {
         _snwprintf_s(display, sizeof(display) / sizeof(display[0]), _TRUNCATE,
-                     L"%s  %s  %.2f GiB%s%s",
-                     location, windows_fs, gib,
+                     L"%s  %s  %s%s%s",
+                     location, windows_fs, size_text,
                      windows_label[0] ? L"  " : L"",
                      windows_label);
     }
@@ -983,7 +1004,12 @@ static DRIVE_LAYOUT_INFORMATION_EX *read_drive_layout(HANDLE disk)
         free(layout);
         if (error != ERROR_INSUFFICIENT_BUFFER && error != ERROR_MORE_DATA)
             return NULL;
-        capacity *= 2u;
+        size_t next_capacity = 0;
+        if (!infiltratr_size_multiply_checked(
+                capacity, 2u, &next_capacity) ||
+            next_capacity > UINT32_MAX)
+            return NULL;
+        capacity = next_capacity;
     }
     return NULL;
 }
@@ -1029,22 +1055,27 @@ static int add_physical_partition_target(HWND combo, DWORD disk_number,
         return 0;
 
     wchar_t display[448];
-    double gib = (double)size_bytes / (1024.0 * 1024.0 * 1024.0);
+    wchar_t size_text[64];
+    if (!format_gib_wide(
+            size_bytes, size_text,
+            sizeof(size_text) / sizeof(size_text[0])))
+        wcscpy_s(size_text, sizeof(size_text) / sizeof(size_text[0]),
+                 L"0.00 GiB");
     if (candidate.is_infiltrator) {
         _snwprintf_s(display, sizeof(display) / sizeof(display[0]), _TRUNCATE,
-                     L"[InfiltratorFS %u.%u]  Disk %lu partition %lu  %.2f GiB  %s",
+                     L"[InfiltratorFS %u.%u]  Disk %lu partition %lu  %s  %s",
                      (unsigned)candidate.format_major,
                      (unsigned)candidate.format_minor,
                      (unsigned long)disk_number,
                      (unsigned long)part->PartitionNumber,
-                     gib,
+                     size_text,
                      candidate.infs_label[0] ? candidate.infs_label : L"InfiltratorFS");
     } else {
         _snwprintf_s(display, sizeof(display) / sizeof(display[0]), _TRUNCATE,
-                     L"[RAW removable partition]  Disk %lu partition %lu  %.2f GiB",
+                     L"[RAW removable partition]  Disk %lu partition %lu  %s",
                      (unsigned long)disk_number,
                      (unsigned long)part->PartitionNumber,
-                     gib);
+                     size_text);
     }
     return add_combo_target(combo, &candidate, display);
 }
@@ -1144,16 +1175,20 @@ static void open_image_dialog(void)
     const wchar_t *base = wcsrchr(path, L'\\');
     base = base ? base + 1 : path;
     wchar_t display[512];
-    double gib = (double)candidate.size_bytes /
-                 (1024.0 * 1024.0 * 1024.0);
+    wchar_t size_text[64];
+    if (!format_gib_wide(
+            candidate.size_bytes, size_text,
+            sizeof(size_text) / sizeof(size_text[0])))
+        wcscpy_s(size_text, sizeof(size_text) / sizeof(size_text[0]),
+                 L"0.00 GiB");
     if (candidate.is_infiltrator) {
         _snwprintf_s(display, sizeof(display) / sizeof(display[0]), _TRUNCATE,
-                     L"[Image \u2022 InfiltratorFS %u.%u]  %s  %.2f GiB",
+                     L"[Image \u2022 InfiltratorFS %u.%u]  %s  %s",
                      (unsigned)candidate.format_major,
-                     (unsigned)candidate.format_minor, base, gib);
+                     (unsigned)candidate.format_minor, base, size_text);
     } else {
         _snwprintf_s(display, sizeof(display) / sizeof(display[0]), _TRUNCATE,
-                     L"[Image]  %s  %.2f GiB", base, gib);
+                     L"[Image]  %s  %s", base, size_text);
     }
 
     HWND list = GetDlgItem(g_main_window, IDC_TARGET);
@@ -1679,25 +1714,27 @@ static int open_selected_volume(int format_first)
 
     if (format_first) {
         wchar_t prompt[896];
+        wchar_t size_text[64];
+        if (!format_gib_wide(
+                target->size_bytes, size_text,
+                sizeof(size_text) / sizeof(size_text[0])))
+            wcscpy_s(size_text, sizeof(size_text) / sizeof(size_text[0]),
+                     L"0.00 GiB");
         if (target->is_image) {
             _snwprintf_s(prompt, sizeof(prompt) / sizeof(prompt[0]), _TRUNCATE,
-                         L"FORMAT THIS IMAGE AS INFILTRATORFS?\n\nFile: %s\nSize: %.2f GiB\n\nEverything currently in this image file will be destroyed.",
-                         target->device_path,
-                         (double)target->size_bytes /
-                         (1024.0 * 1024.0 * 1024.0));
+                         L"FORMAT THIS IMAGE AS INFILTRATORFS?\n\nFile: %s\nSize: %s\n\nEverything currently in this image file will be destroyed.",
+                         target->device_path, size_text);
         } else if (target->use_region) {
             _snwprintf_s(prompt, sizeof(prompt) / sizeof(prompt[0]), _TRUNCATE,
-                         L"FORMAT DISK %lu PARTITION %lu AS INFILTRATORFS?\n\nSize: %.2f GiB\n\nEverything currently in this partition will be destroyed. The raw storage view is bounded to this partition.",
+                         L"FORMAT DISK %lu PARTITION %lu AS INFILTRATORFS?\n\nSize: %s\n\nEverything currently in this partition will be destroyed. The raw storage view is bounded to this partition.",
                          (unsigned long)target->disk_number,
                          (unsigned long)target->partition_number,
-                         (double)target->size_bytes /
-                         (1024.0 * 1024.0 * 1024.0));
+                         size_text);
         } else {
             _snwprintf_s(prompt, sizeof(prompt) / sizeof(prompt[0]), _TRUNCATE,
-                         L"FORMAT THIS VOLUME AS INFILTRATORFS?\n\nLocation: %s\nSize: %.2f GiB\n\nEverything currently on this volume will be destroyed. Windows will be locked out of the selected volume before writing.",
+                         L"FORMAT THIS VOLUME AS INFILTRATORFS?\n\nLocation: %s\nSize: %s\n\nEverything currently on this volume will be destroyed. Windows will be locked out of the selected volume before writing.",
                          target->mount_point[0] ? target->mount_point : L"No drive letter",
-                         (double)target->size_bytes /
-                         (1024.0 * 1024.0 * 1024.0));
+                         size_text);
         }
         if (MessageBoxW(g_main_window, prompt, L"Confirm destructive format",
                         MB_YESNO | MB_DEFBUTTON2 | MB_ICONWARNING) != IDYES)
@@ -1907,12 +1944,23 @@ static void inspect_volume(void)
     uint64_t free_blocks = infs_le64_to_cpu(g_volume.sb.free_blocks);
     uint64_t used_blocks = total_blocks >= free_blocks ?
                            total_blocks - free_blocks : 0;
-    double total_gib =
-        (double)total_blocks * INFS_BLOCK_SIZE /
-        (1024.0 * 1024.0 * 1024.0);
-    double free_gib =
-        (double)free_blocks * INFS_BLOCK_SIZE /
-        (1024.0 * 1024.0 * 1024.0);
+    uint64_t total_bytes = 0;
+    uint64_t free_bytes = 0;
+    wchar_t total_size[64];
+    wchar_t free_size[64];
+    if (!infiltratr_u64_multiply_checked(
+            total_blocks, (uint64_t)INFS_BLOCK_SIZE, &total_bytes) ||
+        !infiltratr_u64_multiply_checked(
+            free_blocks, (uint64_t)INFS_BLOCK_SIZE, &free_bytes) ||
+        !format_gib_wide(
+            total_bytes, total_size,
+            sizeof(total_size) / sizeof(total_size[0])) ||
+        !format_gib_wide(
+            free_bytes, free_size,
+            sizeof(free_size) / sizeof(free_size[0]))) {
+        set_status_code(L"Render filesystem capacity", INFS_STATUS_OVERFLOW);
+        return;
+    }
 
     wchar_t message[1024];
     _snwprintf_s(message, sizeof(message) / sizeof(message[0]), _TRUNCATE,
@@ -1920,17 +1968,17 @@ static void inspect_volume(void)
                  L"Format: %u.%u\n"
                  L"Generation: %llu\n"
                  L"Block size: %u bytes\n"
-                 L"Total blocks: %llu (%.2f GiB)\n"
+                 L"Total blocks: %llu (%s)\n"
                  L"Used blocks: %llu\n"
-                 L"Free blocks: %llu (%.2f GiB)",
+                 L"Free blocks: %llu (%s)",
                  label,
                  (unsigned)infs_le16_to_cpu(g_volume.sb.format_major),
                  (unsigned)infs_le16_to_cpu(g_volume.sb.format_minor),
                  (unsigned long long)generation,
                  (unsigned)INFS_BLOCK_SIZE,
-                 (unsigned long long)total_blocks, total_gib,
+                 (unsigned long long)total_blocks, total_size,
                  (unsigned long long)used_blocks,
-                 (unsigned long long)free_blocks, free_gib);
+                 (unsigned long long)free_blocks, free_size);
     set_status(L"Filesystem inspection completed.");
     MessageBoxW(g_main_window, message, L"InfiltratorFS Inspection",
                 MB_OK | MB_ICONINFORMATION);
@@ -2010,7 +2058,16 @@ static void handle_drop(HDROP drop)
     int okay = 1;
     for (UINT i = 0; i < count; ++i) {
         UINT length = DragQueryFileW(drop, i, NULL, 0);
-        wchar_t *path = malloc(((size_t)length + 1u) * sizeof(wchar_t));
+        size_t characters = 0;
+        size_t bytes = 0;
+        if (!infiltratr_size_add_checked(
+                (size_t)length, 1u, &characters) ||
+            !infiltratr_size_multiply_checked(
+                characters, sizeof(wchar_t), &bytes)) {
+            okay = 0;
+            break;
+        }
+        wchar_t *path = malloc(bytes);
         if (!path) {
             okay = 0;
             break;

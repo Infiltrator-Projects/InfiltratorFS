@@ -111,13 +111,21 @@ static int command_map(struct infs_volume *vol, const char *path,
     for (uint32_t i = 0; i < count; ++i) {
         uint64_t l = infs_le64_to_cpu(ext[i].logical_block);
         uint32_t n = infs_le32_to_cpu(ext[i].block_count);
-        if (logical >= l && logical < l + n) {
+        uint64_t logical_end = 0;
+        if (!infiltratr_u64_add_checked(
+                l, (uint64_t)n, &logical_end))
+            return die_status("map metadata", INFS_STATUS_CORRUPT);
+        if (logical >= l && logical < logical_end) {
             if (infs_le32_to_cpu(ext[i].flags) == INFS_EXTENT_HOLE) {
                 puts("hole");
                 return 0;
             }
-            printf("%" PRIu64 "\n", infs_le64_to_cpu(ext[i].physical_block) +
-                   (logical - l));
+            uint64_t physical = 0;
+            if (!infiltratr_u64_add_checked(
+                    infs_le64_to_cpu(ext[i].physical_block),
+                    logical - l, &physical))
+                return die_status("map metadata", INFS_STATUS_CORRUPT);
+            printf("%" PRIu64 "\n", physical);
             return 0;
         }
     }

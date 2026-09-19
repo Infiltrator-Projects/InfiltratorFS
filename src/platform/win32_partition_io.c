@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #ifdef _WIN32
 #include "infilfs/win32_partition_io.h"
+#include "infiltratr/arithmetic.h"
 #include "infiltratr/core.h"
 
 #define WIN32_LEAN_AND_MEAN
@@ -267,7 +268,12 @@ static DRIVE_LAYOUT_INFORMATION_EX *read_drive_layout(HANDLE disk)
         free(layout);
         if (error != ERROR_INSUFFICIENT_BUFFER && error != ERROR_MORE_DATA)
             return NULL;
-        capacity *= 2u;
+        size_t next_capacity = 0;
+        if (!infiltratr_size_multiply_checked(
+                capacity, 2u, &next_capacity) ||
+            next_capacity > UINT32_MAX)
+            return NULL;
+        capacity = next_capacity;
     }
     return NULL;
 }

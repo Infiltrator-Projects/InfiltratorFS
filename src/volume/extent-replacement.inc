@@ -8,8 +8,10 @@ static int file_replace_range(struct infs_volume *vol,
         (struct infs_object_header_disk *)object;
     struct infs_file_payload_disk *p =
         (struct infs_file_payload_disk *)(object + sizeof(*hdr));
-    uint64_t replace_end = logical_start + block_count;
-    if (replace_end < logical_start || block_count > UINT32_MAX ||
+    uint64_t replace_end = 0;
+    if (!infiltratr_u64_add_checked(
+            logical_start, block_count, &replace_end) ||
+        block_count > UINT32_MAX ||
         !extent_flags_valid((uint32_t)block_count, new_physical, new_flags))
         return INFS_STATUS_INVALID_ARGUMENT;
 
@@ -45,7 +47,11 @@ static int file_replace_range(struct infs_volume *vol,
         uint64_t phys = infs_le64_to_cpu(ext[i].physical_block);
         uint32_t n = infs_le32_to_cpu(ext[i].block_count);
         uint32_t flags = infs_le32_to_cpu(ext[i].flags);
-        uint64_t e = l + n;
+        uint64_t e = 0;
+        if (!infiltratr_u64_add_checked(l, (uint64_t)n, &e)) {
+            status = INFS_STATUS_CORRUPT;
+            goto out;
+        }
         if (e <= logical_start || l >= replace_end) {
             status = extent_emit_capacity(rebuilt, &new_count, capacity,
                                           l, phys, n, flags);

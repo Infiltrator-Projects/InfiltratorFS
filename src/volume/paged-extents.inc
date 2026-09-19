@@ -36,9 +36,12 @@ static uint32_t extent_pointer_tree_levels(uint32_t page_count)
     if (!page_count)
         return 0;
     while (capacity < page_count && levels < INFS_EXTENT_INDEX_MAX_LEVELS) {
-        if (capacity > UINT64_MAX / INFS_EXTENT_INDEX_POINTERS_PER_PAGE)
+        uint64_t next_capacity = 0;
+        if (!infiltratr_u64_multiply_checked(
+                capacity, INFS_EXTENT_INDEX_POINTERS_PER_PAGE,
+                &next_capacity))
             return 0;
-        capacity *= INFS_EXTENT_INDEX_POINTERS_PER_PAGE;
+        capacity = next_capacity;
         ++levels;
     }
     return capacity >= page_count ? levels : 0;
@@ -97,9 +100,11 @@ static int extent_pointer_tree_resolve(
         infs_status status;
 
         for (uint32_t i = 0; i < level; ++i) {
-            if (span > UINT64_MAX / INFS_EXTENT_INDEX_POINTERS_PER_PAGE)
+            uint64_t next_span = 0;
+            if (!infiltratr_u64_multiply_checked(
+                    span, INFS_EXTENT_INDEX_POINTERS_PER_PAGE, &next_span))
                 return INFS_STATUS_CORRUPT;
-            span *= INFS_EXTENT_INDEX_POINTERS_PER_PAGE;
+            span = next_span;
         }
         status = read_block(vol, node, page_data);
         if (status != INFS_STATUS_OK)
@@ -323,12 +328,15 @@ static int extent_page_validate(struct infs_volume *vol,
         uint64_t physical = infs_le64_to_cpu(ext[i].physical_block);
         uint32_t blocks = infs_le32_to_cpu(ext[i].block_count);
         uint32_t flags = infs_le32_to_cpu(ext[i].flags);
+        uint64_t logical_end = 0;
         uint64_t physical_blocks;
-        if (!blocks || logical != next || logical > UINT64_MAX - blocks ||
+        if (!blocks || logical != next ||
+            !infiltratr_u64_add_checked(
+                logical, (uint64_t)blocks, &logical_end) ||
             !extent_flags_valid(blocks, physical, flags))
             return INFS_STATUS_CORRUPT;
         if (extent_kind(flags) == INFS_EXTENT_HOLE) {
-            next += blocks;
+            next = logical_end;
             continue;
         }
         if (extent_is_compressed(flags) &&
@@ -339,7 +347,7 @@ static int extent_page_validate(struct infs_volume *vol,
         if (!physical_blocks || physical >= total ||
             physical_blocks > total - physical)
             return INFS_STATUS_CORRUPT;
-        next += blocks;
+        next = logical_end;
     }
     if (entries_out)
         *entries_out = ext;
@@ -814,14 +822,26 @@ static int paged_extent_replace_rebuild(
                                                &old, &old_count);
     if (status != INFS_STATUS_OK)
         return status;
-    uint32_t capacity = old_count + 3u;
+    uint64_t capacity64 = 0;
+    if (!infiltratr_u64_add_checked(
+            (uint64_t)old_count, UINT64_C(3), &capacity64) ||
+        capacity64 > UINT32_MAX) {
+        free(old);
+        return INFS_STATUS_FILE_TOO_LARGE;
+    }
+    uint32_t capacity = (uint32_t)capacity64;
     struct infs_extent_disk *rebuilt = calloc(capacity, sizeof(*rebuilt));
     if (!rebuilt) {
         free(old);
         return INFS_STATUS_NO_MEMORY;
     }
     uint32_t new_count = 0;
-    uint64_t replace_end = logical_start + block_count;
+    uint64_t replace_end = 0;
+    if (!infiltratr_u64_add_checked(
+            logical_start, block_count, &replace_end)) {
+        status = INFS_STATUS_INVALID_ARGUMENT;
+        goto out;
+    }
     int emitted = 0;
     struct infs_object_header_disk *hdr =
         (struct infs_object_header_disk *)object;
@@ -830,7 +850,11 @@ static int paged_extent_replace_rebuild(
         uint64_t phys = infs_le64_to_cpu(old[i].physical_block);
         uint32_t n = infs_le32_to_cpu(old[i].block_count);
         uint32_t flags = infs_le32_to_cpu(old[i].flags);
-        uint64_t e = l + n;
+        uint64_t e = 0;
+        if (!infiltratr_u64_add_checked(l, (uint64_t)n, &e)) {
+            status = INFS_STATUS_CORRUPT;
+            goto out;
+        }
         if (e <= logical_start || l >= replace_end) {
             status = extent_emit_capacity(rebuilt, &new_count, capacity,
                                           l, phys, n, flags);
@@ -906,7 +930,10 @@ static int paged_extent_replace(struct infs_volume *vol,
             vol, object, file, logical_start, block_count,
             new_physical, new_flags);
 
-    uint64_t replace_end = logical_start + block_count;
+    uint64_t replace_end = 0;
+    if (!infiltratr_u64_add_checked(
+            logical_start, block_count, &replace_end))
+        return INFS_STATUS_INVALID_ARGUMENT;
     uint8_t page_data[INFS_BLOCK_SIZE];
     struct infs_extent_disk *old;
     uint32_t old_count, page_index;
@@ -916,8 +943,11 @@ static int paged_extent_replace(struct infs_volume *vol,
     if (status != INFS_STATUS_OK)
         return status;
     struct infs_extent_disk *last = &old[old_count - 1u];
-    uint64_t page_end = infs_le64_to_cpu(last->logical_block) +
-        infs_le32_to_cpu(last->block_count);
+    uint64_t page_end = 0;
+    if (!infiltratr_u64_add_checked(
+            infs_le64_to_cpu(last->logical_block),
+            (uint64_t)infs_le32_to_cpu(last->block_count), &page_end))
+        return INFS_STATUS_CORRUPT;
     if (replace_end > page_end)
         return paged_extent_replace_rebuild(
             vol, object, file, logical_start, block_count,
@@ -933,7 +963,9 @@ static int paged_extent_replace(struct infs_volume *vol,
         uint64_t phys = infs_le64_to_cpu(old[i].physical_block);
         uint32_t n = infs_le32_to_cpu(old[i].block_count);
         uint32_t flags = infs_le32_to_cpu(old[i].flags);
-        uint64_t e = l + n;
+        uint64_t e = 0;
+        if (!infiltratr_u64_add_checked(l, (uint64_t)n, &e))
+            return INFS_STATUS_CORRUPT;
         if (e <= logical_start || l >= replace_end) {
             status = extent_emit_capacity(
                 rebuilt, &new_count, INFS_EXTENTS_PER_PAGE + 2u,
@@ -1046,8 +1078,13 @@ static int paged_extent_ensure(struct infs_volume *vol,
     if (status != INFS_STATUS_OK)
         return status;
     struct infs_extent_disk *last = &ext[count - 1u];
-    uint64_t have = infs_le64_to_cpu(last->logical_block) +
-        infs_le32_to_cpu(last->block_count);
+    uint64_t have = 0;
+    if (!infiltratr_u64_add_checked(
+            infs_le64_to_cpu(last->logical_block),
+            (uint64_t)infs_le32_to_cpu(last->block_count), &have)) {
+        free(ext);
+        return INFS_STATUS_CORRUPT;
+    }
     if (needed <= have) {
         free(ext);
         return INFS_STATUS_OK;
@@ -1117,7 +1154,11 @@ static int paged_extent_truncate(struct infs_volume *vol,
         uint64_t phys = infs_le64_to_cpu(old[i].physical_block);
         uint32_t n = infs_le32_to_cpu(old[i].block_count);
         uint32_t flags = infs_le32_to_cpu(old[i].flags);
-        uint64_t e = l + n;
+        uint64_t e = 0;
+        if (!infiltratr_u64_add_checked(l, (uint64_t)n, &e)) {
+            status = INFS_STATUS_CORRUPT;
+            goto out;
+        }
         if (l >= target_blocks) {
             if (extent_kind(flags) == INFS_EXTENT_NORMAL) {
                 status = file_free_unshared_run(

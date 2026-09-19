@@ -14,6 +14,8 @@ This file records user-visible, compatibility, architecture and validation chang
 - Preserve crash-safe checkpoint ordering and fail-closed write poisoning on indeterminate durability failures.
 - Advance userspace to Infiltratr Common 1.19.8 and consume its canonical typography, design metrics, font provenance, project identity, formatting and POSIX path contracts where they fit without moving filesystem semantics into Common.
 - Fix the native Manager's failed-command capture leak exposed by ASan/LeakSanitizer.
+- Forensically audit Common 1.19.8 call sites: use checked shared arithmetic for extent/allocation and Win32 growth paths, and use the generic Common scaler for Windows capacity text while preserving the established two-decimal GiB presentation.
+- Add a Common-usage policy gate so these call-site choices cannot silently drift back to local duplicate arithmetic or capacity scaling.
 
 ## 0.18.62 — 2026-09-19
 

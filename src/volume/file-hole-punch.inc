@@ -166,7 +166,8 @@ static int punch_hole_tx(struct infs_volume *vol, const char *path,
     status = write_object(vol, lk.block, object);
     if (status != INFS_STATUS_OK)
         return status;
-    return finish_mutation(vol, length + INFS_BLOCK_SIZE);
+    return finish_mutation(vol, infiltratr_u64_add_saturating(
+        length, (uint64_t)INFS_BLOCK_SIZE));
 }
 
 infs_status infs_punch_hole(struct infs_volume *vol, const char *path,

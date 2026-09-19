@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #ifdef _WIN32
 #include "infilfs/win32_io.h"
+#include "infiltratr/arithmetic.h"
 #include "infiltratr/core.h"
 
 #define WIN32_LEAN_AND_MEAN
@@ -240,9 +241,12 @@ static infs_status volume_size_from_extents(HANDLE handle,
         free(extents);
         if (error != ERROR_MORE_DATA)
             return status_from_win32(error);
-        if (capacity > (size_t)UINT32_MAX / 2u)
+        size_t next_capacity = 0;
+        if (!infiltratr_size_multiply_checked(
+                capacity, 2u, &next_capacity) ||
+            next_capacity > (size_t)UINT32_MAX)
             return INFS_STATUS_OVERFLOW;
-        capacity *= 2u;
+        capacity = next_capacity;
     }
     return INFS_STATUS_NOT_SUPPORTED;
 }
