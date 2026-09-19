@@ -18,6 +18,7 @@ This file records user-visible, compatibility, architecture and validation chang
 - Add a Common-usage policy gate so these call-site choices cannot silently drift back to local duplicate arithmetic or capacity scaling.
 - Preserve the established fixed two-decimal MiB defrag output and fixed two-decimal GiB compression metrics through Common's generic scaler; do not substitute the auto-scaling disk-capacity helper where the command-line unit itself is part of the interface.
 - Complete a second Common 1.19.8 call-site pass across compression, attribute accounting and scalable directory metadata so persistent range/offset/size arithmetic consistently uses the shared checked primitives without changing filesystem semantics or user-visible units.
+- Route mkfs block I/O through Common's uint64 exact positioned-I/O contract without pre-narrowing offsets to off_t, and check block-to-byte/bitmap-coverage multiplication before issuing I/O.
 
 ## 0.18.62 — 2026-09-19
 

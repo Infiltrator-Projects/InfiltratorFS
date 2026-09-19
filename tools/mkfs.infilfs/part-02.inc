@@ -195,9 +195,8 @@ int main(int argc, char **argv)
 
         if (!identified) {
             for (unsigned i = 1; i < INFS_CHECKPOINT_COUNT; ++i) {
-                off_t off =
-                    (off_t)(checkpoints[i] * INFS_BLOCK_SIZE);
-                if (infs_pread_full(fd, raw, sizeof(raw), off) != 0 ||
+                if (pread_block_full_fd(
+                        fd, checkpoints[i], raw, sizeof(raw)) != 0 ||
                     infs_decode_superblock(raw, &existing) != 0 ||
                     infs_le64_to_cpu(existing.total_blocks) != total_blocks)
                     continue;
@@ -221,9 +220,8 @@ int main(int argc, char **argv)
 
         memset(raw, 0, sizeof(raw));
         for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i) {
-            off_t off =
-                (off_t)(wipe_checkpoints[i] * INFS_BLOCK_SIZE);
-            if (infs_pwrite_full(fd, raw, sizeof(raw), off) != 0) {
+            if (pwrite_block_full_fd(
+                    fd, wipe_checkpoints[i], raw, sizeof(raw)) != 0) {
                 perror("wipe checkpoint");
                 close(fd);
                 return 1;
@@ -257,14 +255,18 @@ int main(int argc, char **argv)
         close(fd);
         return 1;
     }
-    const uint64_t bitmap_bytes = rounded_bitmap_bits / UINT64_C(8);
     const uint64_t bitmap_blocks =
         rounded_bitmap_bytes / INFS_BLOCK_SIZE;
+    uint64_t bitmap_coverage_blocks = 0;
     size_t bitmap_alloc = 0;
     if (!bitmap_blocks || bitmap_blocks > SIZE_MAX ||
         !infiltratr_size_multiply_checked(
             (size_t)bitmap_blocks, (size_t)INFS_BLOCK_SIZE,
-            &bitmap_alloc)) {
+            &bitmap_alloc) ||
+        !infiltratr_u64_multiply_checked(
+            bitmap_blocks,
+            (uint64_t)INFS_BLOCK_SIZE * UINT64_C(8),
+            &bitmap_coverage_blocks)) {
         fprintf(stderr, "Target allocation bitmap is too large for this build.\n");
         close(fd);
         return 1;

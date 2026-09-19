@@ -86,6 +86,35 @@ static int bitmap_get(const uint8_t *bitmap, uint64_t block)
     return (bitmap[block >> 3] >> (block & 7u)) & 1u;
 }
 
+static int block_byte_offset(uint64_t block, uint64_t *offset)
+{
+    if (!offset ||
+        !infiltratr_u64_multiply_checked(
+            block, (uint64_t)INFS_BLOCK_SIZE, offset)) {
+        errno = EOVERFLOW;
+        return -1;
+    }
+    return 0;
+}
+
+static int pread_block_full_fd(int fd, uint64_t block,
+                               void *buffer, size_t size)
+{
+    uint64_t offset = 0;
+    if (block_byte_offset(block, &offset) != 0)
+        return -1;
+    return infs_pread_full(fd, buffer, size, offset);
+}
+
+static int pwrite_block_full_fd(int fd, uint64_t block,
+                                const void *buffer, size_t size)
+{
+    uint64_t offset = 0;
+    if (block_byte_offset(block, &offset) != 0)
+        return -1;
+    return infs_pwrite_full(fd, buffer, size, offset);
+}
+
 static int write_allocation_page_fd(
     int fd, uint64_t physical_block, const uint8_t magic[8],
     uint64_t logical_index, uint32_t level, uint32_t entries,
@@ -103,8 +132,8 @@ static int write_allocation_page_fd(
         memcpy(page + 1, payload, bytes);
     if (infs_allocation_page_finalize(block) != INFS_STATUS_OK)
         return -1;
-    return infs_pwrite_full(fd, block, sizeof(block),
-                            (off_t)(physical_block * INFS_BLOCK_SIZE));
+    return pwrite_block_full_fd(
+        fd, physical_block, block, sizeof(block));
 }
 
 static int id_is_zero_local(const uint8_t id[16])

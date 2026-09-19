@@ -89,8 +89,8 @@
     index_page->entry_count = infs_cpu_to_le32(1);
     index_page->bytes_used = infs_cpu_to_le32(sizeof(*ie));
     if (infs_metadata_page_finalize(block) != INFS_STATUS_OK ||
-        infs_pwrite_full(fd, block, sizeof(block),
-                         (off_t)(index_page_block * INFS_BLOCK_SIZE)) != 0) {
+        pwrite_block_full_fd(
+            fd, index_page_block, block, sizeof(block)) != 0) {
         perror("write object index page");
         free(bitmap);
         close(fd);
@@ -104,8 +104,8 @@
         close(fd);
         return 1;
     }
-    if (infs_pwrite_full(fd, block, sizeof(block),
-                         (off_t)(index_block * INFS_BLOCK_SIZE)) != 0) {
+    if (pwrite_block_full_fd(
+            fd, index_block, block, sizeof(block)) != 0) {
         perror("write object index");
         free(bitmap);
         close(fd);
@@ -126,8 +126,8 @@
             block, root_id, 1, 0755u,
             root_uid, root_gid, &root_time) !=
             INFS_STATUS_OK ||
-        infs_pwrite_full(fd, block, sizeof(block),
-                         (off_t)(root_block * INFS_BLOCK_SIZE)) != 0) {
+        pwrite_block_full_fd(
+            fd, root_block, block, sizeof(block)) != 0) {
         perror("write root directory");
         free(bitmap);
         close(fd);
@@ -149,8 +149,8 @@
         return 1;
     }
     for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i) {
-        off_t off = (off_t)(checkpoints[i] * INFS_BLOCK_SIZE);
-        if (infs_pwrite_full(fd, block, sizeof(block), off) != 0) {
+        if (pwrite_block_full_fd(
+                fd, checkpoints[i], block, sizeof(block)) != 0) {
             perror("write checkpoint");
             free(bitmap);
             close(fd);

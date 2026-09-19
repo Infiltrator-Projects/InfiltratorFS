@@ -9,7 +9,7 @@
     bitmap_set(bitmap, root_block);
     bitmap_set(bitmap, index_page_block);
 
-    for (uint64_t b = total_blocks; b < bitmap_blocks * INFS_BLOCK_SIZE * 8ull; ++b)
+    for (uint64_t b = total_blocks; b < bitmap_coverage_blocks; ++b)
         bitmap_set(bitmap, b);
 
     uint64_t used_blocks = 0;
@@ -65,8 +65,8 @@
      * the target is deliberately unmountable rather than half-formatted. */
     uint8_t block[INFS_BLOCK_SIZE] = {0};
     for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i) {
-        off_t off = (off_t)(checkpoints[i] * INFS_BLOCK_SIZE);
-        if (infs_pwrite_full(fd, block, sizeof(block), off) != 0) {
+        if (pwrite_block_full_fd(
+                fd, checkpoints[i], block, sizeof(block)) != 0) {
             perror("invalidate checkpoint");
             free(bitmap);
             close(fd);
