@@ -178,7 +178,7 @@ bool infilfs_extent_is_compressed(u32 flags)
         infilfs_extent_codec(flags) != INFILFS_COMPRESSION_NONE;
 }
 
-static u64 infilfs_extent_physical_blocks(u32 logical_blocks, u32 flags)
+u64 infilfs_extent_physical_blocks(u32 logical_blocks, u32 flags)
 {
     u32 stored;
 
