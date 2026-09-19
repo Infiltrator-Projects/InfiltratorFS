@@ -1435,6 +1435,182 @@ static int infilfs_ns_shared_range_append(
     return 0;
 }
 
+
+static int infilfs_ns_shared_range_compare(const void *left, const void *right)
+{
+    const struct infilfs_native_shared_range *a = left;
+    const struct infilfs_native_shared_range *b = right;
+
+    if (a->start < b->start)
+        return -1;
+    if (a->start > b->start)
+        return 1;
+    if (a->end < b->end)
+        return -1;
+    if (a->end > b->end)
+        return 1;
+    return 0;
+}
+
+/*
+ * Final eviction removes exactly one live owner. Keep the shared-range
+ * accelerator exact by decrementing reference multiplicity in one merge sweep
+ * instead of invalidating it and forcing the next unlink to rescan every file.
+ */
+static int infilfs_ns_shared_range_drop_owner(
+    struct infilfs_native_pending *pending, struct inode *inode)
+{
+    struct infilfs_native_shared_range *owned = NULL;
+    struct infilfs_native_shared_range *updated = NULL;
+    struct infilfs_extent_disk *extents = NULL;
+    u8 *object = NULL;
+    size_t updated_count = 0;
+    size_t updated_capacity = 0;
+    size_t owned_count = 0;
+    size_t owner_index = 0;
+    u32 extent_count = 0;
+    u64 old_blocks = 0;
+    bool was_inline = false;
+    u32 i;
+    int ret = 0;
+
+    if (!pending->shared_range_index_valid || !pending->shared_range_count)
+        return 0;
+
+    object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+    if (!object)
+        return -ENOMEM;
+    ret = infilfs_native_collect_extents(
+        pending, inode, object, &extents, &extent_count,
+        &old_blocks, &was_inline);
+    if (ret)
+        goto out;
+    (void)old_blocks;
+    (void)was_inline;
+
+    if (extent_count) {
+        owned = kvmalloc_array(extent_count, sizeof(*owned), GFP_NOFS);
+        if (!owned) {
+            ret = -ENOMEM;
+            goto out;
+        }
+    }
+
+    for (i = 0; i < extent_count; ++i) {
+        u32 flags = le32_to_cpu(extents[i].flags);
+        u32 logical_blocks = le32_to_cpu(extents[i].block_count);
+        u64 start;
+        u64 blocks;
+
+        if (infilfs_extent_kind(flags) != INFILFS_EXTENT_NORMAL)
+            continue;
+        start = le64_to_cpu(extents[i].physical_block);
+        blocks = infilfs_extent_physical_blocks(logical_blocks, flags);
+        if (!start || !blocks || start > U64_MAX - blocks) {
+            ret = -EFSCORRUPTED;
+            goto out;
+        }
+        owned[owned_count].start = start;
+        owned[owned_count].end = start + blocks;
+        owned[owned_count].refs = 1u;
+        owned_count++;
+    }
+
+    if (!owned_count)
+        goto out;
+
+    sort(owned, owned_count, sizeof(*owned),
+         infilfs_ns_shared_range_compare, NULL);
+
+    /* One file must never count twice for overlapping physical ranges. */
+    {
+        size_t write = 0;
+
+        for (i = 0; i < owned_count; ++i) {
+            if (write && owned[i].start <= owned[write - 1u].end) {
+                if (owned[i].end > owned[write - 1u].end)
+                    owned[write - 1u].end = owned[i].end;
+                continue;
+            }
+            owned[write++] = owned[i];
+        }
+        owned_count = write;
+    }
+
+    for (i = 0; i < pending->shared_range_count; ++i) {
+        const struct infilfs_native_shared_range *shared =
+            &pending->shared_ranges[i];
+        size_t k;
+        u64 cursor;
+
+        if (shared->start >= shared->end || shared->refs < 2u) {
+            ret = -EFSCORRUPTED;
+            goto out;
+        }
+        cursor = shared->start;
+        while (owner_index < owned_count &&
+               owned[owner_index].end <= cursor)
+            owner_index++;
+
+        k = owner_index;
+        while (k < owned_count && owned[k].start < shared->end) {
+            u64 overlap_end;
+
+            if (owned[k].end <= cursor) {
+                k++;
+                continue;
+            }
+            if (owned[k].start > cursor) {
+                u64 gap_end = min_t(u64, owned[k].start, shared->end);
+
+                ret = infilfs_ns_shared_range_append(
+                    &updated, &updated_count, &updated_capacity,
+                    cursor, gap_end, shared->refs);
+                if (ret)
+                    goto out;
+                cursor = gap_end;
+                if (cursor >= shared->end)
+                    break;
+            }
+
+            overlap_end = min_t(u64, owned[k].end, shared->end);
+            if (overlap_end > cursor) {
+                if (shared->refs > 2u) {
+                    ret = infilfs_ns_shared_range_append(
+                        &updated, &updated_count, &updated_capacity,
+                        cursor, overlap_end, shared->refs - 1u);
+                    if (ret)
+                        goto out;
+                }
+                cursor = overlap_end;
+            }
+            if (owned[k].end <= cursor)
+                k++;
+            else
+                break;
+        }
+        if (cursor < shared->end) {
+            ret = infilfs_ns_shared_range_append(
+                &updated, &updated_count, &updated_capacity,
+                cursor, shared->end, shared->refs);
+            if (ret)
+                goto out;
+        }
+        owner_index = k;
+    }
+
+    kvfree(pending->shared_ranges);
+    pending->shared_ranges = updated;
+    pending->shared_range_count = updated_count;
+    updated = NULL;
+out:
+    kvfree(updated);
+    kvfree(owned);
+    kvfree(extents);
+    kfree(object);
+    return ret;
+}
+
 static int infilfs_ns_shared_range_index_build(
     struct infilfs_native_pending *pending)
 {
