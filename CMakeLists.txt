@@ -7,12 +7,12 @@ set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
-set(INFILTRATR_COMMON_REQUIRED_VERSION "1.19.6")
+set(INFILTRATR_COMMON_REQUIRED_VERSION "1.19.8")
 set(INFILTRATR_COMMON_REQUIRED_COMMIT
-    "a0e26896cc2a5674a138b29f009a7b30f0d636c6")
+    "3bfcb6f76ca44ac33bc2fee54fb114caa0eca5f9")
 
 # InfiltratorFS consumes the same Common contract as the other Infiltrator
-# projects. Prefer a parent-provided/installed 1.19.6 package, then the pinned
+# projects. Prefer a parent-provided/installed 1.19.8 package, then the pinned
 # submodule. A source checkout without initialised submodules still remains
 # buildable by fetching the exact immutable Common commit.
 if(NOT TARGET InfiltratrCommon::Portable)
@@ -70,6 +70,25 @@ if(NOT TARGET InfiltratrCommon::Portable OR
         "Infiltratr Common ${INFILTRATR_COMMON_REQUIRED_VERSION} is required")
 endif()
 
+# Common 1.19.8 owns the canonical MB Corpo asset provenance. Installed
+# packages import this contract through InfiltratrCommonConfig.cmake; vendored
+# and FetchContent builds include the same module directly from the exact
+# pinned Common source.
+if(NOT DEFINED INFILTRATR_MB_CORPO_ARCHIVE_SHA256)
+    if(EXISTS
+       "${CMAKE_CURRENT_SOURCE_DIR}/src/infiltratr-common/cmake/InfiltratrTypographyAssets.cmake")
+        include(
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/infiltratr-common/cmake/InfiltratrTypographyAssets.cmake")
+    elseif(DEFINED infiltratr_common_SOURCE_DIR AND EXISTS
+           "${infiltratr_common_SOURCE_DIR}/cmake/InfiltratrTypographyAssets.cmake")
+        include(
+            "${infiltratr_common_SOURCE_DIR}/cmake/InfiltratrTypographyAssets.cmake")
+    else()
+        message(FATAL_ERROR
+            "Infiltratr Common typography asset contract is unavailable")
+    endif()
+endif()
+
 # LZ4 codec identifier 1 remains a retained, non-default Format 0.18
 # interoperability representation. Pin it so every userspace adapter
 # decodes the same byte stream; automatic writes continue to use IAC1.
@@ -91,7 +110,7 @@ FetchContent_MakeAvailable(infilfs_lz4)
 set(INFILFS_FONT_ARCHIVE
     "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/mb-corpo-fonts.tar.xz")
 set(INFILFS_FONT_ARCHIVE_SHA256
-    "bdb6063f838a7fab22b4d6b412170640c69511df53aa3dfa9a4ea8431c9d8274")
+    "${INFILTRATR_MB_CORPO_ARCHIVE_SHA256}")
 if(NOT EXISTS "${INFILFS_FONT_ARCHIVE}")
     message(FATAL_ERROR "Required InfiltratorFS MB Corpo font archive is missing")
 endif()
@@ -106,11 +125,11 @@ file(MAKE_DIRECTORY "${INFILFS_FONT_DIR}")
 file(ARCHIVE_EXTRACT INPUT "${INFILFS_FONT_ARCHIVE}"
                      DESTINATION "${INFILFS_FONT_DIR}")
 set(INFILFS_FONT_A_COND_REGULAR
-    "${INFILFS_FONT_DIR}/mb_corpo_a_cond_regular.ttf")
+    "${INFILFS_FONT_DIR}/${INFILTRATR_MB_CORPO_BRAND_REGULAR_FILE}")
 set(INFILFS_FONT_S_BOLD
-    "${INFILFS_FONT_DIR}/mb_corpo_s_bold.ttf")
+    "${INFILFS_FONT_DIR}/${INFILTRATR_MB_CORPO_UI_BOLD_FILE}")
 set(INFILFS_FONT_S_REGULAR
-    "${INFILFS_FONT_DIR}/mb_corpo_s_regular.ttf")
+    "${INFILFS_FONT_DIR}/${INFILTRATR_MB_CORPO_UI_REGULAR_FILE}")
 set(INFILFS_FONT_FILES
     "${INFILFS_FONT_A_COND_REGULAR}"
     "${INFILFS_FONT_S_BOLD}"
@@ -129,13 +148,13 @@ endfunction()
 
 infilfs_verify_font(
     "${INFILFS_FONT_A_COND_REGULAR}"
-    "c8bcd7e1a7d71169b38491d9b7c1ffe7ba7b46e888f0c1219931343a47bc0e05")
+    "${INFILTRATR_MB_CORPO_BRAND_REGULAR_SHA256}")
 infilfs_verify_font(
     "${INFILFS_FONT_S_BOLD}"
-    "d37ea986e2344d83390f94f170e6272b56efd00bfec808afe8314c4ca45d43b4")
+    "${INFILTRATR_MB_CORPO_UI_BOLD_SHA256}")
 infilfs_verify_font(
     "${INFILFS_FONT_S_REGULAR}"
-    "94ede6629443c03d4362dcef425fb3ff520be5d654370021a34e81286804465c")
+    "${INFILTRATR_MB_CORPO_UI_REGULAR_SHA256}")
 
 function(infilfs_enable_warnings target)
     if(MSVC)

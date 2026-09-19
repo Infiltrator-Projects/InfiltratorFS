@@ -2,6 +2,7 @@
 #define _GNU_SOURCE
 #include <gtk/gtk.h>
 
+#include "infiltratr/core.h"
 #include "infiltratr/design.h"
 #include "infiltratr/format.h"
 #include "infiltratr/posix.h"
@@ -30,7 +31,26 @@
 #define TOOL_INSPECT "/usr/bin/infilfs-inspect"
 #define TOOL_FSCK "/usr/sbin/fsck.infiltratorfs"
 #define TOOL_FORENSIC "/usr/bin/infilfs-forensic"
-#define ACCENT_HEX "#00adef"
+
+static const InfiltratrProjectInfo manager_project_info = {
+    .struct_size = sizeof(InfiltratrProjectInfo),
+    .abi_version = INFILTRATR_PROJECT_INFO_ABI,
+    .program_name = APP_NAME,
+    .executable_name = "infiltratorfs-manager",
+    .application_id = APP_ID,
+    .version = INFILFS_IMPLEMENTATION_VERSION,
+    .source_id = "Infiltrator-Projects/InfiltratorFS",
+    .build_profile = "native",
+    .author = "Shannon Smith",
+    .website = "https://github.com/Infiltrator-Projects/InfiltratorFS",
+    .license_id = "GPL-3.0-or-later",
+    .comments =
+        "INFILTRATORFS · NATIVE FILESYSTEM\n\n"
+        "Native Linux management for InfiltratorFS volumes. Uses the native "
+        "VFS/DKMS driver; FUSE is not the product path.",
+    .icon_name = "drive-harddisk",
+    .copyright_text = "Copyright © 2016–2026 Shannon Smith",
+};
 
 typedef struct Target {
     char *path;
@@ -207,6 +227,10 @@ static gboolean command_success(const char *const argv[], char **output)
     GError *error = NULL;
     gboolean okay = g_spawn_check_wait_status(status, &error);
     g_clear_error(&error);
+    if (!okay && output && *output) {
+        g_free(*output);
+        *output = NULL;
+    }
     return okay;
 }
 
@@ -214,9 +238,9 @@ static char *canonical_path(const char *path)
 {
     if (!path || !*path)
         return g_strdup("");
-    char *resolved = realpath(path, NULL);
-    if (resolved)
-        return resolved;
+    char resolved[PATH_MAX];
+    if (infiltratr_realpath_copy(path, resolved, sizeof(resolved)))
+        return g_strdup(resolved);
     return g_strdup(path);
 }
 
@@ -540,16 +564,25 @@ static void rgb_text(uint32_t rgb, char out[8])
     g_snprintf(out, 8, "#%06x", (unsigned)(rgb & 0xffffffu));
 }
 
+static void css_replace_u32(GString *css, const char *token, uint32_t value)
+{
+    char number[16];
+    g_snprintf(number, sizeof(number), "%u", (unsigned)value);
+    (void)g_string_replace(css, token, number, 0);
+}
+
 static void manager_apply_theme(Manager *manager)
 {
     const InfiltratrThemePalette *palette = infiltratr_theme_resolve(
         manager->theme_mode, system_prefers_dark());
-    if (!palette)
+    const InfiltratrDesignMetrics *metrics = infiltratr_design_metrics();
+    const InfiltratrTypography *typography = infiltratr_typography();
+    if (!palette || !metrics || !typography)
         return;
     char background[8], panel[8], card[8], surface[8], input[8], border[8];
     char text[8], title[8], muted[8], subtle[8], button_bg[8], button_fg[8];
     char select_bg[8], select_fg[8], neutral[8], fault[8], card_hover[8];
-    char surface_hover[8];
+    char surface_hover[8], accent[8];
     rgb_text(palette->background_rgb, background);
     rgb_text(palette->panel_rgb, panel);
     rgb_text(palette->card_rgb, card);
@@ -568,74 +601,85 @@ static void manager_apply_theme(Manager *manager)
     rgb_text(palette->fault_rgb, fault);
     rgb_text(palette->card_hover_rgb, card_hover);
     rgb_text(palette->surface_hover_rgb, surface_hover);
+    rgb_text(palette->neutral_accent_rgb, accent);
 
     GString *css = g_string_new(NULL);
     g_string_append_printf(css,
-        "* { font-family: 'MB Corpo S Title WEB'; font-weight: 400; }\n"
+        "* { font-family: '@UI_FONT@'; font-weight: @UI_REGULAR@; }\n"
         "window, dialog, messagedialog, filechooser { background: %s; color: %s; }\n"
         "headerbar { min-height: 44px; background: %s; color: %s; border-bottom: 1px solid %s; }\n"
-        "headerbar .title, headerbar label.title { font-family: 'MB Corpo A Title Cond WEB'; font-size: 18px; font-weight: 700; color: %s; }\n"
-        "headerbar .subtitle, headerbar label.subtitle { color: %s; font-size: 12px; font-weight: 700; }\n"
-        "button { min-height: 30px; padding: 0 12px; background: %s; border: 1px solid %s; border-radius: 6px; font-family: 'MB Corpo S Title WEB'; font-weight: 700; }\n"
+        "headerbar .title, headerbar label.title { font-family: '@BRAND_FONT@'; font-size: 18px; font-weight: @UI_BOLD@; color: %s; }\n"
+        "headerbar .subtitle, headerbar label.subtitle { color: %s; font-size: 12px; font-weight: @UI_BOLD@; }\n"
+        "button { min-height: 30px; padding: 0 12px; background: %s; border: 1px solid %s; border-radius: @SMALL_RADIUS@px; font-family: '@UI_FONT@'; font-weight: @UI_BOLD@; }\n"
         "button, button label, button image { color: %s; }\n"
         "headerbar button label, headerbar button image { color: %s; opacity: 1; }\n"
         "button:hover { background: %s; }\n"
         "button:hover label, button:hover image { color: %s; }\n"
         "button:active, button:checked { background: %s; border-color: %s; }\n"
         "button:active, button:active label, button:active image, button:checked, button:checked label, button:checked image { color: %s; }\n"
-        "button.suggested-action { background: " ACCENT_HEX "; border-color: " ACCENT_HEX "; }\n"
+        "button.suggested-action { background: " "@ACCENT@" "; border-color: " "@ACCENT@" "; }\n"
         "button.suggested-action, button.suggested-action label, button.suggested-action image { color: #031018; }\n"
         "button.destructive-action { background: %s; border-color: %s; }\n"
         "button.destructive-action, button.destructive-action label, button.destructive-action image { color: %s; }\n"
-        "entry, spinbutton, textview, textview text { background: %s; color: %s; border-color: %s; caret-color: " ACCENT_HEX "; }\n"
+        "entry, spinbutton, textview, textview text { background: %s; color: %s; border-color: %s; caret-color: " "@ACCENT@" "; }\n"
         "stackswitcher button { background: transparent; color: %s; border-color: transparent; border-radius: 0; padding: 0 14px; }\n"
-        "stackswitcher button:checked { color: %s; border-bottom: 2px solid " ACCENT_HEX "; }\n"
+        "stackswitcher button:checked { color: %s; border-bottom: 2px solid " "@ACCENT@" "; }\n"
         ".sidebar { background: %s; border-right: 1px solid %s; }\n"
-        ".sidebar-title { font-size: 11px; font-weight: 700; color: %s; }\n"
+        ".sidebar-title { font-size: 11px; font-weight: @UI_BOLD@; color: %s; }\n"
         ".sidebar-count { color: %s; font-size: 11px; }\n"
         ".device-list { background: transparent; }\n"
-        ".device-list row { border: 1px solid transparent; border-radius: 6px; margin: 3px 10px; }\n"
+        ".device-list row { border: 1px solid transparent; border-radius: @SMALL_RADIUS@px; margin: 3px 10px; }\n"
         ".device-list row:hover { background: %s; }\n"
-        ".device-list row:selected, .device-list row:selected:hover { background: %s; border-color: %s; border-left-width: 3px; border-left-color: " ACCENT_HEX "; }\n"
+        ".device-list row:selected, .device-list row:selected:hover { background: %s; border-color: %s; border-left-width: 3px; border-left-color: " "@ACCENT@" "; }\n"
         ".device-row { padding: 11px 12px; }\n"
-        ".device-name { font-size: 14px; font-weight: 700; color: %s; }\n"
+        ".device-name { font-size: 14px; font-weight: @UI_BOLD@; color: %s; }\n"
         ".device-meta { color: %s; font-size: 12px; }\n"
         ".content { padding: 30px 34px 24px 34px; }\n"
-        ".hero-title { color: %s; font-family: 'MB Corpo A Title Cond WEB'; font-size: 27px; font-weight: 400; }\n"
+        ".hero-title { color: %s; font-family: '@BRAND_FONT@'; font-size: 27px; font-weight: @BRAND_WEIGHT@; }\n"
         ".hero-path { color: %s; font-size: 12px; }\n"
-        ".badge { padding: 4px 9px; border-radius: 999px; background: %s; border: 1px solid %s; color: %s; font-size: 11px; font-weight: 700; }\n"
-        ".badge-mounted { border-color: " ACCENT_HEX "; color: " ACCENT_HEX "; }\n"
-        ".section-title { color: %s; font-size: 16px; font-weight: 700; }\n"
+        ".badge { padding: 4px 9px; border-radius: 999px; background: %s; border: 1px solid %s; color: %s; font-size: 11px; font-weight: @UI_BOLD@; }\n"
+        ".badge-mounted { border-color: " "@ACCENT@" "; color: " "@ACCENT@" "; }\n"
+        ".section-title { color: %s; font-size: 16px; font-weight: @UI_BOLD@; }\n"
         ".section-subtitle { color: %s; font-size: 12px; }\n"
         ".card, .stat-card, .empty-state { border: 1px solid %s; background: %s; }\n"
-        ".card { padding: 18px; border-radius: 10px; }\n"
-        ".stat-card { padding: 15px 16px; border-radius: 10px; }\n"
-        ".stat-caption { color: %s; font-size: 10px; font-weight: 700; }\n"
-        ".stat-value { color: %s; font-size: 17px; font-weight: 700; }\n"
+        ".card { padding: 18px; border-radius: @CONTROL_RADIUS@px; }\n"
+        ".stat-card { padding: 15px 16px; border-radius: @CONTROL_RADIUS@px; }\n"
+        ".stat-caption { color: %s; font-size: 10px; font-weight: @UI_BOLD@; }\n"
+        ".stat-value { color: %s; font-size: 17px; font-weight: @UI_BOLD@; }\n"
         ".detail-caption { color: %s; font-size: 11px; }\n"
-        ".detail-value { color: %s; font-weight: 700; }\n"
-        ".action-row { padding: 12px; border-radius: 6px; }\n"
+        ".detail-value { color: %s; font-weight: @UI_BOLD@; }\n"
+        ".action-row { padding: 12px; border-radius: @SMALL_RADIUS@px; }\n"
         ".action-row:hover { background: %s; }\n"
-        ".action-title { color: %s; font-weight: 700; }\n"
+        ".action-title { color: %s; font-weight: @UI_BOLD@; }\n"
         ".action-description { color: %s; font-size: 12px; }\n"
-        ".danger-zone { padding: 16px; border: 1px solid %s; border-radius: 10px; background: %s; }\n"
-        ".empty-state { min-width: 460px; padding: 36px 46px; border-radius: 12px; }\n"
-        ".empty-title { color: %s; font-family: 'MB Corpo A Title Cond WEB'; font-size: 30px; font-weight: 400; }\n"
+        ".danger-zone { padding: 16px; border: 1px solid %s; border-radius: @CONTROL_RADIUS@px; background: %s; }\n"
+        ".empty-state { min-width: 460px; padding: 36px 46px; border-radius: @CARD_RADIUS@px; }\n"
+        ".empty-title { color: %s; font-family: '@BRAND_FONT@'; font-size: 30px; font-weight: @BRAND_WEIGHT@; }\n"
         ".empty-copy { color: %s; font-size: 13px; }\n"
-        ".activity-frame { border: 1px solid %s; border-radius: 10px; background: %s; }\n"
-        ".activity, .activity text { background: %s; color: %s; font-family: 'MB Corpo S Title WEB'; font-weight: 400; }\n"
+        ".activity-frame { border: 1px solid %s; border-radius: @CONTROL_RADIUS@px; background: %s; }\n"
+        ".activity, .activity text { background: %s; color: %s; font-family: '@UI_FONT@'; font-weight: @UI_REGULAR@; }\n"
         ".statusbar { padding: 8px 12px; border-top: 1px solid %s; background: %s; }\n"
         ".status-text { color: %s; font-size: 11px; }\n"
         ".link-about-dialog { background: %s; color: %s; }\n",
         background, text, panel, title, border, title, muted,
         button_bg, border, button_fg, button_fg, neutral, button_fg,
-        select_bg, ACCENT_HEX, select_fg, surface, fault, fault,
+        select_bg, "@ACCENT@", select_fg, surface, fault, fault,
         input, text, border, muted, title, panel, border, muted, subtle,
         card_hover, select_bg, border, text, muted, title, muted,
         surface, border, muted, title, muted, border, card, subtle, title,
         subtle, text, surface_hover, text, muted, fault, surface, title,
         muted, border, input, input, text, border, panel, subtle,
         background, text);
+
+    (void)g_string_replace(css, "@UI_FONT@", typography->ui_family, 0);
+    (void)g_string_replace(css, "@BRAND_FONT@", typography->brand_family, 0);
+    (void)g_string_replace(css, "@ACCENT@", accent, 0);
+    css_replace_u32(css, "@UI_REGULAR@", typography->ui_regular_weight);
+    css_replace_u32(css, "@UI_BOLD@", typography->ui_bold_weight);
+    css_replace_u32(css, "@BRAND_WEIGHT@", typography->brand_weight);
+    css_replace_u32(css, "@SMALL_RADIUS@", metrics->small_radius);
+    css_replace_u32(css, "@CONTROL_RADIUS@", metrics->control_radius);
+    css_replace_u32(css, "@CARD_RADIUS@", metrics->card_radius);
 
     if (!manager->css) {
         manager->css = gtk_css_provider_new();
@@ -1479,20 +1523,21 @@ static void on_about(GtkButton *button, gpointer data)
     gtk_window_set_transient_for(GTK_WINDOW(dialog), GTK_WINDOW(manager->window));
     gtk_window_set_modal(GTK_WINDOW(dialog), TRUE);
     gtk_window_set_title(GTK_WINDOW(dialog), "About InfiltratorFS");
-    gtk_about_dialog_set_program_name(GTK_ABOUT_DIALOG(dialog), APP_NAME);
-    gtk_about_dialog_set_version(GTK_ABOUT_DIALOG(dialog), INFILFS_IMPLEMENTATION_VERSION);
-    gtk_about_dialog_set_comments(GTK_ABOUT_DIALOG(dialog),
-        "INFILTRATORFS · NATIVE FILESYSTEM\n\n"
-        "Native Linux management for InfiltratorFS volumes. Uses the native VFS/DKMS driver; FUSE is not the product path.");
-    gtk_about_dialog_set_website(GTK_ABOUT_DIALOG(dialog),
-        "https://github.com/Infiltrator-Projects/InfiltratorFS");
+    gtk_about_dialog_set_program_name(
+        GTK_ABOUT_DIALOG(dialog), manager_project_info.program_name);
+    gtk_about_dialog_set_version(
+        GTK_ABOUT_DIALOG(dialog), manager_project_info.version);
+    gtk_about_dialog_set_comments(
+        GTK_ABOUT_DIALOG(dialog), manager_project_info.comments);
+    gtk_about_dialog_set_website(
+        GTK_ABOUT_DIALOG(dialog), manager_project_info.website);
     gtk_about_dialog_set_website_label(GTK_ABOUT_DIALOG(dialog), "Project website");
-    gtk_about_dialog_set_copyright(GTK_ABOUT_DIALOG(dialog),
-        "Copyright © 2016–2026 Shannon Smith");
+    gtk_about_dialog_set_copyright(
+        GTK_ABOUT_DIALOG(dialog), manager_project_info.copyright_text);
     gtk_about_dialog_set_license(GTK_ABOUT_DIALOG(dialog),
         "GPL-3.0-or-later. See LICENSE in the source package for the complete licence text.");
     gtk_about_dialog_set_wrap_license(GTK_ABOUT_DIALOG(dialog), TRUE);
-    const char *authors[] = { "Shannon Smith", NULL };
+    const char *authors[] = { manager_project_info.author, NULL };
     gtk_about_dialog_set_authors(GTK_ABOUT_DIALOG(dialog), authors);
     add_class(dialog, "link-about-dialog");
     GtkIconTheme *theme = gtk_icon_theme_get_default();
@@ -1930,7 +1975,8 @@ int main(int argc, char **argv)
     }
     manager->startup_check = startup_check;
     manager->format_device = format_device;
-    GtkApplication *app = gtk_application_new(APP_ID, G_APPLICATION_FLAGS_NONE);
+    GtkApplication *app = gtk_application_new(
+        APP_ID, G_APPLICATION_DEFAULT_FLAGS);
     g_signal_connect(app, "activate", G_CALLBACK(app_activate), manager);
     int result = g_application_run(G_APPLICATION(app), 1, argv);
     g_object_unref(app);

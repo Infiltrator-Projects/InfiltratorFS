@@ -12,6 +12,8 @@ This file records user-visible, compatibility, architecture and validation chang
 - Add slow-path diagnostics for checkpoint selection, writable mount initialisation, checkpoint healing, quota reconstruction, snapshot retention-map construction and transaction publication.
 - Report checkpoint-replica divergence when it forces expensive deep graph validation so recovery-time stalls are directly attributable in the kernel log.
 - Preserve crash-safe checkpoint ordering and fail-closed write poisoning on indeterminate durability failures.
+- Advance userspace to Infiltratr Common 1.19.8 and consume its canonical typography, design metrics, font provenance, project identity, formatting and POSIX path contracts where they fit without moving filesystem semantics into Common.
+- Fix the native Manager's failed-command capture leak exposed by ASan/LeakSanitizer.
 
 ## 0.18.62 — 2026-09-19
 

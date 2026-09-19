@@ -22,6 +22,7 @@
 #include "infiltratorfs-windows-bridge.h"
 #include "infiltratorfs-windows-metadata.h"
 #include "infiltratr/design.h"
+#include "infiltratr/format.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -416,11 +417,36 @@ static HFONT create_ui_font(HWND hwnd, int points, int weight,
                        family);
 }
 
+static HFONT create_common_font(HWND hwnd, int points, const char *family,
+                                uint32_t weight)
+{
+    wchar_t wide_family[LF_FACESIZE];
+    if (!family ||
+        !MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, family, -1,
+                             wide_family,
+                             (int)(sizeof(wide_family) /
+                                   sizeof(wide_family[0]))))
+        return NULL;
+    return create_ui_font(hwnd, points, (int)weight, wide_family);
+}
+
 static void set_control_font(HWND hwnd, int id, HFONT font)
 {
     HWND control = GetDlgItem(hwnd, id);
     if (control && font)
         SendMessageW(control, WM_SETFONT, (WPARAM)font, TRUE);
+}
+
+static int format_capacity_wide(uint64_t bytes, wchar_t *out,
+                                size_t out_count)
+{
+    char text[64];
+    if (!out || !out_count)
+        return 0;
+    infiltratr_format_disk_capacity(bytes, text, sizeof(text));
+    return MultiByteToWideChar(
+               CP_UTF8, MB_ERR_INVALID_CHARS, text, -1,
+               out, (int)out_count) > 0;
 }
 
 static void update_target_summary(void)
@@ -438,15 +464,19 @@ static void update_target_summary(void)
         return;
     }
 
-    double gib = (double)target->size_bytes /
-                 (1024.0 * 1024.0 * 1024.0);
+    wchar_t size_text[64];
+    if (!format_capacity_wide(
+            target->size_bytes, size_text,
+            sizeof(size_text) / sizeof(size_text[0])))
+        wcscpy_s(size_text, sizeof(size_text) / sizeof(size_text[0]), L"0 B");
+
     wchar_t text[512];
     const wchar_t *label = target->infs_label[0] ?
                            target->infs_label : L"InfiltratorFS";
     if (target->is_image) {
         _snwprintf_s(text, sizeof(text) / sizeof(text[0]), _TRUNCATE,
-                     L"Image file\r\n%.2f GiB  \u2022  %s",
-                     gib,
+                     L"Image file\r\n%s  \u2022  %s",
+                     size_text,
                      target->is_infiltrator ? label :
                      L"Unknown / unformatted image");
         if (target->is_infiltrator)
@@ -455,19 +485,19 @@ static void update_target_summary(void)
         if (target->use_region) {
             _snwprintf_s(text, sizeof(text) / sizeof(text[0]), _TRUNCATE,
                          L"Disk %lu  \u2022  Partition %lu\r\n"
-                         L"%.2f GiB  \u2022  InfiltratorFS %u.%u  \u2022  %s",
+                         L"%s  \u2022  InfiltratorFS %u.%u  \u2022  %s",
                          (unsigned long)target->disk_number,
                          (unsigned long)target->partition_number,
-                         gib,
+                         size_text,
                          (unsigned)target->format_major,
                          (unsigned)target->format_minor,
                          label);
         } else {
             _snwprintf_s(text, sizeof(text) / sizeof(text[0]), _TRUNCATE,
-                         L"%s\r\n%.2f GiB  \u2022  InfiltratorFS %u.%u  \u2022  %s",
+                         L"%s\r\n%s  \u2022  InfiltratorFS %u.%u  \u2022  %s",
                          target->mount_point[0] ?
                          target->mount_point : L"No drive letter",
-                         gib,
+                         size_text,
                          (unsigned)target->format_major,
                          (unsigned)target->format_minor,
                          label);
@@ -476,16 +506,16 @@ static void update_target_summary(void)
     } else if (target->use_region) {
         _snwprintf_s(text, sizeof(text) / sizeof(text[0]), _TRUNCATE,
                      L"Disk %lu  \u2022  Partition %lu\r\n"
-                     L"%.2f GiB  \u2022  Not currently InfiltratorFS",
+                     L"%s  \u2022  Not currently InfiltratorFS",
                      (unsigned long)target->disk_number,
                      (unsigned long)target->partition_number,
-                     gib);
+                     size_text);
     } else {
         _snwprintf_s(text, sizeof(text) / sizeof(text[0]), _TRUNCATE,
-                     L"%s\r\n%.2f GiB  \u2022  Not currently InfiltratorFS",
+                     L"%s\r\n%s  \u2022  Not currently InfiltratorFS",
                      target->mount_point[0] ?
                      target->mount_point : L"No drive letter",
-                     gib);
+                     size_text);
     }
     SetWindowTextW(summary, text);
 }
@@ -2006,14 +2036,19 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message,
         SetMenu(hwnd, create_main_menu());
         update_theme_menu(hwnd);
 
-        g_ui_font = create_ui_font(
-            hwnd, 10, FW_NORMAL, L"MB Corpo S Title WEB");
-        g_title_font = create_ui_font(
-            hwnd, 22, FW_NORMAL, L"MB Corpo A Title Cond WEB");
-        g_heading_font = create_ui_font(
-            hwnd, 12, FW_BOLD, L"MB Corpo S Title WEB");
-        g_activity_font = create_ui_font(
-            hwnd, 9, FW_NORMAL, L"MB Corpo S Title WEB");
+        const InfiltratrTypography *typography = infiltratr_typography();
+        if (!typography)
+            return -1;
+        g_ui_font = create_common_font(
+            hwnd, 10, typography->ui_family, typography->ui_regular_weight);
+        g_title_font = create_common_font(
+            hwnd, 22, typography->brand_family, typography->brand_weight);
+        g_heading_font = create_common_font(
+            hwnd, 12, typography->ui_family, typography->ui_bold_weight);
+        g_activity_font = create_common_font(
+            hwnd, 9, typography->ui_family, typography->ui_regular_weight);
+        if (!g_ui_font || !g_title_font || !g_heading_font || !g_activity_font)
+            return -1;
 
         CreateWindowW(L"STATIC", L"InfiltratorFS",
                       WS_CHILD | WS_VISIBLE | SS_LEFT,
