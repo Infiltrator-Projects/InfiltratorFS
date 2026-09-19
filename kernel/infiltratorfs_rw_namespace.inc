@@ -1887,9 +1887,9 @@ static int infilfs_ns_delete_file_resources(
         pending, file, ii->object_id, changes, change_count, change_capacity);
     if (ret)
         goto out;
-    for (extent_index = 0; extent_index < extent_count; ++extent_index) {
-        u32 flags = le32_to_cpu(extents[extent_index].flags);
-        u32 logical_blocks = le32_to_cpu(extents[extent_index].block_count);
+    for (i = 0; i < extent_count; ++i) {
+        u32 flags = le32_to_cpu(extents[i].flags);
+        u32 logical_blocks = le32_to_cpu(extents[i].block_count);
 
         if (infilfs_extent_kind(flags) != INFILFS_EXTENT_NORMAL)
             continue;
