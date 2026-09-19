@@ -1314,7 +1314,7 @@ void infilfs_native_block_digest(
     infilfs_rw_sha256_final(&ctx, digest->bytes);
 }
 
-static int infilfs_native_collect_extents(
+int infilfs_native_collect_extents(
     struct infilfs_native_pending *pending, struct inode *inode,
     u8 object[INFILFS_DISK_BLOCK_SIZE],
     struct infilfs_extent_disk **extents_out, u32 *count_out,
