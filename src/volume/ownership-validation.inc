@@ -111,6 +111,30 @@ static int claim_index_metadata_pages(struct infs_volume *vol,
     return INFS_STATUS_OK;
 }
 
+static int claim_snapshot_metadata_pages(
+    struct infs_volume *vol, uint8_t *owners, uint64_t total)
+{
+    uint8_t catalog[INFS_BLOCK_SIZE];
+    struct infs_snapshot_catalog_payload_disk *payload = NULL;
+    infs_status status = snapshot_catalog_load(vol, catalog, &payload, NULL);
+
+    if (status != INFS_STATUS_OK)
+        return status;
+
+    uint32_t pages = infs_le32_to_cpu(payload->reserved);
+    const uint64_t *pointers = (const uint64_t *)(payload + 1);
+    for (uint32_t i = 0; i < pages; ++i) {
+        uint64_t page_block = infs_le64_to_cpu(pointers[i]);
+        if (!page_block || page_block >= total ||
+            !bitmap_get(vol->bitmap, page_block))
+            return INFS_STATUS_CORRUPT;
+        status = ownership_claim(owners, total, page_block);
+        if (status != INFS_STATUS_OK)
+            return status;
+    }
+    return INFS_STATUS_OK;
+}
+
 static int claim_directory_tree_node(
     struct infs_volume *vol, uint8_t *owners, uint64_t total,
     const uint8_t owner_id[16], uint64_t block_no, unsigned depth)
@@ -335,6 +359,13 @@ static int build_live_ownership_bitmap_progress(
         if (object_type == INFS_OBJECT_DIRECTORY) {
             status = claim_directory_metadata_pages(vol, owners, total,
                                                     object_block);
+            if (status != INFS_STATUS_OK)
+                goto out;
+            scrub_metadata_progress_update(progress, (uint64_t)i + 1u);
+            continue;
+        }
+        if (object_type == INFS_OBJECT_SNAPSHOT_CATALOG) {
+            status = claim_snapshot_metadata_pages(vol, owners, total);
             if (status != INFS_STATUS_OK)
                 goto out;
             scrub_metadata_progress_update(progress, (uint64_t)i + 1u);
