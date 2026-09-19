@@ -132,15 +132,17 @@ static infs_status scrub_validate_snapshot_metadata(
     if (status != INFS_STATUS_OK)
         return status;
 
-    uint32_t count = infs_le32_to_cpu(payload->snapshot_count);
-    struct infs_snapshot_record_disk *records =
-        (struct infs_snapshot_record_disk *)(payload + 1);
+    struct infs_snapshot_record_disk *records = NULL;
+    uint32_t count = 0;
+    status = snapshot_catalog_records(vol, catalog, payload, &records, &count);
+    if (status != INFS_STATUS_OK)
+        return status;
 
     for (uint32_t i = 0; i < count; ++i) {
         int first_visit = 0;
         status = snapshot_visit_once(visit, &records[i], &first_visit);
         if (status != INFS_STATUS_OK)
-            return status;
+            break;
         if (!first_visit)
             continue;
 
@@ -156,7 +158,7 @@ static infs_status scrub_validate_snapshot_metadata(
         struct infs_volume view;
         status = snapshot_open_view(vol, name, &view);
         if (status != INFS_STATUS_OK)
-            return status;
+            break;
 
         status = scrub_validate_generation_metadata(&view, report, progress);
         if (status == INFS_STATUS_OK && report->metadata_errors == 0)
@@ -164,9 +166,10 @@ static infs_status scrub_validate_snapshot_metadata(
                 &view, report, visit, progress);
         snapshot_close_view(&view);
         if (status != INFS_STATUS_OK || report->metadata_errors != 0)
-            return status;
+            break;
     }
-    return INFS_STATUS_OK;
+    free(records);
+    return status;
 }
 
 /* Verify file payloads for one already metadata-validated generation. Report
@@ -339,14 +342,17 @@ static infs_status scrub_verify_snapshot_data(
     if (status != INFS_STATUS_OK)
         return status;
 
-    uint32_t count = infs_le32_to_cpu(payload->snapshot_count);
-    struct infs_snapshot_record_disk *records =
-        (struct infs_snapshot_record_disk *)(payload + 1);
+    struct infs_snapshot_record_disk *records = NULL;
+    uint32_t count = 0;
+    status = snapshot_catalog_records(vol, catalog, payload, &records, &count);
+    if (status != INFS_STATUS_OK)
+        return status;
+
     for (uint32_t i = 0; i < count; ++i) {
         int first_visit = 0;
         status = snapshot_visit_once(visit, &records[i], &first_visit);
         if (status != INFS_STATUS_OK)
-            return status;
+            break;
         if (!first_visit)
             continue;
 
@@ -360,7 +366,7 @@ static infs_status scrub_verify_snapshot_data(
         struct infs_volume view;
         status = snapshot_open_view(vol, name, &view);
         if (status != INFS_STATUS_OK)
-            return status;
+            break;
 
         status = scrub_verify_data(&view, report, progress, context,
                                    INFS_SCRUB_PHASE_SNAPSHOTS);
@@ -369,9 +375,10 @@ static infs_status scrub_verify_snapshot_data(
                 &view, report, visit, progress, context);
         snapshot_close_view(&view);
         if (status != INFS_STATUS_OK)
-            return status;
+            break;
     }
-    return INFS_STATUS_OK;
+    free(records);
+    return status;
 }
 
 static infs_status scrub_run(struct infs_volume *vol,

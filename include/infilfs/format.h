@@ -27,6 +27,9 @@ static const uint8_t INFS_EXTENT_PAGE_MAGIC[8] = {
 static const uint8_t INFS_EXTENT_INDEX_PAGE_MAGIC[8] = {
     'I', 'N', 'F', 'S', 'E', 'I', '0', '1'
 };
+static const uint8_t INFS_SNAPSHOT_PAGE_MAGIC[8] = {
+    'I', 'N', 'F', 'S', 'S', 'P', '0', '1'
+};
 static const uint8_t INFS_ALLOCATION_BRANCH_PAGE_MAGIC[8] = {
     'I', 'N', 'F', 'S', 'A', 'B', '0', '1'
 };
@@ -343,10 +346,13 @@ struct INFS_PACKED infs_snapshot_record_disk {
     uint8_t  name[INFS_SNAPSHOT_NAME_MAX + 1u];
 };
 
-#define INFS_SNAPSHOTS_PER_CATALOG \
+#define INFS_SNAPSHOT_RECORDS_PER_PAGE \
+    (INFS_METADATA_PAGE_DATA_SIZE / sizeof(struct infs_snapshot_record_disk))
+#define INFS_SNAPSHOT_PAGE_POINTERS \
     ((INFS_BLOCK_SIZE - sizeof(struct infs_object_header_disk) - \
-      sizeof(struct infs_snapshot_catalog_payload_disk)) / \
-     sizeof(struct infs_snapshot_record_disk))
+      sizeof(struct infs_snapshot_catalog_payload_disk)) / sizeof(uint64_t))
+#define INFS_SNAPSHOTS_PER_CATALOG \
+    (INFS_SNAPSHOT_RECORDS_PER_PAGE * INFS_SNAPSHOT_PAGE_POINTERS)
 
 #define INFS_METADATA_PAGE_DATA_SIZE \
     (INFS_BLOCK_SIZE - sizeof(struct infs_metadata_page_disk))
@@ -436,8 +442,12 @@ _Static_assert(sizeof(struct infs_snapshot_record_disk) == 152,
                "snapshot record layout changed");
 _Static_assert(sizeof(INFS_SNAPSHOT_CATALOG_ID) == 17u,
                "snapshot catalog ID must contain exactly 16 bytes");
-_Static_assert(INFS_SNAPSHOTS_PER_CATALOG == 26u,
-               "snapshot catalog capacity unexpectedly changed");
+_Static_assert(INFS_SNAPSHOT_RECORDS_PER_PAGE == 26u,
+               "snapshot page capacity unexpectedly changed");
+_Static_assert(INFS_SNAPSHOT_PAGE_POINTERS >= 490u,
+               "snapshot catalog pointer capacity unexpectedly small");
+_Static_assert(INFS_SNAPSHOTS_PER_CATALOG >= 12000u,
+               "snapshot catalog capacity unexpectedly small");
 _Static_assert(INFS_CHECKSUMS_PER_OBJECT >= 120,
                "checksum object capacity unexpectedly small");
 _Static_assert(INFS_INLINE_DATA_MAX == 3808u,

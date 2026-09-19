@@ -247,6 +247,7 @@ struct infilfs_snapshot_catalog_payload_disk {
 } __packed;
 
 #define INFILFS_SNAPSHOT_NAME_MAX 63u
+#define INFILFS_SNAPSHOT_PAGE_MAGIC "INFSSP01"
 
 struct infilfs_snapshot_record_disk {
     __le64 generation;
@@ -262,6 +263,14 @@ struct infilfs_snapshot_record_disk {
     __le32 reserved;
     __u8 name[INFILFS_SNAPSHOT_NAME_MAX + 1u];
 } __packed;
+
+#define INFILFS_SNAPSHOT_RECORDS_PER_PAGE \
+    (INFILFS_METADATA_PAGE_DATA_SIZE / sizeof(struct infilfs_snapshot_record_disk))
+#define INFILFS_SNAPSHOT_PAGE_POINTERS \
+    ((INFILFS_DISK_BLOCK_SIZE - sizeof(struct infilfs_object_header_disk) - \
+      sizeof(struct infilfs_snapshot_catalog_payload_disk)) / sizeof(__le64))
+#define INFILFS_SNAPSHOTS_PER_CATALOG \
+    (INFILFS_SNAPSHOT_RECORDS_PER_PAGE * INFILFS_SNAPSHOT_PAGE_POINTERS)
 
 #define INFILFS_METADATA_PAGE_DATA_SIZE \
     (INFILFS_DISK_BLOCK_SIZE - sizeof(struct infilfs_metadata_page_disk))

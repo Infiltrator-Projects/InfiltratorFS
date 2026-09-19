@@ -659,14 +659,22 @@ int infilfs_rw_snapshot_count(struct super_block *sb, u32 *count_out)
                               snapshot_id, object);
     if (!ret) {
         header = (struct infilfs_object_header_disk *)object;
-        if (le32_to_cpu(header->payload_size) < sizeof(*payload)) {
+        payload = (struct infilfs_snapshot_catalog_payload_disk *)(header + 1);
+        if (le16_to_cpu(header->object_version) != INFILFS_OBJECT_VERSION_PAGED ||
+            le32_to_cpu(header->payload_size) < sizeof(*payload)) {
             ret = -EFSCORRUPTED;
         } else {
-            payload = (struct infilfs_snapshot_catalog_payload_disk *)(header + 1);
-            if (le32_to_cpu(payload->reserved) != 0)
+            u32 count = le32_to_cpu(payload->snapshot_count);
+            u32 pages = le32_to_cpu(payload->reserved);
+            u32 expected = count ?
+                DIV_ROUND_UP(count, INFILFS_SNAPSHOT_RECORDS_PER_PAGE) : 0u;
+            if (count > INFILFS_SNAPSHOTS_PER_CATALOG ||
+                pages != expected || pages > INFILFS_SNAPSHOT_PAGE_POINTERS ||
+                le32_to_cpu(header->payload_size) !=
+                    sizeof(*payload) + (size_t)pages * sizeof(__le64))
                 ret = -EFSCORRUPTED;
             else
-                *count_out = le32_to_cpu(payload->snapshot_count);
+                *count_out = count;
         }
     }
     kfree(object);
@@ -681,18 +689,19 @@ static int infilfs_rw_snapshot_union(struct super_block *sb, u32 snapshots)
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
     struct infilfs_object_header_disk *header;
     struct infilfs_snapshot_catalog_payload_disk *payload;
-    struct infilfs_snapshot_record_disk *records;
     u8 *object = NULL;
+    u8 *page = NULL;
     u64 catalog_block;
     u16 type;
-    u32 i;
+    u32 processed = 0;
     int ret;
 
     if (!snapshots)
         return 0;
     object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_KERNEL);
+    page = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_KERNEL);
     sbi->snapshot_bitmap = kvzalloc(sbi->bitmap_bytes, GFP_KERNEL);
-    if (!object || !sbi->snapshot_bitmap) {
+    if (!object || !page || !sbi->snapshot_bitmap) {
         ret = -ENOMEM;
         goto out;
     }
@@ -708,51 +717,89 @@ static int infilfs_rw_snapshot_union(struct super_block *sb, u32 snapshots)
                               snapshot_id, object);
     if (ret)
         goto out;
+
     header = (struct infilfs_object_header_disk *)object;
     payload = (struct infilfs_snapshot_catalog_payload_disk *)(header + 1);
-    records = (struct infilfs_snapshot_record_disk *)(payload + 1);
+    u32 pages = le32_to_cpu(payload->reserved);
+    __le64 *pointers = (__le64 *)(payload + 1);
     if (le32_to_cpu(payload->snapshot_count) != snapshots ||
-        sizeof(*payload) + (size_t)snapshots * sizeof(*records) !=
-            le32_to_cpu(header->payload_size)) {
+        pages != DIV_ROUND_UP(snapshots, INFILFS_SNAPSHOT_RECORDS_PER_PAGE) ||
+        pages > INFILFS_SNAPSHOT_PAGE_POINTERS ||
+        le32_to_cpu(header->payload_size) !=
+            sizeof(*payload) + (size_t)pages * sizeof(*pointers)) {
         ret = -EFSCORRUPTED;
         goto out;
     }
 
-    for (i = 0; i < snapshots; ++i) {
-        struct infilfs_superblock_disk retained = sbi->disk;
-        struct infilfs_allocation_layout layout = {0};
-        u8 *bitmap = NULL;
-        size_t bitmap_bytes = 0;
-        size_t j;
+    for (u32 p = 0; p < pages; ++p) {
+        u64 page_block = le64_to_cpu(pointers[p]);
+        struct infilfs_metadata_page_disk *meta;
+        struct infilfs_snapshot_record_disk *records;
+        u32 page_count, expected;
 
-        retained.generation = records[i].generation;
-        retained.free_blocks = records[i].free_blocks;
-        retained.allocation_root_block = records[i].allocation_root_block;
-        retained.allocation_leaf_count = records[i].allocation_leaf_count;
-        retained.object_index_block = records[i].object_index_block;
-        retained.root_object_block = records[i].root_object_block;
-        memcpy(retained.root_object_id, records[i].root_object_id, 16);
-
-        ret = infilfs_allocation_map_load(
-            sb, &retained, &bitmap, &bitmap_bytes, &layout);
-        infilfs_allocation_layout_destroy(&layout);
+        ret = infilfs_read_allocated_block(sb, page_block, page);
         if (ret)
             goto out;
-        if (bitmap_bytes != sbi->bitmap_bytes) {
-            kvfree(bitmap);
+        if (!infilfs_metadata_page_valid(
+                sb, page, (const u8 *)INFILFS_SNAPSHOT_PAGE_MAGIC,
+                snapshot_id)) {
             ret = -EFSCORRUPTED;
             goto out;
         }
-        for (j = 0; j < bitmap_bytes; ++j)
-            sbi->snapshot_bitmap[j] |= bitmap[j];
-        kvfree(bitmap);
+        meta = (struct infilfs_metadata_page_disk *)page;
+        page_count = le32_to_cpu(meta->entry_count);
+        expected = min_t(u32, INFILFS_SNAPSHOT_RECORDS_PER_PAGE,
+                         snapshots - processed);
+        if (page_count != expected ||
+            le32_to_cpu(meta->bytes_used) !=
+                page_count * sizeof(struct infilfs_snapshot_record_disk)) {
+            ret = -EFSCORRUPTED;
+            goto out;
+        }
+        records = (struct infilfs_snapshot_record_disk *)(meta + 1);
+
+        for (u32 i = 0; i < page_count; ++i, ++processed) {
+            struct infilfs_superblock_disk retained = sbi->disk;
+            struct infilfs_allocation_layout layout = {0};
+            u8 *bitmap = NULL;
+            size_t bitmap_bytes = 0;
+
+            if (!infilfs_timestamp_valid(&records[i].created_time)) {
+                ret = -EFSCORRUPTED;
+                goto out;
+            }
+            retained.generation = records[i].generation;
+            retained.free_blocks = records[i].free_blocks;
+            retained.allocation_root_block =
+                records[i].allocation_root_block;
+            retained.allocation_leaf_count =
+                records[i].allocation_leaf_count;
+            retained.object_index_block = records[i].object_index_block;
+            retained.root_object_block = records[i].root_object_block;
+            memcpy(retained.root_object_id, records[i].root_object_id, 16);
+
+            ret = infilfs_allocation_map_load(
+                sb, &retained, &bitmap, &bitmap_bytes, &layout);
+            infilfs_allocation_layout_destroy(&layout);
+            if (ret)
+                goto out;
+            if (bitmap_bytes != sbi->bitmap_bytes) {
+                kvfree(bitmap);
+                ret = -EFSCORRUPTED;
+                goto out;
+            }
+            for (size_t j = 0; j < bitmap_bytes; ++j)
+                sbi->snapshot_bitmap[j] |= bitmap[j];
+            kvfree(bitmap);
+        }
     }
-    ret = 0;
+    ret = processed == snapshots ? 0 : -EFSCORRUPTED;
 out:
     if (ret) {
         kvfree(sbi->snapshot_bitmap);
         sbi->snapshot_bitmap = NULL;
     }
+    kfree(page);
     kfree(object);
     return ret;
 }

@@ -478,9 +478,14 @@ static infs_status snapshot_union_bitmap_progress(
         return status;
     }
 
-    uint32_t count = infs_le32_to_cpu(payload->snapshot_count);
-    struct infs_snapshot_record_disk *records =
-        (struct infs_snapshot_record_disk *)(payload + 1);
+    struct infs_snapshot_record_disk *records = NULL;
+    uint32_t count = 0;
+    status = snapshot_catalog_records(vol, catalog, payload, &records, &count);
+    if (status != INFS_STATUS_OK) {
+        free(*union_out);
+        *union_out = NULL;
+        return status;
+    }
     scrub_metadata_progress_begin(
         progress, vol, INFS_SCRUB_METADATA_SNAPSHOT_UNION, count);
 
@@ -490,6 +495,7 @@ static infs_status snapshot_union_bitmap_progress(
             vol, &records[i], &bitmap, progress,
             infs_le64_to_cpu(records[i].generation));
         if (status != INFS_STATUS_OK) {
+            free(records);
             free(*union_out);
             *union_out = NULL;
             return status;
@@ -502,6 +508,7 @@ static infs_status snapshot_union_bitmap_progress(
         free(bitmap);
         scrub_metadata_progress_update(progress, (uint64_t)i + 1u);
     }
+    free(records);
     return INFS_STATUS_OK;
 }
 

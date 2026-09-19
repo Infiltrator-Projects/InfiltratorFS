@@ -127,38 +127,141 @@ static int snapshot_catalog_load(
     status = read_object(vol, lookup.block, block);
     if (status != INFS_STATUS_OK)
         return status;
+
     struct infs_object_header_disk *header =
         (struct infs_object_header_disk *)block;
     if (infs_le16_to_cpu(header->object_type) !=
             INFS_OBJECT_SNAPSHOT_CATALOG ||
+        infs_le16_to_cpu(header->object_version) != INFS_OBJECT_VERSION_PAGED ||
         memcmp(header->object_id, snapshot_catalog_id, 16) != 0 ||
         !id_is_zero(header->parent_id))
         return INFS_STATUS_CORRUPT;
+
     struct infs_snapshot_catalog_payload_disk *payload =
         (struct infs_snapshot_catalog_payload_disk *)(header + 1);
     uint32_t count = infs_le32_to_cpu(payload->snapshot_count);
+    uint32_t pages = infs_le32_to_cpu(payload->reserved);
+    uint32_t expected_pages = count ?
+        (count + INFS_SNAPSHOT_RECORDS_PER_PAGE - 1u) /
+            INFS_SNAPSHOT_RECORDS_PER_PAGE : 0u;
     if (count > INFS_SNAPSHOTS_PER_CATALOG ||
-        infs_le32_to_cpu(payload->reserved) != 0)
+        pages != expected_pages || pages > INFS_SNAPSHOT_PAGE_POINTERS ||
+        le32_to_cpu(header->payload_size) !=
+            sizeof(*payload) + (size_t)pages * sizeof(uint64_t))
         return INFS_STATUS_CORRUPT;
-    struct infs_snapshot_record_disk *records =
-        (struct infs_snapshot_record_disk *)(payload + 1);
-    uint64_t catalog_generation = infs_le64_to_cpu(header->generation);
-    for (uint32_t i = 0; i < count; ++i) {
-        status = snapshot_record_valid(
-            vol, &records[i], catalog_generation);
-        if (status != INFS_STATUS_OK)
-            return status;
-        for (uint32_t j = 0; j < i; ++j) {
-            uint16_t a = infs_le16_to_cpu(records[i].name_length);
-            uint16_t b = infs_le16_to_cpu(records[j].name_length);
-            if (a == b && memcmp(records[i].name, records[j].name, a) == 0)
-                return INFS_STATUS_CORRUPT;
-        }
+
+    const uint64_t *pointers = (const uint64_t *)(payload + 1);
+    uint64_t total = infs_le64_to_cpu(vol->sb.total_blocks);
+    for (uint32_t i = 0; i < pages; ++i) {
+        uint64_t page_block = infs_le64_to_cpu(pointers[i]);
+        if (!page_block || page_block >= total ||
+            !bitmap_get(vol->bitmap, page_block))
+            return INFS_STATUS_CORRUPT;
     }
     if (payload_out)
         *payload_out = payload;
     if (lookup_out)
         *lookup_out = lookup;
+    return INFS_STATUS_OK;
+}
+
+static int snapshot_page_load(
+    struct infs_volume *vol, uint64_t block,
+    uint64_t catalog_generation, uint8_t page_data[INFS_BLOCK_SIZE],
+    struct infs_snapshot_record_disk **records_out, uint32_t *count_out)
+{
+    infs_status status = read_block(vol, block, page_data);
+    if (status != INFS_STATUS_OK)
+        return status;
+    if (!infs_validate_metadata_page(
+            page_data, INFS_SNAPSHOT_PAGE_MAGIC, snapshot_catalog_id) ||
+        !metadata_page_generation_valid(vol, page_data))
+        return INFS_STATUS_CORRUPT;
+
+    struct infs_metadata_page_disk *page =
+        (struct infs_metadata_page_disk *)page_data;
+    if (infs_le64_to_cpu(page->generation) > catalog_generation)
+        return INFS_STATUS_CORRUPT;
+    uint32_t count = infs_le32_to_cpu(page->entry_count);
+    uint32_t bytes = infs_le32_to_cpu(page->bytes_used);
+    if (!count || count > INFS_SNAPSHOT_RECORDS_PER_PAGE ||
+        bytes != count * sizeof(struct infs_snapshot_record_disk))
+        return INFS_STATUS_CORRUPT;
+
+    struct infs_snapshot_record_disk *records =
+        (struct infs_snapshot_record_disk *)(page + 1);
+    for (uint32_t i = 0; i < count; ++i) {
+        status = snapshot_record_valid(vol, &records[i], catalog_generation);
+        if (status != INFS_STATUS_OK)
+            return status;
+    }
+    if (records_out)
+        *records_out = records;
+    if (count_out)
+        *count_out = count;
+    return INFS_STATUS_OK;
+}
+
+static int snapshot_catalog_records(
+    struct infs_volume *vol, const uint8_t catalog[INFS_BLOCK_SIZE],
+    const struct infs_snapshot_catalog_payload_disk *payload,
+    struct infs_snapshot_record_disk **records_out, uint32_t *count_out)
+{
+    if (!vol || !catalog || !payload || !records_out || !count_out)
+        return INFS_STATUS_INVALID_ARGUMENT;
+    *records_out = NULL;
+    *count_out = 0;
+
+    const struct infs_object_header_disk *header =
+        (const struct infs_object_header_disk *)catalog;
+    uint64_t catalog_generation = infs_le64_to_cpu(header->generation);
+    uint32_t total_count = infs_le32_to_cpu(payload->snapshot_count);
+    uint32_t pages = infs_le32_to_cpu(payload->reserved);
+    if (!total_count)
+        return INFS_STATUS_OK;
+
+    struct infs_snapshot_record_disk *all =
+        calloc(total_count, sizeof(*all));
+    if (!all)
+        return INFS_STATUS_NO_MEMORY;
+
+    const uint64_t *pointers = (const uint64_t *)(payload + 1);
+    uint32_t copied = 0;
+    for (uint32_t p = 0; p < pages; ++p) {
+        uint8_t page_data[INFS_BLOCK_SIZE];
+        struct infs_snapshot_record_disk *page_records = NULL;
+        uint32_t page_count = 0;
+        infs_status status = snapshot_page_load(
+            vol, infs_le64_to_cpu(pointers[p]), catalog_generation,
+            page_data, &page_records, &page_count);
+        uint32_t expected = p + 1u < pages ?
+            INFS_SNAPSHOT_RECORDS_PER_PAGE :
+            total_count - p * INFS_SNAPSHOT_RECORDS_PER_PAGE;
+        if (status != INFS_STATUS_OK || page_count != expected ||
+            page_count > total_count - copied) {
+            free(all);
+            return status != INFS_STATUS_OK ? status : INFS_STATUS_CORRUPT;
+        }
+        memcpy(&all[copied], page_records,
+               (size_t)page_count * sizeof(*all));
+        copied += page_count;
+    }
+    if (copied != total_count) {
+        free(all);
+        return INFS_STATUS_CORRUPT;
+    }
+    for (uint32_t i = 0; i < total_count; ++i) {
+        for (uint32_t j = 0; j < i; ++j) {
+            uint16_t a = infs_le16_to_cpu(all[i].name_length);
+            uint16_t b = infs_le16_to_cpu(all[j].name_length);
+            if (a == b && memcmp(all[i].name, all[j].name, a) == 0) {
+                free(all);
+                return INFS_STATUS_CORRUPT;
+            }
+        }
+    }
+    *records_out = all;
+    *count_out = total_count;
     return INFS_STATUS_OK;
 }
 
@@ -174,16 +277,21 @@ static int snapshot_find_record(
     infs_status status = snapshot_catalog_load(vol, catalog, &payload, NULL);
     if (status != INFS_STATUS_OK)
         return status;
-    uint32_t count = infs_le32_to_cpu(payload->snapshot_count);
-    struct infs_snapshot_record_disk *records =
-        (struct infs_snapshot_record_disk *)(payload + 1);
+
+    struct infs_snapshot_record_disk *records = NULL;
+    uint32_t count = 0;
+    status = snapshot_catalog_records(vol, catalog, payload, &records, &count);
+    if (status != INFS_STATUS_OK)
+        return status;
     for (uint32_t i = 0; i < count; ++i) {
         if (snapshot_record_name_equal(&records[i], name, length)) {
             if (record_out)
                 *record_out = records[i];
+            free(records);
             return INFS_STATUS_OK;
         }
     }
+    free(records);
     return INFS_STATUS_NOT_FOUND;
 }
 
@@ -251,13 +359,20 @@ static infs_status snapshot_union_bitmap(struct infs_volume *vol,
         *union_out = NULL;
         return status;
     }
-    uint32_t count = infs_le32_to_cpu(payload->snapshot_count);
-    struct infs_snapshot_record_disk *records =
-        (struct infs_snapshot_record_disk *)(payload + 1);
+
+    struct infs_snapshot_record_disk *records = NULL;
+    uint32_t count = 0;
+    status = snapshot_catalog_records(vol, catalog, payload, &records, &count);
+    if (status != INFS_STATUS_OK) {
+        free(*union_out);
+        *union_out = NULL;
+        return status;
+    }
     for (uint32_t i = 0; i < count; ++i) {
         uint8_t *bitmap = NULL;
         status = snapshot_read_bitmap(vol, &records[i], &bitmap);
         if (status != INFS_STATUS_OK) {
+            free(records);
             free(*union_out);
             *union_out = NULL;
             return status;
@@ -266,6 +381,7 @@ static infs_status snapshot_union_bitmap(struct infs_volume *vol,
             (*union_out)[j] |= bitmap[j];
         free(bitmap);
     }
+    free(records);
     return INFS_STATUS_OK;
 }
 
@@ -328,6 +444,7 @@ static int snapshot_validate_catalog_graphs(struct infs_volume *vol)
             return INFS_STATUS_NO_MEMORY;
         vol->snapshot_validation_context = visit;
     }
+
     uint8_t catalog[INFS_BLOCK_SIZE];
     struct infs_snapshot_catalog_payload_disk *payload;
     infs_status status = snapshot_catalog_load(vol, catalog, &payload, NULL);
@@ -337,14 +454,17 @@ static int snapshot_validate_catalog_graphs(struct infs_volume *vol)
     }
     if (status != INFS_STATUS_OK)
         goto out;
-    uint32_t count = infs_le32_to_cpu(payload->snapshot_count);
-    struct infs_snapshot_record_disk *records =
-        (struct infs_snapshot_record_disk *)(payload + 1);
+
+    struct infs_snapshot_record_disk *records = NULL;
+    uint32_t count = 0;
+    status = snapshot_catalog_records(vol, catalog, payload, &records, &count);
+    if (status != INFS_STATUS_OK)
+        goto out;
     for (uint32_t i = 0; i < count; ++i) {
         int first_visit = 0;
         status = snapshot_visit_once(visit, &records[i], &first_visit);
         if (status != INFS_STATUS_OK)
-            goto out;
+            break;
         if (!first_visit)
             continue;
         char name[INFS_SNAPSHOT_NAME_MAX + 1u] = {0};
@@ -353,7 +473,7 @@ static int snapshot_validate_catalog_graphs(struct infs_volume *vol)
         struct infs_volume view;
         status = snapshot_open_view(vol, name, &view);
         if (status != INFS_STATUS_OK)
-            goto out;
+            break;
         status = validate_index_entries(&view);
         if (status == INFS_STATUS_OK)
             status = validate_integrity_metadata(&view);
@@ -363,8 +483,9 @@ static int snapshot_validate_catalog_graphs(struct infs_volume *vol)
             status = validate_checksum_graph(&view);
         snapshot_close_view(&view);
         if (status != INFS_STATUS_OK)
-            goto out;
+            break;
     }
+    free(records);
 out:
     if (owns_context) {
         vol->snapshot_validation_context = NULL;
@@ -395,40 +516,99 @@ static int snapshot_catalog_append(
             generation, sizeof(*payload));
         if (status != INFS_STATUS_OK)
             return status;
-        payload = (struct infs_snapshot_catalog_payload_disk *)(
-            catalog + sizeof(struct infs_object_header_disk));
+        struct infs_object_header_disk *header =
+            (struct infs_object_header_disk *)catalog;
+        header->object_version = infs_cpu_to_le16(INFS_OBJECT_VERSION_PAGED);
+        payload = (struct infs_snapshot_catalog_payload_disk *)(header + 1);
         memset(payload, 0, sizeof(*payload));
+    } else {
+        struct infs_snapshot_record_disk *existing = NULL;
+        uint32_t existing_count = 0;
+        status = snapshot_catalog_records(
+            vol, catalog, payload, &existing, &existing_count);
+        if (status != INFS_STATUS_OK)
+            return status;
+        for (uint32_t i = 0; i < existing_count; ++i) {
+            if (snapshot_record_name_equal(&existing[i], name, name_length)) {
+                free(existing);
+                return INFS_STATUS_ALREADY_EXISTS;
+            }
+        }
+        free(existing);
     }
 
     uint32_t count = infs_le32_to_cpu(payload->snapshot_count);
+    uint32_t page_count = infs_le32_to_cpu(payload->reserved);
     if (count >= INFS_SNAPSHOTS_PER_CATALOG)
         return INFS_STATUS_NO_SPACE;
-    struct infs_snapshot_record_disk *records =
-        (struct infs_snapshot_record_disk *)(payload + 1);
-    for (uint32_t i = 0; i < count; ++i) {
-        if (snapshot_record_name_equal(&records[i], name, name_length))
-            return INFS_STATUS_ALREADY_EXISTS;
+
+    struct infs_snapshot_record_disk record;
+    memset(&record, 0, sizeof(record));
+    record.generation = vol->tx_base_sb.generation;
+    timestamp_disk_from_value(&record.created_time, created_time);
+    record.allocation_root_block = vol->tx_base_sb.allocation_root_block;
+    record.allocation_leaf_count = vol->tx_base_sb.allocation_leaf_count;
+    record.free_blocks = vol->tx_base_sb.free_blocks;
+    record.object_index_block = vol->tx_base_sb.object_index_block;
+    record.root_object_block = vol->tx_base_sb.root_object_block;
+    memcpy(record.root_object_id, vol->tx_base_sb.root_object_id, 16);
+    record.name_length = infs_cpu_to_le16((uint16_t)name_length);
+    memcpy(record.name, name, name_length);
+
+    uint32_t page_index = count / INFS_SNAPSHOT_RECORDS_PER_PAGE;
+    uint32_t slot = count % INFS_SNAPSHOT_RECORDS_PER_PAGE;
+    uint64_t *pointers = (uint64_t *)(payload + 1);
+    uint8_t page_data[INFS_BLOCK_SIZE];
+    uint64_t old_page = 0;
+    struct infs_snapshot_record_disk *page_records = NULL;
+    uint32_t records_on_page = 0;
+
+    if (slot == 0) {
+        if (page_count >= INFS_SNAPSHOT_PAGE_POINTERS)
+            return INFS_STATUS_NO_SPACE;
+        uint64_t generation = 0;
+        status = transaction_next_generation(vol, &generation);
+        if (status != INFS_STATUS_OK)
+            return status;
+        status = infs_metadata_page_init(
+            page_data, INFS_SNAPSHOT_PAGE_MAGIC, snapshot_catalog_id,
+            generation);
+        if (status != INFS_STATUS_OK)
+            return status;
+        struct infs_metadata_page_disk *page =
+            (struct infs_metadata_page_disk *)page_data;
+        page_records = (struct infs_snapshot_record_disk *)(page + 1);
+        records_on_page = 0;
+    } else {
+        old_page = infs_le64_to_cpu(pointers[page_index]);
+        status = snapshot_page_load(
+            vol, old_page,
+            infs_le64_to_cpu(((struct infs_object_header_disk *)catalog)->generation),
+            page_data, &page_records, &records_on_page);
+        if (status != INFS_STATUS_OK || records_on_page != slot)
+            return status != INFS_STATUS_OK ? status : INFS_STATUS_CORRUPT;
     }
 
-    struct infs_snapshot_record_disk *record = &records[count];
-    memset(record, 0, sizeof(*record));
-    record->generation = vol->tx_base_sb.generation;
-    timestamp_disk_from_value(&record->created_time, created_time);
-    record->allocation_root_block =
-        vol->tx_base_sb.allocation_root_block;
-    record->allocation_leaf_count =
-        vol->tx_base_sb.allocation_leaf_count;
-    record->free_blocks = vol->tx_base_sb.free_blocks;
-    record->object_index_block = vol->tx_base_sb.object_index_block;
-    record->root_object_block = vol->tx_base_sb.root_object_block;
-    memcpy(record->root_object_id, vol->tx_base_sb.root_object_id, 16);
-    record->name_length = infs_cpu_to_le16((uint16_t)name_length);
-    memcpy(record->name, name, name_length);
+    page_records[records_on_page] = record;
+    struct infs_metadata_page_disk *page =
+        (struct infs_metadata_page_disk *)page_data;
+    page->entry_count = infs_cpu_to_le32(records_on_page + 1u);
+    page->bytes_used = infs_cpu_to_le32(
+        (records_on_page + 1u) * sizeof(record));
+    uint64_t replacement = 0;
+    status = metadata_page_store(vol, old_page, page_data, &replacement);
+    if (status != INFS_STATUS_OK)
+        return status;
+    pointers[page_index] = infs_cpu_to_le64(replacement);
+    if (slot == 0)
+        ++page_count;
+
     payload->snapshot_count = infs_cpu_to_le32(count + 1u);
+    payload->reserved = infs_cpu_to_le32(page_count);
     struct infs_object_header_disk *header =
         (struct infs_object_header_disk *)catalog;
-    header->payload_size = infs_cpu_to_le32((uint32_t)(sizeof(*payload) +
-        (size_t)(count + 1u) * sizeof(*record)));
+    header->payload_size = infs_cpu_to_le32((uint32_t)(
+        sizeof(*payload) + (size_t)page_count * sizeof(uint64_t)));
 
     if (!is_new)
         return write_object(vol, lookup.block, catalog);
@@ -520,9 +700,12 @@ infs_status infs_snapshot_delete(struct infs_volume *vol, const char *name)
     status = snapshot_catalog_load(vol, catalog, &payload, &lookup);
     if (status != INFS_STATUS_OK)
         goto fail;
-    uint32_t count = infs_le32_to_cpu(payload->snapshot_count);
-    struct infs_snapshot_record_disk *records =
-        (struct infs_snapshot_record_disk *)(payload + 1);
+
+    struct infs_snapshot_record_disk *records = NULL;
+    uint32_t count = 0;
+    status = snapshot_catalog_records(vol, catalog, payload, &records, &count);
+    if (status != INFS_STATUS_OK)
+        goto fail;
     uint32_t found = count;
     for (uint32_t i = 0; i < count; ++i) {
         if (snapshot_record_name_equal(&records[i], name, name_length)) {
@@ -531,23 +714,114 @@ infs_status infs_snapshot_delete(struct infs_volume *vol, const char *name)
         }
     }
     if (found == count) {
+        free(records);
         status = INFS_STATUS_NOT_FOUND;
         goto fail;
     }
+
     struct infs_snapshot_record_disk removed = records[found];
+    free(records);
     uint8_t *removed_bitmap = NULL;
     status = snapshot_read_bitmap(vol, &removed, &removed_bitmap);
     if (status != INFS_STATUS_OK)
         goto fail;
 
-    memmove(&records[found], &records[found + 1u],
-            (size_t)(count - found - 1u) * sizeof(*records));
-    memset(&records[count - 1u], 0, sizeof(*records));
+    uint32_t last = count - 1u;
+    uint32_t target_page_index = found / INFS_SNAPSHOT_RECORDS_PER_PAGE;
+    uint32_t target_slot = found % INFS_SNAPSHOT_RECORDS_PER_PAGE;
+    uint32_t last_page_index = last / INFS_SNAPSHOT_RECORDS_PER_PAGE;
+    uint32_t last_slot = last % INFS_SNAPSHOT_RECORDS_PER_PAGE;
+    uint32_t page_count = infs_le32_to_cpu(payload->reserved);
+    uint64_t *pointers = (uint64_t *)(payload + 1);
+    uint64_t catalog_generation =
+        infs_le64_to_cpu(((struct infs_object_header_disk *)catalog)->generation);
+
+    uint8_t target_page[INFS_BLOCK_SIZE];
+    struct infs_snapshot_record_disk *target_records = NULL;
+    uint32_t target_count = 0;
+    uint64_t target_old = infs_le64_to_cpu(pointers[target_page_index]);
+    status = snapshot_page_load(
+        vol, target_old, catalog_generation,
+        target_page, &target_records, &target_count);
+    if (status != INFS_STATUS_OK) {
+        free(removed_bitmap);
+        goto fail;
+    }
+
+    if (target_page_index == last_page_index) {
+        if (found != last)
+            target_records[target_slot] = target_records[last_slot];
+        memset(&target_records[last_slot], 0, sizeof(*target_records));
+        struct infs_metadata_page_disk *page =
+            (struct infs_metadata_page_disk *)target_page;
+        if (target_count == 1u) {
+            free_run(vol, target_old, 1u);
+            pointers[last_page_index] = 0;
+            --page_count;
+        } else {
+            page->entry_count = infs_cpu_to_le32(target_count - 1u);
+            page->bytes_used = infs_cpu_to_le32(
+                (target_count - 1u) * sizeof(*target_records));
+            uint64_t replacement = 0;
+            status = metadata_page_store(
+                vol, target_old, target_page, &replacement);
+            if (status != INFS_STATUS_OK) {
+                free(removed_bitmap);
+                goto fail;
+            }
+            pointers[target_page_index] = infs_cpu_to_le64(replacement);
+        }
+    } else {
+        uint8_t last_page[INFS_BLOCK_SIZE];
+        struct infs_snapshot_record_disk *last_records = NULL;
+        uint32_t last_count = 0;
+        uint64_t last_old = infs_le64_to_cpu(pointers[last_page_index]);
+        status = snapshot_page_load(
+            vol, last_old, catalog_generation,
+            last_page, &last_records, &last_count);
+        if (status != INFS_STATUS_OK || last_slot >= last_count) {
+            free(removed_bitmap);
+            status = status != INFS_STATUS_OK ? status : INFS_STATUS_CORRUPT;
+            goto fail;
+        }
+        target_records[target_slot] = last_records[last_slot];
+        uint64_t target_replacement = 0;
+        status = metadata_page_store(
+            vol, target_old, target_page, &target_replacement);
+        if (status != INFS_STATUS_OK) {
+            free(removed_bitmap);
+            goto fail;
+        }
+        pointers[target_page_index] = infs_cpu_to_le64(target_replacement);
+
+        memset(&last_records[last_slot], 0, sizeof(*last_records));
+        struct infs_metadata_page_disk *last_meta =
+            (struct infs_metadata_page_disk *)last_page;
+        if (last_count == 1u) {
+            free_run(vol, last_old, 1u);
+            pointers[last_page_index] = 0;
+            --page_count;
+        } else {
+            last_meta->entry_count = infs_cpu_to_le32(last_count - 1u);
+            last_meta->bytes_used = infs_cpu_to_le32(
+                (last_count - 1u) * sizeof(*last_records));
+            uint64_t last_replacement = 0;
+            status = metadata_page_store(
+                vol, last_old, last_page, &last_replacement);
+            if (status != INFS_STATUS_OK) {
+                free(removed_bitmap);
+                goto fail;
+            }
+            pointers[last_page_index] = infs_cpu_to_le64(last_replacement);
+        }
+    }
+
     payload->snapshot_count = infs_cpu_to_le32(count - 1u);
+    payload->reserved = infs_cpu_to_le32(page_count);
     struct infs_object_header_disk *header =
         (struct infs_object_header_disk *)catalog;
-    header->payload_size = infs_cpu_to_le32((uint32_t)(sizeof(*payload) +
-        (size_t)(count - 1u) * sizeof(*records)));
+    header->payload_size = infs_cpu_to_le32((uint32_t)(
+        sizeof(*payload) + (size_t)page_count * sizeof(uint64_t)));
     status = write_object(vol, lookup.block, catalog);
     if (status != INFS_STATUS_OK) {
         free(removed_bitmap);
@@ -595,7 +869,7 @@ infs_status infs_snapshot_delete(struct infs_volume *vol, const char *name)
     if (status != INFS_STATUS_OK)
         goto fail;
     status = finish_mutation(vol, vol->bitmap_bytes +
-                             (uint64_t)INFS_BLOCK_SIZE * 3u);
+                             (uint64_t)INFS_BLOCK_SIZE * 4u);
     if (status != INFS_STATUS_OK)
         goto fail;
     return INFS_STATUS_OK;
@@ -615,6 +889,7 @@ infs_status infs_snapshot_list(struct infs_volume *vol,
     *count_out = 0;
     if (!snapshots_enabled(vol))
         return INFS_STATUS_NOT_SUPPORTED;
+
     uint8_t catalog[INFS_BLOCK_SIZE];
     struct infs_snapshot_catalog_payload_disk *payload;
     infs_status status = snapshot_catalog_load(vol, catalog, &payload, NULL);
@@ -622,19 +897,28 @@ infs_status infs_snapshot_list(struct infs_volume *vol,
         return INFS_STATUS_OK;
     if (status != INFS_STATUS_OK)
         return status;
-    uint32_t count = infs_le32_to_cpu(payload->snapshot_count);
-    struct infs_snapshot_info *list = calloc(count ? count : 1u, sizeof(*list));
-    if (!list)
+
+    struct infs_snapshot_record_disk *records = NULL;
+    uint32_t count = 0;
+    status = snapshot_catalog_records(vol, catalog, payload, &records, &count);
+    if (status != INFS_STATUS_OK)
+        return status;
+
+    struct infs_snapshot_info *list =
+        calloc(count ? count : 1u, sizeof(*list));
+    if (!list) {
+        free(records);
         return INFS_STATUS_NO_MEMORY;
-    struct infs_snapshot_record_disk *records =
-        (struct infs_snapshot_record_disk *)(payload + 1);
+    }
     for (uint32_t i = 0; i < count; ++i) {
         uint16_t length = infs_le16_to_cpu(records[i].name_length);
         memcpy(list[i].name, records[i].name, length);
         list[i].name[length] = '\0';
         list[i].generation = infs_le64_to_cpu(records[i].generation);
-        timestamp_value_from_disk(&records[i].created_time, &list[i].created_time);
+        timestamp_value_from_disk(
+            &records[i].created_time, &list[i].created_time);
     }
+    free(records);
     *snapshots = list;
     *count_out = count;
     return INFS_STATUS_OK;

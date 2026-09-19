@@ -773,16 +773,20 @@ static bool infilfs_object_basic_valid(struct super_block *sb,
             return false;
     } else if (le16_to_cpu(header->object_type) == INFILFS_OBJECT_SNAPSHOT_CATALOG) {
         const struct infilfs_snapshot_catalog_payload_disk *catalog;
-        const struct infilfs_snapshot_record_disk *records;
-        u32 count, i;
-        if (payload < sizeof(*catalog)) return false;
+        u32 count, pages, expected_pages;
+        if (version != INFILFS_OBJECT_VERSION_PAGED ||
+            payload < sizeof(*catalog))
+            return false;
         catalog = (const struct infilfs_snapshot_catalog_payload_disk *)(header + 1);
         count = le32_to_cpu(catalog->snapshot_count);
-        if (count > 26u || payload != sizeof(*catalog) +
-            (size_t)count * sizeof(*records)) return false;
-        records = (const struct infilfs_snapshot_record_disk *)(catalog + 1);
-        for (i = 0; i < count; ++i)
-            if (!infilfs_timestamp_valid(&records[i].created_time)) return false;
+        pages = le32_to_cpu(catalog->reserved);
+        expected_pages = count ?
+            DIV_ROUND_UP(count, INFILFS_SNAPSHOT_RECORDS_PER_PAGE) : 0u;
+        if (count > INFILFS_SNAPSHOTS_PER_CATALOG ||
+            pages != expected_pages ||
+            pages > INFILFS_SNAPSHOT_PAGE_POINTERS ||
+            payload != sizeof(*catalog) + (size_t)pages * sizeof(__le64))
+            return false;
     }
     return true;
 }

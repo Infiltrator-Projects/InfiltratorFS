@@ -122,7 +122,11 @@ static void check_layout(void)
            "snapshot catalog payload size");
     expect(sizeof(struct infs_snapshot_record_disk) == 152u,
            "snapshot record size");
-    expect(INFS_SNAPSHOTS_PER_CATALOG == 26u,
+    expect(INFS_SNAPSHOT_RECORDS_PER_PAGE == 26u,
+           "snapshot page capacity");
+    expect(INFS_SNAPSHOT_PAGE_POINTERS >= 490u,
+           "snapshot catalog pointer capacity");
+    expect(INFS_SNAPSHOTS_PER_CATALOG >= 12000u,
            "snapshot catalog capacity");
 }
 
