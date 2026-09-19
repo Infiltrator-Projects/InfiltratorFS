@@ -270,6 +270,8 @@ static int infilfs_defrag_one(
     struct infilfs_native_index_change change = {0};
     struct infilfs_fragmentation_metrics before = {0};
     struct infilfs_fragmentation_metrics after = {0};
+    struct timespec64 saved_mtime;
+    struct timespec64 saved_ctime;
     u8 *old_object = NULL;
     u8 *new_object = NULL;
     u64 old_blocks = 0;
@@ -300,6 +302,14 @@ static int infilfs_defrag_one(
     max_blocks = max_bytes >> INFILFS_DISK_BLOCK_SHIFT;
     if (max_blocks < 2)
         return -EINVAL;
+
+    /*
+     * Defrag is a physical-only operation. Preserve the exact user-visible VFS
+     * timestamps that stat(2) reports at operation entry; these can be newer
+     * than an older file-object image after metadata-only activity.
+     */
+    saved_mtime = inode_get_mtime(inode);
+    saved_ctime = inode_get_ctime(inode);
 
     ret = filemap_write_and_wait(inode->i_mapping);
     if (ret)
@@ -443,10 +453,10 @@ static int infilfs_defrag_one(
         struct infilfs_file_payload_disk *new_file =
             (struct infilfs_file_payload_disk *)(new_header + 1);
 
-        new_file->attributes.modification_time =
-            old_file->attributes.modification_time;
-        new_file->attributes.change_time =
-            old_file->attributes.change_time;
+        infilfs_timestamp_encode(
+            &new_file->attributes.modification_time, saved_mtime);
+        infilfs_timestamp_encode(
+            &new_file->attributes.change_time, saved_ctime);
         ret = infilfs_rw_finalize_object(new_object);
         if (ret)
             goto finish;
@@ -479,10 +489,8 @@ finish:
         goto out;
 
     ii->object_block = new_file_block;
-    inode_set_mtime_to_ts(
-        inode, infilfs_timestamp_decode(&old_file->attributes.modification_time));
-    inode_set_ctime_to_ts(
-        inode, infilfs_timestamp_decode(&old_file->attributes.change_time));
+    inode_set_mtime_to_ts(inode, saved_mtime);
+    inode_set_ctime_to_ts(inode, saved_ctime);
     infilfs_refresh_inode_blocks_after_commit(inode);
     request->moved_bytes =
         (preserve_boundaries ? segment_physical_blocks : segment_blocks) <<
