@@ -76,6 +76,7 @@ test -f "$kernel/infiltratorfs_checksum_cache.c" || fail 'checksum cache object 
 test -f "$kernel/infiltratorfs_pagecache.c" || fail 'page-cache object missing'
 test -f "$kernel/infiltratorfs_directory_tree.c" || fail 'directory-tree object missing'
 test -f "$kernel/infiltratorfs_linux_meta_codec.c" || fail 'Linux metadata codec object missing'
+test -f "$kernel/infiltratorfs_shared_ownership.c" || fail 'shared ownership accelerator object missing'
 test ! -e "$kernel/infiltratorfs_directory_tree.inc" || fail 'directory tree regressed to textual include'
 ! grep -Fq 'infiltratorfs_directory_tree.inc' "$rw" || fail 'RW compositor textually includes directory tree'
 test ! -e "$kernel/infiltratorfs_pagecache.inc" || fail 'page-cache regressed to textual include'
