@@ -6,6 +6,10 @@ is to keep design intent, byte-level specification, implementation status,
 qualification evidence and historical investigation from becoming competing
 sources of truth.
 
+## Architecture decision record
+
+- `DECISIONS.md` — durable cross-cutting architectural choices and their consequences. It does not replace `ON_DISK_FORMAT.md`, `ROADMAP.md` or `QUALIFICATION.md`.
+
 ## Normative and architectural documents
 
 - `ON_DISK_FORMAT.md` — persistent Format 0.18 structural contract. Exact
