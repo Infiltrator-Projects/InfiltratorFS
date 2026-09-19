@@ -1179,12 +1179,14 @@ static int infilfs_ns_cow_object(struct infilfs_native_pending *pending,
                                  struct inode *inode,
                                  const u8 new_parent_id[16],
                                  s64 link_delta, bool clear_parent,
-                                 u64 *new_block_out)
+                                 u64 *new_block_out,
+                                 struct timespec64 *change_time_out)
 {
     struct infilfs_inode_info *ii = INFILFS_I(inode);
     u8 *object;
     struct infilfs_object_header_disk *header;
     struct infilfs_attributes_disk *attributes;
+    struct timespec64 change_time;
     u64 links;
     u64 new_block;
     int ret;
@@ -1216,7 +1218,8 @@ static int infilfs_ns_cow_object(struct infilfs_native_pending *pending,
         memset(header->parent_id, 0, sizeof(header->parent_id));
     else if (new_parent_id)
         memcpy(header->parent_id, new_parent_id, 16);
-    infilfs_timestamp_encode_ns(&attributes->change_time, (s64)(ktime_get_real_ns()));
+    change_time = ns_to_timespec64(ktime_get_real_ns());
+    infilfs_timestamp_encode(&attributes->change_time, change_time);
     header->generation = cpu_to_le64(pending->tx.generation);
     ret = infilfs_rw_finalize_object(object);
     if (ret)
@@ -1228,8 +1231,11 @@ static int infilfs_ns_cow_object(struct infilfs_native_pending *pending,
     if (ret)
         goto out;
     ret = infilfs_rw_tx_defer_free(&pending->tx, ii->object_block, 1);
-    if (!ret)
+    if (!ret) {
         *new_block_out = new_block;
+        if (change_time_out)
+            *change_time_out = change_time;
+    }
 out:
     kfree(object);
     return ret;
@@ -2016,7 +2022,7 @@ static int infilfs_ns_delete_object(
          */
         if (links >= 1u) {
             ret = infilfs_ns_cow_object(pending, inode, NULL, -1, true,
-                                        retained_block_out);
+                                        retained_block_out, NULL);
             if (ret)
                 return ret;
             *retained_out = true;
@@ -2352,6 +2358,7 @@ static int infilfs_ns_link(struct dentry *old_dentry, struct inode *dir,
     struct infilfs_inode_info *dir_ii = INFILFS_I(dir);
     struct infilfs_native_pending *pending;
     struct infilfs_ns_index_change changes[2];
+    struct timespec64 file_ctime = {0};
     u64 new_file_block = 0, new_dir_block = 0;
     s64 dir_block_delta = 0;
     int ret;
@@ -2370,7 +2377,8 @@ static int infilfs_ns_link(struct dentry *old_dentry, struct inode *dir,
     ret = infilfs_ns_begin(dir->i_sb, &pending);
     if (ret)
         return ret;
-    ret = infilfs_ns_cow_object(pending, inode, NULL, 1, true, &new_file_block);
+    ret = infilfs_ns_cow_object(pending, inode, NULL, 1, true,
+                                &new_file_block, &file_ctime);
     if (!ret)
         ret = infilfs_ns_rebuild_directory_accounted(
             pending, dir, NULL, NULL, &dentry->d_name, ii->object_id,
@@ -2393,6 +2401,7 @@ static int infilfs_ns_link(struct dentry *old_dentry, struct inode *dir,
         dir_ii->object_block = new_dir_block;
         infilfs_adjust_inode_blocks_after_commit(dir, dir_block_delta);
         inc_nlink(inode);
+        inode_set_ctime_to_ts(inode, file_ctime);
         ihold(inode);
         d_instantiate(dentry, inode);
     }
@@ -2648,7 +2657,7 @@ static int infilfs_ns_rename(struct user_namespace *idmap,
         pending, source,
         (!same_parent && !(source_ii->object_type == INFILFS_OBJECT_FILE &&
           source->i_nlink > 1)) ? new_dir_ii->object_id : NULL,
-        0, false, &source_block);
+        0, false, &source_block, NULL);
 finish:
     ;
     if (!ret)
