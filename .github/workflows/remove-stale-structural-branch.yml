@@ -1,0 +1,26 @@
+name: Remove stale structural branch
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  remove-stale-branch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete finish-structural-overhaul
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          git init cleanup
+          cd cleanup
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${REPOSITORY}.git"
+          if git ls-remote --exit-code --heads origin refs/heads/finish-structural-overhaul >/dev/null 2>&1; then
+            git push origin --delete finish-structural-overhaul
+          fi
