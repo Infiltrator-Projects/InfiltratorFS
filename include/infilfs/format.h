@@ -320,9 +320,9 @@ struct INFS_PACKED infs_index_entry_disk {
 #define INFS_SNAPSHOT_NAME_MAX 63u
 
 /* A snapshot catalog is an ordinary checksummed CoW object in the current
- * object index. Each record is a complete read-only generation root. Its
- * immutable bitmap image describes that generation's graph, including any
- * snapshots that already existed when the generation was captured. */
+ * object index. Each record is a complete read-only generation root. Snapshot
+ * ownership is retained by the generation's immutable allocation-tree root;
+ * no whole-volume bitmap image is copied when a snapshot is created. */
 struct INFS_PACKED infs_snapshot_catalog_payload_disk {
     uint32_t snapshot_count;
     uint32_t reserved;
@@ -331,8 +331,8 @@ struct INFS_PACKED infs_snapshot_catalog_payload_disk {
 struct INFS_PACKED infs_snapshot_record_disk {
     uint64_t generation;
     struct infs_timestamp_disk created_time;
-    uint64_t bitmap_start_block;
-    uint64_t bitmap_block_count;
+    uint64_t allocation_root_block;
+    uint64_t allocation_leaf_count;
     uint64_t free_blocks;
     uint64_t object_index_block;
     uint64_t root_object_block;

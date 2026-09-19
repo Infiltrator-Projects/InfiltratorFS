@@ -296,14 +296,7 @@ static int build_live_ownership_bitmap_progress(
             goto out;
     }
 
-    if (vol->snapshot_view) {
-        for (uint64_t i = 0; i < vol->snapshot_bitmap_block_count; ++i) {
-            status = ownership_claim(
-                owners, total, vol->snapshot_bitmap_start_block + i);
-            if (status != INFS_STATUS_OK)
-                goto out;
-        }
-    } else {
+    {
         struct infs_allocation_layout map = {0};
         status = allocation_map_load(vol, &vol->sb, NULL, NULL, &map);
         if (status != INFS_STATUS_OK)

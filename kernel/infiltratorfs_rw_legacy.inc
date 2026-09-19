@@ -683,7 +683,6 @@ static int infilfs_rw_snapshot_union(struct super_block *sb, u32 snapshots)
     struct infilfs_snapshot_catalog_payload_disk *payload;
     struct infilfs_snapshot_record_disk *records;
     u8 *object = NULL;
-    u8 *bitmap_block = NULL;
     u64 catalog_block;
     u16 type;
     u32 i;
@@ -692,9 +691,8 @@ static int infilfs_rw_snapshot_union(struct super_block *sb, u32 snapshots)
     if (!snapshots)
         return 0;
     object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_KERNEL);
-    bitmap_block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_KERNEL);
     sbi->snapshot_bitmap = kvzalloc(sbi->bitmap_bytes, GFP_KERNEL);
-    if (!object || !bitmap_block || !sbi->snapshot_bitmap) {
+    if (!object || !sbi->snapshot_bitmap) {
         ret = -ENOMEM;
         goto out;
     }
@@ -721,29 +719,33 @@ static int infilfs_rw_snapshot_union(struct super_block *sb, u32 snapshots)
     }
 
     for (i = 0; i < snapshots; ++i) {
-        u64 start = le64_to_cpu(records[i].bitmap_start_block);
-        u64 blocks = le64_to_cpu(records[i].bitmap_block_count);
-        u64 b;
+        struct infilfs_superblock_disk retained = sbi->disk;
+        struct infilfs_allocation_layout layout = {0};
+        u8 *bitmap = NULL;
+        size_t bitmap_bytes = 0;
+        size_t j;
 
-        if (blocks != sbi->bitmap_bytes / INFILFS_DISK_BLOCK_SIZE ||
-            !start || start >= infilfs_volume_blocks(sbi) ||
-            blocks > infilfs_volume_blocks(sbi) - start) {
+        retained.generation = records[i].generation;
+        retained.free_blocks = records[i].free_blocks;
+        retained.allocation_root_block = records[i].allocation_root_block;
+        retained.allocation_leaf_count = records[i].allocation_leaf_count;
+        retained.object_index_block = records[i].object_index_block;
+        retained.root_object_block = records[i].root_object_block;
+        memcpy(retained.root_object_id, records[i].root_object_id, 16);
+
+        ret = infilfs_allocation_map_load(
+            sb, &retained, &bitmap, &bitmap_bytes, &layout);
+        infilfs_allocation_layout_destroy(&layout);
+        if (ret)
+            goto out;
+        if (bitmap_bytes != sbi->bitmap_bytes) {
+            kvfree(bitmap);
             ret = -EFSCORRUPTED;
             goto out;
         }
-        for (b = 0; b < blocks; ++b) {
-            size_t offset = (size_t)b * INFILFS_DISK_BLOCK_SIZE;
-            size_t n;
-            size_t j;
-
-            ret = infilfs_read_allocated_block(sb, start + b, bitmap_block);
-            if (ret)
-                goto out;
-            n = min_t(size_t, INFILFS_DISK_BLOCK_SIZE,
-                      sbi->bitmap_bytes - offset);
-            for (j = 0; j < n; ++j)
-                sbi->snapshot_bitmap[offset + j] |= bitmap_block[j];
-        }
+        for (j = 0; j < bitmap_bytes; ++j)
+            sbi->snapshot_bitmap[j] |= bitmap[j];
+        kvfree(bitmap);
     }
     ret = 0;
 out:
@@ -751,7 +753,6 @@ out:
         kvfree(sbi->snapshot_bitmap);
         sbi->snapshot_bitmap = NULL;
     }
-    kfree(bitmap_block);
     kfree(object);
     return ret;
 }

@@ -165,12 +165,10 @@ struct infs_volume {
     void *snapshot_validation_context;
     void *snapshot_scrub_context;
 
-    /* Ephemeral ownership context for a retained-generation view. Snapshot
-     * records keep a flat immutable ownership image even though the live
-     * generation uses the Format 0.18 sharded allocation tree. */
+    /* Ephemeral retained-generation view. Its allocation bitmap and validated
+     * allocation-tree cache are reconstructed from the snapshot's persistent
+     * CoW allocation-tree root rather than from a copied bitmap image. */
     int snapshot_view;
-    uint64_t snapshot_bitmap_start_block;
-    uint64_t snapshot_bitmap_block_count;
 };
 
 struct infs_lookup {

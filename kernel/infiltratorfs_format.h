@@ -251,8 +251,8 @@ struct infilfs_snapshot_catalog_payload_disk {
 struct infilfs_snapshot_record_disk {
     __le64 generation;
     struct infilfs_timestamp_disk created_time;
-    __le64 bitmap_start_block;
-    __le64 bitmap_block_count;
+    __le64 allocation_root_block;
+    __le64 allocation_leaf_count;
     __le64 free_blocks;
     __le64 object_index_block;
     __le64 root_object_block;

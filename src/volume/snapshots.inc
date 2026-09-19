@@ -78,20 +78,22 @@ static int snapshot_record_valid(
 {
     uint64_t total = infs_le64_to_cpu(vol->sb.total_blocks);
     uint64_t generation = infs_le64_to_cpu(record->generation);
-    uint64_t bitmap_start = infs_le64_to_cpu(record->bitmap_start_block);
-    uint64_t bitmap_blocks = infs_le64_to_cpu(record->bitmap_block_count);
-    uint64_t expected_bitmap_blocks =
-        (uint64_t)(vol->bitmap_bytes / INFS_BLOCK_SIZE);
+    uint64_t allocation_root =
+        infs_le64_to_cpu(record->allocation_root_block);
+    uint64_t allocation_leaves =
+        infs_le64_to_cpu(record->allocation_leaf_count);
     uint64_t index = infs_le64_to_cpu(record->object_index_block);
     uint64_t root = infs_le64_to_cpu(record->root_object_block);
     uint16_t name_length = infs_le16_to_cpu(record->name_length);
+    size_t expected_leaves = 0;
 
-    if (catalog_generation == 0 || generation == 0 ||
+    if (allocation_map_counts(total, &expected_leaves, NULL, NULL, NULL) !=
+            INFS_STATUS_OK ||
+        catalog_generation == 0 || generation == 0 ||
         generation >= catalog_generation ||
-        bitmap_blocks == 0 || bitmap_blocks != expected_bitmap_blocks ||
-        bitmap_start == 0 || bitmap_start >= total ||
-        bitmap_blocks > total - bitmap_start || index == 0 || index >= total ||
-        root == 0 || root >= total ||
+        allocation_root == 0 || allocation_root >= total ||
+        allocation_leaves != expected_leaves ||
+        index == 0 || index >= total || root == 0 || root >= total ||
         infs_le64_to_cpu(record->free_blocks) > total ||
         id_is_zero(record->root_object_id) ||
         !timestamp_disk_valid(&record->created_time) || name_length == 0 ||
@@ -185,49 +187,47 @@ static int snapshot_find_record(
     return INFS_STATUS_NOT_FOUND;
 }
 
+static infs_status snapshot_load_allocation(
+    struct infs_volume *vol, const struct infs_snapshot_record_disk *record,
+    uint8_t **bitmap_out, struct infs_allocation_layout *layout_out)
+{
+    if (!vol || !record || !bitmap_out)
+        return INFS_STATUS_INVALID_ARGUMENT;
+    *bitmap_out = NULL;
+
+    struct infs_superblock_disk snapshot_sb = vol->sb;
+    snapshot_sb.generation = record->generation;
+    snapshot_sb.free_blocks = record->free_blocks;
+    snapshot_sb.allocation_root_block = record->allocation_root_block;
+    snapshot_sb.allocation_leaf_count = record->allocation_leaf_count;
+    snapshot_sb.object_index_block = record->object_index_block;
+    snapshot_sb.root_object_block = record->root_object_block;
+    memcpy(snapshot_sb.root_object_id, record->root_object_id, 16);
+
+    size_t bitmap_bytes = 0;
+    infs_status status = allocation_map_load(
+        vol, &snapshot_sb, bitmap_out, &bitmap_bytes, layout_out);
+    if (status != INFS_STATUS_OK)
+        return status;
+    if (bitmap_bytes != vol->bitmap_bytes) {
+        free(*bitmap_out);
+        *bitmap_out = NULL;
+        if (layout_out)
+            allocation_map_layout_destroy(layout_out);
+        return INFS_STATUS_CORRUPT;
+    }
+    return INFS_STATUS_OK;
+}
+
 static infs_status snapshot_read_bitmap(
     struct infs_volume *vol, const struct infs_snapshot_record_disk *record,
     uint8_t **bitmap_out)
 {
-    if (!bitmap_out)
-        return INFS_STATUS_INVALID_ARGUMENT;
-    *bitmap_out = NULL;
-    uint8_t *bitmap = malloc(vol->bitmap_bytes);
-    if (!bitmap)
-        return INFS_STATUS_NO_MEMORY;
-    uint64_t start = infs_le64_to_cpu(record->bitmap_start_block);
-    infs_status status = infs_storage_read(
-        &vol->storage, start * INFS_BLOCK_SIZE, bitmap, vol->bitmap_bytes);
-    if (status != INFS_STATUS_OK) {
-        free(bitmap);
-        return status;
-    }
-    uint64_t total = infs_le64_to_cpu(vol->sb.total_blocks);
-    uint64_t free_count = 0;
-    for (uint64_t b = 0; b < total; ++b) {
-        if (!bitmap_get(bitmap, b))
-            ++free_count;
-    }
-    if (free_count != infs_le64_to_cpu(record->free_blocks)) {
-        free(bitmap);
-        return INFS_STATUS_CORRUPT;
-    }
-    for (uint64_t b = total; b < (uint64_t)vol->bitmap_bytes * 8u; ++b) {
-        if (!bitmap_get(bitmap, b)) {
-            free(bitmap);
-            return INFS_STATUS_CORRUPT;
-        }
-    }
-    uint64_t blocks = infs_le64_to_cpu(record->bitmap_block_count);
-    for (uint64_t i = 0; i < blocks; ++i) {
-        if (!bitmap_get(vol->bitmap, start + i) ||
-            !bitmap_get(bitmap, start + i)) {
-            free(bitmap);
-            return INFS_STATUS_CORRUPT;
-        }
-    }
-    *bitmap_out = bitmap;
-    return INFS_STATUS_OK;
+    struct infs_allocation_layout layout = {0};
+    infs_status status = snapshot_load_allocation(
+        vol, record, bitmap_out, &layout);
+    allocation_map_layout_destroy(&layout);
+    return status;
 }
 
 static infs_status snapshot_union_bitmap(struct infs_volume *vol,
@@ -278,8 +278,10 @@ static infs_status snapshot_open_view(
     infs_status status = snapshot_find_record(vol, name, &record);
     if (status != INFS_STATUS_OK)
         return status;
+
     uint8_t *bitmap = NULL;
-    status = snapshot_read_bitmap(vol, &record, &bitmap);
+    struct infs_allocation_layout layout = {0};
+    status = snapshot_load_allocation(vol, &record, &bitmap, &layout);
     if (status != INFS_STATUS_OK)
         return status;
 
@@ -287,23 +289,22 @@ static infs_status snapshot_open_view(
     view->storage = vol->storage;
     view->size_bytes = vol->size_bytes;
     view->sb = vol->sb;
+    view->sb.generation = record.generation;
+    view->sb.free_blocks = record.free_blocks;
+    view->sb.allocation_root_block = record.allocation_root_block;
+    view->sb.allocation_leaf_count = record.allocation_leaf_count;
+    view->sb.object_index_block = record.object_index_block;
+    view->sb.root_object_block = record.root_object_block;
+    memcpy(view->sb.root_object_id, record.root_object_id, 16);
     view->bitmap = bitmap;
     view->bitmap_bytes = vol->bitmap_bytes;
+    allocation_map_cache_replace(view, &layout);
     view->data_allocation_cursor = 1u;
     view->metadata_allocation_cursor =
         infs_le64_to_cpu(view->sb.total_blocks);
     view->snapshot_validation_context = vol->snapshot_validation_context;
     view->snapshot_scrub_context = vol->snapshot_scrub_context;
     view->snapshot_view = 1;
-    view->snapshot_bitmap_start_block =
-        infs_le64_to_cpu(record.bitmap_start_block);
-    view->snapshot_bitmap_block_count =
-        infs_le64_to_cpu(record.bitmap_block_count);
-    view->sb.generation = record.generation;
-    view->sb.free_blocks = record.free_blocks;
-    view->sb.object_index_block = record.object_index_block;
-    view->sb.root_object_block = record.root_object_block;
-    memcpy(view->sb.root_object_id, record.root_object_id, 16);
     return INFS_STATUS_OK;
 }
 
@@ -312,6 +313,7 @@ static void snapshot_close_view(struct infs_volume *view)
     if (!view)
         return;
     object_cache_destroy(view);
+    allocation_map_cache_destroy(view);
     free(view->bitmap);
     view->bitmap = NULL;
 }
@@ -373,7 +375,6 @@ out:
 
 static int snapshot_catalog_append(
     struct infs_volume *vol, const char *name, size_t name_length,
-    uint64_t bitmap_start, const uint8_t *snapshot_bitmap,
     const struct infs_timestamp *created_time)
 {
     uint8_t catalog[INFS_BLOCK_SIZE];
@@ -413,16 +414,11 @@ static int snapshot_catalog_append(
     memset(record, 0, sizeof(*record));
     record->generation = vol->tx_base_sb.generation;
     timestamp_disk_from_value(&record->created_time, created_time);
-    record->bitmap_start_block = infs_cpu_to_le64(bitmap_start);
-    record->bitmap_block_count = infs_cpu_to_le64(
-        (uint64_t)(vol->bitmap_bytes / INFS_BLOCK_SIZE));
-    uint64_t free_count = 0;
-    uint64_t total = infs_le64_to_cpu(vol->tx_base_sb.total_blocks);
-    for (uint64_t b = 0; b < total; ++b) {
-        if (!bitmap_get(snapshot_bitmap, b))
-            ++free_count;
-    }
-    record->free_blocks = infs_cpu_to_le64(free_count);
+    record->allocation_root_block =
+        vol->tx_base_sb.allocation_root_block;
+    record->allocation_leaf_count =
+        vol->tx_base_sb.allocation_leaf_count;
+    record->free_blocks = vol->tx_base_sb.free_blocks;
     record->object_index_block = vol->tx_base_sb.object_index_block;
     record->root_object_block = vol->tx_base_sb.root_object_block;
     memcpy(record->root_object_id, vol->tx_base_sb.root_object_id, 16);
@@ -479,50 +475,20 @@ infs_status infs_snapshot_create(struct infs_volume *vol, const char *name)
     if (status != INFS_STATUS_OK)
         return status;
 
-    uint8_t *snapshot_bitmap = malloc(vol->bitmap_bytes);
-    if (!snapshot_bitmap) {
-        status = INFS_STATUS_NO_MEMORY;
-        goto fail;
-    }
-    memcpy(snapshot_bitmap, vol->bitmap, vol->bitmap_bytes);
-
-    struct infs_allocation_layout live_map = {0};
-    status = allocation_map_cache_view(vol, &vol->tx_base_sb, &live_map);
-    if (status != INFS_STATUS_OK) {
-        free(snapshot_bitmap);
-        goto fail;
-    }
-    for (size_t i = 0; i < live_map.leaf_count; ++i)
-        bitmap_set(snapshot_bitmap, live_map.leaf_blocks[i], 0);
-    for (size_t i = 0; i < live_map.branch_count; ++i)
-        bitmap_set(snapshot_bitmap, live_map.branch_blocks[i], 0);
-
-    uint64_t bitmap_blocks =
-        (uint64_t)(vol->bitmap_bytes / INFS_BLOCK_SIZE);
-    uint64_t bitmap_start = 0;
-    status = alloc_exact_run(vol, bitmap_blocks, &bitmap_start);
-    if (status != INFS_STATUS_OK) {
-        free(snapshot_bitmap);
-        goto fail;
-    }
-    for (uint64_t i = 0; i < bitmap_blocks; ++i)
-        bitmap_set(snapshot_bitmap, bitmap_start + i, 1);
-    status = infs_storage_write(&vol->storage,
-        bitmap_start * INFS_BLOCK_SIZE, snapshot_bitmap, vol->bitmap_bytes);
-    if (status != INFS_STATUS_OK) {
-        free(snapshot_bitmap);
-        goto fail;
-    }
     struct infs_timestamp now = {0};
     status = infs_storage_current_time(&vol->storage, &now);
     if (status == INFS_STATUS_OK)
-        status = snapshot_catalog_append(vol, name, name_length, bitmap_start,
-                                         snapshot_bitmap, &now);
-    free(snapshot_bitmap);
+        status = snapshot_catalog_append(vol, name, name_length, &now);
     if (status != INFS_STATUS_OK)
         goto fail;
-    status = finish_mutation(vol, vol->bitmap_bytes +
-                             (uint64_t)INFS_BLOCK_SIZE * 4u);
+
+    /*
+     * The snapshot record retains the already committed allocation-tree root.
+     * Publication of this tiny catalogue mutation may replace allocation-tree
+     * pages, but snapshot_union_bitmap() sees the new record before deferred
+     * frees are applied and therefore preserves the complete retained tree.
+     */
+    status = finish_mutation(vol, (uint64_t)INFS_BLOCK_SIZE * 4u);
     if (status != INFS_STATUS_OK)
         goto fail;
     return INFS_STATUS_OK;
