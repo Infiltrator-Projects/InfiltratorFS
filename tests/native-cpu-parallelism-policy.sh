@@ -62,6 +62,12 @@ grep -Fq 'infilfs_cpu_budget()' "$internal" || \
     fail 'writeback batch is not CPU-budget-aware'
 grep -Fq 'infilfs_queue_cpu_work(&items[i].work)' "$data" || \
     fail 'write preparation bypasses native CPU pool'
+grep -Fq 'if (!infilfs_queue_cpu_work(&items[i].work))' "$data" || \
+    fail 'write preparation queue failure can strand a completion'
+grep -Fq 'items[i].ret = infilfs_native_prepare_append(' "$data" || \
+    fail 'write preparation queue failure lost its synchronous fallback'
+grep -Fq 'complete(&items[i].done);' "$data" || \
+    fail 'write preparation queue failure does not complete its waiter'
 grep -Fq 'infilfs_cpu_work_enter();' "$data" || \
     fail 'write preparation does not consume a native CPU slot'
 grep -Fq 'infilfs_queue_cpu_work(&work[i].work)' "$read_cache" || \

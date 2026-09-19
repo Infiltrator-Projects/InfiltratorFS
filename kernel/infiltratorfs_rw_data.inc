@@ -3521,7 +3521,18 @@ static ssize_t infilfs_native_parallel_append_batch(
         items[i].bytes = bytes;
         items[i].preferred = preferred;
         atomic64_inc(&sbi->prepared_append_attempts);
-        infilfs_queue_cpu_work(&items[i].work);
+        if (!infilfs_queue_cpu_work(&items[i].work)) {
+            /*
+             * A failed queue attempt must never strand the completion below.
+             * The work item is freshly initialized and cannot already be
+             * pending here, so execute the same preparation synchronously as
+             * a fail-safe fallback and complete it exactly once.
+             */
+            items[i].ret = infilfs_native_prepare_append(
+                items[i].inode, items[i].plain, items[i].bytes,
+                items[i].preferred, &items[i].prepared);
+            complete(&items[i].done);
+        }
         offset += bytes;
     }
 
