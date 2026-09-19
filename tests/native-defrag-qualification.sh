@@ -201,19 +201,54 @@ else
     grep -Fq 'moved 0.00 MiB' <<<"$COMPRESSED_DEFRAG"
     (( COMPRESSED_PHYSICAL_RUNS_AFTER == 1 ))
 fi
-test "$(sha256sum "$COMPRESSED" | awk '{print $1}')" = "$COMPRESSED_EXPECTED"
-test "$(stat -c '%b' "$COMPRESSED")" = "$COMPRESSED_BLOCKS_BEFORE"
+COMPRESSED_ACTUAL="$(sha256sum "$COMPRESSED" | awk '{print $1}')"
+[[ "$COMPRESSED_ACTUAL" == "$COMPRESSED_EXPECTED" ]] || {
+    echo "Compressed defrag content mismatch: expected=$COMPRESSED_EXPECTED actual=$COMPRESSED_ACTUAL" >&2
+    exit 1
+}
+COMPRESSED_BLOCKS_AFTER="$(stat -c '%b' "$COMPRESSED")"
+[[ "$COMPRESSED_BLOCKS_AFTER" == "$COMPRESSED_BLOCKS_BEFORE" ]] || {
+    echo "Compressed defrag allocation changed: before=$COMPRESSED_BLOCKS_BEFORE after=$COMPRESSED_BLOCKS_AFTER" >&2
+    exit 1
+}
 
 ACTUAL="$(sha256sum "$FILE" | awk '{print $1}')"
-test "$ACTUAL" = "$EXPECTED"
-test "$(sha256sum "$LINK" | awk '{print $1}')" = "$EXPECTED"
-test "$(stat -c '%i' "$FILE")" = "$INO_BEFORE"
-test "$(stat -c '%i' "$LINK")" = "$INO_BEFORE"
-test "$(getfattr --only-values -n user.infiltratorfs-defrag "$FILE")" = preserved
+[[ "$ACTUAL" == "$EXPECTED" ]] || {
+    echo "Defrag content mismatch: expected=$EXPECTED actual=$ACTUAL" >&2
+    exit 1
+}
+LINK_ACTUAL="$(sha256sum "$LINK" | awk '{print $1}')"
+[[ "$LINK_ACTUAL" == "$EXPECTED" ]] || {
+    echo "Hard-link content mismatch: expected=$EXPECTED actual=$LINK_ACTUAL" >&2
+    exit 1
+}
+FILE_INO_AFTER="$(stat -c '%i' "$FILE")"
+LINK_INO_AFTER="$(stat -c '%i' "$LINK")"
+[[ "$FILE_INO_AFTER" == "$INO_BEFORE" ]] || {
+    echo "Defrag inode identity changed: before=$INO_BEFORE after=$FILE_INO_AFTER" >&2
+    exit 1
+}
+[[ "$LINK_INO_AFTER" == "$INO_BEFORE" ]] || {
+    echo "Hard-link inode identity changed: before=$INO_BEFORE after=$LINK_INO_AFTER" >&2
+    exit 1
+}
+XATTR_AFTER="$(getfattr --only-values -n user.infiltratorfs-defrag "$FILE")"
+[[ "$XATTR_AFTER" == preserved ]] || {
+    echo "Defrag xattr changed: expected=preserved actual=$XATTR_AFTER" >&2
+    exit 1
+}
 
 # Defrag is physical optimisation, not user-visible content modification.
-test "$(stat -c '%y' "$FILE")" = "$MTIME_BEFORE"
-test "$(stat -c '%z' "$FILE")" = "$CTIME_BEFORE"
+MTIME_AFTER="$(stat -c '%y' "$FILE")"
+CTIME_AFTER="$(stat -c '%z' "$FILE")"
+[[ "$MTIME_AFTER" == "$MTIME_BEFORE" ]] || {
+    echo "Defrag changed mtime: before=$MTIME_BEFORE after=$MTIME_AFTER" >&2
+    exit 1
+}
+[[ "$CTIME_AFTER" == "$CTIME_BEFORE" ]] || {
+    echo "Defrag changed ctime: before=$CTIME_BEFORE after=$CTIME_AFTER" >&2
+    exit 1
+}
 
 sync
 sudo umount "$MOUNTPOINT"
