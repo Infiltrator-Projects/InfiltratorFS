@@ -4,6 +4,15 @@ This file records user-visible, compatibility, architecture and validation chang
 
 ## Unreleased
 
+## 0.18.63 — 2026-09-19
+
+- Complete native Linux mutation of scalable extent-pointer trees, including promotion beyond the direct page-head ceiling and safe demotion when extent metadata shrinks.
+- Avoid a second whole-device writeback walk during transaction publication: stage dependencies durably, synchronously submit the three checkpoint buffers, then issue the device-cache flush.
+- Avoid whole-device `sync_blockdev()` work for clean `fsync()` calls when no native transaction exists to publish.
+- Add slow-path diagnostics for checkpoint selection, writable mount initialisation, checkpoint healing, quota reconstruction, snapshot retention-map construction and transaction publication.
+- Report checkpoint-replica divergence when it forces expensive deep graph validation so recovery-time stalls are directly attributable in the kernel log.
+- Preserve crash-safe checkpoint ordering and fail-closed write poisoning on indeterminate durability failures.
+
 ## 0.18.62 — 2026-09-19
 
 - Fix the native prepared-append queue-failure path so a failed workqueue enqueue cannot strand a completion waiter.
