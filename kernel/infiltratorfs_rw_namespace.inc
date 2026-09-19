@@ -2259,8 +2259,14 @@ static int infilfs_ns_evict_unlinked_file(struct inode *inode)
         pending, inode, &changes, &change_count, &change_capacity);
     if (!ret)
         ret = infilfs_ns_rebuild_index(pending, changes, change_count);
-    if (!ret) {
-        /* Owner removal changes multiplicity; force a read-side rebuild. */
+    if (!ret)
+        ret = infilfs_ns_shared_range_drop_owner(pending, inode);
+    if (ret) {
+        /*
+         * A failed operation will roll back persistent mutation. Discard the
+         * volatile ownership accelerator too rather than retain a partial
+         * decrement; the next operation can rebuild it read-side.
+         */
         pending->shared_range_index_valid = false;
         pending->shared_range_count = 0;
     }
