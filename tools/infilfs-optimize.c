@@ -15,6 +15,7 @@
 #include "infiltratorfs_ioctl.h"
 #include "infiltratr/arithmetic.h"
 #include "infiltratr/core.h"
+#include "infiltratr/format.h"
 
 struct optimize_options {
     bool defrag;
@@ -142,13 +143,15 @@ static int optimize_file(const char *path)
         return -1;
     }
 
+    char moved_text[64];
+    infiltratr_format_disk_capacity(moved, moved_text, sizeof(moved_text));
     printf("%s: extents %" PRIu64 " -> %" PRIu64
-           ", fragmentation %.1f%% -> %.1f%%, moved %.2f MiB\n",
+           ", fragmentation %.1f%% -> %.1f%%, moved %s\n",
            path, (uint64_t)before.data_extents,
            (uint64_t)after.data_extents,
            (double)before.fragmentation_milli / 10.0,
            (double)after.fragmentation_milli / 10.0,
-           (double)moved / (1024.0 * 1024.0));
+           moved_text);
 
     g_summary.after_extents += after.data_extents;
     g_summary.moved_bytes += moved;
@@ -232,13 +235,15 @@ int main(int argc, char **argv)
         return 2;
     }
 
+    char moved_text[64];
+    infiltratr_format_disk_capacity(
+        g_summary.moved_bytes, moved_text, sizeof(moved_text));
     printf("Summary: files=%" PRIu64 " fragmented=%" PRIu64
            " extents=%" PRIu64 "->%" PRIu64
-           " moved=%.2f MiB failures=%" PRIu64 "\n",
+           " moved=%s failures=%" PRIu64 "\n",
            g_summary.files, g_summary.fragmented_files,
            g_summary.before_extents, g_summary.after_extents,
-           (double)g_summary.moved_bytes / (1024.0 * 1024.0),
-           g_summary.failures);
+           moved_text, g_summary.failures);
 
     return g_summary.failures ? 1 : 0;
 }

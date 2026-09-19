@@ -2,6 +2,7 @@
 #include "infilfs/posix_io.h"
 #include "infilfs/volume.h"
 #include "infiltratr/core.h"
+#include "infiltratr/format.h"
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -40,8 +41,9 @@ static int block_device_is_mounted(const char *path)
 
 static void print_bytes(const char *label, uint64_t value)
 {
-    printf("  %-34s %" PRIu64 " bytes (%.2f GiB)\n",
-           label, value, (double)value / 1073741824.0);
+    char display[64];
+    infiltratr_format_disk_capacity(value, display, sizeof(display));
+    printf("  %-34s %" PRIu64 " bytes (%s)\n", label, value, display);
 }
 
 int main(int argc, char **argv)

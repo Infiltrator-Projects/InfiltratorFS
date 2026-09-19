@@ -136,10 +136,14 @@ static int extent_pointer_tree_build(
         return INFS_STATUS_INVALID_ARGUMENT;
     if (!extent_pointer_tree_levels(page_count))
         return INFS_STATUS_FILE_TOO_LARGE;
-    current = malloc((size_t)page_count * sizeof(*current));
+    size_t current_bytes = 0;
+    if (!infiltratr_size_multiply_checked(
+            (size_t)page_count, sizeof(*current), &current_bytes))
+        return INFS_STATUS_OVERFLOW;
+    current = malloc(current_bytes);
     if (!current)
         return INFS_STATUS_NO_MEMORY;
-    memcpy(current, extent_pages, (size_t)page_count * sizeof(*current));
+    memcpy(current, extent_pages, current_bytes);
 
     for (;;) {
         uint32_t parent_count =
@@ -273,7 +277,11 @@ static int paged_extent_collect_page_blocks(
 
     if (!blocks_out || !count_out || !count)
         return INFS_STATUS_INVALID_ARGUMENT;
-    blocks = malloc((size_t)count * sizeof(*blocks));
+    size_t blocks_bytes = 0;
+    if (!infiltratr_size_multiply_checked(
+            (size_t)count, sizeof(*blocks), &blocks_bytes))
+        return INFS_STATUS_OVERFLOW;
+    blocks = malloc(blocks_bytes);
     if (!blocks)
         return INFS_STATUS_NO_MEMORY;
     for (uint32_t i = 0; i < count; ++i) {
@@ -1045,10 +1053,19 @@ static int paged_extent_ensure(struct infs_volume *vol,
         return INFS_STATUS_OK;
     }
     uint64_t remaining = needed - have;
-    uint32_t capacity = count +
-        (uint32_t)(remaining / UINT32_MAX) + 2u;
-    struct infs_extent_disk *grown = realloc(
-        ext, (size_t)capacity * sizeof(*grown));
+    uint64_t extra = remaining / UINT32_MAX;
+    uint64_t capacity64 = 0;
+    size_t grown_bytes = 0;
+    if (!infiltratr_u64_add_checked((uint64_t)count, extra, &capacity64) ||
+        !infiltratr_u64_add_checked(capacity64, UINT64_C(2), &capacity64) ||
+        capacity64 > UINT32_MAX ||
+        !infiltratr_size_multiply_checked(
+            (size_t)capacity64, sizeof(*ext), &grown_bytes)) {
+        free(ext);
+        return INFS_STATUS_OVERFLOW;
+    }
+    uint32_t capacity = (uint32_t)capacity64;
+    struct infs_extent_disk *grown = realloc(ext, grown_bytes);
     if (!grown) {
         free(ext);
         return INFS_STATUS_NO_MEMORY;

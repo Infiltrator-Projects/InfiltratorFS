@@ -315,7 +315,8 @@ if(WIN32)
         @ONLY)
 
     add_library(infilfs_windows_bridge STATIC
-        tools/windows/infiltratorfs-windows-bridge.c)
+        tools/windows/infiltratorfs-windows-bridge.c
+        tools/windows/infiltratorfs-windows-metadata.c)
     target_include_directories(infilfs_windows_bridge PUBLIC tools/windows)
     target_link_libraries(infilfs_windows_bridge PUBLIC
         infilfs_win32 shell32 ole32)
