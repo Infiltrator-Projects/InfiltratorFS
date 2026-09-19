@@ -260,7 +260,7 @@ static int infilfs_native_recover_unlinked_files(struct super_block *sb)
      * side of the rwsem.
      */
     for (i = 0; i < count;) {
-        u32 end = min_t(u32, count, i + 64u);
+        u32 end = min_t(u32, count, i + 256u);
         u32 j;
 
         down_read(&sbi->write_lock);
@@ -273,23 +273,38 @@ static int infilfs_native_recover_unlinked_files(struct super_block *sb)
             if (le16_to_cpu(entries[j].object_type) != INFILFS_OBJECT_FILE)
                 continue;
 
-            ret = infilfs_index_lookup(sb, entries[j].object_id,
-                                       &live_block, &live_type);
-            if (ret == -ENOENT) {
-                ret = 0;
-                continue;
-            }
-            if (ret)
-                goto unlock_discovery;
-            if (live_type != INFILFS_OBJECT_FILE) {
-                ret = -EFSCORRUPTED;
-                goto unlock_discovery;
-            }
-
+            /*
+             * The catalogue snapshot already names the block that held this
+             * object. Most entries have not moved, so read it directly while
+             * the bounded topology read lock keeps the current graph stable.
+             * Only a moved/reclaimed snapshot block pays for a live index
+             * lookup. This avoids a million index-tree searches on large
+             * mounted volumes while retaining correctness under concurrent
+             * CoW publication.
+             */
+            live_block = le64_to_cpu(entries[j].object_block);
+            live_type = INFILFS_OBJECT_FILE;
             ret = infilfs_read_object(sb, live_block, INFILFS_OBJECT_FILE,
                                       entries[j].object_id, object);
-            if (ret)
-                goto unlock_discovery;
+            if (ret) {
+                ret = infilfs_index_lookup(sb, entries[j].object_id,
+                                           &live_block, &live_type);
+                if (ret == -ENOENT) {
+                    ret = 0;
+                    continue;
+                }
+                if (ret)
+                    goto unlock_discovery;
+                if (live_type != INFILFS_OBJECT_FILE) {
+                    ret = -EFSCORRUPTED;
+                    goto unlock_discovery;
+                }
+                ret = infilfs_read_object(
+                    sb, live_block, INFILFS_OBJECT_FILE,
+                    entries[j].object_id, object);
+                if (ret)
+                    goto unlock_discovery;
+            }
             files++;
 
             header = (struct infilfs_object_header_disk *)object;
