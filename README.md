@@ -149,3 +149,9 @@ Implementation comments and workflow comments should explain local behaviour onl
 ## Development rule
 
 Before 1.0, prefer the cleanest long-term filesystem design over preserving obsolete development-format assumptions. A feature is marked complete only when its implementation and required qualification are both complete.
+
+## Licence
+
+Copyright © 2016–2026 Shannon Smith.
+
+InfiltratorFS is licensed under the GNU General Public License version 3 or, at your option, any later version (`GPL-3.0-or-later`).

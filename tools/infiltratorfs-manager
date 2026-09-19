@@ -1702,7 +1702,7 @@ class Manager(Gtk.ApplicationWindow):
                 "Uses the native VFS/DKMS driver; FUSE is not the product path."
             ),
             authors=("Shannon Smith",),
-            copyright="Copyright © 2016 Shannon Smith",
+            copyright="Copyright © 2016–2026 Shannon Smith",
             website="https://github.com/Infiltrator-Projects/InfiltratorFS",
             license_name="GPL-3.0-or-later",
             license_text=(
