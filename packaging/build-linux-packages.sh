@@ -58,7 +58,7 @@ for file in Makefile infiltratorfs_core.c infiltratorfs_crypto.c infiltratorfs_i
             infiltratorfs_rw.inc \
             infiltratorfs_rw_legacy.inc infiltratorfs_checksum_cache.c infiltratorfs_rw_data.inc \
             infiltratorfs_rw_namespace.inc infiltratorfs_read_cache.c \
-            infiltratorfs_pagecache.c infiltratorfs_linux_meta_codec.c infiltratorfs_linux_meta.inc \
+            infiltratorfs_pagecache.c infiltratorfs_linux_meta_codec.c infiltratorfs_shared_ownership.c infiltratorfs_linux_meta.inc \
             infiltratorfs_resize.c infiltratorfs_quota.inc \
             infiltratorfs_defrag.inc infiltratorfs_ioctl.h; do
     install -m 0644 "kernel/$file" "$dkms_root/$file"
@@ -264,6 +264,7 @@ for required in \
     'usr/share/infiltratorfs/fonts/mb_corpo_s_regular.ttf$' \
     "usr/src/infiltratorfs-${package_version}/dkms.conf$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_core.c$" \
+    "usr/src/infiltratorfs-${package_version}/infiltratorfs_shared_ownership.c$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_crypto.c$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_internal.h$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_format.h$" \
