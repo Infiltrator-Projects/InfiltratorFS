@@ -65,6 +65,8 @@
  */
 unsigned int infilfs_cpu_budget(void);
 bool infilfs_queue_cpu_work(struct work_struct *work);
+void infilfs_mod_delayed_cpu_work(struct delayed_work *work,
+                                  unsigned long delay);
 void infilfs_cpu_work_enter(void);
 void infilfs_cpu_work_exit(void);
 
