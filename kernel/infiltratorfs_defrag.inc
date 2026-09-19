@@ -479,6 +479,10 @@ finish:
         goto out;
 
     ii->object_block = new_file_block;
+    inode_set_mtime_to_ts(
+        inode, infilfs_timestamp_decode(&old_file->attributes.modification_time));
+    inode_set_ctime_to_ts(
+        inode, infilfs_timestamp_decode(&old_file->attributes.change_time));
     infilfs_refresh_inode_blocks_after_commit(inode);
     request->moved_bytes =
         (preserve_boundaries ? segment_physical_blocks : segment_blocks) <<
