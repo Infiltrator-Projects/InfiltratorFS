@@ -267,6 +267,38 @@ struct infilfs_native_pending {
     bool commit_failed;
 };
 
+/* Rebuildable native lookup accelerators; persistent state never depends on them. */
+void infilfs_native_writer_tail_invalidate(struct infilfs_native_pending *pending);
+bool infilfs_native_writer_tail_lookup(
+    struct infilfs_native_pending *pending, const u8 owner_id[16],
+    struct infilfs_native_writer_tail *out);
+void infilfs_native_writer_tail_store(
+    struct infilfs_native_pending *pending, const u8 owner_id[16],
+    const u8 object_id[16], u64 object_block, u64 start_logical);
+void infilfs_native_index_locator_invalidate(
+    struct infilfs_native_pending *pending);
+int infilfs_native_index_locator_ensure(
+    struct infilfs_native_pending *pending, u32 wanted);
+int infilfs_native_index_locator_insert(
+    struct infilfs_native_pending *pending, const u8 object_id[16],
+    u32 page_index, u32 entry_index);
+bool infilfs_native_index_locator_lookup(
+    struct infilfs_native_pending *pending, const u8 object_id[16],
+    u32 *page_index, u32 *entry_index);
+int infilfs_native_index_locator_build(
+    struct infilfs_native_pending *pending,
+    const u8 head[INFILFS_DISK_BLOCK_SIZE]);
+void infilfs_native_directory_locator_invalidate(
+    struct infilfs_native_pending *pending);
+bool infilfs_native_directory_locator_matches(
+    struct infilfs_native_pending *pending, const u8 owner_id[16], u32 count);
+bool infilfs_native_directory_locator_lookup(
+    struct infilfs_native_pending *pending, const u8 owner_id[16],
+    const char *name, size_t name_len);
+int infilfs_native_directory_locator_insert(
+    struct infilfs_native_pending *pending, const u8 owner_id[16],
+    const char *name, size_t name_len);
+
 int infilfs_native_collect_extents(
     struct infilfs_native_pending *pending, struct inode *inode,
     u8 object[INFILFS_DISK_BLOCK_SIZE],
