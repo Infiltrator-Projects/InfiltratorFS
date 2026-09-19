@@ -1530,6 +1530,8 @@ static int infilfs_select_checkpoint(struct super_block *sb,
             break;
         }
     }
+    if (deep_validation)
+        pr_warn("InfiltratorFS: checkpoint replicas differ; performing deep object-graph validation\n");
     for (attempt = 0; attempt < INFILFS_CHECKPOINT_COUNT; ++attempt) {
         int best = -1;
         u64 best_generation = 0;
