@@ -524,13 +524,6 @@ static int validate_bitmap_ownership_progress(
     return status;
 }
 
-static int validate_bitmap_ownership(struct infs_volume *vol,
-                                     const struct infs_index_entry_disk *entries,
-                                     uint32_t count)
-{
-    return validate_bitmap_ownership_progress(vol, entries, count, NULL);
-}
-
 static int validate_integrity_metadata_progress(
     struct infs_volume *vol, struct scrub_metadata_progress_context *progress,
     int validate_snapshots)
