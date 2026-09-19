@@ -113,6 +113,7 @@ struct Manager {
     GtkWidget *stat_size;
     GtkWidget *stat_fs;
     GtkWidget *stat_mount;
+    GtkWidget *stat_status_card;
     GtkWidget *value_type;
     GtkWidget *value_path;
     GtkWidget *value_fs;
@@ -582,7 +583,8 @@ static void manager_apply_theme(Manager *manager)
     char background[8], panel[8], card[8], surface[8], input[8], border[8];
     char text[8], title[8], muted[8], subtle[8], button_bg[8], button_fg[8];
     char select_bg[8], select_fg[8], neutral[8], fault[8], card_hover[8];
-    char surface_hover[8], accent[8];
+    char surface_hover[8], accent[8], success[8], warning[8], info[8];
+    char operation[8], operation_hover[8];
     rgb_text(palette->background_rgb, background);
     rgb_text(palette->panel_rgb, panel);
     rgb_text(palette->card_rgb, card);
@@ -602,6 +604,11 @@ static void manager_apply_theme(Manager *manager)
     rgb_text(palette->card_hover_rgb, card_hover);
     rgb_text(palette->surface_hover_rgb, surface_hover);
     rgb_text(palette->neutral_accent_rgb, accent);
+    rgb_text(palette->success_rgb, success);
+    rgb_text(palette->warning_rgb, warning);
+    rgb_text(palette->info_rgb, info);
+    rgb_text(palette->operation_rgb, operation);
+    rgb_text(palette->operation_hover_rgb, operation_hover);
 
     GString *css = g_string_new(NULL);
     g_string_append_printf(css,
@@ -670,6 +677,41 @@ static void manager_apply_theme(Manager *manager)
         subtle, text, surface_hover, text, muted, fault, surface, title,
         muted, border, input, input, text, border, panel, subtle,
         background, text);
+
+    /*
+     * Common 1.19.8 exposes semantic state and operation colours in addition
+     * to the base surfaces.  Use those roles directly instead of flattening
+     * the Manager into neutral accent + fault only.
+     */
+    g_string_append_printf(css,
+        ".badge { border-color: %s; color: %s; }\n"
+        ".badge-mounted { border-color: %s; color: %s; }\n"
+        ".section-info { color: %s; }\n"
+        ".section-maintenance { color: %s; }\n"
+        ".section-danger { color: %s; }\n"
+        ".card-info { border-color: %s; }\n"
+        ".card-maintenance { border-color: %s; }\n"
+        ".stat-capacity { border-color: %s; }\n"
+        ".stat-filesystem { border-color: %s; }\n"
+        ".stat-status { border-color: %s; }\n"
+        ".stat-status .stat-value { color: %s; }\n"
+        ".stat-status.status-mounted { border-color: %s; }\n"
+        ".stat-status.status-mounted .stat-value { color: %s; }\n"
+        ".action-row button { background: %s; border-color: %s; }\n"
+        ".action-row button, .action-row button label, .action-row button image { color: %s; }\n"
+        ".action-row button:hover { background: %s; }\n"
+        ".action-row button:hover, .action-row button:hover label, .action-row button:hover image { color: %s; }\n"
+        ".action-inspect image { color: %s; }\n"
+        ".action-check image { color: %s; }\n"
+        ".action-scrub image { color: %s; }\n"
+        ".action-forensic image { color: %s; }\n"
+        ".danger-zone .section-subtitle { color: %s; }\n",
+        warning, warning, success, success,
+        info, accent, fault,
+        info, accent,
+        info, accent, warning, warning, success, success,
+        operation, border, text, operation_hover, text,
+        info, success, warning, accent, fault);
 
     (void)g_string_replace(css, "@UI_FONT@", typography->ui_family, 0);
     (void)g_string_replace(css, "@BRAND_FONT@", typography->brand_family, 0);
@@ -1070,6 +1112,14 @@ static void manager_show_target(Manager *manager)
         gtk_style_context_add_class(badge, "badge-mounted");
     else
         gtk_style_context_remove_class(badge, "badge-mounted");
+    if (manager->stat_status_card) {
+        GtkStyleContext *status_card =
+            gtk_widget_get_style_context(manager->stat_status_card);
+        if (mounted)
+            gtk_style_context_add_class(status_card, "status-mounted");
+        else
+            gtk_style_context_remove_class(status_card, "status-mounted");
+    }
 
     char size_text[64];
     infiltratr_format_disk_capacity(target->size, size_text, sizeof(size_text));
@@ -1558,10 +1608,12 @@ static void on_about(GtkButton *button, gpointer data)
 static GtkWidget *action_row(Manager *manager, GtkWidget *parent,
                              const char *icon, const char *title,
                              const char *description, const char *button_text,
-                             GCallback callback)
+                             const char *semantic_style, GCallback callback)
 {
     GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
     add_class(row, "action-row");
+    if (semantic_style)
+        add_class(row, semantic_style);
     gtk_box_pack_start(GTK_BOX(row), make_icon(icon, GTK_ICON_SIZE_BUTTON, 22),
                        FALSE, FALSE, 2);
     GtkWidget *text = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
@@ -1732,14 +1784,23 @@ static GtkWidget *build_ui(Manager *manager)
     GtkWidget *stats = gtk_grid_new();
     gtk_grid_set_column_spacing(GTK_GRID(stats), 10);
     gtk_grid_set_column_homogeneous(GTK_GRID(stats), TRUE);
-    gtk_grid_attach(GTK_GRID(stats), stat_card("CAPACITY", &manager->stat_size), 0, 0, 1, 1);
-    gtk_grid_attach(GTK_GRID(stats), stat_card("FILESYSTEM", &manager->stat_fs), 1, 0, 1, 1);
-    gtk_grid_attach(GTK_GRID(stats), stat_card("STATUS", &manager->stat_mount), 2, 0, 1, 1);
+    GtkWidget *capacity_card = stat_card("CAPACITY", &manager->stat_size);
+    GtkWidget *filesystem_card = stat_card("FILESYSTEM", &manager->stat_fs);
+    manager->stat_status_card = stat_card("STATUS", &manager->stat_mount);
+    add_class(capacity_card, "stat-capacity");
+    add_class(filesystem_card, "stat-filesystem");
+    add_class(manager->stat_status_card, "stat-status");
+    gtk_grid_attach(GTK_GRID(stats), capacity_card, 0, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(stats), filesystem_card, 1, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(stats), manager->stat_status_card, 2, 0, 1, 1);
     gtk_box_pack_start(GTK_BOX(overview), stats, FALSE, FALSE, 0);
 
     GtkWidget *details = gtk_box_new(GTK_ORIENTATION_VERTICAL, 13);
     add_class(details, "card");
-    gtk_box_pack_start(GTK_BOX(details), make_label("Volume information", "section-title"), FALSE, FALSE, 0);
+    add_class(details, "card-info");
+    GtkWidget *details_title = make_label("Volume information", "section-title");
+    add_class(details_title, "section-info");
+    gtk_box_pack_start(GTK_BOX(details), details_title, FALSE, FALSE, 0);
     GtkWidget *detail_grid = gtk_grid_new();
     gtk_grid_set_column_spacing(GTK_GRID(detail_grid), 30);
     gtk_grid_set_row_spacing(GTK_GRID(detail_grid), 10);
@@ -1754,21 +1815,30 @@ static GtkWidget *build_ui(Manager *manager)
 
     GtkWidget *maintenance = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
     add_class(maintenance, "card");
-    gtk_box_pack_start(GTK_BOX(maintenance), make_label("Maintenance", "section-title"), FALSE, FALSE, 0);
+    add_class(maintenance, "card-maintenance");
+    GtkWidget *maintenance_title = make_label("Maintenance", "section-title");
+    add_class(maintenance_title, "section-maintenance");
+    gtk_box_pack_start(GTK_BOX(maintenance), maintenance_title, FALSE, FALSE, 0);
     manager->inspect_button = action_row(manager, maintenance, "document-properties-symbolic",
-        "Inspect filesystem", "Read filesystem identity, format version and geometry.", "Inspect", G_CALLBACK(on_inspect));
+        "Inspect filesystem", "Read filesystem identity, format version and geometry.", "Inspect",
+        "action-inspect", G_CALLBACK(on_inspect));
     manager->check_button = action_row(manager, maintenance, "emblem-ok-symbolic",
-        "Check filesystem", "Run the fast structural consistency check.", "Check", G_CALLBACK(on_check));
+        "Check filesystem", "Run the fast structural consistency check.", "Check",
+        "action-check", G_CALLBACK(on_check));
     manager->scrub_button = action_row(manager, maintenance, "system-run-symbolic",
-        "Deep scrub", "Read payloads, recompute checksums and verify retained generations.", "Scrub", G_CALLBACK(on_scrub));
+        "Deep scrub", "Read payloads, recompute checksums and verify retained generations.", "Scrub",
+        "action-scrub", G_CALLBACK(on_scrub));
     manager->forensic_button = action_row(manager, maintenance, "system-search-symbolic",
-        "Forensic scan", "Locate current and orphaned filesystem metadata.", "Scan", G_CALLBACK(on_forensic));
+        "Forensic scan", "Locate current and orphaned filesystem metadata.", "Scan",
+        "action-forensic", G_CALLBACK(on_forensic));
     gtk_box_pack_start(GTK_BOX(overview), maintenance, FALSE, FALSE, 0);
 
     GtkWidget *danger = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 14);
     add_class(danger, "danger-zone");
     GtkWidget *danger_text = gtk_box_new(GTK_ORIENTATION_VERTICAL, 3);
-    gtk_box_pack_start(GTK_BOX(danger_text), make_label("Erase and format", "section-title"), FALSE, FALSE, 0);
+    GtkWidget *danger_title = make_label("Erase and format", "section-title");
+    add_class(danger_title, "section-danger");
+    gtk_box_pack_start(GTK_BOX(danger_text), danger_title, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(danger_text), make_label("Permanently erase this target and create a new InfiltratorFS volume.", "section-subtitle"), FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(danger), danger_text, TRUE, TRUE, 0);
     manager->format_button = gtk_button_new_with_label("Format Volume…");

@@ -4,6 +4,8 @@ This file records user-visible, compatibility, architecture and validation chang
 
 ## Unreleased
 
+- Use the complete semantic Infiltratr Common 1.19.8 night/day palette in the native Manager: warning/success state badges, information/maintenance accents, operation surfaces and semantic maintenance icons, while preserving the existing layout and behaviour.
+
 ## 0.18.63 — 2026-09-19
 
 - Complete native Linux mutation of scalable extent-pointer trees, including promotion beyond the direct page-head ceiling and safe demotion when extent metadata shrinks.
