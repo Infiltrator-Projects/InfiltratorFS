@@ -41,7 +41,10 @@ infs_status infs_get_attributes(struct infs_volume *vol, const char *path,
             vol, block, p, ext, &allocated_blocks);
         if (status != INFS_STATUS_OK)
             return status;
-        attributes->allocated_size = allocated_blocks * INFS_BLOCK_SIZE;
+        if (!infiltratr_u64_multiply_checked(
+                allocated_blocks, (uint64_t)INFS_BLOCK_SIZE,
+                &attributes->allocated_size))
+            return INFS_STATUS_OVERFLOW;
         posix = &p->posix;
     } else if (lk.type == INFS_OBJECT_DIRECTORY) {
         const struct infs_object_header_disk *header =
@@ -50,9 +53,15 @@ infs_status infs_get_attributes(struct infs_volume *vol, const char *path,
             (const struct infs_directory_payload_disk *)(header + 1);
         uint64_t blocks = 1u;
         if (infs_le16_to_cpu(header->object_version) ==
-            INFS_OBJECT_VERSION_PAGED)
-            blocks += infs_le32_to_cpu(p->bytes_used);
-        attributes->allocated_size = blocks * INFS_BLOCK_SIZE;
+            INFS_OBJECT_VERSION_PAGED &&
+            !infiltratr_u64_add_checked(
+                blocks, (uint64_t)infs_le32_to_cpu(p->bytes_used),
+                &blocks))
+            return INFS_STATUS_CORRUPT;
+        if (!infiltratr_u64_multiply_checked(
+                blocks, (uint64_t)INFS_BLOCK_SIZE,
+                &attributes->allocated_size))
+            return INFS_STATUS_OVERFLOW;
         posix = &p->posix;
     } else if (lk.type == INFS_OBJECT_SYMLINK) {
         struct infs_symlink_payload_disk *p;

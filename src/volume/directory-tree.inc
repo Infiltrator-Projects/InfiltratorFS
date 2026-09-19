@@ -397,7 +397,10 @@ static int tree_dir_mutate_node(
             page->bytes_used = infs_cpu_to_le32((uint32_t)(bytes + rec));
             return metadata_page_store(vol, node, block, replacement_out);
         }
-        uint8_t *grown = malloc((size_t)bytes + rec);
+        size_t grown_bytes = 0;
+        if (!infiltratr_size_add_checked((size_t)bytes, rec, &grown_bytes))
+            return INFS_STATUS_OVERFLOW;
+        uint8_t *grown = malloc(grown_bytes);
         if (!grown)
             return INFS_STATUS_NO_MEMORY;
         memcpy(grown, entries, bytes);
@@ -410,7 +413,7 @@ static int tree_dir_mutate_node(
         memcpy(entry->object_id, object_id, 16);
         memcpy(cursor + sizeof(*entry), name, wanted);
         status = tree_dir_build_subtree(
-            vol, owner_id, grown, (size_t)bytes + rec, count + 1u,
+            vol, owner_id, grown, grown_bytes, count + 1u,
             depth, replacement_out);
         free(grown);
         if (status != INFS_STATUS_OK)

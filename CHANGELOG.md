@@ -17,6 +17,7 @@ This file records user-visible, compatibility, architecture and validation chang
 - Forensically audit Common 1.19.8 call sites: use checked shared arithmetic for extent/allocation and Win32 growth paths, and use the generic Common scaler for Windows capacity text while preserving the established two-decimal GiB presentation.
 - Add a Common-usage policy gate so these call-site choices cannot silently drift back to local duplicate arithmetic or capacity scaling.
 - Preserve the established fixed two-decimal MiB defrag output and fixed two-decimal GiB compression metrics through Common's generic scaler; do not substitute the auto-scaling disk-capacity helper where the command-line unit itself is part of the interface.
+- Complete a second Common 1.19.8 call-site pass across compression, attribute accounting and scalable directory metadata so persistent range/offset/size arithmetic consistently uses the shared checked primitives without changing filesystem semantics or user-visible units.
 
 ## 0.18.62 — 2026-09-19
 

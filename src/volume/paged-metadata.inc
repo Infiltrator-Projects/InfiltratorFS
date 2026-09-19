@@ -859,12 +859,16 @@ static int paged_dir_snapshot(struct infs_volume *vol,
         if (status != INFS_STATUS_OK)
             return status;
         size_t next_total_bytes = 0;
+        uint64_t next_total_count = 0;
         if (!infiltratr_size_add_checked(
                 total_bytes, (size_t)bytes, &next_total_bytes) ||
-            UINT32_MAX - total_count < count)
+            !infiltratr_u64_add_checked(
+                (uint64_t)total_count, (uint64_t)count,
+                &next_total_count) ||
+            next_total_count > UINT32_MAX)
             return INFS_STATUS_OVERFLOW;
         total_bytes = next_total_bytes;
-        total_count += count;
+        total_count = (uint32_t)next_total_count;
     }
     if (total_count != expected_count)
         return INFS_STATUS_CORRUPT;
