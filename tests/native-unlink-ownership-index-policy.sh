@@ -6,13 +6,19 @@ ns="$root/kernel/infiltratorfs_rw_namespace.inc"
 state="$root/kernel/infiltratorfs_internal.h"
 data="$root/kernel/infiltratorfs_rw_data.inc"
 reflink="$root/kernel/infiltratorfs_defrag.inc"
+ownership="$root/kernel/infiltratorfs_shared_ownership.c"
 
 fail() { echo "native unlink ownership index policy: $*" >&2; exit 1; }
-for file in "$ns" "$state" "$data" "$reflink"; do test -f "$file" || fail "missing $file"; done
+for file in "$ns" "$state" "$data" "$reflink" "$ownership"; do test -f "$file" || fail "missing $file"; done
 
 grep -Fq 'struct infilfs_native_shared_range' "$state" || fail 'shared-range state missing'
 grep -Fq 'shared_range_index_valid' "$state" || fail 'shared-range validity state missing'
+grep -Fq 'u32 refs;' "$state" || fail 'shared-range multiplicity state missing'
 grep -Fq 'infilfs_ns_shared_range_index_build' "$ns" || fail 'shared-range builder missing'
+grep -Fq '(u32)coverage' "$ns" || fail 'shared-range builder does not preserve exact reference multiplicity'
+grep -Fq 'infilfs_shared_ownership_drop_owner' "$ownership" || fail 'incremental owner-drop engine missing'
+grep -Fq 'shared->refs - 1u' "$ownership" || fail 'incremental owner-drop does not decrement multiplicity'
+! grep -Fq 'infilfs_ns_index_snapshot' "$ownership" || fail 'owner-drop regressed to whole-index scan'
 grep -Fq 'infilfs_ns_shared_range_maybe_shared' "$ns" || fail 'shared-range query missing'
 grep -Fq 'infilfs_ns_other_reference_cover' "$ns" || fail 'exact ownership fallback missing'
 grep -Fq 'kvfree(pending->shared_ranges);' "$data" || fail 'ownership index unmount cleanup missing'
@@ -75,8 +81,18 @@ if 'infilfs_ns_evict_free_prepared_run(' not in delete_body:
 if 'infilfs_ns_free_unshared_run(' in delete_body:
     raise SystemExit('final eviction regressed to generic ownership scanner')
 
-if 'pending->shared_range_index_valid = false;' not in evict:
-    raise SystemExit('final eviction does not invalidate changed ownership multiplicity')
+rebuild = evict.find('infilfs_ns_rebuild_index(pending, changes, change_count)')
+drop = evict.find('infilfs_shared_ownership_drop_owner(pending, inode)')
+finish = evict.find('infilfs_ns_finish(pending, ret)')
+if min(rebuild, drop, finish) < 0 or not (rebuild < drop < finish):
+    raise SystemExit('final eviction does not update shared ownership incrementally before finish')
+
+# Failure may invalidate the volatile accelerator, but successful eviction must
+# not force the next inode to rebuild the complete ownership map.
+ret_block = evict.find('if (ret) {', drop)
+invalidate = evict.find('pending->shared_range_index_valid = false;', drop)
+if invalidate >= 0 and (ret_block < 0 or invalidate < ret_block):
+    raise SystemExit('successful eviction still invalidates the shared ownership index')
 
 free_start = s.index('static int infilfs_ns_free_unshared_run(')
 free_end = s.index('\nstatic int ', free_start + 1)
