@@ -127,11 +127,17 @@ fill_super_body="$(sed -n '/static int infilfs_fill_super(/,/^}/p' "$driver")"
     fail 'namespace mutation waits for complete orphan recovery'
 grep -Fq 'orphan_recovery_generation' "$kernel/infiltratorfs_internal.h" || \
     fail 'orphan recovery lost its mount-generation fence'
+grep -Fq 'infilfs_mod_delayed_cpu_work(&sbi->orphan_recovery_work, 1);' "$driver" || \
+    fail 'orphan recovery is not scheduled on the native unbound CPU pool'
 recovery_body="$(sed -n '/static int infilfs_native_recover_unlinked_files(/,/^}/p' "$rw")"
 grep -Fq 'le64_to_cpu(header->generation) <= recovery_generation' <<<"$recovery_body" || \
     fail 'orphan recovery does not reject post-mount zero-link objects'
-grep -Fq 'u32 end = min_t(u32, count, i + 64u);' <<<"$recovery_body" || \
+grep -Fq 'u32 end = min_t(u32, count, i + 256u);' <<<"$recovery_body" || \
     fail 'orphan discovery no longer yields the topology lock in bounded batches'
+grep -Fq 'live_block = le64_to_cpu(entries[j].object_block);' <<<"$recovery_body" || \
+    fail 'orphan discovery lost direct snapshot-block fast path'
+grep -Fq 'infilfs_index_lookup(sb, entries[j].object_id' <<<"$recovery_body" || \
+    fail 'orphan discovery lost moved-object fallback lookup'
 test "$(grep -Fc 'down_read(&sbi->write_lock);' <<<"$recovery_body")" -ge 2 || \
     fail 'orphan discovery/revalidation lost topology serialization'
 test "$(grep -Fc 'up_read(&sbi->write_lock);' <<<"$recovery_body")" -ge 3 || \
