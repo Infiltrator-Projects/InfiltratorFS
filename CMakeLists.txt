@@ -9,7 +9,7 @@ set(CMAKE_C_EXTENSIONS OFF)
 
 set(INFILTRATR_COMMON_REQUIRED_VERSION "1.19.6")
 set(INFILTRATR_COMMON_REQUIRED_COMMIT
-    "4964786ebf1e66dfdb9309c3813dcb17bce19eb5")
+    "a0e26896cc2a5674a138b29f009a7b30f0d636c6")
 
 # InfiltratorFS consumes the same Common contract as the other Infiltrator
 # projects. Prefer a parent-provided/installed 1.19.6 package, then the pinned
