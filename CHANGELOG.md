@@ -4,7 +4,11 @@ This file records user-visible, compatibility, architecture and validation chang
 
 ## Unreleased
 
-No unreleased changes are recorded after the 0.18.61 release candidate.
+## Unreleased — 0.18.62
+
+- Fix the native prepared-append queue-failure path so a failed workqueue enqueue cannot strand a completion waiter.
+- Continue forensic scalability, snapshot and native-write-path hardening after 0.18.61.
+
 
 ## 0.18.61 — 2026-09-19
 
