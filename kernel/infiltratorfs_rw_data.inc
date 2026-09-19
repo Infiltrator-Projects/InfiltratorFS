@@ -1026,9 +1026,11 @@ static void infilfs_native_idle_work(struct work_struct *work)
 
     if (!sbi)
         return;
+    infilfs_cpu_work_enter();
     down_write(&sbi->write_lock);
     ret = infilfs_native_pending_commit_locked(pending);
     up_write(&sbi->write_lock);
+    infilfs_cpu_work_exit();
     if (ret)
         pr_err("InfiltratorFS: native idle publication failed: %d\n", ret);
 }
