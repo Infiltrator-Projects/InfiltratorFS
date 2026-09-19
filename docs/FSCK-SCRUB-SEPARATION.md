@@ -37,6 +37,14 @@ Its output is explicit and human-readable, identifying the major checks performe
 
 The default check does not reconstruct a block-by-block live ownership bitmap from every file extent. That exhaustive ownership proof is intentionally part of deep scrub; otherwise a nominally "fast" fsck scales with every allocated data block on large volumes.
 
+The default check also does **not** reread every regular-file object or follow every
+per-file checksum-object chain. It authenticates the object-index topology and
+entry references, the allocation tree/accounting, and the directory namespace
+graph. Directory and symlink metadata needed to prove topology/reachability is
+read; regular-file header/link-count cross-validation and checksum-chain
+cross-validation remain part of `--scrub`. This keeps ordinary boot/fsck work
+bounded by metadata topology rather than by a million-file payload population.
+
 `fsck.infiltratorfs --scrub <device>` is the explicit heavyweight mode. The same native `fsck.infiltratorfs` executable directly calls the authoritative scrub APIs and performs the full data-integrity scan. It does not execute, wrap, depend on, or delegate to another scrub command.
 
 The deep mode retains the complete former scrub functionality, including ordinary offline scrub, stable online scrub (`--scrub --online`) and named snapshot scrub (`--scrub --snapshot <name>`).
