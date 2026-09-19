@@ -1942,27 +1942,24 @@ static int infilfs_native_build_file_object(
         sizeof(struct infilfs_object_header_disk) -
         sizeof(struct infilfs_file_payload_disk)) /
         sizeof(struct infilfs_extent_disk);
+    u16 old_version = le16_to_cpu(old_header->object_version);
     bool paged = extent_count && (extent_count > classic_max ||
-        le16_to_cpu(old_header->object_version) == INFILFS_OBJECT_VERSION_PAGED);
+        old_version == INFILFS_OBJECT_VERSION_PAGED ||
+        old_version == INFILFS_OBJECT_VERSION_TREE);
     u64 stored_block;
     int ret;
 
-    if (le16_to_cpu(old_header->object_version) ==
-        INFILFS_OBJECT_VERSION_PAGED) {
+    if (old_version == INFILFS_OBJECT_VERSION_PAGED ||
+        old_version == INFILFS_OBJECT_VERSION_TREE) {
         const struct infilfs_extent_head_disk *old_head =
             (const struct infilfs_extent_head_disk *)(old_file + 1);
-        size_t expected;
 
-        old_page_count = le32_to_cpu(old_head->page_count);
-        if (!old_page_count ||
-            old_page_count > INFILFS_EXTENT_PAGE_POINTERS ||
-            le32_to_cpu(old_head->reserved) != 0)
-            return -EFSCORRUPTED;
-        expected = sizeof(*old_file) + sizeof(*old_head) +
-            (size_t)old_page_count * sizeof(__le64);
-        if (expected != le32_to_cpu(old_header->payload_size))
-            return -EFSCORRUPTED;
-        old_pointers = (const __le64 *)(old_head + 1);
+        ret = infilfs_extent_layout_validate(
+            pending->sb, old_object, &old_page_count);
+        if (ret)
+            return ret;
+        if (old_version == INFILFS_OBJECT_VERSION_PAGED)
+            old_pointers = (const __le64 *)(old_head + 1);
     }
 
     memset(new_object, 0, INFILFS_DISK_BLOCK_SIZE);
@@ -2013,9 +2010,67 @@ static int infilfs_native_build_file_object(
         u8 *old_page_block;
 
         if (!(le64_to_cpu(pending->tx.next_sb.incompat_flags) &
-              INFILFS_INCOMPAT_PAGED_EXTENTS) ||
-            !pages || pages > INFILFS_EXTENT_PAGE_POINTERS)
+              INFILFS_INCOMPAT_PAGED_EXTENTS) || !pages)
             return -EFBIG;
+
+        if (pages > INFILFS_EXTENT_PAGE_POINTERS ||
+            old_version == INFILFS_OBJECT_VERSION_TREE) {
+            u64 *extent_pages;
+            u64 tree_root = 0;
+            u32 tree_levels = 0;
+
+            extent_pages = kvmalloc_array(pages, sizeof(*extent_pages), GFP_NOFS);
+            page_block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+            if (!extent_pages || !page_block) {
+                kvfree(extent_pages);
+                kfree(page_block);
+                return -ENOMEM;
+            }
+
+            for (p = 0; p < pages; ++p) {
+                struct infilfs_metadata_page_disk *page;
+                u32 n = min_t(u32, INFILFS_EXTENTS_PER_PAGE,
+                              extent_count - copied);
+
+                infilfs_rw_init_page(
+                    page_block, infilfs_extent_page_magic, ii->object_id,
+                    pending->tx.generation);
+                page = (struct infilfs_metadata_page_disk *)page_block;
+                page->entry_count = cpu_to_le32(n);
+                page->bytes_used = cpu_to_le32(n * sizeof(*extents));
+                memcpy(page + 1, extents + copied,
+                       (size_t)n * sizeof(*extents));
+                ret = infilfs_rw_finalize_page(page_block);
+                if (ret)
+                    break;
+                ret = infilfs_native_store_extent_page(
+                    pending, 0, page_block, &extent_pages[p]);
+                if (ret)
+                    break;
+                copied += n;
+            }
+            if (!ret)
+                ret = infilfs_extent_pointer_tree_build(
+                    pending, ii->object_id, extent_pages, pages,
+                    &tree_root, &tree_levels);
+            if (!ret)
+                ret = infilfs_extent_layout_defer_free(pending, old_object);
+            if (!ret) {
+                header->object_version =
+                    cpu_to_le16(INFILFS_OBJECT_VERSION_TREE);
+                head->page_count = cpu_to_le32(pages);
+                head->reserved = cpu_to_le32(tree_levels);
+                pointers[0] = cpu_to_le64(tree_root);
+                header->payload_size = cpu_to_le32(
+                    sizeof(*file) + sizeof(*head) + sizeof(*pointers));
+            }
+            kvfree(extent_pages);
+            kfree(page_block);
+            if (ret)
+                return ret;
+            goto extent_layout_ready;
+        }
+
         page_block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
         old_page_block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
         if (!page_block || !old_page_block) {
@@ -2109,6 +2164,7 @@ paged_out:
             return ret;
     }
 
+extent_layout_ready:
     ret = infilfs_rw_finalize_object(new_object);
     if (ret)
         return ret;
