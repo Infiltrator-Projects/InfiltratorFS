@@ -360,7 +360,9 @@ infs_status infs_metadata_page_finalize(uint8_t block[INFS_BLOCK_SIZE])
          memcmp(page->magic, INFS_DIRECTORY_BRANCH_PAGE_MAGIC, 8) != 0 &&
          memcmp(page->magic, INFS_INDEX_PAGE_MAGIC, 8) != 0 &&
          memcmp(page->magic, INFS_INDEX_BRANCH_PAGE_MAGIC, 8) != 0 &&
-         memcmp(page->magic, INFS_EXTENT_PAGE_MAGIC, 8) != 0) ||
+         memcmp(page->magic, INFS_EXTENT_PAGE_MAGIC, 8) != 0 &&
+         memcmp(page->magic, INFS_EXTENT_INDEX_PAGE_MAGIC, 8) != 0 &&
+         memcmp(page->magic, INFS_SNAPSHOT_PAGE_MAGIC, 8) != 0) ||
         infs_le64_to_cpu(page->generation) == 0 ||
         !id_is_nonzero(page->owner_object_id) ||
         bytes_used > INFS_METADATA_PAGE_DATA_SIZE ||
