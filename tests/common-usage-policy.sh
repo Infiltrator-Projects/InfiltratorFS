@@ -12,6 +12,8 @@ tool="$root/tools/infilfs-tool/part-02.inc"
 win="$root/tools/windows/infiltratorfs-windows.c"
 winio="$root/src/platform/win32_io.c"
 winpart="$root/src/platform/win32_partition_io.c"
+optimize="$root/tools/infilfs-optimize.c"
+compression="$root/tools/infilfs-compression.c"
 
 grep -Fq 'set(INFILTRATR_COMMON_REQUIRED_VERSION "1.19.8")' "$cmake"
 grep -Fq '3bfcb6f76ca44ac33bc2fee54fb114caa0eca5f9' "$cmake"
@@ -35,6 +37,20 @@ grep -Fq 'infiltratr_format_scaled_quantity' "$win"
 grep -Fq 'options.minimum_unit = 3u' "$win"
 grep -Fq 'options.maximum_unit = 3u' "$win"
 grep -Fq 'options.decimal_places = 2u' "$win"
+
+# Fixed-unit command output is a product contract. Use Common's generic scaler
+# rather than the auto-scaling convenience function when the command promises
+# a specific unit.
+grep -Fq 'infiltratr_format_scaled_quantity' "$optimize"
+grep -Fq 'options.minimum_unit = 2u' "$optimize"
+grep -Fq 'options.maximum_unit = 2u' "$optimize"
+grep -Fq 'options.decimal_places = 2u' "$optimize"
+! grep -Fq 'infiltratr_format_disk_capacity' "$optimize"
+grep -Fq 'infiltratr_format_scaled_quantity' "$compression"
+grep -Fq 'options.minimum_unit = 3u' "$compression"
+grep -Fq 'options.maximum_unit = 3u' "$compression"
+grep -Fq 'options.decimal_places = 2u' "$compression"
+! grep -Fq 'infiltratr_format_disk_capacity' "$compression"
 
 ! grep -Fq 'UINT64_MAX - blocks' "$paged"
 ! grep -Fq '1024.0 * 1024.0 * 1024.0' "$win"

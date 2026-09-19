@@ -36,6 +36,21 @@ struct optimize_summary {
 static struct optimize_options g_options;
 static struct optimize_summary g_summary;
 
+static void format_mib(uint64_t bytes, char *buffer, size_t size)
+{
+    static const char *const units[] = {"B", "KiB", "MiB"};
+    InfiltratrScaleOptions options = INFILTRATR_SCALE_OPTIONS_INIT;
+
+    options.minimum_unit = 2u;
+    options.maximum_unit = 2u;
+    options.decimal_places = 2u;
+    options.integer_threshold = 0.0L;
+    options.integer_at_minimum_unit = false;
+    (void)infiltratr_format_scaled_quantity(
+        (long double)bytes, units, INFILTRATR_ARRAY_LENGTH(units),
+        "", &options, buffer, size);
+}
+
 static void usage(const char *program)
 {
     fprintf(stderr,
@@ -144,7 +159,7 @@ static int optimize_file(const char *path)
     }
 
     char moved_text[64];
-    infiltratr_format_disk_capacity(moved, moved_text, sizeof(moved_text));
+    format_mib(moved, moved_text, sizeof(moved_text));
     printf("%s: extents %" PRIu64 " -> %" PRIu64
            ", fragmentation %.1f%% -> %.1f%%, moved %s\n",
            path, (uint64_t)before.data_extents,
@@ -236,8 +251,7 @@ int main(int argc, char **argv)
     }
 
     char moved_text[64];
-    infiltratr_format_disk_capacity(
-        g_summary.moved_bytes, moved_text, sizeof(moved_text));
+    format_mib(g_summary.moved_bytes, moved_text, sizeof(moved_text));
     printf("Summary: files=%" PRIu64 " fragmented=%" PRIu64
            " extents=%" PRIu64 "->%" PRIu64
            " moved=%s failures=%" PRIu64 "\n",

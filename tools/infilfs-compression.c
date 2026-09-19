@@ -39,10 +39,25 @@ static int block_device_is_mounted(const char *path)
     return mounted;
 }
 
+static void format_gib(uint64_t bytes, char *buffer, size_t size)
+{
+    static const char *const units[] = {"B", "KiB", "MiB", "GiB"};
+    InfiltratrScaleOptions options = INFILTRATR_SCALE_OPTIONS_INIT;
+
+    options.minimum_unit = 3u;
+    options.maximum_unit = 3u;
+    options.decimal_places = 2u;
+    options.integer_threshold = 0.0L;
+    options.integer_at_minimum_unit = false;
+    (void)infiltratr_format_scaled_quantity(
+        (long double)bytes, units, INFILTRATR_ARRAY_LENGTH(units),
+        "", &options, buffer, size);
+}
+
 static void print_bytes(const char *label, uint64_t value)
 {
     char display[64];
-    infiltratr_format_disk_capacity(value, display, sizeof(display));
+    format_gib(value, display, sizeof(display));
     printf("  %-34s %" PRIu64 " bytes (%s)\n", label, value, display);
 }
 
