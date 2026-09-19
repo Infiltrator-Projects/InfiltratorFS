@@ -14,7 +14,7 @@
 #define INFILFS_NATIVE_INDEX_LOCATOR_MIN_CAPACITY 64u
 #define INFILFS_NATIVE_DIRECTORY_LOCATOR_MIN_CAPACITY 64u
 
-static u32 infilfs_native_id_hash(const u8 id[16])
+u32 infilfs_native_id_hash(const u8 id[16])
 {
     u32 h = 2166136261u;
     unsigned int i;
@@ -175,7 +175,7 @@ static int infilfs_native_directory_locator_resize(
     return 0;
 }
 
-static int infilfs_native_directory_locator_ensure(
+int infilfs_native_directory_locator_ensure(
     struct infilfs_native_pending *pending, u32 wanted)
 {
     u64 needed;
