@@ -714,6 +714,7 @@ int infilfs_rw_snapshot_count(struct super_block *sb, u32 *count_out)
 
 static int infilfs_rw_snapshot_union(struct super_block *sb, u32 snapshots)
 {
+    u64 started = ktime_get_ns();
     static const u8 snapshot_id[16] = {
         'I','N','F','S','-','S','N','A','P','-','C','A','T','-','0','1'
     };
@@ -832,6 +833,13 @@ out:
     }
     kfree(page);
     kfree(object);
+    if (snapshots) {
+        u64 elapsed_ms =
+            div_u64(ktime_get_ns() - started, NSEC_PER_MSEC);
+        if (elapsed_ms >= 250)
+            pr_warn("InfiltratorFS: snapshot retention map snapshots=%u took %llums\n",
+                    snapshots, (unsigned long long)elapsed_ms);
+    }
     return ret;
 }
 
@@ -1181,6 +1189,7 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
     unsigned int n;
     int ret;
     int replica_error = 0;
+    u64 commit_started = ktime_get_ns();
 
     /*
      * All transaction-private file data and metadata are still unreachable at
@@ -1281,6 +1290,15 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
     tx->free_extent_capacity = 0;
     tx->free_extent_index_valid = false;
     tx->bitmap = NULL;
+    {
+        u64 elapsed_ms =
+            div_u64(ktime_get_ns() - commit_started, NSEC_PER_MSEC);
+        if (elapsed_ms >= 100)
+            pr_warn_ratelimited(
+                "InfiltratorFS: slow transaction publication=%llums generation=%llu\n",
+                (unsigned long long)elapsed_ms,
+                (unsigned long long)tx->generation);
+    }
     return 0;
 }
 
