@@ -63,7 +63,7 @@ grep -Fq 'down_read(&sbi->write_lock);' "$quota" || fail 'quota topology read lo
 # The native driver must stay a genuine multi-object Kbuild module. The
 # allocation map is the first extracted subsystem and must never regress into
 # textual inclusion.
-grep -Fqx 'infiltratorfs-y := infiltratorfs_core.o infiltratorfs_crypto.o infiltratorfs_allocation_map.o infiltratorfs_resize.o infiltratorfs_index_tree.o infiltratorfs_parallel_alloc.o infiltratorfs_allocation_publish.o infiltratorfs_read_cache.o infiltratorfs_pagecache.o infiltratorfs_directory_tree.o infiltratorfs_checksum_cache.o infiltratorfs_linux_meta_codec.o' "$makefile" || \
+grep -Fqx 'infiltratorfs-y := infiltratorfs_core.o infiltratorfs_crypto.o infiltratorfs_allocation_map.o infiltratorfs_resize.o infiltratorfs_index_tree.o infiltratorfs_parallel_alloc.o infiltratorfs_allocation_publish.o infiltratorfs_read_cache.o infiltratorfs_pagecache.o infiltratorfs_directory_tree.o infiltratorfs_checksum_cache.o infiltratorfs_linux_meta_codec.o infiltratorfs_shared_ownership.o' "$makefile" || \
     fail 'kernel module is no longer built from explicit component objects'
 test -f "$kernel/infiltratorfs_internal.h" || fail 'missing private kernel API header'
 test -f "$kernel/infiltratorfs_crypto.c" || fail 'accelerated integrity object missing'
