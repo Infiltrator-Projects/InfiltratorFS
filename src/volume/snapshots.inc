@@ -146,7 +146,7 @@ static int snapshot_catalog_load(
             INFS_SNAPSHOT_RECORDS_PER_PAGE : 0u;
     if (count > INFS_SNAPSHOTS_PER_CATALOG ||
         pages != expected_pages || pages > INFS_SNAPSHOT_PAGE_POINTERS ||
-        le32_to_cpu(header->payload_size) !=
+        infs_le32_to_cpu(header->payload_size) !=
             sizeof(*payload) + (size_t)pages * sizeof(uint64_t))
         return INFS_STATUS_CORRUPT;
 
