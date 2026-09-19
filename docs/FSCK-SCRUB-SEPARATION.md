@@ -24,7 +24,7 @@ The corrected design below is the product contract.
 The default check validates, as applicable:
 
 - readable and internally valid superblock/checkpoints;
-- allocation metadata structure and accounting;
+- allocation-tree structure, authenticated pages, critical allocations and free-block accounting;
 - object index structure and object references;
 - root object and namespace structure;
 - directory/link/reference consistency;
@@ -34,6 +34,8 @@ The default check validates, as applicable:
 - other format invariants necessary to decide whether the filesystem metadata is structurally clean.
 
 Its output is explicit and human-readable, identifying the major checks performed and ending with a clear CLEAN / ERROR result. On a newly formatted empty filesystem it should complete essentially immediately.
+
+The default check does not reconstruct a block-by-block live ownership bitmap from every file extent. That exhaustive ownership proof is intentionally part of deep scrub; otherwise a nominally "fast" fsck scales with every allocated data block on large volumes.
 
 `fsck.infiltratorfs --scrub <device>` is the explicit heavyweight mode. The same native `fsck.infiltratorfs` executable directly calls the authoritative scrub APIs and performs the full data-integrity scan. It does not execute, wrap, depend on, or delegate to another scrub command.
 
