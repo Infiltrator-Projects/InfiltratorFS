@@ -62,7 +62,8 @@ static int object_version_valid(uint16_t type, uint16_t version)
         return 1;
     if (version == INFS_OBJECT_VERSION_PAGED)
         return type == INFS_OBJECT_DIRECTORY || type == INFS_OBJECT_INDEX ||
-            type == INFS_OBJECT_FILE;
+            type == INFS_OBJECT_FILE ||
+            type == INFS_OBJECT_SNAPSHOT_CATALOG;
     return version == INFS_OBJECT_VERSION_TREE &&
         (type == INFS_OBJECT_INDEX || type == INFS_OBJECT_DIRECTORY ||
          type == INFS_OBJECT_FILE);
@@ -133,15 +134,23 @@ static int snapshot_catalog_payload_shape_valid(
 {
     if (payload_size < sizeof(struct infs_snapshot_catalog_payload_disk))
         return 0;
+    const struct infs_object_header_disk *header =
+        (const struct infs_object_header_disk *)block;
+    if (infs_le16_to_cpu(header->object_version) != INFS_OBJECT_VERSION_PAGED)
+        return 0;
     const struct infs_snapshot_catalog_payload_disk *payload =
         (const struct infs_snapshot_catalog_payload_disk *)(
             block + sizeof(struct infs_object_header_disk));
     uint32_t count = infs_le32_to_cpu(payload->snapshot_count);
-    if (infs_le32_to_cpu(payload->reserved) != 0 ||
-        count > INFS_SNAPSHOTS_PER_CATALOG)
+    uint32_t pages = infs_le32_to_cpu(payload->reserved);
+    uint32_t expected_pages = count ?
+        (count + INFS_SNAPSHOT_RECORDS_PER_PAGE - 1u) /
+            INFS_SNAPSHOT_RECORDS_PER_PAGE : 0u;
+    if (count > INFS_SNAPSHOTS_PER_CATALOG ||
+        pages != expected_pages || pages > INFS_SNAPSHOT_PAGE_POINTERS)
         return 0;
     return payload_size == sizeof(*payload) +
-        (size_t)count * sizeof(struct infs_snapshot_record_disk);
+        (size_t)pages * sizeof(uint64_t);
 }
 
 infs_status infs_encode_superblock(uint8_t block[INFS_BLOCK_SIZE],
