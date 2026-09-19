@@ -2013,8 +2013,7 @@ static int infilfs_native_build_file_object(
               INFILFS_INCOMPAT_PAGED_EXTENTS) || !pages)
             return -EFBIG;
 
-        if (pages > INFILFS_EXTENT_PAGE_POINTERS ||
-            old_version == INFILFS_OBJECT_VERSION_TREE) {
+        if (pages > INFILFS_EXTENT_PAGE_POINTERS) {
             u64 *extent_pages;
             u64 tree_root = 0;
             u32 tree_levels = 0;
@@ -2087,8 +2086,9 @@ static int infilfs_native_build_file_object(
             struct infilfs_metadata_page_disk *page;
             u32 n = min_t(u32, INFILFS_EXTENTS_PER_PAGE,
                           extent_count - copied);
-            u64 old_page_no = p < old_page_count ?
-                le64_to_cpu(old_pointers[p]) : 0;
+            u64 old_page_no =
+                old_version == INFILFS_OBJECT_VERSION_PAGED &&
+                p < old_page_count ? le64_to_cpu(old_pointers[p]) : 0;
             u64 block;
             bool unchanged = false;
 
@@ -2147,11 +2147,17 @@ static int infilfs_native_build_file_object(
          * live object and must participate in the same deferred/snapshot-aware
          * reclamation as every other CoW metadata block.
          */
-        for (p = pages; p < old_page_count; ++p) {
-            ret = infilfs_rw_tx_defer_free(
-                &pending->tx, le64_to_cpu(old_pointers[p]), 1);
+        if (old_version == INFILFS_OBJECT_VERSION_TREE) {
+            ret = infilfs_extent_layout_defer_free(pending, old_object);
             if (ret)
                 goto paged_out;
+        } else {
+            for (p = pages; p < old_page_count; ++p) {
+                ret = infilfs_rw_tx_defer_free(
+                    &pending->tx, le64_to_cpu(old_pointers[p]), 1);
+                if (ret)
+                    goto paged_out;
+            }
         }
 
         header->payload_size = cpu_to_le32(sizeof(*file) + sizeof(*head) +
