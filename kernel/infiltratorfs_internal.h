@@ -626,6 +626,7 @@ int infilfs_rw_allocation_map_publish(
 /* Services shared with the compiled verified-read cursor/cache layer. */
 extern const u8 infilfs_extent_page_magic[8];
 u32 infilfs_extent_kind(u32 flags);
+u64 infilfs_extent_physical_blocks(u32 logical_blocks, u32 flags);
 bool infilfs_extent_is_compressed(u32 flags);
 bool infilfs_extent_flags_valid(u32 logical_blocks, u64 physical, u32 flags);
 int infilfs_read_compressed_extent(
