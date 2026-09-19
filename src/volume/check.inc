@@ -2,6 +2,33 @@
 #include "infilfs/check.h"
 
 /*
+ * The normal checker validates the persistent allocation tree and accounting
+ * without reconstructing ownership from every live file/data block.
+ * allocation_map_load() authenticates the complete allocation tree, validates
+ * geometry, loads the authoritative bitmap, checks free-block accounting and
+ * verifies critical metadata allocation. The exhaustive live/snapshot
+ * ownership proof remains part of --scrub.
+ */
+static infs_status check_allocation_structure(struct infs_volume *vol)
+{
+    struct infs_allocation_layout layout = {0};
+    uint8_t *bitmap = NULL;
+    size_t bitmap_bytes = 0;
+    infs_status status;
+
+    status = allocation_map_load(
+        vol, &vol->sb, &bitmap, &bitmap_bytes, &layout);
+    if (status == INFS_STATUS_OK &&
+        (bitmap_bytes != vol->bitmap_bytes ||
+         memcmp(bitmap, vol->bitmap, bitmap_bytes) != 0))
+        status = INFS_STATUS_CORRUPT;
+
+    free(bitmap);
+    allocation_map_layout_destroy(&layout);
+    return status;
+}
+
+/*
  * Fast structural filesystem check.
  *
  * This deliberately validates persistent filesystem metadata without reading
@@ -32,7 +59,7 @@ infs_status infs_check(struct infs_volume *vol,
     }
     report->object_index_valid = 1;
 
-    status = validate_integrity_metadata(vol);
+    status = check_allocation_structure(vol);
     if (status != INFS_STATUS_OK) {
         report->failed_stage = INFS_CHECK_STAGE_ALLOCATION_OWNERSHIP;
         return checkpoint_graph_status(status);
