@@ -54,7 +54,7 @@ install -d "$dkms_root"
 for file in Makefile infiltratorfs_core.c infiltratorfs_crypto.c infiltratorfs_internal.h infiltratorfs_format.h \
             infiltratorfs_allocation_map.c infiltratorfs_allocation_publish.c \
             infiltratorfs_parallel_alloc.c \
-            infiltratorfs_index_tree.c infiltratorfs_directory_tree.c \
+            infiltratorfs_index_tree.c infiltratorfs_extent_tree.c infiltratorfs_directory_tree.c \
             infiltratorfs_rw.inc \
             infiltratorfs_rw_legacy.inc infiltratorfs_checksum_cache.c infiltratorfs_checksum_store.c infiltratorfs_locator_cache.c infiltratorfs_rw_data.inc \
             infiltratorfs_rw_namespace.inc infiltratorfs_read_cache.c \
@@ -272,6 +272,7 @@ for required in \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_allocation_map.c$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_allocation_publish.c$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_parallel_alloc.c$" \
+    "usr/src/infiltratorfs-${package_version}/infiltratorfs_extent_tree.c$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_rw.inc$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_rw_legacy.inc$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_checksum_cache.c$" \
@@ -378,7 +379,7 @@ verify_installer() {
         kernel/infiltratorfs_crypto.c \
         kernel/infiltratorfs_format.h include/infilfs/iac1.h kernel/infiltratorfs_allocation_map.c \
         kernel/infiltratorfs_allocation_publish.c kernel/infiltratorfs_rw.inc \
-        kernel/infiltratorfs_parallel_alloc.c \
+        kernel/infiltratorfs_parallel_alloc.c kernel/infiltratorfs_extent_tree.c \
         kernel/infiltratorfs_rw_legacy.inc kernel/infiltratorfs_checksum_cache.c kernel/infiltratorfs_locator_cache.c \
         kernel/infiltratorfs_rw_data.inc \
         kernel/infiltratorfs_rw_namespace.inc kernel/infiltratorfs_read_cache.c \
