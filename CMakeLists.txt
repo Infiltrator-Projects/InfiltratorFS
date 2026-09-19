@@ -7,12 +7,12 @@ set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
-set(INFILTRATR_COMMON_REQUIRED_VERSION "1.19.2")
+set(INFILTRATR_COMMON_REQUIRED_VERSION "1.19.3")
 set(INFILTRATR_COMMON_REQUIRED_COMMIT
-    "44409af17c89b6ece6b4bcb2c0c133213c695c23")
+    "de7251ce12ed176048df1bad05ef7e4d0db7e9ec")
 
 # InfiltratorFS consumes the same Common contract as the other Infiltrator
-# projects. Prefer a parent-provided/installed 1.19.2 package, then the pinned
+# projects. Prefer a parent-provided/installed 1.19.3 package, then the pinned
 # submodule. A source checkout without initialised submodules still remains
 # buildable by fetching the exact immutable Common commit.
 if(NOT TARGET InfiltratrCommon::Portable)

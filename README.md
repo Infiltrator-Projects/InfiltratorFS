@@ -14,7 +14,7 @@ user-facing README so visible status wording can change without breaking CI.
 **Current source:** 0.18.59<br>
 **On-disk format:** 0.18<br>
 **Latest published release:** v0.18.58<br>
-**Shared foundation:** Infiltratr Common 1.19.2<br>
+**Shared foundation:** Infiltratr Common 1.19.3<br>
 **Licence:** GPL-3.0-or-later
 
 Pre-1.0 development is current-format-only. Development-format compatibility is not promised, so test media may need reformatting after an on-disk-format revision.
