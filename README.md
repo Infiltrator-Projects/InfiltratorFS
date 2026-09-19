@@ -14,7 +14,9 @@ user-facing README so visible status wording can change without breaking CI.
 **Current source:** 0.18.63<br>
 **On-disk format:** 0.18<br>
 **Published releases:** [GitHub Releases](https://github.com/Infiltrator-Projects/InfiltratorFS/releases)<br>
-**Shared foundation:** Infiltratr Common 1.19.3<br>
+**Shared foundation:** Infiltratr Common 1.19.6<br>
+
+The Manager's appearance contract is shared with the other desktop applications: **Day** is the white Infiltrator palette, **Night** is the MB graphite/black palette with the canonical blue accent, and **System** follows the host light/dark preference by selecting exactly one of those two palettes.
 **Licence:** GPL-3.0-or-later
 
 Pre-1.0 development is current-format-only. Development-format compatibility is not promised, so test media may need reformatting after an on-disk-format revision.
