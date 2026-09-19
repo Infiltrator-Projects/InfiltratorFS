@@ -38,7 +38,7 @@ static const char *check_stage_name(uint32_t stage)
     case INFS_CHECK_STAGE_NAMESPACE:
         return "namespace/reference metadata";
     case INFS_CHECK_STAGE_CHECKSUM_METADATA:
-        return "checksum metadata";
+        return "checksum metadata index";
     case INFS_CHECK_STAGE_COMPLETE:
         return "complete";
     default:
@@ -85,10 +85,11 @@ static int run_structural_check(const char *target)
     printf("  Namespace/references:  %s\n",
            check_word(report.namespace_valid, report.failed_stage,
                       INFS_CHECK_STAGE_NAMESPACE));
-    printf("  Checksum metadata:     %s\n",
+    printf("  Checksum metadata index:%s\n",
            check_word(report.checksum_metadata_valid, report.failed_stage,
                       INFS_CHECK_STAGE_CHECKSUM_METADATA));
-    puts("  User-data checksum scan: NOT REQUESTED (--scrub for deep verification)");
+    puts("  File/checksum chain validation: NOT REQUESTED (--scrub for deep verification)");
+    puts("  User-data checksum scan:        NOT REQUESTED (--scrub for deep verification)");
 
     if (status == INFS_STATUS_OK) {
         puts("  Result:                CLEAN");
