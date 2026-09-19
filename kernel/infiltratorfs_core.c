@@ -2909,6 +2909,9 @@ static int infilfs_fill_super(struct super_block *sb, struct fs_context *fc)
     const struct infilfs_fs_context *ctx =
         fc ? fc->fs_private : NULL;
     int ret;
+    u64 mount_started = ktime_get_ns();
+    u64 phase_started;
+    u64 phase_ms;
 
     if (!sb_set_blocksize(sb, INFILFS_DISK_BLOCK_SIZE))
         return -EINVAL;
@@ -2942,13 +2945,30 @@ static int infilfs_fill_super(struct super_block *sb, struct fs_context *fc)
                       infilfs_orphan_recovery_worker);
     sb->s_fs_info = sbi;
 
+    phase_started = ktime_get_ns();
     ret = infilfs_select_checkpoint(sb, &sbi->disk);
+    phase_ms = div_u64(ktime_get_ns() - phase_started, NSEC_PER_MSEC);
+    if (phase_ms >= 250)
+        pr_warn("InfiltratorFS: slow mount phase checkpoint-select=%llums\n",
+                (unsigned long long)phase_ms);
     if (ret)
         goto fail;
+
+    phase_started = ktime_get_ns();
     ret = infilfs_rw_mount_init(sb);
+    phase_ms = div_u64(ktime_get_ns() - phase_started, NSEC_PER_MSEC);
+    if (phase_ms >= 250)
+        pr_warn("InfiltratorFS: slow mount phase rw-init=%llums\n",
+                (unsigned long long)phase_ms);
     if (ret)
         goto fail;
+
+    phase_started = ktime_get_ns();
     ret = infilfs_rw_heal_checkpoints(sb);
+    phase_ms = div_u64(ktime_get_ns() - phase_started, NSEC_PER_MSEC);
+    if (phase_ms >= 250)
+        pr_warn("InfiltratorFS: slow mount phase checkpoint-heal=%llums\n",
+                (unsigned long long)phase_ms);
     if (ret)
         goto fail;
 
@@ -2971,10 +2991,20 @@ static int infilfs_fill_super(struct super_block *sb, struct fs_context *fc)
         ret = -ENOMEM;
         goto fail;
     }
+    phase_started = ktime_get_ns();
     ret = infilfs_quota_mount_init(sb);
+    phase_ms = div_u64(ktime_get_ns() - phase_started, NSEC_PER_MSEC);
+    if (phase_ms >= 250)
+        pr_warn("InfiltratorFS: slow mount phase quota-rebuild=%llums\n",
+                (unsigned long long)phase_ms);
     if (ret)
         goto fail;
     infilfs_schedule_orphan_recovery(sb);
+
+    phase_ms = div_u64(ktime_get_ns() - mount_started, NSEC_PER_MSEC);
+    if (phase_ms >= 250)
+        pr_warn("InfiltratorFS: mount completed in %llums\n",
+                (unsigned long long)phase_ms);
 
     pr_info("InfiltratorFS: native %s mount Format %u.%u generation %llu media=%s media_source=%s compress=%s cpu_budget=%u\n",
             sb_rdonly(sb) ? "read-only" : "read-write",
