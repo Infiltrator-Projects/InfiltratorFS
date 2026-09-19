@@ -2519,7 +2519,8 @@ static int infilfs_native_try_single_paged_overwrite(
         u32 second_count;
 
         if (old_page_count >= INFILFS_EXTENT_PAGE_POINTERS) {
-            ret = -EFBIG;
+            /* Let the authoritative generic path promote the file to TREE. */
+            ret = -EOPNOTSUPP;
             goto out;
         }
         first_count = local_count / 2u;
@@ -2743,7 +2744,8 @@ static int infilfs_native_try_prepared_paged_append(
     }
     if (local_count > INFILFS_EXTENTS_PER_PAGE &&
         old_page_count >= INFILFS_EXTENT_PAGE_POINTERS) {
-        ret = -EFBIG;
+        /* Let the authoritative generic path promote the file to TREE. */
+        ret = -EOPNOTSUPP;
         goto out;
     }
 
