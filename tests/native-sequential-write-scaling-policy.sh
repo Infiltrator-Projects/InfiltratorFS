@@ -53,14 +53,15 @@ grep -Fq '#define INFILFS_NATIVE_IDLE_DELAY (5u * HZ)' "$data"
 grep -Fq 'const u64 max_publish = 512ULL * 1024ULL * 1024ULL;' "$data"
 grep -Fq '#define INFILFS_NATIVE_METADATA_PUBLISH_CHARGE (64ULL * 1024ULL)' "$ns"
 
-# Publication must retain the two-barrier dependency ordering: one barrier
-# after staging data/metadata/allocation-tree blocks and one after issuing all
-# three checkpoint replicas. Reintroducing the old four/five barrier sequence
-# causes severe burst/stall behaviour on removable flash media.
+# Publication keeps one full dependency barrier, then writes only the three
+# checkpoint buffers synchronously and flushes the device cache. A second
+# whole-device sync after the dependency graph is already durable is forbidden.
 legacy="$root/kernel/infiltratorfs_rw_legacy.inc"
 commit_body="$(sed -n '/static int infilfs_rw_tx_commit(/,/^}/p' "$legacy")"
-test "$(grep -Fc 'sync_blockdev(tx->sb->s_bdev)' <<<"$commit_body")" -eq 2
+test "$(grep -Fc 'sync_blockdev(tx->sb->s_bdev)' <<<"$commit_body")" -eq 1
 grep -Fq 'infilfs_rw_allocation_map_publish(tx, &next_allocation)' <<<"$commit_body"
+grep -Fq 'infilfs_rw_write_block_sync(tx->sb' <<<"$commit_body"
+grep -Fq 'blkdev_issue_flush(tx->sb->s_bdev)' <<<"$commit_body"
 grep -Fq 'for (n = 1; n < INFILFS_CHECKPOINT_COUNT; ++n)' <<<"$commit_body"
 
 # Deferred publication must react to excess physical CoW churn as well as
@@ -95,6 +96,8 @@ writepages="$(sed -n '/static int infilfs_writepages(/,/^}/p' "$pagecache")"
 fsync_body="$(sed -n '/static int infilfs_file_fsync(/,/^}/p' "$data")"
 grep -Fq 'file_write_and_wait_range' <<<"$fsync_body"
 grep -Fq 'infilfs_native_pending_flush_sb' <<<"$fsync_body"
+pending_flush="$(sed -n '/int infilfs_native_pending_flush_sb(/,/^}/p' "$data")"
+! grep -Fq 'sync_blockdev(sb->s_bdev)' <<<"$pending_flush"
 
 # Verified reads must queue a bounded contiguous extent window before the
 # synchronous 4 KiB integrity reader waits on the first buffer.
