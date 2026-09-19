@@ -435,48 +435,21 @@ static infs_status snapshot_read_bitmap_progress(
 {
     if (!progress)
         return snapshot_read_bitmap(vol, record, bitmap_out);
-    if (!bitmap_out)
+    if (!vol || !record || !bitmap_out)
         return INFS_STATUS_INVALID_ARGUMENT;
-    *bitmap_out = NULL;
-    uint8_t *bitmap = malloc(vol->bitmap_bytes);
-    if (!bitmap)
-        return INFS_STATUS_NO_MEMORY;
-    uint64_t start = infs_le64_to_cpu(record->bitmap_start_block);
-    infs_status status = infs_storage_read(
-        &vol->storage, start * INFS_BLOCK_SIZE, bitmap, vol->bitmap_bytes);
-    if (status != INFS_STATUS_OK) {
-        free(bitmap);
+
+    struct infs_allocation_layout layout = {0};
+    infs_status status = snapshot_load_allocation(
+        vol, record, bitmap_out, &layout);
+    allocation_map_layout_destroy(&layout);
+    if (status != INFS_STATUS_OK)
         return status;
-    }
 
     uint64_t total = infs_le64_to_cpu(vol->sb.total_blocks);
     scrub_metadata_progress_begin_generation(
         progress, generation, INFS_SCRUB_METADATA_SNAPSHOT_BITMAP, total);
-    uint64_t free_count = 0;
-    for (uint64_t b = 0; b < total; ++b) {
-        if (!bitmap_get(bitmap, b))
-            ++free_count;
+    for (uint64_t b = 0; b < total; ++b)
         scrub_metadata_progress_update(progress, b + 1u);
-    }
-    if (free_count != infs_le64_to_cpu(record->free_blocks)) {
-        free(bitmap);
-        return INFS_STATUS_CORRUPT;
-    }
-    for (uint64_t b = total; b < (uint64_t)vol->bitmap_bytes * 8u; ++b) {
-        if (!bitmap_get(bitmap, b)) {
-            free(bitmap);
-            return INFS_STATUS_CORRUPT;
-        }
-    }
-    uint64_t blocks = infs_le64_to_cpu(record->bitmap_block_count);
-    for (uint64_t i = 0; i < blocks; ++i) {
-        if (!bitmap_get(vol->bitmap, start + i) ||
-            !bitmap_get(bitmap, start + i)) {
-            free(bitmap);
-            return INFS_STATUS_CORRUPT;
-        }
-    }
-    *bitmap_out = bitmap;
     return INFS_STATUS_OK;
 }
 
