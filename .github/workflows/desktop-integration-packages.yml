@@ -1,6 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 name: Desktop integration packages
 
+# This workflow is also the qualification source consumed by release assembly.
+# Touching this workflow deliberately refreshes the managed Ubuntu/Mint package
+# prerelease when its current package-build contract has changed.
 on:
   push:
     branches: [main]
