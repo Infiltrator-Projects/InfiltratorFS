@@ -24,7 +24,7 @@ BEGIN
             VALUE "OriginalFilename", "InfiltratorFS-Windows-@PROJECT_VERSION@.exe\0"
             VALUE "ProductName", "InfiltratorFS\0"
             VALUE "ProductVersion", "@PROJECT_VERSION@\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 InfiltratorFS contributors\0"
+            VALUE "LegalCopyright", "Copyright (C) 2016 InfiltratorFS contributors\0"
         END
     END
     BLOCK "VarFileInfo"
