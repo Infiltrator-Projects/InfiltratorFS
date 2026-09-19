@@ -1073,12 +1073,6 @@ static int alloc_exact_run_impl(struct infs_volume *vol, uint64_t wanted,
     return INFS_STATUS_OK;
 }
 
-static int alloc_exact_run(struct infs_volume *vol, uint64_t wanted,
-                   uint64_t *start_out)
-{
-    return alloc_exact_run_impl(vol, wanted, start_out, 1);
-}
-
 static int alloc_exact_run_uninitialized(struct infs_volume *vol,
                                          uint64_t wanted,
                                          uint64_t *start_out)
