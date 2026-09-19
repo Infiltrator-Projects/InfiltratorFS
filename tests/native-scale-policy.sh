@@ -21,6 +21,7 @@ grep -Fq 'verify_population' "$stress"
 grep -Fq '[SCALE-PERF]' "$stress"
 grep -Fq 'directory_locator_names' "$root/kernel/infiltratorfs_internal.h"
 ! grep -Fq 'u8 name[INFILFS_NAME_MAX]' "$root/kernel/infiltratorfs_internal.h"
-grep -Fq 'infilfs_native_directory_locator_names_reserve' "$root/kernel/infiltratorfs_rw_data.inc"
+grep -Fq 'infilfs_native_directory_locator_names_reserve' "$root/kernel/infiltratorfs_locator_cache.c"
+! grep -Fq 'infilfs_native_directory_locator_names_reserve' "$root/kernel/infiltratorfs_rw_data.inc"
 
 echo 'Native million-file/large-volume scale policy guard passed.'
