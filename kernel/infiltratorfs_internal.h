@@ -681,6 +681,13 @@ int infilfs_extent_layout_validate(
 int infilfs_extent_page_block(
     struct super_block *sb, const u8 object[INFILFS_DISK_BLOCK_SIZE],
     u32 page_index, u64 *block_out);
+int infilfs_extent_pointer_tree_build(
+    struct infilfs_native_pending *pending, const u8 owner_id[16],
+    const u64 *extent_pages, u32 page_count,
+    u64 *root_out, u32 *levels_out);
+int infilfs_extent_layout_defer_free(
+    struct infilfs_native_pending *pending,
+    const u8 object[INFILFS_DISK_BLOCK_SIZE]);
 u32 infilfs_extent_kind(u32 flags);
 u64 infilfs_extent_physical_blocks(u32 logical_blocks, u32 flags);
 bool infilfs_extent_is_compressed(u32 flags);
