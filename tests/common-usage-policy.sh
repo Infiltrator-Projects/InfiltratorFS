@@ -23,8 +23,8 @@ mkfs2="$root/tools/mkfs.infilfs/part-02.inc"
 mkfs3="$root/tools/mkfs.infilfs/part-03.inc"
 mkfs4="$root/tools/mkfs.infilfs/part-04.inc"
 
-grep -Fq 'set(INFILTRATR_COMMON_REQUIRED_VERSION "1.19.8")' "$cmake"
-grep -Fq '3bfcb6f76ca44ac33bc2fee54fb114caa0eca5f9' "$cmake"
+grep -Fq 'set(INFILTRATR_COMMON_REQUIRED_VERSION "1.19.10")' "$cmake"
+grep -Fq '33e69c0a462b56d388881d89c4eb49f72fa0b0fe' "$cmake"
 
 # Persistent/range arithmetic uses Common's checked contracts rather than
 # parallel hand-written overflow tests.

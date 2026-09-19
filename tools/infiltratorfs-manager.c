@@ -584,7 +584,11 @@ static void manager_apply_theme(Manager *manager)
     char text[8], title[8], muted[8], subtle[8], button_bg[8], button_fg[8];
     char select_bg[8], select_fg[8], neutral[8], fault[8], card_hover[8];
     char surface_hover[8], accent[8], success[8], warning[8], info[8];
-    char operation[8], operation_hover[8];
+    char operation[8], operation_hover[8], titlebar[8], connection[8];
+    char connection_border[8], heading[8], summary[8], kicker[8];
+    char detail_label[8], note[8], status_border[8], accent_fg[8];
+    char accent_hover[8], selected_summary[8], warning_muted[8];
+    char warning_border[8], success_border[8];
     rgb_text(palette->background_rgb, background);
     rgb_text(palette->panel_rgb, panel);
     rgb_text(palette->card_rgb, card);
@@ -609,6 +613,21 @@ static void manager_apply_theme(Manager *manager)
     rgb_text(palette->info_rgb, info);
     rgb_text(palette->operation_rgb, operation);
     rgb_text(palette->operation_hover_rgb, operation_hover);
+    rgb_text(palette->titlebar_rgb, titlebar);
+    rgb_text(palette->connection_rgb, connection);
+    rgb_text(palette->connection_border_rgb, connection_border);
+    rgb_text(palette->heading_rgb, heading);
+    rgb_text(palette->summary_rgb, summary);
+    rgb_text(palette->kicker_rgb, kicker);
+    rgb_text(palette->detail_label_rgb, detail_label);
+    rgb_text(palette->note_rgb, note);
+    rgb_text(palette->status_border_rgb, status_border);
+    rgb_text(palette->accent_foreground_rgb, accent_fg);
+    rgb_text(palette->accent_hover_rgb, accent_hover);
+    rgb_text(palette->selected_summary_rgb, selected_summary);
+    rgb_text(palette->warning_muted_rgb, warning_muted);
+    rgb_text(palette->warning_border_rgb, warning_border);
+    rgb_text(palette->success_border_rgb, success_border);
 
     GString *css = g_string_new(NULL);
     g_string_append_printf(css,
@@ -625,7 +644,8 @@ static void manager_apply_theme(Manager *manager)
         "button:active, button:checked { background: %s; border-color: %s; }\n"
         "button:active, button:active label, button:active image, button:checked, button:checked label, button:checked image { color: %s; }\n"
         "button.suggested-action { background: " "@ACCENT@" "; border-color: " "@ACCENT@" "; }\n"
-        "button.suggested-action, button.suggested-action label, button.suggested-action image { color: #031018; }\n"
+        "button.suggested-action, button.suggested-action label, button.suggested-action image { color: @ACCENT_FG@; }\n"
+        "button.suggested-action:hover { background: @ACCENT_HOVER@; border-color: @ACCENT_HOVER@; }\n"
         "button.destructive-action { background: %s; border-color: %s; }\n"
         "button.destructive-action, button.destructive-action label, button.destructive-action image { color: %s; }\n"
         "entry, spinbutton, textview, textview text { background: %s; color: %s; border-color: %s; caret-color: " "@ACCENT@" "; }\n"
@@ -641,6 +661,7 @@ static void manager_apply_theme(Manager *manager)
         ".device-row { padding: 11px 12px; }\n"
         ".device-name { font-size: 14px; font-weight: @UI_BOLD@; color: %s; }\n"
         ".device-meta { color: %s; font-size: 12px; }\n"
+        ".device-list row:selected .device-meta { color: @SELECTED_SUMMARY@; }\n"
         ".content { padding: 30px 34px 24px 34px; }\n"
         ".hero-title { color: %s; font-family: '@BRAND_FONT@'; font-size: 27px; font-weight: @BRAND_WEIGHT@; }\n"
         ".hero-path { color: %s; font-size: 12px; }\n"
@@ -668,18 +689,18 @@ static void manager_apply_theme(Manager *manager)
         ".statusbar { padding: 8px 12px; border-top: 1px solid %s; background: %s; }\n"
         ".status-text { color: %s; font-size: 11px; }\n"
         ".link-about-dialog { background: %s; color: %s; }\n",
-        background, text, panel, title, border, title, muted,
+        background, text, titlebar, title, border, title, summary,
         button_bg, border, button_fg, button_fg, neutral, button_fg,
         select_bg, "@ACCENT@", select_fg, surface, fault, fault,
-        input, text, border, muted, title, panel, border, muted, subtle,
-        card_hover, select_bg, border, text, muted, title, muted,
-        surface, border, muted, title, muted, border, card, subtle, title,
-        subtle, text, surface_hover, text, muted, fault, surface, title,
-        muted, border, input, input, text, border, panel, subtle,
-        background, text);
+        input, text, border, summary, heading, panel, border, kicker, summary,
+        card_hover, select_bg, border, text, summary, title, summary,
+        surface, status_border, warning_muted, heading, summary, border, card,
+        kicker, heading, detail_label, text, surface_hover, heading, note,
+        fault, surface, title, note, border, input, input, text,
+        connection_border, connection, summary, background, text);
 
     /*
-     * Common 1.19.8 exposes semantic state and operation colours in addition
+     * Common 1.19.10 exposes the complete Linux MBLINK-derived appearance roles in addition
      * to the base surfaces.  Use those roles directly instead of flattening
      * the Manager into neutral accent + fault only.
      */
@@ -706,16 +727,19 @@ static void manager_apply_theme(Manager *manager)
         ".action-scrub image { color: %s; }\n"
         ".action-forensic image { color: %s; }\n"
         ".danger-zone .section-subtitle { color: %s; }\n",
-        warning, warning, success, success,
+        warning_border, warning_muted, success_border, success,
         info, accent, fault,
         info, accent,
-        info, accent, warning, warning, success, success,
+        info, accent, warning_border, warning_muted, success_border, success,
         operation, border, text, operation_hover, text,
         info, success, warning, accent, fault);
 
     (void)g_string_replace(css, "@UI_FONT@", typography->ui_family, 0);
     (void)g_string_replace(css, "@BRAND_FONT@", typography->brand_family, 0);
     (void)g_string_replace(css, "@ACCENT@", accent, 0);
+    (void)g_string_replace(css, "@ACCENT_FG@", accent_fg, 0);
+    (void)g_string_replace(css, "@ACCENT_HOVER@", accent_hover, 0);
+    (void)g_string_replace(css, "@SELECTED_SUMMARY@", selected_summary, 0);
     css_replace_u32(css, "@UI_REGULAR@", typography->ui_regular_weight);
     css_replace_u32(css, "@UI_BOLD@", typography->ui_bold_weight);
     css_replace_u32(css, "@BRAND_WEIGHT@", typography->brand_weight);

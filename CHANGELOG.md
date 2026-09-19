@@ -4,7 +4,8 @@ This file records user-visible, compatibility, architecture and validation chang
 
 ## Unreleased
 
-- Use the complete semantic Infiltratr Common 1.19.8 night/day palette in the native Manager: warning/success state badges, information/maintenance accents, operation surfaces and semantic maintenance icons, while preserving the existing layout and behaviour.
+- Advance to Infiltratr Common 1.19.10 and consume the complete Linux MBLINK-derived appearance roles in the native Manager, including titlebar, connection/status surface, heading/summary/kicker/detail/note text, selected-summary, accent-hover/foreground and muted state-border colours.
+- Keep filesystem-specific semantic colouring on top of those canonical roles: success for mounted/check, warning for offline/scrub, fault for destructive formatting, information for inspection and the canonical blue accent for filesystem/forensic operations, without changing layout or behaviour.
 
 ## 0.18.63 — 2026-09-19
 
