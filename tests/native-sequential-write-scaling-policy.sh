@@ -4,6 +4,7 @@ set -euo pipefail
 
 root="${1:-.}"
 data="$root/kernel/infiltratorfs_rw_data.inc"
+checksum_store="$root/kernel/infiltratorfs_checksum_store.c"
 ns="$root/kernel/infiltratorfs_rw_namespace.inc"
 internal="$root/kernel/infiltratorfs_internal.h"
 pagecache="$root/kernel/infiltratorfs_pagecache.c"
@@ -14,12 +15,12 @@ rw="$root/kernel/infiltratorfs_rw.inc"
 
 # Sequential EOF appends must stay at the checksum tail rather than collecting
 # the historical checksum chain on every group boundary.
-grep -Fq 'infilfs_native_checksum_append_tail' "$data"
-grep -Fq 'infilfs_native_writer_tail_lookup' "$data"
-grep -Fq 'infilfs_native_writer_tail_store' "$data"
+grep -Fq 'infilfs_native_checksum_append_tail' "$checksum_store"
+grep -Fq 'infilfs_native_writer_tail_lookup' "$checksum_store"
+grep -Fq 'infilfs_native_writer_tail_store' "$checksum_store"
 grep -Fq 'start_block == old_blocks' "$data"
 
-append_body="$(sed -n '/static int infilfs_native_checksum_append_tail(/,/^}/p' "$data")"
+append_body="$(sed -n '/static int infilfs_native_checksum_append_tail(/,/^}/p' "$checksum_store")"
 ! grep -Fq 'infilfs_native_checksum_collect' <<<"$append_body"
 
 # Aligned sequential appends must prepare user bytes, integrity digests, the

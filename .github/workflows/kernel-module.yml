@@ -104,6 +104,7 @@ jobs:
              kernel/infiltratorfs_index_tree.c \
              kernel/infiltratorfs_directory_tree.c \
              kernel/infiltratorfs_checksum_cache.c \
+             kernel/infiltratorfs_checksum_store.c \
              kernel/infiltratorfs_locator_cache.c \
              kernel/infiltratorfs_linux_meta_codec.c \
              kernel/infiltratorfs_shared_ownership.c \

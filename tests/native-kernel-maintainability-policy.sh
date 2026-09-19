@@ -63,7 +63,7 @@ grep -Fq 'down_read(&sbi->write_lock);' "$quota" || fail 'quota topology read lo
 # The native driver must stay a genuine multi-object Kbuild module. The
 # allocation map is the first extracted subsystem and must never regress into
 # textual inclusion.
-grep -Fqx 'infiltratorfs-y := infiltratorfs_core.o infiltratorfs_crypto.o infiltratorfs_allocation_map.o infiltratorfs_resize.o infiltratorfs_index_tree.o infiltratorfs_parallel_alloc.o infiltratorfs_allocation_publish.o infiltratorfs_read_cache.o infiltratorfs_pagecache.o infiltratorfs_directory_tree.o infiltratorfs_checksum_cache.o infiltratorfs_locator_cache.o infiltratorfs_linux_meta_codec.o infiltratorfs_shared_ownership.o' "$makefile" || \
+grep -Fqx 'infiltratorfs-y := infiltratorfs_core.o infiltratorfs_crypto.o infiltratorfs_allocation_map.o infiltratorfs_resize.o infiltratorfs_index_tree.o infiltratorfs_parallel_alloc.o infiltratorfs_allocation_publish.o infiltratorfs_read_cache.o infiltratorfs_pagecache.o infiltratorfs_directory_tree.o infiltratorfs_checksum_cache.o infiltratorfs_checksum_store.o infiltratorfs_locator_cache.o infiltratorfs_linux_meta_codec.o infiltratorfs_shared_ownership.o' "$makefile" || \
     fail 'kernel module is no longer built from explicit component objects'
 test -f "$kernel/infiltratorfs_internal.h" || fail 'missing private kernel API header'
 test -f "$kernel/infiltratorfs_crypto.c" || fail 'accelerated integrity object missing'
@@ -73,6 +73,7 @@ test -f "$kernel/infiltratorfs_parallel_alloc.c" || fail 'parallel allocator obj
 test -f "$kernel/infiltratorfs_allocation_publish.c" || fail 'allocation publisher object missing'
 test -f "$kernel/infiltratorfs_read_cache.c" || fail 'verified-read cache object missing'
 test -f "$kernel/infiltratorfs_checksum_cache.c" || fail 'checksum cache object missing'
+test -f "$kernel/infiltratorfs_checksum_store.c" || fail 'checksum store object missing'
 test -f "$kernel/infiltratorfs_pagecache.c" || fail 'page-cache object missing'
 test -f "$kernel/infiltratorfs_directory_tree.c" || fail 'directory-tree object missing'
 test -f "$kernel/infiltratorfs_linux_meta_codec.c" || fail 'Linux metadata codec object missing'
@@ -217,7 +218,11 @@ check_bytes() {
 check_bytes "$driver" 120000
 check_bytes "$rw" 90000
 check_bytes "$kernel/infiltratorfs_rw_legacy.inc" 100000
-check_bytes "$kernel/infiltratorfs_rw_data.inc" 200000
+check_bytes "$kernel/infiltratorfs_rw_data.inc" 170000
+! grep -Fq 'static int infilfs_native_checksum_decode(' "$kernel/infiltratorfs_rw_data.inc" || \
+    fail 'persistent checksum store regressed into RW data compositor'
+grep -Fq 'int infilfs_native_checksum_decode(' "$kernel/infiltratorfs_checksum_store.c" || \
+    fail 'compiled checksum store lost checksum-object ownership'
 ! grep -Fq 'static int infilfs_native_index_locator_build(' "$kernel/infiltratorfs_rw_data.inc" || \
     fail 'locator cache regressed into RW data compositor'
 grep -Fq 'int infilfs_native_index_locator_build(' "$kernel/infiltratorfs_locator_cache.c" || \

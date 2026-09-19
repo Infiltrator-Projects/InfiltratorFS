@@ -56,7 +56,7 @@ for file in Makefile infiltratorfs_core.c infiltratorfs_crypto.c infiltratorfs_i
             infiltratorfs_parallel_alloc.c \
             infiltratorfs_index_tree.c infiltratorfs_directory_tree.c \
             infiltratorfs_rw.inc \
-            infiltratorfs_rw_legacy.inc infiltratorfs_checksum_cache.c infiltratorfs_locator_cache.c infiltratorfs_rw_data.inc \
+            infiltratorfs_rw_legacy.inc infiltratorfs_checksum_cache.c infiltratorfs_checksum_store.c infiltratorfs_locator_cache.c infiltratorfs_rw_data.inc \
             infiltratorfs_rw_namespace.inc infiltratorfs_read_cache.c \
             infiltratorfs_pagecache.c infiltratorfs_linux_meta_codec.c infiltratorfs_shared_ownership.c infiltratorfs_linux_meta.inc \
             infiltratorfs_resize.c infiltratorfs_quota.inc \

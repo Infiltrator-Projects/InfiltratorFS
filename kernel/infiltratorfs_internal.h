@@ -515,6 +515,15 @@ struct infilfs_visit_set {
     size_t count;
 };
 
+struct infilfs_native_index_change {
+    u8 object_id[16];
+    u64 object_block;
+    u16 object_type;
+    bool add;
+    bool remove;
+    bool found;
+};
+
 struct infilfs_native_checksum_payload_disk {
     u8 owner_object_id[16];
     u8 next_object_id[16];
@@ -674,6 +683,9 @@ int infilfs_map_file_block_detail(
 int infilfs_read_object(
     struct super_block *sb, u64 object_block, u16 expected_type,
     const u8 *expected_id, u8 *out);
+int infilfs_index_lookup(
+    struct super_block *sb, const u8 object_id[16],
+    u64 *object_block_out, u16 *type_out);
 bool infilfs_native_checksum_cache_lookup(
     struct super_block *sb, const u8 owner_id[16],
     struct infilfs_native_checksum_cache_entry *out);
@@ -687,6 +699,34 @@ bool infilfs_native_checksum_group_cache_lookup(
 void infilfs_native_checksum_group_cache_store(
     struct super_block *sb, const u8 owner_id[16], const u8 object_id[16],
     u64 object_block, u64 start_logical);
+int infilfs_native_checksum_decode(
+    struct super_block *sb, const u8 owner_id[16], const u8 object_id[16],
+    u64 object_block, u8 block[INFILFS_DISK_BLOCK_SIZE],
+    struct infilfs_native_checksum_payload_disk **payload_out);
+int infilfs_native_checksum_update_existing_group(
+    struct infilfs_native_pending *pending,
+    struct infilfs_file_payload_disk *file, const u8 owner_id[16],
+    u64 touched_start, u64 touched_count,
+    const struct infilfs_data_checksum_disk *digests,
+    struct infilfs_native_index_change *changes, u32 change_capacity,
+    u32 *change_count, u8 final_tail_id[16], u64 *final_tail_block,
+    u64 *final_tail_start);
+int infilfs_native_checksum_set_range(
+    struct infilfs_native_pending *pending,
+    struct infilfs_file_payload_disk *file, const u8 owner_id[16],
+    u64 touched_start, u64 touched_count,
+    const struct infilfs_data_checksum_disk *digests,
+    struct infilfs_native_index_change *changes, u32 change_capacity,
+    u32 *change_count, u8 final_tail_id[16], u64 *final_tail_block,
+    u64 *final_tail_start);
+int infilfs_native_checksum_append(
+    struct infilfs_native_pending *pending,
+    struct infilfs_file_payload_disk *file, const u8 owner_id[16],
+    u64 touched_start, u64 touched_count,
+    const struct infilfs_data_checksum_disk *digests,
+    struct infilfs_native_index_change *changes, u32 change_capacity,
+    u32 *change_count, u8 final_tail_id[16], u64 *final_tail_block,
+    u64 *final_tail_start);
 int infilfs_native_read_expected_digest(
     struct super_block *sb, const u8 owner_id[16], const u8 head_id[16],
     u64 logical, struct infilfs_native_read_checksum_cursor *cursor,

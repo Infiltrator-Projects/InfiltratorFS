@@ -5,11 +5,12 @@ set -euo pipefail
 root="${1:-.}"
 data="$root/kernel/infiltratorfs_rw_data.inc"
 cache="$root/kernel/infiltratorfs_checksum_cache.c"
+store="$root/kernel/infiltratorfs_checksum_store.c"
 legacy="$root/kernel/infiltratorfs_rw_legacy.inc"
 state="$root/kernel/infiltratorfs_internal.h"
 ns="$root/kernel/infiltratorfs_rw_namespace.inc"
 
-for file in "$data" "$legacy" "$state" "$ns"; do
+for file in "$data" "$cache" "$store" "$legacy" "$state" "$ns"; do
     test -f "$file"
 done
 
@@ -23,7 +24,8 @@ grep -Fq 'operation_allocated_count' "$data"
 grep -Fq 'infilfs_native_store_extent_page' "$data"
 grep -Fq 'old_page_count' "$data"
 grep -Fq 'INFILFS_NATIVE_CHECKSUM_GROUP_CACHE_SLOTS' "$cache"
-grep -Fq 'infilfs_native_checksum_update_existing_group' "$data"
+grep -Fq 'infilfs_native_checksum_update_existing_group' "$store"
+! grep -Fq 'static int infilfs_native_checksum_update_existing_group' "$data"
 grep -Fq 'infilfs_native_try_single_paged_overwrite' "$data"
 grep -Fq 'binary-searches the paged map' "$data"
 grep -Fq 'infilfs_native_build_extent_page' "$data"

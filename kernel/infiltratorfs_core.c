@@ -988,7 +988,7 @@ out:
     return ret;
 }
 
-static int infilfs_index_lookup(struct super_block *sb, const u8 object_id[16],
+int infilfs_index_lookup(struct super_block *sb, const u8 object_id[16],
                                 u64 *object_block_out, u16 *type_out)
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
