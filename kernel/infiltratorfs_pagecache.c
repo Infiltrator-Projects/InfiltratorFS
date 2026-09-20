@@ -30,8 +30,13 @@ static bool infilfs_dirty_folio(struct address_space *mapping,
     bool changed;
 
     spin_lock_irqsave(&sbi->pagecache_accounting_lock, flags);
-    if (!folio_test_private(folio)) {
-        folio_attach_private(folio, sbi);
+    /*
+     * PG_private is intentionally left to the page-cache framework. Modern
+     * iomap uses folio->private for its per-folio state, so InfiltratorFS
+     * tracks only its independent pending-CoW accounting bit in PG_private_2.
+     */
+    if (!folio_test_private_2(folio)) {
+        folio_set_private_2(folio);
         atomic64_add(folio_size(folio) >> INFILFS_DISK_BLOCK_SHIFT,
                      &sbi->pagecache_pending_blocks);
     }
@@ -47,11 +52,11 @@ static void infilfs_pagecache_unaccount(struct folio *folio, bool discard)
 
     spin_lock_irqsave(&sbi->pagecache_accounting_lock, flags);
     /* A concurrent mmap dirtying must retain the next writeback's demand. */
-    if (folio_test_private(folio) &&
+    if (folio_test_private_2(folio) &&
         (discard || !folio_test_dirty(folio))) {
         atomic64_sub(folio_size(folio) >> INFILFS_DISK_BLOCK_SHIFT,
                      &sbi->pagecache_pending_blocks);
-        folio_detach_private(folio);
+        folio_clear_private_2(folio);
     }
     spin_unlock_irqrestore(&sbi->pagecache_accounting_lock, flags);
 }
@@ -69,7 +74,7 @@ static bool infilfs_release_folio(struct folio *folio, gfp_t gfp)
     if (folio_test_dirty(folio) || folio_test_writeback(folio))
         return false;
     infilfs_pagecache_unaccount(folio, false);
-    return !folio_test_private(folio);
+    return !folio_test_private_2(folio);
 }
 
 struct infilfs_pagecache_write_ctx {
