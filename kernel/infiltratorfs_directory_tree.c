@@ -345,7 +345,7 @@ static int infilfs_native_tree_dir_leaf_validate(
             rec > bytes - offset || !len || len > INFILFS_NAME_MAX ||
             sizeof(*entry) + len > rec ||
             !infilfs_rw_utf8_valid(entries + offset + sizeof(*entry), len) ||
-            ((le64_to_cpu(INFILFS_SB(sb)->disk.incompat_flags) &
+            ((le64_to_cpu(INFILFS_SB(pending->sb)->disk.incompat_flags) &
               INFILFS_INCOMPAT_REMOVABLE_NAMES_V1) &&
              !infilfs_removable_name_valid_v1(
                  entries + offset + sizeof(*entry), len)))
