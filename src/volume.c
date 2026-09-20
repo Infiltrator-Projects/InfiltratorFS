@@ -19,6 +19,50 @@
 
 static const uint8_t snapshot_catalog_id[16] = INFS_SNAPSHOT_CATALOG_ID;
 
+static int removable_names_enabled(const struct infs_volume *vol)
+{
+    return vol &&
+        (infs_le64_to_cpu(vol->sb.incompat_flags) &
+         INFS_INCOMPAT_REMOVABLE_NAMES_V1) != 0;
+}
+
+static int removable_name_valid_v1(const uint8_t *name, size_t length)
+{
+    static const char *reserved[] = {
+        "CON", "PRN", "AUX", "NUL",
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
+    };
+    char base[5] = {0};
+    size_t base_length = 0;
+    if (!name || !length || length > 255u ||
+        name[length - 1u] == '.' || name[length - 1u] == ' ')
+        return 0;
+    for (size_t i = 0; i < length; ++i) {
+        uint8_t c = name[i];
+        if (c < 0x20u || c == 0x7fu ||
+            c == '<' || c == '>' || c == ':' || c == '"' ||
+            c == '/' || c == '\\' || c == '|' || c == '?' || c == '*')
+            return 0;
+        if (c == '.')
+            break;
+        if (base_length < sizeof(base) - 1u) {
+            if (c >= 'a' && c <= 'z')
+                c = (uint8_t)(c - ('a' - 'A'));
+            base[base_length++] = (char)c;
+        } else {
+            base_length = sizeof(base);
+        }
+    }
+    if (base_length < sizeof(base)) {
+        for (size_t i = 0; i < sizeof(reserved) / sizeof(reserved[0]); ++i)
+            if (strlen(reserved[i]) == base_length &&
+                memcmp(base, reserved[i], base_length) == 0)
+                return 0;
+    }
+    return 1;
+}
+
 static int timestamp_disk_valid(const struct infs_timestamp_disk *disk)
 {
     return disk && infs_le32_to_cpu(disk->nanoseconds) < UINT32_C(1000000000) &&
