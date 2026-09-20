@@ -36,4 +36,13 @@ grep -Fq 'validate_bitmap_ownership_progress' "$ownership" || \
 grep -Fq 'does not reconstruct a block-by-block live ownership bitmap' "$doc" || \
     fail 'fsck/scrub ownership boundary is undocumented'
 
+fsck_tool="$root/tools/fsck.infiltratorfs.c"
+test -f "$fsck_tool" || fail 'fsck command implementation missing'
+grep -Fq 'report.failed_stage == INFS_CHECK_STAGE_CHECKPOINTS' "$fsck_tool" || \
+    fail 'checkpoint repair is not limited to checkpoint-only corruption'
+grep -Fq 'report.checkpoint_replicas_valid > 0' "$fsck_tool" || \
+    fail 'checkpoint repair no longer requires a surviving replica'
+! grep -Fq 'status == INFS_STATUS_OK &&' "$fsck_tool" || \
+    fail 'checkpoint repair gate regressed to an unreachable clean-status condition'
+
 printf 'Fast fsck structural/deep scrub separation guard passed.\n'
