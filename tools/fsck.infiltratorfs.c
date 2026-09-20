@@ -89,9 +89,17 @@ static int run_structural_check(const char *target, int repair)
     infs_volume_close(&vol);
 
     int corrected = 0;
-    if (status == INFS_STATUS_OK &&
+    int checkpoint_only_corruption =
+        status == INFS_STATUS_CORRUPT &&
+        report.failed_stage == INFS_CHECK_STAGE_CHECKPOINTS &&
+        report.checkpoint_replicas_valid > 0 &&
         report.checkpoint_replicas_valid < INFS_CHECKPOINT_COUNT &&
-        repair) {
+        report.object_index_valid &&
+        report.allocation_ownership_valid &&
+        report.namespace_valid &&
+        report.checksum_metadata_valid;
+
+    if (checkpoint_only_corruption && repair) {
         infs_status repair_status = repair_checkpoint_replicas(target);
         if (repair_status != INFS_STATUS_OK) {
             fprintf(stderr, "fsck.infiltratorfs: checkpoint repair: %s\n",
