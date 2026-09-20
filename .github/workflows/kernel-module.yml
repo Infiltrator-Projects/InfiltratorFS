@@ -109,6 +109,7 @@ jobs:
              kernel/infiltratorfs_locator_cache.c \
              kernel/infiltratorfs_linux_meta_codec.c \
              kernel/infiltratorfs_shared_ownership.c \
+             kernel/infiltratorfs_name_policy.c \
              kernel/infiltratorfs_rw.inc \
              kernel/infiltratorfs_rw_legacy.inc \
              kernel/infiltratorfs_rw_data.inc \
