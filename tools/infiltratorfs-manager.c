@@ -1061,21 +1061,34 @@ static void manager_error(Manager *manager, const char *text)
 
 static void manager_set_enabled(Manager *manager)
 {
-    gboolean available = manager->target != NULL && !manager->busy;
-    gboolean mounted = available && manager->target->mountpoint &&
-                       *manager->target->mountpoint;
-    gboolean maintenance = available && !mounted;
+    const gboolean mounted =
+        manager->target && manager->target->mountpoint &&
+        *manager->target->mountpoint;
+    const gboolean is_infiltrator =
+        manager->target && manager->target->filesystem &&
+        g_ascii_strcasecmp(manager->target->filesystem, "infiltratorfs") == 0;
+    const struct infilfs_manager_state state = {
+        .has_target = manager->target != NULL,
+        .is_infiltrator = is_infiltrator,
+        .mounted = mounted,
+        .busy = manager->busy,
+        .volume_open = mounted
+    };
+    struct infilfs_manager_enablement enabled;
+    infilfs_manager_compute_enablement(&state, &enabled);
+
     GtkWidget *buttons[] = {
         manager->inspect_button, manager->check_button,
         manager->scrub_button, manager->forensic_button, NULL
     };
     for (size_t i = 0; buttons[i]; ++i)
-        gtk_widget_set_sensitive(buttons[i], maintenance);
-    gtk_widget_set_sensitive(manager->format_button, available && !mounted);
-    gtk_widget_set_sensitive(manager->mount_button, available);
-    gtk_widget_set_sensitive(manager->unmount_button, available && mounted);
+        gtk_widget_set_sensitive(buttons[i], enabled.maintenance);
+    gtk_widget_set_sensitive(manager->format_button, enabled.format);
+    gtk_widget_set_sensitive(manager->mount_button, enabled.mount);
+    gtk_widget_set_sensitive(manager->unmount_button, enabled.unmount);
     gtk_button_set_label(GTK_BUTTON(manager->mount_button),
-                         mounted ? "Open in Files" : "Mount and Open");
+                         mounted ? "Open in Files" :
+                         infilfs_manager_copy()->mount_button);
 }
 
 static void set_detail(GtkWidget *label, const char *text)
@@ -1147,7 +1160,7 @@ static void manager_show_target(Manager *manager)
     }
 
     char size_text[64];
-    infiltratr_format_disk_capacity(target->size, size_text, sizeof(size_text));
+    (void)infilfs_manager_format_capacity(target->size, size_text, sizeof(size_text));
     gtk_label_set_text(GTK_LABEL(manager->stat_size), size_text);
     gtk_label_set_text(GTK_LABEL(manager->stat_fs),
         (target->filesystem && *target->filesystem) ? target->filesystem : "Unknown / unformatted");
@@ -1182,7 +1195,7 @@ static GtkWidget *device_row(Target *target)
     GtkWidget *name = make_label(target->name, "device-name");
     gtk_label_set_ellipsize(GTK_LABEL(name), PANGO_ELLIPSIZE_END);
     char size_text[64];
-    infiltratr_format_disk_capacity(target->size, size_text, sizeof(size_text));
+    (void)infilfs_manager_format_capacity(target->size, size_text, sizeof(size_text));
     char *meta_text = g_strdup_printf("%s  •  %s", target->path, size_text);
     GtkWidget *meta = make_label(meta_text, "device-meta");
     g_free(meta_text);
@@ -1300,32 +1313,44 @@ static void run_maintenance(Manager *manager, const char *title,
     manager_run_job(manager, job);
 }
 
+static void run_shared_maintenance(
+    Manager *manager, enum infilfs_manager_action_id id,
+    const char *block_op, const char *tool, const char *tool_arg)
+{
+    const struct infilfs_manager_action_descriptor *action =
+        infilfs_manager_action(id);
+    if (!action)
+        return;
+    run_maintenance(manager, action->title, action->success,
+                    block_op, tool, tool_arg);
+}
+
 static void on_inspect(GtkButton *button, gpointer data)
 {
     (void)button;
-    run_maintenance(data, "Inspect filesystem", "Inspection completed.",
-                    "inspect-block", TOOL_INSPECT, NULL);
+    run_shared_maintenance(data, INFILFS_MANAGER_ACTION_INSPECT,
+                           "inspect-block", TOOL_INSPECT, NULL);
 }
 
 static void on_check(GtkButton *button, gpointer data)
 {
     (void)button;
-    run_maintenance(data, "Check filesystem", "Structural filesystem check completed.",
-                    "check-block", TOOL_FSCK, NULL);
+    run_shared_maintenance(data, INFILFS_MANAGER_ACTION_CHECK,
+                           "check-block", TOOL_FSCK, NULL);
 }
 
 static void on_scrub(GtkButton *button, gpointer data)
 {
     (void)button;
-    run_maintenance(data, "Deep scrub", "Deep integrity scrub completed.",
-                    "scrub-block", TOOL_FSCK, "--scrub");
+    run_shared_maintenance(data, INFILFS_MANAGER_ACTION_SCRUB,
+                           "scrub-block", TOOL_FSCK, "--scrub");
 }
 
 static void on_forensic(GtkButton *button, gpointer data)
 {
     (void)button;
-    run_maintenance(data, "Forensic scan", "Forensic scan completed.",
-                    "forensic-block", TOOL_FORENSIC, NULL);
+    run_shared_maintenance(data, INFILFS_MANAGER_ACTION_FORENSIC,
+                           "forensic-block", TOOL_FORENSIC, NULL);
 }
 
 static char *ask_label(Manager *manager)

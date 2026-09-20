@@ -2,7 +2,9 @@
 #ifndef INFILTRATORFS_MANAGER_CONTRACT_H
 #define INFILTRATORFS_MANAGER_CONTRACT_H
 
+#include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -21,8 +23,26 @@ struct infilfs_manager_action_descriptor {
     const char *title;
     const char *description;
     const char *button;
+    const char *success;
     const char *semantic_style;
     const char *linux_icon;
+};
+
+struct infilfs_manager_state {
+    bool has_target;
+    bool is_infiltrator;
+    bool mounted;
+    bool busy;
+    bool volume_open;
+};
+
+struct infilfs_manager_enablement {
+    bool maintenance;
+    bool format;
+    bool mount;
+    bool unmount;
+    bool files;
+    bool file_mutation;
 };
 
 struct infilfs_manager_copy {
@@ -59,6 +79,11 @@ const struct infilfs_manager_copy *infilfs_manager_copy(void);
 const struct infilfs_manager_action_descriptor *infilfs_manager_action(
     enum infilfs_manager_action_id id);
 size_t infilfs_manager_action_count(void);
+void infilfs_manager_compute_enablement(
+    const struct infilfs_manager_state *state,
+    struct infilfs_manager_enablement *out);
+bool infilfs_manager_format_capacity(
+    uint64_t bytes, char *out, size_t out_size);
 
 #ifdef __cplusplus
 }

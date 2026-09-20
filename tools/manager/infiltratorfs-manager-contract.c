@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "infiltratorfs-manager-contract.h"
 
+#include "infiltratr/format.h"
+
+#include <string.h>
+
 static const struct infilfs_manager_copy copy = {
     .app_title = "InfiltratorFS",
     .subtitle = "Filesystem management",
@@ -38,6 +42,7 @@ static const struct infilfs_manager_action_descriptor actions[] = {
         "Inspect filesystem",
         "Read filesystem identity, format version and geometry.",
         "Inspect",
+        "Inspection completed.",
         "action-inspect",
         "document-properties-symbolic"
     },
@@ -46,6 +51,7 @@ static const struct infilfs_manager_action_descriptor actions[] = {
         "Check filesystem",
         "Run the fast structural consistency check.",
         "Check",
+        "Structural filesystem check completed.",
         "action-check",
         "emblem-ok-symbolic"
     },
@@ -54,6 +60,7 @@ static const struct infilfs_manager_action_descriptor actions[] = {
         "Deep scrub",
         "Read payloads, recompute checksums and verify retained generations.",
         "Scrub",
+        "Deep integrity scrub completed.",
         "action-scrub",
         "system-run-symbolic"
     },
@@ -62,6 +69,7 @@ static const struct infilfs_manager_action_descriptor actions[] = {
         "Forensic scan",
         "Locate current and orphaned filesystem metadata.",
         "Scan",
+        "Forensic scan completed.",
         "action-forensic",
         "system-search-symbolic"
     }
@@ -83,4 +91,35 @@ const struct infilfs_manager_action_descriptor *infilfs_manager_action(
 size_t infilfs_manager_action_count(void)
 {
     return sizeof(actions) / sizeof(actions[0]);
+}
+
+
+void infilfs_manager_compute_enablement(
+    const struct infilfs_manager_state *state,
+    struct infilfs_manager_enablement *out)
+{
+    if (!out)
+        return;
+    memset(out, 0, sizeof(*out));
+    if (!state)
+        return;
+
+    const bool available = state->has_target && !state->busy;
+    const bool filesystem = available && state->is_infiltrator;
+
+    out->maintenance = filesystem && !state->mounted;
+    out->format = available && !state->mounted;
+    out->mount = filesystem;
+    out->unmount = filesystem && state->mounted;
+    out->files = filesystem;
+    out->file_mutation =
+        filesystem && state->volume_open && !state->mounted;
+}
+
+bool infilfs_manager_format_capacity(
+    uint64_t bytes, char *out, size_t out_size)
+{
+    if (!out || !out_size)
+        return false;
+    return infiltratr_format_disk_capacity(bytes, out, out_size);
 }

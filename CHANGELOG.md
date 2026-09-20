@@ -4,6 +4,9 @@ This file records user-visible, compatibility, architecture and validation chang
 
 ## Unreleased
 
+- Complete the shared Manager behaviour contract across Linux and Windows: action success copy, target/action enablement policy and GUI capacity formatting now come from one platform-neutral module, leaving GTK/Win32 storage, mount and native-file-manager mechanics in their adapters.
+- Match Windows capacity presentation to Linux by using the same Common auto-scaling disk-capacity contract rather than a Windows-only fixed-GiB formatter.
+
 - Begin converging the Linux and Windows Managers onto one shared application/presentation contract: identical core wording, maintenance actions, structure labels and semantic action roles now come from one C module while GTK/Win32 remain thin native presentation adapters.
 - Advance the development source to 0.18.65 so post-0.18.64 cross-platform Manager work cannot be mistaken for the immutable published release.
 - Rebuild the Windows Manager around the same application structure as Linux: storage sidebar, shared hero/mount controls, Overview/Files pages, capacity/filesystem/status cards, volume information, identical four maintenance actions, destructive-format zone and activity log. Windows-only file transfer remains an adapter capability on the Files page rather than defining a separate application.

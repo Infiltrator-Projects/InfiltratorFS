@@ -570,22 +570,12 @@ static void set_control_font(HWND hwnd, int id, HFONT font)
         SendMessageW(control, WM_SETFONT, (WPARAM)font, TRUE);
 }
 
-static int format_gib_wide(uint64_t bytes, wchar_t *out, size_t out_count)
+static int format_capacity_wide(uint64_t bytes, wchar_t *out,
+                                size_t out_count)
 {
-    static const char *const units[] = {"B", "KiB", "MiB", "GiB"};
-    InfiltratrScaleOptions options = INFILTRATR_SCALE_OPTIONS_INIT;
     char text[64];
-
-    if (!out || !out_count)
-        return 0;
-    options.minimum_unit = 3u;
-    options.maximum_unit = 3u;
-    options.decimal_places = 2u;
-    options.integer_threshold = 0.0L;
-    options.integer_at_minimum_unit = false;
-    if (!infiltratr_format_scaled_quantity(
-            (long double)bytes, units, INFILTRATR_ARRAY_LENGTH(units),
-            "", &options, text, sizeof(text)))
+    if (!out || !out_count ||
+        !infilfs_manager_format_capacity(bytes, text, sizeof(text)))
         return 0;
     return MultiByteToWideChar(
                CP_UTF8, MB_ERR_INVALID_CHARS, text, -1,
@@ -619,11 +609,11 @@ static void update_target_summary(void)
     }
 
     wchar_t size_text[64];
-    if (!format_gib_wide(
+    if (!format_capacity_wide(
             target->size_bytes, size_text,
             sizeof(size_text) / sizeof(size_text[0])))
         wcscpy_s(size_text, sizeof(size_text) / sizeof(size_text[0]),
-                 L"0.00 GiB");
+                 L"0 B");
 
     const wchar_t *label = target->infs_label[0] ?
                            target->infs_label : L"InfiltratorFS";
@@ -895,31 +885,28 @@ static void layout_controls(HWND hwnd)
 static void update_buttons(void)
 {
     struct target_volume *target = selected_target();
-    int have_target = target != NULL;
-    int have_infiltrator = have_target && target->is_infiltrator;
-    int bridge_active = infs_windows_bridge_active();
+    const int bridge_active = infs_windows_bridge_active();
+    const struct infilfs_manager_state state = {
+        .has_target = target != NULL,
+        .is_infiltrator = target && target->is_infiltrator,
+        .mounted = bridge_active != 0,
+        .busy = false,
+        .volume_open = g_volume_open != 0
+    };
+    struct infilfs_manager_enablement enabled;
+    infilfs_manager_compute_enablement(&state, &enabled);
 
     update_target_summary();
-    EnableWindow(GetDlgItem(g_main_window, IDC_FORMAT),
-                 have_target && !bridge_active);
-    EnableWindow(GetDlgItem(g_main_window, IDC_ADD_FILES),
-                 g_volume_open && !bridge_active);
-    EnableWindow(GetDlgItem(g_main_window, IDC_ADD_FOLDER),
-                 g_volume_open && !bridge_active);
-    EnableWindow(GetDlgItem(g_main_window, IDC_INSPECT),
-                 have_infiltrator && !bridge_active);
-    EnableWindow(GetDlgItem(g_main_window, IDC_CHECK),
-                 have_infiltrator && !bridge_active);
-    EnableWindow(GetDlgItem(g_main_window, IDC_SCRUB),
-                 have_infiltrator && !bridge_active);
-    EnableWindow(GetDlgItem(g_main_window, IDC_FORENSIC),
-                 have_infiltrator && !bridge_active);
-    EnableWindow(GetDlgItem(g_main_window, IDC_MOUNT_DRIVE),
-                 have_infiltrator);
-    EnableWindow(GetDlgItem(g_main_window, IDC_UNMOUNT_DRIVE),
-                 bridge_active);
-    EnableWindow(GetDlgItem(g_main_window, IDC_PAGE_FILES),
-                 have_infiltrator);
+    EnableWindow(GetDlgItem(g_main_window, IDC_FORMAT), enabled.format);
+    EnableWindow(GetDlgItem(g_main_window, IDC_ADD_FILES), enabled.file_mutation);
+    EnableWindow(GetDlgItem(g_main_window, IDC_ADD_FOLDER), enabled.file_mutation);
+    EnableWindow(GetDlgItem(g_main_window, IDC_INSPECT), enabled.maintenance);
+    EnableWindow(GetDlgItem(g_main_window, IDC_CHECK), enabled.maintenance);
+    EnableWindow(GetDlgItem(g_main_window, IDC_SCRUB), enabled.maintenance);
+    EnableWindow(GetDlgItem(g_main_window, IDC_FORENSIC), enabled.maintenance);
+    EnableWindow(GetDlgItem(g_main_window, IDC_MOUNT_DRIVE), enabled.mount);
+    EnableWindow(GetDlgItem(g_main_window, IDC_UNMOUNT_DRIVE), enabled.unmount);
+    EnableWindow(GetDlgItem(g_main_window, IDC_PAGE_FILES), enabled.files);
 
     set_control_text_utf8(g_main_window, IDC_MOUNT_DRIVE,
                           infilfs_manager_copy()->mount_button);
@@ -1192,11 +1179,11 @@ static int add_volume_target(HWND combo, const wchar_t *volume_name,
 
     wchar_t display[448];
     wchar_t size_text[64];
-    if (!format_gib_wide(
+    if (!format_capacity_wide(
             candidate.size_bytes, size_text,
             sizeof(size_text) / sizeof(size_text[0])))
         wcscpy_s(size_text, sizeof(size_text) / sizeof(size_text[0]),
-                 L"0.00 GiB");
+                 L"0 B");
     if (candidate.is_infiltrator) {
         _snwprintf_s(display, sizeof(display) / sizeof(display[0]), _TRUNCATE,
                      L"[InfiltratorFS %u.%u]  %s  %s  %s",
@@ -1333,11 +1320,11 @@ static int add_physical_partition_target(HWND combo, DWORD disk_number,
 
     wchar_t display[448];
     wchar_t size_text[64];
-    if (!format_gib_wide(
+    if (!format_capacity_wide(
             size_bytes, size_text,
             sizeof(size_text) / sizeof(size_text[0])))
         wcscpy_s(size_text, sizeof(size_text) / sizeof(size_text[0]),
-                 L"0.00 GiB");
+                 L"0 B");
     if (candidate.is_infiltrator) {
         _snwprintf_s(display, sizeof(display) / sizeof(display[0]), _TRUNCATE,
                      L"[InfiltratorFS %u.%u]  Disk %lu partition %lu  %s  %s",
@@ -1437,10 +1424,10 @@ static int add_image_target_from_path(const wchar_t *path)
     base = base ? base + 1 : path;
     wchar_t display[512];
     wchar_t size_text[64];
-    if (!format_gib_wide(candidate.size_bytes, size_text,
+    if (!format_capacity_wide(candidate.size_bytes, size_text,
                          sizeof(size_text) / sizeof(size_text[0])))
         wcscpy_s(size_text, sizeof(size_text) / sizeof(size_text[0]),
-                 L"0.00 GiB");
+                 L"0 B");
     if (candidate.is_infiltrator) {
         _snwprintf_s(display, sizeof(display) / sizeof(display[0]), _TRUNCATE,
                      L"[Image · InfiltratorFS %u.%u]  %s  %s",
@@ -2066,11 +2053,11 @@ static int open_selected_volume(int format_first)
     if (format_first) {
         wchar_t prompt[896];
         wchar_t size_text[64];
-        if (!format_gib_wide(
+        if (!format_capacity_wide(
                 target->size_bytes, size_text,
                 sizeof(size_text) / sizeof(size_text[0])))
             wcscpy_s(size_text, sizeof(size_text) / sizeof(size_text[0]),
-                     L"0.00 GiB");
+                     L"0 B");
         if (target->is_image) {
             _snwprintf_s(prompt, sizeof(prompt) / sizeof(prompt[0]), _TRUNCATE,
                          L"FORMAT THIS IMAGE AS INFILTRATORFS?\n\nFile: %s\nSize: %s\n\nEverything currently in this image file will be destroyed.",
@@ -2322,7 +2309,17 @@ static void check_volume(void)
         report.allocation_ownership_valid ? L"valid" : L"invalid",
         report.namespace_valid ? L"valid" : L"invalid",
         report.checksum_metadata_valid ? L"valid" : L"invalid");
-    set_status(L"Structural filesystem check completed.");
+    {
+        const struct infilfs_manager_action_descriptor *action =
+            infilfs_manager_action(INFILFS_MANAGER_ACTION_CHECK);
+        if (action) {
+            wchar_t success[256];
+            if (utf8_to_wide_text(
+                    action->success, success,
+                    sizeof(success) / sizeof(success[0])))
+                set_status(success);
+        }
+    }
     MessageBoxW(g_main_window, message, L"InfiltratorFS Check",
                 MB_OK | MB_ICONINFORMATION);
 }
@@ -2364,7 +2361,17 @@ static void forensic_volume(void)
         (unsigned long long)summary.unknown_records,
         (unsigned long long)summary.checkpoints_found,
         (unsigned long long)summary.objects_found);
-    set_status(L"Forensic scan completed.");
+    {
+        const struct infilfs_manager_action_descriptor *action =
+            infilfs_manager_action(INFILFS_MANAGER_ACTION_FORENSIC);
+        if (action) {
+            wchar_t success[256];
+            if (utf8_to_wide_text(
+                    action->success, success,
+                    sizeof(success) / sizeof(success[0])))
+                set_status(success);
+        }
+    }
     MessageBoxW(g_main_window, message, L"InfiltratorFS Forensic Scan",
                 MB_OK | MB_ICONINFORMATION);
 }
@@ -2394,10 +2401,10 @@ static void inspect_volume(void)
             total_blocks, (uint64_t)INFS_BLOCK_SIZE, &total_bytes) ||
         !infiltratr_u64_multiply_checked(
             free_blocks, (uint64_t)INFS_BLOCK_SIZE, &free_bytes) ||
-        !format_gib_wide(
+        !format_capacity_wide(
             total_bytes, total_size,
             sizeof(total_size) / sizeof(total_size[0])) ||
-        !format_gib_wide(
+        !format_capacity_wide(
             free_bytes, free_size,
             sizeof(free_size) / sizeof(free_size[0]))) {
         set_status_code(L"Render filesystem capacity", INFS_STATUS_OVERFLOW);
@@ -2421,7 +2428,17 @@ static void inspect_volume(void)
                  (unsigned long long)total_blocks, total_size,
                  (unsigned long long)used_blocks,
                  (unsigned long long)free_blocks, free_size);
-    set_status(L"Filesystem inspection completed.");
+    {
+        const struct infilfs_manager_action_descriptor *action =
+            infilfs_manager_action(INFILFS_MANAGER_ACTION_INSPECT);
+        if (action) {
+            wchar_t success[256];
+            if (utf8_to_wide_text(
+                    action->success, success,
+                    sizeof(success) / sizeof(success[0])))
+                set_status(success);
+        }
+    }
     MessageBoxW(g_main_window, message, L"InfiltratorFS Inspection",
                 MB_OK | MB_ICONINFORMATION);
 }
@@ -2444,7 +2461,17 @@ static void scrub_volume(void)
                  (unsigned long long)report.data_blocks_checked,
                  (unsigned long long)report.checksum_errors,
                  (unsigned long long)report.metadata_errors);
-    set_status(L"Scrub completed successfully.");
+    {
+        const struct infilfs_manager_action_descriptor *action =
+            infilfs_manager_action(INFILFS_MANAGER_ACTION_SCRUB);
+        if (action) {
+            wchar_t success[256];
+            if (utf8_to_wide_text(
+                    action->success, success,
+                    sizeof(success) / sizeof(success[0])))
+                set_status(success);
+        }
+    }
     MessageBoxW(g_main_window, message, L"InfiltratorFS Scrub",
                 MB_OK | MB_ICONINFORMATION);
 }
