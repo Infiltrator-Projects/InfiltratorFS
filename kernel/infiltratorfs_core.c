@@ -1120,7 +1120,10 @@ static int infilfs_validate_checkpoint_directory_tree(
                 name = entries + offset + sizeof(*entry);
                 if (!infilfs_rw_utf8_valid(name, name_length) ||
                     memchr(name, '\0', name_length) ||
-                    memchr(name, '/', name_length)) {
+                    memchr(name, '/', name_length) ||
+                    ((le64_to_cpu(INFILFS_SB(sb)->disk.incompat_flags) &
+                      INFILFS_INCOMPAT_REMOVABLE_NAMES_V1) &&
+                     !infilfs_removable_name_valid_v1(name, name_length))) {
                     ret = -EFSCORRUPTED;
                     goto out;
                 }
