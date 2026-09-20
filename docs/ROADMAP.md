@@ -110,6 +110,14 @@ The intended security architecture is described in `SECURITY.md`. Current Linux 
 
 See `PLATFORM_ADAPTERS.md` for the adapter contract.
 
+## Future ecosystem integration
+
+Possible future integrations with Software, System Monitor, Defragmenter, LINK-family applications, Runner Monitor and other Infiltrator projects are recorded in `FUTURE_ECOSYSTEM_INTEGRATION.md`.
+
+These are **not current feature-completion gates**. They remain subordinate to the present priority: make the native Linux filesystem boot, mount, recover and sustain ordinary desktop/server workloads with normal latency and throughput before adding ecosystem-specific enhancement layers.
+
+The integration design is capability-based and optional: applications must continue to work on other filesystems, standard operating-system APIs are preferred where sufficient, and InfiltratorFS must not acquire product-specific knowledge such as Debian package or diagnostic-record semantics.
+
 ## Deliberately deferred
 
 Global synchronous deduplication, distributed/network filesystem semantics and application-visible transactions are not first-generation requirements.
