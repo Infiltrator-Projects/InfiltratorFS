@@ -91,8 +91,12 @@ static infs_status formatter_write_allocation_page(
                               block, sizeof(block));
 }
 
-infs_status infs_format_storage(struct infs_storage *storage, const char *label)
+infs_status infs_format_storage_with_options(struct infs_storage *storage,
+                                             const char *label,
+                                             uint32_t options)
 {
+    if (options & ~INFS_KNOWN_FORMAT_OPTIONS)
+        return INFS_STATUS_INVALID_ARGUMENT;
     if (!storage || !infs_storage_valid(storage) || !storage->ops->write_at ||
         !storage->ops->flush || !storage->ops->random_bytes ||
         !storage->ops->current_time || !label)
@@ -222,7 +226,9 @@ infs_status infs_format_storage(struct infs_storage *storage, const char *label)
         INFS_INCOMPAT_HARD_LINKS | INFS_INCOMPAT_SNAPSHOTS |
         INFS_INCOMPAT_PAGED_EXTENTS | INFS_INCOMPAT_INDEX_TREE |
         INFS_INCOMPAT_DIRECTORY_TREE | INFS_INCOMPAT_ALLOCATION_TREE |
-        INFS_INCOMPAT_COMPRESSED_EXTENTS | INFS_INCOMPAT_UNICODE_NORM_V1);
+        INFS_INCOMPAT_COMPRESSED_EXTENTS | INFS_INCOMPAT_UNICODE_NORM_V1 |
+        ((options & INFS_FORMAT_OPTION_REMOVABLE_NAMES_V1) ?
+            INFS_INCOMPAT_REMOVABLE_NAMES_V1 : UINT64_C(0)));
     memcpy(sb.label, label, label_length);
 
     uint8_t block[INFS_BLOCK_SIZE] = {0};
@@ -350,4 +356,10 @@ infs_status infs_format_storage(struct infs_storage *storage, const char *label)
 done:
     free(bitmap);
     return status;
+}
+
+
+infs_status infs_format_storage(struct infs_storage *storage, const char *label)
+{
+    return infs_format_storage_with_options(storage, label, 0);
 }
