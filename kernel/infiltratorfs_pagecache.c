@@ -78,7 +78,6 @@ struct infilfs_pagecache_write_ctx {
 struct infilfs_writeback_cluster {
     u8 *buffer;
     struct folio **folios;
-    size_t *lengths;
     unsigned int count;
     unsigned int capacity;
     loff_t position;
@@ -493,8 +492,12 @@ static int infilfs_writeback_folio(struct folio *folio,
         mapping_set_error(mapping, ret);
         folio_redirty_for_writepage(wbc, folio);
     }
-    if (!ret)
+    if (!ret) {
         infilfs_pagecache_unaccount(folio, false);
+        if (wbc->sync_mode == WB_SYNC_NONE)
+            wbc->nr_to_write -=
+                (long)(folio_size(folio) >> PAGE_SHIFT);
+    }
     folio_end_writeback(folio);
 unlock:
     folio_unlock(folio);
@@ -557,10 +560,10 @@ static int infilfs_writepages(struct address_space *mapping,
     int ret = 0;
 
     cluster.buffer = kvmalloc(batch_bytes, GFP_NOFS);
-    cluster.folios = kvmalloc_array(max_folios, sizeof(*cluster.folios), GFP_NOFS);
-    cluster.lengths = kvmalloc_array(max_folios, sizeof(*cluster.lengths), GFP_NOFS);
+    cluster.folios = kvmalloc_array(
+        max_folios, sizeof(*cluster.folios), GFP_NOFS);
     cluster.capacity = max_folios;
-    if (!cluster.buffer || !cluster.folios || !cluster.lengths) {
+    if (!cluster.buffer || !cluster.folios) {
         ret = -ENOMEM;
         goto out;
     }
@@ -641,12 +644,15 @@ static int infilfs_writepages(struct address_space *mapping,
             }
             folio_get(folio);
             cluster.folios[cluster.count] = folio;
-            cluster.lengths[cluster.count] = length;
             cluster.count++;
             cluster.bytes += length;
+            if (wbc->sync_mode == WB_SYNC_NONE)
+                wbc->nr_to_write -=
+                    (long)(folio_size(folio) >> PAGE_SHIFT);
 
             if (cluster.bytes == batch_bytes ||
-                (wbc->sync_mode == WB_SYNC_NONE && --wbc->nr_to_write <= 0)) {
+                (wbc->sync_mode == WB_SYNC_NONE &&
+                 wbc->nr_to_write <= 0)) {
                 ret = infilfs_writeback_cluster_submit(mapping, wbc, &cluster);
                 if (ret || (wbc->sync_mode == WB_SYNC_NONE &&
                             wbc->nr_to_write <= 0))
@@ -666,7 +672,6 @@ static int infilfs_writepages(struct address_space *mapping,
 out:
     if (ret)
         mapping_set_error(mapping, ret);
-    kvfree(cluster.lengths);
     kvfree(cluster.folios);
     kvfree(cluster.buffer);
     return ret;
