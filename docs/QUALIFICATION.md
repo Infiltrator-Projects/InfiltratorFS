@@ -24,6 +24,25 @@ Automatic qualification and conformance jobs are hard-capped at 10 minutes where
 
 ## Current development evidence boundary
 
+### 0.18.66 Windows security-descriptor mapping baseline
+
+Exact implementation source `7ce6a641de9de69fa67e32c21d979641082460b8`
+completed the required cross-platform qualification on 2026-09-20:
+
+- **Build and conformance** run `35506988395` passed the Linux full suite, Clang conformance, ASan/UBSan, GCC static analysis, native package construction and the Windows native application/portable-core build and tests;
+- **Windows Explorer bridge qualification** run `35506988393` passed on the same exact source; and
+- the exact source also passed **Linux metadata qualification** run `35506988373`, **Linux root-volume qualification** run `35506988389` and **Native resize qualification** run `35506988359`.
+
+`include/infilfs/win32_security.h` now provides an executable, host-header-independent
+ACCESS_MASK projection onto the portable rights vocabulary. File and directory
+specific bits retain their distinct Windows meanings, GENERIC_* masks are
+expanded before projection, DELETE/READ_CONTROL/WRITE_DAC/WRITE_OWNER map to
+portable administrative rights, and SYNCHRONIZE/ACCESS_SYSTEM_SECURITY/
+MAXIMUM_ALLOWED cannot manufacture persistent portable access. SID identity
+remains an adapter binding rather than the persistent principal identity; DACL
+allow/deny ordering and inheritance remain responsibilities of the future
+versioned portable security object.
+
 ### 0.18.66 portable-rights and Linux security-mapping baseline
 
 Exact implementation source `cc8f7215398b11a9b637ca5ea02268be67b65de5`
