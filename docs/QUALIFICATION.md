@@ -24,6 +24,27 @@ Automatic qualification and conformance jobs are hard-capped at 10 minutes where
 
 ## Current development evidence boundary
 
+### 0.18.66 native N-1 CPU-budget baseline
+
+Exact implementation source `3adfb38ee91389f757617df892018aa5dc8fdce5`
+completed the required qualification on 2026-09-20:
+
+- **Build and conformance** run `35498743024` passed in full, including Linux full suite, GCC/Clang, ASan/UBSan, static analysis, native Linux packages and Windows builds;
+- **Native Linux kernel module** run `35498743019` passed in full, including upstream Linux 7.0 compilation and the dedicated mounted **Native N-1 CPU parallelism qualification** step;
+- **Linux metadata qualification** run `35498743164` passed;
+- **Linux root-volume qualification** run `35498743069` passed; and
+- **Native resize qualification** run `35498743106` passed.
+
+The dedicated mounted workload resolved a filesystem CPU budget of 3 on a
+4-logical-CPU runner and measured a real prepared-write worker peak of exactly
+3, with 512 preparation attempts and 512 successful prepared appends. The
+workers execute digest/compression/reservation preparation before the serialized
+publication section and each occupies the shared module-wide N-1 gate, so this
+is direct evidence that independent write preparation can fill the complete
+filesystem budget without exceeding it. The same run subsequently completed the
+full mounted read/write, quota, media-placement, defragmentation and scrub suite.
+
+
 ### 0.18.66 removable-volume filename-profile baseline
 
 Exact implementation source `d4e91557ec4f4a5590450294e0f40ec10473b728`

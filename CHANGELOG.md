@@ -4,6 +4,7 @@ This file records user-visible, compatibility, architecture and validation chang
 
 ## Unreleased
 
+- Mark the filesystem-wide native Linux N-1 concurrency budget as roadmap-complete after mounted real-write qualification reached budget=3 with prepared-write peak=3 and the complete exact-source CI/native suites passed.
 - Add mounted N-1 CPU-budget qualification with real prepared-write concurrency telemetry, proving CPU-heavy write preparation can fill the filesystem budget before short serialized publication.
 - Mark the cross-platform removable-volume filename profile as roadmap-complete after exact-source portable, mounted native, metadata, root-volume and resize qualification.
 - Add an optional persistent removable-volume filename profile with cross-platform component constraints, portable/native enforcement, fail-closed graph validation, mkfs selection, and mounted qualification.
