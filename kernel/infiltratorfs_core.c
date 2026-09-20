@@ -2498,6 +2498,21 @@ static int infilfs_populate_inode(struct inode *inode, u64 object_block,
             inode->i_mode = S_IFREG | permissions;
             inode->i_fop = &infilfs_file_operations;
             inode->i_mapping->a_ops = &infilfs_aops;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
+            /*
+             * Linux 6.17 made the buffered write_begin/write_end contract
+             * folio-native.  Before that boundary our compatibility callback
+             * must return a struct page and therefore deliberately remains
+             * order-0.  On folio-native kernels, permit larger page-cache
+             * folios but cap them at one InfiltratorFS compression cluster.
+             * This aligns VM granularity with the 256 KiB verified CoW unit
+             * instead of allowing arbitrarily large random-write amplification.
+             */
+            mapping_set_folio_order_range(
+                inode->i_mapping, 0,
+                get_order((unsigned long)INFILFS_COMPRESSION_CLUSTER_BLOCKS *
+                          INFILFS_DISK_BLOCK_SIZE));
+#endif
             i_size_write(inode, le64_to_cpu(attributes->logical_size));
             ret = infilfs_file_allocated_blocks(inode, object, &allocated);
             if (ret)
