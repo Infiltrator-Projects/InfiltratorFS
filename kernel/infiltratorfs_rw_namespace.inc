@@ -2497,9 +2497,9 @@ static int infilfs_ns_rename_exchange_same_dir(
 
     if (!source || !destination || !source_ii || !destination_ii || !dir_ii)
         return -ENOENT;
-    ret = infilfs_ns_validate_name(old_dir->i_sb, &old_dentry->d_name);
+    ret = infilfs_ns_validate_name(dir->i_sb, &old_dentry->d_name);
     if (!ret)
-        ret = infilfs_ns_validate_name(new_dir->i_sb, &new_dentry->d_name);
+        ret = infilfs_ns_validate_name(dir->i_sb, &new_dentry->d_name);
     if (ret)
         return ret;
     if (source == destination)
