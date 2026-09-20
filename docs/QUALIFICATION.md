@@ -32,6 +32,7 @@ completed the relevant automatic qualification on 2026-09-20:
 - **Build and conformance** run `35495809194` passed, including the Linux full suite, format conformance, phase-3 integrity/repair cases, Clang, ASan/UBSan, GCC static analysis, native Linux package construction and Windows portable/native application builds;
 - **Linux metadata qualification** run `35495809198` passed on a freshly formatted current-format native mount with the new Unicode-policy feature bit; and
 - **Linux root-volume qualification** run `35495809170` passed on the same exact source.
+- **Native Linux kernel module** run `35495809153` passed, including the mounted native read/write/scrub suite and upstream Linux 7.0 module compatibility.
 
 The Unicode policy is persisted as incompatible feature `UNICODE_NORM_V1`.
 It deliberately defines exact validated UTF-8 preservation with no implicit
