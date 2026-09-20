@@ -2,6 +2,13 @@
 #include <linux/bvec.h>
 
 #include "infiltratorfs_internal.h"
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0) && IS_ENABLED(CONFIG_IOMAP)
+#include <linux/iomap.h>
+#define INFILFS_HAVE_VERIFIED_IOMAP_READ 1
+#else
+#define INFILFS_HAVE_VERIFIED_IOMAP_READ 0
+#endif
 /*
  * Native Linux page-cache integration.
  *
@@ -66,6 +73,9 @@ static void infilfs_invalidate_folio(struct folio *folio, size_t offset,
 {
     if (!offset && length == folio_size(folio))
         infilfs_pagecache_unaccount(folio, true);
+#if INFILFS_HAVE_VERIFIED_IOMAP_READ
+    iomap_invalidate_folio(folio, offset, length);
+#endif
 }
 
 static bool infilfs_release_folio(struct folio *folio, gfp_t gfp)
@@ -74,6 +84,10 @@ static bool infilfs_release_folio(struct folio *folio, gfp_t gfp)
     if (folio_test_dirty(folio) || folio_test_writeback(folio))
         return false;
     infilfs_pagecache_unaccount(folio, false);
+#if INFILFS_HAVE_VERIFIED_IOMAP_READ
+    if (!iomap_release_folio(folio, gfp))
+        return false;
+#endif
     return !folio_test_private_2(folio);
 }
 
@@ -104,6 +118,27 @@ struct infilfs_readahead_cluster {
     size_t bytes;
 };
 
+#if INFILFS_HAVE_VERIFIED_IOMAP_READ
+struct infilfs_iomap_read_range {
+    struct folio *folio;
+    size_t offset;
+    size_t length;
+};
+
+struct infilfs_iomap_read_batch {
+    struct inode *inode;
+    struct bio_vec *bvecs;
+    struct infilfs_iomap_read_range *ranges;
+    unsigned int bvec_count;
+    unsigned int bvec_capacity;
+    unsigned int range_count;
+    unsigned int range_capacity;
+    loff_t position;
+    size_t bytes;
+    int error;
+};
+#endif
+
 static int infilfs_pagecache_append_bvecs(
     struct bio_vec *bvecs, unsigned int capacity, unsigned int *count,
     struct folio *folio, size_t bytes)
@@ -132,6 +167,40 @@ static int infilfs_pagecache_append_bvecs(
     }
     return 0;
 }
+
+#if INFILFS_HAVE_VERIFIED_IOMAP_READ
+static int infilfs_pagecache_append_bvec_range(
+    struct bio_vec *bvecs, unsigned int capacity, unsigned int *count,
+    struct folio *folio, size_t offset, size_t bytes)
+{
+    unsigned int needed;
+    size_t end;
+
+    if (!bvecs || !count || !folio || offset > folio_size(folio) ||
+        bytes > folio_size(folio) - offset)
+        return -EINVAL;
+    if (!bytes)
+        return 0;
+
+    end = offset + bytes;
+    needed = DIV_ROUND_UP((offset & (PAGE_SIZE - 1u)) + bytes, PAGE_SIZE);
+    if (*count > capacity || needed > capacity - *count)
+        return -EOVERFLOW;
+
+    while (offset < end) {
+        size_t page_offset = offset & (PAGE_SIZE - 1u);
+        size_t chunk = min_t(size_t, PAGE_SIZE - page_offset, end - offset);
+        struct bio_vec *bvec = &bvecs[*count];
+
+        bvec->bv_page = folio_page(folio, offset >> PAGE_SHIFT);
+        bvec->bv_offset = page_offset;
+        bvec->bv_len = chunk;
+        (*count)++;
+        offset += chunk;
+    }
+    return 0;
+}
+#endif
 
 static void infilfs_pagecache_zero_folio(
     struct folio *folio, size_t offset, size_t bytes)
@@ -219,7 +288,7 @@ out:
     return ret;
 }
 
-static int infilfs_read_folio(struct file *file, struct folio *folio)
+static int infilfs_read_folio_legacy(struct file *file, struct folio *folio)
 {
     int ret;
 
@@ -298,7 +367,7 @@ static int infilfs_readahead_cluster_submit(
     return ret;
 }
 
-static void infilfs_readahead(struct readahead_control *rac)
+static void infilfs_readahead_legacy(struct readahead_control *rac)
 {
     struct infilfs_readahead_cluster cluster = {0};
     const size_t batch_bytes = INFILFS_NATIVE_WRITEBACK_BATCH_BYTES;
@@ -324,10 +393,10 @@ static void infilfs_readahead(struct readahead_control *rac)
         if (bytes > batch_bytes) {
             ret = infilfs_readahead_cluster_submit(&cluster);
             if (ret) {
-                infilfs_read_folio(rac->file, folio);
+                infilfs_read_folio_legacy(rac->file, folio);
                 goto fallback_remaining;
             }
-            infilfs_read_folio(rac->file, folio);
+            infilfs_read_folio_legacy(rac->file, folio);
             continue;
         }
 
@@ -338,7 +407,7 @@ static void infilfs_readahead(struct readahead_control *rac)
              segments > cluster.bvec_capacity - cluster.bvec_count)) {
             ret = infilfs_readahead_cluster_submit(&cluster);
             if (ret) {
-                infilfs_read_folio(rac->file, folio);
+                infilfs_read_folio_legacy(rac->file, folio);
                 goto fallback_remaining;
             }
         }
@@ -349,7 +418,7 @@ static void infilfs_readahead(struct readahead_control *rac)
             cluster.bvecs, cluster.bvec_capacity,
             &cluster.bvec_count, folio, bytes);
         if (ret) {
-            infilfs_read_folio(rac->file, folio);
+            infilfs_read_folio_legacy(rac->file, folio);
             goto fallback_remaining;
         }
         cluster.folios[cluster.count++] = folio;
@@ -368,16 +437,259 @@ fallback:
     kvfree(cluster.folios);
     kvfree(cluster.bvecs);
     while ((folio = readahead_folio(rac)) != NULL)
-        infilfs_read_folio(rac->file, folio);
+        infilfs_read_folio_legacy(rac->file, folio);
     return;
 
 fallback_remaining:
     while ((folio = readahead_folio(rac)) != NULL)
-        infilfs_read_folio(rac->file, folio);
+        infilfs_read_folio_legacy(rac->file, folio);
 out:
     kvfree(cluster.folios);
     kvfree(cluster.bvecs);
 }
+
+#if INFILFS_HAVE_VERIFIED_IOMAP_READ
+/*
+ * Linux 7.0 iomap can delegate the actual read transport to the filesystem.
+ * InfiltratorFS uses that interface only for page-cache state management:
+ * compression, sparse extents and SHA-256 verification remain in the native
+ * verified reader. This mirrors the iomap/FUSE model where IOMAP_MAPPED is a
+ * logical transport mapping rather than a promise that generic bio I/O can
+ * address the data directly.
+ */
+static int infilfs_iomap_read_begin(
+    struct inode *inode, loff_t pos, loff_t length, unsigned int flags,
+    struct iomap *iomap, struct iomap *srcmap)
+{
+    (void)inode;
+    (void)srcmap;
+
+    if (flags || pos < 0 || length <= 0)
+        return -EOPNOTSUPP;
+
+    iomap->type = IOMAP_MAPPED;
+    iomap->offset = pos;
+    iomap->length = length;
+    iomap->addr = IOMAP_NULL_ADDR;
+    return 0;
+}
+
+static const struct iomap_ops infilfs_iomap_read_ops = {
+    .iomap_begin = infilfs_iomap_read_begin,
+};
+
+static int infilfs_iomap_read_range_sync(
+    const struct iomap_iter *iter, struct folio *folio, size_t length)
+{
+    struct bio_vec inline_bvec;
+    struct bio_vec *bvecs = &inline_bvec;
+    struct iov_iter to;
+    loff_t position = iter->pos;
+    size_t offset = offset_in_folio(folio, position);
+    unsigned int bvec_count = 0;
+    unsigned int bvec_capacity;
+    ssize_t got;
+    int ret;
+
+    if (!length || offset > folio_size(folio) ||
+        length > folio_size(folio) - offset)
+        return -EIO;
+
+    bvec_capacity =
+        DIV_ROUND_UP((offset & (PAGE_SIZE - 1u)) + length, PAGE_SIZE);
+    if (bvec_capacity > 1u) {
+        bvecs = kvmalloc_array(
+            bvec_capacity, sizeof(*bvecs), GFP_NOFS);
+        if (!bvecs)
+            return -ENOMEM;
+    }
+
+    ret = infilfs_pagecache_append_bvec_range(
+        bvecs, bvec_capacity, &bvec_count, folio, offset, length);
+    if (ret)
+        goto out;
+
+    iov_iter_bvec(&to, ITER_DEST, bvecs, bvec_count, length);
+    got = infilfs_native_read_iter_cached(
+        iter->inode, &position, &to);
+    if (got != length)
+        ret = got < 0 ? (int)got : -EIO;
+    else
+        flush_dcache_folio(folio);
+
+out:
+    if (ret)
+        mapping_set_error(folio->mapping, ret);
+    if (bvecs != &inline_bvec)
+        kvfree(bvecs);
+    return ret;
+}
+
+static int infilfs_iomap_read_batch_submit(
+    struct infilfs_iomap_read_batch *batch)
+{
+    struct iov_iter to;
+    loff_t position;
+    ssize_t got;
+    unsigned int i;
+    int ret = 0;
+
+    if (!batch || !batch->range_count)
+        return 0;
+
+    position = batch->position;
+    iov_iter_bvec(
+        &to, ITER_DEST, batch->bvecs, batch->bvec_count, batch->bytes);
+    got = infilfs_native_read_iter_cached(
+        batch->inode, &position, &to);
+    if (got != batch->bytes)
+        ret = got < 0 ? (int)got : -EIO;
+    if (ret)
+        mapping_set_error(batch->inode->i_mapping, ret);
+
+    for (i = 0; i < batch->range_count; ++i) {
+        struct infilfs_iomap_read_range *range = &batch->ranges[i];
+
+        if (!ret)
+            flush_dcache_folio(range->folio);
+        iomap_finish_folio_read(
+            range->folio, range->offset, range->length, ret);
+        folio_put(range->folio);
+    }
+
+    batch->bvec_count = 0;
+    batch->range_count = 0;
+    batch->bytes = 0;
+    batch->position = 0;
+    if (ret)
+        batch->error = ret;
+    return ret;
+}
+
+static int infilfs_iomap_read_folio_range(
+    const struct iomap_iter *iter, struct iomap_read_folio_ctx *ctx,
+    size_t length)
+{
+    struct folio *folio = ctx->cur_folio;
+    struct infilfs_iomap_read_batch *batch = ctx->read_ctx;
+    size_t offset = offset_in_folio(folio, iter->pos);
+    unsigned int needed;
+    int ret;
+
+    if (!batch) {
+        ret = infilfs_iomap_read_range_sync(iter, folio, length);
+        if (!ret)
+            iomap_finish_folio_read(folio, offset, length, 0);
+        return ret;
+    }
+
+    if (batch->error)
+        return batch->error;
+    if (!length || offset > folio_size(folio) ||
+        length > folio_size(folio) - offset)
+        return -EIO;
+
+    needed =
+        DIV_ROUND_UP((offset & (PAGE_SIZE - 1u)) + length, PAGE_SIZE);
+    if (needed > batch->bvec_capacity || !batch->range_capacity)
+        return -EOVERFLOW;
+
+    if (batch->range_count &&
+        (iter->pos != batch->position + batch->bytes ||
+         length > INFILFS_NATIVE_WRITEBACK_BATCH_BYTES - batch->bytes ||
+         needed > batch->bvec_capacity - batch->bvec_count ||
+         batch->range_count >= batch->range_capacity)) {
+        ret = infilfs_iomap_read_batch_submit(batch);
+        if (ret)
+            return ret;
+    }
+
+    if (!batch->range_count) {
+        batch->inode = iter->inode;
+        batch->position = iter->pos;
+    }
+
+    ret = infilfs_pagecache_append_bvec_range(
+        batch->bvecs, batch->bvec_capacity, &batch->bvec_count,
+        folio, offset, length);
+    if (ret)
+        return ret;
+
+    folio_get(folio);
+    batch->ranges[batch->range_count].folio = folio;
+    batch->ranges[batch->range_count].offset = offset;
+    batch->ranges[batch->range_count].length = length;
+    batch->range_count++;
+    batch->bytes += length;
+    return 0;
+}
+
+static void infilfs_iomap_submit_read(struct iomap_read_folio_ctx *ctx)
+{
+    struct infilfs_iomap_read_batch *batch = ctx->read_ctx;
+
+    if (batch && batch->range_count)
+        (void)infilfs_iomap_read_batch_submit(batch);
+}
+
+static const struct iomap_read_ops infilfs_iomap_verified_read_ops = {
+    .read_folio_range = infilfs_iomap_read_folio_range,
+    .submit_read = infilfs_iomap_submit_read,
+};
+
+static int infilfs_read_folio(struct file *file, struct folio *folio)
+{
+    struct iomap_read_folio_ctx ctx = {
+        .ops = &infilfs_iomap_verified_read_ops,
+        .cur_folio = folio,
+    };
+
+    (void)file;
+    iomap_read_folio(&infilfs_iomap_read_ops, &ctx, NULL);
+    return 0;
+}
+
+static void infilfs_readahead(struct readahead_control *rac)
+{
+    struct infilfs_iomap_read_batch batch = {0};
+    struct iomap_read_folio_ctx ctx = {
+        .ops = &infilfs_iomap_verified_read_ops,
+        .rac = rac,
+        .read_ctx = &batch,
+    };
+    unsigned int capacity =
+        DIV_ROUND_UP(INFILFS_NATIVE_WRITEBACK_BATCH_BYTES, PAGE_SIZE) + 1u;
+
+    batch.bvecs = kvmalloc_array(
+        capacity, sizeof(*batch.bvecs), GFP_NOFS);
+    batch.ranges = kvmalloc_array(
+        capacity, sizeof(*batch.ranges), GFP_NOFS);
+    batch.bvec_capacity = capacity;
+    batch.range_capacity = capacity;
+    if (!batch.bvecs || !batch.ranges) {
+        kvfree(batch.ranges);
+        kvfree(batch.bvecs);
+        infilfs_readahead_legacy(rac);
+        return;
+    }
+
+    iomap_readahead(&infilfs_iomap_read_ops, &ctx, NULL);
+    if (batch.range_count)
+        (void)infilfs_iomap_read_batch_submit(&batch);
+    kvfree(batch.ranges);
+    kvfree(batch.bvecs);
+}
+#else
+static int infilfs_read_folio(struct file *file, struct folio *folio)
+{
+    return infilfs_read_folio_legacy(file, folio);
+}
+
+static void infilfs_readahead(struct readahead_control *rac)
+{
+    infilfs_readahead_legacy(rac);
+}
+#endif
 
 static int infilfs_pagecache_prepare_folio(struct address_space *mapping,
                                  loff_t pos, unsigned int len,
@@ -594,6 +906,10 @@ static int infilfs_writeback_folio(struct folio *folio,
                 (long)(folio_size(folio) >> PAGE_SHIFT);
     }
     folio_end_writeback(folio);
+#if INFILFS_HAVE_VERIFIED_IOMAP_READ
+    if (!ret)
+        (void)iomap_release_folio(folio, GFP_NOFS);
+#endif
 
 out_free:
     if (bvecs != &inline_bvec)
@@ -636,6 +952,10 @@ static int infilfs_writeback_cluster_submit(
         else
             infilfs_pagecache_unaccount(folio, false);
         folio_end_writeback(folio);
+#if INFILFS_HAVE_VERIFIED_IOMAP_READ
+        if (!ret)
+            (void)iomap_release_folio(folio, GFP_NOFS);
+#endif
         folio_unlock(folio);
         folio_put(folio);
     }
