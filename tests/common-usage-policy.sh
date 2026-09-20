@@ -10,6 +10,7 @@ allocation="$root/src/volume/allocation-map.inc"
 hole="$root/src/volume/file-hole-punch.inc"
 tool="$root/tools/infilfs-tool/part-02.inc"
 win="$root/tools/windows/infiltratorfs-windows.c"
+manager_contract="$root/tools/manager/infiltratorfs-manager-contract.c"
 winio="$root/src/platform/win32_io.c"
 winpart="$root/src/platform/win32_partition_io.c"
 optimize="$root/tools/infilfs-optimize.c"
@@ -46,15 +47,15 @@ grep -Fq 'pread_block_full_fd' "$mkfs1"
 grep -Fq 'pwrite_block_full_fd' "$mkfs1"
 grep -Fq 'bitmap_coverage_blocks' "$mkfs2"
 
-# Windows buffer growth and fixed-GiB presentation use Common while preserving
-# the existing two-decimal GiB user-visible contract.
+# Windows buffer growth stays checked while GUI capacity presentation is
+# shared with Linux through the Manager contract and Common's normal
+# auto-scaling storage formatter.
 grep -Fq 'infiltratr_size_multiply_checked' "$win"
 grep -Fq 'infiltratr_size_multiply_checked' "$winio"
 grep -Fq 'infiltratr_size_multiply_checked' "$winpart"
-grep -Fq 'infiltratr_format_scaled_quantity' "$win"
-grep -Fq 'options.minimum_unit = 3u' "$win"
-grep -Fq 'options.maximum_unit = 3u' "$win"
-grep -Fq 'options.decimal_places = 2u' "$win"
+grep -Fq 'infilfs_manager_format_capacity' "$win"
+grep -Fq 'infiltratr_format_disk_capacity' "$manager_contract"
+! grep -Fq 'format_gib_wide' "$win"
 
 # Fixed-unit command output is a product contract. Use Common's generic scaler
 # rather than the auto-scaling convenience function when the command promises
