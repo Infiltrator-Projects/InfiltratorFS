@@ -2,7 +2,15 @@
 
 This file records user-visible, compatibility, architecture and validation changes for InfiltratorFS.
 
-## Unreleased
+## 0.18.65 — 2026-09-20
+
+- Modernise the native Linux page-cache read path on Linux 7.0 and newer by delegating folio read/readahead state management to iomap while retaining InfiltratorFS's verified native transport for sparse extents, compression and SHA-256 integrity.
+- Keep pre-7.0 kernels on the already-qualified direct-bvec page-cache implementation rather than introducing an emulated iomap compatibility layer.
+- Reserve folio private state for iomap and track InfiltratorFS pending-CoW accounting independently with the auxiliary folio flag.
+- Fix native writeback accounting so nr_to_write is decremented by base-page count independently of cluster batching, including large-folio fallback.
+- Keep page-cache reads and writeback zero-copy at the folio/native-iterator boundary and prohibit generic iomap bio reads that would bypass filesystem verification.
+- Add an exact upstream Linux 7.0 compile gate for the out-of-tree module and prove the iomap symbols consumed by InfiltratorFS are exported for modules.
+- Move the extent-pointer-tree metadata-page workspace off the kernel stack after the upstream Linux 7.0 build exposed a 4 KiB stack frame.
 
 - Give the Linux Manager its own project-owned application identity icon: the same graphite tile and canonical `#00ADEF` filesystem glyph used by the Software Centre, installed once for hicolor and as the `infiltratorfs` Mint app-install alias; UDisks/device surfaces deliberately keep the platform drive icon because they represent volumes rather than the application.
 

@@ -24,6 +24,26 @@ Automatic qualification and conformance jobs are hard-capped at 10 minutes where
 
 ## Current development evidence boundary
 
+### 0.18.65 pre-release implementation baseline
+
+Exact development source `4696539ad0446dd92b7a3527137100caceaac0e6`
+passed the broad and native automatic gates on 2026-09-20:
+
+- **Build and conformance** run `35493759241`;
+- **Native Linux kernel module** run `35493759240`, including the new exact upstream Linux 7.0 compile-compatibility job.
+
+The immediately preceding implementation source
+`4bdc46c6b0fcbf589d1bac3971e9ae808d71d552` also passed:
+
+- **Linux metadata qualification** run `35493659875`;
+- **Linux root-volume qualification** run `35493659867`; and
+- **Native resize qualification** run `35493659900`.
+
+The only executable-policy change between those two sources is the corrected
+self-contained upstream Linux 7.0 compiler gate. The immutable `v0.18.65`
+release still requires its own exact release commit to pass the event-driven
+publication prerequisites before a tag or release is created.
+
 ### 0.18.60 pre-release implementation baseline
 
 Exact implementation source `ee716fc61310ed6c3d9e07852b72883518793d5e`
