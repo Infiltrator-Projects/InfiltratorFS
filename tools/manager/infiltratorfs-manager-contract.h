@@ -51,6 +51,13 @@ struct infilfs_manager_copy {
     const char *storage_heading;
     const char *empty_title;
     const char *empty_copy;
+    const char *volume_title;
+    const char *ready_status;
+    const char *mounted_status;
+    const char *unmounted_status;
+    const char *unknown_filesystem;
+    const char *image_file_type;
+    const char *default_image_name;
     const char *overview_tab;
     const char *files_tab;
     const char *capacity_caption;
@@ -71,6 +78,9 @@ struct infilfs_manager_copy {
     const char *new_image_button;
     const char *open_image_button;
     const char *refresh_button;
+    const char *theme_button;
+    const char *about_button;
+    const char *filesystem_label;
     const char *activity_heading;
     const char *clear_button;
 };

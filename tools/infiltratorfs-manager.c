@@ -162,7 +162,8 @@ static Target *target_new(const char *path, gboolean block)
     target->path = g_strdup(path ? path : "");
     target->block = block;
     target->name = g_strdup(infiltratr_path_basename(path ? path : ""));
-    target->media = g_strdup(block ? "Fixed disk" : "Image file");
+    target->media = g_strdup(
+        block ? "Fixed disk" : infilfs_manager_copy()->image_file_type);
     target->filesystem = g_strdup("");
     target->label = g_strdup("");
     target->mountpoint = g_strdup("");
@@ -1126,7 +1127,9 @@ static void manager_show_target(Manager *manager)
 {
     if (!manager->target) {
         gtk_stack_set_visible_child_name(GTK_STACK(manager->content_stack), "empty");
-        gtk_label_set_text(GTK_LABEL(manager->status_label), "Ready");
+        gtk_label_set_text(
+            GTK_LABEL(manager->status_label),
+            infilfs_manager_copy()->ready_status);
         manager_set_enabled(manager);
         return;
     }
@@ -1143,8 +1146,10 @@ static void manager_show_target(Manager *manager)
     gtk_image_set_pixel_size(GTK_IMAGE(manager->hero_icon), 32);
 
     gboolean mounted = target->mountpoint && *target->mountpoint;
-    gtk_label_set_text(GTK_LABEL(manager->mount_badge),
-                       mounted ? "Mounted" : "Not mounted");
+    gtk_label_set_text(
+        GTK_LABEL(manager->mount_badge),
+        mounted ? infilfs_manager_copy()->mounted_status :
+                  infilfs_manager_copy()->unmounted_status);
     GtkStyleContext *badge = gtk_widget_get_style_context(manager->mount_badge);
     if (mounted)
         gtk_style_context_add_class(badge, "badge-mounted");
@@ -1162,13 +1167,22 @@ static void manager_show_target(Manager *manager)
     char size_text[64];
     (void)infilfs_manager_format_capacity(target->size, size_text, sizeof(size_text));
     gtk_label_set_text(GTK_LABEL(manager->stat_size), size_text);
-    gtk_label_set_text(GTK_LABEL(manager->stat_fs),
-        (target->filesystem && *target->filesystem) ? target->filesystem : "Unknown / unformatted");
-    gtk_label_set_text(GTK_LABEL(manager->stat_mount), mounted ? "Mounted" : "Not mounted");
-    set_detail(manager->value_type, target->block ? target->media : "Image file");
+    gtk_label_set_text(
+        GTK_LABEL(manager->stat_fs),
+        (target->filesystem && *target->filesystem) ?
+        target->filesystem : infilfs_manager_copy()->unknown_filesystem);
+    gtk_label_set_text(
+        GTK_LABEL(manager->stat_mount),
+        mounted ? infilfs_manager_copy()->mounted_status :
+                  infilfs_manager_copy()->unmounted_status);
+    set_detail(
+        manager->value_type,
+        target->block ? target->media : infilfs_manager_copy()->image_file_type);
     set_detail(manager->value_path, target->path);
-    set_detail(manager->value_fs,
-        (target->filesystem && *target->filesystem) ? target->filesystem : "Unknown / unformatted");
+    set_detail(
+        manager->value_fs,
+        (target->filesystem && *target->filesystem) ?
+        target->filesystem : infilfs_manager_copy()->unknown_filesystem);
     set_detail(manager->value_label, target->label);
     char mount_state[256];
     if (mounted && target->mount_fstype && *target->mount_fstype)
@@ -1536,7 +1550,8 @@ static void on_create_image(GtkButton *button, gpointer data)
         GTK_FILE_CHOOSER_ACTION_SAVE, "Cancel", GTK_RESPONSE_CANCEL,
         "Continue", GTK_RESPONSE_OK, NULL);
     gtk_file_chooser_set_do_overwrite_confirmation(GTK_FILE_CHOOSER(chooser), TRUE);
-    gtk_file_chooser_set_current_name(GTK_FILE_CHOOSER(chooser), "infiltratorfs.img");
+    gtk_file_chooser_set_current_name(
+        GTK_FILE_CHOOSER(chooser), infilfs_manager_copy()->default_image_name);
     gint response = gtk_dialog_run(GTK_DIALOG(chooser));
     char *filename = response == GTK_RESPONSE_OK ?
         gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(chooser)) : NULL;
@@ -1799,8 +1814,10 @@ static GtkWidget *build_ui(Manager *manager)
     gtk_box_pack_start(GTK_BOX(hero), manager->hero_icon, FALSE, FALSE, 0);
     GtkWidget *identity = gtk_box_new(GTK_ORIENTATION_VERTICAL, 3);
     GtkWidget *title_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-    manager->title_label = make_label("Volume", "hero-title");
-    manager->mount_badge = make_label("Not mounted", "badge");
+    manager->title_label =
+        make_label(infilfs_manager_copy()->volume_title, "hero-title");
+    manager->mount_badge =
+        make_label(infilfs_manager_copy()->unmounted_status, "badge");
     gtk_box_pack_start(GTK_BOX(title_row), manager->title_label, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(title_row), manager->mount_badge, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(identity), title_row, FALSE, FALSE, 0);
@@ -1856,7 +1873,9 @@ static GtkWidget *build_ui(Manager *manager)
     gtk_grid_set_row_spacing(GTK_GRID(detail_grid), 10);
     detail_row(detail_grid, 0, infilfs_manager_copy()->device_type, &manager->value_type);
     detail_row(detail_grid, 1, infilfs_manager_copy()->device_path, &manager->value_path);
-    detail_row(detail_grid, 2, "Filesystem", &manager->value_fs);
+    detail_row(
+        detail_grid, 2, infilfs_manager_copy()->filesystem_label,
+        &manager->value_fs);
     detail_row(detail_grid, 3, infilfs_manager_copy()->volume_label, &manager->value_label);
     detail_row(detail_grid, 4, infilfs_manager_copy()->mount_state, &manager->value_mount);
     detail_row(detail_grid, 5, infilfs_manager_copy()->mount_point, &manager->value_mountpoint);
@@ -1937,7 +1956,8 @@ static GtkWidget *build_ui(Manager *manager)
     GtkWidget *statusbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     add_class(statusbar, "statusbar");
     manager->spinner = gtk_spinner_new();
-    manager->status_label = make_label("Ready", "status-text");
+    manager->status_label =
+        make_label(infilfs_manager_copy()->ready_status, "status-text");
     manager->version_label = make_label("Version " INFILFS_IMPLEMENTATION_VERSION, "status-text");
     gtk_label_set_xalign(GTK_LABEL(manager->version_label), 1.0f);
     gtk_box_pack_start(GTK_BOX(statusbar), manager->spinner, FALSE, FALSE, 0);

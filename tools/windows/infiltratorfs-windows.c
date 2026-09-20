@@ -590,11 +590,11 @@ static void update_target_summary(void)
     const struct infilfs_manager_copy *copy = infilfs_manager_copy();
     struct target_volume *target = selected_target();
     if (!target) {
-        SetWindowTextW(GetDlgItem(g_main_window, IDC_HERO_TITLE),
-                       L"Select a storage target");
+        set_control_text_utf8(
+            g_main_window, IDC_HERO_TITLE, copy->empty_title);
         SetWindowTextW(GetDlgItem(g_main_window, IDC_HERO_PATH), L"");
-        SetWindowTextW(GetDlgItem(g_main_window, IDC_MOUNT_BADGE),
-                       L"Not mounted");
+        set_control_text_utf8(
+            g_main_window, IDC_MOUNT_BADGE, copy->unmounted_status);
         SetWindowTextW(GetDlgItem(g_main_window, IDC_STAT_CAPACITY), L"—");
         SetWindowTextW(GetDlgItem(g_main_window, IDC_STAT_FILESYSTEM), L"—");
         SetWindowTextW(GetDlgItem(g_main_window, IDC_STAT_STATUS), L"—");
@@ -639,11 +639,13 @@ static void update_target_summary(void)
                    target->device_path);
 
     const int mounted = infs_windows_bridge_active();
-    SetWindowTextW(GetDlgItem(g_main_window, IDC_MOUNT_BADGE),
-                   mounted ? L"Mounted" : L"Not mounted");
+    set_control_text_utf8(
+        g_main_window, IDC_MOUNT_BADGE,
+        mounted ? copy->mounted_status : copy->unmounted_status);
     SetWindowTextW(GetDlgItem(g_main_window, IDC_STAT_CAPACITY), size_text);
-    SetWindowTextW(GetDlgItem(g_main_window, IDC_STAT_STATUS),
-                   mounted ? L"Mounted" : L"Not mounted");
+    set_control_text_utf8(
+        g_main_window, IDC_STAT_STATUS,
+        mounted ? copy->mounted_status : copy->unmounted_status);
     g_status_state_color = mounted ? g_success_color : g_warning_muted_color;
 
     wchar_t fs_text[96];
@@ -653,21 +655,27 @@ static void update_target_summary(void)
                      (unsigned)target->format_major,
                      (unsigned)target->format_minor);
     } else {
-        wcscpy_s(fs_text, sizeof(fs_text) / sizeof(fs_text[0]),
-                 L"Unknown / unformatted");
+        (void)utf8_to_wide_text(
+            copy->unknown_filesystem, fs_text,
+            sizeof(fs_text) / sizeof(fs_text[0]));
     }
     SetWindowTextW(GetDlgItem(g_main_window, IDC_STAT_FILESYSTEM), fs_text);
 
-    SetWindowTextW(GetDlgItem(g_main_window, IDC_DETAIL_TYPE),
-                   target->is_image ? L"Image file" :
-                   (target->use_region ? L"Physical partition" : L"Windows volume"));
+    if (target->is_image)
+        set_control_text_utf8(
+            g_main_window, IDC_DETAIL_TYPE, copy->image_file_type);
+    else
+        SetWindowTextW(
+            GetDlgItem(g_main_window, IDC_DETAIL_TYPE),
+            target->use_region ? L"Physical partition" : L"Windows volume");
     SetWindowTextW(GetDlgItem(g_main_window, IDC_DETAIL_PATH),
                    target->device_path);
     SetWindowTextW(GetDlgItem(g_main_window, IDC_DETAIL_FS), fs_text);
     SetWindowTextW(GetDlgItem(g_main_window, IDC_DETAIL_LABEL),
                    target->is_infiltrator ? label : L"—");
-    SetWindowTextW(GetDlgItem(g_main_window, IDC_DETAIL_MOUNT),
-                   mounted ? L"Mounted" : L"Not mounted");
+    set_control_text_utf8(
+        g_main_window, IDC_DETAIL_MOUNT,
+        mounted ? copy->mounted_status : copy->unmounted_status);
 
     wchar_t bridge_root[MAX_PATH * 4u] = L"";
     if (mounted)
@@ -908,8 +916,13 @@ static void update_buttons(void)
     EnableWindow(GetDlgItem(g_main_window, IDC_UNMOUNT_DRIVE), enabled.unmount);
     EnableWindow(GetDlgItem(g_main_window, IDC_PAGE_FILES), enabled.files);
 
-    set_control_text_utf8(g_main_window, IDC_MOUNT_DRIVE,
-                          infilfs_manager_copy()->mount_button);
+    if (bridge_active)
+        SetWindowTextW(
+            GetDlgItem(g_main_window, IDC_MOUNT_DRIVE), L"Open in Explorer");
+    else
+        set_control_text_utf8(
+            g_main_window, IDC_MOUNT_DRIVE,
+            infilfs_manager_copy()->mount_button);
     set_control_text_utf8(g_main_window, IDC_UNMOUNT_DRIVE,
                           infilfs_manager_copy()->unmount_button);
 }
@@ -1469,7 +1482,10 @@ static void open_image_dialog(void)
 
 static void create_image_dialog(void)
 {
-    wchar_t path[32768] = L"infiltratorfs.img";
+    wchar_t path[32768] = L"";
+    (void)utf8_to_wide_text(
+        infilfs_manager_copy()->default_image_name,
+        path, sizeof(path) / sizeof(path[0]));
     OPENFILENAMEW dialog;
     memset(&dialog, 0, sizeof(dialog));
     dialog.lStructSize = sizeof(dialog);
@@ -2591,8 +2607,8 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message,
         create_button_utf8(hwnd, IDC_NEW_IMAGE, copy->new_image_button);
         create_button_utf8(hwnd, IDC_OPEN_IMAGE, copy->open_image_button);
         create_button_utf8(hwnd, IDC_REFRESH, copy->refresh_button);
-        create_button_utf8(hwnd, IDC_THEME, "Theme");
-        create_button_utf8(hwnd, IDC_ABOUT, "About");
+        create_button_utf8(hwnd, IDC_THEME, copy->theme_button);
+        create_button_utf8(hwnd, IDC_ABOUT, copy->about_button);
 
         create_static_utf8(hwnd, IDC_STORAGE_HEADING, copy->storage_heading, 0);
         HWND target_list = CreateWindowExW(
@@ -2604,9 +2620,10 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message,
         CreateWindowW(L"STATIC", L"", WS_CHILD | SS_LEFT | SS_NOPREFIX,
                       0, 0, 0, 0, hwnd, (HMENU)IDC_TARGET_SUMMARY, NULL, NULL);
 
-        create_static_utf8(hwnd, IDC_HERO_TITLE, "Select a storage target", 0);
+        create_static_utf8(hwnd, IDC_HERO_TITLE, copy->empty_title, 0);
         create_static_utf8(hwnd, IDC_HERO_PATH, "", SS_NOPREFIX);
-        create_static_utf8(hwnd, IDC_MOUNT_BADGE, "Not mounted", SS_CENTER);
+        create_static_utf8(
+            hwnd, IDC_MOUNT_BADGE, copy->unmounted_status, SS_CENTER);
         create_button_utf8(hwnd, IDC_MOUNT_DRIVE, copy->mount_button);
         create_button_utf8(hwnd, IDC_UNMOUNT_DRIVE, copy->unmount_button);
         create_button_utf8(hwnd, IDC_PAGE_OVERVIEW, copy->overview_tab);
@@ -2624,7 +2641,8 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message,
         create_static_utf8(hwnd, IDC_DETAIL_TYPE, "—", SS_NOPREFIX);
         create_static_utf8(hwnd, IDC_DETAIL_PATH_CAPTION, copy->device_path, 0);
         create_static_utf8(hwnd, IDC_DETAIL_PATH, "—", SS_NOPREFIX);
-        create_static_utf8(hwnd, IDC_DETAIL_FS_CAPTION, copy->filesystem_caption, 0);
+        create_static_utf8(
+            hwnd, IDC_DETAIL_FS_CAPTION, copy->filesystem_label, 0);
         create_static_utf8(hwnd, IDC_DETAIL_FS, "—", 0);
         create_static_utf8(hwnd, IDC_DETAIL_LABEL_CAPTION, copy->volume_label, 0);
         create_static_utf8(hwnd, IDC_DETAIL_LABEL, "—", 0);
@@ -2697,8 +2715,12 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message,
             WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_BORDER |
             ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY,
             0, 0, 0, 0, hwnd, (HMENU)IDC_ACTIVITY, NULL, NULL);
+        wchar_t ready_status[64] = L"";
+        (void)utf8_to_wide_text(
+            copy->ready_status, ready_status,
+            sizeof(ready_status) / sizeof(ready_status[0]));
         HWND status = CreateWindowExW(
-            0, L"STATIC", L"Ready",
+            0, L"STATIC", ready_status,
             WS_CHILD | WS_VISIBLE | SS_LEFT | SS_CENTERIMAGE,
             0, 0, 0, 0, hwnd, (HMENU)IDC_STATUS, NULL, NULL);
 
