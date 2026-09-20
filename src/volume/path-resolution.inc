@@ -52,7 +52,10 @@ static int split_parent(struct infs_volume *vol, const char *path,
         return INFS_STATUS_NAME_TOO_LONG;
     memcpy(name, slash, name_len);
     name[name_len] = '\0';
-    if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0)
+    if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0 ||
+        !infs_utf8_validate(name, name_len) ||
+        (removable_names_enabled(vol) &&
+         !removable_name_valid_v1((const uint8_t *)name, name_len)))
         return INFS_STATUS_INVALID_ARGUMENT;
 
     char parent_path[INFS_PATH_MAX];
