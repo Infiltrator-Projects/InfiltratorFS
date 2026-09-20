@@ -1565,7 +1565,7 @@ static int infilfs_posix_create_native_named_child(
             (INFILFS_ATTR_HIDDEN | INFILFS_ATTR_SYSTEM))
         ret = 0;
     else
-        ret = infilfs_ns_validate_name(name);
+        ret = infilfs_ns_validate_name(dir->i_sb, name);
     if (ret)
         return ret;
     failure_stage = "begin";
