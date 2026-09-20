@@ -41,3 +41,23 @@ bool infilfs_removable_name_valid_v1(const unsigned char *name, size_t length)
     }
     return true;
 }
+
+int infilfs_name_validate(struct super_block *sb, const struct qstr *name)
+{
+    struct infilfs_sb_info *sbi = sb ? INFILFS_SB(sb) : NULL;
+    bool reserved_linux_meta = name &&
+        name->len == sizeof(INFILFS_LINUX_META_DIRECTORY) - 1u &&
+        !memcmp(name->name, INFILFS_LINUX_META_DIRECTORY, name->len);
+
+    if (!name || !name->len || name->len > INFILFS_NAME_MAX ||
+        !infilfs_rw_utf8_valid(name->name, name->len) ||
+        (name->len == 1 && name->name[0] == '.') ||
+        (name->len == 2 && name->name[0] == '.' && name->name[1] == '.') ||
+        reserved_linux_meta ||
+        (sbi &&
+         (le64_to_cpu(sbi->disk.incompat_flags) &
+          INFILFS_INCOMPAT_REMOVABLE_NAMES_V1) &&
+         !infilfs_removable_name_valid_v1(name->name, name->len)))
+        return -EINVAL;
+    return 0;
+}
