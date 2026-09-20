@@ -42,7 +42,7 @@ Filesystem and object identities are 128-bit persistent values. Paths are namesp
 
 Directories map UTF-8 names to persistent objects. Regular files may have multiple namespace references through hard links. Symbolic links are their own persistent objects with stored targets. Namespace operations are transactional and must preserve exact parent/reference/link-count invariants.
 
-Format 0.18 uses 1023-byte UTF-8 component names, byte-exact case-sensitive comparison and explicit validation of forbidden traversal/reserved forms. Future Unicode normalization or case-folding policy must be versioned rather than silently changing current semantics.
+Format 0.18 uses 1023-byte UTF-8 component names, byte-exact case-sensitive comparison and explicit validation of forbidden traversal/reserved forms. Unicode-name policy v1 is persisted as an incompatible feature and explicitly performs no implicit normalization: valid UTF-8 is preserved exactly. Any future normalization or case-folding semantics require a new versioned policy rather than silently changing current lookup behavior.
 
 ## 3. Transactions, generations and checkpoints
 
@@ -133,7 +133,7 @@ Online defragmentation is copy-on-write. It may improve physical layout but must
 
 Quota accounting is an adapter-level administrative policy over persistent objects rather than part of portable object identity. Linux quota state may persist rules/roots and rebuild usage from authoritative namespace/object state. Whether a quota implementation is currently complete belongs in `ROADMAP.md`, not here.
 
-A future repair-capable fsck must distinguish deterministic repairs from cases where correctness cannot be established. Ambiguous corruption remains fail-closed.
+The repair-capable fsck distinguishes deterministic repairs from cases where correctness cannot be established. It may reconstruct damaged checkpoint replicas only from a surviving validated committed graph; ambiguous authoritative metadata corruption remains fail-closed and unmodified.
 
 ## 10. Linux adapter
 

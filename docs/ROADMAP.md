@@ -31,7 +31,7 @@ Pre-1.0 development is current-format-only. A development format may be replaced
 - [x] Regular-file hard links.
 - [x] Named read-only snapshots and retained historical generations.
 - [x] Portable attributes with POSIX compatibility metadata isolated from the portable model.
-- [ ] Versioned Unicode normalization policy.
+- [x] Versioned Unicode normalization policy.
 - [ ] Optional case-folded directory policy.
 - [ ] Cross-platform removable-volume filename profile.
 - [ ] Generic typed/reparse extension objects.
@@ -77,7 +77,7 @@ Pre-1.0 development is current-format-only. A development format may be replaced
 
 - [x] Online filesystem grow and safely bounded shrink.
 - [x] Native user/group/project quotas with durable policy and remount usage reconstruction.
-- [ ] Deterministic repair-capable filesystem checker for unambiguous repair cases.
+- [x] Deterministic repair-capable filesystem checker for unambiguous repair cases.
 - [ ] Snapshot restore/rollback for selected objects and whole-volume recovery to a retained generation.
 
 ## Security and protection

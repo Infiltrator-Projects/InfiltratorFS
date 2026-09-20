@@ -24,6 +24,25 @@ Automatic qualification and conformance jobs are hard-capped at 10 minutes where
 
 ## Current development evidence boundary
 
+### 0.18.66 Unicode-policy and deterministic-repair baseline
+
+Exact implementation source `8f89ea23fac7f52dc6f4f8f9ea46e9d161dce35c`
+completed the relevant automatic qualification on 2026-09-20:
+
+- **Build and conformance** run `35495809194` passed, including the Linux full suite, format conformance, phase-3 integrity/repair cases, Clang, ASan/UBSan, GCC static analysis, native Linux package construction and Windows portable/native application builds;
+- **Linux metadata qualification** run `35495809198` passed on a freshly formatted current-format native mount with the new Unicode-policy feature bit; and
+- **Linux root-volume qualification** run `35495809170` passed on the same exact source.
+
+The Unicode policy is persisted as incompatible feature `UNICODE_NORM_V1`.
+It deliberately defines exact validated UTF-8 preservation with no implicit
+normalization, so future normalization semantics cannot silently alter lookup.
+
+The deterministic repair qualification proves both one- and two-replica
+checkpoint loss can be healed from the surviving validated committed graph,
+while non-checkpoint authoritative metadata corruption is left byte-for-byte
+unchanged and reported uncorrected. These are the bounded unambiguous repair
+semantics required by the roadmap; ambiguous corruption remains fail-closed.
+
 ### 0.18.65 pre-release implementation baseline
 
 Exact development source `4696539ad0446dd92b7a3527137100caceaac0e6`
