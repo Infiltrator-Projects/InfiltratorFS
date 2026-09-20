@@ -56,5 +56,6 @@ grep -Fq 'refusing to remove the filesystem package while / is mounted as Infilt
 grep -Fq 'MODULE_ALIAS_FS(INFILTRATORFS_NAME)' "$root/kernel/infiltratorfs_core.c"
 grep -Fq '.get_inode_acl = infilfs_posix_acl_get' "$root/kernel/infiltratorfs_rw.inc"
 grep -Fq '.set_acl = infilfs_posix_acl_set' "$root/kernel/infiltratorfs_rw.inc"
-grep -Fq 'infilfs_ns_reserved_linux_meta_name' "$root/kernel/infiltratorfs_rw_namespace.inc"
+grep -Fq 'bool infilfs_name_is_reserved_linux_meta' "$root/kernel/infiltratorfs_name_policy.c"
+grep -Fq 'infilfs_name_is_reserved_linux_meta(name)' "$root/kernel/infiltratorfs_rw.inc"
 echo 'root-volume integration policy: PASS'
