@@ -33,7 +33,7 @@ Pre-1.0 development is current-format-only. A development format may be replaced
 - [x] Portable attributes with POSIX compatibility metadata isolated from the portable model.
 - [x] Versioned Unicode normalization policy.
 - [ ] Optional case-folded directory policy.
-- [ ] Cross-platform removable-volume filename profile.
+- [x] Cross-platform removable-volume filename profile.
 - [ ] Generic typed/reparse extension objects.
 - [ ] Generic named streams/extended metadata model.
 

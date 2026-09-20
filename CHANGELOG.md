@@ -4,6 +4,7 @@ This file records user-visible, compatibility, architecture and validation chang
 
 ## Unreleased
 
+- Mark the cross-platform removable-volume filename profile as roadmap-complete after exact-source portable, mounted native, metadata, root-volume and resize qualification.
 - Add an optional persistent removable-volume filename profile with cross-platform component constraints, portable/native enforcement, fail-closed graph validation, mkfs selection, and mounted qualification.
 
 - Mark the versioned Unicode namespace policy and deterministic unambiguous fsck repair as roadmap-complete after exact-source conformance, mounted metadata and root-volume qualification.

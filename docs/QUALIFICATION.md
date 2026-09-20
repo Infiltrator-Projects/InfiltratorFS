@@ -24,6 +24,24 @@ Automatic qualification and conformance jobs are hard-capped at 10 minutes where
 
 ## Current development evidence boundary
 
+### 0.18.66 removable-volume filename-profile baseline
+
+Exact implementation source `d4e91557ec4f4a5590450294e0f40ec10473b728`
+completed the required automatic qualification on 2026-09-20:
+
+- **Build and conformance** run `35498348227` passed, including the portable removable-name conformance coverage, GCC/Clang, sanitizers, static analysis, Linux package construction and Windows builds;
+- **Native Linux kernel module** run `35498348121` passed, including the dedicated mounted **Native removable-volume filename profile** step plus the complete native read/write/scrub suite and upstream Linux 7.0 compile gate;
+- **Linux metadata qualification** run `35498348272` passed;
+- **Linux root-volume qualification** run `35498348190` passed; and
+- **Native resize qualification** run `35498348279` passed.
+
+The optional persistent `REMOVABLE_NAMES_V1` incompatibility feature is now
+qualified as a complete cross-platform filename profile. It retains exact UTF-8
+identity while enforcing the conservative removable-media component contract in
+both portable and native mutation paths and fails closed when on-disk directory
+metadata violates the selected profile.
+
+
 ### 0.18.66 Unicode-policy and deterministic-repair baseline
 
 Exact implementation source `8f89ea23fac7f52dc6f4f8f9ea46e9d161dce35c`
