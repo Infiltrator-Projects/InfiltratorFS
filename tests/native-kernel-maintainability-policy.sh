@@ -11,13 +11,14 @@ makefile="$kernel/Makefile"
 ioctl="$kernel/infiltratorfs_ioctl.h"
 resize="$kernel/infiltratorfs_resize.c"
 quota="$kernel/infiltratorfs_quota.inc"
+pagecache="$kernel/infiltratorfs_pagecache.c"
 
 fail() {
     echo "native kernel maintainability policy: $*" >&2
     exit 1
 }
 
-for file in "$driver" "$rw" "$data" "$makefile" "$ioctl" "$resize" "$quota"; do
+for file in "$driver" "$rw" "$data" "$makefile" "$ioctl" "$resize" "$quota" "$pagecache"; do
     test -f "$file" || fail "missing $file"
 done
 
@@ -124,6 +125,17 @@ getattr_body="$(sed -n '/static int infilfs_getattr(/,/^}/p' "$rw")"
 grep -Fq 'stat->btime = ii->birth_time;' <<<"$getattr_body" || fail 'getattr lost cached persistent birth time'
 grep -Fq 'struct timespec64 birth_time;' "$kernel/infiltratorfs_internal.h" || fail 'inode birth-time cache missing'
 grep -Fq 'ATTR_KILL_SUID | ATTR_KILL_SGID' "$rw" || fail 'set-ID stripping is not persisted'
+
+# VM writeback accounting is a page count, not a batch count. Keep the
+# decrement independent of the cluster-full short circuit so a full 1 MiB
+# batch cannot accidentally escape nr_to_write accounting. The direct
+# large-folio fallback and the clustered path both account base pages.
+! grep -Fq -- '--wbc->nr_to_write' "$pagecache" || \
+    fail 'writeback accounting regressed to short-circuit pre-decrement'
+! grep -Fq 'size_t *lengths;' "$pagecache" || \
+    fail 'unused writeback cluster lengths array returned'
+test "$(grep -Fc '(long)(folio_size(folio) >> PAGE_SHIFT)' "$pagecache")" -ge 2 || \
+    fail 'writeback paths do not account every base page in a folio'
 
 # Writable mount latency must not scale with every regular-file object. Crash
 # orphan discovery runs after mount, is fenced to the committed mount
