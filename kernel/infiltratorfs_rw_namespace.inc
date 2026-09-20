@@ -53,13 +53,58 @@ static bool infilfs_ns_reserved_linux_meta_name(const struct qstr *name)
                name->len) == 0;
 }
 
-static int infilfs_ns_validate_name(const struct qstr *name)
+static bool infilfs_ns_removable_name_valid(const unsigned char *name,
+                                             size_t length)
 {
+    static const char * const reserved[] = {
+        "CON", "PRN", "AUX", "NUL",
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
+    };
+    char base[5] = { 0 };
+    size_t base_length = 0;
+    size_t i;
+    if (!name || !length || length > 255u ||
+        name[length - 1u] == '.' || name[length - 1u] == ' ')
+        return false;
+    for (i = 0; i < length; ++i) {
+        unsigned char c = name[i];
+        if (c < 0x20u || c == 0x7fu ||
+            c == '<' || c == '>' || c == ':' || c == '"' ||
+            c == '/' || c == '\\' || c == '|' || c == '?' || c == '*')
+            return false;
+        if (c == '.')
+            break;
+        if (base_length < sizeof(base) - 1u) {
+            if (c >= 'a' && c <= 'z')
+                c = (unsigned char)(c - ('a' - 'A'));
+            base[base_length++] = (char)c;
+        } else {
+            base_length = sizeof(base);
+        }
+    }
+    if (base_length < sizeof(base)) {
+        for (i = 0; i < ARRAY_SIZE(reserved); ++i)
+            if (strlen(reserved[i]) == base_length &&
+                !memcmp(base, reserved[i], base_length))
+                return false;
+    }
+    return true;
+}
+
+static int infilfs_ns_validate_name(struct super_block *sb,
+                                    const struct qstr *name)
+{
+    struct infilfs_sb_info *sbi = sb ? INFILFS_SB(sb) : NULL;
     if (!name || !name->len || name->len > INFILFS_NAME_MAX ||
         !infilfs_rw_utf8_valid(name->name, name->len) ||
         (name->len == 1 && name->name[0] == '.') ||
         (name->len == 2 && name->name[0] == '.' && name->name[1] == '.') ||
-        infilfs_ns_reserved_linux_meta_name(name))
+        infilfs_ns_reserved_linux_meta_name(name) ||
+        (sbi &&
+         (le64_to_cpu(sbi->disk.incompat_flags) &
+          INFILFS_INCOMPAT_REMOVABLE_NAMES_V1) &&
+         !infilfs_ns_removable_name_valid(name->name, name->len)))
         return -EINVAL;
     return 0;
 }
@@ -696,7 +741,7 @@ static int infilfs_ns_append_paged_directory(
     u64 new_head_block;
     int ret;
 
-    ret = infilfs_ns_validate_name(add_name);
+    ret = infilfs_ns_validate_name(pending->sb, add_name);
     if (ret)
         return ret;
     add_rec = ALIGN(sizeof(struct infilfs_dirent_disk) + add_name->len, 8);
@@ -918,7 +963,7 @@ static int infilfs_ns_rebuild_directory(
     if (ret)
         goto out;
     if (add_name) {
-        ret = infilfs_ns_validate_name(add_name);
+        ret = infilfs_ns_validate_name(pending->sb, add_name);
         if (ret)
             goto out;
         add_rec = ALIGN(sizeof(struct infilfs_dirent_disk) + add_name->len, 8);
@@ -2371,7 +2416,7 @@ static int infilfs_ns_link(struct dentry *old_dentry, struct inode *dir,
     if (!(le64_to_cpu(INFILFS_SB(dir->i_sb)->disk.incompat_flags) &
           INFILFS_INCOMPAT_HARD_LINKS))
         return -EOPNOTSUPP;
-    ret = infilfs_ns_validate_name(&dentry->d_name);
+    ret = infilfs_ns_validate_name(dir->i_sb, &dentry->d_name);
     if (ret)
         return ret;
     ret = infilfs_quota_hardlink_check(inode, dir);
@@ -2432,7 +2477,7 @@ static int infilfs_ns_symlink(struct user_namespace *idmap, struct inode *dir,
     if (!(le64_to_cpu(INFILFS_SB(dir->i_sb)->disk.incompat_flags) &
           INFILFS_INCOMPAT_SYMBOLIC_LINKS))
         return -EOPNOTSUPP;
-    ret = infilfs_ns_validate_name(&dentry->d_name);
+    ret = infilfs_ns_validate_name(dir->i_sb, &dentry->d_name);
     if (ret)
         return ret;
     ret = infilfs_ns_begin(dir->i_sb, &pending);
@@ -2491,9 +2536,9 @@ static int infilfs_ns_rename_exchange_same_dir(
 
     if (!source || !destination || !source_ii || !destination_ii || !dir_ii)
         return -ENOENT;
-    ret = infilfs_ns_validate_name(&old_dentry->d_name);
+    ret = infilfs_ns_validate_name(old_dir->i_sb, &old_dentry->d_name);
     if (!ret)
-        ret = infilfs_ns_validate_name(&new_dentry->d_name);
+        ret = infilfs_ns_validate_name(new_dir->i_sb, &new_dentry->d_name);
     if (ret)
         return ret;
     if (source == destination)
@@ -2591,9 +2636,9 @@ static int infilfs_ns_rename(struct user_namespace *idmap,
         return -EEXIST;
     if (destination == source)
         return 0;
-    ret = infilfs_ns_validate_name(&old_dentry->d_name);
+    ret = infilfs_ns_validate_name(old_dir->i_sb, &old_dentry->d_name);
     if (!ret)
-        ret = infilfs_ns_validate_name(&new_dentry->d_name);
+        ret = infilfs_ns_validate_name(new_dir->i_sb, &new_dentry->d_name);
     if (ret)
         return ret;
     if (destination) {
