@@ -42,12 +42,17 @@ bool infilfs_removable_name_valid_v1(const unsigned char *name, size_t length)
     return true;
 }
 
+bool infilfs_name_is_reserved_linux_meta(const struct qstr *name)
+{
+    return name &&
+        name->len == sizeof(INFILFS_LINUX_META_DIRECTORY) - 1u &&
+        !memcmp(name->name, INFILFS_LINUX_META_DIRECTORY, name->len);
+}
+
 int infilfs_name_validate(struct super_block *sb, const struct qstr *name)
 {
     struct infilfs_sb_info *sbi = sb ? INFILFS_SB(sb) : NULL;
-    bool reserved_linux_meta = name &&
-        name->len == sizeof(INFILFS_LINUX_META_DIRECTORY) - 1u &&
-        !memcmp(name->name, INFILFS_LINUX_META_DIRECTORY, name->len);
+    bool reserved_linux_meta = infilfs_name_is_reserved_linux_meta(name);
 
     if (!name || !name->len || name->len > INFILFS_NAME_MAX ||
         !infilfs_rw_utf8_valid(name->name, name->len) ||
