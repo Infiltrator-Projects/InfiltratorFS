@@ -2,7 +2,7 @@
 
 # InfiltratorFS
 
-**Project copyright:** © 2000-2026 Shannon Smith
+**Project copyright:** © 1993-2026 Shannon Smith
 
 [![Build and conformance](https://github.com/Infiltrator-Projects/InfiltratorFS/actions/workflows/ci.yml/badge.svg)](https://github.com/Infiltrator-Projects/InfiltratorFS/actions/workflows/ci.yml)
 
@@ -156,6 +156,6 @@ Before 1.0, prefer the cleanest long-term filesystem design over preserving obso
 
 ## Licence
 
-Copyright © 2000-2026 Shannon Smith.
+Copyright © 1993-2026 Shannon Smith.
 
 InfiltratorFS is licensed under the GNU General Public License version 3 or, at your option, any later version (`GPL-3.0-or-later`).

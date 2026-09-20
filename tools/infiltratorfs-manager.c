@@ -50,7 +50,7 @@ static const InfiltratrProjectInfo manager_project_info = {
         "Native Linux management for InfiltratorFS volumes. Uses the native "
         "VFS/DKMS driver; FUSE is not the product path.",
     .icon_name = "drive-harddisk",
-    .copyright_text = "Copyright © 2000-2026 Shannon Smith",
+    .copyright_text = "Copyright © 1993-2026 Shannon Smith",
 };
 
 typedef struct Target {
