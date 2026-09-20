@@ -69,6 +69,7 @@ void infilfs_mod_delayed_cpu_work(struct delayed_work *work,
                                   unsigned long delay);
 void infilfs_cpu_work_enter(void);
 void infilfs_cpu_work_exit(void);
+bool infilfs_removable_name_valid_v1(const unsigned char *name, size_t length);
 
 static inline size_t infilfs_native_writeback_batch_bytes(void)
 {
