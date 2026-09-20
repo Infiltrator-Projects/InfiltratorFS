@@ -3,7 +3,7 @@
 
 #include "infiltratorfs_internal.h"
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0) && IS_ENABLED(CONFIG_IOMAP)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0) && IS_ENABLED(CONFIG_FS_IOMAP)
 #include <linux/iomap.h>
 #define INFILFS_HAVE_VERIFIED_IOMAP_READ 1
 #else

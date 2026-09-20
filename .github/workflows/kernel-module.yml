@@ -1530,6 +1530,13 @@ jobs:
           git clone --depth 1 --branch v7.0 \
             https://github.com/torvalds/linux.git "$kdir"
           make -C "$kdir" defconfig
+          # FS_IOMAP is the filesystem iomap library switch.  The upstream
+          # defconfig normally selects it through ext4, but force a selector
+          # explicitly so this job can never silently compile only the legacy
+          # pre-iomap branch.
+          "$kdir/scripts/config" --enable EXT4_FS
+          make -C "$kdir" olddefconfig
+          grep -Fq 'CONFIG_FS_IOMAP=y' "$kdir/.config"
           make -C "$kdir" -j2 prepare modules_prepare
           test -f "$kdir/include/generated/utsrelease.h"
           grep -Fq '"7.0' "$kdir/include/generated/utsrelease.h"

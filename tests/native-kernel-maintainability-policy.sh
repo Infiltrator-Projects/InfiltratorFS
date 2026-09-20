@@ -163,7 +163,7 @@ test "$(grep -Fc 'iov_iter_bvec(' "$pagecache")" -ge 4 || \
 # custom verified/compressed I/O while delegating folio state management to
 # iomap. Keep generic bio iomap reads out of InfiltratorFS: they would bypass
 # the native SHA-256 and compression reader.
-grep -Fq 'KERNEL_VERSION(7, 0, 0) && IS_ENABLED(CONFIG_IOMAP)' "$pagecache" || \
+grep -Fq 'KERNEL_VERSION(7, 0, 0) && IS_ENABLED(CONFIG_FS_IOMAP)' "$pagecache" || \
     fail 'verified iomap read compatibility boundary missing'
 grep -Fq 'struct iomap_read_ops infilfs_iomap_verified_read_ops' "$pagecache" || \
     fail 'verified iomap read operations missing'
