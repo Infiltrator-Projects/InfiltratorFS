@@ -69,6 +69,7 @@ int infilfs_extent_pointer_tree_build(
     u64 *root_out, u32 *levels_out)
 {
     u64 *current = NULL;
+    u8 *page_data = NULL;
     u32 current_count = page_count;
     u32 level = 0;
     int ret = 0;
@@ -83,6 +84,11 @@ int infilfs_extent_pointer_tree_build(
     if (!current)
         return -ENOMEM;
     memcpy(current, extent_pages, (size_t)page_count * sizeof(*current));
+    page_data = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+    if (!page_data) {
+        ret = -ENOMEM;
+        goto out;
+    }
 
     for (;;) {
         u32 parent_count = DIV_ROUND_UP(
@@ -97,7 +103,6 @@ int infilfs_extent_pointer_tree_build(
         }
 
         for (parent = 0; parent < parent_count; ++parent) {
-            u8 page_data[INFILFS_DISK_BLOCK_SIZE];
             struct infilfs_metadata_page_disk *page =
                 (struct infilfs_metadata_page_disk *)page_data;
             __le64 *pointers = (__le64 *)(page + 1);
@@ -148,6 +153,7 @@ int infilfs_extent_pointer_tree_build(
     }
 
 out:
+    kfree(page_data);
     kvfree(current);
     return ret;
 }
