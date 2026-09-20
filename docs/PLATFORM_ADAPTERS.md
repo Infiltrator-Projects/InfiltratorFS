@@ -71,6 +71,8 @@ Windows currently has portable-core image/raw-device access plus a user-mode Exp
 
 The bridge exposes a projected NTFS virtualization root, hydrates InfiltratorFS data on demand and persists the supported Windows mutations back through the portable core. Provider-backed directories may be materialized as ordinary local directories while file content remains lazily projected so normal Explorer move/rename behaviour can work around ProjFS partial-directory limitations.
 
+The Windows Manager shares its application/presentation contract with the Linux Manager: the storage-target model, Overview structure, maintenance action set, wording and Common appearance roles are one product contract. Win32 owns only native control rendering, storage discovery/dialogs and Windows-specific file/Explorer integration. The Files page is an adapter capability because the current Windows path must provide userspace import/projection while Linux can hand an already-mounted filesystem to the native desktop file manager.
+
 This bridge is interoperability, not a native InfiltratorFS Windows filesystem driver. Windows still sees a projected NTFS surface, and Windows-specific kernel filesystem semantics remain outside this bridge.
 
 A future native Windows adapter must integrate with the Windows I/O Manager, Cache Manager, Memory Manager, security descriptors, file/share/delete semantics, reparse/extension behaviour and native volume mounting while preserving the same persistent InfiltratorFS model.

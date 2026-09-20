@@ -6,6 +6,9 @@ This file records user-visible, compatibility, architecture and validation chang
 
 - Begin converging the Linux and Windows Managers onto one shared application/presentation contract: identical core wording, maintenance actions, structure labels and semantic action roles now come from one C module while GTK/Win32 remain thin native presentation adapters.
 - Advance the development source to 0.18.65 so post-0.18.64 cross-platform Manager work cannot be mistaken for the immutable published release.
+- Rebuild the Windows Manager around the same application structure as Linux: storage sidebar, shared hero/mount controls, Overview/Files pages, capacity/filesystem/status cards, volume information, identical four maintenance actions, destructive-format zone and activity log. Windows-only file transfer remains an adapter capability on the Files page rather than defining a separate application.
+- Add Windows parity for Create Image, fast structural Check and Forensic Scan through the same portable-core APIs used by the Linux tooling, while retaining the ProjFS Explorer bridge as the Windows-only mount adapter.
+- Apply the full Common 1.19.10 Night presentation roles to the Win32 Manager, including connection surface, headings, summaries, kickers, detail/note text and semantic success/warning/info/fault/accent states.
 
 - Advance to Infiltratr Common 1.19.10 and consume the complete Linux MBLINK-derived appearance roles in the native Manager, including titlebar, connection/status surface, heading/summary/kicker/detail/note text, selected-summary, accent-hover/foreground and muted state-border colours.
 - Keep filesystem-specific semantic colouring on top of those canonical roles: success for mounted/check, warning for offline/scrub, fault for destructive formatting, information for inspection and the canonical blue accent for filesystem/forensic operations, without changing layout or behaviour.

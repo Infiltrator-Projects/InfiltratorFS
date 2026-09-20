@@ -15,6 +15,8 @@
 #include "infilfs/endian.h"
 #include "infilfs/format_volume.h"
 #include "infilfs/format.h"
+#include "infilfs/check.h"
+#include "infilfs/forensic.h"
 #include "infilfs/fs.h"
 #include "infilfs/status.h"
 #include "infilfs/volume.h"
@@ -40,30 +42,71 @@
 #define INFILFS_VERSION_W L"0.9.6"
 #endif
 
-#define IDC_TARGET       1001
-#define IDC_REFRESH      1002
-#define IDC_LABEL        1003
-#define IDC_FORMAT       1004
-#define IDC_OPEN         1005
-#define IDC_ADD_FILES    1006
-#define IDC_ADD_FOLDER   1007
-#define IDC_SCRUB        1008
-#define IDC_CONTENTS     1009
-#define IDC_STATUS       1010
-#define IDC_MOUNT_DRIVE  1011
-#define IDC_UNMOUNT_DRIVE 1012
-#define IDC_TARGET_SUMMARY 1013
-#define IDC_HEADER_TITLE   1014
+#define IDC_TARGET          1001
+#define IDC_REFRESH         1002
+#define IDC_LABEL           1003
+#define IDC_FORMAT          1004
+#define IDC_OPEN            1005
+#define IDC_ADD_FILES       1006
+#define IDC_ADD_FOLDER      1007
+#define IDC_SCRUB           1008
+#define IDC_CONTENTS        1009
+#define IDC_STATUS          1010
+#define IDC_MOUNT_DRIVE     1011
+#define IDC_UNMOUNT_DRIVE   1012
+#define IDC_TARGET_SUMMARY  1013
+#define IDC_HEADER_TITLE    1014
 #define IDC_HEADER_SUBTITLE 1015
 #define IDC_STORAGE_HEADING 1016
 #define IDC_CONTENTS_HEADING 1017
-#define IDC_CONTENTS_HINT  1018
+#define IDC_CONTENTS_HINT   1018
 #define IDC_ACTIVITY_HEADING 1019
 #define IDC_ACTIVITY        1020
 #define IDC_ACTIVITY_CLEAR  1021
 #define IDC_INSPECT         1022
 #define IDC_OPEN_IMAGE      1023
 #define IDC_LABEL_CAPTION   1024
+#define IDC_NEW_IMAGE       1025
+#define IDC_THEME           1026
+#define IDC_ABOUT           1027
+#define IDC_PAGE_OVERVIEW   1028
+#define IDC_PAGE_FILES      1029
+#define IDC_HERO_TITLE      1030
+#define IDC_HERO_PATH       1031
+#define IDC_MOUNT_BADGE     1032
+#define IDC_STAT_CAPACITY_CAPTION 1033
+#define IDC_STAT_CAPACITY   1034
+#define IDC_STAT_FILESYSTEM_CAPTION 1035
+#define IDC_STAT_FILESYSTEM 1036
+#define IDC_STAT_STATUS_CAPTION 1037
+#define IDC_STAT_STATUS     1038
+#define IDC_VOLUME_INFO_HEADING 1039
+#define IDC_DETAIL_TYPE_CAPTION 1040
+#define IDC_DETAIL_TYPE     1041
+#define IDC_DETAIL_PATH_CAPTION 1042
+#define IDC_DETAIL_PATH     1043
+#define IDC_DETAIL_FS_CAPTION 1044
+#define IDC_DETAIL_FS       1045
+#define IDC_DETAIL_LABEL_CAPTION 1046
+#define IDC_DETAIL_LABEL    1047
+#define IDC_DETAIL_MOUNT_CAPTION 1048
+#define IDC_DETAIL_MOUNT    1049
+#define IDC_DETAIL_MOUNTPOINT_CAPTION 1050
+#define IDC_DETAIL_MOUNTPOINT 1051
+#define IDC_MAINTENANCE_HEADING 1052
+#define IDC_INSPECT_TITLE   1053
+#define IDC_INSPECT_DESC    1054
+#define IDC_CHECK           1055
+#define IDC_CHECK_TITLE     1056
+#define IDC_CHECK_DESC      1057
+#define IDC_SCRUB_TITLE     1058
+#define IDC_SCRUB_DESC      1059
+#define IDC_FORENSIC        1060
+#define IDC_FORENSIC_TITLE  1061
+#define IDC_FORENSIC_DESC   1062
+#define IDC_DANGER_HEADING  1063
+#define IDC_DANGER_DESC     1064
+#define IDC_STORAGE_COUNT   1065
 
 #define IDM_FILE_REFRESH    2001
 #define IDM_FILE_OPEN       2002
@@ -117,10 +160,31 @@ static int g_dark_mode = 0;
 static InfiltratrThemeMode g_theme_mode = INFILTRATR_THEME_SYSTEM;
 static COLORREF g_background_color;
 static COLORREF g_panel_color;
+static COLORREF g_card_color;
+static COLORREF g_surface_color;
+static COLORREF g_connection_color;
+static COLORREF g_border_color;
 static COLORREF g_text_color;
+static COLORREF g_title_color;
+static COLORREF g_heading_color;
+static COLORREF g_summary_color;
+static COLORREF g_kicker_color;
+static COLORREF g_detail_color;
+static COLORREF g_note_color;
 static COLORREF g_muted_color;
+static COLORREF g_accent_color;
+static COLORREF g_success_color;
+static COLORREF g_warning_color;
+static COLORREF g_fault_color;
+static COLORREF g_info_color;
+static COLORREF g_warning_muted_color;
+static COLORREF g_status_state_color;
 static HBRUSH g_background_brush = NULL;
 static HBRUSH g_panel_brush = NULL;
+static HBRUSH g_card_brush = NULL;
+static HBRUSH g_surface_brush = NULL;
+static HBRUSH g_connection_brush = NULL;
+static int g_show_files = 0;
 static HIMAGELIST g_content_images = NULL;
 static int g_icon_file = -1;
 static int g_icon_folder = -1;
@@ -166,6 +230,43 @@ static COLORREF common_rgb(uint32_t rgb)
                (BYTE)(rgb & 0xffu));
 }
 
+static int utf8_to_wide_text(const char *text, wchar_t *out, size_t out_count)
+{
+    if (!text || !out || !out_count)
+        return 0;
+    return MultiByteToWideChar(
+               CP_UTF8, MB_ERR_INVALID_CHARS, text, -1,
+               out, (int)out_count) > 0;
+}
+
+static void set_control_text_utf8(HWND hwnd, int id, const char *text)
+{
+    wchar_t wide[512];
+    if (utf8_to_wide_text(text, wide, sizeof(wide) / sizeof(wide[0])))
+        SetWindowTextW(GetDlgItem(hwnd, id), wide);
+}
+
+static HWND create_static_utf8(HWND hwnd, int id, const char *text,
+                               DWORD extra_style)
+{
+    wchar_t wide[1024];
+    if (!utf8_to_wide_text(text, wide, sizeof(wide) / sizeof(wide[0])))
+        wide[0] = L'\0';
+    return CreateWindowW(
+        L"STATIC", wide, WS_CHILD | WS_VISIBLE | SS_LEFT | extra_style,
+        0, 0, 0, 0, hwnd, (HMENU)(INT_PTR)id, NULL, NULL);
+}
+
+static HWND create_button_utf8(HWND hwnd, int id, const char *text)
+{
+    wchar_t wide[256];
+    if (!utf8_to_wide_text(text, wide, sizeof(wide) / sizeof(wide[0])))
+        wide[0] = L'\0';
+    return CreateWindowW(
+        L"BUTTON", wide, WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+        0, 0, 0, 0, hwnd, (HMENU)(INT_PTR)id, NULL, NULL);
+}
+
 static void initialise_visual_theme(void)
 {
     const int system_dark = system_prefers_dark_mode();
@@ -180,16 +281,42 @@ static void initialise_visual_theme(void)
 
     HBRUSH old_background = g_background_brush;
     HBRUSH old_panel = g_panel_brush;
+    HBRUSH old_card = g_card_brush;
+    HBRUSH old_surface = g_surface_brush;
+    HBRUSH old_connection = g_connection_brush;
+
     g_background_color = common_rgb(palette->background_rgb);
     g_panel_color = common_rgb(palette->panel_rgb);
+    g_card_color = common_rgb(palette->card_rgb);
+    g_surface_color = common_rgb(palette->surface_rgb);
+    g_connection_color = common_rgb(palette->connection_rgb);
+    g_border_color = common_rgb(palette->border_rgb);
     g_text_color = common_rgb(palette->text_rgb);
+    g_title_color = common_rgb(palette->title_rgb);
+    g_heading_color = common_rgb(palette->heading_rgb);
+    g_summary_color = common_rgb(palette->summary_rgb);
+    g_kicker_color = common_rgb(palette->kicker_rgb);
+    g_detail_color = common_rgb(palette->detail_label_rgb);
+    g_note_color = common_rgb(palette->note_rgb);
     g_muted_color = common_rgb(palette->muted_rgb);
+    g_accent_color = common_rgb(palette->neutral_accent_rgb);
+    g_success_color = common_rgb(palette->success_rgb);
+    g_warning_color = common_rgb(palette->warning_rgb);
+    g_fault_color = common_rgb(palette->fault_rgb);
+    g_info_color = common_rgb(palette->info_rgb);
+    g_warning_muted_color = common_rgb(palette->warning_muted_rgb);
+    g_status_state_color = g_warning_muted_color;
+
     g_background_brush = CreateSolidBrush(g_background_color);
     g_panel_brush = CreateSolidBrush(g_panel_color);
-    if (old_background)
-        DeleteObject(old_background);
-    if (old_panel)
-        DeleteObject(old_panel);
+    g_card_brush = CreateSolidBrush(g_card_color);
+    g_surface_brush = CreateSolidBrush(g_surface_color);
+    g_connection_brush = CreateSolidBrush(g_connection_color);
+    if (old_background) DeleteObject(old_background);
+    if (old_panel) DeleteObject(old_panel);
+    if (old_card) DeleteObject(old_card);
+    if (old_surface) DeleteObject(old_surface);
+    if (old_connection) DeleteObject(old_connection);
 }
 
 static void apply_window_visual_theme(HWND hwnd)
@@ -231,8 +358,8 @@ static void apply_current_theme(HWND hwnd)
 
     HWND list = GetDlgItem(hwnd, IDC_CONTENTS);
     if (list) {
-        ListView_SetBkColor(list, g_panel_color);
-        ListView_SetTextBkColor(list, g_panel_color);
+        ListView_SetBkColor(list, g_connection_color);
+        ListView_SetTextBkColor(list, g_connection_color);
         ListView_SetTextColor(list, g_text_color);
         theme_control(list);
         theme_control(ListView_GetHeader(list));
@@ -248,6 +375,7 @@ static void apply_current_theme(HWND hwnd)
         theme_control(GetDlgItem(hwnd, themed_ids[i]));
 
     update_theme_menu(hwnd);
+    update_target_summary();
     SetClassLongPtrW(hwnd, GCLP_HBRBACKGROUND, (LONG_PTR)g_background_brush);
     RedrawWindow(hwnd, NULL, NULL,
                  RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
@@ -465,14 +593,25 @@ static void update_target_summary(void)
 {
     if (!g_main_window)
         return;
-    HWND summary = GetDlgItem(g_main_window, IDC_TARGET_SUMMARY);
-    if (!summary)
-        return;
 
+    const struct infilfs_manager_copy *copy = infilfs_manager_copy();
     struct target_volume *target = selected_target();
     if (!target) {
-        SetWindowTextW(summary,
-                       L"Select a non-system volume or partition to begin.");
+        SetWindowTextW(GetDlgItem(g_main_window, IDC_HERO_TITLE),
+                       L"Select a storage target");
+        SetWindowTextW(GetDlgItem(g_main_window, IDC_HERO_PATH), L"");
+        SetWindowTextW(GetDlgItem(g_main_window, IDC_MOUNT_BADGE),
+                       L"Not mounted");
+        SetWindowTextW(GetDlgItem(g_main_window, IDC_STAT_CAPACITY), L"—");
+        SetWindowTextW(GetDlgItem(g_main_window, IDC_STAT_FILESYSTEM), L"—");
+        SetWindowTextW(GetDlgItem(g_main_window, IDC_STAT_STATUS), L"—");
+        int detail_ids[] = {
+            IDC_DETAIL_TYPE, IDC_DETAIL_PATH, IDC_DETAIL_FS,
+            IDC_DETAIL_LABEL, IDC_DETAIL_MOUNT, IDC_DETAIL_MOUNTPOINT
+        };
+        for (size_t i = 0; i < sizeof(detail_ids) / sizeof(detail_ids[0]); ++i)
+            SetWindowTextW(GetDlgItem(g_main_window, detail_ids[i]), L"—");
+        g_status_state_color = g_warning_muted_color;
         return;
     }
 
@@ -483,54 +622,115 @@ static void update_target_summary(void)
         wcscpy_s(size_text, sizeof(size_text) / sizeof(size_text[0]),
                  L"0.00 GiB");
 
-    wchar_t text[512];
     const wchar_t *label = target->infs_label[0] ?
                            target->infs_label : L"InfiltratorFS";
-    if (target->is_image) {
-        _snwprintf_s(text, sizeof(text) / sizeof(text[0]), _TRUNCATE,
-                     L"Image file\r\n%s  \u2022  %s",
-                     size_text,
-                     target->is_infiltrator ? label :
-                     L"Unknown / unformatted image");
-        if (target->is_infiltrator)
-            SetWindowTextW(GetDlgItem(g_main_window, IDC_LABEL), label);
-    } else if (target->is_infiltrator) {
-        if (target->use_region) {
-            _snwprintf_s(text, sizeof(text) / sizeof(text[0]), _TRUNCATE,
-                         L"Disk %lu  \u2022  Partition %lu\r\n"
-                         L"%s  \u2022  InfiltratorFS %u.%u  \u2022  %s",
-                         (unsigned long)target->disk_number,
-                         (unsigned long)target->partition_number,
-                         size_text,
-                         (unsigned)target->format_major,
-                         (unsigned)target->format_minor,
-                         label);
-        } else {
-            _snwprintf_s(text, sizeof(text) / sizeof(text[0]), _TRUNCATE,
-                         L"%s\r\n%s  \u2022  InfiltratorFS %u.%u  \u2022  %s",
-                         target->mount_point[0] ?
-                         target->mount_point : L"No drive letter",
-                         size_text,
-                         (unsigned)target->format_major,
-                         (unsigned)target->format_minor,
-                         label);
-        }
-        SetWindowTextW(GetDlgItem(g_main_window, IDC_LABEL), label);
+    wchar_t title[INFS_LABEL_MAX + 96u];
+    if (target->is_infiltrator)
+        wcsncpy_s(title, sizeof(title) / sizeof(title[0]), label, _TRUNCATE);
+    else if (target->is_image) {
+        const wchar_t *base = wcsrchr(target->device_path, L'\\');
+        wcsncpy_s(title, sizeof(title) / sizeof(title[0]),
+                  base ? base + 1 : target->device_path, _TRUNCATE);
     } else if (target->use_region) {
-        _snwprintf_s(text, sizeof(text) / sizeof(text[0]), _TRUNCATE,
-                     L"Disk %lu  \u2022  Partition %lu\r\n"
-                     L"%s  \u2022  Not currently InfiltratorFS",
+        _snwprintf_s(title, sizeof(title) / sizeof(title[0]), _TRUNCATE,
+                     L"Disk %lu · Partition %lu",
                      (unsigned long)target->disk_number,
-                     (unsigned long)target->partition_number,
-                     size_text);
+                     (unsigned long)target->partition_number);
     } else {
-        _snwprintf_s(text, sizeof(text) / sizeof(text[0]), _TRUNCATE,
-                     L"%s\r\n%s  \u2022  Not currently InfiltratorFS",
-                     target->mount_point[0] ?
-                     target->mount_point : L"No drive letter",
-                     size_text);
+        wcsncpy_s(title, sizeof(title) / sizeof(title[0]),
+                  target->mount_point[0] ? target->mount_point :
+                  target->device_path, _TRUNCATE);
     }
-    SetWindowTextW(summary, text);
+    SetWindowTextW(GetDlgItem(g_main_window, IDC_HERO_TITLE), title);
+    SetWindowTextW(GetDlgItem(g_main_window, IDC_HERO_PATH),
+                   target->device_path);
+
+    const int mounted = infs_windows_bridge_active();
+    SetWindowTextW(GetDlgItem(g_main_window, IDC_MOUNT_BADGE),
+                   mounted ? L"Mounted" : L"Not mounted");
+    SetWindowTextW(GetDlgItem(g_main_window, IDC_STAT_CAPACITY), size_text);
+    SetWindowTextW(GetDlgItem(g_main_window, IDC_STAT_STATUS),
+                   mounted ? L"Mounted" : L"Not mounted");
+    g_status_state_color = mounted ? g_success_color : g_warning_muted_color;
+
+    wchar_t fs_text[96];
+    if (target->is_infiltrator) {
+        _snwprintf_s(fs_text, sizeof(fs_text) / sizeof(fs_text[0]), _TRUNCATE,
+                     L"InfiltratorFS %u.%u",
+                     (unsigned)target->format_major,
+                     (unsigned)target->format_minor);
+    } else {
+        wcscpy_s(fs_text, sizeof(fs_text) / sizeof(fs_text[0]),
+                 L"Unknown / unformatted");
+    }
+    SetWindowTextW(GetDlgItem(g_main_window, IDC_STAT_FILESYSTEM), fs_text);
+
+    SetWindowTextW(GetDlgItem(g_main_window, IDC_DETAIL_TYPE),
+                   target->is_image ? L"Image file" :
+                   (target->use_region ? L"Physical partition" : L"Windows volume"));
+    SetWindowTextW(GetDlgItem(g_main_window, IDC_DETAIL_PATH),
+                   target->device_path);
+    SetWindowTextW(GetDlgItem(g_main_window, IDC_DETAIL_FS), fs_text);
+    SetWindowTextW(GetDlgItem(g_main_window, IDC_DETAIL_LABEL),
+                   target->is_infiltrator ? label : L"—");
+    SetWindowTextW(GetDlgItem(g_main_window, IDC_DETAIL_MOUNT),
+                   mounted ? L"Mounted" : L"Not mounted");
+
+    wchar_t bridge_root[MAX_PATH * 4u] = L"";
+    if (mounted)
+        (void)infs_windows_bridge_root(
+            bridge_root, sizeof(bridge_root) / sizeof(bridge_root[0]));
+    SetWindowTextW(GetDlgItem(g_main_window, IDC_DETAIL_MOUNTPOINT),
+                   mounted && bridge_root[0] ? bridge_root :
+                   (target->mount_point[0] ? target->mount_point : L"—"));
+
+    if (target->is_infiltrator)
+        SetWindowTextW(GetDlgItem(g_main_window, IDC_LABEL), label);
+
+    wchar_t summary[512];
+    _snwprintf_s(summary, sizeof(summary) / sizeof(summary[0]), _TRUNCATE,
+                 L"%s  ·  %s  ·  %s",
+                 title, size_text, fs_text);
+    SetWindowTextW(GetDlgItem(g_main_window, IDC_TARGET_SUMMARY), summary);
+
+    (void)copy;
+    InvalidateRect(g_main_window, NULL, TRUE);
+}
+
+static void show_page(int files)
+{
+    g_show_files = files ? 1 : 0;
+    const int overview_ids[] = {
+        IDC_STAT_CAPACITY_CAPTION, IDC_STAT_CAPACITY,
+        IDC_STAT_FILESYSTEM_CAPTION, IDC_STAT_FILESYSTEM,
+        IDC_STAT_STATUS_CAPTION, IDC_STAT_STATUS,
+        IDC_VOLUME_INFO_HEADING,
+        IDC_DETAIL_TYPE_CAPTION, IDC_DETAIL_TYPE,
+        IDC_DETAIL_PATH_CAPTION, IDC_DETAIL_PATH,
+        IDC_DETAIL_FS_CAPTION, IDC_DETAIL_FS,
+        IDC_DETAIL_LABEL_CAPTION, IDC_DETAIL_LABEL,
+        IDC_DETAIL_MOUNT_CAPTION, IDC_DETAIL_MOUNT,
+        IDC_DETAIL_MOUNTPOINT_CAPTION, IDC_DETAIL_MOUNTPOINT,
+        IDC_MAINTENANCE_HEADING,
+        IDC_INSPECT_TITLE, IDC_INSPECT_DESC, IDC_INSPECT,
+        IDC_CHECK_TITLE, IDC_CHECK_DESC, IDC_CHECK,
+        IDC_SCRUB_TITLE, IDC_SCRUB_DESC, IDC_SCRUB,
+        IDC_FORENSIC_TITLE, IDC_FORENSIC_DESC, IDC_FORENSIC,
+        IDC_DANGER_HEADING, IDC_DANGER_DESC,
+        IDC_LABEL_CAPTION, IDC_LABEL, IDC_FORMAT
+    };
+    const int files_ids[] = {
+        IDC_CONTENTS_HEADING, IDC_CONTENTS_HINT,
+        IDC_ADD_FILES, IDC_ADD_FOLDER, IDC_CONTENTS
+    };
+    for (size_t i = 0; i < sizeof(overview_ids) / sizeof(overview_ids[0]); ++i)
+        ShowWindow(GetDlgItem(g_main_window, overview_ids[i]),
+                   files ? SW_HIDE : SW_SHOW);
+    for (size_t i = 0; i < sizeof(files_ids) / sizeof(files_ids[0]); ++i)
+        ShowWindow(GetDlgItem(g_main_window, files_ids[i]),
+                   files ? SW_SHOW : SW_HIDE);
+    EnableWindow(GetDlgItem(g_main_window, IDC_PAGE_OVERVIEW), files);
+    EnableWindow(GetDlgItem(g_main_window, IDC_PAGE_FILES), !files);
 }
 
 static void layout_controls(HWND hwnd)
@@ -539,78 +739,140 @@ static void layout_controls(HWND hwnd)
     GetClientRect(hwnd, &rect);
     int width = rect.right - rect.left;
     int height = rect.bottom - rect.top;
-    const int margin = 24;
-    const int sidebar = 330;
+    const int margin = 20;
+    const int sidebar = 286;
     const int gap = 24;
-    const int header_top = 18;
-    const int body_top = 104;
+    const int header_top = 14;
+    const int body_top = 82;
     const int right = margin + sidebar + gap;
     int right_width = width - right - margin;
-    int status_y = height - 50;
-    int list_y = body_top + 144;
-    const int activity_height = 118;
-    int list_height = status_y - list_y - activity_height - 58;
-    if (list_height < 170)
-        list_height = 170;
-    int activity_y = list_y + list_height + 12;
+    int status_y = height - 38;
+    const int activity_height = 116;
+    int activity_y = status_y - activity_height - 12;
+    int page_top = body_top + 112;
+    int page_bottom = activity_y - 12;
+    int page_height = page_bottom - page_top;
+    if (page_height < 320)
+        page_height = 320;
 
     MoveWindow(GetDlgItem(hwnd, IDC_HEADER_TITLE),
-               margin, header_top, width - 2 * margin, 34, TRUE);
+               margin, header_top, 280, 30, TRUE);
     MoveWindow(GetDlgItem(hwnd, IDC_HEADER_SUBTITLE),
-               margin + 2, header_top + 37, width - 2 * margin, 22, TRUE);
+               margin + 2, header_top + 31, 340, 20, TRUE);
+
+    int header_x = width - margin;
+    header_x -= 86;
+    MoveWindow(GetDlgItem(hwnd, IDC_ABOUT), header_x, header_top + 8, 86, 32, TRUE);
+    header_x -= 94;
+    MoveWindow(GetDlgItem(hwnd, IDC_THEME), header_x, header_top + 8, 86, 32, TRUE);
+    header_x -= 94;
+    MoveWindow(GetDlgItem(hwnd, IDC_REFRESH), header_x, header_top + 8, 86, 32, TRUE);
+    header_x -= 108;
+    MoveWindow(GetDlgItem(hwnd, IDC_OPEN_IMAGE), header_x, header_top + 8, 100, 32, TRUE);
+    header_x -= 104;
+    MoveWindow(GetDlgItem(hwnd, IDC_NEW_IMAGE), header_x, header_top + 8, 96, 32, TRUE);
 
     MoveWindow(GetDlgItem(hwnd, IDC_STORAGE_HEADING),
-               margin, body_top, sidebar, 24, TRUE);
+               margin, body_top, sidebar, 22, TRUE);
     MoveWindow(GetDlgItem(hwnd, IDC_TARGET),
-               margin, body_top + 32, sidebar, 250, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_REFRESH),
-               margin + sidebar - 90, body_top - 2, 90, 28, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_TARGET_SUMMARY),
-               margin, body_top + 292, sidebar, 72, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_LABEL_CAPTION),
-               margin, body_top + 372, sidebar, 20, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_LABEL),
-               margin, body_top + 396, sidebar, 32, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_OPEN_IMAGE),
-               margin, body_top + 442, 102, 36, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_OPEN),
-               margin + 108, body_top + 442, 98, 36, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_FORMAT),
-               margin + 212, body_top + 442, 103, 36, TRUE);
+               margin, body_top + 30, sidebar, activity_y - body_top - 62, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_STORAGE_COUNT),
+               margin, activity_y - 24, sidebar, 20, TRUE);
+
+    MoveWindow(GetDlgItem(hwnd, IDC_HERO_TITLE),
+               right, body_top, right_width - 320, 32, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_MOUNT_BADGE),
+               right + right_width - 312, body_top + 2, 92, 26, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_HERO_PATH),
+               right, body_top + 36, right_width - 260, 20, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_MOUNT_DRIVE),
+               right + right_width - 210, body_top + 30, 130, 32, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_UNMOUNT_DRIVE),
+               right + right_width - 74, body_top + 30, 74, 32, TRUE);
+
+    MoveWindow(GetDlgItem(hwnd, IDC_PAGE_OVERVIEW),
+               right, body_top + 70, 98, 30, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_PAGE_FILES),
+               right + 104, body_top + 70, 72, 30, TRUE);
+
+    int stat_y = page_top;
+    int stat_gap = 10;
+    int stat_w = (right_width - 2 * stat_gap) / 3;
+    int stat_ids[][2] = {
+        { IDC_STAT_CAPACITY_CAPTION, IDC_STAT_CAPACITY },
+        { IDC_STAT_FILESYSTEM_CAPTION, IDC_STAT_FILESYSTEM },
+        { IDC_STAT_STATUS_CAPTION, IDC_STAT_STATUS }
+    };
+    for (int i = 0; i < 3; ++i) {
+        int sx = right + i * (stat_w + stat_gap);
+        MoveWindow(GetDlgItem(hwnd, stat_ids[i][0]), sx + 12, stat_y + 8, stat_w - 24, 16, TRUE);
+        MoveWindow(GetDlgItem(hwnd, stat_ids[i][1]), sx + 12, stat_y + 28, stat_w - 24, 25, TRUE);
+    }
+
+    int info_y = stat_y + 68;
+    int left_w = (right_width * 55) / 100;
+    int right_x = right + left_w + 18;
+    int maint_w = right_width - left_w - 18;
+    MoveWindow(GetDlgItem(hwnd, IDC_VOLUME_INFO_HEADING), right, info_y, left_w, 24, TRUE);
+    int row_y = info_y + 32;
+    const int cap_ids[] = {
+        IDC_DETAIL_TYPE_CAPTION, IDC_DETAIL_PATH_CAPTION, IDC_DETAIL_FS_CAPTION,
+        IDC_DETAIL_LABEL_CAPTION, IDC_DETAIL_MOUNT_CAPTION, IDC_DETAIL_MOUNTPOINT_CAPTION
+    };
+    const int value_ids[] = {
+        IDC_DETAIL_TYPE, IDC_DETAIL_PATH, IDC_DETAIL_FS,
+        IDC_DETAIL_LABEL, IDC_DETAIL_MOUNT, IDC_DETAIL_MOUNTPOINT
+    };
+    for (int i = 0; i < 6; ++i) {
+        MoveWindow(GetDlgItem(hwnd, cap_ids[i]), right, row_y, 118, 20, TRUE);
+        MoveWindow(GetDlgItem(hwnd, value_ids[i]), right + 124, row_y,
+                   left_w - 124, 20, TRUE);
+        row_y += 28;
+    }
+
+    MoveWindow(GetDlgItem(hwnd, IDC_MAINTENANCE_HEADING), right_x, info_y, maint_w, 24, TRUE);
+    const int action_title_ids[] = {
+        IDC_INSPECT_TITLE, IDC_CHECK_TITLE, IDC_SCRUB_TITLE, IDC_FORENSIC_TITLE
+    };
+    const int action_desc_ids[] = {
+        IDC_INSPECT_DESC, IDC_CHECK_DESC, IDC_SCRUB_DESC, IDC_FORENSIC_DESC
+    };
+    const int action_button_ids[] = {
+        IDC_INSPECT, IDC_CHECK, IDC_SCRUB, IDC_FORENSIC
+    };
+    row_y = info_y + 32;
+    for (int i = 0; i < 4; ++i) {
+        MoveWindow(GetDlgItem(hwnd, action_title_ids[i]), right_x, row_y, maint_w - 82, 20, TRUE);
+        MoveWindow(GetDlgItem(hwnd, action_desc_ids[i]), right_x, row_y + 19, maint_w - 82, 34, TRUE);
+        MoveWindow(GetDlgItem(hwnd, action_button_ids[i]), right_x + maint_w - 76, row_y + 7, 76, 32, TRUE);
+        row_y += 58;
+    }
+
+    int danger_y = page_bottom - 82;
+    if (danger_y < info_y + 210)
+        danger_y = info_y + 210;
+    MoveWindow(GetDlgItem(hwnd, IDC_DANGER_HEADING), right, danger_y, 170, 24, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_DANGER_DESC), right, danger_y + 26, right_width - 420, 40, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_LABEL_CAPTION), right + right_width - 410, danger_y, 80, 20, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_LABEL), right + right_width - 330, danger_y - 3, 190, 28, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_FORMAT), right + right_width - 132, danger_y - 3, 132, 30, TRUE);
 
     MoveWindow(GetDlgItem(hwnd, IDC_CONTENTS_HEADING),
-               right, body_top, right_width, 24, TRUE);
+               right, page_top, right_width, 24, TRUE);
     MoveWindow(GetDlgItem(hwnd, IDC_CONTENTS_HINT),
-               right, body_top + 25, right_width, 20, TRUE);
-
-    int x = right;
-    MoveWindow(GetDlgItem(hwnd, IDC_INSPECT),
-               x, body_top + 60, 88, 36, TRUE);
-    x += 96;
+               right, page_top + 26, right_width - 250, 20, TRUE);
     MoveWindow(GetDlgItem(hwnd, IDC_ADD_FILES),
-               x, body_top + 60, 108, 36, TRUE);
-    x += 116;
+               right + right_width - 224, page_top + 2, 104, 32, TRUE);
     MoveWindow(GetDlgItem(hwnd, IDC_ADD_FOLDER),
-               x, body_top + 60, 118, 36, TRUE);
-    x += 126;
-    MoveWindow(GetDlgItem(hwnd, IDC_SCRUB),
-               x, body_top + 60, 118, 36, TRUE);
-
-    int unmount_x = right + right_width - 112;
-    int mount_x = unmount_x - 148;
-    MoveWindow(GetDlgItem(hwnd, IDC_MOUNT_DRIVE),
-               mount_x, body_top + 106, 148, 36, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_UNMOUNT_DRIVE),
-               unmount_x, body_top + 106, 112, 36, TRUE);
-
+               right + right_width - 112, page_top + 2, 112, 32, TRUE);
     MoveWindow(GetDlgItem(hwnd, IDC_CONTENTS),
-               right, list_y, right_width, list_height, TRUE);
+               right, page_top + 56, right_width, page_height - 56, TRUE);
+
     HWND list = GetDlgItem(hwnd, IDC_CONTENTS);
     if (list) {
         int type_width = 120;
         int name_width = right_width - type_width - 8;
-        if (name_width < 220)
-            name_width = 220;
+        if (name_width < 220) name_width = 220;
         ListView_SetColumnWidth(list, 0, name_width);
         ListView_SetColumnWidth(list, 1, type_width);
     }
@@ -621,34 +883,45 @@ static void layout_controls(HWND hwnd)
                right + right_width - 72, activity_y - 4, 72, 28, TRUE);
     MoveWindow(GetDlgItem(hwnd, IDC_ACTIVITY),
                right, activity_y + 28, right_width, activity_height - 28, TRUE);
-
     MoveWindow(GetDlgItem(hwnd, IDC_STATUS),
-               margin, status_y, width - 2 * margin, 32, TRUE);
+               margin, status_y, width - 2 * margin, 28, TRUE);
+
+    show_page(g_show_files);
 }
 
 static void update_buttons(void)
 {
-    int have_target = selected_target() != NULL;
-    update_target_summary();
+    struct target_volume *target = selected_target();
+    int have_target = target != NULL;
+    int have_infiltrator = have_target && target->is_infiltrator;
     int bridge_active = infs_windows_bridge_active();
+
+    update_target_summary();
     EnableWindow(GetDlgItem(g_main_window, IDC_FORMAT),
                  have_target && !bridge_active);
-    EnableWindow(GetDlgItem(g_main_window, IDC_OPEN),
-                 have_target && !bridge_active);
     EnableWindow(GetDlgItem(g_main_window, IDC_ADD_FILES),
-                 g_volume_open);
+                 g_volume_open && !bridge_active);
     EnableWindow(GetDlgItem(g_main_window, IDC_ADD_FOLDER),
-                 g_volume_open);
-    EnableWindow(GetDlgItem(g_main_window, IDC_SCRUB),
                  g_volume_open && !bridge_active);
     EnableWindow(GetDlgItem(g_main_window, IDC_INSPECT),
-                 g_volume_open);
+                 have_infiltrator && !bridge_active);
+    EnableWindow(GetDlgItem(g_main_window, IDC_CHECK),
+                 have_infiltrator && !bridge_active);
+    EnableWindow(GetDlgItem(g_main_window, IDC_SCRUB),
+                 have_infiltrator && !bridge_active);
+    EnableWindow(GetDlgItem(g_main_window, IDC_FORENSIC),
+                 have_infiltrator && !bridge_active);
     EnableWindow(GetDlgItem(g_main_window, IDC_MOUNT_DRIVE),
-                 g_volume_open);
+                 have_infiltrator);
     EnableWindow(GetDlgItem(g_main_window, IDC_UNMOUNT_DRIVE),
                  bridge_active);
-    SetWindowTextW(GetDlgItem(g_main_window, IDC_MOUNT_DRIVE),
-                   bridge_active ? L"Open in Explorer" : L"Mount in Explorer");
+    EnableWindow(GetDlgItem(g_main_window, IDC_PAGE_FILES),
+                 have_infiltrator);
+
+    set_control_text_utf8(g_main_window, IDC_MOUNT_DRIVE,
+                          infilfs_manager_copy()->mount_button);
+    set_control_text_utf8(g_main_window, IDC_UNMOUNT_DRIVE,
+                          infilfs_manager_copy()->unmount_button);
 }
 
 static void trim_volume_slash(const wchar_t *volume_name,
@@ -1115,45 +1388,29 @@ static void enumerate_physical_partitions(HWND combo,
     }
 }
 
-static void open_image_dialog(void)
+static int add_image_target_from_path(const wchar_t *path)
 {
-    wchar_t path[32768] = L"";
-    OPENFILENAMEW dialog;
-    memset(&dialog, 0, sizeof(dialog));
-    dialog.lStructSize = sizeof(dialog);
-    dialog.hwndOwner = g_main_window;
-    dialog.lpstrFile = path;
-    dialog.nMaxFile = (DWORD)(sizeof(path) / sizeof(path[0]));
-    dialog.lpstrFilter =
-        L"InfiltratorFS images\0*.img;*.infiltratorfs\0"
-        L"All files\0*.*\0\0";
-    dialog.Flags = OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
-    if (!GetOpenFileNameW(&dialog))
-        return;
-
     HANDLE file = CreateFileW(path, GENERIC_READ,
                               FILE_SHARE_READ | FILE_SHARE_WRITE |
                                   FILE_SHARE_DELETE,
                               NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     if (file == INVALID_HANDLE_VALUE) {
         set_windows_error(L"Open image file", GetLastError());
-        return;
+        return 0;
     }
     LARGE_INTEGER length;
     if (!GetFileSizeEx(file, &length) || length.QuadPart <= 0) {
         DWORD error = GetLastError();
         CloseHandle(file);
-        if (!error)
-            error = ERROR_BAD_LENGTH;
+        if (!error) error = ERROR_BAD_LENGTH;
         set_windows_error(L"Read image size", error);
-        return;
+        return 0;
     }
     CloseHandle(file);
-
     if (wcslen(path) >= TARGET_PATH_MAX) {
         SetLastError(ERROR_FILENAME_EXCED_RANGE);
         set_windows_error(L"Open image path", GetLastError());
-        return;
+        return 0;
     }
 
     struct target_volume candidate;
@@ -1177,14 +1434,13 @@ static void open_image_dialog(void)
     base = base ? base + 1 : path;
     wchar_t display[512];
     wchar_t size_text[64];
-    if (!format_gib_wide(
-            candidate.size_bytes, size_text,
-            sizeof(size_text) / sizeof(size_text[0])))
+    if (!format_gib_wide(candidate.size_bytes, size_text,
+                         sizeof(size_text) / sizeof(size_text[0])))
         wcscpy_s(size_text, sizeof(size_text) / sizeof(size_text[0]),
                  L"0.00 GiB");
     if (candidate.is_infiltrator) {
         _snwprintf_s(display, sizeof(display) / sizeof(display[0]), _TRUNCATE,
-                     L"[Image \u2022 InfiltratorFS %u.%u]  %s  %s",
+                     L"[Image · InfiltratorFS %u.%u]  %s  %s",
                      (unsigned)candidate.format_major,
                      (unsigned)candidate.format_minor, base, size_text);
     } else {
@@ -1194,15 +1450,101 @@ static void open_image_dialog(void)
 
     HWND list = GetDlgItem(g_main_window, IDC_TARGET);
     if (!add_combo_target(list, &candidate, display))
-        return;
+        return 0;
     SendMessageW(list, LB_SETCURSEL,
                  (WPARAM)(SendMessageW(list, LB_GETCOUNT, 0, 0) - 1), 0);
     update_buttons();
-    set_status(L"Image added to the storage list. Open it to manage its contents.");
+    return 1;
+}
+
+static void open_image_dialog(void)
+{
+    wchar_t path[32768] = L"";
+    OPENFILENAMEW dialog;
+    memset(&dialog, 0, sizeof(dialog));
+    dialog.lStructSize = sizeof(dialog);
+    dialog.hwndOwner = g_main_window;
+    dialog.lpstrFile = path;
+    dialog.nMaxFile = (DWORD)(sizeof(path) / sizeof(path[0]));
+    dialog.lpstrFilter =
+        L"InfiltratorFS images\0*.img;*.infiltratorfs\0"
+        L"All files\0*.*\0\0";
+    dialog.Flags = OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+    if (!GetOpenFileNameW(&dialog))
+        return;
+    close_volume();
+    if (add_image_target_from_path(path))
+        set_status(L"Image added to the storage list.");
+}
+
+static void create_image_dialog(void)
+{
+    wchar_t path[32768] = L"infiltratorfs.img";
+    OPENFILENAMEW dialog;
+    memset(&dialog, 0, sizeof(dialog));
+    dialog.lStructSize = sizeof(dialog);
+    dialog.hwndOwner = g_main_window;
+    dialog.lpstrFile = path;
+    dialog.nMaxFile = (DWORD)(sizeof(path) / sizeof(path[0]));
+    dialog.lpstrFilter =
+        L"InfiltratorFS image\0*.img\0All files\0*.*\0\0";
+    dialog.lpstrDefExt = L"img";
+    dialog.Flags = OFN_EXPLORER | OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT;
+    if (!GetSaveFileNameW(&dialog))
+        return;
+
+    HANDLE file = CreateFileW(path, GENERIC_READ | GENERIC_WRITE, 0, NULL,
+                              CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file == INVALID_HANDLE_VALUE) {
+        set_windows_error(L"Create image file", GetLastError());
+        return;
+    }
+    LARGE_INTEGER size;
+    size.QuadPart = INT64_C(512) * 1024 * 1024;
+    if (!SetFilePointerEx(file, size, NULL, FILE_BEGIN) || !SetEndOfFile(file)) {
+        DWORD error = GetLastError();
+        CloseHandle(file);
+        DeleteFileW(path);
+        set_windows_error(L"Size image file", error);
+        return;
+    }
+    CloseHandle(file);
+
+    wchar_t wide_label[INFS_LABEL_MAX] = L"InfiltratorFS";
+    GetWindowTextW(GetDlgItem(g_main_window, IDC_LABEL), wide_label,
+                   (int)(sizeof(wide_label) / sizeof(wide_label[0])));
+    char label[INFS_LABEL_MAX * 4u];
+    if (!WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide_label, -1,
+                             label, (int)sizeof(label), NULL, NULL)) {
+        DeleteFileW(path);
+        MessageBoxW(g_main_window, L"The volume label is not valid Unicode.",
+                    L"InfiltratorFS", MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    struct infs_storage storage = {0};
+    infs_status status = infs_win32_storage_open(&storage, path, 1, 0);
+    if (status == INFS_STATUS_OK)
+        status = infs_format_storage(&storage, label);
+    infs_storage_close(&storage);
+    if (status != INFS_STATUS_OK) {
+        DeleteFileW(path);
+        set_status_code(L"Create image", status);
+        return;
+    }
+    close_volume();
+    if (add_image_target_from_path(path)) {
+        set_status(L"512 MiB image created and formatted successfully.");
+        (void)open_selected_volume(0);
+        update_buttons();
+    }
 }
 
 static void refresh_volumes(void)
 {
+    if (infs_windows_bridge_active())
+        infs_windows_bridge_stop();
+    close_volume();
     HWND combo = GetDlgItem(g_main_window, IDC_TARGET);
     SendMessageW(combo, LB_RESETCONTENT, 0, 0);
     g_target_count = 0;
@@ -1243,6 +1585,11 @@ static void refresh_volumes(void)
 
     if (added)
         SendMessageW(combo, LB_SETCURSEL, 0, 0);
+    wchar_t count_text[96];
+    _snwprintf_s(count_text, sizeof(count_text) / sizeof(count_text[0]),
+                 _TRUNCATE, L"%d available partition%s",
+                 added, added == 1 ? L"" : L"s");
+    SetWindowTextW(GetDlgItem(g_main_window, IDC_STORAGE_COUNT), count_text);
     update_buttons();
 
     if (infiltrator_count > 0) {
@@ -1928,9 +2275,100 @@ static void unmount_windows_drive(void)
     update_buttons();
 }
 
+static int ensure_volume_open(void)
+{
+    if (g_volume_open)
+        return 1;
+    return open_selected_volume(0);
+}
+
+static int maintenance_ready(void)
+{
+    if (infs_windows_bridge_active()) {
+        MessageBoxW(
+            g_main_window,
+            L"Unmount the volume before running inspect, check, scrub or forensic maintenance.",
+            L"InfiltratorFS", MB_OK | MB_ICONINFORMATION);
+        return 0;
+    }
+    return ensure_volume_open();
+}
+
+static void check_volume(void)
+{
+    if (!maintenance_ready())
+        return;
+    struct infs_check_report report;
+    memset(&report, 0, sizeof(report));
+    set_status(L"Checking InfiltratorFS structure ...");
+    infs_status status = infs_check(&g_volume, &report);
+    if (status != INFS_STATUS_OK) {
+        set_status_code(L"Check filesystem", status);
+        return;
+    }
+    wchar_t message[640];
+    _snwprintf_s(
+        message, sizeof(message) / sizeof(message[0]), _TRUNCATE,
+        L"Structural check complete.\n\n"
+        L"Generation: %llu\nValid checkpoints: %u\n"
+        L"Object index: %s\nAllocation ownership: %s\n"
+        L"Namespace: %s\nChecksum metadata: %s",
+        (unsigned long long)report.check_generation,
+        (unsigned)report.checkpoint_replicas_valid,
+        report.object_index_valid ? L"valid" : L"invalid",
+        report.allocation_ownership_valid ? L"valid" : L"invalid",
+        report.namespace_valid ? L"valid" : L"invalid",
+        report.checksum_metadata_valid ? L"valid" : L"invalid");
+    set_status(L"Structural filesystem check completed.");
+    MessageBoxW(g_main_window, message, L"InfiltratorFS Check",
+                MB_OK | MB_ICONINFORMATION);
+}
+
+static infs_status forensic_ignore_record(
+    const struct infs_forensic_record *record, void *context)
+{
+    (void)record;
+    (void)context;
+    return INFS_STATUS_OK;
+}
+
+static void forensic_volume(void)
+{
+    if (!maintenance_ready())
+        return;
+    struct infs_forensic_summary summary;
+    memset(&summary, 0, sizeof(summary));
+    set_status(L"Scanning InfiltratorFS metadata ...");
+    infs_status status = infs_forensic_scan(
+        &g_volume.storage, forensic_ignore_record, NULL, &summary);
+    if (status != INFS_STATUS_OK) {
+        set_status_code(L"Forensic scan", status);
+        return;
+    }
+    wchar_t message[768];
+    _snwprintf_s(
+        message, sizeof(message) / sizeof(message[0]), _TRUNCATE,
+        L"Forensic scan complete.\n\n"
+        L"Blocks scanned: %llu / %llu\nRecords found: %llu\n"
+        L"Current: %llu\nStale: %llu\nOrphaned: %llu\nUnknown: %llu\n"
+        L"Checkpoints: %llu\nObjects: %llu",
+        (unsigned long long)summary.scanned_blocks,
+        (unsigned long long)summary.total_blocks,
+        (unsigned long long)summary.records_found,
+        (unsigned long long)summary.current_records,
+        (unsigned long long)summary.stale_records,
+        (unsigned long long)summary.orphaned_records,
+        (unsigned long long)summary.unknown_records,
+        (unsigned long long)summary.checkpoints_found,
+        (unsigned long long)summary.objects_found);
+    set_status(L"Forensic scan completed.");
+    MessageBoxW(g_main_window, message, L"InfiltratorFS Forensic Scan",
+                MB_OK | MB_ICONINFORMATION);
+}
+
 static void inspect_volume(void)
 {
-    if (!g_volume_open)
+    if (!maintenance_ready())
         return;
 
     wchar_t label[INFS_LABEL_MAX + 1u] = L"InfiltratorFS";
@@ -1987,7 +2425,7 @@ static void inspect_volume(void)
 
 static void scrub_volume(void)
 {
-    if (!g_volume_open)
+    if (!maintenance_ready())
         return;
     struct infs_scrub_report report;
     set_status(L"Scrubbing InfiltratorFS volume ...");
@@ -2014,7 +2452,7 @@ static void show_about(void)
     _snwprintf_s(message, sizeof(message) / sizeof(message[0]), _TRUNCATE,
                  L"InfiltratorFS Manager for Windows " INFILFS_VERSION_W
                  L"\n\nInfiltratorFS implementation " INFILFS_VERSION_W
-                 L"\nDisk format: %u.%u\n\nPortable InfiltratorFS core with a native Windows storage/UI adapter.\nWindows discovery includes raw physical partitions that have no drive letter or Windows filesystem driver.\n\nDriverless Explorer bridge: Microsoft's inbox Projected File System (ProjFS) exposes an opened InfiltratorFS volume through a projected Explorer folder, with an auxiliary drive alias when Windows can expose one in the current UAC namespace. InfiltratorFS ships no custom Windows kernel driver in this mode.\n\nLicence: GPL-3.0-or-later\n\nExperimental filesystem \u2014 use backed-up or disposable media while testing.",
+                 L"\nDisk format: %u.%u\n\nSame InfiltratorFS Manager application contract as Linux, rendered through the native Win32 presentation/storage adapter. Windows discovery includes raw physical partitions that have no drive letter or Windows filesystem driver.\n\nDriverless Explorer bridge: Microsoft's inbox Projected File System (ProjFS) exposes an opened InfiltratorFS volume through a projected Explorer folder, with an auxiliary drive alias when Windows can expose one in the current UAC namespace. InfiltratorFS ships no custom Windows kernel driver in this mode.\n\nLicence: GPL-3.0-or-later\n\nExperimental filesystem \u2014 use backed-up or disposable media while testing.",
                  (unsigned)INFS_FORMAT_MAJOR,
                  (unsigned)INFS_FORMAT_MINOR);
     MessageBoxW(g_main_window, message, L"About InfiltratorFS",
@@ -2095,8 +2533,18 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message,
         update_theme_menu(hwnd);
 
         const InfiltratrTypography *typography = infiltratr_typography();
-        if (!typography)
+        const struct infilfs_manager_copy *copy = infilfs_manager_copy();
+        const struct infilfs_manager_action_descriptor *inspect =
+            infilfs_manager_action(INFILFS_MANAGER_ACTION_INSPECT);
+        const struct infilfs_manager_action_descriptor *check =
+            infilfs_manager_action(INFILFS_MANAGER_ACTION_CHECK);
+        const struct infilfs_manager_action_descriptor *scrub =
+            infilfs_manager_action(INFILFS_MANAGER_ACTION_SCRUB);
+        const struct infilfs_manager_action_descriptor *forensic =
+            infilfs_manager_action(INFILFS_MANAGER_ACTION_FORENSIC);
+        if (!typography || !copy || !inspect || !check || !scrub || !forensic)
             return -1;
+
         g_ui_font = create_common_font(
             hwnd, 10, typography->ui_family, typography->ui_regular_weight);
         g_title_font = create_common_font(
@@ -2108,83 +2556,92 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message,
         if (!g_ui_font || !g_title_font || !g_heading_font || !g_activity_font)
             return -1;
 
-        CreateWindowW(L"STATIC", L"InfiltratorFS",
-                      WS_CHILD | WS_VISIBLE | SS_LEFT,
-                      0, 0, 0, 0, hwnd, (HMENU)IDC_HEADER_TITLE, NULL, NULL);
-        CreateWindowW(L"STATIC",
-                      L"Windows Volume Manager  \u2022  Native portable-core access  \u2022  Driverless Explorer bridge",
-                      WS_CHILD | WS_VISIBLE | SS_LEFT,
-                      0, 0, 0, 0, hwnd, (HMENU)IDC_HEADER_SUBTITLE, NULL, NULL);
+        create_static_utf8(hwnd, IDC_HEADER_TITLE, copy->app_title, 0);
+        create_static_utf8(hwnd, IDC_HEADER_SUBTITLE, copy->subtitle, 0);
+        create_button_utf8(hwnd, IDC_NEW_IMAGE, copy->new_image_button);
+        create_button_utf8(hwnd, IDC_OPEN_IMAGE, copy->open_image_button);
+        create_button_utf8(hwnd, IDC_REFRESH, copy->refresh_button);
+        create_button_utf8(hwnd, IDC_THEME, "Theme");
+        create_button_utf8(hwnd, IDC_ABOUT, "About");
 
-        CreateWindowW(L"STATIC", L"Storage",
-                      WS_CHILD | WS_VISIBLE | SS_LEFT,
-                      0, 0, 0, 0, hwnd, (HMENU)IDC_STORAGE_HEADING, NULL, NULL);
-        HWND combo = CreateWindowExW(0, L"LISTBOX", L"",
-                      WS_CHILD | WS_VISIBLE | WS_TABSTOP |
-                      WS_VSCROLL | WS_BORDER | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
-                      0, 0, 0, 0, hwnd, (HMENU)IDC_TARGET, NULL, NULL);
-        HWND refresh = CreateWindowW(L"BUTTON", L"Refresh",
-                      WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                      0, 0, 0, 0, hwnd, (HMENU)IDC_REFRESH, NULL, NULL);
-        HWND summary = CreateWindowW(L"STATIC",
-                      L"Select a non-system volume or partition to begin.",
-                      WS_CHILD | WS_VISIBLE | SS_LEFT | SS_NOPREFIX,
+        create_static_utf8(hwnd, IDC_STORAGE_HEADING, copy->storage_heading, 0);
+        HWND target_list = CreateWindowExW(
+            0, L"LISTBOX", L"",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL |
+            WS_BORDER | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
+            0, 0, 0, 0, hwnd, (HMENU)IDC_TARGET, NULL, NULL);
+        create_static_utf8(hwnd, IDC_STORAGE_COUNT, "0 available partitions", 0);
+        CreateWindowW(L"STATIC", L"", WS_CHILD | SS_LEFT | SS_NOPREFIX,
                       0, 0, 0, 0, hwnd, (HMENU)IDC_TARGET_SUMMARY, NULL, NULL);
 
-        CreateWindowW(L"STATIC", L"Format label",
-                      WS_CHILD | WS_VISIBLE | SS_LEFT,
-                      0, 0, 0, 0, hwnd, (HMENU)IDC_LABEL_CAPTION, NULL, NULL);
-        HWND label = CreateWindowExW(0, L"EDIT", L"InfiltratorFS",
-                      WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL,
-                      0, 0, 0, 0, hwnd, (HMENU)IDC_LABEL, NULL, NULL);
-        HWND open_image = CreateWindowW(L"BUTTON", L"Open Image...",
-                      WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                      0, 0, 0, 0, hwnd, (HMENU)IDC_OPEN_IMAGE, NULL, NULL);
-        HWND open = CreateWindowW(L"BUTTON", L"Open",
-                      WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
-                      0, 0, 0, 0, hwnd, (HMENU)IDC_OPEN, NULL, NULL);
-        HWND format = CreateWindowW(L"BUTTON", L"Format Volume",
-                      WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                      0, 0, 0, 0, hwnd, (HMENU)IDC_FORMAT, NULL, NULL);
+        create_static_utf8(hwnd, IDC_HERO_TITLE, "Select a storage target", 0);
+        create_static_utf8(hwnd, IDC_HERO_PATH, "", SS_NOPREFIX);
+        create_static_utf8(hwnd, IDC_MOUNT_BADGE, "Not mounted", SS_CENTER);
+        create_button_utf8(hwnd, IDC_MOUNT_DRIVE, copy->mount_button);
+        create_button_utf8(hwnd, IDC_UNMOUNT_DRIVE, copy->unmount_button);
+        create_button_utf8(hwnd, IDC_PAGE_OVERVIEW, copy->overview_tab);
+        create_button_utf8(hwnd, IDC_PAGE_FILES, copy->files_tab);
 
-        CreateWindowW(L"STATIC", L"Volume contents",
-                      WS_CHILD | WS_VISIBLE | SS_LEFT,
-                      0, 0, 0, 0, hwnd, (HMENU)IDC_CONTENTS_HEADING, NULL, NULL);
-        CreateWindowW(L"STATIC",
-                      L"Root directory  \u2022  Drag files or folders here to copy them",
-                      WS_CHILD | WS_VISIBLE | SS_LEFT,
-                      0, 0, 0, 0, hwnd, (HMENU)IDC_CONTENTS_HINT, NULL, NULL);
+        create_static_utf8(hwnd, IDC_STAT_CAPACITY_CAPTION, copy->capacity_caption, 0);
+        create_static_utf8(hwnd, IDC_STAT_CAPACITY, "—", 0);
+        create_static_utf8(hwnd, IDC_STAT_FILESYSTEM_CAPTION, copy->filesystem_caption, 0);
+        create_static_utf8(hwnd, IDC_STAT_FILESYSTEM, "—", 0);
+        create_static_utf8(hwnd, IDC_STAT_STATUS_CAPTION, copy->status_caption, 0);
+        create_static_utf8(hwnd, IDC_STAT_STATUS, "—", 0);
 
-        HWND add_files = CreateWindowW(L"BUTTON", L"Add Files\u2026",
-                      WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                      0, 0, 0, 0, hwnd, (HMENU)IDC_ADD_FILES, NULL, NULL);
-        HWND add_folder = CreateWindowW(L"BUTTON", L"Add Folder\u2026",
-                      WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                      0, 0, 0, 0, hwnd, (HMENU)IDC_ADD_FOLDER, NULL, NULL);
-        HWND inspect = CreateWindowW(L"BUTTON", L"Inspect",
-                      WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                      0, 0, 0, 0, hwnd, (HMENU)IDC_INSPECT, NULL, NULL);
-        HWND scrub = CreateWindowW(L"BUTTON", L"Scrub / Verify",
-                      WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                      0, 0, 0, 0, hwnd, (HMENU)IDC_SCRUB, NULL, NULL);
-        HWND mount_drive = CreateWindowW(L"BUTTON", L"Mount in Explorer",
-                      WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                      0, 0, 0, 0, hwnd, (HMENU)IDC_MOUNT_DRIVE, NULL, NULL);
-        HWND unmount_drive = CreateWindowW(L"BUTTON", L"Unmount",
-                      WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                      0, 0, 0, 0, hwnd, (HMENU)IDC_UNMOUNT_DRIVE, NULL, NULL);
+        create_static_utf8(hwnd, IDC_VOLUME_INFO_HEADING, copy->volume_information, 0);
+        create_static_utf8(hwnd, IDC_DETAIL_TYPE_CAPTION, copy->device_type, 0);
+        create_static_utf8(hwnd, IDC_DETAIL_TYPE, "—", SS_NOPREFIX);
+        create_static_utf8(hwnd, IDC_DETAIL_PATH_CAPTION, copy->device_path, 0);
+        create_static_utf8(hwnd, IDC_DETAIL_PATH, "—", SS_NOPREFIX);
+        create_static_utf8(hwnd, IDC_DETAIL_FS_CAPTION, copy->filesystem_caption, 0);
+        create_static_utf8(hwnd, IDC_DETAIL_FS, "—", 0);
+        create_static_utf8(hwnd, IDC_DETAIL_LABEL_CAPTION, copy->volume_label, 0);
+        create_static_utf8(hwnd, IDC_DETAIL_LABEL, "—", 0);
+        create_static_utf8(hwnd, IDC_DETAIL_MOUNT_CAPTION, copy->mount_state, 0);
+        create_static_utf8(hwnd, IDC_DETAIL_MOUNT, "—", 0);
+        create_static_utf8(hwnd, IDC_DETAIL_MOUNTPOINT_CAPTION, copy->mount_point, 0);
+        create_static_utf8(hwnd, IDC_DETAIL_MOUNTPOINT, "—", SS_NOPREFIX);
 
-        HWND list = CreateWindowExW(0, WC_LISTVIEWW, L"",
-                      WS_CHILD | WS_VISIBLE | WS_TABSTOP |
-                      WS_BORDER | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS,
-                      0, 0, 0, 0, hwnd, (HMENU)IDC_CONTENTS, NULL, NULL);
+        create_static_utf8(hwnd, IDC_MAINTENANCE_HEADING, copy->maintenance, 0);
+        create_static_utf8(hwnd, IDC_INSPECT_TITLE, inspect->title, 0);
+        create_static_utf8(hwnd, IDC_INSPECT_DESC, inspect->description, 0);
+        create_button_utf8(hwnd, IDC_INSPECT, inspect->button);
+        create_static_utf8(hwnd, IDC_CHECK_TITLE, check->title, 0);
+        create_static_utf8(hwnd, IDC_CHECK_DESC, check->description, 0);
+        create_button_utf8(hwnd, IDC_CHECK, check->button);
+        create_static_utf8(hwnd, IDC_SCRUB_TITLE, scrub->title, 0);
+        create_static_utf8(hwnd, IDC_SCRUB_DESC, scrub->description, 0);
+        create_button_utf8(hwnd, IDC_SCRUB, scrub->button);
+        create_static_utf8(hwnd, IDC_FORENSIC_TITLE, forensic->title, 0);
+        create_static_utf8(hwnd, IDC_FORENSIC_DESC, forensic->description, 0);
+        create_button_utf8(hwnd, IDC_FORENSIC, forensic->button);
+
+        create_static_utf8(hwnd, IDC_DANGER_HEADING, copy->danger_title, 0);
+        create_static_utf8(hwnd, IDC_DANGER_DESC, copy->danger_description, 0);
+        create_static_utf8(hwnd, IDC_LABEL_CAPTION, copy->volume_label, 0);
+        HWND label = CreateWindowExW(
+            0, L"EDIT", L"InfiltratorFS",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL,
+            0, 0, 0, 0, hwnd, (HMENU)IDC_LABEL, NULL, NULL);
+        HWND format = create_button_utf8(hwnd, IDC_FORMAT, copy->format_button);
+
+        create_static_utf8(hwnd, IDC_CONTENTS_HEADING, "Volume contents", 0);
+        create_static_utf8(hwnd, IDC_CONTENTS_HINT,
+                           "Root directory · Drag files or folders here to copy them", 0);
+        HWND add_files = create_button_utf8(hwnd, IDC_ADD_FILES, "Add Files...");
+        HWND add_folder = create_button_utf8(hwnd, IDC_ADD_FOLDER, "Add Folder...");
+        HWND list = CreateWindowExW(
+            0, WC_LISTVIEWW, L"",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_BORDER |
+            LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS,
+            0, 0, 0, 0, hwnd, (HMENU)IDC_CONTENTS, NULL, NULL);
         ListView_SetExtendedListViewStyle(
             list, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_LABELTIP);
-        ListView_SetBkColor(list, g_panel_color);
-        ListView_SetTextBkColor(list, g_panel_color);
+        ListView_SetBkColor(list, g_connection_color);
+        ListView_SetTextBkColor(list, g_connection_color);
         ListView_SetTextColor(list, g_text_color);
-        g_content_images = ImageList_Create(
-            20, 20, ILC_COLOR32 | ILC_MASK, 3, 1);
+        g_content_images = ImageList_Create(20, 20, ILC_COLOR32 | ILC_MASK, 3, 1);
         if (g_content_images) {
             g_icon_file = add_stock_icon(g_content_images, SIID_DOCNOASSOC);
             g_icon_folder = add_stock_icon(g_content_images, SIID_FOLDER);
@@ -2203,55 +2660,72 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message,
         column.iSubItem = 1;
         ListView_InsertColumn(list, 1, &column);
 
-        CreateWindowW(L"STATIC", L"Activity log",
-                      WS_CHILD | WS_VISIBLE | SS_LEFT,
-                      0, 0, 0, 0, hwnd, (HMENU)IDC_ACTIVITY_HEADING, NULL, NULL);
-        HWND clear_activity = CreateWindowW(L"BUTTON", L"Clear",
-                      WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                      0, 0, 0, 0, hwnd, (HMENU)IDC_ACTIVITY_CLEAR, NULL, NULL);
+        create_static_utf8(hwnd, IDC_ACTIVITY_HEADING, copy->activity_heading, 0);
+        HWND clear_activity = create_button_utf8(hwnd, IDC_ACTIVITY_CLEAR, copy->clear_button);
         HWND activity = CreateWindowExW(
-                      0, L"EDIT", L"",
-                      WS_CHILD | WS_VISIBLE | WS_VSCROLL |
-                      WS_BORDER | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY,
-                      0, 0, 0, 0, hwnd, (HMENU)IDC_ACTIVITY, NULL, NULL);
+            0, L"EDIT", L"",
+            WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_BORDER |
+            ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY,
+            0, 0, 0, 0, hwnd, (HMENU)IDC_ACTIVITY, NULL, NULL);
+        HWND status = CreateWindowExW(
+            0, L"STATIC", L"Ready",
+            WS_CHILD | WS_VISIBLE | SS_LEFT | SS_CENTERIMAGE,
+            0, 0, 0, 0, hwnd, (HMENU)IDC_STATUS, NULL, NULL);
 
-        HWND status = CreateWindowExW(0, L"STATIC", L"Ready",
-                      WS_CHILD | WS_VISIBLE | SS_LEFT | SS_CENTERIMAGE,
-                      0, 0, 0, 0, hwnd, (HMENU)IDC_STATUS, NULL, NULL);
-
-        int normal_ids[] = {
-            IDC_HEADER_SUBTITLE, IDC_TARGET, IDC_REFRESH, IDC_TARGET_SUMMARY,
-            IDC_LABEL_CAPTION, IDC_LABEL, IDC_FORMAT, IDC_OPEN_IMAGE, IDC_OPEN,
-            IDC_INSPECT, IDC_ADD_FILES, IDC_ADD_FOLDER,
-            IDC_SCRUB, IDC_MOUNT_DRIVE, IDC_UNMOUNT_DRIVE, IDC_CONTENTS,
-            IDC_CONTENTS_HINT, IDC_ACTIVITY_HEADING, IDC_ACTIVITY_CLEAR,
-            IDC_STATUS
+        const int normal_ids[] = {
+            IDC_HEADER_SUBTITLE, IDC_NEW_IMAGE, IDC_OPEN_IMAGE, IDC_REFRESH,
+            IDC_THEME, IDC_ABOUT, IDC_TARGET, IDC_STORAGE_COUNT,
+            IDC_HERO_PATH, IDC_MOUNT_BADGE, IDC_MOUNT_DRIVE, IDC_UNMOUNT_DRIVE,
+            IDC_PAGE_OVERVIEW, IDC_PAGE_FILES,
+            IDC_STAT_CAPACITY_CAPTION, IDC_STAT_FILESYSTEM_CAPTION,
+            IDC_STAT_STATUS_CAPTION, IDC_DETAIL_TYPE_CAPTION,
+            IDC_DETAIL_TYPE, IDC_DETAIL_PATH_CAPTION, IDC_DETAIL_PATH,
+            IDC_DETAIL_FS_CAPTION, IDC_DETAIL_FS, IDC_DETAIL_LABEL_CAPTION,
+            IDC_DETAIL_LABEL, IDC_DETAIL_MOUNT_CAPTION, IDC_DETAIL_MOUNT,
+            IDC_DETAIL_MOUNTPOINT_CAPTION, IDC_DETAIL_MOUNTPOINT,
+            IDC_INSPECT_DESC, IDC_INSPECT, IDC_CHECK_DESC, IDC_CHECK,
+            IDC_SCRUB_DESC, IDC_SCRUB, IDC_FORENSIC_DESC, IDC_FORENSIC,
+            IDC_DANGER_DESC, IDC_LABEL_CAPTION, IDC_LABEL, IDC_FORMAT,
+            IDC_CONTENTS_HINT, IDC_ADD_FILES, IDC_ADD_FOLDER, IDC_CONTENTS,
+            IDC_ACTIVITY_CLEAR, IDC_STATUS
         };
         for (size_t i = 0; i < sizeof(normal_ids) / sizeof(normal_ids[0]); ++i)
             set_control_font(hwnd, normal_ids[i], g_ui_font);
+        const int heading_ids[] = {
+            IDC_STORAGE_HEADING, IDC_VOLUME_INFO_HEADING,
+            IDC_MAINTENANCE_HEADING, IDC_DANGER_HEADING,
+            IDC_CONTENTS_HEADING, IDC_ACTIVITY_HEADING,
+            IDC_INSPECT_TITLE, IDC_CHECK_TITLE, IDC_SCRUB_TITLE,
+            IDC_FORENSIC_TITLE, IDC_STAT_CAPACITY, IDC_STAT_FILESYSTEM,
+            IDC_STAT_STATUS
+        };
+        for (size_t i = 0; i < sizeof(heading_ids) / sizeof(heading_ids[0]); ++i)
+            set_control_font(hwnd, heading_ids[i], g_heading_font);
         set_control_font(hwnd, IDC_HEADER_TITLE, g_title_font);
-        set_control_font(hwnd, IDC_STORAGE_HEADING, g_heading_font);
-        set_control_font(hwnd, IDC_CONTENTS_HEADING, g_heading_font);
-        set_control_font(hwnd, IDC_ACTIVITY_HEADING, g_heading_font);
+        set_control_font(hwnd, IDC_HERO_TITLE, g_title_font);
         set_control_font(hwnd, IDC_ACTIVITY, g_activity_font);
 
-        SendMessageW(combo, LB_SETITEMHEIGHT, 0, 28);
-        int themed_ids[] = {
-            IDC_TARGET, IDC_REFRESH, IDC_LABEL, IDC_FORMAT, IDC_OPEN_IMAGE,
-            IDC_OPEN, IDC_INSPECT, IDC_ADD_FILES, IDC_ADD_FOLDER, IDC_SCRUB,
-            IDC_MOUNT_DRIVE, IDC_UNMOUNT_DRIVE, IDC_CONTENTS,
+        SendMessageW(target_list, LB_SETITEMHEIGHT, 0, 32);
+        const int themed_ids[] = {
+            IDC_TARGET, IDC_NEW_IMAGE, IDC_OPEN_IMAGE, IDC_REFRESH, IDC_THEME,
+            IDC_ABOUT, IDC_LABEL, IDC_FORMAT, IDC_MOUNT_DRIVE,
+            IDC_UNMOUNT_DRIVE, IDC_PAGE_OVERVIEW, IDC_PAGE_FILES,
+            IDC_INSPECT, IDC_CHECK, IDC_SCRUB, IDC_FORENSIC,
+            IDC_ADD_FILES, IDC_ADD_FOLDER, IDC_CONTENTS,
             IDC_ACTIVITY_CLEAR, IDC_ACTIVITY
         };
-        for (size_t i = 0;
-             i < sizeof(themed_ids) / sizeof(themed_ids[0]); ++i)
+        for (size_t i = 0; i < sizeof(themed_ids) / sizeof(themed_ids[0]); ++i)
             theme_control(GetDlgItem(hwnd, themed_ids[i]));
         theme_control(ListView_GetHeader(list));
         apply_window_visual_theme(hwnd);
 
+        (void)label; (void)format; (void)add_files; (void)add_folder;
+        (void)clear_activity; (void)activity; (void)status;
         DragAcceptFiles(hwnd, TRUE);
         layout_controls(hwnd);
         refresh_volumes();
         update_buttons();
+        show_page(0);
         return 0;
     }
     case WM_SIZE:
@@ -2262,50 +2736,118 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message,
         HWND control = (HWND)lparam;
         int id = GetDlgCtrlID(control);
         SetBkMode(dc, TRANSPARENT);
-        SetTextColor(dc,
-                     id == IDC_HEADER_SUBTITLE ||
-                     id == IDC_CONTENTS_HINT ||
-                     id == IDC_TARGET_SUMMARY ||
-                     id == IDC_LABEL_CAPTION ||
-                     id == IDC_STATUS ?
-                     g_muted_color : g_text_color);
-        return (LRESULT)g_background_brush;
+        COLORREF foreground = g_text_color;
+        HBRUSH brush = g_background_brush;
+
+        if (id == IDC_HEADER_SUBTITLE || id == IDC_HERO_PATH ||
+            id == IDC_CONTENTS_HINT || id == IDC_STATUS ||
+            id == IDC_STORAGE_COUNT)
+            foreground = g_summary_color;
+        else if (id == IDC_STORAGE_HEADING ||
+                 id == IDC_VOLUME_INFO_HEADING ||
+                 id == IDC_MAINTENANCE_HEADING ||
+                 id == IDC_CONTENTS_HEADING ||
+                 id == IDC_ACTIVITY_HEADING)
+            foreground = g_heading_color;
+        else if (id == IDC_DANGER_HEADING)
+            foreground = g_fault_color;
+        else if (id == IDC_STAT_CAPACITY_CAPTION ||
+                 id == IDC_STAT_FILESYSTEM_CAPTION ||
+                 id == IDC_STAT_STATUS_CAPTION)
+            foreground = g_kicker_color;
+        else if (id == IDC_STAT_STATUS || id == IDC_MOUNT_BADGE)
+            foreground = g_status_state_color;
+        else if (id == IDC_INSPECT_TITLE)
+            foreground = g_info_color;
+        else if (id == IDC_CHECK_TITLE)
+            foreground = g_success_color;
+        else if (id == IDC_SCRUB_TITLE)
+            foreground = g_warning_color;
+        else if (id == IDC_FORENSIC_TITLE)
+            foreground = g_accent_color;
+        else if (id == IDC_INSPECT_DESC || id == IDC_CHECK_DESC ||
+                 id == IDC_SCRUB_DESC || id == IDC_FORENSIC_DESC ||
+                 id == IDC_DANGER_DESC)
+            foreground = g_note_color;
+        else if (id == IDC_DETAIL_TYPE_CAPTION ||
+                 id == IDC_DETAIL_PATH_CAPTION ||
+                 id == IDC_DETAIL_FS_CAPTION ||
+                 id == IDC_DETAIL_LABEL_CAPTION ||
+                 id == IDC_DETAIL_MOUNT_CAPTION ||
+                 id == IDC_DETAIL_MOUNTPOINT_CAPTION ||
+                 id == IDC_LABEL_CAPTION)
+            foreground = g_detail_color;
+        else if (id == IDC_STAT_CAPACITY || id == IDC_STAT_FILESYSTEM)
+            foreground = g_heading_color;
+
+        if (id == IDC_STAT_CAPACITY_CAPTION || id == IDC_STAT_CAPACITY ||
+            id == IDC_STAT_FILESYSTEM_CAPTION || id == IDC_STAT_FILESYSTEM ||
+            id == IDC_STAT_STATUS_CAPTION || id == IDC_STAT_STATUS)
+            brush = g_card_brush;
+
+        SetTextColor(dc, foreground);
+        return (LRESULT)brush;
     }
     case WM_CTLCOLOREDIT:
     case WM_CTLCOLORLISTBOX: {
         HDC dc = (HDC)wparam;
         SetTextColor(dc, g_text_color);
-        SetBkColor(dc, g_panel_color);
-        return (LRESULT)g_panel_brush;
+        SetBkColor(dc, g_connection_color);
+        return (LRESULT)g_connection_brush;
     }
     case WM_GETMINMAXINFO: {
         MINMAXINFO *limits = (MINMAXINFO *)lparam;
-        limits->ptMinTrackSize.x = 1100;
-        limits->ptMinTrackSize.y = 680;
+        limits->ptMinTrackSize.x = 1120;
+        limits->ptMinTrackSize.y = 720;
         return 0;
     }
     case WM_COMMAND:
         if (LOWORD(wparam) == IDC_TARGET && HIWORD(wparam) == LBN_SELCHANGE) {
+            if (infs_windows_bridge_active())
+                infs_windows_bridge_stop();
+            close_volume();
+            refresh_contents();
             update_buttons();
             return 0;
         }
         switch (LOWORD(wparam)) {
         case IDC_REFRESH:
         case IDM_FILE_REFRESH: refresh_volumes(); return 0;
-        case IDC_FORMAT: open_selected_volume(1); return 0;
+        case IDC_NEW_IMAGE: create_image_dialog(); return 0;
+        case IDC_FORMAT: open_selected_volume(1); update_buttons(); return 0;
         case IDC_OPEN:
-        case IDM_FILE_OPEN: open_selected_volume(0); return 0;
+        case IDM_FILE_OPEN: open_selected_volume(0); update_buttons(); return 0;
         case IDC_OPEN_IMAGE:
         case IDM_FILE_OPEN_IMAGE: open_image_dialog(); return 0;
+        case IDC_PAGE_OVERVIEW: show_page(0); return 0;
+        case IDC_PAGE_FILES:
+            if (ensure_volume_open()) {
+                refresh_contents();
+                show_page(1);
+            }
+            return 0;
         case IDC_INSPECT: inspect_volume(); return 0;
+        case IDC_CHECK: check_volume(); return 0;
         case IDC_ACTIVITY_CLEAR:
             SetWindowTextW(GetDlgItem(hwnd, IDC_ACTIVITY), L"");
             return 0;
         case IDC_ADD_FILES: add_files_dialog(); return 0;
         case IDC_ADD_FOLDER: add_folder_dialog(); return 0;
         case IDC_SCRUB: scrub_volume(); return 0;
-        case IDC_MOUNT_DRIVE: mount_windows_drive(); return 0;
-        case IDC_UNMOUNT_DRIVE: unmount_windows_drive(); return 0;
+        case IDC_FORENSIC: forensic_volume(); return 0;
+        case IDC_MOUNT_DRIVE:
+            if (ensure_volume_open())
+                mount_windows_drive();
+            update_buttons();
+            return 0;
+        case IDC_UNMOUNT_DRIVE:
+            unmount_windows_drive();
+            update_buttons();
+            return 0;
+        case IDC_THEME:
+            set_theme_mode(hwnd, infiltratr_theme_mode_next(g_theme_mode));
+            return 0;
+        case IDC_ABOUT: show_about(); return 0;
         case IDM_VIEW_THEME_SYSTEM:
             set_theme_mode(hwnd, INFILTRATR_THEME_SYSTEM); return 0;
         case IDM_VIEW_THEME_DAY:
@@ -2404,10 +2946,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous,
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
-    if (g_panel_brush)
-        DeleteObject(g_panel_brush);
-    if (g_background_brush)
-        DeleteObject(g_background_brush);
+    if (g_connection_brush) DeleteObject(g_connection_brush);
+    if (g_surface_brush) DeleteObject(g_surface_brush);
+    if (g_card_brush) DeleteObject(g_card_brush);
+    if (g_panel_brush) DeleteObject(g_panel_brush);
+    if (g_background_brush) DeleteObject(g_background_brush);
+    g_connection_brush = g_surface_brush = g_card_brush = NULL;
     g_panel_brush = g_background_brush = NULL;
     unregister_project_fonts();
     CoUninitialize();
