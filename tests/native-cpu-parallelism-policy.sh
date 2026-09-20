@@ -41,16 +41,16 @@ grep -Fq 'filesystem_budget=%u reserved_for_os=%u' "$core" || \
     fail 'mounted evidence no longer reports the CPU policy'
 
 # The code path and its shipped/DKMS synchronization contract must agree with
-# the architecture documentation. The roadmap remains incomplete until full
-# mutation/publication qualification proves the whole write path scales.
+# the architecture documentation. Full mounted N-1 mutation scaling is now
+# qualified, so the authoritative roadmap must retain the completed state.
 grep -Fq 'filesystem_cpu_budget = max(1, online_logical_cpus - 1)' "$architecture" || \
     fail 'architecture lost the normative N-1 formula'
 grep -Fq 'max(1, online logical CPUs - 1)' "$makefile" || \
     fail 'Kbuild synchronization contract lost N-1 policy'
 grep -Fq 'max(1, online logical CPUs - 1)' "$ioctl" || \
     fail 'DKMS synchronization contract lost N-1 policy'
-grep -Fq -- '- [ ] Filesystem-wide native Linux concurrency budget of `max(1, online logical CPUs - 1)`' "$roadmap" || \
-    fail 'roadmap must stay open until full N-1 mutation scaling is qualified'
+grep -Fq -- '- [x] Filesystem-wide native Linux concurrency budget of `max(1, online logical CPUs - 1)`' "$roadmap" || \
+    fail 'qualified N-1 concurrency capability is no longer marked complete'
 
 # CPU-heavy native preparation and verified-read hashing use the shared pool,
 # never generic system_unbound_wq, and must not regress to arbitrary four/eight
