@@ -284,8 +284,17 @@ static int validate_namespace_graph_progress(
             struct infs_dirent_disk *entry =
                 (struct infs_dirent_disk *)(base + offset);
             uint16_t rec = infs_le16_to_cpu(entry->record_size);
+            uint16_t name_length = infs_le16_to_cpu(entry->name_length);
+            const uint8_t *entry_name =
+                (const uint8_t *)entry + sizeof(*entry);
             uint16_t type = infs_le16_to_cpu(entry->object_type);
             uint32_t target = 0;
+            if (removable_names_enabled(vol) &&
+                !removable_name_valid_v1(entry_name, name_length)) {
+                free(owned);
+                status = INFS_STATUS_CORRUPT;
+                goto out;
+            }
             status = index_entry_index(entries, count, entry->object_id,
                                        &target);
             if (status != INFS_STATUS_OK || target == root_index ||
