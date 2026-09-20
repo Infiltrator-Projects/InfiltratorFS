@@ -3074,15 +3074,36 @@ struct infilfs_native_prepare_work {
     int ret;
 };
 
+static void infilfs_native_prepare_parallel_enter(
+    struct infilfs_sb_info *sbi)
+{
+    s64 active;
+    s64 peak;
+
+    active = atomic64_inc_return(&sbi->prepared_append_active);
+    peak = atomic64_read(&sbi->prepared_append_peak_active);
+    while (active > peak) {
+        s64 observed = atomic64_cmpxchg(
+            &sbi->prepared_append_peak_active, peak, active);
+
+        if (observed == peak)
+            break;
+        peak = observed;
+    }
+}
+
 static void infilfs_native_prepare_workfn(struct work_struct *work)
 {
     struct infilfs_native_prepare_work *item = container_of(
         work, struct infilfs_native_prepare_work, work);
+    struct infilfs_sb_info *sbi = INFILFS_SB(item->inode->i_sb);
 
     infilfs_cpu_work_enter();
+    infilfs_native_prepare_parallel_enter(sbi);
     item->ret = infilfs_native_prepare_append(
         item->inode, item->plain, item->bytes, item->preferred,
         &item->prepared);
+    atomic64_dec(&sbi->prepared_append_active);
     infilfs_cpu_work_exit();
     complete(&item->done);
 }

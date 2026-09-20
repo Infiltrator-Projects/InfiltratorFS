@@ -434,6 +434,8 @@ struct infilfs_sb_info {
     atomic64_t allocation_media_nonrotational_scored;
     atomic64_t allocation_media_balanced_scored;
     atomic64_t prepared_append_attempts;
+    atomic64_t prepared_append_active;
+    atomic64_t prepared_append_peak_active;
     atomic64_t prepared_append_successes;
     atomic64_t prepared_append_bytes;
     atomic64_t prepared_paged_append_successes;

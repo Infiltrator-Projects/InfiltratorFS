@@ -166,6 +166,16 @@ jobs:
           bash -n tests/native-removable-name-profile.sh
           bash tests/native-removable-name-profile.sh build kernel/infiltratorfs.ko
 
+      - name: Native N-1 CPU parallelism qualification
+        if: steps.headers.outputs.runtime_kdir != ''
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash tests/native-cpu-parallelism-policy.sh .
+          bash -n tests/native-cpu-parallelism-qualification.sh
+          bash tests/native-cpu-parallelism-qualification.sh build kernel/infiltratorfs.ko
+
       - name: Native user group and project quota qualification
         if: steps.headers.outputs.runtime_kdir != ''
         timeout-minutes: 15

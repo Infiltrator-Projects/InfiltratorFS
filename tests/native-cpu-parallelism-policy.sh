@@ -68,6 +68,14 @@ grep -Fq 'items[i].ret = infilfs_native_prepare_append(' "$data" || \
     fail 'write preparation queue failure lost its synchronous fallback'
 grep -Fq 'complete(&items[i].done);' "$data" || \
     fail 'write preparation queue failure does not complete its waiter'
+grep -Fq 'prepared_append_peak_active' "$internal" || \
+    fail 'real prepared-write concurrency telemetry missing'
+grep -Fq 'infilfs_native_prepare_parallel_enter(sbi);' "$data" || \
+    fail 'prepared-write concurrency is not measured inside real worker execution'
+grep -Fq 'atomic64_dec(&sbi->prepared_append_active);' "$data" || \
+    fail 'prepared-write active telemetry is not balanced'
+grep -Fq 'prepared_append_peak_active=%lld' "$root/kernel/infiltratorfs_parallel_alloc.c" || \
+    fail 'mounted prepared-write peak evidence is not reported'
 grep -Fq 'infilfs_cpu_work_enter();' "$data" || \
     fail 'write preparation does not consume a native CPU slot'
 grep -Fq 'infilfs_queue_cpu_work(&work[i].work)' "$read_cache" || \
