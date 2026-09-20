@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.20)
-project(InfiltratorFS VERSION 0.18.64 LANGUAGES C)
-# Development qualification anchor: 0.18.64
+project(InfiltratorFS VERSION 0.18.65 LANGUAGES C)
+# Development qualification anchor: 0.18.65
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -343,6 +343,7 @@ if(WIN32)
 
     add_executable(infiltratorfs-windows WIN32
         tools/windows/infiltratorfs-windows-entry.c
+        tools/manager/infiltratorfs-manager-contract.c
         ${CMAKE_CURRENT_BINARY_DIR}/infiltratorfs-windows-version.rc
         ${CMAKE_CURRENT_BINARY_DIR}/infiltratorfs-windows-fonts.rc)
     target_include_directories(infiltratorfs-windows PRIVATE tools/windows)
@@ -386,7 +387,9 @@ if(UNIX)
         pkg_check_modules(GTK3 QUIET IMPORTED_TARGET gtk+-3.0)
     endif()
     if(GTK3_FOUND)
-        add_executable(infiltratorfs-manager tools/infiltratorfs-manager.c)
+        add_executable(infiltratorfs-manager
+            tools/infiltratorfs-manager.c
+            tools/manager/infiltratorfs-manager-contract.c)
         target_link_libraries(infiltratorfs-manager PRIVATE
             InfiltratrCommon::Common PkgConfig::GTK3)
         target_compile_definitions(infiltratorfs-manager PRIVATE
@@ -449,6 +452,9 @@ if(UNIX)
         COMMAND bash ${CMAKE_SOURCE_DIR}/tests/current-format-tree.sh ${CMAKE_BINARY_DIR})
     add_test(NAME infilfs-ui-font-policy
         COMMAND bash ${CMAKE_SOURCE_DIR}/tests/ui-font-policy.sh
+                     ${CMAKE_SOURCE_DIR})
+    add_test(NAME infilfs-manager-parity-policy
+        COMMAND bash ${CMAKE_SOURCE_DIR}/tests/manager-parity-policy.sh
                      ${CMAKE_SOURCE_DIR})
     add_test(NAME infilfs-common-usage-policy
         COMMAND bash ${CMAKE_SOURCE_DIR}/tests/common-usage-policy.sh

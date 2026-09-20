@@ -5,6 +5,7 @@
 #include "infiltratr/core.h"
 #include "infiltratr/design.h"
 #include "infiltratr/format.h"
+#include "manager/infiltratorfs-manager-contract.h"
 #include "infiltratr/posix.h"
 #include "infiltratr/posix_path.h"
 
@@ -1698,10 +1699,10 @@ static GtkWidget *build_ui(Manager *manager)
     GtkWidget *bar = gtk_header_bar_new();
     gtk_header_bar_set_show_close_button(GTK_HEADER_BAR(bar), TRUE);
     gtk_header_bar_set_title(GTK_HEADER_BAR(bar), APP_NAME);
-    gtk_header_bar_set_subtitle(GTK_HEADER_BAR(bar), "Native filesystem management");
+    gtk_header_bar_set_subtitle(GTK_HEADER_BAR(bar), infilfs_manager_copy()->subtitle);
     gtk_window_set_titlebar(GTK_WINDOW(manager->window), bar);
 
-    GtkWidget *new_image = gtk_button_new_with_label("New Image");
+    GtkWidget *new_image = gtk_button_new_with_label(infilfs_manager_copy()->new_image_button);
     g_signal_connect(new_image, "clicked", G_CALLBACK(on_create_image), manager);
     gtk_header_bar_pack_start(GTK_HEADER_BAR(bar), new_image);
     GtkWidget *open_image = gtk_button_new();
@@ -1730,7 +1731,7 @@ static GtkWidget *build_ui(Manager *manager)
 
     GtkWidget *sidebar = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     add_class(sidebar, "sidebar");
-    GtkWidget *sidebar_title = make_label("STORAGE", "sidebar-title");
+    GtkWidget *sidebar_title = make_label(infilfs_manager_copy()->storage_heading, "sidebar-title");
     gtk_widget_set_margin_start(sidebar_title, 18);
     gtk_widget_set_margin_top(sidebar_title, 18);
     gtk_widget_set_margin_bottom(sidebar_title, 8);
@@ -1757,10 +1758,10 @@ static GtkWidget *build_ui(Manager *manager)
     GtkWidget *empty = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     add_class(empty, "empty-state");
     gtk_box_pack_start(GTK_BOX(empty), make_icon("drive-harddisk-symbolic", GTK_ICON_SIZE_DIALOG, 52), FALSE, FALSE, 0);
-    GtkWidget *empty_title = make_label("Select a storage target", "empty-title");
+    GtkWidget *empty_title = make_label(infilfs_manager_copy()->empty_title, "empty-title");
     gtk_label_set_xalign(GTK_LABEL(empty_title), 0.5f);
     gtk_box_pack_start(GTK_BOX(empty), empty_title, FALSE, FALSE, 0);
-    GtkWidget *empty_copy = make_label("Choose a partition, or open/create an InfiltratorFS image.", "empty-copy");
+    GtkWidget *empty_copy = make_label(infilfs_manager_copy()->empty_copy, "empty-copy");
     gtk_label_set_xalign(GTK_LABEL(empty_copy), 0.5f);
     gtk_box_pack_start(GTK_BOX(empty), empty_copy, FALSE, FALSE, 0);
     gtk_container_add(GTK_CONTAINER(empty_align), empty);
@@ -1782,10 +1783,10 @@ static GtkWidget *build_ui(Manager *manager)
     gtk_label_set_ellipsize(GTK_LABEL(manager->path_label), PANGO_ELLIPSIZE_MIDDLE);
     gtk_box_pack_start(GTK_BOX(identity), manager->path_label, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(hero), identity, TRUE, TRUE, 0);
-    manager->unmount_button = gtk_button_new_with_label("Unmount");
+    manager->unmount_button = gtk_button_new_with_label(infilfs_manager_copy()->unmount_button);
     g_signal_connect(manager->unmount_button, "clicked", G_CALLBACK(on_unmount), manager);
     gtk_box_pack_end(GTK_BOX(hero), manager->unmount_button, FALSE, FALSE, 0);
-    manager->mount_button = gtk_button_new_with_label("Mount and Open");
+    manager->mount_button = gtk_button_new_with_label(infilfs_manager_copy()->mount_button);
     add_class(manager->mount_button, "suggested-action");
     g_signal_connect(manager->mount_button, "clicked", G_CALLBACK(on_mount), manager);
     gtk_box_pack_end(GTK_BOX(hero), manager->mount_button, FALSE, FALSE, 0);
@@ -1803,14 +1804,14 @@ static GtkWidget *build_ui(Manager *manager)
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(overview_scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
     GtkWidget *overview = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);
     gtk_container_add(GTK_CONTAINER(overview_scroll), overview);
-    gtk_stack_add_titled(GTK_STACK(manager->page_stack), overview_scroll, "overview", "Overview");
+    gtk_stack_add_titled(GTK_STACK(manager->page_stack), overview_scroll, "overview", infilfs_manager_copy()->overview_tab);
 
     GtkWidget *stats = gtk_grid_new();
     gtk_grid_set_column_spacing(GTK_GRID(stats), 10);
     gtk_grid_set_column_homogeneous(GTK_GRID(stats), TRUE);
-    GtkWidget *capacity_card = stat_card("CAPACITY", &manager->stat_size);
-    GtkWidget *filesystem_card = stat_card("FILESYSTEM", &manager->stat_fs);
-    manager->stat_status_card = stat_card("STATUS", &manager->stat_mount);
+    GtkWidget *capacity_card = stat_card(infilfs_manager_copy()->capacity_caption, &manager->stat_size);
+    GtkWidget *filesystem_card = stat_card(infilfs_manager_copy()->filesystem_caption, &manager->stat_fs);
+    manager->stat_status_card = stat_card(infilfs_manager_copy()->status_caption, &manager->stat_mount);
     add_class(capacity_card, "stat-capacity");
     add_class(filesystem_card, "stat-filesystem");
     add_class(manager->stat_status_card, "stat-status");
@@ -1822,50 +1823,60 @@ static GtkWidget *build_ui(Manager *manager)
     GtkWidget *details = gtk_box_new(GTK_ORIENTATION_VERTICAL, 13);
     add_class(details, "card");
     add_class(details, "card-info");
-    GtkWidget *details_title = make_label("Volume information", "section-title");
+    GtkWidget *details_title = make_label(infilfs_manager_copy()->volume_information, "section-title");
     add_class(details_title, "section-info");
     gtk_box_pack_start(GTK_BOX(details), details_title, FALSE, FALSE, 0);
     GtkWidget *detail_grid = gtk_grid_new();
     gtk_grid_set_column_spacing(GTK_GRID(detail_grid), 30);
     gtk_grid_set_row_spacing(GTK_GRID(detail_grid), 10);
-    detail_row(detail_grid, 0, "Device type", &manager->value_type);
-    detail_row(detail_grid, 1, "Device path", &manager->value_path);
+    detail_row(detail_grid, 0, infilfs_manager_copy()->device_type, &manager->value_type);
+    detail_row(detail_grid, 1, infilfs_manager_copy()->device_path, &manager->value_path);
     detail_row(detail_grid, 2, "Filesystem", &manager->value_fs);
-    detail_row(detail_grid, 3, "Volume label", &manager->value_label);
-    detail_row(detail_grid, 4, "Mount state", &manager->value_mount);
-    detail_row(detail_grid, 5, "Mount point", &manager->value_mountpoint);
+    detail_row(detail_grid, 3, infilfs_manager_copy()->volume_label, &manager->value_label);
+    detail_row(detail_grid, 4, infilfs_manager_copy()->mount_state, &manager->value_mount);
+    detail_row(detail_grid, 5, infilfs_manager_copy()->mount_point, &manager->value_mountpoint);
     gtk_box_pack_start(GTK_BOX(details), detail_grid, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(overview), details, FALSE, FALSE, 0);
+
+    const struct infilfs_manager_copy *copy = infilfs_manager_copy();
+    const struct infilfs_manager_action_descriptor *inspect =
+        infilfs_manager_action(INFILFS_MANAGER_ACTION_INSPECT);
+    const struct infilfs_manager_action_descriptor *check =
+        infilfs_manager_action(INFILFS_MANAGER_ACTION_CHECK);
+    const struct infilfs_manager_action_descriptor *scrub =
+        infilfs_manager_action(INFILFS_MANAGER_ACTION_SCRUB);
+    const struct infilfs_manager_action_descriptor *forensic =
+        infilfs_manager_action(INFILFS_MANAGER_ACTION_FORENSIC);
 
     GtkWidget *maintenance = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
     add_class(maintenance, "card");
     add_class(maintenance, "card-maintenance");
-    GtkWidget *maintenance_title = make_label("Maintenance", "section-title");
+    GtkWidget *maintenance_title = make_label(copy->maintenance, "section-title");
     add_class(maintenance_title, "section-maintenance");
     gtk_box_pack_start(GTK_BOX(maintenance), maintenance_title, FALSE, FALSE, 0);
-    manager->inspect_button = action_row(manager, maintenance, "document-properties-symbolic",
-        "Inspect filesystem", "Read filesystem identity, format version and geometry.", "Inspect",
-        "action-inspect", G_CALLBACK(on_inspect));
-    manager->check_button = action_row(manager, maintenance, "emblem-ok-symbolic",
-        "Check filesystem", "Run the fast structural consistency check.", "Check",
-        "action-check", G_CALLBACK(on_check));
-    manager->scrub_button = action_row(manager, maintenance, "system-run-symbolic",
-        "Deep scrub", "Read payloads, recompute checksums and verify retained generations.", "Scrub",
-        "action-scrub", G_CALLBACK(on_scrub));
-    manager->forensic_button = action_row(manager, maintenance, "system-search-symbolic",
-        "Forensic scan", "Locate current and orphaned filesystem metadata.", "Scan",
-        "action-forensic", G_CALLBACK(on_forensic));
+    manager->inspect_button = action_row(manager, maintenance, inspect->linux_icon,
+        inspect->title, inspect->description, inspect->button,
+        inspect->semantic_style, G_CALLBACK(on_inspect));
+    manager->check_button = action_row(manager, maintenance, check->linux_icon,
+        check->title, check->description, check->button,
+        check->semantic_style, G_CALLBACK(on_check));
+    manager->scrub_button = action_row(manager, maintenance, scrub->linux_icon,
+        scrub->title, scrub->description, scrub->button,
+        scrub->semantic_style, G_CALLBACK(on_scrub));
+    manager->forensic_button = action_row(manager, maintenance, forensic->linux_icon,
+        forensic->title, forensic->description, forensic->button,
+        forensic->semantic_style, G_CALLBACK(on_forensic));
     gtk_box_pack_start(GTK_BOX(overview), maintenance, FALSE, FALSE, 0);
 
     GtkWidget *danger = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 14);
     add_class(danger, "danger-zone");
     GtkWidget *danger_text = gtk_box_new(GTK_ORIENTATION_VERTICAL, 3);
-    GtkWidget *danger_title = make_label("Erase and format", "section-title");
+    GtkWidget *danger_title = make_label(infilfs_manager_copy()->danger_title, "section-title");
     add_class(danger_title, "section-danger");
     gtk_box_pack_start(GTK_BOX(danger_text), danger_title, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(danger_text), make_label("Permanently erase this target and create a new InfiltratorFS volume.", "section-subtitle"), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(danger_text), make_label(infilfs_manager_copy()->danger_description, "section-subtitle"), FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(danger), danger_text, TRUE, TRUE, 0);
-    manager->format_button = gtk_button_new_with_label("Format Volume…");
+    manager->format_button = gtk_button_new_with_label(infilfs_manager_copy()->format_button);
     add_class(manager->format_button, "destructive-action");
     g_signal_connect(manager->format_button, "clicked", G_CALLBACK(on_format), manager);
     gtk_box_pack_end(GTK_BOX(danger), manager->format_button, FALSE, FALSE, 0);
@@ -1873,8 +1884,8 @@ static GtkWidget *build_ui(Manager *manager)
 
     GtkWidget *activity = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     GtkWidget *activity_top = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-    gtk_box_pack_start(GTK_BOX(activity_top), make_label("Activity log", "section-title"), TRUE, TRUE, 0);
-    GtkWidget *clear = gtk_button_new_with_label("Clear");
+    gtk_box_pack_start(GTK_BOX(activity_top), make_label(infilfs_manager_copy()->activity_heading, "section-title"), TRUE, TRUE, 0);
+    GtkWidget *clear = gtk_button_new_with_label(infilfs_manager_copy()->clear_button);
     g_signal_connect(clear, "clicked", G_CALLBACK(clear_activity), manager);
     gtk_box_pack_end(GTK_BOX(activity_top), clear, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(activity), activity_top, FALSE, FALSE, 0);

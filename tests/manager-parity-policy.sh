@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root="${1:?source tree required}"
+contract_h="$root/tools/manager/infiltratorfs-manager-contract.h"
+contract_c="$root/tools/manager/infiltratorfs-manager-contract.c"
+linux="$root/tools/infiltratorfs-manager.c"
+windows="$root/tools/windows/infiltratorfs-windows.c"
+cmake="$root/CMakeLists.txt"
+
+test -f "$contract_h"
+test -f "$contract_c"
+grep -Fq 'INFILFS_MANAGER_ACTION_INSPECT' "$contract_h"
+grep -Fq 'INFILFS_MANAGER_ACTION_CHECK' "$contract_h"
+grep -Fq 'INFILFS_MANAGER_ACTION_SCRUB' "$contract_h"
+grep -Fq 'INFILFS_MANAGER_ACTION_FORENSIC' "$contract_h"
+grep -Fq '"Filesystem management"' "$contract_c"
+grep -Fq '"Mount and Open"' "$contract_c"
+grep -Fq '"Erase and format"' "$contract_c"
+grep -Fq 'manager/infiltratorfs-manager-contract.h' "$linux"
+grep -Fq '../manager/infiltratorfs-manager-contract.h' "$windows"
+grep -Fq 'tools/manager/infiltratorfs-manager-contract.c' "$cmake"
+echo "manager-parity-policy: PASS"

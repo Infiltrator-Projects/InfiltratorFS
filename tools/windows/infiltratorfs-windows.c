@@ -21,6 +21,7 @@
 #include "infilfs/win32_io.h"
 #include "infiltratorfs-windows-bridge.h"
 #include "infiltratorfs-windows-metadata.h"
+#include "../manager/infiltratorfs-manager-contract.h"
 #include "infiltratr/arithmetic.h"
 #include "infiltratr/design.h"
 #include "infiltratr/format.h"
