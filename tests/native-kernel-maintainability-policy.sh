@@ -151,6 +151,16 @@ test "$(grep -Fc 'iov_iter_bvec(' "$pagecache")" -ge 4 || \
 ! grep -Fq 'u8 *buffer;' "$pagecache" || \
     fail 'page-cache cluster buffer member returned'
 
+# Large page-cache folios are enabled only once the VFS write contract is
+# folio-native.  Bound the maximum order to one compression cluster so random
+# dirtying cannot turn into unbounded CoW amplification.
+grep -Fq '#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)' "$driver" || \
+    fail 'large-folio kernel-version boundary missing'
+grep -Fq 'mapping_set_folio_order_range(' "$driver" || \
+    fail 'folio-native kernels no longer enable bounded large folios'
+grep -Fq 'get_order((unsigned long)INFILFS_COMPRESSION_CLUSTER_BLOCKS *' "$driver" || \
+    fail 'large-folio maximum is no longer tied to the compression cluster'
+
 # Writable mount latency must not scale with every regular-file object. Crash
 # orphan discovery runs after mount, is fenced to the committed mount
 # generation, and may only hold the topology read lock for bounded batches.
