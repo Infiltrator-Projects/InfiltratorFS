@@ -45,31 +45,6 @@ infilfs_ns_attributes_mut(u8 object[INFILFS_DISK_BLOCK_SIZE])
     return (struct infilfs_attributes_disk *)infilfs_ns_attributes(object);
 }
 
-static bool infilfs_ns_reserved_linux_meta_name(const struct qstr *name)
-{
-    return name &&
-        name->len == sizeof(INFILFS_LINUX_META_DIRECTORY) - 1u &&
-        memcmp(name->name, INFILFS_LINUX_META_DIRECTORY,
-               name->len) == 0;
-}
-
-static int infilfs_ns_validate_name(struct super_block *sb,
-                                    const struct qstr *name)
-{
-    struct infilfs_sb_info *sbi = sb ? INFILFS_SB(sb) : NULL;
-    if (!name || !name->len || name->len > INFILFS_NAME_MAX ||
-        !infilfs_rw_utf8_valid(name->name, name->len) ||
-        (name->len == 1 && name->name[0] == '.') ||
-        (name->len == 2 && name->name[0] == '.' && name->name[1] == '.') ||
-        infilfs_ns_reserved_linux_meta_name(name) ||
-        (sbi &&
-         (le64_to_cpu(sbi->disk.incompat_flags) &
-          INFILFS_INCOMPAT_REMOVABLE_NAMES_V1) &&
-         !infilfs_removable_name_valid_v1(name->name, name->len)))
-        return -EINVAL;
-    return 0;
-}
-
 static int infilfs_ns_begin(struct super_block *sb,
                             struct infilfs_native_pending **pending_out)
 {
@@ -702,7 +677,7 @@ static int infilfs_ns_append_paged_directory(
     u64 new_head_block;
     int ret;
 
-    ret = infilfs_ns_validate_name(pending->sb, add_name);
+    ret = infilfs_name_validate(pending->sb, add_name);
     if (ret)
         return ret;
     add_rec = ALIGN(sizeof(struct infilfs_dirent_disk) + add_name->len, 8);
@@ -924,7 +899,7 @@ static int infilfs_ns_rebuild_directory(
     if (ret)
         goto out;
     if (add_name) {
-        ret = infilfs_ns_validate_name(pending->sb, add_name);
+        ret = infilfs_name_validate(pending->sb, add_name);
         if (ret)
             goto out;
         add_rec = ALIGN(sizeof(struct infilfs_dirent_disk) + add_name->len, 8);
@@ -2377,7 +2352,7 @@ static int infilfs_ns_link(struct dentry *old_dentry, struct inode *dir,
     if (!(le64_to_cpu(INFILFS_SB(dir->i_sb)->disk.incompat_flags) &
           INFILFS_INCOMPAT_HARD_LINKS))
         return -EOPNOTSUPP;
-    ret = infilfs_ns_validate_name(dir->i_sb, &dentry->d_name);
+    ret = infilfs_name_validate(dir->i_sb, &dentry->d_name);
     if (ret)
         return ret;
     ret = infilfs_quota_hardlink_check(inode, dir);
@@ -2438,7 +2413,7 @@ static int infilfs_ns_symlink(struct user_namespace *idmap, struct inode *dir,
     if (!(le64_to_cpu(INFILFS_SB(dir->i_sb)->disk.incompat_flags) &
           INFILFS_INCOMPAT_SYMBOLIC_LINKS))
         return -EOPNOTSUPP;
-    ret = infilfs_ns_validate_name(dir->i_sb, &dentry->d_name);
+    ret = infilfs_name_validate(dir->i_sb, &dentry->d_name);
     if (ret)
         return ret;
     ret = infilfs_ns_begin(dir->i_sb, &pending);
@@ -2497,9 +2472,9 @@ static int infilfs_ns_rename_exchange_same_dir(
 
     if (!source || !destination || !source_ii || !destination_ii || !dir_ii)
         return -ENOENT;
-    ret = infilfs_ns_validate_name(dir->i_sb, &old_dentry->d_name);
+    ret = infilfs_name_validate(dir->i_sb, &old_dentry->d_name);
     if (!ret)
-        ret = infilfs_ns_validate_name(dir->i_sb, &new_dentry->d_name);
+        ret = infilfs_name_validate(dir->i_sb, &new_dentry->d_name);
     if (ret)
         return ret;
     if (source == destination)
@@ -2597,9 +2572,9 @@ static int infilfs_ns_rename(struct user_namespace *idmap,
         return -EEXIST;
     if (destination == source)
         return 0;
-    ret = infilfs_ns_validate_name(old_dir->i_sb, &old_dentry->d_name);
+    ret = infilfs_name_validate(old_dir->i_sb, &old_dentry->d_name);
     if (!ret)
-        ret = infilfs_ns_validate_name(new_dir->i_sb, &new_dentry->d_name);
+        ret = infilfs_name_validate(new_dir->i_sb, &new_dentry->d_name);
     if (ret)
         return ret;
     if (destination) {
