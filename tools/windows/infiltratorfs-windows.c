@@ -190,6 +190,8 @@ static int g_icon_file = -1;
 static int g_icon_folder = -1;
 static int g_icon_link = -1;
 
+static int open_selected_volume(int format_first);
+
 static int system_prefers_dark_mode(void)
 {
     DWORD value = 1;
