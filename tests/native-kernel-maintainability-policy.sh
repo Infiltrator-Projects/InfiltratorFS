@@ -159,6 +159,27 @@ test "$(grep -Fc 'iov_iter_bvec(' "$pagecache")" -ge 4 || \
 ! grep -Fq 'u8 *buffer;' "$pagecache" || \
     fail 'page-cache cluster buffer member returned'
 
+# Linux 7.0 gained an iomap read transport hook that lets filesystems retain
+# custom verified/compressed I/O while delegating folio state management to
+# iomap. Keep generic bio iomap reads out of InfiltratorFS: they would bypass
+# the native SHA-256 and compression reader.
+grep -Fq 'KERNEL_VERSION(7, 0, 0) && IS_ENABLED(CONFIG_IOMAP)' "$pagecache" || \
+    fail 'verified iomap read compatibility boundary missing'
+grep -Fq 'struct iomap_read_ops infilfs_iomap_verified_read_ops' "$pagecache" || \
+    fail 'verified iomap read operations missing'
+grep -Fq 'iomap_read_folio(&infilfs_iomap_read_ops' "$pagecache" || \
+    fail 'Linux 7.0 read_folio does not delegate folio state to iomap'
+grep -Fq 'iomap_readahead(&infilfs_iomap_read_ops' "$pagecache" || \
+    fail 'Linux 7.0 readahead does not delegate folio state to iomap'
+grep -Fq 'iomap_finish_folio_read(' "$pagecache" || \
+    fail 'custom iomap transport does not complete folio ranges'
+grep -Fq 'iomap->addr = IOMAP_NULL_ADDR;' "$pagecache" || \
+    fail 'iomap read mapping no longer advertises custom transport'
+! grep -Fq 'iomap_bio_read_ops' "$pagecache" || \
+    fail 'generic iomap bio read would bypass InfiltratorFS verification'
+! grep -Fq 'iomap_bio_read_folio' "$pagecache" || \
+    fail 'generic iomap folio bio read would bypass InfiltratorFS verification'
+
 # Large page-cache folios are enabled only once the VFS write contract is
 # folio-native.  Bound the maximum order to one compression cluster so random
 # dirtying cannot turn into unbounded CoW amplification.
