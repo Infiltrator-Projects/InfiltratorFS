@@ -198,7 +198,7 @@ static void build_valid_image(struct memory_image *image)
     memcpy(sb.root_object_id, root_id, 16);
     sb.incompat_flags = infs_cpu_to_le64(
         INFS_INCOMPAT_UTF8_NAMES | INFS_INCOMPAT_SPARSE_EXTENTS |
-        INFS_INCOMPAT_ALLOCATION_TREE);
+        INFS_INCOMPAT_ALLOCATION_TREE | INFS_INCOMPAT_UNICODE_NORM_V1);
     memcpy(sb.label, "Conformance", 11);
     expect(infs_encode_superblock(block, &sb) == INFS_STATUS_OK,
            "encode checkpoint");
