@@ -78,10 +78,12 @@ struct infilfs_pagecache_write_ctx {
 };
 
 struct infilfs_writeback_cluster {
-    u8 *buffer;
+    struct bio_vec *bvecs;
     struct folio **folios;
     unsigned int count;
     unsigned int capacity;
+    unsigned int bvec_count;
+    unsigned int bvec_capacity;
     loff_t position;
     size_t bytes;
 };
@@ -515,10 +517,16 @@ static int infilfs_writeback_folio(struct folio *folio,
 {
     struct address_space *mapping = folio->mapping;
     struct inode *inode;
+    struct bio_vec inline_bvec;
+    struct bio_vec *bvecs = &inline_bvec;
+    struct iov_iter iter;
     loff_t position;
+    loff_t write_position;
     loff_t file_size;
     size_t length;
-    size_t done = 0;
+    unsigned int bvec_count = 0;
+    unsigned int bvec_capacity;
+    ssize_t written;
     int ret = 0;
 
     if (!mapping)
@@ -528,51 +536,63 @@ static int infilfs_writeback_folio(struct folio *folio,
     if (folio->mapping != mapping || !folio_test_dirty(folio))
         goto unlock;
     folio_wait_writeback(folio);
-    if (!folio_clear_dirty_for_io(folio))
-        goto unlock;
 
     position = folio_pos(folio);
     file_size = i_size_read(inode);
     if (position >= file_size) {
+        if (!folio_clear_dirty_for_io(folio))
+            goto unlock;
         folio_start_writeback(folio);
         infilfs_pagecache_unaccount(folio, true);
         folio_end_writeback(folio);
         goto unlock;
     }
-    length = min_t(loff_t, folio_size(folio), file_size - position);
-    folio_start_writeback(folio);
-    while (done < length) {
-        struct page *page = folio_page(folio, done >> PAGE_SHIFT);
-        struct kvec vec;
-        struct iov_iter iter;
-        loff_t write_position = position + done;
-        size_t chunk = min_t(size_t, PAGE_SIZE, length - done);
-        void *address = kmap_local_page(page);
-        ssize_t written;
 
-        vec.iov_base = address;
-        vec.iov_len = chunk;
-        iov_iter_kvec(&iter, ITER_SOURCE, &vec, 1, chunk);
-        written = infilfs_native_writeback_iter(
-            inode, &write_position, &iter, chunk);
-        kunmap_local(address);
-        if (written != chunk) {
-            ret = written < 0 ? (int)written : -EIO;
-            break;
+    length = min_t(loff_t, folio_size(folio), file_size - position);
+    bvec_capacity = DIV_ROUND_UP(length, PAGE_SIZE);
+    if (bvec_capacity > 1u) {
+        bvecs = kvmalloc_array(
+            bvec_capacity, sizeof(*bvecs), GFP_NOFS);
+        if (!bvecs) {
+            ret = -ENOMEM;
+            mapping_set_error(mapping, ret);
+            goto unlock;
         }
-        done += chunk;
     }
+    ret = infilfs_pagecache_append_bvecs(
+        bvecs, bvec_capacity, &bvec_count, folio, length);
+    if (ret) {
+        mapping_set_error(mapping, ret);
+        goto out_free;
+    }
+
+    if (!folio_clear_dirty_for_io(folio)) {
+        ret = 0;
+        goto out_free;
+    }
+
+    folio_start_writeback(folio);
+    iov_iter_bvec(
+        &iter, ITER_SOURCE, bvecs, bvec_count, length);
+    write_position = position;
+    written = infilfs_native_writeback_iter(
+        inode, &write_position, &iter, length);
+    if (written != length)
+        ret = written < 0 ? (int)written : -EIO;
     if (ret) {
         mapping_set_error(mapping, ret);
         folio_redirty_for_writepage(wbc, folio);
-    }
-    if (!ret) {
+    } else {
         infilfs_pagecache_unaccount(folio, false);
         if (wbc->sync_mode == WB_SYNC_NONE)
             wbc->nr_to_write -=
                 (long)(folio_size(folio) >> PAGE_SHIFT);
     }
     folio_end_writeback(folio);
+
+out_free:
+    if (bvecs != &inline_bvec)
+        kvfree(bvecs);
 unlock:
     folio_unlock(folio);
     return ret;
@@ -583,7 +603,6 @@ static int infilfs_writeback_cluster_submit(
     struct infilfs_writeback_cluster *cluster)
 {
     struct inode *inode = mapping->host;
-    struct kvec vec;
     struct iov_iter iter;
     loff_t position;
     ssize_t written;
@@ -592,9 +611,10 @@ static int infilfs_writeback_cluster_submit(
 
     if (!cluster->count)
         return 0;
-    vec.iov_base = cluster->buffer;
-    vec.iov_len = cluster->bytes;
-    iov_iter_kvec(&iter, ITER_SOURCE, &vec, 1, cluster->bytes);
+
+    iov_iter_bvec(
+        &iter, ITER_SOURCE, cluster->bvecs,
+        cluster->bvec_count, cluster->bytes);
     position = cluster->position;
     written = infilfs_native_writeback_iter(
         inode, &position, &iter, cluster->bytes);
@@ -615,6 +635,7 @@ static int infilfs_writeback_cluster_submit(
         folio_put(folio);
     }
     cluster->count = 0;
+    cluster->bvec_count = 0;
     cluster->bytes = 0;
     cluster->position = 0;
     return ret;
@@ -629,15 +650,17 @@ static int infilfs_writepages(struct address_space *mapping,
     pgoff_t end = wbc->range_end == LLONG_MAX ? (pgoff_t)-1 :
         wbc->range_end >> PAGE_SHIFT;
     size_t batch_bytes = infilfs_native_writeback_batch_bytes();
-    unsigned int max_folios =
+    unsigned int max_segments =
         DIV_ROUND_UP(batch_bytes, PAGE_SIZE) + 1u;
     int ret = 0;
 
-    cluster.buffer = kvmalloc(batch_bytes, GFP_NOFS);
+    cluster.bvecs = kvmalloc_array(
+        max_segments, sizeof(*cluster.bvecs), GFP_NOFS);
     cluster.folios = kvmalloc_array(
-        max_folios, sizeof(*cluster.folios), GFP_NOFS);
-    cluster.capacity = max_folios;
-    if (!cluster.buffer || !cluster.folios) {
+        max_segments, sizeof(*cluster.folios), GFP_NOFS);
+    cluster.capacity = max_segments;
+    cluster.bvec_capacity = max_segments;
+    if (!cluster.bvecs || !cluster.folios) {
         ret = -ENOMEM;
         goto out;
     }
@@ -653,7 +676,8 @@ static int infilfs_writepages(struct address_space *mapping,
             loff_t file_size = i_size_read(mapping->host);
             size_t length = position < file_size ?
                 min_t(loff_t, folio_size(folio), file_size - position) : 0;
-            size_t copied = 0;
+            unsigned int segments =
+                length ? DIV_ROUND_UP(length, PAGE_SIZE) : 0;
 
             if (folio_size(folio) > batch_bytes) {
                 ret = infilfs_writeback_cluster_submit(mapping, wbc, &cluster);
@@ -666,7 +690,8 @@ static int infilfs_writepages(struct address_space *mapping,
 
             if (cluster.count &&
                 (position != cluster.position + cluster.bytes ||
-                 cluster.bytes + length > batch_bytes)) {
+                 cluster.bytes + length > batch_bytes ||
+                 segments > cluster.bvec_capacity - cluster.bvec_count)) {
                 ret = infilfs_writeback_cluster_submit(mapping, wbc, &cluster);
                 if (ret)
                     break;
@@ -682,6 +707,7 @@ static int infilfs_writepages(struct address_space *mapping,
                 folio_unlock(folio);
                 continue;
             }
+
             position = folio_pos(folio);
             file_size = i_size_read(mapping->host);
             if (position >= file_size) {
@@ -691,12 +717,15 @@ static int infilfs_writepages(struct address_space *mapping,
                 folio_unlock(folio);
                 continue;
             }
+
             length = min_t(loff_t, folio_size(folio), file_size - position);
+            segments = DIV_ROUND_UP(length, PAGE_SIZE);
             if (!cluster.count)
                 cluster.position = position;
             if (position != cluster.position + cluster.bytes ||
                 cluster.bytes + length > batch_bytes ||
-                cluster.count >= cluster.capacity) {
+                cluster.count >= cluster.capacity ||
+                segments > cluster.bvec_capacity - cluster.bvec_count) {
                 folio_redirty_for_writepage(wbc, folio);
                 folio_unlock(folio);
                 ret = infilfs_writeback_cluster_submit(mapping, wbc, &cluster);
@@ -705,20 +734,18 @@ static int infilfs_writepages(struct address_space *mapping,
                 continue;
             }
 
-            folio_start_writeback(folio);
-            while (copied < length) {
-                struct page *page = folio_page(folio, copied >> PAGE_SHIFT);
-                size_t chunk = min_t(size_t, PAGE_SIZE, length - copied);
-                void *address = kmap_local_page(page);
-
-                memcpy(cluster.buffer + cluster.bytes + copied,
-                       address, chunk);
-                kunmap_local(address);
-                copied += chunk;
+            ret = infilfs_pagecache_append_bvecs(
+                cluster.bvecs, cluster.bvec_capacity,
+                &cluster.bvec_count, folio, length);
+            if (ret) {
+                folio_redirty_for_writepage(wbc, folio);
+                folio_unlock(folio);
+                break;
             }
+
+            folio_start_writeback(folio);
             folio_get(folio);
-            cluster.folios[cluster.count] = folio;
-            cluster.count++;
+            cluster.folios[cluster.count++] = folio;
             cluster.bytes += length;
             if (wbc->sync_mode == WB_SYNC_NONE)
                 wbc->nr_to_write -=
@@ -739,15 +766,17 @@ static int infilfs_writepages(struct address_space *mapping,
                     wbc->nr_to_write <= 0))
             break;
     }
+
     if (!ret)
         ret = infilfs_writeback_cluster_submit(mapping, wbc, &cluster);
     else if (cluster.count)
         (void)infilfs_writeback_cluster_submit(mapping, wbc, &cluster);
+
 out:
     if (ret)
         mapping_set_error(mapping, ret);
     kvfree(cluster.folios);
-    kvfree(cluster.buffer);
+    kvfree(cluster.bvecs);
     return ret;
 }
 
