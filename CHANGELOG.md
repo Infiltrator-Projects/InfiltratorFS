@@ -2,6 +2,10 @@
 
 This file records user-visible, compatibility, architecture and validation changes for InfiltratorFS.
 
+## Unreleased
+
+- Allow the release APT verification gate a bounded eight-plus-minute propagation window so the five-minute scheduled repository importer and GitHub Pages deployment cannot race the previous seven-minute verifier cutoff.
+
 ## 0.18.65 — 2026-09-20
 
 - Modernise the native Linux page-cache read path on Linux 7.0 and newer by delegating folio read/readahead state management to iomap while retaining InfiltratorFS's verified native transport for sparse extents, compression and SHA-256 integrity.
