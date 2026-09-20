@@ -36,6 +36,7 @@ sources of truth.
 ## Operational and specialist material
 
 - `FORENSICS.md` — forensic scanner semantics and evidentiary limits.
+- `FUTURE_ECOSYSTEM_INTEGRATION.md` — non-binding future ideas for optional capability-based integration with the wider Infiltrator software family; it is not a completion checklist or release promise.
 - `kernel/README.md` — local native-Linux module build/ownership guidance.
 - `IAC1-2026-HARDWARE-DESIGN.md` — performance-design constraints for modern
   hardware. Normative codec semantics remain in `COMPRESSION.md`.
