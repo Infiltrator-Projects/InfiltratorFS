@@ -94,6 +94,9 @@ static const uint8_t INFS_ALLOCATION_LEAF_PAGE_MAGIC[8] = {
  * Future normalization policies must use a different incompatible feature
  * version rather than silently changing lookup semantics. */
 #define INFS_INCOMPAT_UNICODE_NORM_V1 UINT64_C(0x0000000000002000)
+/* Optional removable-volume filename profile v1. Writers enforce a conservative
+ * cross-platform component subset while preserving exact UTF-8 identity. */
+#define INFS_INCOMPAT_REMOVABLE_NAMES_V1 UINT64_C(0x0000000000004000)
 #define INFS_KNOWN_COMPAT_FLAGS UINT64_C(0)
 #define INFS_KNOWN_RO_COMPAT_FLAGS UINT64_C(0)
 #define INFS_KNOWN_INCOMPAT_FLAGS \
@@ -103,7 +106,8 @@ static const uint8_t INFS_ALLOCATION_LEAF_PAGE_MAGIC[8] = {
      INFS_INCOMPAT_HARD_LINKS | INFS_INCOMPAT_SNAPSHOTS | \
      INFS_INCOMPAT_PAGED_EXTENTS | INFS_INCOMPAT_INDEX_TREE | \
      INFS_INCOMPAT_DIRECTORY_TREE | INFS_INCOMPAT_ALLOCATION_TREE | \
-     INFS_INCOMPAT_COMPRESSED_EXTENTS | INFS_INCOMPAT_UNICODE_NORM_V1)
+     INFS_INCOMPAT_COMPRESSED_EXTENTS | INFS_INCOMPAT_UNICODE_NORM_V1 | \
+     INFS_INCOMPAT_REMOVABLE_NAMES_V1)
 
 #define INFS_ATTR_READ_ONLY           UINT64_C(0x0000000000000001)
 #define INFS_ATTR_HIDDEN              UINT64_C(0x0000000000000002)
