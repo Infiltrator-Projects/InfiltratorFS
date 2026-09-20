@@ -136,6 +136,14 @@ grep -Fq 'ATTR_KILL_SUID | ATTR_KILL_SGID' "$rw" || fail 'set-ID stripping is no
     fail 'unused writeback cluster lengths array returned'
 test "$(grep -Fc '(long)(folio_size(folio) >> PAGE_SHIFT)' "$pagecache")" -ge 2 || \
     fail 'writeback paths do not account every base page in a folio'
+grep -Fq 'folio_test_private_2(folio)' "$pagecache" || \
+    fail 'pending CoW accounting no longer uses the auxiliary folio flag'
+grep -Fq 'folio_set_private_2(folio)' "$pagecache" || \
+    fail 'pending CoW accounting marker is not set independently'
+grep -Fq 'folio_clear_private_2(folio)' "$pagecache" || \
+    fail 'pending CoW accounting marker is not cleared independently'
+! grep -Fq 'folio_attach_private(folio, sbi)' "$pagecache" || \
+    fail 'InfiltratorFS reclaimed folio->private from page-cache frameworks'
 
 # Keep the page-cache bridge zero-copy at its folio/native-iterator boundary.
 # Reintroducing MiB-scale read/write bounce buffers wastes memory bandwidth and
