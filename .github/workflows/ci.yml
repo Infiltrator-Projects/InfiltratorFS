@@ -355,7 +355,10 @@ jobs:
           Select-String -Path tests/win32-projfs-bridge.c -Pattern 'hardlink/delete/move-out qualification: PASS' -SimpleMatch
           Select-String -Path tools/windows/infiltratorfs-windows-bridge.c -Pattern 'PrjWriteFileData' -SimpleMatch
           Select-String -Path tools/windows/infiltratorfs-windows-bridge.c -Pattern 'PRJ_NOTIFY_FILE_HANDLE_CLOSED_FILE_MODIFIED' -SimpleMatch
-          Select-String -Path tools/windows/infiltratorfs-windows.c -Pattern 'Mount in Explorer' -SimpleMatch
+          Select-String -Path tools/manager/infiltratorfs-manager-contract.c -Pattern '"Mount and Open"' -SimpleMatch
+          Select-String -Path tools/windows/infiltratorfs-windows.c -Pattern 'infs_check(&g_volume' -SimpleMatch
+          Select-String -Path tools/windows/infiltratorfs-windows.c -Pattern 'infs_forensic_scan(' -SimpleMatch
+          Select-String -Path tools/windows/infiltratorfs-windows.c -Pattern 'create_image_dialog' -SimpleMatch
           Select-String -Path src/platform/win32_partition_io.c -Pattern 'GLOBALROOT' -SimpleMatch
           Select-String -Path src/platform/win32_partition_io.c -Pattern 'IOCTL_DISK_GET_DRIVE_LAYOUT_EX' -SimpleMatch
       - name: Verify versioned Windows executable and metadata
