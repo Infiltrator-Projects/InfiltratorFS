@@ -47,6 +47,24 @@ Current Format 0.18 requires UTF-8 names, sparse extents, the allocation-tree re
 
 A representation is accepted only when its feature bit/version contract agrees with the structure actually stored. A feature bit that contradicts the selected record version is corruption.
 
+
+### Removable-volume filename profile v1
+
+The optional incompatibility feature `INFS_INCOMPAT_REMOVABLE_NAMES_V1`
+selects a conservative cross-platform namespace profile for volumes intended
+to move between operating systems. It does not change Unicode identity:
+component bytes remain valid UTF-8 and are compared exactly under Unicode
+policy v1.
+
+When the feature is present, each namespace component is limited to 255 UTF-8
+bytes, must not end in a dot or space, must not contain ASCII control bytes or
+`< > : " / \\ | ? *`, and must not use the case-insensitive DOS device base
+names `CON`, `PRN`, `AUX`, `NUL`, `COM1` through `COM9`, or `LPT1`
+through `LPT9`, including those bases followed by an extension. Readers must
+reject a flagged namespace that violates this contract. The profile is
+optional; unflagged volumes retain the general 1023-byte UTF-8 component
+contract.
+
 ## 4. Allocation ownership
 
 Logical allocation ownership remains one authoritative bit per filesystem block: zero means free; one means allocated or unavailable.
