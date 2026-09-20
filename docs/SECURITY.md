@@ -3,7 +3,7 @@
 
 ## Status
 
-This document defines the intended cross-platform security architecture. Current source does **not** yet implement the final portable security-object format. Current POSIX mode/UID/GID compatibility metadata and Linux adapter metadata must therefore not be mistaken for the future canonical cross-platform identity model.
+This document defines the intended cross-platform security architecture. Current source does **not** yet implement the final portable security-object format. It now does define the stable portable access-right vocabulary and the Linux/POSIX projection policy that future security objects consume. Current POSIX mode/UID/GID compatibility metadata and Linux adapter metadata must therefore not be mistaken for the future canonical cross-platform principal/ACL store.
 
 ## Threat model and trust boundaries
 
@@ -76,7 +76,9 @@ Unresolved principals must remain intact. A platform must be able to preserve an
 
 ## Portable access rights
 
-The portable ACL vocabulary should describe filesystem meaning rather than copy one operating system's bit constants. Candidate rights include:
+`include/infilfs/security.h` defines the stable portable rights mask. Its bit
+positions describe filesystem meaning and never copy Linux mode/POSIX ACL or
+Windows ACCESS_MASK constants:
 
 ```text
 read data
@@ -98,9 +100,11 @@ change permissions
 take ownership
 ```
 
-Adapters then translate native access masks onto these rights.
-
-Traditional POSIX read/write/execute bits are a projection of part of this model. Windows DACL rights are another projection. The portable model must be rich enough that translating through Linux does not destroy Windows-only ACL detail, and translating through Windows does not destroy POSIX-only state.
+Adapters translate native access rules onto these rights. Traditional POSIX
+read/write/execute bits are one projection; Windows DACL rights are another.
+The vocabulary is deliberately available before the final security-object
+record exists so persistent ACL design cannot accidentally make one platform's
+numeric ABI authoritative.
 
 ## ACL entries
 
@@ -116,16 +120,30 @@ Explicit deny and inheritance need first-class representation because reducing a
 
 ## Linux mapping
 
-Linux adapters may expose:
+Linux exposes owner/group identity, mode bits, POSIX ACLs and Linux-specific
+security/xattr metadata. The mapping policy is explicit:
 
-- owner/group identity;
-- mode bits;
-- POSIX ACLs where supported;
-- Linux-specific security/xattr metadata.
+- numeric UID and GID values are adapter-local compatibility bindings, never
+  portable principal IDs;
+- for regular files, POSIX read maps to `read data`, write maps to both
+  `write data` and `append data`, and execute maps to `execute`;
+- for directories, POSIX read maps to `list directory`, write maps to
+  `create file`, `create directory` and `delete child`, and execute maps
+  to `traverse directory`; an operation may require both write and traverse;
+- a POSIX ACL entry uses the same rwx projection after the ACL mask/effective
+  permissions are applied by the Linux VFS;
+- mode/ACL bits do not manufacture attribute, permission-administration or
+  ownership rights that POSIX controls through ownership/capability rules;
+- `chmod`, `chown` and POSIX ACL updates follow Linux VFS semantics and
+  update the Linux compatibility/sidecar state without treating that state as
+  the final portable ACL object.
 
-`chmod`, `chown` and POSIX ACL changes require defined update rules against the portable security object. They must not blindly replace a richer ACL with only the information Linux can display.
-
-Current source stores POSIX mode and numeric UID/GID compatibility metadata and supports standard Linux xattr namespaces. Those facilities are useful today but are not yet the final portable principal/ACL store.
+The executable projection helpers are in `include/infilfs/posix_security.h`.
+Mounted qualification exercises real `setfacl`/`getfacl`, chmod mask
+interaction, default-ACL inheritance, rsync ACL preservation, remount
+durability and enforcement through an unprivileged UID. Current Linux metadata
+remains a compatibility layer until versioned portable security objects and
+principals are implemented.
 
 ## Windows mapping
 
