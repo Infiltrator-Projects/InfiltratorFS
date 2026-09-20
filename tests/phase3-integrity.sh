@@ -66,8 +66,22 @@ with open(path, "r+b", buffering=0) as image:
     os.fsync(image.fileno())
 PY
 
-"$fsck" -n "$checkpoint_repair" >"$tmp/checkpoint-before.out"
+checkpoint_before_sha="$(sha256sum "$checkpoint_repair" | awk '{print $1}')"
+set +e
+"$fsck" -n "$checkpoint_repair" >"$tmp/checkpoint-before.out" 2>&1
+checkpoint_readonly_rc=$?
+set -e
+if [[ $checkpoint_readonly_rc -ne 4 ]]; then
+    echo "phase3-integrity: degraded checkpoint -n exit was $checkpoint_readonly_rc, expected 4" >&2
+    cat "$tmp/checkpoint-before.out" >&2
+    exit 1
+fi
 grep -Fq 'Checkpoint replicas:   2/3 DEGRADED' "$tmp/checkpoint-before.out"
+checkpoint_after_readonly_sha="$(sha256sum "$checkpoint_repair" | awk '{print $1}')"
+if [[ "$checkpoint_before_sha" != "$checkpoint_after_readonly_sha" ]]; then
+    echo 'phase3-integrity: fsck -n modified a degraded checkpoint image' >&2
+    exit 1
+fi
 
 set +e
 "$fsck" -p "$checkpoint_repair" >"$tmp/checkpoint-repair.out" 2>&1
