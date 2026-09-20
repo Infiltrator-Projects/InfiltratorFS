@@ -145,23 +145,37 @@ static int checkpoint_matches(struct infs_volume *vol, uint64_t block_no,
 
 static int heal_checkpoints(struct infs_volume *vol)
 {
-    int need_heal = 0;
+    uint8_t repair[INFS_CHECKPOINT_COUNT] = {0};
+    unsigned repair_count = 0;
+
     for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i) {
         uint64_t b = infs_le64_to_cpu(vol->sb.checkpoint_block[i]);
+
         if (!checkpoint_matches(vol, b, &vol->sb)) {
-            need_heal = 1;
-            break;
+            repair[i] = 1;
+            ++repair_count;
         }
     }
-    if (!need_heal)
+    if (!repair_count)
         return INFS_STATUS_OK;
 
+    /*
+     * Never rewrite a replica that already matches the selected, fully
+     * validated checkpoint.  During recovery those copies are our surviving
+     * anchors; touching only stale/invalid replicas reduces both media writes
+     * and the power-loss window while healing a degraded set.
+     */
     uint8_t raw[INFS_BLOCK_SIZE];
     infs_status status = infs_encode_superblock(raw, &vol->sb);
     if (status != INFS_STATUS_OK)
         return status;
+
     for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i) {
-        uint64_t b = infs_le64_to_cpu(vol->sb.checkpoint_block[i]);
+        uint64_t b;
+
+        if (!repair[i])
+            continue;
+        b = infs_le64_to_cpu(vol->sb.checkpoint_block[i]);
         status = write_block(vol, b, raw);
         if (status != INFS_STATUS_OK)
             return status;
