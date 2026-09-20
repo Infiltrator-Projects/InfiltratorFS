@@ -2142,7 +2142,7 @@ abort:
     return ret;
 }
 
-static ssize_t infilfs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
+static __maybe_unused ssize_t infilfs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 {
     struct file *filep = iocb->ki_filp;
     struct inode *inode = file_inode(filep);
@@ -2223,7 +2223,7 @@ static int infilfs_rw_create(struct user_namespace *idmap, struct inode *dir,
 }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
-static struct dentry *infilfs_rw_mkdir(struct mnt_idmap *idmap,
+static __maybe_unused struct dentry *infilfs_rw_mkdir(struct mnt_idmap *idmap,
                                        struct inode *dir,
                                        struct dentry *dentry, umode_t mode)
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)

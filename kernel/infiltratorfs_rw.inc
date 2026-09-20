@@ -2015,7 +2015,7 @@ size_change_done:
     return 0;
 }
 
-static ssize_t infilfs_file_read_iter_atime(struct kiocb *iocb,
+static __maybe_unused ssize_t infilfs_file_read_iter_atime(struct kiocb *iocb,
                                               struct iov_iter *to)
 {
     struct file *file = iocb->ki_filp;
@@ -2047,7 +2047,7 @@ static ssize_t infilfs_file_read_iter_atime(struct kiocb *iocb,
  * portable on-disk attributes.  Report those authoritative values through
  * ->getattr so desktop file managers see creation time as well as POSIX times.
  */
-static const struct infilfs_attributes_disk *
+static __maybe_unused const struct infilfs_attributes_disk *
 infilfs_vfs_attributes(const u8 object[INFILFS_DISK_BLOCK_SIZE])
 {
     const struct infilfs_object_header_disk *header =
@@ -2068,7 +2068,7 @@ infilfs_vfs_attributes(const u8 object[INFILFS_DISK_BLOCK_SIZE])
     }
 }
 
-static struct timespec64 infilfs_vfs_decode_time(
+static __maybe_unused struct timespec64 infilfs_vfs_decode_time(
     const struct infilfs_timestamp_disk *encoded)
 {
     return infilfs_timestamp_decode(encoded);

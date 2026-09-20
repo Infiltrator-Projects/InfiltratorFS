@@ -248,7 +248,7 @@ u64 infilfs_native_visible_free_blocks(struct super_block *sb)
     return free_blocks;
 }
 
-static u64 infilfs_native_available_data_blocks(struct super_block *sb)
+static __maybe_unused u64 infilfs_native_available_data_blocks(struct super_block *sb)
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
     u64 free_blocks = infilfs_native_visible_free_blocks(sb);
@@ -4365,7 +4365,7 @@ static int infilfs_rw_create(struct user_namespace *idmap, struct inode *dir,
 }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
-static struct dentry *infilfs_rw_mkdir(struct mnt_idmap *idmap,
+static __maybe_unused struct dentry *infilfs_rw_mkdir(struct mnt_idmap *idmap,
                                        struct inode *dir,
                                        struct dentry *dentry, umode_t mode)
 {

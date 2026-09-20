@@ -222,7 +222,6 @@ int infilfs_read_compressed_extent(
     size_t stored_span = (size_t)physical_blocks * INFILFS_DISK_BLOCK_SIZE;
     size_t plain_bytes = (size_t)extent_blocks * INFILFS_DISK_BLOCK_SIZE;
     u8 *compressed;
-    u64 i;
     int decoded;
     int ret = 0;
 
@@ -1006,7 +1005,7 @@ int infilfs_index_lookup(struct super_block *sb, const u8 object_id[16],
                                         type_out);
 }
 
-static bool infilfs_checkpoint_bitmap_get(const u8 *bitmap, u64 block)
+static __maybe_unused bool infilfs_checkpoint_bitmap_get(const u8 *bitmap, u64 block)
 {
     return (bitmap[block >> 3] & (u8)(1u << (block & 7u))) != 0;
 }
