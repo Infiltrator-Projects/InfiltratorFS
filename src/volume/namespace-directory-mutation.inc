@@ -125,7 +125,8 @@ static void touch_ctime(struct infs_volume *vol,
     timestamp_disk_from_value(&attributes->change_time, &now);
 }
 
-static int next_component(const char **cursor, char out[INFS_NAME_MAX + 1u])
+static int next_component(struct infs_volume *vol, const char **cursor,
+                          char out[INFS_NAME_MAX + 1u])
 {
     const char *p = *cursor;
     while (*p == '/')
@@ -140,7 +141,9 @@ static int next_component(const char **cursor, char out[INFS_NAME_MAX + 1u])
     size_t len = (size_t)(p - start);
     if (len == 0 || len > INFS_NAME_MAX)
         return INFS_STATUS_NAME_TOO_LONG;
-    if (!infs_utf8_validate(start, len))
+    if (!infs_utf8_validate(start, len) ||
+        (removable_names_enabled(vol) &&
+         !removable_name_valid_v1((const uint8_t *)start, len)))
         return INFS_STATUS_INVALID_ARGUMENT;
     memcpy(out, start, len);
     out[len] = '\0';
@@ -157,7 +160,7 @@ static int lookup_from(struct infs_volume *vol, const struct infs_lookup *start,
     int trailing_slash = relative_len > 0 && relative[relative_len - 1u] == '/';
     char comp[INFS_NAME_MAX + 1u];
     int rc;
-    while ((rc = next_component(&cursor, comp)) > 0) {
+    while ((rc = next_component(vol, &cursor, comp)) > 0) {
         /* Every component, including `.` and `..`, is directory traversal
          * through the current object. A regular file cannot be traversed. */
         if (cur.type != INFS_OBJECT_DIRECTORY)
