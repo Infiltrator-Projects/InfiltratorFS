@@ -34,6 +34,57 @@ truncate -s 64M "$base"
 "$fsck" --scrub "$base" | grep -Fq 'Result:              CLEAN'
 old_physical="$($tool "$base" map /data 0)"
 
+# A single damaged checkpoint replica is an unambiguous repair case. Fast fsck
+# must report the degraded replica set without modifying it under -n; -p may
+# heal only from the already-selected structurally valid generation, must use
+# the conventional "corrected" exit bit, and must converge to three identical
+# valid replicas without changing user data.
+checkpoint_repair="$tmp/checkpoint-repair.img"
+cp "$base" "$checkpoint_repair"
+python3 - "$checkpoint_repair" <<'PY'
+import os
+import struct
+import sys
+
+BLOCK = 4096
+CHECKPOINTS_OFFSET = 76
+path = sys.argv[1]
+with open(path, "r+b", buffering=0) as image:
+    primary = image.read(BLOCK)
+    checkpoints = struct.unpack_from("<QQQ", primary, CHECKPOINTS_OFFSET)
+    target = checkpoints[1]
+    if not target:
+        raise SystemExit("secondary checkpoint block is zero")
+    offset = target * BLOCK + 257
+    image.seek(offset)
+    original = image.read(1)
+    if len(original) != 1:
+        raise SystemExit("short secondary checkpoint read")
+    image.seek(offset)
+    image.write(bytes([original[0] ^ 0x5A]))
+    image.flush()
+    os.fsync(image.fileno())
+PY
+
+"$fsck" -n "$checkpoint_repair" >"$tmp/checkpoint-before.out"
+grep -Fq 'Checkpoint replicas:   2/3 DEGRADED' "$tmp/checkpoint-before.out"
+
+set +e
+"$fsck" -p "$checkpoint_repair" >"$tmp/checkpoint-repair.out" 2>&1
+checkpoint_repair_rc=$?
+set -e
+if [[ $checkpoint_repair_rc -ne 1 ]]; then
+    echo "phase3-integrity: checkpoint repair exit was $checkpoint_repair_rc, expected 1" >&2
+    cat "$tmp/checkpoint-repair.out" >&2
+    exit 1
+fi
+grep -Fq 'Checkpoint repair:     CORRECTED' "$tmp/checkpoint-repair.out"
+grep -Fq 'Result:                FILESYSTEM ERRORS CORRECTED' "$tmp/checkpoint-repair.out"
+"$fsck" -n "$checkpoint_repair" >"$tmp/checkpoint-after.out"
+grep -Fq 'Checkpoint replicas:   3/3 OK' "$tmp/checkpoint-after.out"
+"$tool" "$checkpoint_repair" cat /data >"$tmp/checkpoint-readback"
+cmp "$tmp/old.bin" "$tmp/checkpoint-readback"
+
 # Before checkpoint publication, an overwrite must leave the old data reachable.
 for stage in before-bitmap after-bitmap; do
     image="$tmp/$stage.img"
