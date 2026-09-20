@@ -595,9 +595,11 @@ static bool infilfs_checkpoint_basic_valid(
         return false;
     if ((incompat & (INFILFS_INCOMPAT_UTF8_NAMES |
                      INFILFS_INCOMPAT_SPARSE_EXTENTS |
-                     INFILFS_INCOMPAT_ALLOCATION_TREE)) !=
+                     INFILFS_INCOMPAT_ALLOCATION_TREE |
+                     INFILFS_INCOMPAT_UNICODE_NORM_V1)) !=
         (INFILFS_INCOMPAT_UTF8_NAMES | INFILFS_INCOMPAT_SPARSE_EXTENTS |
-         INFILFS_INCOMPAT_ALLOCATION_TREE))
+         INFILFS_INCOMPAT_ALLOCATION_TREE |
+         INFILFS_INCOMPAT_UNICODE_NORM_V1))
         return false;
     if (le64_to_cpu(disk->compat_flags) != 0 ||
         le64_to_cpu(disk->ro_compat_flags) != 0)

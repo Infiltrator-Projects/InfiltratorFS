@@ -99,6 +99,88 @@ grep -Fq 'Checkpoint replicas:   3/3 OK' "$tmp/checkpoint-after.out"
 "$tool" "$checkpoint_repair" cat /data >"$tmp/checkpoint-readback"
 cmp "$tmp/old.bin" "$tmp/checkpoint-readback"
 
+# Two damaged replicas remain deterministic when the sole surviving checkpoint
+# points at a complete valid graph. Preen must heal from that one authority.
+checkpoint_one_good="$tmp/checkpoint-one-good.img"
+cp "$base" "$checkpoint_one_good"
+python3 - "$checkpoint_one_good" <<'PY'
+import os
+import struct
+import sys
+BLOCK = 4096
+CHECKPOINTS_OFFSET = 76
+path = sys.argv[1]
+with open(path, "r+b", buffering=0) as image:
+    primary = image.read(BLOCK)
+    checkpoints = struct.unpack_from("<QQQ", primary, CHECKPOINTS_OFFSET)
+    for slot, block in enumerate(checkpoints[1:], start=1):
+        if not block:
+            raise SystemExit(f"checkpoint {slot} block is zero")
+        image.seek(block * BLOCK + 257 + slot)
+        original = image.read(1)
+        if len(original) != 1:
+            raise SystemExit("short checkpoint read")
+        image.seek(block * BLOCK + 257 + slot)
+        image.write(bytes([original[0] ^ (0x31 + slot)]))
+    image.flush()
+    os.fsync(image.fileno())
+PY
+set +e
+"$fsck" -p "$checkpoint_one_good" >"$tmp/checkpoint-one-good.out" 2>&1
+checkpoint_one_good_rc=$?
+set -e
+if [[ $checkpoint_one_good_rc -ne 1 ]]; then
+    echo "phase3-integrity: one-good checkpoint repair exit was $checkpoint_one_good_rc, expected 1" >&2
+    cat "$tmp/checkpoint-one-good.out" >&2
+    exit 1
+fi
+grep -Fq 'Checkpoint repair:     CORRECTED' "$tmp/checkpoint-one-good.out"
+"$fsck" -n "$checkpoint_one_good" >"$tmp/checkpoint-one-good-after.out"
+grep -Fq 'Checkpoint replicas:   3/3 OK' "$tmp/checkpoint-one-good-after.out"
+"$tool" "$checkpoint_one_good" cat /data >"$tmp/checkpoint-one-good-readback"
+cmp "$tmp/old.bin" "$tmp/checkpoint-one-good-readback"
+
+# Non-checkpoint authoritative metadata damage is not a deterministic repair
+# case. -p must fail closed and leave the image byte-for-byte unchanged.
+ambiguous="$tmp/ambiguous-metadata.img"
+cp "$base" "$ambiguous"
+python3 - "$ambiguous" <<'PY'
+import os
+import struct
+import sys
+BLOCK = 4096
+OBJECT_INDEX_OFFSET = 60
+path = sys.argv[1]
+with open(path, "r+b", buffering=0) as image:
+    primary = image.read(BLOCK)
+    index_block = struct.unpack_from("<Q", primary, OBJECT_INDEX_OFFSET)[0]
+    if not index_block:
+        raise SystemExit("object index block is zero")
+    image.seek(index_block * BLOCK + 333)
+    original = image.read(1)
+    if len(original) != 1:
+        raise SystemExit("short object-index read")
+    image.seek(index_block * BLOCK + 333)
+    image.write(bytes([original[0] ^ 0x6D]))
+    image.flush()
+    os.fsync(image.fileno())
+PY
+ambiguous_before_sha="$(sha256sum "$ambiguous" | awk '{print $1}')"
+set +e
+"$fsck" -p "$ambiguous" >"$tmp/ambiguous.out" 2>&1
+ambiguous_rc=$?
+set -e
+if [[ $ambiguous_rc -ne 4 ]]; then
+    echo "phase3-integrity: ambiguous metadata repair exit was $ambiguous_rc, expected 4" >&2
+    cat "$tmp/ambiguous.out" >&2
+    exit 1
+fi
+ambiguous_after_sha="$(sha256sum "$ambiguous" | awk '{print $1}')"
+if [[ "$ambiguous_before_sha" != "$ambiguous_after_sha" ]]; then
+    echo 'phase3-integrity: fsck -p modified ambiguous metadata corruption' >&2
+    exit 1
+fi
+
 # Before checkpoint publication, an overwrite must leave the old data reachable.
 for stage in before-bitmap after-bitmap; do
     image="$tmp/$stage.img"

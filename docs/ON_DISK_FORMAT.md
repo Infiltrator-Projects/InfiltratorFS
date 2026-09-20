@@ -43,7 +43,7 @@ Format 0.18 uses separate compatible, read-only-compatible and incompatible feat
 - Unknown read-only-compatible bits prevent writable open.
 - Unknown compatible bits may be ignored according to their contract.
 
-Current Format 0.18 requires UTF-8 names, sparse extents and the allocation-tree representation. Current formatters enable the established known feature set for inline data, shared extents, paged metadata/extents, symbolic links, hard links, snapshots, object-index tree, directory tree, allocation tree and compressed extents.
+Current Format 0.18 requires UTF-8 names, sparse extents, the allocation-tree representation and Unicode-name policy v1. Unicode-name policy v1 validates UTF-8 but performs no implicit Unicode normalization: namespace components are preserved and compared exactly as supplied. This is an explicit incompatible feature contract, so any future NFC/NFD or other normalization policy must receive a different version/feature identity rather than silently changing lookup semantics. Current formatters enable the established known feature set for inline data, shared extents, paged metadata/extents, symbolic links, hard links, snapshots, object-index tree, directory tree, allocation tree and compressed extents.
 
 A representation is accepted only when its feature bit/version contract agrees with the structure actually stored. A feature bit that contradicts the selected record version is corruption.
 

@@ -222,7 +222,7 @@ infs_status infs_format_storage(struct infs_storage *storage, const char *label)
         INFS_INCOMPAT_HARD_LINKS | INFS_INCOMPAT_SNAPSHOTS |
         INFS_INCOMPAT_PAGED_EXTENTS | INFS_INCOMPAT_INDEX_TREE |
         INFS_INCOMPAT_DIRECTORY_TREE | INFS_INCOMPAT_ALLOCATION_TREE |
-        INFS_INCOMPAT_COMPRESSED_EXTENTS);
+        INFS_INCOMPAT_COMPRESSED_EXTENTS | INFS_INCOMPAT_UNICODE_NORM_V1);
     memcpy(sb.label, label, label_length);
 
     uint8_t block[INFS_BLOCK_SIZE] = {0};

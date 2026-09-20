@@ -157,7 +157,7 @@ static void make_golden_superblock(struct infs_superblock_disk *sb)
     sb->ro_compat_flags = infs_cpu_to_le64(UINT64_C(0xd1d2d3d4d5d6d7d8));
     sb->incompat_flags = infs_cpu_to_le64(
         INFS_INCOMPAT_UTF8_NAMES | INFS_INCOMPAT_SPARSE_EXTENTS |
-        INFS_INCOMPAT_INLINE_DATA);
+        INFS_INCOMPAT_INLINE_DATA | INFS_INCOMPAT_UNICODE_NORM_V1);
     memcpy(sb->label, "Golden-0.11", 11);
 }
 
@@ -188,7 +188,7 @@ static void make_expected_superblock(uint8_t block[INFS_BLOCK_SIZE])
     put_le64(block, 140, UINT64_C(0xd1d2d3d4d5d6d7d8));
     put_le64(block, 148,
              INFS_INCOMPAT_UTF8_NAMES | INFS_INCOMPAT_SPARSE_EXTENTS |
-                 INFS_INCOMPAT_INLINE_DATA);
+                 INFS_INCOMPAT_INLINE_DATA | INFS_INCOMPAT_UNICODE_NORM_V1);
     memcpy(block + 156, "Golden-0.11", 11);
     refresh_crc(block, 220);
 }
@@ -231,14 +231,24 @@ static void check_superblock_encoding(void)
     expect_superblock_rejected(encoded, 14, 11, 2, "reject block-size drift");
     expect_superblock_rejected(encoded, 16, INFS_CHECKSUM_SHA256, 4,
                                "reject checkpoint checksum drift");
-    expect_superblock_rejected(encoded, 148, INFS_INCOMPAT_SPARSE_EXTENTS, 8,
+    expect_superblock_rejected(encoded, 148,
+                               INFS_INCOMPAT_SPARSE_EXTENTS |
+                                   INFS_INCOMPAT_UNICODE_NORM_V1, 8,
                                "reject missing UTF-8 feature");
-    expect_superblock_rejected(encoded, 148, INFS_INCOMPAT_UTF8_NAMES, 8,
+    expect_superblock_rejected(encoded, 148,
+                               INFS_INCOMPAT_UTF8_NAMES |
+                                   INFS_INCOMPAT_UNICODE_NORM_V1, 8,
                                "reject missing sparse-extents feature");
     expect_superblock_rejected(encoded, 148,
                                INFS_INCOMPAT_UTF8_NAMES |
                                    INFS_INCOMPAT_SPARSE_EXTENTS |
+                                   INFS_INCOMPAT_INLINE_DATA, 8,
+                               "reject missing Unicode normalization policy");
+    expect_superblock_rejected(encoded, 148,
+                               INFS_INCOMPAT_UTF8_NAMES |
+                                   INFS_INCOMPAT_SPARSE_EXTENTS |
                                    INFS_INCOMPAT_INLINE_DATA |
+                                   INFS_INCOMPAT_UNICODE_NORM_V1 |
                                    (UINT64_C(1) << 63),
                                8, "reject unknown incompatible feature");
 

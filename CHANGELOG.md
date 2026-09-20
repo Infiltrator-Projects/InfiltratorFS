@@ -4,6 +4,8 @@ This file records user-visible, compatibility, architecture and validation chang
 
 ## Unreleased
 
+- Define and persist Unicode namespace policy v1: valid UTF-8 is preserved byte-for-byte with no implicit normalization, and both portable/native readers reject current-format media that omits the explicit policy bit.
+- Strengthen deterministic fsck repair qualification: preen proves recovery from either one or two damaged checkpoint replicas when the surviving graph is authoritative, while non-checkpoint metadata corruption is verified fail-closed and byte-preserving.
 - Allow the release APT verification gate a bounded eight-plus-minute propagation window so the five-minute scheduled repository importer and GitHub Pages deployment cannot race the previous seven-minute verifier cutoff.
 
 ## 0.18.65 — 2026-09-20

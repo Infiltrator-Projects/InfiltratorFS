@@ -197,7 +197,8 @@ int infs_validate_superblock_block(const uint8_t block[INFS_BLOCK_SIZE])
         return 0;
     uint64_t incompat_flags = infs_le64_to_cpu(sb->incompat_flags);
     const uint64_t required_flags =
-        INFS_INCOMPAT_UTF8_NAMES | INFS_INCOMPAT_SPARSE_EXTENTS;
+        INFS_INCOMPAT_UTF8_NAMES | INFS_INCOMPAT_SPARSE_EXTENTS |
+        INFS_INCOMPAT_UNICODE_NORM_V1;
     if ((incompat_flags & ~INFS_KNOWN_INCOMPAT_FLAGS) != 0 ||
         (incompat_flags & required_flags) != required_flags)
         return 0;
