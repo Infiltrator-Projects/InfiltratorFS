@@ -1534,7 +1534,7 @@ jobs:
           # defconfig normally selects it through ext4, but force a selector
           # explicitly so this job can never silently compile only the legacy
           # pre-iomap branch.
-          "$kdir/scripts/config" --enable EXT4_FS
+          "$kdir/scripts/config" --file "$kdir/.config" --enable EXT4_FS
           make -C "$kdir" olddefconfig
           grep -Fq 'CONFIG_FS_IOMAP=y' "$kdir/.config"
           make -C "$kdir" -j2 prepare modules_prepare
@@ -1551,8 +1551,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # modules_prepare intentionally does not generate Module.symvers.
+          # Compile every translation unit and allow modpost unresolved-symbol
+          # warnings; the ABI/API compatibility evidence is the successful
+          # Werror compile against this exact upstream tree. Separately prove
+          # that the iomap entry points we call are exported to modules.
+          grep -Fq 'EXPORT_SYMBOL_GPL(iomap_read_folio);' "$KDIR/fs/iomap/buffered-io.c"
+          grep -Fq 'EXPORT_SYMBOL_GPL(iomap_readahead);' "$KDIR/fs/iomap/buffered-io.c"
+          grep -Fq 'EXPORT_SYMBOL_GPL(iomap_finish_folio_read);' "$KDIR/fs/iomap/buffered-io.c"
+          grep -Fq 'EXPORT_SYMBOL_GPL(iomap_release_folio);' "$KDIR/fs/iomap/buffered-io.c"
+          grep -Fq 'EXPORT_SYMBOL_GPL(iomap_invalidate_folio);' "$KDIR/fs/iomap/buffered-io.c"
           make -C kernel clean KDIR="$KDIR"
-          make -C kernel KDIR="$KDIR"
+          make -C kernel KDIR="$KDIR" KBUILD_MODPOST_WARN=1
           test -s kernel/infiltratorfs.ko
           test "$(modinfo -F name kernel/infiltratorfs.ko)" = infiltratorfs
           test "$(modinfo -F license kernel/infiltratorfs.ko)" = GPL
