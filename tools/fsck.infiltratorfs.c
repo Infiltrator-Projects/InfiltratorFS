@@ -9,6 +9,7 @@
 #include <string.h>
 
 #define FSCK_EXIT_CLEAN 0
+#define FSCK_EXIT_CORRECTED 1
 #define FSCK_EXIT_UNCORRECTED 4
 #define FSCK_EXIT_OPERATIONAL 8
 #define FSCK_EXIT_USAGE 16
@@ -53,7 +54,26 @@ static const char *check_word(int valid, uint32_t failed_stage,
     return "NOT CHECKED";
 }
 
-static int run_structural_check(const char *target)
+static infs_status repair_checkpoint_replicas(const char *target)
+{
+    struct infs_volume vol;
+    infs_status status = infs_posix_volume_open(&vol, target, 1);
+
+    if (status != INFS_STATUS_OK)
+        return status;
+
+    /*
+     * Writable open is the single recovery authority for checkpoint replicas.
+     * It selects the newest structurally valid generation and rewrites only
+     * stale/invalid replicas from that already-validated superblock. Keep fsck
+     * repair deliberately narrow: never synthesize metadata or guess between
+     * competing generations here.
+     */
+    infs_volume_close(&vol);
+    return INFS_STATUS_OK;
+}
+
+static int run_structural_check(const char *target, int repair)
 {
     struct infs_volume vol;
     infs_status status = infs_posix_volume_open(&vol, target, 0);
@@ -67,6 +87,37 @@ static int run_structural_check(const char *target)
     struct infs_check_report report;
     status = infs_check(&vol, &report);
     infs_volume_close(&vol);
+
+    int corrected = 0;
+    if (status == INFS_STATUS_OK &&
+        report.checkpoint_replicas_valid < INFS_CHECKPOINT_COUNT &&
+        repair) {
+        infs_status repair_status = repair_checkpoint_replicas(target);
+        if (repair_status != INFS_STATUS_OK) {
+            fprintf(stderr, "fsck.infiltratorfs: checkpoint repair: %s\n",
+                    infs_status_string(repair_status));
+            return repair_status == INFS_STATUS_CORRUPT ?
+                FSCK_EXIT_UNCORRECTED : FSCK_EXIT_OPERATIONAL;
+        }
+
+        status = infs_posix_volume_open(&vol, target, 0);
+        if (status != INFS_STATUS_OK) {
+            fprintf(stderr, "fsck.infiltratorfs: verify repair: %s\n",
+                    infs_status_string(status));
+            return status == INFS_STATUS_CORRUPT ?
+                FSCK_EXIT_UNCORRECTED : FSCK_EXIT_OPERATIONAL;
+        }
+        status = infs_check(&vol, &report);
+        infs_volume_close(&vol);
+        if (status != INFS_STATUS_OK ||
+            report.checkpoint_replicas_valid != INFS_CHECKPOINT_COUNT) {
+            fprintf(stderr,
+                    "fsck.infiltratorfs: checkpoint repair did not converge\n");
+            return status == INFS_STATUS_CORRUPT ?
+                FSCK_EXIT_UNCORRECTED : FSCK_EXIT_OPERATIONAL;
+        }
+        corrected = 1;
+    }
 
     printf("InfiltratorFS filesystem check\n");
     printf("  Generation:            %" PRIu64 "\n", report.check_generation);
@@ -90,6 +141,11 @@ static int run_structural_check(const char *target)
     puts("  User-data checksum scan:        NOT REQUESTED (--scrub for deep verification)");
 
     if (status == INFS_STATUS_OK) {
+        if (corrected) {
+            puts("  Checkpoint repair:     CORRECTED");
+            puts("  Result:                FILESYSTEM ERRORS CORRECTED");
+            return FSCK_EXIT_CORRECTED;
+        }
         puts("  Result:                CLEAN");
         return FSCK_EXIT_CLEAN;
     }
@@ -240,6 +296,8 @@ int main(int argc, char **argv)
 {
     int deep_scrub = 0;
     int online = 0;
+    int automatic_repair = 0;
+    int no_modify = 0;
     const char *snapshot_name = NULL;
     const char *target = NULL;
 
@@ -268,6 +326,10 @@ int main(int argc, char **argv)
                     usage(argv[0]);
                     return FSCK_EXIT_USAGE;
                 }
+                if (*p == 'a' || *p == 'p')
+                    automatic_repair = 1;
+                else if (*p == 'n')
+                    no_modify = 1;
             }
         } else if (!target) {
             target = arg;
@@ -279,6 +341,11 @@ int main(int argc, char **argv)
 
     if (!target) {
         usage(argv[0]);
+        return FSCK_EXIT_USAGE;
+    }
+    if (automatic_repair && no_modify) {
+        fprintf(stderr,
+                "fsck.infiltratorfs: -n cannot be combined with -a or -p\n");
         return FSCK_EXIT_USAGE;
     }
     if ((online || snapshot_name) && !deep_scrub) {
@@ -294,5 +361,5 @@ int main(int argc, char **argv)
 
     if (deep_scrub)
         return run_deep_scrub(target, online, snapshot_name);
-    return run_structural_check(target);
+    return run_structural_check(target, automatic_repair && !no_modify);
 }
