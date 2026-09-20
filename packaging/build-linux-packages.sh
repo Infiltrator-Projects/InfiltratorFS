@@ -58,7 +58,7 @@ for file in Makefile infiltratorfs_core.c infiltratorfs_crypto.c infiltratorfs_i
             infiltratorfs_rw.inc \
             infiltratorfs_rw_legacy.inc infiltratorfs_checksum_cache.c infiltratorfs_checksum_store.c infiltratorfs_locator_cache.c infiltratorfs_rw_data.inc \
             infiltratorfs_rw_namespace.inc infiltratorfs_read_cache.c \
-            infiltratorfs_pagecache.c infiltratorfs_linux_meta_codec.c infiltratorfs_shared_ownership.c infiltratorfs_linux_meta.inc \
+            infiltratorfs_pagecache.c infiltratorfs_linux_meta_codec.c infiltratorfs_shared_ownership.c infiltratorfs_name_policy.c infiltratorfs_linux_meta.inc \
             infiltratorfs_resize.c infiltratorfs_quota.inc \
             infiltratorfs_defrag.inc infiltratorfs_ioctl.h; do
     install -m 0644 "kernel/$file" "$dkms_root/$file"
@@ -267,6 +267,7 @@ for required in \
     "usr/src/infiltratorfs-${package_version}/dkms.conf$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_core.c$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_shared_ownership.c$" \
+    "usr/src/infiltratorfs-${package_version}/infiltratorfs_name_policy.c$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_crypto.c$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_internal.h$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_format.h$" \
@@ -389,7 +390,7 @@ verify_installer() {
         kernel/infiltratorfs_rw_legacy.inc kernel/infiltratorfs_checksum_cache.c kernel/infiltratorfs_locator_cache.c \
         kernel/infiltratorfs_rw_data.inc \
         kernel/infiltratorfs_rw_namespace.inc kernel/infiltratorfs_read_cache.c \
-        kernel/infiltratorfs_pagecache.c kernel/infiltratorfs_linux_meta_codec.c kernel/infiltratorfs_linux_meta.inc \
+        kernel/infiltratorfs_pagecache.c kernel/infiltratorfs_linux_meta_codec.c kernel/infiltratorfs_name_policy.c kernel/infiltratorfs_linux_meta.inc \
         kernel/infiltratorfs_resize.c kernel/infiltratorfs_quota.inc \
         kernel/infiltratorfs_defrag.inc kernel/infiltratorfs_ioctl.h; do
         test -f "$verify_root/$required"
