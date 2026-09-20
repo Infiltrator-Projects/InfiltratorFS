@@ -3,7 +3,7 @@
 
 ## Status
 
-This document defines the intended cross-platform security architecture. Current source does **not** yet implement the final portable security-object format. It now does define the stable portable access-right vocabulary and the Linux/POSIX projection policy that future security objects consume. Current POSIX mode/UID/GID compatibility metadata and Linux adapter metadata must therefore not be mistaken for the future canonical cross-platform principal/ACL store.
+This document defines the intended cross-platform security architecture. Current source does **not** yet implement the final portable security-object format. The stable portable access-right vocabulary and Linux/POSIX projection policy are implemented and qualified; future security objects consume those completed contracts. Current POSIX mode/UID/GID compatibility metadata and Linux adapter metadata must therefore not be mistaken for the future canonical cross-platform principal/ACL store.
 
 ## Threat model and trust boundaries
 

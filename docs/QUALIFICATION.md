@@ -24,6 +24,26 @@ Automatic qualification and conformance jobs are hard-capped at 10 minutes where
 
 ## Current development evidence boundary
 
+### 0.18.66 portable-rights and Linux security-mapping baseline
+
+Exact implementation source `cc8f7215398b11a9b637ca5ea02268be67b65de5`
+completed the required automatic qualification on 2026-09-20:
+
+- **Build and conformance** run `35506393848` passed in full, including the new portable security-policy conformance test, Linux/Clang builds, sanitizers, GCC static analysis, native package construction and Windows portable/native builds;
+- **Linux metadata qualification** run `35506393878` passed the mounted UID/GID/mode, real POSIX ACL, default-ACL inheritance, chmod-mask interaction, rsync ACL preservation and remount durability contract;
+- **Linux root-volume qualification** run `35506393873` passed; and
+- **Native Linux kernel module** run `35506393838` passed, including upstream Linux 7.0 compilation and the complete mounted native read/write/scrub suite.
+
+The portable rights mask now has stable filesystem-meaning bit assignments in
+`include/infilfs/security.h`, independent of Linux and Windows ABI constants.
+The Linux projection is executable in `include/infilfs/posix_security.h`:
+UID/GID remain adapter-local bindings, regular-file and directory rwx semantics
+map separately, POSIX ACL entries use the same projection after Linux effective
+masking, and mode bits cannot manufacture permission-administration or
+ownership rights. The final portable principal/security-object store remains a
+separate roadmap item.
+
+
 ### 0.18.66 native N-1 CPU-budget baseline
 
 Exact implementation source `3adfb38ee91389f757617df892018aa5dc8fdce5`

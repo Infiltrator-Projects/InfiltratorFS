@@ -83,8 +83,8 @@ Pre-1.0 development is current-format-only. A development format may be replaced
 ## Security and protection
 
 - [ ] Versioned portable security objects with stable typed principals and ACL entries.
-- [ ] Generic access-right vocabulary independent of POSIX and Windows constants.
-- [ ] Linux UID/GID/mode and POSIX ACL mapping policy.
+- [x] Generic access-right vocabulary independent of POSIX and Windows constants.
+- [x] Linux UID/GID/mode and POSIX ACL mapping policy.
 - [ ] Windows SID/security-descriptor mapping policy.
 - [ ] Preservation rules for platform-specific security metadata.
 - [ ] Portable named-attribute/named-stream objects distinct from adapter sidecars.

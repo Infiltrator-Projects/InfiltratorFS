@@ -4,6 +4,7 @@ This file records user-visible, compatibility, architecture and validation chang
 
 ## Unreleased
 
+- Mark the portable access-right vocabulary and Linux UID/GID/mode/POSIX ACL projection policy as roadmap-complete after exact-source cross-platform conformance plus mounted ACL/remount qualification.
 - Introduce a platform-neutral 64-bit access-right vocabulary for future portable ACL/security objects without reusing Linux or Windows ABI bit values.
 - Define executable Linux/POSIX mode and ACL projection helpers, including distinct regular-file and directory semantics while keeping UID/GID values adapter-local rather than portable principal identities.
 - Mark the filesystem-wide native Linux N-1 concurrency budget as roadmap-complete after mounted real-write qualification reached budget=3 with prepared-write peak=3 and the complete exact-source CI/native suites passed.
