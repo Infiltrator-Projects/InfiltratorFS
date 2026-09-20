@@ -137,6 +137,20 @@ grep -Fq 'ATTR_KILL_SUID | ATTR_KILL_SGID' "$rw" || fail 'set-ID stripping is no
 test "$(grep -Fc '(long)(folio_size(folio) >> PAGE_SHIFT)' "$pagecache")" -ge 2 || \
     fail 'writeback paths do not account every base page in a folio'
 
+# Keep the page-cache bridge zero-copy at its folio/native-iterator boundary.
+# Reintroducing MiB-scale read/write bounce buffers wastes memory bandwidth and
+# prevents the adapter from scaling cleanly to multi-page folios.
+grep -Fq '#include <linux/bvec.h>' "$pagecache" || \
+    fail 'page-cache bvec contract include missing'
+test "$(grep -Fc 'iov_iter_bvec(' "$pagecache")" -ge 4 || \
+    fail 'page-cache read/write paths no longer use direct bvec iterators'
+! grep -Fq 'cluster.buffer' "$pagecache" || \
+    fail 'page-cache cluster bounce buffer returned'
+! grep -Fq 'cluster->buffer' "$pagecache" || \
+    fail 'page-cache submit path regressed to a bounce buffer'
+! grep -Fq 'u8 *buffer;' "$pagecache" || \
+    fail 'page-cache cluster buffer member returned'
+
 # Writable mount latency must not scale with every regular-file object. Crash
 # orphan discovery runs after mount, is fenced to the committed mount
 # generation, and may only hold the topology read lock for bounded batches.
