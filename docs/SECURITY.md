@@ -147,11 +147,35 @@ principals are implemented.
 
 ## Windows mapping
 
-A future Windows filesystem driver should map Windows security descriptors, SIDs, DACL entries and inheritance semantics onto the same portable security object.
+Windows SIDs are adapter identity bindings, not portable principal IDs. A DACL
+ACE keeps its allow/deny disposition and ordering, resolves the SID through the
+principal binding table when possible, and projects its ACCESS_MASK onto the
+portable rights vocabulary. Unresolved SIDs remain intact as bindings so moving
+the volume between machines or domains is non-destructive.
 
-Windows-specific information that has no portable equivalent should be retained in typed extension metadata rather than silently discarded when the volume is later mounted elsewhere.
+The executable ACCESS_MASK projection is in
+`include/infilfs/win32_security.h`. File and directory meanings are kept
+distinct where Windows overloads the same specific-access bits:
 
-Likewise, a Windows-side ACL edit must have defined projection/update semantics so it does not accidentally erase unrelated portable or platform-specific entries.
+- file read/write/append/execute map to the corresponding portable data rights;
+- directory list/add-file/add-subdirectory/traverse/delete-child map to the
+  corresponding portable directory rights;
+- read/write extended attributes map to read/write named metadata;
+- read/write attributes map to portable attribute rights;
+- DELETE, READ_CONTROL, WRITE_DAC and WRITE_OWNER map to delete, read
+  permissions, change permissions and take ownership respectively;
+- GENERIC_READ/WRITE/EXECUTE/ALL are expanded with the Windows file-object
+  generic mapping before the specific bits are interpreted; and
+- SYNCHRONIZE, ACCESS_SYSTEM_SECURITY and MAXIMUM_ALLOWED do not manufacture
+  portable ACL rights because they are host object-manager/request semantics,
+  not persistent filesystem permissions.
+
+DACL inheritance flags and explicit allow/deny entries are preserved by the
+portable security object rather than flattened into a Unix-style rwx mask.
+SACL/audit policy and Windows-specific control bits that have no portable
+equivalent are preserved as typed platform-specific security metadata rather
+than silently discarded. A Windows-side ACL edit must update the represented
+portable entries without erasing unrelated unknown/platform-specific metadata.
 
 ## Other operating systems
 

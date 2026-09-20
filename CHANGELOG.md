@@ -4,6 +4,7 @@ This file records user-visible, compatibility, architecture and validation chang
 
 ## Unreleased
 
+- Define an executable Windows security-descriptor mapping policy: SID bindings remain adapter-local identities, DACL access masks project onto portable file/directory/metadata/administrative rights, generic masks are expanded explicitly, and Windows-only request/audit semantics cannot silently widen portable access.
 - Mark the portable access-right vocabulary and Linux UID/GID/mode/POSIX ACL projection policy as roadmap-complete after exact-source cross-platform conformance plus mounted ACL/remount qualification.
 - Introduce a platform-neutral 64-bit access-right vocabulary for future portable ACL/security objects without reusing Linux or Windows ABI bit values.
 - Define executable Linux/POSIX mode and ACL projection helpers, including distinct regular-file and directory semantics while keeping UID/GID values adapter-local rather than portable principal identities.
