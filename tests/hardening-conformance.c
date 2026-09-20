@@ -704,6 +704,39 @@ static void check_rename_replacement(struct memory_image *image)
     infs_volume_close(&volume);
 }
 
+static void check_checkpoint_heal_preserves_good_replicas(
+    struct memory_image *image)
+{
+    const uint64_t damaged = UINT64_C(2048);
+    struct infs_volume volume;
+
+    build_valid_image(image);
+    image->bytes[damaged * INFS_BLOCK_SIZE + 257u] ^= 0x5au;
+
+    /*
+     * A healthy primary is made unwritable on purpose. Recovery must leave it
+     * untouched and repair only the damaged secondary from the already
+     * validated surviving checkpoint. The previous rewrite-all policy fails
+     * this test even though the primary already contains the correct bytes.
+     */
+    image->fail_write_block = 0;
+    image->fail_writes = 1;
+    expect(open_image(image, 1, &volume) == INFS_STATUS_OK,
+           "repair damaged checkpoint without rewriting healthy primary");
+    infs_volume_close(&volume);
+    image->fail_writes = 0;
+    image->fail_write_block = UINT64_MAX;
+
+    expect(memcmp(image->bytes,
+                  image->bytes + damaged * INFS_BLOCK_SIZE,
+                  INFS_BLOCK_SIZE) == 0,
+           "repaired secondary matches surviving primary");
+    expect(memcmp(image->bytes,
+                  image->bytes + (TEST_BLOCKS - 1u) * INFS_BLOCK_SIZE,
+                  INFS_BLOCK_SIZE) == 0,
+           "healthy tertiary remains equal after targeted repair");
+}
+
 static void check_post_commit_replica_failure(struct memory_image *image)
 {
     build_valid_image(image);
@@ -910,6 +943,7 @@ int main(void)
     check_namespace_validation(&image);
     check_checksum_reachability(&image);
     check_rename_replacement(&image);
+    check_checkpoint_heal_preserves_good_replicas(&image);
     check_post_commit_replica_failure(&image);
     check_allocation_layout_cache_avoids_reload(&image);
     check_precheckpoint_flush_failure_aborts(&image);
