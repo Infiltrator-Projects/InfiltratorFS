@@ -30,7 +30,8 @@ Exact implementation source `7ce6a641de9de69fa67e32c21d979641082460b8`
 completed the required cross-platform qualification on 2026-09-20:
 
 - **Build and conformance** run `35506988395` passed the Linux full suite, Clang conformance, ASan/UBSan, GCC static analysis, native package construction and the Windows native application/portable-core build and tests;
-- **Windows Explorer bridge qualification** run `35506988393` passed on the same exact source; and
+- **Windows Explorer bridge qualification** run `35506988393` passed on the same exact source;
+- **Native Linux kernel module** run `35506988424` passed, including the upstream Linux 7.0 compile gate and mounted native qualification; and
 - the exact source also passed **Linux metadata qualification** run `35506988373`, **Linux root-volume qualification** run `35506988389` and **Native resize qualification** run `35506988359`.
 
 `include/infilfs/win32_security.h` now provides an executable, host-header-independent
