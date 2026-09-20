@@ -4,6 +4,8 @@ This file records user-visible, compatibility, architecture and validation chang
 
 ## Unreleased
 
+- Give the Linux Manager its own project-owned application identity icon: the same graphite tile and canonical `#00ADEF` filesystem glyph used by the Software Centre, installed once for hicolor and as the `infiltratorfs` Mint app-install alias; UDisks/device surfaces deliberately keep the platform drive icon because they represent volumes rather than the application.
+
 - Complete the shared Manager behaviour contract across Linux and Windows: action success copy, target/action enablement policy and GUI capacity formatting now come from one platform-neutral module, leaving GTK/Win32 storage, mount and native-file-manager mechanics in their adapters.
 - Match Windows capacity presentation to Linux by using the same Common auto-scaling disk-capacity contract rather than a Windows-only fixed-GiB formatter.
 - Update the UI/Common policy gates to assert the shared Manager capacity contract instead of the superseded Windows-only fixed-GiB implementation.

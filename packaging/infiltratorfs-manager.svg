@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="InfiltratorFS Manager">
+  <rect x="8" y="8" width="240" height="240" rx="48" fill="#0D1218" stroke="#26313D" stroke-width="6"/>
+  <g transform="translate(32 32) scale(8)" fill="none" stroke="#00ADEF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 7h7l2 2h9v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/>
+    <path d="M3 7V5a2 2 0 0 1 2-2h5l2 2"/>
+  </g>
+</svg>

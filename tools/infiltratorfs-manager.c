@@ -49,7 +49,7 @@ static const InfiltratrProjectInfo manager_project_info = {
         "INFILTRATORFS · NATIVE FILESYSTEM\n\n"
         "Native Linux management for InfiltratorFS volumes. Uses the native "
         "VFS/DKMS driver; FUSE is not the product path.",
-    .icon_name = "drive-harddisk",
+    .icon_name = "infiltratorfs-manager",
     .copyright_text = "Copyright © 1993-2026 Shannon Smith",
 };
 
@@ -1658,8 +1658,9 @@ static void on_about(GtkButton *button, gpointer data)
     GtkIconTheme *theme = gtk_icon_theme_get_default();
     if (theme) {
         GError *error = NULL;
-        GdkPixbuf *logo = gtk_icon_theme_load_icon(theme, "drive-harddisk", 96,
-                                                   GTK_ICON_LOOKUP_FORCE_SIZE, &error);
+        GdkPixbuf *logo = gtk_icon_theme_load_icon(
+            theme, manager_project_info.icon_name, 96,
+            GTK_ICON_LOOKUP_FORCE_SIZE, &error);
         if (logo) {
             gtk_about_dialog_set_logo(GTK_ABOUT_DIALOG(dialog), logo);
             g_object_unref(logo);
@@ -2117,6 +2118,8 @@ int main(int argc, char **argv)
             return 1;
         }
     }
+
+    gtk_window_set_default_icon_name(manager_project_info.icon_name);
 
     Manager *manager = g_new0(Manager, 1);
     if (!manager) {

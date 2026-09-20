@@ -499,6 +499,14 @@ if(UNIX)
         RENAME infiltratorfs)
     install(FILES packaging/infiltratorfs-manager.desktop
             DESTINATION share/applications)
+    # One project-owned application icon feeds the launcher/window/About
+    # identity and the package-name alias consumed by Linux Mint Software
+    # Manager. Block-device icons remain the platform's drive-harddisk symbols.
+    install(FILES packaging/infiltratorfs-manager.svg
+            DESTINATION share/icons/hicolor/scalable/apps)
+    install(FILES packaging/infiltratorfs-manager.svg
+            DESTINATION share/app-install/icons
+            RENAME infiltratorfs.svg)
     # Nemo already gets a stock "Format" action from Mintstick.  Ship our
     # partition-safe replacement beside the integration helper instead of as a
     # second visible action; the helper diverts the stock action and installs
