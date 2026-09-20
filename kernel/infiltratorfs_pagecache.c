@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include <linux/bvec.h>
+
 #include "infiltratorfs_internal.h"
 /*
  * Native Linux page-cache integration.
@@ -85,55 +87,128 @@ struct infilfs_writeback_cluster {
 };
 
 struct infilfs_readahead_cluster {
-    u8 *buffer;
+    struct bio_vec *bvecs;
     struct folio **folios;
     unsigned int count;
     unsigned int capacity;
+    unsigned int bvec_count;
+    unsigned int bvec_capacity;
     loff_t position;
     size_t bytes;
 };
+
+static int infilfs_pagecache_append_bvecs(
+    struct bio_vec *bvecs, unsigned int capacity, unsigned int *count,
+    struct folio *folio, size_t bytes)
+{
+    unsigned int needed;
+    size_t offset = 0;
+
+    if (!bvecs || !count || !folio || bytes > folio_size(folio))
+        return -EINVAL;
+    if (!bytes)
+        return 0;
+
+    needed = DIV_ROUND_UP(bytes, PAGE_SIZE);
+    if (*count > capacity || needed > capacity - *count)
+        return -EOVERFLOW;
+
+    while (offset < bytes) {
+        size_t chunk = min_t(size_t, PAGE_SIZE, bytes - offset);
+        struct bio_vec *bvec = &bvecs[*count];
+
+        bvec->bv_page = folio_page(folio, offset >> PAGE_SHIFT);
+        bvec->bv_offset = 0;
+        bvec->bv_len = chunk;
+        (*count)++;
+        offset += chunk;
+    }
+    return 0;
+}
+
+static void infilfs_pagecache_zero_folio(
+    struct folio *folio, size_t offset, size_t bytes)
+{
+    while (bytes) {
+        size_t page_offset = offset & (PAGE_SIZE - 1u);
+        size_t chunk = min_t(size_t, PAGE_SIZE - page_offset, bytes);
+        struct page *page = folio_page(folio, offset >> PAGE_SHIFT);
+        void *address = kmap_local_page(page);
+
+        memset((u8 *)address + page_offset, 0, chunk);
+        kunmap_local(address);
+        offset += chunk;
+        bytes -= chunk;
+    }
+}
+
+static void infilfs_readahead_zero_tail(
+    struct infilfs_readahead_cluster *cluster, size_t wanted)
+{
+    unsigned int i;
+    size_t keep = wanted;
+
+    for (i = 0; i < cluster->count; ++i) {
+        struct folio *folio = cluster->folios[i];
+        size_t bytes = folio_size(folio);
+
+        if (keep >= bytes) {
+            keep -= bytes;
+            continue;
+        }
+        infilfs_pagecache_zero_folio(folio, keep, bytes - keep);
+        keep = 0;
+    }
+}
 
 static int infilfs_pagecache_fill_folio(struct folio *folio)
 {
     struct inode *inode = folio->mapping->host;
     struct infilfs_inode_info *ii = INFILFS_I(inode);
-    loff_t start = folio_pos(folio);
+    struct bio_vec inline_bvec;
+    struct bio_vec *bvecs = &inline_bvec;
+    struct iov_iter iter;
+    loff_t position = folio_pos(folio);
     u64 persisted = ii ? READ_ONCE(ii->persisted_size) : 0;
+    size_t bytes = folio_size(folio);
     size_t wanted = 0;
-    size_t offset;
+    unsigned int bvec_count = 0;
+    unsigned int bvec_capacity;
+    ssize_t got = 0;
     int ret = 0;
 
-    if (start >= 0 && (u64)start < persisted)
-        wanted = min_t(u64, folio_size(folio), persisted - (u64)start);
-    for (offset = 0; offset < folio_size(folio); offset += PAGE_SIZE) {
-        struct page *page = folio_page(folio, offset >> PAGE_SHIFT);
-        struct kvec vec;
-        struct iov_iter iter;
-        loff_t position = start + offset;
-        size_t chunk = offset < wanted ?
-            min_t(size_t, PAGE_SIZE, wanted - offset) : 0;
-        void *address = kmap_local_page(page);
-        ssize_t got = 0;
+    if (position >= 0 && (u64)position < persisted)
+        wanted = min_t(u64, bytes, persisted - (u64)position);
+    bvec_capacity = wanted ? DIV_ROUND_UP(wanted, PAGE_SIZE) : 0;
 
-        if (chunk) {
-            vec.iov_base = address;
-            vec.iov_len = chunk;
-            iov_iter_kvec(&iter, ITER_DEST, &vec, 1, chunk);
-            got = infilfs_native_read_iter_cached(inode, &position, &iter);
-        }
-        if (got != chunk) {
+    if (bvec_capacity > 1u) {
+        bvecs = kvmalloc_array(
+            bvec_capacity, sizeof(*bvecs), GFP_NOFS);
+        if (!bvecs)
+            return -ENOMEM;
+    }
+
+    if (wanted) {
+        ret = infilfs_pagecache_append_bvecs(
+            bvecs, bvec_capacity, &bvec_count, folio, wanted);
+        if (ret)
+            goto out;
+        iov_iter_bvec(&iter, ITER_DEST, bvecs, bvec_count, wanted);
+        got = infilfs_native_read_iter_cached(inode, &position, &iter);
+        if (got != wanted) {
             ret = got < 0 ? (int)got : -EIO;
-            kunmap_local(address);
-            break;
+            goto out;
         }
-        if (chunk < PAGE_SIZE)
-            memset(address + chunk, 0, PAGE_SIZE - chunk);
-        kunmap_local(address);
     }
-    if (!ret) {
-        flush_dcache_folio(folio);
-        folio_mark_uptodate(folio);
-    }
+
+    if (wanted < bytes)
+        infilfs_pagecache_zero_folio(folio, wanted, bytes - wanted);
+    flush_dcache_folio(folio);
+    folio_mark_uptodate(folio);
+
+out:
+    if (bvecs != &inline_bvec)
+        kvfree(bvecs);
     return ret;
 }
 
@@ -167,7 +242,6 @@ static int infilfs_readahead_cluster_submit(
     struct folio *first;
     struct inode *inode;
     struct infilfs_inode_info *ii;
-    struct kvec vec;
     struct iov_iter iter;
     loff_t position;
     u64 persisted;
@@ -188,33 +262,20 @@ static int infilfs_readahead_cluster_submit(
     if (position >= 0 && (u64)position < persisted)
         wanted = min_t(u64, cluster->bytes, persisted - (u64)position);
     if (wanted) {
-        vec.iov_base = cluster->buffer;
-        vec.iov_len = wanted;
-        iov_iter_kvec(&iter, ITER_DEST, &vec, 1, wanted);
+        iov_iter_bvec(
+            &iter, ITER_DEST, cluster->bvecs,
+            cluster->bvec_count, wanted);
         got = infilfs_native_read_iter_cached(inode, &position, &iter);
         if (got != wanted)
             ret = got < 0 ? (int)got : -EIO;
     }
     if (!ret && wanted < cluster->bytes)
-        memset(cluster->buffer + wanted, 0, cluster->bytes - wanted);
+        infilfs_readahead_zero_tail(cluster, wanted);
 
     for (i = 0; i < cluster->count; ++i) {
         struct folio *folio = cluster->folios[i];
 
         if (!ret) {
-            size_t source = (size_t)(folio_pos(folio) - cluster->position);
-            size_t copied = 0;
-
-            while (copied < folio_size(folio)) {
-                struct page *page = folio_page(folio, copied >> PAGE_SHIFT);
-                size_t chunk = min_t(size_t, PAGE_SIZE,
-                                     folio_size(folio) - copied);
-                void *address = kmap_local_page(page);
-
-                memcpy(address, cluster->buffer + source + copied, chunk);
-                kunmap_local(address);
-                copied += chunk;
-            }
             flush_dcache_folio(folio);
             folio_mark_uptodate(folio);
         } else {
@@ -224,6 +285,7 @@ static int infilfs_readahead_cluster_submit(
     }
 
     cluster->count = 0;
+    cluster->bvec_count = 0;
     cluster->bytes = 0;
     cluster->position = 0;
     return ret;
@@ -232,23 +294,27 @@ static int infilfs_readahead_cluster_submit(
 static void infilfs_readahead(struct readahead_control *rac)
 {
     struct infilfs_readahead_cluster cluster = {0};
-    unsigned int max_folios =
-        DIV_ROUND_UP(INFILFS_NATIVE_WRITEBACK_BATCH_BYTES, PAGE_SIZE) + 1u;
+    const size_t batch_bytes = INFILFS_NATIVE_WRITEBACK_BATCH_BYTES;
+    unsigned int max_segments =
+        DIV_ROUND_UP(batch_bytes, PAGE_SIZE) + 1u;
     struct folio *folio;
     int ret = 0;
 
-    cluster.buffer = kvmalloc(INFILFS_NATIVE_WRITEBACK_BATCH_BYTES, GFP_NOFS);
-    cluster.folios = kvmalloc_array(max_folios, sizeof(*cluster.folios),
-                                    GFP_NOFS);
-    cluster.capacity = max_folios;
-    if (!cluster.buffer || !cluster.folios)
+    cluster.bvecs = kvmalloc_array(
+        max_segments, sizeof(*cluster.bvecs), GFP_NOFS);
+    cluster.folios = kvmalloc_array(
+        max_segments, sizeof(*cluster.folios), GFP_NOFS);
+    cluster.capacity = max_segments;
+    cluster.bvec_capacity = max_segments;
+    if (!cluster.bvecs || !cluster.folios)
         goto fallback;
 
     while ((folio = readahead_folio(rac)) != NULL) {
         loff_t position = folio_pos(folio);
         size_t bytes = folio_size(folio);
+        unsigned int segments = DIV_ROUND_UP(bytes, PAGE_SIZE);
 
-        if (bytes > INFILFS_NATIVE_WRITEBACK_BATCH_BYTES) {
+        if (bytes > batch_bytes) {
             ret = infilfs_readahead_cluster_submit(&cluster);
             if (ret) {
                 infilfs_read_folio(rac->file, folio);
@@ -260,8 +326,9 @@ static void infilfs_readahead(struct readahead_control *rac)
 
         if (cluster.count &&
             (position != cluster.position + cluster.bytes ||
-             bytes > INFILFS_NATIVE_WRITEBACK_BATCH_BYTES - cluster.bytes ||
-             cluster.count >= cluster.capacity)) {
+             bytes > batch_bytes - cluster.bytes ||
+             cluster.count >= cluster.capacity ||
+             segments > cluster.bvec_capacity - cluster.bvec_count)) {
             ret = infilfs_readahead_cluster_submit(&cluster);
             if (ret) {
                 infilfs_read_folio(rac->file, folio);
@@ -271,10 +338,17 @@ static void infilfs_readahead(struct readahead_control *rac)
 
         if (!cluster.count)
             cluster.position = position;
+        ret = infilfs_pagecache_append_bvecs(
+            cluster.bvecs, cluster.bvec_capacity,
+            &cluster.bvec_count, folio, bytes);
+        if (ret) {
+            infilfs_read_folio(rac->file, folio);
+            goto fallback_remaining;
+        }
         cluster.folios[cluster.count++] = folio;
         cluster.bytes += bytes;
 
-        if (cluster.bytes == INFILFS_NATIVE_WRITEBACK_BATCH_BYTES) {
+        if (cluster.bytes == batch_bytes) {
             ret = infilfs_readahead_cluster_submit(&cluster);
             if (ret)
                 goto fallback_remaining;
@@ -285,7 +359,7 @@ static void infilfs_readahead(struct readahead_control *rac)
 
 fallback:
     kvfree(cluster.folios);
-    kvfree(cluster.buffer);
+    kvfree(cluster.bvecs);
     while ((folio = readahead_folio(rac)) != NULL)
         infilfs_read_folio(rac->file, folio);
     return;
@@ -295,7 +369,7 @@ fallback_remaining:
         infilfs_read_folio(rac->file, folio);
 out:
     kvfree(cluster.folios);
-    kvfree(cluster.buffer);
+    kvfree(cluster.bvecs);
 }
 
 static int infilfs_pagecache_prepare_folio(struct address_space *mapping,
