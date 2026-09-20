@@ -1501,6 +1501,55 @@ jobs:
       - name: Report runtime mount test availability
         if: steps.headers.outputs.runtime_kdir == ''
         run: echo 'Native module compiled successfully; runtime load/mount skipped because matching hosted-runner kernel headers were unavailable.'
+  upstream-linux-7-compile:
+    name: Upstream Linux 7.0 compile compatibility
+    concurrency:
+      group: native-kernel-upstream-7-${{ github.ref }}
+      cancel-in-progress: true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Install upstream kernel build dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison build-essential flex git libelf-dev libssl-dev
+
+      - name: Prepare exact upstream Linux 7.0 tree
+        id: upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          kdir="$RUNNER_TEMP/linux-7.0"
+          git clone --depth 1 --branch v7.0 \
+            https://github.com/torvalds/linux.git "$kdir"
+          make -C "$kdir" defconfig
+          make -C "$kdir" -j2 prepare modules_prepare
+          test -f "$kdir/include/generated/utsrelease.h"
+          grep -Fq '"7.0' "$kdir/include/generated/utsrelease.h"
+          printf 'kdir=%s\n' "$kdir" >> "$GITHUB_OUTPUT"
+
+      - name: Guard iomap compatibility contract
+        run: bash tests/native-kernel-maintainability-policy.sh .
+
+      - name: Compile native module against upstream Linux 7.0
+        env:
+          KDIR: ${{ steps.upstream.outputs.kdir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          make -C kernel clean KDIR="$KDIR"
+          make -C kernel KDIR="$KDIR"
+          test -s kernel/infiltratorfs.ko
+          test "$(modinfo -F name kernel/infiltratorfs.ko)" = infiltratorfs
+          test "$(modinfo -F license kernel/infiltratorfs.ko)" = GPL
+
   local-kernel-compile:
     # This is intentionally an opt-in check for Shannon's exact local kernel.
     # Normal push/release qualification must not depend on a home runner.
