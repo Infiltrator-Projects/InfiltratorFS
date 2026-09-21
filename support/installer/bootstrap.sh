@@ -110,22 +110,39 @@ prepare_desktop_bundle() {
     rm -rf "$destination"
     mkdir -p "$destination"
     tar -xf "$DESKTOP_BUNDLE" -C "$destination"
-    for pattern in 'infiltratorfs-libblockdev-fs3_*.deb'                    'infiltratorfs-gnome-disk-utility_*.deb'                    'infiltratorfs-desktop-integration_*.deb'                    'infiltratorfs-desktop-integration.manifest'; do
+    for pattern in 'infiltratorfs-libblockdev-fs3_*.deb' \
+                   'infiltratorfs-gnome-disk-utility_*.deb' \
+                   'infiltratorfs-desktop-integration_*.deb' \
+                   'infiltratorfs-desktop-integration.manifest'; do
         file="$(find "$destination" -maxdepth 1 -type f -name "$pattern" -print -quit)"
         [[ -s "$file" ]] || {
             echo "Bundled desktop integration is incomplete: $pattern" >&2
             return 1
         }
     done
-    [[ "$(sed -n 's/^target=//p' "$destination/infiltratorfs-desktop-integration.manifest")" =        ubuntu-24.04-linuxmint-22.x ]] || {
+    [[ "$(sed -n 's/^target=//p' "$destination/infiltratorfs-desktop-integration.manifest")" = \
+       ubuntu-24.04-linuxmint-22.x ]] || {
         echo 'Bundled desktop integration target is invalid.' >&2
         return 1
     }
 }
 
+desktop_bundle_host_supported() {
+    [[ -r /etc/os-release ]] || return 1
+    (
+        . /etc/os-release
+        case "${ID:-}:${VERSION_ID:-}" in
+            ubuntu:24.04|linuxmint:22*) exit 0 ;;
+            *) exit 1 ;;
+        esac
+    )
+}
+
 verify_desktop_integration() {
     local status owner
-    for package in infiltratorfs-desktop-integration                    infiltratorfs-gnome-disk-utility                    infiltratorfs-libblockdev-fs3; do
+    for package in infiltratorfs-desktop-integration \
+                   infiltratorfs-gnome-disk-utility \
+                   infiltratorfs-libblockdev-fs3; do
         status="$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null || true)"
         [[ "$status" = "install ok installed" ]] || {
             echo "InfiltratorFS desktop integration package is not installed: $package" >&2
@@ -138,7 +155,10 @@ verify_desktop_integration() {
         return 1
     }
     if command -v gdbus >/dev/null 2>&1; then
-        gdbus call --system --dest org.freedesktop.UDisks2             --object-path /org/freedesktop/UDisks2/Manager             --method org.freedesktop.UDisks2.Manager.CanFormat infiltratorfs             2>/dev/null | grep -Fq true || {
+        gdbus call --system --dest org.freedesktop.UDisks2 \
+            --object-path /org/freedesktop/UDisks2/Manager \
+            --method org.freedesktop.UDisks2.Manager.CanFormat infiltratorfs \
+            2>/dev/null | grep -Fq true || {
                 echo 'UDisks does not advertise InfiltratorFS formatting after installation.' >&2
                 return 1
             }
@@ -249,6 +269,10 @@ fi
 desktop_dir="$BUILD_DIR/desktop-integration"
 declare -a desktop_debs=()
 if [[ -f "$DESKTOP_BUNDLE" ]]; then
+    desktop_bundle_host_supported || {
+        echo 'The bundled desktop integration is qualified only for Ubuntu 24.04 and Linux Mint 22.x.' >&2
+        exit 1
+    }
     prepare_desktop_bundle "$desktop_dir"
     desktop_debs+=(
         "$(find "$desktop_dir" -maxdepth 1 -type f -name 'infiltratorfs-libblockdev-fs3_*.deb' -print -quit)"
