@@ -51,7 +51,7 @@ static int file_validate(uint8_t block[INFS_BLOCK_SIZE],
         return INFS_STATUS_CORRUPT;
     struct infs_file_payload_disk *p =
         (struct infs_file_payload_disk *)(block + sizeof(*hdr));
-    if (validate_common_metadata(vol, &p->attributes, &p->posix) != INFS_STATUS_OK ||
+    if (validate_common_metadata(&p->attributes, &p->posix) != INFS_STATUS_OK ||
         infs_le32_to_cpu(p->data_checksum_type) != INFS_CHECKSUM_SHA256)
         return INFS_STATUS_CORRUPT;
     uint32_t count = infs_le32_to_cpu(p->extent_count);

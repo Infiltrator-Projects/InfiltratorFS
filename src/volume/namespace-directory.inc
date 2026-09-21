@@ -11,7 +11,7 @@ static int dir_validate(uint8_t block[INFS_BLOCK_SIZE],
 
     struct infs_directory_payload_disk *payload =
         (struct infs_directory_payload_disk *)(block + sizeof(*hdr));
-    if (validate_common_metadata(vol, &payload->attributes, &payload->posix) !=
+    if (validate_common_metadata(&payload->attributes, &payload->posix) !=
         INFS_STATUS_OK)
         return INFS_STATUS_CORRUPT;
 
@@ -99,7 +99,7 @@ static int symlink_validate(
         return INFS_STATUS_CORRUPT;
     struct infs_symlink_payload_disk *payload =
         (struct infs_symlink_payload_disk *)(header + 1);
-    if (validate_common_metadata(vol, &payload->attributes, &payload->posix) !=
+    if (validate_common_metadata(&payload->attributes, &payload->posix) !=
             INFS_STATUS_OK ||
         infs_le64_to_cpu(payload->attributes.link_count) != 1u)
         return INFS_STATUS_CORRUPT;

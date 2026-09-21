@@ -98,7 +98,6 @@ static infs_status transaction_next_generation(const struct infs_volume *vol,
 }
 
 static int validate_common_metadata(
-    const struct infs_volume *vol,
     const struct infs_attributes_disk *attributes,
     const struct infs_posix_compat_disk *posix);
 static infs_status security_object_validate_owner(

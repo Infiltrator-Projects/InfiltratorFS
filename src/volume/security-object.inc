@@ -248,6 +248,10 @@ infs_status infs_get_security_descriptor(
         return INFS_STATUS_CORRUPT;
     if (id_is_zero(attributes->security_object_id))
         return INFS_STATUS_NOT_FOUND;
+    status = security_object_validate_owner(
+        vol, attributes->security_object_id, owner.object_id);
+    if (status != INFS_STATUS_OK)
+        return status;
     struct infs_lookup security;
     status = index_find(vol, attributes->security_object_id, &security);
     if (status != INFS_STATUS_OK || security.type != INFS_OBJECT_SECURITY)

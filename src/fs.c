@@ -4,6 +4,7 @@
 #include "infilfs/checksum.h"
 #include "infilfs/endian.h"
 #include "infilfs/storage.h"
+#include "infilfs/security.h"
 #include "infilfs/utf8.h"
 
 #include <stddef.h>

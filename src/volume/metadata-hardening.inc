@@ -3,7 +3,6 @@
  * checksum ownership and the scalable Format 0.18 metadata representation. */
 
 static int validate_common_metadata(
-    const struct infs_volume *vol,
     const struct infs_attributes_disk *attributes,
     const struct infs_posix_compat_disk *posix)
 {
@@ -16,9 +15,7 @@ static int validate_common_metadata(
         !timestamp_disk_valid(&attributes->modification_time) ||
         !timestamp_disk_valid(&attributes->change_time))
         return INFS_STATUS_CORRUPT;
-    if ((!id_is_zero(attributes->security_object_id) &&
-         !security_objects_enabled(vol)) ||
-        !id_is_zero(attributes->extended_attributes_object_id))
+    if (!id_is_zero(attributes->extended_attributes_object_id))
         return INFS_STATUS_CORRUPT;
     if ((infs_le32_to_cpu(posix->permissions) & ~07777u) != 0 ||
         infs_le32_to_cpu(posix->flags) != 0)
