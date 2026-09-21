@@ -127,7 +127,10 @@ jobs:
           ! grep -q 'usr/bin/infilfs-fuse$' "$contents"
           dpkg-deb --field "release-assets/$deb" Depends | grep -Fq infiltratorfs-desktop-integration
           "release-assets/$installer" --verify
-          grep -aq 'infiltratorfs-desktop-integration-bundle.tar' "release-assets/$installer"
+          payload_start="$(awk '/^__INFILTRATORFS_NATIVE_PAYLOAD__$/ { print NR + 1; exit }' "release-assets/$installer")"
+          test -n "$payload_start"
+          tail -n +"$payload_start" "release-assets/$installer" | tar -tzf - | \
+            grep -Fxq './infiltratorfs-desktop-integration-bundle.tar'
           test -s "release-assets/$windows"
 
       - name: Preserve exact release assets
