@@ -1549,6 +1549,7 @@ static int infilfs_validate_checkpoint_graph(
     const struct infilfs_directory_payload_disk *root_payload;
     u64 indexed_root;
     u16 indexed_type;
+    struct infilfs_allocation_layout committed_layout = {0};
     size_t bitmap_bytes = 0;
     u8 *bitmap = NULL;
     u8 *root = NULL;
@@ -1569,7 +1570,7 @@ static int infilfs_validate_checkpoint_graph(
     sbi->disk = *candidate;
 
     ret = infilfs_allocation_map_load(
-        sb, candidate, &bitmap, &bitmap_bytes, NULL);
+        sb, candidate, &bitmap, &bitmap_bytes, &committed_layout);
     if (ret)
         goto out;
 
@@ -1642,7 +1643,26 @@ out:
     write_unlock(&sbi->bitmap_lock);
     kfree(index);
     kfree(root);
+
+    /*
+     * The allocation tree is the expensive part of checkpoint selection.
+     * Keep the exact bitmap and tree geometry that were just authenticated
+     * instead of throwing them away and rereading the same tree during RW
+     * initialization. Failed candidates still release all candidate state.
+     */
+    if (!ret) {
+        if (sbi->bitmap || sbi->allocation_leaf_blocks ||
+            sbi->allocation_branch_blocks) {
+            ret = -EFSCORRUPTED;
+        } else {
+            sbi->bitmap = bitmap;
+            sbi->bitmap_bytes = bitmap_bytes;
+            bitmap = NULL;
+            infilfs_allocation_cache_replace(sbi, &committed_layout);
+        }
+    }
     kvfree(bitmap);
+    infilfs_allocation_layout_destroy(&committed_layout);
     return ret;
 }
 

@@ -882,12 +882,34 @@ static int infilfs_rw_mount_init(struct super_block *sb)
     struct infilfs_allocation_layout committed_layout = {0};
     int ret;
 
-    ret = infilfs_allocation_map_load(
-        sb, &sbi->disk, &sbi->bitmap, &sbi->bitmap_bytes,
-        &committed_layout);
-    if (ret)
-        goto fail;
-    infilfs_allocation_cache_replace(sbi, &committed_layout);
+    /*
+     * Normal mount arrives with the selected checkpoint's allocation bitmap
+     * and tree geometry already validated and transferred by checkpoint
+     * selection. Keep a defensive fallback for internal callers, but never
+     * reread a healthy mount's allocation tree here.
+     */
+    if (sbi->bitmap) {
+        struct infilfs_allocation_layout cached_view = {0};
+        size_t expected_bitmap_bytes = 0;
+
+        ret = infilfs_allocation_runtime_bytes(
+            infilfs_volume_blocks(sbi), &expected_bitmap_bytes);
+        if (ret || sbi->bitmap_bytes != expected_bitmap_bytes) {
+            ret = ret ? ret : -EFSCORRUPTED;
+            goto fail;
+        }
+        ret = infilfs_allocation_cache_view(
+            sbi, &sbi->disk, &cached_view);
+        if (ret)
+            goto fail;
+    } else {
+        ret = infilfs_allocation_map_load(
+            sb, &sbi->disk, &sbi->bitmap, &sbi->bitmap_bytes,
+            &committed_layout);
+        if (ret)
+            goto fail;
+        infilfs_allocation_cache_replace(sbi, &committed_layout);
+    }
 
     ret = infilfs_parallel_allocator_mount_init(sb);
     if (ret)

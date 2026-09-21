@@ -199,6 +199,26 @@ grep -Fq 'mapping_set_folio_order_range(' "$driver" || \
 grep -Fq 'get_order((unsigned long)INFILFS_COMPRESSION_CLUSTER_BLOCKS *' "$driver" || \
     fail 'large-folio maximum is no longer tied to the compression cluster'
 
+# Checkpoint selection already authenticates and expands the live allocation
+# tree. Preserve that selected runtime state across the mount boundary rather
+# than rereading the entire allocation tree in RW initialization.
+checkpoint_graph_body="$(sed -n '/static int infilfs_validate_checkpoint_graph(/,/^}/p' "$driver")"
+grep -Fq 'struct infilfs_allocation_layout committed_layout = {0};' <<<"$checkpoint_graph_body" || \
+    fail 'checkpoint validation no longer retains allocation-tree geometry'
+grep -Fq 'sb, candidate, &bitmap, &bitmap_bytes, &committed_layout);' <<<"$checkpoint_graph_body" || \
+    fail 'checkpoint validation stopped loading transferable allocation state'
+grep -Fq 'sbi->bitmap = bitmap;' <<<"$checkpoint_graph_body" || \
+    fail 'validated allocation bitmap is not transferred to mount state'
+grep -Fq 'infilfs_allocation_cache_replace(sbi, &committed_layout);' <<<"$checkpoint_graph_body" || \
+    fail 'validated allocation-tree geometry is not transferred to mount state'
+mount_init_body="$(sed -n '/int infilfs_rw_mount_init(struct super_block \*sb)/,/^}/p' "$kernel/infiltratorfs_rw_legacy.inc")"
+grep -Fq 'if (sbi->bitmap)' <<<"$mount_init_body" || \
+    fail 'RW mount init no longer adopts checkpoint-selected allocation state'
+grep -Fq 'infilfs_allocation_cache_view(' <<<"$mount_init_body" || \
+    fail 'RW mount init does not validate transferred allocation geometry'
+grep -Fq '} else {' <<<"$mount_init_body" || \
+    fail 'RW mount init lost defensive allocation-map fallback'
+
 # Writable mount latency must not scale with every regular-file object. Crash
 # orphan discovery runs after mount, is fenced to the committed mount
 # generation, and may only hold the topology read lock for bounded batches.
