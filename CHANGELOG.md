@@ -4,6 +4,9 @@ This file records user-visible, compatibility, architecture and validation chang
 
 ## Unreleased
 
+- Fix a Manager discovery deadlock where Inspect was disabled unless the target had already been identified as InfiltratorFS. Inspect is now available for any selected unmounted target, while Check, Scrub, Mount and filesystem-specific operations still require positive InfiltratorFS identification.
+- Add an executable regression test proving an unknown unmounted target remains inspectable without weakening the safety gates on filesystem-specific maintenance.
+
 ## 0.18.66 — 2026-09-21
 
 - Replace foreground portable-security scans with bounded persistent lookup: resolvable bindings gain deterministic secondary-index objects in the existing object index, immutable descriptors use content-derived collision-slot IDs for direct reuse, opaque bindings remain non-resolvable, and ACL detach/unlink becomes independent of total namespace size with reclamation deferred to graph-tracing maintenance.
