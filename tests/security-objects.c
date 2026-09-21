@@ -157,6 +157,14 @@ int main(void)
     ok(infs_put_security_principal(&volume, &group) == INFS_STATUS_OK,
        "create group principal");
 
+    struct infs_security_principal duplicate = {0};
+    duplicate.kind = INFS_PRINCIPAL_USER;
+    duplicate.bindings = &user_bindings[0];
+    duplicate.binding_count = 1;
+    ok(infs_put_security_principal(&volume, &duplicate) ==
+           INFS_STATUS_ALREADY_EXISTS,
+       "reject duplicate unique platform binding");
+
     struct infs_security_principal got_principal = {0};
     ok(infs_get_security_principal(
            &volume, user.principal_id, &got_principal) == INFS_STATUS_OK,
@@ -224,6 +232,37 @@ int main(void)
            &descriptor, subjects, 2, INFS_RIGHT_DELETE) == 0,
        "ordered deny evaluation");
 
+    struct infs_security_ace ordered[2] = {0};
+    memcpy(ordered[0].principal_id, user.principal_id, 16);
+    ordered[0].rights = INFS_RIGHT_READ_DATA;
+    ordered[0].disposition = INFS_ACE_ALLOW;
+    memcpy(ordered[1].principal_id, user.principal_id, 16);
+    ordered[1].rights = INFS_RIGHT_READ_DATA;
+    ordered[1].disposition = INFS_ACE_DENY;
+    struct infs_security_descriptor ordered_descriptor = descriptor;
+    ordered_descriptor.aces = ordered;
+    ordered_descriptor.ace_count = 2;
+    ok(infs_security_access_allowed(
+           &ordered_descriptor, subjects, 2, INFS_RIGHT_READ_DATA) == 1,
+       "later deny cannot revoke an already decided right");
+
+    ordered[0].disposition = UINT16_C(99);
+    ok(infs_security_access_allowed(
+           &ordered_descriptor, subjects, 2, INFS_RIGHT_READ_DATA) == 0,
+       "malformed in-memory ACE fails closed");
+    ordered[0].disposition = INFS_ACE_ALLOW;
+
+    struct infs_security_descriptor missing = descriptor;
+    uint8_t missing_id[16];
+    memset(missing_id, 0xa5, sizeof(missing_id));
+    struct infs_security_ace missing_ace = aces[0];
+    memcpy(missing_ace.principal_id, missing_id, 16);
+    missing.aces = &missing_ace;
+    missing.ace_count = 1;
+    ok(infs_set_security_descriptor(&volume, "/one", &missing) ==
+           INFS_STATUS_INVALID_ARGUMENT,
+       "reject descriptor with missing principal");
+
     struct infs_security_descriptor inherited = {0};
     ok(infs_security_inherit_descriptor(
            &descriptor, 0, user.principal_id, group.principal_id,
@@ -232,6 +271,20 @@ int main(void)
     ok(inherited.ace_count == 1 &&
        (inherited.aces[0].flags & INFS_ACE_INHERITED) != 0,
        "file inheritance filters and marks ACE");
+    infs_free_security_descriptor(&inherited);
+
+    struct infs_security_ace no_propagate_ace = aces[2];
+    no_propagate_ace.flags =
+        INFS_ACE_INHERIT_FILE | INFS_ACE_NO_PROPAGATE;
+    struct infs_security_descriptor no_propagate = descriptor;
+    no_propagate.aces = &no_propagate_ace;
+    no_propagate.ace_count = 1;
+    ok(infs_security_inherit_descriptor(
+           &no_propagate, 1, user.principal_id, group.principal_id,
+           &inherited) == INFS_STATUS_OK,
+       "inherit no-propagate descriptor");
+    ok(inherited.ace_count == 0,
+       "file-only no-propagate ACE does not create useless directory ACE");
     infs_free_security_descriptor(&inherited);
 
     const size_t large_count = (size_t)INFS_SECURITY_INLINE_ACES + 5u;

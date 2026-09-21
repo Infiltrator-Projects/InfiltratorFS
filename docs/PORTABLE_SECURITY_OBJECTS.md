@@ -135,11 +135,12 @@ Linux and Windows adapters resolve local credentials into principal IDs through
 typed bindings, project native permissions onto the portable rights mask and
 preserve platform-specific security metadata that has no portable equivalent.
 
-The native Linux driver may continue using its established POSIX compatibility
-metadata while the portable evaluator is being wired into enforcement, but
-portable security objects are not considered roadmap-complete until persistent
-objects, inheritance, access evaluation, platform mapping and qualification all
-agree on this contract.
+The native Linux driver continues to use its established POSIX compatibility
+metadata and VFS ACL enforcement as the Linux projection. Portable-security
+completion requires the persistent objects, ordered evaluator, inheritance,
+Linux/Windows projection rules, native-reader acceptance and exact-source
+qualification to agree on this contract. Platform-specific UI/driver features
+that go beyond this portable contract remain separate adapter roadmap items.
 
 ## Pre-1.0 compatibility
 

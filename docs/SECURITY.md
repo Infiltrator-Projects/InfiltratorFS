@@ -98,9 +98,9 @@ take ownership
 
 Adapters translate native access rules onto these rights. Traditional POSIX
 read/write/execute bits are one projection; Windows DACL rights are another.
-The vocabulary is deliberately available before the final security-object
-record exists so persistent ACL design cannot accidentally make one platform's
-numeric ABI authoritative.
+The vocabulary is deliberately independent of the persistent security-object
+encoding so neither the format nor an adapter can accidentally make one
+platform's numeric ABI authoritative.
 
 ## ACL entries
 
@@ -137,9 +137,9 @@ security/xattr metadata. The mapping policy is explicit:
 The executable projection helpers are in `include/infilfs/posix_security.h`.
 Mounted qualification exercises real `setfacl`/`getfacl`, chmod mask
 interaction, default-ACL inheritance, rsync ACL preservation, remount
-durability and enforcement through an unprivileged UID. Current Linux metadata
-remains a compatibility layer until versioned portable security objects and
-principals are implemented.
+durability and enforcement through an unprivileged UID. Linux mode/POSIX ACL
+metadata remains the native adapter's compatibility/enforcement projection; it
+does not redefine the portable principal or ACL object format.
 
 ## Windows mapping
 

@@ -12,6 +12,31 @@ static int id_nonzero(const uint8_t id[16])
     return bits != 0;
 }
 
+static int security_ace_valid(const struct infs_security_ace *ace)
+{
+    return ace && id_nonzero(ace->principal_id) && ace->rights != 0 &&
+        (ace->rights & ~INFS_RIGHT_ALL) == 0 &&
+        (ace->disposition == INFS_ACE_ALLOW ||
+         ace->disposition == INFS_ACE_DENY) &&
+        (ace->flags & ~INFS_ACE_KNOWN_FLAGS) == 0;
+}
+
+static int security_descriptor_valid(
+    const struct infs_security_descriptor *descriptor)
+{
+    if (!descriptor ||
+        !id_nonzero(descriptor->owner_principal_id) ||
+        !id_nonzero(descriptor->primary_group_principal_id) ||
+        (descriptor->flags & ~INFS_SECURITY_KNOWN_FLAGS) != 0 ||
+        (descriptor->flags & INFS_SECURITY_DACL_PRESENT) == 0 ||
+        (descriptor->ace_count && !descriptor->aces))
+        return 0;
+    for (size_t i = 0; i < descriptor->ace_count; ++i)
+        if (!security_ace_valid(&descriptor->aces[i]))
+            return 0;
+    return 1;
+}
+
 static int subject_has_principal(const uint8_t *ids, size_t count,
                                  const uint8_t id[16])
 {
@@ -28,9 +53,10 @@ int infs_security_access_allowed(
     const uint8_t *principal_ids, size_t principal_count,
     infs_rights_mask requested)
 {
-    if (!descriptor || (requested & ~INFS_RIGHT_ALL) != 0 ||
-        (descriptor->flags & ~INFS_SECURITY_KNOWN_FLAGS) != 0 ||
-        (descriptor->flags & INFS_SECURITY_DACL_PRESENT) == 0)
+    if (!security_descriptor_valid(descriptor) ||
+        (requested & ~INFS_RIGHT_ALL) != 0 ||
+        (principal_count && !principal_ids) ||
+        principal_count > SIZE_MAX / 16u)
         return 0;
     if (requested == 0)
         return 1;
@@ -62,11 +88,10 @@ infs_status infs_security_inherit_descriptor(
     const uint8_t primary_group_principal_id[16],
     struct infs_security_descriptor *child)
 {
-    if (!parent || !owner_principal_id || !primary_group_principal_id ||
-        !child || !id_nonzero(owner_principal_id) ||
-        !id_nonzero(primary_group_principal_id) ||
-        (parent->flags & ~INFS_SECURITY_KNOWN_FLAGS) != 0 ||
-        (parent->flags & INFS_SECURITY_DACL_PRESENT) == 0)
+    if (!security_descriptor_valid(parent) ||
+        !owner_principal_id || !primary_group_principal_id || !child ||
+        !id_nonzero(owner_principal_id) ||
+        !id_nonzero(primary_group_principal_id))
         return INFS_STATUS_INVALID_ARGUMENT;
 
     memset(child, 0, sizeof(*child));
@@ -79,7 +104,13 @@ infs_status infs_security_inherit_descriptor(
     for (size_t i = 0; i < parent->ace_count; ++i) {
         uint16_t flags = parent->aces[i].flags;
         if (child_is_directory) {
-            if (flags & (INFS_ACE_INHERIT_DIRECTORY | INFS_ACE_INHERIT_FILE))
+            int file_only_no_propagate =
+                (flags & INFS_ACE_INHERIT_FILE) != 0 &&
+                (flags & INFS_ACE_INHERIT_DIRECTORY) == 0 &&
+                (flags & INFS_ACE_NO_PROPAGATE) != 0;
+            if (!file_only_no_propagate &&
+                (flags & (INFS_ACE_INHERIT_DIRECTORY |
+                          INFS_ACE_INHERIT_FILE)) != 0)
                 ++count;
         } else if (flags & INFS_ACE_INHERIT_FILE) {
             ++count;
@@ -100,6 +131,11 @@ infs_status infs_security_inherit_descriptor(
             ((flags & (INFS_ACE_INHERIT_DIRECTORY |
                        INFS_ACE_INHERIT_FILE)) != 0) :
             ((flags & INFS_ACE_INHERIT_FILE) != 0);
+        if (child_is_directory &&
+            (flags & INFS_ACE_INHERIT_FILE) != 0 &&
+            (flags & INFS_ACE_INHERIT_DIRECTORY) == 0 &&
+            (flags & INFS_ACE_NO_PROPAGATE) != 0)
+            inherit = 0;
         if (!inherit)
             continue;
 
