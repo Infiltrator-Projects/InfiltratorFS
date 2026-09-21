@@ -119,6 +119,19 @@ grep -Fq 'infiltratorfs-desktop-integration' "$noble_bundle_builder"
 grep -Fq 'Provides' "$noble_bundle_builder"
 grep -Fq 'Conflicts' "$noble_bundle_builder"
 grep -Fq 'Replaces' "$noble_bundle_builder"
+
+# A normal InfiltratorFS install must not be allowed to stop at udev identity
+# while leaving stock GNOME Disks to render "Unknown (infiltratorfs 0.18)".
+# The core package therefore requires the managed integration package, and the
+# native .run path carries the exact ABI-matched replacement packages with it.
+grep -Fq 'desktop_depends=", udisks2, infiltratorfs-desktop-integration"' \
+    "$repo_root/packaging/build-linux-packages.sh"
+grep -Fq 'INFILTRATORFS_DESKTOP_BUNDLE_DIR' \
+    "$repo_root/packaging/build-linux-packages.sh"
+grep -Fq 'infiltratorfs-desktop-integration-bundle.tar' "$bootstrap"
+grep -Fq 'verify_desktop_integration' "$bootstrap"
+grep -Fq 'dpkg-query -S /usr/bin/gnome-disks' "$bootstrap"
+bash -n "$repo_root/packaging/build-linux-packages.sh"
 grep -Fq 'BD_FS_TECH_INFILTRATORFS' "$noble_libblockdev_patch"
 grep -Fq 'InfiltratorFS formatter service is unavailable' "$noble_gnome_patch"
 grep -Fq 'src/disks/gducreateotherpage.c' "$noble_gnome_patch"
