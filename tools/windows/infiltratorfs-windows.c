@@ -908,7 +908,7 @@ static void update_buttons(void)
     EnableWindow(GetDlgItem(g_main_window, IDC_FORMAT), enabled.format);
     EnableWindow(GetDlgItem(g_main_window, IDC_ADD_FILES), enabled.file_mutation);
     EnableWindow(GetDlgItem(g_main_window, IDC_ADD_FOLDER), enabled.file_mutation);
-    EnableWindow(GetDlgItem(g_main_window, IDC_INSPECT), enabled.maintenance);
+    EnableWindow(GetDlgItem(g_main_window, IDC_INSPECT), enabled.inspect);
     EnableWindow(GetDlgItem(g_main_window, IDC_CHECK), enabled.maintenance);
     EnableWindow(GetDlgItem(g_main_window, IDC_SCRUB), enabled.maintenance);
     EnableWindow(GetDlgItem(g_main_window, IDC_FORENSIC), enabled.maintenance);
