@@ -244,6 +244,21 @@ int main(void)
        memcmp(resolved, user.principal_id, 16) == 0,
        "reverse binding lookup");
 
+    struct infs_security_binding old_uid = user_bindings[0];
+    ok(infs_security_binding_init_posix(
+           &user_bindings[0], INFS_BINDING_POSIX_UID,
+           authority_a, 1001) == INFS_STATUS_OK,
+       "build replacement scoped UID binding");
+    ok(infs_put_security_principal(&volume, &user) == INFS_STATUS_OK,
+       "update persistent binding index");
+    ok(infs_find_security_principal_by_binding(
+           &volume, &old_uid, resolved) == INFS_STATUS_NOT_FOUND,
+       "removed binding no longer resolves");
+    ok(infs_find_security_principal_by_binding(
+           &volume, &user_bindings[0], resolved) == INFS_STATUS_OK &&
+       memcmp(resolved, user.principal_id, 16) == 0,
+       "replacement binding resolves");
+
     ok(infs_create_file(&volume, "/one", NULL) == INFS_STATUS_OK,
        "create first file");
     ok(infs_create_file(&volume, "/two", NULL) == INFS_STATUS_OK,
@@ -284,6 +299,8 @@ int main(void)
        "get descriptor attributes");
     ok(memcmp(one.security_object_id, two.security_object_id, 16) == 0,
        "identical descriptors are single-instanced");
+    uint8_t shared_descriptor_id[16];
+    memcpy(shared_descriptor_id, one.security_object_id, 16);
 
     uint8_t subjects[32];
     memcpy(subjects, user.principal_id, 16);
@@ -452,9 +469,17 @@ int main(void)
     infs_free_security_descriptor(&got);
     ok(infs_set_security_descriptor(&volume, "/two", NULL) == INFS_STATUS_OK,
        "detach final shared descriptor");
+    ok(infs_set_security_descriptor(
+           &volume, "/one", &descriptor) == INFS_STATUS_OK,
+       "reattach canonical descriptor without namespace scan");
+    ok(infs_get_attributes(&volume, "/one", &one) == INFS_STATUS_OK &&
+       memcmp(one.security_object_id, shared_descriptor_id, 16) == 0,
+       "content-addressed descriptor reuses preserved object");
+    ok(infs_set_security_descriptor(&volume, "/one", NULL) == INFS_STATUS_OK,
+       "detach reattached descriptor");
     ok(infs_scrub(&volume, &report) == INFS_STATUS_OK &&
        report.metadata_errors == 0,
-       "scrub after descriptor reclamation");
+       "scrub after descriptor detach");
 
     infs_volume_close(&volume);
     free(image.p);

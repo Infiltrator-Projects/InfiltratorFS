@@ -50,12 +50,24 @@ typedef uint64_t infs_rights_mask;
 #define INFS_SECURITY_BINDING_MAX 68u
 #endif
 
+#ifndef INFS_SECURITY_POSIX_AUTHORITY_SIZE
 #define INFS_SECURITY_POSIX_AUTHORITY_SIZE 16u
+#endif
+#ifndef INFS_SECURITY_POSIX_BINDING_SIZE
 #define INFS_SECURITY_POSIX_BINDING_SIZE 20u
+#endif
+#ifndef INFS_SECURITY_WINDOWS_SID_MIN
 #define INFS_SECURITY_WINDOWS_SID_MIN 8u
+#endif
+#ifndef INFS_SECURITY_WINDOWS_SID_MAX
 #define INFS_SECURITY_WINDOWS_SID_MAX 68u
+#endif
+#ifndef INFS_SECURITY_WINDOWS_SID_REVISION
 #define INFS_SECURITY_WINDOWS_SID_REVISION 1u
+#endif
+#ifndef INFS_SECURITY_WINDOWS_SID_MAX_SUB_AUTHORITIES
 #define INFS_SECURITY_WINDOWS_SID_MAX_SUB_AUTHORITIES 15u
+#endif
 
 /* The all-zero ID remains invalid. IDs 00..00:01 through 00..00:1f are
  * permanently reserved for implicit portable security semantics. */
@@ -126,6 +138,12 @@ infs_status infs_security_binding_get_posix(
     uint32_t *numeric_id);
 infs_status infs_security_binding_init_windows_sid(
     struct infs_security_binding *binding, const uint8_t *sid, size_t size);
+infs_status infs_security_binding_digest(
+    const struct infs_security_binding *binding, uint8_t digest[32]);
+void infs_security_binding_index_object_id(
+    const uint8_t digest[32], uint16_t slot, uint8_t object_id[16]);
+void infs_security_descriptor_object_id(
+    const uint8_t digest[32], uint16_t slot, uint8_t object_id[16]);
 
 int infs_security_ace_is_valid(const struct infs_security_ace *ace);
 int infs_security_descriptor_is_valid(

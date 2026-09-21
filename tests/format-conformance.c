@@ -124,6 +124,8 @@ static void check_layout(void)
            "snapshot record size");
     expect(INFS_OBJECT_PRINCIPAL == 7u, "principal object type");
     expect(INFS_OBJECT_SECURITY == 8u, "security descriptor object type");
+    expect(INFS_OBJECT_SECURITY_BINDING == 9u,
+           "security binding index object type");
     expect(INFS_SECURITY_VERSION == 2u, "portable security payload version");
     expect(INFS_INCOMPAT_PORTABLE_SECURITY == UINT64_C(0x0000000000008000),
            "portable security incompatibility bit");
@@ -131,18 +133,27 @@ static void check_layout(void)
            "scoped POSIX binding size");
     expect(INFS_SECURITY_WINDOWS_SID_MAX == INFS_SECURITY_BINDING_MAX,
            "Windows SID fits complete binding payload");
+    expect(INFS_SECURITY_HASH_SLOTS == 32u,
+           "security collision probe bound");
     expect(sizeof(struct infs_principal_payload_disk) == 16u,
            "principal payload size");
     expect(sizeof(struct infs_security_binding_disk) == 76u,
            "security binding size");
     expect(sizeof(struct infs_security_payload_disk) == 80u,
            "security descriptor payload size");
+    expect(sizeof(struct infs_security_binding_index_payload_disk) == 128u,
+           "security binding index payload size");
     expect(sizeof(struct infs_security_ace_disk) == 32u,
            "security ACE size");
     expect(offsetof(struct infs_security_binding_disk, value) == 8u,
            "security binding value offset");
+    expect(offsetof(struct infs_security_payload_disk, identity_slot) == 12u,
+           "security descriptor collision-slot offset");
     expect(offsetof(struct infs_security_payload_disk, semantic_digest) == 48u,
            "security descriptor digest offset");
+    expect(offsetof(struct infs_security_binding_index_payload_disk,
+                    binding_digest) == 24u,
+           "security binding digest offset");
     expect(offsetof(struct infs_security_ace_disk, rights) == 16u,
            "security ACE rights offset");
     expect(INFS_SNAPSHOT_RECORDS_PER_PAGE == 26u,

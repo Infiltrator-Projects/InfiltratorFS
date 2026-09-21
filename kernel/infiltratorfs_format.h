@@ -46,6 +46,7 @@
 #define INFILFS_OBJECT_SNAPSHOT_CATALOG 6u
 #define INFILFS_OBJECT_PRINCIPAL 7u
 #define INFILFS_OBJECT_SECURITY 8u
+#define INFILFS_OBJECT_SECURITY_BINDING 9u
 
 #define INFILFS_OBJECT_VERSION_CLASSIC 1u
 #define INFILFS_OBJECT_VERSION_PAGED 2u
@@ -238,6 +239,7 @@ struct infilfs_data_checksum_disk {
 } __packed;
 
 #define INFILFS_SECURITY_VERSION 2u
+#define INFILFS_SECURITY_HASH_SLOTS 32u
 #define INFILFS_SECURITY_BINDING_MAX 68u
 #define INFILFS_SECURITY_PRINCIPAL_USER 1u
 #define INFILFS_SECURITY_PRINCIPAL_GROUP 2u
@@ -294,10 +296,22 @@ struct infilfs_security_payload_disk {
     __le16 flags;
     __le32 ace_count;
     __le32 page_count;
-    __le32 reserved;
+    __le16 identity_slot;
+    __le16 reserved;
     __u8 owner_principal_id[16];
     __u8 primary_group_principal_id[16];
     __u8 semantic_digest[32];
+} __packed;
+
+struct infilfs_security_binding_index_payload_disk {
+    __le16 version;
+    __le16 slot;
+    __le16 binding_type;
+    __le16 binding_size;
+    __u8 principal_id[16];
+    __u8 binding_digest[32];
+    __u8 value[INFILFS_SECURITY_BINDING_MAX];
+    __le32 reserved;
 } __packed;
 
 struct infilfs_security_ace_disk {
@@ -436,5 +450,9 @@ static_assert(INFILFS_INDEX_TREE_BRANCH_BYTES <= INFILFS_METADATA_PAGE_DATA_SIZE
 static_assert(INFILFS_DIRECTORY_TREE_BRANCH_BYTES <= INFILFS_METADATA_PAGE_DATA_SIZE);
 static_assert(sizeof(struct infilfs_snapshot_catalog_payload_disk) == 8);
 static_assert(sizeof(struct infilfs_snapshot_record_disk) == 152);
+static_assert(sizeof(struct infilfs_security_payload_disk) == 80,
+              "security payload layout changed");
+static_assert(sizeof(struct infilfs_security_binding_index_payload_disk) == 128,
+              "security binding index payload layout changed");
 
 #endif

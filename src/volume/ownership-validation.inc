@@ -825,6 +825,46 @@ static int validate_integrity_metadata_progress(
                     goto out;
                 }
             }
+        } else if (type == INFS_OBJECT_SECURITY_BINDING) {
+            if (!security_objects_enabled(vol)) {
+                status = INFS_STATUS_CORRUPT;
+                goto out;
+            }
+            uint8_t object[INFS_BLOCK_SIZE];
+            status = read_object(
+                vol, infs_le64_to_cpu(entries[i].object_block), object);
+            if (status != INFS_STATUS_OK)
+                goto out;
+            struct infs_object_header_disk *header =
+                (struct infs_object_header_disk *)object;
+            struct infs_security_binding_index_payload_disk *payload =
+                (struct infs_security_binding_index_payload_disk *)(header + 1);
+
+            struct infs_security_binding binding;
+            memset(&binding, 0, sizeof(binding));
+            binding.type = infs_le16_to_cpu(payload->binding_type);
+            binding.size = infs_le16_to_cpu(payload->binding_size);
+            if (binding.size == 0 ||
+                binding.size > INFS_SECURITY_BINDING_MAX) {
+                status = INFS_STATUS_CORRUPT;
+                goto out;
+            }
+            memcpy(binding.value, payload->value, binding.size);
+
+            struct infs_security_principal principal = {0};
+            status = infs_get_security_principal(
+                vol, payload->principal_id, &principal);
+            if (status != INFS_STATUS_OK) {
+                status = INFS_STATUS_CORRUPT;
+                goto out;
+            }
+            int contains = security_principal_has_binding(
+                &principal, &binding);
+            infs_free_security_principal(&principal);
+            if (!contains) {
+                status = INFS_STATUS_CORRUPT;
+                goto out;
+            }
         } else if (type == INFS_OBJECT_SECURITY) {
             if (!security_objects_enabled(vol)) {
                 status = INFS_STATUS_CORRUPT;

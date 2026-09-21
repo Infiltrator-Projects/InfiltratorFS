@@ -50,6 +50,7 @@ static const char *object_type_name(uint16_t type)
     case INFS_OBJECT_SNAPSHOT_CATALOG: return "snapshot-catalog";
     case INFS_OBJECT_PRINCIPAL: return "principal";
     case INFS_OBJECT_SECURITY: return "security-descriptor";
+    case INFS_OBJECT_SECURITY_BINDING: return "security-binding";
     case INFS_OBJECT_INDEX: return "index";
     case INFS_OBJECT_CHECKSUM: return "checksum";
     default: return "none";

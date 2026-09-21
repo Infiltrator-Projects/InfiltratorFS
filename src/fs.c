@@ -56,7 +56,8 @@ static int object_type_valid(uint16_t type)
            type == INFS_OBJECT_SYMLINK ||
            type == INFS_OBJECT_SNAPSHOT_CATALOG ||
            type == INFS_OBJECT_PRINCIPAL ||
-           type == INFS_OBJECT_SECURITY;
+           type == INFS_OBJECT_SECURITY ||
+           type == INFS_OBJECT_SECURITY_BINDING;
 }
 
 static int object_version_valid(uint16_t type, uint16_t version)
@@ -191,6 +192,49 @@ static int principal_payload_shape_valid(
     return 1;
 }
 
+static int security_binding_index_payload_shape_valid(
+    const uint8_t block[INFS_BLOCK_SIZE], uint32_t payload_size)
+{
+    if (payload_size != sizeof(struct infs_security_binding_index_payload_disk))
+        return 0;
+
+    const struct infs_object_header_disk *header =
+        (const struct infs_object_header_disk *)block;
+    const struct infs_security_binding_index_payload_disk *payload =
+        (const struct infs_security_binding_index_payload_disk *)(header + 1);
+
+    uint16_t slot = infs_le16_to_cpu(payload->slot);
+    uint16_t size = infs_le16_to_cpu(payload->binding_size);
+    if (infs_le16_to_cpu(payload->version) != INFS_SECURITY_VERSION ||
+        slot >= INFS_SECURITY_HASH_SLOTS ||
+        size == 0 || size > INFS_SECURITY_BINDING_MAX ||
+        infs_le32_to_cpu(payload->reserved) != 0 ||
+        !id_is_nonzero(payload->principal_id) ||
+        infs_security_principal_id_is_reserved(payload->principal_id) ||
+        memcmp(header->parent_id, payload->principal_id, 16) != 0)
+        return 0;
+
+    struct infs_security_binding binding;
+    memset(&binding, 0, sizeof(binding));
+    binding.type = infs_le16_to_cpu(payload->binding_type);
+    binding.size = size;
+    memcpy(binding.value, payload->value, size);
+    if (binding.type == INFS_BINDING_OPAQUE ||
+        !infs_security_binding_is_valid(&binding))
+        return 0;
+    for (uint16_t i = size; i < INFS_SECURITY_BINDING_MAX; ++i)
+        if (payload->value[i] != 0)
+            return 0;
+
+    uint8_t digest[32];
+    uint8_t expected_id[16];
+    if (infs_security_binding_digest(&binding, digest) != INFS_STATUS_OK ||
+        memcmp(digest, payload->binding_digest, 32) != 0)
+        return 0;
+    infs_security_binding_index_object_id(digest, slot, expected_id);
+    return memcmp(expected_id, header->object_id, 16) == 0;
+}
+
 static int security_ace_disk_valid(const struct infs_security_ace_disk *ace)
 {
     if (!ace || infs_le32_to_cpu(ace->reserved) != 0)
@@ -220,7 +264,8 @@ static int security_payload_shape_valid(
     if (infs_le16_to_cpu(payload->version) != INFS_SECURITY_VERSION ||
         (flags & ~INFS_SECURITY_KNOWN_FLAGS) != 0 ||
         (flags & INFS_SECURITY_DACL_PRESENT) == 0 ||
-        infs_le32_to_cpu(payload->reserved) != 0 ||
+        infs_le16_to_cpu(payload->identity_slot) >= INFS_SECURITY_HASH_SLOTS ||
+        infs_le16_to_cpu(payload->reserved) != 0 ||
         !id_is_nonzero(payload->owner_principal_id) ||
         !id_is_nonzero(payload->primary_group_principal_id) ||
         infs_security_principal_id_is_reserved(payload->owner_principal_id) ||
@@ -228,6 +273,13 @@ static int security_payload_shape_valid(
             payload->primary_group_principal_id) ||
         !bytes_are_zero(header->parent_id, sizeof(header->parent_id)) ||
         count > INFS_SECURITY_MAX_ACES)
+        return 0;
+
+    uint8_t expected_id[16];
+    infs_security_descriptor_object_id(
+        payload->semantic_digest, infs_le16_to_cpu(payload->identity_slot),
+        expected_id);
+    if (memcmp(expected_id, header->object_id, 16) != 0)
         return 0;
 
     if (object_version == INFS_OBJECT_VERSION_CLASSIC) {
@@ -406,6 +458,8 @@ infs_status infs_object_finalize(uint8_t block[INFS_BLOCK_SIZE])
          !snapshot_catalog_payload_shape_valid(block, payload_size)) ||
         (object_type == INFS_OBJECT_PRINCIPAL &&
          !principal_payload_shape_valid(block, payload_size)) ||
+        (object_type == INFS_OBJECT_SECURITY_BINDING &&
+         !security_binding_index_payload_shape_valid(block, payload_size)) ||
         (object_type == INFS_OBJECT_SECURITY &&
          !security_payload_shape_valid(block, payload_size, object_version))) {
         return INFS_STATUS_INVALID_ARGUMENT;
@@ -454,6 +508,9 @@ int infs_validate_object_block(const uint8_t block[INFS_BLOCK_SIZE])
         return 0;
     if (object_type == INFS_OBJECT_PRINCIPAL &&
         !principal_payload_shape_valid(block, payload_size))
+        return 0;
+    if (object_type == INFS_OBJECT_SECURITY_BINDING &&
+        !security_binding_index_payload_shape_valid(block, payload_size))
         return 0;
     if (object_type == INFS_OBJECT_SECURITY &&
         !security_payload_shape_valid(block, payload_size, object_version))

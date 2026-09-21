@@ -109,6 +109,9 @@ static infs_status security_ace_page_validate(
 static void security_binding_decode(
     struct infs_security_binding *binding,
     const struct infs_security_binding_disk *disk);
+static int security_principal_has_binding(
+    const struct infs_security_principal *principal,
+    const struct infs_security_binding *binding);
 static infs_status security_descriptor_decode(
     struct infs_volume *vol, uint8_t object[INFS_BLOCK_SIZE],
     struct infs_security_descriptor *descriptor);

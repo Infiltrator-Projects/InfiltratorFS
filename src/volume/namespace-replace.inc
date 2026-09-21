@@ -71,21 +71,14 @@ static int destroy_replaced_object_tx(struct infs_volume *vol,
         return INFS_STATUS_CORRUPT;
     }
 
-    uint8_t security_id[16] = {0};
-    {
-        struct infs_attributes_disk *attributes = object_attributes(object);
-        if (!attributes)
-            return INFS_STATUS_CORRUPT;
-        memcpy(security_id, attributes->security_object_id, 16);
-    }
     status = index_remove(vol, target->object_id);
     if (status != INFS_STATUS_OK)
         return status;
     free_run(vol, target->block, 1);
     if (vol->tx_error != INFS_STATUS_OK)
         return vol->tx_error;
-    if (!id_is_zero(security_id))
-        return security_descriptor_release_if_unreferenced(vol, security_id);
+    /* Shared descriptor reclamation is tracing maintenance, never a
+     * namespace-wide scan on replacement. */
     return INFS_STATUS_OK;
 }
 

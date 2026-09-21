@@ -58,8 +58,9 @@ static const uint8_t INFS_ALLOCATION_LEAF_PAGE_MAGIC[8] = {
 #define INFS_OBJECT_CHECKSUM   4u
 #define INFS_OBJECT_SYMLINK    5u
 #define INFS_OBJECT_SNAPSHOT_CATALOG 6u
-#define INFS_OBJECT_PRINCIPAL  7u
-#define INFS_OBJECT_SECURITY   8u
+#define INFS_OBJECT_PRINCIPAL        7u
+#define INFS_OBJECT_SECURITY         8u
+#define INFS_OBJECT_SECURITY_BINDING 9u
 
 #define INFS_OBJECT_VERSION_CLASSIC 1u
 #define INFS_OBJECT_VERSION_PAGED   2u
@@ -305,8 +306,27 @@ struct INFS_PACKED infs_data_checksum_disk {
 /* Portable security payload version 2. Earlier development security payloads
  * are intentionally unsupported: pre-1.0 uses one current representation. */
 #define INFS_SECURITY_VERSION 2u
+#define INFS_SECURITY_HASH_SLOTS 32u
 #ifndef INFS_SECURITY_BINDING_MAX
 #define INFS_SECURITY_BINDING_MAX 68u
+#endif
+#ifndef INFS_SECURITY_POSIX_AUTHORITY_SIZE
+#define INFS_SECURITY_POSIX_AUTHORITY_SIZE 16u
+#endif
+#ifndef INFS_SECURITY_POSIX_BINDING_SIZE
+#define INFS_SECURITY_POSIX_BINDING_SIZE 20u
+#endif
+#ifndef INFS_SECURITY_WINDOWS_SID_MIN
+#define INFS_SECURITY_WINDOWS_SID_MIN 8u
+#endif
+#ifndef INFS_SECURITY_WINDOWS_SID_MAX
+#define INFS_SECURITY_WINDOWS_SID_MAX 68u
+#endif
+#ifndef INFS_SECURITY_WINDOWS_SID_REVISION
+#define INFS_SECURITY_WINDOWS_SID_REVISION 1u
+#endif
+#ifndef INFS_SECURITY_WINDOWS_SID_MAX_SUB_AUTHORITIES
+#define INFS_SECURITY_WINDOWS_SID_MAX_SUB_AUTHORITIES 15u
 #endif
 
 struct INFS_PACKED infs_principal_payload_disk {
@@ -331,10 +351,22 @@ struct INFS_PACKED infs_security_payload_disk {
     uint16_t flags;
     uint32_t ace_count;
     uint32_t page_count;
-    uint32_t reserved;
+    uint16_t identity_slot;
+    uint16_t reserved;
     uint8_t owner_principal_id[16];
     uint8_t primary_group_principal_id[16];
     uint8_t semantic_digest[32];
+};
+
+struct INFS_PACKED infs_security_binding_index_payload_disk {
+    uint16_t version;
+    uint16_t slot;
+    uint16_t binding_type;
+    uint16_t binding_size;
+    uint8_t principal_id[16];
+    uint8_t binding_digest[32];
+    uint8_t value[INFS_SECURITY_BINDING_MAX];
+    uint32_t reserved;
 };
 
 struct INFS_PACKED infs_security_ace_disk {
@@ -513,6 +545,8 @@ _Static_assert(sizeof(struct infs_security_binding_disk) == 76,
                "security binding layout changed");
 _Static_assert(sizeof(struct infs_security_payload_disk) == 80,
                "security payload layout changed");
+_Static_assert(sizeof(struct infs_security_binding_index_payload_disk) == 128,
+               "security binding index payload layout changed");
 _Static_assert(sizeof(struct infs_security_ace_disk) == 32,
                "security ACE layout changed");
 _Static_assert(INFS_PRINCIPAL_BINDINGS_PER_OBJECT >= 52u,

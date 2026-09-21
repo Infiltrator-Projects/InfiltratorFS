@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "infilfs/security.h"
+#include "infilfs/checksum.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -137,6 +138,61 @@ infs_status infs_security_binding_init_windows_sid(
     binding->size = (uint16_t)size;
     memcpy(binding->value, sid, size);
     return INFS_STATUS_OK;
+}
+
+static void security_derived_object_id(
+    const uint8_t domain[16], const uint8_t digest[32], uint16_t slot,
+    uint8_t object_id[16])
+{
+    uint8_t material[50];
+    uint8_t full[32];
+    memcpy(material, domain, 16u);
+    memcpy(material + 16u, digest, 32u);
+    material[48] = (uint8_t)slot;
+    material[49] = (uint8_t)(slot >> 8u);
+    infs_sha256(material, sizeof(material), full);
+    memcpy(object_id, full, 16u);
+}
+
+infs_status infs_security_binding_digest(
+    const struct infs_security_binding *binding, uint8_t digest[32])
+{
+    static const uint8_t domain[16] = {
+        'I','N','F','S','-','B','I','N','D','-','V','2',0,0,0,0
+    };
+    uint8_t material[16u + 4u + INFS_SECURITY_BINDING_MAX];
+    if (!digest || !infs_security_binding_is_valid(binding))
+        return INFS_STATUS_INVALID_ARGUMENT;
+    memcpy(material, domain, 16u);
+    material[16] = (uint8_t)binding->type;
+    material[17] = (uint8_t)(binding->type >> 8u);
+    material[18] = (uint8_t)binding->size;
+    material[19] = (uint8_t)(binding->size >> 8u);
+    memcpy(material + 20u, binding->value, binding->size);
+    infs_sha256(material, 20u + binding->size, digest);
+    return INFS_STATUS_OK;
+}
+
+void infs_security_binding_index_object_id(
+    const uint8_t digest[32], uint16_t slot, uint8_t object_id[16])
+{
+    static const uint8_t domain[16] = {
+        'I','N','F','S','-','B','I','N','D','-','I','D','2',0,0,0
+    };
+    if (!digest || !object_id)
+        return;
+    security_derived_object_id(domain, digest, slot, object_id);
+}
+
+void infs_security_descriptor_object_id(
+    const uint8_t digest[32], uint16_t slot, uint8_t object_id[16])
+{
+    static const uint8_t domain[16] = {
+        'I','N','F','S','-','D','E','S','C','-','I','D','2',0,0,0
+    };
+    if (!digest || !object_id)
+        return;
+    security_derived_object_id(domain, digest, slot, object_id);
 }
 
 int infs_security_ace_is_valid(const struct infs_security_ace *ace)

@@ -77,6 +77,12 @@ bool infilfs_security_reserved_principal_id(const u8 id[16]);
 bool infilfs_security_sid_valid(const u8 *sid, u16 size);
 bool infilfs_security_ace_valid(
     const struct infilfs_security_ace_disk *ace);
+bool infilfs_security_binding_index_valid(
+    const struct infilfs_object_header_disk *header,
+    const struct infilfs_security_binding_index_payload_disk *payload);
+bool infilfs_security_descriptor_valid(
+    struct super_block *sb, const struct infilfs_object_header_disk *header,
+    u32 payload_size);
 
 static inline size_t infilfs_native_writeback_batch_bytes(void)
 {

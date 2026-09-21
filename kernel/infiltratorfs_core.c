@@ -854,56 +854,20 @@ static bool infilfs_object_basic_valid(struct super_block *sb,
                     !memcmp(bindings[i].value, bindings[j].value, size))
                     return false;
         }
+    } else if (le16_to_cpu(header->object_type) ==
+               INFILFS_OBJECT_SECURITY_BINDING) {
+        const struct infilfs_security_binding_index_payload_disk *binding;
+
+        if (version != INFILFS_OBJECT_VERSION_CLASSIC ||
+            payload != sizeof(*binding))
+            return false;
+        binding =
+            (const struct infilfs_security_binding_index_payload_disk *)(header + 1);
+        if (!infilfs_security_binding_index_valid(header, binding))
+            return false;
     } else if (le16_to_cpu(header->object_type) == INFILFS_OBJECT_SECURITY) {
-        const struct infilfs_security_payload_disk *security;
-        const struct infilfs_security_ace_disk *aces;
-        const __le64 *pages;
-        u32 ace_count, page_count, expected_pages, i;
-
-        if (payload < sizeof(*security) ||
-            memchr_inv(header->parent_id, 0, sizeof(header->parent_id)))
+        if (!infilfs_security_descriptor_valid(sb, header, payload))
             return false;
-        security = (const struct infilfs_security_payload_disk *)(header + 1);
-        ace_count = le32_to_cpu(security->ace_count);
-        page_count = le32_to_cpu(security->page_count);
-        if (le16_to_cpu(security->version) != INFILFS_SECURITY_VERSION ||
-            (le16_to_cpu(security->flags) & ~INFILFS_SECURITY_KNOWN_FLAGS) ||
-            !(le16_to_cpu(security->flags) & INFILFS_SECURITY_DACL_PRESENT) ||
-            le32_to_cpu(security->reserved) != 0 ||
-            !memchr_inv(security->owner_principal_id, 0, 16) ||
-            !memchr_inv(security->primary_group_principal_id, 0, 16) ||
-            infilfs_security_reserved_principal_id(
-                security->owner_principal_id) ||
-            infilfs_security_reserved_principal_id(
-                security->primary_group_principal_id) ||
-            ace_count > INFILFS_SECURITY_MAX_ACES)
-            return false;
-
-        if (version == INFILFS_OBJECT_VERSION_CLASSIC) {
-            if (page_count != 0 ||
-                ace_count > INFILFS_SECURITY_INLINE_ACES ||
-                payload != sizeof(*security) +
-                    (size_t)ace_count * sizeof(*aces))
-                return false;
-            aces = (const struct infilfs_security_ace_disk *)(security + 1);
-            for (i = 0; i < ace_count; ++i)
-                if (!infilfs_security_ace_valid(&aces[i]))
-                    return false;
-        } else if (version == INFILFS_OBJECT_VERSION_PAGED) {
-            expected_pages = ace_count ?
-                DIV_ROUND_UP(ace_count, INFILFS_SECURITY_ACES_PER_PAGE) : 0u;
-            if (page_count != expected_pages ||
-                page_count > INFILFS_SECURITY_PAGE_POINTERS ||
-                payload != sizeof(*security) +
-                    (size_t)page_count * sizeof(*pages))
-                return false;
-            pages = (const __le64 *)(security + 1);
-            for (i = 0; i < page_count; ++i)
-                if (!le64_to_cpu(pages[i]))
-                    return false;
-        } else {
-            return false;
-        }
     }
     return true;
 }
