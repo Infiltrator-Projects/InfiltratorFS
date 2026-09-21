@@ -115,10 +115,17 @@ void infilfs_manager_compute_enablement(
         return;
 
     const bool available = state->has_target && !state->busy;
+    const bool offline = available && !state->mounted;
     const bool filesystem = available && state->is_infiltrator;
 
+    /*
+     * Inspect is deliberately a discovery operation: requiring an existing
+     * filesystem classification here creates a circular dependency where an
+     * unrecognised InfiltratorFS volume cannot be inspected to identify it.
+     */
+    out->inspect = offline;
     out->maintenance = filesystem && !state->mounted;
-    out->format = available && !state->mounted;
+    out->format = offline;
     out->mount = filesystem;
     out->unmount = filesystem && state->mounted;
     out->files = filesystem;
