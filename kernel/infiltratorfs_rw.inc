@@ -2040,6 +2040,21 @@ static __maybe_unused ssize_t infilfs_file_read_iter_atime(struct kiocb *iocb,
     return result;
 }
 
+static ssize_t infilfs_file_read_iter_dispatch(
+    struct kiocb *iocb, struct iov_iter *to)
+{
+    if (iocb->ki_flags & IOCB_DIRECT) {
+        size_t count = iov_iter_count(to);
+
+        if (!IS_ALIGNED(iocb->ki_pos, INFILFS_DISK_BLOCK_SIZE) ||
+            !IS_ALIGNED(count, INFILFS_DISK_BLOCK_SIZE) ||
+            !IS_ALIGNED(iov_iter_alignment(to), INFILFS_DISK_BLOCK_SIZE))
+            return -EINVAL;
+        return infilfs_file_read_iter_atime(iocb, to);
+    }
+    return generic_file_read_iter(iocb, to);
+}
+
 /*
  * Native VFS metadata bridge.
  *

@@ -119,6 +119,13 @@ grep -Fq 'generic_write_checks(iocb, from)' <<<"$write_buffered" || fail 'buffer
 grep -Fq 'file_remove_privs(filep)' <<<"$write_buffered" || fail 'buffered writes do not strip file privileges'
 grep -Fq 'file_update_time(filep)' <<<"$write_buffered" || fail 'buffered writes do not update VFS timestamps'
 grep -Fq '__generic_file_write_iter(iocb, from)' <<<"$write_buffered" || fail 'buffered write path lost generic page-cache write'
+grep -Fq 'iocb->ki_flags & IOCB_DIRECT' <<<"$write_buffered" || fail 'direct writes are not dispatched explicitly'
+grep -Fq 'infilfs_file_write_iter_common(iocb, from, true)' <<<"$write_buffered" || fail 'direct writes lost native verified path'
+grep -Fq 'FMODE_CAN_ODIRECT' "$driver" || fail 'O_DIRECT admission is not advertised to modern VFS'
+grep -Fq '.read_iter = infilfs_file_read_iter_dispatch' "$driver" || fail 'direct-read dispatcher is not active'
+direct_read="$(sed -n '/static ssize_t infilfs_file_read_iter_dispatch(/,/^}/p' "$rw")"
+grep -Fq 'iocb->ki_flags & IOCB_DIRECT' <<<"$direct_read" || fail 'direct reads are not dispatched explicitly'
+grep -Fq 'generic_file_read_iter(iocb, to)' <<<"$direct_read" || fail 'ordinary reads no longer use page cache'
 grep -Fq 'inode_get_mtime(inode)' "$data" || fail 'native writeback no longer persists VFS mtime'
 grep -Fq 'inode_get_ctime(inode)' "$data" || fail 'native writeback no longer persists VFS ctime'
 getattr_body="$(sed -n '/static int infilfs_getattr(/,/^}/p' "$rw")"

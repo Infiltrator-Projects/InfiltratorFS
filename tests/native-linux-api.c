@@ -73,6 +73,40 @@ int main(int argc, char **argv)
         return 1;
     }
     close(fd);
+
+    {
+        void *direct_write = NULL;
+        void *direct_read = NULL;
+        int direct_fd;
+
+        if (posix_memalign(&direct_write, 4096, 4096) != 0 ||
+            posix_memalign(&direct_read, 4096, 4096) != 0)
+            die("posix_memalign O_DIRECT");
+        memset(direct_write, 0xa5, 4096);
+        memset(direct_read, 0, 4096);
+        direct_fd = openat(
+            dirfd, "direct-io", O_CREAT | O_TRUNC | O_RDWR | O_DIRECT, 0600);
+        if (direct_fd < 0)
+            die("O_DIRECT open");
+        if (write(direct_fd, direct_write, 4096) != 4096)
+            die("O_DIRECT write");
+        if (lseek(direct_fd, 0, SEEK_SET) != 0)
+            die("O_DIRECT lseek");
+        if (read(direct_fd, direct_read, 4096) != 4096)
+            die("O_DIRECT read");
+        if (memcmp(direct_write, direct_read, 4096) != 0) {
+            fprintf(stderr, "O_DIRECT readback mismatch\n");
+            return 1;
+        }
+        if (fsync(direct_fd) != 0)
+            die("O_DIRECT fsync");
+        close(direct_fd);
+        if (unlinkat(dirfd, "direct-io", 0) != 0)
+            die("O_DIRECT unlink");
+        free(direct_read);
+        free(direct_write);
+    }
+
     close(dirfd);
 
     char a[4096], b[4096], linked[4096];

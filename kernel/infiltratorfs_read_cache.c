@@ -57,7 +57,7 @@ struct infilfs_native_read_extent_cursor {
     bool valid;
 };
 
-#define INFILFS_NATIVE_READAHEAD_BLOCKS 256u
+#define INFILFS_NATIVE_READAHEAD_BLOCKS 1024u
 #define INFILFS_NATIVE_READ_HASH_MIN_BLOCKS 16u
 
 struct infilfs_native_read_hash_work {
@@ -603,9 +603,14 @@ ssize_t infilfs_native_read_iter_cached(struct inode *inode,
                                INFILFS_DISK_BLOCK_SIZE,
                        INFILFS_DISK_BLOCK_SIZE);
             } else {
-                infilfs_native_readahead_extent(
-                    inode->i_sb, physical, logical, extent_logical,
-                    extent_blocks, &readahead_next_logical);
+                /*
+                 * Multi-block runs submit the full bounded batch before any
+                 * wait. Keep speculative readahead for the single-block path.
+                 */
+                if (run_blocks < 2u)
+                    infilfs_native_readahead_extent(
+                        inode->i_sb, physical, logical, extent_logical,
+                        extent_blocks, &readahead_next_logical);
 
                 if (run_blocks >= 2u) {
                     u32 j;

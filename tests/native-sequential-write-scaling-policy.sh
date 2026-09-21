@@ -53,16 +53,23 @@ grep -Fq '#define INFILFS_NATIVE_IDLE_DELAY (5u * HZ)' "$data"
 grep -Fq 'const u64 max_publish = 512ULL * 1024ULL * 1024ULL;' "$data"
 grep -Fq '#define INFILFS_NATIVE_METADATA_PUBLISH_CHARGE (64ULL * 1024ULL)' "$ns"
 
-# Publication keeps one full dependency barrier, then writes only the three
-# checkpoint buffers synchronously and flushes the device cache. A second
-# whole-device sync after the dependency graph is already durable is forbidden.
+# Publication drains only this transaction's CoW dependency set, then writes
+# checkpoint replicas synchronously and performs one stable-media cache flush.
 legacy="$root/kernel/infiltratorfs_rw_legacy.inc"
 commit_body="$(sed -n '/static int infilfs_rw_tx_commit(/,/^}/p' "$legacy")"
-test "$(grep -Fc 'sync_blockdev(tx->sb->s_bdev)' <<<"$commit_body")" -eq 1
+! grep -Fq 'sync_blockdev(tx->sb->s_bdev)' <<<"$commit_body"
 grep -Fq 'infilfs_rw_allocation_map_publish(tx, &next_allocation)' <<<"$commit_body"
+grep -Fq 'infilfs_rw_sync_transaction_dependencies(tx)' <<<"$commit_body"
 grep -Fq 'infilfs_rw_write_block_sync(tx->sb' <<<"$commit_body"
 grep -Fq 'blkdev_issue_flush(tx->sb->s_bdev)' <<<"$commit_body"
 grep -Fq 'for (n = 1; n < INFILFS_CHECKPOINT_COUNT; ++n)' <<<"$commit_body"
+dependency_sync="$(sed -n '/static int infilfs_rw_sync_transaction_dependencies(/,/^}/p' "$legacy")"
+grep -Fq 'sb_find_get_block' <<<"$dependency_sync"
+grep -Fq 'tx->allocated' <<<"$dependency_sync"
+dependency_batch="$(sed -n '/static int infilfs_rw_sync_dependency_batch(/,/^}/p' "$legacy")"
+grep -Fq 'blk_start_plug' <<<"$dependency_batch"
+grep -Fq 'write_dirty_buffer' <<<"$dependency_batch"
+grep -Fq 'wait_on_buffer' <<<"$dependency_batch"
 
 # Deferred publication must react to excess physical CoW churn as well as
 # logical user bytes so tiny partial writes cannot consume the volume before
@@ -80,7 +87,14 @@ grep -Fq 'infilfs_native_pending_should_publish(pending)' "$ns"
 # cache so freshly dirtied data remains coherent before writeback.
 write_entry="$(sed -n '/static ssize_t infilfs_file_write_iter(/,/^}/p' "$data")"
 grep -Fq 'generic_file_write_iter(iocb, from)' <<<"$write_entry"
-grep -Fq '.read_iter = generic_file_read_iter' "$core"
+grep -Fq 'iocb->ki_flags & IOCB_DIRECT' <<<"$write_entry"
+grep -Fq 'infilfs_file_write_iter_common(iocb, from, true)' <<<"$write_entry"
+grep -Fq '.open = infilfs_file_open' "$core"
+grep -Fq 'FMODE_CAN_ODIRECT' "$core"
+grep -Fq '.read_iter = infilfs_file_read_iter_dispatch' "$core"
+direct_read="$(sed -n '/static ssize_t infilfs_file_read_iter_dispatch(/,/^}/p' "$rw")"
+grep -Fq 'iocb->ki_flags & IOCB_DIRECT' <<<"$direct_read"
+grep -Fq 'generic_file_read_iter(iocb, to)' <<<"$direct_read"
 grep -Fq 'infilfs_native_writeback_batch_bytes()' "$pagecache"
 grep -Fq 'infilfs_queue_cpu_work(&items[i].work)' "$data"
 grep -Fq 'infilfs_writeback_cluster_submit' "$pagecache"
@@ -99,12 +113,15 @@ grep -Fq 'infilfs_native_pending_flush_sb' <<<"$fsync_body"
 pending_flush="$(sed -n '/int infilfs_native_pending_flush_sb(/,/^}/p' "$data")"
 ! grep -Fq 'sync_blockdev(sb->s_bdev)' <<<"$pending_flush"
 
-# Verified reads must queue a bounded contiguous extent window before the
-# synchronous 4 KiB integrity reader waits on the first buffer.
-grep -Fq '#define INFILFS_NATIVE_READAHEAD_BLOCKS 256u' "$read_cache"
+# Verified multi-block reads submit a bounded 4 MiB run before waiting.
+grep -Fq '#define INFILFS_NATIVE_READAHEAD_BLOCKS 1024u' "$read_cache"
+grep -Fq '#define INFILFS_READ_IO_BATCH_BLOCKS 1024u' "$core"
+read_run="$(sed -n '/static int infilfs_read_block_run(/,/^}/p' "$core")"
+grep -Fq 'bh_read_batch' <<<"$read_run"
+grep -Fq 'blk_start_plug' <<<"$read_run"
+grep -Fq 'wait_on_buffer' <<<"$read_run"
 readahead_body="$(sed -n '/static void infilfs_native_readahead_extent(/,/^}/p' "$read_cache")"
 grep -Fq 'sb_breadahead' <<<"$readahead_body"
-grep -Fq 'INFILFS_NATIVE_READAHEAD_BLOCKS' <<<"$readahead_body"
 
 # Tree-directory i_blocks accounting must use the transaction's exact local
 # allocation/free delta. Recursively rereading the growing directory tree after

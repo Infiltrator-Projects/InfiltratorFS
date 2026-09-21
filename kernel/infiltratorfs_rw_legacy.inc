@@ -1180,6 +1180,73 @@ int infilfs_rw_tx_apply_deferred(struct infilfs_rw_tx *tx)
 }
 
 
+#define INFILFS_RW_DEPENDENCY_BATCH_BLOCKS 1024u
+
+static int infilfs_rw_sync_dependency_batch(
+    struct buffer_head **bhs, u32 count)
+{
+    struct blk_plug plug;
+    u32 i;
+    int ret = 0;
+
+    if (!count)
+        return 0;
+    blk_start_plug(&plug);
+    for (i = 0; i < count; ++i)
+        write_dirty_buffer(bhs[i], REQ_SYNC);
+    blk_finish_plug(&plug);
+
+    for (i = 0; i < count; ++i) {
+        wait_on_buffer(bhs[i]);
+        if ((buffer_write_io_error(bhs[i]) || !buffer_uptodate(bhs[i])) &&
+            !ret)
+            ret = -EIO;
+        brelse(bhs[i]);
+    }
+    return ret;
+}
+
+static int infilfs_rw_sync_transaction_dependencies(struct infilfs_rw_tx *tx)
+{
+    struct buffer_head **bhs;
+    u32 count = 0;
+    size_t r;
+    int ret = 0;
+
+    bhs = kvmalloc_array(
+        INFILFS_RW_DEPENDENCY_BATCH_BLOCKS, sizeof(*bhs), GFP_NOFS);
+    if (!bhs)
+        return -ENOMEM;
+
+    for (r = 0; r < tx->allocated_count && !ret; ++r) {
+        u64 i;
+
+        for (i = 0; i < tx->allocated[r].count; ++i) {
+            struct buffer_head *bh = sb_find_get_block(
+                tx->sb, (sector_t)(tx->allocated[r].start + i));
+
+            if (!bh)
+                continue;
+            bhs[count++] = bh;
+            if (count == INFILFS_RW_DEPENDENCY_BATCH_BLOCKS) {
+                ret = infilfs_rw_sync_dependency_batch(bhs, count);
+                count = 0;
+                if (ret)
+                    break;
+            }
+        }
+    }
+    if (!ret && count)
+        ret = infilfs_rw_sync_dependency_batch(bhs, count);
+    else if (ret) {
+        u32 i;
+        for (i = 0; i < count; ++i)
+            brelse(bhs[i]);
+    }
+    kvfree(bhs);
+    return ret;
+}
+
 static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
 {
     struct infilfs_sb_info *sbi = tx->sbi;
@@ -1192,18 +1259,16 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
     u64 commit_started = ktime_get_ns();
 
     /*
-     * All transaction-private file data and metadata are still unreachable at
-     * this point. Build/stage the replacement allocation tree first, then use
-     * one durability barrier for the entire dependency graph. There is no
-     * safety benefit in flushing file data before staging the allocation tree:
-     * neither can become reachable until a checkpoint is durable.
+     * Build the replacement allocation tree first, then drain only this
+     * transaction's CoW dependency set. Whole-device writeback would also wait
+     * for unrelated dirties and turns fsync into a global device stall.
      */
     ret = infilfs_rw_allocation_map_publish(tx, &next_allocation);
     if (ret) {
         infilfs_allocation_layout_destroy(&next_allocation);
         return ret;
     }
-    ret = sync_blockdev(tx->sb->s_bdev);
+    ret = infilfs_rw_sync_transaction_dependencies(tx);
     if (ret) {
         infilfs_allocation_layout_destroy(&next_allocation);
         return ret;
@@ -1218,8 +1283,8 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
     first = (unsigned int)(tx->generation % INFILFS_CHECKPOINT_COUNT);
 
     /*
-     * The dependency graph above is already durable, so all checkpoint
-     * replicas can be issued before the second and final durability barrier.
+     * The dependency graph above has completed its writes, so all checkpoint
+     * replicas can be issued before the single stable-media durability barrier.
      * If power fails during this phase, recovery may see generation N or any
      * complete generation-N+1 checkpoint; either is safe because every N+1
      * dependency was flushed before checkpoint writes began.

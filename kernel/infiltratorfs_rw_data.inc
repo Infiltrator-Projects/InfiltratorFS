@@ -4302,6 +4302,16 @@ static ssize_t infilfs_file_write_iter(struct kiocb *iocb,
     u64 quota_growth = 0;
     ssize_t ret;
 
+    if (iocb->ki_flags & IOCB_DIRECT) {
+        size_t count = iov_iter_count(from);
+
+        if (!IS_ALIGNED(iocb->ki_pos, INFILFS_DISK_BLOCK_SIZE) ||
+            !IS_ALIGNED(count, INFILFS_DISK_BLOCK_SIZE) ||
+            !IS_ALIGNED(iov_iter_alignment(from), INFILFS_DISK_BLOCK_SIZE))
+            return -EINVAL;
+        return infilfs_file_write_iter_common(iocb, from, true);
+    }
+
     if (!iov_iter_count(from))
         return 0;
 

@@ -477,13 +477,74 @@ int infilfs_read_block(struct super_block *sb, u64 block, void *out)
     return 0;
 }
 
+#define INFILFS_READ_IO_BATCH_BLOCKS 1024u
+
+static int infilfs_read_block_run(
+    struct super_block *sb, u64 start, u32 count, u8 *out)
+{
+    struct buffer_head **bhs;
+    u32 capacity;
+    u32 done = 0;
+    int ret = 0;
+
+    if (!count)
+        return 0;
+    capacity = min_t(u32, count, INFILFS_READ_IO_BATCH_BLOCKS);
+    bhs = kvmalloc_array(capacity, sizeof(*bhs), GFP_NOFS);
+    if (!bhs)
+        return -ENOMEM;
+
+    while (done < count) {
+        struct blk_plug plug;
+        u32 batch = min_t(u32, capacity, count - done);
+        u32 acquired = 0;
+        u32 i;
+
+        for (i = 0; i < batch; ++i) {
+            bhs[i] = sb_getblk(sb, (sector_t)(start + done + i));
+            if (!bhs[i]) {
+                ret = -ENOMEM;
+                break;
+            }
+            ++acquired;
+        }
+        if (ret) {
+            for (i = 0; i < acquired; ++i)
+                brelse(bhs[i]);
+            break;
+        }
+
+        blk_start_plug(&plug);
+        bh_read_batch((int)batch, bhs);
+        blk_finish_plug(&plug);
+
+        for (i = 0; i < batch; ++i) {
+            wait_on_buffer(bhs[i]);
+            if (!buffer_uptodate(bhs[i])) {
+                if (!ret)
+                    ret = -EIO;
+            } else if (!ret) {
+                memcpy(out + (size_t)(done + i) * INFILFS_DISK_BLOCK_SIZE,
+                       bhs[i]->b_data, INFILFS_DISK_BLOCK_SIZE);
+            }
+            brelse(bhs[i]);
+        }
+        if (ret)
+            break;
+        done += batch;
+        cond_resched();
+    }
+
+    kvfree(bhs);
+    return ret;
+}
+
 int infilfs_read_allocated_blocks(
     struct super_block *sb, u64 start, u32 count, void *out)
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
     const u8 *bitmap;
     size_t bytes;
-    u32 i;
     int ret = 0;
 
     if (!sbi || !out || !count ||
@@ -524,14 +585,7 @@ unlock:
     if (ret)
         return ret;
 
-    for (i = 0; i < count; ++i) {
-        ret = infilfs_read_block(
-            sb, start + i,
-            (u8 *)out + (size_t)i * INFILFS_DISK_BLOCK_SIZE);
-        if (ret)
-            return ret;
-    }
-    return 0;
+    return infilfs_read_block_run(sb, start, count, out);
 }
 
 int infilfs_read_allocated_block(struct super_block *sb, u64 block,
@@ -2990,10 +3044,18 @@ static const struct file_operations infilfs_dir_operations = {
     .fsync = infilfs_file_fsync,
 };
 
+static int infilfs_file_open(struct inode *inode, struct file *file)
+{
+    (void)inode;
+    file->f_mode |= FMODE_CAN_ODIRECT;
+    return 0;
+}
+
 static const struct file_operations infilfs_file_operations = {
     .owner = THIS_MODULE,
+    .open = infilfs_file_open,
     .llseek = infilfs_file_llseek,
-    .read_iter = generic_file_read_iter,
+    .read_iter = infilfs_file_read_iter_dispatch,
     .write_iter = infilfs_file_write_iter,
     .mmap = generic_file_mmap,
     .fallocate = infilfs_file_fallocate,
