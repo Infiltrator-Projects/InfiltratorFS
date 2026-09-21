@@ -45,6 +45,35 @@ jobs:
             kmod libcap2-bin libgtk-3-dev linux-headers-generic pkg-config policykit-1 \
             rsync util-linux xdg-utils python3
 
+      - name: Download qualified managed desktop integration packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$(gh release list --limit 100 --json tagName,isPrerelease,publishedAt --jq '[.[] | select(.isPrerelease == true and (.tagName | startswith("desktop-integration-ubuntu24.04-")))] | sort_by(.publishedAt) | last | .tagName')"
+          test -n "$tag"
+          dir="$RUNNER_TEMP/desktop-integration"
+          mkdir -p "$dir"
+          gh release download "$tag" --dir "$dir" \
+            --pattern 'infiltratorfs-libblockdev-fs3_*.deb' \
+            --pattern 'infiltratorfs-gnome-disk-utility_*.deb' \
+            --pattern 'infiltratorfs-desktop-integration_*.deb' \
+            --pattern 'infiltratorfs-desktop-integration.manifest'
+          manifest="$dir/infiltratorfs-desktop-integration.manifest"
+          test -s "$manifest"
+          expected_patch="$(cat packaging/libblockdev-3.1-infiltratorfs.patch packaging/gnome-disks-46-infiltratorfs.patch packaging/build-noble-desktop-packages.sh | sha256sum | awk '{print $1}')"
+          test "$(sed -n 's/^patch_sha256=//p' "$manifest")" = "$expected_patch"
+          test "$(sed -n 's/^target=//p' "$manifest")" = ubuntu-24.04-linuxmint-22.x
+          for pattern in \
+            'infiltratorfs-libblockdev-fs3_*.deb' \
+            'infiltratorfs-gnome-disk-utility_*.deb' \
+            'infiltratorfs-desktop-integration_*.deb'; do
+            file="$(find "$dir" -maxdepth 1 -type f -name "$pattern" -print -quit)"
+            test -s "$file"
+            dpkg-deb --info "$file" >/dev/null
+          done
+
       - name: Resolve kernel headers
         id: headers
         shell: bash
@@ -154,6 +183,7 @@ jobs:
           grep -q 'usr/share/initramfs-tools/hooks/infiltratorfs$' "$contents_file"
           depends="$(dpkg-deb --field "$deb" Depends)"
           grep -Eq '(^|, )initramfs-tools([ ,]|$)' <<<"$depends"
+          grep -Eq '(^|, )infiltratorfs-desktop-integration([ ,]|$)' <<<"$depends"
           dpkg-deb -e "$deb" "$control_dir"
           grep -Fq 'live root remains mounted' "$control_dir/preinst"
           grep -Fq 'root-volume upgrade staged safely' "$control_dir/postinst"
@@ -165,7 +195,15 @@ jobs:
         run: |
           set -euo pipefail
           deb="$(find dist -maxdepth 1 -type f -name 'infiltratorfs_*_amd64.deb' -print -quit)"
-          sudo dpkg -i "$deb"
+          desktop_dir="$RUNNER_TEMP/desktop-integration"
+          lib="$(find "$desktop_dir" -maxdepth 1 -type f -name 'infiltratorfs-libblockdev-fs3_*.deb' -print -quit)"
+          gdu="$(find "$desktop_dir" -maxdepth 1 -type f -name 'infiltratorfs-gnome-disk-utility_*.deb' -print -quit)"
+          meta="$(find "$desktop_dir" -maxdepth 1 -type f -name 'infiltratorfs-desktop-integration_*.deb' -print -quit)"
+          test -s "$lib"
+          test -s "$gdu"
+          test -s "$meta"
+          sudo apt-get install -y "$lib" "$gdu" "$meta" "$deb"
+          dpkg-query -W -f='${Status}\n' infiltratorfs-desktop-integration | grep -Fxq 'install ok installed'
           test -x /usr/share/initramfs-tools/hooks/infiltratorfs
           grep -Fq 'manual_add_modules infiltratorfs' /usr/share/initramfs-tools/hooks/infiltratorfs
           initrd="/boot/initrd.img-$(uname -r)"
