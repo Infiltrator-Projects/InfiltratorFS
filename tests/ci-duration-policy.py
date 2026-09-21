@@ -129,6 +129,7 @@ release_artifacts = (wf / 'release-artifacts.yml').read_text()
 for required in (
     'desktop-integration-ubuntu24.04-',
     'infiltratorfs-desktop-integration.manifest',
+    'infiltratorfs-desktop-integration-bundle.tar',
     'managed-packages',
     'gh run download',
 ):
