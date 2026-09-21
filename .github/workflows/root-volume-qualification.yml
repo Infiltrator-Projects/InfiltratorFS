@@ -195,6 +195,7 @@ jobs:
         run: |
           set -euo pipefail
           deb="$(find dist -maxdepth 1 -type f -name 'infiltratorfs_*_amd64.deb' -print -quit)"
+          deb="$(readlink -f "$deb")"
           desktop_dir="$RUNNER_TEMP/desktop-integration"
           lib="$(find "$desktop_dir" -maxdepth 1 -type f -name 'infiltratorfs-libblockdev-fs3_*.deb' -print -quit)"
           gdu="$(find "$desktop_dir" -maxdepth 1 -type f -name 'infiltratorfs-gnome-disk-utility_*.deb' -print -quit)"
