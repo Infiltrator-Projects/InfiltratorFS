@@ -55,6 +55,7 @@ static const uint8_t INFS_ALLOCATION_LEAF_PAGE_MAGIC[8] = {
 #define INFS_OBJECT_CHECKSUM   4u
 #define INFS_OBJECT_SYMLINK    5u
 #define INFS_OBJECT_SNAPSHOT_CATALOG 6u
+#define INFS_OBJECT_SECURITY   7u
 
 #define INFS_OBJECT_VERSION_CLASSIC 1u
 #define INFS_OBJECT_VERSION_PAGED   2u
@@ -97,6 +98,8 @@ static const uint8_t INFS_ALLOCATION_LEAF_PAGE_MAGIC[8] = {
 /* Optional removable-volume filename profile v1. Writers enforce a conservative
  * cross-platform component subset while preserving exact UTF-8 identity. */
 #define INFS_INCOMPAT_REMOVABLE_NAMES_V1 UINT64_C(0x0000000000004000)
+/* Versioned portable principals and ACL security objects. */
+#define INFS_INCOMPAT_SECURITY_OBJECTS_V1 UINT64_C(0x0000000000008000)
 #define INFS_KNOWN_COMPAT_FLAGS UINT64_C(0)
 #define INFS_KNOWN_RO_COMPAT_FLAGS UINT64_C(0)
 #define INFS_KNOWN_INCOMPAT_FLAGS \
@@ -107,7 +110,7 @@ static const uint8_t INFS_ALLOCATION_LEAF_PAGE_MAGIC[8] = {
      INFS_INCOMPAT_PAGED_EXTENTS | INFS_INCOMPAT_INDEX_TREE | \
      INFS_INCOMPAT_DIRECTORY_TREE | INFS_INCOMPAT_ALLOCATION_TREE | \
      INFS_INCOMPAT_COMPRESSED_EXTENTS | INFS_INCOMPAT_UNICODE_NORM_V1 | \
-     INFS_INCOMPAT_REMOVABLE_NAMES_V1)
+     INFS_INCOMPAT_REMOVABLE_NAMES_V1 | INFS_INCOMPAT_SECURITY_OBJECTS_V1)
 
 #define INFS_ATTR_READ_ONLY           UINT64_C(0x0000000000000001)
 #define INFS_ATTR_HIDDEN              UINT64_C(0x0000000000000002)
@@ -294,6 +297,38 @@ struct INFS_PACKED infs_data_checksum_disk {
     uint8_t bytes[32];
 };
 
+/* Portable security-object v1. Principal identity is the stable 128-bit
+ * principal_id. Platform bindings are typed opaque bytes; Linux UID/GID and
+ * Windows SID bindings therefore never become the filesystem-wide identity. */
+#define INFS_SECURITY_VERSION_V1 1u
+#define INFS_SECURITY_BINDING_MAX 68u
+
+struct INFS_PACKED infs_security_payload_disk {
+    uint16_t version;
+    uint16_t principal_count;
+    uint16_t ace_count;
+    uint16_t flags;
+    uint32_t principal_bytes;
+    uint32_t ace_bytes;
+};
+
+struct INFS_PACKED infs_security_principal_disk {
+    uint8_t principal_id[16];
+    uint16_t kind;
+    uint16_t binding_type;
+    uint16_t binding_size;
+    uint16_t flags;
+    uint8_t binding[INFS_SECURITY_BINDING_MAX];
+};
+
+struct INFS_PACKED infs_security_ace_disk {
+    uint8_t principal_id[16];
+    uint64_t rights;
+    uint16_t disposition;
+    uint16_t flags;
+    uint32_t reserved;
+};
+
 #define INFS_CHECKSUMS_PER_OBJECT \
     ((INFS_BLOCK_SIZE - sizeof(struct infs_object_header_disk) - \
       sizeof(struct infs_checksum_payload_disk)) / \
@@ -441,6 +476,12 @@ _Static_assert(sizeof(struct infs_checksum_payload_disk) == 48,
                "checksum payload layout changed");
 _Static_assert(sizeof(struct infs_data_checksum_disk) == 32,
                "data checksum layout changed");
+_Static_assert(sizeof(struct infs_security_payload_disk) == 16,
+               "security payload layout changed");
+_Static_assert(sizeof(struct infs_security_principal_disk) == 92,
+               "security principal layout changed");
+_Static_assert(sizeof(struct infs_security_ace_disk) == 32,
+               "security ACE layout changed");
 _Static_assert(sizeof(struct infs_index_payload_disk) == 8,
                "index payload layout changed");
 _Static_assert(sizeof(struct infs_index_entry_disk) == 32,

@@ -238,6 +238,13 @@ static int snapshots_enabled(const struct infs_volume *vol)
          INFS_INCOMPAT_SNAPSHOTS) != 0;
 }
 
+static int security_objects_enabled(const struct infs_volume *vol)
+{
+    return vol &&
+        (infs_le64_to_cpu(vol->sb.incompat_flags) &
+         INFS_INCOMPAT_SECURITY_OBJECTS_V1) != 0;
+}
+
 /* Format 0.18 paged-index dispatch targets. core.inc owns the classic index
  * implementation and calls these when it encounters a version-2 index head. */
 static int paged_index_find(struct infs_volume *vol, const uint8_t id[16],
@@ -329,6 +336,7 @@ static int paged_extent_replace(struct infs_volume *vol,
 #include "volume/reflink.inc"
 #include "volume/inline-files.inc"
 #include "volume/attributes.inc"
+#include "volume/security-object.inc"
 #include "volume/file-read.inc"
 #include "volume/file-write.inc"
 #include "volume/file-truncate.inc"

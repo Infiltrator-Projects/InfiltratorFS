@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 #include "infilfs/format.h"
+#include "infilfs/security.h"
 #include "infilfs/storage.h"
 #include "infilfs/time.h"
 
@@ -366,6 +367,17 @@ infs_status infs_set_times(struct infs_volume *vol, const char *path,
                            const struct infs_time_update *update);
 infs_status infs_set_portable_flags(struct infs_volume *vol, const char *path,
                                     uint64_t portable_flags);
+
+/* Replace or remove the portable security object attached to one namespace
+ * object. A NULL descriptor removes it. get() allocates arrays owned by the
+ * caller and released with infs_free_security_descriptor(). */
+infs_status infs_set_security_descriptor(
+    struct infs_volume *vol, const char *path,
+    const struct infs_security_descriptor *descriptor);
+infs_status infs_get_security_descriptor(
+    struct infs_volume *vol, const char *path,
+    struct infs_security_descriptor *descriptor);
+void infs_free_security_descriptor(struct infs_security_descriptor *descriptor);
 
 infs_status infs_scrub(struct infs_volume *vol,
                        struct infs_scrub_report *report);
