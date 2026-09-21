@@ -4,6 +4,7 @@ This file records user-visible, compatibility, architecture and validation chang
 
 ## Unreleased
 
+- Redesign the development portable-security model before format freeze: principal identities become volume-level indexed objects with multiple platform bindings, security descriptors become shareable owner/group + ordered-ACL objects, descriptor reachability is graph-derived rather than persistent-refcount based, and large ACLs are permitted to page beyond one metadata block.
 - Implement versioned portable security objects with stable 128-bit principals, typed POSIX/Windows/opaque identity bindings, ordered allow/deny ACL entries, inheritance flags, transactional attachment/replacement/removal, native-reader recognition and bidirectional scrub validation.
 - Mark the Windows SID/security-descriptor mapping policy roadmap-complete after exact-source cross-platform conformance and Windows Explorer bridge qualification.
 - Define an executable Windows security-descriptor mapping policy: SID bindings remain adapter-local identities, DACL access masks project onto portable file/directory/metadata/administrative rights, generic masks are expanded explicitly, and Windows-only request/audit semantics cannot silently widen portable access.

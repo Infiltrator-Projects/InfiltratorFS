@@ -98,32 +98,37 @@ Each metadata object begins with `struct infs_object_header_disk`, containing:
 
 Object IDs and generations are nonzero. Payloads, padding and reserved bytes must be canonical for the selected object type/version.
 
-Object types include directory, regular file, object index, checksum metadata, symbolic link and snapshot catalog.
+Object types include directory, regular file, object index, checksum metadata,
+symbolic link, snapshot catalog, portable principal and portable security
+descriptor.
 
-### Portable security objects
+### Portable principals and security descriptors
 
-When `SECURITY_OBJECTS_V1` is set, a namespace object's
-`security_object_id` may reference an indexed type-7 security object. The
-security object is an ordinary checksummed copy-on-write object whose parent ID
-is the owning namespace object's persistent object ID.
+When `SECURITY_OBJECTS_V1` is set, portable principals and security
+descriptors are independent indexed object classes.
 
-Version 1 stores a fixed header followed by an ordered principal table and an
-ordered ACE table. Each principal has a stable 128-bit InfiltratorFS principal
-ID plus an optional typed platform binding. Current binding classes cover POSIX
-UID, POSIX GID, Windows SID and opaque preserved bindings. Platform identifiers
-are bindings only; none of them is the persistent principal identity.
+A principal object's 128-bit object ID is the stable principal ID. Its payload
+contains principal kind plus zero or more variable-length typed platform
+bindings. A single principal may therefore retain POSIX and Windows bindings at
+the same time.
 
-Each ACE references one principal ID, carries an allow or deny disposition, the
-64-bit portable rights mask and versioned inheritance/applicability flags.
-Every ACE principal must exist in the same security object. Unknown rights,
-flags, malformed sizes, duplicate principal IDs, dangling owner references and
-non-canonical padding fail validation.
+A namespace object's `security_object_id` references a shareable security
+descriptor. The descriptor contains owner and primary-group principal IDs,
+descriptor-control flags, a canonical semantic digest and ordered ACEs that
+reference principal IDs. Descriptor object parent ID is zero because one
+descriptor may be referenced by many namespace objects.
 
-Security objects are owned one-to-one by namespace objects in v1. Replacing or
-removing a descriptor is transactional, and deleting the final namespace object
-reclaims its attached security object. Scrub validates both directions of the
-relationship: the namespace attribute must reference the indexed security
-object and the security object's parent ID must reference that same owner.
+Writers canonicalize and reuse an identical descriptor when one already exists.
+Descriptor reachability is derived from the namespace graph; it is not trusted
+to a mutable persistent reference counter. Scrub validates every principal/ACE
+reference and may deterministically reclaim an unreferenced descriptor.
+
+Compact descriptors keep ACEs inline. Descriptors larger than the inline
+capacity use checksummed metadata pages under the same descriptor object ID.
+The public ACL model is therefore not bounded by one filesystem block.
+
+The exact persistent and evaluation contract is in
+`PORTABLE_SECURITY_OBJECTS.md`.
 
 ## 6. Object index
 
@@ -148,7 +153,9 @@ Portable common attributes contain:
 
 These are not Linux `struct stat` or Windows file-information structures.
 
-Current security and extended-metadata references remain zero until their portable object classes and compatibility contracts are defined.
+The security reference may be nonzero when `SECURITY_OBJECTS_V1` is enabled.
+The extended-metadata reference remains zero until its portable object class and
+compatibility contract are defined.
 
 A POSIX compatibility record stores current mode/UID/GID information for adapter use. It is compatibility metadata, not persistent object identity or the final portable security authority.
 

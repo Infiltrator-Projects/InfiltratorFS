@@ -58,21 +58,17 @@ Mounting a volume on an operating system that cannot expose a particular securit
 
 ## Portable principals
 
-A future security object should refer to stable InfiltratorFS principals rather than directly treating a Linux numeric UID or a Windows SID as the filesystem-wide identity.
+Portable principals are volume-level persistent objects. A principal's
+128-bit object ID is its stable identity and it may carry zero or more typed
+platform bindings, including POSIX UID/GID and Windows SID bindings at the same
+time. Local identifiers therefore remain resolution bindings, not the
+filesystem-wide identity.
 
-Conceptually a principal contains a stable persistent identifier plus zero or more platform identity bindings, for example:
+The object index supplies the scalable principal catalog rather than embedding
+principal definitions separately in each file's ACL. Unresolved principals and
+bindings remain intact when a volume moves between operating systems.
 
-```text
-InfiltratorFS principal
-    persistent principal ID
-    Linux UID/GID binding(s)
-    Windows SID binding(s)
-    future platform identity binding(s)
-```
-
-The persistent principal remains the same object even when a volume moves between operating systems. Adapter bindings determine how the local OS resolves that principal.
-
-Unresolved principals must remain intact. A platform must be able to preserve an ACL entry even when it cannot map the referenced principal to a current local account.
+The exact object/descriptor contract is in `PORTABLE_SECURITY_OBJECTS.md`.
 
 ## Portable access rights
 
@@ -108,15 +104,15 @@ numeric ABI authoritative.
 
 ## ACL entries
 
-A versioned portable security object should support ordered access-control entries containing at least:
+Portable ACLs use ordered entries containing a stable principal ID, allow/deny
+disposition, portable rights and explicit inheritance/applicability flags.
+Access evaluation is deterministic and deny-aware: ordered ACEs decide requested
+rights, DENY rejects matching still-undecided rights, ALLOW grants matching
+still-undecided rights, and rights left undecided at the end are denied.
 
-- principal identity;
-- allow or deny disposition;
-- portable rights mask;
-- inheritance/applicability flags; and
-- reserved/versioned extension space for future audit or platform-specific policy.
-
-Explicit deny and inheritance need first-class representation because reducing all permissions to POSIX mode bits would lose information that other platforms rely on.
+Descriptors also carry explicit owner and primary-group principal IDs plus
+descriptor-control flags. They are shareable immutable semantic objects rather
+than one private ACL copy per namespace object.
 
 ## Linux mapping
 
@@ -185,27 +181,30 @@ The same approach applies to adjacent metadata classes such as named attributes,
 
 ## On-disk security objects
 
-Format 0.18 now uses the reserved `security object ID` in common attributes
-when incompatible feature `SECURITY_OBJECTS_V1` is present. A nonzero
-reference points to a version-1 portable security object owned by that namespace
-object.
+Format 0.18 uses separate persistent principal and security-descriptor object
+classes when `SECURITY_OBJECTS_V1` is enabled. Namespace common attributes
+reference a shareable security descriptor; descriptor ACEs and owner/group
+fields reference stable principal objects.
 
-The record contains stable principal IDs with typed platform bindings followed
-by ordered ACL entries. ACL entries carry allow/deny disposition, portable
-rights and inheritance/applicability flags. The record is checksummed like
-other objects, participates in copy-on-write publication, is indexed by its
-persistent object ID and is validated as part of the ownership/security graph.
+Principal definitions are not duplicated inside descriptors. A principal may
+carry multiple platform bindings. Descriptors have zero parent ID because they
+may be shared by many namespace objects. Their canonical semantic digest enables
+exact reuse while scrub derives reachability from namespace references rather
+than trusting a mutable persistent reference counter.
 
-Unknown rights or flags fail closed in v1. Duplicate principals, ACEs that
-reference absent principals, malformed binding lengths, dangling owner
-references and namespace/security back-reference disagreement are corruption.
-Platform-specific security information that cannot yet be represented by v1
-remains a separate preservation-layer roadmap item rather than being silently
-flattened into the portable ACL.
+Small ACLs are stored compactly; the format permits paged ACE metadata for
+larger descriptors rather than making one 4096-byte block the permanent ACL
+capacity ceiling. Full persistent details are specified in
+`PORTABLE_SECURITY_OBJECTS.md`.
+
+Unknown rights/flags fail closed in v1. Missing principals, malformed bindings,
+bad descriptor digests, illegal descriptor references and non-canonical padding
+are corruption. Platform-specific security information with no portable
+equivalent remains a separate preservation-layer roadmap item.
 
 ## Security invariants
 
-Once the portable security format exists, conformance should require that:
+Portable security conformance requires that:
 
 - access decisions never depend on unauthenticated security metadata;
 - unknown security extensions are preserved or rejected according to explicit feature/version rules;

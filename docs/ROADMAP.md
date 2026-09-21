@@ -82,7 +82,7 @@ Pre-1.0 development is current-format-only. A development format may be replaced
 
 ## Security and protection
 
-- [ ] Versioned portable security objects with stable typed principals and ACL entries.
+- [ ] Versioned portable security objects with volume-level stable principals, multi-binding identity resolution, shareable descriptors and ordered ACL entries.
 - [x] Generic access-right vocabulary independent of POSIX and Windows constants.
 - [x] Linux UID/GID/mode and POSIX ACL mapping policy.
 - [x] Windows SID/security-descriptor mapping policy.
