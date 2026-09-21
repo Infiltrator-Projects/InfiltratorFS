@@ -545,6 +545,7 @@ int infilfs_read_allocated_blocks(
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
     const u8 *bitmap;
     size_t bytes;
+    u32 i;
     int ret = 0;
 
     if (!sbi || !out || !count ||
