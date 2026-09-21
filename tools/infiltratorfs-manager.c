@@ -554,9 +554,8 @@ static gboolean system_prefers_dark(void)
                  "gtk-application-prefer-dark-theme", &prefer,
                  "gtk-theme-name", &theme,
                  NULL);
-    gchar *lower = theme ? g_ascii_strdown(theme, -1) : NULL;
-    gboolean dark = prefer || (lower && g_strrstr(lower, "dark") != NULL);
-    g_free(lower);
+    gboolean dark = prefer ||
+        (theme && infiltratr_ascii_contains_ci(theme, "dark"));
     g_free(theme);
     return dark;
 }
@@ -1063,7 +1062,8 @@ static void manager_set_enabled(Manager *manager)
         *manager->target->mountpoint;
     const gboolean is_infiltrator =
         manager->target && manager->target->filesystem &&
-        g_ascii_strcasecmp(manager->target->filesystem, "infiltratorfs") == 0;
+        infiltratr_ascii_equal_ci(
+            manager->target->filesystem, "infiltratorfs");
     const struct infilfs_manager_state state = {
         .has_target = manager->target != NULL,
         .is_infiltrator = is_infiltrator,

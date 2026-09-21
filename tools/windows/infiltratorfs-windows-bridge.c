@@ -13,6 +13,7 @@
 #include "infilfs/format.h"
 #include "infilfs/status.h"
 #include "infiltratr/arithmetic.h"
+#include "infiltratr/dynlib.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -153,7 +154,7 @@ typedef HRESULT (WINAPI *bridge_prj_write_data_fn)(
     UINT64, UINT32);
 
 struct bridge_projfs_api {
-    HMODULE module;
+    InfiltratrDynlib module;
     bridge_prj_mark_directory_fn mark_directory;
     bridge_prj_start_fn start;
     bridge_prj_stop_fn stop;
@@ -176,44 +177,46 @@ static const uint8_t bridge_provider_id[] = {
     'I','N','F','S','-','P','R','O','J','F','S','-','V','1'
 };
 
-static int bridge_load_proc(FARPROC *out, const char *name)
-{
-    *out = GetProcAddress(g_projfs.module, name);
-    return *out != NULL;
-}
-
 static int bridge_load_projfs_api(void)
 {
-    if (g_projfs.module)
+    if (infiltratr_dynlib_is_open(&g_projfs.module))
         return 1;
 
-    HMODULE module = LoadLibraryW(L"ProjectedFSLib.dll");
-    if (!module)
+    struct bridge_projfs_api candidate;
+    memset(&candidate, 0, sizeof(candidate));
+    if (!infiltratr_dynlib_open(&candidate.module, "ProjectedFSLib.dll"))
         return 0;
-    memset(&g_projfs, 0, sizeof(g_projfs));
-    g_projfs.module = module;
 
-#define LOAD_PRJ(member, name) do { \
-    FARPROC proc = NULL; \
-    if (!bridge_load_proc(&proc, name)) { \
-        FreeLibrary(g_projfs.module); \
-        memset(&g_projfs, 0, sizeof(g_projfs)); \
-        return 0; \
-    } \
-    memcpy(&g_projfs.member, &proc, sizeof(g_projfs.member)); \
-} while (0)
+    const InfiltratrDynlibBinding bindings[] = {
+        { "PrjMarkDirectoryAsPlaceholder", &candidate.mark_directory,
+          sizeof(candidate.mark_directory), true },
+        { "PrjStartVirtualizing", &candidate.start,
+          sizeof(candidate.start), true },
+        { "PrjStopVirtualizing", &candidate.stop,
+          sizeof(candidate.stop), true },
+        { "PrjFileNameCompare", &candidate.name_compare,
+          sizeof(candidate.name_compare), true },
+        { "PrjFileNameMatch", &candidate.name_match,
+          sizeof(candidate.name_match), true },
+        { "PrjFillDirEntryBuffer", &candidate.fill_dir,
+          sizeof(candidate.fill_dir), true },
+        { "PrjWritePlaceholderInfo", &candidate.write_placeholder,
+          sizeof(candidate.write_placeholder), true },
+        { "PrjAllocateAlignedBuffer", &candidate.alloc,
+          sizeof(candidate.alloc), true },
+        { "PrjFreeAlignedBuffer", &candidate.free_buffer,
+          sizeof(candidate.free_buffer), true },
+        { "PrjWriteFileData", &candidate.write_data,
+          sizeof(candidate.write_data), true },
+    };
+    if (!infiltratr_dynlib_bind_symbols(
+            &candidate.module, bindings,
+            sizeof(bindings) / sizeof(bindings[0]))) {
+        infiltratr_dynlib_close(&candidate.module);
+        return 0;
+    }
 
-    LOAD_PRJ(mark_directory, "PrjMarkDirectoryAsPlaceholder");
-    LOAD_PRJ(start, "PrjStartVirtualizing");
-    LOAD_PRJ(stop, "PrjStopVirtualizing");
-    LOAD_PRJ(name_compare, "PrjFileNameCompare");
-    LOAD_PRJ(name_match, "PrjFileNameMatch");
-    LOAD_PRJ(fill_dir, "PrjFillDirEntryBuffer");
-    LOAD_PRJ(write_placeholder, "PrjWritePlaceholderInfo");
-    LOAD_PRJ(alloc, "PrjAllocateAlignedBuffer");
-    LOAD_PRJ(free_buffer, "PrjFreeAlignedBuffer");
-    LOAD_PRJ(write_data, "PrjWriteFileData");
-#undef LOAD_PRJ
+    g_projfs = candidate;
     return 1;
 }
 

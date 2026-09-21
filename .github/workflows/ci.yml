@@ -351,7 +351,11 @@ jobs:
           Select-String -Path tools/windows/infiltratorfs-windows-entry.c -Pattern 'infs_volume_set_deferred_publish' -SimpleMatch
           Select-String -Path tools/windows/infiltratorfs-windows-entry.c -Pattern 'INFS_WINDOWS_TRANSFER_PUBLISH_BYTES' -SimpleMatch
           Select-String -Path tools/windows/infiltratorfs-windows-bridge.c -Pattern 'PrjStartVirtualizing' -SimpleMatch
-          Select-String -Path tools/windows/infiltratorfs-windows-bridge.c -Pattern 'LoadLibraryW(L"ProjectedFSLib.dll")' -SimpleMatch
+          Select-String -Path tools/windows/infiltratorfs-windows-bridge.c -Pattern 'infiltratr_dynlib_open' -SimpleMatch
+          Select-String -Path tools/windows/infiltratorfs-windows-bridge.c -Pattern 'infiltratr_dynlib_bind_symbols' -SimpleMatch
+          if (Select-String -Path tools/windows/infiltratorfs-windows-bridge.c -Pattern 'GetProcAddress' -SimpleMatch -Quiet) {
+            throw 'ProjFS bridge must use Common dynamic-library binding'
+          }
           Select-String -Path tests/win32-projfs-bridge.c -Pattern 'hardlink/delete/move-out qualification: PASS' -SimpleMatch
           Select-String -Path tools/windows/infiltratorfs-windows-bridge.c -Pattern 'PrjWriteFileData' -SimpleMatch
           Select-String -Path tools/windows/infiltratorfs-windows-bridge.c -Pattern 'PRJ_NOTIFY_FILE_HANDLE_CLOSED_FILE_MODIFIED' -SimpleMatch

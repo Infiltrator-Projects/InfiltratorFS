@@ -26,6 +26,7 @@ mkfs4="$root/tools/mkfs.infilfs/part-04.inc"
 theme="$root/tools/infiltratorfs-theme.c"
 manager="$root/tools/infiltratorfs-manager.c"
 resize="$root/tools/infiltratorfs-resize.c"
+winbridge="$root/tools/windows/infiltratorfs-windows-bridge.c"
 
 grep -Fq 'set(INFILTRATR_COMMON_REQUIRED_VERSION "1.19.20")' "$cmake"
 grep -Fq '336ab8f7f8b7364b6296c7560fc67b242b27eb9d' "$cmake"
@@ -36,10 +37,22 @@ grep -Fq 'infiltratr_theme_mode_parse(argv[1], &mode)' "$theme"
 grep -Fq 'infiltratr_theme_mode_parse(value, &mode)' "$manager"
 grep -Fq 'infiltratr_theme_mode_key(mode)' "$manager"
 grep -Fq 'infiltratr_ascii_equal_ci(argv[2], "max")' "$resize"
+grep -Fq 'infiltratr_ascii_contains_ci(theme, "dark")' "$manager"
+grep -Fq 'infiltratr_ascii_equal_ci(' "$manager"
 ! grep -Fq 'g_ascii_strcasecmp' "$manager"
+! grep -Fq 'g_ascii_strdown' "$manager"
 ! grep -Fq 'g_ascii_tolower' "$manager"
 ! grep -Fq 'strcasecmp(argv[2], "max")' "$resize"
 ! grep -Fq 'strcmp(argv[1], "system")' "$theme"
+
+# The Windows Explorer bridge uses Common's atomic dynamic-library binding
+# instead of carrying a second LoadLibrary/GetProcAddress implementation.
+grep -Fq 'infiltratr_dynlib_open(&candidate.module, "ProjectedFSLib.dll")' "$winbridge"
+grep -Fq 'infiltratr_dynlib_bind_symbols' "$winbridge"
+grep -Fq 'infilfs_win32 InfiltratrCommon::Common shell32 ole32' "$cmake"
+! grep -Fq 'LoadLibraryW' "$winbridge"
+! grep -Fq 'GetProcAddress' "$winbridge"
+! grep -Fq 'FreeLibrary' "$winbridge"
 
 # Persistent/range arithmetic uses Common's checked contracts rather than
 # parallel hand-written overflow tests.
