@@ -747,6 +747,40 @@ static int validate_integrity_metadata_progress(
                 if (status != INFS_STATUS_OK)
                     goto out;
             }
+        } else if (type == INFS_OBJECT_SECURITY) {
+            if (!security_objects_enabled(vol)) {
+                status = INFS_STATUS_CORRUPT;
+                goto out;
+            }
+            uint8_t object[INFS_BLOCK_SIZE];
+            status = read_object(
+                vol, infs_le64_to_cpu(entries[i].object_block), object);
+            if (status != INFS_STATUS_OK)
+                goto out;
+            struct infs_object_header_disk *header =
+                (struct infs_object_header_disk *)object;
+            if (id_is_zero(header->parent_id)) {
+                status = INFS_STATUS_CORRUPT;
+                goto out;
+            }
+            struct infs_lookup owner;
+            status = index_find(vol, header->parent_id, &owner);
+            if (status != INFS_STATUS_OK || !namespace_object_type(owner.type)) {
+                status = INFS_STATUS_CORRUPT;
+                goto out;
+            }
+            uint8_t owner_object[INFS_BLOCK_SIZE];
+            status = read_object(vol, owner.block, owner_object);
+            if (status != INFS_STATUS_OK)
+                goto out;
+            struct infs_attributes_disk *attributes =
+                object_attributes(owner_object);
+            if (!attributes ||
+                memcmp(attributes->security_object_id,
+                       entries[i].object_id, 16) != 0) {
+                status = INFS_STATUS_CORRUPT;
+                goto out;
+            }
         }
         scrub_metadata_progress_update(progress, (uint64_t)i + 1u);
     }

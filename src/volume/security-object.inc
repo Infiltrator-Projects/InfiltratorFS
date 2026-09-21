@@ -1,3 +1,24 @@
+static infs_status security_object_validate_owner(
+    struct infs_volume *vol, const uint8_t security_id[16],
+    const uint8_t owner_id[16])
+{
+    if (!vol || !security_id || !owner_id || id_is_zero(security_id))
+        return INFS_STATUS_INVALID_ARGUMENT;
+    struct infs_lookup lookup;
+    infs_status status = index_find(vol, security_id, &lookup);
+    if (status != INFS_STATUS_OK || lookup.type != INFS_OBJECT_SECURITY)
+        return INFS_STATUS_CORRUPT;
+    uint8_t object[INFS_BLOCK_SIZE];
+    status = read_object(vol, lookup.block, object);
+    if (status != INFS_STATUS_OK)
+        return status;
+    struct infs_object_header_disk *header =
+        (struct infs_object_header_disk *)object;
+    if (memcmp(header->parent_id, owner_id, 16) != 0)
+        return INFS_STATUS_CORRUPT;
+    return INFS_STATUS_OK;
+}
+
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 static int security_descriptor_input_valid(

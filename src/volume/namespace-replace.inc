@@ -71,6 +71,17 @@ static int destroy_replaced_object_tx(struct infs_volume *vol,
         return INFS_STATUS_CORRUPT;
     }
 
+    {
+        struct infs_attributes_disk *attributes = object_attributes(object);
+        if (!attributes)
+            return INFS_STATUS_CORRUPT;
+        if (!id_is_zero(attributes->security_object_id)) {
+            status = security_object_destroy_by_id(
+                vol, attributes->security_object_id);
+            if (status != INFS_STATUS_OK)
+                return status;
+        }
+    }
     status = index_remove(vol, target->object_id);
     if (status != INFS_STATUS_OK)
         return status;
