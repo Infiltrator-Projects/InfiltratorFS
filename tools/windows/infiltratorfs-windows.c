@@ -2492,17 +2492,78 @@ static void scrub_volume(void)
                 MB_OK | MB_ICONINFORMATION);
 }
 
+enum {
+    IDC_ABOUT_CREDITS = 61001,
+    IDC_ABOUT_LICENCE = 61002
+};
+
+static HRESULT CALLBACK about_dialog_callback(
+    HWND window, UINT notification, WPARAM wparam, LPARAM lparam,
+    LONG_PTR reference_data)
+{
+    (void)reference_data;
+    if (notification == TDN_HYPERLINK_CLICKED && lparam != 0) {
+        (void)ShellExecuteW(
+            window, L"open", (LPCWSTR)lparam, NULL, NULL, SW_SHOWNORMAL);
+    } else if (notification == TDN_BUTTON_CLICKED) {
+        if ((int)wparam == IDC_ABOUT_CREDITS) {
+            (void)TaskDialog(
+                window, NULL, L"Credits", L"Credits",
+                L"Shannon Smith — Author and project maintainer",
+                TDCBF_CLOSE_BUTTON, TD_INFORMATION_ICON, NULL);
+            return S_FALSE;
+        }
+        if ((int)wparam == IDC_ABOUT_LICENCE) {
+            (void)TaskDialog(
+                window, NULL, L"Licence", L"Licence",
+                L"GPL-3.0-or-later. See LICENSE in the source package for the complete licence text.",
+                TDCBF_CLOSE_BUTTON, TD_INFORMATION_ICON, NULL);
+            return S_FALSE;
+        }
+    }
+    return S_OK;
+}
+
 static void show_about(void)
 {
-    wchar_t message[1024];
-    _snwprintf_s(message, sizeof(message) / sizeof(message[0]), _TRUNCATE,
-                 L"InfiltratorFS Manager for Windows " INFILFS_VERSION_W
-                 L"\n\nInfiltratorFS implementation " INFILFS_VERSION_W
-                 L"\nDisk format: %u.%u\n\nSame InfiltratorFS Manager application contract as Linux, rendered through the native Win32 presentation/storage adapter. Windows discovery includes raw physical partitions that have no drive letter or Windows filesystem driver.\n\nDriverless Explorer bridge: Microsoft's inbox Projected File System (ProjFS) exposes an opened InfiltratorFS volume through a projected Explorer folder, with an auxiliary drive alias when Windows can expose one in the current UAC namespace. InfiltratorFS ships no custom Windows kernel driver in this mode.\n\nLicence: GPL-3.0-or-later\n\nExperimental filesystem \u2014 use backed-up or disposable media while testing.",
-                 (unsigned)INFS_FORMAT_MAJOR,
-                 (unsigned)INFS_FORMAT_MINOR);
-    MessageBoxW(g_main_window, message, L"About InfiltratorFS",
-                MB_OK | MB_ICONINFORMATION);
+    static const TASKDIALOG_BUTTON buttons[] = {
+        { IDC_ABOUT_CREDITS, L"Credits" },
+        { IDC_ABOUT_LICENCE, L"Licence" }
+    };
+    TASKDIALOGCONFIG config;
+    wchar_t content[1024];
+
+    _snwprintf_s(
+        content, sizeof(content) / sizeof(content[0]), _TRUNCATE,
+        INFILFS_VERSION_W
+        L"\n\nNative Windows management for InfiltratorFS volumes."
+        L"\n\nBuild: Windows / native build"
+        L"\n\n<a href=\"https://github.com/Infiltrator-Projects/InfiltratorFS\">Website</a>"
+        L"\n\nCopyright © 1993-2026 Shannon Smith");
+
+    memset(&config, 0, sizeof(config));
+    config.cbSize = sizeof(config);
+    config.hwndParent = g_main_window;
+    config.dwFlags = TDF_ENABLE_HYPERLINKS |
+                     TDF_POSITION_RELATIVE_TO_WINDOW |
+                     TDF_SIZE_TO_CONTENT;
+    config.dwCommonButtons = TDCBF_CLOSE_BUTTON;
+    config.pszWindowTitle = L"About InfiltratorFS";
+    config.pszMainInstruction = L"InfiltratorFS";
+    config.pszContent = content;
+    config.cButtons = (UINT)(sizeof(buttons) / sizeof(buttons[0]));
+    config.pButtons = buttons;
+    config.pfCallback = about_dialog_callback;
+    if (FAILED(TaskDialogIndirect(&config, NULL, NULL, NULL))) {
+        (void)MessageBoxW(
+            g_main_window,
+            L"InfiltratorFS " INFILFS_VERSION_W
+            L"\n\nNative Windows management for InfiltratorFS volumes."
+            L"\n\nBuild: Windows / native build"
+            L"\n\nCopyright © 1993-2026 Shannon Smith",
+            L"About InfiltratorFS",
+            MB_OK | MB_ICONINFORMATION);
+    }
 }
 
 static HMENU create_main_menu(void)

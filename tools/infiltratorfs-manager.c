@@ -46,9 +46,8 @@ static const InfiltratrProjectInfo manager_project_info = {
     .website = "https://github.com/Infiltrator-Projects/InfiltratorFS",
     .license_id = "GPL-3.0-or-later",
     .comments =
-        "INFILTRATORFS · NATIVE FILESYSTEM\n\n"
-        "Native Linux management for InfiltratorFS volumes. Uses the native "
-        "VFS/DKMS driver; FUSE is not the product path.",
+        "Native Linux management for InfiltratorFS volumes using the native "
+        "VFS/DKMS driver.",
     .icon_name = "infiltratorfs-manager",
     .copyright_text = "Copyright © 1993-2026 Shannon Smith",
 };
@@ -1640,6 +1639,14 @@ static void on_about(GtkButton *button, gpointer data)
     (void)button;
     Manager *manager = data;
     GtkWidget *dialog = gtk_about_dialog_new();
+    char *comments = g_strdup_printf(
+        "%s\n\nBuild: %s",
+        manager_project_info.comments,
+        infiltratr_build_profile_label(manager_project_info.build_profile));
+    char *author = g_strdup_printf(
+        "%s — Author and project maintainer", manager_project_info.author);
+    const char *authors[] = { author, NULL };
+
     gtk_window_set_transient_for(GTK_WINDOW(dialog), GTK_WINDOW(manager->window));
     gtk_window_set_modal(GTK_WINDOW(dialog), TRUE);
     gtk_window_set_title(GTK_WINDOW(dialog), "About InfiltratorFS");
@@ -1648,18 +1655,17 @@ static void on_about(GtkButton *button, gpointer data)
     gtk_about_dialog_set_version(
         GTK_ABOUT_DIALOG(dialog), manager_project_info.version);
     gtk_about_dialog_set_comments(
-        GTK_ABOUT_DIALOG(dialog), manager_project_info.comments);
+        GTK_ABOUT_DIALOG(dialog),
+        comments != NULL ? comments : manager_project_info.comments);
     gtk_about_dialog_set_website(
         GTK_ABOUT_DIALOG(dialog), manager_project_info.website);
-    gtk_about_dialog_set_website_label(GTK_ABOUT_DIALOG(dialog), "Project website");
+    gtk_about_dialog_set_website_label(GTK_ABOUT_DIALOG(dialog), "Website");
     gtk_about_dialog_set_copyright(
         GTK_ABOUT_DIALOG(dialog), manager_project_info.copyright_text);
     gtk_about_dialog_set_license(GTK_ABOUT_DIALOG(dialog),
         "GPL-3.0-or-later. See LICENSE in the source package for the complete licence text.");
     gtk_about_dialog_set_wrap_license(GTK_ABOUT_DIALOG(dialog), TRUE);
-    const char *authors[] = { manager_project_info.author, NULL };
     gtk_about_dialog_set_authors(GTK_ABOUT_DIALOG(dialog), authors);
-    add_class(dialog, "link-about-dialog");
     GtkIconTheme *theme = gtk_icon_theme_get_default();
     if (theme) {
         GError *error = NULL;
@@ -1674,6 +1680,8 @@ static void on_about(GtkButton *button, gpointer data)
     }
     gtk_dialog_run(GTK_DIALOG(dialog));
     gtk_widget_destroy(dialog);
+    g_free(author);
+    g_free(comments);
 }
 
 static GtkWidget *action_row(Manager *manager, GtkWidget *parent,

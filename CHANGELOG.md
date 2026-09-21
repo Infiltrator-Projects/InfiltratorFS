@@ -4,6 +4,10 @@ This file records user-visible, compatibility, architecture and validation chang
 
 ## Unreleased
 
+- Standardise Linux and Windows About presentation on the suite-wide System Monitor contract, including canonical Build, Website, Credits, Licence and Close semantics.
+- Remove the Linux About-specific styling/tagline and replace the oversized Windows technical-information message with a compact native TaskDialog.
+
+
 - Fix a Manager discovery deadlock where Inspect was disabled unless the target had already been identified as InfiltratorFS. Inspect is now available for any selected unmounted target, while Check, Scrub, Mount and filesystem-specific operations still require positive InfiltratorFS identification.
 - Add an executable regression test proving an unknown unmounted target remains inspectable without weakening the safety gates on filesystem-specific maintenance.
 
