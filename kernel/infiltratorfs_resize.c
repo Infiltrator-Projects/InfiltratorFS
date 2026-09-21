@@ -253,16 +253,20 @@ static int infilfs_native_resize_locked(
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
     struct infilfs_allocation_layout next_layout = {0};
     struct infilfs_superblock_disk next_sb;
+    unsigned long *new_reservations = NULL;
+    unsigned long *old_reservations;
     u8 *next_bitmap = NULL;
     u8 *old_bitmap;
     u8 *sb_block = NULL;
     size_t next_bitmap_bytes = 0;
+    size_t new_reservation_bytes = 0;
     u64 checkpoint[INFILFS_CHECKPOINT_COUNT];
     u64 old_total = infilfs_volume_blocks(sbi);
     u64 new_total;
     u64 generation;
     u64 common;
     u64 bit;
+    u64 words;
     u32 snapshots = 0;
     u32 slot;
     int ret;
@@ -371,6 +375,18 @@ static int infilfs_native_resize_locked(
     }
     ++generation;
 
+    words = DIV_ROUND_UP_ULL(new_total, BITS_PER_LONG);
+    if (words > SIZE_MAX / sizeof(unsigned long)) {
+        ret = -EOVERFLOW;
+        goto out;
+    }
+    new_reservation_bytes = (size_t)words * sizeof(unsigned long);
+    new_reservations = kvzalloc(new_reservation_bytes, GFP_NOFS);
+    if (!new_reservations) {
+        ret = -ENOMEM;
+        goto out;
+    }
+
     ret = infilfs_resize_write_layout(
         sb, next_bitmap, next_bitmap_bytes,
         new_total, generation, &next_layout);
@@ -414,6 +430,7 @@ static int infilfs_native_resize_locked(
     }
 
     old_bitmap = sbi->bitmap;
+    old_reservations = sbi->allocation_reservations;
     sbi->bitmap = next_bitmap;
     sbi->bitmap_bytes = next_bitmap_bytes;
     next_bitmap = NULL;
@@ -424,11 +441,9 @@ static int infilfs_native_resize_locked(
     sbi->visible_bitmap_bytes = sbi->bitmap_bytes;
     write_unlock(&sbi->bitmap_lock);
 
-    /*
-     * resize_active has drained every volatile reservation before this point.
-     * Reservation lists are geometry-independent, so only reset accounting
-     * and per-shard search hints for the new volume size.
-     */
+    sbi->allocation_reservations = new_reservations;
+    sbi->allocation_reservation_bytes = new_reservation_bytes;
+    new_reservations = NULL;
     atomic64_set(&sbi->allocation_reserved_blocks, 0);
     atomic64_set(&sbi->allocation_active_reservations, 0);
     atomic64_set(&sbi->allocation_reservation_steer, 0);
@@ -448,6 +463,7 @@ static int infilfs_native_resize_locked(
     (void)infilfs_rw_free_extent_index_rebuild_mount(sb);
 
     kvfree(old_bitmap);
+    kvfree(old_reservations);
 
     for (slot = 1; slot < INFILFS_CHECKPOINT_COUNT; ++slot) {
         int one = infilfs_rw_write_block(sb, checkpoint[slot], sb_block);
@@ -473,6 +489,7 @@ static int infilfs_native_resize_locked(
     ret = 0;
 out:
     kfree(sb_block);
+    kvfree(new_reservations);
     kvfree(next_bitmap);
     infilfs_allocation_layout_destroy(&next_layout);
     return ret;
