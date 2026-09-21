@@ -61,6 +61,7 @@
 #   infiltratorfs.ko is a composite Kbuild module.
 #   infiltratorfs_core.c owns VFS/mount/checkpoint orchestration.
 #   infiltratorfs_crypto.c owns accelerated integrity hashing.
+#   infiltratorfs_security.c owns portable-security format validation helpers.
 #   infiltratorfs_allocation_map.c owns Format 0.18 allocation-map loading.
 #   infiltratorfs_resize.c owns mounted geometry transitions.
 #   infiltratorfs_index_tree.c owns Format 0.18 object-index reads/snapshots.
@@ -89,7 +90,7 @@
 # KERNELRELEASE conditional, the initial DKMS make terminates with
 # "make: *** No targets. Stop." before Kbuild is ever entered.
 obj-m += infiltratorfs.o
-infiltratorfs-y := infiltratorfs_core.o infiltratorfs_crypto.o infiltratorfs_allocation_map.o infiltratorfs_resize.o infiltratorfs_index_tree.o infiltratorfs_extent_tree.o infiltratorfs_parallel_alloc.o infiltratorfs_allocation_publish.o infiltratorfs_read_cache.o infiltratorfs_pagecache.o infiltratorfs_directory_tree.o infiltratorfs_checksum_cache.o infiltratorfs_checksum_store.o infiltratorfs_locator_cache.o infiltratorfs_linux_meta_codec.o infiltratorfs_shared_ownership.o infiltratorfs_name_policy.o
+infiltratorfs-y := infiltratorfs_core.o infiltratorfs_crypto.o infiltratorfs_security.o infiltratorfs_allocation_map.o infiltratorfs_resize.o infiltratorfs_index_tree.o infiltratorfs_extent_tree.o infiltratorfs_parallel_alloc.o infiltratorfs_allocation_publish.o infiltratorfs_read_cache.o infiltratorfs_pagecache.o infiltratorfs_directory_tree.o infiltratorfs_checksum_cache.o infiltratorfs_checksum_store.o infiltratorfs_locator_cache.o infiltratorfs_linux_meta_codec.o infiltratorfs_shared_ownership.o infiltratorfs_name_policy.o
 ccflags-y += -I$(src)/../include/infilfs
 
 KDIR ?= /lib/modules/$(shell uname -r)/build

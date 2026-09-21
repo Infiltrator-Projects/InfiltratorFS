@@ -73,6 +73,11 @@ bool infilfs_removable_name_valid_v1(const unsigned char *name, size_t length);
 int infilfs_name_validate(struct super_block *sb, const struct qstr *name);
 bool infilfs_name_is_reserved_linux_meta(const struct qstr *name);
 
+bool infilfs_security_reserved_principal_id(const u8 id[16]);
+bool infilfs_security_sid_valid(const u8 *sid, u16 size);
+bool infilfs_security_ace_valid(
+    const struct infilfs_security_ace_disk *ace);
+
 static inline size_t infilfs_native_writeback_batch_bytes(void)
 {
     const size_t cluster_bytes =

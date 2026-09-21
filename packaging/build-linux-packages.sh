@@ -51,7 +51,7 @@ install -m 0644 README.md "$package_root/usr/share/doc/infiltratorfs/README.md"
 # though the repository build itself succeeds.
 dkms_root="$package_root/usr/src/infiltratorfs-$package_version"
 install -d "$dkms_root"
-for file in Makefile infiltratorfs_core.c infiltratorfs_crypto.c infiltratorfs_internal.h infiltratorfs_format.h \
+for file in Makefile infiltratorfs_core.c infiltratorfs_crypto.c infiltratorfs_security.c infiltratorfs_internal.h infiltratorfs_format.h \
             infiltratorfs_allocation_map.c infiltratorfs_allocation_publish.c \
             infiltratorfs_parallel_alloc.c \
             infiltratorfs_index_tree.c infiltratorfs_extent_tree.c infiltratorfs_directory_tree.c \
@@ -269,6 +269,7 @@ for required in \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_shared_ownership.c$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_name_policy.c$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_crypto.c$" \
+    "usr/src/infiltratorfs-${package_version}/infiltratorfs_security.c$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_internal.h$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_format.h$" \
     "usr/src/infiltratorfs-${package_version}/iac1.h$" \

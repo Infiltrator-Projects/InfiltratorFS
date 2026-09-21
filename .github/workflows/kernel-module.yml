@@ -96,6 +96,7 @@ jobs:
           cp kernel/Makefile \
              kernel/infiltratorfs_core.c \
              kernel/infiltratorfs_crypto.c \
+             kernel/infiltratorfs_security.c \
              kernel/infiltratorfs_internal.h \
              kernel/infiltratorfs_format.h \
              kernel/infiltratorfs_allocation_map.c \
