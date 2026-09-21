@@ -60,15 +60,28 @@ Mounting a volume on an operating system that cannot expose a particular securit
 
 Portable principals are volume-level persistent objects. A principal's
 128-bit object ID is its stable identity and it may carry zero or more typed
-platform bindings, including POSIX UID/GID and Windows SID bindings at the same
-time. Local identifiers therefore remain resolution bindings, not the
-filesystem-wide identity.
+platform bindings at the same time. Local identifiers therefore remain
+resolution bindings, not the filesystem-wide identity.
+
+POSIX UID/GID bindings are always scoped by a nonzero 128-bit identity-authority
+ID. A bare numeric UID or GID has no portable meaning. Windows bindings contain
+canonical binary SIDs and are validated structurally before they can resolve a
+principal. Opaque bindings are preservation-only and never resolve credentials.
 
 The object index supplies the scalable principal catalog rather than embedding
 principal definitions separately in each file's ACL. Unresolved principals and
 bindings remain intact when a volume moves between operating systems.
 
 The exact object/descriptor contract is in `PORTABLE_SECURITY_OBJECTS.md`.
+
+## Well-known principals
+
+Portable ACLs reserve implicit principal IDs for OWNER, GROUP, EVERYONE,
+CREATOR_OWNER and CREATOR_GROUP. These IDs are not ordinary indexed principal
+objects. OWNER and GROUP resolve through the descriptor's explicit owner and
+primary-group principals; EVERYONE always applies. CREATOR_OWNER and
+CREATOR_GROUP are inheritance templates that are replaced with the child's
+actual owner/group principal and cannot directly grant access.
 
 ## Portable access rights
 
@@ -119,8 +132,9 @@ than one private ACL copy per namespace object.
 Linux exposes owner/group identity, mode bits, POSIX ACLs and Linux-specific
 security/xattr metadata. The mapping policy is explicit:
 
-- numeric UID and GID values are adapter-local compatibility bindings, never
-  portable principal IDs;
+- numeric UID and GID values are adapter-local compatibility values and may
+  resolve a portable principal only together with an explicit identity-authority
+  ID; a bare numeric value is never a portable principal ID;
 - for regular files, POSIX read maps to `read data`, write maps to both
   `write data` and `append data`, and execute maps to `execute`;
 - for directories, POSIX read maps to `list directory`, write maps to
@@ -143,11 +157,14 @@ does not redefine the portable principal or ACL object format.
 
 ## Windows mapping
 
-Windows SIDs are adapter identity bindings, not portable principal IDs. A DACL
-ACE keeps its allow/deny disposition and ordering, resolves the SID through the
-principal binding table when possible, and projects its ACCESS_MASK onto the
-portable rights vocabulary. Unresolved SIDs remain intact as bindings so moving
-the volume between machines or domains is non-destructive.
+Windows SIDs are adapter identity bindings, not portable principal IDs. The
+persistent binding is the canonical binary SID, not its textual S-1-... form.
+Revision, sub-authority count and exact byte length are validated before the SID
+can resolve a principal. A DACL ACE keeps its allow/deny disposition and
+ordering, resolves the SID through the principal binding table when possible,
+and projects its ACCESS_MASK onto the portable rights vocabulary. Unresolved
+SIDs remain intact as bindings so moving the volume between machines or domains
+is non-destructive.
 
 The executable ACCESS_MASK projection is in
 `include/infilfs/win32_security.h`. File and directory meanings are kept
@@ -182,7 +199,9 @@ The same approach applies to adjacent metadata classes such as named attributes,
 ## On-disk security objects
 
 Format 0.18 uses separate persistent principal and security-descriptor object
-classes when `SECURITY_OBJECTS_V1` is enabled. Namespace common attributes
+classes when the portable-security incompatibility feature is enabled.
+Current security-object payload version 2 is the only accepted development
+representation. Namespace common attributes
 reference a shareable security descriptor; descriptor ACEs and owner/group
 fields reference stable principal objects.
 
@@ -197,7 +216,8 @@ larger descriptors rather than making one 4096-byte block the permanent ACL
 capacity ceiling. Full persistent details are specified in
 `PORTABLE_SECURITY_OBJECTS.md`.
 
-Unknown rights/flags fail closed in v1. Missing principals, malformed bindings,
+Unknown rights/flags fail closed in the current payload version. Missing
+principals, malformed bindings,
 bad descriptor digests, illegal descriptor references and non-canonical padding
 are corruption. Platform-specific security information with no portable
 equivalent remains a separate preservation-layer roadmap item.
@@ -206,7 +226,8 @@ equivalent remains a separate preservation-layer roadmap item.
 
 Portable security conformance requires that:
 
-- access decisions never depend on unauthenticated security metadata;
+- access decisions never depend on security metadata that has not passed the
+  format's structural, checksum and graph validation;
 - unknown security extensions are preserved or rejected according to explicit feature/version rules;
 - an adapter never widens access merely because it cannot represent a restriction in its normal UI;
 - unresolved principals remain stable and non-destructive;

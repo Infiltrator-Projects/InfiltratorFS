@@ -4,6 +4,7 @@ This file records user-visible, compatibility, architecture and validation chang
 
 ## Unreleased
 
+- Correct the portable-security identity model before further feature work: advance the development payload contract to version 2, scope POSIX numeric bindings by a 128-bit identity authority, require canonical binary Windows SIDs, make opaque bindings preservation-only, reserve implicit OWNER/GROUP/EVERYONE/CREATOR_OWNER/CREATOR_GROUP principals, and specify graph-traced rather than foreground full-namespace reclamation.
 - Harden the portable ACL evaluator and inheritance engine to reject malformed in-memory descriptors fail-closed, preserve ordered allow/deny decisions, and canonicalise the file-only/no-propagate directory inheritance edge case.
 - Redesign the development portable-security model before format freeze: principal identities become volume-level indexed objects with multiple platform bindings, security descriptors become shareable owner/group + ordered-ACL objects, descriptor reachability is graph-derived rather than persistent-refcount based, and large ACLs are permitted to page beyond one metadata block.
 - Implement versioned portable security objects with stable 128-bit principals, typed POSIX/Windows/opaque identity bindings, ordered allow/deny ACL entries, inheritance flags, transactional attachment/replacement/removal, native-reader recognition and bidirectional scrub validation.

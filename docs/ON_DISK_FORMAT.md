@@ -104,13 +104,21 @@ descriptor.
 
 ### Portable principals and security descriptors
 
-When `SECURITY_OBJECTS_V1` is set, portable principals and security
-descriptors are independent indexed object classes.
+When the portable-security incompatibility feature is set, portable principals
+and security descriptors are independent indexed object classes. Current
+security payload version 2 is the sole accepted development representation;
+superseded payload versions are corruption.
 
 A principal object's 128-bit object ID is the stable principal ID. Its payload
-contains principal kind plus zero or more variable-length typed platform
-bindings. A single principal may therefore retain POSIX and Windows bindings at
-the same time.
+contains principal kind plus zero or more fixed-size typed binding records with
+an explicit meaningful-byte count. POSIX UID/GID values are encoded as a
+nonzero 128-bit identity-authority ID followed by a little-endian 32-bit number.
+Windows identity uses canonical binary SID bytes. Opaque bindings are
+preservation-only and are not eligible for reverse credential lookup.
+
+A reserved implicit principal-ID namespace defines OWNER, GROUP, EVERYONE,
+CREATOR_OWNER and CREATOR_GROUP. Reserved IDs are never allocated to ordinary
+objects or stored as ordinary principal objects.
 
 A namespace object's `security_object_id` references a shareable security
 descriptor. The descriptor contains owner and primary-group principal IDs,
@@ -120,8 +128,10 @@ descriptor may be referenced by many namespace objects.
 
 Writers canonicalize and reuse an identical descriptor when one already exists.
 Descriptor reachability is derived from the namespace graph; it is not trusted
-to a mutable persistent reference counter. Scrub validates every principal/ACE
-reference and may deterministically reclaim an unreferenced descriptor.
+to a mutable persistent reference counter. Foreground namespace mutation does
+not perform whole-namespace reference scans for descriptor reclamation.
+Unreferenced descriptors/principals are tracing-GC candidates during scrub or a
+bounded maintenance pass.
 
 Compact descriptors keep ACEs inline. Descriptors larger than the inline
 capacity use checksummed metadata pages under the same descriptor object ID.
@@ -153,7 +163,8 @@ Portable common attributes contain:
 
 These are not Linux `struct stat` or Windows file-information structures.
 
-The security reference may be nonzero when `SECURITY_OBJECTS_V1` is enabled.
+The security reference may be nonzero when the portable-security
+incompatibility feature is enabled.
 The extended-metadata reference remains zero until its portable object class and
 compatibility contract are defined.
 
