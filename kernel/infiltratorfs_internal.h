@@ -125,7 +125,6 @@ static_assert(sizeof(struct infilfs_linux_xattr_record) == 8);
 struct infilfs_parallel_reservation {
     u64 start;
     u64 count;
-    u64 token;
     u32 shard;
     bool active;
 };
@@ -438,12 +437,11 @@ struct infilfs_sb_info {
     u64 metadata_alloc_hint;
     spinlock_t allocation_reservation_locks[
         INFILFS_ALLOCATION_RESERVATION_SHARDS];
-    struct list_head allocation_reservation_lists[
-        INFILFS_ALLOCATION_RESERVATION_SHARDS];
+    unsigned long *allocation_reservations;
+    size_t allocation_reservation_bytes;
     u64 allocation_reservation_hints[
         INFILFS_ALLOCATION_RESERVATION_SHARDS];
     atomic64_t allocation_reservation_steer;
-    atomic64_t allocation_reservation_serial;
     atomic64_t allocation_reserved_blocks;
     atomic64_t allocation_active_reservations;
     atomic64_t allocation_peak_active_reservations;
@@ -672,10 +670,9 @@ int infilfs_parallel_allocator_mount_init(struct super_block *sb);
 int infilfs_parallel_allocator_enable(struct super_block *sb);
 void infilfs_parallel_allocator_mount_destroy(struct super_block *sb);
 int infilfs_parallel_tx_claim(
-    struct infilfs_rw_tx *tx, u64 start, u64 count,
-    struct infilfs_parallel_reservation *consume_reservation);
+    struct infilfs_rw_tx *tx, u64 start, u64 count, bool consume_reservation);
 bool infilfs_parallel_range_reserved(
-    struct infilfs_sb_info *sbi, u64 start, u64 count);
+    const struct infilfs_sb_info *sbi, u64 start, u64 count);
 u64 infilfs_parallel_object_preferred(
     const struct infilfs_sb_info *sbi, const u8 object_id[16]);
 void infilfs_parallel_note_workload(
