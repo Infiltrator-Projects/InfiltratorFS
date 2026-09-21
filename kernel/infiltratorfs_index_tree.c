@@ -209,7 +209,7 @@ static int infilfs_index_tree_snapshot_node(
             if (memcmp(entries[i].object_id, prefix, depth) != 0 ||
                 !memchr_inv(entries[i].object_id, 0, 16) ||
                 type < INFILFS_OBJECT_DIRECTORY ||
-                type > INFILFS_OBJECT_SNAPSHOT_CATALOG ||
+                type > INFILFS_OBJECT_SECURITY ||
                 type == INFILFS_OBJECT_INDEX ||
                 le16_to_cpu(entries[i].flags) != 0 ||
                 le32_to_cpu(entries[i].reserved) != 0 ||

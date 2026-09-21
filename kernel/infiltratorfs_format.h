@@ -44,6 +44,7 @@
 #define INFILFS_OBJECT_CHECKSUM 4u
 #define INFILFS_OBJECT_SYMLINK 5u
 #define INFILFS_OBJECT_SNAPSHOT_CATALOG 6u
+#define INFILFS_OBJECT_SECURITY 7u
 
 #define INFILFS_OBJECT_VERSION_CLASSIC 1u
 #define INFILFS_OBJECT_VERSION_PAGED 2u
@@ -94,6 +95,7 @@
 #define INFILFS_INCOMPAT_UNICODE_NORM_V1 ((__u64)0x0000000000002000ULL)
 /* Optional removable-volume filename profile v1; mirrors the portable core. */
 #define INFILFS_INCOMPAT_REMOVABLE_NAMES_V1 ((__u64)0x0000000000004000ULL)
+#define INFILFS_INCOMPAT_SECURITY_OBJECTS_V1 ((__u64)0x0000000000008000ULL)
 #define INFILFS_KNOWN_INCOMPAT_FLAGS \
     (INFILFS_INCOMPAT_UTF8_NAMES | INFILFS_INCOMPAT_SPARSE_EXTENTS | \
      INFILFS_INCOMPAT_INLINE_DATA | INFILFS_INCOMPAT_SHARED_EXTENTS | \
@@ -102,7 +104,7 @@
      INFILFS_INCOMPAT_PAGED_EXTENTS | INFILFS_INCOMPAT_INDEX_TREE | \
      INFILFS_INCOMPAT_DIRECTORY_TREE | INFILFS_INCOMPAT_ALLOCATION_TREE | \
      INFILFS_INCOMPAT_COMPRESSED_EXTENTS | INFILFS_INCOMPAT_UNICODE_NORM_V1 | \
-     INFILFS_INCOMPAT_REMOVABLE_NAMES_V1)
+     INFILFS_INCOMPAT_REMOVABLE_NAMES_V1 | INFILFS_INCOMPAT_SECURITY_OBJECTS_V1)
 
 struct infilfs_superblock_disk {
     __u8 magic[8];
@@ -232,6 +234,43 @@ struct infilfs_extent_disk {
 
 struct infilfs_data_checksum_disk {
     __u8 bytes[32];
+} __packed;
+
+#define INFILFS_SECURITY_VERSION_V1 1u
+#define INFILFS_SECURITY_BINDING_MAX 68u
+#define INFILFS_SECURITY_PRINCIPAL_USER 1u
+#define INFILFS_SECURITY_PRINCIPAL_GROUP 2u
+#define INFILFS_SECURITY_PRINCIPAL_SERVICE 3u
+#define INFILFS_SECURITY_PRINCIPAL_WELL_KNOWN 4u
+#define INFILFS_SECURITY_ACE_ALLOW 1u
+#define INFILFS_SECURITY_ACE_DENY 2u
+#define INFILFS_SECURITY_ACE_KNOWN_FLAGS 0x000fu
+#define INFILFS_SECURITY_RIGHT_ALL 0x000000000001ffffULL
+
+struct infilfs_security_payload_disk {
+    __le16 version;
+    __le16 principal_count;
+    __le16 ace_count;
+    __le16 flags;
+    __le32 principal_bytes;
+    __le32 ace_bytes;
+} __packed;
+
+struct infilfs_security_principal_disk {
+    __u8 principal_id[16];
+    __le16 kind;
+    __le16 binding_type;
+    __le16 binding_size;
+    __le16 flags;
+    __u8 binding[INFILFS_SECURITY_BINDING_MAX];
+} __packed;
+
+struct infilfs_security_ace_disk {
+    __u8 principal_id[16];
+    __le64 rights;
+    __le16 disposition;
+    __le16 flags;
+    __le32 reserved;
 } __packed;
 
 struct infilfs_index_payload_disk {

@@ -788,6 +788,66 @@ static bool infilfs_object_basic_valid(struct super_block *sb,
             pages > INFILFS_SNAPSHOT_PAGE_POINTERS ||
             payload != sizeof(*catalog) + (size_t)pages * sizeof(__le64))
             return false;
+    } else if (le16_to_cpu(header->object_type) == INFILFS_OBJECT_SECURITY) {
+        const struct infilfs_security_payload_disk *security;
+        const struct infilfs_security_principal_disk *principals;
+        const struct infilfs_security_ace_disk *aces;
+        u32 principal_count, ace_count, principal_bytes, ace_bytes, i, j;
+
+        if (version != INFILFS_OBJECT_VERSION_CLASSIC ||
+            payload < sizeof(*security))
+            return false;
+        security = (const struct infilfs_security_payload_disk *)(header + 1);
+        principal_count = le16_to_cpu(security->principal_count);
+        ace_count = le16_to_cpu(security->ace_count);
+        principal_bytes = le32_to_cpu(security->principal_bytes);
+        ace_bytes = le32_to_cpu(security->ace_bytes);
+        if (le16_to_cpu(security->version) != INFILFS_SECURITY_VERSION_V1 ||
+            le16_to_cpu(security->flags) != 0 ||
+            principal_bytes != principal_count * sizeof(*principals) ||
+            ace_bytes != ace_count * sizeof(*aces) ||
+            payload != sizeof(*security) + principal_bytes + ace_bytes)
+            return false;
+        principals = (const struct infilfs_security_principal_disk *)(security + 1);
+        aces = (const struct infilfs_security_ace_disk *)(
+            (const u8 *)principals + principal_bytes);
+        for (i = 0; i < principal_count; ++i) {
+            u16 kind = le16_to_cpu(principals[i].kind);
+            u16 binding_size = le16_to_cpu(principals[i].binding_size);
+            if (!memchr_inv(principals[i].principal_id, 0, 16) ||
+                kind < INFILFS_SECURITY_PRINCIPAL_USER ||
+                kind > INFILFS_SECURITY_PRINCIPAL_WELL_KNOWN ||
+                binding_size > INFILFS_SECURITY_BINDING_MAX ||
+                le16_to_cpu(principals[i].flags) != 0 ||
+                memchr_inv(principals[i].binding + binding_size, 0,
+                           INFILFS_SECURITY_BINDING_MAX - binding_size))
+                return false;
+            for (j = 0; j < i; ++j)
+                if (!memcmp(principals[j].principal_id,
+                            principals[i].principal_id, 16))
+                    return false;
+        }
+        for (i = 0; i < ace_count; ++i) {
+            u64 rights = le64_to_cpu(aces[i].rights);
+            u16 disposition = le16_to_cpu(aces[i].disposition);
+            u16 flags = le16_to_cpu(aces[i].flags);
+            bool found = false;
+            if (!memchr_inv(aces[i].principal_id, 0, 16) || !rights ||
+                (rights & ~INFILFS_SECURITY_RIGHT_ALL) ||
+                (disposition != INFILFS_SECURITY_ACE_ALLOW &&
+                 disposition != INFILFS_SECURITY_ACE_DENY) ||
+                (flags & ~INFILFS_SECURITY_ACE_KNOWN_FLAGS) ||
+                le32_to_cpu(aces[i].reserved) != 0)
+                return false;
+            for (j = 0; j < principal_count; ++j)
+                if (!memcmp(principals[j].principal_id,
+                            aces[i].principal_id, 16)) {
+                    found = true;
+                    break;
+                }
+            if (!found)
+                return false;
+        }
     }
     return true;
 }
