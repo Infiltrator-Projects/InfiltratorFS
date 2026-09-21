@@ -37,6 +37,13 @@ struct infilfs_manager_state {
 };
 
 struct infilfs_manager_enablement {
+    /*
+     * Inspection is the identity-discovery operation, so it must remain
+     * available for an unmounted target whose filesystem is not yet known.
+     * maintenance is reserved for operations that require a positively
+     * identified InfiltratorFS volume.
+     */
+    bool inspect;
     bool maintenance;
     bool format;
     bool mount;
