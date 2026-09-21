@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "infilfs/endian.h"
 #include "infilfs/format_volume.h"
 #include "infilfs/volume.h"
 #include <stdio.h>
@@ -16,7 +17,10 @@ static infs_status sz(void*c,uint64_t*n,int*d){struct image*i=c;*n=i->n;*d=0;ret
 static infs_status rn(void*c,void*b,size_t n){struct image*i=c;uint8_t*p=b;for(size_t x=0;x<n;++x){i->rnd^=i->rnd<<13;i->rnd^=i->rnd>>7;i->rnd^=i->rnd<<17;p[x]=(uint8_t)i->rnd;}return INFS_STATUS_OK;}
 static infs_status tm(void*c,struct infs_timestamp*t){(void)c;t->seconds=1787288400;t->nanoseconds=0;return INFS_STATUS_OK;}
 static void cl(void*c){(void)c;}
-static const struct infs_storage_ops ops={rd,wr,fl,sz,rn,tm,cl};
+static const struct infs_storage_ops ops={
+ .read_at=rd,.write_at=wr,.flush=fl,.get_size=sz,
+ .random_bytes=rn,.current_time=tm,.close=cl
+};
 static struct infs_storage st(struct image*i){struct infs_storage s={&ops,i};return s;}
 
 int main(void){

@@ -368,6 +368,16 @@ static int validate_namespace_graph_progress(
             status = INFS_STATUS_CORRUPT;
             goto out;
         }
+        if (!id_is_zero(attributes->security_object_id)) {
+            if (!security_objects_enabled(vol)) {
+                status = INFS_STATUS_CORRUPT;
+                goto out;
+            }
+            status = security_object_validate_owner(
+                vol, attributes->security_object_id, header->object_id);
+            if (status != INFS_STATUS_OK)
+                goto out;
+        }
 
         if (i == root_index) {
             if (references[i] != 0 || !id_is_zero(header->parent_id)) {
