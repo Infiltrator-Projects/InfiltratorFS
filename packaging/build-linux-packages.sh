@@ -13,6 +13,7 @@ version="$(sed -n 's/^project(InfiltratorFS VERSION \([^ ]*\) LANGUAGES C)$/\1/p
 package_version="${INFILTRATORFS_PACKAGE_VERSION:-$version}"
 build_identity="${INFILTRATORFS_BUILD_IDENTITY:-generic-apt}"
 emit_run="${INFILTRATORFS_EMIT_RUN:-1}"
+desktop_bundle_dir="${INFILTRATORFS_DESKTOP_BUNDLE_DIR:-}"
 [[ "$package_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\+native[0-9]+)?$ ]] || {
     echo "Invalid InfiltratorFS package version: $package_version" >&2
     exit 1
@@ -76,7 +77,7 @@ EOF
 
 install -d "$package_root/DEBIAN"
 installed_size="$(du -sk "$package_root/usr" | cut -f1)"
-desktop_recommends=", udisks2, infiltratorfs-desktop-integration"
+desktop_depends=", udisks2, infiltratorfs-desktop-integration"
 desktop_identity="managed-packages"
 cat > "$package_root/DEBIAN/control" <<EOF
 Package: infiltratorfs
@@ -87,8 +88,8 @@ Architecture: ${architecture}
 Maintainer: The First Infiltrator
 X-InfiltratorFS-Build: ${build_identity}
 X-InfiltratorFS-Desktop-Integration: ${desktop_identity}
-Depends: dkms, initramfs-tools, kmod, policykit-1, util-linux, xdg-utils, fontconfig, libssl3t64 | libssl3, libgtk-3-0t64 | libgtk-3-0, libglib2.0-0t64 | libglib2.0-0
-Recommends: linux-headers-generic, udev${desktop_recommends}
+Depends: dkms, initramfs-tools, kmod, policykit-1, util-linux, xdg-utils, fontconfig, libssl3t64 | libssl3, libgtk-3-0t64 | libgtk-3-0, libglib2.0-0t64 | libglib2.0-0${desktop_depends}
+Recommends: linux-headers-generic, udev
 Installed-Size: ${installed_size}
 Homepage: https://github.com/Infiltrator-Projects/InfiltratorFS
 Description: native Linux InfiltratorFS filesystem and tools
@@ -312,6 +313,10 @@ if grep -q 'usr/share/nemo/actions/infiltratorfs-format-partition.nemo_action$' 
 fi
 test "$(dpkg-deb --field "$dist_dir/$deb_name" Version)" = "$package_version"
 depends="$(dpkg-deb --field "$dist_dir/$deb_name" Depends)"
+grep -Eq '(^|, )infiltratorfs-desktop-integration([ ,]|$)' <<<"$depends" || {
+    echo 'Core package must require the managed desktop integration package.' >&2
+    exit 1
+}
 for dependency in dkms initramfs-tools kmod policykit-1 util-linux xdg-utils fontconfig libgtk-3-0t64 libglib2.0-0t64; do
     grep -Eq "(^|, )${dependency}([ ,|]|$)" <<<"$depends"
 done
@@ -360,9 +365,42 @@ fi
 # The .run payload contains source, but its bootstrap deliberately disables the
 # optional PkgConfig/FUSE discovery and removes any legacy infilfs-fuse binary.
 source_epoch="$(git log -1 --format=%ct 2>/dev/null || date +%s)"
-tar --sort=name --mtime="@${source_epoch}" --owner=0 --group=0 --numeric-owner \
-    --exclude='./.git' --exclude='*/.git' --exclude='./build*' --exclude='./dist' \
-    -czf "$payload" .
+bundle_work=""
+bundle_payload=""
+if [[ -n "$desktop_bundle_dir" ]]; then
+    [[ -d "$desktop_bundle_dir" ]] || {
+        echo "Desktop integration bundle directory does not exist: $desktop_bundle_dir" >&2
+        exit 1
+    }
+    bundle_work="$(mktemp -d)"
+    bundle_payload="$bundle_work/infiltratorfs-desktop-integration-bundle.tar"
+    for pattern in 'infiltratorfs-libblockdev-fs3_*.deb' \
+                   'infiltratorfs-gnome-disk-utility_*.deb' \
+                   'infiltratorfs-desktop-integration_*.deb' \
+                   'infiltratorfs-desktop-integration.manifest'; do
+        file="$(find "$desktop_bundle_dir" -maxdepth 1 -type f -name "$pattern" -print -quit)"
+        [[ -s "$file" ]] || {
+            echo "Desktop integration bundle is incomplete: $pattern" >&2
+            exit 1
+        }
+    done
+    tar -C "$desktop_bundle_dir" -cf "$bundle_payload" \
+        "$(basename "$(find "$desktop_bundle_dir" -maxdepth 1 -type f -name 'infiltratorfs-libblockdev-fs3_*.deb' -print -quit)")" \
+        "$(basename "$(find "$desktop_bundle_dir" -maxdepth 1 -type f -name 'infiltratorfs-gnome-disk-utility_*.deb' -print -quit)")" \
+        "$(basename "$(find "$desktop_bundle_dir" -maxdepth 1 -type f -name 'infiltratorfs-desktop-integration_*.deb' -print -quit)")" \
+        infiltratorfs-desktop-integration.manifest
+fi
+
+tar_args=(
+    --sort=name --mtime="@${source_epoch}" --owner=0 --group=0 --numeric-owner
+    --exclude='./.git' --exclude='*/.git' --exclude='./build*' --exclude='./dist'
+    -czf "$payload" -C "$repo_root" .
+)
+if [[ -n "$bundle_payload" ]]; then
+    tar_args+=( -C "$bundle_work" "$(basename "$bundle_payload")" )
+fi
+tar "${tar_args[@]}"
+rm -rf "$bundle_work"
 
 cat > "$dist_dir/$run_name" <<'RUN_HEADER'
 #!/usr/bin/env bash
@@ -399,6 +437,17 @@ verify_installer() {
     test -x "$verify_root/support/installer/bootstrap.sh"
     bash -n "$verify_root/support/installer/bootstrap.sh"
     bash -n "$verify_root/packaging/build-linux-packages.sh"
+    if [[ -f "$verify_root/infiltratorfs-desktop-integration-bundle.tar" ]]; then
+        bundle_verify="$verify_root/.desktop-bundle-verify"
+        mkdir -p "$bundle_verify"
+        tar -xf "$verify_root/infiltratorfs-desktop-integration-bundle.tar" -C "$bundle_verify"
+        for pattern in 'infiltratorfs-libblockdev-fs3_*.deb' \
+                       'infiltratorfs-gnome-disk-utility_*.deb' \
+                       'infiltratorfs-desktop-integration_*.deb' \
+                       'infiltratorfs-desktop-integration.manifest'; do
+            test -n "$(find "$bundle_verify" -maxdepth 1 -type f -name "$pattern" -print -quit)"
+        done
+    fi
     grep -Fq 'bash "$ROOT/packaging/build-linux-packages.sh"' \
         "$verify_root/support/installer/bootstrap.sh"
     rm -rf "$verify_root"
