@@ -1,5 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "infiltratorfs_internal.h"
+
+struct infilfs_parallel_reservation_entry {
+    struct list_head node;
+    u64 start;
+    u64 count;
+    u64 token;
+};
 /*
  * Volatile sharded allocation reservations for the native Linux adapter.
  *
@@ -93,24 +100,36 @@ static bool infilfs_parallel_ranges_overlap(
 
 static bool infilfs_parallel_range_reserved_locked(
     struct infilfs_sb_info *sbi, u32 first, u32 last,
-    u64 start, u64 count,
-    const struct infilfs_parallel_reservation *ignore)
+    u64 start, u64 count, u64 ignore_token)
 {
     u32 shard;
 
     for (shard = first; shard <= last; ++shard) {
-        struct infilfs_parallel_reservation *reservation;
+        struct infilfs_parallel_reservation_entry *entry;
 
         list_for_each_entry(
-            reservation, &sbi->allocation_reservation_lists[shard], node) {
-            if (reservation == ignore || !reservation->active)
+            entry, &sbi->allocation_reservation_lists[shard], node) {
+            if (ignore_token && entry->token == ignore_token)
                 continue;
             if (infilfs_parallel_ranges_overlap(
-                    start, count, reservation->start, reservation->count))
+                    start, count, entry->start, entry->count))
                 return true;
         }
     }
     return false;
+}
+
+static struct infilfs_parallel_reservation_entry *
+infilfs_parallel_find_reservation_locked(
+    struct infilfs_sb_info *sbi, u32 shard, u64 token)
+{
+    struct infilfs_parallel_reservation_entry *entry;
+
+    list_for_each_entry(
+        entry, &sbi->allocation_reservation_lists[shard], node)
+        if (entry->token == token)
+            return entry;
+    return NULL;
 }
 
 bool infilfs_parallel_range_reserved(
@@ -131,7 +150,7 @@ bool infilfs_parallel_range_reserved(
     last = infilfs_parallel_shard_for(sbi, start + count - 1u);
     infilfs_parallel_lock_range(sbi, first, last);
     reserved = infilfs_parallel_range_reserved_locked(
-        sbi, first, last, start, count, NULL);
+        sbi, first, last, start, count, 0);
     infilfs_parallel_unlock_range(sbi, first, last);
     return reserved;
 }
@@ -156,6 +175,7 @@ int infilfs_parallel_allocator_mount_init(struct super_block *sb)
         sbi->allocation_reservation_hints[shard] = start;
     }
     atomic64_set(&sbi->allocation_reservation_steer, 0);
+    atomic64_set(&sbi->allocation_reservation_serial, 0);
     atomic64_set(&sbi->allocation_reserved_blocks, 0);
     atomic64_set(&sbi->allocation_active_reservations, 0);
     atomic64_set(&sbi->allocation_peak_active_reservations, 0);
@@ -184,6 +204,7 @@ int infilfs_parallel_allocator_mount_init(struct super_block *sb)
 void infilfs_parallel_allocator_mount_destroy(struct super_block *sb)
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
+    u32 shard;
 
     if (!sbi)
         return;
@@ -223,8 +244,22 @@ void infilfs_parallel_allocator_mount_destroy(struct super_block *sb)
                     &sbi->prepared_append_bytes),
                 (long long)atomic64_read(
                     &sbi->prepared_paged_append_successes));
+
     WARN_ON_ONCE(atomic64_read(&sbi->allocation_active_reservations) != 0);
+    for (shard = 0; shard < INFILFS_ALLOCATION_RESERVATION_SHARDS; ++shard) {
+        struct infilfs_parallel_reservation_entry *entry;
+        struct infilfs_parallel_reservation_entry *next;
+
+        spin_lock(&sbi->allocation_reservation_locks[shard]);
+        list_for_each_entry_safe(
+            entry, next, &sbi->allocation_reservation_lists[shard], node) {
+            list_del(&entry->node);
+            kfree(entry);
+        }
+        spin_unlock(&sbi->allocation_reservation_locks[shard]);
+    }
     atomic64_set(&sbi->allocation_reserved_blocks, 0);
+    atomic64_set(&sbi->allocation_active_reservations, 0);
 }
 
 static int infilfs_parallel_alloc_journal_reserve(struct infilfs_rw_tx *tx)
@@ -262,10 +297,12 @@ int infilfs_parallel_tx_claim(
     struct infilfs_rw_tx *tx, u64 start, u64 count,
     struct infilfs_parallel_reservation *consume_reservation)
 {
+    struct infilfs_parallel_reservation_entry *consume_entry = NULL;
     struct infilfs_sb_info *sbi;
     u32 first;
     u32 last;
     u64 block;
+    u64 consume_token = 0;
     int ret;
 
     if (!tx || !tx->sbi || !tx->bitmap || !count)
@@ -278,11 +315,13 @@ int infilfs_parallel_tx_claim(
             count > total - start || count > tx->free_blocks)
             return -ENOSPC;
     }
-    if (consume_reservation &&
-        (!consume_reservation->active ||
-         consume_reservation->start != start ||
-         consume_reservation->count != count))
-        return -ENOENT;
+    if (consume_reservation) {
+        if (!consume_reservation->active || !consume_reservation->token ||
+            consume_reservation->start != start ||
+            consume_reservation->count != count)
+            return -ENOENT;
+        consume_token = consume_reservation->token;
+    }
 
     ret = infilfs_parallel_alloc_journal_reserve(tx);
     if (ret)
@@ -297,14 +336,18 @@ int infilfs_parallel_tx_claim(
     infilfs_parallel_lock_range(sbi, first, last);
     write_lock(&sbi->bitmap_lock);
 
-    if (consume_reservation &&
-        (!consume_reservation->active ||
-         list_empty(&consume_reservation->node))) {
-        ret = -ENOENT;
-        goto out_unlock;
+    if (consume_reservation) {
+        consume_entry = infilfs_parallel_find_reservation_locked(
+            sbi, first, consume_token);
+        if (!consume_entry ||
+            consume_entry->start != start || consume_entry->count != count) {
+            ret = -ENOENT;
+            consume_entry = NULL;
+            goto out_unlock;
+        }
     }
     if (infilfs_parallel_range_reserved_locked(
-            sbi, first, last, start, count, consume_reservation)) {
+            sbi, first, last, start, count, consume_token)) {
         ret = -EAGAIN;
         goto out_unlock;
     }
@@ -317,10 +360,8 @@ int infilfs_parallel_tx_claim(
 
     for (block = start; block < start + count; ++block)
         infilfs_rw_bitmap_set(tx->bitmap, block, true);
-    if (consume_reservation) {
-        list_del_init(&consume_reservation->node);
-        consume_reservation->active = false;
-    }
+    if (consume_entry)
+        list_del(&consume_entry->node);
     tx->allocated[tx->allocated_count].start = start;
     tx->allocated[tx->allocated_count].count = count;
     tx->allocated_count++;
@@ -336,6 +377,9 @@ out_unlock:
         return ret;
     }
     if (consume_reservation) {
+        consume_reservation->active = false;
+        consume_reservation->token = 0;
+        kfree(consume_entry);
         atomic64_sub(count, &sbi->allocation_reserved_blocks);
         atomic64_dec(&sbi->allocation_active_reservations);
     }
@@ -351,7 +395,7 @@ static bool infilfs_parallel_range_free_locked(
     u64 block;
 
     if (infilfs_parallel_range_reserved_locked(
-            sbi, shard, shard, start, count, NULL))
+            sbi, shard, shard, start, count, 0))
         return false;
     for (block = start; block < start + count; ++block)
         if (infilfs_rw_bitmap_get(sbi->bitmap, block))
@@ -398,19 +442,29 @@ int infilfs_parallel_reserve_data(
     struct infilfs_parallel_reservation *reservation)
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
+    struct infilfs_parallel_reservation_entry *entry;
     u64 metadata_reserve;
+    u64 token;
     s64 charged;
     u32 first_shard;
     u32 pass;
-
     u64 total = infilfs_volume_blocks(sbi);
 
     memset(reservation, 0, sizeof(*reservation));
-    INIT_LIST_HEAD(&reservation->node);
     if (!sbi || !count || count >= total)
         return -ENOSPC;
     if (READ_ONCE(sbi->resize_active))
         return -EBUSY;
+
+    entry = kzalloc(sizeof(*entry), GFP_NOFS);
+    if (!entry)
+        return -ENOMEM;
+    INIT_LIST_HEAD(&entry->node);
+    token = (u64)atomic64_inc_return(&sbi->allocation_reservation_serial);
+    if (!token)
+        token = (u64)atomic64_inc_return(&sbi->allocation_reservation_serial);
+    entry->token = token;
+
     metadata_reserve = infilfs_native_metadata_reserve_blocks(sbi);
     for (;;) {
         u64 free_blocks = infilfs_native_visible_free_blocks(sb);
@@ -419,8 +473,10 @@ int infilfs_parallel_reserve_data(
         charged = atomic64_read(&sbi->allocation_reserved_blocks);
         available = free_blocks > metadata_reserve ?
             free_blocks - metadata_reserve : 0;
-        if ((u64)charged >= available || count > available - (u64)charged)
+        if ((u64)charged >= available || count > available - (u64)charged) {
+            kfree(entry);
             return -ENOSPC;
+        }
         if (atomic64_cmpxchg(&sbi->allocation_reserved_blocks,
                              charged, charged + (s64)count) == charged)
             break;
@@ -446,16 +502,11 @@ int infilfs_parallel_reserve_data(
         if (READ_ONCE(sbi->resize_active)) {
             spin_unlock(&sbi->allocation_reservation_locks[shard]);
             atomic64_sub(count, &sbi->allocation_reserved_blocks);
+            kfree(entry);
             return -EBUSY;
         }
         read_lock(&sbi->bitmap_lock);
         hint = sbi->allocation_reservation_hints[shard];
-        /*
-         * Rotational media pays heavily for seeks, so streaming reservations
-         * start at the file's physical preference whenever that preference
-         * lies inside this shard. Non-rotational/balanced profiles retain the
-         * shard next-fit cursor to preserve free-run shape and writer spread.
-         */
         if (sbi->media_profile == INFILFS_MEDIA_ROTATIONAL &&
             preferred >= arena_start && preferred < arena_end)
             hint = min_t(u64, preferred, arena_end - count);
@@ -474,13 +525,17 @@ int infilfs_parallel_reserve_data(
                 if (!infilfs_parallel_range_free_locked(
                         sbi, shard, candidate, count))
                     continue;
+
+                entry->start = candidate;
+                entry->count = count;
+                list_add_tail(
+                    &entry->node,
+                    &sbi->allocation_reservation_lists[shard]);
                 reservation->start = candidate;
                 reservation->count = count;
+                reservation->token = token;
                 reservation->shard = shard;
                 reservation->active = true;
-                list_add_tail(
-                    &reservation->node,
-                    &sbi->allocation_reservation_lists[shard]);
                 sbi->allocation_reservation_hints[shard] =
                     candidate + count < arena_end ?
                         candidate + count : arena_start;
@@ -494,29 +549,42 @@ int infilfs_parallel_reserve_data(
         read_unlock(&sbi->bitmap_lock);
         spin_unlock(&sbi->allocation_reservation_locks[shard]);
     }
+
     atomic64_sub(count, &sbi->allocation_reserved_blocks);
+    kfree(entry);
     return -ENOSPC;
 }
 
 void infilfs_parallel_release_reservation(
     struct super_block *sb, struct infilfs_parallel_reservation *reservation)
 {
+    struct infilfs_parallel_reservation_entry *entry = NULL;
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
-    bool released = false;
+    u64 count;
 
-    if (!reservation || !sbi ||
+    if (!reservation || !sbi || !reservation->active ||
+        !reservation->token ||
         reservation->shard >= INFILFS_ALLOCATION_RESERVATION_SHARDS)
         return;
+
+    count = reservation->count;
     spin_lock(&sbi->allocation_reservation_locks[reservation->shard]);
-    if (reservation->active) {
-        list_del_init(&reservation->node);
-        reservation->active = false;
-        released = true;
-    }
+    entry = infilfs_parallel_find_reservation_locked(
+        sbi, reservation->shard, reservation->token);
+    if (entry &&
+        entry->start == reservation->start &&
+        entry->count == reservation->count)
+        list_del(&entry->node);
+    else
+        entry = NULL;
+    reservation->active = false;
+    reservation->token = 0;
     spin_unlock(&sbi->allocation_reservation_locks[reservation->shard]);
-    if (!released)
+
+    if (!entry)
         return;
-    atomic64_sub(reservation->count, &sbi->allocation_reserved_blocks);
+    kfree(entry);
+    atomic64_sub(count, &sbi->allocation_reserved_blocks);
     atomic64_dec(&sbi->allocation_active_reservations);
 }
 

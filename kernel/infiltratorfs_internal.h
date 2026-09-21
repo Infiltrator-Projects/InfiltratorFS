@@ -123,9 +123,9 @@ static_assert(sizeof(struct infilfs_linux_xattr_record) == 8);
 
 
 struct infilfs_parallel_reservation {
-    struct list_head node;
     u64 start;
     u64 count;
+    u64 token;
     u32 shard;
     bool active;
 };
@@ -443,6 +443,7 @@ struct infilfs_sb_info {
     u64 allocation_reservation_hints[
         INFILFS_ALLOCATION_RESERVATION_SHARDS];
     atomic64_t allocation_reservation_steer;
+    atomic64_t allocation_reservation_serial;
     atomic64_t allocation_reserved_blocks;
     atomic64_t allocation_active_reservations;
     atomic64_t allocation_peak_active_reservations;
