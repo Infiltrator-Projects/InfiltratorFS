@@ -4,6 +4,16 @@ This file records user-visible, compatibility, architecture and validation chang
 
 ## Unreleased
 
+## 0.18.69 — 2026-09-21
+
+- Replace serial 4 KiB allocated-run reads with bounded 4 MiB buffer-head batches submitted under a block plug before waiting, while retaining buffer-cache coherence and SHA-256 verification.
+- Keep speculative single-block readahead only for the partial-read fallback so multi-block reads do not submit the same physical range twice.
+- Add explicit modern Linux O_DIRECT admission and aligned native read/write dispatch while preserving the page cache for ordinary I/O.
+- Replace transaction-publication sync_blockdev() with targeted writeback of the exact transaction-private CoW allocation set; retain synchronous checkpoint writes and the final device-cache flush as the crash-consistency boundary.
+- Add executable O_DIRECT qualification and policy guards for batched reads, exact dependency writeback and the preserved durability barrier.
+- Add a reproducible performance harness using incompressible data, single-process metadata tests, raw-device baselining and optional fio cross-checks without making fio mandatory.
+- Keep the on-disk format at 0.18.
+
 ## 0.18.68 — 2026-09-21
 
 - Make desktop integration mandatory for normal InfiltratorFS package installation so a system cannot stop at correct udev/UDisks identity while stock GNOME Disks still renders "Unknown (infiltratorfs 0.18)".
