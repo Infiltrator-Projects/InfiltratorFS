@@ -397,7 +397,7 @@ tar_args=(
     -czf "$payload" -C "$repo_root" .
 )
 if [[ -n "$bundle_payload" ]]; then
-    tar_args+=( -C "$bundle_work" "$(basename "$bundle_payload")" )
+    tar_args+=( -C "$bundle_work" "./$(basename "$bundle_payload")" )
 fi
 tar "${tar_args[@]}"
 rm -rf "$bundle_work"
