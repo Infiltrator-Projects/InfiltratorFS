@@ -358,10 +358,20 @@ static int infilfs_native_operation_rollback(
             infilfs_rw_bitmap_set(pending->tx.bitmap, start + b, false);
     }
     write_unlock(&sbi->bitmap_lock);
+    if (pending->tx.free_extent_index_valid) {
+        for (a = pending->operation_allocated_count;
+             a < pending->tx.allocated_count; ++a) {
+            if (infilfs_rw_free_extent_index_add(
+                    &pending->tx, pending->tx.allocated[a].start,
+                    pending->tx.allocated[a].count)) {
+                infilfs_rw_free_extent_index_invalidate(&pending->tx);
+                break;
+            }
+        }
+    }
     pending->tx.allocated_count = pending->operation_allocated_count;
     pending->tx.next_sb = pending->operation_next_sb;
     pending->tx.free_blocks = pending->operation_free_blocks;
-    (void)infilfs_rw_free_extent_index_rebuild(&pending->tx);
     pending->tx.deferred_count = pending->operation_deferred_count;
     if (pending->operation_had_last && pending->tx.deferred_count)
         pending->tx.deferred[pending->tx.deferred_count - 1u] =

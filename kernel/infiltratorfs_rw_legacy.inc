@@ -180,6 +180,130 @@ int infilfs_rw_free_extent_index_remove(struct infilfs_rw_tx *tx,
     return -ENOENT;
 }
 
+static int infilfs_rw_free_extent_index_add(
+    struct infilfs_rw_tx *tx, u64 start, u64 count)
+{
+    u64 end;
+    size_t first;
+    size_t i;
+    int ret;
+
+    if (!tx || !tx->free_extent_index_valid || !count)
+        return -EINVAL;
+    if (start > U64_MAX - count)
+        return -EOVERFLOW;
+    end = start + count;
+
+    i = 0;
+    while (i < tx->free_extent_count) {
+        u64 existing_end;
+
+        if (tx->free_extents[i].start >
+            U64_MAX - tx->free_extents[i].count)
+            return -EFSCORRUPTED;
+        existing_end =
+            tx->free_extents[i].start + tx->free_extents[i].count;
+        if (existing_end >= start)
+            break;
+        ++i;
+    }
+
+    first = i;
+    while (i < tx->free_extent_count &&
+           tx->free_extents[i].start <= end) {
+        u64 existing_end;
+
+        if (tx->free_extents[i].start >
+            U64_MAX - tx->free_extents[i].count)
+            return -EFSCORRUPTED;
+        existing_end =
+            tx->free_extents[i].start + tx->free_extents[i].count;
+        if (tx->free_extents[i].start < start)
+            start = tx->free_extents[i].start;
+        if (existing_end > end)
+            end = existing_end;
+        ++i;
+    }
+
+    if (first < i) {
+        tx->free_extents[first].start = start;
+        tx->free_extents[first].count = end - start;
+        if (i > first + 1u) {
+            memmove(&tx->free_extents[first + 1u],
+                    &tx->free_extents[i],
+                    (tx->free_extent_count - i) *
+                        sizeof(*tx->free_extents));
+            tx->free_extent_count -= i - first - 1u;
+        }
+        return 0;
+    }
+
+    ret = infilfs_rw_free_extent_index_reserve(
+        tx, tx->free_extent_count + 1u);
+    if (ret)
+        return ret;
+    memmove(&tx->free_extents[first + 1u],
+            &tx->free_extents[first],
+            (tx->free_extent_count - first) * sizeof(*tx->free_extents));
+    tx->free_extents[first].start = start;
+    tx->free_extents[first].count = end - start;
+    tx->free_extent_count++;
+    return 0;
+}
+
+static void infilfs_rw_free_extent_index_take(
+    struct infilfs_rw_tx *tx, struct infilfs_sb_info *sbi)
+{
+    tx->free_extents = sbi->free_extents;
+    tx->free_extent_count = sbi->free_extent_count;
+    tx->free_extent_capacity = sbi->free_extent_capacity;
+    tx->free_extent_index_valid = sbi->free_extent_index_valid;
+    sbi->free_extents = NULL;
+    sbi->free_extent_count = 0;
+    sbi->free_extent_capacity = 0;
+    sbi->free_extent_index_valid = false;
+}
+
+static void infilfs_rw_free_extent_index_return(struct infilfs_rw_tx *tx)
+{
+    struct infilfs_sb_info *sbi;
+
+    if (!tx || !tx->sbi)
+        return;
+    sbi = tx->sbi;
+    kvfree(sbi->free_extents);
+    sbi->free_extents = tx->free_extents;
+    sbi->free_extent_count = tx->free_extent_count;
+    sbi->free_extent_capacity = tx->free_extent_capacity;
+    sbi->free_extent_index_valid = tx->free_extent_index_valid;
+    tx->free_extents = NULL;
+    tx->free_extent_count = 0;
+    tx->free_extent_capacity = 0;
+    tx->free_extent_index_valid = false;
+}
+
+int infilfs_rw_free_extent_index_rebuild_mount(struct super_block *sb)
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
+    struct infilfs_rw_tx tx = {0};
+    int ret;
+
+    if (!sbi || !sbi->bitmap)
+        return -EINVAL;
+    tx.sb = sb;
+    tx.sbi = sbi;
+    tx.bitmap = sbi->bitmap;
+    tx.bitmap_bytes = sbi->bitmap_bytes;
+    ret = infilfs_rw_free_extent_index_rebuild(&tx);
+
+    kvfree(sbi->free_extents);
+    sbi->free_extents = tx.free_extents;
+    sbi->free_extent_count = tx.free_extent_count;
+    sbi->free_extent_capacity = tx.free_extent_capacity;
+    sbi->free_extent_index_valid = !ret && tx.free_extent_index_valid;
+    return ret;
+}
+
 static bool infilfs_rw_free_extent_choose_forward(
     const struct infilfs_rw_tx *tx, u64 wanted, u64 cursor, u64 *start_out)
 {
@@ -870,6 +994,13 @@ static int infilfs_rw_enable(struct super_block *sb)
         infilfs_parallel_allocator_mount_destroy(sb);
         return ret;
     }
+
+    /*
+     * Build the free-run accelerator once when write support becomes active.
+     * Transactions borrow and update it incrementally; failure merely disables
+     * the accelerator because the allocation bitmap remains authoritative.
+     */
+    (void)infilfs_rw_free_extent_index_rebuild_mount(sb);
     sbi->data_alloc_hint = 1;
     sbi->metadata_alloc_hint = total > 1 ? total - 1u : 1u;
     sbi->rw_enabled = true;
@@ -938,6 +1069,11 @@ fail:
     sbi->bitmap_bytes = 0;
     kvfree(sbi->snapshot_bitmap);
     sbi->snapshot_bitmap = NULL;
+    kvfree(sbi->free_extents);
+    sbi->free_extents = NULL;
+    sbi->free_extent_count = 0;
+    sbi->free_extent_capacity = 0;
+    sbi->free_extent_index_valid = false;
     infilfs_allocation_layout_destroy(&committed_layout);
     infilfs_allocation_cache_destroy(sbi);
     return ret;
@@ -961,6 +1097,11 @@ static void infilfs_rw_mount_destroy(struct super_block *sb)
     sbi->bitmap_bytes = 0;
     kvfree(sbi->snapshot_bitmap);
     sbi->snapshot_bitmap = NULL;
+    kvfree(sbi->free_extents);
+    sbi->free_extents = NULL;
+    sbi->free_extent_count = 0;
+    sbi->free_extent_capacity = 0;
+    sbi->free_extent_index_valid = false;
     infilfs_allocation_cache_destroy(sbi);
     sbi->rw_enabled = false;
 }
@@ -999,7 +1140,7 @@ static int infilfs_rw_tx_begin(struct super_block *sb, struct infilfs_rw_tx *tx)
     tx->next_sb = sbi->disk;
     tx->generation = generation + 1u;
     tx->free_blocks = le64_to_cpu(sbi->disk.free_blocks);
-    (void)infilfs_rw_free_extent_index_rebuild(tx);
+    infilfs_rw_free_extent_index_take(tx, sbi);
     return 0;
 }
 
@@ -1045,11 +1186,17 @@ static void infilfs_rw_tx_abort(struct infilfs_rw_tx *tx)
         tx->sbi->visible_bitmap = tx->sbi->bitmap;
         tx->sbi->visible_bitmap_bytes = tx->sbi->bitmap_bytes;
         write_unlock(&tx->sbi->bitmap_lock);
+
+        /*
+         * Abort is exceptional. Rebuild from the restored authoritative bitmap
+         * so the mount-owned accelerator cannot retain transaction mutations.
+         */
+        (void)infilfs_rw_free_extent_index_rebuild(tx);
     }
+    infilfs_rw_free_extent_index_return(tx);
     tx->bitmap = NULL;
     kvfree(tx->deferred);
     kvfree(tx->allocated);
-    kvfree(tx->free_extents);
     memset(tx, 0, sizeof(*tx));
 }
 
@@ -1198,6 +1345,42 @@ int infilfs_rw_tx_apply_deferred(struct infilfs_rw_tx *tx)
         }
     }
     write_unlock(&tx->sbi->bitmap_lock);
+
+    if (tx->free_extent_index_valid) {
+        for (r = 0; r < tx->deferred_count; ++r) {
+            u64 start = tx->deferred[r].start;
+            u64 count = tx->deferred[r].count;
+            u64 run_start = 0;
+            u64 run_count = 0;
+
+            for (i = 0; i < count; ++i) {
+                u64 block = start + i;
+
+                if (!infilfs_rw_bitmap_get(tx->bitmap, block)) {
+                    if (!run_count)
+                        run_start = block;
+                    ++run_count;
+                    continue;
+                }
+                if (run_count) {
+                    if (infilfs_rw_free_extent_index_add(
+                            tx, run_start, run_count)) {
+                        infilfs_rw_free_extent_index_invalidate(tx);
+                        break;
+                    }
+                    run_count = 0;
+                }
+            }
+            if (!tx->free_extent_index_valid)
+                break;
+            if (run_count &&
+                infilfs_rw_free_extent_index_add(
+                    tx, run_start, run_count)) {
+                infilfs_rw_free_extent_index_invalidate(tx);
+                break;
+            }
+        }
+    }
     return 0;
 }
 
@@ -1371,11 +1554,7 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
     tx->allocated = NULL;
     tx->allocated_count = 0;
     tx->allocated_capacity = 0;
-    kvfree(tx->free_extents);
-    tx->free_extents = NULL;
-    tx->free_extent_count = 0;
-    tx->free_extent_capacity = 0;
-    tx->free_extent_index_valid = false;
+    infilfs_rw_free_extent_index_return(tx);
     tx->bitmap = NULL;
     {
         u64 elapsed_ms =

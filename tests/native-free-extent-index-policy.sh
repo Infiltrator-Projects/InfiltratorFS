@@ -25,8 +25,20 @@ data_alloc="$(sed -n '/static int infilfs_native_alloc_data_exact_reserved(/,/^}
 grep -Fq 'infilfs_rw_free_extent_choose_forward' <<<"$data_alloc"
 grep -Fq 'for (scanned = 0; scanned < total - 1u; ++scanned)' <<<"$data_alloc"
 
+tx_begin="$(sed -n '/static int infilfs_rw_tx_begin(/,/^}/p' "$legacy")"
+! grep -Fq 'infilfs_rw_free_extent_index_rebuild' <<<"$tx_begin"
+grep -Fq 'infilfs_rw_free_extent_index_take(tx, sbi);' <<<"$tx_begin"
+
+apply_deferred="$(sed -n '/^int infilfs_rw_tx_apply_deferred(/,/^}/p' "$legacy")"
+grep -Fq 'infilfs_rw_free_extent_index_add(' <<<"$apply_deferred"
+
 rollback="$(sed -n '/static int infilfs_native_operation_rollback(/,/^}/p' "$data")"
-grep -Fq 'infilfs_rw_free_extent_index_rebuild' <<<"$rollback"
+! grep -Fq 'infilfs_rw_free_extent_index_rebuild' <<<"$rollback"
+grep -Fq 'infilfs_rw_free_extent_index_add(' <<<"$rollback"
+
+rw_enable="$(sed -n '/static int infilfs_rw_enable(/,/^}/p' "$legacy")"
+grep -Fq 'infilfs_rw_free_extent_index_rebuild_mount(sb);' <<<"$rw_enable"
+grep -Fq 'infilfs_rw_free_extent_index_rebuild_mount(sb);' "$resize"
 
 # Mount validation and resize accounting must count complete bitmap words.
 # Scalar per-block free-space scans add hundreds of millions of iterations on

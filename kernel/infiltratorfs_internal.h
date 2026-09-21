@@ -411,6 +411,17 @@ struct infilfs_sb_info {
     rwlock_t bitmap_lock;
     u8 *bitmap;
     size_t bitmap_bytes;
+
+    /*
+     * Rebuildable mount-owned index of maximal free runs. Transactions borrow
+     * this accelerator while write_lock serializes bitmap mutation and return
+     * it after publication. The allocation bitmap remains authoritative.
+     */
+    struct infilfs_rw_free_range *free_extents;
+    size_t free_extent_count;
+    size_t free_extent_capacity;
+    bool free_extent_index_valid;
+
     u64 *allocation_leaf_blocks;
     u64 *allocation_branch_blocks;
     size_t allocation_leaf_count;
@@ -652,6 +663,7 @@ const char *infilfs_media_profile_name(enum infilfs_media_profile profile);
 void infilfs_rw_free_extent_index_invalidate(struct infilfs_rw_tx *tx);
 int infilfs_rw_free_extent_index_remove(
     struct infilfs_rw_tx *tx, u64 start, u64 count);
+int infilfs_rw_free_extent_index_rebuild_mount(struct super_block *sb);
 u64 infilfs_native_metadata_reserve_blocks(const struct infilfs_sb_info *sbi);
 u64 infilfs_native_visible_free_blocks(struct super_block *sb);
 int infilfs_parallel_allocator_mount_init(struct super_block *sb);

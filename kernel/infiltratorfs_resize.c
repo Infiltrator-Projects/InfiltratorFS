@@ -456,6 +456,12 @@ static int infilfs_native_resize_locked(
     sbi->data_alloc_hint = 1u;
     sbi->metadata_alloc_hint = new_total - 1u;
 
+    /*
+     * Geometry changed under the resize gate with all transactions drained.
+     * Rebuild the mount-owned free-run accelerator once for the new bitmap.
+     */
+    (void)infilfs_rw_free_extent_index_rebuild_mount(sb);
+
     kvfree(old_bitmap);
     kvfree(old_reservations);
 
