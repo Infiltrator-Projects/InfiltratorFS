@@ -4,6 +4,8 @@ This file records user-visible, compatibility, architecture and validation chang
 
 ## Unreleased
 
+## 0.18.68 — 2026-09-21
+
 - Make desktop integration mandatory for normal InfiltratorFS package installation so a system cannot stop at correct udev/UDisks identity while stock GNOME Disks still renders "Unknown (infiltratorfs 0.18)".
 - Make the published native .run self-contained by embedding the qualified Ubuntu 24.04 / Linux Mint 22.x libblockdev, GNOME Disks and integration packages, installing them atomically with the locally compiled core package, then verifying package ownership and UDisks formatter capability.
 - Gate release assembly and publication on the presence of that embedded desktop-integration bundle and on the core Debian package carrying a hard dependency on infiltratorfs-desktop-integration.
