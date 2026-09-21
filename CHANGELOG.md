@@ -4,7 +4,9 @@ This file records user-visible, compatibility, architecture and validation chang
 
 ## Unreleased
 
-- Advance development to 0.18.70 after publishing 0.18.69; on-disk Format remains 0.18.
+## 0.18.70 — 2026-09-22
+
+- Advance development after publishing 0.18.69; on-disk Format remains 0.18.
 - Retain the validated mount-state reuse and persistent native free-space index improvements made after 0.18.69.
 - Back out the unqualified list/token allocation-reservation refactor after mounted quota, metadata, parallel-write and resize qualification exposed user-visible `EAGAIN`/`Resource temporarily unavailable` regressions; retain the previously qualified reservation implementation until a replacement passes the full native suite.
 
