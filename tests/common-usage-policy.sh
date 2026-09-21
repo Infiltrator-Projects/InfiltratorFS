@@ -23,9 +23,23 @@ mkfs1="$root/tools/mkfs.infilfs/part-01.inc"
 mkfs2="$root/tools/mkfs.infilfs/part-02.inc"
 mkfs3="$root/tools/mkfs.infilfs/part-03.inc"
 mkfs4="$root/tools/mkfs.infilfs/part-04.inc"
+theme="$root/tools/infiltratorfs-theme.c"
+manager="$root/tools/infiltratorfs-manager.c"
+resize="$root/tools/infiltratorfs-resize.c"
 
-grep -Fq 'set(INFILTRATR_COMMON_REQUIRED_VERSION "1.19.10")' "$cmake"
-grep -Fq '33e69c0a462b56d388881d89c4eb49f72fa0b0fe' "$cmake"
+grep -Fq 'set(INFILTRATR_COMMON_REQUIRED_VERSION "1.19.20")' "$cmake"
+grep -Fq '336ab8f7f8b7364b6296c7560fc67b242b27eb9d' "$cmake"
+
+# Common 1.19.20 owns theme persistence parsing/keys and deterministic ASCII
+# comparison. Keep those generic mechanics out of the filesystem tools.
+grep -Fq 'infiltratr_theme_mode_parse(argv[1], &mode)' "$theme"
+grep -Fq 'infiltratr_theme_mode_parse(value, &mode)' "$manager"
+grep -Fq 'infiltratr_theme_mode_key(mode)' "$manager"
+grep -Fq 'infiltratr_ascii_equal_ci(argv[2], "max")' "$resize"
+! grep -Fq 'g_ascii_strcasecmp' "$manager"
+! grep -Fq 'g_ascii_tolower' "$manager"
+! grep -Fq 'strcasecmp(argv[2], "max")' "$resize"
+! grep -Fq 'strcmp(argv[1], "system")' "$theme"
 
 # Persistent/range arithmetic uses Common's checked contracts rather than
 # parallel hand-written overflow tests.

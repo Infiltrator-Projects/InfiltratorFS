@@ -19,13 +19,7 @@ int main(int argc, char **argv)
     }
 
     InfiltratrThemeMode mode;
-    if (strcmp(argv[1], "system") == 0)
-        mode = INFILTRATR_THEME_SYSTEM;
-    else if (strcmp(argv[1], "day") == 0)
-        mode = INFILTRATR_THEME_DAY;
-    else if (strcmp(argv[1], "night") == 0)
-        mode = INFILTRATR_THEME_NIGHT;
-    else
+    if (!infiltratr_theme_mode_parse(argv[1], &mode))
         return 2;
 
     bool system_dark = argc == 3 && strcmp(argv[2], "dark") == 0;

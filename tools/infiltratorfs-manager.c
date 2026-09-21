@@ -701,7 +701,7 @@ static void manager_apply_theme(Manager *manager)
         connection_border, connection, summary, background, text);
 
     /*
-     * Common 1.19.10 exposes the complete Linux MBLINK-derived appearance roles in addition
+     * Common 1.19.20 exposes the complete Linux MBLINK-derived appearance roles in addition
      * to the base surfaces.  Use those roles directly instead of flattening
      * the Manager into neutral accent + fault only.
      */
@@ -780,12 +780,8 @@ static InfiltratrThemeMode load_theme_mode(void)
     char *path = theme_config_path();
     char value[32] = {0};
     InfiltratrThemeMode mode = INFILTRATR_THEME_SYSTEM;
-    if (path && infiltratr_read_text_file(path, value, sizeof(value))) {
-        if (g_ascii_strcasecmp(value, "day") == 0)
-            mode = INFILTRATR_THEME_DAY;
-        else if (g_ascii_strcasecmp(value, "night") == 0)
-            mode = INFILTRATR_THEME_NIGHT;
-    }
+    if (path && infiltratr_read_text_file(path, value, sizeof(value)))
+        (void)infiltratr_theme_mode_parse(value, &mode);
     g_free(path);
     return mode;
 }
@@ -800,16 +796,17 @@ static void save_theme_mode(InfiltratrThemeMode mode)
         return;
     }
     if (g_mkdir_with_parents(directory, 0700) == 0) {
-        const char *name = infiltratr_theme_mode_name(mode);
-        char lower[16];
-        gsize length = strlen(name);
-        if (length < sizeof(lower) - 2u) {
-            for (gsize i = 0; i < length; ++i)
-                lower[i] = (char)g_ascii_tolower(name[i]);
-            lower[length++] = '\n';
-            lower[length] = '\0';
-            (void)infiltratr_atomic_file_write_bytes(
-                path, INFILTRATR_ATOMIC_FILE_PRIVATE, lower, length);
+        const char *key = infiltratr_theme_mode_key(mode);
+        char value[16];
+        if (key) {
+            size_t length = strlen(key);
+            if (length < sizeof(value) - 2u) {
+                memcpy(value, key, length);
+                value[length++] = '\n';
+                value[length] = '\0';
+                (void)infiltratr_atomic_file_write_bytes(
+                    path, INFILTRATR_ATOMIC_FILE_PRIVATE, value, length);
+            }
         }
     }
     g_free(directory);

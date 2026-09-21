@@ -7,11 +7,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <strings.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
 
 #include "infiltratorfs_ioctl.h"
+#include "infiltratr/core.h"
 #include "infiltratr/quantity.h"
 
 int main(int argc, char **argv)
@@ -26,7 +26,7 @@ int main(int argc, char **argv)
     }
 
     memset(&request, 0, sizeof(request));
-    if (strcasecmp(argv[2], "max") == 0) {
+    if (infiltratr_ascii_equal_ci(argv[2], "max")) {
         request.flags = INFILFS_RESIZE_TO_DEVICE_MAX;
     } else if (!infiltratr_parse_binary_quantity_u64(
                    argv[2], &parsed_size)) {
