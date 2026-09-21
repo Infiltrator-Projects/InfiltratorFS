@@ -563,7 +563,7 @@ static bool infilfs_native_choose_scored_extent(
     const struct infilfs_rw_tx *tx, u64 wanted, u64 preferred,
     enum infilfs_data_workload workload, u64 *start_out)
 {
-    struct infilfs_sb_info *sbi;
+    const struct infilfs_sb_info *sbi;
     u64 best_primary = U64_MAX;
     u64 best_secondary = U64_MAX;
     u64 best_start = 0;
