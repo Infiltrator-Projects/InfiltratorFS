@@ -8,6 +8,7 @@ VERSION="$(sed -n 's/^project(InfiltratorFS VERSION \([^ ]*\) LANGUAGES C)$/\1/p
 NATIVE_PACKAGE_VERSION="${VERSION}+native1"
 KERNEL_RELEASE="$(uname -r)"
 PACKAGE_DIR="$BUILD_DIR/native-package"
+DESKTOP_BUNDLE="$ROOT/infiltratorfs-desktop-integration-bundle.tar"
 MODE="install"
 OUTPUT_PATH=""
 declare -a missing_packages=()
@@ -93,10 +94,55 @@ require_no_active_infiltratorfs_mounts() {
 }
 
 refresh_desktop_storage() {
-    command -v udevadm >/dev/null 2>&1 || return 0
-    run_as_root udevadm control --reload-rules || true
-    run_as_root udevadm trigger --subsystem-match=block --action=change || true
-    run_as_root udevadm settle --timeout=30 || true
+    if command -v udevadm >/dev/null 2>&1; then
+        run_as_root udevadm control --reload-rules || true
+        run_as_root udevadm trigger --subsystem-match=block --action=change || true
+        run_as_root udevadm settle --timeout=30 || true
+    fi
+    if command -v systemctl >/dev/null 2>&1; then
+        run_as_root systemctl restart udisks2.service || true
+    fi
+}
+
+prepare_desktop_bundle() {
+    local destination="$1" pattern file
+    [[ -f "$DESKTOP_BUNDLE" ]] || return 1
+    rm -rf "$destination"
+    mkdir -p "$destination"
+    tar -xf "$DESKTOP_BUNDLE" -C "$destination"
+    for pattern in 'infiltratorfs-libblockdev-fs3_*.deb'                    'infiltratorfs-gnome-disk-utility_*.deb'                    'infiltratorfs-desktop-integration_*.deb'                    'infiltratorfs-desktop-integration.manifest'; do
+        file="$(find "$destination" -maxdepth 1 -type f -name "$pattern" -print -quit)"
+        [[ -s "$file" ]] || {
+            echo "Bundled desktop integration is incomplete: $pattern" >&2
+            return 1
+        }
+    done
+    [[ "$(sed -n 's/^target=//p' "$destination/infiltratorfs-desktop-integration.manifest")" =        ubuntu-24.04-linuxmint-22.x ]] || {
+        echo 'Bundled desktop integration target is invalid.' >&2
+        return 1
+    }
+}
+
+verify_desktop_integration() {
+    local status owner
+    for package in infiltratorfs-desktop-integration                    infiltratorfs-gnome-disk-utility                    infiltratorfs-libblockdev-fs3; do
+        status="$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null || true)"
+        [[ "$status" = "install ok installed" ]] || {
+            echo "InfiltratorFS desktop integration package is not installed: $package" >&2
+            return 1
+        }
+    done
+    owner="$(dpkg-query -S /usr/bin/gnome-disks 2>/dev/null | head -n1 | cut -d: -f1 || true)"
+    [[ "$owner" = infiltratorfs-gnome-disk-utility ]] || {
+        echo "GNOME Disks is not owned by the InfiltratorFS managed integration package: ${owner:-unknown}" >&2
+        return 1
+    }
+    if command -v gdbus >/dev/null 2>&1; then
+        gdbus call --system --dest org.freedesktop.UDisks2             --object-path /org/freedesktop/UDisks2/Manager             --method org.freedesktop.UDisks2.Manager.CanFormat infiltratorfs             2>/dev/null | grep -Fq true || {
+                echo 'UDisks does not advertise InfiltratorFS formatting after installation.' >&2
+                return 1
+            }
+    fi
 }
 
 print_package_commands() {
@@ -138,6 +184,11 @@ if [[ "$MODE" == dry-run ]]; then
     fi
     print_build_commands
     print_kernel_commands
+    if [[ -f "$DESKTOP_BUNDLE" ]]; then
+        printf 'The release installer contains the ABI-matched GNOME Disks/libblockdev integration bundle.\n'
+    else
+        printf 'Desktop integration will be resolved through APT as a required package.\n'
+    fi
     printf 'The completed installation is Debian-managed as infiltratorfs %s.\n' "$NATIVE_PACKAGE_VERSION"
     exit 0
 fi
@@ -195,11 +246,27 @@ if [[ "$MODE" == build-only ]]; then
     exit 0
 fi
 
+desktop_dir="$BUILD_DIR/desktop-integration"
+declare -a desktop_debs=()
+if [[ -f "$DESKTOP_BUNDLE" ]]; then
+    prepare_desktop_bundle "$desktop_dir"
+    desktop_debs+=(
+        "$(find "$desktop_dir" -maxdepth 1 -type f -name 'infiltratorfs-libblockdev-fs3_*.deb' -print -quit)"
+        "$(find "$desktop_dir" -maxdepth 1 -type f -name 'infiltratorfs-gnome-disk-utility_*.deb' -print -quit)"
+        "$(find "$desktop_dir" -maxdepth 1 -type f -name 'infiltratorfs-desktop-integration_*.deb' -print -quit)"
+    )
+fi
+
 (
     cd "$PACKAGE_DIR"
-    run_as_root apt-get install -y "./$(basename "$PACKAGE")"
+    if (( ${#desktop_debs[@]} > 0 )); then
+        run_as_root apt-get install -y "./$(basename "$PACKAGE")" "${desktop_debs[@]}"
+    else
+        run_as_root apt-get install -y "./$(basename "$PACKAGE")"
+    fi
 )
 refresh_desktop_storage
+verify_desktop_integration
 
 installed_version="$(dpkg-query -W -f='${Version}' infiltratorfs 2>/dev/null || true)"
 installed_build="$(dpkg-query -W -f='${X-InfiltratorFS-Build}' infiltratorfs 2>/dev/null || true)"
@@ -221,5 +288,6 @@ printf 'Installed package: infiltratorfs %s\n' "$installed_version"
 printf 'Build: Native / local machine compile\n'
 printf 'Kernel: %s\n' "$KERNEL_RELEASE"
 printf 'Driver: Native Linux VFS / DKMS\n'
+printf 'Desktop integration: managed GNOME Disks / libblockdev packages verified\n'
 printf 'APT owns the installation and will offer only a genuinely newer release.\n'
 printf 'Launch "InfiltratorFS Manager" from the application menu.\n'
