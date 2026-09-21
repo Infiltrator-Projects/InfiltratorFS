@@ -122,6 +122,17 @@ static void check_layout(void)
            "snapshot catalog payload size");
     expect(sizeof(struct infs_snapshot_record_disk) == 152u,
            "snapshot record size");
+    expect(INFS_OBJECT_SECURITY == 7u, "security object type");
+    expect(sizeof(struct infs_security_payload_disk) == 16u,
+           "security payload size");
+    expect(sizeof(struct infs_security_principal_disk) == 92u,
+           "security principal size");
+    expect(sizeof(struct infs_security_ace_disk) == 32u,
+           "security ACE size");
+    expect(offsetof(struct infs_security_principal_disk, binding) == 24u,
+           "security principal binding offset");
+    expect(offsetof(struct infs_security_ace_disk, rights) == 16u,
+           "security ACE rights offset");
     expect(INFS_SNAPSHOT_RECORDS_PER_PAGE == 26u,
            "snapshot page capacity");
     expect(INFS_SNAPSHOT_PAGE_POINTERS >= 490u,

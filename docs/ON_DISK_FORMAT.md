@@ -100,6 +100,31 @@ Object IDs and generations are nonzero. Payloads, padding and reserved bytes mus
 
 Object types include directory, regular file, object index, checksum metadata, symbolic link and snapshot catalog.
 
+### Portable security objects
+
+When `SECURITY_OBJECTS_V1` is set, a namespace object's
+`security_object_id` may reference an indexed type-7 security object. The
+security object is an ordinary checksummed copy-on-write object whose parent ID
+is the owning namespace object's persistent object ID.
+
+Version 1 stores a fixed header followed by an ordered principal table and an
+ordered ACE table. Each principal has a stable 128-bit InfiltratorFS principal
+ID plus an optional typed platform binding. Current binding classes cover POSIX
+UID, POSIX GID, Windows SID and opaque preserved bindings. Platform identifiers
+are bindings only; none of them is the persistent principal identity.
+
+Each ACE references one principal ID, carries an allow or deny disposition, the
+64-bit portable rights mask and versioned inheritance/applicability flags.
+Every ACE principal must exist in the same security object. Unknown rights,
+flags, malformed sizes, duplicate principal IDs, dangling owner references and
+non-canonical padding fail validation.
+
+Security objects are owned one-to-one by namespace objects in v1. Replacing or
+removing a descriptor is transactional, and deleting the final namespace object
+reclaims its attached security object. Scrub validates both directions of the
+relationship: the namespace attribute must reference the indexed security
+object and the security object's parent ID must reference that same owner.
+
 ## 6. Object index
 
 The object index maps a persistent 128-bit object ID to the physical block containing that object's metadata plus its type.
@@ -118,7 +143,7 @@ Portable common attributes contain:
 - link count;
 - portable flags;
 - birth/access/modification/metadata-change timestamps;
-- future portable security-object ID; and
+- portable security-object ID; and
 - future portable extended-metadata object ID.
 
 These are not Linux `struct stat` or Windows file-information structures.

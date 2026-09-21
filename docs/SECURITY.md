@@ -3,7 +3,7 @@
 
 ## Status
 
-This document defines the intended cross-platform security architecture. Current source does **not** yet implement the final portable security-object format. The stable portable access-right vocabulary and both Linux/POSIX and Windows security-descriptor projection policies are implemented and qualified; future security objects consume those completed contracts. Current POSIX mode/UID/GID compatibility metadata and Linux adapter metadata must therefore not be mistaken for the future canonical cross-platform principal/ACL store.
+This document defines the cross-platform security architecture. Current source implements versioned portable security objects with stable 128-bit principal IDs, typed platform bindings, ordered allow/deny ACL entries and the portable rights vocabulary. Linux/POSIX and Windows security-descriptor projection policies are separate adapter contracts. Current POSIX mode/UID/GID compatibility metadata and Linux adapter xattrs remain compatibility/sidecar state rather than the canonical portable principal/ACL store.
 
 ## Threat model and trust boundaries
 
@@ -183,21 +183,25 @@ macOS, BSD, Haiku and future adapters follow the same rule: map equivalent conce
 
 The same approach applies to adjacent metadata classes such as named attributes, resource forks, alternate data streams and typed/reparse metadata: first identify the underlying portable meaning, then preserve genuinely platform-specific additions without data loss.
 
-## On-disk direction
+## On-disk security objects
 
-Format 0.18 reserves a `security object ID` in common attributes. That reference remains zero in the current portable format because the security-object record class and feature/version contract have not yet been standardized.
+Format 0.18 now uses the reserved `security object ID` in common attributes
+when incompatible feature `SECURITY_OBJECTS_V1` is present. A nonzero
+reference points to a version-1 portable security object owned by that namespace
+object.
 
-A future format revision should define:
+The record contains stable principal IDs with typed platform bindings followed
+by ordered ACL entries. ACL entries carry allow/deny disposition, portable
+rights and inheritance/applicability flags. The record is checksummed like
+other objects, participates in copy-on-write publication, is indexed by its
+persistent object ID and is validated as part of the ownership/security graph.
 
-- versioned security-object records;
-- stable principal IDs and typed platform bindings;
-- versioned ACL entries and rights;
-- inheritance semantics;
-- unknown-entry preservation rules;
-- checksumming and graph reachability requirements; and
-- scrub/recovery behavior for security metadata.
-
-Because InfiltratorFS is still pre-1.0, this can be introduced cleanly without preserving compatibility with older development formats.
+Unknown rights or flags fail closed in v1. Duplicate principals, ACEs that
+reference absent principals, malformed binding lengths, dangling owner
+references and namespace/security back-reference disagreement are corruption.
+Platform-specific security information that cannot yet be represented by v1
+remains a separate preservation-layer roadmap item rather than being silently
+flattened into the portable ACL.
 
 ## Security invariants
 
