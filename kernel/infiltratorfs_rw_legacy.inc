@@ -1244,7 +1244,7 @@ int infilfs_rw_tx_defer_free(struct infilfs_rw_tx *tx,
 static int infilfs_rw_tx_record_alloc(struct infilfs_rw_tx *tx,
                                       u64 start, u64 count)
 {
-    return infilfs_parallel_tx_claim(tx, start, count, false);
+    return infilfs_parallel_tx_claim(tx, start, count, NULL);
 }
 
 int infilfs_rw_tx_alloc(struct infilfs_rw_tx *tx, u64 count,
