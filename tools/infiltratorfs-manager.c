@@ -1078,9 +1078,14 @@ static void manager_set_enabled(Manager *manager)
     struct infilfs_manager_enablement enabled;
     infilfs_manager_compute_enablement(&state, &enabled);
 
+    /*
+     * Inspect is the recovery/discovery path for an unclassified target.
+     * Do not gate it on the very filesystem identity it is meant to discover.
+     */
+    gtk_widget_set_sensitive(manager->inspect_button, enabled.inspect);
     GtkWidget *buttons[] = {
-        manager->inspect_button, manager->check_button,
-        manager->scrub_button, manager->forensic_button, NULL
+        manager->check_button, manager->scrub_button,
+        manager->forensic_button, NULL
     };
     for (size_t i = 0; buttons[i]; ++i)
         gtk_widget_set_sensitive(buttons[i], enabled.maintenance);
