@@ -211,6 +211,11 @@ jobs:
           test -n "$(find release-assets -maxdepth 1 -name 'infiltratorfs-desktop-integration_*.deb' -print -quit)"
           test "$(dpkg-deb --field "release-assets/$deb" Version)" = "$VERSION"
           test "$(dpkg-deb --field "release-assets/$deb" X-InfiltratorFS-Desktop-Integration)" = managed-packages
+          dpkg-deb --field "release-assets/$deb" Depends | grep -Fq infiltratorfs-desktop-integration
+          payload_start="$(awk '/^__INFILTRATORFS_NATIVE_PAYLOAD__$/ { print NR + 1; exit }' "release-assets/$installer")"
+          test -n "$payload_start"
+          tail -n +"$payload_start" "release-assets/$installer" | tar -tzf - | \
+            grep -Fxq './infiltratorfs-desktop-integration-bundle.tar'
           contents="$RUNNER_TEMP/published-deb-contents.txt"
           dpkg-deb --contents "release-assets/$deb" > "$contents"
           ! grep -q 'usr/bin/infilfs-fuse$' "$contents"
