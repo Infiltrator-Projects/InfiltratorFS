@@ -66,7 +66,8 @@ static int index_page_validate(struct infs_volume *vol,
             infs_le32_to_cpu(entries[i].reserved) != 0 ||
             (type != INFS_OBJECT_DIRECTORY && type != INFS_OBJECT_FILE &&
              type != INFS_OBJECT_CHECKSUM && type != INFS_OBJECT_SYMLINK &&
-             type != INFS_OBJECT_SNAPSHOT_CATALOG) ||
+             type != INFS_OBJECT_SNAPSHOT_CATALOG &&
+             type != INFS_OBJECT_SECURITY) ||
             (type == INFS_OBJECT_SYMLINK && !symbolic_links_enabled(vol)) ||
             (type == INFS_OBJECT_SNAPSHOT_CATALOG &&
              (!snapshots_enabled(vol) ||
