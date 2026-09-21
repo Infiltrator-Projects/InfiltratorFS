@@ -257,7 +257,7 @@ static int security_objects_enabled(const struct infs_volume *vol)
 {
     return vol &&
         (infs_le64_to_cpu(vol->sb.incompat_flags) &
-         INFS_INCOMPAT_SECURITY_OBJECTS_V1) != 0;
+         INFS_INCOMPAT_PORTABLE_SECURITY) != 0;
 }
 
 /* Format 0.18 paged-index dispatch targets. core.inc owns the classic index

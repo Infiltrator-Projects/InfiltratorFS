@@ -136,24 +136,19 @@ static int symlink_payload_shape_valid(const uint8_t block[INFS_BLOCK_SIZE],
 static int security_binding_disk_valid(
     const struct infs_security_binding_disk *binding)
 {
-    if (!binding)
+    if (!binding || infs_le16_to_cpu(binding->reserved) != 0)
         return 0;
-    uint16_t type = infs_le16_to_cpu(binding->type);
-    uint16_t size = infs_le16_to_cpu(binding->value_size);
-    if (infs_le16_to_cpu(binding->flags) != 0 ||
-        infs_le16_to_cpu(binding->reserved) != 0 || size == 0 ||
-        size > INFS_SECURITY_BINDING_MAX ||
-        (type != INFS_BINDING_POSIX_UID &&
-         type != INFS_BINDING_POSIX_GID &&
-         type != INFS_BINDING_WINDOWS_SID &&
-         type != INFS_BINDING_OPAQUE))
+    struct infs_security_binding decoded;
+    memset(&decoded, 0, sizeof(decoded));
+    decoded.type = infs_le16_to_cpu(binding->type);
+    decoded.flags = infs_le16_to_cpu(binding->flags);
+    decoded.size = infs_le16_to_cpu(binding->value_size);
+    if (decoded.size > INFS_SECURITY_BINDING_MAX)
         return 0;
-    if ((type == INFS_BINDING_POSIX_UID || type == INFS_BINDING_POSIX_GID) &&
-        size != 4u)
+    memcpy(decoded.value, binding->value, decoded.size);
+    if (!infs_security_binding_is_valid(&decoded))
         return 0;
-    if (type == INFS_BINDING_WINDOWS_SID && size < 8u)
-        return 0;
-    for (uint16_t i = size; i < INFS_SECURITY_BINDING_MAX; ++i)
+    for (uint16_t i = decoded.size; i < INFS_SECURITY_BINDING_MAX; ++i)
         if (binding->value[i] != 0)
             return 0;
     return 1;
@@ -171,13 +166,14 @@ static int principal_payload_shape_valid(
     uint16_t count = infs_le16_to_cpu(payload->binding_count);
     uint16_t kind = infs_le16_to_cpu(payload->kind);
     uint32_t bytes = infs_le32_to_cpu(payload->binding_bytes);
-    if (infs_le16_to_cpu(payload->version) != INFS_SECURITY_VERSION_V1 ||
-        kind < INFS_PRINCIPAL_USER || kind > INFS_PRINCIPAL_WELL_KNOWN ||
+    if (infs_le16_to_cpu(payload->version) != INFS_SECURITY_VERSION ||
+        kind < INFS_PRINCIPAL_USER || kind > INFS_PRINCIPAL_SERVICE ||
         infs_le16_to_cpu(payload->flags) != 0 ||
         infs_le32_to_cpu(payload->reserved) != 0 ||
         bytes != (uint32_t)count * sizeof(struct infs_security_binding_disk) ||
         payload_size != sizeof(*payload) + bytes ||
         count > INFS_PRINCIPAL_BINDINGS_PER_OBJECT ||
+        infs_security_principal_id_is_reserved(header->object_id) ||
         !bytes_are_zero(header->parent_id, sizeof(header->parent_id)))
         return 0;
     const struct infs_security_binding_disk *bindings =
@@ -197,15 +193,15 @@ static int principal_payload_shape_valid(
 
 static int security_ace_disk_valid(const struct infs_security_ace_disk *ace)
 {
-    if (!ace || !id_is_nonzero(ace->principal_id))
+    if (!ace || infs_le32_to_cpu(ace->reserved) != 0)
         return 0;
-    uint64_t rights = infs_le64_to_cpu(ace->rights);
-    uint16_t disposition = infs_le16_to_cpu(ace->disposition);
-    uint16_t flags = infs_le16_to_cpu(ace->flags);
-    return rights != 0 && (rights & ~INFS_RIGHT_ALL) == 0 &&
-        (disposition == INFS_ACE_ALLOW || disposition == INFS_ACE_DENY) &&
-        (flags & ~INFS_ACE_KNOWN_FLAGS) == 0 &&
-        infs_le32_to_cpu(ace->reserved) == 0;
+    struct infs_security_ace decoded;
+    memset(&decoded, 0, sizeof(decoded));
+    memcpy(decoded.principal_id, ace->principal_id, 16);
+    decoded.rights = infs_le64_to_cpu(ace->rights);
+    decoded.disposition = infs_le16_to_cpu(ace->disposition);
+    decoded.flags = infs_le16_to_cpu(ace->flags);
+    return infs_security_ace_is_valid(&decoded);
 }
 
 static int security_payload_shape_valid(
@@ -221,12 +217,15 @@ static int security_payload_shape_valid(
     uint16_t flags = infs_le16_to_cpu(payload->flags);
     uint32_t count = infs_le32_to_cpu(payload->ace_count);
     uint32_t pages = infs_le32_to_cpu(payload->page_count);
-    if (infs_le16_to_cpu(payload->version) != INFS_SECURITY_VERSION_V1 ||
+    if (infs_le16_to_cpu(payload->version) != INFS_SECURITY_VERSION ||
         (flags & ~INFS_SECURITY_KNOWN_FLAGS) != 0 ||
         (flags & INFS_SECURITY_DACL_PRESENT) == 0 ||
         infs_le32_to_cpu(payload->reserved) != 0 ||
         !id_is_nonzero(payload->owner_principal_id) ||
         !id_is_nonzero(payload->primary_group_principal_id) ||
+        infs_security_principal_id_is_reserved(payload->owner_principal_id) ||
+        infs_security_principal_id_is_reserved(
+            payload->primary_group_principal_id) ||
         !bytes_are_zero(header->parent_id, sizeof(header->parent_id)) ||
         count > INFS_SECURITY_MAX_ACES)
         return 0;

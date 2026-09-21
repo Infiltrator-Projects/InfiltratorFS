@@ -37,10 +37,9 @@ typedef uint64_t infs_rights_mask;
     INFS_RIGHT_WRITE_NAMED_METADATA | INFS_RIGHT_READ_PERMISSIONS | \
     INFS_RIGHT_CHANGE_PERMISSIONS | INFS_RIGHT_TAKE_OWNERSHIP)
 
-#define INFS_PRINCIPAL_USER       UINT16_C(1)
-#define INFS_PRINCIPAL_GROUP      UINT16_C(2)
-#define INFS_PRINCIPAL_SERVICE    UINT16_C(3)
-#define INFS_PRINCIPAL_WELL_KNOWN UINT16_C(4)
+#define INFS_PRINCIPAL_USER    UINT16_C(1)
+#define INFS_PRINCIPAL_GROUP   UINT16_C(2)
+#define INFS_PRINCIPAL_SERVICE UINT16_C(3)
 
 #define INFS_BINDING_POSIX_UID   UINT16_C(1)
 #define INFS_BINDING_POSIX_GID   UINT16_C(2)
@@ -50,6 +49,23 @@ typedef uint64_t infs_rights_mask;
 #ifndef INFS_SECURITY_BINDING_MAX
 #define INFS_SECURITY_BINDING_MAX 68u
 #endif
+
+#define INFS_SECURITY_POSIX_AUTHORITY_SIZE 16u
+#define INFS_SECURITY_POSIX_BINDING_SIZE 20u
+#define INFS_SECURITY_WINDOWS_SID_MIN 8u
+#define INFS_SECURITY_WINDOWS_SID_MAX 68u
+#define INFS_SECURITY_WINDOWS_SID_REVISION 1u
+#define INFS_SECURITY_WINDOWS_SID_MAX_SUB_AUTHORITIES 15u
+
+/* The all-zero ID remains invalid. IDs 00..00:01 through 00..00:1f are
+ * permanently reserved for implicit portable security semantics. */
+#define INFS_PRINCIPAL_RESERVED_MAX_CODE UINT8_C(31)
+
+extern const uint8_t infs_principal_owner_id[16];
+extern const uint8_t infs_principal_group_id[16];
+extern const uint8_t infs_principal_everyone_id[16];
+extern const uint8_t infs_principal_creator_owner_id[16];
+extern const uint8_t infs_principal_creator_group_id[16];
 
 #define INFS_ACE_ALLOW UINT16_C(1)
 #define INFS_ACE_DENY  UINT16_C(2)
@@ -95,6 +111,25 @@ struct infs_security_descriptor {
     struct infs_security_ace *aces;
     size_t ace_count;
 };
+
+int infs_security_principal_id_is_reserved(const uint8_t principal_id[16]);
+int infs_security_principal_id_is_well_known(const uint8_t principal_id[16]);
+int infs_security_principal_id_is_creator(const uint8_t principal_id[16]);
+
+int infs_security_windows_sid_valid(const uint8_t *sid, size_t size);
+int infs_security_binding_is_valid(const struct infs_security_binding *binding);
+infs_status infs_security_binding_init_posix(
+    struct infs_security_binding *binding, uint16_t type,
+    const uint8_t authority_id[16], uint32_t numeric_id);
+infs_status infs_security_binding_get_posix(
+    const struct infs_security_binding *binding, uint8_t authority_id[16],
+    uint32_t *numeric_id);
+infs_status infs_security_binding_init_windows_sid(
+    struct infs_security_binding *binding, const uint8_t *sid, size_t size);
+
+int infs_security_ace_is_valid(const struct infs_security_ace *ace);
+int infs_security_descriptor_is_valid(
+    const struct infs_security_descriptor *descriptor);
 
 int infs_security_access_allowed(
     const struct infs_security_descriptor *descriptor,

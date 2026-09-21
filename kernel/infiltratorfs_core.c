@@ -716,6 +716,68 @@ static int infilfs_read_checkpoint_candidates(
         set->first_read_error : -EFSCORRUPTED;
 }
 
+static bool infilfs_security_reserved_principal_id(const u8 id[16])
+{
+    return id && !memchr_inv(id, 0, 15) && id[15] != 0 &&
+        id[15] <= INFILFS_SECURITY_PRINCIPAL_RESERVED_MAX_CODE;
+}
+
+static bool infilfs_security_known_well_known_id(const u8 id[16])
+{
+    if (!infilfs_security_reserved_principal_id(id))
+        return false;
+    return id[15] >= INFILFS_SECURITY_PRINCIPAL_OWNER_CODE &&
+        id[15] <= INFILFS_SECURITY_PRINCIPAL_CREATOR_GROUP_CODE;
+}
+
+static bool infilfs_security_creator_id(const u8 id[16])
+{
+    return infilfs_security_reserved_principal_id(id) &&
+        (id[15] == INFILFS_SECURITY_PRINCIPAL_CREATOR_OWNER_CODE ||
+         id[15] == INFILFS_SECURITY_PRINCIPAL_CREATOR_GROUP_CODE);
+}
+
+static bool infilfs_security_sid_valid(const u8 *sid, u16 size)
+{
+    if (!sid || size < INFILFS_SECURITY_WINDOWS_SID_MIN ||
+        size > INFILFS_SECURITY_WINDOWS_SID_MAX ||
+        sid[0] != INFILFS_SECURITY_WINDOWS_SID_REVISION ||
+        sid[1] > INFILFS_SECURITY_WINDOWS_SID_MAX_SUB_AUTHORITIES)
+        return false;
+    return size == INFILFS_SECURITY_WINDOWS_SID_MIN +
+        (u16)sid[1] * 4u;
+}
+
+static bool infilfs_security_ace_valid(
+    const struct infilfs_security_ace_disk *ace)
+{
+    u64 rights;
+    u16 disposition, flags;
+
+    if (!ace || !memchr_inv(ace->principal_id, 0, 16) ||
+        le32_to_cpu(ace->reserved) != 0)
+        return false;
+    rights = le64_to_cpu(ace->rights);
+    disposition = le16_to_cpu(ace->disposition);
+    flags = le16_to_cpu(ace->flags);
+    if (!rights || (rights & ~INFILFS_SECURITY_RIGHT_ALL) ||
+        (disposition != INFILFS_SECURITY_ACE_ALLOW &&
+         disposition != INFILFS_SECURITY_ACE_DENY) ||
+        (flags & ~INFILFS_SECURITY_ACE_KNOWN_FLAGS))
+        return false;
+    if (infilfs_security_reserved_principal_id(ace->principal_id) &&
+        !infilfs_security_known_well_known_id(ace->principal_id))
+        return false;
+    if (infilfs_security_creator_id(ace->principal_id)) {
+        u16 inherit = flags &
+            (INFILFS_SECURITY_ACE_INHERIT_FILE |
+             INFILFS_SECURITY_ACE_INHERIT_DIRECTORY);
+        if (!inherit || !(flags & INFILFS_SECURITY_ACE_INHERIT_ONLY))
+            return false;
+    }
+    return true;
+}
+
 static bool infilfs_object_basic_valid(struct super_block *sb,
                                        const u8 *block,
                                        u16 expected_type,
@@ -808,15 +870,16 @@ static bool infilfs_object_basic_valid(struct super_block *sb,
 
         if (version != INFILFS_OBJECT_VERSION_CLASSIC ||
             payload < sizeof(*principal) ||
+            infilfs_security_reserved_principal_id(header->object_id) ||
             memchr_inv(header->parent_id, 0, sizeof(header->parent_id)))
             return false;
         principal = (const struct infilfs_principal_payload_disk *)(header + 1);
         binding_count = le16_to_cpu(principal->binding_count);
         binding_bytes = le32_to_cpu(principal->binding_bytes);
-        if (le16_to_cpu(principal->version) != INFILFS_SECURITY_VERSION_V1 ||
+        if (le16_to_cpu(principal->version) != INFILFS_SECURITY_VERSION ||
             le16_to_cpu(principal->kind) < INFILFS_SECURITY_PRINCIPAL_USER ||
             le16_to_cpu(principal->kind) >
-                INFILFS_SECURITY_PRINCIPAL_WELL_KNOWN ||
+                INFILFS_SECURITY_PRINCIPAL_SERVICE ||
             le16_to_cpu(principal->flags) != 0 ||
             le32_to_cpu(principal->reserved) != 0 ||
             binding_count > INFILFS_PRINCIPAL_BINDINGS_PER_OBJECT ||
@@ -839,8 +902,11 @@ static bool infilfs_object_basic_valid(struct super_block *sb,
                  type != INFILFS_SECURITY_BINDING_OPAQUE) ||
                 ((type == INFILFS_SECURITY_BINDING_POSIX_UID ||
                   type == INFILFS_SECURITY_BINDING_POSIX_GID) &&
-                 size != 4u) ||
-                (type == INFILFS_SECURITY_BINDING_WINDOWS_SID && size < 8u) ||
+                 (size != INFILFS_SECURITY_POSIX_BINDING_SIZE ||
+                  !memchr_inv(bindings[i].value, 0,
+                              INFILFS_SECURITY_POSIX_AUTHORITY_SIZE))) ||
+                (type == INFILFS_SECURITY_BINDING_WINDOWS_SID &&
+                 !infilfs_security_sid_valid(bindings[i].value, size)) ||
                 memchr_inv(bindings[i].value + size, 0,
                            INFILFS_SECURITY_BINDING_MAX - size))
                 return false;
@@ -862,12 +928,16 @@ static bool infilfs_object_basic_valid(struct super_block *sb,
         security = (const struct infilfs_security_payload_disk *)(header + 1);
         ace_count = le32_to_cpu(security->ace_count);
         page_count = le32_to_cpu(security->page_count);
-        if (le16_to_cpu(security->version) != INFILFS_SECURITY_VERSION_V1 ||
+        if (le16_to_cpu(security->version) != INFILFS_SECURITY_VERSION ||
             (le16_to_cpu(security->flags) & ~INFILFS_SECURITY_KNOWN_FLAGS) ||
             !(le16_to_cpu(security->flags) & INFILFS_SECURITY_DACL_PRESENT) ||
             le32_to_cpu(security->reserved) != 0 ||
             !memchr_inv(security->owner_principal_id, 0, 16) ||
             !memchr_inv(security->primary_group_principal_id, 0, 16) ||
+            infilfs_security_reserved_principal_id(
+                security->owner_principal_id) ||
+            infilfs_security_reserved_principal_id(
+                security->primary_group_principal_id) ||
             ace_count > INFILFS_SECURITY_MAX_ACES)
             return false;
 
@@ -878,18 +948,9 @@ static bool infilfs_object_basic_valid(struct super_block *sb,
                     (size_t)ace_count * sizeof(*aces))
                 return false;
             aces = (const struct infilfs_security_ace_disk *)(security + 1);
-            for (i = 0; i < ace_count; ++i) {
-                u64 rights = le64_to_cpu(aces[i].rights);
-                u16 disposition = le16_to_cpu(aces[i].disposition);
-                u16 flags = le16_to_cpu(aces[i].flags);
-                if (!memchr_inv(aces[i].principal_id, 0, 16) || !rights ||
-                    (rights & ~INFILFS_SECURITY_RIGHT_ALL) ||
-                    (disposition != INFILFS_SECURITY_ACE_ALLOW &&
-                     disposition != INFILFS_SECURITY_ACE_DENY) ||
-                    (flags & ~INFILFS_SECURITY_ACE_KNOWN_FLAGS) ||
-                    le32_to_cpu(aces[i].reserved) != 0)
+            for (i = 0; i < ace_count; ++i)
+                if (!infilfs_security_ace_valid(&aces[i]))
                     return false;
-            }
         } else if (version == INFILFS_OBJECT_VERSION_PAGED) {
             expected_pages = ace_count ?
                 DIV_ROUND_UP(ace_count, INFILFS_SECURITY_ACES_PER_PAGE) : 0u;

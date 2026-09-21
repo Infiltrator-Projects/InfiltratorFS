@@ -31,7 +31,7 @@ one object per principal avoids introducing a second fixed-capacity directory.
 A principal object's 128-bit object ID is also its stable principal ID. A
 principal stores:
 
-- principal kind: user, group, service or well-known;
+- principal kind: user, group or service;
 - zero or more typed platform bindings;
 - versioned flags; and
 - fixed-size canonical binding records whose meaningful byte length is explicit.

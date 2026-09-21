@@ -1,30 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-static int security_binding_input_valid(const struct infs_security_binding *binding)
+static int security_binding_input_valid(
+    const struct infs_security_binding *binding)
 {
-    if (!binding || binding->flags != 0 || binding->size == 0 ||
-        binding->size > INFS_SECURITY_BINDING_MAX)
-        return 0;
-    if (binding->type != INFS_BINDING_POSIX_UID &&
-        binding->type != INFS_BINDING_POSIX_GID &&
-        binding->type != INFS_BINDING_WINDOWS_SID &&
-        binding->type != INFS_BINDING_OPAQUE)
-        return 0;
-    if ((binding->type == INFS_BINDING_POSIX_UID ||
-         binding->type == INFS_BINDING_POSIX_GID) && binding->size != 4u)
-        return 0;
-    if (binding->type == INFS_BINDING_WINDOWS_SID && binding->size < 8u)
-        return 0;
-    return 1;
+    return infs_security_binding_is_valid(binding);
 }
 
 static int security_ace_input_valid(const struct infs_security_ace *ace)
 {
-    return ace && !id_is_zero(ace->principal_id) && ace->rights != 0 &&
-        (ace->rights & ~INFS_RIGHT_ALL) == 0 &&
-        (ace->disposition == INFS_ACE_ALLOW ||
-         ace->disposition == INFS_ACE_DENY) &&
-        (ace->flags & ~INFS_ACE_KNOWN_FLAGS) == 0;
+    return infs_security_ace_is_valid(ace);
 }
 
 static int security_principal_input_valid(
@@ -32,7 +16,9 @@ static int security_principal_input_valid(
 {
     if (!principal ||
         principal->kind < INFS_PRINCIPAL_USER ||
-        principal->kind > INFS_PRINCIPAL_WELL_KNOWN ||
+        principal->kind > INFS_PRINCIPAL_SERVICE ||
+        (!id_is_zero(principal->principal_id) &&
+         infs_security_principal_id_is_reserved(principal->principal_id)) ||
         principal->flags != 0 ||
         principal->binding_count > INFS_PRINCIPAL_BINDINGS_PER_OBJECT ||
         (principal->binding_count && !principal->bindings))
@@ -54,19 +40,9 @@ static int security_principal_input_valid(
 static int security_descriptor_input_valid(
     const struct infs_security_descriptor *descriptor)
 {
-    if (!descriptor)
-        return 1;
-    if (id_is_zero(descriptor->owner_principal_id) ||
-        id_is_zero(descriptor->primary_group_principal_id) ||
-        (descriptor->flags & ~INFS_SECURITY_KNOWN_FLAGS) != 0 ||
-        (descriptor->flags & INFS_SECURITY_DACL_PRESENT) == 0 ||
-        descriptor->ace_count > INFS_SECURITY_MAX_ACES ||
-        (descriptor->ace_count && !descriptor->aces))
-        return 0;
-    for (size_t i = 0; i < descriptor->ace_count; ++i)
-        if (!security_ace_input_valid(&descriptor->aces[i]))
-            return 0;
-    return 1;
+    return !descriptor ||
+        (descriptor->ace_count <= INFS_SECURITY_MAX_ACES &&
+         infs_security_descriptor_is_valid(descriptor));
 }
 
 static void security_binding_encode(
@@ -232,7 +208,7 @@ static infs_status put_security_principal_tx(
     struct infs_principal_payload_disk *payload =
         (struct infs_principal_payload_disk *)(
             object + sizeof(struct infs_object_header_disk));
-    payload->version = infs_cpu_to_le16(INFS_SECURITY_VERSION_V1);
+    payload->version = infs_cpu_to_le16(INFS_SECURITY_VERSION);
     payload->kind = infs_cpu_to_le16(principal->kind);
     payload->binding_count =
         infs_cpu_to_le16((uint16_t)principal->binding_count);
@@ -337,6 +313,8 @@ infs_status infs_find_security_principal_by_binding(
     if (!vol || !binding || !principal_id_out ||
         !security_binding_input_valid(binding))
         return INFS_STATUS_INVALID_ARGUMENT;
+    if (binding->type == INFS_BINDING_OPAQUE)
+        return INFS_STATUS_NOT_SUPPORTED;
     struct infs_index_entry_disk *entries = NULL;
     uint32_t count = 0;
     infs_status status = index_snapshot(vol, &entries, &count);
@@ -390,6 +368,9 @@ static infs_status security_principal_references_valid(
     if (status != INFS_STATUS_OK)
         return status == INFS_STATUS_NOT_FOUND ? INFS_STATUS_INVALID_ARGUMENT : status;
     for (size_t i = 0; i < descriptor->ace_count; ++i) {
+        if (infs_security_principal_id_is_well_known(
+                descriptor->aces[i].principal_id))
+            continue;
         status = security_principal_lookup(
             vol, descriptor->aces[i].principal_id, &lookup);
         if (status != INFS_STATUS_OK)
@@ -411,7 +392,7 @@ static infs_status security_descriptor_digest(
     uint8_t *canonical = calloc(total ? total : 1u, 1u);
     if (!canonical)
         return INFS_STATUS_NO_MEMORY;
-    infs_store_le16(canonical, INFS_SECURITY_VERSION_V1);
+    infs_store_le16(canonical, INFS_SECURITY_VERSION);
     infs_store_le16(canonical + 2u, descriptor->flags);
     infs_store_le32(canonical + 4u, (uint32_t)descriptor->ace_count);
     memcpy(canonical + 8u, descriptor->owner_principal_id, 16u);
@@ -636,7 +617,7 @@ static infs_status security_descriptor_create(
         header->object_version = infs_cpu_to_le16(INFS_OBJECT_VERSION_PAGED);
     struct infs_security_payload_disk *payload =
         (struct infs_security_payload_disk *)(header + 1);
-    payload->version = infs_cpu_to_le16(INFS_SECURITY_VERSION_V1);
+    payload->version = infs_cpu_to_le16(INFS_SECURITY_VERSION);
     payload->flags = infs_cpu_to_le16(descriptor->flags);
     payload->ace_count = infs_cpu_to_le32(count);
     payload->page_count = infs_cpu_to_le32(pages);

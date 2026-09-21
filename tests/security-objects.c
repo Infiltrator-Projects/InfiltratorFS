@@ -100,15 +100,14 @@ static struct infs_storage storage_for(struct image *image)
     return storage;
 }
 
-static struct infs_security_binding uid_binding(uint32_t uid)
+static struct infs_security_binding uid_binding(
+    const uint8_t authority[16], uint32_t uid)
 {
     struct infs_security_binding binding = {0};
-    binding.type = INFS_BINDING_POSIX_UID;
-    binding.size = 4;
-    binding.value[0] = (uint8_t)uid;
-    binding.value[1] = (uint8_t)(uid >> 8);
-    binding.value[2] = (uint8_t)(uid >> 16);
-    binding.value[3] = (uint8_t)(uid >> 24);
+    if (infs_security_binding_init_posix(
+            &binding, INFS_BINDING_POSIX_UID, authority, uid) !=
+        INFS_STATUS_OK)
+        memset(&binding, 0, sizeof(binding));
     return binding;
 }
 
@@ -128,14 +127,35 @@ int main(void)
     ok(infs_volume_open_storage(&volume, &storage, 1) == INFS_STATUS_OK,
        "open");
     ok((infs_le64_to_cpu(volume.sb.incompat_flags) &
-        INFS_INCOMPAT_SECURITY_OBJECTS_V1) != 0,
+        INFS_INCOMPAT_PORTABLE_SECURITY) != 0,
        "security feature enabled");
 
+    static const uint8_t authority_a[16] = {
+        0x11,0x11,0x11,0x11,0x11,0x11,0x11,0x11,
+        0x11,0x11,0x11,0x11,0x11,0x11,0x11,0x11
+    };
+    static const uint8_t authority_b[16] = {
+        0x22,0x22,0x22,0x22,0x22,0x22,0x22,0x22,
+        0x22,0x22,0x22,0x22,0x22,0x22,0x22,0x22
+    };
+    static const uint8_t user_sid[] = {
+        1,2,0,0,0,0,0,5,21,0,0,0,0xe8,0x03,0,0
+    };
+    static const uint8_t group_sid[] = {
+        1,2,0,0,0,0,0,5,32,0,0,0,0x20,0x02,0,0
+    };
+    static const uint8_t text_sid[] = "SID-USER-001";
+
     struct infs_security_binding user_bindings[2] = {0};
-    user_bindings[0] = uid_binding(1000);
-    user_bindings[1].type = INFS_BINDING_WINDOWS_SID;
-    user_bindings[1].size = 12;
-    memcpy(user_bindings[1].value, "SID-USER-001", 12);
+    user_bindings[0] = uid_binding(authority_a, 1000);
+    ok(infs_security_binding_init_windows_sid(
+           &user_bindings[1], user_sid, sizeof(user_sid)) == INFS_STATUS_OK,
+       "canonical Windows SID binding");
+    struct infs_security_binding bad_sid = {0};
+    ok(infs_security_binding_init_windows_sid(
+           &bad_sid, text_sid, sizeof(text_sid) - 1u) ==
+           INFS_STATUS_INVALID_ARGUMENT,
+       "reject textual SID bytes");
 
     struct infs_security_principal user = {0};
     user.kind = INFS_PRINCIPAL_USER;
@@ -147,9 +167,9 @@ int main(void)
        "user principal ID allocated");
 
     struct infs_security_binding group_binding = {0};
-    group_binding.type = INFS_BINDING_WINDOWS_SID;
-    group_binding.size = 12;
-    memcpy(group_binding.value, "SID-GROUP001", 12);
+    ok(infs_security_binding_init_windows_sid(
+           &group_binding, group_sid, sizeof(group_sid)) == INFS_STATUS_OK,
+       "canonical group SID binding");
     struct infs_security_principal group = {0};
     group.kind = INFS_PRINCIPAL_GROUP;
     group.bindings = &group_binding;
@@ -165,6 +185,41 @@ int main(void)
            INFS_STATUS_ALREADY_EXISTS,
        "reject duplicate unique platform binding");
 
+    struct infs_security_binding scoped_uid =
+        uid_binding(authority_b, 1000);
+    struct infs_security_principal scoped_user = {0};
+    scoped_user.kind = INFS_PRINCIPAL_USER;
+    scoped_user.bindings = &scoped_uid;
+    scoped_user.binding_count = 1;
+    ok(infs_put_security_principal(&volume, &scoped_user) == INFS_STATUS_OK,
+       "same numeric UID in another authority remains distinct");
+
+    struct infs_security_binding opaque = {0};
+    opaque.type = INFS_BINDING_OPAQUE;
+    opaque.size = 3;
+    memcpy(opaque.value, "abc", 3);
+    struct infs_security_principal opaque_a = {0};
+    opaque_a.kind = INFS_PRINCIPAL_SERVICE;
+    opaque_a.bindings = &opaque;
+    opaque_a.binding_count = 1;
+    struct infs_security_principal opaque_b = opaque_a;
+    ok(infs_put_security_principal(&volume, &opaque_a) == INFS_STATUS_OK,
+       "first opaque binding");
+    memset(opaque_b.principal_id, 0, sizeof(opaque_b.principal_id));
+    ok(infs_put_security_principal(&volume, &opaque_b) == INFS_STATUS_OK,
+       "duplicate opaque preservation binding");
+    uint8_t opaque_resolved[16];
+    ok(infs_find_security_principal_by_binding(
+           &volume, &opaque, opaque_resolved) == INFS_STATUS_NOT_SUPPORTED,
+       "opaque binding is not credential-resolvable");
+
+    struct infs_security_principal reserved = {0};
+    reserved.kind = INFS_PRINCIPAL_USER;
+    memcpy(reserved.principal_id, infs_principal_owner_id, 16);
+    ok(infs_put_security_principal(&volume, &reserved) ==
+           INFS_STATUS_INVALID_ARGUMENT,
+       "reserved well-known ID cannot become an ordinary principal");
+
     struct infs_security_principal got_principal = {0};
     ok(infs_get_security_principal(
            &volume, user.principal_id, &got_principal) == INFS_STATUS_OK,
@@ -173,6 +228,14 @@ int main(void)
        "multi-binding principal preserved");
     ok(got_principal.bindings[1].type == INFS_BINDING_WINDOWS_SID,
        "SID binding preserved");
+    uint8_t decoded_authority[16];
+    uint32_t decoded_uid = 0;
+    ok(infs_security_binding_get_posix(
+           &got_principal.bindings[0], decoded_authority, &decoded_uid) ==
+           INFS_STATUS_OK &&
+       memcmp(decoded_authority, authority_a, 16) == 0 &&
+       decoded_uid == 1000,
+       "scoped POSIX binding round-trips");
     infs_free_security_principal(&got_principal);
 
     uint8_t resolved[16];
@@ -232,6 +295,38 @@ int main(void)
            &descriptor, subjects, 2, INFS_RIGHT_DELETE) == 0,
        "ordered deny evaluation");
 
+    struct infs_security_ace special_aces[3] = {0};
+    memcpy(special_aces[0].principal_id, infs_principal_owner_id, 16);
+    special_aces[0].rights = INFS_RIGHT_READ_ATTRIBUTES;
+    special_aces[0].disposition = INFS_ACE_ALLOW;
+    memcpy(special_aces[1].principal_id, infs_principal_group_id, 16);
+    special_aces[1].rights = INFS_RIGHT_WRITE_ATTRIBUTES;
+    special_aces[1].disposition = INFS_ACE_ALLOW;
+    memcpy(special_aces[2].principal_id, infs_principal_everyone_id, 16);
+    special_aces[2].rights = INFS_RIGHT_READ_PERMISSIONS;
+    special_aces[2].disposition = INFS_ACE_ALLOW;
+    struct infs_security_descriptor special_descriptor = descriptor;
+    special_descriptor.aces = special_aces;
+    special_descriptor.ace_count = 3;
+    ok(infs_security_access_allowed(
+           &special_descriptor, subjects, 2,
+           INFS_RIGHT_READ_ATTRIBUTES | INFS_RIGHT_WRITE_ATTRIBUTES) == 1,
+       "OWNER and GROUP resolve through descriptor identities");
+    ok(infs_security_access_allowed(
+           &special_descriptor, NULL, 0,
+           INFS_RIGHT_READ_PERMISSIONS) == 1,
+       "EVERYONE applies without a credential binding");
+    ok(infs_set_security_descriptor(
+           &volume, "/two", &special_descriptor) == INFS_STATUS_OK,
+       "well-known principals persist without principal objects");
+
+    struct infs_security_ace unknown_special = {0};
+    unknown_special.principal_id[15] = 6;
+    unknown_special.rights = INFS_RIGHT_READ_DATA;
+    unknown_special.disposition = INFS_ACE_ALLOW;
+    ok(!infs_security_ace_is_valid(&unknown_special),
+       "unknown reserved principal fails closed");
+
     struct infs_security_ace ordered[2] = {0};
     memcpy(ordered[0].principal_id, user.principal_id, 16);
     ordered[0].rights = INFS_RIGHT_READ_DATA;
@@ -272,6 +367,30 @@ int main(void)
        (inherited.aces[0].flags & INFS_ACE_INHERITED) != 0,
        "file inheritance filters and marks ACE");
     infs_free_security_descriptor(&inherited);
+
+    struct infs_security_ace creator = {0};
+    memcpy(creator.principal_id, infs_principal_creator_owner_id, 16);
+    creator.rights = INFS_RIGHT_READ_DATA;
+    creator.disposition = INFS_ACE_ALLOW;
+    creator.flags = INFS_ACE_INHERIT_FILE | INFS_ACE_INHERIT_ONLY;
+    struct infs_security_descriptor creator_template = descriptor;
+    creator_template.aces = &creator;
+    creator_template.ace_count = 1;
+    ok(infs_security_inherit_descriptor(
+           &creator_template, 0, scoped_user.principal_id,
+           group.principal_id, &inherited) == INFS_STATUS_OK,
+       "inherit CREATOR_OWNER template");
+    ok(inherited.ace_count == 1 &&
+       memcmp(inherited.aces[0].principal_id,
+              scoped_user.principal_id, 16) == 0 &&
+       (inherited.aces[0].flags & INFS_ACE_INHERITED) != 0 &&
+       (inherited.aces[0].flags & INFS_ACE_INHERIT_ONLY) == 0,
+       "CREATOR_OWNER becomes actual child owner");
+    infs_free_security_descriptor(&inherited);
+
+    creator.flags = INFS_ACE_INHERIT_FILE;
+    ok(!infs_security_ace_is_valid(&creator),
+       "creator principal requires inherit-only template semantics");
 
     struct infs_security_ace no_propagate_ace = aces[2];
     no_propagate_ace.flags =

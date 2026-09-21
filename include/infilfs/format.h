@@ -102,8 +102,9 @@ static const uint8_t INFS_ALLOCATION_LEAF_PAGE_MAGIC[8] = {
 /* Optional removable-volume filename profile v1. Writers enforce a conservative
  * cross-platform component subset while preserving exact UTF-8 identity. */
 #define INFS_INCOMPAT_REMOVABLE_NAMES_V1 UINT64_C(0x0000000000004000)
-/* Versioned portable principals and ACL security objects. */
-#define INFS_INCOMPAT_SECURITY_OBJECTS_V1 UINT64_C(0x0000000000008000)
+/* Portable principal/security object family. The exact development
+ * representation is selected by each security payload's version field. */
+#define INFS_INCOMPAT_PORTABLE_SECURITY UINT64_C(0x0000000000008000)
 #define INFS_KNOWN_COMPAT_FLAGS UINT64_C(0)
 #define INFS_KNOWN_RO_COMPAT_FLAGS UINT64_C(0)
 #define INFS_KNOWN_INCOMPAT_FLAGS \
@@ -114,7 +115,7 @@ static const uint8_t INFS_ALLOCATION_LEAF_PAGE_MAGIC[8] = {
      INFS_INCOMPAT_PAGED_EXTENTS | INFS_INCOMPAT_INDEX_TREE | \
      INFS_INCOMPAT_DIRECTORY_TREE | INFS_INCOMPAT_ALLOCATION_TREE | \
      INFS_INCOMPAT_COMPRESSED_EXTENTS | INFS_INCOMPAT_UNICODE_NORM_V1 | \
-     INFS_INCOMPAT_REMOVABLE_NAMES_V1 | INFS_INCOMPAT_SECURITY_OBJECTS_V1)
+     INFS_INCOMPAT_REMOVABLE_NAMES_V1 | INFS_INCOMPAT_PORTABLE_SECURITY)
 
 #define INFS_ATTR_READ_ONLY           UINT64_C(0x0000000000000001)
 #define INFS_ATTR_HIDDEN              UINT64_C(0x0000000000000002)
@@ -301,10 +302,9 @@ struct INFS_PACKED infs_data_checksum_disk {
     uint8_t bytes[32];
 };
 
-/* Portable security model v1. Principal definitions are volume-level
- * indexed objects. Security descriptors reference principal IDs and may be
- * shared by many namespace objects. */
-#define INFS_SECURITY_VERSION_V1 1u
+/* Portable security payload version 2. Earlier development security payloads
+ * are intentionally unsupported: pre-1.0 uses one current representation. */
+#define INFS_SECURITY_VERSION 2u
 #ifndef INFS_SECURITY_BINDING_MAX
 #define INFS_SECURITY_BINDING_MAX 68u
 #endif

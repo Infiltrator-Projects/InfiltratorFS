@@ -124,6 +124,13 @@ static void check_layout(void)
            "snapshot record size");
     expect(INFS_OBJECT_PRINCIPAL == 7u, "principal object type");
     expect(INFS_OBJECT_SECURITY == 8u, "security descriptor object type");
+    expect(INFS_SECURITY_VERSION == 2u, "portable security payload version");
+    expect(INFS_INCOMPAT_PORTABLE_SECURITY == UINT64_C(0x0000000000008000),
+           "portable security incompatibility bit");
+    expect(INFS_SECURITY_POSIX_BINDING_SIZE == 20u,
+           "scoped POSIX binding size");
+    expect(INFS_SECURITY_WINDOWS_SID_MAX == INFS_SECURITY_BINDING_MAX,
+           "Windows SID fits complete binding payload");
     expect(sizeof(struct infs_principal_payload_disk) == 16u,
            "principal payload size");
     expect(sizeof(struct infs_security_binding_disk) == 76u,
