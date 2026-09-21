@@ -55,6 +55,7 @@ static int object_type_valid(uint16_t type)
            type == INFS_OBJECT_INDEX || type == INFS_OBJECT_CHECKSUM ||
            type == INFS_OBJECT_SYMLINK ||
            type == INFS_OBJECT_SNAPSHOT_CATALOG ||
+           type == INFS_OBJECT_PRINCIPAL ||
            type == INFS_OBJECT_SECURITY;
 }
 
@@ -65,7 +66,8 @@ static int object_version_valid(uint16_t type, uint16_t version)
     if (version == INFS_OBJECT_VERSION_PAGED)
         return type == INFS_OBJECT_DIRECTORY || type == INFS_OBJECT_INDEX ||
             type == INFS_OBJECT_FILE ||
-            type == INFS_OBJECT_SNAPSHOT_CATALOG;
+            type == INFS_OBJECT_SNAPSHOT_CATALOG ||
+            type == INFS_OBJECT_SECURITY;
     return version == INFS_OBJECT_VERSION_TREE &&
         (type == INFS_OBJECT_INDEX || type == INFS_OBJECT_DIRECTORY ||
          type == INFS_OBJECT_FILE);
@@ -131,66 +133,128 @@ static int symlink_payload_shape_valid(const uint8_t block[INFS_BLOCK_SIZE],
         infs_utf8_validate(target, length);
 }
 
-static int security_payload_shape_valid(
+static int security_binding_disk_valid(
+    const struct infs_security_binding_disk *binding)
+{
+    if (!binding)
+        return 0;
+    uint16_t type = infs_le16_to_cpu(binding->type);
+    uint16_t size = infs_le16_to_cpu(binding->value_size);
+    if (infs_le16_to_cpu(binding->flags) != 0 ||
+        infs_le16_to_cpu(binding->reserved) != 0 || size == 0 ||
+        size > INFS_SECURITY_BINDING_MAX ||
+        (type != INFS_BINDING_POSIX_UID &&
+         type != INFS_BINDING_POSIX_GID &&
+         type != INFS_BINDING_WINDOWS_SID &&
+         type != INFS_BINDING_OPAQUE))
+        return 0;
+    if ((type == INFS_BINDING_POSIX_UID || type == INFS_BINDING_POSIX_GID) &&
+        size != 4u)
+        return 0;
+    if (type == INFS_BINDING_WINDOWS_SID && size < 8u)
+        return 0;
+    for (uint16_t i = size; i < INFS_SECURITY_BINDING_MAX; ++i)
+        if (binding->value[i] != 0)
+            return 0;
+    return 1;
+}
+
+static int principal_payload_shape_valid(
     const uint8_t block[INFS_BLOCK_SIZE], uint32_t payload_size)
+{
+    if (payload_size < sizeof(struct infs_principal_payload_disk))
+        return 0;
+    const struct infs_object_header_disk *header =
+        (const struct infs_object_header_disk *)block;
+    const struct infs_principal_payload_disk *payload =
+        (const struct infs_principal_payload_disk *)(header + 1);
+    uint16_t count = infs_le16_to_cpu(payload->binding_count);
+    uint16_t kind = infs_le16_to_cpu(payload->kind);
+    uint32_t bytes = infs_le32_to_cpu(payload->binding_bytes);
+    if (infs_le16_to_cpu(payload->version) != INFS_SECURITY_VERSION_V1 ||
+        kind < INFS_PRINCIPAL_USER || kind > INFS_PRINCIPAL_WELL_KNOWN ||
+        infs_le16_to_cpu(payload->flags) != 0 ||
+        infs_le32_to_cpu(payload->reserved) != 0 ||
+        bytes != (uint32_t)count * sizeof(struct infs_security_binding_disk) ||
+        payload_size != sizeof(*payload) + bytes ||
+        count > INFS_PRINCIPAL_BINDINGS_PER_OBJECT ||
+        !bytes_are_zero(header->parent_id, sizeof(header->parent_id)))
+        return 0;
+    const struct infs_security_binding_disk *bindings =
+        (const struct infs_security_binding_disk *)(payload + 1);
+    for (uint16_t i = 0; i < count; ++i) {
+        if (!security_binding_disk_valid(&bindings[i]))
+            return 0;
+        for (uint16_t j = 0; j < i; ++j)
+            if (bindings[i].type == bindings[j].type &&
+                bindings[i].value_size == bindings[j].value_size &&
+                memcmp(bindings[i].value, bindings[j].value,
+                       infs_le16_to_cpu(bindings[i].value_size)) == 0)
+                return 0;
+    }
+    return 1;
+}
+
+static int security_ace_disk_valid(const struct infs_security_ace_disk *ace)
+{
+    if (!ace || !id_is_nonzero(ace->principal_id))
+        return 0;
+    uint64_t rights = infs_le64_to_cpu(ace->rights);
+    uint16_t disposition = infs_le16_to_cpu(ace->disposition);
+    uint16_t flags = infs_le16_to_cpu(ace->flags);
+    return rights != 0 && (rights & ~INFS_RIGHT_ALL) == 0 &&
+        (disposition == INFS_ACE_ALLOW || disposition == INFS_ACE_DENY) &&
+        (flags & ~INFS_ACE_KNOWN_FLAGS) == 0 &&
+        infs_le32_to_cpu(ace->reserved) == 0;
+}
+
+static int security_payload_shape_valid(
+    const uint8_t block[INFS_BLOCK_SIZE], uint32_t payload_size,
+    uint16_t object_version)
 {
     if (payload_size < sizeof(struct infs_security_payload_disk))
         return 0;
+    const struct infs_object_header_disk *header =
+        (const struct infs_object_header_disk *)block;
     const struct infs_security_payload_disk *payload =
-        (const struct infs_security_payload_disk *)(
-            block + sizeof(struct infs_object_header_disk));
+        (const struct infs_security_payload_disk *)(header + 1);
+    uint16_t flags = infs_le16_to_cpu(payload->flags);
+    uint32_t count = infs_le32_to_cpu(payload->ace_count);
+    uint32_t pages = infs_le32_to_cpu(payload->page_count);
     if (infs_le16_to_cpu(payload->version) != INFS_SECURITY_VERSION_V1 ||
-        infs_le16_to_cpu(payload->flags) != 0)
-        return 0;
-    uint32_t principals = infs_le16_to_cpu(payload->principal_count);
-    uint32_t aces = infs_le16_to_cpu(payload->ace_count);
-    uint32_t principal_bytes = infs_le32_to_cpu(payload->principal_bytes);
-    uint32_t ace_bytes = infs_le32_to_cpu(payload->ace_bytes);
-    if (principal_bytes != principals * sizeof(struct infs_security_principal_disk) ||
-        ace_bytes != aces * sizeof(struct infs_security_ace_disk) ||
-        payload_size != sizeof(*payload) + principal_bytes + ace_bytes)
+        (flags & ~INFS_SECURITY_KNOWN_FLAGS) != 0 ||
+        (flags & INFS_SECURITY_DACL_PRESENT) == 0 ||
+        infs_le32_to_cpu(payload->reserved) != 0 ||
+        !id_is_nonzero(payload->owner_principal_id) ||
+        !id_is_nonzero(payload->primary_group_principal_id) ||
+        !bytes_are_zero(header->parent_id, sizeof(header->parent_id)) ||
+        count > INFS_SECURITY_MAX_ACES)
         return 0;
 
-    const struct infs_security_principal_disk *p =
-        (const struct infs_security_principal_disk *)(payload + 1);
-    const struct infs_security_ace_disk *a =
-        (const struct infs_security_ace_disk *)((const uint8_t *)p + principal_bytes);
-    for (uint32_t i = 0; i < principals; ++i) {
-        uint16_t kind = infs_le16_to_cpu(p[i].kind);
-        uint16_t binding_type = infs_le16_to_cpu(p[i].binding_type);
-        uint16_t binding_size = infs_le16_to_cpu(p[i].binding_size);
-        if (!id_is_nonzero(p[i].principal_id) ||
-            kind < INFS_PRINCIPAL_USER || kind > INFS_PRINCIPAL_WELL_KNOWN ||
-            binding_size > INFS_SECURITY_BINDING_MAX ||
-            infs_le16_to_cpu(p[i].flags) != 0 ||
-            (binding_type == INFS_BINDING_NONE && binding_size != 0))
+    if (object_version == INFS_OBJECT_VERSION_CLASSIC) {
+        if (pages != 0 || count > INFS_SECURITY_INLINE_ACES ||
+            payload_size != sizeof(*payload) +
+                (size_t)count * sizeof(struct infs_security_ace_disk))
             return 0;
-        for (uint32_t j = 0; j < i; ++j)
-            if (memcmp(p[j].principal_id, p[i].principal_id, 16) == 0)
+        const struct infs_security_ace_disk *aces =
+            (const struct infs_security_ace_disk *)(payload + 1);
+        for (uint32_t i = 0; i < count; ++i)
+            if (!security_ace_disk_valid(&aces[i]))
                 return 0;
-        for (uint16_t j = binding_size; j < INFS_SECURITY_BINDING_MAX; ++j)
-            if (p[i].binding[j] != 0)
-                return 0;
+        return 1;
     }
-    for (uint32_t i = 0; i < aces; ++i) {
-        uint64_t rights = infs_le64_to_cpu(a[i].rights);
-        uint16_t disposition = infs_le16_to_cpu(a[i].disposition);
-        uint16_t flags = infs_le16_to_cpu(a[i].flags);
-        if (!id_is_nonzero(a[i].principal_id) ||
-            (rights & ~INFS_RIGHT_ALL) != 0 || rights == 0 ||
-            (disposition != INFS_ACE_ALLOW && disposition != INFS_ACE_DENY) ||
-            (flags & ~INFS_ACE_KNOWN_FLAGS) != 0 ||
-            infs_le32_to_cpu(a[i].reserved) != 0)
+    if (object_version != INFS_OBJECT_VERSION_PAGED)
+        return 0;
+    uint32_t expected_pages = count ?
+        (count + INFS_SECURITY_ACES_PER_PAGE - 1u) /
+            INFS_SECURITY_ACES_PER_PAGE : 0u;
+    if (pages != expected_pages || pages > INFS_SECURITY_PAGE_POINTERS ||
+        payload_size != sizeof(*payload) + (size_t)pages * sizeof(uint64_t))
+        return 0;
+    const uint64_t *pointers = (const uint64_t *)(payload + 1);
+    for (uint32_t i = 0; i < pages; ++i)
+        if (infs_le64_to_cpu(pointers[i]) == 0)
             return 0;
-        int found = 0;
-        for (uint32_t j = 0; j < principals; ++j)
-            if (memcmp(p[j].principal_id, a[i].principal_id, 16) == 0) {
-                found = 1;
-                break;
-            }
-        if (!found)
-            return 0;
-    }
     return 1;
 }
 
@@ -341,8 +405,10 @@ infs_status infs_object_finalize(uint8_t block[INFS_BLOCK_SIZE])
          !symlink_payload_shape_valid(block, payload_size)) ||
         (object_type == INFS_OBJECT_SNAPSHOT_CATALOG &&
          !snapshot_catalog_payload_shape_valid(block, payload_size)) ||
+        (object_type == INFS_OBJECT_PRINCIPAL &&
+         !principal_payload_shape_valid(block, payload_size)) ||
         (object_type == INFS_OBJECT_SECURITY &&
-         !security_payload_shape_valid(block, payload_size))) {
+         !security_payload_shape_valid(block, payload_size, object_version))) {
         return INFS_STATUS_INVALID_ARGUMENT;
     }
 
@@ -387,8 +453,11 @@ int infs_validate_object_block(const uint8_t block[INFS_BLOCK_SIZE])
     if (object_type == INFS_OBJECT_SNAPSHOT_CATALOG &&
         !snapshot_catalog_payload_shape_valid(block, payload_size))
         return 0;
+    if (object_type == INFS_OBJECT_PRINCIPAL &&
+        !principal_payload_shape_valid(block, payload_size))
+        return 0;
     if (object_type == INFS_OBJECT_SECURITY &&
-        !security_payload_shape_valid(block, payload_size))
+        !security_payload_shape_valid(block, payload_size, object_version))
         return 0;
     if (!bytes_are_zero(hdr->checksum + sizeof(uint64_t),
                         sizeof(hdr->checksum) - sizeof(uint64_t)) ||
@@ -436,7 +505,8 @@ infs_status infs_metadata_page_finalize(uint8_t block[INFS_BLOCK_SIZE])
          memcmp(page->magic, INFS_INDEX_BRANCH_PAGE_MAGIC, 8) != 0 &&
          memcmp(page->magic, INFS_EXTENT_PAGE_MAGIC, 8) != 0 &&
          memcmp(page->magic, INFS_EXTENT_INDEX_PAGE_MAGIC, 8) != 0 &&
-         memcmp(page->magic, INFS_SNAPSHOT_PAGE_MAGIC, 8) != 0) ||
+         memcmp(page->magic, INFS_SNAPSHOT_PAGE_MAGIC, 8) != 0 &&
+         memcmp(page->magic, INFS_SECURITY_ACE_PAGE_MAGIC, 8) != 0) ||
         infs_le64_to_cpu(page->generation) == 0 ||
         !id_is_nonzero(page->owner_object_id) ||
         bytes_used > INFS_METADATA_PAGE_DATA_SIZE ||

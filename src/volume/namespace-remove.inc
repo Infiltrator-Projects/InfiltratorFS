@@ -118,17 +118,13 @@ static int remove_object(struct infs_volume *vol, const char *path, int want_dir
             return status;
         return finish_mutation(vol, (uint64_t)INFS_BLOCK_SIZE * 5u);
     }
+    uint8_t security_id[16] = {0};
     {
         struct infs_attributes_disk *child_attributes =
             object_attributes(child_block);
         if (!child_attributes)
             return INFS_STATUS_CORRUPT;
-        if (!id_is_zero(child_attributes->security_object_id)) {
-            status = security_object_destroy_by_id(
-                vol, child_attributes->security_object_id);
-            if (status != INFS_STATUS_OK)
-                return status;
-        }
+        memcpy(security_id, child_attributes->security_object_id, 16);
     }
     status = index_remove(vol, child.object_id);
     if (status != INFS_STATUS_OK)
@@ -136,6 +132,11 @@ static int remove_object(struct infs_volume *vol, const char *path, int want_dir
     free_run(vol, child.block, 1);
     if (vol->tx_error != INFS_STATUS_OK)
         return vol->tx_error;
+    if (!id_is_zero(security_id)) {
+        status = security_descriptor_release_if_unreferenced(vol, security_id);
+        if (status != INFS_STATUS_OK)
+            return status;
+    }
     return finish_mutation(vol, (uint64_t)INFS_BLOCK_SIZE * 4u);
 }
 

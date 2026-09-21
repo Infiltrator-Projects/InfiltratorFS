@@ -30,6 +30,9 @@ static const uint8_t INFS_EXTENT_INDEX_PAGE_MAGIC[8] = {
 static const uint8_t INFS_SNAPSHOT_PAGE_MAGIC[8] = {
     'I', 'N', 'F', 'S', 'S', 'P', '0', '1'
 };
+static const uint8_t INFS_SECURITY_ACE_PAGE_MAGIC[8] = {
+    'I', 'N', 'F', 'S', 'A', 'C', '0', '1'
+};
 static const uint8_t INFS_ALLOCATION_BRANCH_PAGE_MAGIC[8] = {
     'I', 'N', 'F', 'S', 'A', 'B', '0', '1'
 };
@@ -55,7 +58,8 @@ static const uint8_t INFS_ALLOCATION_LEAF_PAGE_MAGIC[8] = {
 #define INFS_OBJECT_CHECKSUM   4u
 #define INFS_OBJECT_SYMLINK    5u
 #define INFS_OBJECT_SNAPSHOT_CATALOG 6u
-#define INFS_OBJECT_SECURITY   7u
+#define INFS_OBJECT_PRINCIPAL  7u
+#define INFS_OBJECT_SECURITY   8u
 
 #define INFS_OBJECT_VERSION_CLASSIC 1u
 #define INFS_OBJECT_VERSION_PAGED   2u
@@ -297,28 +301,40 @@ struct INFS_PACKED infs_data_checksum_disk {
     uint8_t bytes[32];
 };
 
-/* Portable security-object v1. Principal identity is the stable 128-bit
- * principal_id. Platform bindings are typed opaque bytes; Linux UID/GID and
- * Windows SID bindings therefore never become the filesystem-wide identity. */
+/* Portable security model v1. Principal definitions are volume-level
+ * indexed objects. Security descriptors reference principal IDs and may be
+ * shared by many namespace objects. */
 #define INFS_SECURITY_VERSION_V1 1u
+#ifndef INFS_SECURITY_BINDING_MAX
 #define INFS_SECURITY_BINDING_MAX 68u
+#endif
+
+struct INFS_PACKED infs_principal_payload_disk {
+    uint16_t version;
+    uint16_t kind;
+    uint16_t binding_count;
+    uint16_t flags;
+    uint32_t binding_bytes;
+    uint32_t reserved;
+};
+
+struct INFS_PACKED infs_security_binding_disk {
+    uint16_t type;
+    uint16_t flags;
+    uint16_t value_size;
+    uint16_t reserved;
+    uint8_t value[INFS_SECURITY_BINDING_MAX];
+};
 
 struct INFS_PACKED infs_security_payload_disk {
     uint16_t version;
-    uint16_t principal_count;
-    uint16_t ace_count;
     uint16_t flags;
-    uint32_t principal_bytes;
-    uint32_t ace_bytes;
-};
-
-struct INFS_PACKED infs_security_principal_disk {
-    uint8_t principal_id[16];
-    uint16_t kind;
-    uint16_t binding_type;
-    uint16_t binding_size;
-    uint16_t flags;
-    uint8_t binding[INFS_SECURITY_BINDING_MAX];
+    uint32_t ace_count;
+    uint32_t page_count;
+    uint32_t reserved;
+    uint8_t owner_principal_id[16];
+    uint8_t primary_group_principal_id[16];
+    uint8_t semantic_digest[32];
 };
 
 struct INFS_PACKED infs_security_ace_disk {
@@ -400,6 +416,21 @@ struct INFS_PACKED infs_snapshot_record_disk {
 
 #define INFS_METADATA_PAGE_DATA_SIZE \
     (INFS_BLOCK_SIZE - sizeof(struct infs_metadata_page_disk))
+#define INFS_PRINCIPAL_BINDINGS_PER_OBJECT \
+    ((INFS_BLOCK_SIZE - sizeof(struct infs_object_header_disk) - \
+      sizeof(struct infs_principal_payload_disk)) / \
+     sizeof(struct infs_security_binding_disk))
+#define INFS_SECURITY_INLINE_ACES \
+    ((INFS_BLOCK_SIZE - sizeof(struct infs_object_header_disk) - \
+      sizeof(struct infs_security_payload_disk)) / \
+     sizeof(struct infs_security_ace_disk))
+#define INFS_SECURITY_ACES_PER_PAGE \
+    (INFS_METADATA_PAGE_DATA_SIZE / sizeof(struct infs_security_ace_disk))
+#define INFS_SECURITY_PAGE_POINTERS \
+    ((INFS_BLOCK_SIZE - sizeof(struct infs_object_header_disk) - \
+      sizeof(struct infs_security_payload_disk)) / sizeof(uint64_t))
+#define INFS_SECURITY_MAX_ACES \
+    (INFS_SECURITY_ACES_PER_PAGE * INFS_SECURITY_PAGE_POINTERS)
 #define INFS_ALLOCATION_PAGE_DATA_SIZE \
     (INFS_BLOCK_SIZE - sizeof(struct infs_allocation_page_disk))
 #define INFS_ALLOCATION_TREE_FANOUT \
@@ -476,12 +507,22 @@ _Static_assert(sizeof(struct infs_checksum_payload_disk) == 48,
                "checksum payload layout changed");
 _Static_assert(sizeof(struct infs_data_checksum_disk) == 32,
                "data checksum layout changed");
-_Static_assert(sizeof(struct infs_security_payload_disk) == 16,
+_Static_assert(sizeof(struct infs_principal_payload_disk) == 16,
+               "principal payload layout changed");
+_Static_assert(sizeof(struct infs_security_binding_disk) == 76,
+               "security binding layout changed");
+_Static_assert(sizeof(struct infs_security_payload_disk) == 80,
                "security payload layout changed");
-_Static_assert(sizeof(struct infs_security_principal_disk) == 92,
-               "security principal layout changed");
 _Static_assert(sizeof(struct infs_security_ace_disk) == 32,
                "security ACE layout changed");
+_Static_assert(INFS_PRINCIPAL_BINDINGS_PER_OBJECT >= 52u,
+               "principal binding capacity unexpectedly small");
+_Static_assert(INFS_SECURITY_INLINE_ACES >= 120u,
+               "inline ACL capacity unexpectedly small");
+_Static_assert(INFS_SECURITY_ACES_PER_PAGE >= 125u,
+               "security ACE page capacity unexpectedly small");
+_Static_assert(INFS_SECURITY_MAX_ACES >= 60000u,
+               "paged ACL capacity unexpectedly small");
 _Static_assert(sizeof(struct infs_index_payload_disk) == 8,
                "index payload layout changed");
 _Static_assert(sizeof(struct infs_index_entry_disk) == 32,

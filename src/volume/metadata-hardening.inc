@@ -373,8 +373,8 @@ static int validate_namespace_graph_progress(
                 status = INFS_STATUS_CORRUPT;
                 goto out;
             }
-            status = security_object_validate_owner(
-                vol, attributes->security_object_id, header->object_id);
+            status = security_descriptor_validate_reference(
+                vol, attributes->security_object_id);
             if (status != INFS_STATUS_OK)
                 goto out;
         }

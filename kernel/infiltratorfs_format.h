@@ -44,7 +44,8 @@
 #define INFILFS_OBJECT_CHECKSUM 4u
 #define INFILFS_OBJECT_SYMLINK 5u
 #define INFILFS_OBJECT_SNAPSHOT_CATALOG 6u
-#define INFILFS_OBJECT_SECURITY 7u
+#define INFILFS_OBJECT_PRINCIPAL 7u
+#define INFILFS_OBJECT_SECURITY 8u
 
 #define INFILFS_OBJECT_VERSION_CLASSIC 1u
 #define INFILFS_OBJECT_VERSION_PAGED 2u
@@ -242,27 +243,45 @@ struct infilfs_data_checksum_disk {
 #define INFILFS_SECURITY_PRINCIPAL_GROUP 2u
 #define INFILFS_SECURITY_PRINCIPAL_SERVICE 3u
 #define INFILFS_SECURITY_PRINCIPAL_WELL_KNOWN 4u
+#define INFILFS_SECURITY_BINDING_POSIX_UID 1u
+#define INFILFS_SECURITY_BINDING_POSIX_GID 2u
+#define INFILFS_SECURITY_BINDING_WINDOWS_SID 3u
+#define INFILFS_SECURITY_BINDING_OPAQUE 0xffffu
 #define INFILFS_SECURITY_ACE_ALLOW 1u
 #define INFILFS_SECURITY_ACE_DENY 2u
-#define INFILFS_SECURITY_ACE_KNOWN_FLAGS 0x000fu
+#define INFILFS_SECURITY_ACE_KNOWN_FLAGS 0x001fu
+#define INFILFS_SECURITY_DACL_PRESENT 0x0001u
+#define INFILFS_SECURITY_PROTECTED 0x0002u
+#define INFILFS_SECURITY_AUTO_INHERIT 0x0004u
+#define INFILFS_SECURITY_KNOWN_FLAGS 0x0007u
 #define INFILFS_SECURITY_RIGHT_ALL 0x000000000001ffffULL
+
+struct infilfs_principal_payload_disk {
+    __le16 version;
+    __le16 kind;
+    __le16 binding_count;
+    __le16 flags;
+    __le32 binding_bytes;
+    __le32 reserved;
+} __packed;
+
+struct infilfs_security_binding_disk {
+    __le16 type;
+    __le16 flags;
+    __le16 value_size;
+    __le16 reserved;
+    __u8 value[INFILFS_SECURITY_BINDING_MAX];
+} __packed;
 
 struct infilfs_security_payload_disk {
     __le16 version;
-    __le16 principal_count;
-    __le16 ace_count;
     __le16 flags;
-    __le32 principal_bytes;
-    __le32 ace_bytes;
-} __packed;
-
-struct infilfs_security_principal_disk {
-    __u8 principal_id[16];
-    __le16 kind;
-    __le16 binding_type;
-    __le16 binding_size;
-    __le16 flags;
-    __u8 binding[INFILFS_SECURITY_BINDING_MAX];
+    __le32 ace_count;
+    __le32 page_count;
+    __le32 reserved;
+    __u8 owner_principal_id[16];
+    __u8 primary_group_principal_id[16];
+    __u8 semantic_digest[32];
 } __packed;
 
 struct infilfs_security_ace_disk {
@@ -293,6 +312,7 @@ struct infilfs_snapshot_catalog_payload_disk {
 
 #define INFILFS_SNAPSHOT_NAME_MAX 63u
 #define INFILFS_SNAPSHOT_PAGE_MAGIC "INFSSP01"
+#define INFILFS_SECURITY_ACE_PAGE_MAGIC "INFSAC01"
 
 struct infilfs_snapshot_record_disk {
     __le64 generation;
@@ -319,6 +339,21 @@ struct infilfs_snapshot_record_disk {
 
 #define INFILFS_METADATA_PAGE_DATA_SIZE \
     (INFILFS_DISK_BLOCK_SIZE - sizeof(struct infilfs_metadata_page_disk))
+#define INFILFS_PRINCIPAL_BINDINGS_PER_OBJECT \
+    ((INFILFS_DISK_BLOCK_SIZE - sizeof(struct infilfs_object_header_disk) - \
+      sizeof(struct infilfs_principal_payload_disk)) / \
+     sizeof(struct infilfs_security_binding_disk))
+#define INFILFS_SECURITY_INLINE_ACES \
+    ((INFILFS_DISK_BLOCK_SIZE - sizeof(struct infilfs_object_header_disk) - \
+      sizeof(struct infilfs_security_payload_disk)) / \
+     sizeof(struct infilfs_security_ace_disk))
+#define INFILFS_SECURITY_ACES_PER_PAGE \
+    (INFILFS_METADATA_PAGE_DATA_SIZE / sizeof(struct infilfs_security_ace_disk))
+#define INFILFS_SECURITY_PAGE_POINTERS \
+    ((INFILFS_DISK_BLOCK_SIZE - sizeof(struct infilfs_object_header_disk) - \
+      sizeof(struct infilfs_security_payload_disk)) / sizeof(__le64))
+#define INFILFS_SECURITY_MAX_ACES \
+    (INFILFS_SECURITY_ACES_PER_PAGE * INFILFS_SECURITY_PAGE_POINTERS)
 #define INFILFS_ALLOCATION_PAGE_DATA_SIZE \
     (INFILFS_DISK_BLOCK_SIZE - sizeof(struct infilfs_allocation_page_disk))
 #define INFILFS_ALLOCATION_TREE_FANOUT \

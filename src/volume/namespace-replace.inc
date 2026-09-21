@@ -71,22 +71,22 @@ static int destroy_replaced_object_tx(struct infs_volume *vol,
         return INFS_STATUS_CORRUPT;
     }
 
+    uint8_t security_id[16] = {0};
     {
         struct infs_attributes_disk *attributes = object_attributes(object);
         if (!attributes)
             return INFS_STATUS_CORRUPT;
-        if (!id_is_zero(attributes->security_object_id)) {
-            status = security_object_destroy_by_id(
-                vol, attributes->security_object_id);
-            if (status != INFS_STATUS_OK)
-                return status;
-        }
+        memcpy(security_id, attributes->security_object_id, 16);
     }
     status = index_remove(vol, target->object_id);
     if (status != INFS_STATUS_OK)
         return status;
     free_run(vol, target->block, 1);
-    return vol->tx_error;
+    if (vol->tx_error != INFS_STATUS_OK)
+        return vol->tx_error;
+    if (!id_is_zero(security_id))
+        return security_descriptor_release_if_unreferenced(vol, security_id);
+    return INFS_STATUS_OK;
 }
 
 static int rename_tx(struct infs_volume *vol, const char *oldpath,

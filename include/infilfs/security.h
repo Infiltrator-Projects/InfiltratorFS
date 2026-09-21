@@ -5,14 +5,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/*
- * Portable access-right vocabulary.
- *
- * These bit positions describe filesystem meaning only. They are deliberately
- * independent of Linux mode bits/POSIX ACL permission values and Windows
- * ACCESS_MASK constants. Persistent security objects can therefore use this
- * vocabulary without making one operating system's ABI authoritative.
- */
+#include "infilfs/status.h"
+
 typedef uint64_t infs_rights_mask;
 
 #define INFS_RIGHT_READ_DATA            (UINT64_C(1) << 0)
@@ -33,16 +27,29 @@ typedef uint64_t infs_rights_mask;
 #define INFS_RIGHT_CHANGE_PERMISSIONS   (UINT64_C(1) << 15)
 #define INFS_RIGHT_TAKE_OWNERSHIP       (UINT64_C(1) << 16)
 
+#define INFS_RIGHT_ALL ( \
+    INFS_RIGHT_READ_DATA | INFS_RIGHT_WRITE_DATA | INFS_RIGHT_APPEND_DATA | \
+    INFS_RIGHT_EXECUTE | INFS_RIGHT_LIST_DIRECTORY | \
+    INFS_RIGHT_TRAVERSE_DIRECTORY | INFS_RIGHT_CREATE_FILE | \
+    INFS_RIGHT_CREATE_DIRECTORY | INFS_RIGHT_DELETE | \
+    INFS_RIGHT_DELETE_CHILD | INFS_RIGHT_READ_ATTRIBUTES | \
+    INFS_RIGHT_WRITE_ATTRIBUTES | INFS_RIGHT_READ_NAMED_METADATA | \
+    INFS_RIGHT_WRITE_NAMED_METADATA | INFS_RIGHT_READ_PERMISSIONS | \
+    INFS_RIGHT_CHANGE_PERMISSIONS | INFS_RIGHT_TAKE_OWNERSHIP)
+
 #define INFS_PRINCIPAL_USER       UINT16_C(1)
 #define INFS_PRINCIPAL_GROUP      UINT16_C(2)
 #define INFS_PRINCIPAL_SERVICE    UINT16_C(3)
 #define INFS_PRINCIPAL_WELL_KNOWN UINT16_C(4)
 
-#define INFS_BINDING_NONE        UINT16_C(0)
 #define INFS_BINDING_POSIX_UID   UINT16_C(1)
 #define INFS_BINDING_POSIX_GID   UINT16_C(2)
 #define INFS_BINDING_WINDOWS_SID UINT16_C(3)
 #define INFS_BINDING_OPAQUE      UINT16_C(0xffff)
+
+#ifndef INFS_SECURITY_BINDING_MAX
+#define INFS_SECURITY_BINDING_MAX 68u
+#endif
 
 #define INFS_ACE_ALLOW UINT16_C(1)
 #define INFS_ACE_DENY  UINT16_C(2)
@@ -51,15 +58,27 @@ typedef uint64_t infs_rights_mask;
 #define INFS_ACE_INHERIT_DIRECTORY UINT16_C(0x0002)
 #define INFS_ACE_INHERIT_ONLY      UINT16_C(0x0004)
 #define INFS_ACE_NO_PROPAGATE      UINT16_C(0x0008)
-#define INFS_ACE_KNOWN_FLAGS       UINT16_C(0x000f)
+#define INFS_ACE_INHERITED         UINT16_C(0x0010)
+#define INFS_ACE_KNOWN_FLAGS       UINT16_C(0x001f)
+
+#define INFS_SECURITY_DACL_PRESENT UINT16_C(0x0001)
+#define INFS_SECURITY_PROTECTED    UINT16_C(0x0002)
+#define INFS_SECURITY_AUTO_INHERIT UINT16_C(0x0004)
+#define INFS_SECURITY_KNOWN_FLAGS  UINT16_C(0x0007)
+
+struct infs_security_binding {
+    uint16_t type;
+    uint16_t flags;
+    uint16_t size;
+    uint8_t value[INFS_SECURITY_BINDING_MAX];
+};
 
 struct infs_security_principal {
     uint8_t principal_id[16];
     uint16_t kind;
-    uint16_t binding_type;
-    uint16_t binding_size;
     uint16_t flags;
-    uint8_t binding[68];
+    struct infs_security_binding *bindings;
+    size_t binding_count;
 };
 
 struct infs_security_ace {
@@ -70,20 +89,25 @@ struct infs_security_ace {
 };
 
 struct infs_security_descriptor {
-    struct infs_security_principal *principals;
-    size_t principal_count;
+    uint8_t owner_principal_id[16];
+    uint8_t primary_group_principal_id[16];
+    uint16_t flags;
     struct infs_security_ace *aces;
     size_t ace_count;
 };
 
-#define INFS_RIGHT_ALL ( \
-    INFS_RIGHT_READ_DATA | INFS_RIGHT_WRITE_DATA | INFS_RIGHT_APPEND_DATA | \
-    INFS_RIGHT_EXECUTE | INFS_RIGHT_LIST_DIRECTORY | \
-    INFS_RIGHT_TRAVERSE_DIRECTORY | INFS_RIGHT_CREATE_FILE | \
-    INFS_RIGHT_CREATE_DIRECTORY | INFS_RIGHT_DELETE | \
-    INFS_RIGHT_DELETE_CHILD | INFS_RIGHT_READ_ATTRIBUTES | \
-    INFS_RIGHT_WRITE_ATTRIBUTES | INFS_RIGHT_READ_NAMED_METADATA | \
-    INFS_RIGHT_WRITE_NAMED_METADATA | INFS_RIGHT_READ_PERMISSIONS | \
-    INFS_RIGHT_CHANGE_PERMISSIONS | INFS_RIGHT_TAKE_OWNERSHIP)
+int infs_security_access_allowed(
+    const struct infs_security_descriptor *descriptor,
+    const uint8_t *principal_ids, size_t principal_count,
+    infs_rights_mask requested);
+
+infs_status infs_security_inherit_descriptor(
+    const struct infs_security_descriptor *parent, int child_is_directory,
+    const uint8_t owner_principal_id[16],
+    const uint8_t primary_group_principal_id[16],
+    struct infs_security_descriptor *child);
+
+void infs_free_security_descriptor(struct infs_security_descriptor *descriptor);
+void infs_free_security_principal(struct infs_security_principal *principal);
 
 #endif

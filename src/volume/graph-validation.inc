@@ -85,12 +85,15 @@ static int validate_index_entries_progress(
             (type != INFS_OBJECT_DIRECTORY && type != INFS_OBJECT_FILE &&
              type != INFS_OBJECT_CHECKSUM && type != INFS_OBJECT_SYMLINK &&
              type != INFS_OBJECT_SNAPSHOT_CATALOG &&
+             type != INFS_OBJECT_PRINCIPAL &&
              type != INFS_OBJECT_SECURITY) ||
             (type == INFS_OBJECT_SYMLINK && !symbolic_links_enabled(vol)) ||
             (type == INFS_OBJECT_SNAPSHOT_CATALOG &&
              (!snapshots_enabled(vol) ||
               memcmp(entries[i].object_id, snapshot_catalog_id, 16) != 0)) ||
-            (type == INFS_OBJECT_SECURITY && !security_objects_enabled(vol))) {
+            ((type == INFS_OBJECT_PRINCIPAL ||
+              type == INFS_OBJECT_SECURITY) &&
+             !security_objects_enabled(vol))) {
             free(entries);
             return INFS_STATUS_CORRUPT;
         }

@@ -368,16 +368,26 @@ infs_status infs_set_times(struct infs_volume *vol, const char *path,
 infs_status infs_set_portable_flags(struct infs_volume *vol, const char *path,
                                     uint64_t portable_flags);
 
-/* Replace or remove the portable security object attached to one namespace
- * object. A NULL descriptor removes it. get() allocates arrays owned by the
- * caller and released with infs_free_security_descriptor(). */
+/* Portable principal catalog. A zero principal_id passed to put() allocates a
+ * new stable 128-bit ID and writes it back to the caller structure. Nonzero IDs
+ * update the existing principal or create that exact ID when unused. */
+infs_status infs_put_security_principal(
+    struct infs_volume *vol, struct infs_security_principal *principal);
+infs_status infs_get_security_principal(
+    struct infs_volume *vol, const uint8_t principal_id[16],
+    struct infs_security_principal *principal);
+infs_status infs_find_security_principal_by_binding(
+    struct infs_volume *vol, const struct infs_security_binding *binding,
+    uint8_t principal_id_out[16]);
+
+/* Replace or remove the shareable portable security descriptor attached to one
+ * namespace object. A NULL descriptor removes it. */
 infs_status infs_set_security_descriptor(
     struct infs_volume *vol, const char *path,
     const struct infs_security_descriptor *descriptor);
 infs_status infs_get_security_descriptor(
     struct infs_volume *vol, const char *path,
     struct infs_security_descriptor *descriptor);
-void infs_free_security_descriptor(struct infs_security_descriptor *descriptor);
 
 infs_status infs_scrub(struct infs_volume *vol,
                        struct infs_scrub_report *report);

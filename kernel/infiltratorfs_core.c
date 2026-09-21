@@ -747,12 +747,25 @@ static bool infilfs_object_basic_valid(struct super_block *sb,
         return false;
 
     version = le16_to_cpu(header->object_version);
-    if (version != INFILFS_OBJECT_VERSION_CLASSIC &&
-        version != INFILFS_OBJECT_VERSION_PAGED &&
-        !(version == INFILFS_OBJECT_VERSION_TREE &&
-          (le16_to_cpu(header->object_type) == INFILFS_OBJECT_INDEX ||
-           le16_to_cpu(header->object_type) == INFILFS_OBJECT_DIRECTORY)))
+    if (version == INFILFS_OBJECT_VERSION_CLASSIC) {
+        /* Every persistent object class has a compact version-1 form. */
+    } else if (version == INFILFS_OBJECT_VERSION_PAGED) {
+        u16 type = le16_to_cpu(header->object_type);
+        if (type != INFILFS_OBJECT_DIRECTORY &&
+            type != INFILFS_OBJECT_INDEX &&
+            type != INFILFS_OBJECT_FILE &&
+            type != INFILFS_OBJECT_SNAPSHOT_CATALOG &&
+            type != INFILFS_OBJECT_SECURITY)
+            return false;
+    } else if (version == INFILFS_OBJECT_VERSION_TREE) {
+        u16 type = le16_to_cpu(header->object_type);
+        if (type != INFILFS_OBJECT_INDEX &&
+            type != INFILFS_OBJECT_DIRECTORY &&
+            type != INFILFS_OBJECT_FILE)
+            return false;
+    } else {
         return false;
+    }
 
     payload = le32_to_cpu(header->payload_size);
     if (payload > INFILFS_DISK_BLOCK_SIZE - sizeof(*header))
@@ -788,65 +801,109 @@ static bool infilfs_object_basic_valid(struct super_block *sb,
             pages > INFILFS_SNAPSHOT_PAGE_POINTERS ||
             payload != sizeof(*catalog) + (size_t)pages * sizeof(__le64))
             return false;
-    } else if (le16_to_cpu(header->object_type) == INFILFS_OBJECT_SECURITY) {
-        const struct infilfs_security_payload_disk *security;
-        const struct infilfs_security_principal_disk *principals;
-        const struct infilfs_security_ace_disk *aces;
-        u32 principal_count, ace_count, principal_bytes, ace_bytes, i, j;
+    } else if (le16_to_cpu(header->object_type) == INFILFS_OBJECT_PRINCIPAL) {
+        const struct infilfs_principal_payload_disk *principal;
+        const struct infilfs_security_binding_disk *bindings;
+        u32 binding_count, binding_bytes, i, j;
 
         if (version != INFILFS_OBJECT_VERSION_CLASSIC ||
-            payload < sizeof(*security))
+            payload < sizeof(*principal) ||
+            memchr_inv(header->parent_id, 0, sizeof(header->parent_id)))
             return false;
-        security = (const struct infilfs_security_payload_disk *)(header + 1);
-        principal_count = le16_to_cpu(security->principal_count);
-        ace_count = le16_to_cpu(security->ace_count);
-        principal_bytes = le32_to_cpu(security->principal_bytes);
-        ace_bytes = le32_to_cpu(security->ace_bytes);
-        if (le16_to_cpu(security->version) != INFILFS_SECURITY_VERSION_V1 ||
-            le16_to_cpu(security->flags) != 0 ||
-            principal_bytes != principal_count * sizeof(*principals) ||
-            ace_bytes != ace_count * sizeof(*aces) ||
-            payload != sizeof(*security) + principal_bytes + ace_bytes)
+        principal = (const struct infilfs_principal_payload_disk *)(header + 1);
+        binding_count = le16_to_cpu(principal->binding_count);
+        binding_bytes = le32_to_cpu(principal->binding_bytes);
+        if (le16_to_cpu(principal->version) != INFILFS_SECURITY_VERSION_V1 ||
+            le16_to_cpu(principal->kind) < INFILFS_SECURITY_PRINCIPAL_USER ||
+            le16_to_cpu(principal->kind) >
+                INFILFS_SECURITY_PRINCIPAL_WELL_KNOWN ||
+            le16_to_cpu(principal->flags) != 0 ||
+            le32_to_cpu(principal->reserved) != 0 ||
+            binding_count > INFILFS_PRINCIPAL_BINDINGS_PER_OBJECT ||
+            binding_bytes !=
+                binding_count * sizeof(struct infilfs_security_binding_disk) ||
+            payload != sizeof(*principal) + binding_bytes)
             return false;
-        principals = (const struct infilfs_security_principal_disk *)(security + 1);
-        aces = (const struct infilfs_security_ace_disk *)(
-            (const u8 *)principals + principal_bytes);
-        for (i = 0; i < principal_count; ++i) {
-            u16 kind = le16_to_cpu(principals[i].kind);
-            u16 binding_size = le16_to_cpu(principals[i].binding_size);
-            if (!memchr_inv(principals[i].principal_id, 0, 16) ||
-                kind < INFILFS_SECURITY_PRINCIPAL_USER ||
-                kind > INFILFS_SECURITY_PRINCIPAL_WELL_KNOWN ||
-                binding_size > INFILFS_SECURITY_BINDING_MAX ||
-                le16_to_cpu(principals[i].flags) != 0 ||
-                memchr_inv(principals[i].binding + binding_size, 0,
-                           INFILFS_SECURITY_BINDING_MAX - binding_size))
+
+        bindings = (const struct infilfs_security_binding_disk *)(principal + 1);
+        for (i = 0; i < binding_count; ++i) {
+            u16 type = le16_to_cpu(bindings[i].type);
+            u16 size = le16_to_cpu(bindings[i].value_size);
+
+            if (le16_to_cpu(bindings[i].flags) != 0 ||
+                le16_to_cpu(bindings[i].reserved) != 0 ||
+                !size || size > INFILFS_SECURITY_BINDING_MAX ||
+                (type != INFILFS_SECURITY_BINDING_POSIX_UID &&
+                 type != INFILFS_SECURITY_BINDING_POSIX_GID &&
+                 type != INFILFS_SECURITY_BINDING_WINDOWS_SID &&
+                 type != INFILFS_SECURITY_BINDING_OPAQUE) ||
+                ((type == INFILFS_SECURITY_BINDING_POSIX_UID ||
+                  type == INFILFS_SECURITY_BINDING_POSIX_GID) &&
+                 size != 4u) ||
+                (type == INFILFS_SECURITY_BINDING_WINDOWS_SID && size < 8u) ||
+                memchr_inv(bindings[i].value + size, 0,
+                           INFILFS_SECURITY_BINDING_MAX - size))
                 return false;
             for (j = 0; j < i; ++j)
-                if (!memcmp(principals[j].principal_id,
-                            principals[i].principal_id, 16))
+                if (bindings[i].type == bindings[j].type &&
+                    bindings[i].value_size == bindings[j].value_size &&
+                    !memcmp(bindings[i].value, bindings[j].value, size))
                     return false;
         }
-        for (i = 0; i < ace_count; ++i) {
-            u64 rights = le64_to_cpu(aces[i].rights);
-            u16 disposition = le16_to_cpu(aces[i].disposition);
-            u16 flags = le16_to_cpu(aces[i].flags);
-            bool found = false;
-            if (!memchr_inv(aces[i].principal_id, 0, 16) || !rights ||
-                (rights & ~INFILFS_SECURITY_RIGHT_ALL) ||
-                (disposition != INFILFS_SECURITY_ACE_ALLOW &&
-                 disposition != INFILFS_SECURITY_ACE_DENY) ||
-                (flags & ~INFILFS_SECURITY_ACE_KNOWN_FLAGS) ||
-                le32_to_cpu(aces[i].reserved) != 0)
+    } else if (le16_to_cpu(header->object_type) == INFILFS_OBJECT_SECURITY) {
+        const struct infilfs_security_payload_disk *security;
+        const struct infilfs_security_ace_disk *aces;
+        const __le64 *pages;
+        u32 ace_count, page_count, expected_pages, i;
+
+        if (payload < sizeof(*security) ||
+            memchr_inv(header->parent_id, 0, sizeof(header->parent_id)))
+            return false;
+        security = (const struct infilfs_security_payload_disk *)(header + 1);
+        ace_count = le32_to_cpu(security->ace_count);
+        page_count = le32_to_cpu(security->page_count);
+        if (le16_to_cpu(security->version) != INFILFS_SECURITY_VERSION_V1 ||
+            (le16_to_cpu(security->flags) & ~INFILFS_SECURITY_KNOWN_FLAGS) ||
+            !(le16_to_cpu(security->flags) & INFILFS_SECURITY_DACL_PRESENT) ||
+            le32_to_cpu(security->reserved) != 0 ||
+            !memchr_inv(security->owner_principal_id, 0, 16) ||
+            !memchr_inv(security->primary_group_principal_id, 0, 16) ||
+            ace_count > INFILFS_SECURITY_MAX_ACES)
+            return false;
+
+        if (version == INFILFS_OBJECT_VERSION_CLASSIC) {
+            if (page_count != 0 ||
+                ace_count > INFILFS_SECURITY_INLINE_ACES ||
+                payload != sizeof(*security) +
+                    (size_t)ace_count * sizeof(*aces))
                 return false;
-            for (j = 0; j < principal_count; ++j)
-                if (!memcmp(principals[j].principal_id,
-                            aces[i].principal_id, 16)) {
-                    found = true;
-                    break;
-                }
-            if (!found)
+            aces = (const struct infilfs_security_ace_disk *)(security + 1);
+            for (i = 0; i < ace_count; ++i) {
+                u64 rights = le64_to_cpu(aces[i].rights);
+                u16 disposition = le16_to_cpu(aces[i].disposition);
+                u16 flags = le16_to_cpu(aces[i].flags);
+                if (!memchr_inv(aces[i].principal_id, 0, 16) || !rights ||
+                    (rights & ~INFILFS_SECURITY_RIGHT_ALL) ||
+                    (disposition != INFILFS_SECURITY_ACE_ALLOW &&
+                     disposition != INFILFS_SECURITY_ACE_DENY) ||
+                    (flags & ~INFILFS_SECURITY_ACE_KNOWN_FLAGS) ||
+                    le32_to_cpu(aces[i].reserved) != 0)
+                    return false;
+            }
+        } else if (version == INFILFS_OBJECT_VERSION_PAGED) {
+            expected_pages = ace_count ?
+                DIV_ROUND_UP(ace_count, INFILFS_SECURITY_ACES_PER_PAGE) : 0u;
+            if (page_count != expected_pages ||
+                page_count > INFILFS_SECURITY_PAGE_POINTERS ||
+                payload != sizeof(*security) +
+                    (size_t)page_count * sizeof(*pages))
                 return false;
+            pages = (const __le64 *)(security + 1);
+            for (i = 0; i < page_count; ++i)
+                if (!le64_to_cpu(pages[i]))
+                    return false;
+        } else {
+            return false;
         }
     }
     return true;

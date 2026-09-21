@@ -100,9 +100,21 @@ static infs_status transaction_next_generation(const struct infs_volume *vol,
 static int validate_common_metadata(
     const struct infs_attributes_disk *attributes,
     const struct infs_posix_compat_disk *posix);
-static infs_status security_object_validate_owner(
-    struct infs_volume *vol, const uint8_t security_id[16],
-    const uint8_t owner_id[16]);
+static infs_status security_descriptor_validate_reference(
+    struct infs_volume *vol, const uint8_t security_id[16]);
+static infs_status security_ace_page_validate(
+    struct infs_volume *vol, const uint8_t block[INFS_BLOCK_SIZE],
+    const uint8_t owner_id[16], struct infs_security_ace_disk **aces_out,
+    uint32_t *count_out);
+static void security_binding_decode(
+    struct infs_security_binding *binding,
+    const struct infs_security_binding_disk *disk);
+static infs_status security_descriptor_decode(
+    struct infs_volume *vol, uint8_t object[INFS_BLOCK_SIZE],
+    struct infs_security_descriptor *descriptor);
+static infs_status security_principal_references_valid(
+    struct infs_volume *vol,
+    const struct infs_security_descriptor *descriptor);
 static int validate_integrity_metadata(struct infs_volume *vol);
 static int validate_namespace_graph(struct infs_volume *vol);
 static int validate_checksum_graph(struct infs_volume *vol);
