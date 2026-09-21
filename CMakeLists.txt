@@ -220,6 +220,13 @@ add_executable(infilfs-volume-conformance tests/volume-conformance.c)
 target_link_libraries(infilfs-volume-conformance PRIVATE infilfs_core)
 infilfs_enable_warnings(infilfs-volume-conformance)
 
+add_executable(infilfs-manager-enablement-test
+    tests/manager-enablement.c
+    tools/manager/infiltratorfs-manager-contract.c)
+target_include_directories(infilfs-manager-enablement-test PRIVATE tools)
+target_link_libraries(infilfs-manager-enablement-test PRIVATE InfiltratrCommon::Common)
+infilfs_enable_warnings(infilfs-manager-enablement-test)
+
 add_executable(infilfs-hardening-conformance tests/hardening-conformance.c)
 target_link_libraries(infilfs-hardening-conformance PRIVATE infilfs_core)
 infilfs_enable_warnings(infilfs-hardening-conformance)
@@ -299,6 +306,7 @@ add_test(NAME infilfs-removable-names COMMAND infilfs-removable-names)
 add_test(NAME infilfs-security-policy COMMAND infilfs-security-policy)
 add_test(NAME infilfs-security-objects COMMAND infilfs-security-objects)
 add_test(NAME infilfs-volume-conformance COMMAND infilfs-volume-conformance)
+add_test(NAME infilfs-manager-enablement COMMAND infilfs-manager-enablement-test)
 add_test(NAME infilfs-hardening-conformance COMMAND infilfs-hardening-conformance)
 add_test(NAME infilfs-open-hardening COMMAND infilfs-open-hardening)
 add_test(NAME infilfs-063-hardening COMMAND infilfs-063-hardening)
