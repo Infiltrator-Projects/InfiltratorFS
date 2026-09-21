@@ -92,9 +92,10 @@ jobs:
             dpkg-deb --info "$file" >/dev/null
           done
 
-      - name: Build current core Debian package
+      - name: Build current core package and self-contained native installer
         env:
-          INFILTRATORFS_EMIT_RUN: "0"
+          INFILTRATORFS_EMIT_RUN: "1"
+          INFILTRATORFS_DESKTOP_BUNDLE_DIR: ${{ runner.temp }}/desktop-integration
         shell: bash
         run: |
           set -euo pipefail
@@ -112,7 +113,7 @@ jobs:
           installer="infiltratorfs-${VERSION}-linux-native.run"
           windows="InfiltratorFS-Windows-${VERSION}.exe"
           cp "dist/$deb" release-assets/
-          cp "$RUNNER_TEMP/build-linux/$installer" release-assets/
+          cp "dist/$installer" release-assets/
           cp "$RUNNER_TEMP/build-windows/$windows" release-assets/
           cp "$RUNNER_TEMP/desktop-integration/"*.deb release-assets/
           cp "$RUNNER_TEMP/desktop-integration/infiltratorfs-desktop-integration.manifest" release-assets/
@@ -124,8 +125,9 @@ jobs:
           ! grep -q 'usr/lib/infiltratorfs/os-integration/gnome-disks$' "$contents"
           ! grep -q 'usr/lib/infiltratorfs/os-integration/libbd_fs.so$' "$contents"
           ! grep -q 'usr/bin/infilfs-fuse$' "$contents"
-          dpkg-deb --field "release-assets/$deb" Recommends | grep -Fq infiltratorfs-desktop-integration
+          dpkg-deb --field "release-assets/$deb" Depends | grep -Fq infiltratorfs-desktop-integration
           "release-assets/$installer" --verify
+          grep -aq 'infiltratorfs-desktop-integration-bundle.tar' "release-assets/$installer"
           test -s "release-assets/$windows"
 
       - name: Preserve exact release assets
