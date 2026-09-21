@@ -69,6 +69,33 @@ CREATOR_OWNER and CREATOR_GROUP are valid only on inheritable, inherit-only ACE
 templates and never participate directly in an access check. Ordinary generated
 object IDs must never enter the reserved well-known namespace.
 
+## Bounded persistent lookup
+
+Foreground security operations must not scan the object population.
+
+Resolvable principal bindings have a small secondary index represented by
+ordinary indexed `INFS_OBJECT_SECURITY_BINDING` objects. A canonical binding is
+SHA-256 hashed with a security-specific domain separator. The full binding hash
+plus a bounded collision-slot number deterministically derives the 128-bit
+secondary-index object ID. Each index record stores the complete canonical
+binding, its full digest, slot and target principal ID. Reverse lookup therefore
+uses the ordinary scalable object index and always confirms the complete
+binding; a truncated-ID/hash collision can never alias identities.
+
+Opaque bindings have no secondary-index object because they are preservation
+records, not credential-resolution keys.
+
+Security descriptors use the same pattern without a separate index object. The
+descriptor semantic digest plus collision slot deterministically derives the
+descriptor's own object ID. Exact payload comparison still confirms equality.
+The slot is persisted in the descriptor head so readers can validate its
+content-addressed identity.
+
+Both mappings use a small fixed collision-probe bound. Occupied candidates with
+different full digests are collisions and advance to the next slot; exhausting
+the bound fails closed. This provides bounded lookup without introducing a
+second tree implementation or trusting a hash prefix as semantic identity.
+
 ## Shareable security descriptors
 
 `infs_attributes_disk.security_object_id` references an indexed
@@ -86,16 +113,15 @@ A descriptor stores:
 The descriptor object has no namespace parent. Its header parent ID is zero
 because ownership is many-to-one from namespace objects to a shared descriptor.
 
-Setting an ACL first canonicalizes the requested descriptor and then reuses an
-existing descriptor when the semantic digest and full canonical payload match.
-Otherwise a new descriptor is created. Detaching a descriptor never destroys it
-until the current committed namespace graph has no remaining references.
-Reference ownership is therefore derived from the graph rather than trusted to
-a mutable on-disk reference counter.
+Setting an ACL first canonicalizes the requested descriptor and probes its
+bounded content-derived object IDs. An exact existing descriptor is reused;
+otherwise the first free collision slot becomes the new immutable descriptor.
+No whole-object-index descriptor search is part of ordinary ACL mutation.
 
-This keeps descriptors shareable and avoids creating a second consistency
-problem around persistent reference counts. A later runtime cache may accelerate
-descriptor lookup/reclamation without changing the format.
+Detaching a descriptor only removes the namespace reference. It does not scan
+the namespace to prove last-reference status and does not maintain a mutable
+persistent reference count. Unreachable descriptors are reclaimed later by
+graph-tracing maintenance.
 
 ## ACL semantics
 

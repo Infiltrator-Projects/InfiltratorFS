@@ -120,18 +120,28 @@ A reserved implicit principal-ID namespace defines OWNER, GROUP, EVERYONE,
 CREATOR_OWNER and CREATOR_GROUP. Reserved IDs are never allocated to ordinary
 objects or stored as ordinary principal objects.
 
+Resolvable principal bindings are accompanied by
+`INFS_OBJECT_SECURITY_BINDING` secondary-index objects. Their object IDs are
+bounded collision-slot candidates derived from a domain-separated SHA-256 of
+the complete canonical binding. The record stores the complete binding, full
+digest, slot and target principal ID, so the ordinary object index provides
+bounded reverse lookup without making a hash prefix authoritative. Opaque
+bindings are never indexed.
+
 A namespace object's `security_object_id` references a shareable security
 descriptor. The descriptor contains owner and primary-group principal IDs,
-descriptor-control flags, a canonical semantic digest and ordered ACEs that
-reference principal IDs. Descriptor object parent ID is zero because one
-descriptor may be referenced by many namespace objects.
+descriptor-control flags, a canonical semantic digest, a collision slot and
+ordered ACEs that reference principal IDs. Its object ID is deterministically
+derived from the full descriptor digest plus the slot. Descriptor object parent
+ID is zero because one descriptor may be referenced by many namespace objects.
 
-Writers canonicalize and reuse an identical descriptor when one already exists.
-Descriptor reachability is derived from the namespace graph; it is not trusted
-to a mutable persistent reference counter. Foreground namespace mutation does
-not perform whole-namespace reference scans for descriptor reclamation.
-Unreferenced descriptors/principals are tracing-GC candidates during scrub or a
-bounded maintenance pass.
+Writers probe a bounded set of content-derived descriptor IDs and reuse an
+exact descriptor when one already exists; ordinary ACL mutation never scans the
+object population for deduplication. Descriptor reachability is derived from
+the namespace graph, not a mutable persistent reference counter. Foreground
+namespace mutation never performs whole-namespace reference scans for
+descriptor reclamation. Unreferenced descriptors/principals are tracing-GC
+candidates during scrub or a bounded maintenance pass.
 
 Compact descriptors keep ACEs inline. Descriptors larger than the inline
 capacity use checksummed metadata pages under the same descriptor object ID.

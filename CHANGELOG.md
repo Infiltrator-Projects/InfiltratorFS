@@ -4,6 +4,7 @@ This file records user-visible, compatibility, architecture and validation chang
 
 ## Unreleased
 
+- Replace foreground portable-security scans with bounded persistent lookup: resolvable bindings gain deterministic secondary-index objects in the existing object index, immutable descriptors use content-derived collision-slot IDs for direct reuse, opaque bindings remain non-resolvable, and ACL detach/unlink becomes independent of total namespace size with reclamation deferred to graph-tracing maintenance.
 - Correct the portable-security identity model before further feature work: advance the development payload contract to version 2, scope POSIX numeric bindings by a 128-bit identity authority, require canonical binary Windows SIDs, make opaque bindings preservation-only, reserve implicit OWNER/GROUP/EVERYONE/CREATOR_OWNER/CREATOR_GROUP principals, and specify graph-traced rather than foreground full-namespace reclamation.
 - Harden the portable ACL evaluator and inheritance engine to reject malformed in-memory descriptors fail-closed, preserve ordered allow/deny decisions, and canonicalise the file-only/no-propagate directory inheritance edge case.
 - Redesign the development portable-security model before format freeze: principal identities become volume-level indexed objects with multiple platform bindings, security descriptors become shareable owner/group + ordered-ACL objects, descriptor reachability is graph-derived rather than persistent-refcount based, and large ACLs are permitted to page beyond one metadata block.
