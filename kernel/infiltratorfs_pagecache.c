@@ -924,7 +924,10 @@ static int infilfs_writeback_cluster_submit(
     struct infilfs_writeback_cluster *cluster)
 {
     struct inode *inode = mapping->host;
+    struct bio_vec *bvecs = cluster->bvecs;
     struct iov_iter iter;
+    struct kvec staged_vec;
+    void *staged = NULL;
     loff_t position;
     ssize_t written;
     int ret = 0;
@@ -933,9 +936,36 @@ static int infilfs_writeback_cluster_submit(
     if (!cluster->count)
         return 0;
 
+    /*
+     * Native preparation and checkpoint publication can legitimately sleep
+     * for much longer than a page-cache lock should be held.  Capture the
+     * writeback image while the dirty folios are locked, keep their writeback
+     * bits and references as the VFS completion contract, then release the
+     * folio locks before entering compression/CoW/publication.
+     *
+     * A folio dirtied again after this snapshot remains dirty for the next
+     * writeback pass; infilfs_pagecache_unaccount() deliberately preserves its
+     * pending-CoW marker in that case.
+     */
+    staged = kvmalloc(cluster->bytes, GFP_NOFS);
+    if (!staged) {
+        ret = -ENOMEM;
+        goto staging_failed;
+    }
     iov_iter_bvec(
-        &iter, ITER_SOURCE, cluster->bvecs,
-        cluster->bvec_count, cluster->bytes);
+        &iter, ITER_SOURCE, bvecs, cluster->bvec_count, cluster->bytes);
+    if (copy_from_iter(staged, cluster->bytes, &iter) != cluster->bytes) {
+        ret = -EFAULT;
+        goto staging_failed;
+    }
+
+    for (i = 0; i < cluster->count; ++i)
+        folio_unlock(cluster->folios[i]);
+
+    staged_vec.iov_base = staged;
+    staged_vec.iov_len = cluster->bytes;
+    iov_iter_kvec(
+        &iter, ITER_SOURCE, &staged_vec, 1, cluster->bytes);
     position = cluster->position;
     written = infilfs_native_writeback_iter(
         inode, &position, &iter, cluster->bytes);
@@ -947,18 +977,38 @@ static int infilfs_writeback_cluster_submit(
     for (i = 0; i < cluster->count; ++i) {
         struct folio *folio = cluster->folios[i];
 
-        if (ret)
+        if (ret) {
+            folio_lock(folio);
             folio_redirty_for_writepage(wbc, folio);
-        else
+            folio_unlock(folio);
+        } else {
             infilfs_pagecache_unaccount(folio, false);
+        }
         folio_end_writeback(folio);
 #if INFILFS_HAVE_VERIFIED_IOMAP_READ
-        if (!ret)
+        if (!ret) {
+            folio_lock(folio);
             (void)iomap_release_folio(folio, GFP_NOFS);
+            folio_unlock(folio);
+        }
 #endif
+        folio_put(folio);
+    }
+    goto out_reset;
+
+staging_failed:
+    mapping_set_error(mapping, ret);
+    for (i = 0; i < cluster->count; ++i) {
+        struct folio *folio = cluster->folios[i];
+
+        folio_redirty_for_writepage(wbc, folio);
+        folio_end_writeback(folio);
         folio_unlock(folio);
         folio_put(folio);
     }
+
+out_reset:
+    kvfree(staged);
     cluster->count = 0;
     cluster->bvec_count = 0;
     cluster->bytes = 0;
