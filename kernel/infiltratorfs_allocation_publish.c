@@ -197,7 +197,16 @@ int infilfs_rw_allocation_map_publish(
     size_t reserved_count = 0;
     size_t max_reserved;
     size_t needed = 0;
+    size_t final_dirty_leaves = 0;
+    size_t final_dirty_level1 = 0;
+    size_t final_dirty_level2 = 0;
     size_t i, r;
+    u64 publish_started = ktime_get_ns();
+    u64 phase_started = publish_started;
+    u64 prepare_ms = 0;
+    u64 reclaim_ms = 0;
+    u64 leaf_write_ms = 0;
+    u64 branch_write_ms = 0;
     int ret;
 
     if (!next_layout)
@@ -283,6 +292,15 @@ int infilfs_rw_allocation_map_publish(
         }
     }
 
+    final_dirty_leaves =
+        infilfs_rw_allocation_dirty_count(dirty_leaves, old.leaf_count);
+    final_dirty_level1 =
+        infilfs_rw_allocation_dirty_count(dirty_level1, old.level1_count);
+    final_dirty_level2 =
+        infilfs_rw_allocation_dirty_count(dirty_level2, old.level2_count);
+    prepare_ms = div_u64(ktime_get_ns() - phase_started, NSEC_PER_MSEC);
+    phase_started = ktime_get_ns();
+
     memcpy(new_leaves, old.leaf_blocks,
            old.leaf_count * sizeof(*new_leaves));
     memcpy(new_branches, old.branch_blocks,
@@ -321,6 +339,10 @@ int infilfs_rw_allocation_map_publish(
             if (ret)
                 goto out;
         }
+        leaf_write_ms = div_u64(
+            ktime_get_ns() - phase_started, NSEC_PER_MSEC);
+        phase_started = ktime_get_ns();
+
         for (i = 0; i < old.level1_count; ++i) {
             if (!dirty_level1[i])
                 continue;
@@ -340,6 +362,9 @@ int infilfs_rw_allocation_map_publish(
         ret = infilfs_rw_tx_apply_deferred(tx);
         if (ret)
             goto out;
+        reclaim_ms = div_u64(
+            ktime_get_ns() - phase_started, NSEC_PER_MSEC);
+        phase_started = ktime_get_ns();
 
         tx->next_sb.allocation_root_block = cpu_to_le64(new_branches[0]);
         tx->next_sb.allocation_leaf_count = cpu_to_le64(old.leaf_count);
@@ -426,6 +451,23 @@ int infilfs_rw_allocation_map_publish(
     }
 
     if (!ret) {
+        u64 elapsed_ms;
+
+        branch_write_ms = div_u64(
+            ktime_get_ns() - phase_started, NSEC_PER_MSEC);
+        elapsed_ms = div_u64(
+            ktime_get_ns() - publish_started, NSEC_PER_MSEC);
+        if (elapsed_ms >= 100)
+            pr_warn_ratelimited(
+                "InfiltratorFS: slow allocation-map publication=%llums generation=%llu prepare=%llums reclaim=%llums leaf_write=%llums branch_write=%llums dirty_leaves=%zu dirty_level1=%zu dirty_level2=%zu\n",
+                (unsigned long long)elapsed_ms,
+                (unsigned long long)tx->generation,
+                (unsigned long long)prepare_ms,
+                (unsigned long long)reclaim_ms,
+                (unsigned long long)leaf_write_ms,
+                (unsigned long long)branch_write_ms,
+                final_dirty_leaves, final_dirty_level1, final_dirty_level2);
+
         next_layout->leaf_blocks = new_leaves;
         next_layout->branch_blocks = new_branches;
         next_layout->leaf_count = old.leaf_count;
