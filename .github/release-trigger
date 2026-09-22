@@ -1,6 +1,7 @@
-0.18.73
+0.18.74
 qualification=exact-source-release-gate-hosted
 publication-gate=event-driven-v10
 root-volume-package-dependency-fix=qualified
 installer-bundle-path=canonical-v1
 allocation-regression-backout=qualified-v1
+sustained-write-stall-recovery=qualified-v1
