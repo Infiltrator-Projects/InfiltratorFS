@@ -97,8 +97,10 @@ jobs:
       - name: Validate native Manager source policy
         run: |
           test -f tools/infiltratorfs-manager.c
-          grep -Fq '"lsblk", "-P", "-b", "-n", "-p", "-o"' tools/infiltratorfs-manager.c
-          grep -Fq '"PATH,SIZE,TYPE,RM,PKNAME,TRAN,FSTYPE,LABEL,MOUNTPOINTS"' tools/infiltratorfs-manager.c
+          test -f tools/manager/infiltratorfs-manager-storage.c
+          grep -Fq '"lsblk", "-P", "-b", "-n", "-p", "-o"' tools/manager/infiltratorfs-manager-storage.c
+          grep -Fq '"PATH,SIZE,TYPE,RM,PKNAME,TRAN,FSTYPE,LABEL,MOUNTPOINTS"' tools/manager/infiltratorfs-manager-storage.c
+          ! grep -Fq '"lsblk", "-P", "-b", "-n", "-p", "-o"' tools/infiltratorfs-manager.c
           grep -Fq 'gtk_application_window_new' tools/infiltratorfs-manager.c
           grep -Fq '#include "infiltratr/design.h"' tools/infiltratorfs-manager.c
           ! grep -Fqi 'zenity' tools/infiltratorfs-manager.c
