@@ -324,7 +324,7 @@ grep -Fq 'int infilfs_native_checksum_decode(' "$kernel/infiltratorfs_checksum_s
     fail 'locator cache regressed into RW data compositor'
 grep -Fq 'int infilfs_native_index_locator_build(' "$kernel/infiltratorfs_locator_cache.c" || \
     fail 'compiled locator cache lost object-index locator ownership'
-check_bytes "$kernel/infiltratorfs_rw_namespace.inc" 100000
+check_bytes "$kernel/infiltratorfs_rw_namespace.inc" 90000
 check_bytes "$quota" 70000
 
 printf 'Native kernel locking/composition maintainability policy guard passed.\n'

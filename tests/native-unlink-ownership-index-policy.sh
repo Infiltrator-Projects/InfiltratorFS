@@ -14,15 +14,24 @@ for file in "$ns" "$state" "$data" "$reflink" "$ownership"; do test -f "$file" |
 grep -Fq 'struct infilfs_native_shared_range' "$state" || fail 'shared-range state missing'
 grep -Fq 'shared_range_index_valid' "$state" || fail 'shared-range validity state missing'
 grep -Fq 'u32 refs;' "$state" || fail 'shared-range multiplicity state missing'
-grep -Fq 'infilfs_ns_shared_range_index_build' "$ns" || fail 'shared-range builder missing'
-grep -Fq '(u32)coverage' "$ns" || fail 'shared-range builder does not preserve exact reference multiplicity'
+grep -Fq 'infilfs_shared_ownership_index_build' "$ownership" || fail 'shared-range builder missing'
+grep -Fq '(u32)coverage' "$ownership" || fail 'shared-range builder does not preserve exact reference multiplicity'
 grep -Fq 'infilfs_shared_ownership_add_owner' "$ownership" || fail 'incremental owner-add engine missing'
 grep -Fq 'shared->refs + 1u' "$ownership" || fail 'incremental owner-add does not increment multiplicity'
 grep -Fq 'infilfs_shared_ownership_drop_owner' "$ownership" || fail 'incremental owner-drop engine missing'
 grep -Fq 'shared->refs - 1u' "$ownership" || fail 'incremental owner-drop does not decrement multiplicity'
-! grep -Fq 'infilfs_ns_index_snapshot' "$ownership" || fail 'owner-drop regressed to whole-index scan'
-grep -Fq 'infilfs_ns_shared_range_maybe_shared' "$ns" || fail 'shared-range query missing'
-grep -Fq 'infilfs_ns_other_reference_cover' "$ns" || fail 'exact ownership fallback missing'
+python3 - "$ownership" <<'PYOWN'
+from pathlib import Path
+import sys
+s = Path(sys.argv[1]).read_text()
+a = s.index('int infilfs_shared_ownership_drop_owner(')
+b = len(s)
+body = s[a:b]
+if 'infilfs_ns_index_snapshot' in body:
+    raise SystemExit('incremental owner-drop regressed to whole-index scan')
+PYOWN
+grep -Fq 'infilfs_shared_ownership_maybe_shared' "$ownership" || fail 'shared-range query missing'
+grep -Fq 'infilfs_shared_ownership_other_reference_cover' "$ownership" || fail 'exact ownership fallback missing'
 grep -Fq 'kvfree(pending->shared_ranges);' "$data" || fail 'ownership index unmount cleanup missing'
 grep -Fq 'A non-inline reflink introduces one additional live owner' "$reflink" || fail 'reflink incremental ownership rationale missing'
 
@@ -47,17 +56,18 @@ if 'pending->shared_range_index_valid = false;' in prefix:
 PY
 
 grep -Fq 'struct mutex shared_range_build_lock;' "$state" || fail 'ownership-index build mutex missing'
-grep -Fq 'infilfs_ns_prepare_shared_range_index' "$ns" || fail 'read-side ownership-index preparation missing'
+grep -Fq 'infilfs_shared_ownership_prepare_index' "$ownership" || fail 'read-side ownership-index preparation missing'
 
-python3 - "$ns" <<'PY'
+python3 - "$ns" "$ownership" <<'PY'
 from pathlib import Path
 import sys
 
 s = Path(sys.argv[1]).read_text()
+ownership = Path(sys.argv[2]).read_text()
 
-prep_start = s.index('static int infilfs_ns_prepare_shared_range_index(')
-prep_end = s.index('\nstatic bool infilfs_ns_shared_range_maybe_shared(', prep_start)
-prep = s[prep_start:prep_end]
+prep_start = ownership.index('int infilfs_shared_ownership_prepare_index(')
+prep_end = ownership.index('\nbool infilfs_shared_ownership_maybe_shared(', prep_start)
+prep = ownership[prep_start:prep_end]
 if 'mutex_lock(&sbi->shared_range_build_lock);' not in prep:
     raise SystemExit('ownership-index build is not serialized')
 if 'down_read(&sbi->write_lock);' not in prep or 'up_read(&sbi->write_lock);' not in prep:
@@ -68,7 +78,7 @@ if 'down_write(&sbi->write_lock);' in prep:
 evict_start = s.index('static int infilfs_ns_evict_unlinked_file(')
 evict_end = s.index('\nstatic int ', evict_start + 1)
 evict = s[evict_start:evict_end]
-prepare = evict.find('infilfs_ns_prepare_shared_range_index(pending)')
+prepare = evict.find('infilfs_shared_ownership_prepare_index(pending)')
 begin = evict.find('infilfs_ns_begin(inode->i_sb, &pending)')
 valid = evict.find('pending->shared_range_index_valid')
 if min(prepare, begin, valid) < 0:
@@ -100,10 +110,10 @@ if invalidate >= 0 and (ret_block < 0 or invalidate < ret_block):
 free_start = s.index('static int infilfs_ns_free_unshared_run(')
 free_end = s.index('\nstatic int ', free_start + 1)
 body = s[free_start:free_end]
-build = body.find('infilfs_ns_shared_range_index_build(pending)')
-query = body.find('infilfs_ns_shared_range_maybe_shared')
+build = body.find('infilfs_shared_ownership_index_build(pending)')
+query = body.find('infilfs_shared_ownership_maybe_shared')
 fastfree = body.find('return infilfs_rw_tx_defer_free(&pending->tx, start, count)')
-scan = body.find('infilfs_ns_other_reference_cover(')
+scan = body.find('infilfs_shared_ownership_other_reference_cover(')
 if min(build, query, fastfree, scan) < 0:
     raise SystemExit('unlink ownership fast/fallback sequence incomplete')
 if not (build < query < fastfree < scan):

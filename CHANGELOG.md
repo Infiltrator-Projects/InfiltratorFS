@@ -7,6 +7,7 @@ This file records user-visible, compatibility, architecture and validation chang
 - Advance development identity to 0.18.73 after immutable 0.18.72 publication.
 - Advance the exact Infiltratr Common dependency from 1.19.23 to 1.19.24 at `748e089ae175329471d4cf375522c44081371bd5`. This Common release hardens graphics surface range/alias handling; InfiltratorFS does not consume that graphics API, so the pin changes no filesystem or on-disk semantics.
 - Split the filesystem-wide N-1 CPU/workqueue policy from the VFS/checkpoint core into a dedicated compiled `infiltratorfs_cpu.o`, preserving the same hotplug-aware execution gate while reducing `infiltratorfs_core.c` coupling.
+- Consolidate native shared-range ownership discovery, exact fallback and incremental multiplicity accounting in `infiltratorfs_shared_ownership.c`, removing the duplicate range-append helper from the namespace compositor and shrinking its ownership surface.
 
 
 ## 0.18.72 — 2026-09-22

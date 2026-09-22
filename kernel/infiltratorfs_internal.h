@@ -330,6 +330,18 @@ int infilfs_native_collect_extents(
     u8 object[INFILFS_DISK_BLOCK_SIZE],
     struct infilfs_extent_disk **extents_out, u32 *count_out,
     u64 *old_blocks_out, bool *was_inline_out);
+int infilfs_ns_index_snapshot(
+    struct super_block *sb, struct infilfs_index_entry_disk **entries_out,
+    u32 *count_out);
+int infilfs_shared_ownership_index_build(
+    struct infilfs_native_pending *pending);
+int infilfs_shared_ownership_prepare_index(
+    struct infilfs_native_pending *pending);
+bool infilfs_shared_ownership_maybe_shared(
+    const struct infilfs_native_pending *pending, u64 start, u64 end);
+int infilfs_shared_ownership_other_reference_cover(
+    struct super_block *sb, const u8 owner_id[16], u64 cursor, u64 end,
+    u64 *cover_end, u64 *next_start);
 int infilfs_shared_ownership_add_owner(
     struct infilfs_native_pending *pending,
     const struct infilfs_extent_disk *extents, u32 extent_count);
