@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.20)
-project(InfiltratorFS VERSION 0.18.71 LANGUAGES C)
-# Development qualification anchor: 0.18.71
+project(InfiltratorFS VERSION 0.18.72 LANGUAGES C)
+# Development qualification anchor: 0.18.72
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -208,6 +208,10 @@ add_executable(infilfs-casefold tests/casefold.c)
 target_link_libraries(infilfs-casefold PRIVATE infilfs_core)
 infilfs_enable_warnings(infilfs-casefold)
 
+add_executable(infilfs-typed-extensions tests/typed-extensions.c)
+target_link_libraries(infilfs-typed-extensions PRIVATE infilfs_core)
+infilfs_enable_warnings(infilfs-typed-extensions)
+
 add_executable(infilfs-security-policy tests/security-policy.c)
 target_include_directories(infilfs-security-policy PRIVATE include)
 infilfs_enable_warnings(infilfs-security-policy)
@@ -308,6 +312,7 @@ add_test(NAME infilfs-checksum-known-answer COMMAND infilfs-checksum-test)
 add_test(NAME infilfs-format-conformance COMMAND infilfs-format-conformance)
 add_test(NAME infilfs-removable-names COMMAND infilfs-removable-names)
 add_test(NAME infilfs-casefold COMMAND infilfs-casefold)
+add_test(NAME infilfs-typed-extensions COMMAND infilfs-typed-extensions)
 add_test(NAME infilfs-security-policy COMMAND infilfs-security-policy)
 add_test(NAME infilfs-security-objects COMMAND infilfs-security-objects)
 add_test(NAME infilfs-volume-conformance COMMAND infilfs-volume-conformance)

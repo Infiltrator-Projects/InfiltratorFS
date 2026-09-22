@@ -57,7 +57,8 @@ static int object_type_valid(uint16_t type)
            type == INFS_OBJECT_SNAPSHOT_CATALOG ||
            type == INFS_OBJECT_PRINCIPAL ||
            type == INFS_OBJECT_SECURITY ||
-           type == INFS_OBJECT_SECURITY_BINDING;
+           type == INFS_OBJECT_SECURITY_BINDING ||
+           type == INFS_OBJECT_EXTENSION;
 }
 
 static int object_version_valid(uint16_t type, uint16_t version)
@@ -309,6 +310,30 @@ static int security_payload_shape_valid(
     return 1;
 }
 
+
+static int extension_payload_shape_valid(
+    const uint8_t block[INFS_BLOCK_SIZE], uint32_t payload_size)
+{
+    if (payload_size < sizeof(struct infs_extension_payload_disk))
+        return 0;
+    const struct infs_extension_payload_disk *payload =
+        (const struct infs_extension_payload_disk *)(
+            block + sizeof(struct infs_object_header_disk));
+    uint32_t data_size = infs_le32_to_cpu(payload->data_size);
+    uint16_t flags = infs_le16_to_cpu(payload->flags);
+    if (infs_le16_to_cpu(payload->version) != INFS_EXTENSION_VERSION ||
+        !infs_le32_to_cpu(payload->type_version) ||
+        infs_le32_to_cpu(payload->reserved) != 0 ||
+        (flags & ~INFS_KNOWN_EXTENSION_FLAGS) != 0 ||
+        !id_is_nonzero(payload->type_id) ||
+        data_size > INFS_EXTENSION_DATA_MAX ||
+        payload_size != sizeof(*payload) + data_size)
+        return 0;
+    uint8_t digest[32];
+    infs_sha256(payload + 1, data_size, digest);
+    return memcmp(digest, payload->data_digest, sizeof(digest)) == 0;
+}
+
 static int snapshot_catalog_payload_shape_valid(
     const uint8_t block[INFS_BLOCK_SIZE], uint32_t payload_size)
 {
@@ -461,7 +486,9 @@ infs_status infs_object_finalize(uint8_t block[INFS_BLOCK_SIZE])
         (object_type == INFS_OBJECT_SECURITY_BINDING &&
          !security_binding_index_payload_shape_valid(block, payload_size)) ||
         (object_type == INFS_OBJECT_SECURITY &&
-         !security_payload_shape_valid(block, payload_size, object_version))) {
+         !security_payload_shape_valid(block, payload_size, object_version)) ||
+        (object_type == INFS_OBJECT_EXTENSION &&
+         !extension_payload_shape_valid(block, payload_size))) {
         return INFS_STATUS_INVALID_ARGUMENT;
     }
 
@@ -514,6 +541,9 @@ int infs_validate_object_block(const uint8_t block[INFS_BLOCK_SIZE])
         return 0;
     if (object_type == INFS_OBJECT_SECURITY &&
         !security_payload_shape_valid(block, payload_size, object_version))
+        return 0;
+    if (object_type == INFS_OBJECT_EXTENSION &&
+        !extension_payload_shape_valid(block, payload_size))
         return 0;
     if (!bytes_are_zero(hdr->checksum + sizeof(uint64_t),
                         sizeof(hdr->checksum) - sizeof(uint64_t)) ||

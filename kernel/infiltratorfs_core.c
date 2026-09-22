@@ -923,6 +923,31 @@ static bool infilfs_object_basic_valid(struct super_block *sb,
     } else if (le16_to_cpu(header->object_type) == INFILFS_OBJECT_SECURITY) {
         if (!infilfs_security_descriptor_valid(sb, header, payload))
             return false;
+    } else if (le16_to_cpu(header->object_type) == INFILFS_OBJECT_EXTENSION) {
+        const struct infilfs_extension_payload_disk *extension;
+        u32 data_size;
+        u8 digest[32];
+
+        if (version != INFILFS_OBJECT_VERSION_CLASSIC ||
+            payload < sizeof(*extension) ||
+            memchr_inv(header->parent_id, 0, sizeof(header->parent_id)))
+            return false;
+        extension =
+            (const struct infilfs_extension_payload_disk *)(header + 1);
+        data_size = le32_to_cpu(extension->data_size);
+        if (le16_to_cpu(extension->version) != INFILFS_EXTENSION_VERSION ||
+            !le32_to_cpu(extension->type_version) ||
+            le32_to_cpu(extension->reserved) != 0 ||
+            (le16_to_cpu(extension->flags) &
+             ~INFILFS_KNOWN_EXTENSION_FLAGS) ||
+            !memchr_inv(extension->type_id, 0, sizeof(extension->type_id)) ||
+            data_size > INFILFS_DISK_BLOCK_SIZE - sizeof(*header) -
+                sizeof(*extension) ||
+            payload != sizeof(*extension) + data_size ||
+            infilfs_crypto_sha256((const u8 *)(extension + 1),
+                                  data_size, digest) ||
+            memcmp(digest, extension->data_digest, sizeof(digest)))
+            return false;
     }
     return true;
 }

@@ -47,7 +47,8 @@ static infs_status check_index_structure(struct infs_volume *vol)
              type != INFS_OBJECT_SNAPSHOT_CATALOG &&
              type != INFS_OBJECT_PRINCIPAL &&
              type != INFS_OBJECT_SECURITY &&
-             type != INFS_OBJECT_SECURITY_BINDING) ||
+             type != INFS_OBJECT_SECURITY_BINDING &&
+             type != INFS_OBJECT_EXTENSION) ||
             (type == INFS_OBJECT_SYMLINK && !symbolic_links_enabled(vol)) ||
             (type == INFS_OBJECT_SNAPSHOT_CATALOG &&
              (!snapshots_enabled(vol) ||
@@ -56,6 +57,8 @@ static infs_status check_index_structure(struct infs_volume *vol)
               type == INFS_OBJECT_SECURITY ||
               type == INFS_OBJECT_SECURITY_BINDING) &&
              !security_objects_enabled(vol)) ||
+            (type == INFS_OBJECT_EXTENSION &&
+             !typed_extensions_enabled(vol)) ||
             (i != 0 &&
              memcmp(entries[i - 1u].object_id, entries[i].object_id, 16) == 0)) {
             free(entries);

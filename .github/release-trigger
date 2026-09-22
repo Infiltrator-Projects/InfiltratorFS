@@ -1,4 +1,4 @@
-0.18.71
+0.18.72
 qualification=exact-source-release-gate-hosted
 publication-gate=event-driven-v10
 root-volume-package-dependency-fix=qualified

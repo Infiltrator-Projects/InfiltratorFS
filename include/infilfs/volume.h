@@ -47,6 +47,14 @@ struct infs_attributes {
     uint32_t posix_gid;
 };
 
+struct infs_typed_extension {
+    uint8_t type_id[16];
+    uint32_t type_version;
+    uint16_t flags;
+    uint8_t *data;
+    size_t data_size;
+};
+
 struct infs_time_update {
     uint32_t birth_action;
     uint32_t access_action;
@@ -291,6 +299,13 @@ infs_status infs_lookup_path(struct infs_volume *vol, const char *path,
                              struct infs_lookup *out);
 infs_status infs_get_attributes(struct infs_volume *vol, const char *path,
                                 struct infs_attributes *attributes);
+infs_status infs_set_typed_extension(
+    struct infs_volume *vol, const char *path,
+    const struct infs_typed_extension *extension);
+infs_status infs_get_typed_extension(
+    struct infs_volume *vol, const char *path,
+    struct infs_typed_extension *extension);
+void infs_free_typed_extension(struct infs_typed_extension *extension);
 /* On success, list_dir stores a heap-owned array in *items (or NULL for an
  * empty result) and its element count in *count. Release it with
  * infs_free_dir_items(). */

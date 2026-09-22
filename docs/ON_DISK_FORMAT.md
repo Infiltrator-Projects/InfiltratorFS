@@ -322,3 +322,21 @@ For Format 0.18 maintenance, use these sources in order:
 5. `QUALIFICATION.md` only for exact-source evidence; qualification history does not redefine the byte format.
 
 No second conformance document is maintained. This avoids duplicating format rules and allowing two specifications to drift.
+
+
+### Generic typed extension objects
+
+`INFS_INCOMPAT_TYPED_EXTENSIONS` enables immutable
+`INFS_OBJECT_EXTENSION` objects. The namespace object's existing
+`extended_attributes_object_id` references one extension envelope containing a
+stable 128-bit type ID, type-specific version, generic flags, byte length,
+SHA-256 payload digest and opaque bytes.
+
+`INFS_EXTENSION_FLAG_REPARSE` identifies reparse/path-redirection semantics
+without importing Windows reparse tags into the portable core.
+`INFS_EXTENSION_FLAG_PRESERVE_OPAQUE` requires adapters that do not understand
+a type to round-trip it unchanged. Extension objects have zero parent IDs and
+immutable contents. Snapshot and reflink operations retain the reference;
+replace/detach mutates only the namespace object's reference. Unreachable
+extension objects are tracing-maintenance candidates rather than requiring an
+O(N) foreground reference scan. Named streams remain a separate roadmap item.

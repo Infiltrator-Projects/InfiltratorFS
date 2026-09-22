@@ -15,8 +15,6 @@ static int validate_common_metadata(
         !timestamp_disk_valid(&attributes->modification_time) ||
         !timestamp_disk_valid(&attributes->change_time))
         return INFS_STATUS_CORRUPT;
-    if (!id_is_zero(attributes->extended_attributes_object_id))
-        return INFS_STATUS_CORRUPT;
     if ((infs_le32_to_cpu(posix->permissions) & ~07777u) != 0 ||
         infs_le32_to_cpu(posix->flags) != 0)
         return INFS_STATUS_CORRUPT;
@@ -403,6 +401,16 @@ static int validate_namespace_graph_progress(
             }
             status = security_descriptor_validate_reference(
                 vol, attributes->security_object_id);
+            if (status != INFS_STATUS_OK)
+                goto out;
+        }
+        if (!id_is_zero(attributes->extended_attributes_object_id)) {
+            if (!typed_extensions_enabled(vol)) {
+                status = INFS_STATUS_CORRUPT;
+                goto out;
+            }
+            status = typed_extension_validate_reference(
+                vol, attributes->extended_attributes_object_id);
             if (status != INFS_STATUS_OK)
                 goto out;
         }

@@ -61,6 +61,7 @@ static const uint8_t INFS_ALLOCATION_LEAF_PAGE_MAGIC[8] = {
 #define INFS_OBJECT_PRINCIPAL        7u
 #define INFS_OBJECT_SECURITY         8u
 #define INFS_OBJECT_SECURITY_BINDING 9u
+#define INFS_OBJECT_EXTENSION       10u
 
 #define INFS_OBJECT_VERSION_CLASSIC 1u
 #define INFS_OBJECT_VERSION_PAGED   2u
@@ -109,6 +110,8 @@ static const uint8_t INFS_ALLOCATION_LEAF_PAGE_MAGIC[8] = {
 /* Optional namespace case-fold policy v1. ASCII A-Z fold to a-z for lookup
  * identity; all other valid UTF-8 bytes retain exact identity. */
 #define INFS_INCOMPAT_CASEFOLD_V1 UINT64_C(0x0000000000010000)
+/* Immutable typed extension objects attached through extended_attributes_object_id. */
+#define INFS_INCOMPAT_TYPED_EXTENSIONS UINT64_C(0x0000000000020000)
 #define INFS_KNOWN_COMPAT_FLAGS UINT64_C(0)
 #define INFS_KNOWN_RO_COMPAT_FLAGS UINT64_C(0)
 #define INFS_KNOWN_INCOMPAT_FLAGS \
@@ -120,7 +123,7 @@ static const uint8_t INFS_ALLOCATION_LEAF_PAGE_MAGIC[8] = {
      INFS_INCOMPAT_DIRECTORY_TREE | INFS_INCOMPAT_ALLOCATION_TREE | \
      INFS_INCOMPAT_COMPRESSED_EXTENTS | INFS_INCOMPAT_UNICODE_NORM_V1 | \
      INFS_INCOMPAT_REMOVABLE_NAMES_V1 | INFS_INCOMPAT_PORTABLE_SECURITY | \
-     INFS_INCOMPAT_CASEFOLD_V1)
+     INFS_INCOMPAT_CASEFOLD_V1 | INFS_INCOMPAT_TYPED_EXTENSIONS)
 
 #define INFS_ATTR_READ_ONLY           UINT64_C(0x0000000000000001)
 #define INFS_ATTR_HIDDEN              UINT64_C(0x0000000000000002)
@@ -380,6 +383,26 @@ struct INFS_PACKED infs_security_ace_disk {
     uint16_t flags;
     uint32_t reserved;
 };
+
+#define INFS_EXTENSION_VERSION 1u
+#define INFS_EXTENSION_FLAG_REPARSE         UINT16_C(0x0001)
+#define INFS_EXTENSION_FLAG_PRESERVE_OPAQUE UINT16_C(0x0002)
+#define INFS_KNOWN_EXTENSION_FLAGS \
+    (INFS_EXTENSION_FLAG_REPARSE | INFS_EXTENSION_FLAG_PRESERVE_OPAQUE)
+
+struct INFS_PACKED infs_extension_payload_disk {
+    uint16_t version;
+    uint16_t flags;
+    uint32_t type_version;
+    uint32_t data_size;
+    uint32_t reserved;
+    uint8_t type_id[16];
+    uint8_t data_digest[32];
+};
+
+#define INFS_EXTENSION_DATA_MAX \
+    (INFS_BLOCK_SIZE - sizeof(struct infs_object_header_disk) - \
+     sizeof(struct infs_extension_payload_disk))
 
 #define INFS_CHECKSUMS_PER_OBJECT \
     ((INFS_BLOCK_SIZE - sizeof(struct infs_object_header_disk) - \

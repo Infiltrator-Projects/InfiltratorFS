@@ -69,7 +69,8 @@ static int index_page_validate(struct infs_volume *vol,
              type != INFS_OBJECT_SNAPSHOT_CATALOG &&
              type != INFS_OBJECT_PRINCIPAL &&
              type != INFS_OBJECT_SECURITY &&
-             type != INFS_OBJECT_SECURITY_BINDING) ||
+             type != INFS_OBJECT_SECURITY_BINDING &&
+             type != INFS_OBJECT_EXTENSION) ||
             (type == INFS_OBJECT_SYMLINK && !symbolic_links_enabled(vol)) ||
             (type == INFS_OBJECT_SNAPSHOT_CATALOG &&
              (!snapshots_enabled(vol) ||
@@ -77,7 +78,9 @@ static int index_page_validate(struct infs_volume *vol,
             ((type == INFS_OBJECT_PRINCIPAL ||
               type == INFS_OBJECT_SECURITY ||
               type == INFS_OBJECT_SECURITY_BINDING) &&
-             !security_objects_enabled(vol)))
+             !security_objects_enabled(vol)) ||
+            (type == INFS_OBJECT_EXTENSION &&
+             !typed_extensions_enabled(vol)))
             return INFS_STATUS_CORRUPT;
     }
     if (entries_out)

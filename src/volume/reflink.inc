@@ -246,6 +246,13 @@ static infs_status reflink_file_tx(struct infs_volume *vol,
             return status;
     }
 
+    memcpy(destination->attributes.security_object_id,
+           source->attributes.security_object_id,
+           sizeof(destination->attributes.security_object_id));
+    memcpy(destination->attributes.extended_attributes_object_id,
+           source->attributes.extended_attributes_object_id,
+           sizeof(destination->attributes.extended_attributes_object_id));
+
     status = infs_object_finalize(destination_object);
     if (status != INFS_STATUS_OK)
         return status;
