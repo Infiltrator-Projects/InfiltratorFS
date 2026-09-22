@@ -1599,12 +1599,12 @@ static gboolean select_requested_device_idle(gpointer data)
     Manager *manager = data;
     if (!manager->format_device)
         return G_SOURCE_REMOVE;
-    char *requested = canonical_path(manager->format_device);
+    char *requested = infiltratorfs_manager_canonical_path(manager->format_device);
     GList *children = gtk_container_get_children(GTK_CONTAINER(manager->device_list));
     GtkListBoxRow *match = NULL;
     for (GList *node = children; node; node = node->next) {
         Target *target = g_object_get_data(G_OBJECT(node->data), "infiltratorfs-target");
-        char *candidate = target ? canonical_path(target->path) : NULL;
+        char *candidate = target ? infiltratorfs_manager_canonical_path(target->path) : NULL;
         if (candidate && strcmp(candidate, requested) == 0)
             match = GTK_LIST_BOX_ROW(node->data);
         g_free(candidate);
