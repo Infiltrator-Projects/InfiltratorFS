@@ -204,6 +204,7 @@ int infilfs_rw_allocation_map_publish(
     u64 publish_started = ktime_get_ns();
     u64 phase_started = publish_started;
     u64 prepare_ms = 0;
+    u64 retire_ms = 0;
     u64 reclaim_ms = 0;
     u64 leaf_write_ms = 0;
     u64 branch_write_ms = 0;
@@ -339,10 +340,6 @@ int infilfs_rw_allocation_map_publish(
             if (ret)
                 goto out;
         }
-        leaf_write_ms = div_u64(
-            ktime_get_ns() - phase_started, NSEC_PER_MSEC);
-        phase_started = ktime_get_ns();
-
         for (i = 0; i < old.level1_count; ++i) {
             if (!dirty_level1[i])
                 continue;
@@ -358,6 +355,10 @@ int infilfs_rw_allocation_map_publish(
             if (ret)
                 goto out;
         }
+
+        retire_ms = div_u64(
+            ktime_get_ns() - phase_started, NSEC_PER_MSEC);
+        phase_started = ktime_get_ns();
 
         ret = infilfs_rw_tx_apply_deferred(tx);
         if (ret)
@@ -395,6 +396,10 @@ int infilfs_rw_allocation_map_publish(
             if (ret)
                 goto out;
         }
+
+        leaf_write_ms = div_u64(
+            ktime_get_ns() - phase_started, NSEC_PER_MSEC);
+        phase_started = ktime_get_ns();
 
         for (i = 0; i < old.level1_count; ++i) {
             size_t first;
@@ -459,10 +464,11 @@ int infilfs_rw_allocation_map_publish(
             ktime_get_ns() - publish_started, NSEC_PER_MSEC);
         if (elapsed_ms >= 100)
             pr_warn_ratelimited(
-                "InfiltratorFS: slow allocation-map publication=%llums generation=%llu prepare=%llums reclaim=%llums leaf_write=%llums branch_write=%llums dirty_leaves=%zu dirty_level1=%zu dirty_level2=%zu\n",
+                "InfiltratorFS: slow allocation-map publication=%llums generation=%llu prepare=%llums retire=%llums reclaim=%llums leaf_write=%llums branch_write=%llums dirty_leaves=%zu dirty_level1=%zu dirty_level2=%zu\n",
                 (unsigned long long)elapsed_ms,
                 (unsigned long long)tx->generation,
                 (unsigned long long)prepare_ms,
+                (unsigned long long)retire_ms,
                 (unsigned long long)reclaim_ms,
                 (unsigned long long)leaf_write_ms,
                 (unsigned long long)branch_write_ms,
