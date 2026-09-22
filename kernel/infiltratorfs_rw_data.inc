@@ -109,6 +109,41 @@ int infilfs_native_stage_block(struct super_block *sb, u64 block,
     return 0;
 }
 
+/*
+ * Data blocks allocated by the active CoW transaction are unreachable from
+ * the committed checkpoint.  Submit those immutable staged blocks promptly
+ * instead of retaining hundreds of MiB of dirty buffer_heads until checkpoint
+ * publication.  Publication still waits for every transaction dependency and
+ * performs both durability barriers, so this changes latency, not ordering or
+ * crash-consistency semantics.
+ *
+ * Submit a whole compression/write cluster under one block plug.  This keeps
+ * request merging while allowing device I/O to overlap later codec/metadata
+ * work; the commit path normally reaches these buffers already clean or
+ * in-flight instead of creating a large synchronous write burst.
+ */
+static void infilfs_native_submit_staged_range(struct super_block *sb,
+                                               u64 start, u32 count)
+{
+    struct blk_plug plug;
+    u32 i;
+
+    if (!count)
+        return;
+
+    blk_start_plug(&plug);
+    for (i = 0; i < count; ++i) {
+        struct buffer_head *bh =
+            sb_find_get_block(sb, (sector_t)(start + i));
+
+        if (!bh)
+            continue;
+        write_dirty_buffer(bh, 0);
+        brelse(bh);
+    }
+    blk_finish_plug(&plug);
+}
+
 static bool infilfs_native_block_private(struct infilfs_native_pending *pending,
                                          u64 block)
 {
@@ -2986,6 +3021,8 @@ static int infilfs_native_stage_compression_candidate(
         if (ret)
             goto out;
     }
+    infilfs_native_submit_staged_range(
+        inode->i_sb, *data_start_out, stored_blocks);
 out:
     kvfree(stored);
     return ret;
@@ -3059,6 +3096,8 @@ static int infilfs_native_prepare_append(
         if (ret)
             goto fail;
     }
+    infilfs_native_submit_staged_range(
+        inode->i_sb, prepared->data_start, physical_blocks);
 
     prepared->logical_blocks = logical_blocks;
     prepared->physical_blocks = physical_blocks;
@@ -3452,6 +3491,8 @@ generic_extent_write:
         infilfs_native_block_digest(data_block,
                                     &digests[logical - start_block]);
     }
+    infilfs_native_submit_staged_range(
+        inode->i_sb, data_start, (u32)touched_blocks);
 
 data_staged:
     ret = infilfs_native_replace_extent_range(
