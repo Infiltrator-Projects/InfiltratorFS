@@ -168,6 +168,15 @@ jobs:
           bash -n tests/native-removable-name-profile.sh
           bash tests/native-removable-name-profile.sh build kernel/infiltratorfs.ko
 
+      - name: Native case-folded namespace policy
+        if: steps.headers.outputs.runtime_kdir != ''
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n tests/native-casefold-qualification.sh
+          bash tests/native-casefold-qualification.sh build kernel/infiltratorfs.ko
+
       - name: Native N-1 CPU parallelism qualification
         if: steps.headers.outputs.runtime_kdir != ''
         timeout-minutes: 10
