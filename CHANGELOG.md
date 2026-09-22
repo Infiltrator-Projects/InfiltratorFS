@@ -4,6 +4,8 @@ This file records user-visible, compatibility, architecture and validation chang
 
 ## Unreleased
 
+- Advance development identity to 0.18.71 after immutable publication of 0.18.70; on-disk Format remains 0.18.
+
 - Mark versioned portable security objects roadmap-complete after exact-source Linux, Windows, sanitizer and native-mounted qualification of the existing implementation.
 - Finalise the platform-specific security preservation policy: map shared meaning portably, retain unrelated platform detail, fail rather than silently discard unrepresentable metadata, and never let opaque metadata widen access. Generic persistence containers remain separate roadmap work.
 
