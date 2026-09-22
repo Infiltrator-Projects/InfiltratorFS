@@ -4,18 +4,14 @@ This file records user-visible, compatibility, architecture and validation chang
 
 ## Unreleased
 
-- Advance development identity to 0.18.72 after immutable 0.18.71 publication.
+## 0.18.72 — 2026-09-22
+
+- Publish 0.18.72 directly after 0.18.70; 0.18.71 was used only as an intermediate development identity and was never published.
 - Advance the exact Infiltratr Common dependency from 1.19.20 to 1.19.23 at `a9cf2957cffeefe6001830916b8a32c2ef58a551`; the intervening Common releases are backward-compatible hardening plus a temporal helper and do not alter InfiltratorFS persistent semantics.
 - Mark optional case-folded directories roadmap-complete after portable cross-platform conformance plus mounted native VFS/dcache qualification and CLEAN scrub.
-- Mark generic typed/reparse extension objects roadmap-complete after Linux/Clang/sanitizer/Windows conformance, scrub/reference validation and native-reader qualification.
-- Add generic immutable typed extension objects using the existing namespace extension-object ID: stable 128-bit type IDs, type versions, opaque SHA-256-protected payloads, generic reparse/preserve flags, portable set/get APIs, scrub/reference validation, native-reader recognition and reflink preservation.
-
-- Add optional persistent namespace case-fold policy v1, selected by the portable formatter option or `mkfs.infilfs --casefold`: ASCII A-Z folds to a-z consistently across portable lookup/caches, scalable directory routing, duplicate validation and native Linux dcache/namespace lookup, while original spelling and all non-ASCII UTF-8 bytes remain exact.
-
-- Advance development identity to 0.18.71 after immutable publication of 0.18.70; on-disk Format remains 0.18.
-
-- Mark versioned portable security objects roadmap-complete after exact-source Linux, Windows, sanitizer and native-mounted qualification of the existing implementation.
-- Mark the platform-specific security preservation rules roadmap-complete: map shared meaning portably, retain unrelated platform detail, fail rather than silently discard unrepresentable metadata, and never let opaque metadata widen access. Generic persistence containers remain separate roadmap work.
+- Add and mark generic typed/reparse extension objects roadmap-complete: stable 128-bit type IDs, type versions, opaque SHA-256-protected payloads, generic reparse/preserve flags, portable set/get APIs, scrub/reference validation, native-reader recognition and reflink preservation.
+- Preserve the qualified CoW durability and reflink-scaling hardening accumulated during 0.18.71/0.18.72 development.
+- Retain Format 0.18; this release does not introduce a backward-compatibility promise before 1.0.
 
 ## 0.18.70 — 2026-09-22
 

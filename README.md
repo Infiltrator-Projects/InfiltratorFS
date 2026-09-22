@@ -18,7 +18,7 @@ user-facing README so visible status wording can change without breaking CI.
 **Published releases:** [GitHub Releases](https://github.com/Infiltrator-Projects/InfiltratorFS/releases)<br>
 **Shared foundation:** Infiltratr Common 1.19.23<br>
 
-The Manager consumes the complete Infiltratr Common 1.19.20 appearance contract: **Day** is the white Infiltrator palette, **Night** is the layered Linux MBLINK reference palette (canvas, titlebar, graphite surfaces, semantic state colours and canonical blue accent), and **System** follows the host light/dark preference by selecting exactly one of those two palettes.
+The Manager consumes the complete Infiltratr Common 1.19.23 appearance contract: **Day** is the white Infiltrator palette, **Night** is the layered Linux MBLINK reference palette (canvas, titlebar, graphite surfaces, semantic state colours and canonical blue accent), and **System** follows the host light/dark preference by selecting exactly one of those two palettes.
 **Licence:** GPL-3.0-or-later
 
 Pre-1.0 development is current-format-only. Development-format compatibility is not promised, so test media may need reformatting after an on-disk-format revision.

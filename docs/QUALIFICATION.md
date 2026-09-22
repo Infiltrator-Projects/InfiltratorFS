@@ -28,6 +28,25 @@ Automatic qualification and conformance jobs are hard-capped at 10 minutes where
 
 ## Current development evidence boundary
 
+### 0.18.72 Common 1.19.23 integration baseline
+
+Exact integration source `b77327f222b499f0834fd41bd03c27f8f644544a` advanced the pinned/submodule Common dependency to
+1.19.23 at `a9cf2957cffeefe6001830916b8a32c2ef58a551` and completed the automatic
+qualification set on 2026-09-22:
+
+- **Build and conformance** run `35703040492` passed.
+- **Native Linux kernel module** run `35703040479` passed.
+- **Linux root-volume qualification** run `35703040567` passed.
+- **Linux metadata qualification** run `35703040519` passed.
+- **Native resize qualification** run `35703040501` passed.
+- **Windows Explorer bridge qualification** run `35703040471` passed.
+
+Common 1.19.21 through 1.19.23 are compatible hardening releases for this
+consumer. They add no filesystem-format semantics and require no InfiltratorFS
+compatibility shim. The filesystem continues to consume Common only for neutral
+shared primitives/tooling contracts, not for persistent filesystem meaning.
+
+
 ### 0.18.72 case-folded namespace and typed-extension completion baseline
 
 Exact implementation/qualification source `397d2c0f7ba38cb21ea5cf81729f0b952912e22f` completed the feature-specific qualification on 2026-09-22:
