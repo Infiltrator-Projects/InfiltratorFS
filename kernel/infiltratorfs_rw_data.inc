@@ -110,17 +110,17 @@ int infilfs_native_stage_block(struct super_block *sb, u64 block,
 }
 
 /*
- * Data blocks allocated by the active CoW transaction are unreachable from
- * the committed checkpoint.  Submit those immutable staged blocks promptly
- * instead of retaining hundreds of MiB of dirty buffer_heads until checkpoint
- * publication.  Publication still waits for every transaction dependency and
+ * Newly committed CoW dependencies are unreachable from the durable
+ * checkpoint until transaction publication. Submit their staged buffers
+ * promptly instead of retaining hundreds of MiB of dirty buffer_heads until
+ * the publication boundary. Publication still waits for every dependency and
  * performs both durability barriers, so this changes latency, not ordering or
  * crash-consistency semantics.
  *
- * Submit a whole compression/write cluster under one block plug.  This keeps
- * request merging while allowing device I/O to overlap later codec/metadata
- * work; the commit path normally reaches these buffers already clean or
- * in-flight instead of creating a large synchronous write burst.
+ * Submit each freshly allocated range under one block plug. This keeps request
+ * merging while allowing data I/O to overlap later codec/metadata work; the
+ * commit path normally reaches these buffers already clean or in-flight
+ * instead of creating a large synchronous write burst.
  */
 static void infilfs_native_submit_staged_range(struct super_block *sb,
                                                u64 start, u64 count)
