@@ -316,9 +316,13 @@ static int extension_payload_shape_valid(
 {
     if (payload_size < sizeof(struct infs_extension_payload_disk))
         return 0;
+    const struct infs_object_header_disk *header =
+        (const struct infs_object_header_disk *)block;
     const struct infs_extension_payload_disk *payload =
         (const struct infs_extension_payload_disk *)(
             block + sizeof(struct infs_object_header_disk));
+    if (!bytes_are_zero(header->parent_id, sizeof(header->parent_id)))
+        return 0;
     uint32_t data_size = infs_le32_to_cpu(payload->data_size);
     uint16_t flags = infs_le16_to_cpu(payload->flags);
     if (infs_le16_to_cpu(payload->version) != INFS_EXTENSION_VERSION ||
