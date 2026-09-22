@@ -101,6 +101,18 @@ grep -Fq 'infilfs_native_writeback_batch_bytes()' "$pagecache"
 grep -Fq 'infilfs_queue_cpu_work(&items[i].work)' "$data"
 grep -Fq 'infilfs_writeback_cluster_submit' "$pagecache"
 grep -Fq 'infilfs_native_writeback_iter' "$pagecache"
+
+# CoW data is unreachable until checkpoint publication, so submit each staged
+# data cluster early and let the existing transaction dependency drain provide
+# the ordering/wait boundary. This prevents every 512 MiB publication from
+# becoming the point where hundreds of MiB of data I/O is first issued.
+grep -Fq 'infilfs_native_submit_staged_range' "$data"
+submit_body="$(sed -n '/static void infilfs_native_submit_staged_range(/,/^}/p' "$data")"
+grep -Fq 'blk_start_plug' <<<"$submit_body"
+grep -Fq 'write_dirty_buffer(bh, 0)' <<<"$submit_body"
+grep -Fq 'blk_finish_plug' <<<"$submit_body"
+test "$(grep -Fc 'infilfs_native_submit_staged_range(' "$data")" -ge 4
+
 grep -Fq 'u64 persisted_size;' "$internal"
 grep -Fq 'READ_ONCE(ii->persisted_size)' "$data"
 
