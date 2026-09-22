@@ -1105,6 +1105,30 @@ out:
     return ret;
 }
 
+#if IS_ENABLED(CONFIG_MIGRATION)
+/*
+ * Linux falls back to a warning path for filesystems with ->writepages but no
+ * migrate_folio callback.  InfiltratorFS also owns PG_private_2 as the
+ * pending-CoW accounting marker, so generic filemap migration needs one small
+ * adapter: migrate the normal page-cache state first, then transfer that
+ * independent accounting bit without changing the superblock-wide count.
+ */
+static int infilfs_migrate_folio(struct address_space *mapping,
+                                 struct folio *dst, struct folio *src,
+                                 enum migrate_mode mode)
+{
+    bool pending_cow = folio_test_private_2(src);
+    int ret;
+
+    ret = filemap_migrate_folio(mapping, dst, src, mode);
+    if (!ret && pending_cow) {
+        folio_set_private_2(dst);
+        folio_clear_private_2(src);
+    }
+    return ret;
+}
+#endif
+
 const struct address_space_operations infilfs_aops = {
     .read_folio = infilfs_read_folio,
     .readahead = infilfs_readahead,
@@ -1114,4 +1138,7 @@ const struct address_space_operations infilfs_aops = {
     .dirty_folio = infilfs_dirty_folio,
     .invalidate_folio = infilfs_invalidate_folio,
     .release_folio = infilfs_release_folio,
+#if IS_ENABLED(CONFIG_MIGRATION)
+    .migrate_folio = infilfs_migrate_folio,
+#endif
 };
