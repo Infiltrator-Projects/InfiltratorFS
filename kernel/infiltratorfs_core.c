@@ -2815,6 +2815,8 @@ static struct dentry *infilfs_lookup(struct inode *dir, struct dentry *dentry,
     int ret;
 
     (void)flags;
+    if (infilfs_casefold_names_enabled(dir->i_sb))
+        d_set_d_op(dentry, &infilfs_casefold_dentry_ops);
     if (search.name_len == 0 || search.name_len > INFILFS_NAME_MAX)
         return ERR_PTR(-ENAMETOOLONG);
     if (dir == d_inode(dir->i_sb->s_root) &&
@@ -3164,8 +3166,6 @@ static int infilfs_fill_super(struct super_block *sb, struct fs_context *fc)
     sb->s_maxbytes = MAX_LFS_FILESIZE;
     sb->s_time_gran = 1;
     sb->s_op = &infilfs_super_operations;
-    if (infilfs_casefold_names_enabled(sb))
-        sb->s_d_op = &infilfs_casefold_dentry_ops;
     sb->s_xattr = infilfs_xattr_handlers;
 
     root_inode = infilfs_get_inode(sb, le64_to_cpu(sbi->disk.root_object_block),
@@ -3181,6 +3181,8 @@ static int infilfs_fill_super(struct super_block *sb, struct fs_context *fc)
         ret = -ENOMEM;
         goto fail;
     }
+    if (infilfs_casefold_names_enabled(sb))
+        d_set_d_op(sb->s_root, &infilfs_casefold_dentry_ops);
     phase_started = ktime_get_ns();
     ret = infilfs_quota_mount_init(sb);
     phase_ms = div_u64(ktime_get_ns() - phase_started, NSEC_PER_MSEC);
