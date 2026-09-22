@@ -258,7 +258,10 @@ jobs:
           payload="$(jq -nc --arg repository "$GITHUB_REPOSITORY" --arg sha "$RELEASE_SHA" \
             '{event_type:"application-release",client_payload:{repository:$repository,sha:$sha}}')"
           # Cross-repository dispatch accelerates publication when configured.
-          # The central scheduled importer also publishes releases without a PAT.
+          # The central scheduled importer also publishes releases without a PAT,
+          # but scheduled Actions are asynchronous and are not a synchronous
+          # release gate. Only an accepted immediate dispatch is bounded here.
+          dispatched=false
           if [[ -n "${DISPATCH_TOKEN:-}" ]]; then
             if curl --fail-with-body --silent --show-error --connect-timeout 10 --max-time 30 --request POST \
               --header "Authorization: Bearer $DISPATCH_TOKEN" \
@@ -267,16 +270,33 @@ jobs:
               --data "$payload" \
               https://api.github.com/repos/Infiltrator-Projects/Infiltrator-Repository/dispatches; then
               echo 'APT repository dispatch accepted; verifying publication.'
+              dispatched=true
             else
-              echo '::warning::Immediate APT dispatch failed; verifying scheduled repository publication instead.'
+              echo '::warning::Immediate APT dispatch failed; central scheduled publication will verify this release asynchronously.'
             fi
           else
-            echo 'Immediate dispatch is not configured; verifying scheduled repository publication.'
+            echo '::warning::Immediate APT dispatch is not configured; central scheduled publication will verify this release asynchronously.'
           fi
+
           catalogue='https://infiltrator-projects.github.io/Infiltrator-Repository/catalogue/apps.json'
-          # The five-minute fallback importer plus Pages deployment/propagation can
-          # legitimately approach seven minutes from release publication. Leave a
-          # bounded margin inside the ten-minute job ceiling instead of racing it.
+
+          # Opportunistically accept a release that the central publisher has
+          # already made visible, even when no immediate dispatch was available.
+          if curl -fsS --retry 2 --retry-delay 1 "$catalogue?release=$RELEASE_SHA&attempt=0" \
+            | jq -e --arg id "$APP_ID" --arg version "$VERSION" \
+              '.[] | select(.id == $id and .version == $version)' >/dev/null; then
+            echo "APT repository already advertises $APP_ID $VERSION."
+            exit 0
+          fi
+
+          if [[ "$dispatched" != true ]]; then
+            echo 'APT verification deferred to the central repository workflow.'
+            exit 0
+          fi
+
+          # An accepted immediate dispatch should normally publish well inside
+          # the ten-minute ceiling. Keep this bounded so a broken dispatch path
+          # remains visible instead of silently passing.
           for attempt in $(seq 1 50); do
             if curl -fsS --retry 2 --retry-delay 1 "$catalogue?release=$RELEASE_SHA&attempt=$attempt" \
               | jq -e --arg id "$APP_ID" --arg version "$VERSION" \
@@ -286,5 +306,5 @@ jobs:
             fi
             sleep 10
           done
-          echo "APT publication did not complete inside the ten-minute automatic ceiling." >&2
+          echo "Immediate APT publication did not complete inside the ten-minute automatic ceiling." >&2
           exit 1
