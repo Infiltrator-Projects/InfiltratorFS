@@ -2,6 +2,14 @@
 
 This file records user-visible, compatibility, architecture and validation changes for InfiltratorFS.
 
+## 0.18.75 — 2026-09-22
+
+- Fix the residual sustained-write publication stall isolated by the 0.18.74 live phase telemetry: transaction publication was spending almost all tail latency inside allocation-map publication while dependency draining had fallen to only tens of milliseconds.
+- Replace per-range incremental free-extent cache insertion during transaction publication with one authoritative word-at-a-time rebuild from the post-publication allocation bitmap. This removes the fragmented-volume O(n²) scan/memmove path while preserving the exact bitmap as allocation authority.
+- Add allocation-map subphase telemetry for preparation, retired-range journalling, bitmap/index reclamation, leaf writes and branch writes, including dirty-tree counts, so any remaining publication tail can be attributed without another broad kernel trace.
+- Keep operation-level rollback on incremental extent-cache repair because those rollback sets are bounded; only large transaction publication uses the one-shot rebuild.
+- On-disk Format remains 0.18.
+
 ## 0.18.74 — 2026-09-22
 
 - Publish 0.18.74 as the sustained native-write stall recovery release after the 0.18.73 development cycle; on-disk Format remains 0.18.
