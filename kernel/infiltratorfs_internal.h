@@ -611,6 +611,9 @@ int infilfs_crypto_sha256(const u8 *data, size_t len, u8 out[32]);
 int infilfs_crypto_sha256_zeropad(const u8 *data, size_t len,
                                   size_t padded_len, u8 out[32]);
 void infilfs_crypto_exit(void);
+bool infilfs_extension_object_valid(
+    const struct infilfs_object_header_disk *header,
+    u16 version, u32 payload_size);
 
 void infilfs_allocation_layout_destroy(struct infilfs_allocation_layout *layout);
 void infilfs_allocation_cache_destroy(struct infilfs_sb_info *sbi);
