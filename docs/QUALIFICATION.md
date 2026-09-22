@@ -24,6 +24,24 @@ Automatic qualification and conformance jobs are hard-capped at 10 minutes where
 
 ## Current development evidence boundary
 
+### 0.18.70 portable security-object completion baseline
+
+Exact implementation source `6212c44f9d55b4ecc3125a127fb10d64f18ee8d3`
+completed the required cross-platform qualification on 2026-09-22:
+
+- **Build and conformance** run `35625432756` passed in full. The Linux full suite built and passed `infilfs-security-policy` and `infilfs-security-objects`; ASan/UBSan also passed the security-object test, and the same workflow's Windows native/portable job built and passed both tests under MSVC.
+- **Native Linux kernel module** run `35625432736` passed the out-of-tree module, native mounted read/write/remount/scrub qualification and upstream Linux 7.0 compile gate on the same exact source.
+- **Linux metadata qualification** run `35625432952` and **Linux root-volume qualification** run `35625432770` passed on the same exact source.
+
+The qualified implementation provides stable 128-bit portable principals,
+scoped POSIX and canonical Windows SID bindings, preservation-only opaque
+bindings, bounded persistent reverse lookup, immutable shareable descriptors,
+ordered allow/deny evaluation, inheritance, paged large ACLs, transactional
+attachment/removal, native-reader recognition and scrub validation. The
+portable security-object roadmap item is therefore complete. Platform-specific
+security metadata that has no portable equivalent remains governed by the
+separate preservation-policy and generic-metadata roadmap items.
+
 ### 0.18.66 Windows security-descriptor mapping baseline
 
 Exact implementation source `7ce6a641de9de69fa67e32c21d979641082460b8`

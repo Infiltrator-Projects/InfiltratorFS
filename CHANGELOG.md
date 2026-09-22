@@ -4,6 +4,9 @@ This file records user-visible, compatibility, architecture and validation chang
 
 ## Unreleased
 
+- Mark versioned portable security objects roadmap-complete after exact-source Linux, Windows, sanitizer and native-mounted qualification of the existing implementation.
+- Finalise the platform-specific security preservation policy: map shared meaning portably, retain unrelated platform detail, fail rather than silently discard unrepresentable metadata, and never let opaque metadata widen access. Generic persistence containers remain separate roadmap work.
+
 ## 0.18.70 — 2026-09-22
 
 - Advance development after publishing 0.18.69; on-disk Format remains 0.18.

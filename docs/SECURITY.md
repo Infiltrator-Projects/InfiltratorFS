@@ -219,8 +219,37 @@ capacity ceiling. Full persistent details are specified in
 Unknown rights/flags fail closed in the current payload version. Missing
 principals, malformed bindings,
 bad descriptor digests, illegal descriptor references and non-canonical padding
-are corruption. Platform-specific security information with no portable
-equivalent remains a separate preservation-layer roadmap item.
+are corruption.
+
+## Platform-specific security preservation policy
+
+The preservation rule is independent of whether a particular adapter can expose
+the metadata in its native UI. Adapters must follow this order:
+
+1. Map semantics that have a portable InfiltratorFS equivalent into the portable
+   principal, ACL, rights or future generic metadata model.
+2. Keep genuinely platform-specific residual semantics separate from that
+   portable meaning. They must never be flattened into a weaker representation
+   merely because the current host cannot interpret them.
+3. A mutation may update the portable portion it owns, but must retain unrelated
+   preserved platform metadata unchanged. If the current format/adapter has no
+   safe persistence container for that metadata, the mutation must fail
+   explicitly rather than silently discard it.
+4. Preserved opaque or unknown metadata is non-authoritative for access on an
+   adapter that cannot interpret it: it cannot manufacture rights or widen an
+   access decision.
+5. Unknown feature or payload versions are preserved only when an explicitly
+   versioned container declares opaque round-trip semantics. Otherwise readers
+   fail closed instead of guessing.
+6. Copy, reflink, snapshot and restore operations must carry attached preserved
+   metadata with the object once the corresponding persistent extension class
+   exists; cross-platform edits must not detach it accidentally.
+
+This completes the preservation *rules*. It does not claim that Format 0.18
+already has a generic container for every platform-specific security payload.
+That storage mechanism remains part of the separate generic typed/reparse and
+portable named-metadata roadmap work. Current opaque principal bindings are
+already preservation-only and obey the same non-resolution rule.
 
 ## Security invariants
 
