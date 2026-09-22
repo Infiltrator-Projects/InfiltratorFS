@@ -524,14 +524,17 @@ out:
     return ret;
 }
 
-static bool infilfs_ns_name_matches(const u8 *record, size_t record_len,
+static bool infilfs_ns_name_matches(struct super_block *sb,
+                                    const u8 *record, size_t record_len,
                                     const char *name, size_t name_len)
 {
     const struct infilfs_dirent_disk *entry =
         (const struct infilfs_dirent_disk *)record;
     u16 n = le16_to_cpu(entry->name_length);
-    return n == name_len && sizeof(*entry) + n <= record_len &&
-        memcmp(record + sizeof(*entry), name, n) == 0;
+    return sizeof(*entry) + n <= record_len &&
+        infilfs_name_equal(
+            sb, record + sizeof(*entry), n,
+            (const u8 *)name, name_len);
 }
 
 /*
@@ -924,18 +927,18 @@ static int infilfs_ns_rebuild_directory(
             ret = -EFSCORRUPTED;
             goto out;
         }
-        if (remove_a && infilfs_ns_name_matches(all + offset, rec,
+        if (remove_a && infilfs_ns_name_matches(pending->sb, all + offset, rec,
                                                 remove_a->name, remove_a->len)) {
             found_a = true;
             remove = true;
         }
-        if (remove_b && infilfs_ns_name_matches(all + offset, rec,
+        if (remove_b && infilfs_ns_name_matches(pending->sb, all + offset, rec,
                                                 remove_b->name, remove_b->len)) {
             found_b = true;
             remove = true;
         }
         if (!remove && add_name &&
-            infilfs_ns_name_matches(all + offset, rec,
+            infilfs_ns_name_matches(pending->sb, all + offset, rec,
                                     add_name->name, add_name->len)) {
             ret = -EEXIST;
             goto out;

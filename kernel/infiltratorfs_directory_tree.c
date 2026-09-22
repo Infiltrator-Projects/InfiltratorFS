@@ -4,17 +4,27 @@
  * Native scalable directory tree.
  *
  * File names are routed by SHA-256, one digest byte per 256-way branch level.
- * Leaf records retain the normal exact UTF-8 name bytes and are compared
- * byte-for-byte, so a hash never becomes namespace identity. Every modified
+ * Leaf records retain the original UTF-8 bytes and are compared with the
+ * versioned namespace identity policy, so a hash never becomes namespace identity. Every modified
  * path is copy-on-written through the native pending transaction.
  */
 
-static void infilfs_tree_dir_digest(const u8 *name, size_t len, u8 digest[32])
+static void infilfs_tree_dir_digest(struct super_block *sb,
+                                    const u8 *name, size_t len, u8 digest[32])
 {
     struct infilfs_rw_sha256_ctx ctx;
+    size_t i;
 
     infilfs_rw_sha256_init(&ctx);
-    infilfs_rw_sha256_update(&ctx, name, len);
+    if (!infilfs_casefold_names_enabled(sb)) {
+        infilfs_rw_sha256_update(&ctx, name, len);
+    } else {
+        for (i = 0; i < len; ++i) {
+            u8 folded = name[i] >= 'A' && name[i] <= 'Z' ?
+                (u8)(name[i] + ('a' - 'A')) : name[i];
+            infilfs_rw_sha256_update(&ctx, &folded, 1u);
+        }
+    }
     infilfs_rw_sha256_final(&ctx, digest);
 }
 
@@ -103,8 +113,9 @@ static int infilfs_tree_dir_leaf_find(
             rec > bytes - offset || !len || len > INFILFS_NAME_MAX ||
             sizeof(*entry) + len > rec)
             return -EFSCORRUPTED;
-        if (len == name_len &&
-            !memcmp(entries + offset + sizeof(*entry), name, name_len)) {
+        if (infilfs_name_equal(
+                sb, entries + offset + sizeof(*entry), len,
+                name, name_len)) {
             if (search) {
                 memcpy(search->object_id, entry->object_id, 16);
                 search->object_type = le16_to_cpu(entry->object_type);
@@ -165,7 +176,7 @@ int infilfs_tree_dir_lookup_name(
         goto out;
     }
 
-    infilfs_tree_dir_digest(name, name_len, digest);
+    infilfs_tree_dir_digest(dir->i_sb, name, name_len, digest);
     for (;;) {
         const __le64 *children;
 
@@ -447,7 +458,8 @@ static int infilfs_native_tree_dir_build(
                     break;
                 }
                 infilfs_tree_dir_digest(
-                    entries + in_off + sizeof(*entry), len, digest);
+                    pending->sb, entries + in_off + sizeof(*entry),
+                    len, digest);
                 if (digest[depth] == (u8)slot) {
                     memcpy(group + group_bytes, entries + in_off, rec);
                     group_bytes += rec;
@@ -531,9 +543,9 @@ static int infilfs_native_tree_dir_mutate(
             u16 rec = le16_to_cpu(entry->record_size);
             u16 len = le16_to_cpu(entry->name_length);
 
-            if (len == name->len &&
-                !memcmp(entries + offset + sizeof(*entry),
-                        name->name, name->len)) {
+            if (infilfs_name_equal(
+                    pending->sb, entries + offset + sizeof(*entry), len,
+                    name->name, name->len)) {
                 found = offset;
                 found_rec = rec;
                 break;

@@ -26,6 +26,62 @@ static int removable_names_enabled(const struct infs_volume *vol)
          INFS_INCOMPAT_REMOVABLE_NAMES_V1) != 0;
 }
 
+static int casefold_names_enabled(const struct infs_volume *vol)
+{
+    return vol &&
+        (infs_le64_to_cpu(vol->sb.incompat_flags) &
+         INFS_INCOMPAT_CASEFOLD_V1) != 0;
+}
+
+static uint8_t namespace_casefold_byte_v1(uint8_t value)
+{
+    return value >= 'A' && value <= 'Z' ?
+        (uint8_t)(value + ('a' - 'A')) : value;
+}
+
+static int namespace_name_equal(
+    const struct infs_volume *vol,
+    const uint8_t *left, size_t left_length,
+    const uint8_t *right, size_t right_length)
+{
+    if (!left || !right || left_length != right_length)
+        return 0;
+    if (!casefold_names_enabled(vol))
+        return memcmp(left, right, left_length) == 0;
+    for (size_t i = 0; i < left_length; ++i)
+        if (namespace_casefold_byte_v1(left[i]) !=
+            namespace_casefold_byte_v1(right[i]))
+            return 0;
+    return 1;
+}
+
+static uint64_t namespace_name_hash(
+    const struct infs_volume *vol, const uint8_t *name, size_t length)
+{
+    uint64_t hash = UINT64_C(1469598103934665603);
+    for (size_t i = 0; i < length; ++i) {
+        uint8_t value = casefold_names_enabled(vol) ?
+            namespace_casefold_byte_v1(name[i]) : name[i];
+        hash ^= value;
+        hash *= UINT64_C(1099511628211);
+    }
+    return hash;
+}
+
+static void namespace_name_digest(
+    const struct infs_volume *vol, const uint8_t *name, size_t length,
+    uint8_t digest[32])
+{
+    if (!casefold_names_enabled(vol)) {
+        infs_sha256(name, length, digest);
+        return;
+    }
+    uint8_t folded[INFS_NAME_MAX];
+    for (size_t i = 0; i < length; ++i)
+        folded[i] = namespace_casefold_byte_v1(name[i]);
+    infs_sha256(folded, length, digest);
+}
+
 static int removable_name_valid_v1(const uint8_t *name, size_t length)
 {
     static const char *reserved[] = {

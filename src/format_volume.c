@@ -229,7 +229,9 @@ infs_status infs_format_storage_with_options(struct infs_storage *storage,
         INFS_INCOMPAT_COMPRESSED_EXTENTS | INFS_INCOMPAT_UNICODE_NORM_V1 |
         INFS_INCOMPAT_PORTABLE_SECURITY |
         ((options & INFS_FORMAT_OPTION_REMOVABLE_NAMES_V1) ?
-            INFS_INCOMPAT_REMOVABLE_NAMES_V1 : UINT64_C(0)));
+            INFS_INCOMPAT_REMOVABLE_NAMES_V1 : UINT64_C(0)) |
+        ((options & INFS_FORMAT_OPTION_CASEFOLD_V1) ?
+            INFS_INCOMPAT_CASEFOLD_V1 : UINT64_C(0)));
     memcpy(sb.label, label, label_length);
 
     uint8_t block[INFS_BLOCK_SIZE] = {0};

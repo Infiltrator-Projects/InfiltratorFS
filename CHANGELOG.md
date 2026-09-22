@@ -4,6 +4,8 @@ This file records user-visible, compatibility, architecture and validation chang
 
 ## Unreleased
 
+- Add optional persistent namespace case-fold policy v1, selected by the portable formatter option or `mkfs.infilfs --casefold`: ASCII A-Z folds to a-z consistently across portable lookup/caches, scalable directory routing, duplicate validation and native Linux dcache/namespace lookup, while original spelling and all non-ASCII UTF-8 bytes remain exact.
+
 - Advance development identity to 0.18.71 after immutable publication of 0.18.70; on-disk Format remains 0.18.
 
 - Mark versioned portable security objects roadmap-complete after exact-source Linux, Windows, sanitizer and native-mounted qualification of the existing implementation.

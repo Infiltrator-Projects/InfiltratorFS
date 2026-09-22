@@ -218,6 +218,7 @@ static int infilfs_linux_meta_find_child(
     u16 expected_type, struct inode **inode_out)
 {
     struct infilfs_dir_lookup search = {
+        .sb = dir->i_sb,
         .name = name,
         .name_len = name_len,
     };

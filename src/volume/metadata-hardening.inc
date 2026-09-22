@@ -144,7 +144,29 @@ static int directory_name_ref_compare(const void *left, const void *right)
     return 0;
 }
 
-static int directory_blob_duplicate_status(const uint8_t *base, size_t bytes)
+static int directory_name_ref_casefold_compare(
+    const void *left, const void *right)
+{
+    const struct directory_name_ref *a = left;
+    const struct directory_name_ref *b = right;
+    uint16_t common = a->length < b->length ? a->length : b->length;
+    for (uint16_t i = 0; i < common; ++i) {
+        uint8_t av = namespace_casefold_byte_v1(a->name[i]);
+        uint8_t bv = namespace_casefold_byte_v1(b->name[i]);
+        if (av < bv)
+            return -1;
+        if (av > bv)
+            return 1;
+    }
+    if (a->length < b->length)
+        return -1;
+    if (a->length > b->length)
+        return 1;
+    return 0;
+}
+
+static int directory_blob_duplicate_status(struct infs_volume *vol,
+                                           const uint8_t *base, size_t bytes)
 {
     if (!base && bytes)
         return INFS_STATUS_INVALID_ARGUMENT;
@@ -182,11 +204,15 @@ static int directory_blob_duplicate_status(const uint8_t *base, size_t bytes)
         offset += rec;
     }
 
-    qsort(names, count, sizeof(*names), directory_name_ref_compare);
+    qsort(names, count, sizeof(*names),
+          casefold_names_enabled(vol) ?
+              directory_name_ref_casefold_compare :
+              directory_name_ref_compare);
     int status = INFS_STATUS_OK;
     for (size_t i = 1; i < count; ++i) {
-        if (names[i - 1u].length == names[i].length &&
-            memcmp(names[i - 1u].name, names[i].name, names[i].length) == 0) {
+        if (namespace_name_equal(
+                vol, names[i - 1u].name, names[i - 1u].length,
+                names[i].name, names[i].length)) {
             status = INFS_STATUS_CORRUPT;
             break;
         }

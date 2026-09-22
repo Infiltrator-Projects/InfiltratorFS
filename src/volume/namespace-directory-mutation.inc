@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-static int dir_remove(uint8_t block[INFS_BLOCK_SIZE], const char *name,
+static int dir_remove(struct infs_volume *vol,
+                      uint8_t block[INFS_BLOCK_SIZE], const char *name,
                       struct infs_dirent_disk *removed_copy)
 {
     struct infs_directory_payload_disk *payload;
@@ -7,7 +8,7 @@ static int dir_remove(uint8_t block[INFS_BLOCK_SIZE], const char *name,
     if (status != INFS_STATUS_OK)
         return status;
     size_t offset;
-    struct infs_dirent_disk *e = dir_find(payload, name, strlen(name), &offset);
+    struct infs_dirent_disk *e = dir_find(vol, payload, name, strlen(name), &offset);
     if (!e)
         return INFS_STATUS_NOT_FOUND;
     uint16_t rec = infs_le16_to_cpu(e->record_size);
@@ -45,7 +46,7 @@ static int dir_remove_volume(struct infs_volume *vol,
              INFS_OBJECT_VERSION_PAGED)
         status = paged_dir_remove(vol, block, name, removed_copy);
     else
-        status = dir_remove(block, name, removed_copy);
+        status = dir_remove(vol, block, name, removed_copy);
     if (status == INFS_STATUS_OK &&
         infs_le16_to_cpu(header->object_version) != INFS_OBJECT_VERSION_PAGED &&
         infs_le16_to_cpu(header->object_version) != INFS_OBJECT_VERSION_TREE)

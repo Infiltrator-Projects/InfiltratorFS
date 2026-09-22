@@ -4,7 +4,7 @@
  *
  * Names are routed by the complete SHA-256 digest, one byte per branch level.
  * Leaves retain the ordinary validated variable-length dirent representation.
- * Exact name bytes are always compared at the leaf, so the hash is only a
+ * The versioned namespace identity rule is rechecked at the leaf, so the hash is only a
  * routing accelerator and never the namespace identity. A full leaf whose
  * complete 256-bit digest cannot be separated fails closed rather than
  * silently aliasing names.
@@ -21,9 +21,10 @@ static void tree_dir_set_root(struct infs_directory_payload_disk *payload,
     infs_store_le64(payload + 1, root);
 }
 
-static void tree_dir_digest(const char *name, size_t len, uint8_t digest[32])
+static void tree_dir_digest(struct infs_volume *vol,
+                            const char *name, size_t len, uint8_t digest[32])
 {
-    infs_sha256(name, len, digest);
+    namespace_name_digest(vol, (const uint8_t *)name, len, digest);
 }
 
 static int tree_dir_branch_validate(
@@ -79,8 +80,9 @@ static int tree_dir_leaf_find(
             (struct infs_dirent_disk *)(entries + offset);
         uint16_t rec = infs_le16_to_cpu(entry->record_size);
         uint16_t len = infs_le16_to_cpu(entry->name_length);
-        if (len == wanted &&
-            memcmp(entries + offset + sizeof(*entry), name, wanted) == 0) {
+        if (namespace_name_equal(
+                vol, entries + offset + sizeof(*entry), len,
+                (const uint8_t *)name, wanted)) {
             if (entry_out)
                 *entry_out = *entry;
             return INFS_STATUS_OK;
@@ -109,7 +111,7 @@ static int tree_dir_lookup(struct infs_volume *vol,
             INFS_STATUS_NOT_FOUND : INFS_STATUS_CORRUPT;
 
     uint8_t digest[32];
-    tree_dir_digest(name, strlen(name), digest);
+    tree_dir_digest(vol, name, strlen(name), digest);
     for (unsigned depth = 0; depth <= INFS_DIRECTORY_TREE_DEPTH; ++depth) {
         uint8_t block[INFS_BLOCK_SIZE];
         int status = read_block(vol, node, block);
@@ -293,7 +295,7 @@ static int tree_dir_build_subtree(
                 return INFS_STATUS_CORRUPT;
             }
             uint8_t digest[32];
-            tree_dir_digest(
+            tree_dir_digest(vol, 
                 (const char *)entries + in_off + sizeof(*entry), len, digest);
             if (digest[depth] == (uint8_t)slot) {
                 memcpy(group + group_bytes, entries + in_off, rec);
@@ -350,8 +352,9 @@ static int tree_dir_mutate_node(
                 (struct infs_dirent_disk *)(entries + offset);
             uint16_t rec = infs_le16_to_cpu(entry->record_size);
             uint16_t len = infs_le16_to_cpu(entry->name_length);
-            if (len == wanted &&
-                memcmp(entries + offset + sizeof(*entry), name, wanted) == 0) {
+            if (namespace_name_equal(
+                    vol, entries + offset + sizeof(*entry), len,
+                    (const uint8_t *)name, wanted)) {
                 found_offset = offset;
                 found_rec = rec;
                 if (removed_copy)
@@ -497,7 +500,7 @@ static int tree_dir_add(struct infs_volume *vol,
     struct infs_directory_payload_disk *payload =
         (struct infs_directory_payload_disk *)(header + 1);
     uint8_t digest[32];
-    tree_dir_digest(name, len, digest);
+    tree_dir_digest(vol, name, len, digest);
     uint64_t root = tree_dir_root(payload), replacement = 0;
     if (!root) {
         size_t rec = align8(sizeof(struct infs_dirent_disk) + len);
@@ -548,7 +551,7 @@ static int tree_dir_remove(struct infs_volume *vol,
         return count == 0 && root == 0 ?
             INFS_STATUS_NOT_FOUND : INFS_STATUS_CORRUPT;
     uint8_t digest[32];
-    tree_dir_digest(name, strlen(name), digest);
+    tree_dir_digest(vol, name, strlen(name), digest);
     uint64_t replacement = 0;
     int status = tree_dir_mutate_node(
         vol, header->object_id, root, name, NULL, 0, digest,

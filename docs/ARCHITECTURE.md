@@ -42,7 +42,7 @@ Filesystem and object identities are 128-bit persistent values. Paths are namesp
 
 Directories map UTF-8 names to persistent objects. Regular files may have multiple namespace references through hard links. Symbolic links are their own persistent objects with stored targets. Namespace operations are transactional and must preserve exact parent/reference/link-count invariants.
 
-Format 0.18 uses 1023-byte UTF-8 component names, byte-exact case-sensitive comparison and explicit validation of forbidden traversal/reserved forms. Unicode-name policy v1 is persisted as an incompatible feature and explicitly performs no implicit normalization: valid UTF-8 is preserved exactly. Any future normalization or case-folding semantics require a new versioned policy rather than silently changing current lookup behavior.
+Format 0.18 uses 1023-byte UTF-8 component names and explicit validation of forbidden traversal/reserved forms. Unicode-name policy v1 performs no implicit normalization and preserves valid UTF-8 exactly. The default namespace remains byte-exact and case-sensitive. An optional incompatible case-fold policy v1 canonicalizes ASCII A-Z to a-z for lookup identity while retaining original spelling and treating every non-ASCII UTF-8 byte exactly; portable and native directory caches/tree routing use that same rule. Any broader normalization or Unicode case-folding semantics require a new versioned policy rather than silently changing current lookup behavior.
 
 ## 3. Transactions, generations and checkpoints
 

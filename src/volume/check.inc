@@ -148,7 +148,7 @@ static infs_status check_namespace_structure(struct infs_volume *vol)
             free(owned);
             goto out;
         }
-        status = directory_blob_duplicate_status(base, bytes);
+        status = directory_blob_duplicate_status(vol, base, bytes);
         if (status != INFS_STATUS_OK) {
             free(owned);
             goto out;

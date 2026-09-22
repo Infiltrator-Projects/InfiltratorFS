@@ -110,7 +110,8 @@ static int symlink_validate(
     return INFS_STATUS_OK;
 }
 
-static struct infs_dirent_disk *dir_find(struct infs_directory_payload_disk *payload,
+static struct infs_dirent_disk *dir_find(struct infs_volume *vol,
+                                          struct infs_directory_payload_disk *payload,
                                           const char *name, size_t name_len,
                                           size_t *offset_out)
 {
@@ -121,7 +122,8 @@ static struct infs_dirent_disk *dir_find(struct infs_directory_payload_disk *pay
         struct infs_dirent_disk *e = (struct infs_dirent_disk *)p;
         uint16_t rec = infs_le16_to_cpu(e->record_size);
         uint16_t n = infs_le16_to_cpu(e->name_length);
-        if (n == name_len && memcmp(p + sizeof(*e), name, name_len) == 0) {
+        if (namespace_name_equal(vol, p + sizeof(*e), n,
+                                 (const uint8_t *)name, name_len)) {
             if (offset_out)
                 *offset_out = offset;
             return e;
@@ -171,8 +173,9 @@ static int dir_lookup_volume(struct infs_volume *vol,
                                    infs_le16_to_cpu(entry->object_type),
                                    INFS_DIRECTORY_PAGE_UNKNOWN))
             cached_all = 0;
-        if (name_length == wanted_length &&
-            memcmp(cached_name, name, wanted_length) == 0)
+        if (namespace_name_equal(
+                vol, (const uint8_t *)cached_name, name_length,
+                (const uint8_t *)name, wanted_length))
             wanted = entry;
         cursor += record_size;
         remaining -= record_size;
@@ -186,7 +189,8 @@ static int dir_lookup_volume(struct infs_volume *vol,
     return INFS_STATUS_OK;
 }
 
-static int dir_add(uint8_t block[INFS_BLOCK_SIZE], const char *name,
+static int dir_add(struct infs_volume *vol,
+                   uint8_t block[INFS_BLOCK_SIZE], const char *name,
                    const uint8_t object_id[16], uint16_t type)
 {
     struct infs_directory_payload_disk *payload;
@@ -199,7 +203,7 @@ static int dir_add(uint8_t block[INFS_BLOCK_SIZE], const char *name,
         id_is_zero(object_id) || !infs_utf8_validate(name, name_len) ||
         !namespace_object_type(type))
         return INFS_STATUS_INVALID_ARGUMENT;
-    if (dir_find(payload, name, name_len, NULL))
+    if (dir_find(vol, payload, name, name_len, NULL))
         return INFS_STATUS_ALREADY_EXISTS;
 
     struct infs_object_header_disk *hdr = (struct infs_object_header_disk *)block;
@@ -241,7 +245,7 @@ static int dir_add_volume(struct infs_volume *vol,
              INFS_OBJECT_VERSION_PAGED)
         status = paged_dir_add(vol, block, name, object_id, type);
     else
-        status = dir_add(block, name, object_id, type);
+        status = dir_add(vol, block, name, object_id, type);
     if (status == INFS_STATUS_OK &&
         infs_le16_to_cpu(header->object_version) != INFS_OBJECT_VERSION_PAGED &&
         infs_le16_to_cpu(header->object_version) != INFS_OBJECT_VERSION_TREE)

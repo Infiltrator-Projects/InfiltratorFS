@@ -70,6 +70,13 @@ void infilfs_mod_delayed_cpu_work(struct delayed_work *work,
 void infilfs_cpu_work_enter(void);
 void infilfs_cpu_work_exit(void);
 bool infilfs_removable_name_valid_v1(const unsigned char *name, size_t length);
+bool infilfs_casefold_names_enabled(const struct super_block *sb);
+bool infilfs_name_equal(const struct super_block *sb,
+                        const u8 *left, size_t left_length,
+                        const u8 *right, size_t right_length);
+u32 infilfs_name_hash(const struct super_block *sb,
+                      const u8 *name, size_t length);
+extern const struct dentry_operations infilfs_casefold_dentry_ops;
 int infilfs_name_validate(struct super_block *sb, const struct qstr *name);
 bool infilfs_name_is_reserved_linux_meta(const struct qstr *name);
 
@@ -499,6 +506,7 @@ static inline struct infilfs_inode_info *INFILFS_I(struct inode *inode)
 }
 
 struct infilfs_dir_lookup {
+    struct super_block *sb;
     const char *name;
     size_t name_len;
     u8 object_id[16];

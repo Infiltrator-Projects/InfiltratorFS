@@ -4,6 +4,7 @@ int main(int argc, char **argv)
     int force = 0;
     int wipe_only = 0;
     int removable_profile = 0;
+    int casefold = 0;
     const char *label = "InfiltratorFS";
     const char *path = NULL;
 
@@ -14,6 +15,8 @@ int main(int argc, char **argv)
             wipe_only = 1;
         } else if (strcmp(argv[i], "--removable-profile") == 0) {
             removable_profile = 1;
+        } else if (strcmp(argv[i], "--casefold") == 0) {
+            casefold = 1;
         } else if (strcmp(argv[i], "-L") == 0 && i + 1 < argc) {
             label = argv[++i];
         } else if (argv[i][0] == '-') {

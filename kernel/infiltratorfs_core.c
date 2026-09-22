@@ -1869,7 +1869,9 @@ static int infilfs_lookup_visitor(const struct infilfs_dirent_disk *entry,
     struct infilfs_dir_lookup *search = arg;
     u16 name_len = le16_to_cpu(entry->name_length);
 
-    if (name_len != search->name_len || memcmp(name, search->name, name_len) != 0)
+    if (!infilfs_name_equal(
+            search->sb, name, name_len,
+            (const u8 *)search->name, search->name_len))
         return 0;
     memcpy(search->object_id, entry->object_id, 16);
     search->object_type = le16_to_cpu(entry->object_type);
@@ -2803,6 +2805,7 @@ static struct dentry *infilfs_lookup(struct inode *dir, struct dentry *dentry,
                                      unsigned int flags)
 {
     struct infilfs_dir_lookup search = {
+        .sb = dir->i_sb,
         .name = dentry->d_name.name,
         .name_len = dentry->d_name.len,
     };
@@ -2815,9 +2818,10 @@ static struct dentry *infilfs_lookup(struct inode *dir, struct dentry *dentry,
     if (search.name_len == 0 || search.name_len > INFILFS_NAME_MAX)
         return ERR_PTR(-ENAMETOOLONG);
     if (dir == d_inode(dir->i_sb->s_root) &&
-        search.name_len == sizeof(INFILFS_LINUX_META_DIRECTORY) - 1u &&
-        memcmp(search.name, INFILFS_LINUX_META_DIRECTORY,
-               search.name_len) == 0 &&
+        infilfs_name_equal(
+            dir->i_sb, (const u8 *)search.name, search.name_len,
+            (const u8 *)INFILFS_LINUX_META_DIRECTORY,
+            sizeof(INFILFS_LINUX_META_DIRECTORY) - 1u) &&
         infilfs_linux_meta_directory_is_internal(dir->i_sb)) {
         d_add(dentry, NULL);
         return NULL;
@@ -3160,6 +3164,8 @@ static int infilfs_fill_super(struct super_block *sb, struct fs_context *fc)
     sb->s_maxbytes = MAX_LFS_FILESIZE;
     sb->s_time_gran = 1;
     sb->s_op = &infilfs_super_operations;
+    if (infilfs_casefold_names_enabled(sb))
+        sb->s_d_op = &infilfs_casefold_dentry_ops;
     sb->s_xattr = infilfs_xattr_handlers;
 
     root_inode = infilfs_get_inode(sb, le64_to_cpu(sbi->disk.root_object_block),

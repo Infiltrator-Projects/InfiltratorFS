@@ -20,16 +20,13 @@ struct infs_directory_cache_state {
     uint8_t complete;
 };
 
-static uint64_t directory_cache_hash(const uint8_t parent_id[16],
+static uint64_t directory_cache_hash(struct infs_volume *vol,
+                                     const uint8_t parent_id[16],
                                      const char *name, size_t length)
 {
-    uint64_t h = UINT64_C(1469598103934665603);
+    uint64_t h = namespace_name_hash(vol, (const uint8_t *)name, length);
     for (unsigned i = 0; i < 16; ++i) {
         h ^= parent_id[i];
-        h *= UINT64_C(1099511628211);
-    }
-    for (size_t i = 0; i < length; ++i) {
-        h ^= (uint8_t)name[i];
         h *= UINT64_C(1099511628211);
     }
     return h;
@@ -135,7 +132,7 @@ static struct infs_directory_cache_entry *directory_cache_find(
     if (!vol || !vol->directory_cache || !name)
         return NULL;
     size_t length = strlen(name);
-    uint64_t h = directory_cache_hash(parent_id, name, length);
+    uint64_t h = directory_cache_hash(vol, parent_id, name, length);
     size_t mask = vol->directory_cache_slots - 1u;
     size_t slot = (size_t)(h & mask);
     for (size_t probe = 0; probe < vol->directory_cache_slots; ++probe) {
@@ -146,7 +143,9 @@ static struct infs_directory_cache_entry *directory_cache_find(
         if (entry->state == 1 && entry->hash == h &&
             entry->name_length == length &&
             memcmp(entry->parent_id, parent_id, 16) == 0 &&
-            memcmp(entry->name, name, length) == 0)
+            namespace_name_equal(vol, (const uint8_t *)entry->name,
+                                 entry->name_length,
+                                 (const uint8_t *)name, length))
             return entry;
     }
     return NULL;
@@ -191,7 +190,7 @@ static int directory_cache_store(struct infs_volume *vol,
     size_t length = strlen(name);
     if (!length || length > INFS_NAME_MAX)
         return 0;
-    uint64_t h = directory_cache_hash(parent_id, name, length);
+    uint64_t h = directory_cache_hash(vol, parent_id, name, length);
     size_t mask = vol->directory_cache_slots - 1u;
     size_t slot = (size_t)(h & mask);
     size_t tombstone = SIZE_MAX;
@@ -201,7 +200,9 @@ static int directory_cache_store(struct infs_volume *vol,
         if (entry->state == 1 && entry->hash == h &&
             entry->name_length == length &&
             memcmp(entry->parent_id, parent_id, 16) == 0 &&
-            memcmp(entry->name, name, length) == 0) {
+            namespace_name_equal(vol, (const uint8_t *)entry->name,
+                                 entry->name_length,
+                                 (const uint8_t *)name, length)) {
             memcpy(entry->object_id, object_id, 16);
             entry->type = type;
             if (page_index != INFS_DIRECTORY_PAGE_UNKNOWN)

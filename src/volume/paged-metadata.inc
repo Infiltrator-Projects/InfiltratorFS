@@ -638,8 +638,9 @@ static int paged_dir_lookup(struct infs_volume *vol,
                                        entry->object_id,
                                        infs_le16_to_cpu(entry->object_type), p))
                 cached_all = 0;
-            if (!have_wanted && stored_length == wanted_length &&
-                memcmp(cached_name, name, wanted_length) == 0) {
+            if (!have_wanted && namespace_name_equal(
+                    vol, (const uint8_t *)cached_name, stored_length,
+                    (const uint8_t *)name, wanted_length)) {
                 wanted = *entry;
                 have_wanted = 1;
             }

@@ -69,16 +69,10 @@ void infilfs_native_index_locator_invalidate(
     pending->index_locator_valid = false;
 }
 
-static u32 infilfs_native_name_hash(const char *name, size_t length)
+static u32 infilfs_native_name_hash(struct super_block *sb,
+                                    const char *name, size_t length)
 {
-    u32 h = 2166136261u;
-    size_t i;
-
-    for (i = 0; i < length; ++i) {
-        h ^= (u8)name[i];
-        h *= 16777619u;
-    }
-    return h;
+    return infilfs_name_hash(sb, (const u8 *)name, length);
 }
 
 void infilfs_native_directory_locator_invalidate(
@@ -212,7 +206,7 @@ bool infilfs_native_directory_locator_lookup(
         !pending->directory_locator_capacity)
         return false;
 
-    hash = infilfs_native_name_hash(name, name_len);
+    hash = infilfs_native_name_hash(pending->sb, name, name_len);
     slot = hash & (pending->directory_locator_capacity - 1u);
     for (probes = 0; probes < pending->directory_locator_capacity; ++probes) {
         struct infilfs_native_directory_locator *entry =
@@ -259,7 +253,7 @@ int infilfs_native_directory_locator_insert(
             return ret;
     }
 
-    hash = infilfs_native_name_hash(name, name_len);
+    hash = infilfs_native_name_hash(pending->sb, name, name_len);
     slot = hash & (pending->directory_locator_capacity - 1u);
     for (probes = 0; probes < pending->directory_locator_capacity; ++probes) {
         entry = &pending->directory_locators[
