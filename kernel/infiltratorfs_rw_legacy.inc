@@ -1462,6 +1462,12 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
     int ret;
     int replica_error = 0;
     u64 commit_started = ktime_get_ns();
+    u64 phase_started = commit_started;
+    u64 allocation_ms = 0;
+    u64 dependencies_ms = 0;
+    u64 dependency_flush_ms = 0;
+    u64 checkpoints_ms = 0;
+    u64 publication_flush_ms = 0;
 
     /*
      * Build the replacement allocation tree first, then drain only this
@@ -1473,11 +1479,18 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
         infilfs_allocation_layout_destroy(&next_allocation);
         return ret;
     }
+    allocation_ms = div_u64(
+        ktime_get_ns() - phase_started, NSEC_PER_MSEC);
+    phase_started = ktime_get_ns();
+
     ret = infilfs_rw_sync_transaction_dependencies(tx);
     if (ret) {
         infilfs_allocation_layout_destroy(&next_allocation);
         return ret;
     }
+    dependencies_ms = div_u64(
+        ktime_get_ns() - phase_started, NSEC_PER_MSEC);
+    phase_started = ktime_get_ns();
 
     /*
      * I/O completion is not a persistence ordering boundary on devices with a
@@ -1492,6 +1505,9 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
         infilfs_allocation_layout_destroy(&next_allocation);
         return ret;
     }
+    dependency_flush_ms = div_u64(
+        ktime_get_ns() - phase_started, NSEC_PER_MSEC);
+    phase_started = ktime_get_ns();
 
     sb_block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
     if (!sb_block) {
@@ -1524,6 +1540,9 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
         if (ret && !replica_error)
             replica_error = ret;
     }
+    checkpoints_ms = div_u64(
+        ktime_get_ns() - phase_started, NSEC_PER_MSEC);
+    phase_started = ktime_get_ns();
 
     ret = blkdev_issue_flush(tx->sb->s_bdev);
     if (ret) {
@@ -1538,6 +1557,8 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
         kfree(sb_block);
         return ret;
     }
+    publication_flush_ms = div_u64(
+        ktime_get_ns() - phase_started, NSEC_PER_MSEC);
     kfree(sb_block);
 
     /*
@@ -1573,9 +1594,14 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
             div_u64(ktime_get_ns() - commit_started, NSEC_PER_MSEC);
         if (elapsed_ms >= 100)
             pr_warn_ratelimited(
-                "InfiltratorFS: slow transaction publication=%llums generation=%llu\n",
+                "InfiltratorFS: slow transaction publication=%llums generation=%llu allocation=%llums dependencies=%llums dependency_flush=%llums checkpoints=%llums publication_flush=%llums\n",
                 (unsigned long long)elapsed_ms,
-                (unsigned long long)tx->generation);
+                (unsigned long long)tx->generation,
+                (unsigned long long)allocation_ms,
+                (unsigned long long)dependencies_ms,
+                (unsigned long long)dependency_flush_ms,
+                (unsigned long long)checkpoints_ms,
+                (unsigned long long)publication_flush_ms);
     }
     return 0;
 }
