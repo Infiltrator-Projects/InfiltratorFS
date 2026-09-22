@@ -30,7 +30,8 @@ tx_begin="$(sed -n '/static int infilfs_rw_tx_begin(/,/^}/p' "$legacy")"
 grep -Fq 'infilfs_rw_free_extent_index_take(tx, sbi);' <<<"$tx_begin"
 
 apply_deferred="$(sed -n '/^int infilfs_rw_tx_apply_deferred(/,/^}/p' "$legacy")"
-grep -Fq 'infilfs_rw_free_extent_index_add(' <<<"$apply_deferred"
+grep -Fq 'infilfs_rw_free_extent_index_rebuild(tx)' <<<"$apply_deferred"
+! grep -Fq 'infilfs_rw_free_extent_index_add(' <<<"$apply_deferred"
 
 rollback="$(sed -n '/static int infilfs_native_operation_rollback(/,/^}/p' "$data")"
 ! grep -Fq 'infilfs_rw_free_extent_index_rebuild' <<<"$rollback"
