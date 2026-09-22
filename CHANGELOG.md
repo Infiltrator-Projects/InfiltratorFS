@@ -9,6 +9,11 @@ This file records user-visible, compatibility, architecture and validation chang
 - Split the filesystem-wide N-1 CPU/workqueue policy from the VFS/checkpoint core into a dedicated compiled `infiltratorfs_cpu.o`, preserving the same hotplug-aware execution gate while reducing `infiltratorfs_core.c` coupling.
 - Consolidate native shared-range ownership discovery, exact fallback and incremental multiplicity accounting in `infiltratorfs_shared_ownership.c`, removing the duplicate range-append helper from the namespace compositor and shrinking its ownership surface.
 - Split Linux Manager storage discovery, protected-device filtering and mount observation into a dedicated internal module, leaving the GTK source responsible for presentation/workflow rather than device inventory policy.
+- Fix a sustained native writeback stall reproduced by a live Linux Mint root-tree rsync: committed CoW dependencies are now submitted progressively instead of accumulating hundreds of MiB of dirty buffer heads until the 512 MiB transaction-publication boundary.
+- Snapshot each bounded dirty-folio writeback cluster before native compression/CoW work and release the page-cache folio locks before entering potentially long transaction publication, preventing multi-second publication latency from propagating as multi-second VFS folio lock stalls.
+- Add native page-cache folio migration support, including transfer of the independent pending-CoW accounting marker, eliminating the Linux compaction warning for an address-space implementation with writepages but no migrate_folio callback.
+- Add per-phase slow-publication telemetry for allocation-map construction, dependency draining, the dependency durability barrier, checkpoint writes and the final publication barrier so any residual tail latency can be attributed to a concrete publication phase.
+- Harden the progressive-I/O design so staged ranges are submitted only after the individual operation is committed into the deferred transaction; volatile reservations are never reusable while stale I/O to the same physical range can remain in flight.
 
 
 ## 0.18.72 — 2026-09-22
