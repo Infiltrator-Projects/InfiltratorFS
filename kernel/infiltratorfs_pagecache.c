@@ -980,18 +980,25 @@ static int infilfs_writeback_cluster_submit(
         if (ret) {
             folio_lock(folio);
             folio_redirty_for_writepage(wbc, folio);
+            folio_end_writeback(folio);
             folio_unlock(folio);
         } else {
             infilfs_pagecache_unaccount(folio, false);
-        }
-        folio_end_writeback(folio);
 #if INFILFS_HAVE_VERIFIED_IOMAP_READ
-        if (!ret) {
+            /*
+             * Keep the folio locked while dropping optional iomap-private
+             * state and ending writeback.  Ending writeback first would let
+             * truncate/invalidation detach the mapping before this final
+             * folio-state access.
+             */
             folio_lock(folio);
             (void)iomap_release_folio(folio, GFP_NOFS);
+            folio_end_writeback(folio);
             folio_unlock(folio);
-        }
+#else
+            folio_end_writeback(folio);
 #endif
+        }
         folio_put(folio);
     }
     goto out_reset;
