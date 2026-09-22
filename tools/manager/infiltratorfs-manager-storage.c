@@ -117,7 +117,7 @@ gboolean command_success(const char *const argv[], char **output)
     return okay;
 }
 
-static char *canonical_path(const char *path)
+char *infiltratorfs_manager_canonical_path(const char *path)
 {
     if (!path || !*path)
         return g_strdup("");
@@ -141,7 +141,7 @@ static GHashTable *protected_devices(void)
             g_free(source);
             continue;
         }
-        char *real = canonical_path(source);
+        char *real = infiltratorfs_manager_canonical_path(source);
         if (real && *real)
             g_hash_table_add(set, real);
         else
@@ -155,7 +155,7 @@ static GHashTable *protected_devices(void)
                 g_strstrip(lines[line]);
                 if (!*lines[line])
                     continue;
-                char *ancestor = canonical_path(lines[line]);
+                char *ancestor = infiltratorfs_manager_canonical_path(lines[line]);
                 if (ancestor && *ancestor)
                     g_hash_table_add(set, ancestor);
                 else
@@ -291,7 +291,7 @@ GPtrArray *discover_partitions(char **error_text)
             continue;
         }
         char *path = pair_value(pairs, argc, "PATH");
-        char *real = canonical_path(path);
+        char *real = infiltratorfs_manager_canonical_path(path);
         if (!path || !*path || g_hash_table_contains(protected, real)) {
             g_free(real);
             g_free(path);
