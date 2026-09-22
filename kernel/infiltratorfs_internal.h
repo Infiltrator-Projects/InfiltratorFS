@@ -60,9 +60,11 @@
 /*
  * Native CPU parallelism is module-wide, not per mount.  All mounted volumes
  * share one execution budget so multiple InfiltratorFS mounts cannot each
- * consume N-1 CPUs independently.  The implementation in infiltratorfs_core.c
+ * consume N-1 CPUs independently.  The implementation in infiltratorfs_cpu.c
  * derives the budget exactly as max(1, online logical CPUs - 1).
  */
+int infilfs_cpu_pool_init(void);
+void infilfs_cpu_pool_exit(void);
 unsigned int infilfs_cpu_budget(void);
 bool infilfs_queue_cpu_work(struct work_struct *work);
 void infilfs_mod_delayed_cpu_work(struct delayed_work *work,

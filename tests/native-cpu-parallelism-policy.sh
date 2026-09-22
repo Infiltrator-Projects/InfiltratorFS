@@ -4,6 +4,7 @@ set -euo pipefail
 
 root="${1:-.}"
 core="$root/kernel/infiltratorfs_core.c"
+cpu="$root/kernel/infiltratorfs_cpu.c"
 internal="$root/kernel/infiltratorfs_internal.h"
 data="$root/kernel/infiltratorfs_rw_data.inc"
 read_cache="$root/kernel/infiltratorfs_read_cache.c"
@@ -18,26 +19,26 @@ fail() {
     exit 1
 }
 
-for file in "$core" "$internal" "$data" "$read_cache" "$pagecache" \
+for file in "$core" "$cpu" "$internal" "$data" "$read_cache" "$pagecache" \
             "$makefile" "$ioctl" "$architecture" "$roadmap"; do
     test -f "$file" || fail "missing $file"
 done
 
 # The filesystem-wide execution ceiling is exactly N-1 online logical CPUs,
 # except that a one-CPU machine must still be able to execute filesystem work.
-grep -Fq 'unsigned int online_logical_cpus = num_online_cpus();' "$core" || \
+grep -Fq 'unsigned int online_logical_cpus = num_online_cpus();' "$cpu" || \
     fail 'CPU budget is not derived from online logical CPUs'
-grep -Fq 'online_logical_cpus > 1u ? online_logical_cpus - 1u : 1u' "$core" || \
+grep -Fq 'online_logical_cpus > 1u ? online_logical_cpus - 1u : 1u' "$cpu" || \
     fail 'CPU budget is not max(1, online logical CPUs - 1)'
-grep -Fq 'num_possible_cpus()' "$core" || \
+grep -Fq 'num_possible_cpus()' "$cpu" || \
     fail 'CPU pool cannot grow when an offline possible CPU is later onlined'
-grep -Fq 'WQ_UNBOUND | WQ_MEM_RECLAIM' "$core" || \
+grep -Fq 'WQ_UNBOUND | WQ_MEM_RECLAIM' "$cpu" || \
     fail 'native CPU pool lost unbound/reclaim-safe workqueue semantics'
-grep -Fq 'atomic_cmpxchg(&infilfs_cpu_active' "$core" || \
+grep -Fq 'atomic_cmpxchg(&infilfs_cpu_active' "$cpu" || \
     fail 'module-wide execution gate is missing'
-grep -Fq 'wait_event(infilfs_cpu_wait, infilfs_cpu_try_enter())' "$core" || \
+grep -Fq 'wait_event(infilfs_cpu_wait, infilfs_cpu_try_enter())' "$cpu" || \
     fail 'CPU work no longer waits for the module-wide N-1 gate'
-grep -Fq 'filesystem_budget=%u reserved_for_os=%u' "$core" || \
+grep -Fq 'filesystem_budget=%u reserved_for_os=%u' "$cpu" || \
     fail 'mounted evidence no longer reports the CPU policy'
 
 # The code path and its shipped/DKMS synchronization contract must agree with
