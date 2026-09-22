@@ -4,6 +4,10 @@ This file records user-visible, compatibility, architecture and validation chang
 
 ## Unreleased
 
+- Advance development identity to 0.18.73 after immutable 0.18.72 publication.
+- Advance the exact Infiltratr Common dependency from 1.19.23 to 1.19.24 at `748e089ae175329471d4cf375522c44081371bd5`. This Common release hardens graphics surface range/alias handling; InfiltratorFS does not consume that graphics API, so the pin changes no filesystem or on-disk semantics.
+
+
 ## 0.18.72 — 2026-09-22
 
 - Publish 0.18.72 directly after 0.18.70; 0.18.71 was used only as an intermediate development identity and was never published.

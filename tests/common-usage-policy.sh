@@ -28,10 +28,10 @@ manager="$root/tools/infiltratorfs-manager.c"
 resize="$root/tools/infiltratorfs-resize.c"
 winbridge="$root/tools/windows/infiltratorfs-windows-bridge.c"
 
-grep -Fq 'set(INFILTRATR_COMMON_REQUIRED_VERSION "1.19.23")' "$cmake"
-grep -Fq 'a9cf2957cffeefe6001830916b8a32c2ef58a551' "$cmake"
+grep -Fq 'set(INFILTRATR_COMMON_REQUIRED_VERSION "1.19.24")' "$cmake"
+grep -Fq '748e089ae175329471d4cf375522c44081371bd5' "$cmake"
 
-# Common 1.19.23 owns theme persistence parsing/keys and deterministic ASCII
+# Common 1.19.24 owns theme persistence parsing/keys and deterministic ASCII
 # comparison. Keep those generic mechanics out of the filesystem tools.
 grep -Fq 'infiltratr_theme_mode_parse(argv[1], &mode)' "$theme"
 grep -Fq 'infiltratr_theme_mode_parse(value, &mode)' "$manager"
