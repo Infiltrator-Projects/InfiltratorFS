@@ -63,6 +63,11 @@ been built since mount, it remains invalid and the existing exact fallback is
 unchanged. Allocation failure while updating the accelerator invalidates it
 conservatively rather than risking a false negative.
 
+Mounted qualification now also exercises the exact workload that exposed the
+original scaling concern: repeated whole-file reflinks followed by a one-block
+truncate and unlink. The test verifies that the source file remains unchanged;
+the normal mounted workflow subsequently remounts/scrubs the resulting volume.
+
 ### Power-loss qualification host caching
 
 The real root-boot qualification already kills QEMU while the InfiltratorFS
