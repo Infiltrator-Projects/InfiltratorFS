@@ -432,6 +432,23 @@ static void infilfs_native_operation_commit(
     size_t i;
 
     /*
+     * Once this operation is committed into the deferred transaction its
+     * newly claimed CoW ranges can no longer be returned by operation-level
+     * rollback. Submit them now, not while they are merely reservations:
+     * releasing a reservation while an old write is still in flight could let
+     * a later writer reuse the same physical blocks and race that I/O.
+     *
+     * The blocks remain unreachable from the committed checkpoint. The final
+     * transaction publication still waits for every dependency and performs
+     * the stable-media barriers before publishing the new generation.
+     */
+    for (i = pending->operation_allocated_count;
+         i < pending->tx.allocated_count; ++i)
+        infilfs_native_submit_staged_range(
+            pending->sb, pending->tx.allocated[i].start,
+            (u32)min_t(u64, pending->tx.allocated[i].count, U32_MAX));
+
+    /*
      * Account the physical allocation pressure produced by this successful
      * operation.  Partial CoW writes can allocate a full filesystem block (and
      * associated metadata) for only a handful of user bytes; measuring only
@@ -3021,8 +3038,6 @@ static int infilfs_native_stage_compression_candidate(
         if (ret)
             goto out;
     }
-    infilfs_native_submit_staged_range(
-        inode->i_sb, *data_start_out, stored_blocks);
 out:
     kvfree(stored);
     return ret;
@@ -3096,9 +3111,6 @@ static int infilfs_native_prepare_append(
         if (ret)
             goto fail;
     }
-    infilfs_native_submit_staged_range(
-        inode->i_sb, prepared->data_start, physical_blocks);
-
     prepared->logical_blocks = logical_blocks;
     prepared->physical_blocks = physical_blocks;
     prepared->extent_flags = extent_flags;
@@ -3491,9 +3503,6 @@ generic_extent_write:
         infilfs_native_block_digest(data_block,
                                     &digests[logical - start_block]);
     }
-    infilfs_native_submit_staged_range(
-        inode->i_sb, data_start, (u32)touched_blocks);
-
 data_staged:
     ret = infilfs_native_replace_extent_range(
         old_extents, old_extent_count, old_blocks, start_block,
