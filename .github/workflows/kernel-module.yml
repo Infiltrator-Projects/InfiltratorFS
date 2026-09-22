@@ -934,6 +934,34 @@ jobs:
             exit 1
           fi
 
+          # Regress the clone -> tiny-truncate ownership path that historically
+          # forced a complete shared-range rebuild after every reflink.
+          # Repeated whole-file clones followed by a one-block shrink must keep
+          # the source intact and remain scrub-clean.
+          sudo python3 - "$mountpoint/native-rw/reflink-source.bin" "$mountpoint/native-rw" <<'PY'
+          import os
+          import shutil
+          import subprocess
+          import sys
+
+          source, root = sys.argv[1:]
+          source_size = os.stat(source).st_size
+          for i in range(32):
+              clone = os.path.join(root, f"reflink-truncate-{i}.bin")
+              subprocess.run(
+                  ["cp", "--reflink=always", source, clone],
+                  check=True)
+              os.truncate(clone, source_size - 4096)
+              fd = os.open(clone, os.O_RDONLY | os.O_CLOEXEC)
+              try:
+                  assert os.fstat(fd).st_size == source_size - 4096
+              finally:
+                  os.close(fd)
+              os.unlink(clone)
+          assert os.stat(source).st_size == source_size
+          PY
+          test "$(sudo sha256sum "$mountpoint/native-rw/reflink-source.bin" | awk '{print $1}')" =             "$reflink_source_hash"
+
           # Native parity: sparse high-offset growth, extent truncate,
           # preallocation and hole punching must survive the offline scrub.
           # Keep these values visible in the hosted log: this path is both a
