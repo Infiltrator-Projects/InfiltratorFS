@@ -7,12 +7,12 @@ set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
-set(INFILTRATR_COMMON_REQUIRED_VERSION "1.19.20")
+set(INFILTRATR_COMMON_REQUIRED_VERSION "1.19.23")
 set(INFILTRATR_COMMON_REQUIRED_COMMIT
-    "336ab8f7f8b7364b6296c7560fc67b242b27eb9d")
+    "a9cf2957cffeefe6001830916b8a32c2ef58a551")
 
 # InfiltratorFS consumes the same Common contract as the other Infiltrator
-# projects. Prefer a parent-provided/installed 1.19.20 package, then the pinned
+# projects. Prefer a parent-provided/installed 1.19.23 package, then the pinned
 # submodule. A source checkout without initialised submodules still remains
 # buildable by fetching the exact immutable Common commit.
 if(NOT TARGET InfiltratrCommon::Portable)
@@ -70,7 +70,7 @@ if(NOT TARGET InfiltratrCommon::Portable OR
         "Infiltratr Common ${INFILTRATR_COMMON_REQUIRED_VERSION} is required")
 endif()
 
-# Common 1.19.20 owns the canonical MB Corpo asset provenance. Installed
+# Common 1.19.23 owns the canonical MB Corpo asset provenance. Installed
 # packages import this contract through InfiltratrCommonConfig.cmake; vendored
 # and FetchContent builds include the same module directly from the exact
 # pinned Common source.

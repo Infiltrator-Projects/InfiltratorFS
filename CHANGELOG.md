@@ -5,6 +5,7 @@ This file records user-visible, compatibility, architecture and validation chang
 ## Unreleased
 
 - Advance development identity to 0.18.72 after immutable 0.18.71 publication.
+- Advance the exact Infiltratr Common dependency from 1.19.20 to 1.19.23 at `a9cf2957cffeefe6001830916b8a32c2ef58a551`; the intervening Common releases are backward-compatible hardening plus a temporal helper and do not alter InfiltratorFS persistent semantics.
 - Mark optional case-folded directories roadmap-complete after portable cross-platform conformance plus mounted native VFS/dcache qualification and CLEAN scrub.
 - Mark generic typed/reparse extension objects roadmap-complete after Linux/Clang/sanitizer/Windows conformance, scrub/reference validation and native-reader qualification.
 - Add generic immutable typed extension objects using the existing namespace extension-object ID: stable 128-bit type IDs, type versions, opaque SHA-256-protected payloads, generic reparse/preserve flags, portable set/get APIs, scrub/reference validation, native-reader recognition and reflink preservation.
