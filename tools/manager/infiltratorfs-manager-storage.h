@@ -29,6 +29,7 @@ typedef struct Target {
 void target_free(gpointer data);
 Target *target_new(const char *path, gboolean block);
 void replace_string(char **slot, const char *value);
+char *infiltratorfs_manager_canonical_path(const char *path);
 
 gboolean spawn_capture(const char *const argv[], char **output,
                        char **error_output, int *wait_status);
