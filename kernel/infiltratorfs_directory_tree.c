@@ -777,7 +777,7 @@ int infilfs_native_tree_directory_update(
                 ret = -ENOENT;                                                 \
                 goto out;                                                      \
             }                                                                  \
-            infilfs_tree_dir_digest((qname)->name, (qname)->len, digest);      \
+            infilfs_tree_dir_digest(pending->sb, (qname)->name, (qname)->len, digest);      \
             ret = infilfs_native_tree_dir_mutate(                              \
                 pending, header->object_id, root, qname, NULL, 0, digest,      \
                 0u, INFILFS_TREE_DIR_REMOVE, &replacement);                    \
@@ -801,7 +801,7 @@ int infilfs_native_tree_directory_update(
             ret = -EOVERFLOW;
             goto out;
         }
-        infilfs_tree_dir_digest(add_name->name, add_name->len, digest);
+        infilfs_tree_dir_digest(pending->sb, add_name->name, add_name->len, digest);
         if (!root) {
             size_t rec = ALIGN(
                 sizeof(struct infilfs_dirent_disk) + add_name->len, 8);

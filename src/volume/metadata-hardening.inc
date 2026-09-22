@@ -297,7 +297,7 @@ static int validate_namespace_graph_progress(
             free(owned);
             goto out;
         }
-        status = directory_blob_duplicate_status(base, bytes);
+        status = directory_blob_duplicate_status(vol, base, bytes);
         if (status != INFS_STATUS_OK) {
             free(owned);
             goto out;
