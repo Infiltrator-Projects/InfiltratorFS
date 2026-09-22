@@ -52,7 +52,7 @@ install -m 0644 README.md "$package_root/usr/share/doc/infiltratorfs/README.md"
 # though the repository build itself succeeds.
 dkms_root="$package_root/usr/src/infiltratorfs-$package_version"
 install -d "$dkms_root"
-for file in Makefile infiltratorfs_core.c infiltratorfs_crypto.c infiltratorfs_security.c infiltratorfs_extension.c infiltratorfs_internal.h infiltratorfs_format.h \
+for file in Makefile infiltratorfs_core.c infiltratorfs_cpu.c infiltratorfs_crypto.c infiltratorfs_security.c infiltratorfs_extension.c infiltratorfs_internal.h infiltratorfs_format.h \
             infiltratorfs_allocation_map.c infiltratorfs_allocation_publish.c \
             infiltratorfs_parallel_alloc.c \
             infiltratorfs_index_tree.c infiltratorfs_extent_tree.c infiltratorfs_directory_tree.c \
@@ -267,6 +267,7 @@ for required in \
     'usr/share/fonts/truetype/infiltratorfs/mb_corpo_s_regular.ttf$' \
     "usr/src/infiltratorfs-${package_version}/dkms.conf$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_core.c$" \
+    "usr/src/infiltratorfs-${package_version}/infiltratorfs_cpu.c$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_shared_ownership.c$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_name_policy.c$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_crypto.c$" \
@@ -422,7 +423,7 @@ verify_installer() {
         packaging/build-linux-packages.sh packaging/infiltratorfs-os-integration \
         packaging/patch-mintstick.py packaging/infiltratorfs-manager.svg \
         src/infiltratr-common/CMakeLists.txt kernel/Makefile kernel/infiltratorfs_core.c \
-        kernel/infiltratorfs_crypto.c \
+        kernel/infiltratorfs_cpu.c kernel/infiltratorfs_crypto.c \
         kernel/infiltratorfs_format.h include/infilfs/iac1.h kernel/infiltratorfs_allocation_map.c \
         kernel/infiltratorfs_allocation_publish.c kernel/infiltratorfs_rw.inc \
         kernel/infiltratorfs_parallel_alloc.c kernel/infiltratorfs_extent_tree.c \
