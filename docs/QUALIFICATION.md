@@ -24,6 +24,23 @@ Automatic qualification and conformance jobs are hard-capped at 10 minutes where
 
 ## Current development evidence boundary
 
+### 0.18.71 platform-specific security-preservation policy baseline
+
+Exact policy source `667d722f73dba09047329a15724af1f20fbd2916` completed the required cross-platform policy qualification on 2026-09-22:
+
+- **Native Linux kernel module** run `35683597910` passed, including the mounted read/write transaction and CLEAN scrub matrix plus upstream Linux 7.0 compilation.
+- **Linux metadata qualification** run `35683597932`, **Linux root-volume qualification** run `35683597969` and **Native resize qualification** run `35683598316` passed on the same source.
+- **Windows Explorer bridge qualification** run `35683597922` passed on the same source.
+- Within **Build and conformance** run `35683597943`, the Linux full-suite job `106605679862` and Windows native/portable-core job `106605978513` passed the policy-sensitive portable-security and cross-platform conformance tests on the same source.
+
+The completed preservation contract requires adapters to map common meaning
+into portable semantics, retain genuinely platform-specific residual state,
+refuse mutations that would silently discard unrepresentable security metadata,
+and ensure opaque/unknown metadata cannot manufacture access. This completion
+is deliberately limited to the preservation *rules*: generic typed extension
+objects and portable named metadata/streams remain separate roadmap items and
+are not claimed complete here.
+
 ### 0.18.70 portable security-object completion baseline
 
 Exact implementation source `6212c44f9d55b4ecc3125a127fb10d64f18ee8d3`

@@ -86,7 +86,7 @@ Pre-1.0 development is current-format-only. A development format may be replaced
 - [x] Generic access-right vocabulary independent of POSIX and Windows constants.
 - [x] Linux UID/GID/mode and POSIX ACL mapping policy.
 - [x] Windows SID/security-descriptor mapping policy.
-- [ ] Preservation rules for platform-specific security metadata.
+- [x] Preservation rules for platform-specific security metadata.
 - [ ] Portable named-attribute/named-stream objects distinct from adapter sidecars.
 - [ ] Protection classes and multi-device placement.
 - [ ] Replication and/or parity.
