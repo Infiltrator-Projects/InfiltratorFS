@@ -172,19 +172,27 @@ grep -Fq 'folio_set_private_2(dst)' <<<"$migrate_body" || \
 grep -Fq 'folio_clear_private_2(src)' <<<"$migrate_body" || \
     fail 'folio migration leaves duplicate pending-CoW marker state'
 
-# Keep the page-cache bridge zero-copy at its folio/native-iterator boundary.
-# Reintroducing MiB-scale read/write bounce buffers wastes memory bandwidth and
-# prevents the adapter from scaling cleanly to multi-page folios.
+# Reads retain direct bvec transport. Writeback deliberately snapshots each
+# bounded dirty cluster before releasing folio locks: native compression/CoW
+# and checkpoint publication may sleep for seconds under adverse media states,
+# and must never pin ordinary page-cache locks for that entire interval.
 grep -Fq '#include <linux/bvec.h>' "$pagecache" || \
     fail 'page-cache bvec contract include missing'
 test "$(grep -Fc 'iov_iter_bvec(' "$pagecache")" -ge 4 || \
     fail 'page-cache read/write paths no longer use direct bvec iterators'
+writeback_submit="$(sed -n '/static int infilfs_writeback_cluster_submit(/,/^}/p' "$pagecache")"
+grep -Fq 'staged = kvmalloc(cluster->bytes, GFP_NOFS);' <<<"$writeback_submit" || \
+    fail 'writeback no longer snapshots data before releasing folio locks'
+grep -Fq 'folio_unlock(cluster->folios[i]);' <<<"$writeback_submit" || \
+    fail 'writeback cluster keeps folio locks across native publication'
+grep -Fq 'iov_iter_kvec(' <<<"$writeback_submit" || \
+    fail 'staged writeback image is not handed to the native writer'
+grep -Fq 'folio_end_writeback(folio);' <<<"$writeback_submit" || \
+    fail 'staged writeback lost VFS completion accounting'
 ! grep -Fq 'cluster.buffer' "$pagecache" || \
-    fail 'page-cache cluster bounce buffer returned'
+    fail 'persistent page-cache cluster buffer member returned'
 ! grep -Fq 'cluster->buffer' "$pagecache" || \
-    fail 'page-cache submit path regressed to a bounce buffer'
-! grep -Fq 'u8 *buffer;' "$pagecache" || \
-    fail 'page-cache cluster buffer member returned'
+    fail 'persistent page-cache submit buffer member returned'
 
 # Linux 7.0 gained an iomap read transport hook that lets filesystems retain
 # custom verified/compressed I/O while delegating folio state management to
