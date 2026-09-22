@@ -156,6 +156,22 @@ grep -Fq 'folio_clear_private_2(folio)' "$pagecache" || \
 ! grep -Fq 'folio_attach_private(folio, sbi)' "$pagecache" || \
     fail 'InfiltratorFS reclaimed folio->private from page-cache frameworks'
 
+# Filesystems implementing ->writepages must provide folio migration or Linux
+# falls back to a WARN_ON path during compaction. The adapter must also transfer
+# InfiltratorFS's independent PG_private_2 pending-CoW marker without changing
+# its superblock-wide accounting value.
+grep -Fq '.migrate_folio = infilfs_migrate_folio' "$pagecache" || \
+    fail 'page-cache folio migration callback missing'
+migrate_body="$(sed -n '/static int infilfs_migrate_folio(/,/^}/p' "$pagecache")"
+grep -Fq 'filemap_migrate_folio(mapping, dst, src, mode)' <<<"$migrate_body" || \
+    fail 'folio migration does not delegate normal page-cache state'
+grep -Fq 'folio_test_private_2(src)' <<<"$migrate_body" || \
+    fail 'folio migration lost pending-CoW marker detection'
+grep -Fq 'folio_set_private_2(dst)' <<<"$migrate_body" || \
+    fail 'folio migration does not transfer pending-CoW marker'
+grep -Fq 'folio_clear_private_2(src)' <<<"$migrate_body" || \
+    fail 'folio migration leaves duplicate pending-CoW marker state'
+
 # Keep the page-cache bridge zero-copy at its folio/native-iterator boundary.
 # Reintroducing MiB-scale read/write bounce buffers wastes memory bandwidth and
 # prevents the adapter from scaling cleanly to multi-page folios.
