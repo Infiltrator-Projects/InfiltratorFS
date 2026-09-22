@@ -1,4 +1,4 @@
-0.18.74
+0.18.75
 qualification=exact-source-release-gate-hosted
 publication-gate=event-driven-v10
 root-volume-package-dependency-fix=qualified
@@ -6,3 +6,4 @@ installer-bundle-path=canonical-v1
 allocation-regression-backout=qualified-v1
 sustained-write-stall-recovery=qualified-v1
 release-finalization=20260922-live-stall-recovery-v1
+allocation-publication-recovery=live-phase-telemetry-v1
