@@ -28,6 +28,31 @@ Automatic qualification and conformance jobs are hard-capped at 10 minutes where
 
 ## Current development evidence boundary
 
+### 0.18.72 case-folded namespace and typed-extension completion baseline
+
+Exact implementation/qualification source `397d2c0f7ba38cb21ea5cf81729f0b952912e22f` completed the feature-specific qualification on 2026-09-22:
+
+- **Build and conformance** run `35701731801` passed GCC static analysis, Clang conformance, ASan/UBSan, the Linux full suite, native package construction and the Windows native/portable-core build. The Linux full suite and Windows tests both built and passed `infilfs-casefold` and `infilfs-typed-extensions`.
+- **Native Linux kernel module** run `35701731792` passed the dedicated **Native case-folded namespace policy** step on a real mounted `mkfs.infilfs --casefold` image. The test verified mixed-case lookup identity, VFS/dcache inode identity, `O_EXCL` collision rejection, original-spelling preservation, ASCII-only v1 folding, write-through via alternate case, clean unmount and CLEAN scrub. The same run also passed upstream Linux 7.0 compile compatibility for the native reader including typed-extension validation.
+- **Linux metadata qualification** run `35701731857` passed on the exact source.
+
+Case-fold policy v1 is therefore complete: it is opt-in, persistent, locale-independent,
+preserves original UTF-8 spelling, folds ASCII A-Z only for namespace identity,
+and uses the same identity rule in portable lookup/cache/tree/scrub paths and
+the native Linux VFS/dcache path.
+
+Generic typed/reparse extension objects are also complete. Format 0.18 now has
+immutable indexed `INFS_OBJECT_EXTENSION` envelopes attached through the
+existing `extended_attributes_object_id`, with stable 128-bit type IDs,
+independent type versions, bounded opaque payloads, SHA-256 payload digests,
+fail-closed flags/version validation, portable set/get/detach APIs, scrub
+reference validation, native-reader recognition and reflink preservation.
+Unknown extension semantics remain opaque to the core. Detach/replacement does
+not perform an unsafe foreground last-reference free; shared unreachable
+extension objects remain eligible for the same snapshot-aware graph-tracing
+maintenance model used by other immutable shared metadata.
+
+
 ### 0.18.71 platform-specific security-preservation policy baseline
 
 Exact policy source `667d722f73dba09047329a15724af1f20fbd2916` completed the required cross-platform policy qualification on 2026-09-22:
@@ -40,10 +65,10 @@ Exact policy source `667d722f73dba09047329a15724af1f20fbd2916` completed the req
 The completed preservation contract requires adapters to map common meaning
 into portable semantics, retain genuinely platform-specific residual state,
 refuse mutations that would silently discard unrepresentable security metadata,
-and ensure opaque/unknown metadata cannot manufacture access. This completion
-is deliberately limited to the preservation *rules*: generic typed extension
-objects and portable named metadata/streams remain separate roadmap items and
-are not claimed complete here.
+and ensure opaque/unknown metadata cannot manufacture access. This completion is deliberately limited to the preservation *rules*. Generic
+typed extension objects are now separately complete under the 0.18.72
+qualification baseline above; portable named metadata/streams remain separate
+roadmap work.
 
 ### 0.18.70 portable security-object completion baseline
 

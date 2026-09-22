@@ -5,6 +5,8 @@ This file records user-visible, compatibility, architecture and validation chang
 ## Unreleased
 
 - Advance development identity to 0.18.72 after immutable 0.18.71 publication.
+- Mark optional case-folded directories roadmap-complete after portable cross-platform conformance plus mounted native VFS/dcache qualification and CLEAN scrub.
+- Mark generic typed/reparse extension objects roadmap-complete after Linux/Clang/sanitizer/Windows conformance, scrub/reference validation and native-reader qualification.
 - Add generic immutable typed extension objects using the existing namespace extension-object ID: stable 128-bit type IDs, type versions, opaque SHA-256-protected payloads, generic reparse/preserve flags, portable set/get APIs, scrub/reference validation, native-reader recognition and reflink preservation.
 
 - Add optional persistent namespace case-fold policy v1, selected by the portable formatter option or `mkfs.infilfs --casefold`: ASCII A-Z folds to a-z consistently across portable lookup/caches, scalable directory routing, duplicate validation and native Linux dcache/namespace lookup, while original spelling and all non-ASCII UTF-8 bytes remain exact.
