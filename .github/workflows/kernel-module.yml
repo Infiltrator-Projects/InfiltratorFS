@@ -95,6 +95,7 @@ jobs:
           trap 'rm -rf "$dkms_src"' EXIT
           cp kernel/Makefile \
              kernel/infiltratorfs_core.c \
+             kernel/infiltratorfs_cpu.c \
              kernel/infiltratorfs_crypto.c \
              kernel/infiltratorfs_security.c \
              kernel/infiltratorfs_extension.c \
