@@ -1346,40 +1346,23 @@ int infilfs_rw_tx_apply_deferred(struct infilfs_rw_tx *tx)
     }
     write_unlock(&tx->sbi->bitmap_lock);
 
+    /*
+     * Publication can retire tens of thousands of CoW ranges at once.
+     * Incrementally inserting every newly free run into the sorted extent
+     * cache is O(n^2) on fragmented volumes because each insertion scans and
+     * may memmove the tail.  The authoritative bitmap has already been
+     * updated above, and its rebuild path uses word-at-a-time bitmap scanners,
+     * so rebuild the accelerator once from that exact post-publication image.
+     *
+     * This is deliberately limited to transaction publication.  Small
+     * operation rollback still updates the cache incrementally because its
+     * released range set is bounded and latency-sensitive.
+     */
     if (tx->free_extent_index_valid) {
-        for (r = 0; r < tx->deferred_count; ++r) {
-            u64 start = tx->deferred[r].start;
-            u64 count = tx->deferred[r].count;
-            u64 run_start = 0;
-            u64 run_count = 0;
+        int index_ret = infilfs_rw_free_extent_index_rebuild(tx);
 
-            for (i = 0; i < count; ++i) {
-                u64 block = start + i;
-
-                if (!infilfs_rw_bitmap_get(tx->bitmap, block)) {
-                    if (!run_count)
-                        run_start = block;
-                    ++run_count;
-                    continue;
-                }
-                if (run_count) {
-                    if (infilfs_rw_free_extent_index_add(
-                            tx, run_start, run_count)) {
-                        infilfs_rw_free_extent_index_invalidate(tx);
-                        break;
-                    }
-                    run_count = 0;
-                }
-            }
-            if (!tx->free_extent_index_valid)
-                break;
-            if (run_count &&
-                infilfs_rw_free_extent_index_add(
-                    tx, run_start, run_count)) {
-                infilfs_rw_free_extent_index_invalidate(tx);
-                break;
-            }
-        }
+        if (index_ret)
+            infilfs_rw_free_extent_index_invalidate(tx);
     }
     return 0;
 }
