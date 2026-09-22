@@ -17,7 +17,23 @@ grep -Fq 'infilfs_rw_allocation_map_publish(tx, &next_allocation)' <<<"$commit_b
 grep -Fq 'infilfs_rw_sync_transaction_dependencies(tx)' <<<"$commit_body"
 grep -Fq 'infilfs_rw_write_block_sync(tx->sb' <<<"$commit_body"
 grep -Fq 'blkdev_issue_flush(tx->sb->s_bdev)' <<<"$commit_body"
+test "$(grep -Fc 'blkdev_issue_flush(tx->sb->s_bdev)' <<<"$commit_body")" -eq 2
 grep -Fq 'for (n = 1; n < INFILFS_CHECKPOINT_COUNT; ++n)' <<<"$commit_body"
+python3 - "$rw" <<'PY'
+from pathlib import Path
+import sys
+
+s = Path(sys.argv[1]).read_text()
+start = s.index('static int infilfs_rw_tx_commit(')
+end = s.index('\nstatic ', start + 1)
+body = s[start:end]
+dependencies = body.index('infilfs_rw_sync_transaction_dependencies(tx)')
+first_flush = body.index('blkdev_issue_flush(tx->sb->s_bdev)', dependencies)
+checkpoint = body.index('infilfs_rw_write_block_sync(tx->sb', first_flush)
+second_flush = body.index('blkdev_issue_flush(tx->sb->s_bdev)', checkpoint)
+if not (dependencies < first_flush < checkpoint < second_flush):
+    raise SystemExit('CoW dependencies are not durable before checkpoint publication')
+PY
 dependency_sync="$(sed -n '/static int infilfs_rw_sync_transaction_dependencies(/,/^}/p' "$rw")"
 grep -Fq 'tx->allocated' <<<"$dependency_sync"
 grep -Fq 'sb_find_get_block' <<<"$dependency_sync"

@@ -1,6 +1,10 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # InfiltratorFS Qualification Ledger
 
+The forensic cross-check of current kernel invariants against the 2026
+filesystem research/advisory failure modes is recorded in
+[`FILESYSTEM-PAPER-AUDIT-2026.md`](FILESYSTEM-PAPER-AUDIT-2026.md).
+
 This file is the **single authoritative exact-source evidence record** for InfiltratorFS. It records what was actually exercised on named commits and workflows. It is not a feature list; feature completion belongs in `ROADMAP.md`.
 
 Historical results apply only to the source commit on which they ran. A later green portable CI run does not silently inherit an older mounted, heavy or destructive qualification result.

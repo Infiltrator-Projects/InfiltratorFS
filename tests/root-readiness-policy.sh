@@ -25,6 +25,7 @@ if grep -Fq '"Linux root boot qualification"' "$root/.github/workflows/release-p
 fi
 
 grep -Fq 'ROOT_RECOVERY_PASS' "$root/tests/root-boot-qemu.sh"
+grep -Fq 'if=virtio,cache=none' "$root/tests/root-boot-qemu.sh"
 ! grep -R -Fq 'INFS_IAC1_MIN_SAVINGS_DIVISOR' \
     "$root/kernel" "$root/src" "$root/include" || exit 1
 

@@ -515,11 +515,7 @@ out:
 }
 
 
-struct infilfs_reflink_checksum_clone {
-    u8 source_id[16];
-    u8 clone_id[16];
-    u64 source_block;
-};
+#define INFILFS_REFLINK_INDEX_BATCH 1024u
 
 static int infilfs_reflink_clone_checksum_chain(
     struct infilfs_native_pending *pending,
@@ -527,35 +523,61 @@ static int infilfs_reflink_clone_checksum_chain(
     const u8 source_owner[16], const u8 clone_owner[16],
     struct infilfs_file_payload_disk *clone_file)
 {
-    struct infilfs_reflink_checksum_clone *nodes = NULL;
     struct infilfs_native_index_change *changes = NULL;
-    u8 current[16];
+    u8 source_id[16];
+    u8 clone_id[16] = {0};
     u8 *object = NULL;
-    u32 count = 0;
-    u32 capacity = 0;
-    unsigned int guard;
+    u64 logical_blocks;
+    u64 max_nodes;
+    u64 visited = 0;
+    u32 batch_count = 0;
+    u32 batch_capacity;
     int ret = 0;
-    u32 i;
 
     memset(clone_file->checksum_head_id, 0,
            sizeof(clone_file->checksum_head_id));
-    memcpy(current, source_file->checksum_head_id, sizeof(current));
-    if (!memchr_inv(current, 0, sizeof(current)))
+    memcpy(source_id, source_file->checksum_head_id, sizeof(source_id));
+    if (!memchr_inv(source_id, 0, sizeof(source_id)))
         return 0;
 
-    object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
-    if (!object)
-        return -ENOMEM;
+    logical_blocks = DIV_ROUND_UP_ULL(
+        le64_to_cpu(source_file->attributes.logical_size),
+        INFILFS_DISK_BLOCK_SIZE);
+    max_nodes = DIV_ROUND_UP_ULL(
+        logical_blocks, INFILFS_NATIVE_CHECKSUMS_PER_OBJECT);
+    if (!max_nodes)
+        return -EFSCORRUPTED;
 
-    for (guard = 0; memchr_inv(current, 0, sizeof(current)) &&
-         guard < 1048576u; ++guard) {
+    batch_capacity = (u32)min_t(
+        u64, max_nodes, INFILFS_REFLINK_INDEX_BATCH);
+    changes = kvmalloc_array(
+        batch_capacity, sizeof(*changes), GFP_NOFS);
+    object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+    if (!changes || !object) {
+        ret = -ENOMEM;
+        goto out;
+    }
+
+    ret = infilfs_native_random_id(clone_id);
+    if (ret)
+        goto out;
+    memcpy(clone_file->checksum_head_id, clone_id, 16);
+
+    while (memchr_inv(source_id, 0, sizeof(source_id))) {
+        struct infilfs_object_header_disk *header;
         struct infilfs_native_checksum_payload_disk *payload;
-        struct infilfs_reflink_checksum_clone *grown;
-        u8 next[16];
-        u64 block;
+        u8 next_source_id[16];
+        u8 next_clone_id[16] = {0};
+        u64 source_block;
+        u64 clone_block;
         u16 type;
 
-        ret = infilfs_index_lookup(pending->sb, current, &block, &type);
+        if (visited >= max_nodes) {
+            ret = -EFSCORRUPTED;
+            goto out;
+        }
+        ret = infilfs_index_lookup(
+            pending->sb, source_id, &source_block, &type);
         if (ret)
             goto out;
         if (type != INFILFS_OBJECT_CHECKSUM) {
@@ -563,72 +585,23 @@ static int infilfs_reflink_clone_checksum_chain(
             goto out;
         }
         ret = infilfs_native_checksum_decode(
-            pending->sb, source_owner, current, block, object, &payload);
+            pending->sb, source_owner, source_id,
+            source_block, object, &payload);
         if (ret)
             goto out;
-        memcpy(next, payload->next_object_id, sizeof(next));
-
-        if (count == capacity) {
-            u32 new_capacity = capacity ? capacity * 2u : 16u;
-
-            grown = kvmalloc_array(
-                new_capacity, sizeof(*grown), GFP_NOFS);
-            if (!grown) {
-                ret = -ENOMEM;
+        memcpy(next_source_id, payload->next_object_id, 16);
+        if (memchr_inv(next_source_id, 0, sizeof(next_source_id))) {
+            ret = infilfs_native_random_id(next_clone_id);
+            if (ret)
                 goto out;
-            }
-            if (count)
-                memcpy(grown, nodes, (size_t)count * sizeof(*grown));
-            kvfree(nodes);
-            nodes = grown;
-            capacity = new_capacity;
         }
-        memset(&nodes[count], 0, sizeof(nodes[count]));
-        memcpy(nodes[count].source_id, current, 16);
-        nodes[count].source_block = block;
-        ret = infilfs_native_random_id(nodes[count].clone_id);
-        if (ret)
-            goto out;
-        count++;
-        memcpy(current, next, sizeof(current));
-    }
-    if (memchr_inv(current, 0, sizeof(current))) {
-        ret = -ELOOP;
-        goto out;
-    }
-    if (!count) {
-        ret = -EFSCORRUPTED;
-        goto out;
-    }
-
-    changes = kvmalloc_array(count, sizeof(*changes), GFP_NOFS);
-    if (!changes) {
-        ret = -ENOMEM;
-        goto out;
-    }
-    memset(changes, 0, (size_t)count * sizeof(*changes));
-
-    for (i = 0; i < count; ++i) {
-        struct infilfs_object_header_disk *header;
-        struct infilfs_native_checksum_payload_disk *payload;
-        u64 clone_block;
-
-        ret = infilfs_native_checksum_decode(
-            pending->sb, source_owner, nodes[i].source_id,
-            nodes[i].source_block, object, &payload);
-        if (ret)
-            goto out;
 
         header = (struct infilfs_object_header_disk *)object;
         header->generation = cpu_to_le64(pending->tx.generation);
-        memcpy(header->object_id, nodes[i].clone_id, 16);
+        memcpy(header->object_id, clone_id, 16);
         memcpy(header->parent_id, clone_owner, 16);
         memcpy(payload->owner_object_id, clone_owner, 16);
-        memset(payload->next_object_id, 0,
-               sizeof(payload->next_object_id));
-        if (i + 1u < count)
-            memcpy(payload->next_object_id, nodes[i + 1u].clone_id, 16);
-
+        memcpy(payload->next_object_id, next_clone_id, 16);
         ret = infilfs_rw_finalize_object(object);
         if (ret)
             goto out;
@@ -640,19 +613,38 @@ static int infilfs_reflink_clone_checksum_chain(
         if (ret)
             goto out;
 
-        memcpy(changes[i].object_id, nodes[i].clone_id, 16);
-        changes[i].object_block = clone_block;
-        changes[i].object_type = INFILFS_OBJECT_CHECKSUM;
-        changes[i].add = true;
+        memset(&changes[batch_count], 0, sizeof(changes[batch_count]));
+        memcpy(changes[batch_count].object_id, clone_id, 16);
+        changes[batch_count].object_block = clone_block;
+        changes[batch_count].object_type = INFILFS_OBJECT_CHECKSUM;
+        changes[batch_count].add = true;
+        batch_count++;
+        visited++;
+
+        if (batch_count == batch_capacity) {
+            ret = infilfs_native_index_update(
+                pending, changes, batch_count);
+            if (ret)
+                goto out;
+            batch_count = 0;
+        }
+        memcpy(source_id, next_source_id, 16);
+        memcpy(clone_id, next_clone_id, 16);
     }
 
-    ret = infilfs_native_index_update(pending, changes, count);
-    if (!ret)
-        memcpy(clone_file->checksum_head_id, nodes[0].clone_id, 16);
+    if (!visited) {
+        ret = -EFSCORRUPTED;
+        goto out;
+    }
+    if (batch_count)
+        ret = infilfs_native_index_update(
+            pending, changes, batch_count);
 out:
+    if (ret)
+        memset(clone_file->checksum_head_id, 0,
+               sizeof(clone_file->checksum_head_id));
     kfree(object);
     kvfree(changes);
-    kvfree(nodes);
     return ret;
 }
 
@@ -837,16 +829,24 @@ static int infilfs_native_reflink_full(
     }
 
     /*
-     * A non-inline reflink has just introduced a second live owner for the
-     * source physical ranges.  Any ownership snapshot built before this clone
-     * can now contain false negatives, so it must never survive the operation.
-     * Rebuild lazily on the next release/free query under write_lock.
+     * A non-inline reflink introduces one additional live owner for every
+     * source physical range.  Maintain a valid ownership accelerator locally
+     * instead of forcing the next reclamation to rebuild the entire map.
      */
-    if (!source_inline) {
-        kvfree(pending->shared_ranges);
-        pending->shared_ranges = NULL;
-        pending->shared_range_count = 0;
-        pending->shared_range_index_valid = false;
+    if (!source_inline && pending->shared_range_index_valid) {
+        int ownership_ret = infilfs_shared_ownership_add_owner(
+            pending, source_extents, source_count);
+
+        if (ownership_ret) {
+            kvfree(pending->shared_ranges);
+            pending->shared_ranges = NULL;
+            pending->shared_range_count = 0;
+            pending->shared_range_index_valid = false;
+            if (ownership_ret != -ENOMEM && ownership_ret != -EOVERFLOW) {
+                ret = ownership_ret;
+                goto finish;
+            }
+        }
     }
     pending->tx.next_sb.generation = cpu_to_le64(pending->tx.generation);
 

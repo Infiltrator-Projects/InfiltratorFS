@@ -215,7 +215,7 @@ boot_once() {
       -nographic -serial mon:stdio \
       -drive if=pflash,format=raw,readonly=on,file="$ovmf_code" \
       -drive if=pflash,format=raw,file="$work/OVMF_VARS.fd" \
-      -drive format=raw,file="$disk",if=virtio \
+      -drive format=raw,file="$disk",if=virtio,cache=none \
       -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
       >"$log" 2>&1 &
     qemu_pid=$!

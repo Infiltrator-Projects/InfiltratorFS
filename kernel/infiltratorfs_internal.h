@@ -328,6 +328,9 @@ int infilfs_native_collect_extents(
     u8 object[INFILFS_DISK_BLOCK_SIZE],
     struct infilfs_extent_disk **extents_out, u32 *count_out,
     u64 *old_blocks_out, bool *was_inline_out);
+int infilfs_shared_ownership_add_owner(
+    struct infilfs_native_pending *pending,
+    const struct infilfs_extent_disk *extents, u32 extent_count);
 int infilfs_shared_ownership_drop_owner(
     struct infilfs_native_pending *pending, struct inode *inode);
 

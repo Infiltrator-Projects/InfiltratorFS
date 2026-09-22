@@ -53,8 +53,9 @@ grep -Fq '#define INFILFS_NATIVE_IDLE_DELAY (5u * HZ)' "$data"
 grep -Fq 'const u64 max_publish = 512ULL * 1024ULL * 1024ULL;' "$data"
 grep -Fq '#define INFILFS_NATIVE_METADATA_PUBLISH_CHARGE (64ULL * 1024ULL)' "$ns"
 
-# Publication drains only this transaction's CoW dependency set, then writes
-# checkpoint replicas synchronously and performs one stable-media cache flush.
+# Publication drains only this transaction's CoW dependency set, makes those
+# writes stable, then writes checkpoint replicas and performs the publication
+# stable-media flush.
 legacy="$root/kernel/infiltratorfs_rw_legacy.inc"
 commit_body="$(sed -n '/static int infilfs_rw_tx_commit(/,/^}/p' "$legacy")"
 ! grep -Fq 'sync_blockdev(tx->sb->s_bdev)' <<<"$commit_body"
@@ -62,6 +63,7 @@ grep -Fq 'infilfs_rw_allocation_map_publish(tx, &next_allocation)' <<<"$commit_b
 grep -Fq 'infilfs_rw_sync_transaction_dependencies(tx)' <<<"$commit_body"
 grep -Fq 'infilfs_rw_write_block_sync(tx->sb' <<<"$commit_body"
 grep -Fq 'blkdev_issue_flush(tx->sb->s_bdev)' <<<"$commit_body"
+test "$(grep -Fc 'blkdev_issue_flush(tx->sb->s_bdev)' <<<"$commit_body")" -eq 2
 grep -Fq 'for (n = 1; n < INFILFS_CHECKPOINT_COUNT; ++n)' <<<"$commit_body"
 dependency_sync="$(sed -n '/static int infilfs_rw_sync_transaction_dependencies(/,/^}/p' "$legacy")"
 grep -Fq 'sb_find_get_block' <<<"$dependency_sync"

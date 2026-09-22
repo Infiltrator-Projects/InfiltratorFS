@@ -117,6 +117,8 @@ jobs:
         run: bash tests/native-random-write-optimization-policy.sh .
       - name: Guard native sequential-write scaling
         run: bash tests/native-sequential-write-scaling-policy.sh .
+      - name: Guard native reflink scaling
+        run: bash tests/native-reflink-scaling-policy.sh .
       - name: Guard native N-1 CPU parallelism
         run: bash tests/native-cpu-parallelism-policy.sh .
       - name: Guard native small-file scaling

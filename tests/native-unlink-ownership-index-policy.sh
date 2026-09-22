@@ -16,13 +16,15 @@ grep -Fq 'shared_range_index_valid' "$state" || fail 'shared-range validity stat
 grep -Fq 'u32 refs;' "$state" || fail 'shared-range multiplicity state missing'
 grep -Fq 'infilfs_ns_shared_range_index_build' "$ns" || fail 'shared-range builder missing'
 grep -Fq '(u32)coverage' "$ns" || fail 'shared-range builder does not preserve exact reference multiplicity'
+grep -Fq 'infilfs_shared_ownership_add_owner' "$ownership" || fail 'incremental owner-add engine missing'
+grep -Fq 'shared->refs + 1u' "$ownership" || fail 'incremental owner-add does not increment multiplicity'
 grep -Fq 'infilfs_shared_ownership_drop_owner' "$ownership" || fail 'incremental owner-drop engine missing'
 grep -Fq 'shared->refs - 1u' "$ownership" || fail 'incremental owner-drop does not decrement multiplicity'
 ! grep -Fq 'infilfs_ns_index_snapshot' "$ownership" || fail 'owner-drop regressed to whole-index scan'
 grep -Fq 'infilfs_ns_shared_range_maybe_shared' "$ns" || fail 'shared-range query missing'
 grep -Fq 'infilfs_ns_other_reference_cover' "$ns" || fail 'exact ownership fallback missing'
 grep -Fq 'kvfree(pending->shared_ranges);' "$data" || fail 'ownership index unmount cleanup missing'
-grep -Fq 'A non-inline reflink has just introduced a second live owner' "$reflink" || fail 'reflink invalidation rationale missing'
+grep -Fq 'A non-inline reflink introduces one additional live owner' "$reflink" || fail 'reflink incremental ownership rationale missing'
 
 python3 - "$reflink" <<'PY'
 from pathlib import Path
@@ -32,15 +34,16 @@ start = s.index('static int infilfs_native_reflink_full(')
 end = s.index('\nstatic loff_t infilfs_file_remap_file_range(', start)
 body = s[start:end]
 clone = body.find('infilfs_native_build_file_object(')
-free_ranges = body.find('kvfree(pending->shared_ranges);')
-clear_ptr = body.find('pending->shared_ranges = NULL;', free_ranges)
-clear_count = body.find('pending->shared_range_count = 0;', clear_ptr)
-invalidate = body.find('pending->shared_range_index_valid = false;', clear_count)
+valid = body.find('pending->shared_range_index_valid')
+add = body.find('infilfs_shared_ownership_add_owner(')
 finish = body.find('infilfs_ns_finish(pending, ret)')
-if min(clone, free_ranges, clear_ptr, clear_count, invalidate, finish) < 0:
-    raise SystemExit('reflink ownership-index invalidation sequence incomplete')
-if not (clone < free_ranges < clear_ptr < clear_count < invalidate < finish):
-    raise SystemExit('reflink ownership index is not invalidated before publication')
+if min(clone, valid, add, finish) < 0:
+    raise SystemExit('reflink incremental ownership update sequence incomplete')
+if not (clone < valid < add < finish):
+    raise SystemExit('reflink ownership multiplicity is not updated before publication')
+prefix = body[:add]
+if 'pending->shared_range_index_valid = false;' in prefix:
+    raise SystemExit('successful reflink still invalidates ownership before incremental update')
 PY
 
 grep -Fq 'struct mutex shared_range_build_lock;' "$state" || fail 'ownership-index build mutex missing'

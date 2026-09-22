@@ -1479,6 +1479,20 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
         return ret;
     }
 
+    /*
+     * I/O completion is not a persistence ordering boundary on devices with a
+     * volatile write-back cache.  Make every CoW dependency durable before any
+     * generation-N+1 checkpoint can be issued.  The second barrier below then
+     * makes the checkpoint publication itself durable.
+     */
+    ret = blkdev_issue_flush(tx->sb->s_bdev);
+    if (ret) {
+        sbi->write_poisoned = true;
+        pr_warn("InfiltratorFS: dependency durability barrier failed; further writes disabled until remount\n");
+        infilfs_allocation_layout_destroy(&next_allocation);
+        return ret;
+    }
+
     sb_block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
     if (!sb_block) {
         infilfs_allocation_layout_destroy(&next_allocation);
@@ -1488,11 +1502,9 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
     first = (unsigned int)(tx->generation % INFILFS_CHECKPOINT_COUNT);
 
     /*
-     * The dependency graph above has completed its writes, so all checkpoint
-     * replicas can be issued before the single stable-media durability barrier.
-     * If power fails during this phase, recovery may see generation N or any
-     * complete generation-N+1 checkpoint; either is safe because every N+1
-     * dependency was flushed before checkpoint writes began.
+     * The dependency graph is now on stable media.  Checkpoint replicas may be
+     * issued in any order because none can reference volatile dependency data.
+     * The final cache flush below is the generation-N+1 publication barrier.
      */
     ret = infilfs_rw_write_block_sync(tx->sb,
         le64_to_cpu(tx->next_sb.checkpoint_block[first]), sb_block);
