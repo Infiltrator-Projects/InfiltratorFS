@@ -123,10 +123,10 @@ int infilfs_native_stage_block(struct super_block *sb, u64 block,
  * in-flight instead of creating a large synchronous write burst.
  */
 static void infilfs_native_submit_staged_range(struct super_block *sb,
-                                               u64 start, u32 count)
+                                               u64 start, u64 count)
 {
     struct blk_plug plug;
-    u32 i;
+    u64 i;
 
     if (!count)
         return;
@@ -446,7 +446,7 @@ static void infilfs_native_operation_commit(
          i < pending->tx.allocated_count; ++i)
         infilfs_native_submit_staged_range(
             pending->sb, pending->tx.allocated[i].start,
-            (u32)min_t(u64, pending->tx.allocated[i].count, U32_MAX));
+            pending->tx.allocated[i].count);
 
     /*
      * Account the physical allocation pressure produced by this successful
