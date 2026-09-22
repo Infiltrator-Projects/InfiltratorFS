@@ -102,16 +102,20 @@ grep -Fq 'infilfs_queue_cpu_work(&items[i].work)' "$data"
 grep -Fq 'infilfs_writeback_cluster_submit' "$pagecache"
 grep -Fq 'infilfs_native_writeback_iter' "$pagecache"
 
-# CoW data is unreachable until checkpoint publication, so submit each staged
-# data cluster early and let the existing transaction dependency drain provide
-# the ordering/wait boundary. This prevents every 512 MiB publication from
-# becoming the point where hundreds of MiB of data I/O is first issued.
+# Newly allocated CoW dependencies are unreachable until checkpoint
+# publication. Submit them as soon as the individual operation is committed
+# into the deferred transaction, but never while they are only volatile
+# reservations: a rolled-back reservation must not be reusable while stale I/O
+# to the same physical range can still be in flight.
 grep -Fq 'infilfs_native_submit_staged_range' "$data"
 submit_body="$(sed -n '/static void infilfs_native_submit_staged_range(/,/^}/p' "$data")"
 grep -Fq 'blk_start_plug' <<<"$submit_body"
 grep -Fq 'write_dirty_buffer(bh, 0)' <<<"$submit_body"
 grep -Fq 'blk_finish_plug' <<<"$submit_body"
-test "$(grep -Fc 'infilfs_native_submit_staged_range(' "$data")" -ge 4
+operation_commit="$(sed -n '/static void infilfs_native_operation_commit(/,/^}/p' "$data")"
+grep -Fq 'pending->operation_allocated_count' <<<"$operation_commit"
+grep -Fq 'infilfs_native_submit_staged_range(' <<<"$operation_commit"
+! grep -Fq 'infilfs_native_submit_staged_range(' <<<"$(sed -n '/static int infilfs_native_prepare_append(/,/^}/p' "$data")"
 
 grep -Fq 'u64 persisted_size;' "$internal"
 grep -Fq 'READ_ONCE(ii->persisted_size)' "$data"
