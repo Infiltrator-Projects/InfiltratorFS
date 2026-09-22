@@ -9,7 +9,7 @@ static u8 infilfs_casefold_byte_v1(u8 value)
 
 bool infilfs_casefold_names_enabled(const struct super_block *sb)
 {
-    const struct infilfs_sb_info *sbi = sb ? INFILFS_SB(sb) : NULL;
+    const struct infilfs_sb_info *sbi = sb ? sb->s_fs_info : NULL;
 
     return sbi &&
         (le64_to_cpu(sbi->disk.incompat_flags) &
