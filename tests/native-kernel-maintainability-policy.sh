@@ -85,6 +85,20 @@ test -f "$kernel/infiltratorfs_directory_tree.c" || fail 'directory-tree object 
 test -f "$kernel/infiltratorfs_linux_meta_codec.c" || fail 'Linux metadata codec object missing'
 test -f "$kernel/infiltratorfs_locator_cache.c" || fail 'native locator cache object missing'
 test -f "$kernel/infiltratorfs_shared_ownership.c" || fail 'shared ownership accelerator object missing'
+
+# Every compiled Kbuild object must also ship in the self-contained DKMS source
+# installed by the Debian/.run packaging path. A repository build can succeed
+# while package installation fails later if a newly split object is omitted.
+package_builder="$root/packaging/build-linux-packages.sh"
+test -f "$package_builder" || fail 'Linux package builder missing'
+module_objects="$(sed -nE 's/^infiltratorfs-y := (.*)$/\1/p' "$makefile")"
+test -n "$module_objects" || fail 'could not resolve Kbuild object list'
+for object in $module_objects; do
+    source="${object%.o}.c"
+    grep -Fq "$source" "$package_builder" || \
+        fail "DKMS package source list omits $source"
+done
+
 test ! -e "$kernel/infiltratorfs_directory_tree.inc" || fail 'directory tree regressed to textual include'
 ! grep -Fq 'infiltratorfs_directory_tree.inc' "$rw" || fail 'RW compositor textually includes directory tree'
 test ! -e "$kernel/infiltratorfs_pagecache.inc" || fail 'page-cache regressed to textual include'
