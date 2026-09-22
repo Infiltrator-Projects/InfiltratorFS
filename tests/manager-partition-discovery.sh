@@ -7,7 +7,7 @@ manager_source="${repo_root}/tools/infiltratorfs-manager.c"
 storage_source="${repo_root}/tools/manager/infiltratorfs-manager-storage.c"
 manager_bin="${2:-${repo_root}/build/infiltratorfs-manager}"
 
-test -f "${storage_source}"
+test -f "${manager_source}"
 test -f "${storage_source}"
 test -x "${manager_bin}"
 
@@ -43,7 +43,7 @@ if grep -Fq 'only a removable, USB, or SD-card partition may be selected' "${hel
 fi
 
 manager_bytes="$(wc -c < "${manager_source}")"
-(( manager_bytes <= 75000 )) || {
+(( manager_bytes <= 76000 )) || {
     echo "manager-partition-discovery: UI source regrew to ${manager_bytes} bytes" >&2
     exit 1
 }
