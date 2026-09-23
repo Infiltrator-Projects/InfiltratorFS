@@ -1449,9 +1449,23 @@ static int infilfs_posix_rewrite_inode(struct inode *inode,
 
 finish:
     kfree(object);
-    ret = infilfs_ns_finish(pending, ret);
-    if (!ret)
+    /*
+     * Keep write_lock until the VFS timestamp view matches the completed
+     * metadata transaction.  Delayed data writeback serializes on this same
+     * lock and copies inode mtime/ctime into its replacement file object.  The
+     * old ordering released the lock first and therefore required setattr to
+     * synchronously drain every dirty regular file before an explicit mtime
+     * update; rsync -a consequently became a per-file synchronous pipeline.
+     */
+    ret = infilfs_ns_finish_locked(pending, ret);
+    if (!ret) {
         ii->object_block = new_block;
+        if (attr->ia_valid & ATTR_MTIME)
+            inode_set_mtime_to_ts(inode, attr->ia_mtime);
+        if (attr->ia_valid & ATTR_CTIME)
+            inode_set_ctime_to_ts(inode, attr->ia_ctime);
+    }
+    up_write(&INFILFS_SB(inode->i_sb)->write_lock);
     return ret;
 }
 
@@ -1890,17 +1904,13 @@ static int infilfs_posix_setattr(struct user_namespace *idmap,
     metadata = *attr;
 
     /*
-     * The native data writer timestamps its persisted object at writeback.
-     * Drain earlier buffered writes before an explicit timestamp update so
-     * delayed writeback cannot overwrite touch/cp -p metadata after remount.
-     * ATTR_SIZE already drains the mapping below before changing the object.
+     * Explicit timestamps no longer need to drain dirty data first.
+     * infilfs_posix_rewrite_inode() publishes mtime/ctime into the VFS inode
+     * before releasing the same topology lock used by delayed writeback, so a
+     * later writeback observes the explicit values instead of overwriting them.
+     * ATTR_SIZE still drains below because changing file size has separate data
+     * ordering requirements.
      */
-    if (S_ISREG(inode->i_mode) && (attr->ia_valid & ATTR_MTIME) &&
-        !(attr->ia_valid & ATTR_SIZE)) {
-        ret = filemap_write_and_wait(inode->i_mapping);
-        if (ret)
-            return ret;
-    }
 
     /*
      * Size changes use the extent-aware native transaction.  Metadata fields
