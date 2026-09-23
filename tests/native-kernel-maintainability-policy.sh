@@ -144,6 +144,16 @@ grep -Fq 'iocb->ki_flags & IOCB_DIRECT' <<<"$direct_read" || fail 'direct reads 
 grep -Fq 'generic_file_read_iter(iocb, to)' <<<"$direct_read" || fail 'ordinary reads no longer use page cache'
 grep -Fq 'inode_get_mtime(inode)' "$data" || fail 'native writeback no longer persists VFS mtime'
 grep -Fq 'inode_get_ctime(inode)' "$data" || fail 'native writeback no longer persists VFS ctime'
+rewrite_body="$(sed -n '/static int infilfs_posix_rewrite_inode(/,/^}/p' "$rw")"
+grep -Fq 'infilfs_ns_finish_locked(pending, ret)' <<<"$rewrite_body" || \
+    fail 'POSIX metadata rewrite releases topology lock before VFS timestamp publication'
+grep -Fq 'inode_set_mtime_to_ts(inode, attr->ia_mtime)' <<<"$rewrite_body" || \
+    fail 'POSIX metadata rewrite does not publish mtime under topology lock'
+grep -Fq 'inode_set_ctime_to_ts(inode, attr->ia_ctime)' <<<"$rewrite_body" || \
+    fail 'POSIX metadata rewrite does not publish ctime under topology lock'
+setattr_body="$(sed -n '/static int infilfs_posix_setattr(/,/^}/p' "$rw")"
+test "$(grep -Fc 'filemap_write_and_wait(inode->i_mapping)' <<<"$setattr_body")" -eq 1 || \
+    fail 'setattr reintroduced a per-mtime buffered-write drain'
 getattr_body="$(sed -n '/static int infilfs_getattr(/,/^}/p' "$rw")"
 ! grep -Fq 'write_lock' <<<"$getattr_body" || fail 'getattr regressed onto filesystem-wide topology lock'
 ! grep -Fq 'infilfs_read_object' <<<"$getattr_body" || fail 'getattr regressed to synchronous object reread'
