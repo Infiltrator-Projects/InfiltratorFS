@@ -2,6 +2,12 @@
 
 This file records user-visible, compatibility, architecture and validation changes for InfiltratorFS.
 
+## 0.18.76 — 2026-09-23
+
+- Advance development after publishing 0.18.75; on-disk Format remains 0.18.
+- Correct APT publication verification so a source release does not fail merely because the central pull-based repository publisher has not run yet. An accepted immediate repository dispatch is still verified synchronously; otherwise publication is left to the authoritative scheduled central workflow.
+- Preserve the exact Infiltratr Common 1.19.24 pin at `748e089ae175329471d4cf375522c44081371bd5`.
+
 ## 0.18.75 — 2026-09-22
 
 - Fix the residual sustained-write publication stall isolated by the 0.18.74 live phase telemetry: transaction publication was spending almost all tail latency inside allocation-map publication while dependency draining had fallen to only tens of milliseconds.

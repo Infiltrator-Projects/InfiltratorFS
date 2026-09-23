@@ -1,6 +1,7 @@
-0.18.75
+0.18.76
 qualification=exact-source-release-gate-hosted
 publication-gate=event-driven-v10
+apt-publication-verification=asynchronous-central-v1
 root-volume-package-dependency-fix=qualified
 installer-bundle-path=canonical-v1
 allocation-regression-backout=qualified-v1
