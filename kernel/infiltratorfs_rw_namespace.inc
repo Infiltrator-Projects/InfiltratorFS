@@ -85,14 +85,21 @@ static int infilfs_ns_begin(struct super_block *sb,
  */
 #define INFILFS_NATIVE_METADATA_PUBLISH_CHARGE (64ULL * 1024ULL)
 
-static int infilfs_ns_finish(struct infilfs_native_pending *pending, int ret)
+/*
+ * Complete one namespace savepoint while retaining write_lock.  Most callers
+ * use infilfs_ns_finish(), which immediately drops the topology lock.  Metadata
+ * paths that must update their VFS inode view atomically with the transaction
+ * may use this locked form and release write_lock only after that view is
+ * coherent.  In particular, delayed data writeback reads inode mtime/ctime
+ * while holding the same lock.
+ */
+static int infilfs_ns_finish_locked(struct infilfs_native_pending *pending,
+                                    int ret)
 {
-    struct infilfs_sb_info *sbi = INFILFS_SB(pending->sb);
     int rollback_ret = 0;
 
     if (ret) {
         rollback_ret = infilfs_native_operation_rollback(pending);
-        up_write(&sbi->write_lock);
         return rollback_ret ? rollback_ret : ret;
     }
 
@@ -107,6 +114,14 @@ static int infilfs_ns_finish(struct infilfs_native_pending *pending, int ret)
         infilfs_mod_delayed_cpu_work(&pending->idle_work,
                          INFILFS_NATIVE_IDLE_DELAY);
     }
+    return ret;
+}
+
+static int infilfs_ns_finish(struct infilfs_native_pending *pending, int ret)
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(pending->sb);
+
+    ret = infilfs_ns_finish_locked(pending, ret);
     up_write(&sbi->write_lock);
     return ret;
 }
