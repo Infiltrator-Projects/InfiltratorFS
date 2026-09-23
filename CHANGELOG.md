@@ -3,6 +3,7 @@
 This file records user-visible, compatibility, architecture and validation changes for InfiltratorFS.
 
 ## 0.18.76 — 2026-09-23
+- Remove the per-file buffered-write drain from explicit regular-file mtime updates without weakening timestamp correctness: POSIX metadata rewrite now keeps the topology writer lock through VFS mtime/ctime publication, so delayed writeback cannot overwrite a newer `touch`, `cp -p` or `rsync -a` timestamp. This restores asynchronous page-cache behaviour for metadata-preserving copy workloads instead of forcing every file through `filemap_write_and_wait()`.
 
 - Advance development after publishing 0.18.75; on-disk Format remains 0.18.
 - Correct APT publication verification so a source release does not fail merely because the central pull-based repository publisher has not run yet. An accepted immediate repository dispatch is still verified synchronously; otherwise publication is left to the authoritative scheduled central workflow.
