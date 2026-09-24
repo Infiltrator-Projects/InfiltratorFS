@@ -289,7 +289,7 @@ static void manager_apply_theme(Manager *manager)
         ".action-description { color: %s; font-size: 12px; }\n"
         ".danger-zone { padding: 16px; border: 1px solid %s; border-radius: @CONTROL_RADIUS@px; background: %s; }\n"
         ".empty-state { min-width: 460px; padding: 36px 46px; border-radius: @CARD_RADIUS@px; }\n"
-        ".empty-title { color: %s; font-family: '@BRAND_FONT@'; font-size: 30px; font-weight: @BRAND_WEIGHT@; }\n"
+        ".empty-title { color: %s; font-family: '@BRAND_FONT@'; font-size: 28px; font-weight: @BRAND_WEIGHT@; }\n"
         ".empty-copy { color: %s; font-size: 13px; }\n"
         ".activity-frame { border: 1px solid %s; border-radius: @CONTROL_RADIUS@px; background: %s; }\n"
         ".activity, .activity text { background: %s; color: %s; font-family: '@UI_FONT@'; font-weight: @UI_REGULAR@; }\n"

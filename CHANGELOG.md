@@ -2,6 +2,11 @@
 
 This file records user-visible, compatibility, architecture and validation changes for InfiltratorFS.
 
+## 0.18.81 — 2026-09-24
+- Align the Manager empty-state heading with the same 28 px publisher title scale as populated Manager pages.
+- Keep filesystem format, kernel driver, storage, encryption, namespace and maintenance behaviour unchanged.
+- On-disk Format remains 0.18.
+
 ## 0.18.80 — 2026-09-24
 - Align the Manager hero heading with the 28 px publisher-wide desktop heading scale.
 - Keep filesystem format, kernel driver, storage, encryption, namespace and maintenance behaviour unchanged.
