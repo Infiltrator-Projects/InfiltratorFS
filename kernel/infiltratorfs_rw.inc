@@ -219,6 +219,7 @@ static int infilfs_native_recover_unlinked_files(struct super_block *sb)
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
     struct infilfs_index_entry_disk *entries = NULL;
+    struct infilfs_index_entry_disk *candidates = NULL;
     u8 *object = NULL;
     u32 count = 0, orphans = 0, files = 0;
     u32 i;
@@ -234,10 +235,8 @@ static int infilfs_native_recover_unlinked_files(struct super_block *sb)
         recovery_generation = le64_to_cpu(sbi->disk.generation);
 
     /*
-     * Copy the object-index catalogue under one short topology snapshot, then
-     * release the lock before inspecting file objects.  The previous worker
-     * held write_lock for the entire million-file discovery pass; that made an
-     * asynchronous scan behave like a global write freeze after boot.
+     * Snapshot topology once, then let the compiled discovery worker scan
+     * disjoint catalogue ranges under the filesystem-wide N-1 CPU budget.
      */
     down_read(&sbi->write_lock);
     ret = infilfs_ns_index_snapshot(sb, &entries, &count);
@@ -245,91 +244,16 @@ static int infilfs_native_recover_unlinked_files(struct super_block *sb)
     if (ret)
         goto out;
 
+    ret = infilfs_orphan_discover_parallel(
+        sb, entries, count, recovery_generation,
+        &candidates, &orphans, &files);
+    if (ret)
+        goto out;
+
     object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
     if (!object) {
         ret = -ENOMEM;
         goto out;
-    }
-
-    /*
-     * Writers may advance/reclaim metadata after the catalogue snapshot, so
-     * re-resolve every file by object identity.  Hold the topology read lock
-     * only for a bounded batch: this keeps each read coherent while giving
-     * namespace/data publication frequent opportunities to acquire the writer
-     * side of the rwsem.
-     */
-    for (i = 0; i < count;) {
-        u32 end = min_t(u32, count, i + 256u);
-        u32 j;
-
-        down_read(&sbi->write_lock);
-        for (j = i; j < end; ++j) {
-            struct infilfs_object_header_disk *header;
-            struct infilfs_file_payload_disk *file;
-            u64 live_block;
-            u16 live_type;
-
-            if (le16_to_cpu(entries[j].object_type) != INFILFS_OBJECT_FILE)
-                continue;
-
-            /*
-             * The catalogue snapshot already names the block that held this
-             * object. Most entries have not moved, so read it directly while
-             * the bounded topology read lock keeps the current graph stable.
-             * Only a moved/reclaimed snapshot block pays for a live index
-             * lookup. This avoids a million index-tree searches on large
-             * mounted volumes while retaining correctness under concurrent
-             * CoW publication.
-             */
-            live_block = le64_to_cpu(entries[j].object_block);
-            live_type = INFILFS_OBJECT_FILE;
-            ret = infilfs_read_object(sb, live_block, INFILFS_OBJECT_FILE,
-                                      entries[j].object_id, object);
-            if (ret) {
-                ret = infilfs_index_lookup(sb, entries[j].object_id,
-                                           &live_block, &live_type);
-                if (ret == -ENOENT) {
-                    ret = 0;
-                    continue;
-                }
-                if (ret)
-                    goto unlock_discovery;
-                if (live_type != INFILFS_OBJECT_FILE) {
-                    ret = -EFSCORRUPTED;
-                    goto unlock_discovery;
-                }
-                ret = infilfs_read_object(
-                    sb, live_block, INFILFS_OBJECT_FILE,
-                    entries[j].object_id, object);
-                if (ret)
-                    goto unlock_discovery;
-            }
-            files++;
-
-            header = (struct infilfs_object_header_disk *)object;
-            if (le32_to_cpu(header->payload_size) < sizeof(*file)) {
-                ret = -EFSCORRUPTED;
-                goto unlock_discovery;
-            }
-            file = (struct infilfs_file_payload_disk *)(header + 1);
-
-            /*
-             * Only recover zero-link objects that existed at the mount
-             * generation.  A live unlink after mount gets a newer CoW
-             * generation and must be left to its normal final-iput lifetime.
-             */
-            if (le64_to_cpu(file->attributes.link_count) == 0 &&
-                le64_to_cpu(header->generation) <= recovery_generation) {
-                entries[orphans] = entries[j];
-                entries[orphans].object_block = cpu_to_le64(live_block);
-                entries[orphans].object_type =
-                    cpu_to_le16(INFILFS_OBJECT_FILE);
-                orphans++;
-            }
-        }
-        up_read(&sbi->write_lock);
-        i = end;
-        cond_resched();
     }
 
     for (i = 0; i < orphans; ++i) {
@@ -341,12 +265,11 @@ static int infilfs_native_recover_unlinked_files(struct super_block *sb)
         bool recover = false;
 
         /*
-         * Revalidate immediately before reclaim.  Normal filesystem activity
-         * is allowed throughout the background scan, so a candidate may have
-         * moved or disappeared since discovery.
+         * Revalidate immediately before reclaim. Live mutations were allowed
+         * during discovery, so a candidate may have moved or disappeared.
          */
         down_read(&sbi->write_lock);
-        ret = infilfs_index_lookup(sb, entries[i].object_id, &live_block,
+        ret = infilfs_index_lookup(sb, candidates[i].object_id, &live_block,
                                    &live_type);
         if (ret == -ENOENT) {
             ret = 0;
@@ -357,7 +280,7 @@ static int infilfs_native_recover_unlinked_files(struct super_block *sb)
             ret = -EFSCORRUPTED;
         if (!ret)
             ret = infilfs_read_object(sb, live_block, INFILFS_OBJECT_FILE,
-                                      entries[i].object_id, object);
+                                      candidates[i].object_id, object);
         if (!ret) {
             header = (struct infilfs_object_header_disk *)object;
             if (le32_to_cpu(header->payload_size) < sizeof(*file)) {
@@ -376,12 +299,12 @@ static int infilfs_native_recover_unlinked_files(struct super_block *sb)
             continue;
 
         inode = infilfs_get_inode(sb, live_block, INFILFS_OBJECT_FILE,
-                                  entries[i].object_id);
+                                  candidates[i].object_id);
         if (IS_ERR(inode)) {
             ret = PTR_ERR(inode);
             goto out;
         }
-        ret = infilfs_linux_meta_remove_object(sb, entries[i].object_id);
+        ret = infilfs_linux_meta_remove_object(sb, candidates[i].object_id);
         if (ret) {
             iput(inode);
             goto out;
@@ -389,25 +312,23 @@ static int infilfs_native_recover_unlinked_files(struct super_block *sb)
         clear_nlink(inode);
         ret = infilfs_ns_evict_unlinked_file(inode);
         if (!ret)
-            set_nlink(inode, 1); /* prevent a second reclaim during iput */
+            set_nlink(inode, 1);
         iput(inode);
         if (ret)
             goto out;
     }
 
     ret = 0;
-    goto out;
-
-unlock_discovery:
-    up_read(&sbi->write_lock);
 out:
     pr_info("InfiltratorFS: orphan scan generation<=%llu files=%u candidates=%u elapsed_ms=%llu result=%d\n",
             (unsigned long long)recovery_generation, files, orphans,
             (unsigned long long)div_u64(ktime_get_ns() - started, 1000000), ret);
     kfree(object);
+    kvfree(candidates);
     kvfree(entries);
     return ret;
 }
+
 
 static u64 infilfs_native_extent_allocated_blocks(
     const struct infilfs_extent_disk *extents, u32 count)
