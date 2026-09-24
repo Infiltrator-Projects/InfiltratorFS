@@ -414,7 +414,7 @@ static int build_live_ownership_bitmap_progress(
             scrub_metadata_progress_update(progress, (uint64_t)i + 1u);
             continue;
         }
-        if (object_type != INFS_OBJECT_FILE) {
+        if (!file_data_object_type(object_type)) {
             scrub_metadata_progress_update(progress, (uint64_t)i + 1u);
             continue;
         }
@@ -661,7 +661,8 @@ static int validate_integrity_metadata_progress(
             }
             struct infs_lookup owner;
             status = index_find(vol, cp->owner_object_id, &owner);
-            if (status != INFS_STATUS_OK || owner.type != INFS_OBJECT_FILE) {
+            if (status != INFS_STATUS_OK ||
+                !file_data_object_type(owner.type)) {
                 status = INFS_STATUS_CORRUPT;
                 goto out;
             }
@@ -686,7 +687,7 @@ static int validate_integrity_metadata_progress(
                     goto out;
                 }
             }
-        } else if (type == INFS_OBJECT_FILE) {
+        } else if (file_data_object_type(type)) {
             uint8_t object[INFS_BLOCK_SIZE];
             status = read_object(
                 vol, infs_le64_to_cpu(entries[i].object_block), object);
