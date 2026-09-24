@@ -64,20 +64,21 @@ The CPU policy is explicit and applies to InfiltratorFS as a filesystem, not
 only to IAC1 compression:
 
 ```text
-filesystem_cpu_budget = max(1, online_logical_cpus - 1)
+filesystem_cpu_budget = max(1, online_physical_cores - 1)
 ```
 
-For systems with more than one online logical CPU, exactly one logical CPU worth
-of concurrency is reserved for the rest of the operating system and the
-filesystem may use the remaining N-1 logical CPUs. On a one-CPU system the
-filesystem may use that one CPU because there is no second CPU to reserve.
+For systems with more than one online physical core, exactly one complete core
+worth of CPU-heavy filesystem concurrency is reserved for the rest of the
+operating system. SMT siblings remain scheduler capacity and do not increase the
+filesystem worker ceiling. On a one-core system the filesystem may use that one
+core because there is no second core to reserve.
 
 ```text
 1 CPU   -> use up to 1 for InfiltratorFS
 2 CPUs  -> use up to 1 for InfiltratorFS
-3 CPUs  -> use up to 2 for InfiltratorFS
-14 CPUs -> use up to 13 for InfiltratorFS
-255 CPUs -> use up to 254 for InfiltratorFS
+3 physical cores -> use up to 2 for InfiltratorFS
+12 physical cores / 14 logical CPUs -> use up to 11 for InfiltratorFS
+255 physical cores -> use up to 254 for InfiltratorFS
 ```
 
 This is not an instruction to pin a particular processor or to manufacture busy
