@@ -230,6 +230,17 @@ int main(int argc, char **argv)
         rc = command_snapshot_cat(&vol, argv[3], argv[4]);
     } else if (strcmp(cmd, "snapshot-readlink") == 0 && argc == 5) {
         rc = command_snapshot_readlink(&vol, argv[3], argv[4]);
+    } else if (strcmp(cmd, "snapshot-restore") == 0 &&
+               (argc == 6 || argc == 7)) {
+        int replace = argc == 7 && strcmp(argv[6], "--replace") == 0;
+        if (argc == 7 && !replace) {
+            rc = 2;
+        } else {
+            status = infs_snapshot_restore_path(
+                &vol, argv[3], argv[4], argv[5], replace);
+            if (status != INFS_STATUS_OK)
+                rc = die_status("snapshot-restore", status);
+        }
     } else {
         usage(argv[0]);
         rc = 2;
