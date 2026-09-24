@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "infilfs/storage_mirror.h"
+#include "storage_lock.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -10,7 +11,24 @@ struct mirror_context {
     size_t count;
     uint64_t size_bytes;
     int is_device;
+    struct infs_storage_lock state_lock;
 };
+
+static int mirror_member_healthy(struct mirror_context *ctx, size_t member)
+{
+    int healthy;
+    infs_storage_lock_acquire(&ctx->state_lock);
+    healthy = ctx->healthy[member] != 0;
+    infs_storage_lock_release(&ctx->state_lock);
+    return healthy;
+}
+
+static void mirror_quarantine_member(struct mirror_context *ctx, size_t member)
+{
+    infs_storage_lock_acquire(&ctx->state_lock);
+    ctx->healthy[member] = 0;
+    infs_storage_lock_release(&ctx->state_lock);
+}
 
 static infs_status mirror_read(void *opaque, uint64_t offset,
                                void *buffer, size_t size)
@@ -28,7 +46,7 @@ static infs_status mirror_read(void *opaque, uint64_t offset,
     }
 
     for (size_t i = 0; i < ctx->count; ++i) {
-        if (!ctx->healthy[i])
+        if (!mirror_member_healthy(ctx, i))
             continue;
 
         if (!have_copy) {
@@ -83,7 +101,7 @@ static infs_status mirror_write(void *opaque, uint64_t offset,
      * until the mirror is explicitly reconstructed or repaired.
      */
     for (size_t i = 0; i < ctx->count; ++i) {
-        if (!ctx->healthy[i]) {
+        if (!mirror_member_healthy(ctx, i)) {
             degraded = 1;
             continue;
         }
@@ -91,7 +109,7 @@ static infs_status mirror_write(void *opaque, uint64_t offset,
         infs_status status = infs_storage_write(
             &ctx->members[i], offset, buffer, size);
         if (status != INFS_STATUS_OK) {
-            ctx->healthy[i] = 0;
+            mirror_quarantine_member(ctx, i);
             degraded = 1;
             if (result == INFS_STATUS_OK)
                 result = status;
@@ -111,14 +129,14 @@ static infs_status mirror_flush(void *opaque)
     int degraded = 0;
 
     for (size_t i = 0; i < ctx->count; ++i) {
-        if (!ctx->healthy[i]) {
+        if (!mirror_member_healthy(ctx, i)) {
             degraded = 1;
             continue;
         }
         attempted = 1;
         infs_status status = infs_storage_flush(&ctx->members[i]);
         if (status != INFS_STATUS_OK) {
-            ctx->healthy[i] = 0;
+            mirror_quarantine_member(ctx, i);
             degraded = 1;
             if (result == INFS_STATUS_OK)
                 result = status;
@@ -174,6 +192,7 @@ static void mirror_close(void *opaque)
         return;
     for (size_t i = 0; i < ctx->count; ++i)
         infs_storage_close(&ctx->members[i]);
+    infs_storage_lock_destroy(&ctx->state_lock);
     free(ctx->healthy);
     free(ctx->members);
     free(ctx);
@@ -200,11 +219,16 @@ infs_status infs_storage_mirror_create(struct infs_storage *members,
     struct mirror_context *ctx = calloc(1, sizeof(*ctx));
     if (!ctx)
         return INFS_STATUS_NO_MEMORY;
+    if (!infs_storage_lock_init(&ctx->state_lock)) {
+        free(ctx);
+        return INFS_STATUS_ERROR;
+    }
     ctx->members = calloc(member_count, sizeof(*ctx->members));
     ctx->healthy = calloc(member_count, sizeof(*ctx->healthy));
     if (!ctx->members || !ctx->healthy) {
         free(ctx->healthy);
         free(ctx->members);
+        infs_storage_lock_destroy(&ctx->state_lock);
         free(ctx);
         return INFS_STATUS_NO_MEMORY;
     }
