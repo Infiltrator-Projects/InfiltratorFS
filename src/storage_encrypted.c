@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "infilfs/storage_encrypted.h"
 #include "infilfs/endian.h"
+#include "storage_lock.h"
 
 #include <limits.h>
 #include <stdlib.h>
@@ -20,6 +21,7 @@
 #define ENC_RECORD_BYTES (ENC_LOGICAL_BLOCK + ENC_NONCE_BYTES + ENC_TAG_BYTES)
 #define ENC_VERSION UINT32_C(1)
 #define ENC_MAGIC "INFSEV01"
+#define ENC_LOCK_STRIPES 64u
 
 #define H_OFF_MAGIC 0u
 #define H_OFF_VERSION 8u
@@ -41,6 +43,7 @@ struct encrypted_context {
     uint64_t logical_size;
     uint8_t salt[ENC_SALT_BYTES];
     uint8_t volume_key[ENC_KEY_BYTES];
+    struct infs_storage_lock block_locks[ENC_LOCK_STRIPES];
 };
 
 static void secure_zero(void *memory, size_t size)
@@ -268,7 +271,12 @@ static infs_status encrypted_read(void *opaque, uint64_t offset,
         size_t chunk = 4096u - within;
         if (chunk > size - done)
             chunk = size - done;
+
+        struct infs_storage_lock *lock =
+            &ctx->block_locks[logical % ENC_LOCK_STRIPES];
+        infs_storage_lock_acquire(lock);
         infs_status status = encrypted_read_block(ctx, logical, block);
+        infs_storage_lock_release(lock);
         if (status != INFS_STATUS_OK) {
             secure_zero(block, sizeof(block));
             return status;
@@ -296,17 +304,26 @@ static infs_status encrypted_write(void *opaque, uint64_t offset,
         if (chunk > size - done)
             chunk = size - done;
 
-        if (within != 0 || chunk != 4096u) {
-            infs_status status = encrypted_read_block(ctx, logical, block);
-            if (status != INFS_STATUS_OK) {
-                secure_zero(block, sizeof(block));
-                return status;
-            }
-        } else {
+        /*
+         * Partial writes are a read-modify-write transaction over one
+         * authenticated logical block.  Serialize only the matching stripe so
+         * two writers cannot both decrypt the same old plaintext and then
+         * overwrite one another's disjoint updates. Reads take the same stripe
+         * to avoid observing a physical AEAD record while it is being replaced.
+         */
+        struct infs_storage_lock *lock =
+            &ctx->block_locks[logical % ENC_LOCK_STRIPES];
+        infs_storage_lock_acquire(lock);
+        infs_status status = INFS_STATUS_OK;
+        if (within != 0 || chunk != 4096u)
+            status = encrypted_read_block(ctx, logical, block);
+        else
             memset(block, 0, sizeof(block));
+        if (status == INFS_STATUS_OK) {
+            memcpy(block + within, (const uint8_t *)buffer + done, chunk);
+            status = encrypted_write_block(ctx, logical, block);
         }
-        memcpy(block + within, (const uint8_t *)buffer + done, chunk);
-        infs_status status = encrypted_write_block(ctx, logical, block);
+        infs_storage_lock_release(lock);
         if (status != INFS_STATUS_OK) {
             secure_zero(block, sizeof(block));
             return status;
@@ -319,7 +336,19 @@ static infs_status encrypted_write(void *opaque, uint64_t offset,
 
 static infs_status encrypted_flush(void *opaque)
 {
-    return infs_storage_flush(&((struct encrypted_context *)opaque)->backing);
+    struct encrypted_context *ctx = opaque;
+
+    /*
+     * A durability barrier must not pass an in-flight encrypted block update.
+     * Acquire every stripe in a fixed order, flush the backing store, then
+     * release in reverse order.
+     */
+    for (size_t i = 0; i < ENC_LOCK_STRIPES; ++i)
+        infs_storage_lock_acquire(&ctx->block_locks[i]);
+    infs_status status = infs_storage_flush(&ctx->backing);
+    for (size_t i = ENC_LOCK_STRIPES; i > 0; --i)
+        infs_storage_lock_release(&ctx->block_locks[i - 1u]);
+    return status;
 }
 
 static infs_status encrypted_size(void *opaque, uint64_t *size_bytes,
@@ -351,6 +380,8 @@ static void encrypted_close(void *opaque)
     secure_zero(ctx->volume_key, sizeof(ctx->volume_key));
     secure_zero(ctx->salt, sizeof(ctx->salt));
     infs_storage_close(&ctx->backing);
+    for (size_t i = 0; i < ENC_LOCK_STRIPES; ++i)
+        infs_storage_lock_destroy(&ctx->block_locks[i]);
     free(ctx);
 }
 
@@ -373,6 +404,18 @@ static infs_status encrypted_take_backing(
     struct encrypted_context *ctx = calloc(1, sizeof(*ctx));
     if (!ctx)
         return INFS_STATUS_NO_MEMORY;
+
+    size_t initialized = 0;
+    for (; initialized < ENC_LOCK_STRIPES; ++initialized) {
+        if (!infs_storage_lock_init(&ctx->block_locks[initialized])) {
+            while (initialized > 0)
+                infs_storage_lock_destroy(
+                    &ctx->block_locks[--initialized]);
+            free(ctx);
+            return INFS_STATUS_ERROR;
+        }
+    }
+
     ctx->backing = *backing;
     backing->ops = NULL;
     backing->context = NULL;
