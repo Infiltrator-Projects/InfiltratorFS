@@ -2919,9 +2919,7 @@ static void infilfs_orphan_recovery_worker(struct work_struct *work)
     if (!sb)
         return;
 
-    infilfs_cpu_work_enter();
     ret = infilfs_native_recover_unlinked_files(sb);
-    infilfs_cpu_work_exit();
     if (ret) {
         WRITE_ONCE(sbi->write_poisoned, true);
         pr_err("InfiltratorFS: asynchronous crash-orphan recovery failed: %d; writes disabled\n",
