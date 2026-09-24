@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "infilfs/check.h"
 #include "infilfs/endian.h"
 #include "infilfs/format.h"
 #include "infilfs/format_volume.h"
@@ -84,6 +85,9 @@ int main(void)
     ok(ext_out.data_size==sizeof(ext_bytes)&&!memcmp(ext_out.data,ext_bytes,sizeof(ext_bytes)),"typed extension data preserved");
     infs_free_typed_extension(&ext_out);
 
+    struct infs_check_report check_report;
+    ok(infs_check(&v,&check_report)==INFS_STATUS_OK,
+       "fast check with streams");
     struct infs_scrub_report report;
     ok(infs_scrub(&v,&report)==INFS_STATUS_OK&&report.metadata_errors==0&&report.checksum_errors==0,"scrub with streams");
     ok(infs_volume_sync(&v)==INFS_STATUS_OK,"sync");
