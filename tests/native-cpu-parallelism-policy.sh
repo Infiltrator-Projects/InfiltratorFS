@@ -9,6 +9,7 @@ internal="$root/kernel/infiltratorfs_internal.h"
 data="$root/kernel/infiltratorfs_rw_data.inc"
 read_cache="$root/kernel/infiltratorfs_read_cache.c"
 pagecache="$root/kernel/infiltratorfs_pagecache.c"
+orphan="$root/kernel/infiltratorfs_orphan_scan.c"
 makefile="$root/kernel/Makefile"
 ioctl="$root/kernel/infiltratorfs_ioctl.h"
 architecture="$root/docs/ARCHITECTURE.md"
@@ -20,7 +21,7 @@ fail() {
 }
 
 for file in "$core" "$cpu" "$internal" "$data" "$read_cache" "$pagecache" \
-            "$makefile" "$ioctl" "$architecture" "$roadmap"; do
+            "$orphan" "$makefile" "$ioctl" "$architecture" "$roadmap"; do
     test -f "$file" || fail "missing $file"
 done
 
@@ -101,8 +102,12 @@ grep -Fq 'infilfs_cpu_work_enter();' "$data" || \
     fail 'idle publication/write preparation lost N-1 execution gating'
 grep -Fq 'infilfs_mod_delayed_cpu_work(&sbi->orphan_recovery_work, 1);' "$core" || \
     fail 'orphan recovery bypasses native unbound CPU pool'
-grep -Fq 'infilfs_cpu_work_enter();' "$core" || \
-    fail 'orphan recovery lost N-1 execution gating'
+grep -Fq 'workers = min_t(unsigned int, infilfs_cpu_budget(), count);' "$orphan" || \
+    fail 'orphan discovery does not scale to the live N-1 CPU budget'
+grep -Fq 'infilfs_queue_cpu_work(&work[i].work)' "$orphan" || \
+    fail 'orphan discovery does not dispatch peer scan workers'
+grep -Fq 'infilfs_cpu_work_enter();' "$orphan" || \
+    fail 'orphan discovery workers lost N-1 execution gating'
 ! grep -Fq 'mod_delayed_work(system_long_wq, &pending->idle_work' "$data" || \
     fail 'idle publication regressed to system_long_wq'
 
