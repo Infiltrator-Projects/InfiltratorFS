@@ -120,22 +120,26 @@ static infs_status set_typed_extension_tx(
     if (!attributes)
         return INFS_STATUS_CORRUPT;
 
-    if (!extension) {
-        if (id_is_zero(attributes->extended_attributes_object_id))
-            return INFS_STATUS_OK;
-        memset(attributes->extended_attributes_object_id, 0, 16);
-        touch_ctime(vol, attributes);
-        status = write_object(vol, owner.block, owner_block);
+    uint8_t extension_id[16] = {0};
+    if (extension) {
+        status = typed_extension_create(vol, extension, extension_id);
         if (status != INFS_STATUS_OK)
             return status;
-        return finish_mutation(vol, (uint64_t)INFS_BLOCK_SIZE * 3u);
+    } else {
+        uint8_t existing_extension[16];
+        status = metadata_reference_typed_extension(
+            vol, attributes->extended_attributes_object_id,
+            existing_extension);
+        if (status == INFS_STATUS_NOT_FOUND)
+            return INFS_STATUS_OK;
+        if (status != INFS_STATUS_OK)
+            return status;
     }
 
-    uint8_t extension_id[16];
-    status = typed_extension_create(vol, extension, extension_id);
+    status = metadata_reference_replace_typed_extension(
+        vol, owner_block, attributes, extension_id);
     if (status != INFS_STATUS_OK)
         return status;
-    memcpy(attributes->extended_attributes_object_id, extension_id, 16);
     touch_ctime(vol, attributes);
     status = write_object(vol, owner.block, owner_block);
     if (status != INFS_STATUS_OK)
@@ -185,14 +189,14 @@ infs_status infs_get_typed_extension(
     if (id_is_zero(attributes->extended_attributes_object_id))
         return INFS_STATUS_NOT_FOUND;
 
-    status = typed_extension_validate_reference(
-        vol, attributes->extended_attributes_object_id);
+    uint8_t extension_id[16];
+    status = metadata_reference_typed_extension(
+        vol, attributes->extended_attributes_object_id, extension_id);
     if (status != INFS_STATUS_OK)
         return status;
 
     struct infs_lookup lookup;
-    status = index_find(vol, attributes->extended_attributes_object_id,
-                        &lookup);
+    status = index_find(vol, extension_id, &lookup);
     if (status != INFS_STATUS_OK || lookup.type != INFS_OBJECT_EXTENSION)
         return INFS_STATUS_CORRUPT;
     uint8_t object[INFS_BLOCK_SIZE];
