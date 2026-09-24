@@ -144,10 +144,43 @@ static void infilfs_native_submit_staged_range(struct super_block *sb,
 static bool infilfs_native_block_private(struct infilfs_native_pending *pending,
                                          u64 block)
 {
-    struct infilfs_sb_info *sbi = INFILFS_SB(pending->sb);
-    return sbi && block < infilfs_volume_blocks(sbi) && sbi->bitmap &&
-        !infilfs_rw_bitmap_get(sbi->bitmap, block) &&
-        infilfs_rw_bitmap_get(pending->tx.bitmap, block);
+    /*
+     * The deferred transaction deliberately borrows sbi->bitmap as tx.bitmap,
+     * so the old "not in sbi bitmap, but in tx bitmap" test could never be
+     * true.  Use the exact volatile allocation set maintained at operation
+     * commit instead. False positives would be unsafe; false negatives merely
+     * cause an extra CoW, so allocation-set construction fails conservatively.
+     */
+    return pending &&
+        infilfs_visit_contains(&pending->private_blocks, block);
+}
+
+static void infilfs_native_private_blocks_note_operation(
+    struct infilfs_native_pending *pending)
+{
+    size_t i;
+
+    for (i = pending->operation_allocated_count;
+         i < pending->tx.allocated_count; ++i) {
+        u64 start = pending->tx.allocated[i].start;
+        u64 count = pending->tx.allocated[i].count;
+        u64 b;
+
+        for (b = 0; b < count; ++b) {
+            u64 block = start + b;
+
+            if (infilfs_visit_contains(&pending->private_blocks, block))
+                continue;
+            if (infilfs_visit_claim(&pending->private_blocks, block)) {
+                /*
+                 * This set is only an acceleration authority.  Dropping it
+                 * preserves correctness by falling back to ordinary CoW.
+                 */
+                infilfs_visit_destroy(&pending->private_blocks);
+                return;
+            }
+        }
+    }
 }
 
 static int infilfs_native_undo_capture(struct infilfs_native_pending *pending,
@@ -320,6 +353,9 @@ static int infilfs_native_pending_begin_locked(
         return -EBUSY;
     if (pending->active)
         return 0;
+
+    /* A published transaction has no private blocks in the next generation. */
+    infilfs_visit_destroy(&pending->private_blocks);
     ret = infilfs_rw_tx_begin(pending->sb, &pending->tx);
     if (ret)
         return ret;
@@ -431,6 +467,12 @@ static void infilfs_native_operation_commit(
             pending->tx.allocated[i].count);
 
     /*
+     * Only successful operation allocations become reusable transaction-
+     * private blocks.  Failed operations roll back before reaching here.
+     */
+    infilfs_native_private_blocks_note_operation(pending);
+
+    /*
      * Account the physical allocation pressure produced by this successful
      * operation.  Partial CoW writes can allocate a full filesystem block (and
      * associated metadata) for only a handful of user bytes; measuring only
@@ -511,6 +553,7 @@ static int infilfs_native_pending_commit_locked(
         return ret;
     }
     memset(&pending->tx, 0, sizeof(pending->tx));
+    infilfs_visit_destroy(&pending->private_blocks);
     pending->active = false;
     pending->pending_bytes = 0;
     pending->pending_physical_bytes = 0;
@@ -586,6 +629,7 @@ static void infilfs_native_pending_destroy(struct super_block *sb)
     if (pending->active)
         infilfs_rw_tx_abort(&pending->tx);
     kvfree(pending->undo);
+    infilfs_visit_destroy(&pending->private_blocks);
     kvfree(pending->index_locators);
     kvfree(pending->directory_locators);
     kvfree(pending->directory_locator_names);
