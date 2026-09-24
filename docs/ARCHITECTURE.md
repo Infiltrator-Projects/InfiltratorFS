@@ -115,7 +115,9 @@ Named snapshots identify immutable earlier generations. Blocks referenced by any
 
 Snapshot semantics are a consequence of the common generation/CoW model rather than a separate storage mechanism.
 
-Current geometry-change design is conservative: resize may reject retained snapshots instead of attempting snapshot-aware geometry migration. Future snapshot rollback/restore should reuse the same retained-generation model rather than inventing an unrelated backup format.
+Whole-volume snapshot rollback now reuses that retained-generation model directly: the selected retained roots are republished as a fresh monotonically increasing live generation instead of copying the historical namespace into a new backup structure. Selected-object restore remains separate follow-on work.
+
+Current geometry-change design is conservative: resize may reject retained snapshots instead of attempting snapshot-aware geometry migration.
 
 ## 8. Integrity, scrub and forensics
 
