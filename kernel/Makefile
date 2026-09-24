@@ -78,7 +78,7 @@
 #   infiltratorfs_directory_tree.c owns scalable Format 0.18 directory trees.
 #   infiltratorfs_linux_meta_codec.c owns Linux sidecar blob/naming codec rules.
 #   infiltratorfs_shared_ownership.c owns shared-range discovery, exact fallback and incremental shared-extent reference accounting.
-   infiltratorfs_orphan_scan.c owns N-1 parallel crash-orphan discovery.
+#   infiltratorfs_orphan_scan.c owns N-1 parallel crash-orphan discovery.
 #   infiltratorfs_name_policy.c owns persistent cross-platform filename policy.
 #   infiltratorfs_rw.inc is the only remaining nested implementation compositor;
 #   leaf .inc files must not start including each other or creating hidden cycles.
