@@ -40,8 +40,10 @@ static int file_validate(uint8_t block[INFS_BLOCK_SIZE],
                          struct infs_extent_disk **extents_out)
 {
     struct infs_object_header_disk *hdr = (struct infs_object_header_disk *)block;
+    uint16_t object_type = infs_le16_to_cpu(hdr->object_type);
     if (!infs_validate_object_block(block) ||
-        infs_le16_to_cpu(hdr->object_type) != INFS_OBJECT_FILE ||
+        (object_type != INFS_OBJECT_FILE &&
+         object_type != INFS_OBJECT_NAMED_STREAM) ||
         infs_le32_to_cpu(hdr->payload_size) < sizeof(struct infs_file_payload_disk))
         return INFS_STATUS_CORRUPT;
     uint16_t version = infs_le16_to_cpu(hdr->object_version);
