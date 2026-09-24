@@ -500,7 +500,7 @@ int wmain(int argc, wchar_t **argv)
     wchar_t root[32768] = {0};
     if (!infs_windows_bridge_root(
             root, sizeof(root) / sizeof(root[0]))) {
-        infs_windows_bridge_stop();
+        (void)infs_windows_bridge_stop();
         infs_volume_close(&volume);
         return fail(L"Resolve ProjFS virtualization root");
     }
@@ -514,7 +514,11 @@ int wmain(int argc, wchar_t **argv)
     struct infs_windows_bridge_stats bridge_stats;
     memset(&bridge_stats, 0, sizeof(bridge_stats));
     int have_stats = infs_windows_bridge_get_stats(&bridge_stats);
-    infs_windows_bridge_stop();
+    infs_status stop_status = infs_windows_bridge_stop();
+    if (stop_status != INFS_STATUS_OK) {
+        infs_volume_close(&volume);
+        return fail(L"Publish pending ProjFS mutations during bridge stop");
+    }
     if (client_status != 0) {
         infs_volume_close(&volume);
         return client_status;
