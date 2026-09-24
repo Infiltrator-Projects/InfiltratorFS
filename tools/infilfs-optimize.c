@@ -179,7 +179,7 @@ static int walk_callback(const char *path, const struct stat *st,
 {
     (void)ftwbuf;
     if (typeflag == FTW_F && S_ISREG(st->st_mode))
-        (void)optimize_file(path);
+        return optimize_file(path);
     return 0;
 }
 
@@ -239,10 +239,13 @@ int main(int argc, char **argv)
     }
 
     if (S_ISREG(st.st_mode)) {
-        (void)optimize_file(path);
+        if (optimize_file(path) != 0)
+            return 1;
     } else if (S_ISDIR(st.st_mode) && g_options.recursive) {
-        if (nftw(path, walk_callback, 32, FTW_PHYS | FTW_MOUNT) != 0) {
-            perror("nftw");
+        int walk_status = nftw(path, walk_callback, 32, FTW_PHYS | FTW_MOUNT);
+        if (walk_status != 0) {
+            if (walk_status < 0)
+                perror("nftw");
             return 1;
         }
     } else {
