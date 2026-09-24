@@ -58,4 +58,22 @@ mkdir_body="$(sed -n '/static .*infilfs_posix_mkdir(/,/^}/p' "$rw")"
 ! grep -Fq 'infilfs_rw_create_data(' <<<"$create_body"
 ! grep -Fq 'infilfs_rw_mkdir_data(' <<<"$mkdir_body"
 
+# The shared native child creator is the authoritative create/mkdir mutation
+# path. It must join the deferred namespace transaction rather than draining it
+# first or publishing a standalone generation for each created object.
+create_native_body="$(sed -n '/static int infilfs_posix_create_native_named_child(/,/^}/p' "$rw")"
+grep -Fq 'infilfs_ns_begin(dir->i_sb, &pending)' <<<"$create_native_body"
+grep -Fq 'infilfs_ns_finish(pending, ret)' <<<"$create_native_body"
+! grep -Fq 'infilfs_native_pending_flush_sb' <<<"$create_native_body"
+! grep -Fq 'infilfs_rw_tx_commit' <<<"$create_native_body"
+
+# Dormant compatibility code must not retain a whole-device fsync implementation
+# that could be accidentally rewired into the VFS later.
+! grep -Fq 'sync_blockdev(file_inode(file)->i_sb->s_bdev)' \
+    "$root/kernel/infiltratorfs_rw_legacy.inc"
+
+# No write-only copy of the starting superblock belongs in pending state.
+! grep -Fq 'base_disk' "$root/kernel/infiltratorfs_internal.h"
+! grep -Fq 'pending->base_disk' "$data"
+
 printf 'Native deferred metadata publication policy: PASS\n'
