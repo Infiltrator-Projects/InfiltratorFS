@@ -445,6 +445,12 @@ struct infilfs_sb_info {
     size_t quota_rule_count;
     struct infilfs_project_root *project_roots;
     size_t project_root_count;
+    /*
+     * Volatile generation for cached effective project identities.  Protected
+     * by quota_lock.  Project-root changes and cross-parent renames advance it,
+     * invalidating every inode cache without a global inode walk.
+     */
+    u64 quota_project_epoch;
     rwlock_t bitmap_lock;
     u8 *bitmap;
     size_t bitmap_bytes;
@@ -525,6 +531,9 @@ struct infilfs_inode_info {
     u64 data_allocation_hint;
     u64 portable_flags;
     struct timespec64 birth_time;
+    u64 quota_project_epoch;
+    u32 quota_project_id;
+    bool quota_project_cached;
     u16 object_type;
     u8 object_id[16];
     char *symlink_target;
