@@ -16,6 +16,7 @@
 
 struct infs_win32_storage_context {
     HANDLE handle;
+    SRWLOCK io_lock;
     int locked;
     int is_device;
     int is_volume;
@@ -109,22 +110,37 @@ static infs_status win32_read_at(void *context, uint64_t offset,
     infs_status status = checked_absolute_offset(win, offset, size, &absolute);
     if (status != INFS_STATUS_OK)
         return status;
+
+    /*
+     * This backend uses the synchronous HANDLE file pointer. Serialize the
+     * seek plus complete transfer so concurrent read_at/write_at callers
+     * cannot redirect one another to the wrong byte range.
+     */
+    AcquireSRWLockExclusive(&win->io_lock);
     status = win32_seek(win->handle, absolute);
     if (status != INFS_STATUS_OK)
-        return status;
+        goto out;
+
     uint8_t *out = buffer;
     while (size) {
         DWORD chunk = size > UINT32_C(0x40000000) ?
             UINT32_C(0x40000000) : (DWORD)size;
         DWORD done = 0;
-        if (!ReadFile(win->handle, out, chunk, &done, NULL))
-            return status_from_win32(GetLastError());
-        if (done == 0)
-            return INFS_STATUS_IO_ERROR;
+        if (!ReadFile(win->handle, out, chunk, &done, NULL)) {
+            status = status_from_win32(GetLastError());
+            goto out;
+        }
+        if (done == 0) {
+            status = INFS_STATUS_IO_ERROR;
+            goto out;
+        }
         out += done;
         size -= done;
     }
-    return INFS_STATUS_OK;
+    status = INFS_STATUS_OK;
+out:
+    ReleaseSRWLockExclusive(&win->io_lock);
+    return status;
 }
 
 static infs_status win32_write_at(void *context, uint64_t offset,
@@ -135,30 +151,43 @@ static infs_status win32_write_at(void *context, uint64_t offset,
     infs_status status = checked_absolute_offset(win, offset, size, &absolute);
     if (status != INFS_STATUS_OK)
         return status;
+
+    AcquireSRWLockExclusive(&win->io_lock);
     status = win32_seek(win->handle, absolute);
     if (status != INFS_STATUS_OK)
-        return status;
+        goto out;
+
     const uint8_t *in = buffer;
     while (size) {
         DWORD chunk = size > UINT32_C(0x40000000) ?
             UINT32_C(0x40000000) : (DWORD)size;
         DWORD done = 0;
-        if (!WriteFile(win->handle, in, chunk, &done, NULL))
-            return status_from_win32(GetLastError());
-        if (done == 0)
-            return INFS_STATUS_IO_ERROR;
+        if (!WriteFile(win->handle, in, chunk, &done, NULL)) {
+            status = status_from_win32(GetLastError());
+            goto out;
+        }
+        if (done == 0) {
+            status = INFS_STATUS_IO_ERROR;
+            goto out;
+        }
         in += done;
         size -= done;
     }
-    return INFS_STATUS_OK;
+    status = INFS_STATUS_OK;
+out:
+    ReleaseSRWLockExclusive(&win->io_lock);
+    return status;
 }
 
 static infs_status win32_flush(void *context)
 {
     struct infs_win32_storage_context *win = context;
+    infs_status status = INFS_STATUS_OK;
+    AcquireSRWLockExclusive(&win->io_lock);
     if (!FlushFileBuffers(win->handle))
-        return status_from_win32(GetLastError());
-    return INFS_STATUS_OK;
+        status = status_from_win32(GetLastError());
+    ReleaseSRWLockExclusive(&win->io_lock);
+    return status;
 }
 
 static infs_status volume_size_from_partition(HANDLE handle,
@@ -400,6 +429,7 @@ static infs_status open_common(struct infs_storage *storage,
     if (!win)
         return INFS_STATUS_NO_MEMORY;
     win->handle = INVALID_HANDLE_VALUE;
+    InitializeSRWLock(&win->io_lock);
     win->is_device = path_is_device(path) || has_region;
     win->is_volume = path_is_volume(path) && !has_region;
     win->has_region = has_region;
