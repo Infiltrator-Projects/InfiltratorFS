@@ -2,6 +2,13 @@
 
 This file records user-visible, compatibility, architecture and validation changes for InfiltratorFS.
 
+## 0.18.87 — 2026-09-25
+- Correct the native N-1 CPU policy to reserve one complete physical core, not merely one logical SMT thread, for the operating system and interactive applications.
+- Derive the module-wide CPU-heavy worker budget from unique online physical-core sibling groups. A 12-core/14-thread hybrid system therefore uses 11 filesystem workers instead of 13.
+- Keep SMT siblings available to the Linux scheduler as general capacity without letting them inflate InfiltratorFS's CPU-heavy concurrency ceiling.
+- Align mounted CPU qualification, scale-stress defaults, architecture documentation and shipped synchronization contracts with the physical-core N-1 rule.
+- On-disk Format remains 0.18.
+
 ## 0.18.86 — 2026-09-24
 - Cache resolved effective project identity on ordinary inodes across per-folio quota reservations, with epoch invalidation on project-root changes and cross-parent namespace moves; multiply-linked/no-parent files remain on the exact alias-resolution path.
 - Repair deferred-transaction private-block detection. The working transaction and live allocation bitmap intentionally share one image, so the former bitmap-difference test could never identify unpublished blocks; an exact volatile allocation set now allows safe in-place reuse with the existing undo journal instead of repeated metadata CoW churn.
