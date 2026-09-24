@@ -2,6 +2,13 @@
 
 This file records user-visible, compatibility, architecture and validation changes for InfiltratorFS.
 
+## 0.18.84 — 2026-09-24
+- Remove the whole-volume object-index snapshot from ordinary quota admission. Single-parent files/directories now resolve project ownership through their bounded parent chain, while the expensive alias scan is retained only for multiply-linked/no-parent files that genuinely require it.
+- Skip project ownership resolution entirely for user/group-only quota workloads when no project quota rule is active.
+- Add a static scalability guard so normal quota admission cannot silently regress to whole-index project discovery.
+- Keep the filesystem-wide N-1 CPU budget unchanged: cheap admission remains synchronous by design, while genuinely independent heavy filesystem work continues to use the shared N-1 execution budget.
+- On-disk Format remains 0.18.
+
 ## 0.18.83 — 2026-09-24
 - Align Manager secondary device metadata with the suite-wide 11 px supporting-text scale.
 - Keep filesystem format, kernel driver, storage, encryption, namespace and maintenance behaviour unchanged.
