@@ -6,6 +6,7 @@
 
 struct mirror_context {
     struct infs_storage *members;
+    uint8_t *healthy;
     size_t count;
     uint64_t size_bytes;
     int is_device;
@@ -15,17 +16,57 @@ static infs_status mirror_read(void *opaque, uint64_t offset,
                                void *buffer, size_t size)
 {
     struct mirror_context *ctx = opaque;
-    infs_status first = INFS_STATUS_IO_ERROR;
+    infs_status first_error = INFS_STATUS_IO_ERROR;
+    int have_copy = 0;
+    uint8_t *verify = NULL;
+    const size_t verify_capacity = size < 65536u ? size : 65536u;
+
+    if (size) {
+        verify = malloc(verify_capacity);
+        if (!verify)
+            return INFS_STATUS_NO_MEMORY;
+    }
 
     for (size_t i = 0; i < ctx->count; ++i) {
-        infs_status status = infs_storage_read(
-            &ctx->members[i], offset, buffer, size);
-        if (status == INFS_STATUS_OK)
-            return INFS_STATUS_OK;
-        if (i == 0)
-            first = status;
+        if (!ctx->healthy[i])
+            continue;
+
+        if (!have_copy) {
+            infs_status status = infs_storage_read(
+                &ctx->members[i], offset, buffer, size);
+            if (status != INFS_STATUS_OK) {
+                ctx->healthy[i] = 0;
+                if (first_error == INFS_STATUS_IO_ERROR)
+                    first_error = status;
+                continue;
+            }
+            have_copy = 1;
+            continue;
+        }
+
+        size_t checked = 0;
+        while (checked < size) {
+            size_t chunk = size - checked;
+            if (chunk > verify_capacity)
+                chunk = verify_capacity;
+            infs_status status = infs_storage_read(
+                &ctx->members[i], offset + checked, verify, chunk);
+            if (status != INFS_STATUS_OK) {
+                ctx->healthy[i] = 0;
+                if (first_error == INFS_STATUS_IO_ERROR)
+                    first_error = status;
+                break;
+            }
+            if (memcmp((const uint8_t *)buffer + checked, verify, chunk) != 0) {
+                free(verify);
+                return INFS_STATUS_CORRUPT;
+            }
+            checked += chunk;
+        }
     }
-    return first;
+
+    free(verify);
+    return have_copy ? INFS_STATUS_OK : first_error;
 }
 
 static infs_status mirror_write(void *opaque, uint64_t offset,
@@ -40,10 +81,15 @@ static infs_status mirror_write(void *opaque, uint64_t offset,
      * the returned failure tells the filesystem that durability is degraded.
      */
     for (size_t i = 0; i < ctx->count; ++i) {
+        if (!ctx->healthy[i])
+            continue;
         infs_status status = infs_storage_write(
             &ctx->members[i], offset, buffer, size);
-        if (status != INFS_STATUS_OK && result == INFS_STATUS_OK)
-            result = status;
+        if (status != INFS_STATUS_OK) {
+            ctx->healthy[i] = 0;
+            if (result == INFS_STATUS_OK)
+                result = status;
+        }
     }
     return result;
 }
@@ -54,9 +100,14 @@ static infs_status mirror_flush(void *opaque)
     infs_status result = INFS_STATUS_OK;
 
     for (size_t i = 0; i < ctx->count; ++i) {
+        if (!ctx->healthy[i])
+            continue;
         infs_status status = infs_storage_flush(&ctx->members[i]);
-        if (status != INFS_STATUS_OK && result == INFS_STATUS_OK)
-            result = status;
+        if (status != INFS_STATUS_OK) {
+            ctx->healthy[i] = 0;
+            if (result == INFS_STATUS_OK)
+                result = status;
+        }
     }
     return result;
 }
@@ -105,6 +156,7 @@ static void mirror_close(void *opaque)
         return;
     for (size_t i = 0; i < ctx->count; ++i)
         infs_storage_close(&ctx->members[i]);
+    free(ctx->healthy);
     free(ctx->members);
     free(ctx);
 }
@@ -131,7 +183,10 @@ infs_status infs_storage_mirror_create(struct infs_storage *members,
     if (!ctx)
         return INFS_STATUS_NO_MEMORY;
     ctx->members = calloc(member_count, sizeof(*ctx->members));
-    if (!ctx->members) {
+    ctx->healthy = calloc(member_count, sizeof(*ctx->healthy));
+    if (!ctx->members || !ctx->healthy) {
+        free(ctx->healthy);
+        free(ctx->members);
         free(ctx);
         return INFS_STATUS_NO_MEMORY;
     }
@@ -142,6 +197,7 @@ infs_status infs_storage_mirror_create(struct infs_storage *members,
         uint64_t bytes = 0;
         int device = 0;
         if (!infs_storage_valid(&members[i])) {
+            free(ctx->healthy);
             free(ctx->members);
             free(ctx);
             return INFS_STATUS_INVALID_ARGUMENT;
@@ -149,6 +205,7 @@ infs_status infs_storage_mirror_create(struct infs_storage *members,
         infs_status status = infs_storage_get_size(
             &members[i], &bytes, &device);
         if (status != INFS_STATUS_OK || bytes == 0) {
+            free(ctx->healthy);
             free(ctx->members);
             free(ctx);
             return status != INFS_STATUS_OK ?
@@ -161,6 +218,7 @@ infs_status infs_storage_mirror_create(struct infs_storage *members,
     }
 
     memcpy(ctx->members, members, member_count * sizeof(*members));
+    memset(ctx->healthy, 1, member_count * sizeof(*ctx->healthy));
     for (size_t i = 0; i < member_count; ++i) {
         members[i].ops = NULL;
         members[i].context = NULL;
