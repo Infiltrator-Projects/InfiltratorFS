@@ -1255,7 +1255,14 @@ static long infilfs_file_fallocate(struct file *file, int mode,
         return -EOPNOTSUPP;
 
     end = (u64)offset + (u64)length;
-    buffer = kvzalloc(64u * 1024u, GFP_NOFS);
+    /*
+     * Format 0.18 has no unwritten-extent state, so preallocation must still
+     * materialize initialized uncompressed blocks.  Do that in the native
+     * writer's 4 MiB transaction unit instead of 64 KiB fragments: semantics
+     * are unchanged, but a 64 MiB reservation no longer drives 1024 separate
+     * read/modify/write iterations.
+     */
+    buffer = kvzalloc(INFILFS_NATIVE_WRITE_CHUNK, GFP_NOFS);
     if (!buffer)
         return -ENOMEM;
     position = (u64)offset;
@@ -1263,7 +1270,8 @@ static long infilfs_file_fallocate(struct file *file, int mode,
         struct kiocb iocb;
         struct iov_iter iter;
         struct kvec vec;
-        size_t chunk = min_t(u64, 64u * 1024u, end - position);
+        size_t chunk = min_t(u64, INFILFS_NATIVE_WRITE_CHUNK,
+                             end - position);
         ssize_t got;
         ssize_t written;
 
