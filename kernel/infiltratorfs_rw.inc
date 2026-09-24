@@ -97,19 +97,12 @@ static int infilfs_rw_tx_begin(struct super_block *sb,
 }
 
 /*
- * The data layer still carries compatibility create/mkdir/setattr wrappers for
- * qualification while the final VFS entry points below use the deferred native
- * namespace/POSIX path. Keep those wrappers private and explicitly unused: they
- * must not become a second public mutation path or reintroduce synchronous
- * namespace publication.
+ * Data I/O contributes directly to the final native transaction path.  The old
+ * flush-before-create/mkdir/setattr compatibility wrappers are retired so
+ * dormant synchronous namespace mutations cannot be mistaken for VFS entry
+ * points or accidentally rewired later.
  */
-#define infilfs_rw_create __maybe_unused infilfs_rw_create_data
-#define infilfs_rw_mkdir __maybe_unused infilfs_rw_mkdir_data
-#define infilfs_rw_setattr __maybe_unused infilfs_rw_setattr_data
 #include "infiltratorfs_rw_data.inc"
-#undef infilfs_rw_create
-#undef infilfs_rw_mkdir
-#undef infilfs_rw_setattr
 
 /*
  * Format 0.18 directory-tree code is composed here: checksum helpers and
