@@ -118,101 +118,6 @@ static void infilfs_linux_meta_cache_remove(
     kfree(entry);
 }
 
-static int infilfs_linux_meta_hex_nibble(u8 c)
-{
-    if (c >= '0' && c <= '9')
-        return c - '0';
-    if (c >= 'a' && c <= 'f')
-        return c - 'a' + 10;
-    if (c >= 'A' && c <= 'F')
-        return c - 'A' + 10;
-    return -EINVAL;
-}
-
-static bool infilfs_linux_meta_parse_uuid_name(
-    const u8 *name, size_t length, u8 object_id[16])
-{
-    static const u8 hyphen_at[4] = {8, 13, 18, 23};
-    size_t i;
-    unsigned int nibble = 0;
-    unsigned int h = 0;
-
-    if (!name || length != 36)
-        return false;
-    memset(object_id, 0, 16);
-    for (i = 0; i < length; ++i) {
-        int value;
-
-        if (h < ARRAY_SIZE(hyphen_at) && i == hyphen_at[h]) {
-            if (name[i] != '-')
-                return false;
-            ++h;
-            continue;
-        }
-        value = infilfs_linux_meta_hex_nibble(name[i]);
-        if (value < 0 || nibble >= 32)
-            return false;
-        if ((nibble & 1u) == 0)
-            object_id[nibble >> 1] = (u8)value << 4;
-        else
-            object_id[nibble >> 1] |= (u8)value;
-        ++nibble;
-    }
-    return nibble == 32 && h == ARRAY_SIZE(hyphen_at);
-}
-
-struct infilfs_linux_meta_cache_build {
-    struct super_block *sb;
-    struct infilfs_sb_info *sbi;
-};
-
-static int infilfs_linux_meta_cache_build_visitor(
-    const struct infilfs_dirent_disk *entry, const u8 *name, void *arg)
-{
-    struct infilfs_linux_meta_cache_build *build = arg;
-    u8 target_object_id[16];
-    u64 block;
-    u16 type;
-    int ret;
-
-    if (le16_to_cpu(entry->object_type) != INFILFS_OBJECT_FILE ||
-        !infilfs_linux_meta_parse_uuid_name(
-            name, le16_to_cpu(entry->name_length), target_object_id))
-        return 0;
-    ret = infilfs_index_lookup(build->sb, entry->object_id, &block, &type);
-    if (ret)
-        return ret;
-    if (type != INFILFS_OBJECT_FILE)
-        return -EFSCORRUPTED;
-    return infilfs_linux_meta_cache_insert(
-        build->sbi, target_object_id, entry->object_id, block);
-}
-
-static int infilfs_linux_meta_cache_build(struct super_block *sb,
-                                          struct inode *dir)
-{
-    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
-    struct infilfs_linux_meta_cache_build build = {.sb = sb, .sbi = sbi};
-    int ret;
-
-    if (sbi->linux_meta_cache_valid)
-        return 0;
-    ret = infilfs_linux_meta_cache_prepare(sbi);
-    if (ret)
-        return ret;
-    infilfs_linux_meta_cache_reset(sbi);
-    down_read(&sbi->write_lock);
-    ret = infilfs_for_each_dirent(
-        dir, infilfs_linux_meta_cache_build_visitor, &build);
-    up_read(&sbi->write_lock);
-    if (ret < 0) {
-        infilfs_linux_meta_cache_reset(sbi);
-        return ret;
-    }
-    sbi->linux_meta_cache_valid = true;
-    return 0;
-}
-
 static int infilfs_linux_meta_find_child(
     struct inode *dir, const char *name, size_t name_len,
     u16 expected_type, struct inode **inode_out)
@@ -237,7 +142,10 @@ static int infilfs_linux_meta_find_child(
      * inode population can inspect sidecar metadata recursively.
      */
     down_read(&INFILFS_SB(dir->i_sb)->write_lock);
-    ret = infilfs_for_each_dirent(dir, infilfs_lookup_visitor, &search);
+    ret = infilfs_tree_dir_lookup_name(
+        dir, (const u8 *)name, (u16)name_len, &search);
+    if (ret == -EOPNOTSUPP)
+        ret = infilfs_for_each_dirent(dir, infilfs_lookup_visitor, &search);
     if (ret < 0)
         goto unlock;
     if (!search.found) {
@@ -401,6 +309,7 @@ static int infilfs_linux_meta_get_file(
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
     struct infilfs_linux_meta_cache_entry *cached;
+    struct infilfs_inode_info *ii;
     struct inode *dir = NULL;
     struct inode *file = NULL;
     struct qstr name;
@@ -423,9 +332,17 @@ static int infilfs_linux_meta_get_file(
     if (ret)
         return ret;
 
-    ret = infilfs_linux_meta_cache_build(sb, dir);
+    /*
+     * Sidecar names are the target object's deterministic UUID.  A cache miss
+     * therefore needs one exact directory-tree lookup and one object-index
+     * lookup, not a scan of every sidecar plus an index lookup for each entry.
+     * This keeps the first xattr operation proportional to tree depth rather
+     * than to the number of files that already have Linux metadata.
+     */
+    ret = infilfs_linux_meta_cache_prepare(sbi);
     if (ret)
         goto out;
+    sbi->linux_meta_cache_valid = true;
     cached = infilfs_linux_meta_cache_lookup(sbi, object_id);
     if (cached) {
         file = infilfs_get_inode(
@@ -443,10 +360,24 @@ static int infilfs_linux_meta_get_file(
         *file_out = file;
         return 0;
     }
-    if (!create) {
-        ret = -ENOENT;
-        goto out;
+
+    ret = infilfs_linux_meta_find_child(
+        dir, name_out, 36, INFILFS_OBJECT_FILE, &file);
+    if (!ret) {
+        ii = INFILFS_I(file);
+        ret = ii ? infilfs_linux_meta_cache_insert(
+            sbi, object_id, ii->object_id, ii->object_block) : -EIO;
+        if (ret)
+            goto out;
+        ret = infilfs_linux_meta_validate_internal(file, INFILFS_OBJECT_FILE);
+        if (ret)
+            goto out;
+        *dir_out = dir;
+        *file_out = file;
+        return 0;
     }
+    if (ret != -ENOENT || !create)
+        goto out;
 
     name.name = name_out;
     name.len = 36;
@@ -461,28 +392,22 @@ static int infilfs_linux_meta_get_file(
             file = NULL;
             goto out;
         }
-        ret = infilfs_linux_meta_cache_insert(sbi, object_id, id, block);
-        if (ret)
-            goto out;
     } else if (ret == -EEXIST) {
-        sbi->linux_meta_cache_valid = false;
-        ret = infilfs_linux_meta_cache_build(sb, dir);
+        /*
+         * Another lookup/create path may have won while this caller was
+         * preparing the sidecar. Resolve that one deterministic name directly.
+         */
+        ret = infilfs_linux_meta_find_child(
+            dir, name_out, 36, INFILFS_OBJECT_FILE, &file);
         if (ret)
             goto out;
-        cached = infilfs_linux_meta_cache_lookup(sbi, object_id);
-        if (!cached) {
-            ret = -EFSCORRUPTED;
-            goto out;
-        }
-        file = infilfs_get_inode(
-            sb, cached->sidecar_object_block, INFILFS_OBJECT_FILE,
-            cached->sidecar_object_id);
-        if (IS_ERR(file)) {
-            ret = PTR_ERR(file);
-            file = NULL;
-            goto out;
-        }
+    } else {
+        goto out;
     }
+
+    ii = INFILFS_I(file);
+    ret = ii ? infilfs_linux_meta_cache_insert(
+        sbi, object_id, ii->object_id, ii->object_block) : -EIO;
     if (ret)
         goto out;
     ret = infilfs_linux_meta_validate_internal(file, INFILFS_OBJECT_FILE);
