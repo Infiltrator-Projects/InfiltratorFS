@@ -17,6 +17,9 @@ rule_usage="$(
 set_rule="$(
     awk '/^static int infilfs_quota_set_rule\(/,/^}/' "$quota"
 )"
+prepare_reparent="$(
+    awk '/^static int infilfs_quota_prepare_reparent_locked\(/,/^}/' "$quota"
+)"
 
 # Project quotas are rooted subtrees.  They must never regress to the old
 # whole-volume index scan + per-object ancestry walk that stalled writeback on
@@ -33,5 +36,11 @@ grep -Fq 'wanted_type != INFILFS_QUOTA_GROUP' <<<"$rule_usage"
 ! grep -Fq 'infilfs_quota_object_project_from_index_locked' <<<"$rule_usage"
 grep -Fq 'request->type == INFILFS_QUOTA_PROJECT' <<<"$set_rule"
 grep -Fq 'infilfs_quota_project_rule_usage_locked' <<<"$set_rule"
+
+# Cross-project directory renames run inside the namespace writer transaction.
+# Their quota preflight must likewise remain proportional to the moved subtree.
+grep -Fq 'infilfs_quota_domain_usage_locked' <<<"$prepare_reparent"
+! grep -Fq 'infilfs_ns_index_snapshot' <<<"$prepare_reparent"
+! grep -Fq 'infilfs_quota_reparent_member_locked' "$quota"
 
 echo "native quota scalability policy: PASS"
