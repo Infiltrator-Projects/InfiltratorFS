@@ -292,6 +292,22 @@ static int infilfs_quota_find_rule_locked(struct infilfs_sb_info *sbi,
     return -1;
 }
 
+/*
+ * Project ownership is irrelevant to user/group-only quota workloads.
+ * Avoid even resolving an inode's project unless at least one project rule is
+ * active.  This keeps ordinary quota admission independent of namespace size.
+ */
+static bool infilfs_quota_has_project_rule_locked(
+    const struct infilfs_sb_info *sbi)
+{
+    size_t i;
+
+    for (i = 0; i < sbi->quota_rule_count; ++i)
+        if (sbi->quota_rules[i].type == INFILFS_QUOTA_PROJECT)
+            return true;
+    return false;
+}
+
 static u32 infilfs_quota_root_match_locked(const struct infilfs_sb_info *sbi,
                                            const u8 object_id[16])
 {
@@ -512,40 +528,42 @@ static int infilfs_quota_alias_project_from_index_locked(
     return 0;
 }
 
-static int infilfs_quota_object_project_from_index_locked(
-    struct super_block *sb,
-    const struct infilfs_object_header_disk *header,
-    const struct infilfs_index_entry_disk *entries, u32 count,
-    u32 *project_out)
-{
-    if (le16_to_cpu(header->object_type) == INFILFS_OBJECT_FILE) {
-        const struct infilfs_file_payload_disk *file =
-            (const struct infilfs_file_payload_disk *)(header + 1);
-        u64 links = le64_to_cpu(file->attributes.link_count);
-
-        if (links && (links > 1u || !memchr_inv(header->parent_id, 0, 16)))
-            return infilfs_quota_alias_project_from_index_locked(
-                sb, header->object_id, links, entries, count, project_out);
-    }
-    return infilfs_quota_effective_project_locked(
-        sb, header->object_id, header->parent_id, project_out);
-}
-
 static int infilfs_quota_object_project_locked(
     struct super_block *sb,
     const struct infilfs_object_header_disk *header,
     u32 *project_out)
 {
-    struct infilfs_index_entry_disk *entries = NULL;
-    u32 count = 0;
-    int ret;
+    /*
+     * The common case has one persistent parent and can resolve project
+     * ownership by walking only that parent chain.  The previous implementation
+     * snapshotted the complete object index first, so every buffered write_begin
+     * on a populated filesystem became O(total objects).
+     *
+     * Only multiply-linked files (or the compatibility no-parent form) need
+     * alias reconstruction because they intentionally have no unique parent.
+     */
+    if (le16_to_cpu(header->object_type) == INFILFS_OBJECT_FILE) {
+        const struct infilfs_file_payload_disk *file =
+            (const struct infilfs_file_payload_disk *)(header + 1);
+        u64 links = le64_to_cpu(file->attributes.link_count);
 
-    ret = infilfs_ns_index_snapshot(sb, &entries, &count);
-    if (!ret)
-        ret = infilfs_quota_object_project_from_index_locked(
-            sb, header, entries, count, project_out);
-    kvfree(entries);
-    return ret;
+        if (links && (links > 1u || !memchr_inv(header->parent_id, 0, 16))) {
+            struct infilfs_index_entry_disk *entries = NULL;
+            u32 count = 0;
+            int ret;
+
+            ret = infilfs_ns_index_snapshot(sb, &entries, &count);
+            if (!ret)
+                ret = infilfs_quota_alias_project_from_index_locked(
+                    sb, header->object_id, links,
+                    entries, count, project_out);
+            kvfree(entries);
+            return ret;
+        }
+    }
+
+    return infilfs_quota_effective_project_locked(
+        sb, header->object_id, header->parent_id, project_out);
 }
 
 static int infilfs_quota_rebuild_usage_locked(struct super_block *sb)
@@ -1562,6 +1580,10 @@ static int infilfs_quota_candidate_subjects_locked(
         .type = INFILFS_QUOTA_USER, .id = (u32)uid };
     candidate[(*candidate_count)++] = (struct infilfs_quota_subject){
         .type = INFILFS_QUOTA_GROUP, .id = (u32)gid };
+
+    if (!infilfs_quota_has_project_rule_locked(INFILFS_SB(inode->i_sb)))
+        return 0;
+
     ret = infilfs_quota_inode_project_locked(inode, &project);
     if (ret)
         return ret;
@@ -1675,10 +1697,13 @@ static int infilfs_quota_reserve_create(
         .type = INFILFS_QUOTA_USER, .id = uid };
     candidate[count++] = (struct infilfs_quota_subject){
         .type = INFILFS_QUOTA_GROUP, .id = gid };
-    ret = infilfs_quota_inode_project_locked(parent, &project);
-    if (!ret && project)
-        candidate[count++] = (struct infilfs_quota_subject){
-            .type = INFILFS_QUOTA_PROJECT, .id = project };
+
+    if (infilfs_quota_has_project_rule_locked(sbi)) {
+        ret = infilfs_quota_inode_project_locked(parent, &project);
+        if (!ret && project)
+            candidate[count++] = (struct infilfs_quota_subject){
+                .type = INFILFS_QUOTA_PROJECT, .id = project };
+    }
     if (!ret)
         ret = infilfs_quota_reserve_candidates_locked(
             sbi, parent->i_sb, candidate, count, bytes, objects, reservation);
