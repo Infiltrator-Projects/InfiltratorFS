@@ -2,6 +2,12 @@
 
 This file records user-visible, compatibility, architecture and validation changes for InfiltratorFS.
 
+## 0.18.77 — 2026-09-24
+- Reduce small-file writeback contention exposed by the 0.18.76 live rsync forensic capture. Inline-file writeback now snapshots the current object under the topology read side, performs inline integrity verification and replacement SHA-256 work without holding the filesystem-wide writer, then acquires the writer only for complete-object revalidation and CoW/index publication.
+- Preserve lost-update safety for transaction-private blocks that may be rewritten in place: publication re-reads and compares the complete verified 4 KiB object under the writer and retries from a fresh snapshot if another mutation changed it.
+- Add a small-file scaling policy guard that requires digest preparation before writer acquisition and complete-object revalidation before publication.
+- On-disk Format remains 0.18.
+
 ## 0.18.76 — 2026-09-23
 - Remove the per-file buffered-write drain from explicit regular-file mtime updates without weakening timestamp correctness: POSIX metadata rewrite now keeps the topology writer lock through VFS mtime/ctime publication, so delayed writeback cannot overwrite a newer `touch`, `cp -p` or `rsync -a` timestamp. This restores asynchronous page-cache behaviour for metadata-preserving copy workloads instead of forcing every file through `filemap_write_and_wait()`.
 
