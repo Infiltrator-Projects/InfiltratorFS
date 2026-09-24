@@ -256,7 +256,7 @@ static void manager_apply_theme(Manager *manager)
         "button.destructive-action { background: %s; border-color: %s; }\n"
         "button.destructive-action, button.destructive-action label, button.destructive-action image { color: %s; }\n"
         "entry, spinbutton, textview, textview text { background: %s; color: %s; border-color: %s; caret-color: " "@ACCENT@" "; }\n"
-        "stackswitcher button { background: transparent; color: %s; border-color: transparent; border-radius: 0; padding: 0 14px; }\n"
+        "stackswitcher button { background: transparent; color: %s; border-color: transparent; border-radius: 0; padding: 5px 10px; }\n"
         "stackswitcher button:checked { color: %s; border-bottom: 2px solid " "@ACCENT@" "; }\n"
         ".sidebar { background: %s; border-right: 1px solid %s; }\n"
         ".sidebar-title { font-size: 11px; font-weight: @UI_BOLD@; color: %s; }\n"

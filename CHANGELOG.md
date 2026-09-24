@@ -2,6 +2,11 @@
 
 This file records user-visible, compatibility, architecture and validation changes for InfiltratorFS.
 
+## 0.18.90 — 2026-09-25
+- Align Linux Manager stack-switcher tabs with the suite-wide 5 px / 10 px compact tab rhythm.
+- Keep filesystem format, kernel driver, storage, encryption, namespace and maintenance behaviour unchanged.
+- On-disk Format remains 0.18.
+
 ## 0.18.89 — 2026-09-25
 - Align Linux Manager action rows with Common's 10 px control radius instead of the 6 px compact radius.
 - Keep filesystem format, kernel driver, storage, encryption, namespace and maintenance behaviour unchanged.
