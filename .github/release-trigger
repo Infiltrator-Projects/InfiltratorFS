@@ -12,3 +12,4 @@ release-retry=readme-version-aligned-v1
 rsync-mtime-writeback-serialization-fix=qualified-v1
 
 small-file-writeback-lock-scope=forensic-v1
+project-quota-scalability=qualified-v1
