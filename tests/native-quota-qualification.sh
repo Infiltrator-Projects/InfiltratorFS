@@ -72,6 +72,9 @@ PY
 stage "static POSIX ACL policy guard"
 bash "$script_dir/native-posix-acl-policy.sh" "$repo_root"
 
+stage "project quota scalability policy guard"
+bash "$script_dir/native-quota-scalability-policy.sh" "$repo_root"
+
 stage "format and mount"
 mkdir -p "$mnt"
 truncate -s 512M "$image"
