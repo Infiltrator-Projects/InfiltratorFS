@@ -30,10 +30,11 @@
  * write_lock is the authoritative pending-transaction merge/checkpoint
  * publication coordination domain, not a CPU-work execution queue. Expensive
  * compression, integrity hashing, data preparation and lockless allocation
- * reservation belong outside it. Native CPU work shares the module-wide
- * max(1, online logical CPUs - 1) budget across all mounted volumes so one
- * logical CPU worth of concurrency remains available to the rest of the OS
- * whenever more than one logical CPU is online.
+ * reservation belong outside it. Native CPU-heavy work shares the module-wide
+ * max(1, online physical cores - 1) budget across all mounted volumes. SMT
+ * siblings remain scheduler capacity but do not inflate that budget, so one
+ * complete physical core worth of concurrency remains available to the rest of
+ * the OS whenever more than one core is online.
  * resize_active is raised before resize drains already-started transactions and
  * reservations. Quota reservations are preflighted outside write_lock and are
  * finished or aborted only after that publication-coordination lock is released.
