@@ -31,9 +31,17 @@ loaded=1
 
 pool_line="$(sudo dmesg --since "$start_time" 2>/dev/null |
     grep 'InfiltratorFS: CPU pool online_logical_cpus=' | tail -n1)"
+cores="$(sed -nE 's/.*online_physical_cores=([0-9]+).*/\1/p' <<<"$pool_line")"
 budget="$(sed -nE 's/.*filesystem_budget=([0-9]+).*/\1/p' <<<"$pool_line")"
-[[ "$budget" =~ ^[0-9]+$ && "$budget" -ge 1 ]] || {
-    echo "native CPU parallelism: could not resolve filesystem budget" >&2
+[[ "$cores" =~ ^[0-9]+$ && "$cores" -ge 1 &&
+   "$budget" =~ ^[0-9]+$ && "$budget" -ge 1 ]] || {
+    echo "native CPU parallelism: could not resolve physical-core budget" >&2
+    echo "$pool_line" >&2
+    exit 1
+}
+expected_budget=$(( cores > 1 ? cores - 1 : 1 ))
+(( budget == expected_budget )) || {
+    echo "native CPU parallelism: budget=$budget expected=$expected_budget for cores=$cores" >&2
     echo "$pool_line" >&2
     exit 1
 }
@@ -99,5 +107,5 @@ successes="$(sed -nE 's/.*prepared_append_successes=([0-9]+).*/\1/p' <<<"$alloca
 
 "$build/fsck.infiltratorfs" --scrub "$image" |
     grep -Fq 'Result:              CLEAN'
-printf 'Native N-1 CPU parallelism qualification passed: budget=%s peak=%s attempts=%s successes=%s\n' \
-    "$budget" "$peak" "$attempts" "$successes"
+printf 'Native N-1 physical-core parallelism qualification passed: cores=%s budget=%s peak=%s attempts=%s successes=%s\n' \
+    "$cores" "$budget" "$peak" "$attempts" "$successes"
