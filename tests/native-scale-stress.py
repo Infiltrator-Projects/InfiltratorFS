@@ -12,6 +12,22 @@ import subprocess
 import time
 
 
+def online_physical_cores() -> int:
+    cpus = sorted(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else list(range(os.cpu_count() or 1))
+    cores: set[tuple[int, int]] = set()
+    try:
+        for cpu in cpus:
+            topo = f"/sys/devices/system/cpu/cpu{cpu}/topology"
+            with open(os.path.join(topo, "physical_package_id"), encoding="ascii") as stream:
+                package = int(stream.read().strip())
+            with open(os.path.join(topo, "core_id"), encoding="ascii") as stream:
+                core = int(stream.read().strip())
+            cores.add((package, core))
+    except (OSError, ValueError):
+        return max(1, len(cpus))
+    return max(1, len(cores))
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("root", help="stress directory below an already-mounted filesystem")
@@ -20,8 +36,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--workers",
         type=int,
-        default=max(1, (os.cpu_count() or 1) - 1),
-        help="parallel workers (default: online logical CPUs minus one, minimum one)",
+        default=max(1, online_physical_cores() - 1),
+        help="parallel workers (default: online physical cores minus one, minimum one)",
     )
     parser.add_argument("--churn-files", type=int, default=100_000)
     parser.add_argument("--batch-directories", type=int, default=64)
