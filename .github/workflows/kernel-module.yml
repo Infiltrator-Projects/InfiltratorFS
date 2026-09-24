@@ -949,6 +949,53 @@ jobs:
             exit 1
           fi
 
+          # Standard Linux FICLONERANGE semantics: clone a block-aligned
+          # subrange into the middle of an already-populated destination,
+          # verify bytes outside the range are preserved, then mutate the
+          # destination and prove CoW leaves the source unchanged.
+          sudo python3 - "$mountpoint/native-rw/reflink-range-source.bin"               "$mountpoint/native-rw/reflink-range-destination.bin" <<'PY'
+          import fcntl
+          import hashlib
+          import os
+          import struct
+          import sys
+
+          src_path, dst_path = sys.argv[1:]
+          src = bytes((i * 29 + 17) & 0xff for i in range(1024 * 1024))
+          dst = bytes((i * 11 + 5) & 0xff for i in range(1024 * 1024))
+          with open(src_path, "xb", buffering=0) as stream:
+              stream.write(src)
+              os.fsync(stream.fileno())
+          with open(dst_path, "xb", buffering=0) as stream:
+              stream.write(dst)
+              os.fsync(stream.fileno())
+
+          src_offset = 256 * 1024
+          length = 256 * 1024
+          dst_offset = 128 * 1024
+          expected = bytearray(dst)
+          expected[dst_offset:dst_offset + length] =               src[src_offset:src_offset + length]
+
+          src_fd = os.open(src_path, os.O_RDONLY | os.O_CLOEXEC)
+          dst_fd = os.open(dst_path, os.O_RDWR | os.O_CLOEXEC)
+          try:
+              # _IOW(0x94, 13, struct file_clone_range), size 32.
+              ficlonerange = (1 << 30) | (32 << 16) | (0x94 << 8) | 13
+              request = struct.pack("qQQQ", src_fd, src_offset, length, dst_offset)
+              fcntl.ioctl(dst_fd, ficlonerange, request)
+              os.fsync(dst_fd)
+              actual = os.pread(dst_fd, len(expected), 0)
+              assert actual == expected
+              source_digest = hashlib.sha256(os.pread(src_fd, len(src), 0)).digest()
+              patch = b'Z' * 4096
+              assert os.pwrite(dst_fd, patch, dst_offset) == len(patch)
+              os.fsync(dst_fd)
+              assert hashlib.sha256(os.pread(src_fd, len(src), 0)).digest() == source_digest
+          finally:
+              os.close(dst_fd)
+              os.close(src_fd)
+          PY
+
           # Regress the clone -> tiny-truncate ownership path that historically
           # forced a complete shared-range rebuild after every reflink.
           # Repeated whole-file clones followed by a one-block shrink must keep
