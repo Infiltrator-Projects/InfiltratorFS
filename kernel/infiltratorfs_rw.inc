@@ -40,7 +40,6 @@ static int infilfs_quota_persist_locked(struct super_block *sb);
 
 #define infilfs_rw_tx_begin infilfs_rw_tx_begin_legacy
 #define infilfs_file_write_iter infilfs_file_write_iter_legacy
-#define infilfs_file_fsync infilfs_file_fsync_legacy
 #define infilfs_rw_create infilfs_rw_create_legacy
 #define infilfs_rw_mkdir infilfs_rw_mkdir_legacy
 #define infilfs_rw_setattr infilfs_rw_setattr_legacy
@@ -49,7 +48,6 @@ static int infilfs_quota_persist_locked(struct super_block *sb);
 #include "infiltratorfs_rw_legacy.inc"
 #undef infilfs_rw_tx_begin
 #undef infilfs_file_write_iter
-#undef infilfs_file_fsync
 #undef infilfs_rw_create
 #undef infilfs_rw_mkdir
 #undef infilfs_rw_setattr
@@ -99,13 +97,11 @@ static int infilfs_rw_tx_begin(struct super_block *sb,
 }
 
 /*
- * The data layer already wraps create/mkdir/setattr to flush a deferred data
- * transaction before entering the original synchronous metadata path.  Keep
- * those qualified wrappers available under private names so the POSIX layer
- * can add ownership and general setattr semantics without duplicating the
- * data-path ordering rules. Helpers not reachable from the active composition
- * remain private and explicitly unused until their owning layer is extracted
- * or retired; they must not become a second public mutation path.
+ * The data layer still carries compatibility create/mkdir/setattr wrappers for
+ * qualification while the final VFS entry points below use the deferred native
+ * namespace/POSIX path. Keep those wrappers private and explicitly unused: they
+ * must not become a second public mutation path or reintroduce synchronous
+ * namespace publication.
  */
 #define infilfs_rw_create __maybe_unused infilfs_rw_create_data
 #define infilfs_rw_mkdir __maybe_unused infilfs_rw_mkdir_data
