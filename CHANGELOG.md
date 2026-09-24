@@ -3,6 +3,11 @@
 This file records user-visible, compatibility, architecture and validation changes for InfiltratorFS.
 
 ## 0.18.78 — 2026-09-24
+- Complete named-stream integration across scalable object-index validation, paged/tree extent handling, ownership accounting, checksum graphs, deep scrub, shared-extent protection and compression metrics; large named metadata streams now pass the same structural and data-integrity rules as regular file-data objects.
+- Correct live checkpoint-replica validation after publication by treating the serialized superblock checksum as a derived encoding field rather than comparing it against the intentionally unmodified in-memory checksum bytes. Fast checks now recognise all freshly published checkpoint replicas without requiring a reopen.
+- Serialize synchronous Win32 seek-plus-I/O operations with an SRW lock so concurrent positional storage requests cannot redirect one another through a shared HANDLE file pointer.
+- Harden replicated storage against stale-member reuse: members that miss writes/flushes remain quarantined for the mirror lifetime, post-reopen divergent replicas are detected as corruption rather than silently selected, and degraded writes remain fail-closed while healthy replicas continue receiving data.
+- Propagate per-file optimizer failures to recursive and single-file callers so maintenance commands cannot report shell success after a failed optimisation.
 - Retire the dormant legacy whole-device fsync implementation so only the active deferred native fsync path can be wired into the VFS.
 - Remove unused deferred-transaction base-superblock state and its dead assignment.
 - Strengthen the deferred namespace publication policy guard: create/mkdir must enter the shared native namespace transaction and must not flush or directly commit a standalone generation per object.
