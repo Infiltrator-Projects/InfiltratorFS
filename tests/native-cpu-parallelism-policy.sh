@@ -25,12 +25,15 @@ for file in "$core" "$cpu" "$internal" "$data" "$read_cache" "$pagecache" \
     test -f "$file" || fail "missing $file"
 done
 
-# The filesystem-wide execution ceiling is exactly N-1 online logical CPUs,
-# except that a one-CPU machine must still be able to execute filesystem work.
-grep -Fq 'unsigned int online_logical_cpus = num_online_cpus();' "$cpu" || \
-    fail 'CPU budget is not derived from online logical CPUs'
-grep -Fq 'online_logical_cpus > 1u ? online_logical_cpus - 1u : 1u' "$cpu" || \
-    fail 'CPU budget is not max(1, online logical CPUs - 1)'
+# The filesystem-wide CPU-heavy execution ceiling is exactly N-1 online
+# physical cores. SMT siblings are scheduler capacity but do not inflate the
+# filesystem worker budget. A one-core machine must still execute filesystem work.
+grep -Fq 'static unsigned int infilfs_online_physical_cores(void)' "$cpu" || \
+    fail 'physical-core topology helper is missing'
+grep -Fq 'topology_sibling_cpumask(cpu)' "$cpu" || \
+    fail 'physical-core budget does not collapse SMT siblings'
+grep -Fq 'online_physical_cores > 1u ? online_physical_cores - 1u : 1u' "$cpu" || \
+    fail 'CPU budget is not max(1, online physical cores - 1)'
 grep -Fq 'num_possible_cpus()' "$cpu" || \
     fail 'CPU pool cannot grow when an offline possible CPU is later onlined'
 grep -Fq 'WQ_UNBOUND | WQ_MEM_RECLAIM' "$cpu" || \
@@ -39,20 +42,20 @@ grep -Fq 'atomic_cmpxchg(&infilfs_cpu_active' "$cpu" || \
     fail 'module-wide execution gate is missing'
 grep -Fq 'wait_event(infilfs_cpu_wait, infilfs_cpu_try_enter())' "$cpu" || \
     fail 'CPU work no longer waits for the module-wide N-1 gate'
-grep -Fq 'filesystem_budget=%u reserved_for_os=%u' "$cpu" || \
-    fail 'mounted evidence no longer reports the CPU policy'
+grep -Fq 'online_physical_cores=%u filesystem_budget=%u reserved_for_os_cores=%u' "$cpu" || \
+    fail 'mounted evidence no longer reports the physical-core CPU policy'
 
 # The code path and its shipped/DKMS synchronization contract must agree with
 # the architecture documentation. Full mounted N-1 mutation scaling is now
 # qualified, so the authoritative roadmap must retain the completed state.
-grep -Fq 'filesystem_cpu_budget = max(1, online_logical_cpus - 1)' "$architecture" || \
-    fail 'architecture lost the normative N-1 formula'
-grep -Fq 'max(1, online logical CPUs - 1)' "$makefile" || \
-    fail 'Kbuild synchronization contract lost N-1 policy'
-grep -Fq 'max(1, online logical CPUs - 1)' "$ioctl" || \
-    fail 'DKMS synchronization contract lost N-1 policy'
-grep -Fq -- '- [x] Filesystem-wide native Linux concurrency budget of `max(1, online logical CPUs - 1)`' "$roadmap" || \
-    fail 'qualified N-1 concurrency capability is no longer marked complete'
+grep -Fq 'filesystem_cpu_budget = max(1, online_physical_cores - 1)' "$architecture" || \
+    fail 'architecture lost the normative physical-core N-1 formula'
+grep -Fq 'max(1, online physical cores - 1)' "$makefile" || \
+    fail 'Kbuild synchronization contract lost physical-core N-1 policy'
+grep -Fq 'max(1, online physical cores - 1)' "$ioctl" || \
+    fail 'DKMS synchronization contract lost physical-core N-1 policy'
+grep -Fq -- '- [x] Filesystem-wide native Linux CPU-heavy concurrency budget of `max(1, online physical cores - 1)`' "$roadmap" || \
+    fail 'qualified physical-core N-1 concurrency capability is no longer marked complete'
 
 # CPU-heavy native preparation and verified-read hashing use the shared pool,
 # never generic system_unbound_wq, and must not regress to arbitrary four/eight
@@ -112,14 +115,14 @@ grep -Fq 'infilfs_cpu_work_enter();' "$orphan" || \
     fail 'idle publication regressed to system_long_wq'
 
 python3 - <<'PY'
-def budget(n):
-    return n - 1 if n > 1 else 1
+def budget(cores):
+    return cores - 1 if cores > 1 else 1
 
-expected = {1: 1, 2: 1, 3: 2, 14: 13, 255: 254}
-for cpus, wanted in expected.items():
-    got = budget(cpus)
+expected = {1: 1, 2: 1, 3: 2, 12: 11, 255: 254}
+for cores, wanted in expected.items():
+    got = budget(cores)
     if got != wanted:
-        raise SystemExit(f"{cpus} CPUs -> {got}, expected {wanted}")
+        raise SystemExit(f"{cores} physical cores -> {got}, expected {wanted}")
 PY
 
 printf 'Native N-1 CPU parallelism policy guard passed.\n'
