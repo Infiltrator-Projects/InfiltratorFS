@@ -2,6 +2,11 @@
 
 This file records user-visible, compatibility, architecture and validation changes for InfiltratorFS.
 
+## 0.18.80 — 2026-09-24
+- Align the Manager hero heading with the 28 px publisher-wide desktop heading scale.
+- Keep filesystem format, kernel driver, storage, encryption, namespace and maintenance behaviour unchanged.
+- On-disk Format remains 0.18.
+
 ## 0.18.79 — 2026-09-24
 - Fail native Linux object creation closed when the current uid/gid cannot be represented in the Format 0.18 POSIX compatibility fields, instead of silently substituting numeric zero/root ownership. File, directory and symlink creation now all propagate the mapping error before publication.
 - Make authenticated encrypted storage safe for concurrent partial-block writes with logical-block stripe locks. Reads share the same stripe and flush fences every stripe, preventing lost read-modify-write updates and durability barriers from passing in-flight AEAD record replacement.

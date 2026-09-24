@@ -270,7 +270,7 @@ static void manager_apply_theme(Manager *manager)
         ".device-meta { color: %s; font-size: 12px; }\n"
         ".device-list row:selected .device-meta { color: @SELECTED_SUMMARY@; }\n"
         ".content { padding: 30px 34px 24px 34px; }\n"
-        ".hero-title { color: %s; font-family: '@BRAND_FONT@'; font-size: 27px; font-weight: @BRAND_WEIGHT@; }\n"
+        ".hero-title { color: %s; font-family: '@BRAND_FONT@'; font-size: 28px; font-weight: @BRAND_WEIGHT@; }\n"
         ".hero-path { color: %s; font-size: 12px; }\n"
         ".badge { padding: 4px 9px; border-radius: 999px; background: %s; border: 1px solid %s; color: %s; font-size: 11px; font-weight: @UI_BOLD@; }\n"
         ".badge-mounted { border-color: " "@ACCENT@" "; color: " "@ACCENT@" "; }\n"
