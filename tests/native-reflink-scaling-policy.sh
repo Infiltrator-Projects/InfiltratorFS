@@ -21,6 +21,23 @@ grep -Fq 'batch_count == batch_capacity' "$reflink" ||
 ! grep -Fq 'struct infilfs_reflink_checksum_clone' "$reflink" ||
     fail 'reflink still materializes the complete checksum chain in memory'
 
+grep -Fq 'static int infilfs_native_reflink_range(' "$reflink" ||
+    fail 'native block-range reflink implementation missing'
+grep -Fq 'infilfs_reflink_extract_range(' "$reflink" ||
+    fail 'range reflink does not extract source extent ranges'
+grep -Fq 'infilfs_reflink_splice_range(' "$reflink" ||
+    fail 'range reflink does not splice destination extent ranges'
+grep -Fq 'infilfs_native_checksum_set_range(' "$reflink" ||
+    fail 'range reflink does not project source integrity metadata'
+grep -Fq 'infilfs_quota_reserve_inode(' "$reflink" ||
+    fail 'reflink/remap bypasses quota reservation'
+grep -Fq 'infilfs_file_remap_file_range(' "$reflink" ||
+    fail 'FICLONE is not routed through the common remap path'
+! grep -Fq 'pos_in != 0 || pos_out != 0' "$reflink" ||
+    fail 'legacy whole-file-only remap restriction returned'
+! grep -Fq 'len != source_size' "$reflink" ||
+    fail 'legacy whole-file-only length restriction returned'
+
 python3 - "$reflink" "$ownership" <<'PY'
 from pathlib import Path
 import sys
