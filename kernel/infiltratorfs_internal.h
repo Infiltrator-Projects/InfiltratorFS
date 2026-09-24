@@ -251,6 +251,13 @@ struct infilfs_native_shared_range {
     u32 refs;
 };
 
+/* Bounded cycle/alias detector shared by metadata-tree walkers. */
+struct infilfs_visit_set {
+    u64 *slots;
+    size_t capacity;
+    size_t count;
+};
+
 struct infilfs_native_pending {
     struct list_head node;
     struct super_block *sb;
@@ -580,13 +587,6 @@ struct infilfs_allocation_layout {
     size_t branch_count;
     size_t level1_count;
     size_t level2_count;
-};
-
-/* Bounded cycle/alias detector shared by metadata-tree walkers. */
-struct infilfs_visit_set {
-    u64 *slots;
-    size_t capacity;
-    size_t count;
 };
 
 struct infilfs_native_index_change {
