@@ -90,8 +90,9 @@ independent work may naturally leave some of that budget unused.
 
 Fixed low worker limits are forbidden as a substitute for this policy. Worker
 pools, writeback preparation, compression, integrity work, allocation and
-metadata preparation must derive their CPU ceiling from the online logical CPU
-count and must not impose an unrelated cap such as 4 or 8 workers.
+metadata preparation must derive their CPU-heavy concurrency ceiling from the
+online physical-core count and must not impose an unrelated cap such as 4 or 8
+workers.
 
 ## Core performance rule
 
