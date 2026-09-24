@@ -229,6 +229,7 @@ infs_status infs_format_storage_with_options(struct infs_storage *storage,
         INFS_INCOMPAT_COMPRESSED_EXTENTS | INFS_INCOMPAT_UNICODE_NORM_V1 |
         INFS_INCOMPAT_PORTABLE_SECURITY |
         INFS_INCOMPAT_TYPED_EXTENSIONS |
+        INFS_INCOMPAT_NAMED_STREAMS_V1 |
         ((options & INFS_FORMAT_OPTION_REMOVABLE_NAMES_V1) ?
             INFS_INCOMPAT_REMOVABLE_NAMES_V1 : UINT64_C(0)) |
         ((options & INFS_FORMAT_OPTION_CASEFOLD_V1) ?
