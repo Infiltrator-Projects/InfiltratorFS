@@ -267,7 +267,7 @@ static void manager_apply_theme(Manager *manager)
         ".device-list row:selected, .device-list row:selected:hover { background: %s; border-color: %s; border-left-width: 3px; border-left-color: " "@ACCENT@" "; }\n"
         ".device-row { padding: 11px 12px; }\n"
         ".device-name { font-size: 14px; font-weight: @UI_BOLD@; color: %s; }\n"
-        ".device-meta { color: %s; font-size: 12px; }\n"
+        ".device-meta { color: %s; font-size: 11px; }\n"
         ".device-list row:selected .device-meta { color: @SELECTED_SUMMARY@; }\n"
         ".content { padding: 30px 34px 24px 34px; }\n"
         ".hero-title { color: %s; font-family: '@BRAND_FONT@'; font-size: 28px; font-weight: @BRAND_WEIGHT@; }\n"

@@ -2,6 +2,11 @@
 
 This file records user-visible, compatibility, architecture and validation changes for InfiltratorFS.
 
+## 0.18.83 — 2026-09-24
+- Align Manager secondary device metadata with the suite-wide 11 px supporting-text scale.
+- Keep filesystem format, kernel driver, storage, encryption, namespace and maintenance behaviour unchanged.
+- On-disk Format remains 0.18.
+
 ## 0.18.82 — 2026-09-24
 - Align Manager device navigation side margins with the suite-wide 8 px navigation rhythm.
 - Keep filesystem format, kernel driver, storage, encryption, namespace and maintenance behaviour unchanged.
