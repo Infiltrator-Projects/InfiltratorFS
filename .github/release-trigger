@@ -7,7 +7,7 @@ installer-bundle-path=canonical-v1
 allocation-regression-backout=qualified-v1
 sustained-write-stall-recovery=qualified-v1
 allocation-publication-recovery=live-phase-telemetry-v1
-release-finalization=20260924-small-file-writeback-v1
+release-finalization=20260924-forensic-hardening-v2
 release-retry=readme-version-aligned-v1
 rsync-mtime-writeback-serialization-fix=qualified-v1
 
