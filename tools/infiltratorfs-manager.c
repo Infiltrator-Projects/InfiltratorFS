@@ -277,7 +277,7 @@ static void manager_apply_theme(Manager *manager)
         ".section-title { color: %s; font-size: 16px; font-weight: @UI_BOLD@; }\n"
         ".section-subtitle { color: %s; font-size: 12px; }\n"
         ".card, .stat-card, .empty-state { border: 1px solid %s; background: %s; }\n"
-        ".card { padding: 18px; border-radius: @CONTROL_RADIUS@px; }\n"
+        ".card { padding: 18px; border-radius: @CARD_RADIUS@px; }\n"
         ".stat-card { padding: 15px 16px; border-radius: @CONTROL_RADIUS@px; }\n"
         ".stat-caption { color: %s; font-size: 10px; font-weight: @UI_BOLD@; }\n"
         ".stat-value { color: %s; font-size: 17px; font-weight: @UI_BOLD@; }\n"
