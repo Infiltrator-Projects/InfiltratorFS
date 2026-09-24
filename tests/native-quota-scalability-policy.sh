@@ -20,6 +20,12 @@ set_rule="$(
 prepare_reparent="$(
     awk '/^static int infilfs_quota_prepare_reparent_locked\(/,/^}/' "$quota"
 )"
+object_project="$(
+    awk '/^static int infilfs_quota_object_project_locked\(/,/^}/' "$quota"
+)"
+candidate_subjects="$(
+    awk '/^static int infilfs_quota_candidate_subjects_locked\(/,/^}/' "$quota"
+)"
 
 # Project quotas are rooted subtrees.  They must never regress to the old
 # whole-volume index scan + per-object ancestry walk that stalled writeback on
@@ -42,5 +48,16 @@ grep -Fq 'infilfs_quota_project_rule_usage_locked' <<<"$set_rule"
 grep -Fq 'infilfs_quota_domain_usage_locked' <<<"$prepare_reparent"
 ! grep -Fq 'infilfs_ns_index_snapshot' <<<"$prepare_reparent"
 ! grep -Fq 'infilfs_quota_reparent_member_locked' "$quota"
+
+# Normal write admission must never flatten/snapshot the whole object index.
+# Only the hard-link alias branch may take a global snapshot; single-parent
+# files resolve their project from the bounded parent chain.
+grep -Fq 'infilfs_quota_effective_project_locked' <<<"$object_project"
+grep -Fq 'links > 1u' <<<"$object_project"
+grep -Fq 'infilfs_ns_index_snapshot' <<<"$object_project"
+! grep -Fq 'infilfs_quota_object_project_from_index_locked' "$quota"
+
+# User/group-only workloads must not pay project-resolution cost at all.
+grep -Fq 'infilfs_quota_has_project_rule_locked' <<<"$candidate_subjects"
 
 echo "native quota scalability policy: PASS"
