@@ -88,6 +88,8 @@ test -f "$kernel/infiltratorfs_linux_meta_codec.c" || fail 'Linux metadata codec
 test -f "$kernel/infiltratorfs_locator_cache.c" || fail 'native locator cache object missing'
 test -f "$kernel/infiltratorfs_shared_ownership.c" || fail 'shared ownership accelerator object missing'
 test -f "$kernel/infiltratorfs_orphan_scan.c" || fail 'parallel orphan scanner object missing'
+grep -Fqx '#   infiltratorfs_orphan_scan.c owns N-1 parallel crash-orphan discovery.' "$makefile" || \
+    fail 'orphan scanner ownership line is not a valid Makefile comment'
 
 # Every compiled Kbuild object must also ship in the self-contained DKMS source
 # installed by the Debian/.run packaging path. A repository build can succeed
