@@ -1,0 +1,145 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#include "infilfs/storage_mirror.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+struct member {
+    unsigned char bytes[8192];
+    int fail_reads;
+    int fail_writes;
+    unsigned flushes;
+    int closed;
+};
+
+static void die(const char *message)
+{
+    fprintf(stderr, "storage-mirror: %s\n", message);
+    exit(1);
+}
+
+static void ok(int condition, const char *message)
+{
+    if (!condition)
+        die(message);
+}
+
+static infs_status rd(void *opaque, uint64_t offset, void *buffer, size_t size)
+{
+    struct member *m = opaque;
+    if (m->fail_reads)
+        return INFS_STATUS_IO_ERROR;
+    if (offset > sizeof(m->bytes) || size > sizeof(m->bytes) - (size_t)offset)
+        return INFS_STATUS_IO_ERROR;
+    memcpy(buffer, m->bytes + (size_t)offset, size);
+    return INFS_STATUS_OK;
+}
+
+static infs_status wr(void *opaque, uint64_t offset,
+                      const void *buffer, size_t size)
+{
+    struct member *m = opaque;
+    if (m->fail_writes)
+        return INFS_STATUS_IO_ERROR;
+    if (offset > sizeof(m->bytes) || size > sizeof(m->bytes) - (size_t)offset)
+        return INFS_STATUS_IO_ERROR;
+    memcpy(m->bytes + (size_t)offset, buffer, size);
+    return INFS_STATUS_OK;
+}
+
+static infs_status fl(void *opaque)
+{
+    struct member *m = opaque;
+    ++m->flushes;
+    return m->fail_writes ? INFS_STATUS_IO_ERROR : INFS_STATUS_OK;
+}
+
+static infs_status sz(void *opaque, uint64_t *bytes, int *is_device)
+{
+    (void)opaque;
+    *bytes = 8192;
+    *is_device = 1;
+    return INFS_STATUS_OK;
+}
+
+static infs_status rnd(void *opaque, void *buffer, size_t size)
+{
+    (void)opaque;
+    memset(buffer, 0xa5, size);
+    return INFS_STATUS_OK;
+}
+
+static infs_status now(void *opaque, struct infs_timestamp *time)
+{
+    (void)opaque;
+    time->seconds = 1;
+    time->nanoseconds = 2;
+    return INFS_STATUS_OK;
+}
+
+static void cls(void *opaque)
+{
+    ((struct member *)opaque)->closed = 1;
+}
+
+static const struct infs_storage_ops ops = {
+    .read_at = rd,
+    .write_at = wr,
+    .flush = fl,
+    .get_size = sz,
+    .random_bytes = rnd,
+    .current_time = now,
+    .close = cls,
+};
+
+int main(void)
+{
+    struct member a = {0}, b = {0};
+    struct infs_storage members[2] = {
+        { .ops = &ops, .context = &a },
+        { .ops = &ops, .context = &b },
+    };
+    struct infs_storage mirror = {0};
+
+    ok(infs_storage_mirror_create(members, 2, &mirror) == INFS_STATUS_OK,
+       "create mirror");
+    ok(!members[0].ops && !members[1].ops, "member ownership transferred");
+
+    static const char payload[] = "replicated";
+    ok(infs_storage_write(&mirror, 123, payload, sizeof(payload)) ==
+           INFS_STATUS_OK,
+       "replicated write");
+    ok(!memcmp(a.bytes + 123, payload, sizeof(payload)) &&
+       !memcmp(b.bytes + 123, payload, sizeof(payload)),
+       "both members contain payload");
+    ok(infs_storage_flush(&mirror) == INFS_STATUS_OK &&
+       a.flushes == 1 && b.flushes == 1,
+       "durability barrier reaches every member");
+
+    char readback[sizeof(payload)] = {0};
+    a.fail_reads = 1;
+    ok(infs_storage_read(&mirror, 123, readback, sizeof(readback)) ==
+           INFS_STATUS_OK &&
+       !memcmp(readback, payload, sizeof(payload)),
+       "read fails over to surviving replica");
+
+    b.fail_writes = 1;
+    static const char degraded[] = "degraded";
+    ok(infs_storage_write(&mirror, 512, degraded, sizeof(degraded)) ==
+           INFS_STATUS_IO_ERROR,
+       "degraded write is never reported as healthy");
+    ok(!memcmp(a.bytes + 512, degraded, sizeof(degraded)),
+       "healthy replica still receives degraded write");
+
+    uint64_t bytes = 0;
+    int is_device = 0;
+    ok(infs_storage_get_size(&mirror, &bytes, &is_device) == INFS_STATUS_OK &&
+       bytes == 8192 && is_device,
+       "mirror geometry");
+
+    infs_storage_close(&mirror);
+    ok(a.closed && b.closed, "mirror closes every owned member");
+    puts("replicated storage backend: PASS");
+    return 0;
+}
