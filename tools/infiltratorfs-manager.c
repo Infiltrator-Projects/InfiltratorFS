@@ -1384,7 +1384,7 @@ static GtkWidget *build_ui(Manager *manager)
     GtkWidget *root = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_container_add(GTK_CONTAINER(manager->window), root);
     GtkWidget *paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
-    gtk_paned_set_position(GTK_PANED(paned), 286);
+    gtk_paned_set_position(GTK_PANED(paned), 248);
     gtk_box_pack_start(GTK_BOX(root), paned, TRUE, TRUE, 0);
 
     GtkWidget *sidebar = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);

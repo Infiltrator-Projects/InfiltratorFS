@@ -2,6 +2,11 @@
 
 This file records user-visible, compatibility, architecture and validation changes for InfiltratorFS.
 
+## 0.18.85 — 2026-09-24
+- Align the Linux Manager sidebar divider with the suite-wide 248 px desktop navigation width.
+- Keep filesystem format, kernel driver, storage, encryption, namespace and maintenance behaviour unchanged.
+- On-disk Format remains 0.18.
+
 ## 0.18.84 — 2026-09-24
 - Remove the whole-volume object-index snapshot from ordinary quota admission. Single-parent files/directories now resolve project ownership through their bounded parent chain, while the expensive alias scan is retained only for multiply-linked/no-parent files that genuinely require it.
 - Skip project ownership resolution entirely for user/group-only quota workloads when no project quota rule is active.
