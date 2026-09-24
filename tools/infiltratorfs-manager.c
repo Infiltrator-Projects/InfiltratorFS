@@ -283,7 +283,7 @@ static void manager_apply_theme(Manager *manager)
         ".stat-value { color: %s; font-size: 17px; font-weight: @UI_BOLD@; }\n"
         ".detail-caption { color: %s; font-size: 11px; }\n"
         ".detail-value { color: %s; font-weight: @UI_BOLD@; }\n"
-        ".action-row { padding: 12px; border-radius: @SMALL_RADIUS@px; }\n"
+        ".action-row { padding: 12px; border-radius: @CONTROL_RADIUS@px; }\n"
         ".action-row:hover { background: %s; }\n"
         ".action-title { color: %s; font-weight: @UI_BOLD@; }\n"
         ".action-description { color: %s; font-size: 12px; }\n"

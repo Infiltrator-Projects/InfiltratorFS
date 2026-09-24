@@ -2,6 +2,11 @@
 
 This file records user-visible, compatibility, architecture and validation changes for InfiltratorFS.
 
+## 0.18.89 — 2026-09-25
+- Align Linux Manager action rows with Common's 10 px control radius instead of the 6 px compact radius.
+- Keep filesystem format, kernel driver, storage, encryption, namespace and maintenance behaviour unchanged.
+- On-disk Format remains 0.18.
+
 ## 0.18.88 — 2026-09-25
 - Align ordinary Linux Manager cards with Common's 12 px card radius instead of the 10 px control radius.
 - Make hosted N-1 CPU qualification explicitly skip the runtime multi-worker proof when the runner exposes only one filesystem worker slot; the physical-core budget check still runs, and multi-worker proof remains mandatory on capable runners.
