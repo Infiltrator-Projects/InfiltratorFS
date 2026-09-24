@@ -4,6 +4,7 @@ name: Desktop integration packages
 # This workflow is also the qualification source consumed by release assembly.
 # Touching this workflow deliberately refreshes the managed Ubuntu/Mint package
 # prerelease when its current package-build contract has changed.
+# Refresh marker: 2026-09-25 suite UI qualification.
 on:
   push:
     branches: [main]
