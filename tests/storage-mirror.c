@@ -136,6 +136,7 @@ int main(void)
      * The member that missed a write is quarantined for the lifetime of this
      * mirror, so a later transient read recovery cannot serve stale bytes.
      */
+    a.fail_reads = 0;
     b.fail_writes = 0;
     b.fail_reads = 0;
     memset(readback, 0, sizeof(readback));
