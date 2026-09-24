@@ -35,7 +35,6 @@ static infs_status mirror_read(void *opaque, uint64_t offset,
             infs_status status = infs_storage_read(
                 &ctx->members[i], offset, buffer, size);
             if (status != INFS_STATUS_OK) {
-                ctx->healthy[i] = 0;
                 if (first_error == INFS_STATUS_IO_ERROR)
                     first_error = status;
                 continue;
@@ -52,7 +51,6 @@ static infs_status mirror_read(void *opaque, uint64_t offset,
             infs_status status = infs_storage_read(
                 &ctx->members[i], offset + checked, verify, chunk);
             if (status != INFS_STATUS_OK) {
-                ctx->healthy[i] = 0;
                 if (first_error == INFS_STATUS_IO_ERROR)
                     first_error = status;
                 break;
