@@ -326,8 +326,30 @@ static int typed_extensions_enabled(const struct infs_volume *vol)
          INFS_INCOMPAT_TYPED_EXTENSIONS) != 0;
 }
 
+static int named_streams_enabled(const struct infs_volume *vol)
+{
+    return vol &&
+        (infs_le64_to_cpu(vol->sb.incompat_flags) &
+         INFS_INCOMPAT_NAMED_STREAMS_V1) != 0;
+}
+
+static int file_data_object_type(uint16_t type)
+{
+    return type == INFS_OBJECT_FILE || type == INFS_OBJECT_NAMED_STREAM;
+}
+
 static infs_status typed_extension_validate_reference(
     struct infs_volume *vol, const uint8_t extension_id[16]);
+
+static infs_status metadata_set_validate_reference(
+    struct infs_volume *vol, const uint8_t metadata_id[16]);
+static infs_status metadata_reference_typed_extension(
+    struct infs_volume *vol, const uint8_t reference_id[16],
+    uint8_t extension_id_out[16]);
+static infs_status metadata_reference_replace_typed_extension(
+    struct infs_volume *vol, uint8_t owner_block[INFS_BLOCK_SIZE],
+    struct infs_attributes_disk *attributes,
+    const uint8_t extension_id[16]);
 
 /* Format 0.18 paged-index dispatch targets. core.inc owns the classic index
  * implementation and calls these when it encounters a version-2 index head. */
@@ -424,6 +446,7 @@ static int paged_extent_replace(struct infs_volume *vol,
 #include "volume/security-object.inc"
 #include "volume/file-read.inc"
 #include "volume/file-write.inc"
+#include "volume/named-streams.inc"
 #include "volume/file-truncate.inc"
 #include "volume/file-hole-punch.inc"
 #include "volume/namespace-remove.inc"
