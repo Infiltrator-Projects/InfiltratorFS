@@ -2,6 +2,12 @@
 
 This file records user-visible, compatibility, architecture and validation changes for InfiltratorFS.
 
+## 0.18.78 — 2026-09-24
+- Retire the dormant legacy whole-device fsync implementation so only the active deferred native fsync path can be wired into the VFS.
+- Remove unused deferred-transaction base-superblock state and its dead assignment.
+- Strengthen the deferred namespace publication policy guard: create/mkdir must enter the shared native namespace transaction and must not flush or directly commit a standalone generation per object.
+- Align the native maintainability guard with the reduced legacy alias bridge. On-disk Format remains 0.18.
+
 ## 0.18.77 — 2026-09-24
 - Reduce small-file writeback contention exposed by the 0.18.76 live rsync forensic capture. Inline-file writeback now snapshots the current object under the topology read side, performs inline integrity verification and replacement SHA-256 work without holding the filesystem-wide writer, then acquires the writer only for complete-object revalidation and CoW/index publication.
 - Preserve lost-update safety for transaction-private blocks that may be rewritten in place: publication re-reads and compares the complete verified 4 KiB object under the writer and retries from a fresh snapshot if another mutation changed it.
