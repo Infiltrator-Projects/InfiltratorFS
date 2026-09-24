@@ -49,7 +49,13 @@ int main(void)
     ok(big&&readback,"allocate stream buffers");
     for(size_t i=0;i<big_n;i++) big[i]=(uint8_t)((i*37u+11u)&0xffu);
 
-    ok(infs_named_stream_set(&v,"/owner","user.preview/data",big,big_n)==INFS_STATUS_OK,"set large stream");
+    infs_status stream_status =
+        infs_named_stream_set(&v, "/owner", "user.preview/data", big, big_n);
+    if (stream_status != INFS_STATUS_OK) {
+        fprintf(stderr, "named-streams: set large stream: %s (%d)\n",
+                infs_status_string(stream_status), (int)stream_status);
+        exit(1);
+    }
     memset(readback,0,big_n);
     ok(infs_named_stream_read(&v,"/owner","user.preview/data",readback,big_n,0)==(int64_t)big_n,"read large stream");
     ok(!memcmp(big,readback,big_n),"large stream roundtrip");
