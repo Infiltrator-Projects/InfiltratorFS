@@ -13,13 +13,14 @@ ioctl="$kernel/infiltratorfs_ioctl.h"
 resize="$kernel/infiltratorfs_resize.c"
 quota="$kernel/infiltratorfs_quota.inc"
 pagecache="$kernel/infiltratorfs_pagecache.c"
+orphan="$kernel/infiltratorfs_orphan_scan.c"
 
 fail() {
     echo "native kernel maintainability policy: $*" >&2
     exit 1
 }
 
-for file in "$driver" "$rw" "$data" "$namespace" "$makefile" "$ioctl" "$resize" "$quota" "$pagecache"; do
+for file in "$driver" "$rw" "$data" "$namespace" "$makefile" "$ioctl" "$resize" "$quota" "$pagecache" "$orphan"; do
     test -f "$file" || fail "missing $file"
 done
 
@@ -291,7 +292,7 @@ grep -Fq '} else {' <<<"$mount_init_body" || \
 
 # Writable mount latency must not scale with every regular-file object. Crash
 # orphan discovery runs after mount, is fenced to the committed mount
-# generation, and may only hold the topology read lock for bounded batches.
+# generation, and scans disjoint catalogue ranges through the native N-1 pool.
 # Live namespace mutation must never wait for the complete background scan.
 grep -Fq 'infilfs_schedule_orphan_recovery(sb);' "$driver" || \
     fail 'writable mount lost deferred orphan recovery'
@@ -305,18 +306,23 @@ grep -Fq 'orphan_recovery_generation' "$kernel/infiltratorfs_internal.h" || \
 grep -Fq 'infilfs_mod_delayed_cpu_work(&sbi->orphan_recovery_work, 1);' "$driver" || \
     fail 'orphan recovery is not scheduled on the native unbound CPU pool'
 recovery_body="$(sed -n '/static int infilfs_native_recover_unlinked_files(/,/^}/p' "$rw")"
+grep -Fq 'infilfs_orphan_discover_parallel(' <<<"$recovery_body" || \
+    fail 'orphan recovery lost parallel discovery'
 grep -Fq 'le64_to_cpu(header->generation) <= recovery_generation' <<<"$recovery_body" || \
-    fail 'orphan recovery does not reject post-mount zero-link objects'
-grep -Fq 'u32 end = min_t(u32, count, i + 256u);' <<<"$recovery_body" || \
+    fail 'orphan reclaim does not reject post-mount zero-link objects'
+scan_body="$(sed -n '/static int infilfs_orphan_scan_range(/,/^}/p' "$orphan")"
+grep -Fq 'u32 end = min_t(u32, item->end, i + 256u);' <<<"$scan_body" || \
     fail 'orphan discovery no longer yields the topology lock in bounded batches'
-grep -Fq 'live_block = le64_to_cpu(entries[j].object_block);' <<<"$recovery_body" || \
+grep -Fq 'live_block = le64_to_cpu(entry->object_block);' <<<"$scan_body" || \
     fail 'orphan discovery lost direct snapshot-block fast path'
-grep -Fq 'infilfs_index_lookup(sb, entries[j].object_id' <<<"$recovery_body" || \
+grep -Fq 'infilfs_index_lookup(' <<<"$scan_body" || \
     fail 'orphan discovery lost moved-object fallback lookup'
-test "$(grep -Fc 'down_read(&sbi->write_lock);' <<<"$recovery_body")" -ge 2 || \
-    fail 'orphan discovery/revalidation lost topology serialization'
-test "$(grep -Fc 'up_read(&sbi->write_lock);' <<<"$recovery_body")" -ge 3 || \
-    fail 'orphan recovery no longer releases topology locks between phases'
+grep -Fq 'down_read(&sbi->write_lock);' <<<"$scan_body" || \
+    fail 'parallel orphan discovery lost topology serialization'
+grep -Fq 'up_read(&sbi->write_lock);' <<<"$scan_body" || \
+    fail 'parallel orphan discovery no longer releases topology locks between batches'
+grep -Fq 'infilfs_queue_cpu_work(&work[i].work)' "$orphan" || \
+    fail 'orphan discovery no longer dispatches independent N-1 scan ranges'
 
 # Only the core object and the explicit RW compositor may textually compose
 # remaining implementation .inc units. A leaf .inc importing another leaf creates hidden
