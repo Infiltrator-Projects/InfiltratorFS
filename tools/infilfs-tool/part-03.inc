@@ -218,6 +218,9 @@ int main(int argc, char **argv)
     } else if (strcmp(cmd, "snapshot-delete") == 0 && argc == 4) {
         status = infs_snapshot_delete(&vol, argv[3]);
         if (status != INFS_STATUS_OK) rc = die_status("snapshot-delete", status);
+    } else if (strcmp(cmd, "snapshot-rollback") == 0 && argc == 4) {
+        status = infs_snapshot_rollback(&vol, argv[3]);
+        if (status != INFS_STATUS_OK) rc = die_status("snapshot-rollback", status);
     } else if (strcmp(cmd, "snapshot-ls") == 0 &&
                (argc == 4 || argc == 5)) {
         rc = command_snapshot_ls(&vol, argv[3], argc == 5 ? argv[4] : "/");
