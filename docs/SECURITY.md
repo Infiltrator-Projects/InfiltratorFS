@@ -37,11 +37,17 @@ logical-data digest verification, copy-on-write publication, checkpoint
 recovery and fail-closed handling of unsupported/malformed persistent
 structures.
 
-Current Format 0.18 does **not** provide confidentiality for offline media.
-Whole-volume/per-file encryption, key wrapping and authenticated encrypted
-metadata remain roadmap work. An attacker who can read the raw medium can read
-unencrypted file data and metadata; an attacker who can arbitrarily rewrite the
-medium is outside the guarantees of unkeyed checksums.
+Current Format 0.18 supports an optional authenticated whole-volume
+storage wrapper. A random 256-bit volume key encrypts every logical 4096-byte
+block with AES-256-GCM; a PBKDF2-HMAC-SHA256-derived key-encryption key wraps
+that volume key in the encrypted-container header. Block number and volume salt
+are authenticated as associated data, so metadata and file-data blocks are both
+confidential and authenticated when the encrypted storage layer is used.
+
+This is currently one whole-volume encryption domain. Per-object/multiple
+encryption domains and independently selectable protection classes remain
+roadmap work. Unencrypted Format 0.18 volumes retain the existing CRC64/SHA-256
+integrity model and do not provide offline confidentiality.
 
 Availability under hostile resource-exhaustion input is bounded where practical
 through explicit record limits, traversal guards and malformed-topology
