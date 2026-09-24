@@ -41,6 +41,14 @@ if not digest < writer < revalidate:
     raise SystemExit("inline writeback no longer prepares before writer-lock revalidation")
 if "infilfs_rw_load_inline(" in body:
     raise SystemExit("inline writeback regressed to integrity hashing under the writer helper")
+if "(void)infilfs_native_pending_commit_locked(pending)" in body:
+    raise SystemExit("inline writeback discards deferred publication failure")
+publish = body.find("int publish = infilfs_native_pending_commit_locked(pending);")
+error = body.find("ret = publish;", publish)
+revert = body.find("goto out_revert;", error)
+success = body.find("*position = pos + copied;", publish)
+if min(publish, error, revert, success) < 0 or not (publish < error < revert < success):
+    raise SystemExit("inline writeback does not surface publication failure before success")
 PY
 
 # Pure paged-directory additions must use the exact volatile name locator and
