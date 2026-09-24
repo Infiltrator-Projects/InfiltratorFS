@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-static int64_t write_file_tx(struct infs_volume *vol, const char *path,
-                             const void *buf, size_t size, uint64_t offset)
+static int64_t write_file_lookup_tx(struct infs_volume *vol,
+                                    const struct infs_lookup *lookup,
+                                    const void *buf, size_t size,
+                                    uint64_t offset)
 {
-    if (!vol || !path || (size && !buf))
+    if (!vol || !lookup || (size && !buf))
         return INFS_STATUS_INVALID_ARGUMENT;
     if (!vol->writable)
         return INFS_STATUS_READ_ONLY;
@@ -12,13 +14,12 @@ static int64_t write_file_tx(struct infs_volume *vol, const char *path,
         return INFS_STATUS_OVERFLOW;
     if (size == 0)
         return 0;
-
-    struct infs_lookup lk;
-    infs_status status = infs_lookup_path(vol, path, &lk);
-    if (status != INFS_STATUS_OK)
-        return status;
-    if (lk.type != INFS_OBJECT_FILE)
+    if (lookup->type != INFS_OBJECT_FILE &&
+        lookup->type != INFS_OBJECT_NAMED_STREAM)
         return INFS_STATUS_IS_DIRECTORY;
+
+    struct infs_lookup lk = *lookup;
+    infs_status status;
 
     uint8_t object[INFS_BLOCK_SIZE];
     status = read_object(vol, lk.block, object);
@@ -302,6 +303,20 @@ static int64_t write_file_tx(struct infs_volume *vol, const char *path,
     if (status != INFS_STATUS_OK)
         return status;
     return (int64_t)done;
+}
+
+static int64_t write_file_tx(struct infs_volume *vol, const char *path,
+                             const void *buf, size_t size, uint64_t offset)
+{
+    if (!vol || !path || (size && !buf))
+        return INFS_STATUS_INVALID_ARGUMENT;
+    struct infs_lookup lookup;
+    infs_status status = infs_lookup_path(vol, path, &lookup);
+    if (status != INFS_STATUS_OK)
+        return status;
+    if (lookup.type != INFS_OBJECT_FILE)
+        return INFS_STATUS_IS_DIRECTORY;
+    return write_file_lookup_tx(vol, &lookup, buf, size, offset);
 }
 
 static int64_t write_file_common(struct infs_volume *vol, const char *path,
