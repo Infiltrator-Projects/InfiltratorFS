@@ -62,6 +62,8 @@ static const uint8_t INFS_ALLOCATION_LEAF_PAGE_MAGIC[8] = {
 #define INFS_OBJECT_SECURITY         8u
 #define INFS_OBJECT_SECURITY_BINDING 9u
 #define INFS_OBJECT_EXTENSION       10u
+#define INFS_OBJECT_METADATA_SET    11u
+#define INFS_OBJECT_NAMED_STREAM    12u
 
 #define INFS_OBJECT_VERSION_CLASSIC 1u
 #define INFS_OBJECT_VERSION_PAGED   2u
@@ -112,6 +114,11 @@ static const uint8_t INFS_ALLOCATION_LEAF_PAGE_MAGIC[8] = {
 #define INFS_INCOMPAT_CASEFOLD_V1 UINT64_C(0x0000000000010000)
 /* Immutable typed extension objects attached through extended_attributes_object_id. */
 #define INFS_INCOMPAT_TYPED_EXTENSIONS UINT64_C(0x0000000000020000)
+/* Portable named metadata v1. extended_attributes_object_id may reference a
+ * metadata-set object that owns UTF-8 named streams plus an optional typed
+ * extension reference. Stream contents use the ordinary extent/checksum
+ * engine and are not namespace entries or adapter sidecars. */
+#define INFS_INCOMPAT_NAMED_STREAMS_V1 UINT64_C(0x0000000000040000)
 #define INFS_KNOWN_COMPAT_FLAGS UINT64_C(0)
 #define INFS_KNOWN_RO_COMPAT_FLAGS UINT64_C(0)
 #define INFS_KNOWN_INCOMPAT_FLAGS \
@@ -123,7 +130,8 @@ static const uint8_t INFS_ALLOCATION_LEAF_PAGE_MAGIC[8] = {
      INFS_INCOMPAT_DIRECTORY_TREE | INFS_INCOMPAT_ALLOCATION_TREE | \
      INFS_INCOMPAT_COMPRESSED_EXTENTS | INFS_INCOMPAT_UNICODE_NORM_V1 | \
      INFS_INCOMPAT_REMOVABLE_NAMES_V1 | INFS_INCOMPAT_PORTABLE_SECURITY | \
-     INFS_INCOMPAT_CASEFOLD_V1 | INFS_INCOMPAT_TYPED_EXTENSIONS)
+     INFS_INCOMPAT_CASEFOLD_V1 | INFS_INCOMPAT_TYPED_EXTENSIONS | \
+     INFS_INCOMPAT_NAMED_STREAMS_V1)
 
 #define INFS_ATTR_READ_ONLY           UINT64_C(0x0000000000000001)
 #define INFS_ATTR_HIDDEN              UINT64_C(0x0000000000000002)
@@ -400,6 +408,34 @@ struct INFS_PACKED infs_extension_payload_disk {
     uint8_t data_digest[32];
 };
 
+#define INFS_METADATA_SET_VERSION 1u
+#define INFS_METADATA_STREAM_FLAG_NONE UINT32_C(0)
+
+struct INFS_PACKED infs_metadata_set_payload_disk {
+    uint16_t version;
+    uint16_t flags;
+    uint32_t entry_count;
+    uint32_t bytes_used;
+    uint32_t reserved;
+    uint8_t typed_extension_object_id[16];
+};
+
+/* Variable-size UTF-8 name bytes follow each fixed record and are padded to
+ * 8-byte alignment. stream_object_id references INFS_OBJECT_NAMED_STREAM. */
+struct INFS_PACKED infs_metadata_stream_entry_disk {
+    uint16_t record_size;
+    uint16_t name_length;
+    uint32_t flags;
+    uint8_t stream_object_id[16];
+};
+
+#define INFS_METADATA_STREAM_MAX_RECORD_SIZE \
+    ((sizeof(struct infs_metadata_stream_entry_disk) + INFS_NAME_MAX + 7u) & \
+     ~(size_t)7u)
+#define INFS_METADATA_SET_DATA_MAX \
+    (INFS_BLOCK_SIZE - sizeof(struct infs_object_header_disk) - \
+     sizeof(struct infs_metadata_set_payload_disk))
+
 #define INFS_EXTENSION_DATA_MAX \
     (INFS_BLOCK_SIZE - sizeof(struct infs_object_header_disk) - \
      sizeof(struct infs_extension_payload_disk))
@@ -576,6 +612,12 @@ _Static_assert(sizeof(struct infs_security_binding_index_payload_disk) == 128,
                "security binding index payload layout changed");
 _Static_assert(sizeof(struct infs_security_ace_disk) == 32,
                "security ACE layout changed");
+_Static_assert(sizeof(struct infs_metadata_set_payload_disk) == 32,
+               "metadata-set payload layout changed");
+_Static_assert(sizeof(struct infs_metadata_stream_entry_disk) == 24,
+               "metadata-stream entry layout changed");
+_Static_assert(INFS_METADATA_STREAM_MAX_RECORD_SIZE <= INFS_METADATA_SET_DATA_MAX,
+               "maximum stream name no longer fits one metadata set");
 _Static_assert(INFS_PRINCIPAL_BINDINGS_PER_OBJECT >= 52u,
                "principal binding capacity unexpectedly small");
 _Static_assert(INFS_SECURITY_INLINE_ACES >= 120u,
