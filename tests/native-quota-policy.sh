@@ -28,6 +28,7 @@ grep -Fq '(INFILFS_ATTR_HIDDEN | INFILFS_ATTR_SYSTEM)' "$root/kernel/infiltrator
 grep -Fq 'infilfs_quota_reserve_inode(inode, quota_growth' "$root/kernel/infiltratorfs_rw_data.inc"
 grep -Fq 'infilfs_quota_reserve_create(dir, 0, 1' "$root/kernel/infiltratorfs_rw.inc"
 grep -Fq 'infilfs_quota_prepare_reparent_locked' "$root/kernel/infiltratorfs_rw_namespace.inc"
+bash "$root/tests/native-quota-scalability-policy.sh" "$root"
 grep -Fq 'infiltratorfs-quota' "$root/CMakeLists.txt"
 grep -Fq 'infiltratorfs_quota.inc' "$root/packaging/build-linux-packages.sh"
 # The quota harness now also carries mounted POSIX ACL qualification through
