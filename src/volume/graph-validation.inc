@@ -132,10 +132,23 @@ static int checkpoint_matches(struct infs_volume *vol, uint64_t block_no,
     uint8_t raw[INFS_BLOCK_SIZE];
     if (read_block(vol, block_no, raw) != 0)
         return 0;
+
     struct infs_superblock_disk sb;
     if (infs_decode_superblock(raw, &sb) != 0)
         return 0;
-    return memcmp(&sb, best, sizeof(sb)) == 0;
+
+    /*
+     * checksum is an encoding field, not live superblock state.
+     * infs_encode_superblock() calculates it into the serialized block without
+     * mutating vol->sb, so comparing the decoded checksum bytes against the
+     * in-memory structure made every freshly published generation appear to
+     * have zero valid replicas until the volume was reopened.  The decode
+     * above has already authenticated the stored checksum; compare the
+     * semantic superblock with that field normalized away.
+     */
+    struct infs_superblock_disk expected = *best;
+    memcpy(expected.checksum, sb.checksum, sizeof(expected.checksum));
+    return memcmp(&sb, &expected, sizeof(sb)) == 0;
 }
 
 static int heal_checkpoints(struct infs_volume *vol)
