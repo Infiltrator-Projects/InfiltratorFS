@@ -168,6 +168,7 @@ add_library(infilfs_core STATIC
     src/checksum.c
     src/status.c
     src/storage.c
+    src/storage_mirror.c
     src/security.c
     src/fs.c
     src/forensic.c
@@ -199,6 +200,10 @@ infilfs_enable_warnings(infilfs-checksum-test)
 add_executable(infilfs-portable-core tests/portable-core.c)
 target_link_libraries(infilfs-portable-core PRIVATE infilfs_core)
 infilfs_enable_warnings(infilfs-portable-core)
+
+add_executable(infilfs-storage-mirror tests/storage-mirror.c)
+target_link_libraries(infilfs-storage-mirror PRIVATE infilfs_core)
+infilfs_enable_warnings(infilfs-storage-mirror)
 
 add_executable(infilfs-removable-names tests/removable-names.c)
 target_link_libraries(infilfs-removable-names PRIVATE infilfs_core)
