@@ -155,7 +155,7 @@ static void infilfs_posix_current_ids(kuid_t *uid, kgid_t *gid)
     put_cred(cred);
 }
 
-static void infilfs_posix_fill_common_attributes(
+static int infilfs_posix_fill_common_attributes(
     struct infilfs_attributes_disk *attributes,
     struct infilfs_posix_compat_disk *posix,
     umode_t mode, u64 links)
@@ -163,18 +163,27 @@ static void infilfs_posix_fill_common_attributes(
     u64 now = ktime_get_real_ns();
     kuid_t kernel_uid;
     kgid_t kernel_gid;
-    u32 uid = 0;
-    u32 gid = 0;
+    u32 uid;
+    u32 gid;
+    int ret;
 
     /*
      * The disk format stores init-user-namespace numeric IDs.  The format
      * header intentionally removes Linux's current task macro, so obtain a
      * stable credential reference through the exported credential API rather
      * than depending on current_fsuid/current_fsgid macro expansion here.
+     *
+     * Never substitute uid/gid zero when an id-mapped credential cannot be
+     * represented.  Returning -EOVERFLOW keeps object creation fail-closed
+     * instead of silently manufacturing root ownership on disk.
      */
     infilfs_posix_current_ids(&kernel_uid, &kernel_gid);
-    (void)infilfs_posix_uid_to_disk(kernel_uid, &uid);
-    (void)infilfs_posix_gid_to_disk(kernel_gid, &gid);
+    ret = infilfs_posix_uid_to_disk(kernel_uid, &uid);
+    if (ret)
+        return ret;
+    ret = infilfs_posix_gid_to_disk(kernel_gid, &gid);
+    if (ret)
+        return ret;
 
     memset(attributes, 0, sizeof(*attributes));
     memset(posix, 0, sizeof(*posix));
@@ -186,6 +195,7 @@ static void infilfs_posix_fill_common_attributes(
     posix->permissions = cpu_to_le32(mode & 07777);
     posix->uid = cpu_to_le32(uid);
     posix->gid = cpu_to_le32(gid);
+    return 0;
 }
 
 /*
@@ -1504,8 +1514,10 @@ static int infilfs_posix_create_object_native(
             (struct infilfs_file_payload_disk *)(header + 1);
 
         header->payload_size = cpu_to_le32(sizeof(*file));
-        infilfs_posix_fill_common_attributes(&file->attributes,
-                                              &file->posix, mode, initial_links);
+        ret = infilfs_posix_fill_common_attributes(
+            &file->attributes, &file->posix, mode, initial_links);
+        if (ret)
+            goto out;
         file->attributes.portable_flags = cpu_to_le64(portable_flags);
         file->data_checksum_type = cpu_to_le32(INFILFS_CHECKSUM_SHA256);
         posix = &file->posix;
@@ -1519,8 +1531,10 @@ static int infilfs_posix_create_object_native(
             sizeof(*dir) +
             (le16_to_cpu(header->object_version) == INFILFS_OBJECT_VERSION_TREE ?
              sizeof(__le64) : 0u));
-        infilfs_posix_fill_common_attributes(&dir->attributes,
-                                              &dir->posix, mode, initial_links);
+        ret = infilfs_posix_fill_common_attributes(
+            &dir->attributes, &dir->posix, mode, initial_links);
+        if (ret)
+            goto out;
         dir->attributes.portable_flags = cpu_to_le64(portable_flags);
         posix = &dir->posix;
     } else {
