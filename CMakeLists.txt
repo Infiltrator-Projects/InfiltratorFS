@@ -169,6 +169,7 @@ add_library(infilfs_core STATIC
     src/status.c
     src/storage.c
     src/storage_mirror.c
+    src/storage_encrypted.c
     src/security.c
     src/fs.c
     src/forensic.c
@@ -184,10 +185,17 @@ target_link_libraries(infilfs_core PUBLIC InfiltratrCommon::Portable lz4_static)
 if(WIN32)
     target_link_libraries(infilfs_core PUBLIC bcrypt)
     target_compile_definitions(infilfs_core PRIVATE INFS_HAVE_BCRYPT_SHA256=1)
-else()
-    find_package(OpenSSL QUIET COMPONENTS Crypto)
-    if(OpenSSL_FOUND)
-        target_link_libraries(infilfs_core PUBLIC OpenSSL::Crypto)
+endif()
+
+# Authenticated encrypted-storage support uses the audited provider AES-GCM and
+# PBKDF2 implementations rather than filesystem-local cipher code. Core builds
+# remain possible without OpenSSL; encrypted-container APIs then fail closed
+# with INFS_STATUS_NOT_SUPPORTED.
+find_package(OpenSSL QUIET COMPONENTS Crypto)
+if(OpenSSL_FOUND)
+    target_link_libraries(infilfs_core PUBLIC OpenSSL::Crypto)
+    target_compile_definitions(infilfs_core PRIVATE INFS_HAVE_OPENSSL_AEAD=1)
+    if(NOT WIN32)
         target_compile_definitions(infilfs_core PRIVATE INFS_HAVE_OPENSSL_SHA256=1)
     endif()
 endif()
@@ -204,6 +212,10 @@ infilfs_enable_warnings(infilfs-portable-core)
 add_executable(infilfs-storage-mirror tests/storage-mirror.c)
 target_link_libraries(infilfs-storage-mirror PRIVATE infilfs_core)
 infilfs_enable_warnings(infilfs-storage-mirror)
+
+add_executable(infilfs-storage-encrypted tests/storage-encrypted.c)
+target_link_libraries(infilfs-storage-encrypted PRIVATE infilfs_core)
+infilfs_enable_warnings(infilfs-storage-encrypted)
 
 add_executable(infilfs-removable-names tests/removable-names.c)
 target_link_libraries(infilfs-removable-names PRIVATE infilfs_core)
@@ -314,6 +326,8 @@ infilfs_enable_warnings(infilfs-free-extent-index)
 
 enable_testing()
 add_test(NAME infilfs-checksum-known-answer COMMAND infilfs-checksum-test)
+add_test(NAME infilfs-storage-mirror COMMAND infilfs-storage-mirror)
+add_test(NAME infilfs-storage-encrypted COMMAND infilfs-storage-encrypted)
 add_test(NAME infilfs-format-conformance COMMAND infilfs-format-conformance)
 add_test(NAME infilfs-removable-names COMMAND infilfs-removable-names)
 add_test(NAME infilfs-casefold COMMAND infilfs-casefold)
