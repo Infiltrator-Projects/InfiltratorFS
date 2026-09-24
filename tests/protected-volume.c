@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define MEMBER_BYTES (16u * 1024u * 1024u)
+#define MEMBER_BYTES (32u * 1024u * 1024u)
 
 struct memory_member {
     uint8_t *bytes;
