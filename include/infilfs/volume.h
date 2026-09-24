@@ -262,6 +262,11 @@ struct infs_snapshot_info {
     struct infs_timestamp created_time;
 };
 
+struct infs_named_stream_info {
+    char name[INFS_NAME_MAX + 1u];
+    uint64_t logical_size;
+};
+
 /* Public portable-volume contract:
  * - a successful open transfers the supplied storage context into the volume;
  *   infs_volume_close() releases all owned runtime/storage resources;
@@ -306,6 +311,23 @@ infs_status infs_get_typed_extension(
     struct infs_volume *vol, const char *path,
     struct infs_typed_extension *extension);
 void infs_free_typed_extension(struct infs_typed_extension *extension);
+
+/* Portable named metadata streams. Names are UTF-8 and belong to the owner
+ * object rather than its directory namespace. Stream contents use the same
+ * sparse/CoW/checksum engine as ordinary files. set() atomically replaces the
+ * complete named stream; read() supports arbitrary offsets. */
+infs_status infs_named_stream_set(
+    struct infs_volume *vol, const char *path, const char *name,
+    const void *data, size_t size);
+int64_t infs_named_stream_read(
+    struct infs_volume *vol, const char *path, const char *name,
+    void *data, size_t size, uint64_t offset);
+infs_status infs_named_stream_delete(
+    struct infs_volume *vol, const char *path, const char *name);
+infs_status infs_named_stream_list(
+    struct infs_volume *vol, const char *path,
+    struct infs_named_stream_info **streams, size_t *count);
+void infs_free_named_stream_infos(struct infs_named_stream_info *streams);
 /* On success, list_dir stores a heap-owned array in *items (or NULL for an
  * empty result) and its element count in *count. Release it with
  * infs_free_dir_items(). */
