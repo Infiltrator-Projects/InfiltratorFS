@@ -191,6 +191,15 @@ int main(void)
     expect(infs_create_symlink(&volume, "/pointer", "history", NULL) ==
                INFS_STATUS_OK,
            "create historical symbolic link");
+    expect(infs_mkdir(&volume, "/tree", NULL) == INFS_STATUS_OK,
+           "create historical directory tree");
+    expect(infs_create_file(&volume, "/tree/a", NULL) == INFS_STATUS_OK,
+           "create historical tree file");
+    expect(infs_write_file(&volume, "/tree/a", original, sizeof(original), 0) ==
+               (int64_t)sizeof(original),
+           "write historical tree file");
+    expect(infs_link_file(&volume, "/tree/a", "/tree/b") == INFS_STATUS_OK,
+           "create historical tree hard link");
 
     uint64_t captured_generation = infs_le64_to_cpu(volume.sb.generation);
     expect(infs_snapshot_create(&volume, "before-edit") == INFS_STATUS_OK,
@@ -238,6 +247,10 @@ int main(void)
            "rename live file after snapshot");
     expect(infs_unlink(&volume, "/pointer") == INFS_STATUS_OK,
            "unlink live symbolic link after snapshot");
+    expect(infs_unlink(&volume, "/tree/b") == INFS_STATUS_OK &&
+           infs_unlink(&volume, "/tree/a") == INFS_STATUS_OK &&
+           infs_rmdir(&volume, "/tree") == INFS_STATUS_OK,
+           "remove live tree after snapshot");
 
     uint8_t readback[sizeof(original)];
     expect(infs_snapshot_read_file(&volume, "before-edit", "/history",
@@ -255,6 +268,47 @@ int main(void)
     expect(infs_snapshot_lookup_path(&volume, "before-edit", "/current",
                                      &lookup) == INFS_STATUS_NOT_FOUND,
            "first snapshot excludes later rename");
+
+    /*
+     * Selected-object restore must publish a fresh live copy without rolling
+     * unrelated state back. Restore a directory tree containing a hard link,
+     * then replace an existing destination atomically.
+     */
+    expect(infs_snapshot_restore_path(
+               &volume, "before-edit", "/tree", "/restored-tree", 0) ==
+               INFS_STATUS_OK,
+           "restore selected historical directory tree");
+    struct infs_lookup restored_a;
+    struct infs_lookup restored_b;
+    expect(infs_lookup_path(&volume, "/restored-tree/a", &restored_a) ==
+               INFS_STATUS_OK &&
+           infs_lookup_path(&volume, "/restored-tree/b", &restored_b) ==
+               INFS_STATUS_OK &&
+           memcmp(restored_a.object_id, restored_b.object_id, 16) == 0,
+           "selected restore preserves hard-link identity");
+    expect(infs_read_file(&volume, "/restored-tree/a", readback,
+                          sizeof(readback), 0) ==
+               (int64_t)sizeof(readback) &&
+           memcmp(readback, original, sizeof(readback)) == 0,
+           "selected restore preserves file contents");
+    expect(infs_lookup_path(&volume, "/current", &lookup) == INFS_STATUS_OK,
+           "selected restore leaves unrelated live state unchanged");
+
+    expect(infs_create_file(&volume, "/restore-target", NULL) == INFS_STATUS_OK,
+           "create selected-restore replacement target");
+    expect(infs_snapshot_restore_path(
+               &volume, "before-edit", "/history", "/restore-target", 0) ==
+               INFS_STATUS_ALREADY_EXISTS,
+           "selected restore refuses replacement without opt-in");
+    expect(infs_snapshot_restore_path(
+               &volume, "before-edit", "/history", "/restore-target", 1) ==
+               INFS_STATUS_OK,
+           "selected restore atomically replaces opted-in destination");
+    expect(infs_read_file(&volume, "/restore-target", readback,
+                          sizeof(readback), 0) ==
+               (int64_t)sizeof(readback) &&
+           memcmp(readback, original, sizeof(readback)) == 0,
+           "selected replacement restores historical bytes");
 
     expect(infs_snapshot_create(&volume, "after-edit") == INFS_STATUS_OK,
            "create nested retained generation");
