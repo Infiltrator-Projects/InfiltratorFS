@@ -58,7 +58,9 @@ static int object_type_valid(uint16_t type)
            type == INFS_OBJECT_PRINCIPAL ||
            type == INFS_OBJECT_SECURITY ||
            type == INFS_OBJECT_SECURITY_BINDING ||
-           type == INFS_OBJECT_EXTENSION;
+           type == INFS_OBJECT_EXTENSION ||
+           type == INFS_OBJECT_METADATA_SET ||
+           type == INFS_OBJECT_NAMED_STREAM;
 }
 
 static int object_version_valid(uint16_t type, uint16_t version)
@@ -67,12 +69,12 @@ static int object_version_valid(uint16_t type, uint16_t version)
         return 1;
     if (version == INFS_OBJECT_VERSION_PAGED)
         return type == INFS_OBJECT_DIRECTORY || type == INFS_OBJECT_INDEX ||
-            type == INFS_OBJECT_FILE ||
+            type == INFS_OBJECT_FILE || type == INFS_OBJECT_NAMED_STREAM ||
             type == INFS_OBJECT_SNAPSHOT_CATALOG ||
             type == INFS_OBJECT_SECURITY;
     return version == INFS_OBJECT_VERSION_TREE &&
         (type == INFS_OBJECT_INDEX || type == INFS_OBJECT_DIRECTORY ||
-         type == INFS_OBJECT_FILE);
+         type == INFS_OBJECT_FILE || type == INFS_OBJECT_NAMED_STREAM);
 }
 
 static int index_payload_shape_valid(const uint8_t block[INFS_BLOCK_SIZE],
@@ -338,6 +340,79 @@ static int extension_payload_shape_valid(
     return memcmp(digest, payload->data_digest, sizeof(digest)) == 0;
 }
 
+static int metadata_set_payload_shape_valid(
+    const uint8_t block[INFS_BLOCK_SIZE], uint32_t payload_size)
+{
+    if (payload_size < sizeof(struct infs_metadata_set_payload_disk))
+        return 0;
+    const struct infs_object_header_disk *header =
+        (const struct infs_object_header_disk *)block;
+    if (!bytes_are_zero(header->parent_id, sizeof(header->parent_id)))
+        return 0;
+    const struct infs_metadata_set_payload_disk *payload =
+        (const struct infs_metadata_set_payload_disk *)(header + 1);
+    uint32_t count = infs_le32_to_cpu(payload->entry_count);
+    uint32_t bytes = infs_le32_to_cpu(payload->bytes_used);
+    if (infs_le16_to_cpu(payload->version) != INFS_METADATA_SET_VERSION ||
+        infs_le16_to_cpu(payload->flags) != 0 ||
+        infs_le32_to_cpu(payload->reserved) != 0 ||
+        bytes > INFS_METADATA_SET_DATA_MAX ||
+        payload_size != sizeof(*payload) + bytes)
+        return 0;
+
+    const uint8_t *base = (const uint8_t *)(payload + 1);
+    size_t offset = 0;
+    uint32_t seen = 0;
+    while (offset < bytes) {
+        if (bytes - offset < sizeof(struct infs_metadata_stream_entry_disk))
+            return 0;
+        const struct infs_metadata_stream_entry_disk *entry =
+            (const struct infs_metadata_stream_entry_disk *)(base + offset);
+        uint16_t record = infs_le16_to_cpu(entry->record_size);
+        uint16_t name_length = infs_le16_to_cpu(entry->name_length);
+        if (record < sizeof(*entry) || (record & 7u) != 0 ||
+            record > bytes - offset || name_length == 0 ||
+            name_length > INFS_NAME_MAX ||
+            sizeof(*entry) + name_length > record ||
+            infs_le32_to_cpu(entry->flags) != INFS_METADATA_STREAM_FLAG_NONE ||
+            !id_is_nonzero(entry->stream_object_id))
+            return 0;
+        const uint8_t *name = (const uint8_t *)(entry + 1);
+        if (memchr(name, 0, name_length) ||
+            !infs_utf8_validate(name, name_length))
+            return 0;
+        for (size_t pad = sizeof(*entry) + name_length;
+             pad < record; ++pad)
+            if (base[offset + pad] != 0)
+                return 0;
+
+        /* One metadata set may not contain duplicate exact names. */
+        size_t prior_offset = 0;
+        while (prior_offset < offset) {
+            const struct infs_metadata_stream_entry_disk *prior =
+                (const struct infs_metadata_stream_entry_disk *)(
+                    base + prior_offset);
+            uint16_t prior_record = infs_le16_to_cpu(prior->record_size);
+            uint16_t prior_length = infs_le16_to_cpu(prior->name_length);
+            if (prior_length == name_length &&
+                memcmp(prior + 1, name, name_length) == 0)
+                return 0;
+            prior_offset += prior_record;
+        }
+        ++seen;
+        offset += record;
+    }
+    return offset == bytes && seen == count;
+}
+
+static int named_stream_parent_shape_valid(
+    const uint8_t block[INFS_BLOCK_SIZE])
+{
+    const struct infs_object_header_disk *header =
+        (const struct infs_object_header_disk *)block;
+    return bytes_are_zero(header->parent_id, sizeof(header->parent_id));
+}
+
 static int snapshot_catalog_payload_shape_valid(
     const uint8_t block[INFS_BLOCK_SIZE], uint32_t payload_size)
 {
@@ -492,7 +567,11 @@ infs_status infs_object_finalize(uint8_t block[INFS_BLOCK_SIZE])
         (object_type == INFS_OBJECT_SECURITY &&
          !security_payload_shape_valid(block, payload_size, object_version)) ||
         (object_type == INFS_OBJECT_EXTENSION &&
-         !extension_payload_shape_valid(block, payload_size))) {
+         !extension_payload_shape_valid(block, payload_size)) ||
+        (object_type == INFS_OBJECT_METADATA_SET &&
+         !metadata_set_payload_shape_valid(block, payload_size)) ||
+        (object_type == INFS_OBJECT_NAMED_STREAM &&
+         !named_stream_parent_shape_valid(block))) {
         return INFS_STATUS_INVALID_ARGUMENT;
     }
 
@@ -548,6 +627,12 @@ int infs_validate_object_block(const uint8_t block[INFS_BLOCK_SIZE])
         return 0;
     if (object_type == INFS_OBJECT_EXTENSION &&
         !extension_payload_shape_valid(block, payload_size))
+        return 0;
+    if (object_type == INFS_OBJECT_METADATA_SET &&
+        !metadata_set_payload_shape_valid(block, payload_size))
+        return 0;
+    if (object_type == INFS_OBJECT_NAMED_STREAM &&
+        !named_stream_parent_shape_valid(block))
         return 0;
     if (!bytes_are_zero(hdr->checksum + sizeof(uint64_t),
                         sizeof(hdr->checksum) - sizeof(uint64_t)) ||
