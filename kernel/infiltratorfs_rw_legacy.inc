@@ -2475,10 +2475,10 @@ out:
 }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
-static int infilfs_rw_create(struct mnt_idmap *idmap, struct inode *dir,
+static __maybe_unused int infilfs_rw_create(struct mnt_idmap *idmap, struct inode *dir,
                              struct dentry *dentry, umode_t mode, bool excl)
 #else
-static int infilfs_rw_create(struct user_namespace *idmap, struct inode *dir,
+static __maybe_unused int infilfs_rw_create(struct user_namespace *idmap, struct inode *dir,
                              struct dentry *dentry, umode_t mode, bool excl)
 #endif
 {
@@ -2505,10 +2505,10 @@ static __maybe_unused struct dentry *infilfs_rw_mkdir(struct mnt_idmap *idmap,
                                        struct inode *dir,
                                        struct dentry *dentry, umode_t mode)
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
-static int infilfs_rw_mkdir(struct mnt_idmap *idmap, struct inode *dir,
+static __maybe_unused int infilfs_rw_mkdir(struct mnt_idmap *idmap, struct inode *dir,
                             struct dentry *dentry, umode_t mode)
 #else
-static int infilfs_rw_mkdir(struct user_namespace *idmap, struct inode *dir,
+static __maybe_unused int infilfs_rw_mkdir(struct user_namespace *idmap, struct inode *dir,
                             struct dentry *dentry, umode_t mode)
 #endif
 {
@@ -2545,10 +2545,10 @@ static int infilfs_rw_mkdir(struct user_namespace *idmap, struct inode *dir,
 }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
-static int infilfs_rw_setattr(struct mnt_idmap *idmap, struct dentry *dentry,
+static __maybe_unused int infilfs_rw_setattr(struct mnt_idmap *idmap, struct dentry *dentry,
                               struct iattr *attr)
 #else
-static int infilfs_rw_setattr(struct user_namespace *idmap, struct dentry *dentry,
+static __maybe_unused int infilfs_rw_setattr(struct user_namespace *idmap, struct dentry *dentry,
                               struct iattr *attr)
 #endif
 {
