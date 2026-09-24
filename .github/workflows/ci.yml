@@ -80,7 +80,7 @@ jobs:
 
   linux:
     name: Linux full suite
-    runs-on: ubuntu-latest
+    runs-on: ${{ startsWith(github.event.head_commit.message, 'Release ') && 'ubuntu-latest' || 'linux-native' }}
     timeout-minutes: 10
     steps:
       - name: Check out source
