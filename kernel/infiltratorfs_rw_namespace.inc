@@ -1966,6 +1966,7 @@ static int infilfs_ns_link(struct dentry *old_dentry, struct inode *dir,
     ret = infilfs_ns_finish(pending, ret);
     if (!ret) {
         ii->object_block = new_file_block;
+        ii->quota_project_cached = false;
         dir_ii->object_block = new_dir_block;
         infilfs_adjust_inode_blocks_after_commit(dir, dir_block_delta);
         inc_nlink(inode);
@@ -2325,6 +2326,9 @@ finish2:
                 }
             }
         }
+        if (!ret)
+            infilfs_quota_project_cache_bump_locked(
+                INFILFS_SB(old_dir->i_sb));
         mutex_unlock(&INFILFS_SB(old_dir->i_sb)->quota_lock);
         quota_locked = false;
     }
