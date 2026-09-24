@@ -404,36 +404,75 @@ int infilfs_rw_write_block(struct super_block *sb, u64 block,
     return 0;
 }
 
-static int infilfs_rw_write_block_sync(struct super_block *sb, u64 block,
-                                       const void *data)
+static int infilfs_rw_write_checkpoint_replicas_sync(
+    struct super_block *sb, const struct infilfs_superblock_disk *disk,
+    unsigned int first, const void *data, int *replica_error_out)
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
-    struct buffer_head *bh;
-    int ret = 0;
+    struct buffer_head *bhs[INFILFS_CHECKPOINT_COUNT] = {0};
+    struct blk_plug plug;
+    unsigned int n;
+    int primary_error = 0;
+    int replica_error = 0;
 
-    if (!sbi || block >= sbi->device_blocks)
-        return -EIO;
-    bh = sb_getblk(sb, (sector_t)block);
-    if (!bh)
-        return -EIO;
-
-    lock_buffer(bh);
-    memcpy(bh->b_data, data, INFILFS_DISK_BLOCK_SIZE);
-    set_buffer_uptodate(bh);
-    mark_buffer_dirty(bh);
-    unlock_buffer(bh);
+    if (!sbi || !disk || !data || !replica_error_out ||
+        first >= INFILFS_CHECKPOINT_COUNT)
+        return -EINVAL;
 
     /*
-     * Checkpoint blocks are tiny publication records.  Write and wait for the
-     * exact buffers here; the device-cache flush after all replicas then forms
-     * the stable-media boundary without a second whole-device writeback walk.
+     * The dependency barrier has already made every object reachable from this
+     * generation durable.  Prepare all checkpoint replicas first, submit them
+     * together under one block plug, then wait for each buffer.  Serial
+     * sync_dirty_buffer() calls unnecessarily paid one device completion
+     * latency per replica on every fsync.
      */
-    sync_dirty_buffer(bh);
-    if (!buffer_uptodate(bh))
-        ret = -EIO;
-    brelse(bh);
-    return ret;
+    for (n = 0; n < INFILFS_CHECKPOINT_COUNT; ++n) {
+        unsigned int idx = (first + n) % INFILFS_CHECKPOINT_COUNT;
+        u64 block = le64_to_cpu(disk->checkpoint_block[idx]);
+        struct buffer_head *bh;
+
+        if (block >= sbi->device_blocks) {
+            primary_error = -EIO;
+            goto out_release;
+        }
+        bh = sb_getblk(sb, (sector_t)block);
+        if (!bh) {
+            primary_error = -EIO;
+            goto out_release;
+        }
+        bhs[n] = bh;
+        lock_buffer(bh);
+        memcpy(bh->b_data, data, INFILFS_DISK_BLOCK_SIZE);
+        set_buffer_uptodate(bh);
+        mark_buffer_dirty(bh);
+        unlock_buffer(bh);
+    }
+
+    blk_start_plug(&plug);
+    for (n = 0; n < INFILFS_CHECKPOINT_COUNT; ++n)
+        write_dirty_buffer(bhs[n], REQ_SYNC);
+    blk_finish_plug(&plug);
+
+    for (n = 0; n < INFILFS_CHECKPOINT_COUNT; ++n) {
+        int error = 0;
+
+        wait_on_buffer(bhs[n]);
+        if (buffer_write_io_error(bhs[n]) || !buffer_uptodate(bhs[n]))
+            error = -EIO;
+        if (!n && error)
+            primary_error = error;
+        else if (n && error && !replica_error)
+            replica_error = error;
+    }
+
+out_release:
+    for (n = 0; n < INFILFS_CHECKPOINT_COUNT; ++n)
+        if (bhs[n])
+            brelse(bhs[n]);
+    *replica_error_out = replica_error;
+    return primary_error;
 }
+
 
 static const u64 infilfs_rw_crc64_table[256] = {
     0x0000000000000000ULL, 0x42F0E1EBA9EA3693ULL, 0x85E1C3D753D46D26ULL, 0xC711223CFA3E5BB5ULL,
@@ -1441,7 +1480,6 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
     struct infilfs_allocation_layout next_allocation = {0};
     u8 *sb_block;
     unsigned int first;
-    unsigned int n;
     int ret;
     int replica_error = 0;
     u64 commit_started = ktime_get_ns();
@@ -1505,8 +1543,8 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
      * issued in any order because none can reference volatile dependency data.
      * The final cache flush below is the generation-N+1 publication barrier.
      */
-    ret = infilfs_rw_write_block_sync(tx->sb,
-        le64_to_cpu(tx->next_sb.checkpoint_block[first]), sb_block);
+    ret = infilfs_rw_write_checkpoint_replicas_sync(
+        tx->sb, &tx->next_sb, first, sb_block, &replica_error);
     if (ret) {
         sbi->write_poisoned = true;
         sbi->checkpoint_repair_needed = true;
@@ -1514,14 +1552,6 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
         infilfs_allocation_layout_destroy(&next_allocation);
         kfree(sb_block);
         return ret;
-    }
-
-    for (n = 1; n < INFILFS_CHECKPOINT_COUNT; ++n) {
-        unsigned int idx = (first + n) % INFILFS_CHECKPOINT_COUNT;
-        ret = infilfs_rw_write_block_sync(tx->sb,
-            le64_to_cpu(tx->next_sb.checkpoint_block[idx]), sb_block);
-        if (ret && !replica_error)
-            replica_error = ret;
     }
     checkpoints_ms = div_u64(
         ktime_get_ns() - phase_started, NSEC_PER_MSEC);
