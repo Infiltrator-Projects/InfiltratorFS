@@ -16,4 +16,5 @@ project-quota-scalability=qualified-v1
 quota-admission-hotpath=no-whole-index-v1
 manager-sidebar-width=publisher-248px-v1
 
-mounted-performance-repair=quota-private-xattr-fallocate-fsync-orphan-v4
+mounted-performance-repair=quota-private-xattr-fallocate-fsync-orphan-v5
+kernel-makefile-comment-syntax=guarded-v1
