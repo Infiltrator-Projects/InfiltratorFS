@@ -94,7 +94,6 @@ int infilfs_native_stage_block(struct super_block *sb, u64 block,
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
     struct buffer_head *bh;
-
     if (!sbi || block >= sbi->device_blocks)
         return -EIO;
     bh = sb_getblk(sb, (sector_t)block);
@@ -127,10 +126,8 @@ static void infilfs_native_submit_staged_range(struct super_block *sb,
 {
     struct blk_plug plug;
     u64 i;
-
     if (!count)
         return;
-
     blk_start_plug(&plug);
     for (i = 0; i < count; ++i) {
         struct buffer_head *bh =
@@ -148,7 +145,6 @@ static bool infilfs_native_block_private(struct infilfs_native_pending *pending,
                                          u64 block)
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(pending->sb);
-
     return sbi && block < infilfs_volume_blocks(sbi) && sbi->bitmap &&
         !infilfs_rw_bitmap_get(sbi->bitmap, block) &&
         infilfs_rw_bitmap_get(pending->tx.bitmap, block);
@@ -161,11 +157,9 @@ static int infilfs_native_undo_capture(struct infilfs_native_pending *pending,
     unsigned int new_capacity;
     unsigned int i;
     int ret;
-
     for (i = 0; i < pending->undo_count; ++i)
         if (pending->undo[i].block == block)
             return 0;
-
     if (pending->undo_count == pending->undo_capacity) {
         new_capacity = pending->undo_capacity ?
             pending->undo_capacity * 2u : INFILFS_NATIVE_UNDO_INITIAL;
@@ -182,7 +176,6 @@ static int infilfs_native_undo_capture(struct infilfs_native_pending *pending,
         pending->undo = grown;
         pending->undo_capacity = new_capacity;
     }
-
     ret = infilfs_read_allocated_block(pending->sb, block,
                               pending->undo[pending->undo_count].data);
     if (ret)
@@ -198,7 +191,6 @@ int infilfs_native_store_private_or_cow(
 {
     int ret;
     u64 new_block;
-
     if (old_block && infilfs_native_block_private(pending, old_block)) {
         ret = infilfs_native_undo_capture(pending, old_block);
         if (ret)
@@ -208,7 +200,6 @@ int infilfs_native_store_private_or_cow(
             *new_block_out = old_block;
         return ret;
     }
-
     ret = infilfs_rw_tx_alloc(&pending->tx, 1, &new_block);
     if (ret)
         return ret;
@@ -228,7 +219,6 @@ static struct infilfs_native_pending *
 infilfs_native_pending_find_locked(struct super_block *sb)
 {
     struct infilfs_native_pending *pending;
-
     list_for_each_entry(pending, &infilfs_native_pending_list, node)
         if (pending->sb == sb)
             return pending;
@@ -247,7 +237,6 @@ u64 infilfs_native_metadata_reserve_blocks(
 {
     u64 reserve;
     u64 total;
-
     if (!sbi)
         return 0;
     total = infilfs_volume_blocks(sbi);
@@ -270,11 +259,9 @@ u64 infilfs_native_visible_free_blocks(struct super_block *sb)
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
     struct infilfs_native_pending *pending;
     u64 free_blocks;
-
     if (!sbi)
         return 0;
     free_blocks = le64_to_cpu(READ_ONCE(sbi->disk.free_blocks));
-
     mutex_lock(&infilfs_native_pending_list_lock);
     pending = infilfs_native_pending_find_locked(sb);
     if (pending && READ_ONCE(pending->active))
@@ -288,7 +275,6 @@ static __maybe_unused u64 infilfs_native_available_data_blocks(struct super_bloc
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
     u64 free_blocks = infilfs_native_visible_free_blocks(sb);
     u64 reserve = infilfs_native_metadata_reserve_blocks(sbi);
-
     return free_blocks > reserve ? free_blocks - reserve : 0;
 }
 
@@ -298,7 +284,6 @@ static struct infilfs_native_pending *
 infilfs_native_pending_get(struct super_block *sb, bool create)
 {
     struct infilfs_native_pending *pending;
-
     mutex_lock(&infilfs_native_pending_list_lock);
     pending = infilfs_native_pending_find_locked(sb);
     if (!pending && create) {
@@ -329,7 +314,6 @@ static int infilfs_native_pending_begin_locked(
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(pending->sb);
     int ret;
-
     if (pending->commit_failed)
         return -EIO;
     if (READ_ONCE(sbi->resize_active))
@@ -368,7 +352,6 @@ static int infilfs_native_operation_rollback(
     size_t a;
     unsigned int i;
     int first_error = 0;
-
     for (i = 0; i < pending->undo_count; ++i) {
         int ret = infilfs_native_stage_block(pending->sb,
                                              pending->undo[i].block,
@@ -485,7 +468,6 @@ static bool infilfs_native_pending_should_publish(
     const u64 max_excess_churn = 64ULL * 1024ULL * 1024ULL;
     u64 churn_limit;
     u64 excess;
-
     if (pending->pending_bytes >= pending->publish_threshold)
         return true;
 
@@ -507,10 +489,8 @@ static int infilfs_native_pending_commit_locked(
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(pending->sb);
     int ret;
-
     if (!pending->active)
         return pending->commit_failed ? -EIO : 0;
-
     pending->tx.next_sb.generation = cpu_to_le64(pending->tx.generation);
     sbi->disk = pending->tx.next_sb;
     ret = infilfs_rw_tx_commit(&pending->tx);
@@ -535,7 +515,6 @@ int infilfs_native_pending_flush_sb(struct super_block *sb)
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
     bool committed;
     int ret;
-
     if (!pending)
         return 0;
     cancel_delayed_work_sync(&pending->idle_work);
@@ -561,7 +540,6 @@ static void infilfs_native_idle_work(struct work_struct *work)
         to_delayed_work(work), struct infilfs_native_pending, idle_work);
     struct infilfs_sb_info *sbi = INFILFS_SB(pending->sb);
     int ret;
-
     if (!sbi)
         return;
     infilfs_cpu_work_enter();
@@ -577,7 +555,6 @@ static void infilfs_native_pending_destroy(struct super_block *sb)
 {
     struct infilfs_native_pending *pending;
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
-
     mutex_lock(&infilfs_native_pending_list_lock);
     pending = infilfs_native_pending_find_locked(sb);
     if (pending)
@@ -592,7 +569,6 @@ static void infilfs_native_pending_destroy(struct super_block *sb)
     infilfs_native_checksum_cache_invalidate_sb(sb);
     if (!pending)
         return;
-
     cancel_delayed_work_sync(&pending->idle_work);
     if (sbi) {
         down_write(&sbi->write_lock);
@@ -621,7 +597,6 @@ static bool infilfs_native_choose_scored_extent(
     u64 best_start = 0;
     bool found = false;
     size_t i;
-
     if (!tx || !tx->sbi || !tx->free_extent_index_valid || !wanted ||
         !tx->free_extent_count || !start_out)
         return false;
@@ -631,7 +606,6 @@ static bool infilfs_native_choose_scored_extent(
         if (preferred < 1u || preferred >= infilfs_volume_blocks(sbi))
             preferred = 1u;
     }
-
     for (i = 0; i < tx->free_extent_count; ++i) {
         const struct infilfs_rw_free_range *extent = &tx->free_extents[i];
         u64 extent_start = extent->start;
@@ -682,7 +656,6 @@ static bool infilfs_native_choose_scored_extent(
             found = true;
         }
     }
-
     if (!found)
         return false;
     *start_out = best_start;
@@ -721,7 +694,6 @@ static int infilfs_native_alloc_data_exact_reserved(
     u64 i;
     unsigned int attempts = 0;
     int ret;
-
     infilfs_parallel_note_workload(sbi, workload);
 
 retry:
@@ -738,7 +710,6 @@ retry:
             count > tx->free_blocks - reserve)
             return -ENOSPC;
     }
-
     if (workload == INFILFS_DATA_WORKLOAD_SEQUENTIAL &&
         reservation && reservation->active &&
         reservation->count == count) {
@@ -752,7 +723,6 @@ retry:
         if (ret != -ENOENT && ret != -EAGAIN)
             return ret;
     }
-
     if (workload == INFILFS_DATA_WORKLOAD_SEQUENTIAL &&
         preferred > 0 && preferred < total &&
         count <= total - preferred) {
@@ -785,7 +755,6 @@ retry:
     if (hint < 1 || hint >= total)
         hint = 1;
     candidate = hint;
-
     if (tx->free_extent_index_valid &&
         infilfs_native_choose_scored_extent(
             tx, count, preferred, workload, &start)) {
@@ -817,7 +786,6 @@ retry:
     }
     if (run != count)
         return -ENOSPC;
-
     ret = infilfs_rw_tx_record_alloc(tx, start, count);
     if (ret == -EAGAIN) {
         infilfs_rw_free_extent_index_invalidate(tx);
@@ -844,7 +812,6 @@ void infilfs_native_block_digest(
     struct infilfs_data_checksum_disk *digest)
 {
     struct infilfs_rw_sha256_ctx ctx;
-
     if (!infilfs_crypto_sha256(data, INFILFS_DISK_BLOCK_SIZE, digest->bytes))
         return;
     infilfs_rw_sha256_init(&ctx);
@@ -867,7 +834,6 @@ int infilfs_native_collect_extents(
     u64 logical = 0;
     int ret;
     u32 i;
-
     ret = infilfs_read_object(inode->i_sb, ii->object_block,
                               INFILFS_OBJECT_FILE, ii->object_id, object);
     if (ret)
@@ -876,7 +842,6 @@ int infilfs_native_collect_extents(
     file = (struct infilfs_file_payload_disk *)(header + 1);
     count = le32_to_cpu(file->extent_count);
     *was_inline_out = false;
-
     if (!count) {
         u64 size = le64_to_cpu(file->attributes.logical_size);
         if (size > INFILFS_INLINE_DATA_MAX)
@@ -887,11 +852,9 @@ int infilfs_native_collect_extents(
         *old_blocks_out = 0;
         return 0;
     }
-
     extents = kvmalloc_array(count, sizeof(*extents), GFP_NOFS);
     if (!extents)
         return -ENOMEM;
-
     if (le16_to_cpu(header->object_version) == INFILFS_OBJECT_VERSION_CLASSIC) {
         size_t need = sizeof(*file) + (size_t)count * sizeof(*extents);
         if (need != le32_to_cpu(header->payload_size)) {
@@ -956,7 +919,6 @@ int infilfs_native_collect_extents(
         ret = -EFSCORRUPTED;
         goto fail;
     }
-
     for (i = 0; i < count; ++i) {
         u64 start = le64_to_cpu(extents[i].logical_block);
         u64 physical = le64_to_cpu(extents[i].physical_block);
@@ -992,7 +954,6 @@ static int infilfs_native_map_extent_detail(
     u64 *extent_start_out, u32 *extent_blocks_out)
 {
     u32 i;
-
     for (i = 0; i < count; ++i) {
         u64 start = le64_to_cpu(extents[i].logical_block);
         u32 blocks = le32_to_cpu(extents[i].block_count);
@@ -1031,7 +992,6 @@ static int infilfs_native_extent_append(struct infilfs_extent_disk *out,
                                         u32 blocks, u32 flags)
 {
     struct infilfs_extent_disk *last;
-
     if (!blocks)
         return 0;
     if (*count) {
@@ -1073,11 +1033,9 @@ static int infilfs_native_replace_extent_range(
     u64 replace_end = replace_start + replace_count;
     u32 i;
     int ret;
-
     out = kvmalloc_array(capacity, sizeof(*out), GFP_NOFS);
     if (!out)
         return -ENOMEM;
-
     for (i = 0; i < old_count; ++i) {
         u64 start = le64_to_cpu(old[i].logical_block);
         u64 end = start + le32_to_cpu(old[i].block_count);
@@ -1101,7 +1059,6 @@ static int infilfs_native_replace_extent_range(
         if (end >= replace_start)
             break;
     }
-
     if (old_blocks < replace_start) {
         ret = infilfs_native_extent_append(out, capacity, &count, old_blocks, 0,
             (u32)(replace_start - old_blocks), INFILFS_EXTENT_HOLE);
@@ -1112,7 +1069,6 @@ static int infilfs_native_replace_extent_range(
         replacement_physical, (u32)replace_count, replacement_flags);
     if (ret)
         goto fail;
-
     for (i = 0; i < old_count; ++i) {
         u64 start = le64_to_cpu(old[i].logical_block);
         u64 end = start + le32_to_cpu(old[i].block_count);
@@ -1150,7 +1106,6 @@ static int infilfs_native_release_replaced_extents(
 {
     u64 replace_end;
     u32 i;
-
     if (!replace_count)
         return 0;
     if (replace_start > U64_MAX - replace_count)
@@ -1206,13 +1161,11 @@ static int infilfs_native_tree_build_subtree(
 {
     u8 *block;
     int ret;
-
     if (!count || !root_out)
         return -EINVAL;
     block = kzalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
     if (!block)
         return -ENOMEM;
-
     if (count <= INFILFS_INDEX_ENTRIES_PER_PAGE) {
         struct infilfs_metadata_page_disk *page;
         u64 leaf;
@@ -1304,7 +1257,6 @@ static int infilfs_native_tree_mutate_node(
 {
     u8 *block;
     int ret;
-
     if (!node || depth > 16u)
         return -EFSCORRUPTED;
     block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
@@ -1313,7 +1265,6 @@ static int infilfs_native_tree_mutate_node(
     ret = infilfs_read_allocated_block(pending->sb, node, block);
     if (ret)
         goto out;
-
     if (memcmp(block, infilfs_index_page_magic, 8) == 0) {
         struct infilfs_metadata_page_disk *page;
         struct infilfs_index_entry_disk *entries;
@@ -1427,7 +1378,6 @@ static int infilfs_native_tree_mutate_node(
                 pending, node, block, replacement_out);
         goto out;
     }
-
     if (depth >= 16u) {
         ret = -EFSCORRUPTED;
         goto out;
@@ -1515,7 +1465,6 @@ static int infilfs_native_index_update_tree(
     u32 total_count;
     u32 c;
     int ret = 0;
-
     if (le32_to_cpu(payload->reserved) != 0 ||
         le32_to_cpu(header->payload_size) !=
             sizeof(*payload) + sizeof(*root_ptr))
@@ -1524,7 +1473,6 @@ static int infilfs_native_index_update_tree(
     root = le64_to_cpu(*root_ptr);
     if (!total_count || !root)
         return -EFSCORRUPTED;
-
     infilfs_native_index_locator_invalidate(pending);
     for (c = 0; c < change_count; ++c) {
         enum infilfs_native_tree_mutation mutation;
@@ -1554,7 +1502,6 @@ static int infilfs_native_index_update_tree(
         }
         changes[c].found = true;
     }
-
     payload->entry_count = cpu_to_le32(total_count);
     payload->reserved = 0;
     *root_ptr = cpu_to_le64(root);
@@ -1579,9 +1526,7 @@ static int infilfs_native_index_update_classic(
     struct infilfs_sb_info *sbi = INFILFS_SB(pending->sb);
     u32 i;
     int ret = 0;
-
     infilfs_native_index_locator_invalidate(pending);
-
     for (i = 0; i < change_count; ++i) {
         if (changes[i].remove)
             return -EOPNOTSUPP;
@@ -1621,7 +1566,6 @@ static int infilfs_native_index_update_paged(
     u64 new_head_block;
     bool rebuilt = false;
     int ret = 0;
-
     if (page_count > INFILFS_INDEX_PAGE_POINTERS)
         return -EFSCORRUPTED;
     for (c = 0; c < change_count; ++c)
@@ -1645,7 +1589,6 @@ locate_again:
         pending, total_count + change_count + 32u);
     if (ret)
         goto out;
-
     memset(located, 0, (size_t)(change_count ? change_count : 1u) *
                         sizeof(*located));
     for (c = 0; c < change_count; ++c) {
@@ -1890,7 +1833,6 @@ locate_again:
             pages[page_index] = cpu_to_le64(replacement);
         }
     }
-
     payload->entry_count = cpu_to_le32(total_count);
     header->generation = cpu_to_le64(pending->tx.generation);
     header->payload_size = cpu_to_le32(sizeof(*payload) +
@@ -1929,7 +1871,6 @@ static int infilfs_native_index_update(
     u8 *head;
     struct infilfs_object_header_disk *header;
     int ret;
-
     if (!change_count)
         return 0;
     head = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
@@ -1972,7 +1913,6 @@ static int infilfs_native_store_extent_page(
     if (old_block)
         return infilfs_native_store_private_or_cow(
             pending, old_block, page, new_block_out);
-
     ret = infilfs_rw_tx_alloc(&pending->tx, 1, &new_block);
     if (ret)
         return ret;
@@ -2010,7 +1950,6 @@ static int infilfs_native_build_file_object(
         old_version == INFILFS_OBJECT_VERSION_TREE);
     u64 stored_block;
     int ret;
-
     if (old_version == INFILFS_OBJECT_VERSION_PAGED ||
         old_version == INFILFS_OBJECT_VERSION_TREE) {
         const struct infilfs_extent_head_disk *old_head =
@@ -2023,7 +1962,6 @@ static int infilfs_native_build_file_object(
         if (old_version == INFILFS_OBJECT_VERSION_PAGED)
             old_pointers = (const __le64 *)(old_head + 1);
     }
-
     memset(new_object, 0, INFILFS_DISK_BLOCK_SIZE);
     memcpy(new_object, old_object,
            sizeof(struct infilfs_object_header_disk) +
@@ -2039,7 +1977,6 @@ static int infilfs_native_build_file_object(
     file->extent_count = cpu_to_le32(extent_count);
     file->data_checksum_type = cpu_to_le32(INFILFS_CHECKSUM_SHA256);
     header->generation = cpu_to_le64(pending->tx.generation);
-
     if (!paged) {
         u32 p;
 
@@ -2252,7 +2189,6 @@ static int infilfs_native_build_extent_page(
     u8 page_block[INFILFS_DISK_BLOCK_SIZE])
 {
     struct infilfs_metadata_page_disk *page;
-
     if (!count || count > INFILFS_EXTENTS_PER_PAGE)
         return -EINVAL;
     infilfs_rw_init_page(page_block, infilfs_extent_page_magic,
@@ -2338,17 +2274,14 @@ static int infilfs_native_try_single_paged_overwrite(
     bool found_page = false;
     bool found_extent = false;
     int ret = -EOPNOTSUPP;
-
     if (bytes != INFILFS_DISK_BLOCK_SIZE ||
         (pos & (INFILFS_DISK_BLOCK_SIZE - 1u)) != 0 ||
         le16_to_cpu(old_header->object_version) != INFILFS_OBJECT_VERSION_PAGED)
         return -EOPNOTSUPP;
-
     old_size = le64_to_cpu(old_file->attributes.logical_size);
     if (pos > old_size || bytes > old_size - pos ||
         !le32_to_cpu(old_file->extent_count))
         return -EOPNOTSUPP;
-
     old_head = (const struct infilfs_extent_head_disk *)(old_file + 1);
     old_page_count = le32_to_cpu(old_head->page_count);
     old_extent_total = le32_to_cpu(old_file->extent_count);
@@ -2360,7 +2293,6 @@ static int infilfs_native_try_single_paged_overwrite(
         return -EFSCORRUPTED;
     old_pointers = (const __le64 *)(old_head + 1);
     logical = pos >> INFILFS_DISK_BLOCK_SHIFT;
-
     page_block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
     new_object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
     local = kvmalloc_array(INFILFS_EXTENTS_PER_PAGE + 2u,
@@ -2424,7 +2356,6 @@ static int infilfs_native_try_single_paged_overwrite(
         ret = -EFSCORRUPTED;
         goto out;
     }
-
     page = (struct infilfs_metadata_page_disk *)page_block;
     entries = (struct infilfs_extent_disk *)(page + 1);
     lo = 0;
@@ -2452,7 +2383,6 @@ static int infilfs_native_try_single_paged_overwrite(
         ret = -EFSCORRUPTED;
         goto out;
     }
-
     extent_start = le64_to_cpu(entries[extent_index].logical_block);
     extent_end = extent_start +
         le32_to_cpu(entries[extent_index].block_count);
@@ -2478,7 +2408,6 @@ static int infilfs_native_try_single_paged_overwrite(
         }
         old_physical = base + logical - extent_start;
     }
-
     ret = infilfs_native_alloc_data_exact_reserved(
         pending, 1,
         old_physical &&
@@ -2487,7 +2416,6 @@ static int infilfs_native_try_single_paged_overwrite(
         INFILFS_DATA_WORKLOAD_RANDOM, reservation, &replacement_block);
     if (ret)
         goto out;
-
     ret = infilfs_native_stage_block(inode->i_sb, replacement_block,
                                      write_data);
     if (ret)
@@ -2540,13 +2468,11 @@ static int infilfs_native_try_single_paged_overwrite(
                 goto out;
         }
     }
-
     if (old_extent_total < page_entries) {
         ret = -EFSCORRUPTED;
         goto out;
     }
     new_extent_total = old_extent_total - page_entries + local_count;
-
     memcpy(&working_file, old_file, sizeof(working_file));
     ret = infilfs_native_checksum_update_existing_group(
         pending, &working_file, ii->object_id, logical, 1, &digest,
@@ -2554,18 +2480,15 @@ static int infilfs_native_try_single_paged_overwrite(
         final_tail_id, final_tail_block, final_tail_start);
     if (ret)
         goto out;
-
     ret = infilfs_ns_free_unshared_run(
         pending, ii->object_id, old_physical, 1);
     if (ret)
         goto out;
-
     memcpy(new_object, old_object, INFILFS_DISK_BLOCK_SIZE);
     new_header = (struct infilfs_object_header_disk *)new_object;
     new_file = (struct infilfs_file_payload_disk *)(new_header + 1);
     new_head = (struct infilfs_extent_head_disk *)(new_file + 1);
     new_pointers = (__le64 *)(new_head + 1);
-
     if (local_count <= INFILFS_EXTENTS_PER_PAGE) {
         ret = infilfs_native_build_extent_page(
             pending, ii->object_id, local, local_count, page_block);
@@ -2624,7 +2547,6 @@ static int infilfs_native_try_single_paged_overwrite(
             sizeof(*new_file) + sizeof(*new_head) +
             (size_t)old_page_count * sizeof(*new_pointers));
     }
-
     memcpy(new_file->checksum_head_id, working_file.checksum_head_id, 16);
     new_file->extent_count = cpu_to_le32(new_extent_total);
     new_file->data_checksum_type = cpu_to_le32(INFILFS_CHECKSUM_SHA256);
@@ -2633,7 +2555,6 @@ static int infilfs_native_try_single_paged_overwrite(
     infilfs_timestamp_encode(
         &new_file->attributes.change_time, inode_get_ctime(inode));
     new_header->generation = cpu_to_le64(pending->tx.generation);
-
     ret = infilfs_rw_finalize_object(new_object);
     if (ret)
         goto out;
@@ -2654,7 +2575,6 @@ static int infilfs_native_try_single_paged_overwrite(
         changes[change_count].add = false;
         change_count++;
     }
-
     ret = infilfs_native_index_update(pending, changes, change_count);
     if (ret)
         goto out;
@@ -2711,7 +2631,6 @@ static int infilfs_native_try_prepared_paged_append(
     u32 i;
     bool file_repoint;
     int ret;
-
     if (!prepared || !prepared->valid || !bytes ||
         le16_to_cpu(old_header->object_version) !=
             INFILFS_OBJECT_VERSION_PAGED)
@@ -2724,7 +2643,6 @@ static int infilfs_native_try_prepared_paged_append(
         prepared->logical_blocks !=
             (bytes >> INFILFS_DISK_BLOCK_SHIFT))
         return -EOPNOTSUPP;
-
     old_head = (const struct infilfs_extent_head_disk *)(old_file + 1);
     old_page_count = le32_to_cpu(old_head->page_count);
     old_extent_total = le32_to_cpu(old_file->extent_count);
@@ -2741,7 +2659,6 @@ static int infilfs_native_try_prepared_paged_append(
         (INFILFS_DISK_BLOCK_SIZE >> 9);
     if (old_allocated > U64_MAX - prepared->physical_blocks)
         return -EOVERFLOW;
-
     page_block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
     new_object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
     local = kvmalloc_array(INFILFS_EXTENTS_PER_PAGE + 1u,
@@ -2790,7 +2707,6 @@ static int infilfs_native_try_prepared_paged_append(
         ret = -EFSCORRUPTED;
         goto out;
     }
-
     memcpy(local, entries, (size_t)page_entries * sizeof(*local));
     local_count = page_entries;
     ret = infilfs_native_extent_append(
@@ -2810,7 +2726,6 @@ static int infilfs_native_try_prepared_paged_append(
         ret = -EOPNOTSUPP;
         goto out;
     }
-
     ret = infilfs_native_alloc_data_exact_reserved(
         pending, prepared->physical_blocks, prepared->data_start,
         INFILFS_DATA_WORKLOAD_SEQUENTIAL, &prepared->reservation,
@@ -2821,7 +2736,6 @@ static int infilfs_native_try_prepared_paged_append(
         ret = -EAGAIN;
         goto out;
     }
-
     memcpy(&working_file, old_file, sizeof(working_file));
     ret = infilfs_native_checksum_append_tail(
         pending, &working_file, ii->object_id,
@@ -2836,13 +2750,11 @@ static int infilfs_native_try_prepared_paged_append(
             final_tail_id, final_tail_block, final_tail_start);
     if (ret)
         goto out;
-
     memcpy(new_object, old_object, INFILFS_DISK_BLOCK_SIZE);
     new_header = (struct infilfs_object_header_disk *)new_object;
     new_file = (struct infilfs_file_payload_disk *)(new_header + 1);
     new_head = (struct infilfs_extent_head_disk *)(new_file + 1);
     new_pointers = (__le64 *)(new_head + 1);
-
     if (local_count <= INFILFS_EXTENTS_PER_PAGE) {
         ret = infilfs_native_build_extent_page(
             pending, ii->object_id, local, local_count, page_block);
@@ -2877,7 +2789,6 @@ static int infilfs_native_try_prepared_paged_append(
             sizeof(*new_file) + sizeof(*new_head) +
             (size_t)old_page_count * sizeof(*new_pointers));
     }
-
     memcpy(new_file->checksum_head_id, working_file.checksum_head_id, 16);
     new_file->extent_count = cpu_to_le32(
         old_extent_total - page_entries + local_count);
@@ -2888,7 +2799,6 @@ static int infilfs_native_try_prepared_paged_append(
     infilfs_timestamp_encode(
         &new_file->attributes.change_time, inode_get_ctime(inode));
     new_header->generation = cpu_to_le64(pending->tx.generation);
-
     ret = infilfs_rw_finalize_object(new_object);
     if (ret)
         goto out;
@@ -2911,7 +2821,6 @@ static int infilfs_native_try_prepared_paged_append(
     ret = infilfs_native_index_update(pending, changes, change_count);
     if (ret)
         goto out;
-
     pending->tx.next_sb.generation = cpu_to_le64(pending->tx.generation);
     *new_size_out = pos + bytes;
     *allocated_blocks_out = old_allocated + prepared->physical_blocks;
@@ -2939,7 +2848,6 @@ static int infilfs_native_encode_compression_candidate(
     size_t compressed_bytes = 0;
     u32 stored_blocks = logical_blocks;
     int ret;
-
     if (!sbi || !plain || !logical_blocks || !stored_out ||
         !stored_blocks_out || !extent_flags_out)
         return -EINVAL;
@@ -2947,7 +2855,6 @@ static int infilfs_native_encode_compression_candidate(
     *stored_out = NULL;
     *stored_blocks_out = logical_blocks;
     *extent_flags_out = INFILFS_EXTENT_NORMAL;
-
     if (logical_blocks >= 2u &&
         logical_blocks <= INFILFS_COMPRESSION_CLUSTER_BLOCKS &&
         READ_ONCE(sbi->compression_enabled) &&
@@ -2976,7 +2883,6 @@ static int infilfs_native_encode_compression_candidate(
                 stored_blocks = compressed_blocks;
         }
     }
-
     if (stored_blocks < logical_blocks) {
         size_t stored_span =
             (size_t)stored_blocks * INFILFS_DISK_BLOCK_SIZE;
@@ -3014,13 +2920,11 @@ static int infilfs_native_stage_compression_candidate(
     u32 stored_blocks;
     u32 i;
     int ret;
-
     ret = infilfs_native_encode_compression_candidate(
         pending->tx.sbi, plain, logical_blocks, &stored, &stored_blocks,
         extent_flags_out);
     if (ret)
         return ret;
-
     if (stored_blocks < logical_blocks)
         infilfs_parallel_release_reservation(inode->i_sb, reservation);
     ret = infilfs_native_alloc_data_exact_reserved(
@@ -3029,7 +2933,6 @@ static int infilfs_native_stage_compression_candidate(
         data_start_out);
     if (ret)
         goto out;
-
     source = stored ? stored : plain;
     for (i = 0; i < stored_blocks; ++i) {
         ret = infilfs_native_stage_block(
@@ -3073,7 +2976,6 @@ static int infilfs_native_prepare_append(
     u32 extent_flags;
     u32 i;
     int ret;
-
     if (!sbi || !plain || !prepared || !bytes ||
         (bytes & (INFILFS_DISK_BLOCK_SIZE - 1u)) != 0)
         return -EINVAL;
@@ -3081,7 +2983,6 @@ static int infilfs_native_prepare_append(
     if (logical_blocks < 2u ||
         logical_blocks > INFILFS_COMPRESSION_CLUSTER_BLOCKS)
         return -EINVAL;
-
     memset(prepared, 0, sizeof(*prepared));
     prepared->digests = kvmalloc_array(
         logical_blocks, sizeof(*prepared->digests), GFP_NOFS);
@@ -3091,7 +2992,6 @@ static int infilfs_native_prepare_append(
         infilfs_native_block_digest(
             plain + (size_t)i * INFILFS_DISK_BLOCK_SIZE,
             &prepared->digests[i]);
-
     ret = infilfs_native_encode_compression_candidate(
         sbi, plain, logical_blocks, &stored, &physical_blocks,
         &extent_flags);
@@ -3101,7 +3001,6 @@ static int infilfs_native_prepare_append(
         inode->i_sb, physical_blocks, preferred, &prepared->reservation);
     if (ret)
         goto fail;
-
     prepared->data_start = prepared->reservation.start;
     source = stored ? stored : plain;
     for (i = 0; i < physical_blocks; ++i) {
@@ -3140,7 +3039,6 @@ static void infilfs_native_prepare_parallel_enter(
 {
     s64 active;
     s64 peak;
-
     active = atomic64_inc_return(&sbi->prepared_append_active);
     peak = atomic64_read(&sbi->prepared_append_peak_active);
     while (active > peak) {
@@ -3158,7 +3056,6 @@ static void infilfs_native_prepare_workfn(struct work_struct *work)
     struct infilfs_native_prepare_work *item = container_of(
         work, struct infilfs_native_prepare_work, work);
     struct infilfs_sb_info *sbi = INFILFS_SB(item->inode->i_sb);
-
     infilfs_cpu_work_enter();
     infilfs_native_prepare_parallel_enter(sbi);
     item->ret = infilfs_native_prepare_append(
@@ -3236,7 +3133,6 @@ static int infilfs_native_append_chunk_locked(
     }
     if (ret != -EOPNOTSUPP)
         goto out;
-
     if (bytes == INFILFS_DISK_BLOCK_SIZE &&
         (pos & (INFILFS_DISK_BLOCK_SIZE - 1u)) == 0 &&
         le16_to_cpu(old_header->object_version) ==
@@ -3337,14 +3233,12 @@ generic_extent_write:
         ret = -EFBIG;
         goto out;
     }
-
     workload = infilfs_native_classify_write(pos, bytes, old_size);
     preferred = READ_ONCE(ii->data_allocation_hint);
     if (preferred < 1u ||
         preferred >= infilfs_volume_blocks(pending->tx.sbi))
         preferred = infilfs_parallel_object_preferred(
             pending->tx.sbi, ii->object_id);
-
     if (workload == INFILFS_DATA_WORKLOAD_RANDOM && old_extent_count) {
         u64 old_physical = 0;
         u32 old_flags = INFILFS_EXTENT_HOLE;
@@ -3367,7 +3261,6 @@ generic_extent_write:
                         last_logical, last_flags);
         }
     }
-
     digests = kvmalloc_array(touched_blocks, sizeof(*digests), GFP_NOFS);
     if (!digests) {
         ret = -ENOMEM;
@@ -3403,7 +3296,6 @@ generic_extent_write:
         prepared->used = true;
         goto data_staged;
     }
-
     if (allow_compression &&
         workload == INFILFS_DATA_WORKLOAD_SEQUENTIAL &&
         pos == old_size &&
@@ -3437,7 +3329,6 @@ generic_extent_write:
             goto out;
         goto data_staged;
     }
-
     replacement_flags = INFILFS_EXTENT_NORMAL;
     ret = infilfs_native_alloc_data_exact_reserved(
         pending, touched_blocks, preferred, workload,
@@ -3449,7 +3340,6 @@ generic_extent_write:
         ret = -ENOMEM;
         goto out;
     }
-
     for (logical = start_block; logical <= end_block; ++logical) {
         u64 block_begin = logical << INFILFS_DISK_BLOCK_SHIFT;
         u64 block_end = block_begin + INFILFS_DISK_BLOCK_SIZE;
@@ -3515,7 +3405,6 @@ data_staged:
         touched_blocks);
     if (ret)
         goto out;
-
     memcpy(&working_file, old_file, sizeof(working_file));
     if (pos == old_size &&
         (pos & (INFILFS_DISK_BLOCK_SIZE - 1u)) == 0 &&
@@ -3540,7 +3429,6 @@ data_staged:
     }
     if (ret)
         goto out;
-
     ret = infilfs_native_build_file_object(
         pending, inode, old_object, &working_file, new_extents,
         new_extent_count, new_size, new_object, new_file_block_out,
@@ -3558,7 +3446,6 @@ data_staged:
         changes[change_count].add = false;
         change_count++;
     }
-
     ret = infilfs_native_index_update(pending, changes, change_count);
     if (ret)
         goto out;
@@ -3607,7 +3494,6 @@ static ssize_t infilfs_native_parallel_append_batch(
     unsigned int count;
     unsigned int i;
     int ret = -EOPNOTSUPP;
-
     if (!allow_compression || !sbi || !ii || !requested ||
         requested > infilfs_native_writeback_batch_bytes() ||
         requested < compression_bytes * 2u ||
@@ -3618,25 +3504,21 @@ static ssize_t infilfs_native_parallel_append_batch(
         (le64_to_cpu(READ_ONCE(sbi->disk.incompat_flags)) &
          INFILFS_INCOMPAT_COMPRESSED_EXTENTS) == 0)
         return -EOPNOTSUPP;
-
     count = DIV_ROUND_UP(requested, compression_bytes);
     if (count < 2u)
         return -EOPNOTSUPP;
     if (requested - (size_t)(count - 1u) * compression_bytes <
         2u * INFILFS_DISK_BLOCK_SIZE)
         return -EOPNOTSUPP;
-
     pending = infilfs_native_pending_get(inode->i_sb, true);
     if (!pending)
         return -ENOMEM;
-
     plain = kvmalloc(requested, GFP_NOFS);
     items = kcalloc(count, sizeof(*items), GFP_NOFS);
     if (!plain || !items) {
         ret = -ENOMEM;
         goto out;
     }
-
     copied = copy_from_iter(plain, requested, from);
     if (copied != requested) {
         if (copied)
@@ -3644,13 +3526,11 @@ static ssize_t infilfs_native_parallel_append_batch(
         ret = -EFAULT;
         goto out;
     }
-
     base_preferred = READ_ONCE(ii->data_allocation_hint);
     if (base_preferred < 1u ||
         base_preferred >= infilfs_volume_blocks(sbi))
         base_preferred = infilfs_parallel_object_preferred(
             sbi, ii->object_id);
-
     offset = 0;
     for (i = 0; i < count; ++i) {
         size_t bytes = min_t(size_t, compression_bytes,
@@ -3683,17 +3563,14 @@ static ssize_t infilfs_native_parallel_append_batch(
         }
         offset += bytes;
     }
-
     for (i = 0; i < count; ++i)
         wait_for_completion(&items[i].done);
-
     for (i = 0; i < count; ++i) {
         if (items[i].ret || !items[i].prepared.valid) {
             ret = -EOPNOTSUPP;
             goto revert_all;
         }
     }
-
     down_write(&sbi->write_lock);
     if ((u64)*position != READ_ONCE(ii->persisted_size)) {
         ret = -EOPNOTSUPP;
@@ -3702,7 +3579,6 @@ static ssize_t infilfs_native_parallel_append_batch(
     ret = infilfs_native_pending_begin_locked(pending);
     if (ret)
         goto unlock_revert;
-
     offset = 0;
     for (i = 0; i < count; ++i) {
         struct kvec vec;
@@ -3764,7 +3640,6 @@ static ssize_t infilfs_native_parallel_append_batch(
         committed += consumed;
         offset += bytes;
     }
-
     if (committed && infilfs_native_pending_should_publish(pending)) {
         int publish = infilfs_native_pending_commit_locked(pending);
 
@@ -3780,9 +3655,7 @@ static ssize_t infilfs_native_parallel_append_batch(
          */
         infilfs_mod_delayed_cpu_work(&pending->idle_work,
                          INFILFS_NATIVE_IDLE_DELAY);
-
     up_write(&sbi->write_lock);
-
     if (committed < requested)
         iov_iter_revert(from, requested - committed);
     if (committed) {
@@ -3817,7 +3690,6 @@ static ssize_t infilfs_native_extent_write_iter_mode(
     size_t done = 0;
     loff_t pos = *position;
     int ret = 0;
-
     if (pos < 0)
         return -EINVAL;
     if (!requested)
@@ -3832,7 +3704,6 @@ static ssize_t infilfs_native_extent_write_iter_mode(
     pending = infilfs_native_pending_get(inode->i_sb, true);
     if (!pending)
         return -ENOMEM;
-
     while (done < requested) {
         struct infilfs_parallel_reservation reservation = {0};
         struct infilfs_native_prepared_append prepared = {0};
@@ -4067,7 +3938,6 @@ chunk_unlock:
             break;
         cond_resched();
     }
-
     if (done) {
         *position = pos + done;
         ret = (ssize_t)done;
@@ -4108,7 +3978,7 @@ static int infilfs_native_inline_snapshot(
     u64 size;
     int ret;
 
-    /* Copy a topology-stable object, then verify/hash it without write_lock. */
+    /* Snapshot under the read side; verify/hash without write_lock. */
     down_read(&sbi->write_lock);
     object_block = READ_ONCE(ii->object_block);
     ret = infilfs_read_object(inode->i_sb, object_block,
@@ -4116,7 +3986,6 @@ static int infilfs_native_inline_snapshot(
     up_read(&sbi->write_lock);
     if (ret)
         return ret;
-
     header = (struct infilfs_object_header_disk *)old_object;
     file = (struct infilfs_file_payload_disk *)(header + 1);
     size = le64_to_cpu(file->attributes.logical_size);
@@ -4124,7 +3993,6 @@ static int infilfs_native_inline_snapshot(
         le32_to_cpu(file->extent_count) != 0 ||
         size > INFILFS_INLINE_DATA_MAX)
         return -EOPNOTSUPP;
-
     memset(data, 0, INFILFS_INLINE_DATA_MAX);
     if (size) {
         size_t expected = sizeof(*file) + sizeof(*digest) + (size_t)size;
@@ -4173,13 +4041,11 @@ static ssize_t infilfs_native_inline_write_iter(
     unsigned int attempt;
     int ret;
     int rollback;
-
     if (pos < 0 || (u64)pos > INFILFS_INLINE_DATA_MAX ||
         requested > INFILFS_INLINE_DATA_MAX - (size_t)pos)
         return -EOPNOTSUPP;
     if (!requested)
         return 0;
-
     pending = infilfs_native_pending_get(inode->i_sb, true);
     if (!pending)
         return -ENOMEM;
@@ -4193,13 +4059,12 @@ static ssize_t infilfs_native_inline_write_iter(
         goto out_free;
     }
 
-    /* Consume once; optimistic retries rebuild from this private copy. */
+    /* Consume once; retries reuse this copy. */
     copied = copy_from_iter(input, requested, from);
     if (!copied) {
         ret = -EFAULT;
         goto out_free;
     }
-
     for (attempt = 0; attempt < 8u; ++attempt) {
         ret = infilfs_native_inline_snapshot(
             inode, &old_block, old_object, data, &old_size);
@@ -4209,17 +4074,14 @@ static ssize_t infilfs_native_inline_write_iter(
         memcpy(data + pos, input, copied);
         new_size = max_t(size_t, old_size, (size_t)pos + copied);
 
-        /* Keep tiny-file SHA-256 outside the filesystem-wide writer. */
+        /* Hash outside the filesystem-wide writer. */
         ret = infilfs_rw_inline_digest(data, new_size, prepared_digest);
         if (ret)
             goto out_revert;
 
         down_write(&sbi->write_lock);
 
-        /*
-         * Private CoW blocks can change in place.  Revalidate the complete
-         * object under write_lock; retry rather than publish stale preparation.
-         */
+        /* Private CoW blocks can change in place; revalidate before publish. */
         if (READ_ONCE(ii->object_block) != old_block) {
             up_write(&sbi->write_lock);
             cond_resched();
@@ -4309,7 +4171,6 @@ out_unlock_revert:
         up_write(&sbi->write_lock);
         goto out_revert;
     }
-
     ret = -EAGAIN;
 out_revert:
     iov_iter_revert(from, copied);
@@ -4329,7 +4190,6 @@ ssize_t infilfs_native_writeback_iter(
     struct infilfs_inode_info *ii = INFILFS_I(inode);
     u64 persisted = ii ? READ_ONCE(ii->persisted_size) : 0;
     loff_t pos = *position;
-
     if (pos >= 0 && (u64)pos <= INFILFS_INLINE_DATA_MAX &&
         requested <= INFILFS_INLINE_DATA_MAX - (size_t)pos &&
         persisted <= INFILFS_INLINE_DATA_MAX) {
@@ -4357,7 +4217,6 @@ static ssize_t infilfs_file_write_iter_common(struct kiocb *iocb,
     loff_t end;
     u64 quota_growth = 0;
     ssize_t ret;
-
     if (!iov_iter_count(from))
         return 0;
 
@@ -4380,14 +4239,12 @@ static ssize_t infilfs_file_write_iter_common(struct kiocb *iocb,
         ret = -EFBIG;
         goto out_inode;
     }
-
     ret = file_remove_privs(filep);
     if (ret)
         goto out_inode;
     ret = file_update_time(filep);
     if (ret)
         goto out_inode;
-
     end = pos + requested - 1u;
     old_size = i_size_read(inode);
     if (end + 1 > old_size)
@@ -4411,7 +4268,6 @@ static ssize_t infilfs_file_write_iter_common(struct kiocb *iocb,
                                         end >> PAGE_SHIFT);
     if (ret)
         goto out_mapping;
-
     if ((u64)pos <= INFILFS_INLINE_DATA_MAX &&
         requested <= INFILFS_INLINE_DATA_MAX - (size_t)pos &&
         i_size_read(inode) <= INFILFS_INLINE_DATA_MAX) {
@@ -4421,7 +4277,6 @@ static ssize_t infilfs_file_write_iter_common(struct kiocb *iocb,
         if (ret != -EOPNOTSUPP)
             goto out_mapping;
     }
-
     iocb->ki_pos = pos;
     ret = infilfs_native_extent_write_iter_mode(
         inode, &iocb->ki_pos, from, requested, allow_compression);
@@ -4451,7 +4306,6 @@ static ssize_t infilfs_file_write_iter(struct kiocb *iocb,
     loff_t old_size;
     u64 quota_growth = 0;
     ssize_t ret;
-
     if (iocb->ki_flags & IOCB_DIRECT) {
         size_t count = iov_iter_count(from);
 
@@ -4461,7 +4315,6 @@ static ssize_t infilfs_file_write_iter(struct kiocb *iocb,
             return -EINVAL;
         return infilfs_file_write_iter_common(iocb, from, true);
     }
-
     if (!iov_iter_count(from))
         return 0;
 
@@ -4480,18 +4333,15 @@ static ssize_t infilfs_file_write_iter(struct kiocb *iocb,
         ret = -EFBIG;
         goto out_unlock;
     }
-
     ret = file_remove_privs(filep);
     if (ret)
         goto out_unlock;
     ret = file_update_time(filep);
     if (ret)
         goto out_unlock;
-
     old_size = i_size_read(inode);
     if (pos + (loff_t)requested > old_size)
         quota_growth = (u64)(pos + (loff_t)requested - old_size);
-
     ret = infilfs_quota_reserve_inode(inode, quota_growth, 0, &preflight);
     if (ret)
         goto out_unlock;
@@ -4607,7 +4457,6 @@ int infilfs_native_read_expected_digest(
     u64 current_block = 0, previous_start = 0;
     bool have_previous = false;
     unsigned int guard;
-
     if (!memcmp(head_id, (u8[16]){0}, 16))
         return -EFSCORRUPTED;
     if (cursor->valid && cursor->start_logical <= target) {
@@ -4675,7 +4524,6 @@ static __maybe_unused ssize_t infilfs_file_read_iter_verified(struct kiocb *iocb
     size_t requested, done = 0;
     u8 *object = NULL, *data_block = NULL, *checksum_object = NULL;
     int ret;
-
     if (pos < 0)
         return -EINVAL;
     object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_KERNEL);
@@ -4701,7 +4549,6 @@ static __maybe_unused ssize_t infilfs_file_read_iter_verified(struct kiocb *iocb
         goto out;
     }
     requested = min_t(u64, iov_iter_count(to), file_size - (u64)pos);
-
     if (le32_to_cpu(file->extent_count) == 0 && file_size <= INFILFS_INLINE_DATA_MAX) {
         const struct infilfs_data_checksum_disk *expected;
         const u8 *inline_bytes;
@@ -4728,7 +4575,6 @@ static __maybe_unused ssize_t infilfs_file_read_iter_verified(struct kiocb *iocb
         ret = copied;
         goto out;
     }
-
     while (done < requested) {
         u64 absolute = (u64)pos + done;
         u64 logical = absolute >> INFILFS_DISK_BLOCK_SHIFT;
