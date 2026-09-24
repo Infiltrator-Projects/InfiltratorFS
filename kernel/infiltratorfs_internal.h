@@ -265,6 +265,14 @@ struct infilfs_native_pending {
     struct infilfs_native_undo *undo;
     unsigned int undo_count;
     unsigned int undo_capacity;
+    /*
+     * Exact set of blocks allocated by the current unpublished transaction.
+     * sbi->bitmap and tx.bitmap intentionally share one working allocation
+     * image, so comparing those bitmaps cannot identify transaction-private
+     * blocks.  This volatile set allows repeated metadata updates to reuse
+     * private CoW blocks safely with the per-operation undo journal.
+     */
+    struct infilfs_visit_set private_blocks;
     struct infilfs_native_writer_tail
         writer_tail[INFILFS_NATIVE_WRITER_TAIL_SLOTS];
     struct infilfs_native_index_locator *index_locators;
@@ -656,6 +664,7 @@ bool infilfs_metadata_page_valid(
     struct super_block *sb, const u8 *block, const u8 magic[8],
     const u8 owner_id[16]);
 int infilfs_visit_claim(struct infilfs_visit_set *set, u64 block);
+bool infilfs_visit_contains(const struct infilfs_visit_set *set, u64 block);
 void infilfs_visit_destroy(struct infilfs_visit_set *set);
 bool infilfs_index_tree_branch_valid(
     struct super_block *sb, const u8 block[INFILFS_DISK_BLOCK_SIZE],
