@@ -350,6 +350,12 @@ infs_status infs_reflink_file(struct infs_volume *vol, const char *source_path,
 
 infs_status infs_snapshot_create(struct infs_volume *vol, const char *name);
 infs_status infs_snapshot_delete(struct infs_volume *vol, const char *name);
+/* Atomically make a retained generation the new live generation.  This is a
+ * destructive whole-volume rollback: state created after the retained
+ * generation, including newer snapshot-catalog state, is intentionally
+ * discarded.  The rollback itself publishes a fresh generation so checkpoint
+ * generation numbers remain monotonic. */
+infs_status infs_snapshot_rollback(struct infs_volume *vol, const char *name);
 /* Snapshot-list ownership mirrors list_dir: on success the caller owns the
  * returned array and releases it with infs_free_snapshot_infos(). */
 infs_status infs_snapshot_list(struct infs_volume *vol,
