@@ -75,4 +75,14 @@ grep -Fq 'infilfs_ns_finish(pending, ret)' <<<"$create_native_body"
 ! grep -Fq 'base_disk' "$root/kernel/infiltratorfs_internal.h"
 ! grep -Fq 'pending->base_disk' "$data"
 
+# tx.bitmap deliberately aliases the live working bitmap. Transaction-private
+# detection therefore needs an explicit unpublished-allocation set; comparing
+# the two bitmap pointers/images can never identify a private block.
+private_body="$(sed -n '/static bool infilfs_native_block_private(/,/^}/p' "$data")"
+grep -Fq 'infilfs_visit_contains(&pending->private_blocks, block)' <<<"$private_body"
+! grep -Fq '!infilfs_rw_bitmap_get(sbi->bitmap, block)' <<<"$private_body"
+grep -Fq 'infilfs_native_private_blocks_note_operation(pending);' "$data"
+grep -Fq 'infilfs_visit_destroy(&pending->private_blocks);' "$data"
+grep -Fq 'struct infilfs_visit_set private_blocks;' "$root/kernel/infiltratorfs_internal.h"
+
 printf 'Native deferred metadata publication policy: PASS\n'
