@@ -6,6 +6,9 @@ This file records user-visible, compatibility, architecture and validation chang
 - Retire the dormant legacy whole-device fsync implementation so only the active deferred native fsync path can be wired into the VFS.
 - Remove unused deferred-transaction base-superblock state and its dead assignment.
 - Strengthen the deferred namespace publication policy guard: create/mkdir must enter the shared native namespace transaction and must not flush or directly commit a standalone generation per object.
+- Fail closed after deferred transaction publication errors: once publication fails, fsync, idle work and unmount may report/abandon the poisoned transaction but must never retry the same possibly-indeterminate checkpoint publication before remount recovery.
+- Propagate threshold-triggered inline writeback publication failures into the page-cache error path instead of discarding them and falsely completing writeback successfully.
+- Add regression guards for terminal failed-publication state and inline publication-error propagation.
 - Align the native maintainability guard with the reduced legacy alias bridge. On-disk Format remains 0.18.
 
 ## 0.18.77 — 2026-09-24
