@@ -189,7 +189,8 @@ static infs_status scrub_verify_data(
     uint64_t next_file_report = report->files_checked + UINT64_C(128);
 
     for (uint32_t i = 0; i < entries_count; ++i) {
-        if (infs_le16_to_cpu(entries[i].object_type) != INFS_OBJECT_FILE)
+        if (!file_data_object_type(
+                infs_le16_to_cpu(entries[i].object_type)))
             continue;
         ++report->files_checked;
 
