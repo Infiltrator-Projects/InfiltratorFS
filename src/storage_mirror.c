@@ -73,25 +73,34 @@ static infs_status mirror_write(void *opaque, uint64_t offset,
     struct mirror_context *ctx = opaque;
     infs_status result = INFS_STATUS_OK;
     int attempted = 0;
+    int degraded = 0;
 
     /*
      * Do not stop at the first failed member. Completing the write on every
      * still-working replica maximises the number of recoverable copies while
      * the returned failure tells the filesystem that durability is degraded.
+     * Once a member has missed a write, keep subsequent writes fail-closed
+     * until the mirror is explicitly reconstructed or repaired.
      */
     for (size_t i = 0; i < ctx->count; ++i) {
-        if (!ctx->healthy[i])
+        if (!ctx->healthy[i]) {
+            degraded = 1;
             continue;
+        }
         attempted = 1;
         infs_status status = infs_storage_write(
             &ctx->members[i], offset, buffer, size);
         if (status != INFS_STATUS_OK) {
             ctx->healthy[i] = 0;
+            degraded = 1;
             if (result == INFS_STATUS_OK)
                 result = status;
         }
     }
-    return attempted ? result : INFS_STATUS_IO_ERROR;
+    if (!attempted)
+        return INFS_STATUS_IO_ERROR;
+    return result != INFS_STATUS_OK ? result :
+        (degraded ? INFS_STATUS_IO_ERROR : INFS_STATUS_OK);
 }
 
 static infs_status mirror_flush(void *opaque)
@@ -99,19 +108,26 @@ static infs_status mirror_flush(void *opaque)
     struct mirror_context *ctx = opaque;
     infs_status result = INFS_STATUS_OK;
     int attempted = 0;
+    int degraded = 0;
 
     for (size_t i = 0; i < ctx->count; ++i) {
-        if (!ctx->healthy[i])
+        if (!ctx->healthy[i]) {
+            degraded = 1;
             continue;
+        }
         attempted = 1;
         infs_status status = infs_storage_flush(&ctx->members[i]);
         if (status != INFS_STATUS_OK) {
             ctx->healthy[i] = 0;
+            degraded = 1;
             if (result == INFS_STATUS_OK)
                 result = status;
         }
     }
-    return attempted ? result : INFS_STATUS_IO_ERROR;
+    if (!attempted)
+        return INFS_STATUS_IO_ERROR;
+    return result != INFS_STATUS_OK ? result :
+        (degraded ? INFS_STATUS_IO_ERROR : INFS_STATUS_OK);
 }
 
 static infs_status mirror_size(void *opaque, uint64_t *size_bytes,
