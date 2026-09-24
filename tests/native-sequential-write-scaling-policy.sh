@@ -61,10 +61,13 @@ commit_body="$(sed -n '/static int infilfs_rw_tx_commit(/,/^}/p' "$legacy")"
 ! grep -Fq 'sync_blockdev(tx->sb->s_bdev)' <<<"$commit_body"
 grep -Fq 'infilfs_rw_allocation_map_publish(tx, &next_allocation)' <<<"$commit_body"
 grep -Fq 'infilfs_rw_sync_transaction_dependencies(tx)' <<<"$commit_body"
-grep -Fq 'infilfs_rw_write_block_sync(tx->sb' <<<"$commit_body"
+grep -Fq 'infilfs_rw_write_checkpoint_replicas_sync(' <<<"$commit_body"
 grep -Fq 'blkdev_issue_flush(tx->sb->s_bdev)' <<<"$commit_body"
 test "$(grep -Fc 'blkdev_issue_flush(tx->sb->s_bdev)' <<<"$commit_body")" -eq 2
-grep -Fq 'for (n = 1; n < INFILFS_CHECKPOINT_COUNT; ++n)' <<<"$commit_body"
+checkpoint_batch="$(sed -n '/static int infilfs_rw_write_checkpoint_replicas_sync(/,/^}/p' "$legacy")"
+grep -Fq 'blk_start_plug' <<<"$checkpoint_batch"
+grep -Fq 'write_dirty_buffer(bhs[n], REQ_SYNC)' <<<"$checkpoint_batch"
+grep -Fq 'wait_on_buffer(bhs[n])' <<<"$checkpoint_batch"
 dependency_sync="$(sed -n '/static int infilfs_rw_sync_transaction_dependencies(/,/^}/p' "$legacy")"
 grep -Fq 'sb_find_get_block' <<<"$dependency_sync"
 grep -Fq 'tx->allocated' <<<"$dependency_sync"
@@ -130,6 +133,14 @@ grep -Fq 'file_write_and_wait_range' <<<"$fsync_body"
 grep -Fq 'infilfs_native_pending_flush_sb' <<<"$fsync_body"
 pending_flush="$(sed -n '/int infilfs_native_pending_flush_sb(/,/^}/p' "$data")"
 ! grep -Fq 'sync_blockdev(sb->s_bdev)' <<<"$pending_flush"
+
+# Format 0.18 fallocate materialization has no unwritten-extent representation,
+# so it must initialize real blocks, but it must do so in the native multi-MiB
+# writer unit rather than the historical 64 KiB read/rewrite loop.
+fallocate_body="$(sed -n '/static long infilfs_file_fallocate(/,/^}/p' "$rw")"
+grep -Fq 'kvzalloc(INFILFS_NATIVE_WRITE_CHUNK' <<<"$fallocate_body"
+grep -Fq 'min_t(u64, INFILFS_NATIVE_WRITE_CHUNK' <<<"$fallocate_body"
+! grep -Fq '64u * 1024u' <<<"$fallocate_body"
 
 # Verified multi-block reads submit a bounded 4 MiB run before waiting.
 grep -Fq '#define INFILFS_NATIVE_READAHEAD_BLOCKS 1024u' "$read_cache"
