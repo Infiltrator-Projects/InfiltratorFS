@@ -3,6 +3,7 @@
 #include "infilfs/endian.h"
 #include "infilfs/format.h"
 #include "infilfs/format_volume.h"
+#include "infilfs/fs.h"
 #include "infilfs/volume.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -89,9 +90,30 @@ int main(void)
     infs_status check_status = infs_check(&v, &check_report);
     if (check_status != INFS_STATUS_OK) {
         fprintf(stderr,
-                "named-streams: fast check failed: %s (%d), stage=%u\n",
+                "named-streams: fast check failed: %s (%d), stage=%u, replicas=%u, live-generation=%llu\n",
                 infs_status_string(check_status), (int)check_status,
-                check_report.failed_stage);
+                check_report.failed_stage,
+                check_report.checkpoint_replicas_valid,
+                (unsigned long long)infs_le64_to_cpu(v.sb.generation));
+        for (unsigned checkpoint = 0; checkpoint < INFS_CHECKPOINT_COUNT;
+             ++checkpoint) {
+            uint64_t block =
+                infs_le64_to_cpu(v.sb.checkpoint_block[checkpoint]);
+            struct infs_superblock_disk disk;
+            int decoded = infs_decode_superblock(
+                m.p + (size_t)block * INFS_BLOCK_SIZE, &disk);
+            fprintf(stderr,
+                    "named-streams: checkpoint[%u] block=%llu decode=%d generation=%llu free=%llu index=%llu root=%llu\n",
+                    checkpoint, (unsigned long long)block, decoded,
+                    decoded == INFS_STATUS_OK ?
+                        (unsigned long long)infs_le64_to_cpu(disk.generation) : 0ULL,
+                    decoded == INFS_STATUS_OK ?
+                        (unsigned long long)infs_le64_to_cpu(disk.free_blocks) : 0ULL,
+                    decoded == INFS_STATUS_OK ?
+                        (unsigned long long)infs_le64_to_cpu(disk.object_index_block) : 0ULL,
+                    decoded == INFS_STATUS_OK ?
+                        (unsigned long long)infs_le64_to_cpu(disk.root_object_block) : 0ULL);
+        }
         exit(1);
     }
     struct infs_scrub_report report;
