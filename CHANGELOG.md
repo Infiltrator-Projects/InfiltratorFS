@@ -9,6 +9,7 @@ This file records user-visible, compatibility, architecture and validation chang
 - Fail closed after deferred transaction publication errors: once publication fails, fsync, idle work and unmount may report/abandon the poisoned transaction but must never retry the same possibly-indeterminate checkpoint publication before remount recovery.
 - Propagate threshold-triggered inline writeback publication failures into the page-cache error path instead of discarding them and falsely completing writeback successfully.
 - Add regression guards for terminal failed-publication state and inline publication-error propagation.
+- Retire the unused flush-before-create/mkdir/setattr data wrappers and their macro alias bridge; the deferred POSIX/native namespace path is now the only compiled data-layer route for those VFS mutations.
 - Align the native maintainability guard with the reduced legacy alias bridge. On-disk Format remains 0.18.
 
 ## 0.18.77 — 2026-09-24
