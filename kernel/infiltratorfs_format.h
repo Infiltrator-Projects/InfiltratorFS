@@ -48,6 +48,8 @@
 #define INFILFS_OBJECT_SECURITY 8u
 #define INFILFS_OBJECT_SECURITY_BINDING 9u
 #define INFILFS_OBJECT_EXTENSION       10u
+#define INFILFS_OBJECT_METADATA_SET    11u
+#define INFILFS_OBJECT_NAMED_STREAM    12u
 
 #define INFILFS_OBJECT_VERSION_CLASSIC 1u
 #define INFILFS_OBJECT_VERSION_PAGED 2u
@@ -102,6 +104,7 @@
 /* Optional case-fold policy v1; mirrors the portable core exactly. */
 #define INFILFS_INCOMPAT_CASEFOLD_V1 ((__u64)0x0000000000010000ULL)
 #define INFILFS_INCOMPAT_TYPED_EXTENSIONS ((__u64)0x0000000000020000ULL)
+#define INFILFS_INCOMPAT_NAMED_STREAMS_V1 ((__u64)0x0000000000040000ULL)
 #define INFILFS_KNOWN_INCOMPAT_FLAGS \
     (INFILFS_INCOMPAT_UTF8_NAMES | INFILFS_INCOMPAT_SPARSE_EXTENTS | \
      INFILFS_INCOMPAT_INLINE_DATA | INFILFS_INCOMPAT_SHARED_EXTENTS | \
@@ -111,7 +114,8 @@
      INFILFS_INCOMPAT_DIRECTORY_TREE | INFILFS_INCOMPAT_ALLOCATION_TREE | \
      INFILFS_INCOMPAT_COMPRESSED_EXTENTS | INFILFS_INCOMPAT_UNICODE_NORM_V1 | \
      INFILFS_INCOMPAT_REMOVABLE_NAMES_V1 | INFILFS_INCOMPAT_PORTABLE_SECURITY | \
-     INFILFS_INCOMPAT_CASEFOLD_V1 | INFILFS_INCOMPAT_TYPED_EXTENSIONS)
+     INFILFS_INCOMPAT_CASEFOLD_V1 | INFILFS_INCOMPAT_TYPED_EXTENSIONS | \
+     INFILFS_INCOMPAT_NAMED_STREAMS_V1)
 
 struct infilfs_superblock_disk {
     __u8 magic[8];
@@ -335,6 +339,28 @@ struct infilfs_extension_payload_disk {
     __u8 data_digest[32];
 } __packed;
 
+#define INFILFS_METADATA_SET_VERSION 1u
+
+struct infilfs_metadata_set_payload_disk {
+    __le16 version;
+    __le16 flags;
+    __le32 entry_count;
+    __le32 bytes_used;
+    __le32 reserved;
+    __u8 typed_extension_object_id[16];
+} __packed;
+
+struct infilfs_metadata_stream_entry_disk {
+    __le16 record_size;
+    __le16 name_length;
+    __le32 flags;
+    __u8 stream_object_id[16];
+} __packed;
+
+#define INFILFS_METADATA_SET_DATA_MAX \
+    (INFILFS_DISK_BLOCK_SIZE - sizeof(struct infilfs_object_header_disk) - \
+     sizeof(struct infilfs_metadata_set_payload_disk))
+
 struct infilfs_security_ace_disk {
     __u8 principal_id[16];
     __le64 rights;
@@ -475,5 +501,9 @@ static_assert(sizeof(struct infilfs_security_payload_disk) == 80,
               "security payload layout changed");
 static_assert(sizeof(struct infilfs_security_binding_index_payload_disk) == 128,
               "security binding index payload layout changed");
+static_assert(sizeof(struct infilfs_metadata_set_payload_disk) == 32,
+              "metadata-set payload layout changed");
+static_assert(sizeof(struct infilfs_metadata_stream_entry_disk) == 24,
+              "metadata-stream entry layout changed");
 
 #endif
