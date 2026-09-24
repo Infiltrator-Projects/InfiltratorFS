@@ -1953,14 +1953,11 @@ static int infilfs_quota_prepare_reparent_locked(
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(source->i_sb);
     struct infilfs_inode_info *source_ii = INFILFS_I(source);
-    struct infilfs_index_entry_disk *entries = NULL;
     struct infilfs_quota_subject candidate[3];
     u64 bytes = 0;
     u64 objects = 0;
-    u32 entry_count = 0;
     u32 old_project_id = 0;
     u32 new_project_id = 0;
-    u32 i;
     int ret = 0;
 
     memset(new_project, 0, sizeof(*new_project));
@@ -1987,107 +1984,13 @@ static int infilfs_quota_prepare_reparent_locked(
     if (old_project_id == new_project_id)
         goto out;
 
-    ret = infilfs_ns_index_snapshot(source->i_sb, &entries, &entry_count);
-    if (ret)
-        goto out;
-
-    for (i = 0; i < entry_count; ++i) {
-        struct infilfs_object_header_disk *header;
-        struct infilfs_attributes_disk *attributes;
-        struct infilfs_posix_compat_disk *posix;
-        u8 *object;
-        u16 type = le16_to_cpu(entries[i].object_type);
-        bool member = false;
-        u64 logical;
-
-        if (type != INFILFS_OBJECT_FILE &&
-            type != INFILFS_OBJECT_DIRECTORY &&
-            type != INFILFS_OBJECT_SYMLINK)
-            continue;
-
-        ret = infilfs_quota_reparent_member_locked(
-            source->i_sb, entries[i].object_id,
-            source_ii->object_id, &member);
-        if (ret || !member) {
-            if (ret)
-                break;
-            continue;
-        }
-
-        object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
-        if (!object) {
-            ret = -ENOMEM;
-            break;
-        }
-        ret = infilfs_read_object(
-            source->i_sb, le64_to_cpu(entries[i].object_block),
-            type, entries[i].object_id, object);
-        if (ret) {
-            kfree(object);
-            break;
-        }
-        header = (struct infilfs_object_header_disk *)object;
-        ret = infilfs_posix_object_fields(object, &attributes, &posix);
-        if (ret) {
-            kfree(object);
-            break;
-        }
-        (void)header;
-        (void)posix;
-        if (le64_to_cpu(attributes->portable_flags) & INFILFS_ATTR_SYSTEM) {
-            kfree(object);
-            continue;
-        }
-        if (type == INFILFS_OBJECT_FILE &&
-            le64_to_cpu(attributes->link_count) > 1u) {
-            kfree(object);
-            ret = -EXDEV;
-            break;
-        }
-
-        logical = le64_to_cpu(attributes->logical_size);
-        if (type == INFILFS_OBJECT_FILE) {
-            struct infilfs_iget_args live_args = {
-                .ino = infilfs_object_ino(entries[i].object_id),
-                .object_id = entries[i].object_id,
-            };
-            struct inode *live_inode;
-
-            /*
-             * Buffered writes may have advanced i_size before writeback has
-             * published the new logical_size to the object block. Project
-             * reparent quota admission must use the live logical size or a
-             * dirty subtree can cross the destination project limit. Dirty
-             * mappings keep their inode resident, so ilookup5() observes the
-             * authoritative VFS size without instantiating a new inode. If the
-             * inode is not resident there can be no dirty page-cache state and
-             * the persisted logical size above is authoritative.
-             */
-            live_inode = ilookup5(
-                source->i_sb, (unsigned long)live_args.ino,
-                infilfs_inode_matches_id, &live_args);
-            if (live_inode) {
-                loff_t live_size = i_size_read(live_inode);
-
-                if (live_size < 0) {
-                    iput(live_inode);
-                    kfree(object);
-                    ret = -EFSCORRUPTED;
-                    break;
-                }
-                logical = (u64)live_size;
-                iput(live_inode);
-            }
-        }
-        if (bytes > U64_MAX - logical || objects == U64_MAX) {
-            kfree(object);
-            ret = -EOVERFLOW;
-            break;
-        }
-        bytes += logical;
-        objects++;
-        kfree(object);
-    }
+    /*
+     * rename already owns write_lock through infilfs_ns_begin(), so the
+     * source subtree is stable here.  Walk that subtree directly rather than
+     * scanning the entire object index and re-walking ancestry for every
+     * unrelated object on the volume.
+     */
+    ret = infilfs_quota_domain_usage_locked(source, &bytes, &objects);
     if (ret)
         goto out;
 
@@ -2113,7 +2016,6 @@ static int infilfs_quota_prepare_reparent_locked(
     }
 
 out:
-    kvfree(entries);
     return ret;
 }
 
