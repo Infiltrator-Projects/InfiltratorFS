@@ -403,6 +403,17 @@ infs_status infs_snapshot_read_symlink(struct infs_volume *vol,
                                        const char *path, char *target,
                                        size_t capacity, size_t *length_out);
 
+/* Restore one retained file, symlink or directory tree into the live namespace
+ * without rolling back unrelated live state. The restore is one transaction:
+ * replace==0 refuses an existing destination; replace!=0 atomically replaces
+ * the selected live subtree. Portable flags, POSIX compatibility metadata,
+ * timestamps, portable security descriptors/principals, typed extensions,
+ * named streams and regular-file hard-link identity inside the restored tree
+ * are preserved. */
+infs_status infs_snapshot_restore_path(
+    struct infs_volume *vol, const char *snapshot,
+    const char *source_path, const char *destination_path, int replace);
+
 infs_status infs_set_posix_compat(struct infs_volume *vol, const char *path,
                                   uint32_t mask, uint32_t permissions,
                                   uint32_t uid, uint32_t gid);
