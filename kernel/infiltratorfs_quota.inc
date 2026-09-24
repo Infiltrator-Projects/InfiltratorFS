@@ -357,6 +357,7 @@ static bool infilfs_quota_remove_project_root_locked(
             (sbi->project_root_count - (size_t)idx - 1u) *
                 sizeof(*sbi->project_roots));
     sbi->project_root_count--;
+    infilfs_quota_project_cache_bump_locked(sbi);
     return true;
 }
 
