@@ -27,15 +27,30 @@ diff --git a/src/plugins/fs.c b/src/plugins/fs.c
              return bd_fs_btrfs_is_tech_avail (tech, mode, error);
          case BD_FS_TECH_UDF:
              return bd_fs_udf_is_tech_avail (tech, mode, error);
-+        case BD_FS_TECH_INFILTRATORFS:
-+            if (mode & ~((guint64) BD_FS_TECH_MODE_MKFS)) {
++        case BD_FS_TECH_INFILTRATORFS: {
++            const guint64 supported =
++                BD_FS_TECH_MODE_MKFS | BD_FS_TECH_MODE_CHECK |
++                BD_FS_TECH_MODE_REPAIR | BD_FS_TECH_MODE_RESIZE;
++            if (mode & ~supported) {
 +                g_set_error_literal (error, BD_FS_ERROR,
 +                                     BD_FS_ERROR_TECH_UNAVAIL,
-+                                     "InfiltratorFS currently supports filesystem creation only.");
++                                     "Requested InfiltratorFS operation is not available.");
 +                return FALSE;
 +            }
-+            return bd_utils_check_util_version ("mkfs.infiltratorfs", NULL,
-+                                                "", NULL, error);
++            if ((mode & BD_FS_TECH_MODE_MKFS) &&
++                !bd_utils_check_util_version ("mkfs.infiltratorfs", NULL,
++                                              "", NULL, error))
++                return FALSE;
++            if ((mode & (BD_FS_TECH_MODE_CHECK | BD_FS_TECH_MODE_REPAIR)) &&
++                !bd_utils_check_util_version ("fsck.infiltratorfs", NULL,
++                                              "", NULL, error))
++                return FALSE;
++            if ((mode & BD_FS_TECH_MODE_RESIZE) &&
++                !bd_utils_check_util_version ("infiltratorfs-resize", NULL,
++                                              "", NULL, error))
++                return FALSE;
++            return TRUE;
++        }
          /* coverity[dead_error_begin] */
          default:
              /* this should never be reached (see the comparison with LAST_FS
@@ -67,9 +82,9 @@ diff --git a/src/plugins/fs/generic.c b/src/plugins/fs/generic.c
        .min_size = 2 MiB,
        .max_size = 16 TiB },
 +    /* INFILTRATORFS */
-+    { .resize = 0,
++    { .resize = BD_FS_ONLINE_GROW | BD_FS_ONLINE_SHRINK,
 +      .mkfs = BD_FS_MKFS_LABEL | BD_FS_MKFS_FORCE,
-+      .fsck = 0,
++      .fsck = BD_FS_FSCK_CHECK | BD_FS_FSCK_REPAIR,
 +      .configure = 0,
 +      .features = BD_FS_FEATURE_OWNERS,
 +      .partition_id = "0x83",
@@ -86,9 +101,9 @@ diff --git a/src/plugins/fs/generic.c b/src/plugins/fs/generic.c
 +    /* INFILTRATORFS */
 +    { .type = "infiltratorfs",
 +      .mkfs_util = "mkfs.infiltratorfs",
-+      .check_util = NULL,
-+      .repair_util = NULL,
-+      .resize_util = NULL,
++      .check_util = "fsck.infiltratorfs",
++      .repair_util = "fsck.infiltratorfs",
++      .resize_util = "infiltratorfs-resize",
 +      .minsize_util = NULL,
 +      .label_util = NULL,
 +      .info_util = NULL,
@@ -105,6 +120,62 @@ diff --git a/src/plugins/fs/generic.c b/src/plugins/fs/generic.c
      } else {
          return BD_FS_TECH_GENERIC;
      }
++
++static gboolean infiltratorfs_check_or_repair (const gchar *device,
++                                                gboolean repair,
++                                                GError **error) {
++    const gchar *args[] = {
++        "fsck.infiltratorfs", repair ? "-p" : "-n", device, NULL
++    };
++    return bd_utils_exec_and_report_error (args, NULL, error);
++}
++
++static gboolean infiltratorfs_resize_device (const gchar *device,
++                                              guint64 new_size,
++                                              GError **error) {
++    g_autofree gchar *mountpoint = NULL;
++    g_autofree gchar *size_text = NULL;
++    gboolean unmount = FALSE;
++    gboolean success = FALSE;
++    gboolean unmount_ok = TRUE;
++    GError *local_error = NULL;
++
++    mountpoint = fs_mount (device, "infiltratorfs", FALSE, &unmount, error);
++    if (!mountpoint)
++        return FALSE;
++    size_text = new_size == 0 ?
++        g_strdup ("max") : g_strdup_printf ("%" G_GUINT64_FORMAT, new_size);
++    const gchar *args[] = {
++        "infiltratorfs-resize", mountpoint, size_text, NULL
++    };
++    success = bd_utils_exec_and_report_error (args, NULL, error);
++    if (unmount) {
++        unmount_ok = fs_unmount (device, mountpoint, "resizing", &local_error);
++        if (!unmount_ok) {
++            if (success)
++                g_propagate_error (error, local_error);
++            else
++                g_clear_error (&local_error);
++        }
++    }
++    return success && unmount_ok;
++}
+@@ -440,6 +480,18 @@ static gboolean device_operation (const gchar *device, const gchar *fstype, BDFS
+         }
++    } else if (g_strcmp0 (detected_fstype, "infiltratorfs") == 0) {
++        switch (op) {
++            case BD_FS_RESIZE:
++                return infiltratorfs_resize_device (device, new_size, error);
++            case BD_FS_REPAIR:
++                return infiltratorfs_check_or_repair (device, TRUE, error);
++            case BD_FS_CHECK:
++                return infiltratorfs_check_or_repair (device, FALSE, error);
++            default:
++                break;
++        }
+     }
+ 
+     switch (op) {
 @@ -523,4 +545,37 @@ gboolean bd_fs_clean (const gchar *device, gboolean force, GError **error) {
    gboolean ret = FALSE;
    GError *l_error = NULL;
