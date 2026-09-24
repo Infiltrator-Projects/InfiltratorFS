@@ -879,6 +879,141 @@ fail:
     return status;
 }
 
+infs_status infs_snapshot_rollback(struct infs_volume *vol,
+                                      const char *name)
+{
+    if (!vol || !snapshot_name_valid(name, NULL))
+        return INFS_STATUS_INVALID_ARGUMENT;
+    if (!snapshots_enabled(vol))
+        return INFS_STATUS_NOT_SUPPORTED;
+    if (!vol->writable || vol->snapshot_view)
+        return INFS_STATUS_READ_ONLY;
+    if (vol->reopen_required_status != INFS_STATUS_OK)
+        return vol->reopen_required_status;
+
+    /*
+     * Drain the live deferred transaction before selecting the retained graph.
+     * The snapshot record then describes immutable, already-durable roots.
+     */
+    infs_status status = infs_volume_sync(vol);
+    if (status != INFS_STATUS_OK)
+        return status;
+
+    struct infs_snapshot_record_disk record;
+    status = snapshot_find_record(vol, name, &record);
+    if (status != INFS_STATUS_OK)
+        return status;
+
+    /*
+     * Do not make a retained generation authoritative merely because its
+     * catalogue record is well-formed. Re-run the same graph validation used
+     * for snapshot reads/scrub before publishing the rollback checkpoint.
+     */
+    struct infs_volume view;
+    status = snapshot_open_view(vol, name, &view);
+    if (status != INFS_STATUS_OK)
+        return status;
+    status = validate_index_entries(&view);
+    if (status == INFS_STATUS_OK)
+        status = validate_integrity_metadata(&view);
+    if (status == INFS_STATUS_OK)
+        status = validate_namespace_graph(&view);
+    if (status == INFS_STATUS_OK)
+        status = validate_checksum_graph(&view);
+    snapshot_close_view(&view);
+    if (status != INFS_STATUS_OK)
+        return status;
+
+    uint8_t *rollback_bitmap = NULL;
+    struct infs_allocation_layout rollback_layout = {0};
+    status = snapshot_load_allocation(
+        vol, &record, &rollback_bitmap, &rollback_layout);
+    if (status != INFS_STATUS_OK)
+        return status;
+
+    uint64_t generation = 0;
+    if (!infiltratr_u64_add_checked(
+            infs_le64_to_cpu(vol->sb.generation), UINT64_C(1),
+            &generation) ||
+        generation == 0) {
+        allocation_map_layout_destroy(&rollback_layout);
+        free(rollback_bitmap);
+        return INFS_STATUS_OVERFLOW;
+    }
+
+    struct infs_superblock_disk next_sb = vol->sb;
+    next_sb.generation = infs_cpu_to_le64(generation);
+    next_sb.free_blocks = record.free_blocks;
+    next_sb.allocation_root_block = record.allocation_root_block;
+    next_sb.allocation_leaf_count = record.allocation_leaf_count;
+    next_sb.object_index_block = record.object_index_block;
+    next_sb.root_object_block = record.root_object_block;
+    memcpy(next_sb.root_object_id, record.root_object_id,
+           sizeof(next_sb.root_object_id));
+
+    uint8_t sb_block[INFS_BLOCK_SIZE];
+    status = infs_encode_superblock(sb_block, &next_sb);
+    if (status != INFS_STATUS_OK)
+        goto out;
+
+    /*
+     * Retained roots are already durable. Publishing block-zero first and
+     * flushing it is therefore the rollback commit point. A crash before this
+     * flush keeps the pre-rollback generation authoritative; a crash after it
+     * selects the rollback generation and checkpoint healing can repair the
+     * remaining replicas.
+     */
+    uint64_t primary = infs_le64_to_cpu(next_sb.checkpoint_block[0]);
+    status = infs_storage_write(
+        &vol->storage, primary * INFS_BLOCK_SIZE, sb_block, sizeof(sb_block));
+    if (status != INFS_STATUS_OK)
+        goto out;
+    status = infs_storage_flush(&vol->storage);
+    if (status != INFS_STATUS_OK) {
+        vol->reopen_required_status = status;
+        vol->writable = 0;
+        goto out;
+    }
+
+    free(vol->bitmap);
+    vol->bitmap = rollback_bitmap;
+    rollback_bitmap = NULL;
+    vol->sb = next_sb;
+    allocation_map_cache_replace(vol, &rollback_layout);
+    free_extent_index_destroy(vol);
+    (void)free_extent_index_rebuild(vol);
+    vol->data_allocation_cursor = 1u;
+    vol->metadata_allocation_cursor =
+        infs_le64_to_cpu(vol->sb.total_blocks);
+    vol->checksum_cursor_valid = 0;
+    object_cache_clear(vol);
+    directory_cache_clear(vol);
+    (void)object_cache_rebuild(vol);
+
+    infs_status replica_status = INFS_STATUS_OK;
+    for (unsigned i = 1; i < INFS_CHECKPOINT_COUNT; ++i) {
+        uint64_t checkpoint =
+            infs_le64_to_cpu(next_sb.checkpoint_block[i]);
+        infs_status one = infs_storage_write(
+            &vol->storage, checkpoint * INFS_BLOCK_SIZE,
+            sb_block, sizeof(sb_block));
+        if (one != INFS_STATUS_OK && replica_status == INFS_STATUS_OK)
+            replica_status = one;
+    }
+    infs_status flush_status = infs_storage_flush(&vol->storage);
+    if (flush_status != INFS_STATUS_OK &&
+        replica_status == INFS_STATUS_OK)
+        replica_status = flush_status;
+    vol->checkpoint_repair_needed =
+        replica_status != INFS_STATUS_OK;
+    status = INFS_STATUS_OK;
+
+out:
+    allocation_map_layout_destroy(&rollback_layout);
+    free(rollback_bitmap);
+    return status;
+}
+
 infs_status infs_snapshot_list(struct infs_volume *vol,
                                struct infs_snapshot_info **snapshots,
                                size_t *count_out)
