@@ -3,6 +3,7 @@
 This file records user-visible, compatibility, architecture and validation changes for InfiltratorFS.
 
 ## 0.18.86 — 2026-09-24
+- Cache resolved effective project identity on ordinary inodes across per-folio quota reservations, with epoch invalidation on project-root changes and cross-parent namespace moves; multiply-linked/no-parent files remain on the exact alias-resolution path.
 - Repair deferred-transaction private-block detection. The working transaction and live allocation bitmap intentionally share one image, so the former bitmap-difference test could never identify unpublished blocks; an exact volatile allocation set now allows safe in-place reuse with the existing undo journal instead of repeated metadata CoW churn.
 - Make Linux xattr/special-metadata lookup lazy and scalable. A cache miss now performs one exact directory-tree lookup for the deterministic UUID sidecar instead of scanning every sidecar and performing an object-index lookup for each.
 - Materialize Format 0.18 fallocate reservations in the native 4 MiB writer unit instead of 64 KiB fragments while preserving uncompressed initialized-allocation semantics.
