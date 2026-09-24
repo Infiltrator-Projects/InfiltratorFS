@@ -488,8 +488,18 @@ static int infilfs_native_pending_commit_locked(
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(pending->sb);
     int ret;
+
+    /*
+     * A failed publication is terminal for this mount.  In particular, a
+     * checkpoint write or final durability barrier may have reached stable
+     * media even when the caller received an error, so retrying the same
+     * in-memory transaction would guess at the authoritative generation.
+     * Recovery after close/remount must decide that from physical checkpoints.
+     */
+    if (pending->commit_failed)
+        return -EIO;
     if (!pending->active)
-        return pending->commit_failed ? -EIO : 0;
+        return 0;
     pending->tx.next_sb.generation = cpu_to_le64(pending->tx.generation);
     sbi->disk = pending->tx.next_sb;
     ret = infilfs_rw_tx_commit(&pending->tx);
@@ -568,7 +578,7 @@ static void infilfs_native_pending_destroy(struct super_block *sb)
     cancel_delayed_work_sync(&pending->idle_work);
     if (sbi) {
         down_write(&sbi->write_lock);
-        if (pending->active &&
+        if (pending->active && !pending->commit_failed &&
             infilfs_native_pending_commit_locked(pending) != 0)
             pr_err("InfiltratorFS: unmount could not publish pending native writes\n");
         up_write(&sbi->write_lock);
@@ -4148,8 +4158,15 @@ static ssize_t infilfs_native_inline_write_iter(
         sbi->disk = pending->tx.next_sb;
         pending->pending_bytes += copied;
 
-        if (infilfs_native_pending_should_publish(pending))
-            (void)infilfs_native_pending_commit_locked(pending);
+        if (infilfs_native_pending_should_publish(pending)) {
+            int publish = infilfs_native_pending_commit_locked(pending);
+
+            if (publish) {
+                ret = publish;
+                up_write(&sbi->write_lock);
+                goto out_revert;
+            }
+        }
         if (pending->active && !pending->commit_failed)
             infilfs_mod_delayed_cpu_work(&pending->idle_work,
                              INFILFS_NATIVE_IDLE_DELAY);
