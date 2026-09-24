@@ -11,7 +11,7 @@ static int file_has_paged_extents(const uint8_t object[INFS_BLOCK_SIZE])
     const struct infs_object_header_disk *hdr =
         (const struct infs_object_header_disk *)object;
     uint16_t version = infs_le16_to_cpu(hdr->object_version);
-    return infs_le16_to_cpu(hdr->object_type) == INFS_OBJECT_FILE &&
+    return file_data_object_type(infs_le16_to_cpu(hdr->object_type)) &&
            (version == INFS_OBJECT_VERSION_PAGED ||
             version == INFS_OBJECT_VERSION_TREE);
 }
