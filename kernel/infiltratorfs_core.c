@@ -358,6 +358,24 @@ int infilfs_visit_claim(struct infilfs_visit_set *set, u64 block)
     }
 }
 
+bool infilfs_visit_contains(const struct infilfs_visit_set *set, u64 block)
+{
+    u64 key;
+    size_t slot;
+
+    if (!set || !set->capacity || !set->slots || block == U64_MAX)
+        return false;
+    key = block + 1u;
+    slot = infilfs_visit_hash(key) & (set->capacity - 1u);
+    for (;;) {
+        if (!set->slots[slot])
+            return false;
+        if (set->slots[slot] == key)
+            return true;
+        slot = (slot + 1u) & (set->capacity - 1u);
+    }
+}
+
 void infilfs_visit_destroy(struct infilfs_visit_set *set)
 {
     if (!set)
