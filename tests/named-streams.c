@@ -86,8 +86,14 @@ int main(void)
     infs_free_typed_extension(&ext_out);
 
     struct infs_check_report check_report;
-    ok(infs_check(&v,&check_report)==INFS_STATUS_OK,
-       "fast check with streams");
+    infs_status check_status = infs_check(&v, &check_report);
+    if (check_status != INFS_STATUS_OK) {
+        fprintf(stderr,
+                "named-streams: fast check failed: %s (%d), stage=%u\n",
+                infs_status_string(check_status), (int)check_status,
+                check_report.failed_stage);
+        exit(1);
+    }
     struct infs_scrub_report report;
     ok(infs_scrub(&v,&report)==INFS_STATUS_OK&&report.metadata_errors==0&&report.checksum_errors==0,"scrub with streams");
     ok(infs_volume_sync(&v)==INFS_STATUS_OK,"sync");
