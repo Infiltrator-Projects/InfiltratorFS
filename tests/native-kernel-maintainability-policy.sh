@@ -88,6 +88,8 @@ test -f "$kernel/infiltratorfs_linux_meta_codec.c" || fail 'Linux metadata codec
 test -f "$kernel/infiltratorfs_locator_cache.c" || fail 'native locator cache object missing'
 test -f "$kernel/infiltratorfs_shared_ownership.c" || fail 'shared ownership accelerator object missing'
 test -f "$kernel/infiltratorfs_orphan_scan.c" || fail 'parallel orphan scanner object missing'
+grep -Fq 'kernel/infiltratorfs_orphan_scan.c \' "$root/.github/workflows/kernel-module.yml" || \
+    fail 'DKMS qualification source root omits orphan scanner component'
 grep -Fqx '#   infiltratorfs_orphan_scan.c owns N-1 parallel crash-orphan discovery.' "$makefile" || \
     fail 'orphan scanner ownership line is not a valid Makefile comment'
 visit_line="$(grep -nF 'struct infilfs_visit_set {' "$kernel/infiltratorfs_internal.h" | head -n1 | cut -d: -f1)"
