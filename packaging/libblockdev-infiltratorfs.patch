@@ -23,7 +23,7 @@ diff --git a/src/lib/plugin_apis/fs.api b/src/lib/plugin_apis/fs.api
 diff --git a/src/plugins/fs.c b/src/plugins/fs.c
 --- a/src/plugins/fs.c
 +++ b/src/plugins/fs.c
-@@ -125,6 +125,15 @@ gboolean bd_fs_is_tech_avail (BDFSTech tech, guint64 mode, GError **error) {
+@@ -125,6 +125,30 @@ gboolean bd_fs_is_tech_avail (BDFSTech tech, guint64 mode, GError **error) {
              return bd_fs_btrfs_is_tech_avail (tech, mode, error);
          case BD_FS_TECH_UDF:
              return bd_fs_udf_is_tech_avail (tech, mode, error);
@@ -111,7 +111,7 @@ diff --git a/src/plugins/fs/generic.c b/src/plugins/fs/generic.c
  };
  
  /**
-@@ -366,6 +386,8 @@ static BDFSTech fstype_to_tech (const gchar *fstype) {
+@@ -366,6 +386,48 @@ static BDFSTech fstype_to_tech (const gchar *fstype) {
          return BD_FS_TECH_BTRFS;
      } else if (g_strcmp0 (fstype, "udf") == 0) {
          return BD_FS_TECH_UDF;
@@ -160,7 +160,7 @@ diff --git a/src/plugins/fs/generic.c b/src/plugins/fs/generic.c
 +    }
 +    return success && unmount_ok;
 +}
-@@ -440,6 +480,18 @@ static gboolean device_operation (const gchar *device, const gchar *fstype, BDFS
+@@ -440,4 +480,15 @@ static gboolean device_operation (const gchar *device, const gchar *fstype, BDFS
          }
 +    } else if (g_strcmp0 (detected_fstype, "infiltratorfs") == 0) {
 +        switch (op) {
