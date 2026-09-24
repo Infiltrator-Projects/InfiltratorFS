@@ -59,8 +59,10 @@ int infs_windows_bridge_start(struct infs_volume *volume, HWND owner,
                               wchar_t *drive_out, size_t drive_out_count);
 
 /* stop is the durability boundary for any mutation still waiting in the idle
- * coalescing window and releases all temporary ProjFS/NTFS bridge state. */
-void infs_windows_bridge_stop(void);
+ * coalescing window. It returns the publication status and keeps bridge state
+ * alive on failure so the caller can report/retry instead of discarding an
+ * uncommitted final transaction. */
+infs_status infs_windows_bridge_stop(void);
 int infs_windows_bridge_active(void);
 int infs_windows_bridge_root(wchar_t *root_out, size_t root_out_count);
 int infs_windows_bridge_get_stats(struct infs_windows_bridge_stats *stats);
