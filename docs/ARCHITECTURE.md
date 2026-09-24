@@ -195,9 +195,9 @@ ProjFS is an interoperability bridge, not a native filesystem driver. A future n
 
 ## 12. Security model
 
-Current POSIX compatibility fields and Linux xattr sidecars are not the final portable security authority.
+Current POSIX compatibility fields and Linux xattr sidecars are not the portable security authority.
 
-The intended long-term model uses versioned portable security objects, stable typed principals, portable rights and explicit Linux/Windows mapping. Platform-specific security metadata must be preservable even when another adapter cannot interpret it. See `SECURITY.md`.
+Format 0.18 implements versioned portable security objects, stable typed principals, portable rights and explicit Linux/Windows mapping. Platform-specific security metadata remains preservable even when another adapter cannot interpret it. See `SECURITY.md`.
 
 ## 13. Design guardrails
 
