@@ -1392,13 +1392,14 @@ static long infilfs_file_ioctl(
 
     if (command == FICLONE) {
         struct file *source = fget((unsigned int)argument);
-        int ret;
+        loff_t ret;
 
         if (!source)
             return -EBADF;
-        ret = infilfs_native_reflink_full(source, file);
+        ret = infilfs_file_remap_file_range(
+            source, 0, file, 0, 0, 0);
         fput(source);
-        return ret;
+        return ret < 0 ? (long)ret : 0;
     }
 
     if (command == INFILFS_IOC_SET_QUOTA ||
