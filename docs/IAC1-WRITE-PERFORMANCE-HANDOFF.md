@@ -222,13 +222,15 @@ The worker design must:
 - use memory-reclaim-safe workqueue semantics if the queue is reachable from writeback/reclaim paths.
 
 The worker ceiling follows the filesystem-wide CPU invariant:
-`max(1, online_logical_cpus - 1)`. With more than one logical CPU online,
-InfiltratorFS deliberately leaves one logical CPU worth of concurrency for the
-rest of the operating system and may use all remaining logical CPUs when enough
-independent work exists. Thus 1/2/3/14/255 online logical CPUs yield filesystem
-budgets of 1/1/2/13/254 respectively. Memory pressure, storage saturation or a
-lack of independent work may reduce actual runnable workers, but no fixed low
-worker count may silently replace or cap the N-1 policy.
+`max(1, online_physical_cores - 1)`. With more than one physical core online,
+InfiltratorFS deliberately leaves one complete physical core worth of CPU-heavy
+concurrency for the rest of the operating system. SMT siblings remain scheduler
+capacity but do not inflate the worker budget. Thus 1/2/3/12/255 online physical
+cores yield filesystem budgets of 1/1/2/11/254 respectively; a 12-core/14-thread
+hybrid machine therefore uses 11 filesystem workers, not 13. Memory pressure,
+storage saturation or a lack of independent work may reduce actual runnable
+workers, but no fixed low worker count may silently replace or cap the N-1
+physical-core policy.
 
 ## Options considered and rejected
 
@@ -302,7 +304,7 @@ Performance qualification should separately measure:
 - small-file and mixed-tree throughput;
 - average and tail write syscall latency;
 - CPU utilisation and number of CPUs used during compressible writes;
-- verification that sufficient CPU-bound independent work can scale to the `max(1, online_logical_cpus - 1)` filesystem budget without consuming the reserved OS CPU budget;
+- verification that sufficient CPU-bound independent work can scale to the `max(1, online_physical_cores - 1)` filesystem budget without consuming the reserved OS CPU budget;
 - NVMe utilisation/queue depth during the workload;
 - physical block savings; and
 - aggregate CPU time per logical GiB written.
