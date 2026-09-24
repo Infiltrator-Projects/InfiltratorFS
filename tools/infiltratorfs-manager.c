@@ -262,7 +262,7 @@ static void manager_apply_theme(Manager *manager)
         ".sidebar-title { font-size: 11px; font-weight: @UI_BOLD@; color: %s; }\n"
         ".sidebar-count { color: %s; font-size: 11px; }\n"
         ".device-list { background: transparent; }\n"
-        ".device-list row { border: 1px solid transparent; border-radius: @SMALL_RADIUS@px; margin: 3px 10px; }\n"
+        ".device-list row { border: 1px solid transparent; border-radius: @SMALL_RADIUS@px; margin: 3px 8px; }\n"
         ".device-list row:hover { background: %s; }\n"
         ".device-list row:selected, .device-list row:selected:hover { background: %s; border-color: %s; border-left-width: 3px; border-left-color: " "@ACCENT@" "; }\n"
         ".device-row { padding: 11px 12px; }\n"

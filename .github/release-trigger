@@ -1,4 +1,4 @@
-0.18.81
+0.18.82
 qualification=exact-source-release-gate-hosted
 publication-gate=event-driven-v10
 apt-publication-verification=asynchronous-central-v1
