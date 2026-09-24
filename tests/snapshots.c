@@ -282,6 +282,68 @@ int main(void)
            memcmp(readback, original, sizeof(readback)) == 0,
            "first snapshot survives remount");
 
+    /*
+     * Whole-volume rollback publishes the retained roots as a fresh generation
+     * without copying the namespace. Exercise it on an independent image copy
+     * so the deletion/reclamation checks below can continue using the original.
+     */
+    uint8_t *rollback_copy = malloc(TEST_SIZE);
+    expect(rollback_copy != NULL, "allocate rollback image");
+    memcpy(rollback_copy, image.bytes, TEST_SIZE);
+    struct memory_image rollback_image = {
+        .bytes = rollback_copy,
+        .size = TEST_SIZE,
+        .random_state = UINT64_C(0x6a09e667f3bcc909),
+    };
+    struct infs_volume rollback_volume;
+    storage = make_storage(&rollback_image);
+    expect(infs_volume_open_storage(&rollback_volume, &storage, 1) ==
+               INFS_STATUS_OK,
+           "open rollback image");
+    uint64_t pre_rollback_generation =
+        infs_le64_to_cpu(rollback_volume.sb.generation);
+    expect(infs_snapshot_rollback(&rollback_volume, "before-edit") ==
+               INFS_STATUS_OK,
+           "atomically roll live volume back to retained generation");
+    expect(infs_le64_to_cpu(rollback_volume.sb.generation) ==
+               pre_rollback_generation + 1u,
+           "rollback publishes a monotonic fresh generation");
+    expect(infs_read_file(&rollback_volume, "/history", readback,
+                          sizeof(readback), 0) ==
+               (int64_t)sizeof(readback) &&
+           memcmp(readback, original, sizeof(readback)) == 0,
+           "rollback restores historical file bytes");
+    expect(infs_lookup_path(&rollback_volume, "/current", &lookup) ==
+               INFS_STATUS_NOT_FOUND,
+           "rollback removes post-snapshot rename");
+    expect(infs_read_symlink(&rollback_volume, "/pointer", target,
+                             sizeof(target), &target_length) ==
+               INFS_STATUS_OK &&
+           strcmp(target, "history") == 0,
+           "rollback restores historical symbolic link");
+    snapshots = NULL;
+    snapshot_count = 99;
+    expect(infs_snapshot_list(&rollback_volume, &snapshots, &snapshot_count) ==
+               INFS_STATUS_OK && snapshot_count == 0,
+           "destructive rollback restores historical snapshot-catalog state");
+    infs_free_snapshot_infos(snapshots);
+    expect(infs_scrub(&rollback_volume, &report) == INFS_STATUS_OK &&
+           report.metadata_errors == 0 && report.checksum_errors == 0,
+           "rolled-back generation scrubs clean");
+    infs_volume_close(&rollback_volume);
+
+    storage = make_storage(&rollback_image);
+    expect(infs_volume_open_storage(&rollback_volume, &storage, 0) ==
+               INFS_STATUS_OK,
+           "reopen rolled-back generation");
+    expect(infs_read_file(&rollback_volume, "/history", readback,
+                          sizeof(readback), 0) ==
+               (int64_t)sizeof(readback) &&
+           memcmp(readback, original, sizeof(readback)) == 0,
+           "rollback persists across reopen");
+    infs_volume_close(&rollback_volume);
+    free(rollback_copy);
+
     uint8_t *metadata_copy = malloc(TEST_SIZE);
     expect(metadata_copy != NULL, "allocate metadata-corruption image");
     memcpy(metadata_copy, image.bytes, TEST_SIZE);
