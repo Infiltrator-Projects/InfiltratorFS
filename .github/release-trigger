@@ -1,4 +1,4 @@
-0.18.86
+0.18.87
 qualification=exact-source-release-gate-hosted
 publication-gate=event-driven-v10
 apt-publication-verification=asynchronous-central-v1
@@ -20,3 +20,4 @@ mounted-performance-repair=quota-private-xattr-fallocate-fsync-orphan-v7
 kernel-makefile-comment-syntax=guarded-v1
 internal-type-order=guarded-v1
 dkms-orphan-source=guarded-v1
+physical-core-n-minus-one=hybrid-responsiveness-v1
