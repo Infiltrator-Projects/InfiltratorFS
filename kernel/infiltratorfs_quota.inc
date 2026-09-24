@@ -57,6 +57,9 @@ static int infilfs_quota_reparent_member_locked(
     const u8 source_id[16], bool *member_out);
 static int infilfs_quota_inode_project_locked(
     struct inode *inode, u32 *project_out);
+static int infilfs_quota_project_rule_usage_locked(
+    struct super_block *sb, u32 project_id,
+    u64 *bytes_out, u64 *objects_out);
 
 static_assert(sizeof(struct infilfs_quota_db_header) == 24);
 static_assert(sizeof(struct infilfs_quota_rule_disk) == 24);
