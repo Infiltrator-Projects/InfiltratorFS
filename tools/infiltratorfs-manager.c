@@ -240,7 +240,7 @@ static void manager_apply_theme(Manager *manager)
     g_string_append_printf(css,
         "* { font-family: '@UI_FONT@'; font-weight: @UI_REGULAR@; }\n"
         "window, dialog, messagedialog, filechooser { background: %s; color: %s; }\n"
-        "headerbar { min-height: 44px; background: %s; color: %s; border-bottom: 1px solid %s; }\n"
+        "headerbar { min-height: 44px; background: %s; color: %s; border-bottom: 1px solid %s; padding: 0 6px; }\n"
         "headerbar .title, headerbar label.title { font-family: '@BRAND_FONT@'; font-size: 18px; font-weight: @UI_BOLD@; color: %s; }\n"
         "headerbar .subtitle, headerbar label.subtitle { color: %s; font-size: 12px; font-weight: @UI_BOLD@; }\n"
         "button { min-height: 30px; padding: 0 12px; background: %s; border: 1px solid %s; border-radius: @SMALL_RADIUS@px; font-family: '@UI_FONT@'; font-weight: @UI_BOLD@; }\n"
