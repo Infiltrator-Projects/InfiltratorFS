@@ -1133,3 +1133,490 @@ infs_status infs_snapshot_read_symlink(struct infs_volume *vol,
     }
     return status;
 }
+
+
+struct infs_snapshot_restore_link {
+    uint8_t object_id[16];
+    char *destination_path;
+};
+
+struct infs_snapshot_restore_context {
+    struct infs_volume *live;
+    struct infs_volume *snapshot;
+    struct infs_snapshot_restore_link *links;
+    size_t link_count;
+    size_t link_capacity;
+};
+
+static int snapshot_restore_id_is_zero(const uint8_t id[16])
+{
+    uint8_t any = 0;
+    for (size_t i = 0; i < 16u; ++i)
+        any |= id[i];
+    return any == 0;
+}
+
+static infs_status snapshot_restore_join_path(
+    const char *base, const char *name, char **out)
+{
+    if (!base || !name || !out)
+        return INFS_STATUS_INVALID_ARGUMENT;
+
+    size_t base_len = strlen(base);
+    size_t name_len = strlen(name);
+    if (!name_len || base_len == 0 || base[0] != '/')
+        return INFS_STATUS_INVALID_ARGUMENT;
+
+    size_t slash = strcmp(base, "/") == 0 ? 0u : 1u;
+    if (base_len > INFS_PATH_MAX || name_len > INFS_NAME_MAX ||
+        slash > SIZE_MAX - base_len ||
+        name_len > SIZE_MAX - base_len - slash - 1u)
+        return INFS_STATUS_NAME_TOO_LONG;
+
+    size_t total = base_len + slash + name_len;
+    if (total >= INFS_PATH_MAX)
+        return INFS_STATUS_NAME_TOO_LONG;
+
+    char *path = malloc(total + 1u);
+    if (!path)
+        return INFS_STATUS_NO_MEMORY;
+    memcpy(path, base, base_len);
+    size_t at = base_len;
+    if (slash)
+        path[at++] = '/';
+    memcpy(path + at, name, name_len);
+    path[total] = '\0';
+    *out = path;
+    return INFS_STATUS_OK;
+}
+
+static infs_status snapshot_restore_remove_live_tree(
+    struct infs_volume *live, const char *path)
+{
+    struct infs_lookup lookup;
+    infs_status status = infs_lookup_path(live, path, &lookup);
+    if (status == INFS_STATUS_NOT_FOUND)
+        return INFS_STATUS_OK;
+    if (status != INFS_STATUS_OK)
+        return status;
+    if (strcmp(path, "/") == 0)
+        return INFS_STATUS_INVALID_ARGUMENT;
+
+    if (lookup.type != INFS_OBJECT_DIRECTORY)
+        return infs_unlink(live, path);
+
+    struct infs_dir_item *items = NULL;
+    size_t count = 0;
+    status = infs_list_dir(live, path, &items, &count);
+    if (status != INFS_STATUS_OK)
+        return status;
+
+    for (size_t i = 0; i < count; ++i) {
+        char *child = NULL;
+        status = snapshot_restore_join_path(path, items[i].name, &child);
+        if (status == INFS_STATUS_OK)
+            status = snapshot_restore_remove_live_tree(live, child);
+        free(child);
+        if (status != INFS_STATUS_OK)
+            break;
+    }
+    infs_free_dir_items(items);
+    if (status != INFS_STATUS_OK)
+        return status;
+    return infs_rmdir(live, path);
+}
+
+static infs_status snapshot_restore_link_remember(
+    struct infs_snapshot_restore_context *ctx,
+    const uint8_t object_id[16], const char *destination_path)
+{
+    if (ctx->link_count == ctx->link_capacity) {
+        size_t next = ctx->link_capacity ? ctx->link_capacity * 2u : 16u;
+        if (next < ctx->link_capacity ||
+            next > SIZE_MAX / sizeof(*ctx->links))
+            return INFS_STATUS_OVERFLOW;
+        struct infs_snapshot_restore_link *grown =
+            realloc(ctx->links, next * sizeof(*grown));
+        if (!grown)
+            return INFS_STATUS_NO_MEMORY;
+        ctx->links = grown;
+        ctx->link_capacity = next;
+    }
+
+    char *copy = malloc(strlen(destination_path) + 1u);
+    if (!copy)
+        return INFS_STATUS_NO_MEMORY;
+    strcpy(copy, destination_path);
+    memcpy(ctx->links[ctx->link_count].object_id, object_id, 16);
+    ctx->links[ctx->link_count].destination_path = copy;
+    ctx->link_count++;
+    return INFS_STATUS_OK;
+}
+
+static const char *snapshot_restore_link_find(
+    const struct infs_snapshot_restore_context *ctx,
+    const uint8_t object_id[16])
+{
+    for (size_t i = 0; i < ctx->link_count; ++i)
+        if (memcmp(ctx->links[i].object_id, object_id, 16) == 0)
+            return ctx->links[i].destination_path;
+    return NULL;
+}
+
+static infs_status snapshot_restore_ensure_principal(
+    struct infs_snapshot_restore_context *ctx, const uint8_t principal_id[16])
+{
+    if (snapshot_restore_id_is_zero(principal_id) ||
+        infs_security_principal_id_is_reserved(principal_id))
+        return INFS_STATUS_OK;
+
+    struct infs_security_principal principal = {0};
+    infs_status status = infs_get_security_principal(
+        ctx->live, principal_id, &principal);
+    if (status == INFS_STATUS_OK) {
+        infs_free_security_principal(&principal);
+        return INFS_STATUS_OK;
+    }
+    if (status != INFS_STATUS_NOT_FOUND)
+        return status;
+
+    status = infs_get_security_principal(
+        ctx->snapshot, principal_id, &principal);
+    if (status != INFS_STATUS_OK)
+        return status;
+    status = infs_put_security_principal(ctx->live, &principal);
+    infs_free_security_principal(&principal);
+    return status;
+}
+
+static infs_status snapshot_restore_security(
+    struct infs_snapshot_restore_context *ctx,
+    const char *source_path, const char *destination_path)
+{
+    struct infs_security_descriptor descriptor = {0};
+    infs_status status = infs_get_security_descriptor(
+        ctx->snapshot, source_path, &descriptor);
+    if (status == INFS_STATUS_NOT_FOUND)
+        return INFS_STATUS_OK;
+    if (status != INFS_STATUS_OK)
+        return status;
+
+    status = snapshot_restore_ensure_principal(
+        ctx, descriptor.owner_principal_id);
+    if (status == INFS_STATUS_OK)
+        status = snapshot_restore_ensure_principal(
+            ctx, descriptor.primary_group_principal_id);
+    for (size_t i = 0; status == INFS_STATUS_OK &&
+                         i < descriptor.ace_count; ++i)
+        status = snapshot_restore_ensure_principal(
+            ctx, descriptor.aces[i].principal_id);
+    if (status == INFS_STATUS_OK)
+        status = infs_set_security_descriptor(
+            ctx->live, destination_path, &descriptor);
+    infs_free_security_descriptor(&descriptor);
+    return status;
+}
+
+static infs_status snapshot_restore_named_metadata(
+    struct infs_snapshot_restore_context *ctx,
+    const char *source_path, const char *destination_path)
+{
+    struct infs_typed_extension extension = {0};
+    infs_status status = infs_get_typed_extension(
+        ctx->snapshot, source_path, &extension);
+    if (status == INFS_STATUS_OK) {
+        status = infs_set_typed_extension(
+            ctx->live, destination_path, &extension);
+        infs_free_typed_extension(&extension);
+        if (status != INFS_STATUS_OK)
+            return status;
+    } else if (status != INFS_STATUS_NOT_FOUND) {
+        return status;
+    }
+
+    struct infs_named_stream_info *streams = NULL;
+    size_t stream_count = 0;
+    status = infs_named_stream_list(
+        ctx->snapshot, source_path, &streams, &stream_count);
+    if (status == INFS_STATUS_NOT_FOUND ||
+        status == INFS_STATUS_NOT_SUPPORTED)
+        return INFS_STATUS_OK;
+    if (status != INFS_STATUS_OK)
+        return status;
+
+    for (size_t i = 0; i < stream_count; ++i) {
+        if (streams[i].logical_size > SIZE_MAX) {
+            status = INFS_STATUS_FILE_TOO_LARGE;
+            break;
+        }
+        size_t size = (size_t)streams[i].logical_size;
+        uint8_t *data = malloc(size ? size : 1u);
+        if (!data) {
+            status = INFS_STATUS_NO_MEMORY;
+            break;
+        }
+        size_t done = 0;
+        while (done < size) {
+            size_t chunk = size - done;
+            if (chunk > 256u * 1024u)
+                chunk = 256u * 1024u;
+            int64_t got = infs_named_stream_read(
+                ctx->snapshot, source_path, streams[i].name,
+                data + done, chunk, done);
+            if (got <= 0 || (size_t)got > chunk) {
+                status = got < 0 ? (infs_status)got : INFS_STATUS_IO_ERROR;
+                break;
+            }
+            done += (size_t)got;
+        }
+        if (status == INFS_STATUS_OK)
+            status = infs_named_stream_set(
+                ctx->live, destination_path, streams[i].name, data, size);
+        free(data);
+        if (status != INFS_STATUS_OK)
+            break;
+    }
+    infs_free_named_stream_infos(streams);
+    return status;
+}
+
+static infs_status snapshot_restore_apply_metadata(
+    struct infs_snapshot_restore_context *ctx,
+    const char *source_path, const char *destination_path,
+    const struct infs_attributes *attributes)
+{
+    infs_status status = snapshot_restore_security(
+        ctx, source_path, destination_path);
+    if (status == INFS_STATUS_OK)
+        status = snapshot_restore_named_metadata(
+            ctx, source_path, destination_path);
+    if (status == INFS_STATUS_OK)
+        status = infs_set_portable_flags(
+            ctx->live, destination_path, attributes->portable_flags);
+    if (status == INFS_STATUS_OK)
+        status = infs_set_posix_compat(
+            ctx->live, destination_path,
+            INFS_POSIX_SET_PERMISSIONS | INFS_POSIX_SET_UID |
+                INFS_POSIX_SET_GID,
+            attributes->posix_permissions, attributes->posix_uid,
+            attributes->posix_gid);
+    if (status != INFS_STATUS_OK)
+        return status;
+
+    struct infs_time_update times = {
+        .birth_action = INFS_TIME_SET,
+        .access_action = INFS_TIME_SET,
+        .modification_action = INFS_TIME_SET,
+        .change_action = INFS_TIME_SET,
+        .birth_time = attributes->birth_time,
+        .access_time = attributes->access_time,
+        .modification_time = attributes->modification_time,
+        .change_time = attributes->change_time,
+    };
+    return infs_set_times(ctx->live, destination_path, &times);
+}
+
+static infs_status snapshot_restore_regular_file(
+    struct infs_snapshot_restore_context *ctx,
+    const char *source_path, const char *destination_path,
+    const struct infs_attributes *attributes)
+{
+    const char *existing = snapshot_restore_link_find(
+        ctx, attributes->object_id);
+    if (existing)
+        return infs_link_file(ctx->live, existing, destination_path);
+
+    struct infs_create_options options = {
+        .portable_flags = attributes->portable_flags,
+        .posix_permissions = attributes->posix_permissions,
+        .posix_uid = attributes->posix_uid,
+        .posix_gid = attributes->posix_gid,
+    };
+    infs_status status = infs_create_file(
+        ctx->live, destination_path, &options);
+    if (status != INFS_STATUS_OK)
+        return status;
+
+    uint8_t *buffer = malloc(256u * 1024u);
+    if (!buffer)
+        return INFS_STATUS_NO_MEMORY;
+    uint64_t offset = 0;
+    while (offset < attributes->logical_size) {
+        size_t want = 256u * 1024u;
+        if ((uint64_t)want > attributes->logical_size - offset)
+            want = (size_t)(attributes->logical_size - offset);
+        int64_t got = infs_read_file(
+            ctx->snapshot, source_path, buffer, want, offset);
+        if (got <= 0 || (size_t)got > want) {
+            status = got < 0 ? (infs_status)got : INFS_STATUS_IO_ERROR;
+            break;
+        }
+        int64_t written = infs_write_file_buffered(
+            ctx->live, destination_path, buffer, (size_t)got, offset);
+        if (written != got) {
+            status = written < 0 ? (infs_status)written :
+                                   INFS_STATUS_IO_ERROR;
+            break;
+        }
+        offset += (uint64_t)got;
+    }
+    free(buffer);
+    if (status != INFS_STATUS_OK)
+        return status;
+
+    if (attributes->logical_size == 0)
+        status = infs_truncate_file(ctx->live, destination_path, 0);
+    if (status == INFS_STATUS_OK)
+        status = snapshot_restore_apply_metadata(
+            ctx, source_path, destination_path, attributes);
+    if (status == INFS_STATUS_OK)
+        status = snapshot_restore_link_remember(
+            ctx, attributes->object_id, destination_path);
+    return status;
+}
+
+static infs_status snapshot_restore_one(
+    struct infs_snapshot_restore_context *ctx,
+    const char *source_path, const char *destination_path)
+{
+    struct infs_attributes attributes;
+    infs_status status = infs_get_attributes(
+        ctx->snapshot, source_path, &attributes);
+    if (status != INFS_STATUS_OK)
+        return status;
+
+    if (attributes.object_type == INFS_OBJECT_FILE)
+        return snapshot_restore_regular_file(
+            ctx, source_path, destination_path, &attributes);
+
+    struct infs_create_options options = {
+        .portable_flags = attributes.portable_flags,
+        .posix_permissions = attributes.posix_permissions,
+        .posix_uid = attributes.posix_uid,
+        .posix_gid = attributes.posix_gid,
+    };
+
+    if (attributes.object_type == INFS_OBJECT_SYMLINK) {
+        char target[INFS_SYMLINK_TARGET_MAX + 1u];
+        size_t target_length = 0;
+        status = infs_read_symlink(
+            ctx->snapshot, source_path, target, sizeof(target),
+            &target_length);
+        if (status != INFS_STATUS_OK)
+            return status;
+        status = infs_create_symlink(
+            ctx->live, destination_path, target, &options);
+        if (status == INFS_STATUS_OK)
+            status = snapshot_restore_apply_metadata(
+                ctx, source_path, destination_path, &attributes);
+        return status;
+    }
+
+    if (attributes.object_type != INFS_OBJECT_DIRECTORY)
+        return INFS_STATUS_NOT_SUPPORTED;
+
+    status = infs_mkdir(ctx->live, destination_path, &options);
+    if (status != INFS_STATUS_OK)
+        return status;
+
+    struct infs_dir_item *items = NULL;
+    size_t count = 0;
+    status = infs_list_dir(ctx->snapshot, source_path, &items, &count);
+    if (status != INFS_STATUS_OK)
+        return status;
+    for (size_t i = 0; i < count; ++i) {
+        char *source_child = NULL;
+        char *destination_child = NULL;
+        status = snapshot_restore_join_path(
+            source_path, items[i].name, &source_child);
+        if (status == INFS_STATUS_OK)
+            status = snapshot_restore_join_path(
+                destination_path, items[i].name, &destination_child);
+        if (status == INFS_STATUS_OK)
+            status = snapshot_restore_one(
+                ctx, source_child, destination_child);
+        free(source_child);
+        free(destination_child);
+        if (status != INFS_STATUS_OK)
+            break;
+    }
+    infs_free_dir_items(items);
+    if (status == INFS_STATUS_OK)
+        status = snapshot_restore_apply_metadata(
+            ctx, source_path, destination_path, &attributes);
+    return status;
+}
+
+infs_status infs_snapshot_restore_path(
+    struct infs_volume *vol, const char *snapshot,
+    const char *source_path, const char *destination_path, int replace)
+{
+    if (!vol || !snapshot || !source_path || !destination_path ||
+        source_path[0] != '/' || destination_path[0] != '/' ||
+        strcmp(destination_path, "/") == 0)
+        return INFS_STATUS_INVALID_ARGUMENT;
+    if (!snapshots_enabled(vol))
+        return INFS_STATUS_NOT_SUPPORTED;
+    if (!vol->writable || vol->snapshot_view)
+        return INFS_STATUS_READ_ONLY;
+    if (vol->reopen_required_status != INFS_STATUS_OK)
+        return vol->reopen_required_status;
+
+    infs_status status = infs_volume_sync(vol);
+    if (status != INFS_STATUS_OK)
+        return status;
+
+    struct infs_volume view;
+    status = snapshot_open_view(vol, snapshot, &view);
+    if (status != INFS_STATUS_OK)
+        return status;
+
+    struct infs_lookup source_lookup;
+    status = infs_lookup_path(&view, source_path, &source_lookup);
+    if (status != INFS_STATUS_OK) {
+        snapshot_close_view(&view);
+        return status;
+    }
+
+    struct infs_lookup destination_lookup;
+    infs_status destination_status =
+        infs_lookup_path(vol, destination_path, &destination_lookup);
+    if (destination_status == INFS_STATUS_OK && !replace) {
+        snapshot_close_view(&view);
+        return INFS_STATUS_ALREADY_EXISTS;
+    }
+    if (destination_status != INFS_STATUS_OK &&
+        destination_status != INFS_STATUS_NOT_FOUND) {
+        snapshot_close_view(&view);
+        return destination_status;
+    }
+
+    int old_deferred = vol->deferred_publish;
+    uint64_t old_threshold = vol->deferred_publish_threshold_bytes;
+    vol->deferred_publish = 1;
+    vol->deferred_publish_threshold_bytes = UINT64_MAX;
+
+    if (destination_status == INFS_STATUS_OK)
+        status = snapshot_restore_remove_live_tree(vol, destination_path);
+
+    struct infs_snapshot_restore_context ctx = {
+        .live = vol,
+        .snapshot = &view,
+    };
+    if (status == INFS_STATUS_OK)
+        status = snapshot_restore_one(
+            &ctx, source_path, destination_path);
+    if (status == INFS_STATUS_OK)
+        status = infs_volume_sync(vol);
+    else if (vol->tx_active)
+        tx_abort(vol);
+
+    vol->deferred_publish = old_deferred;
+    vol->deferred_publish_threshold_bytes = old_threshold;
+
+    for (size_t i = 0; i < ctx.link_count; ++i)
+        free(ctx.links[i].destination_path);
+    free(ctx.links);
+    snapshot_close_view(&view);
+    return status;
+}
