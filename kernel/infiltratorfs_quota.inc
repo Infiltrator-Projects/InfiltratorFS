@@ -308,6 +308,19 @@ static bool infilfs_quota_has_project_rule_locked(
     return false;
 }
 
+static void infilfs_quota_project_cache_bump_locked(
+    struct infilfs_sb_info *sbi)
+{
+    /*
+     * Zero is a valid initial epoch.  Wrap is practically unreachable, but
+     * skip back to one so a very old zero-initialized inode can never become
+     * spuriously current after wrap.
+     */
+    sbi->quota_project_epoch++;
+    if (!sbi->quota_project_epoch)
+        sbi->quota_project_epoch = 1;
+}
+
 static u32 infilfs_quota_root_match_locked(const struct infilfs_sb_info *sbi,
                                            const u8 object_id[16])
 {
@@ -1489,6 +1502,7 @@ static int infilfs_quota_set_project(struct inode *inode,
     }
 
     request->effective_project_id = new_effective;
+    infilfs_quota_project_cache_bump_locked(sbi);
     kvfree(old_roots);
     old_roots = NULL;
     goto out;
@@ -1537,16 +1551,32 @@ static int infilfs_quota_get_project(struct inode *inode,
     return ret;
 }
 
-static int infilfs_quota_inode_project_locked(struct inode *inode, u32 *project_out)
+static int infilfs_quota_inode_project_locked(struct inode *inode,
+                                                u32 *project_out)
 {
+    struct infilfs_sb_info *sbi = INFILFS_SB(inode->i_sb);
     struct infilfs_inode_info *ii = INFILFS_I(inode);
     struct infilfs_object_header_disk *header;
     u8 *object;
+    bool cacheable = false;
     int ret;
 
     *project_out = 0;
-    if (!ii)
+    if (!sbi || !ii)
         return -EINVAL;
+
+    /*
+     * write_begin() may run once per folio even after the whole-write quota
+     * preflight. Effective project identity normally does not change between
+     * those calls. Reuse it until project topology changes instead of walking
+     * the parent/index tree for every folio.
+     */
+    if (ii->quota_project_cached &&
+        ii->quota_project_epoch == sbi->quota_project_epoch) {
+        *project_out = ii->quota_project_id;
+        return 0;
+    }
+
     object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
     if (!object)
         return -ENOMEM;
@@ -1556,6 +1586,23 @@ static int infilfs_quota_inode_project_locked(struct inode *inode, u32 *project_
         header = (struct infilfs_object_header_disk *)object;
         ret = infilfs_quota_object_project_locked(
             inode->i_sb, header, project_out);
+        if (!ret) {
+            /*
+             * Direct-parent objects have an unambiguous inheritance chain.
+             * Multiply-linked/no-parent files deliberately use alias
+             * reconstruction and are left uncached.
+             */
+            cacheable = ii->object_type != INFILFS_OBJECT_FILE ||
+                (inode->i_nlink <= 1 &&
+                 memchr_inv(header->parent_id, 0, 16));
+            if (cacheable) {
+                ii->quota_project_id = *project_out;
+                ii->quota_project_epoch = sbi->quota_project_epoch;
+                ii->quota_project_cached = true;
+            } else {
+                ii->quota_project_cached = false;
+            }
+        }
     }
     kfree(object);
     return ret;
