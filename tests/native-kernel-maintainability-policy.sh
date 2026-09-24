@@ -7,6 +7,7 @@ kernel="$root/kernel"
 driver="$kernel/infiltratorfs_core.c"
 rw="$kernel/infiltratorfs_rw.inc"
 data="$kernel/infiltratorfs_rw_data.inc"
+namespace="$kernel/infiltratorfs_rw_namespace.inc"
 makefile="$kernel/Makefile"
 ioctl="$kernel/infiltratorfs_ioctl.h"
 resize="$kernel/infiltratorfs_resize.c"
@@ -18,7 +19,7 @@ fail() {
     exit 1
 }
 
-for file in "$driver" "$rw" "$data" "$makefile" "$ioctl" "$resize" "$quota" "$pagecache"; do
+for file in "$driver" "$rw" "$data" "$namespace" "$makefile" "$ioctl" "$resize" "$quota" "$pagecache"; do
     test -f "$file" || fail "missing $file"
 done
 
@@ -160,6 +161,25 @@ getattr_body="$(sed -n '/static int infilfs_getattr(/,/^}/p' "$rw")"
 grep -Fq 'stat->btime = ii->birth_time;' <<<"$getattr_body" || fail 'getattr lost cached persistent birth time'
 grep -Fq 'struct timespec64 birth_time;' "$kernel/infiltratorfs_internal.h" || fail 'inode birth-time cache missing'
 grep -Fq 'ATTR_KILL_SUID | ATTR_KILL_SGID' "$rw" || fail 'set-ID stripping is not persisted'
+
+# Creator identity conversion is fail-closed. An id-mapped uid/gid that cannot
+# be represented in the init-user-namespace disk fields must never fall back to
+# numeric zero and manufacture root ownership.
+creator_fill="$(sed -n '/static int infilfs_posix_fill_common_attributes(/,/^}/p' "$rw")"
+grep -Fq 'ret = infilfs_posix_uid_to_disk(kernel_uid, &uid);' <<<"$creator_fill" || \
+    fail 'creator uid conversion result is not checked'
+grep -Fq 'ret = infilfs_posix_gid_to_disk(kernel_gid, &gid);' <<<"$creator_fill" || \
+    fail 'creator gid conversion result is not checked'
+test "$(grep -Fc 'if (ret)' <<<"$creator_fill")" -ge 2 || \
+    fail 'creator identity conversion no longer fails closed'
+create_object="$(sed -n '/static int infilfs_posix_create_object_native(/,/^}/p' "$rw")"
+test "$(grep -Fc 'ret = infilfs_posix_fill_common_attributes(' <<<"$create_object")" -eq 2 || \
+    fail 'native file/directory creation bypasses checked creator identity'
+symlink_object="$(sed -n '/static int infilfs_ns_create_symlink_object(/,/^}/p' "$namespace")"
+grep -Fq 'ret = infilfs_rw_fill_common_attributes(' <<<"$symlink_object" || \
+    fail 'native symlink creation bypasses checked creator identity'
+grep -Fq 'if (ret)' <<<"$symlink_object" || \
+    fail 'native symlink creator identity failure is ignored'
 
 # VM writeback accounting is a page count, not a batch count. Keep the
 # decrement independent of the cluster-full short circuit so a full 1 MiB
