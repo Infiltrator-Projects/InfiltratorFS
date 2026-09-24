@@ -338,6 +338,33 @@ static int file_data_object_type(uint16_t type)
     return type == INFS_OBJECT_FILE || type == INFS_OBJECT_NAMED_STREAM;
 }
 
+static int indexed_object_type_valid(
+    const struct infs_volume *vol, uint16_t type, const uint8_t object_id[16])
+{
+    switch (type) {
+    case INFS_OBJECT_DIRECTORY:
+    case INFS_OBJECT_FILE:
+    case INFS_OBJECT_CHECKSUM:
+        return 1;
+    case INFS_OBJECT_SYMLINK:
+        return symbolic_links_enabled(vol);
+    case INFS_OBJECT_SNAPSHOT_CATALOG:
+        return snapshots_enabled(vol) && object_id &&
+            memcmp(object_id, snapshot_catalog_id, 16) == 0;
+    case INFS_OBJECT_PRINCIPAL:
+    case INFS_OBJECT_SECURITY:
+    case INFS_OBJECT_SECURITY_BINDING:
+        return security_objects_enabled(vol);
+    case INFS_OBJECT_EXTENSION:
+        return typed_extensions_enabled(vol);
+    case INFS_OBJECT_METADATA_SET:
+    case INFS_OBJECT_NAMED_STREAM:
+        return named_streams_enabled(vol);
+    default:
+        return 0;
+    }
+}
+
 static infs_status typed_extension_validate_reference(
     struct infs_volume *vol, const uint8_t extension_id[16]);
 
