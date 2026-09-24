@@ -2,6 +2,15 @@
 
 This file records user-visible, compatibility, architecture and validation changes for InfiltratorFS.
 
+## 0.18.79 — 2026-09-24
+- Fail native Linux object creation closed when the current uid/gid cannot be represented in the Format 0.18 POSIX compatibility fields, instead of silently substituting numeric zero/root ownership. File, directory and symlink creation now all propagate the mapping error before publication.
+- Make authenticated encrypted storage safe for concurrent partial-block writes with logical-block stripe locks. Reads share the same stripe and flush fences every stripe, preventing lost read-modify-write updates and durability barriers from passing in-flight AEAD record replacement.
+- Synchronize replicated-storage member-health state without serializing independent member I/O; quarantine decisions are now race-free while the existing degraded-write and split-brain fail-closed behaviour is preserved.
+- Make the Windows Explorer bridge shutdown durability boundary observable and retryable. A failed final publication now returns its error and keeps pending bridge/volume state alive rather than tearing it down and silently discarding the transaction.
+- Add deterministic concurrent encrypted-write qualification, storage-thread-safety policy coverage and native creator-identity regression guards.
+- Align architecture documentation with the already-implemented portable security-object model.
+- On-disk Format remains 0.18.
+
 ## 0.18.78 — 2026-09-24
 - Complete named-stream integration across scalable object-index validation, paged/tree extent handling, ownership accounting, checksum graphs, deep scrub, shared-extent protection and compression metrics; large named metadata streams now pass the same structural and data-integrity rules as regular file-data objects.
 - Correct live checkpoint-replica validation after publication by treating the serialized superblock checksum as a derived encoding field rather than comparing it against the intentionally unmodified in-memory checksum bytes. Fast checks now recognise all freshly published checkpoint replicas without requiring a reopen.
