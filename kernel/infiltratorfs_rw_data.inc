@@ -323,7 +323,6 @@ static int infilfs_native_pending_begin_locked(
     ret = infilfs_rw_tx_begin(pending->sb, &pending->tx);
     if (ret)
         return ret;
-    pending->base_disk = sbi->disk;
     pending->pending_bytes = 0;
     pending->pending_physical_bytes = 0;
     pending->active = true;
@@ -513,13 +512,11 @@ int infilfs_native_pending_flush_sb(struct super_block *sb)
     struct infilfs_native_pending *pending =
         infilfs_native_pending_get(sb, false);
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
-    bool committed;
     int ret;
     if (!pending)
         return 0;
     cancel_delayed_work_sync(&pending->idle_work);
     down_write(&sbi->write_lock);
-    committed = pending->active;
     ret = infilfs_native_pending_commit_locked(pending);
     up_write(&sbi->write_lock);
 
@@ -530,7 +527,6 @@ int infilfs_native_pending_flush_sb(struct super_block *sb)
      * to publish.  A whole-device sync in that case only turns clean fsync()
      * traffic into device-wide stalls.
      */
-    (void)committed;
     return ret;
 }
 
