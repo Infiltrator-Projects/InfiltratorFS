@@ -2,6 +2,11 @@
 
 This file records user-visible, compatibility, architecture and validation changes for InfiltratorFS.
 
+## 0.18.92 — 2026-09-25
+- Give Linux Manager stack-switcher tabs the suite-wide 30 px desktop control height while retaining the existing compact tab rhythm.
+- Keep filesystem format, kernel driver, storage, encryption, namespace and maintenance behaviour unchanged.
+- On-disk Format remains 0.18.
+
 ## 0.18.91 — 2026-09-25
 - Give the Linux Manager titlebar the suite-wide 6 px side padding used by the publisher shell.
 - Keep filesystem format, kernel driver, storage, encryption, namespace and maintenance behaviour unchanged.
