@@ -405,12 +405,31 @@ static int validate_namespace_graph_progress(
                 goto out;
         }
         if (!id_is_zero(attributes->extended_attributes_object_id)) {
-            if (!typed_extensions_enabled(vol)) {
+            struct infs_lookup metadata_reference;
+            status = index_find(
+                vol, attributes->extended_attributes_object_id,
+                &metadata_reference);
+            if (status != INFS_STATUS_OK) {
                 status = INFS_STATUS_CORRUPT;
                 goto out;
             }
-            status = typed_extension_validate_reference(
-                vol, attributes->extended_attributes_object_id);
+            if (metadata_reference.type == INFS_OBJECT_EXTENSION) {
+                if (!typed_extensions_enabled(vol)) {
+                    status = INFS_STATUS_CORRUPT;
+                    goto out;
+                }
+                status = typed_extension_validate_reference(
+                    vol, attributes->extended_attributes_object_id);
+            } else if (metadata_reference.type == INFS_OBJECT_METADATA_SET) {
+                if (!named_streams_enabled(vol)) {
+                    status = INFS_STATUS_CORRUPT;
+                    goto out;
+                }
+                status = metadata_set_validate_reference(
+                    vol, attributes->extended_attributes_object_id);
+            } else {
+                status = INFS_STATUS_CORRUPT;
+            }
             if (status != INFS_STATUS_OK)
                 goto out;
         }
