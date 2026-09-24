@@ -4108,12 +4108,7 @@ static int infilfs_native_inline_snapshot(
     u64 size;
     int ret;
 
-    /*
-     * Pin the persistent topology only long enough to copy the current file
-     * object.  Integrity verification and SHA-256 work operate on that private
-     * snapshot after the read side is released, so unrelated namespace
-     * mutations are not forced to wait behind small-file hashing.
-     */
+    /* Copy a topology-stable object, then verify/hash it without write_lock. */
     down_read(&sbi->write_lock);
     object_block = READ_ONCE(ii->object_block);
     ret = infilfs_read_object(inode->i_sb, object_block,
@@ -4198,11 +4193,7 @@ static ssize_t infilfs_native_inline_write_iter(
         goto out_free;
     }
 
-    /*
-     * Consume the caller iterator once.  Retries below rebuild from this
-     * private copy if another writer changed the same inline object while the
-     * expensive preparation ran without the topology writer lock.
-     */
+    /* Consume once; optimistic retries rebuild from this private copy. */
     copied = copy_from_iter(input, requested, from);
     if (!copied) {
         ret = -EFAULT;
@@ -4218,11 +4209,7 @@ static ssize_t infilfs_native_inline_write_iter(
         memcpy(data + pos, input, copied);
         new_size = max_t(size_t, old_size, (size_t)pos + copied);
 
-        /*
-         * This SHA-256 is the expensive part of tiny-file writeback.  Keep it
-         * outside write_lock so lookups and independent namespace operations
-         * can proceed concurrently.
-         */
+        /* Keep tiny-file SHA-256 outside the filesystem-wide writer. */
         ret = infilfs_rw_inline_digest(data, new_size, prepared_digest);
         if (ret)
             goto out_revert;
@@ -4230,11 +4217,8 @@ static ssize_t infilfs_native_inline_write_iter(
         down_write(&sbi->write_lock);
 
         /*
-         * The transaction can update a private CoW block in place, so a block
-         * number alone is not a sufficient optimistic-version token.  Re-read
-         * and compare the complete verified object under write_lock before
-         * publishing the prepared bytes.  Any intervening mutation retries
-         * from a fresh snapshot rather than risking a lost update.
+         * Private CoW blocks can change in place.  Revalidate the complete
+         * object under write_lock; retry rather than publish stale preparation.
          */
         if (READ_ONCE(ii->object_block) != old_block) {
             up_write(&sbi->write_lock);
