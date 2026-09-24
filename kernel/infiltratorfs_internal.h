@@ -255,7 +255,6 @@ struct infilfs_native_pending {
     struct list_head node;
     struct super_block *sb;
     struct infilfs_rw_tx tx;
-    struct infilfs_superblock_disk base_disk;
     struct delayed_work idle_work;
     size_t operation_allocated_count;
     struct infilfs_superblock_disk operation_next_sb;
