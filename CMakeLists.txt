@@ -526,6 +526,9 @@ if(UNIX)
     add_test(NAME infilfs-common-usage-policy
         COMMAND bash ${CMAKE_SOURCE_DIR}/tests/common-usage-policy.sh
                      ${CMAKE_SOURCE_DIR})
+    add_test(NAME infilfs-storage-thread-safety-policy
+        COMMAND bash ${CMAKE_SOURCE_DIR}/tests/storage-thread-safety-policy.sh
+                     ${CMAKE_SOURCE_DIR})
     add_test(NAME infilfs-manager-helper-shell-syntax
         COMMAND bash -n ${CMAKE_SOURCE_DIR}/tools/infiltratorfs-manager-helper)
     if(TARGET infiltratorfs-manager)
