@@ -1,4 +1,4 @@
-0.18.76
+0.18.77
 qualification=exact-source-release-gate-hosted
 publication-gate=event-driven-v10
 apt-publication-verification=asynchronous-central-v1
@@ -10,3 +10,5 @@ allocation-publication-recovery=live-phase-telemetry-v1
 release-finalization=20260922-allocation-publication-v1
 release-retry=readme-version-aligned-v1
 rsync-mtime-writeback-serialization-fix=qualified-v1
+
+small-file-writeback-lock-scope=forensic-v1
