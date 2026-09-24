@@ -74,6 +74,7 @@ static infs_status mirror_write(void *opaque, uint64_t offset,
 {
     struct mirror_context *ctx = opaque;
     infs_status result = INFS_STATUS_OK;
+    int attempted = 0;
 
     /*
      * Do not stop at the first failed member. Completing the write on every
@@ -83,6 +84,7 @@ static infs_status mirror_write(void *opaque, uint64_t offset,
     for (size_t i = 0; i < ctx->count; ++i) {
         if (!ctx->healthy[i])
             continue;
+        attempted = 1;
         infs_status status = infs_storage_write(
             &ctx->members[i], offset, buffer, size);
         if (status != INFS_STATUS_OK) {
@@ -91,17 +93,19 @@ static infs_status mirror_write(void *opaque, uint64_t offset,
                 result = status;
         }
     }
-    return result;
+    return attempted ? result : INFS_STATUS_IO_ERROR;
 }
 
 static infs_status mirror_flush(void *opaque)
 {
     struct mirror_context *ctx = opaque;
     infs_status result = INFS_STATUS_OK;
+    int attempted = 0;
 
     for (size_t i = 0; i < ctx->count; ++i) {
         if (!ctx->healthy[i])
             continue;
+        attempted = 1;
         infs_status status = infs_storage_flush(&ctx->members[i]);
         if (status != INFS_STATUS_OK) {
             ctx->healthy[i] = 0;
@@ -109,7 +113,7 @@ static infs_status mirror_flush(void *opaque)
                 result = status;
         }
     }
-    return result;
+    return attempted ? result : INFS_STATUS_IO_ERROR;
 }
 
 static infs_status mirror_size(void *opaque, uint64_t *size_bytes,
