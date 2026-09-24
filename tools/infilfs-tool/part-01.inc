@@ -43,10 +43,11 @@ static void usage(const char *prog)
         "  %s <image> snapshot-ls <name> [path]\n"
         "  %s <image> snapshot-stat <name> <path>\n"
         "  %s <image> snapshot-cat <name> <path>\n"
-        "  %s <image> snapshot-readlink <name> <path>\n",
+        "  %s <image> snapshot-readlink <name> <path>\n"
+        "  %s <image> snapshot-restore <name> <source-path> <destination-path> [--replace]\n",
         prog, prog, prog, prog, prog, prog, prog, prog, prog, prog, prog,
         prog, prog, prog, prog, prog, prog, prog, prog, prog, prog, prog, prog,
-        prog);
+        prog, prog);
 }
 
 static int die_errno(const char *what)
