@@ -35,7 +35,7 @@ Pre-1.0 development is current-format-only. A development format may be replaced
 - [x] Optional case-folded directory policy.
 - [x] Cross-platform removable-volume filename profile.
 - [x] Generic typed/reparse extension objects.
-- [ ] Generic named streams/extended metadata model.
+- [x] Generic named streams/extended metadata model.
 
 ## Allocation, performance and storage policy
 
@@ -78,7 +78,8 @@ Pre-1.0 development is current-format-only. A development format may be replaced
 - [x] Online filesystem grow and safely bounded shrink.
 - [x] Native user/group/project quotas with durable policy and remount usage reconstruction.
 - [x] Deterministic repair-capable filesystem checker for unambiguous repair cases.
-- [ ] Snapshot restore/rollback for selected objects and whole-volume recovery to a retained generation.
+- [x] Crash-safe whole-volume rollback to a retained snapshot generation.
+- [ ] Selected-object restore from a retained snapshot without rolling back the whole volume.
 
 ## Security and protection
 
@@ -87,11 +88,13 @@ Pre-1.0 development is current-format-only. A development format may be replaced
 - [x] Linux UID/GID/mode and POSIX ACL mapping policy.
 - [x] Windows SID/security-descriptor mapping policy.
 - [x] Preservation rules for platform-specific security metadata.
-- [ ] Portable named-attribute/named-stream objects distinct from adapter sidecars.
-- [ ] Protection classes and multi-device placement.
-- [ ] Replication and/or parity.
-- [ ] Encryption domains and key wrapping.
-- [ ] Authenticated metadata for encrypted volumes.
+- [x] Portable named-attribute/named-stream objects distinct from adapter sidecars.
+- [x] Multi-device synchronous replicated storage with failover across complete replicas.
+- [ ] Per-object protection classes and placement policy across multiple devices.
+- [x] Replication via synchronous complete-volume mirroring; parity remains a future optional protection mode.
+- [x] Authenticated whole-volume encryption with PBKDF2-derived KEK and wrapped random 256-bit volume key.
+- [ ] Multiple/per-object encryption domains beyond the whole-volume key domain.
+- [x] Authenticated metadata and data for encrypted volumes through per-block AES-256-GCM.
 
 The intended security architecture is described in `SECURITY.md`. Current Linux ownership/mode/xattr metadata must not be mistaken for the final portable security model.
 
