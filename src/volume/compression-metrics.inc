@@ -64,7 +64,8 @@ static infs_status infs_metric_scan_view(
         return status;
 
     for (uint32_t i = 0; i < entry_count; ++i) {
-        if (infs_le16_to_cpu(entries[i].object_type) != INFS_OBJECT_FILE)
+        if (!file_data_object_type(
+                infs_le16_to_cpu(entries[i].object_type)))
             continue;
 
         uint8_t object[INFS_BLOCK_SIZE];
