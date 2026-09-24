@@ -47,9 +47,10 @@
 #   publication coordination domain. CPU-heavy data preparation, compression,
 #   integrity hashing and lockless allocation reservation must happen before
 #   entering this domain; it must not become a single-worker execution queue.
-#   The native CPU execution budget is max(1, online logical CPUs - 1) across
-#   all mounted InfiltratorFS volumes, leaving one logical CPU worth of
-#   concurrency to the rest of the OS whenever more than one CPU is online.
+#   The native CPU-heavy execution budget is max(1, online physical cores - 1)
+#   across all mounted InfiltratorFS volumes. SMT siblings remain scheduler
+#   capacity but do not inflate the budget, leaving one complete core worth of
+#   concurrency to the rest of the OS whenever more than one core is online.
 #   resize_active gates new transactions/reservations before resize drains old
 #   work. Buffered writes perform whole-request quota admission under inode_lock
 #   before page-cache copying; per-folio reservations remain the authoritative
