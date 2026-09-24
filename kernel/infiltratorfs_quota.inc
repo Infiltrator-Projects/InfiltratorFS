@@ -562,45 +562,62 @@ static int infilfs_quota_rebuild_usage_locked(struct super_block *sb)
     }
     if (!sbi->quota_rule_count)
         return 0;
+
+    /*
+     * User/group accounting is object-global and therefore needs one index
+     * pass.  Project accounting is different: its roots already define the
+     * exact subtrees, so rebuilding it via per-object ancestry resolution is
+     * needless quadratic-style work on large volumes.
+     */
     ret = infilfs_ns_index_snapshot(sb, &entries, &count);
     if (ret)
         return ret;
     for (i = 0; i < count; ++i) {
-        struct infilfs_object_header_disk *header;
         struct infilfs_attributes_disk *attributes;
         struct infilfs_posix_compat_disk *posix;
         u8 *object;
         u16 type = le16_to_cpu(entries[i].object_type);
         u64 bytes;
-        u32 uid, gid, project = 0;
+        u32 uid;
+        u32 gid;
         size_t r;
 
-        if (type != INFILFS_OBJECT_FILE && type != INFILFS_OBJECT_DIRECTORY &&
+        if (type != INFILFS_OBJECT_FILE &&
+            type != INFILFS_OBJECT_DIRECTORY &&
             type != INFILFS_OBJECT_SYMLINK)
             continue;
         object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
-        if (!object) { ret = -ENOMEM; break; }
-        ret = infilfs_read_object(sb, le64_to_cpu(entries[i].object_block),
-                                  type, entries[i].object_id, object);
-        if (ret) { kfree(object); break; }
-        header = (struct infilfs_object_header_disk *)object;
+        if (!object) {
+            ret = -ENOMEM;
+            break;
+        }
+        ret = infilfs_read_object(
+            sb, le64_to_cpu(entries[i].object_block),
+            type, entries[i].object_id, object);
+        if (ret) {
+            kfree(object);
+            break;
+        }
         ret = infilfs_posix_object_fields(object, &attributes, &posix);
-        if (ret) { kfree(object); break; }
+        if (ret) {
+            kfree(object);
+            break;
+        }
         if (le64_to_cpu(attributes->portable_flags) & INFILFS_ATTR_SYSTEM) {
             kfree(object);
             continue;
         }
+
         bytes = le64_to_cpu(attributes->logical_size);
         uid = le32_to_cpu(posix->uid);
         gid = le32_to_cpu(posix->gid);
-        ret = infilfs_quota_object_project_from_index_locked(
-            sb, header, entries, count, &project);
-        if (ret) { kfree(object); break; }
         for (r = 0; r < sbi->quota_rule_count; ++r) {
             bool match =
-                (sbi->quota_rules[r].type == INFILFS_QUOTA_USER && sbi->quota_rules[r].id == uid) ||
-                (sbi->quota_rules[r].type == INFILFS_QUOTA_GROUP && sbi->quota_rules[r].id == gid) ||
-                (sbi->quota_rules[r].type == INFILFS_QUOTA_PROJECT && sbi->quota_rules[r].id == project);
+                (sbi->quota_rules[r].type == INFILFS_QUOTA_USER &&
+                 sbi->quota_rules[r].id == uid) ||
+                (sbi->quota_rules[r].type == INFILFS_QUOTA_GROUP &&
+                 sbi->quota_rules[r].id == gid);
+
             if (!match)
                 continue;
             if (sbi->quota_rules[r].used_bytes > U64_MAX - bytes ||
@@ -614,9 +631,26 @@ static int infilfs_quota_rebuild_usage_locked(struct super_block *sb)
         kfree(object);
         if (ret)
             break;
+        cond_resched();
     }
     kvfree(entries);
-    return ret;
+    if (ret)
+        return ret;
+
+    for (i = 0; i < sbi->quota_rule_count; ++i) {
+        u64 bytes = 0;
+        u64 objects = 0;
+
+        if (sbi->quota_rules[i].type != INFILFS_QUOTA_PROJECT)
+            continue;
+        ret = infilfs_quota_project_rule_usage_locked(
+            sb, sbi->quota_rules[i].id, &bytes, &objects);
+        if (ret)
+            return ret;
+        sbi->quota_rules[i].used_bytes = bytes;
+        sbi->quota_rules[i].used_objects = objects;
+    }
+    return 0;
 }
 
 static int infilfs_quota_mount_init(struct super_block *sb)
@@ -651,6 +685,290 @@ static void infilfs_quota_mount_destroy(struct super_block *sb)
 }
 
 
+
+struct infilfs_quota_walk_item {
+    struct list_head link;
+    u8 object_id[16];
+    u16 object_type;
+    u16 depth;
+};
+
+struct infilfs_quota_walk_state {
+    struct list_head *queue;
+    u16 depth;
+};
+
+struct infilfs_quota_seen_link {
+    struct list_head link;
+    u8 object_id[16];
+};
+
+static int infilfs_quota_walk_queue_visitor(
+    const struct infilfs_dirent_disk *entry, const u8 *name, void *arg)
+{
+    struct infilfs_quota_walk_state *state = arg;
+    struct infilfs_quota_walk_item *item;
+    u16 type = le16_to_cpu(entry->object_type);
+
+    (void)name;
+    if (type != INFILFS_OBJECT_FILE &&
+        type != INFILFS_OBJECT_DIRECTORY &&
+        type != INFILFS_OBJECT_SYMLINK)
+        return -EFSCORRUPTED;
+    if (state->depth >= 1023u)
+        return -EFSCORRUPTED;
+
+    item = kmalloc(sizeof(*item), GFP_NOFS);
+    if (!item)
+        return -ENOMEM;
+    INIT_LIST_HEAD(&item->link);
+    memcpy(item->object_id, entry->object_id, sizeof(item->object_id));
+    item->object_type = type;
+    item->depth = state->depth + 1u;
+    list_add_tail(&item->link, state->queue);
+    return 0;
+}
+
+static void infilfs_quota_walk_queue_destroy(struct list_head *queue)
+{
+    struct infilfs_quota_walk_item *item;
+    struct infilfs_quota_walk_item *next;
+
+    list_for_each_entry_safe(item, next, queue, link) {
+        list_del(&item->link);
+        kfree(item);
+    }
+}
+
+static void infilfs_quota_seen_links_destroy(struct list_head *seen)
+{
+    struct infilfs_quota_seen_link *entry;
+    struct infilfs_quota_seen_link *next;
+
+    list_for_each_entry_safe(entry, next, seen, link) {
+        list_del(&entry->link);
+        kfree(entry);
+    }
+}
+
+/*
+ * Only multiply-linked files need duplicate suppression.  Keeping this list
+ * proportional to the number of hard-linked objects avoids allocating a
+ * whole-volume identity table for the overwhelmingly common single-link case.
+ */
+static int infilfs_quota_seen_link_claim(
+    struct list_head *seen, const u8 object_id[16])
+{
+    struct infilfs_quota_seen_link *entry;
+
+    list_for_each_entry(entry, seen, link)
+        if (!memcmp(entry->object_id, object_id, 16))
+            return 0;
+
+    entry = kmalloc(sizeof(*entry), GFP_NOFS);
+    if (!entry)
+        return -ENOMEM;
+    INIT_LIST_HEAD(&entry->link);
+    memcpy(entry->object_id, object_id, sizeof(entry->object_id));
+    list_add_tail(&entry->link, seen);
+    return 1;
+}
+
+/*
+ * Walk one project domain from its root directory instead of rediscovering the
+ * domain by scanning every object in the filesystem and walking every object's
+ * ancestry.  Nested project roots are separate accounting domains and are
+ * deliberately pruned here; callers that aggregate one project ID walk each
+ * matching root independently.
+ *
+ * Topology must be stable while this runs.  Runtime callers hold write_lock for
+ * read; mount-time rebuild runs before the filesystem is exposed to mutations.
+ */
+static int infilfs_quota_tree_usage_locked(
+    struct super_block *sb, const u8 root_id[16], bool reject_hardlinks,
+    struct list_head *seen_hardlinks, u64 *bytes_io, u64 *objects_io)
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
+    LIST_HEAD(queue);
+    struct infilfs_quota_walk_item *root;
+    int ret = 0;
+
+    root = kmalloc(sizeof(*root), GFP_NOFS);
+    if (!root)
+        return -ENOMEM;
+    INIT_LIST_HEAD(&root->link);
+    memcpy(root->object_id, root_id, sizeof(root->object_id));
+    root->object_type = INFILFS_OBJECT_DIRECTORY;
+    root->depth = 0;
+    list_add_tail(&root->link, &queue);
+
+    while (!list_empty(&queue)) {
+        struct infilfs_quota_walk_item *item =
+            list_first_entry(&queue, struct infilfs_quota_walk_item, link);
+        struct infilfs_attributes_disk *attributes;
+        struct infilfs_posix_compat_disk *posix;
+        u64 object_block = 0;
+        u16 indexed_type = 0;
+        u8 *object = NULL;
+        bool count_object = true;
+        u64 logical;
+
+        list_del(&item->link);
+
+        /*
+         * A nested project root owns itself and everything below it.  It is
+         * therefore not part of this root's accounting domain, even when both
+         * roots happen to use the same project ID.
+         */
+        if (item->depth &&
+            infilfs_quota_root_match_locked(sbi, item->object_id)) {
+            kfree(item);
+            continue;
+        }
+
+        ret = infilfs_index_lookup(
+            sb, item->object_id, &object_block, &indexed_type);
+        if (ret)
+            goto item_out;
+        if (indexed_type != item->object_type) {
+            ret = -EFSCORRUPTED;
+            goto item_out;
+        }
+
+        object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+        if (!object) {
+            ret = -ENOMEM;
+            goto item_out;
+        }
+        ret = infilfs_read_object(
+            sb, object_block, indexed_type, item->object_id, object);
+        if (ret)
+            goto item_out;
+        ret = infilfs_posix_object_fields(object, &attributes, &posix);
+        if (ret)
+            goto item_out;
+        (void)posix;
+
+        if (le64_to_cpu(attributes->portable_flags) & INFILFS_ATTR_SYSTEM)
+            count_object = false;
+
+        if (indexed_type == INFILFS_OBJECT_FILE &&
+            le64_to_cpu(attributes->link_count) > 1u) {
+            int claim;
+
+            if (reject_hardlinks) {
+                ret = -EXDEV;
+                goto item_out;
+            }
+            if (!seen_hardlinks) {
+                ret = -EINVAL;
+                goto item_out;
+            }
+            claim = infilfs_quota_seen_link_claim(
+                seen_hardlinks, item->object_id);
+            if (claim < 0) {
+                ret = claim;
+                goto item_out;
+            }
+            if (!claim)
+                count_object = false;
+        }
+
+        if (count_object) {
+            logical = le64_to_cpu(attributes->logical_size);
+            if (indexed_type == INFILFS_OBJECT_FILE) {
+                struct infilfs_iget_args live_args = {
+                    .ino = infilfs_object_ino(item->object_id),
+                    .object_id = item->object_id,
+                };
+                struct inode *live_inode = ilookup5(
+                    sb, (unsigned long)live_args.ino,
+                    infilfs_inode_matches_id, &live_args);
+
+                if (live_inode) {
+                    loff_t live_size = i_size_read(live_inode);
+
+                    if (live_size < 0) {
+                        iput(live_inode);
+                        ret = -EFSCORRUPTED;
+                        goto item_out;
+                    }
+                    logical = (u64)live_size;
+                    iput(live_inode);
+                }
+            }
+            if (*bytes_io > U64_MAX - logical ||
+                *objects_io == U64_MAX) {
+                ret = -EOVERFLOW;
+                goto item_out;
+            }
+            *bytes_io += logical;
+            (*objects_io)++;
+        }
+
+        if (indexed_type == INFILFS_OBJECT_DIRECTORY) {
+            struct inode *dir = infilfs_get_inode(
+                sb, object_block, indexed_type, item->object_id);
+            struct infilfs_quota_walk_state state = {
+                .queue = &queue,
+                .depth = item->depth,
+            };
+
+            if (IS_ERR(dir)) {
+                ret = PTR_ERR(dir);
+                goto item_out;
+            }
+            ret = infilfs_for_each_dirent(
+                dir, infilfs_quota_walk_queue_visitor, &state);
+            iput(dir);
+            if (ret)
+                goto item_out;
+        }
+
+item_out:
+        kfree(object);
+        kfree(item);
+        if (ret)
+            break;
+        cond_resched();
+    }
+
+    infilfs_quota_walk_queue_destroy(&queue);
+    return ret;
+}
+
+static int infilfs_quota_project_rule_usage_locked(
+    struct super_block *sb, u32 project_id,
+    u64 *bytes_out, u64 *objects_out)
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
+    LIST_HEAD(seen_hardlinks);
+    u64 bytes = 0;
+    u64 objects = 0;
+    size_t i;
+    int ret = 0;
+
+    *bytes_out = 0;
+    *objects_out = 0;
+    for (i = 0; i < sbi->project_root_count; ++i) {
+        if (sbi->project_roots[i].project_id != project_id)
+            continue;
+        ret = infilfs_quota_tree_usage_locked(
+            sb, sbi->project_roots[i].object_id, false,
+            &seen_hardlinks, &bytes, &objects);
+        if (ret)
+            break;
+    }
+
+    infilfs_quota_seen_links_destroy(&seen_hardlinks);
+    if (!ret) {
+        *bytes_out = bytes;
+        *objects_out = objects;
+    }
+    return ret;
+}
+
+
 static int infilfs_quota_rule_usage_locked(
     struct super_block *sb, u32 wanted_type, u32 wanted_id,
     u64 *bytes_out, u64 *objects_out)
@@ -664,19 +982,21 @@ static int infilfs_quota_rule_usage_locked(
 
     *bytes_out = 0;
     *objects_out = 0;
+    if (wanted_type != INFILFS_QUOTA_USER &&
+        wanted_type != INFILFS_QUOTA_GROUP)
+        return -EINVAL;
+
     ret = infilfs_ns_index_snapshot(sb, &entries, &count);
     if (ret)
         return ret;
 
     for (i = 0; i < count; ++i) {
-        struct infilfs_object_header_disk *header;
         struct infilfs_attributes_disk *attributes;
         struct infilfs_posix_compat_disk *posix;
         u8 *object;
         u16 type = le16_to_cpu(entries[i].object_type);
         u32 uid;
         u32 gid;
-        u32 project = 0;
         u64 logical;
         bool match;
 
@@ -697,7 +1017,6 @@ static int infilfs_quota_rule_usage_locked(
             kfree(object);
             break;
         }
-        header = (struct infilfs_object_header_disk *)object;
         ret = infilfs_posix_object_fields(object, &attributes, &posix);
         if (ret) {
             kfree(object);
@@ -709,19 +1028,9 @@ static int infilfs_quota_rule_usage_locked(
         }
         uid = le32_to_cpu(posix->uid);
         gid = le32_to_cpu(posix->gid);
-        if (wanted_type == INFILFS_QUOTA_PROJECT) {
-            ret = infilfs_quota_object_project_from_index_locked(
-                sb, header, entries, count, &project);
-            if (ret) {
-                kfree(object);
-                break;
-            }
-        }
-
         match =
             (wanted_type == INFILFS_QUOTA_USER && wanted_id == uid) ||
-            (wanted_type == INFILFS_QUOTA_GROUP && wanted_id == gid) ||
-            (wanted_type == INFILFS_QUOTA_PROJECT && wanted_id == project);
+            (wanted_type == INFILFS_QUOTA_GROUP && wanted_id == gid);
         if (!match) {
             kfree(object);
             continue;
@@ -735,13 +1044,6 @@ static int infilfs_quota_rule_usage_locked(
             };
             struct inode *live_inode;
 
-            /*
-             * Buffered writes can advance i_size before the persistent object
-             * carries the new logical_size. Quota admission and project-domain
-             * transfer must therefore charge the VFS-visible size. Dirty page
-             * cache keeps the inode resident; otherwise the persisted size is
-             * authoritative.
-             */
             live_inode = ilookup5(
                 sb, (unsigned long)live_args.ino,
                 infilfs_inode_matches_id, &live_args);
@@ -766,6 +1068,7 @@ static int infilfs_quota_rule_usage_locked(
         bytes += logical;
         objects++;
         kfree(object);
+        cond_resched();
     }
 
     kvfree(entries);
@@ -840,9 +1143,6 @@ static int infilfs_quota_domain_usage_locked(
     struct inode *root, u64 *bytes_out, u64 *objects_out)
 {
     struct infilfs_inode_info *root_ii = INFILFS_I(root);
-    struct infilfs_index_entry_disk *entries = NULL;
-    u32 count = 0;
-    u32 i;
     u64 bytes = 0;
     u64 objects = 0;
     int ret;
@@ -852,108 +1152,17 @@ static int infilfs_quota_domain_usage_locked(
     if (!root_ii)
         return -EINVAL;
 
-    ret = infilfs_ns_index_snapshot(root->i_sb, &entries, &count);
-    if (ret)
-        return ret;
-
-    for (i = 0; i < count; ++i) {
-        struct infilfs_attributes_disk *attributes;
-        struct infilfs_posix_compat_disk *posix;
-        u8 *object;
-        u16 type = le16_to_cpu(entries[i].object_type);
-        bool member = false;
-        u64 logical;
-
-        if (type != INFILFS_OBJECT_FILE &&
-            type != INFILFS_OBJECT_DIRECTORY &&
-            type != INFILFS_OBJECT_SYMLINK)
-            continue;
-
-        ret = infilfs_quota_reparent_member_locked(
-            root->i_sb, entries[i].object_id,
-            root_ii->object_id, &member);
-        if (ret || !member) {
-            if (ret)
-                break;
-            continue;
-        }
-
-        object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
-        if (!object) {
-            ret = -ENOMEM;
-            break;
-        }
-        ret = infilfs_read_object(
-            root->i_sb, le64_to_cpu(entries[i].object_block),
-            type, entries[i].object_id, object);
-        if (ret) {
-            kfree(object);
-            break;
-        }
-        ret = infilfs_posix_object_fields(object, &attributes, &posix);
-        if (ret) {
-            kfree(object);
-            break;
-        }
-        (void)posix;
-        if (le64_to_cpu(attributes->portable_flags) & INFILFS_ATTR_SYSTEM) {
-            kfree(object);
-            continue;
-        }
-        if (type == INFILFS_OBJECT_FILE &&
-            le64_to_cpu(attributes->link_count) > 1u) {
-            /*
-             * A pre-existing multiply-linked inode may have names outside this
-             * subtree. Re-projecting it without proving every alias is inside
-             * the same domain would make accounting path-dependent.
-             */
-            kfree(object);
-            ret = -EXDEV;
-            break;
-        }
-
-        logical = le64_to_cpu(attributes->logical_size);
-        if (type == INFILFS_OBJECT_FILE) {
-            struct infilfs_iget_args live_args = {
-                .ino = infilfs_object_ino(entries[i].object_id),
-                .object_id = entries[i].object_id,
-            };
-            struct inode *live_inode;
-
-            /*
-             * Buffered writes can advance i_size before the persistent object
-             * carries the new logical_size. Quota admission and project-domain
-             * transfer must therefore charge the VFS-visible size. Dirty page
-             * cache keeps the inode resident; otherwise the persisted size is
-             * authoritative.
-             */
-            live_inode = ilookup5(
-                root->i_sb, (unsigned long)live_args.ino,
-                infilfs_inode_matches_id, &live_args);
-            if (live_inode) {
-                loff_t live_size = i_size_read(live_inode);
-
-                if (live_size < 0) {
-                    iput(live_inode);
-                    kfree(object);
-                    ret = -EFSCORRUPTED;
-                    break;
-                }
-                logical = (u64)live_size;
-                iput(live_inode);
-            }
-        }
-        if (bytes > U64_MAX - logical || objects == U64_MAX) {
-            kfree(object);
-            ret = -EOVERFLOW;
-            break;
-        }
-        bytes += logical;
-        objects++;
-        kfree(object);
-    }
-
-    kvfree(entries);
+    /*
+     * Project reassignment is subtree-local.  Do not turn it into an
+     * O(whole-filesystem * ancestry-depth) operation: walk only the affected
+     * directory tree and prune nested project roots.
+     *
+     * Existing multiply-linked files retain the fail-closed EXDEV behaviour,
+     * because assigning only one alias subtree could otherwise make accounting
+     * path-dependent.
+     */
+    ret = infilfs_quota_tree_usage_locked(
+        root->i_sb, root_ii->object_id, true, NULL, &bytes, &objects);
     if (!ret) {
         *bytes_out = bytes;
         *objects_out = objects;
@@ -1006,9 +1215,13 @@ static int infilfs_quota_set_rule(struct super_block *sb,
      */
     if (idx < 0 && (request->hard_bytes || request->hard_objects)) {
         down_read(&sbi->write_lock);
-        ret = infilfs_quota_rule_usage_locked(
-            sb, request->type, request->id,
-            &initial_bytes, &initial_objects);
+        if (request->type == INFILFS_QUOTA_PROJECT)
+            ret = infilfs_quota_project_rule_usage_locked(
+                sb, request->id, &initial_bytes, &initial_objects);
+        else
+            ret = infilfs_quota_rule_usage_locked(
+                sb, request->type, request->id,
+                &initial_bytes, &initial_objects);
         up_read(&sbi->write_lock);
         if (ret)
             goto rollback;
