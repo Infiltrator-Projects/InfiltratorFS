@@ -1854,18 +1854,30 @@ int infs_windows_bridge_start(struct infs_volume *volume, HWND owner,
     return 1;
 }
 
-void infs_windows_bridge_stop(void)
+infs_status infs_windows_bridge_stop(void)
 {
-    if (g_bridge.drive[0] && g_bridge.dos_target[0]) {
-        DefineDosDeviceW(DDD_REMOVE_DEFINITION |
-                         DDD_EXACT_MATCH_ON_REMOVE |
-                         DDD_RAW_TARGET_PATH,
-                         g_bridge.drive, g_bridge.dos_target);
-    }
+    infs_status status = INFS_STATUS_OK;
 
+    /*
+     * Stop ProjFS first so no new mutation can arrive after the final
+     * durability attempt.  On publication failure keep the timer, lock,
+     * aliases and in-memory volume state intact: a later stop call (or the
+     * idle timer) can retry the exact pending transaction instead of silently
+     * discarding it during teardown.
+     */
     if (g_bridge.context) {
         g_projfs.stop(g_bridge.context);
         g_bridge.context = NULL;
+    }
+
+    if (g_bridge.lock_ready) {
+        EnterCriticalSection(&g_bridge.lock);
+        status = bridge_publish_locked();
+        if (status == INFS_STATUS_OK)
+            bridge_free_enums();
+        LeaveCriticalSection(&g_bridge.lock);
+        if (status != INFS_STATUS_OK)
+            return status;
     }
 
     if (g_bridge.flush_timer) {
@@ -1874,18 +1886,21 @@ void infs_windows_bridge_stop(void)
         g_bridge.flush_timer = NULL;
     }
 
-    if (g_bridge.lock_ready) {
-        EnterCriticalSection(&g_bridge.lock);
-        (void)bridge_publish_locked();
-        bridge_free_enums();
-        LeaveCriticalSection(&g_bridge.lock);
-        DeleteCriticalSection(&g_bridge.lock);
+    if (g_bridge.drive[0] && g_bridge.dos_target[0]) {
+        DefineDosDeviceW(DDD_REMOVE_DEFINITION |
+                         DDD_EXACT_MATCH_ON_REMOVE |
+                         DDD_RAW_TARGET_PATH,
+                         g_bridge.drive, g_bridge.dos_target);
     }
+
+    if (g_bridge.lock_ready)
+        DeleteCriticalSection(&g_bridge.lock);
 
     if (g_bridge.root[0])
         remove_tree(g_bridge.root);
 
     memset(&g_bridge, 0, sizeof(g_bridge));
+    return INFS_STATUS_OK;
 }
 
 int infs_windows_bridge_get_stats(
