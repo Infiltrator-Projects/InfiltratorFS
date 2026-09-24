@@ -52,9 +52,6 @@ struct infilfs_project_root {
     u32 project_id;
 };
 
-static int infilfs_quota_reparent_member_locked(
-    struct super_block *sb, const u8 object_id[16],
-    const u8 source_id[16], bool *member_out);
 static int infilfs_quota_inode_project_locked(
     struct inode *inode, u32 *project_out);
 static int infilfs_quota_project_rule_usage_locked(
@@ -1890,61 +1887,6 @@ static int infilfs_quota_prepare_identity_change(
     return ret;
 }
 
-
-static int infilfs_quota_reparent_member_locked(
-    struct super_block *sb, const u8 object_id[16],
-    const u8 source_id[16], bool *member_out)
-{
-    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
-    u8 current[16];
-    unsigned int depth;
-
-    *member_out = false;
-    memcpy(current, object_id, 16);
-    for (depth = 0; memchr_inv(current, 0, 16) && depth < 1024u; ++depth) {
-        struct infilfs_object_header_disk *header;
-        u8 *object;
-        u64 block;
-        u16 type;
-        int ret;
-
-        if (!memcmp(current, source_id, 16)) {
-            *member_out = true;
-            return 0;
-        }
-
-        /*
-         * A nested project root owns itself and everything below it, so that
-         * branch does not move between project-accounting domains when an
-         * ancestor directory is reparented.
-         */
-        if (infilfs_quota_root_match_locked(sbi, current))
-            return 0;
-
-        ret = infilfs_index_lookup(sb, current, &block, &type);
-        if (ret)
-            return ret;
-        if (type != INFILFS_OBJECT_FILE &&
-            type != INFILFS_OBJECT_DIRECTORY &&
-            type != INFILFS_OBJECT_SYMLINK)
-            return -EFSCORRUPTED;
-
-        object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
-        if (!object)
-            return -ENOMEM;
-        ret = infilfs_read_object(sb, block, type, current, object);
-        if (ret) {
-            kfree(object);
-            return ret;
-        }
-        header = (struct infilfs_object_header_disk *)object;
-        memcpy(current, header->parent_id, 16);
-        kfree(object);
-    }
-    if (depth >= 1024u)
-        return -EFSCORRUPTED;
-    return 0;
-}
 
 static int infilfs_quota_prepare_reparent_locked(
     struct inode *source, struct inode *new_dir,
