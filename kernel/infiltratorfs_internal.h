@@ -340,6 +340,12 @@ int infilfs_native_collect_extents(
 int infilfs_ns_index_snapshot(
     struct super_block *sb, struct infilfs_index_entry_disk **entries_out,
     u32 *count_out);
+int infilfs_orphan_discover_parallel(
+    struct super_block *sb,
+    const struct infilfs_index_entry_disk *entries, u32 count,
+    u64 recovery_generation,
+    struct infilfs_index_entry_disk **candidates_out,
+    u32 *candidate_count_out, u32 *files_out);
 int infilfs_shared_ownership_index_build(
     struct infilfs_native_pending *pending);
 int infilfs_shared_ownership_prepare_index(
