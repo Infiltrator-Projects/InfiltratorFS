@@ -182,6 +182,23 @@ int main(void)
        "ciphertext tamper rejected");
     infs_storage_close(&encrypted);
 
+    /*
+     * Erasing a ciphertext record must also fail authentication.  There is no
+     * unauthenticated all-zero representation for sparse/free logical blocks.
+     */
+    const size_t erased_record =
+        4096u + 5u * (4096u + 12u + 16u);
+    memset(memory.bytes + erased_record, 0, 4096u + 12u + 16u);
+    backing = storage(&memory);
+    ok(infs_storage_encrypted_open(
+           &backing, passphrase, sizeof(passphrase) - 1u, &encrypted) ==
+           INFS_STATUS_OK,
+       "reopen for erased-record tamper test");
+    ok(infs_storage_read(&encrypted, 5u * 4096u, block, sizeof(block)) ==
+           INFS_STATUS_CORRUPT,
+       "erased ciphertext record rejected");
+    infs_storage_close(&encrypted);
+
     free(memory.bytes);
     puts("authenticated encrypted storage: PASS");
     return 0;
