@@ -164,6 +164,8 @@ function(infilfs_enable_warnings target)
     endif()
 endfunction()
 
+find_package(Threads REQUIRED)
+
 add_library(infilfs_core STATIC
     src/checksum.c
     src/status.c
@@ -177,7 +179,8 @@ add_library(infilfs_core STATIC
     src/format_volume.c
 )
 target_include_directories(infilfs_core PUBLIC include)
-target_link_libraries(infilfs_core PUBLIC InfiltratrCommon::Portable lz4_static)
+target_link_libraries(infilfs_core PUBLIC
+    InfiltratrCommon::Portable lz4_static Threads::Threads)
 
 # Integrity hashing is on every data path. Prefer the host crypto provider so
 # SHA-NI/ARMv8 SHA and provider acceleration are used automatically. The
