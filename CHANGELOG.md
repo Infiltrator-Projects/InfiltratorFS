@@ -2,6 +2,16 @@
 
 This file records user-visible, compatibility, architecture and validation changes for InfiltratorFS.
 
+## 0.18.86 — 2026-09-24
+- Repair deferred-transaction private-block detection. The working transaction and live allocation bitmap intentionally share one image, so the former bitmap-difference test could never identify unpublished blocks; an exact volatile allocation set now allows safe in-place reuse with the existing undo journal instead of repeated metadata CoW churn.
+- Make Linux xattr/special-metadata lookup lazy and scalable. A cache miss now performs one exact directory-tree lookup for the deterministic UUID sidecar instead of scanning every sidecar and performing an object-index lookup for each.
+- Materialize Format 0.18 fallocate reservations in the native 4 MiB writer unit instead of 64 KiB fragments while preserving uncompressed initialized-allocation semantics.
+- Submit all three checkpoint replicas together under one block plug after the dependency durability barrier, retaining the final device-cache flush and fail-closed replica handling.
+- Avoid rebuilding the complete free-extent accelerator on tiny fsync publications; bounded small retire sets are merged incrementally while large publications retain the bitmap rebuild path.
+- Parallelize crash-orphan discovery across the filesystem-wide N-1 CPU budget in a dedicated compiled component; authoritative orphan reclamation remains serialized and revalidated.
+- Add regression guards for transaction-private CoW reuse, lazy xattr lookup, batched fallocate/checkpoint publication, small-publication free-index maintenance and N-1 orphan discovery.
+- On-disk Format remains 0.18.
+
 ## 0.18.85 — 2026-09-24
 - Align the Linux Manager sidebar divider with the suite-wide 248 px desktop navigation width.
 - Keep filesystem format, kernel driver, storage, encryption, namespace and maintenance behaviour unchanged.
