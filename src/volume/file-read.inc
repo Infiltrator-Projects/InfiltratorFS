@@ -1,21 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-int64_t infs_read_file(struct infs_volume *vol, const char *path, void *buf,
-                       size_t size, uint64_t offset)
+static int64_t read_file_lookup(struct infs_volume *vol,
+                                const struct infs_lookup *lookup,
+                                void *buf, size_t size, uint64_t offset)
 {
-    if (!vol || !path || (size && !buf))
+    if (!vol || !lookup || (size && !buf))
         return INFS_STATUS_INVALID_ARGUMENT;
     if ((uint64_t)size > INT64_MAX)
         return INFS_STATUS_OVERFLOW;
-
-    struct infs_lookup lk;
-    infs_status status = infs_lookup_path(vol, path, &lk);
-    if (status != INFS_STATUS_OK)
-        return status;
-    if (lk.type != INFS_OBJECT_FILE)
+    if (lookup->type != INFS_OBJECT_FILE &&
+        lookup->type != INFS_OBJECT_NAMED_STREAM)
         return INFS_STATUS_IS_DIRECTORY;
 
     uint8_t object[INFS_BLOCK_SIZE];
-    status = read_object(vol, lk.block, object);
+    infs_status status = read_object(vol, lookup->block, object);
     if (status != INFS_STATUS_OK)
         return status;
     struct infs_object_header_disk *file_hdr =
@@ -58,4 +55,18 @@ int64_t infs_read_file(struct infs_volume *vol, const char *path, void *buf,
         done += chunk;
     }
     return (int64_t)done;
+}
+
+int64_t infs_read_file(struct infs_volume *vol, const char *path, void *buf,
+                       size_t size, uint64_t offset)
+{
+    if (!vol || !path || (size && !buf))
+        return INFS_STATUS_INVALID_ARGUMENT;
+    struct infs_lookup lookup;
+    infs_status status = infs_lookup_path(vol, path, &lookup);
+    if (status != INFS_STATUS_OK)
+        return status;
+    if (lookup.type != INFS_OBJECT_FILE)
+        return INFS_STATUS_IS_DIRECTORY;
+    return read_file_lookup(vol, &lookup, buf, size, offset);
 }
