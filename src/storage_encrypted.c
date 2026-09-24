@@ -165,14 +165,6 @@ out:
 }
 #endif
 
-static int record_is_zero(const uint8_t *record)
-{
-    uint8_t value = 0;
-    for (size_t i = 0; i < (size_t)ENC_RECORD_BYTES; ++i)
-        value |= record[i];
-    return value == 0;
-}
-
 static void block_aad(const struct encrypted_context *ctx,
                       uint64_t logical_block, uint8_t aad[24])
 {
@@ -201,25 +193,20 @@ static infs_status encrypted_read_block(struct encrypted_context *ctx,
     infs_status status = infs_storage_read(
         &ctx->backing, physical, record, (size_t)ENC_RECORD_BYTES);
     if (status == INFS_STATUS_OK) {
-        if (record_is_zero(record)) {
-            /*
-             * Sparse/unwritten physical records represent logical zeroes.
-             * Replacing an allocated record with zeroes cannot forge valid
-             * filesystem metadata: the inner object/checkpoint checksum still
-             * rejects the block. It simply avoids eagerly encrypting every free
-             * block when a large encrypted container is created.
-             */
-            memset(plain, 0, 4096);
-        } else {
-            uint8_t aad[24];
-            block_aad(ctx, logical_block, aad);
-            const uint8_t *nonce = record;
-            const uint8_t *tag = record + ENC_NONCE_BYTES;
-            const uint8_t *cipher = tag + ENC_TAG_BYTES;
-            status = aead_decrypt(
-                ctx->volume_key, nonce, aad, sizeof(aad),
-                cipher, 4096, tag, plain);
-        }
+        uint8_t aad[24];
+        block_aad(ctx, logical_block, aad);
+        const uint8_t *nonce = record;
+        const uint8_t *tag = record + ENC_NONCE_BYTES;
+        const uint8_t *cipher = tag + ENC_TAG_BYTES;
+        /*
+         * Every logical block, including logical zeroes, carries a valid GCM
+         * tag.  An all-zero physical record is therefore corruption rather
+         * than a sparse-zero escape hatch; otherwise an offline attacker could
+         * erase ciphertext and bypass authentication by manufacturing zeroes.
+         */
+        status = aead_decrypt(
+            ctx->volume_key, nonce, aad, sizeof(aad),
+            cipher, 4096, tag, plain);
     }
     secure_zero(record, (size_t)ENC_RECORD_BYTES);
     free(record);
@@ -466,6 +453,31 @@ infs_status infs_storage_encrypted_format(
             header + H_OFF_WRAP_TAG);
     if (status == INFS_STATUS_OK)
         status = infs_storage_write(backing, 0, header, sizeof(header));
+
+    /*
+     * There is deliberately no unauthenticated sparse-record representation.
+     * Initialise every logical block as authenticated zeroes so erasing any
+     * ciphertext record is detected by GCM on the next read.
+     */
+    if (status == INFS_STATUS_OK) {
+        struct encrypted_context initializing;
+        uint8_t zero[4096] = {0};
+        memset(&initializing, 0, sizeof(initializing));
+        initializing.backing = *backing;
+        initializing.logical_blocks = logical_blocks;
+        initializing.logical_size = logical_blocks * ENC_LOGICAL_BLOCK;
+        memcpy(initializing.salt, header + H_OFF_SALT, ENC_SALT_BYTES);
+        memcpy(initializing.volume_key, key, ENC_KEY_BYTES);
+        for (uint64_t block = 0; block < logical_blocks; ++block) {
+            status = encrypted_write_block(&initializing, block, zero);
+            if (status != INFS_STATUS_OK)
+                break;
+        }
+        secure_zero(initializing.volume_key,
+                    sizeof(initializing.volume_key));
+        secure_zero(initializing.salt, sizeof(initializing.salt));
+        secure_zero(zero, sizeof(zero));
+    }
     if (status == INFS_STATUS_OK)
         status = infs_storage_flush(backing);
     if (status == INFS_STATUS_OK)
