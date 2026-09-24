@@ -4093,6 +4093,65 @@ ssize_t infilfs_native_extent_write_iter(struct inode *inode,
  * inline objects can instead be updated and repointed in the same deferred
  * transaction as their namespace creation.
  */
+static int infilfs_native_inline_snapshot(
+    struct inode *inode, u64 *object_block_out,
+    u8 old_object[INFILFS_DISK_BLOCK_SIZE],
+    u8 data[INFILFS_INLINE_DATA_MAX], size_t *old_size_out)
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(inode->i_sb);
+    struct infilfs_inode_info *ii = INFILFS_I(inode);
+    struct infilfs_object_header_disk *header;
+    struct infilfs_file_payload_disk *file;
+    struct infilfs_data_checksum_disk *digest;
+    u8 actual[32];
+    u64 object_block;
+    u64 size;
+    int ret;
+
+    /*
+     * Pin the persistent topology only long enough to copy the current file
+     * object.  Integrity verification and SHA-256 work operate on that private
+     * snapshot after the read side is released, so unrelated namespace
+     * mutations are not forced to wait behind small-file hashing.
+     */
+    down_read(&sbi->write_lock);
+    object_block = READ_ONCE(ii->object_block);
+    ret = infilfs_read_object(inode->i_sb, object_block,
+                              INFILFS_OBJECT_FILE, ii->object_id, old_object);
+    up_read(&sbi->write_lock);
+    if (ret)
+        return ret;
+
+    header = (struct infilfs_object_header_disk *)old_object;
+    file = (struct infilfs_file_payload_disk *)(header + 1);
+    size = le64_to_cpu(file->attributes.logical_size);
+    if (le16_to_cpu(header->object_version) != INFILFS_OBJECT_VERSION_CLASSIC ||
+        le32_to_cpu(file->extent_count) != 0 ||
+        size > INFILFS_INLINE_DATA_MAX)
+        return -EOPNOTSUPP;
+
+    memset(data, 0, INFILFS_INLINE_DATA_MAX);
+    if (size) {
+        size_t expected = sizeof(*file) + sizeof(*digest) + (size_t)size;
+
+        if (expected != le32_to_cpu(header->payload_size))
+            return -EFSCORRUPTED;
+        digest = (struct infilfs_data_checksum_disk *)(file + 1);
+        memcpy(data, digest + 1, (size_t)size);
+        ret = infilfs_rw_inline_digest(data, (size_t)size, actual);
+        if (ret)
+            return ret;
+        if (memcmp(actual, digest->bytes, sizeof(actual)) != 0)
+            return -EIO;
+    } else if (le32_to_cpu(header->payload_size) != sizeof(*file)) {
+        return -EFSCORRUPTED;
+    }
+
+    *object_block_out = object_block;
+    *old_size_out = (size_t)size;
+    return 0;
+}
+
 static ssize_t infilfs_native_inline_write_iter(
     struct inode *inode, loff_t *position, struct iov_iter *from,
     size_t requested)
@@ -4104,131 +4163,178 @@ static ssize_t infilfs_native_inline_write_iter(
     struct infilfs_object_header_disk *header;
     struct infilfs_file_payload_disk *file;
     struct infilfs_data_checksum_disk *digest;
+    u8 prepared_digest[32];
+    u8 *input = NULL;
     u8 *data = NULL;
     u8 *old_object = NULL;
+    u8 *current_object = NULL;
     u8 *new_object = NULL;
     loff_t pos = *position;
     size_t old_size = 0;
     size_t copied = 0;
-    size_t new_size;
+    size_t new_size = 0;
+    u64 old_block = 0;
     u64 new_block = 0;
+    unsigned int attempt;
     int ret;
     int rollback;
 
     if (pos < 0 || (u64)pos > INFILFS_INLINE_DATA_MAX ||
         requested > INFILFS_INLINE_DATA_MAX - (size_t)pos)
         return -EOPNOTSUPP;
+    if (!requested)
+        return 0;
 
     pending = infilfs_native_pending_get(inode->i_sb, true);
     if (!pending)
         return -ENOMEM;
+    input = kmalloc(requested, GFP_NOFS);
     data = kzalloc(INFILFS_INLINE_DATA_MAX, GFP_NOFS);
     old_object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+    current_object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
     new_object = kzalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
-    if (!data || !old_object || !new_object) {
+    if (!input || !data || !old_object || !current_object || !new_object) {
         ret = -ENOMEM;
         goto out_free;
     }
 
-    down_write(&sbi->write_lock);
-    ret = infilfs_native_pending_begin_locked(pending);
-    if (ret)
-        goto out_unlock;
-    ret = infilfs_native_operation_snapshot(pending);
-    if (ret)
-        goto out_unlock;
-
-    ret = infilfs_rw_load_inline(inode, data, &old_size);
-    if (ret)
-        goto rollback_operation;
-    ret = infilfs_read_object(inode->i_sb, ii->object_block,
-                              INFILFS_OBJECT_FILE, ii->object_id, old_object);
-    if (ret)
-        goto rollback_operation;
-    header = (struct infilfs_object_header_disk *)old_object;
-    file = (struct infilfs_file_payload_disk *)(header + 1);
-    if (le16_to_cpu(header->object_version) != INFILFS_OBJECT_VERSION_CLASSIC ||
-        le32_to_cpu(file->extent_count) != 0 ||
-        le64_to_cpu(file->attributes.logical_size) != old_size ||
-        old_size > INFILFS_INLINE_DATA_MAX) {
-        ret = -EOPNOTSUPP;
-        goto rollback_operation;
-    }
-
-    copied = copy_from_iter(data + pos, requested, from);
+    /*
+     * Consume the caller iterator once.  Retries below rebuild from this
+     * private copy if another writer changed the same inline object while the
+     * expensive preparation ran without the topology writer lock.
+     */
+    copied = copy_from_iter(input, requested, from);
     if (!copied) {
         ret = -EFAULT;
-        goto rollback_operation;
+        goto out_free;
     }
-    new_size = max_t(size_t, old_size, (size_t)pos + copied);
 
-    memcpy(new_object, old_object, sizeof(*header) + sizeof(*file));
-    header = (struct infilfs_object_header_disk *)new_object;
-    file = (struct infilfs_file_payload_disk *)(header + 1);
-    header->generation = cpu_to_le64(pending->tx.generation);
-    header->object_version = cpu_to_le16(INFILFS_OBJECT_VERSION_CLASSIC);
-    file->attributes.logical_size = cpu_to_le64(new_size);
-    infilfs_timestamp_encode(
-        &file->attributes.modification_time, inode_get_mtime(inode));
-    infilfs_timestamp_encode(
-        &file->attributes.change_time, inode_get_ctime(inode));
-    file->extent_count = 0;
-    file->data_checksum_type = cpu_to_le32(INFILFS_CHECKSUM_SHA256);
-    memset(file->checksum_head_id, 0, sizeof(file->checksum_head_id));
-    digest = (struct infilfs_data_checksum_disk *)(file + 1);
-    ret = infilfs_rw_inline_digest(data, new_size, digest->bytes);
-    if (ret)
-        goto rollback_operation;
-    memcpy(digest + 1, data, new_size);
-    header->payload_size = cpu_to_le32(
-        sizeof(*file) + sizeof(*digest) + new_size);
+    for (attempt = 0; attempt < 8u; ++attempt) {
+        ret = infilfs_native_inline_snapshot(
+            inode, &old_block, old_object, data, &old_size);
+        if (ret)
+            goto out_revert;
 
-    ret = infilfs_rw_finalize_object(new_object);
-    if (ret)
-        goto rollback_operation;
-    ret = infilfs_native_store_private_or_cow(
-        pending, ii->object_block, new_object, &new_block);
-    if (ret)
-        goto rollback_operation;
+        memcpy(data + pos, input, copied);
+        new_size = max_t(size_t, old_size, (size_t)pos + copied);
 
-    memcpy(change.object_id, ii->object_id, 16);
-    change.object_block = new_block;
-    change.object_type = INFILFS_OBJECT_FILE;
-    ret = infilfs_native_index_update(pending, &change, 1);
-    if (ret)
-        goto rollback_operation;
+        /*
+         * This SHA-256 is the expensive part of tiny-file writeback.  Keep it
+         * outside write_lock so lookups and independent namespace operations
+         * can proceed concurrently.
+         */
+        ret = infilfs_rw_inline_digest(data, new_size, prepared_digest);
+        if (ret)
+            goto out_revert;
 
-    infilfs_native_operation_commit(pending);
-    ii->object_block = new_block;
-    WRITE_ONCE(ii->persisted_size, new_size);
-    if ((u64)i_size_read(inode) < new_size)
-        i_size_write(inode, new_size);
-    pending->tx.next_sb.generation = cpu_to_le64(pending->tx.generation);
-    sbi->disk = pending->tx.next_sb;
-    pending->pending_bytes += copied;
+        down_write(&sbi->write_lock);
 
-    if (infilfs_native_pending_should_publish(pending))
-        (void)infilfs_native_pending_commit_locked(pending);
-    if (pending->active && !pending->commit_failed)
-        infilfs_mod_delayed_cpu_work(&pending->idle_work,
-                         INFILFS_NATIVE_IDLE_DELAY);
+        /*
+         * The transaction can update a private CoW block in place, so a block
+         * number alone is not a sufficient optimistic-version token.  Re-read
+         * and compare the complete verified object under write_lock before
+         * publishing the prepared bytes.  Any intervening mutation retries
+         * from a fresh snapshot rather than risking a lost update.
+         */
+        if (READ_ONCE(ii->object_block) != old_block) {
+            up_write(&sbi->write_lock);
+            cond_resched();
+            continue;
+        }
+        ret = infilfs_read_object(inode->i_sb, old_block,
+                                  INFILFS_OBJECT_FILE, ii->object_id,
+                                  current_object);
+        if (ret) {
+            up_write(&sbi->write_lock);
+            goto out_revert;
+        }
+        if (memcmp(current_object, old_object,
+                   INFILFS_DISK_BLOCK_SIZE) != 0) {
+            up_write(&sbi->write_lock);
+            cond_resched();
+            continue;
+        }
 
-    *position = pos + copied;
-    ret = (ssize_t)copied;
-    goto out_unlock;
+        ret = infilfs_native_pending_begin_locked(pending);
+        if (ret)
+            goto out_unlock_revert;
+        ret = infilfs_native_operation_snapshot(pending);
+        if (ret)
+            goto out_unlock_revert;
+
+        memset(new_object, 0, INFILFS_DISK_BLOCK_SIZE);
+        memcpy(new_object, old_object, sizeof(*header) + sizeof(*file));
+        header = (struct infilfs_object_header_disk *)new_object;
+        file = (struct infilfs_file_payload_disk *)(header + 1);
+        header->generation = cpu_to_le64(pending->tx.generation);
+        header->object_version = cpu_to_le16(INFILFS_OBJECT_VERSION_CLASSIC);
+        file->attributes.logical_size = cpu_to_le64(new_size);
+        infilfs_timestamp_encode(
+            &file->attributes.modification_time, inode_get_mtime(inode));
+        infilfs_timestamp_encode(
+            &file->attributes.change_time, inode_get_ctime(inode));
+        file->extent_count = 0;
+        file->data_checksum_type = cpu_to_le32(INFILFS_CHECKSUM_SHA256);
+        memset(file->checksum_head_id, 0, sizeof(file->checksum_head_id));
+        digest = (struct infilfs_data_checksum_disk *)(file + 1);
+        memcpy(digest->bytes, prepared_digest, sizeof(prepared_digest));
+        memcpy(digest + 1, data, new_size);
+        header->payload_size = cpu_to_le32(
+            sizeof(*file) + sizeof(*digest) + new_size);
+
+        ret = infilfs_rw_finalize_object(new_object);
+        if (ret)
+            goto rollback_operation;
+        ret = infilfs_native_store_private_or_cow(
+            pending, old_block, new_object, &new_block);
+        if (ret)
+            goto rollback_operation;
+
+        memcpy(change.object_id, ii->object_id, 16);
+        change.object_block = new_block;
+        change.object_type = INFILFS_OBJECT_FILE;
+        ret = infilfs_native_index_update(pending, &change, 1);
+        if (ret)
+            goto rollback_operation;
+
+        infilfs_native_operation_commit(pending);
+        ii->object_block = new_block;
+        WRITE_ONCE(ii->persisted_size, new_size);
+        if ((u64)i_size_read(inode) < new_size)
+            i_size_write(inode, new_size);
+        pending->tx.next_sb.generation = cpu_to_le64(pending->tx.generation);
+        sbi->disk = pending->tx.next_sb;
+        pending->pending_bytes += copied;
+
+        if (infilfs_native_pending_should_publish(pending))
+            (void)infilfs_native_pending_commit_locked(pending);
+        if (pending->active && !pending->commit_failed)
+            infilfs_mod_delayed_cpu_work(&pending->idle_work,
+                             INFILFS_NATIVE_IDLE_DELAY);
+
+        *position = pos + copied;
+        ret = (ssize_t)copied;
+        up_write(&sbi->write_lock);
+        goto out_free;
 
 rollback_operation:
-    if (copied)
-        iov_iter_revert(from, copied);
-    rollback = infilfs_native_operation_rollback(pending);
-    if (rollback)
-        ret = rollback;
-out_unlock:
-    up_write(&sbi->write_lock);
+        rollback = infilfs_native_operation_rollback(pending);
+        if (rollback)
+            ret = rollback;
+out_unlock_revert:
+        up_write(&sbi->write_lock);
+        goto out_revert;
+    }
+
+    ret = -EAGAIN;
+out_revert:
+    iov_iter_revert(from, copied);
 out_free:
     kfree(new_object);
+    kfree(current_object);
     kfree(old_object);
     kfree(data);
+    kfree(input);
     return ret;
 }
 
