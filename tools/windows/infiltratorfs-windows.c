@@ -463,15 +463,21 @@ static void set_windows_error(const wchar_t *action, DWORD error)
                 MB_OK | MB_ICONERROR);
 }
 
-static void close_volume(void)
+static int close_volume(void)
 {
-    if (infs_windows_bridge_active())
-        infs_windows_bridge_stop();
+    if (infs_windows_bridge_active()) {
+        infs_status status = infs_windows_bridge_stop();
+        if (status != INFS_STATUS_OK) {
+            set_status_code(L"Flush Windows bridge", status);
+            return 0;
+        }
+    }
     if (g_volume_open) {
         infs_volume_close(&g_volume);
         memset(&g_volume, 0, sizeof(g_volume));
         g_volume_open = 0;
     }
+    return 1;
 }
 
 static struct target_volume *selected_target(void)
@@ -1475,7 +1481,8 @@ static void open_image_dialog(void)
     dialog.Flags = OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
     if (!GetOpenFileNameW(&dialog))
         return;
-    close_volume();
+    if (!close_volume())
+        return;
     if (add_image_target_from_path(path))
         set_status(L"Image added to the storage list.");
 }
@@ -1538,7 +1545,8 @@ static void create_image_dialog(void)
         set_status_code(L"Create image", status);
         return;
     }
-    close_volume();
+    if (!close_volume())
+        return;
     if (add_image_target_from_path(path)) {
         set_status(L"512 MiB image created and formatted successfully.");
         (void)open_selected_volume(0);
@@ -1548,9 +1556,8 @@ static void create_image_dialog(void)
 
 static void refresh_volumes(void)
 {
-    if (infs_windows_bridge_active())
-        infs_windows_bridge_stop();
-    close_volume();
+    if (!close_volume())
+        return;
     HWND combo = GetDlgItem(g_main_window, IDC_TARGET);
     SendMessageW(combo, LB_RESETCONTENT, 0, 0);
     g_target_count = 0;
@@ -2095,7 +2102,8 @@ static int open_selected_volume(int format_first)
             return 0;
     }
 
-    close_volume();
+    if (!close_volume())
+        return 0;
     refresh_contents();
     update_buttons();
     struct infs_storage storage = {0};
@@ -2275,7 +2283,12 @@ static void unmount_windows_drive(void)
     if (!infs_windows_bridge_active())
         return;
     set_status(L"Flushing and unmounting Windows bridge ...");
-    infs_windows_bridge_stop();
+    infs_status status = infs_windows_bridge_stop();
+    if (status != INFS_STATUS_OK) {
+        set_status_code(L"Unmount Windows bridge", status);
+        update_buttons();
+        return;
+    }
     refresh_contents();
     set_status(L"Windows bridge unmounted and InfiltratorFS changes flushed.");
     update_buttons();
@@ -2916,9 +2929,10 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message,
     }
     case WM_COMMAND:
         if (LOWORD(wparam) == IDC_TARGET && HIWORD(wparam) == LBN_SELCHANGE) {
-            if (infs_windows_bridge_active())
-                infs_windows_bridge_stop();
-            close_volume();
+            if (!close_volume()) {
+                update_buttons();
+                return 0;
+            }
             refresh_contents();
             update_buttons();
             return 0;
@@ -2968,7 +2982,9 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message,
         case IDM_VIEW_THEME_NIGHT:
             set_theme_mode(hwnd, INFILTRATR_THEME_NIGHT); return 0;
         case IDM_HELP_ABOUT: show_about(); return 0;
-        case IDM_FILE_EXIT: DestroyWindow(hwnd); return 0;
+        case IDM_FILE_EXIT:
+            SendMessageW(hwnd, WM_CLOSE, 0, 0);
+            return 0;
         default: break;
         }
         break;
@@ -2985,8 +3001,13 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message,
             return 0;
         }
         break;
+    case WM_CLOSE:
+        if (!close_volume())
+            return 0;
+        DestroyWindow(hwnd);
+        return 0;
     case WM_DESTROY:
-        close_volume();
+        (void)close_volume();
         if (g_title_font)
             DeleteObject(g_title_font);
         if (g_heading_font)
