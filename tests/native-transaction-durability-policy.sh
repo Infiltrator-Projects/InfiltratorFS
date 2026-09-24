@@ -16,10 +16,13 @@ commit_body="$(sed -n '/static int infilfs_rw_tx_commit(/,/^}/p' "$rw")"
 ! grep -Fq 'sync_blockdev(tx->sb->s_bdev)' <<<"$commit_body"
 grep -Fq 'infilfs_rw_allocation_map_publish(tx, &next_allocation)' <<<"$commit_body"
 grep -Fq 'infilfs_rw_sync_transaction_dependencies(tx)' <<<"$commit_body"
-grep -Fq 'infilfs_rw_write_block_sync(tx->sb' <<<"$commit_body"
+grep -Fq 'infilfs_rw_write_checkpoint_replicas_sync(' <<<"$commit_body"
 grep -Fq 'blkdev_issue_flush(tx->sb->s_bdev)' <<<"$commit_body"
 test "$(grep -Fc 'blkdev_issue_flush(tx->sb->s_bdev)' <<<"$commit_body")" -eq 2
-grep -Fq 'for (n = 1; n < INFILFS_CHECKPOINT_COUNT; ++n)' <<<"$commit_body"
+checkpoint_batch="$(sed -n '/static int infilfs_rw_write_checkpoint_replicas_sync(/,/^}/p' "$rw")"
+grep -Fq 'blk_start_plug' <<<"$checkpoint_batch"
+grep -Fq 'write_dirty_buffer(bhs[n], REQ_SYNC)' <<<"$checkpoint_batch"
+grep -Fq 'wait_on_buffer(bhs[n])' <<<"$checkpoint_batch"
 python3 - "$rw" <<'PY'
 from pathlib import Path
 import sys
@@ -30,7 +33,7 @@ end = s.index('\nstatic ', start + 1)
 body = s[start:end]
 dependencies = body.index('infilfs_rw_sync_transaction_dependencies(tx)')
 first_flush = body.index('blkdev_issue_flush(tx->sb->s_bdev)', dependencies)
-checkpoint = body.index('infilfs_rw_write_block_sync(tx->sb', first_flush)
+checkpoint = body.index('infilfs_rw_write_checkpoint_replicas_sync(', first_flush)
 second_flush = body.index('blkdev_issue_flush(tx->sb->s_bdev)', checkpoint)
 if not (dependencies < first_flush < checkpoint < second_flush):
     raise SystemExit('CoW dependencies are not durable before checkpoint publication')
