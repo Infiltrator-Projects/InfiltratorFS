@@ -107,9 +107,8 @@ The intended security architecture is described in `SECURITY.md`. Current Linux 
 - [x] Driverless Windows Explorer projection using Microsoft's inbox ProjFS.
 - [ ] Windows attribute/security/filename adapter completion.
 - [ ] Native Windows filesystem driver with Cache Manager/I/O Manager integration.
-- [ ] macOS native adapter investigation/implementation.
-- [ ] BSD native adapter investigation/implementation.
-- [ ] Haiku native adapter investigation/implementation.
+macOS, BSD and Haiku are architectural examples only, not current delivery
+targets or feature-completion gates.
 
 See `PLATFORM_ADAPTERS.md` for the adapter contract.
 
