@@ -28,6 +28,55 @@ Automatic qualification and conformance jobs are hard-capped at 10 minutes where
 
 ## Current development evidence boundary
 
+### 0.18.78 deferred-publication failure hardening baseline
+
+Exact implementation source `4e15491c143bcd39d0c07daa665190e68242840d`
+completed the filesystem-critical automatic qualification on 2026-09-24:
+
+- **Native Linux kernel module** run `35948791030` passed, including the
+  terminal deferred-publication durability guard, deferred namespace
+  publication guard, generic and running-kernel module builds, DKMS source-root
+  reproduction, mounted read/write/remount, removable-name and casefold policy,
+  N-1 CPU parallelism, user/group/project quotas, native transaction plus CLEAN
+  scrub, online grow/shrink, media-aware placement and online defragmentation.
+  Its independent upstream Linux 7.0 compile-compatibility job also passed.
+- **Linux metadata qualification** run `35948791047` passed the quota, ACL and
+  high-scale xattr durability workload.
+- **Linux root-volume qualification** run `35948791097` passed package,
+  initramfs/root payload and mounted root metadata/API checks.
+- **Native resize qualification** run `35948791059` passed.
+- Within **Build and conformance** run `35948791042`, the Linux full suite,
+  release-policy gate and Windows native/portable-core job passed on this exact
+  implementation source. Remaining independent compiler/sanitizer/package jobs
+  are ordinary broad CI rather than evidence substituted for the native mounted
+  durability qualification above.
+
+This baseline closes the deferred-publication failure-state defect found in the
+0.18.78 forensic review. A failed publication is terminal for the current
+mount: the same possibly-indeterminate transaction is not retried by later
+fsync, idle work or unmount, and threshold-triggered inline writeback propagates
+the publication failure into Linux writeback error handling. The obsolete
+flush-before-create/mkdir/setattr data wrappers and their macro alias bridge are
+also retired; the active POSIX/native namespace path remains deferred. On-disk
+Format remains 0.18.
+
+### 0.18.77 published small-file writeback baseline
+
+Exact released source `0de3f22537c3217fff7f029a4f66de6b1fcd7706`
+completed the automatic release qualification on 2026-09-24:
+
+- **Build and conformance** run `35941198409` passed.
+- **Native Linux kernel module** run `35941198457` passed.
+- **Linux metadata qualification** run `35941198394` passed.
+- **Linux root-volume qualification** run `35941198435` passed.
+- **Automatic CI ten-minute watchdog** run `35941204741` passed.
+- **Release artifacts** run `35941507655` passed and the immutable-version
+  publication sequence produced GitHub release `v0.18.77`.
+
+That release is the published baseline for the small-file inline writeback
+lock-scope/revalidation work. Development source 0.18.78 intentionally advances
+beyond it while retaining on-disk Format 0.18.
+
 ### 0.18.72 Common 1.19.23 integration baseline
 
 Exact integration source `b77327f222b499f0834fd41bd03c27f8f644544a` advanced the pinned/submodule Common dependency to
