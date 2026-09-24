@@ -20,10 +20,13 @@ diff --git a/src/lib/plugin_apis/fs.api b/src/lib/plugin_apis/fs.api
 diff --git a/src/plugins/fs.c b/src/plugins/fs.c
 --- a/src/plugins/fs.c
 +++ b/src/plugins/fs.c
-@@ -120,6 +120,30 @@ gboolean bd_fs_is_tech_avail (BDFSTech tech, guint64 mode, GError **error) {
+@@ -120,6 +120,33 @@ gboolean bd_fs_is_tech_avail (BDFSTech tech, guint64 mode, GError **error) {
              return bd_fs_btrfs_is_tech_avail (tech, mode, error);
          case BD_FS_TECH_UDF:
              return bd_fs_udf_is_tech_avail (tech, mode, error);
++#ifndef BD_FS_TECH_INFILTRATORFS
++#define BD_FS_TECH_INFILTRATORFS ((BDFSTech) 13)
++#endif
 +        case BD_FS_TECH_INFILTRATORFS: {
 +            const guint64 supported =
 +                BD_FS_TECH_MODE_MKFS | BD_FS_TECH_MODE_CHECK |
@@ -106,11 +109,14 @@ diff --git a/src/plugins/fs/generic.c b/src/plugins/fs/generic.c
  };
 
  /**
-@@ -343,6 +361,9 @@ static BDFSTech fstype_to_tech (const gchar *fstype) {
+@@ -343,6 +361,12 @@ static BDFSTech fstype_to_tech (const gchar *fstype) {
          return BD_FS_TECH_BTRFS;
      } else if (g_strcmp0 (fstype, "udf") == 0) {
          return BD_FS_TECH_UDF;
 +    } else if (g_strcmp0 (fstype, "infiltratorfs") == 0) {
++#ifndef BD_FS_TECH_INFILTRATORFS
++#define BD_FS_TECH_INFILTRATORFS ((BDFSTech) 13)
++#endif
 +        return BD_FS_TECH_INFILTRATORFS;
      } else {
          return BD_FS_TECH_GENERIC;
