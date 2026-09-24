@@ -241,6 +241,7 @@ infs_status infs_storage_mirror_create(struct infs_storage *members,
         if (!infs_storage_valid(&members[i])) {
             free(ctx->healthy);
             free(ctx->members);
+            infs_storage_lock_destroy(&ctx->state_lock);
             free(ctx);
             return INFS_STATUS_INVALID_ARGUMENT;
         }
@@ -249,6 +250,7 @@ infs_status infs_storage_mirror_create(struct infs_storage *members,
         if (status != INFS_STATUS_OK || bytes == 0) {
             free(ctx->healthy);
             free(ctx->members);
+            infs_storage_lock_destroy(&ctx->state_lock);
             free(ctx);
             return status != INFS_STATUS_OK ?
                 status : INFS_STATUS_INVALID_ARGUMENT;
