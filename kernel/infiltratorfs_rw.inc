@@ -199,10 +199,10 @@ static int infilfs_posix_fill_common_attributes(
 }
 
 /*
- * Namespace symlink creation is compiled after the legacy layer and can use
- * the credential-aware initializer directly.  Regular-file and directory
- * creation still pass through the qualified legacy transaction and are fixed
- * atomically by the POSIX wrapper below immediately after creation.
+ * Namespace symlink creation is compiled after the legacy layer and aliases
+ * the same checked credential-aware initializer used by native file/directory
+ * creation. Every newly staged POSIX object therefore fails closed before
+ * publication if the creator identity cannot be represented on disk.
  */
 #define infilfs_rw_fill_common_attributes infilfs_posix_fill_common_attributes
 #include "infiltratorfs_rw_namespace.inc"
