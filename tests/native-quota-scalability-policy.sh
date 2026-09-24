@@ -71,6 +71,11 @@ grep -Fq 'ii->quota_project_epoch == sbi->quota_project_epoch' <<<"$inode_projec
 grep -Fq 'ii->quota_project_id' <<<"$inode_project"
 grep -Fq 'infilfs_quota_project_cache_bump_locked' "$quota"
 grep -Fq 'quota_project_epoch' "$root/kernel/infiltratorfs_internal.h"
+remove_root="$(
+    awk '/^static bool infilfs_quota_remove_project_root_locked\(/,/^}/' "$quota"
+)"
+grep -Fq 'infilfs_quota_project_cache_bump_locked(sbi);' <<<"$remove_root"
+grep -Fq 'mutex_lock(&INFILFS_SB(dir->i_sb)->quota_lock);' "$root/kernel/infiltratorfs_rw_namespace.inc"
 grep -Fq 'ii->quota_project_cached = false;' "$root/kernel/infiltratorfs_rw_namespace.inc"
 
 echo "native quota scalability policy: PASS"
