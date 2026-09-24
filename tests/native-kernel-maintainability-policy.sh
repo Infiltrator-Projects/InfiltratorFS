@@ -327,15 +327,17 @@ done
 
 # Macro-renamed entry points are migration debt. Guard the known alias bridges
 # structurally instead of counting every macro in rw.inc (which also contains
-# operation-table construction macros and caused false positives). The eighth
-# legacy alias is mount_init: the public wrapper now adds SB_POSIXACL after the
-# unchanged legacy mount-state initializer succeeds.
+# operation-table construction macros and caused false positives). The seventh
+# retained legacy alias is mount_init: the public wrapper now adds SB_POSIXACL
+# after the unchanged legacy mount-state initializer succeeds. The obsolete
+# legacy fsync alias is intentionally gone; the active data-layer fsync is the
+# only implementation allowed to reach the VFS.
 legacy_block="$(sed -n \
     '/^#define infilfs_rw_tx_begin infilfs_rw_tx_begin_legacy$/,/^#include "infiltratorfs_rw_legacy.inc"$/p' \
     "$rw")"
 legacy_aliases="$(grep -Ec '^#define infilfs_[a-z0-9_]+[[:space:]]+infilfs_[a-z0-9_]+_legacy$' <<<"$legacy_block" || true)"
-test "$legacy_aliases" -eq 8 || \
-    fail "legacy alias bridge changed ($legacy_aliases entries; expected 8)"
+test "$legacy_aliases" -eq 7 || \
+    fail "legacy alias bridge changed ($legacy_aliases entries; expected 7)"
 grep -Fq '#define infilfs_rw_mount_init infilfs_rw_mount_init_legacy' <<<"$legacy_block" || \
     fail 'POSIX ACL mount-init alias bridge changed'
 
