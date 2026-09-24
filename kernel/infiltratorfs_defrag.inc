@@ -878,36 +878,510 @@ out:
     return ret;
 }
 
+
+static int infilfs_reflink_extract_range(
+    const struct infilfs_extent_disk *source, u32 source_count,
+    u64 source_start, u64 block_count, u64 destination_start,
+    struct infilfs_extent_disk **range_out, u32 *range_count_out)
+{
+    struct infilfs_extent_disk *range;
+    u32 range_count = 0;
+    u64 source_end;
+    u32 i;
+    int ret;
+
+    if (!block_count || source_start > U64_MAX - block_count)
+        return -EINVAL;
+    source_end = source_start + block_count;
+    range = kvmalloc_array(source_count + 2u, sizeof(*range), GFP_NOFS);
+    if (!range)
+        return -ENOMEM;
+
+    for (i = 0; i < source_count; ++i) {
+        u64 start = le64_to_cpu(source[i].logical_block);
+        u64 blocks = le32_to_cpu(source[i].block_count);
+        u64 end;
+        u64 first;
+        u64 last;
+        u64 physical;
+        u32 flags = le32_to_cpu(source[i].flags);
+
+        if (!blocks || start > U64_MAX - blocks) {
+            ret = -EFSCORRUPTED;
+            goto fail;
+        }
+        end = start + blocks;
+        if (end <= source_start || start >= source_end)
+            continue;
+        first = max_t(u64, start, source_start);
+        last = min_t(u64, end, source_end);
+
+        /*
+         * Compressed extents are indivisible codec streams. Sharing a proper
+         * subset would make the extent's stored-byte/codec contract ambiguous,
+         * so range clone accepts only complete compressed streams.
+         */
+        if (infilfs_extent_is_compressed(flags) &&
+            (first != start || last != end)) {
+            ret = -EINVAL;
+            goto fail;
+        }
+
+        physical = le64_to_cpu(source[i].physical_block);
+        if (infilfs_extent_kind(flags) == INFILFS_EXTENT_NORMAL &&
+            !infilfs_extent_is_compressed(flags))
+            physical += first - start;
+        else if (infilfs_extent_kind(flags) == INFILFS_EXTENT_HOLE)
+            physical = 0;
+
+        ret = infilfs_native_extent_append(
+            range, source_count + 2u, &range_count,
+            destination_start + first - source_start, physical,
+            (u32)(last - first), flags);
+        if (ret)
+            goto fail;
+    }
+
+    if (!range_count) {
+        ret = -EFSCORRUPTED;
+        goto fail;
+    }
+    *range_out = range;
+    *range_count_out = range_count;
+    return 0;
+fail:
+    kvfree(range);
+    return ret;
+}
+
+static int infilfs_reflink_splice_range(
+    const struct infilfs_extent_disk *destination, u32 destination_count,
+    u64 destination_blocks, u64 replace_start, u64 replace_count,
+    const struct infilfs_extent_disk *replacement, u32 replacement_count,
+    struct infilfs_extent_disk **result_out, u32 *result_count_out)
+{
+    struct infilfs_extent_disk *result;
+    u32 capacity = destination_count + replacement_count + 4u;
+    u32 result_count = 0;
+    u64 replace_end;
+    u32 i;
+    int ret;
+
+    if (!replace_count || replace_start > U64_MAX - replace_count)
+        return -EINVAL;
+    replace_end = replace_start + replace_count;
+    result = kvmalloc_array(capacity, sizeof(*result), GFP_NOFS);
+    if (!result)
+        return -ENOMEM;
+
+    for (i = 0; i < destination_count; ++i) {
+        u64 start = le64_to_cpu(destination[i].logical_block);
+        u64 blocks = le32_to_cpu(destination[i].block_count);
+        u64 end = start + blocks;
+        u64 keep_end;
+        u64 physical = le64_to_cpu(destination[i].physical_block);
+        u32 flags = le32_to_cpu(destination[i].flags);
+
+        if (start >= replace_start)
+            break;
+        keep_end = min_t(u64, end, replace_start);
+        if (infilfs_extent_is_compressed(flags) && keep_end != end) {
+            ret = -EINVAL;
+            goto fail;
+        }
+        ret = infilfs_native_extent_append(
+            result, capacity, &result_count, start,
+            infilfs_extent_kind(flags) == INFILFS_EXTENT_NORMAL ?
+                physical : 0,
+            (u32)(keep_end - start), flags);
+        if (ret)
+            goto fail;
+    }
+
+    if (destination_blocks < replace_start) {
+        u64 gap = replace_start - destination_blocks;
+
+        if (gap > U32_MAX) {
+            ret = -EFBIG;
+            goto fail;
+        }
+        ret = infilfs_native_extent_append(
+            result, capacity, &result_count, destination_blocks, 0,
+            (u32)gap, INFILFS_EXTENT_HOLE);
+        if (ret)
+            goto fail;
+    }
+
+    for (i = 0; i < replacement_count; ++i) {
+        ret = infilfs_native_extent_append(
+            result, capacity, &result_count,
+            le64_to_cpu(replacement[i].logical_block),
+            le64_to_cpu(replacement[i].physical_block),
+            le32_to_cpu(replacement[i].block_count),
+            le32_to_cpu(replacement[i].flags));
+        if (ret)
+            goto fail;
+    }
+
+    for (i = 0; i < destination_count; ++i) {
+        u64 start = le64_to_cpu(destination[i].logical_block);
+        u64 blocks = le32_to_cpu(destination[i].block_count);
+        u64 end = start + blocks;
+        u64 keep_start;
+        u64 physical = le64_to_cpu(destination[i].physical_block);
+        u32 flags = le32_to_cpu(destination[i].flags);
+
+        if (end <= replace_end)
+            continue;
+        keep_start = max_t(u64, start, replace_end);
+        if (infilfs_extent_is_compressed(flags) && keep_start != start) {
+            ret = -EINVAL;
+            goto fail;
+        }
+        if (infilfs_extent_kind(flags) == INFILFS_EXTENT_NORMAL &&
+            !infilfs_extent_is_compressed(flags))
+            physical += keep_start - start;
+        else if (infilfs_extent_kind(flags) == INFILFS_EXTENT_HOLE)
+            physical = 0;
+        ret = infilfs_native_extent_append(
+            result, capacity, &result_count, keep_start, physical,
+            (u32)(end - keep_start), flags);
+        if (ret)
+            goto fail;
+    }
+
+    *result_out = result;
+    *result_count_out = result_count;
+    return 0;
+fail:
+    kvfree(result);
+    return ret;
+}
+
+static int infilfs_native_reflink_range(
+    struct file *source_file, loff_t pos_in,
+    struct file *destination_file, loff_t pos_out, loff_t len)
+{
+    struct inode *source_inode = file_inode(source_file);
+    struct inode *destination_inode = file_inode(destination_file);
+    struct infilfs_inode_info *source_ii = INFILFS_I(source_inode);
+    struct infilfs_inode_info *destination_ii = INFILFS_I(destination_inode);
+    struct infilfs_native_pending *pending = NULL;
+    struct infilfs_extent_disk *source_extents = NULL;
+    struct infilfs_extent_disk *destination_extents = NULL;
+    struct infilfs_extent_disk *clone_extents = NULL;
+    struct infilfs_extent_disk *new_extents = NULL;
+    struct infilfs_data_checksum_disk *digests = NULL;
+    struct infilfs_native_index_change *changes = NULL;
+    struct infilfs_file_payload_disk working_file;
+    struct infilfs_object_header_disk *source_header;
+    struct infilfs_object_header_disk *destination_header;
+    struct infilfs_file_payload_disk *source_disk_file;
+    struct infilfs_file_payload_disk *destination_disk_file;
+    struct infilfs_native_read_checksum_cursor checksum_cursor = {0};
+    u8 *source_object = NULL;
+    u8 *destination_object = NULL;
+    u8 *new_object = NULL;
+    u8 *checksum_object = NULL;
+    u8 final_tail_id[16] = {0};
+    u64 final_tail_block = 0;
+    u64 final_tail_start = 0;
+    u64 source_blocks = 0;
+    u64 destination_blocks = 0;
+    u64 start_block;
+    u64 destination_start;
+    u64 block_count;
+    u64 new_size;
+    u64 new_file_block = 0;
+    u64 allocated_blocks;
+    u32 source_count = 0;
+    u32 destination_count = 0;
+    u32 clone_count = 0;
+    u32 new_count = 0;
+    u32 change_count = 0;
+    u32 change_capacity;
+    bool source_inline = false;
+    bool destination_inline = false;
+    bool file_repoint = false;
+    u64 logical;
+    int ret;
+
+    if (!source_ii || !destination_ii ||
+        source_inode->i_sb != destination_inode->i_sb)
+        return -EXDEV;
+    if (source_inode == destination_inode)
+        return -EINVAL;
+    if (!S_ISREG(source_inode->i_mode) ||
+        !S_ISREG(destination_inode->i_mode))
+        return -EINVAL;
+    if (!(destination_file->f_mode & FMODE_WRITE))
+        return -EBADF;
+    if (sb_rdonly(destination_inode->i_sb))
+        return -EROFS;
+    if ((le64_to_cpu(INFILFS_SB(destination_inode->i_sb)->disk.incompat_flags) &
+         INFILFS_INCOMPAT_SHARED_EXTENTS) == 0)
+        return -EOPNOTSUPP;
+    if (pos_in < 0 || pos_out < 0 || len <= 0 ||
+        ((u64)pos_in & (INFILFS_DISK_BLOCK_SIZE - 1u)) ||
+        ((u64)pos_out & (INFILFS_DISK_BLOCK_SIZE - 1u)))
+        return -EINVAL;
+    if ((u64)pos_in > (u64)i_size_read(source_inode) ||
+        (u64)len > (u64)i_size_read(source_inode) - (u64)pos_in)
+        return -EINVAL;
+
+    /*
+     * A non-block-aligned tail is shareable only when it is the source EOF and
+     * the destination clone also ends at its EOF. Otherwise bytes outside the
+     * requested range share the same physical block and must be preserved by a
+     * read/modify/write rather than by remapping the complete block.
+     */
+    if (((u64)len & (INFILFS_DISK_BLOCK_SIZE - 1u)) != 0) {
+        u64 source_end = (u64)pos_in + (u64)len;
+        u64 destination_end = (u64)pos_out + (u64)len;
+
+        if (source_end != (u64)i_size_read(source_inode) ||
+            destination_end < (u64)i_size_read(destination_inode))
+            return -EINVAL;
+    }
+
+    ret = filemap_write_and_wait(source_inode->i_mapping);
+    if (ret)
+        return ret;
+    ret = filemap_write_and_wait(destination_inode->i_mapping);
+    if (ret)
+        return ret;
+
+    source_object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+    destination_object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+    new_object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+    checksum_object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
+    if (!source_object || !destination_object ||
+        !new_object || !checksum_object) {
+        ret = -ENOMEM;
+        goto out;
+    }
+
+    ret = infilfs_ns_begin(destination_inode->i_sb, &pending);
+    if (ret)
+        goto out;
+    ret = infilfs_native_collect_extents(
+        pending, source_inode, source_object, &source_extents,
+        &source_count, &source_blocks, &source_inline);
+    if (ret)
+        goto finish;
+    ret = infilfs_native_collect_extents(
+        pending, destination_inode, destination_object, &destination_extents,
+        &destination_count, &destination_blocks, &destination_inline);
+    if (ret)
+        goto finish;
+
+    /* Inline data has no shareable physical extent. Whole-file clone already
+     * handles it exactly; range clone begins once data has extent storage. */
+    if (source_inline || destination_inline) {
+        ret = -EOPNOTSUPP;
+        goto finish;
+    }
+
+    start_block = (u64)pos_in >> INFILFS_DISK_BLOCK_SHIFT;
+    destination_start = (u64)pos_out >> INFILFS_DISK_BLOCK_SHIFT;
+    block_count = DIV_ROUND_UP_ULL((u64)len, INFILFS_DISK_BLOCK_SIZE);
+    if (!block_count || block_count > U32_MAX) {
+        ret = -EFBIG;
+        goto finish;
+    }
+
+    ret = infilfs_reflink_extract_range(
+        source_extents, source_count, start_block, block_count,
+        destination_start, &clone_extents, &clone_count);
+    if (ret)
+        goto finish;
+    ret = infilfs_reflink_splice_range(
+        destination_extents, destination_count, destination_blocks,
+        destination_start, block_count, clone_extents, clone_count,
+        &new_extents, &new_count);
+    if (ret)
+        goto finish;
+
+    digests = kvmalloc_array(block_count, sizeof(*digests), GFP_NOFS);
+    if (!digests) {
+        ret = -ENOMEM;
+        goto finish;
+    }
+    source_header = (struct infilfs_object_header_disk *)source_object;
+    source_disk_file =
+        (struct infilfs_file_payload_disk *)(source_header + 1);
+    for (logical = 0; logical < block_count; ++logical) {
+        ret = infilfs_native_read_expected_digest(
+            source_inode->i_sb, source_ii->object_id,
+            source_disk_file->checksum_head_id, start_block + logical,
+            &checksum_cursor, checksum_object, &digests[logical]);
+        if (ret)
+            goto finish;
+    }
+
+    destination_header =
+        (struct infilfs_object_header_disk *)destination_object;
+    destination_disk_file =
+        (struct infilfs_file_payload_disk *)(destination_header + 1);
+    memcpy(&working_file, destination_disk_file, sizeof(working_file));
+
+    change_capacity =
+        (u32)min_t(u64, U32_MAX,
+            8u + 2u * DIV_ROUND_UP_ULL(
+                block_count, INFILFS_NATIVE_CHECKSUMS_PER_OBJECT));
+    changes = kcalloc(change_capacity, sizeof(*changes), GFP_NOFS);
+    if (!changes) {
+        ret = -ENOMEM;
+        goto finish;
+    }
+    ret = infilfs_native_checksum_set_range(
+        pending, &working_file, destination_ii->object_id,
+        destination_start, block_count, digests,
+        changes, change_capacity, &change_count,
+        final_tail_id, &final_tail_block, &final_tail_start);
+    if (ret)
+        goto finish;
+
+    ret = infilfs_native_release_replaced_extents(
+        pending, destination_ii->object_id,
+        destination_extents, destination_count,
+        destination_start, block_count);
+    if (ret)
+        goto finish;
+
+    new_size = max_t(u64, le64_to_cpu(
+        destination_disk_file->attributes.logical_size),
+        (u64)pos_out + (u64)len);
+    ret = infilfs_native_build_file_object(
+        pending, destination_inode, destination_object, &working_file,
+        new_extents, new_count, new_size,
+        new_object, &new_file_block, &file_repoint);
+    if (ret)
+        goto finish;
+
+    if (file_repoint) {
+        if (change_count >= change_capacity) {
+            ret = -ENOSPC;
+            goto finish;
+        }
+        memcpy(changes[change_count].object_id,
+               destination_ii->object_id, 16);
+        changes[change_count].object_block = new_file_block;
+        changes[change_count].object_type = INFILFS_OBJECT_FILE;
+        change_count++;
+    }
+    ret = infilfs_native_index_update(pending, changes, change_count);
+    if (ret)
+        goto finish;
+
+    if (pending->shared_range_index_valid) {
+        int ownership_ret = infilfs_shared_ownership_add_owner(
+            pending, clone_extents, clone_count);
+
+        if (ownership_ret) {
+            kvfree(pending->shared_ranges);
+            pending->shared_ranges = NULL;
+            pending->shared_range_count = 0;
+            pending->shared_range_index_valid = false;
+            if (ownership_ret != -ENOMEM && ownership_ret != -EOVERFLOW) {
+                ret = ownership_ret;
+                goto finish;
+            }
+        }
+    }
+
+    pending->tx.next_sb.generation = cpu_to_le64(pending->tx.generation);
+
+finish:
+    if (pending) {
+        int finish_ret = infilfs_ns_finish(pending, ret);
+
+        pending = NULL;
+        if (!ret)
+            ret = finish_ret;
+    }
+    if (!ret) {
+        destination_ii->object_block = new_file_block;
+        WRITE_ONCE(destination_ii->persisted_size, new_size);
+        i_size_write(destination_inode, new_size);
+        allocated_blocks =
+            infilfs_native_extent_allocated_blocks(new_extents, new_count);
+        destination_inode->i_blocks =
+            allocated_blocks * (INFILFS_DISK_BLOCK_SIZE >> 9);
+        infilfs_native_checksum_cache_store(
+            destination_inode->i_sb, destination_ii->object_id,
+            final_tail_id, final_tail_block, final_tail_start);
+        infilfs_native_checksum_cache_invalidate_sb(destination_inode->i_sb);
+    }
+out:
+    kfree(checksum_object);
+    kfree(changes);
+    kvfree(digests);
+    kvfree(new_extents);
+    kvfree(clone_extents);
+    kvfree(destination_extents);
+    kvfree(source_extents);
+    kfree(new_object);
+    kfree(destination_object);
+    kfree(source_object);
+    return ret;
+}
+
 static loff_t infilfs_file_remap_file_range(
     struct file *file_in, loff_t pos_in,
     struct file *file_out, loff_t pos_out,
     loff_t len, unsigned int remap_flags)
 {
+    struct inode *source = file_inode(file_in);
     struct inode *destination = file_inode(file_out);
     struct infilfs_quota_reservation quota = {0};
-    loff_t source_size = i_size_read(file_inode(file_in));
+    loff_t source_size = i_size_read(source);
+    u64 old_destination_size;
+    u64 new_destination_size;
+    u64 logical_growth;
     int ret;
 
-    if (remap_flags || pos_in != 0 || pos_out != 0)
+    if (remap_flags)
         return -EOPNOTSUPP;
-    if (len == 0)
-        len = source_size;
-    if (len != source_size)
-        return -EOPNOTSUPP;
-    if (i_size_read(destination) != 0)
+    if (pos_in < 0 || pos_out < 0)
+        return -EINVAL;
+    if (len == 0) {
+        if (pos_in > source_size)
+            return -EINVAL;
+        len = source_size - pos_in;
+    }
+    if (len <= 0 || pos_in > source_size ||
+        len > source_size - pos_in)
         return -EINVAL;
 
+    old_destination_size = (u64)i_size_read(destination);
+    if ((u64)pos_out > U64_MAX - (u64)len)
+        return -EOVERFLOW;
+    new_destination_size =
+        max_t(u64, old_destination_size, (u64)pos_out + (u64)len);
+    logical_growth = new_destination_size - old_destination_size;
+
     ret = infilfs_quota_reserve_inode(
-        destination, (u64)source_size, 0, &quota);
+        destination, logical_growth, 0, &quota);
     if (ret)
         return ret;
-    ret = infilfs_native_reflink_full(file_in, file_out);
+
+    /*
+     * Preserve the compact inline whole-file clone fast path. Every other
+     * request uses the extent-range implementation, including non-zero source
+     * and destination offsets and replacement inside an existing file.
+     */
+    if (pos_in == 0 && pos_out == 0 &&
+        len == source_size && old_destination_size == 0)
+        ret = infilfs_native_reflink_full(file_in, file_out);
+    else
+        ret = infilfs_native_reflink_range(
+            file_in, pos_in, file_out, pos_out, len);
     if (ret) {
         infilfs_quota_reservation_abort(&quota);
         return ret;
     }
-    infilfs_quota_reservation_finish(
-        &quota, (u64)source_size, 0);
+    infilfs_quota_reservation_finish(&quota, logical_growth, 0);
     return len;
 }
 
