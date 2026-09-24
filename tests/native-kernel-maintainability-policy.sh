@@ -90,6 +90,10 @@ test -f "$kernel/infiltratorfs_shared_ownership.c" || fail 'shared ownership acc
 test -f "$kernel/infiltratorfs_orphan_scan.c" || fail 'parallel orphan scanner object missing'
 grep -Fqx '#   infiltratorfs_orphan_scan.c owns N-1 parallel crash-orphan discovery.' "$makefile" || \
     fail 'orphan scanner ownership line is not a valid Makefile comment'
+visit_line="$(grep -nF 'struct infilfs_visit_set {' "$kernel/infiltratorfs_internal.h" | head -n1 | cut -d: -f1)"
+pending_line="$(grep -nF 'struct infilfs_native_pending {' "$kernel/infiltratorfs_internal.h" | head -n1 | cut -d: -f1)"
+test -n "$visit_line" && test -n "$pending_line" && (( visit_line < pending_line )) || \
+    fail 'visit-set definition must precede native-pending embedded use'
 
 # Every compiled Kbuild object must also ship in the self-contained DKMS source
 # installed by the Debian/.run packaging path. A repository build can succeed
