@@ -343,7 +343,18 @@ grep -Fq '#define infilfs_rw_mount_init infilfs_rw_mount_init_legacy' <<<"$legac
 
 grep -Fq '#include "infiltratorfs_rw_data.inc"' "$rw" || \
     fail 'RW data compositor include missing'
-! grep -Eq '^#define infilfs_rw_(create|mkdir|setattr).*_data
+! grep -Fq '#define infilfs_rw_create __maybe_unused infilfs_rw_create_data' "$rw" || \
+    fail 'retired create data alias bridge returned'
+! grep -Fq '#define infilfs_rw_mkdir __maybe_unused infilfs_rw_mkdir_data' "$rw" || \
+    fail 'retired mkdir data alias bridge returned'
+! grep -Fq '#define infilfs_rw_setattr __maybe_unused infilfs_rw_setattr_data' "$rw" || \
+    fail 'retired setattr data alias bridge returned'
+! grep -Fq 'infilfs_rw_create_legacy' "$data" || \
+    fail 'RW data layer regained legacy create bridge'
+! grep -Fq 'infilfs_rw_mkdir_legacy' "$data" || \
+    fail 'RW data layer regained legacy mkdir bridge'
+! grep -Fq 'infilfs_rw_setattr_legacy' "$data" || \
+    fail 'RW data layer regained legacy setattr bridge'
 grep -Fq '#define infilfs_file_read_iter infilfs_file_read_iter_atime' "$rw" || \
     fail 'read-cache/atime alias bridge changed'
 grep -Fq '#define infilfs_rw_fill_common_attributes infilfs_posix_fill_common_attributes' "$rw" || \
