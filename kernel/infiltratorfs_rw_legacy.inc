@@ -1358,22 +1358,49 @@ retry:
     return 0;
 }
 
+#define INFILFS_RW_DEFERRED_INCREMENTAL_BLOCKS 64u
+
 int infilfs_rw_tx_apply_deferred(struct infilfs_rw_tx *tx)
 {
+    struct infilfs_rw_free_range freed[INFILFS_RW_DEFERRED_INCREMENTAL_BLOCKS];
+    size_t freed_count = 0;
+    u64 deferred_blocks = 0;
+    bool incremental = tx->free_extent_index_valid;
     size_t r;
     u64 i;
+
+    /*
+     * Rebuilding the complete free-extent accelerator from a 1 TiB allocation
+     * bitmap on every tiny fsync is needless fixed work.  Keep a bounded exact
+     * list when this publication retires only a handful of blocks; large CoW
+     * transactions still use the word-at-a-time full rebuild that avoids
+     * quadratic insertion on fragmented volumes.
+     */
+    if (incremental) {
+        for (r = 0; r < tx->deferred_count; ++r) {
+            u64 count = tx->deferred[r].count;
+
+            if (count > INFILFS_RW_DEFERRED_INCREMENTAL_BLOCKS -
+                        deferred_blocks) {
+                incremental = false;
+                break;
+            }
+            deferred_blocks += count;
+        }
+    }
 
     write_lock(&tx->sbi->bitmap_lock);
     for (r = 0; r < tx->deferred_count; ++r) {
         u64 start = tx->deferred[r].start;
         u64 count = tx->deferred[r].count;
+
         for (i = 0; i < count; ++i) {
             u64 block = start + i;
-            unsigned int c;
+            unsigned int cp;
             bool checkpoint = false;
 
-            for (c = 0; c < INFILFS_CHECKPOINT_COUNT; ++c)
-                if (block == le64_to_cpu(tx->next_sb.checkpoint_block[c]))
+            for (cp = 0; cp < INFILFS_CHECKPOINT_COUNT; ++cp)
+                if (block == le64_to_cpu(tx->next_sb.checkpoint_block[cp]))
                     checkpoint = true;
             if (checkpoint || !infilfs_rw_bitmap_get(tx->bitmap, block) ||
                 (tx->sbi->snapshot_bitmap &&
@@ -1381,25 +1408,42 @@ int infilfs_rw_tx_apply_deferred(struct infilfs_rw_tx *tx)
                 continue;
             infilfs_rw_bitmap_set(tx->bitmap, block, false);
             tx->free_blocks++;
+
+            if (incremental) {
+                if (freed_count &&
+                    freed[freed_count - 1u].start +
+                        freed[freed_count - 1u].count == block) {
+                    freed[freed_count - 1u].count++;
+                } else if (freed_count <
+                           INFILFS_RW_DEFERRED_INCREMENTAL_BLOCKS) {
+                    freed[freed_count].start = block;
+                    freed[freed_count].count = 1u;
+                    freed_count++;
+                } else {
+                    /*
+                     * Cannot happen when deferred_blocks stayed within the
+                     * bound, but fail conservatively to the rebuild path.
+                     */
+                    incremental = false;
+                }
+            }
         }
     }
     write_unlock(&tx->sbi->bitmap_lock);
 
-    /*
-     * Publication can retire tens of thousands of CoW ranges at once.
-     * Incrementally inserting every newly free run into the sorted extent
-     * cache is O(n^2) on fragmented volumes because each insertion scans and
-     * may memmove the tail.  The authoritative bitmap has already been
-     * updated above, and its rebuild path uses word-at-a-time bitmap scanners,
-     * so rebuild the accelerator once from that exact post-publication image.
-     *
-     * This is deliberately limited to transaction publication.  Small
-     * operation rollback still updates the cache incrementally because its
-     * released range set is bounded and latency-sensitive.
-     */
     if (tx->free_extent_index_valid) {
-        int index_ret = infilfs_rw_free_extent_index_rebuild(tx);
+        int index_ret = 0;
 
+        if (incremental) {
+            for (r = 0; r < freed_count; ++r) {
+                index_ret = infilfs_rw_free_extent_index_add(
+                    tx, freed[r].start, freed[r].count);
+                if (index_ret)
+                    break;
+            }
+        } else {
+            index_ret = infilfs_rw_free_extent_index_rebuild(tx);
+        }
         if (index_ret)
             infilfs_rw_free_extent_index_invalidate(tx);
     }
