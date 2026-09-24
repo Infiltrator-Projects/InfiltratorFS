@@ -1,4 +1,4 @@
-0.18.85
+0.18.86
 qualification=exact-source-release-gate-hosted
 publication-gate=event-driven-v10
 apt-publication-verification=asynchronous-central-v1
@@ -15,3 +15,5 @@ small-file-writeback-lock-scope=forensic-v1
 project-quota-scalability=qualified-v1
 quota-admission-hotpath=no-whole-index-v1
 manager-sidebar-width=publisher-248px-v1
+
+mounted-performance-repair=quota-private-xattr-fallocate-fsync-orphan-v1
