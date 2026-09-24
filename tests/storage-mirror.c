@@ -132,6 +132,18 @@ int main(void)
     ok(!memcmp(a.bytes + 512, degraded, sizeof(degraded)),
        "healthy replica still receives degraded write");
 
+    /*
+     * The member that missed a write is quarantined for the lifetime of this
+     * mirror, so a later transient read recovery cannot serve stale bytes.
+     */
+    b.fail_writes = 0;
+    b.fail_reads = 0;
+    memset(readback, 0, sizeof(readback));
+    ok(infs_storage_read(&mirror, 512, readback, sizeof(degraded)) ==
+           INFS_STATUS_OK &&
+       !memcmp(readback, degraded, sizeof(degraded)),
+       "runtime quarantine prevents stale-member reads");
+
     uint64_t bytes = 0;
     int is_device = 0;
     ok(infs_storage_get_size(&mirror, &bytes, &is_device) == INFS_STATUS_OK &&
@@ -140,6 +152,29 @@ int main(void)
 
     infs_storage_close(&mirror);
     ok(a.closed && b.closed, "mirror closes every owned member");
+
+    /*
+     * Recreating the mirror loses the in-memory quarantine state. A stale but
+     * readable replica must therefore be detected by cross-member comparison,
+     * never silently selected as authoritative.
+     */
+    a.closed = 0;
+    b.closed = 0;
+    struct infs_storage reopened_members[2] = {
+        { .ops = &ops, .context = &a },
+        { .ops = &ops, .context = &b },
+    };
+    memset(&mirror, 0, sizeof(mirror));
+    ok(infs_storage_mirror_create(reopened_members, 2, &mirror) ==
+           INFS_STATUS_OK,
+       "recreate mirror with divergent members");
+    memset(readback, 0, sizeof(readback));
+    ok(infs_storage_read(&mirror, 512, readback, sizeof(degraded)) ==
+           INFS_STATUS_CORRUPT,
+       "split-brain replicas are rejected instead of serving stale data");
+    infs_storage_close(&mirror);
+    ok(a.closed && b.closed, "reopened mirror closes every member");
+
     puts("replicated storage backend: PASS");
     return 0;
 }
