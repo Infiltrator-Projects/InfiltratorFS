@@ -26,6 +26,9 @@ object_project="$(
 candidate_subjects="$(
     awk '/^static int infilfs_quota_candidate_subjects_locked\(/,/^}/' "$quota"
 )"
+inode_project="$(
+    awk '/^static int infilfs_quota_inode_project_locked\(/,/^}/' "$quota"
+)"
 
 # Project quotas are rooted subtrees.  They must never regress to the old
 # whole-volume index scan + per-object ancestry walk that stalled writeback on
@@ -59,5 +62,15 @@ grep -Fq 'infilfs_ns_index_snapshot' <<<"$object_project"
 
 # User/group-only workloads must not pay project-resolution cost at all.
 grep -Fq 'infilfs_quota_has_project_rule_locked' <<<"$candidate_subjects"
+
+# Buffered write_begin may run per folio.  Once a single-parent inode's project
+# has been resolved, repeat reservations must be O(1) until project topology
+# changes rather than re-walking parent/index trees for every folio.
+grep -Fq 'ii->quota_project_cached' <<<"$inode_project"
+grep -Fq 'ii->quota_project_epoch == sbi->quota_project_epoch' <<<"$inode_project"
+grep -Fq 'ii->quota_project_id' <<<"$inode_project"
+grep -Fq 'infilfs_quota_project_cache_bump_locked' "$quota"
+grep -Fq 'quota_project_epoch' "$root/kernel/infiltratorfs_internal.h"
+grep -Fq 'ii->quota_project_cached = false;' "$root/kernel/infiltratorfs_rw_namespace.inc"
 
 echo "native quota scalability policy: PASS"
