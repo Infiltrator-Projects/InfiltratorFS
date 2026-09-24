@@ -4394,64 +4394,6 @@ static int infilfs_file_fsync(struct file *file, loff_t start, loff_t end,
     return infilfs_native_pending_flush_sb(file_inode(file)->i_sb);
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
-static int infilfs_rw_create(struct mnt_idmap *idmap, struct inode *dir,
-                             struct dentry *dentry, umode_t mode, bool excl)
-#else
-static int infilfs_rw_create(struct user_namespace *idmap, struct inode *dir,
-                             struct dentry *dentry, umode_t mode, bool excl)
-#endif
-{
-    int ret = infilfs_native_pending_flush_sb(dir->i_sb);
-    if (ret)
-        return ret;
-    return infilfs_rw_create_legacy(idmap, dir, dentry, mode, excl);
-}
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
-static __maybe_unused struct dentry *infilfs_rw_mkdir(struct mnt_idmap *idmap,
-                                       struct inode *dir,
-                                       struct dentry *dentry, umode_t mode)
-{
-    int ret = infilfs_native_pending_flush_sb(dir->i_sb);
-    if (ret)
-        return ERR_PTR(ret);
-    return infilfs_rw_mkdir_legacy(idmap, dir, dentry, mode);
-}
-#elif LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
-static int infilfs_rw_mkdir(struct mnt_idmap *idmap, struct inode *dir,
-                            struct dentry *dentry, umode_t mode)
-{
-    int ret = infilfs_native_pending_flush_sb(dir->i_sb);
-    if (ret)
-        return ret;
-    return infilfs_rw_mkdir_legacy(idmap, dir, dentry, mode);
-}
-#else
-static int infilfs_rw_mkdir(struct user_namespace *idmap, struct inode *dir,
-                            struct dentry *dentry, umode_t mode)
-{
-    int ret = infilfs_native_pending_flush_sb(dir->i_sb);
-    if (ret)
-        return ret;
-    return infilfs_rw_mkdir_legacy(idmap, dir, dentry, mode);
-}
-#endif
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
-static int infilfs_rw_setattr(struct mnt_idmap *idmap, struct dentry *dentry,
-                              struct iattr *attr)
-#else
-static int infilfs_rw_setattr(struct user_namespace *idmap,
-                              struct dentry *dentry, struct iattr *attr)
-#endif
-{
-    int ret = infilfs_native_pending_flush_sb(d_inode(dentry)->i_sb);
-    if (ret)
-        return ret;
-    return infilfs_rw_setattr_legacy(idmap, dentry, attr);
-}
-
 static void infilfs_rw_mount_destroy(struct super_block *sb)
 {
     infilfs_native_pending_destroy(sb);
