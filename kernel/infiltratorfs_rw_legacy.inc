@@ -2474,15 +2474,6 @@ out:
     return ret;
 }
 
-static __maybe_unused int infilfs_file_fsync(struct file *file, loff_t start, loff_t end,
-                              int datasync)
-{
-    (void)start;
-    (void)end;
-    (void)datasync;
-    return sync_blockdev(file_inode(file)->i_sb->s_bdev);
-}
-
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
 static int infilfs_rw_create(struct mnt_idmap *idmap, struct inode *dir,
                              struct dentry *dentry, umode_t mode, bool excl)
