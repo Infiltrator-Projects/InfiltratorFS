@@ -106,7 +106,7 @@ diff --git a/src/plugins/fs/generic.c b/src/plugins/fs/generic.c
  };
 
  /**
-@@ -343,6 +361,48 @@ static BDFSTech fstype_to_tech (const gchar *fstype) {
+@@ -343,6 +361,9 @@ static BDFSTech fstype_to_tech (const gchar *fstype) {
          return BD_FS_TECH_BTRFS;
      } else if (g_strcmp0 (fstype, "udf") == 0) {
          return BD_FS_TECH_UDF;
@@ -116,6 +116,10 @@ diff --git a/src/plugins/fs/generic.c b/src/plugins/fs/generic.c
          return BD_FS_TECH_GENERIC;
      }
 +
+@@ -426,4 +462,43 @@ static gboolean btrfs_set_label (const gchar *device, const gchar *label, GError **error) {
+     return success;
+ }
+ 
 +static gboolean infiltratorfs_check_or_repair (const gchar *device,
 +                                                gboolean repair,
 +                                                GError **error) {
@@ -155,6 +159,7 @@ diff --git a/src/plugins/fs/generic.c b/src/plugins/fs/generic.c
 +    }
 +    return success && unmount_ok;
 +}
+ static gboolean device_operation (const gchar *device, const gchar *fstype, BDFSOpType op, guint64 new_size, const gchar *label, const gchar *uuid, GError **error) {
 @@ -430,4 +466,15 @@ static gboolean device_operation (const gchar *device, const gchar *fstype, BDFS
          }
 +    } else if (g_strcmp0 (detected_fstype, "infiltratorfs") == 0) {
