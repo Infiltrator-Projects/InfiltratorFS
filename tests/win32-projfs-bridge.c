@@ -284,7 +284,7 @@ static int run_windows_client(const wchar_t *root_arg)
                  L"%ls%ls", root, alias);
     memset(data, 0, sizeof(data));
     if (!read_windows_file(path, data, sizeof(data) - 1u, &got) ||
-        got != 18u || memcmp(data, "reserved-name-data\n", 18u) != 0)
+        got != 19u || memcmp(data, "reserved-name-data\n", 19u) != 0)
         return fail(L"Read Windows-reserved InfiltratorFS name through alias");
     if (!set_client_acl(path))
         return fail(L"Set Windows ACL on projected reserved-name file");
