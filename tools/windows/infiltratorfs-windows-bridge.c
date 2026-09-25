@@ -778,6 +778,9 @@ static int bridge_prepare_full_directory(
                                          &basic, sizeof(basic));
         CloseHandle(directory);
     }
+    if (infilfs_windows_export_security(
+            g_bridge.volume, path, local, 1) != INFS_STATUS_OK)
+        return 0;
     return 1;
 }
 
@@ -806,8 +809,14 @@ static int bridge_seed_file_placeholder(
 
     HRESULT hr = g_projfs.write_placeholder(
         g_bridge.context, relative, &placeholder, sizeof(placeholder));
-    return SUCCEEDED(hr) ||
-           hr == HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS);
+    if (FAILED(hr) && hr != HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS))
+        return 0;
+
+    wchar_t local[BRIDGE_WINDOWS_PATH_CAP];
+    if (!relative_to_local_path(relative, local))
+        return 0;
+    return infilfs_windows_export_security(
+               g_bridge.volume, path, local, 0) == INFS_STATUS_OK;
 }
 
 static HRESULT status_to_hresult(infs_status status)
@@ -1285,6 +1294,9 @@ static infs_status bridge_sync_local_file(PCWSTR relative)
         if (status == INFS_STATUS_OK)
             status = infs_set_times(g_bridge.volume, path, &update);
     }
+    if (status == INFS_STATUS_OK)
+        status = infilfs_windows_import_security(
+            g_bridge.volume, path, local, 0);
     CloseHandle(input);
 
     if (status == INFS_STATUS_OK) {
@@ -1423,6 +1435,9 @@ static infs_status bridge_import_local_tree(PCWSTR relative)
             infilfs_windows_attributes_to_portable(basic.FileAttributes));
         if (status == INFS_STATUS_OK)
             status = infs_set_times(g_bridge.volume, path, &update);
+        if (status == INFS_STATUS_OK)
+            status = infilfs_windows_import_security(
+                g_bridge.volume, path, local, 1);
     }
     return status;
 }
@@ -1495,10 +1510,23 @@ static HRESULT CALLBACK bridge_notification(
         break;
 
     case PRJ_NOTIFICATION_FILE_HANDLE_CLOSED_FILE_MODIFIED:
-        if (!is_directory)
+        if (!is_directory) {
             status = bridge_sync_local_file(
                 have_current ? current_relative :
                                callback_data->FilePathName);
+        } else {
+            PCWSTR relative = have_current ? current_relative :
+                               callback_data->FilePathName;
+            wchar_t local[BRIDGE_WINDOWS_PATH_CAP];
+            if (!relative_to_local_path(relative, local)) {
+                status = INFS_STATUS_NAME_TOO_LONG;
+                break;
+            }
+            status = infilfs_windows_import_security(
+                g_bridge.volume, source, local, 1);
+            if (status == INFS_STATUS_OK)
+                status = bridge_note_mutation_locked();
+        }
         break;
 
     case PRJ_NOTIFICATION_FILE_HANDLE_CLOSED_FILE_DELETED:
