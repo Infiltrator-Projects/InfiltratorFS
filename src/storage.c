@@ -26,6 +26,31 @@ infs_status infs_storage_write(const struct infs_storage *storage,
     return storage->ops->write_at(storage->context, offset, buffer, size);
 }
 
+infs_status infs_storage_read_policy(
+    const struct infs_storage *storage, uint64_t offset,
+    void *buffer, size_t size, const struct infs_storage_io_policy *policy)
+{
+    if (!infs_storage_valid(storage) || (!buffer && size))
+        return INFS_STATUS_INVALID_ARGUMENT;
+    if (storage->ops->read_at_policy)
+        return storage->ops->read_at_policy(
+            storage->context, offset, buffer, size, policy);
+    return storage->ops->read_at(storage->context, offset, buffer, size);
+}
+
+infs_status infs_storage_write_policy(
+    const struct infs_storage *storage, uint64_t offset,
+    const void *buffer, size_t size, const struct infs_storage_io_policy *policy)
+{
+    if (!infs_storage_valid(storage) || !storage->ops->write_at ||
+        (!buffer && size))
+        return INFS_STATUS_INVALID_ARGUMENT;
+    if (storage->ops->write_at_policy)
+        return storage->ops->write_at_policy(
+            storage->context, offset, buffer, size, policy);
+    return storage->ops->write_at(storage->context, offset, buffer, size);
+}
+
 infs_status infs_storage_flush(const struct infs_storage *storage)
 {
     if (!infs_storage_valid(storage) || !storage->ops->flush) {
