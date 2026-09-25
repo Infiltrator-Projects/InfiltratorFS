@@ -11,6 +11,7 @@
 #include "infiltratorfs-windows-bridge.h"
 #include "infiltratorfs-windows-metadata.h"
 #include "infilfs/format.h"
+#include "infilfs/checksum.h"
 #include "infilfs/status.h"
 #include "infiltratr/arithmetic.h"
 #include "infiltratr/dynlib.h"
@@ -20,6 +21,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
+#include <wctype.h>
 
 #define BRIDGE_READ_CHUNK (4u * 1024u * 1024u)
 #define BRIDGE_IDLE_FLUSH_MS 1200u
@@ -53,6 +55,7 @@ struct bridge_identity {
     uint8_t token[16];
     uint8_t object_id[16];
     wchar_t relative_path[INFS_PATH_MAX + 1u];
+    char infs_path[INFS_PATH_MAX + 1u];
     struct bridge_identity *next;
 };
 
@@ -340,9 +343,12 @@ static struct bridge_identity *bridge_find_identity_by_path(
 }
 
 static struct bridge_identity *bridge_remember_identity(
-    const uint8_t object_id[16], PCWSTR relative_path)
+    const uint8_t object_id[16], PCWSTR relative_path,
+    const char *infs_path)
 {
-    if (!relative_path || wcslen(relative_path) > INFS_PATH_MAX)
+    if (!relative_path || !infs_path ||
+        wcslen(relative_path) > INFS_PATH_MAX ||
+        strlen(infs_path) > INFS_PATH_MAX)
         return NULL;
 
     struct bridge_identity *identity =
@@ -363,6 +369,7 @@ static struct bridge_identity *bridge_remember_identity(
     memcpy(identity->object_id, object_id, 16u);
     wcsncpy_s(identity->relative_path, INFS_PATH_MAX + 1u,
               relative_path, _TRUNCATE);
+    strcpy_s(identity->infs_path, INFS_PATH_MAX + 1u, infs_path);
     return identity;
 }
 
@@ -507,6 +514,85 @@ static void bridge_add_alias(PCWSTR from, PCWSTR to)
     g_bridge.aliases = alias;
 }
 
+
+static int bridge_windows_reserved_component(PCWSTR name)
+{
+    wchar_t base[16];
+    size_t n = 0;
+    while (name[n] && name[n] != L'.' && n + 1u < sizeof(base) / sizeof(base[0])) {
+        base[n] = towupper(name[n]);
+        n++;
+    }
+    base[n] = L'\0';
+    if (wcscmp(base, L"CON") == 0 || wcscmp(base, L"PRN") == 0 ||
+        wcscmp(base, L"AUX") == 0 || wcscmp(base, L"NUL") == 0)
+        return 1;
+    if (n == 4u &&
+        ((wcsncmp(base, L"COM", 3u) == 0 ||
+          wcsncmp(base, L"LPT", 3u) == 0) &&
+         base[3] >= L'1' && base[3] <= L'9'))
+        return 1;
+    return 0;
+}
+
+static int bridge_windows_component_safe(PCWSTR name)
+{
+    if (!name || !*name || wcscmp(name, L".") == 0 ||
+        wcscmp(name, L"..") == 0 ||
+        wcsncmp(name, L"~I~", 3u) == 0)
+        return 0;
+    size_t length = wcslen(name);
+    if (length > 255u || name[length - 1u] == L'.' ||
+        name[length - 1u] == L' ' ||
+        bridge_windows_reserved_component(name))
+        return 0;
+    for (size_t i = 0; i < length; ++i) {
+        wchar_t ch = name[i];
+        if (ch < 32 || ch == L'<' || ch == L'>' || ch == L':' ||
+            ch == L'"' || ch == L'/' || ch == L'\\' || ch == L'|' ||
+            ch == L'?' || ch == L'*')
+            return 0;
+    }
+    return 1;
+}
+
+/*
+ * Existing InfiltratorFS names that Win32 cannot represent losslessly are
+ * projected through a deterministic SHA-256 alias. The bridge identity table
+ * keeps the authoritative InfiltratorFS path, so callbacks map the alias back
+ * without truncating, normalising or otherwise changing the persistent name.
+ * Names beginning with the reserved "~I~" namespace are also aliased, keeping
+ * aliases collision-free with ordinary projected names.
+ */
+static int bridge_project_component(
+    const char *utf8, wchar_t out[INFS_NAME_MAX + 1u])
+{
+    if (!utf8 || !out)
+        return 0;
+    wchar_t direct[INFS_NAME_MAX + 1u];
+    if (!MultiByteToWideChar(
+            CP_UTF8, MB_ERR_INVALID_CHARS, utf8, -1, direct,
+            (int)(sizeof(direct) / sizeof(direct[0]))))
+        return 0;
+    if (bridge_windows_component_safe(direct)) {
+        wcscpy_s(out, INFS_NAME_MAX + 1u, direct);
+        return 1;
+    }
+
+    uint8_t digest[32];
+    static const wchar_t hex[] = L"0123456789ABCDEF";
+    infs_sha256(utf8, strlen(utf8), digest);
+    out[0] = L'~';
+    out[1] = L'I';
+    out[2] = L'~';
+    for (size_t i = 0; i < sizeof(digest); ++i) {
+        out[3u + i * 2u] = hex[digest[i] >> 4u];
+        out[4u + i * 2u] = hex[digest[i] & 0x0fu];
+    }
+    out[67] = L'\0';
+    return 1;
+}
+
 static int wide_relative_to_infs(PCWSTR relative,
                                  char out[INFS_PATH_MAX + 1u])
 {
@@ -517,24 +603,66 @@ static int wide_relative_to_infs(PCWSTR relative,
         return 1;
     }
 
-    wchar_t normalized[INFS_PATH_MAX + 1u];
-    size_t length = wcslen(relative);
-    if (length > INFS_PATH_MAX - 1u)
-        return 0;
-    normalized[0] = L'/';
-    for (size_t i = 0; i < length; ++i) {
-        wchar_t ch = relative[i] == L'\\' ? L'/' : relative[i];
-        normalized[i + 1u] = ch;
+    /*
+     * Prefer the longest projected identity prefix. This reverses deterministic
+     * aliases for existing names and also lets a newly-created Windows child
+     * beneath an aliased directory inherit the correct persistent parent path.
+     */
+    struct bridge_identity *best = NULL;
+    size_t best_length = 0;
+    for (struct bridge_identity *identity = g_bridge.identities;
+         identity; identity = identity->next) {
+        size_t length = wcslen(identity->relative_path);
+        if (length > best_length &&
+            bridge_alias_prefix_match(relative, identity->relative_path)) {
+            best = identity;
+            best_length = length;
+        }
     }
-    normalized[length + 1u] = L'\0';
 
-    int needed = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS,
-                                     normalized, -1, NULL, 0, NULL, NULL);
-    if (needed <= 0 || needed > (int)INFS_PATH_MAX + 1)
+    size_t used = 0;
+    PCWSTR suffix = relative;
+    if (best) {
+        size_t base = strlen(best->infs_path);
+        if (base > INFS_PATH_MAX)
+            return 0;
+        memcpy(out, best->infs_path, base);
+        out[base] = '\0';
+        used = base;
+        suffix = relative + best_length;
+        while (*suffix == L'\\' || *suffix == L'/')
+            suffix++;
+        if (!*suffix)
+            return 1;
+        if (used != 1u || out[0] != '/') {
+            if (used + 1u > INFS_PATH_MAX)
+                return 0;
+            out[used++] = '/';
+            out[used] = '\0';
+        }
+    } else {
+        out[0] = '/';
+        out[1] = '\0';
+        used = 1u;
+    }
+
+    wchar_t normalized[INFS_PATH_MAX + 1u];
+    size_t length = wcslen(suffix);
+    if (length > INFS_PATH_MAX)
         return 0;
-    return WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS,
-                               normalized, -1, out, INFS_PATH_MAX + 1u,
-                               NULL, NULL) != 0;
+    for (size_t i = 0; i < length; ++i)
+        normalized[i] = suffix[i] == L'\\' ? L'/' : suffix[i];
+    normalized[length] = L'\0';
+
+    int needed = WideCharToMultiByte(
+        CP_UTF8, WC_ERR_INVALID_CHARS, normalized, -1,
+        NULL, 0, NULL, NULL);
+    if (needed <= 0 || used + (size_t)needed > INFS_PATH_MAX + 1u)
+        return 0;
+    return WideCharToMultiByte(
+               CP_UTF8, WC_ERR_INVALID_CHARS, normalized, -1,
+               out + used, (int)(INFS_PATH_MAX + 1u - used),
+               NULL, NULL) != 0;
 }
 
 static int make_child_infs_path(const char *parent, const char *name,
@@ -685,18 +813,30 @@ static int bridge_walk_namespace(bridge_namespace_visit_fn visit,
         }
 
         for (size_t i = 0; i < count; ++i) {
-            wchar_t wide_name[INFS_NAME_MAX + 1u];
-            if (!MultiByteToWideChar(
-                    CP_UTF8, MB_ERR_INVALID_CHARS, items[i].name, -1,
-                    wide_name,
-                    (int)(sizeof(wide_name) / sizeof(wide_name[0]))))
-                continue;
-
             char child_path[INFS_PATH_MAX + 1u];
             if (!make_child_infs_path(node->path, items[i].name,
                                       child_path))
                 continue;
 
+            struct infs_attributes attributes;
+            EnterCriticalSection(&g_bridge.lock);
+            status = infs_get_attributes(
+                g_bridge.volume, child_path, &attributes);
+            LeaveCriticalSection(&g_bridge.lock);
+            if (status != INFS_STATUS_OK) {
+                infs_free_dir_items(items);
+                bridge_free_walk(node);
+                bridge_free_walk(stack);
+                return 0;
+            }
+
+            wchar_t wide_name[INFS_NAME_MAX + 1u];
+            if (!bridge_project_component(items[i].name, wide_name)) {
+                infs_free_dir_items(items);
+                bridge_free_walk(node);
+                bridge_free_walk(stack);
+                return 0;
+            }
             wchar_t *child_relative =
                 bridge_join_relative(node->relative, wide_name);
             if (!child_relative) {
@@ -706,12 +846,11 @@ static int bridge_walk_namespace(bridge_namespace_visit_fn visit,
                 return 0;
             }
 
-            struct infs_attributes attributes;
             EnterCriticalSection(&g_bridge.lock);
-            status = infs_get_attributes(
-                g_bridge.volume, child_path, &attributes);
+            struct bridge_identity *identity = bridge_remember_identity(
+                attributes.object_id, child_relative, child_path);
             LeaveCriticalSection(&g_bridge.lock);
-            if (status != INFS_STATUS_OK) {
+            if (!identity) {
                 free(child_relative);
                 infs_free_dir_items(items);
                 bridge_free_walk(node);
@@ -799,7 +938,7 @@ static int bridge_seed_file_placeholder(
 
     EnterCriticalSection(&g_bridge.lock);
     struct bridge_identity *identity =
-        bridge_remember_identity(attributes->object_id, relative);
+        bridge_remember_identity(attributes->object_id, relative, path);
     if (identity)
         bridge_fill_version(attributes, identity->token,
                             &placeholder.VersionInfo);
@@ -913,16 +1052,6 @@ static HRESULT enum_load(struct bridge_enum *session, PCWSTR search_expression)
 
     size_t accepted = 0;
     for (size_t i = 0; i < count; ++i) {
-        wchar_t wide_name[INFS_NAME_MAX + 1u];
-        if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
-                                 items[i].name, -1, wide_name,
-                                 (int)(sizeof(wide_name) /
-                                       sizeof(wide_name[0]))))
-            continue;
-        if (search_expression && *search_expression &&
-            !g_projfs.name_match(wide_name, search_expression))
-            continue;
-
         char child[INFS_PATH_MAX + 1u];
         if (!make_child_infs_path(path, items[i].name, child))
             continue;
@@ -931,6 +1060,25 @@ static HRESULT enum_load(struct bridge_enum *session, PCWSTR search_expression)
         status = infs_get_attributes(g_bridge.volume, child, &attributes);
         LeaveCriticalSection(&g_bridge.lock);
         if (status != INFS_STATUS_OK)
+            continue;
+
+        wchar_t wide_name[INFS_NAME_MAX + 1u];
+        if (!bridge_project_component(items[i].name, wide_name))
+            continue;
+        if (search_expression && *search_expression &&
+            !g_projfs.name_match(wide_name, search_expression))
+            continue;
+
+        wchar_t *relative = bridge_join_relative(
+            session->relative_path, wide_name);
+        if (!relative)
+            continue;
+        EnterCriticalSection(&g_bridge.lock);
+        struct bridge_identity *identity = bridge_remember_identity(
+            attributes.object_id, relative, child);
+        LeaveCriticalSection(&g_bridge.lock);
+        free(relative);
+        if (!identity)
             continue;
 
         wcscpy_s(entries[accepted].name,
@@ -1050,7 +1198,7 @@ static HRESULT CALLBACK bridge_get_placeholder(
     EnterCriticalSection(&g_bridge.lock);
     struct bridge_identity *identity =
         bridge_remember_identity(attributes.object_id,
-                                 current_relative);
+                                 current_relative, path);
     if (identity)
         bridge_fill_version(&attributes, identity->token,
                             &placeholder.VersionInfo);
