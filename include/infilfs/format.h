@@ -139,9 +139,35 @@ static const uint8_t INFS_ALLOCATION_LEAF_PAGE_MAGIC[8] = {
 #define INFS_ATTR_ARCHIVE             UINT64_C(0x0000000000000008)
 #define INFS_ATTR_TEMPORARY           UINT64_C(0x0000000000000010)
 #define INFS_ATTR_NOT_CONTENT_INDEXED UINT64_C(0x0000000000000020)
+
+/*
+ * Persistent per-object storage policy lives in reserved high bits of the
+ * common attributes word so files, directories, hard links, snapshots and
+ * reflinks carry one policy without changing the stable 120-byte attribute
+ * record. Zero is the default inherited backend policy: all mirror members and
+ * encryption domain zero.
+ */
+#define INFS_ATTR_PROTECTION_COPIES_SHIFT 48u
+#define INFS_ATTR_PROTECTION_COPIES_MASK  UINT64_C(0x00ff000000000000)
+#define INFS_ATTR_ENCRYPTION_DOMAIN_SHIFT 56u
+#define INFS_ATTR_ENCRYPTION_DOMAIN_MASK  UINT64_C(0xff00000000000000)
+#define INFS_ATTR_STORAGE_POLICY_MASK \
+    (INFS_ATTR_PROTECTION_COPIES_MASK | INFS_ATTR_ENCRYPTION_DOMAIN_MASK)
 #define INFS_KNOWN_ATTR_FLAGS \
     (INFS_ATTR_READ_ONLY | INFS_ATTR_HIDDEN | INFS_ATTR_SYSTEM | \
-     INFS_ATTR_ARCHIVE | INFS_ATTR_TEMPORARY | INFS_ATTR_NOT_CONTENT_INDEXED)
+     INFS_ATTR_ARCHIVE | INFS_ATTR_TEMPORARY | INFS_ATTR_NOT_CONTENT_INDEXED | \
+     INFS_ATTR_STORAGE_POLICY_MASK)
+
+#define INFS_ATTR_PROTECTION_COPIES(flags) \
+    ((uint8_t)(((flags) & INFS_ATTR_PROTECTION_COPIES_MASK) >> \
+               INFS_ATTR_PROTECTION_COPIES_SHIFT))
+#define INFS_ATTR_ENCRYPTION_DOMAIN(flags) \
+    ((uint8_t)(((flags) & INFS_ATTR_ENCRYPTION_DOMAIN_MASK) >> \
+               INFS_ATTR_ENCRYPTION_DOMAIN_SHIFT))
+#define INFS_ATTR_WITH_STORAGE_POLICY(flags, copies, domain) \
+    (((flags) & ~INFS_ATTR_STORAGE_POLICY_MASK) | \
+     (((uint64_t)(uint8_t)(copies)) << INFS_ATTR_PROTECTION_COPIES_SHIFT) | \
+     (((uint64_t)(uint8_t)(domain)) << INFS_ATTR_ENCRYPTION_DOMAIN_SHIFT))
 
 #if defined(_MSC_VER)
 #pragma pack(push, 1)
