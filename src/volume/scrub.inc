@@ -246,7 +246,8 @@ static infs_status scrub_verify_data(
             if (extent_is_compressed(flags)) {
                 size_t plain_bytes = 0;
                 if (file_decompress_extent(
-                        vol, &scan_extents[j], &plain, &plain_bytes) !=
+                        vol, file, hdr->object_id,
+                        &scan_extents[j], &plain, &plain_bytes) !=
                         INFS_STATUS_OK ||
                     plain_bytes != (size_t)blocks * INFS_BLOCK_SIZE) {
                     free(plain);
@@ -294,7 +295,9 @@ static infs_status scrub_verify_data(
                         memcpy(data,
                                plain + (size_t)block_index * INFS_BLOCK_SIZE,
                                INFS_BLOCK_SIZE);
-                    } else if (read_block(vol, physical + block_index, data) !=
+                    } else if (read_data_block(
+                                   vol, physical + block_index,
+                                   file, hdr->object_id, data) !=
                                INFS_STATUS_OK) {
                         ++report->metadata_errors;
                         continue;
