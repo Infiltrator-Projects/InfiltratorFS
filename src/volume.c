@@ -422,6 +422,20 @@ static int paged_extent_replace(struct infs_volume *vol,
     __attribute__((unused));
 #endif
 
+static void file_storage_policy(
+    const struct infs_file_payload_disk *file,
+    const uint8_t owner_id[16],
+    struct infs_storage_io_policy *policy)
+{
+    memset(policy, 0, sizeof(*policy));
+    if (!file || !owner_id)
+        return;
+    memcpy(policy->object_id, owner_id, sizeof(policy->object_id));
+    uint64_t flags = infs_le64_to_cpu(file->attributes.portable_flags);
+    policy->protection_copies = INFS_ATTR_PROTECTION_COPIES(flags);
+    policy->encryption_domain = INFS_ATTR_ENCRYPTION_DOMAIN(flags);
+}
+
 /*
  * Portable volume implementation composition.  These units are ordered by
  * dependency and named by responsibility rather than by historical phase.
