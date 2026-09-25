@@ -2,6 +2,11 @@
 
 This file records user-visible, compatibility, architecture and validation changes for InfiltratorFS.
 
+## 0.18.93 — 2026-09-25
+- Align the Linux Manager minimum window geometry with the suite desktop shell while preserving the 1220×780 default size.
+- Keep filesystem format, kernel driver, storage, encryption, namespace, maintenance behaviour, dependencies and Common APIs unchanged.
+- On-disk Format remains 0.18.
+
 ## 0.18.92 — 2026-09-25
 - Repair the managed libblockdev patch so its InfiltratorFS technology switch uses the actual extended enum member instead of a preprocessor fallback that fails strict `-Werror=switch` builds.
 - Give Linux Manager stack-switcher tabs the suite-wide 30 px desktop control height while retaining the existing compact tab rhythm.
