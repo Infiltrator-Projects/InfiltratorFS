@@ -97,8 +97,6 @@ static infs_status file_store_inline(
     if (status != INFS_STATUS_OK)
         return status;
 
-    struct infs_object_header_disk *hdr =
-        (struct infs_object_header_disk *)object;
     file = (struct infs_file_payload_disk *)(object + sizeof(*hdr));
     hdr->object_version = infs_cpu_to_le16(INFS_OBJECT_VERSION_CLASSIC);
     memset(file + 1, 0,
@@ -143,7 +141,9 @@ static infs_status file_promote_inline(
         return status;
     if (got != 1)
         return INFS_STATUS_CORRUPT;
-    status = write_block(vol, physical, data);
+    struct infs_object_header_disk *hdr =
+        (struct infs_object_header_disk *)object;
+    status = write_data_block(vol, physical, file, hdr->object_id, data);
     if (status != INFS_STATUS_OK)
         return status;
 
