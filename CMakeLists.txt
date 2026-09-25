@@ -404,7 +404,7 @@ if(WIN32)
         tools/windows/infiltratorfs-windows-metadata.c)
     target_include_directories(infilfs_windows_bridge PUBLIC tools/windows)
     target_link_libraries(infilfs_windows_bridge PUBLIC
-        infilfs_win32 InfiltratrCommon::Common shell32 ole32)
+        infilfs_win32 InfiltratrCommon::Common shell32 ole32 advapi32)
     infilfs_enable_warnings(infilfs_windows_bridge)
 
     add_executable(infiltratorfs-windows WIN32
