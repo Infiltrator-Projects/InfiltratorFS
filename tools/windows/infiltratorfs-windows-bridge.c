@@ -413,6 +413,34 @@ static void bridge_update_identity_prefix(PCWSTR old_path, PCWSTR new_path)
     }
 }
 
+static int bridge_infs_prefix_match(const char *path, const char *prefix)
+{
+    size_t length = strlen(prefix);
+    if (strncmp(path, prefix, length) != 0)
+        return 0;
+    return path[length] == '\0' || path[length] == '/';
+}
+
+static void bridge_update_identity_infs_prefix(
+    const char *old_path, const char *new_path)
+{
+    if (!old_path || !*old_path || !new_path || !*new_path)
+        return;
+    size_t old_length = strlen(old_path);
+    for (struct bridge_identity *identity = g_bridge.identities;
+         identity; identity = identity->next) {
+        if (!bridge_infs_prefix_match(identity->infs_path, old_path))
+            continue;
+        const char *suffix = identity->infs_path + old_length;
+        char rewritten[INFS_PATH_MAX + 1u];
+        int written = snprintf(
+            rewritten, sizeof(rewritten), "%s%s", new_path, suffix);
+        if (written < 0 || written > (int)INFS_PATH_MAX)
+            continue;
+        strcpy_s(identity->infs_path, INFS_PATH_MAX + 1u, rewritten);
+    }
+}
+
 static void bridge_forget_identity_prefix(PCWSTR path)
 {
     if (!path || !*path)
@@ -1715,6 +1743,7 @@ static HRESULT CALLBACK bridge_notification(
                 bridge_add_alias(old_relative, destination_file_name);
                 bridge_update_identity_prefix(old_relative,
                                               destination_file_name);
+                bridge_update_identity_infs_prefix(source, destination);
                 operation_parameters->FileRenamed.NotificationMask =
                     BRIDGE_NOTIFY_PERSIST_MASK;
                 status = bridge_note_mutation_locked();
