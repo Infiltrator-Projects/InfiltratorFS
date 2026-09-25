@@ -8,6 +8,7 @@
 #include "infilfs/win32_security.h"
 
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 int infilfs_windows_ticks_to_timestamp(INT64 ticks,
@@ -435,7 +436,7 @@ static infs_status windows_build_acl(
     }
     if (status != INFS_STATUS_OK)
         goto out;
-    if (acl_size > DWORD_MAX) {
+    if (acl_size > UINT32_MAX) {
         status = INFS_STATUS_OVERFLOW;
         goto out;
     }
