@@ -516,6 +516,36 @@ static int read_block(struct infs_volume *vol, uint64_t block_no,
                              block, INFS_BLOCK_SIZE);
 }
 
+static int read_data_block(
+    struct infs_volume *vol, uint64_t block_no,
+    const struct infs_file_payload_disk *file,
+    const uint8_t owner_id[16],
+    uint8_t block[INFS_BLOCK_SIZE])
+{
+    if (!vol || block_no >= infs_le64_to_cpu(vol->sb.total_blocks))
+        return INFS_STATUS_INVALID_ARGUMENT;
+    struct infs_storage_io_policy policy;
+    file_storage_policy(file, owner_id, &policy);
+    return infs_storage_read_policy(
+        &vol->storage, block_no * INFS_BLOCK_SIZE,
+        block, INFS_BLOCK_SIZE, &policy);
+}
+
+static int write_data_block(
+    struct infs_volume *vol, uint64_t block_no,
+    const struct infs_file_payload_disk *file,
+    const uint8_t owner_id[16],
+    const uint8_t block[INFS_BLOCK_SIZE])
+{
+    if (!vol || block_no >= infs_le64_to_cpu(vol->sb.total_blocks))
+        return INFS_STATUS_INVALID_ARGUMENT;
+    struct infs_storage_io_policy policy;
+    file_storage_policy(file, owner_id, &policy);
+    return infs_storage_write_policy(
+        &vol->storage, block_no * INFS_BLOCK_SIZE,
+        block, INFS_BLOCK_SIZE, &policy);
+}
+
 static int read_object(struct infs_volume *vol, uint64_t block_no,
                        uint8_t block[INFS_BLOCK_SIZE])
 {
