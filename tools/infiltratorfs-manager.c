@@ -1352,7 +1352,7 @@ static GtkWidget *build_ui(Manager *manager)
     manager->window = gtk_application_window_new(manager->app);
     gtk_window_set_title(GTK_WINDOW(manager->window), APP_NAME);
     gtk_window_set_default_size(GTK_WINDOW(manager->window), 1220, 780);
-    gtk_widget_set_size_request(manager->window, 940, 620);
+    gtk_widget_set_size_request(manager->window, 960, 640);
 
     GtkWidget *bar = gtk_header_bar_new();
     gtk_header_bar_set_show_close_button(GTK_HEADER_BAR(bar), TRUE);
