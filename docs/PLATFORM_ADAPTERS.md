@@ -79,20 +79,6 @@ A future native Windows adapter must integrate with the Windows I/O Manager, Cac
 
 Windows should not emulate Linux syscalls, and Linux should not emulate NTFS. Equivalent operations on each platform should map to the same portable semantic operation.
 
-## macOS and BSD
-
-A macOS or BSD adapter would map vnode operations, ownership/ACLs, xattrs, caching and namespace behaviour onto the portable model.
-
-Resource forks or similar named data/metadata should prefer a generic named-stream/named-metadata representation where the underlying concept is portable, with typed platform metadata retained only for genuinely platform-specific semantics.
-
-Booting a stock modern macOS installation from InfiltratorFS is a separate integration problem because Apple's boot/security chain has APFS-specific requirements. That does not change the portable filesystem architecture.
-
-## Haiku
-
-A Haiku adapter would map Haiku filesystem hooks and named attributes onto the same model. Haiku's indexed/queryable attributes may motivate generic indexed metadata, but portable concepts should not be introduced as opaque Haiku-only structures when they can be generalized.
-
-System-volume support would additionally require bootloader, installer and early-boot integration.
-
 ## System-volume support
 
 Being mountable as a data filesystem and being suitable as an operating system's root/system filesystem are different integration levels.
