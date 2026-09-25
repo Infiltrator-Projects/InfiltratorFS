@@ -116,4 +116,52 @@ infs_win32_access_mask_to_rights(uint32_t access_mask, int directory)
     return rights;
 }
 
+
+static inline uint32_t
+infs_win32_rights_to_access_mask(infs_rights_mask rights, int directory)
+{
+    uint32_t mask = 0;
+
+    if (directory) {
+        if (rights & INFS_RIGHT_LIST_DIRECTORY)
+            mask |= INFS_WIN32_FILE_LIST_DIRECTORY;
+        if (rights & INFS_RIGHT_CREATE_FILE)
+            mask |= INFS_WIN32_FILE_ADD_FILE;
+        if (rights & INFS_RIGHT_CREATE_DIRECTORY)
+            mask |= INFS_WIN32_FILE_ADD_SUBDIRECTORY;
+        if (rights & INFS_RIGHT_TRAVERSE_DIRECTORY)
+            mask |= INFS_WIN32_FILE_TRAVERSE;
+        if (rights & INFS_RIGHT_DELETE_CHILD)
+            mask |= INFS_WIN32_FILE_DELETE_CHILD;
+    } else {
+        if (rights & INFS_RIGHT_READ_DATA)
+            mask |= INFS_WIN32_FILE_READ_DATA;
+        if (rights & INFS_RIGHT_WRITE_DATA)
+            mask |= INFS_WIN32_FILE_WRITE_DATA;
+        if (rights & INFS_RIGHT_APPEND_DATA)
+            mask |= INFS_WIN32_FILE_APPEND_DATA;
+        if (rights & INFS_RIGHT_EXECUTE)
+            mask |= INFS_WIN32_FILE_EXECUTE;
+    }
+
+    if (rights & INFS_RIGHT_READ_NAMED_METADATA)
+        mask |= INFS_WIN32_FILE_READ_EA;
+    if (rights & INFS_RIGHT_WRITE_NAMED_METADATA)
+        mask |= INFS_WIN32_FILE_WRITE_EA;
+    if (rights & INFS_RIGHT_READ_ATTRIBUTES)
+        mask |= INFS_WIN32_FILE_READ_ATTRIBUTES;
+    if (rights & INFS_RIGHT_WRITE_ATTRIBUTES)
+        mask |= INFS_WIN32_FILE_WRITE_ATTRIBUTES;
+    if (rights & INFS_RIGHT_DELETE)
+        mask |= INFS_WIN32_DELETE;
+    if (rights & INFS_RIGHT_READ_PERMISSIONS)
+        mask |= INFS_WIN32_READ_CONTROL;
+    if (rights & INFS_RIGHT_CHANGE_PERMISSIONS)
+        mask |= INFS_WIN32_WRITE_DAC;
+    if (rights & INFS_RIGHT_TAKE_OWNERSHIP)
+        mask |= INFS_WIN32_WRITE_OWNER;
+
+    return mask;
+}
+
 #endif
