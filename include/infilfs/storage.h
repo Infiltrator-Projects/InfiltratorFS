@@ -28,11 +28,24 @@
  * synchronization. close releases backend context resources and is called at
  * most once by infs_storage_close().
  */
+struct infs_storage_io_policy {
+    uint8_t object_id[16];
+    uint8_t protection_copies;
+    uint8_t encryption_domain;
+    uint8_t reserved[6];
+};
+
 struct infs_storage_ops {
     infs_status (*read_at)(void *context, uint64_t offset,
                            void *buffer, size_t size);
     infs_status (*write_at)(void *context, uint64_t offset,
                             const void *buffer, size_t size);
+    infs_status (*read_at_policy)(
+        void *context, uint64_t offset, void *buffer, size_t size,
+        const struct infs_storage_io_policy *policy);
+    infs_status (*write_at_policy)(
+        void *context, uint64_t offset, const void *buffer, size_t size,
+        const struct infs_storage_io_policy *policy);
     infs_status (*flush)(void *context);
     infs_status (*get_size)(void *context, uint64_t *size_bytes,
                             int *is_device);
@@ -56,6 +69,12 @@ infs_status infs_storage_read(const struct infs_storage *storage,
                               uint64_t offset, void *buffer, size_t size);
 infs_status infs_storage_write(const struct infs_storage *storage,
                                uint64_t offset, const void *buffer, size_t size);
+infs_status infs_storage_read_policy(
+    const struct infs_storage *storage, uint64_t offset,
+    void *buffer, size_t size, const struct infs_storage_io_policy *policy);
+infs_status infs_storage_write_policy(
+    const struct infs_storage *storage, uint64_t offset,
+    const void *buffer, size_t size, const struct infs_storage_io_policy *policy);
 infs_status infs_storage_flush(const struct infs_storage *storage);
 infs_status infs_storage_get_size(const struct infs_storage *storage,
                                   uint64_t *size_bytes, int *is_device);
