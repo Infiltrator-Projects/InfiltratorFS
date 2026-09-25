@@ -79,7 +79,7 @@ Pre-1.0 development is current-format-only. A development format may be replaced
 - [x] Native user/group/project quotas with durable policy and remount usage reconstruction.
 - [x] Deterministic repair-capable filesystem checker for unambiguous repair cases.
 - [x] Crash-safe whole-volume rollback to a retained snapshot generation.
-- [ ] Selected-object restore from a retained snapshot without rolling back the whole volume.
+- [x] Selected-object restore from a retained snapshot without rolling back the whole volume.
 
 ## Security and protection
 
@@ -107,9 +107,6 @@ The intended security architecture is described in `SECURITY.md`. Current Linux 
 - [x] Driverless Windows Explorer projection using Microsoft's inbox ProjFS.
 - [ ] Windows attribute/security/filename adapter completion.
 - [ ] Native Windows filesystem driver with Cache Manager/I/O Manager integration.
-macOS, BSD and Haiku are architectural examples only, not current delivery
-targets or feature-completion gates.
-
 See `PLATFORM_ADAPTERS.md` for the adapter contract.
 
 ## Future ecosystem integration
