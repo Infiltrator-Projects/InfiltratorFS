@@ -165,7 +165,8 @@ static int truncate_file_tx(struct infs_volume *vol, const char *path, uint64_t 
                 return status;
             if (got != 1)
                 return INFS_STATUS_CORRUPT;
-            status = write_block(vol, replacement, data);
+            status = write_data_block(
+                vol, replacement, p, hdr->object_id, data);
             if (status != INFS_STATUS_OK)
                 return status;
             status = file_replace_range(vol, object, logical, 1, replacement,
