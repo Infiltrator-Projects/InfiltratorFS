@@ -147,8 +147,6 @@ static infs_status file_promote_inline(
     if (status != INFS_STATUS_OK)
         return status;
 
-    struct infs_object_header_disk *hdr =
-        (struct infs_object_header_disk *)object;
     file = (struct infs_file_payload_disk *)(object + sizeof(*hdr));
     memset(file + 1, 0,
            INFS_BLOCK_SIZE - sizeof(*hdr) - sizeof(*file));
