@@ -4,10 +4,12 @@
 #define _UNICODE
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <aclapi.h>
 #include <shlobj.h>
 
 #include "infiltratorfs-windows-bridge.h"
 #include "infilfs/status.h"
+#include "infilfs/checksum.h"
 #include "infilfs/format_volume.h"
 #include "infilfs/volume.h"
 #include "infilfs/win32_io.h"
@@ -23,6 +25,106 @@ static const char edited_linux_payload[] = "windows-edited-linux-file\n";
 static const char exported_payload[] = "infiltratorfs-export-move\n";
 #define DIRTY_RANGE_FILE_SIZE (8u * 1024u * 1024u)
 #define DIRTY_RANGE_OFFSET (4u * 1024u * 1024u)
+
+
+static void projected_alias(const char *name, wchar_t out[68])
+{
+    uint8_t digest[32];
+    static const wchar_t hex[] = L"0123456789ABCDEF";
+    infs_sha256(name, strlen(name), digest);
+    out[0] = L'~';
+    out[1] = L'I';
+    out[2] = L'~';
+    for (size_t i = 0; i < sizeof(digest); ++i) {
+        out[3u + i * 2u] = hex[digest[i] >> 4u];
+        out[4u + i * 2u] = hex[digest[i] & 0x0fu];
+    }
+    out[67] = L'\0';
+}
+
+static int current_user_sid(PSID *sid_out)
+{
+    if (!sid_out)
+        return 0;
+    *sid_out = NULL;
+    HANDLE token = NULL;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token))
+        return 0;
+    DWORD bytes = 0;
+    GetTokenInformation(token, TokenUser, NULL, 0, &bytes);
+    if (!bytes || GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
+        CloseHandle(token);
+        return 0;
+    }
+    TOKEN_USER *user = malloc(bytes);
+    if (!user) {
+        CloseHandle(token);
+        return 0;
+    }
+    if (!GetTokenInformation(token, TokenUser, user, bytes, &bytes)) {
+        free(user);
+        CloseHandle(token);
+        return 0;
+    }
+    DWORD sid_bytes = GetLengthSid(user->User.Sid);
+    PSID sid = malloc(sid_bytes);
+    if (!sid || !CopySid(sid_bytes, sid, user->User.Sid)) {
+        free(sid);
+        free(user);
+        CloseHandle(token);
+        return 0;
+    }
+    free(user);
+    CloseHandle(token);
+    *sid_out = sid;
+    return 1;
+}
+
+static int set_client_acl(const wchar_t *path)
+{
+    PSID user = NULL;
+    PSID everyone = NULL;
+    PACL acl = NULL;
+    int okay = 0;
+    if (!current_user_sid(&user))
+        goto out;
+
+    DWORD everyone_bytes = SECURITY_MAX_SID_SIZE;
+    everyone = malloc(everyone_bytes);
+    if (!everyone ||
+        !CreateWellKnownSid(
+            WinWorldSid, NULL, everyone, &everyone_bytes))
+        goto out;
+
+    EXPLICIT_ACCESSW access[2];
+    memset(access, 0, sizeof(access));
+    access[0].grfAccessPermissions = GENERIC_ALL;
+    access[0].grfAccessMode = SET_ACCESS;
+    access[0].grfInheritance = SUB_CONTAINERS_AND_OBJECTS_INHERIT;
+    access[0].Trustee.TrusteeForm = TRUSTEE_IS_SID;
+    access[0].Trustee.TrusteeType = TRUSTEE_IS_USER;
+    access[0].Trustee.ptstrName = (LPWSTR)user;
+
+    access[1].grfAccessPermissions = GENERIC_READ;
+    access[1].grfAccessMode = SET_ACCESS;
+    access[1].grfInheritance = SUB_CONTAINERS_AND_OBJECTS_INHERIT;
+    access[1].Trustee.TrusteeForm = TRUSTEE_IS_SID;
+    access[1].Trustee.TrusteeType = TRUSTEE_IS_WELL_KNOWN_GROUP;
+    access[1].Trustee.ptstrName = (LPWSTR)everyone;
+
+    if (SetEntriesInAclW(2u, access, NULL, &acl) != ERROR_SUCCESS)
+        goto out;
+    okay = SetNamedSecurityInfoW(
+        (LPWSTR)path, SE_FILE_OBJECT,
+        DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+        NULL, NULL, acl, NULL) == ERROR_SUCCESS;
+out:
+    if (acl)
+        LocalFree(acl);
+    free(everyone);
+    free(user);
+    return okay;
+}
 
 static int fail(const wchar_t *message)
 {
@@ -175,6 +277,38 @@ static int run_windows_client(const wchar_t *root_arg)
     if (!write_windows_file(path, edited_linux_payload,
                             (DWORD)(sizeof(edited_linux_payload) - 1u)))
         return fail(L"Edit Linux-created file through Windows bridge");
+
+    wchar_t alias[68];
+    projected_alias("CON", alias);
+    _snwprintf_s(path, sizeof(path) / sizeof(path[0]), _TRUNCATE,
+                 L"%ls%ls", root, alias);
+    memset(data, 0, sizeof(data));
+    if (!read_windows_file(path, data, sizeof(data) - 1u, &got) ||
+        got != 18u || memcmp(data, "reserved-name-data\n", 18u) != 0)
+        return fail(L"Read Windows-reserved InfiltratorFS name through alias");
+    if (!set_client_acl(path))
+        return fail(L"Set Windows ACL on projected reserved-name file");
+    if (!write_windows_file(path, "reserved-edited\n", 16u))
+        return fail(L"Edit projected reserved-name file");
+
+    char long_name[301];
+    memset(long_name, 'x', sizeof(long_name) - 1u);
+    long_name[sizeof(long_name) - 1u] = '\0';
+    projected_alias(long_name, alias);
+    _snwprintf_s(path, sizeof(path) / sizeof(path[0]), _TRUNCATE,
+                 L"%ls%ls", root, alias);
+    memset(data, 0, sizeof(data));
+    if (!read_windows_file(path, data, sizeof(data) - 1u, &got) ||
+        got != 15u || memcmp(data, "long-name-data\n", 15u) != 0)
+        return fail(L"Read >255-character InfiltratorFS name through alias");
+
+    projected_alias("~I~literal", alias);
+    _snwprintf_s(path, sizeof(path) / sizeof(path[0]), _TRUNCATE,
+                 L"%ls%ls", root, alias);
+    memset(data, 0, sizeof(data));
+    if (!read_windows_file(path, data, sizeof(data) - 1u, &got) ||
+        got != 18u || memcmp(data, "alias-prefix-data\n", 18u) != 0)
+        return fail(L"Read literal bridge-prefix name without alias collision");
 
     _snwprintf_s(path, sizeof(path) / sizeof(path[0]), _TRUNCATE,
                  L"%lsdirty-range.bin", root);
@@ -489,6 +623,43 @@ int wmain(int argc, wchar_t **argv)
         return fail(L"Seed projected move-out qualification tree");
     }
 
+    static const char reserved_payload[] = "reserved-name-data\n";
+    if (infs_create_file(&volume, "/CON", NULL) != INFS_STATUS_OK ||
+        infs_write_file_buffered(
+            &volume, "/CON", reserved_payload,
+            sizeof(reserved_payload) - 1u, 0u) !=
+            (int64_t)(sizeof(reserved_payload) - 1u)) {
+        infs_volume_close(&volume);
+        return fail(L"Seed Windows-reserved filename");
+    }
+
+    char long_component[301];
+    memset(long_component, 'x', sizeof(long_component) - 1u);
+    long_component[sizeof(long_component) - 1u] = '\0';
+    char long_path[INFS_PATH_MAX + 1u];
+    _snprintf_s(long_path, sizeof(long_path), _TRUNCATE,
+                "/%s", long_component);
+    static const char long_payload[] = "long-name-data\n";
+    if (infs_create_file(&volume, long_path, NULL) != INFS_STATUS_OK ||
+        infs_write_file_buffered(
+            &volume, long_path, long_payload,
+            sizeof(long_payload) - 1u, 0u) !=
+            (int64_t)(sizeof(long_payload) - 1u)) {
+        infs_volume_close(&volume);
+        return fail(L"Seed >255-character filename");
+    }
+
+    static const char prefix_payload[] = "alias-prefix-data\n";
+    if (infs_create_file(&volume, "/~I~literal", NULL) != INFS_STATUS_OK ||
+        infs_write_file_buffered(
+            &volume, "/~I~literal", prefix_payload,
+            sizeof(prefix_payload) - 1u, 0u) !=
+            (int64_t)(sizeof(prefix_payload) - 1u) ||
+        infs_volume_sync(&volume) != INFS_STATUS_OK) {
+        infs_volume_close(&volume);
+        return fail(L"Seed bridge-prefix filename");
+    }
+
     wchar_t drive[3] = {0};
     if (!infs_windows_bridge_start(&volume, NULL, drive,
                                    sizeof(drive) / sizeof(drive[0]))) {
@@ -606,6 +777,23 @@ int wmain(int argc, wchar_t **argv)
                  L"FAIL: Shell move-out did not delete the InfiltratorFS source.\n");
         return 1;
     }
+
+    if (!read_portable_file(
+            &volume, "/CON", data, sizeof(data), "reserved-edited\n")) {
+        infs_volume_close(&volume);
+        return fail(L"Projected reserved-name edit did not persist");
+    }
+    struct infs_security_descriptor imported_security;
+    memset(&imported_security, 0, sizeof(imported_security));
+    if (infs_get_security_descriptor(
+            &volume, "/CON", &imported_security) != INFS_STATUS_OK ||
+        imported_security.ace_count < 2u ||
+        !(imported_security.flags & INFS_SECURITY_PROTECTED)) {
+        infs_free_security_descriptor(&imported_security);
+        infs_volume_close(&volume);
+        return fail(L"Windows DACL did not roundtrip into portable security");
+    }
+    infs_free_security_descriptor(&imported_security);
 
     status = infs_volume_sync(&volume);
     infs_volume_close(&volume);
