@@ -14,6 +14,43 @@ struct mirror_context {
     struct infs_storage_lock state_lock;
 };
 
+static size_t mirror_policy_copies(
+    const struct mirror_context *ctx,
+    const struct infs_storage_io_policy *policy)
+{
+    size_t copies = policy ? policy->protection_copies : 0u;
+    if (!copies || copies > ctx->count)
+        copies = ctx->count;
+    return copies;
+}
+
+static size_t mirror_policy_start(
+    const struct mirror_context *ctx,
+    const struct infs_storage_io_policy *policy)
+{
+    if (!policy || !ctx->count)
+        return 0u;
+    uint64_t hash = UINT64_C(1469598103934665603);
+    for (size_t i = 0; i < sizeof(policy->object_id); ++i) {
+        hash ^= policy->object_id[i];
+        hash *= UINT64_C(1099511628211);
+    }
+    return (size_t)(hash % ctx->count);
+}
+
+static int mirror_policy_member(
+    const struct mirror_context *ctx,
+    const struct infs_storage_io_policy *policy, size_t member)
+{
+    size_t copies = mirror_policy_copies(ctx, policy);
+    if (copies == ctx->count)
+        return 1;
+    size_t start = mirror_policy_start(ctx, policy);
+    size_t distance = member >= start ?
+        member - start : ctx->count - start + member;
+    return distance < copies;
+}
+
 static int mirror_member_healthy(struct mirror_context *ctx, size_t member)
 {
     int healthy;
@@ -30,8 +67,9 @@ static void mirror_quarantine_member(struct mirror_context *ctx, size_t member)
     infs_storage_lock_release(&ctx->state_lock);
 }
 
-static infs_status mirror_read(void *opaque, uint64_t offset,
-                               void *buffer, size_t size)
+static infs_status mirror_read_policy(
+    void *opaque, uint64_t offset, void *buffer, size_t size,
+    const struct infs_storage_io_policy *policy)
 {
     struct mirror_context *ctx = opaque;
     infs_status first_error = INFS_STATUS_IO_ERROR;
@@ -46,12 +84,13 @@ static infs_status mirror_read(void *opaque, uint64_t offset,
     }
 
     for (size_t i = 0; i < ctx->count; ++i) {
-        if (!mirror_member_healthy(ctx, i))
+        if (!mirror_policy_member(ctx, policy, i) ||
+            !mirror_member_healthy(ctx, i))
             continue;
 
         if (!have_copy) {
-            infs_status status = infs_storage_read(
-                &ctx->members[i], offset, buffer, size);
+            infs_status status = infs_storage_read_policy(
+                &ctx->members[i], offset, buffer, size, policy);
             if (status != INFS_STATUS_OK) {
                 if (first_error == INFS_STATUS_IO_ERROR)
                     first_error = status;
@@ -66,8 +105,8 @@ static infs_status mirror_read(void *opaque, uint64_t offset,
             size_t chunk = size - checked;
             if (chunk > verify_capacity)
                 chunk = verify_capacity;
-            infs_status status = infs_storage_read(
-                &ctx->members[i], offset + checked, verify, chunk);
+            infs_status status = infs_storage_read_policy(
+                &ctx->members[i], offset + checked, verify, chunk, policy);
             if (status != INFS_STATUS_OK) {
                 if (first_error == INFS_STATUS_IO_ERROR)
                     first_error = status;
@@ -85,29 +124,31 @@ static infs_status mirror_read(void *opaque, uint64_t offset,
     return have_copy ? INFS_STATUS_OK : first_error;
 }
 
-static infs_status mirror_write(void *opaque, uint64_t offset,
-                                const void *buffer, size_t size)
+static infs_status mirror_read(void *opaque, uint64_t offset,
+                               void *buffer, size_t size)
+{
+    return mirror_read_policy(opaque, offset, buffer, size, NULL);
+}
+
+static infs_status mirror_write_policy(
+    void *opaque, uint64_t offset, const void *buffer, size_t size,
+    const struct infs_storage_io_policy *policy)
 {
     struct mirror_context *ctx = opaque;
     infs_status result = INFS_STATUS_OK;
     int attempted = 0;
     int degraded = 0;
 
-    /*
-     * Do not stop at the first failed member. Completing the write on every
-     * still-working replica maximises the number of recoverable copies while
-     * the returned failure tells the filesystem that durability is degraded.
-     * Once a member has missed a write, keep subsequent writes fail-closed
-     * until the mirror is explicitly reconstructed or repaired.
-     */
     for (size_t i = 0; i < ctx->count; ++i) {
+        if (!mirror_policy_member(ctx, policy, i))
+            continue;
         if (!mirror_member_healthy(ctx, i)) {
             degraded = 1;
             continue;
         }
         attempted = 1;
-        infs_status status = infs_storage_write(
-            &ctx->members[i], offset, buffer, size);
+        infs_status status = infs_storage_write_policy(
+            &ctx->members[i], offset, buffer, size, policy);
         if (status != INFS_STATUS_OK) {
             mirror_quarantine_member(ctx, i);
             degraded = 1;
@@ -119,6 +160,12 @@ static infs_status mirror_write(void *opaque, uint64_t offset,
         return INFS_STATUS_IO_ERROR;
     return result != INFS_STATUS_OK ? result :
         (degraded ? INFS_STATUS_IO_ERROR : INFS_STATUS_OK);
+}
+
+static infs_status mirror_write(void *opaque, uint64_t offset,
+                                const void *buffer, size_t size)
+{
+    return mirror_write_policy(opaque, offset, buffer, size, NULL);
 }
 
 static infs_status mirror_flush(void *opaque)
@@ -201,6 +248,8 @@ static void mirror_close(void *opaque)
 static const struct infs_storage_ops mirror_ops = {
     .read_at = mirror_read,
     .write_at = mirror_write,
+    .read_at_policy = mirror_read_policy,
+    .write_at_policy = mirror_write_policy,
     .flush = mirror_flush,
     .get_size = mirror_size,
     .random_bytes = mirror_random,
