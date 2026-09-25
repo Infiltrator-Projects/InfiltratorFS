@@ -105,7 +105,7 @@ The intended security architecture is described in `SECURITY.md`. Current Linux 
 - [x] Windows formatter, transfer/listing and scrub application.
 - [x] Linux/Windows Format 0.18 interoperability coverage.
 - [x] Driverless Windows Explorer projection using Microsoft's inbox ProjFS.
-- [ ] Windows attribute/security/filename adapter completion.
+- [x] Windows attribute/security/filename adapter completion.
 - [ ] Native Windows filesystem driver with Cache Manager/I/O Manager integration.
 See `PLATFORM_ADAPTERS.md` for the adapter contract.
 
