@@ -185,7 +185,8 @@ static int64_t write_file_lookup_tx(struct infs_volume *vol,
     uint32_t logical_blocks = (uint32_t)wanted;
     size_t batch_bytes = (size_t)logical_blocks * INFS_BLOCK_SIZE;
     status = file_store_extent_payload(
-        vol, (const uint8_t *)buf + done, logical_blocks,
+        vol, p, file_hdr->object_id,
+        (const uint8_t *)buf + done, logical_blocks,
         &replacement, &replacement_flags);
     if (status != INFS_STATUS_OK)
         return status;
@@ -244,7 +245,8 @@ static int64_t write_file_lookup_tx(struct infs_volume *vol,
                 return status;
             if (got != 1)
                 return INFS_STATUS_CORRUPT;
-            status = write_block(vol, replacement, data);
+            status = write_data_block(
+                vol, replacement, p, file_hdr->object_id, data);
             if (status != INFS_STATUS_OK)
                 return status;
             status = file_replace_range(vol, object, logical, 1, replacement,
@@ -253,7 +255,8 @@ static int64_t write_file_lookup_tx(struct infs_volume *vol,
                 return status;
             physical = replacement;
         } else {
-            status = write_block(vol, physical, data);
+            status = write_data_block(
+                vol, physical, p, file_hdr->object_id, data);
             if (status != INFS_STATUS_OK)
                 return status;
         }
