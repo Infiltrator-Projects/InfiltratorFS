@@ -59,7 +59,7 @@ for file in Makefile infiltratorfs_core.c infiltratorfs_cpu.c infiltratorfs_cryp
             infiltratorfs_rw.inc \
             infiltratorfs_rw_legacy.inc infiltratorfs_checksum_cache.c infiltratorfs_checksum_store.c infiltratorfs_locator_cache.c infiltratorfs_rw_data.inc \
             infiltratorfs_rw_namespace.inc infiltratorfs_read_cache.c \
-            infiltratorfs_pagecache.c infiltratorfs_linux_meta_codec.c infiltratorfs_shared_ownership.c infiltratorfs_orphan_scan.c infiltratorfs_name_policy.c infiltratorfs_linux_meta.inc \
+            infiltratorfs_pagecache.c infiltratorfs_linux_meta_codec.c infiltratorfs_shared_ownership.c infiltratorfs_orphan_scan.c infiltratorfs_name_policy.c infiltratorfs_media.c infiltratorfs_linux_meta.inc \
             infiltratorfs_resize.c infiltratorfs_quota.inc \
             infiltratorfs_defrag.inc infiltratorfs_ioctl.h; do
     install -m 0644 "kernel/$file" "$dkms_root/$file"
