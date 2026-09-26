@@ -72,6 +72,13 @@ static infs_status mirror_read_policy(
     const struct infs_storage_io_policy *policy)
 {
     struct mirror_context *ctx = opaque;
+    struct infs_storage_io_policy child_policy = {0};
+    const struct infs_storage_io_policy *child = NULL;
+    if (policy) {
+        child_policy = *policy;
+        child_policy.protection_copies = 0u;
+        child = &child_policy;
+    }
     infs_status first_error = INFS_STATUS_IO_ERROR;
     int have_copy = 0;
     uint8_t *verify = NULL;
@@ -90,7 +97,7 @@ static infs_status mirror_read_policy(
 
         if (!have_copy) {
             infs_status status = infs_storage_read_policy(
-                &ctx->members[i], offset, buffer, size, policy);
+                &ctx->members[i], offset, buffer, size, child);
             if (status != INFS_STATUS_OK) {
                 if (first_error == INFS_STATUS_IO_ERROR)
                     first_error = status;
@@ -106,7 +113,7 @@ static infs_status mirror_read_policy(
             if (chunk > verify_capacity)
                 chunk = verify_capacity;
             infs_status status = infs_storage_read_policy(
-                &ctx->members[i], offset + checked, verify, chunk, policy);
+                &ctx->members[i], offset + checked, verify, chunk, child);
             if (status != INFS_STATUS_OK) {
                 if (first_error == INFS_STATUS_IO_ERROR)
                     first_error = status;
@@ -135,6 +142,13 @@ static infs_status mirror_write_policy(
     const struct infs_storage_io_policy *policy)
 {
     struct mirror_context *ctx = opaque;
+    struct infs_storage_io_policy child_policy = {0};
+    const struct infs_storage_io_policy *child = NULL;
+    if (policy) {
+        child_policy = *policy;
+        child_policy.protection_copies = 0u;
+        child = &child_policy;
+    }
     infs_status result = INFS_STATUS_OK;
     int attempted = 0;
     int degraded = 0;
@@ -148,7 +162,7 @@ static infs_status mirror_write_policy(
         }
         attempted = 1;
         infs_status status = infs_storage_write_policy(
-            &ctx->members[i], offset, buffer, size, policy);
+            &ctx->members[i], offset, buffer, size, child);
         if (status != INFS_STATUS_OK) {
             mirror_quarantine_member(ctx, i);
             degraded = 1;
