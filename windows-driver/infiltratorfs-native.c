@@ -53,6 +53,11 @@ typedef struct _INFILFS_NATIVE_FCB {
     ULONGLONG FileId;
     ULONG ObjectType;
     ULONG FileAttributes;
+    ULONG LinkCount;
+    LARGE_INTEGER CreationTime;
+    LARGE_INTEGER AccessTime;
+    LARGE_INTEGER WriteTime;
+    LARGE_INTEGER ChangeTime;
     UNICODE_STRING Path;
     BOOLEAN DeletePending;
 } INFILFS_NATIVE_FCB;
@@ -608,6 +613,11 @@ static INFILFS_NATIVE_FCB *InfilfsAllocateFcb(
     Fcb->FileId = Attributes->file_id;
     Fcb->ObjectType = Attributes->object_type;
     Fcb->FileAttributes = Attributes->file_attributes;
+    Fcb->LinkCount = Attributes->link_count;
+    Fcb->CreationTime.QuadPart = (LONGLONG)Attributes->creation_time_100ns;
+    Fcb->AccessTime.QuadPart = (LONGLONG)Attributes->access_time_100ns;
+    Fcb->WriteTime.QuadPart = (LONGLONG)Attributes->write_time_100ns;
+    Fcb->ChangeTime.QuadPart = (LONGLONG)Attributes->change_time_100ns;
     ExInitializeFastMutex(&Fcb->HeaderMutex);
     if (!NT_SUCCESS(ExInitializeResourceLite(&Fcb->MainResource)) ||
         !NT_SUCCESS(ExInitializeResourceLite(&Fcb->PagingResource))) {
