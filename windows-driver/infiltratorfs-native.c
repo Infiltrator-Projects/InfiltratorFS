@@ -40,6 +40,7 @@ typedef struct _INFILFS_NATIVE_VOLUME {
     BOOLEAN ReadOnly;
     BOOLEAN Locked;
     BOOLEAN Dismounted;
+    BOOLEAN Destroying;
     PFILE_OBJECT LockOwner;
     EX_RUNDOWN_REF Rundown;
     ERESOURCE Resource;
@@ -253,24 +254,50 @@ static INFILFS_NATIVE_VOLUME *InfilfsFindVolumeReferenced(
     return Found;
 }
 
-static VOID InfilfsRetireVolume(INFILFS_NATIVE_VOLUME *Volume)
+static VOID InfilfsFinalizeRetiredVolume(
+    INFILFS_NATIVE_VOLUME *Volume)
 {
     if (!Volume)
         return;
 
     ExAcquireFastMutex(&g_Infilfs.VolumeLock);
-    Volume->Dismounted = TRUE;
     if (!IsListEmpty(&Volume->GlobalLink)) {
         RemoveEntryList(&Volume->GlobalLink);
         InitializeListHead(&Volume->GlobalLink);
     }
     ExReleaseFastMutex(&g_Infilfs.VolumeLock);
 
+    if (Volume->TargetDevice) {
+        ObDereferenceObject(Volume->TargetDevice);
+        Volume->TargetDevice = NULL;
+    }
+    ExDeleteResourceLite(&Volume->Resource);
+    Volume->Signature = 0;
+    IoDeleteDevice(Volume->DeviceObject);
+}
+
+static VOID InfilfsRetireVolume(INFILFS_NATIVE_VOLUME *Volume)
+{
+    BOOLEAN Finalize = FALSE;
+
+    if (!Volume)
+        return;
+
+    /*
+     * Keep the retired VDO on the global list until its final FCB closes.
+     * Service lookup skips Dismounted volumes, while DriverUnload can still
+     * discover a retired object if teardown is requested before its last close.
+     */
+    ExAcquireFastMutex(&g_Infilfs.VolumeLock);
+    Volume->Dismounted = TRUE;
+    ExReleaseFastMutex(&g_Infilfs.VolumeLock);
+
     /*
      * Service/control IRPs look volumes up independently of a VDO-targeted
-     * filesystem IRP. Removing the volume prevents new acquisitions; wait for
-     * already acquired control operations before invalidating TargetDevice or
-     * the device extension.
+     * filesystem IRP. Marking the volume dismounted prevents new acquisitions;
+     * wait for already acquired control operations before invalidating the
+     * mounted VPB. Physical VDO/resource destruction is deferred until the last
+     * FCB is gone so Close never dereferences a freed device extension.
      */
     ExWaitForRundownProtectionRelease(&Volume->Rundown);
 
@@ -280,13 +307,16 @@ static VOID InfilfsRetireVolume(INFILFS_NATIVE_VOLUME *Volume)
     }
     Volume->Locked = FALSE;
     Volume->LockOwner = NULL;
-    if (Volume->TargetDevice) {
-        ObDereferenceObject(Volume->TargetDevice);
-        Volume->TargetDevice = NULL;
+
+    ExAcquireFastMutex(&Volume->FcbLock);
+    if (IsListEmpty(&Volume->Fcbs) && !Volume->Destroying) {
+        Volume->Destroying = TRUE;
+        Finalize = TRUE;
     }
-    ExDeleteResourceLite(&Volume->Resource);
-    Volume->Signature = 0;
-    IoDeleteDevice(Volume->DeviceObject);
+    ExReleaseFastMutex(&Volume->FcbLock);
+
+    if (Finalize)
+        InfilfsFinalizeRetiredVolume(Volume);
 }
 
 static NTSTATUS InfilfsCallService(
@@ -1034,6 +1064,9 @@ static INFILFS_NATIVE_FCB *InfilfsGetOrCreateFcb(
 static VOID InfilfsDereferenceFcb(INFILFS_NATIVE_FCB *Fcb)
 {
     INFILFS_NATIVE_VOLUME *Volume;
+    BOOLEAN Finalize = FALSE;
+    LONG References;
+
     if (!Fcb)
         return;
     Volume = Fcb->Volume;
@@ -1041,14 +1074,23 @@ static VOID InfilfsDereferenceFcb(INFILFS_NATIVE_FCB *Fcb)
         return;
 
     ExAcquireFastMutex(&Volume->FcbLock);
-    LONG References = InterlockedDecrement(&Fcb->References);
+    References = InterlockedDecrement(&Fcb->References);
     if (References == 0) {
         RemoveEntryList(&Fcb->VolumeLink);
         InitializeListHead(&Fcb->VolumeLink);
+        if (Volume->Dismounted &&
+            IsListEmpty(&Volume->Fcbs) &&
+            !Volume->Destroying) {
+            Volume->Destroying = TRUE;
+            Finalize = TRUE;
+        }
     }
     ExReleaseFastMutex(&Volume->FcbLock);
+
     if (References == 0)
         InfilfsFreeFcb(Fcb);
+    if (Finalize)
+        InfilfsFinalizeRetiredVolume(Volume);
 }
 
 static VOID InfilfsCopyPathToRequest(
