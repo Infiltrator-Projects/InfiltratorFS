@@ -1218,6 +1218,44 @@ static NTSTATUS InfilfsCheckAccess(
     return Granted ? STATUS_SUCCESS : AccessStatus;
 }
 
+static NTSTATUS InfilfsCheckCurrentSubjectAccess(
+    INFILFS_NATIVE_VOLUME *Volume, PCUNICODE_STRING Path,
+    ACCESS_MASK DesiredAccess, KPROCESSOR_MODE AccessMode)
+{
+    PSECURITY_DESCRIPTOR Descriptor = NULL;
+    PPRIVILEGE_SET Privileges = NULL;
+    SECURITY_SUBJECT_CONTEXT SubjectContext;
+    ACCESS_MASK GrantedAccess = 0;
+    ULONG DescriptorLength = 0;
+    NTSTATUS AccessStatus = STATUS_SUCCESS;
+    NTSTATUS Status;
+    BOOLEAN Granted;
+
+    if (!DesiredAccess)
+        return STATUS_SUCCESS;
+
+    Status = InfilfsFetchSecurityDescriptor(
+        Volume, Path, &Descriptor, &DescriptorLength);
+    if (Status == STATUS_OBJECT_NAME_NOT_FOUND)
+        return STATUS_SUCCESS;
+    if (!NT_SUCCESS(Status))
+        return Status;
+
+    SeCaptureSubjectContext(&SubjectContext);
+    SeLockSubjectContext(&SubjectContext);
+    Granted = SeAccessCheck(
+        Descriptor, &SubjectContext, TRUE,
+        DesiredAccess, 0, &Privileges,
+        IoGetFileObjectGenericMapping(),
+        AccessMode, &GrantedAccess, &AccessStatus);
+    if (Privileges)
+        SeFreePrivileges(Privileges);
+    SeUnlockSubjectContext(&SubjectContext);
+    SeReleaseSubjectContext(&SubjectContext);
+    ExFreePoolWithTag(Descriptor, INFILFS_NATIVE_REQUEST_TAG);
+    return Granted ? STATUS_SUCCESS : AccessStatus;
+}
+
 static NTSTATUS InfilfsCheckTraverseAccess(
     INFILFS_NATIVE_VOLUME *Volume, PCUNICODE_STRING Path,
     PACCESS_STATE AccessState, KPROCESSOR_MODE AccessMode)
@@ -2357,6 +2395,19 @@ static NTSTATUS InfilfsSetInformation(PDEVICE_OBJECT DeviceObject, PIRP Irp)
             Irp->RequestorMode, &Destination, &AllocatedDestination);
         if (!NT_SUCCESS(Status))
             break;
+        {
+            UNICODE_STRING ParentPath;
+            ACCESS_MASK ParentAccess =
+                Fcb->ObjectType == INFILFS_WIN_NATIVE_OBJECT_DIRECTORY ?
+                    FILE_ADD_SUBDIRECTORY : FILE_ADD_FILE;
+            Status = InfilfsParentPath(&Destination, &ParentPath);
+            if (NT_SUCCESS(Status))
+                Status = InfilfsCheckCurrentSubjectAccess(
+                    Volume, &ParentPath, ParentAccess,
+                    Irp->RequestorMode);
+            if (!NT_SUCCESS(Status))
+                break;
+        }
 
 #ifdef FileRenameInformationEx
         if (Class == FileRenameInformationEx) {
@@ -2409,6 +2460,16 @@ static NTSTATUS InfilfsSetInformation(PDEVICE_OBJECT DeviceObject, PIRP Irp)
             Irp->RequestorMode, &Destination, &AllocatedDestination);
         if (!NT_SUCCESS(Status))
             break;
+        {
+            UNICODE_STRING ParentPath;
+            Status = InfilfsParentPath(&Destination, &ParentPath);
+            if (NT_SUCCESS(Status))
+                Status = InfilfsCheckCurrentSubjectAccess(
+                    Volume, &ParentPath, FILE_ADD_FILE,
+                    Irp->RequestorMode);
+            if (!NT_SUCCESS(Status))
+                break;
+        }
         Replace = Info->ReplaceIfExists ?
             INFILFS_WIN_NATIVE_REQ_REPLACE : 0;
         Status = InfilfsServiceMutation(
