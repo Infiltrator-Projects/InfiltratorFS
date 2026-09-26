@@ -212,9 +212,9 @@ section.
 
 ## 11. Windows adapter
 
-Windows currently has portable-core image/raw-device access and a user-mode ProjFS Explorer bridge. The bridge projects InfiltratorFS content through an NTFS virtualization root and persists supported Windows mutations back through the portable core.
+Windows has portable-core image/raw-device access, the driverless ProjFS Explorer bridge, and a native filesystem-driver implementation. The bridge remains the no-kernel-driver interoperability/recovery path.
 
-ProjFS is an interoperability bridge, not a native filesystem driver. A future native Windows adapter must integrate with the Windows I/O Manager, Cache Manager, Memory Manager, security descriptors, share/delete semantics, reparse behaviour and native volume mounting while preserving the same portable persistent model.
+The native adapter registers as a disk filesystem and owns Windows I/O Manager and Cache Manager integration, native mount/VPB lifetime, shared FCB/CCB state, cached/non-cached/paging I/O, share/delete semantics, byte-range locks, oplocks, security dispatch, namespace mutation and shutdown durability while delegating persistent namespace/data semantics to the same portable core through the native service protocol. It is implementation-complete in source but is not release-qualified until a real Windows mount completes the mounted/Driver-Verifier qualification recorded in ROADMAP.md and QUALIFICATION.md.
 
 ## 12. Security model
 
