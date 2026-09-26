@@ -685,6 +685,50 @@ static NTSTATUS InfilfsLookupPath(
     return Status;
 }
 
+static NTSTATUS InfilfsServiceMutation(
+    INFILFS_NATIVE_VOLUME *Volume, ULONG Opcode,
+    PCUNICODE_STRING Path, PCUNICODE_STRING SecondPath,
+    ULONGLONG Length, ULONG Flags)
+{
+    struct infilfs_win_native_request *Request;
+    struct infilfs_win_native_response *Response;
+    NTSTATUS Status;
+
+    Request = ExAllocatePool2(
+        POOL_FLAG_PAGED, sizeof(*Request), INFILFS_NATIVE_REQUEST_TAG);
+    Response = ExAllocatePool2(
+        POOL_FLAG_PAGED, sizeof(*Response), INFILFS_NATIVE_REQUEST_TAG);
+    if (!Request || !Response) {
+        if (Request)
+            ExFreePoolWithTag(Request, INFILFS_NATIVE_REQUEST_TAG);
+        if (Response)
+            ExFreePoolWithTag(Response, INFILFS_NATIVE_REQUEST_TAG);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    RtlZeroMemory(Request, sizeof(*Request));
+    RtlZeroMemory(Response, sizeof(*Response));
+    Request->opcode = Opcode;
+    Request->length = Length;
+    Request->flags = Flags;
+    InfilfsCopyPathToRequest(Request, Path);
+    if (SecondPath && SecondPath->Buffer) {
+        ULONG Chars = SecondPath->Length / sizeof(WCHAR);
+        if (Chars >= INFILFS_WIN_NATIVE_PATH_CHARS)
+            Chars = INFILFS_WIN_NATIVE_PATH_CHARS - 1u;
+        Request->second_path_chars = Chars;
+        RtlCopyMemory(
+            Request->second_path, SecondPath->Buffer,
+            Chars * sizeof(WCHAR));
+        Request->second_path[Chars] = 0;
+    }
+
+    Status = InfilfsCallService(Volume, Request, Response);
+    ExFreePoolWithTag(Response, INFILFS_NATIVE_REQUEST_TAG);
+    ExFreePoolWithTag(Request, INFILFS_NATIVE_REQUEST_TAG);
+    return Status;
+}
+
 static NTSTATUS InfilfsCreate(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 {
     PIO_STACK_LOCATION IrpSp = IoGetCurrentIrpStackLocation(Irp);
@@ -694,6 +738,10 @@ static NTSTATUS InfilfsCreate(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     INFILFS_NATIVE_FCB *Fcb;
     INFILFS_NATIVE_CCB *Ccb;
     NTSTATUS Status;
+    ULONG Disposition;
+    ULONG Options;
+    BOOLEAN DirectoryRequested;
+    ULONG_PTR CreateInformation = FILE_OPENED;
 
     if (InfilfsIsControlDevice(DeviceObject) ||
         InfilfsIsFileSystemDevice(DeviceObject))
@@ -701,8 +749,59 @@ static NTSTATUS InfilfsCreate(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     if (!Volume || !FileObject)
         return InfilfsCompleteIrp(Irp, STATUS_INVALID_DEVICE_REQUEST, 0);
 
+    Disposition = (IrpSp->Parameters.Create.Options >> 24) & 0xffu;
+    Options = IrpSp->Parameters.Create.Options & 0x00ffffffu;
+    DirectoryRequested = (Options & FILE_DIRECTORY_FILE) != 0;
+
     RtlZeroMemory(&Attributes, sizeof(Attributes));
     Status = InfilfsLookupPath(Volume, &FileObject->FileName, &Attributes);
+    if (Status == STATUS_OBJECT_NAME_NOT_FOUND) {
+        if (Disposition == FILE_OPEN || Disposition == FILE_OVERWRITE)
+            return InfilfsCompleteIrp(Irp, Status, 0);
+
+        Status = InfilfsServiceMutation(
+            Volume,
+            DirectoryRequested ? INFILFS_WIN_NATIVE_OP_MKDIR :
+                                 INFILFS_WIN_NATIVE_OP_CREATE,
+            &FileObject->FileName, NULL, 0, 0);
+        if (!NT_SUCCESS(Status))
+            return InfilfsCompleteIrp(Irp, Status, 0);
+        CreateInformation = FILE_CREATED;
+        RtlZeroMemory(&Attributes, sizeof(Attributes));
+        Status = InfilfsLookupPath(
+            Volume, &FileObject->FileName, &Attributes);
+    } else if (NT_SUCCESS(Status)) {
+        if (Disposition == FILE_CREATE)
+            return InfilfsCompleteIrp(
+                Irp, STATUS_OBJECT_NAME_COLLISION, 0);
+
+        if (DirectoryRequested &&
+            Attributes.object_type != INFILFS_WIN_NATIVE_OBJECT_DIRECTORY)
+            return InfilfsCompleteIrp(
+                Irp, STATUS_NOT_A_DIRECTORY, 0);
+        if ((Options & FILE_NON_DIRECTORY_FILE) &&
+            Attributes.object_type == INFILFS_WIN_NATIVE_OBJECT_DIRECTORY)
+            return InfilfsCompleteIrp(
+                Irp, STATUS_FILE_IS_A_DIRECTORY, 0);
+
+        if (Disposition == FILE_OVERWRITE ||
+            Disposition == FILE_OVERWRITE_IF ||
+            Disposition == FILE_SUPERSEDE) {
+            if (Attributes.object_type != INFILFS_WIN_NATIVE_OBJECT_FILE)
+                return InfilfsCompleteIrp(
+                    Irp, STATUS_FILE_IS_A_DIRECTORY, 0);
+            Status = InfilfsServiceMutation(
+                Volume, INFILFS_WIN_NATIVE_OP_TRUNCATE,
+                &FileObject->FileName, NULL, 0, 0);
+            if (!NT_SUCCESS(Status))
+                return InfilfsCompleteIrp(Irp, Status, 0);
+            Attributes.logical_size = 0;
+            Attributes.allocation_size = 0;
+            CreateInformation =
+                Disposition == FILE_SUPERSEDE ?
+                FILE_SUPERSEDED : FILE_OVERWRITTEN;
+        }
+    }
     if (!NT_SUCCESS(Status))
         return InfilfsCompleteIrp(Irp, Status, 0);
 
@@ -733,7 +832,7 @@ static NTSTATUS InfilfsCreate(PDEVICE_OBJECT DeviceObject, PIRP Irp)
             (PCACHE_MANAGER_CALLBACKS)&g_InfilfsCacheCallbacks, Fcb);
     }
 
-    return InfilfsCompleteIrp(Irp, STATUS_SUCCESS, FILE_OPENED);
+    return InfilfsCompleteIrp(Irp, STATUS_SUCCESS, CreateInformation);
 }
 
 static PVOID InfilfsGetIrpBuffer(PIRP Irp)
