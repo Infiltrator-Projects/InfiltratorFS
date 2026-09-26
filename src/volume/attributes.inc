@@ -314,7 +314,7 @@ infs_status infs_read_symlink(struct infs_volume *vol, const char *path,
 
 static infs_status link_file_tx(struct infs_volume *vol,
                                 const char *existing_path,
-                                const char *new_path)
+                                const char *new_path, int replace)
 {
     if (!vol->writable)
         return INFS_STATUS_READ_ONLY;
@@ -343,11 +343,39 @@ static infs_status link_file_tx(struct infs_volume *vol,
     status = dir_validate(parent_block, &parent_payload);
     if (status != INFS_STATUS_OK)
         return status;
-    status = dir_lookup_volume(vol, parent_block, name, NULL);
-    if (status == INFS_STATUS_OK)
-        return INFS_STATUS_ALREADY_EXISTS;
-    if (status != INFS_STATUS_NOT_FOUND)
+    struct infs_dirent_disk destination_entry;
+    status = dir_lookup_volume(
+        vol, parent_block, name, &destination_entry);
+    if (status == INFS_STATUS_OK) {
+        struct infs_lookup destination;
+
+        if (memcmp(
+                destination_entry.object_id,
+                source.object_id, 16) == 0)
+            return INFS_STATUS_OK;
+        if (!replace)
+            return INFS_STATUS_ALREADY_EXISTS;
+        status = index_find(
+            vol, destination_entry.object_id, &destination);
+        if (status != INFS_STATUS_OK)
+            return status;
+        if (destination.type == INFS_OBJECT_DIRECTORY)
+            return INFS_STATUS_IS_DIRECTORY;
+        if (destination.type != INFS_OBJECT_FILE &&
+            destination.type != INFS_OBJECT_SYMLINK)
+            return INFS_STATUS_NOT_SUPPORTED;
+        status = destroy_replaced_object_tx(vol, &destination);
+        if (status != INFS_STATUS_OK)
+            return status;
+        status = dir_remove_volume(
+            vol, parent_block, name, NULL);
+        if (status != INFS_STATUS_OK)
+            return status;
+        parent_payload = (struct infs_directory_payload_disk *)(
+            parent_block + sizeof(struct infs_object_header_disk));
+    } else if (status != INFS_STATUS_NOT_FOUND) {
         return status;
+    }
 
     uint8_t source_block[INFS_BLOCK_SIZE];
     status = read_object(vol, source.block, source_block);
@@ -385,8 +413,9 @@ static infs_status link_file_tx(struct infs_volume *vol,
     return finish_mutation(vol, (uint64_t)INFS_BLOCK_SIZE * 5u);
 }
 
-infs_status infs_link_file(struct infs_volume *vol, const char *existing_path,
-                           const char *new_path)
+infs_status infs_link_file_ex(struct infs_volume *vol,
+                              const char *existing_path,
+                              const char *new_path, int replace)
 {
     if (!vol || !existing_path || !new_path || existing_path[0] != '/' ||
         new_path[0] != '/')
@@ -398,10 +427,17 @@ infs_status infs_link_file(struct infs_volume *vol, const char *existing_path,
     infs_status status = mutation_scope_begin(vol, &started_transaction);
     if (status != INFS_STATUS_OK)
         return status;
-    status = link_file_tx(vol, existing_path, new_path);
+    status = link_file_tx(
+        vol, existing_path, new_path, replace != 0);
     if (status != INFS_STATUS_OK)
         mutation_scope_fail(vol, started_transaction);
     else
         mutation_scope_success(vol);
     return status;
+}
+
+infs_status infs_link_file(struct infs_volume *vol, const char *existing_path,
+                           const char *new_path)
+{
+    return infs_link_file_ex(vol, existing_path, new_path, 0);
 }
