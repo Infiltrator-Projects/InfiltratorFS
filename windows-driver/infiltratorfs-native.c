@@ -1016,6 +1016,270 @@ static NTSTATUS InfilfsServiceMutation(
     return Status;
 }
 
+static NTSTATUS InfilfsFetchSecurityDescriptor(
+    INFILFS_NATIVE_VOLUME *Volume, PCUNICODE_STRING Path,
+    PSECURITY_DESCRIPTOR *DescriptorOut, PULONG LengthOut)
+{
+    struct infilfs_win_native_request *Request = NULL;
+    struct infilfs_win_native_response *Response = NULL;
+    PSECURITY_DESCRIPTOR Descriptor = NULL;
+    NTSTATUS Status;
+
+    if (!Volume || !Path || !DescriptorOut || !LengthOut)
+        return STATUS_INVALID_PARAMETER;
+    *DescriptorOut = NULL;
+    *LengthOut = 0;
+
+    Request = ExAllocatePool2(
+        POOL_FLAG_PAGED, sizeof(*Request), INFILFS_NATIVE_REQUEST_TAG);
+    Response = ExAllocatePool2(
+        POOL_FLAG_PAGED, sizeof(*Response), INFILFS_NATIVE_REQUEST_TAG);
+    if (!Request || !Response) {
+        Status = STATUS_INSUFFICIENT_RESOURCES;
+        goto out;
+    }
+
+    RtlZeroMemory(Request, sizeof(*Request));
+    RtlZeroMemory(Response, sizeof(*Response));
+    Request->opcode = INFILFS_WIN_NATIVE_OP_QUERY_SECURITY;
+    Request->desired_access =
+        OWNER_SECURITY_INFORMATION |
+        GROUP_SECURITY_INFORMATION |
+        DACL_SECURITY_INFORMATION;
+    InfilfsCopyPathToRequest(Request, Path);
+    Status = InfilfsCallService(Volume, Request, Response);
+    if (!NT_SUCCESS(Status))
+        goto out;
+    if (!Response->output_bytes ||
+        Response->output_bytes > sizeof(Response->output)) {
+        Status = STATUS_INVALID_SECURITY_DESCR;
+        goto out;
+    }
+
+    Descriptor = ExAllocatePool2(
+        POOL_FLAG_PAGED, Response->output_bytes,
+        INFILFS_NATIVE_REQUEST_TAG);
+    if (!Descriptor) {
+        Status = STATUS_INSUFFICIENT_RESOURCES;
+        goto out;
+    }
+    RtlCopyMemory(
+        Descriptor, Response->output, Response->output_bytes);
+    if (!RtlValidSecurityDescriptor(Descriptor)) {
+        Status = STATUS_INVALID_SECURITY_DESCR;
+        goto out;
+    }
+
+    *DescriptorOut = Descriptor;
+    *LengthOut = Response->output_bytes;
+    Descriptor = NULL;
+    Status = STATUS_SUCCESS;
+
+out:
+    if (Descriptor)
+        ExFreePoolWithTag(Descriptor, INFILFS_NATIVE_REQUEST_TAG);
+    if (Response)
+        ExFreePoolWithTag(Response, INFILFS_NATIVE_REQUEST_TAG);
+    if (Request)
+        ExFreePoolWithTag(Request, INFILFS_NATIVE_REQUEST_TAG);
+    return Status;
+}
+
+static NTSTATUS InfilfsStoreSecurityDescriptor(
+    INFILFS_NATIVE_VOLUME *Volume, PCUNICODE_STRING Path,
+    PSECURITY_DESCRIPTOR Descriptor)
+{
+    struct infilfs_win_native_request *Request = NULL;
+    struct infilfs_win_native_response *Response = NULL;
+    ULONG Bytes;
+    NTSTATUS Status;
+
+    if (!Volume || !Path || !Descriptor ||
+        !RtlValidSecurityDescriptor(Descriptor))
+        return STATUS_INVALID_PARAMETER;
+    Bytes = RtlLengthSecurityDescriptor(Descriptor);
+    if (!Bytes || Bytes > INFILFS_WIN_NATIVE_IO_CHUNK)
+        return STATUS_BUFFER_OVERFLOW;
+
+    Request = ExAllocatePool2(
+        POOL_FLAG_PAGED, sizeof(*Request), INFILFS_NATIVE_REQUEST_TAG);
+    Response = ExAllocatePool2(
+        POOL_FLAG_PAGED, sizeof(*Response), INFILFS_NATIVE_REQUEST_TAG);
+    if (!Request || !Response) {
+        Status = STATUS_INSUFFICIENT_RESOURCES;
+        goto out;
+    }
+    RtlZeroMemory(Request, sizeof(*Request));
+    RtlZeroMemory(Response, sizeof(*Response));
+    Request->opcode = INFILFS_WIN_NATIVE_OP_SET_SECURITY;
+    Request->desired_access =
+        OWNER_SECURITY_INFORMATION |
+        GROUP_SECURITY_INFORMATION |
+        DACL_SECURITY_INFORMATION;
+    Request->input_bytes = Bytes;
+    InfilfsCopyPathToRequest(Request, Path);
+    RtlCopyMemory(Request->input, Descriptor, Bytes);
+    Status = InfilfsCallService(Volume, Request, Response);
+
+out:
+    if (Response)
+        ExFreePoolWithTag(Response, INFILFS_NATIVE_REQUEST_TAG);
+    if (Request)
+        ExFreePoolWithTag(Request, INFILFS_NATIVE_REQUEST_TAG);
+    return Status;
+}
+
+static NTSTATUS InfilfsCheckAccess(
+    INFILFS_NATIVE_VOLUME *Volume, PCUNICODE_STRING Path,
+    PACCESS_STATE AccessState, ACCESS_MASK DesiredAccess,
+    KPROCESSOR_MODE AccessMode)
+{
+    PSECURITY_DESCRIPTOR Descriptor = NULL;
+    PPRIVILEGE_SET Privileges = NULL;
+    ACCESS_MASK GrantedAccess = 0;
+    ULONG DescriptorLength = 0;
+    NTSTATUS AccessStatus = STATUS_SUCCESS;
+    NTSTATUS Status;
+    BOOLEAN Granted;
+
+    if (!DesiredAccess)
+        return STATUS_SUCCESS;
+    if (!AccessState)
+        return STATUS_INVALID_PARAMETER;
+
+    Status = InfilfsFetchSecurityDescriptor(
+        Volume, Path, &Descriptor, &DescriptorLength);
+    if (Status == STATUS_OBJECT_NAME_NOT_FOUND)
+        return STATUS_SUCCESS;
+    if (!NT_SUCCESS(Status))
+        return Status;
+
+    SeLockSubjectContext(&AccessState->SubjectSecurityContext);
+    Granted = SeAccessCheck(
+        Descriptor, &AccessState->SubjectSecurityContext, TRUE,
+        DesiredAccess, AccessState->PreviouslyGrantedAccess,
+        &Privileges, IoGetFileObjectGenericMapping(),
+        AccessMode, &GrantedAccess, &AccessStatus);
+    if (Privileges) {
+        (void)SeAppendPrivileges(AccessState, Privileges);
+        SeFreePrivileges(Privileges);
+    }
+    SeUnlockSubjectContext(&AccessState->SubjectSecurityContext);
+
+    ExFreePoolWithTag(Descriptor, INFILFS_NATIVE_REQUEST_TAG);
+    return Granted ? STATUS_SUCCESS : AccessStatus;
+}
+
+static NTSTATUS InfilfsCheckTraverseAccess(
+    INFILFS_NATIVE_VOLUME *Volume, PCUNICODE_STRING Path,
+    PACCESS_STATE AccessState, KPROCESSOR_MODE AccessMode)
+{
+    PWCHAR Buffer;
+    UNICODE_STRING Prefix;
+    ULONG Chars;
+    NTSTATUS Status = STATUS_SUCCESS;
+
+    if (!Path || !Path->Buffer || !AccessState)
+        return STATUS_INVALID_PARAMETER;
+    if (AccessState->Flags & TOKEN_HAS_TRAVERSE_PRIVILEGE)
+        return STATUS_SUCCESS;
+
+    Chars = Path->Length / sizeof(WCHAR);
+    if (Chars <= 1u)
+        return STATUS_SUCCESS;
+    Buffer = ExAllocatePool2(
+        POOL_FLAG_PAGED, Path->Length + sizeof(WCHAR),
+        INFILFS_NATIVE_REQUEST_TAG);
+    if (!Buffer)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    RtlCopyMemory(Buffer, Path->Buffer, Path->Length);
+    Buffer[Chars] = L'\0';
+
+    for (ULONG i = 1u; i < Chars; ++i) {
+        WCHAR Saved;
+        if (Buffer[i] != L'\\')
+            continue;
+        Saved = Buffer[i];
+        Buffer[i] = L'\0';
+        Prefix.Buffer = Buffer;
+        Prefix.Length = (USHORT)(i * sizeof(WCHAR));
+        Prefix.MaximumLength = Prefix.Length + sizeof(WCHAR);
+        Status = InfilfsCheckAccess(
+            Volume, &Prefix, AccessState, FILE_TRAVERSE, AccessMode);
+        Buffer[i] = Saved;
+        if (!NT_SUCCESS(Status))
+            break;
+    }
+
+    ExFreePoolWithTag(Buffer, INFILFS_NATIVE_REQUEST_TAG);
+    return Status;
+}
+
+static NTSTATUS InfilfsParentPath(
+    PCUNICODE_STRING Path, PUNICODE_STRING Parent)
+{
+    ULONG Chars;
+
+    if (!Path || !Path->Buffer || !Parent || !Path->Length)
+        return STATUS_INVALID_PARAMETER;
+    Chars = Path->Length / sizeof(WCHAR);
+    while (Chars > 1u && Path->Buffer[Chars - 1u] != L'\\')
+        Chars--;
+    if (Chars <= 1u) {
+        Parent->Buffer = Path->Buffer;
+        Parent->Length = sizeof(WCHAR);
+        Parent->MaximumLength = Parent->Length;
+        return STATUS_SUCCESS;
+    }
+    Parent->Buffer = Path->Buffer;
+    Parent->Length = (USHORT)((Chars - 1u) * sizeof(WCHAR));
+    Parent->MaximumLength = Parent->Length;
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS InfilfsAssignInitialSecurity(
+    INFILFS_NATIVE_VOLUME *Volume, PCUNICODE_STRING Path,
+    BOOLEAN Directory, PACCESS_STATE AccessState)
+{
+    UNICODE_STRING ParentPath;
+    PSECURITY_DESCRIPTOR ParentDescriptor = NULL;
+    PSECURITY_DESCRIPTOR NewDescriptor = NULL;
+    ULONG ParentLength = 0;
+    NTSTATUS Status;
+
+    if (!Volume || !Path || !AccessState)
+        return STATUS_INVALID_PARAMETER;
+
+    Status = InfilfsParentPath(Path, &ParentPath);
+    if (!NT_SUCCESS(Status))
+        return Status;
+    Status = InfilfsFetchSecurityDescriptor(
+        Volume, &ParentPath, &ParentDescriptor, &ParentLength);
+    if (Status == STATUS_OBJECT_NAME_NOT_FOUND)
+        Status = STATUS_SUCCESS;
+    if (!NT_SUCCESS(Status))
+        goto out;
+
+    Status = SeAssignSecurity(
+        ParentDescriptor, AccessState->SecurityDescriptor,
+        &NewDescriptor, Directory,
+        &AccessState->SubjectSecurityContext,
+        IoGetFileObjectGenericMapping(), PagedPool);
+    if (!NT_SUCCESS(Status))
+        goto out;
+
+    Status = InfilfsStoreSecurityDescriptor(
+        Volume, Path, NewDescriptor);
+
+out:
+    if (NewDescriptor)
+        SeDeassignSecurity(&NewDescriptor);
+    if (ParentDescriptor)
+        ExFreePoolWithTag(
+            ParentDescriptor, INFILFS_NATIVE_REQUEST_TAG);
+    return Status;
+}
+
 static NTSTATUS InfilfsResolveOpenPath(
     PFILE_OBJECT FileObject, PUNICODE_STRING Path, PWCHAR *Allocated)
 {
@@ -1165,6 +1429,9 @@ static NTSTATUS InfilfsCreate(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     ULONG Disposition;
     ULONG Options;
     BOOLEAN DirectoryRequested;
+    BOOLEAN CreatedObject = FALSE;
+    PACCESS_STATE AccessState;
+    ACCESS_MASK DesiredAccess;
     ULONG_PTR CreateInformation = FILE_OPENED;
 
     if (InfilfsIsControlDevice(DeviceObject) ||
@@ -1172,6 +1439,13 @@ static NTSTATUS InfilfsCreate(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         return InfilfsCompleteIrp(Irp, STATUS_SUCCESS, FILE_OPENED);
     if (!Volume || !FileObject)
         return InfilfsCompleteIrp(Irp, STATUS_INVALID_DEVICE_REQUEST, 0);
+    if (!IrpSp->Parameters.Create.SecurityContext ||
+        !IrpSp->Parameters.Create.SecurityContext->AccessState)
+        return InfilfsCompleteIrp(Irp, STATUS_INVALID_PARAMETER, 0);
+    AccessState =
+        IrpSp->Parameters.Create.SecurityContext->AccessState;
+    DesiredAccess =
+        IrpSp->Parameters.Create.SecurityContext->DesiredAccess;
     if (Volume->Dismounted)
         return InfilfsCompleteIrp(Irp, STATUS_VOLUME_DISMOUNTED, 0);
     if (Volume->Locked)
@@ -1186,10 +1460,28 @@ static NTSTATUS InfilfsCreate(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     Options = IrpSp->Parameters.Create.Options & 0x00ffffffu;
     DirectoryRequested = (Options & FILE_DIRECTORY_FILE) != 0;
 
+    Status = InfilfsCheckTraverseAccess(
+        Volume, &OpenPath, AccessState, Irp->RequestorMode);
+    if (!NT_SUCCESS(Status))
+        goto complete;
+
     RtlZeroMemory(&Attributes, sizeof(Attributes));
     Status = InfilfsLookupPath(Volume, &OpenPath, &Attributes);
     if (Status == STATUS_OBJECT_NAME_NOT_FOUND) {
         if (Disposition == FILE_OPEN || Disposition == FILE_OVERWRITE)
+            goto complete;
+
+        {
+            UNICODE_STRING ParentPath;
+            ACCESS_MASK ParentAccess = DirectoryRequested ?
+                FILE_ADD_SUBDIRECTORY : FILE_ADD_FILE;
+            Status = InfilfsParentPath(&OpenPath, &ParentPath);
+            if (NT_SUCCESS(Status))
+                Status = InfilfsCheckAccess(
+                    Volume, &ParentPath, AccessState,
+                    ParentAccess, Irp->RequestorMode);
+        }
+        if (!NT_SUCCESS(Status))
             goto complete;
 
         Status = InfilfsServiceMutation(
@@ -1199,11 +1491,36 @@ static NTSTATUS InfilfsCreate(PDEVICE_OBJECT DeviceObject, PIRP Irp)
             &OpenPath, NULL, 0, 0);
         if (!NT_SUCCESS(Status))
             goto complete;
+        CreatedObject = TRUE;
+        Status = InfilfsAssignInitialSecurity(
+            Volume, &OpenPath, DirectoryRequested, AccessState);
+        if (!NT_SUCCESS(Status)) {
+            (void)InfilfsServiceMutation(
+                Volume,
+                DirectoryRequested ? INFILFS_WIN_NATIVE_OP_RMDIR :
+                                     INFILFS_WIN_NATIVE_OP_UNLINK,
+                &OpenPath, NULL, 0, 0);
+            goto complete;
+        }
         CreateInformation = FILE_CREATED;
         RtlZeroMemory(&Attributes, sizeof(Attributes));
         Status = InfilfsLookupPath(
             Volume, &OpenPath, &Attributes);
     } else if (NT_SUCCESS(Status)) {
+        ACCESS_MASK RequiredAccess = DesiredAccess;
+        if (Disposition == FILE_OVERWRITE ||
+            Disposition == FILE_OVERWRITE_IF)
+            RequiredAccess |=
+                FILE_WRITE_DATA | FILE_WRITE_EA | FILE_WRITE_ATTRIBUTES;
+        if (Disposition == FILE_SUPERSEDE)
+            RequiredAccess |=
+                DELETE | FILE_WRITE_EA | FILE_WRITE_ATTRIBUTES;
+        Status = InfilfsCheckAccess(
+            Volume, &OpenPath, AccessState,
+            RequiredAccess, Irp->RequestorMode);
+        if (!NT_SUCCESS(Status))
+            goto complete;
+
         if (Disposition == FILE_CREATE) {
             Status = STATUS_OBJECT_NAME_COLLISION;
             goto complete;
@@ -1264,6 +1581,15 @@ static NTSTATUS InfilfsCreate(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     if (!NT_SUCCESS(Status))
         goto complete;
     Ccb->ShareRegistered = TRUE;
+    FileObject->ReadAccess =
+        (DesiredAccess &
+         (FILE_READ_DATA | FILE_EXECUTE | FILE_READ_ATTRIBUTES |
+          FILE_READ_EA | READ_CONTROL)) != 0;
+    FileObject->WriteAccess =
+        (DesiredAccess &
+         (FILE_WRITE_DATA | FILE_APPEND_DATA | FILE_WRITE_ATTRIBUTES |
+          FILE_WRITE_EA | WRITE_DAC | WRITE_OWNER)) != 0;
+    FileObject->DeleteAccess = (DesiredAccess & DELETE) != 0;
 
     FileObject->FsContext = Fcb;
     FileObject->FsContext2 = Ccb;
@@ -1291,6 +1617,7 @@ static NTSTATUS InfilfsCreate(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         Irp, STATUS_SUCCESS, CreateInformation);
 
 complete:
+    UNREFERENCED_PARAMETER(CreatedObject);
     if (Ccb) {
         if (Ccb->ShareRegistered && Fcb)
             IoRemoveShareAccess(FileObject, &Fcb->ShareAccess);
