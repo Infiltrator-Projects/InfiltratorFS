@@ -282,12 +282,17 @@ int main(void)
        !memcmp(policy_readback, policy_payload, sizeof(policy_payload)),
        "one-copy file reads when unselected member is unavailable");
 
+    /*
+     * Restore the unselected member before a whole-volume scrub. Other
+     * one-copy objects (for example a named stream with its own object ID) may
+     * legitimately select that member even though the owner file does not.
+     */
+    member[unselected_policy_member].fail_reads = 0;
     struct infs_scrub_report report;
     ok(infs_scrub(&volume, &report) == INFS_STATUS_OK &&
            report.metadata_errors == 0 && report.checksum_errors == 0,
        "scrub protected filesystem");
     infs_volume_close(&volume);
-    member[unselected_policy_member].fail_reads = 0;
 
     for (size_t i = 0; i < 2u; ++i) {
         struct infs_storage backing = member_storage(&member[i]);
