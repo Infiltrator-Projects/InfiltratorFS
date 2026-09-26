@@ -10,6 +10,8 @@
 #include "infiltratorfs-windows-metadata.h"
 #include "../../windows-driver/infiltratorfs-native-protocol.h"
 
+#include <intrin.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
