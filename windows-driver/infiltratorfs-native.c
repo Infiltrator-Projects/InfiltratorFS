@@ -1496,6 +1496,142 @@ static NTSTATUS InfilfsQueryVolumeInformation(
     return InfilfsCompleteIrp(Irp, Status, Used);
 }
 
+static NTSTATUS InfilfsQuerySecurity(PDEVICE_OBJECT DeviceObject, PIRP Irp)
+{
+    PIO_STACK_LOCATION IrpSp = IoGetCurrentIrpStackLocation(Irp);
+    INFILFS_NATIVE_VOLUME *Volume = InfilfsVolumeFromDevice(DeviceObject);
+    PFILE_OBJECT FileObject = IrpSp->FileObject;
+    INFILFS_NATIVE_FCB *Fcb = FileObject ?
+        (INFILFS_NATIVE_FCB *)FileObject->FsContext : NULL;
+    struct infilfs_win_native_request *Request = NULL;
+    struct infilfs_win_native_response *Response = NULL;
+    PVOID Output;
+    ULONG Capacity;
+    NTSTATUS Status;
+
+    if (!Volume || !Fcb)
+        return InfilfsCompleteIrp(Irp, STATUS_INVALID_PARAMETER, 0);
+
+    Capacity = IrpSp->Parameters.QuerySecurity.Length;
+    Output = Irp->UserBuffer;
+    if (!Output && Capacity)
+        return InfilfsCompleteIrp(Irp, STATUS_INVALID_USER_BUFFER, 0);
+
+    Request = ExAllocatePool2(
+        POOL_FLAG_PAGED, sizeof(*Request), INFILFS_NATIVE_REQUEST_TAG);
+    Response = ExAllocatePool2(
+        POOL_FLAG_PAGED, sizeof(*Response), INFILFS_NATIVE_REQUEST_TAG);
+    if (!Request || !Response) {
+        Status = STATUS_INSUFFICIENT_RESOURCES;
+        goto out;
+    }
+
+    RtlZeroMemory(Request, sizeof(*Request));
+    RtlZeroMemory(Response, sizeof(*Response));
+    Request->opcode = INFILFS_WIN_NATIVE_OP_QUERY_SECURITY;
+    Request->desired_access =
+        (ULONG)IrpSp->Parameters.QuerySecurity.SecurityInformation;
+    InfilfsCopyPathToRequest(Request, &Fcb->Path);
+    Status = InfilfsCallService(Volume, Request, Response);
+    if (!NT_SUCCESS(Status))
+        goto out;
+
+    if (Response->output_bytes > sizeof(Response->output)) {
+        Status = STATUS_DATA_ERROR;
+        goto out;
+    }
+
+    Irp->IoStatus.Information = Response->output_bytes;
+    if (Capacity < Response->output_bytes) {
+        Status = STATUS_BUFFER_TOO_SMALL;
+        goto out;
+    }
+
+    if (Response->output_bytes) {
+        __try {
+            ProbeForWrite(Output, Response->output_bytes, sizeof(UCHAR));
+            RtlCopyMemory(Output, Response->output, Response->output_bytes);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            Status = GetExceptionCode();
+            goto out;
+        }
+    }
+    Status = STATUS_SUCCESS;
+
+out:
+    if (Response)
+        ExFreePoolWithTag(Response, INFILFS_NATIVE_REQUEST_TAG);
+    if (Request)
+        ExFreePoolWithTag(Request, INFILFS_NATIVE_REQUEST_TAG);
+    return InfilfsCompleteIrp(
+        Irp, Status,
+        Status == STATUS_SUCCESS ? Irp->IoStatus.Information :
+        (Status == STATUS_BUFFER_TOO_SMALL ? Irp->IoStatus.Information : 0));
+}
+
+static NTSTATUS InfilfsSetSecurity(PDEVICE_OBJECT DeviceObject, PIRP Irp)
+{
+    PIO_STACK_LOCATION IrpSp = IoGetCurrentIrpStackLocation(Irp);
+    INFILFS_NATIVE_VOLUME *Volume = InfilfsVolumeFromDevice(DeviceObject);
+    PFILE_OBJECT FileObject = IrpSp->FileObject;
+    INFILFS_NATIVE_FCB *Fcb = FileObject ?
+        (INFILFS_NATIVE_FCB *)FileObject->FsContext : NULL;
+    PSECURITY_DESCRIPTOR Descriptor =
+        IrpSp->Parameters.SetSecurity.SecurityDescriptor;
+    struct infilfs_win_native_request *Request = NULL;
+    struct infilfs_win_native_response *Response = NULL;
+    ULONG Bytes;
+    NTSTATUS Status;
+
+    if (!Volume || !Fcb || !Descriptor)
+        return InfilfsCompleteIrp(Irp, STATUS_INVALID_PARAMETER, 0);
+    if (Volume->ReadOnly)
+        return InfilfsCompleteIrp(Irp, STATUS_MEDIA_WRITE_PROTECTED, 0);
+
+    __try {
+        if (!RtlValidSecurityDescriptor(Descriptor))
+            return InfilfsCompleteIrp(
+                Irp, STATUS_INVALID_SECURITY_DESCR, 0);
+        Bytes = RtlLengthSecurityDescriptor(Descriptor);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return InfilfsCompleteIrp(Irp, GetExceptionCode(), 0);
+    }
+    if (!Bytes || Bytes > INFILFS_WIN_NATIVE_IO_CHUNK)
+        return InfilfsCompleteIrp(Irp, STATUS_BUFFER_OVERFLOW, 0);
+
+    Request = ExAllocatePool2(
+        POOL_FLAG_PAGED, sizeof(*Request), INFILFS_NATIVE_REQUEST_TAG);
+    Response = ExAllocatePool2(
+        POOL_FLAG_PAGED, sizeof(*Response), INFILFS_NATIVE_REQUEST_TAG);
+    if (!Request || !Response) {
+        Status = STATUS_INSUFFICIENT_RESOURCES;
+        goto out;
+    }
+
+    RtlZeroMemory(Request, sizeof(*Request));
+    RtlZeroMemory(Response, sizeof(*Response));
+    Request->opcode = INFILFS_WIN_NATIVE_OP_SET_SECURITY;
+    Request->desired_access =
+        (ULONG)IrpSp->Parameters.SetSecurity.SecurityInformation;
+    Request->input_bytes = Bytes;
+    InfilfsCopyPathToRequest(Request, &Fcb->Path);
+    __try {
+        RtlCopyMemory(Request->input, Descriptor, Bytes);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        Status = GetExceptionCode();
+        goto out;
+    }
+
+    Status = InfilfsCallService(Volume, Request, Response);
+
+out:
+    if (Response)
+        ExFreePoolWithTag(Response, INFILFS_NATIVE_REQUEST_TAG);
+    if (Request)
+        ExFreePoolWithTag(Request, INFILFS_NATIVE_REQUEST_TAG);
+    return InfilfsCompleteIrp(Irp, Status, 0);
+}
+
 static NTSTATUS InfilfsFlushBuffers(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 {
     PIO_STACK_LOCATION IrpSp = IoGetCurrentIrpStackLocation(Irp);
@@ -1705,6 +1841,10 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
         InfilfsDirectoryControl;
     DriverObject->MajorFunction[IRP_MJ_QUERY_VOLUME_INFORMATION] =
         InfilfsQueryVolumeInformation;
+    DriverObject->MajorFunction[IRP_MJ_QUERY_SECURITY] =
+        InfilfsQuerySecurity;
+    DriverObject->MajorFunction[IRP_MJ_SET_SECURITY] =
+        InfilfsSetSecurity;
     DriverObject->MajorFunction[IRP_MJ_FLUSH_BUFFERS] = InfilfsFlushBuffers;
     DriverObject->MajorFunction[IRP_MJ_FILE_SYSTEM_CONTROL] =
         InfilfsFileSystemControl;
