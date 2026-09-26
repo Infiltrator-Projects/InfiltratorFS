@@ -24,9 +24,13 @@ static int truncate_file_tx(struct infs_volume *vol, const char *path, uint64_t 
         return status;
 
     uint64_t old_size = infs_le64_to_cpu(p->attributes.logical_size);
+    uint64_t storage_policy =
+        infs_le64_to_cpu(p->attributes.portable_flags) &
+        INFS_ATTR_STORAGE_POLICY_MASK;
     int inline_enabled =
         (infs_le64_to_cpu(vol->sb.incompat_flags) &
-         INFS_INCOMPAT_INLINE_DATA) != 0;
+         INFS_INCOMPAT_INLINE_DATA) != 0 &&
+        storage_policy == 0;
 
     if (inline_enabled && size <= INFS_INLINE_DATA_MAX) {
         uint8_t inline_data[INFS_INLINE_DATA_MAX] = {0};
