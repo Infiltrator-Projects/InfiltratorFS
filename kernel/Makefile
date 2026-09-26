@@ -83,7 +83,10 @@
 #   infiltratorfs_name_policy.c owns persistent cross-platform filename policy.
 #   infiltratorfs_media.c owns native media-profile admission and device policy.
 #   infiltratorfs_rw.inc is the only remaining nested implementation compositor;
-#   leaf .inc files must not start including each other or creating hidden cycles.
+#   namespace exchange is isolated in infiltratorfs_rw_namespace_exchange.inc
+#   but remains textually composed here so it can share the proven transaction
+#   helpers without introducing a second include graph. Leaf .inc files must
+#   not start including each other or creating hidden cycles.
 #   Existing macro-renamed legacy/data entry points are migration debt, not a
 #   pattern for new layers. New functionality must use explicit helper names.
 #   The maintainability policy test enforces include ownership, key ordering,
