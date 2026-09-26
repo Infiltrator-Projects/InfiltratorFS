@@ -1280,6 +1280,35 @@ static NTSTATUS InfilfsCheckCurrentSubjectAccess(
     return Granted ? STATUS_SUCCESS : AccessStatus;
 }
 
+static NTSTATUS InfilfsCheckReplaceTargetAccess(
+    INFILFS_NATIVE_VOLUME *Volume, PCUNICODE_STRING Destination,
+    KPROCESSOR_MODE AccessMode)
+{
+    struct infilfs_win_native_attributes Attributes;
+    UNICODE_STRING ParentPath;
+    NTSTATUS Status;
+
+    if (!Volume || !Destination)
+        return STATUS_INVALID_PARAMETER;
+
+    RtlZeroMemory(&Attributes, sizeof(Attributes));
+    Status = InfilfsLookupPath(Volume, Destination, &Attributes);
+    if (Status == STATUS_OBJECT_NAME_NOT_FOUND)
+        return STATUS_SUCCESS;
+    if (!NT_SUCCESS(Status))
+        return Status;
+
+    Status = InfilfsCheckCurrentSubjectAccess(
+        Volume, Destination, DELETE, AccessMode);
+    if (NT_SUCCESS(Status))
+        return STATUS_SUCCESS;
+
+    if (!NT_SUCCESS(InfilfsParentPath(Destination, &ParentPath)))
+        return Status;
+    return InfilfsCheckCurrentSubjectAccess(
+        Volume, &ParentPath, FILE_DELETE_CHILD, AccessMode);
+}
+
 static NTSTATUS InfilfsCheckTraverseAccess(
     INFILFS_NATIVE_VOLUME *Volume, PCUNICODE_STRING Path,
     PACCESS_STATE AccessState, KPROCESSOR_MODE AccessMode)
@@ -2632,6 +2661,13 @@ static NTSTATUS InfilfsSetInformation(PDEVICE_OBJECT DeviceObject, PIRP Irp)
                 INFILFS_WIN_NATIVE_REQ_REPLACE : 0;
         }
 
+        if (Replace) {
+            Status = InfilfsCheckReplaceTargetAccess(
+                Volume, &Destination, Irp->RequestorMode);
+            if (!NT_SUCCESS(Status))
+                break;
+        }
+
         Status = InfilfsServiceMutation(
             Volume, INFILFS_WIN_NATIVE_OP_RENAME,
             HandlePath, &Destination, 0, Replace);
@@ -2683,6 +2719,12 @@ static NTSTATUS InfilfsSetInformation(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         }
         Replace = Info->ReplaceIfExists ?
             INFILFS_WIN_NATIVE_REQ_REPLACE : 0;
+        if (Replace) {
+            Status = InfilfsCheckReplaceTargetAccess(
+                Volume, &Destination, Irp->RequestorMode);
+            if (!NT_SUCCESS(Status))
+                break;
+        }
         Status = InfilfsServiceMutation(
             Volume, INFILFS_WIN_NATIVE_OP_LINK,
             HandlePath, &Destination, 0, Replace);
