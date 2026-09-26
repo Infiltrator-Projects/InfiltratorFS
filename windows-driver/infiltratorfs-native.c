@@ -40,6 +40,7 @@ typedef struct _INFILFS_NATIVE_VOLUME {
     BOOLEAN ReadOnly;
     BOOLEAN Locked;
     BOOLEAN Dismounted;
+    EX_RUNDOWN_REF Rundown;
     ERESOURCE Resource;
     FAST_MUTEX FcbLock;
     LIST_ENTRY Fcbs;
@@ -230,7 +231,8 @@ static NTSTATUS InfilfsTargetFlush(PDEVICE_OBJECT Target)
     return Status;
 }
 
-static INFILFS_NATIVE_VOLUME *InfilfsFindVolume(ULONGLONG VolumeId)
+static INFILFS_NATIVE_VOLUME *InfilfsFindVolumeReferenced(
+    ULONGLONG VolumeId)
 {
     PLIST_ENTRY Entry;
     INFILFS_NATIVE_VOLUME *Found = NULL;
@@ -240,7 +242,8 @@ static INFILFS_NATIVE_VOLUME *InfilfsFindVolume(ULONGLONG VolumeId)
          Entry != &g_Infilfs.Volumes; Entry = Entry->Flink) {
         INFILFS_NATIVE_VOLUME *Volume =
             CONTAINING_RECORD(Entry, INFILFS_NATIVE_VOLUME, GlobalLink);
-        if (Volume->VolumeId == VolumeId && !Volume->Dismounted) {
+        if (Volume->VolumeId == VolumeId && !Volume->Dismounted &&
+            ExAcquireRundownProtection(&Volume->Rundown)) {
             Found = Volume;
             break;
         }
@@ -255,17 +258,25 @@ static VOID InfilfsRetireVolume(INFILFS_NATIVE_VOLUME *Volume)
         return;
 
     ExAcquireFastMutex(&g_Infilfs.VolumeLock);
+    Volume->Dismounted = TRUE;
     if (!IsListEmpty(&Volume->GlobalLink)) {
         RemoveEntryList(&Volume->GlobalLink);
         InitializeListHead(&Volume->GlobalLink);
     }
     ExReleaseFastMutex(&g_Infilfs.VolumeLock);
 
+    /*
+     * Service/control IRPs look volumes up independently of a VDO-targeted
+     * filesystem IRP. Removing the volume prevents new acquisitions; wait for
+     * already acquired control operations before invalidating TargetDevice or
+     * the device extension.
+     */
+    ExWaitForRundownProtectionRelease(&Volume->Rundown);
+
     if (Volume->Vpb) {
         Volume->Vpb->Flags &= ~VPB_MOUNTED;
         Volume->Vpb->DeviceObject = NULL;
     }
-    Volume->Dismounted = TRUE;
     if (Volume->TargetDevice) {
         ObDereferenceObject(Volume->TargetDevice);
         Volume->TargetDevice = NULL;
@@ -518,18 +529,24 @@ static NTSTATUS InfilfsControlRawIo(
          IrpSp->Parameters.DeviceIoControl.OutputBufferLength < Required))
         return InfilfsCompleteIrp(Irp, STATUS_BUFFER_TOO_SMALL, 0);
 
-    Volume = InfilfsFindVolume(Io->volume_id);
+    Volume = InfilfsFindVolumeReferenced(Io->volume_id);
     if (!Volume)
         return InfilfsCompleteIrp(Irp, STATUS_VOLUME_DISMOUNTED, 0);
     if (Io->offset > Volume->SizeBytes ||
-        Io->size > Volume->SizeBytes - Io->offset)
-        return InfilfsCompleteIrp(Irp, STATUS_END_OF_FILE, 0);
-    if (Write && Volume->ReadOnly)
-        return InfilfsCompleteIrp(Irp, STATUS_MEDIA_WRITE_PROTECTED, 0);
+        Io->size > Volume->SizeBytes - Io->offset) {
+        Status = STATUS_END_OF_FILE;
+        goto out;
+    }
+    if (Write && Volume->ReadOnly) {
+        Status = STATUS_MEDIA_WRITE_PROTECTED;
+        goto out;
+    }
 
     Status = InfilfsTargetIo(
         Volume->TargetDevice, Write ? IRP_MJ_WRITE : IRP_MJ_READ,
         Io->offset, Io->data, Io->size);
+out:
+    ExReleaseRundownProtection(&Volume->Rundown);
     return InfilfsCompleteIrp(
         Irp, Status, NT_SUCCESS(Status) ? Required : 0);
 }
@@ -557,11 +574,12 @@ static NTSTATUS InfilfsControlDeviceIo(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         if (IrpSp->Parameters.DeviceIoControl.InputBufferLength <
             sizeof(*Info))
             return InfilfsCompleteIrp(Irp, STATUS_BUFFER_TOO_SMALL, 0);
-        Volume = InfilfsFindVolume(Info->volume_id);
+        Volume = InfilfsFindVolumeReferenced(Info->volume_id);
         if (!Volume)
             return InfilfsCompleteIrp(Irp, STATUS_VOLUME_DISMOUNTED, 0);
-        return InfilfsCompleteIrp(
-            Irp, InfilfsTargetFlush(Volume->TargetDevice), 0);
+        NTSTATUS Status = InfilfsTargetFlush(Volume->TargetDevice);
+        ExReleaseRundownProtection(&Volume->Rundown);
+        return InfilfsCompleteIrp(Irp, Status, 0);
     }
     case IOCTL_INFILFS_NATIVE_VOLUME_QUERY: {
         struct infilfs_win_native_volume_info *Info =
@@ -575,7 +593,7 @@ static NTSTATUS InfilfsControlDeviceIo(PDEVICE_OBJECT DeviceObject, PIRP Irp)
                 sizeof(*Info))
             return InfilfsCompleteIrp(Irp, STATUS_BUFFER_TOO_SMALL, 0);
         Id = *(ULONGLONG *)Irp->AssociatedIrp.SystemBuffer;
-        Volume = InfilfsFindVolume(Id);
+        Volume = InfilfsFindVolumeReferenced(Id);
         if (!Volume)
             return InfilfsCompleteIrp(Irp, STATUS_VOLUME_DISMOUNTED, 0);
         RtlZeroMemory(Info, sizeof(*Info));
@@ -584,6 +602,7 @@ static NTSTATUS InfilfsControlDeviceIo(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         Info->size_bytes = Volume->SizeBytes;
         Info->sector_size = Volume->SectorSize;
         Info->read_only = Volume->ReadOnly ? 1u : 0u;
+        ExReleaseRundownProtection(&Volume->Rundown);
         return InfilfsCompleteIrp(Irp, STATUS_SUCCESS, sizeof(*Info));
     }
     default:
@@ -735,6 +754,7 @@ static NTSTATUS InfilfsMountVolume(
     Volume->SizeBytes = SizeBytes;
     Volume->SectorSize = SectorSize;
     Volume->ReadOnly = InfilfsTargetReadOnly(Target);
+    ExInitializeRundownProtection(&Volume->Rundown);
     ExInitializeResourceLite(&Volume->Resource);
     ExInitializeFastMutex(&Volume->FcbLock);
     InitializeListHead(&Volume->Fcbs);
@@ -3715,6 +3735,7 @@ static VOID InfilfsUnload(PDRIVER_OBJECT DriverObject)
         Entry = RemoveHeadList(&g_Infilfs.Volumes);
         Volume = CONTAINING_RECORD(
             Entry, INFILFS_NATIVE_VOLUME, GlobalLink);
+        ExWaitForRundownProtectionRelease(&Volume->Rundown);
         if (Volume->Vpb) {
             Volume->Vpb->Flags &= ~VPB_MOUNTED;
             Volume->Vpb->DeviceObject = NULL;
