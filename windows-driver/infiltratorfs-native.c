@@ -806,14 +806,81 @@ static NTSTATUS InfilfsServiceMutation(
     return Status;
 }
 
+static NTSTATUS InfilfsResolveOpenPath(
+    PFILE_OBJECT FileObject, PUNICODE_STRING Path, PWCHAR *Allocated)
+{
+    INFILFS_NATIVE_FCB *Parent;
+    USHORT ParentLength;
+    USHORT ChildLength;
+    ULONG Bytes;
+    BOOLEAN Separator;
+
+    if (!FileObject || !Path || !Allocated)
+        return STATUS_INVALID_PARAMETER;
+    *Allocated = NULL;
+
+    if (!FileObject->RelatedFileObject ||
+        !FileObject->FileName.Length ||
+        (FileObject->FileName.Buffer &&
+         FileObject->FileName.Buffer[0] == L'\\')) {
+        *Path = FileObject->FileName;
+        if (!Path->Length) {
+            static WCHAR Root[] = L"\\";
+            RtlInitUnicodeString(Path, Root);
+        }
+        return STATUS_SUCCESS;
+    }
+
+    Parent = (INFILFS_NATIVE_FCB *)
+        FileObject->RelatedFileObject->FsContext;
+    if (!Parent || Parent->Signature != 'fSfI' ||
+        !Parent->Path.Buffer)
+        return STATUS_INVALID_PARAMETER;
+
+    ParentLength = Parent->Path.Length;
+    ChildLength = FileObject->FileName.Length;
+    Separator = ParentLength >= sizeof(WCHAR) &&
+        Parent->Path.Buffer[
+            ParentLength / sizeof(WCHAR) - 1u] != L'\\';
+    Bytes = (ULONG)ParentLength +
+        (Separator ? sizeof(WCHAR) : 0u) +
+        (ULONG)ChildLength;
+    if (Bytes > MAXUSHORT - sizeof(WCHAR))
+        return STATUS_NAME_TOO_LONG;
+
+    PWCHAR Buffer = ExAllocatePool2(
+        POOL_FLAG_PAGED, Bytes + sizeof(WCHAR),
+        INFILFS_NATIVE_FCB_TAG);
+    if (!Buffer)
+        return STATUS_INSUFFICIENT_RESOURCES;
+
+    ULONG Cursor = 0;
+    RtlCopyMemory(Buffer, Parent->Path.Buffer, ParentLength);
+    Cursor += ParentLength / sizeof(WCHAR);
+    if (Separator)
+        Buffer[Cursor++] = L'\\';
+    RtlCopyMemory(
+        Buffer + Cursor, FileObject->FileName.Buffer, ChildLength);
+    Cursor += ChildLength / sizeof(WCHAR);
+    Buffer[Cursor] = L'\0';
+
+    Path->Buffer = Buffer;
+    Path->Length = (USHORT)Bytes;
+    Path->MaximumLength = (USHORT)(Bytes + sizeof(WCHAR));
+    *Allocated = Buffer;
+    return STATUS_SUCCESS;
+}
+
 static NTSTATUS InfilfsCreate(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 {
     PIO_STACK_LOCATION IrpSp = IoGetCurrentIrpStackLocation(Irp);
     INFILFS_NATIVE_VOLUME *Volume = InfilfsVolumeFromDevice(DeviceObject);
     PFILE_OBJECT FileObject = IrpSp->FileObject;
     struct infilfs_win_native_attributes Attributes;
-    INFILFS_NATIVE_FCB *Fcb;
-    INFILFS_NATIVE_CCB *Ccb;
+    INFILFS_NATIVE_FCB *Fcb = NULL;
+    INFILFS_NATIVE_CCB *Ccb = NULL;
+    UNICODE_STRING OpenPath;
+    PWCHAR AllocatedPath = NULL;
     NTSTATUS Status;
     ULONG Disposition;
     ULONG Options;
@@ -826,52 +893,61 @@ static NTSTATUS InfilfsCreate(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     if (!Volume || !FileObject)
         return InfilfsCompleteIrp(Irp, STATUS_INVALID_DEVICE_REQUEST, 0);
 
+    Status = InfilfsResolveOpenPath(
+        FileObject, &OpenPath, &AllocatedPath);
+    if (!NT_SUCCESS(Status))
+        return InfilfsCompleteIrp(Irp, Status, 0);
+
     Disposition = (IrpSp->Parameters.Create.Options >> 24) & 0xffu;
     Options = IrpSp->Parameters.Create.Options & 0x00ffffffu;
     DirectoryRequested = (Options & FILE_DIRECTORY_FILE) != 0;
 
     RtlZeroMemory(&Attributes, sizeof(Attributes));
-    Status = InfilfsLookupPath(Volume, &FileObject->FileName, &Attributes);
+    Status = InfilfsLookupPath(Volume, &OpenPath, &Attributes);
     if (Status == STATUS_OBJECT_NAME_NOT_FOUND) {
         if (Disposition == FILE_OPEN || Disposition == FILE_OVERWRITE)
-            return InfilfsCompleteIrp(Irp, Status, 0);
+            goto complete;
 
         Status = InfilfsServiceMutation(
             Volume,
             DirectoryRequested ? INFILFS_WIN_NATIVE_OP_MKDIR :
                                  INFILFS_WIN_NATIVE_OP_CREATE,
-            &FileObject->FileName, NULL, 0, 0);
+            &OpenPath, NULL, 0, 0);
         if (!NT_SUCCESS(Status))
-            return InfilfsCompleteIrp(Irp, Status, 0);
+            goto complete;
         CreateInformation = FILE_CREATED;
         RtlZeroMemory(&Attributes, sizeof(Attributes));
         Status = InfilfsLookupPath(
-            Volume, &FileObject->FileName, &Attributes);
+            Volume, &OpenPath, &Attributes);
     } else if (NT_SUCCESS(Status)) {
-        if (Disposition == FILE_CREATE)
-            return InfilfsCompleteIrp(
-                Irp, STATUS_OBJECT_NAME_COLLISION, 0);
+        if (Disposition == FILE_CREATE) {
+            Status = STATUS_OBJECT_NAME_COLLISION;
+            goto complete;
+        }
 
         if (DirectoryRequested &&
-            Attributes.object_type != INFILFS_WIN_NATIVE_OBJECT_DIRECTORY)
-            return InfilfsCompleteIrp(
-                Irp, STATUS_NOT_A_DIRECTORY, 0);
+            Attributes.object_type != INFILFS_WIN_NATIVE_OBJECT_DIRECTORY) {
+            Status = STATUS_NOT_A_DIRECTORY;
+            goto complete;
+        }
         if ((Options & FILE_NON_DIRECTORY_FILE) &&
-            Attributes.object_type == INFILFS_WIN_NATIVE_OBJECT_DIRECTORY)
-            return InfilfsCompleteIrp(
-                Irp, STATUS_FILE_IS_A_DIRECTORY, 0);
+            Attributes.object_type == INFILFS_WIN_NATIVE_OBJECT_DIRECTORY) {
+            Status = STATUS_FILE_IS_A_DIRECTORY;
+            goto complete;
+        }
 
         if (Disposition == FILE_OVERWRITE ||
             Disposition == FILE_OVERWRITE_IF ||
             Disposition == FILE_SUPERSEDE) {
-            if (Attributes.object_type != INFILFS_WIN_NATIVE_OBJECT_FILE)
-                return InfilfsCompleteIrp(
-                    Irp, STATUS_FILE_IS_A_DIRECTORY, 0);
+            if (Attributes.object_type != INFILFS_WIN_NATIVE_OBJECT_FILE) {
+                Status = STATUS_FILE_IS_A_DIRECTORY;
+                goto complete;
+            }
             Status = InfilfsServiceMutation(
                 Volume, INFILFS_WIN_NATIVE_OP_TRUNCATE,
-                &FileObject->FileName, NULL, 0, 0);
+                &OpenPath, NULL, 0, 0);
             if (!NT_SUCCESS(Status))
-                return InfilfsCompleteIrp(Irp, Status, 0);
+                goto complete;
             Attributes.logical_size = 0;
             Attributes.allocation_size = 0;
             CreateInformation =
@@ -880,35 +956,37 @@ static NTSTATUS InfilfsCreate(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         }
     }
     if (!NT_SUCCESS(Status))
-        return InfilfsCompleteIrp(Irp, Status, 0);
+        goto complete;
 
     Fcb = InfilfsGetOrCreateFcb(
-        Volume, &FileObject->FileName, &Attributes);
+        Volume, &OpenPath, &Attributes);
     Ccb = ExAllocatePool2(
         POOL_FLAG_NON_PAGED, sizeof(*Ccb), INFILFS_NATIVE_CCB_TAG);
     if (!Fcb || !Ccb) {
-        if (Fcb) InfilfsDereferenceFcb(Fcb);
-        if (Ccb) ExFreePoolWithTag(Ccb, INFILFS_NATIVE_CCB_TAG);
-        return InfilfsCompleteIrp(
-            Irp, STATUS_INSUFFICIENT_RESOURCES, 0);
+        Status = STATUS_INSUFFICIENT_RESOURCES;
+        goto complete;
     }
     RtlZeroMemory(Ccb, sizeof(*Ccb));
     Ccb->Signature = 'cSfI';
 
+    if (!IrpSp->Parameters.Create.SecurityContext) {
+        Status = STATUS_INVALID_PARAMETER;
+        goto complete;
+    }
     Status = IoCheckShareAccess(
         IrpSp->Parameters.Create.SecurityContext->DesiredAccess,
         IrpSp->Parameters.Create.ShareAccess,
         FileObject, &Fcb->ShareAccess, TRUE);
-    if (!NT_SUCCESS(Status)) {
-        ExFreePoolWithTag(Ccb, INFILFS_NATIVE_CCB_TAG);
-        InfilfsDereferenceFcb(Fcb);
-        return InfilfsCompleteIrp(Irp, Status, 0);
-    }
+    if (!NT_SUCCESS(Status))
+        goto complete;
     Ccb->ShareRegistered = TRUE;
 
     FileObject->FsContext = Fcb;
     FileObject->FsContext2 = Ccb;
     FileObject->SectionObjectPointer = &Fcb->SectionObjectPointers;
+
+    if (Options & FILE_DELETE_ON_CLOSE)
+        Fcb->DeletePending = TRUE;
 
     if (Fcb->ObjectType == INFILFS_WIN_NATIVE_OBJECT_FILE &&
         !(FileObject->Flags & FO_NO_INTERMEDIATE_BUFFERING)) {
@@ -921,7 +999,22 @@ static NTSTATUS InfilfsCreate(PDEVICE_OBJECT DeviceObject, PIRP Irp)
             (PCACHE_MANAGER_CALLBACKS)&g_InfilfsCacheCallbacks, Fcb);
     }
 
-    return InfilfsCompleteIrp(Irp, STATUS_SUCCESS, CreateInformation);
+    if (AllocatedPath)
+        ExFreePoolWithTag(AllocatedPath, INFILFS_NATIVE_FCB_TAG);
+    return InfilfsCompleteIrp(
+        Irp, STATUS_SUCCESS, CreateInformation);
+
+complete:
+    if (Ccb) {
+        if (Ccb->ShareRegistered && Fcb)
+            IoRemoveShareAccess(FileObject, &Fcb->ShareAccess);
+        ExFreePoolWithTag(Ccb, INFILFS_NATIVE_CCB_TAG);
+    }
+    if (Fcb)
+        InfilfsDereferenceFcb(Fcb);
+    if (AllocatedPath)
+        ExFreePoolWithTag(AllocatedPath, INFILFS_NATIVE_FCB_TAG);
+    return InfilfsCompleteIrp(Irp, Status, 0);
 }
 
 static PVOID InfilfsGetIrpBuffer(PIRP Irp)
