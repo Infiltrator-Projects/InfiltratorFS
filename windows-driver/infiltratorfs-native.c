@@ -2058,6 +2058,8 @@ static NTSTATUS InfilfsQueryVolumeInformation(
         }
         Info->DeviceType = FILE_DEVICE_DISK_FILE_SYSTEM;
         Info->Characteristics = DeviceObject->Characteristics;
+        if (Volume->ReadOnly)
+            Info->Characteristics |= FILE_READ_ONLY_DEVICE;
         Used = sizeof(*Info);
         break;
     }
