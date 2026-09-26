@@ -2854,6 +2854,7 @@ static NTSTATUS InfilfsQuerySecurity(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     PFILE_OBJECT FileObject = IrpSp->FileObject;
     INFILFS_NATIVE_FCB *Fcb = FileObject ?
         (INFILFS_NATIVE_FCB *)FileObject->FsContext : NULL;
+    PCUNICODE_STRING HandlePath = InfilfsHandlePath(FileObject, Fcb);
     PSECURITY_DESCRIPTOR FullDescriptor = NULL;
     PSECURITY_DESCRIPTOR ObjectDescriptor;
     PSECURITY_DESCRIPTOR Filtered = NULL;
@@ -2865,7 +2866,7 @@ static NTSTATUS InfilfsQuerySecurity(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     ULONG Capacity = IrpSp->Parameters.QuerySecurity.Length;
     NTSTATUS Status;
 
-    if (!Volume || !Fcb)
+    if (!Volume || !Fcb || !HandlePath || !HandlePath->Buffer)
         return InfilfsCompleteIrp(Irp, STATUS_INVALID_PARAMETER, 0);
     if (Information &
         ~(OWNER_SECURITY_INFORMATION |
@@ -2876,7 +2877,7 @@ static NTSTATUS InfilfsQuerySecurity(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         return InfilfsCompleteIrp(Irp, STATUS_INVALID_PARAMETER, 0);
 
     Status = InfilfsFetchSecurityDescriptor(
-        Volume, &Fcb->Path, &FullDescriptor, &FullLength);
+        Volume, HandlePath, &FullDescriptor, &FullLength);
     if (!NT_SUCCESS(Status))
         return InfilfsCompleteIrp(Irp, Status, 0);
 
@@ -2936,6 +2937,7 @@ static NTSTATUS InfilfsSetSecurity(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     PFILE_OBJECT FileObject = IrpSp->FileObject;
     INFILFS_NATIVE_FCB *Fcb = FileObject ?
         (INFILFS_NATIVE_FCB *)FileObject->FsContext : NULL;
+    PCUNICODE_STRING HandlePath = InfilfsHandlePath(FileObject, Fcb);
     PSECURITY_DESCRIPTOR Descriptor =
         IrpSp->Parameters.SetSecurity.SecurityDescriptor;
     PSECURITY_DESCRIPTOR Captured = NULL;
@@ -2946,7 +2948,8 @@ static NTSTATUS InfilfsSetSecurity(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     ULONG Bytes = 0;
     NTSTATUS Status;
 
-    if (!Volume || !Fcb || !Descriptor)
+    if (!Volume || !Fcb || !HandlePath ||
+        !HandlePath->Buffer || !Descriptor)
         return InfilfsCompleteIrp(Irp, STATUS_INVALID_PARAMETER, 0);
     if (Volume->ReadOnly)
         return InfilfsCompleteIrp(Irp, STATUS_MEDIA_WRITE_PROTECTED, 0);
@@ -2981,7 +2984,7 @@ static NTSTATUS InfilfsSetSecurity(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     }
 
     Status = InfilfsFetchSecurityDescriptor(
-        Volume, &Fcb->Path, &Current, &CurrentLength);
+        Volume, HandlePath, &Current, &CurrentLength);
     if (!NT_SUCCESS(Status))
         goto out;
 
@@ -2993,7 +2996,7 @@ static NTSTATUS InfilfsSetSecurity(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         goto out;
 
     Status = InfilfsStoreSecurityDescriptor(
-        Volume, &Fcb->Path, Current);
+        Volume, HandlePath, Current);
 
 out:
     if (Current)
@@ -3011,6 +3014,7 @@ static NTSTATUS InfilfsFlushBuffers(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     PFILE_OBJECT FileObject = IrpSp->FileObject;
     INFILFS_NATIVE_FCB *Fcb = FileObject ?
         (INFILFS_NATIVE_FCB *)FileObject->FsContext : NULL;
+    PCUNICODE_STRING HandlePath = InfilfsHandlePath(FileObject, Fcb);
     NTSTATUS Status;
 
     if (!Volume)
@@ -3020,7 +3024,7 @@ static NTSTATUS InfilfsFlushBuffers(PDEVICE_OBJECT DeviceObject, PIRP Irp)
             FileObject->SectionObjectPointer, NULL, 0, &Irp->IoStatus);
 
     Status = InfilfsFlushPortableVolume(
-        Volume, Fcb ? &Fcb->Path : NULL);
+        Volume, HandlePath);
     return InfilfsCompleteIrp(Irp, Status, 0);
 }
 
@@ -3053,6 +3057,7 @@ static NTSTATUS InfilfsCleanup(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         (INFILFS_NATIVE_FCB *)FileObject->FsContext : NULL;
     INFILFS_NATIVE_CCB *Ccb = FileObject ?
         (INFILFS_NATIVE_CCB *)FileObject->FsContext2 : NULL;
+    PCUNICODE_STRING HandlePath = InfilfsHandlePath(FileObject, Fcb);
     NTSTATUS Status = STATUS_SUCCESS;
 
     if (!FileObject)
@@ -3079,7 +3084,7 @@ static NTSTATUS InfilfsCleanup(PDEVICE_OBJECT DeviceObject, PIRP Irp)
             Fcb->ObjectType == INFILFS_WIN_NATIVE_OBJECT_DIRECTORY ?
                 INFILFS_WIN_NATIVE_OP_RMDIR :
                 INFILFS_WIN_NATIVE_OP_UNLINK,
-            &Fcb->Path, NULL, 0, 0);
+            HandlePath, NULL, 0, 0);
         if (NT_SUCCESS(Status))
             FileObject->DeletePending = TRUE;
         InterlockedDecrement(&Fcb->DeletePendingCount);
