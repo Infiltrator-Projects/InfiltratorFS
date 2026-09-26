@@ -640,14 +640,18 @@ static void dispatch_mutation(
                 request->second_path, request->second_path_chars, second))
             status = INFS_STATUS_NAME_TOO_LONG;
         else
-            status = infs_rename(&v->volume, path, second);
+            status = infs_rename_ex(
+                &v->volume, path, second,
+                (request->flags & INFILFS_WIN_NATIVE_REQ_REPLACE) != 0);
         break;
     case INFILFS_WIN_NATIVE_OP_LINK:
         if (!request_path_utf8(
                 request->second_path, request->second_path_chars, second))
             status = INFS_STATUS_NAME_TOO_LONG;
         else
-            status = infs_link_file(&v->volume, path, second);
+            status = infs_link_file_ex(
+                &v->volume, path, second,
+                (request->flags & INFILFS_WIN_NATIVE_REQ_REPLACE) != 0);
         break;
     default:
         break;
