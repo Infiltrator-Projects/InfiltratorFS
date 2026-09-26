@@ -1155,16 +1155,25 @@ static long infilfs_file_fallocate(struct file *file, int mode,
                                    loff_t offset, loff_t length)
 {
     const int punch = FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE;
+    const int keep = FALLOC_FL_KEEP_SIZE;
+    const int zero = FALLOC_FL_ZERO_RANGE;
+    const int unshare = FALLOC_FL_UNSHARE_RANGE;
     struct inode *inode = file_inode(file);
     u8 *buffer;
     u64 position;
     u64 end;
+    u64 original_size;
+    bool zero_range = false;
+    bool keep_size = false;
     int ret = 0;
 
     if (offset < 0 || length <= 0)
         return -EINVAL;
     if ((u64)offset > U64_MAX - (u64)length)
         return -EFBIG;
+    end = (u64)offset + (u64)length;
+    original_size = (u64)i_size_read(inode);
+
     ret = file_write_and_wait_range(file, offset, offset + length - 1);
     if (ret)
         return ret;
@@ -1174,16 +1183,36 @@ static long infilfs_file_fallocate(struct file *file, int mode,
             truncate_pagecache_range(inode, offset, offset + length - 1);
         return ret;
     }
-    if (mode != 0)
+
+    /*
+     * Format 0.18 extent coverage ends exactly at logical EOF. Therefore an
+     * allocated KEEP_SIZE tail beyond EOF cannot be represented without a new
+     * on-disk extent state. KEEP_SIZE is nevertheless fully meaningful inside
+     * the existing file, where materialising a hole or unsharing a CoW range
+     * does not change logical size.
+     */
+    keep_size = (mode & keep) != 0;
+    if (keep_size && end > original_size)
         return -EOPNOTSUPP;
 
-    end = (u64)offset + (u64)length;
+    switch (mode & ~keep) {
+    case 0:
+        break;
+    case FALLOC_FL_ZERO_RANGE:
+        zero_range = true;
+        break;
+    case FALLOC_FL_UNSHARE_RANGE:
+        break;
+    default:
+        return -EOPNOTSUPP;
+    }
+
     /*
-     * Format 0.18 has no unwritten-extent state, so preallocation must still
-     * materialize initialized uncompressed blocks.  Do that in the native
-     * writer's 4 MiB transaction unit instead of 64 KiB fragments: semantics
-     * are unchanged, but a 64 MiB reservation no longer drives 1024 separate
-     * read/modify/write iterations.
+     * There is no unwritten-extent state, so allocation/unshare materialises
+     * initialized blocks. Preserve existing bytes for ordinary allocation and
+     * UNSHARE_RANGE; ZERO_RANGE deliberately skips the read and writes zeroes.
+     * Work in the native 4 MiB transaction unit rather than historical 64 KiB
+     * fragments.
      */
     buffer = kvzalloc(INFILFS_NATIVE_WRITE_CHUNK, GFP_NOFS);
     if (!buffer)
@@ -1195,19 +1224,21 @@ static long infilfs_file_fallocate(struct file *file, int mode,
         struct kvec vec;
         size_t chunk = min_t(u64, INFILFS_NATIVE_WRITE_CHUNK,
                              end - position);
-        ssize_t got;
+        ssize_t got = 0;
         ssize_t written;
 
         memset(buffer, 0, chunk);
-        vec.iov_base = buffer;
-        vec.iov_len = chunk;
-        init_sync_kiocb(&iocb, file);
-        iocb.ki_pos = position;
-        iov_iter_kvec(&iter, ITER_DEST, &vec, 1, chunk);
-        got = infilfs_file_read_iter_cached(&iocb, &iter);
-        if (got < 0) {
-            ret = (int)got;
-            break;
+        if (!zero_range) {
+            vec.iov_base = buffer;
+            vec.iov_len = chunk;
+            init_sync_kiocb(&iocb, file);
+            iocb.ki_pos = position;
+            iov_iter_kvec(&iter, ITER_DEST, &vec, 1, chunk);
+            got = infilfs_file_read_iter_cached(&iocb, &iter);
+            if (got < 0) {
+                ret = (int)got;
+                break;
+            }
         }
 
         vec.iov_base = buffer;
