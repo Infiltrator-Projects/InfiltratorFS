@@ -1594,11 +1594,14 @@ static NTSTATUS InfilfsCreate(PDEVICE_OBJECT DeviceObject, PIRP Irp)
                 &OpenPath, NULL, 0, 0);
             goto complete;
         }
-        GrantedAccess = DesiredAccess & ~MAXIMUM_ALLOWED;
         CreateInformation = FILE_CREATED;
         RtlZeroMemory(&Attributes, sizeof(Attributes));
         Status = InfilfsLookupPath(
             Volume, &OpenPath, &Attributes);
+        if (NT_SUCCESS(Status))
+            Status = InfilfsCheckAccess(
+                Volume, &OpenPath, AccessState,
+                DesiredAccess, Irp->RequestorMode, &GrantedAccess);
     } else if (NT_SUCCESS(Status)) {
         ACCESS_MASK RequiredAccess = DesiredAccess;
         if (Disposition == FILE_OVERWRITE ||
