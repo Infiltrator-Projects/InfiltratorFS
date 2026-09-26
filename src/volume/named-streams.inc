@@ -331,7 +331,8 @@ static infs_status metadata_reference_replace_typed_extension(
 }
 
 static infs_status named_stream_create_object(
-    struct infs_volume *vol, struct infs_lookup *lookup_out)
+    struct infs_volume *vol, uint64_t storage_policy_flags,
+    struct infs_lookup *lookup_out)
 {
     uint8_t object_id[16];
     infs_status status = generate_unique_object_id(vol, object_id);
@@ -360,6 +361,8 @@ static infs_status named_stream_create_object(
             object + sizeof(struct infs_object_header_disk));
     memset(file, 0, sizeof(*file));
     file->attributes.link_count = infs_cpu_to_le64(1u);
+    file->attributes.portable_flags = infs_cpu_to_le64(
+        storage_policy_flags & INFS_ATTR_STORAGE_POLICY_MASK);
     timestamp_disk_from_value(&file->attributes.birth_time, &now);
     timestamp_disk_from_value(&file->attributes.access_time, &now);
     timestamp_disk_from_value(&file->attributes.modification_time, &now);
@@ -653,7 +656,8 @@ infs_status infs_named_stream_set(
         goto fail;
 
     struct infs_lookup stream;
-    status = named_stream_create_object(vol, &stream);
+    status = named_stream_create_object(
+        vol, infs_le64_to_cpu(attributes->portable_flags), &stream);
     if (status != INFS_STATUS_OK)
         goto fail;
     if (size) {
