@@ -62,6 +62,7 @@ enum infilfs_win_native_opcode {
     INFILFS_WIN_NATIVE_OP_SET_SECURITY = 13,
     INFILFS_WIN_NATIVE_OP_QUERY_VOLUME = 14,
     INFILFS_WIN_NATIVE_OP_LINK = 15,
+    INFILFS_WIN_NATIVE_OP_SET_BASIC = 16,
 };
 
 #define INFILFS_WIN_NATIVE_OBJECT_FILE      UINT32_C(1)
@@ -92,6 +93,15 @@ struct infilfs_win_native_request {
     uint16_t path[INFILFS_WIN_NATIVE_PATH_CHARS];
     uint16_t second_path[INFILFS_WIN_NATIVE_PATH_CHARS];
     uint8_t input[INFILFS_WIN_NATIVE_IO_CHUNK];
+};
+
+struct infilfs_win_native_basic {
+    int64_t creation_time_100ns;
+    int64_t access_time_100ns;
+    int64_t write_time_100ns;
+    int64_t change_time_100ns;
+    uint32_t file_attributes;
+    uint32_t reserved;
 };
 
 struct infilfs_win_native_attributes {
