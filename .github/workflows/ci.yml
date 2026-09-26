@@ -326,6 +326,17 @@ jobs:
         run: cmake -S . -B build -A x64
       - name: Build Windows targets
         run: cmake --build build --config Release --parallel
+      - name: Configure MSBuild for WDK
+        uses: microsoft/setup-msbuild@v2
+      - name: Build native Windows filesystem driver with official WDK NuGet
+        shell: pwsh
+        run: |
+          msbuild .\windows-driver\infiltratorfs-native.vcxproj /restore /t:Build /m /p:Configuration=Release /p:Platform=x64
+          if (!(Test-Path .\windows-driver\x64\Release\infiltratorfs-native.sys) -and
+              !(Test-Path .\windows-driver\Release\infiltratorfs-native.sys)) {
+            Get-ChildItem .\windows-driver -Recurse -Filter infiltratorfs-native.sys | Format-Table FullName
+            throw 'Native Windows filesystem driver binary was not produced.'
+          }
       - name: Run Windows conformance tests
         run: ctest --test-dir build -C Release --output-on-failure
       - name: Open Linux-created cross-platform image on Windows
