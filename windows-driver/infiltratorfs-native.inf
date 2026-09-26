@@ -1,0 +1,35 @@
+; SPDX-License-Identifier: GPL-3.0-or-later
+[Version]
+Signature="$WINDOWS NT$"
+Class=FileSystem
+ClassGuid={CDCF0939-B75B-4630-BF76-80F7BA655884}
+Provider=%ProviderName%
+DriverVer=09/26/2026,0.18.94.0
+CatalogFile=infiltratorfs-native.cat
+PnpLockdown=1
+
+[DestinationDirs]
+DefaultDestDir=12
+
+[DefaultInstall.NTamd64]
+CopyFiles=DriverCopyFiles
+
+[DefaultInstall.NTamd64.Services]
+AddService=InfiltratorFS,0x00000002,InfiltratorFS_Service
+
+[DriverCopyFiles]
+infiltratorfs-native.sys
+
+[InfiltratorFS_Service]
+DisplayName=%ServiceName%
+Description=%ServiceDescription%
+ServiceType=2
+StartType=3
+ErrorControl=1
+ServiceBinary=%12%\infiltratorfs-native.sys
+LoadOrderGroup=File System
+
+[Strings]
+ProviderName="Infiltrator Projects"
+ServiceName="InfiltratorFS"
+ServiceDescription="Native InfiltratorFS Windows filesystem driver"
