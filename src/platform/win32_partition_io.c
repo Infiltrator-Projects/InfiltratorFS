@@ -192,13 +192,13 @@ static void partition_close(void *context)
 }
 
 static const struct infs_storage_ops partition_ops = {
-    partition_read_at,
-    partition_write_at,
-    partition_flush,
-    partition_get_size,
-    partition_random,
-    partition_time,
-    partition_close
+    .read_at = partition_read_at,
+    .write_at = partition_write_at,
+    .flush = partition_flush,
+    .get_size = partition_get_size,
+    .random_bytes = partition_random,
+    .current_time = partition_time,
+    .close = partition_close,
 };
 
 static int parse_physical_drive_number(const wchar_t *path, DWORD *disk_number)
