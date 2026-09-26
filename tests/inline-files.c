@@ -341,6 +341,48 @@ int main(void)
     expect_inline(&volume, &image, 128);
 
     struct infs_scrub_report report;
+    /*
+     * Non-default storage policy must never hide file bytes inside the object
+     * metadata block because placement/encryption dispatch happens at the data
+     * storage boundary. Even a tiny protected file therefore owns data extents.
+     */
+    struct infs_create_options policy_options = {
+        .portable_flags = INFS_ATTR_WITH_STORAGE_POLICY(0, 1u, 7u),
+        .posix_permissions = 0600u,
+    };
+    expect(infs_create_file(&volume, "/policy", &policy_options) ==
+               INFS_STATUS_OK,
+           "create storage-policy file");
+    const uint8_t policy_bytes[32] = {
+        0x6a,0x2b,0x91,0x04,0x55,0xa1,0x77,0x83,
+        0x18,0xc9,0xd2,0xe3,0x41,0x62,0x73,0x84,
+        0x95,0xa6,0xb7,0xc8,0xd9,0xea,0xfb,0x0c,
+        0x1d,0x2e,0x3f,0x40,0x51,0x62,0x73,0x84,
+    };
+    expect(infs_write_file(
+               &volume, "/policy", policy_bytes, sizeof(policy_bytes), 0) ==
+               (int64_t)sizeof(policy_bytes),
+           "write tiny storage-policy file");
+    struct infs_attributes policy_attributes;
+    expect(infs_get_attributes(
+               &volume, "/policy", &policy_attributes) == INFS_STATUS_OK,
+           "get storage-policy attributes");
+    expect(policy_attributes.allocated_size >= INFS_BLOCK_SIZE,
+           "storage-policy file bypasses inline metadata");
+    expect(INFS_ATTR_PROTECTION_COPIES(policy_attributes.portable_flags) == 1u &&
+           INFS_ATTR_ENCRYPTION_DOMAIN(policy_attributes.portable_flags) == 7u,
+           "storage policy persists in attributes");
+    expect(infs_set_portable_flags(
+               &volume, "/policy",
+               INFS_ATTR_WITH_STORAGE_POLICY(INFS_ATTR_HIDDEN, 2u, 8u)) ==
+               INFS_STATUS_BUSY,
+           "nonempty file rejects unsafe live storage-policy change");
+    expect(infs_set_portable_flags(
+               &volume, "/policy",
+               INFS_ATTR_WITH_STORAGE_POLICY(INFS_ATTR_HIDDEN, 1u, 7u)) ==
+               INFS_STATUS_OK,
+           "presentation flags may change without changing storage policy");
+
     expect(infs_scrub(&volume, &report) == INFS_STATUS_OK,
            "scrub inline file");
     expect(report.files_checked == 1, "scrub sees inline file");
