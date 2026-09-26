@@ -628,6 +628,75 @@ static void dispatch_mutation(
     response_status(response, status);
 }
 
+static void dispatch_set_basic(
+    struct native_volume *v,
+    const struct infilfs_win_native_request *request,
+    struct infilfs_win_native_response *response)
+{
+    char path[INFS_PATH_MAX + 1u];
+    if (!request_path_utf8(request->path, request->path_chars, path) ||
+        request->input_bytes != sizeof(struct infilfs_win_native_basic)) {
+        response_status(response, INFS_STATUS_INVALID_ARGUMENT);
+        return;
+    }
+
+    struct infilfs_win_native_basic basic;
+    memcpy(&basic, request->input, sizeof(basic));
+
+    infs_status status = INFS_STATUS_OK;
+    if (basic.file_attributes != 0) {
+        status = infs_set_portable_flags(
+            &v->volume, path,
+            infilfs_windows_attributes_to_portable(
+                basic.file_attributes));
+    }
+
+    if (status == INFS_STATUS_OK &&
+        (basic.creation_time_100ns != 0 ||
+         basic.access_time_100ns != 0 ||
+         basic.write_time_100ns != 0 ||
+         basic.change_time_100ns != 0)) {
+        struct infs_time_update update;
+        memset(&update, 0, sizeof(update));
+
+        if (basic.creation_time_100ns != 0) {
+            update.birth_action = INFS_TIME_SET;
+            if (!infilfs_windows_ticks_to_timestamp(
+                    basic.creation_time_100ns,
+                    &update.birth_time))
+                status = INFS_STATUS_INVALID_ARGUMENT;
+        }
+        if (status == INFS_STATUS_OK &&
+            basic.access_time_100ns != 0) {
+            update.access_action = INFS_TIME_SET;
+            if (!infilfs_windows_ticks_to_timestamp(
+                    basic.access_time_100ns,
+                    &update.access_time))
+                status = INFS_STATUS_INVALID_ARGUMENT;
+        }
+        if (status == INFS_STATUS_OK &&
+            basic.write_time_100ns != 0) {
+            update.modification_action = INFS_TIME_SET;
+            if (!infilfs_windows_ticks_to_timestamp(
+                    basic.write_time_100ns,
+                    &update.modification_time))
+                status = INFS_STATUS_INVALID_ARGUMENT;
+        }
+        if (status == INFS_STATUS_OK &&
+            basic.change_time_100ns != 0) {
+            update.change_action = INFS_TIME_SET;
+            if (!infilfs_windows_ticks_to_timestamp(
+                    basic.change_time_100ns,
+                    &update.change_time))
+                status = INFS_STATUS_INVALID_ARGUMENT;
+        }
+        if (status == INFS_STATUS_OK)
+            status = infs_set_times(&v->volume, path, &update);
+    }
+
+    response_status(response, status);
+}
+
 static void dispatch_request(
     HANDLE control,
     const struct infilfs_win_native_request *request,
@@ -670,6 +739,9 @@ static void dispatch_request(
         break;
     case INFILFS_WIN_NATIVE_OP_SET_SECURITY:
         dispatch_set_security(v, request, response);
+        break;
+    case INFILFS_WIN_NATIVE_OP_SET_BASIC:
+        dispatch_set_basic(v, request, response);
         break;
     case INFILFS_WIN_NATIVE_OP_CREATE:
     case INFILFS_WIN_NATIVE_OP_MKDIR:
