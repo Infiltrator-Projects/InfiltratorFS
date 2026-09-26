@@ -164,6 +164,39 @@ int main(int argc, char **argv)
             die("cross-directory RENAME_EXCHANGE");
         read_exact(cross_a, "right");
         read_exact(cross_b, "left");
+
+        char sub_a[4096], sub_b[4096], child_a[4096], child_b[4096];
+        if (snprintf(sub_a, sizeof(sub_a), "%s/sub-a", dir_a) >=
+                (int)sizeof(sub_a) ||
+            snprintf(sub_b, sizeof(sub_b), "%s/sub-b", dir_b) >=
+                (int)sizeof(sub_b))
+            return 2;
+        if (mkdir(sub_a, 0700) != 0 || mkdir(sub_b, 0700) != 0)
+            die("mkdir directory exchange");
+        if (snprintf(child_a, sizeof(child_a), "%s/child", sub_a) >=
+                (int)sizeof(child_a) ||
+            snprintf(child_b, sizeof(child_b), "%s/child", sub_b) >=
+                (int)sizeof(child_b))
+            return 2;
+        left = open(child_a, O_CREAT | O_TRUNC | O_WRONLY, 0600);
+        right = open(child_b, O_CREAT | O_TRUNC | O_WRONLY, 0600);
+        if (left < 0 || right < 0)
+            die("create directory-exchange children");
+        if (write(left, "from-a", 6) != 6 ||
+            write(right, "from-b", 6) != 6)
+            die("write directory-exchange children");
+        close(left);
+        close(right);
+
+        if (rename_exchange(sub_a, sub_b) != 0)
+            die("cross-directory directory RENAME_EXCHANGE");
+        if (snprintf(child_a, sizeof(child_a), "%s/child", sub_a) >=
+                (int)sizeof(child_a) ||
+            snprintf(child_b, sizeof(child_b), "%s/child", sub_b) >=
+                (int)sizeof(child_b))
+            return 2;
+        read_exact(child_a, "from-b");
+        read_exact(child_b, "from-a");
     }
 
     puts("Native Linux API compatibility: PASS");
