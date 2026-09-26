@@ -83,7 +83,7 @@ static int destroy_replaced_object_tx(struct infs_volume *vol,
 }
 
 static int rename_tx(struct infs_volume *vol, const char *oldpath,
-                     const char *newpath)
+                     const char *newpath, int replace)
 {
     if (!vol->writable)
         return INFS_STATUS_READ_ONLY;
@@ -144,6 +144,8 @@ static int rename_tx(struct infs_volume *vol, const char *oldpath,
     if (have_destination) {
         if (memcmp(destination_entry.object_id, source_id, 16) == 0)
             return INFS_STATUS_OK;
+        if (!replace)
+            return INFS_STATUS_ALREADY_EXISTS;
         destination_type = infs_le16_to_cpu(destination_entry.object_type);
         status = index_find(vol, destination_entry.object_id, &destination);
         if (status != INFS_STATUS_OK)
@@ -284,8 +286,8 @@ static infs_status validate_rename_trailing_slash(struct infs_volume *vol,
         INFS_STATUS_OK : INFS_STATUS_NOT_DIRECTORY;
 }
 
-infs_status infs_rename(struct infs_volume *vol, const char *oldpath,
-                        const char *newpath)
+infs_status infs_rename_ex(struct infs_volume *vol, const char *oldpath,
+                           const char *newpath, int replace)
 {
     if (!vol || !oldpath || !newpath || oldpath[0] != '/' || newpath[0] != '/')
         return INFS_STATUS_INVALID_ARGUMENT;
@@ -301,10 +303,16 @@ infs_status infs_rename(struct infs_volume *vol, const char *oldpath,
     status = mutation_scope_begin(vol, &started_transaction);
     if (status != INFS_STATUS_OK)
         return status;
-    status = rename_tx(vol, oldpath, newpath);
+    status = rename_tx(vol, oldpath, newpath, replace != 0);
     if (status != INFS_STATUS_OK)
         mutation_scope_fail(vol, started_transaction);
     else
         mutation_scope_success(vol);
     return status;
+}
+
+infs_status infs_rename(struct infs_volume *vol, const char *oldpath,
+                        const char *newpath)
+{
+    return infs_rename_ex(vol, oldpath, newpath, 1);
 }
