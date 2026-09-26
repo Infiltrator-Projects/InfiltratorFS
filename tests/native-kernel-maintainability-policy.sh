@@ -172,6 +172,15 @@ grep -Fq 'stat->btime = ii->birth_time;' <<<"$getattr_body" || fail 'getattr los
 grep -Fq 'struct timespec64 birth_time;' "$kernel/infiltratorfs_internal.h" || fail 'inode birth-time cache missing'
 grep -Fq 'ATTR_KILL_SUID | ATTR_KILL_SGID' "$rw" || fail 'set-ID stripping is not persisted'
 
+# The portable core can encode per-object replication/encryption policy that
+# the single-bdev native Linux adapter cannot yet service. The kernel must fail
+# closed at inode admission instead of treating policy-encoded data as ordinary
+# raw extents and risking silent corruption.
+grep -Fq 'ii->portable_flags & INFILFS_ATTR_STORAGE_POLICY_MASK' "$driver" || \
+    fail 'native Linux does not reject unsupported per-object storage policy'
+grep -Fq 'native Linux cannot open file with nondefault storage policy' "$driver" || \
+    fail 'native Linux storage-policy rejection is not diagnosable'
+
 # Creator identity conversion is fail-closed. An id-mapped uid/gid that cannot
 # be represented in the init-user-namespace disk fields must never fall back to
 # numeric zero and manufacture root ownership.
