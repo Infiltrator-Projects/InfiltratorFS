@@ -399,6 +399,15 @@ jobs:
           Select-String -Path CMakeLists.txt -Pattern 'infiltratorfs-windows.manifest' -SimpleMatch
           Select-String -Path tools/windows/infiltratorfs-windows.manifest -Pattern '<longPathAware' -SimpleMatch
           Select-String -Path tools/windows/infiltratorfs-windows.manifest -Pattern '>true</longPathAware>' -SimpleMatch
+      - name: Upload native Windows filesystem driver qualification artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: InfiltratorFS-Windows-Native-Driver
+          path: |
+            build/Release/infiltratorfs-native-service.exe
+            windows-driver/**/infiltratorfs-native.sys
+            windows-driver/infiltratorfs-native.inf
+          if-no-files-found: error
       - name: Upload Windows transfer app
         uses: actions/upload-artifact@v4
         with:
