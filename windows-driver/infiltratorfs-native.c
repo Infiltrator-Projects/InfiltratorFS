@@ -953,6 +953,76 @@ static NTSTATUS InfilfsResolveOpenPath(
     return STATUS_SUCCESS;
 }
 
+static NTSTATUS InfilfsResolveSetTargetPath(
+    HANDLE RootDirectory, PWCHAR FileName, ULONG FileNameLength,
+    KPROCESSOR_MODE RequestorMode, PUNICODE_STRING Path, PWCHAR *Allocated)
+{
+    PFILE_OBJECT RootFile = NULL;
+    INFILFS_NATIVE_FCB *Parent = NULL;
+    USHORT ParentLength = 0;
+    ULONG Bytes;
+    BOOLEAN Separator = FALSE;
+    NTSTATUS Status;
+
+    if (!FileName || !FileNameLength || !Path || !Allocated ||
+        (FileNameLength & (sizeof(WCHAR) - 1u)) != 0)
+        return STATUS_INVALID_PARAMETER;
+    *Allocated = NULL;
+
+    if (!RootDirectory || FileName[0] == L'\\') {
+        Path->Buffer = FileName;
+        Path->Length = (USHORT)FileNameLength;
+        Path->MaximumLength = Path->Length;
+        return STATUS_SUCCESS;
+    }
+
+    Status = ObReferenceObjectByHandle(
+        RootDirectory, FILE_TRAVERSE, *IoFileObjectType,
+        RequestorMode, (PVOID *)&RootFile, NULL);
+    if (!NT_SUCCESS(Status))
+        return Status;
+
+    Parent = (INFILFS_NATIVE_FCB *)RootFile->FsContext;
+    if (!Parent || Parent->Signature != 'fSfI' || !Parent->Path.Buffer) {
+        ObDereferenceObject(RootFile);
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    ParentLength = Parent->Path.Length;
+    Separator = ParentLength >= sizeof(WCHAR) &&
+        Parent->Path.Buffer[ParentLength / sizeof(WCHAR) - 1u] != L'\\';
+    Bytes = (ULONG)ParentLength +
+        (Separator ? sizeof(WCHAR) : 0u) + FileNameLength;
+    if (Bytes > MAXUSHORT - sizeof(WCHAR)) {
+        ObDereferenceObject(RootFile);
+        return STATUS_NAME_TOO_LONG;
+    }
+
+    PWCHAR Buffer = ExAllocatePool2(
+        POOL_FLAG_PAGED, Bytes + sizeof(WCHAR),
+        INFILFS_NATIVE_FCB_TAG);
+    if (!Buffer) {
+        ObDereferenceObject(RootFile);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    ULONG Cursor = 0;
+    RtlCopyMemory(Buffer, Parent->Path.Buffer, ParentLength);
+    Cursor += ParentLength / sizeof(WCHAR);
+    if (Separator)
+        Buffer[Cursor++] = L'\\';
+    RtlCopyMemory(Buffer + Cursor, FileName, FileNameLength);
+    Cursor += FileNameLength / sizeof(WCHAR);
+    Buffer[Cursor] = L'\0';
+
+    Path->Buffer = Buffer;
+    Path->Length = (USHORT)Bytes;
+    Path->MaximumLength = (USHORT)(Bytes + sizeof(WCHAR));
+    *Allocated = Buffer;
+    ObDereferenceObject(RootFile);
+    return STATUS_SUCCESS;
+}
+
 static NTSTATUS InfilfsCreate(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 {
     PIO_STACK_LOCATION IrpSp = IoGetCurrentIrpStackLocation(Irp);
@@ -1469,39 +1539,91 @@ static NTSTATUS InfilfsSetInformation(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     {
         PFILE_RENAME_INFORMATION Info = Buffer;
         UNICODE_STRING Destination;
+        PWCHAR AllocatedDestination = NULL;
+        ULONG Replace = 0;
         if (Length < FIELD_OFFSET(FILE_RENAME_INFORMATION, FileName) ||
             Info->FileNameLength == 0 ||
             Info->FileNameLength >
                 Length - FIELD_OFFSET(FILE_RENAME_INFORMATION, FileName))
             return InfilfsCompleteIrp(
                 Irp, STATUS_INVALID_PARAMETER, 0);
-        if (Info->RootDirectory != NULL)
-            return InfilfsCompleteIrp(
-                Irp, STATUS_NOT_SUPPORTED, 0);
-        Destination.Buffer = Info->FileName;
-        Destination.Length = (USHORT)Info->FileNameLength;
-        Destination.MaximumLength = Destination.Length;
+
+        Status = InfilfsResolveSetTargetPath(
+            Info->RootDirectory, Info->FileName, Info->FileNameLength,
+            Irp->RequestorMode, &Destination, &AllocatedDestination);
+        if (!NT_SUCCESS(Status))
+            break;
+
+#ifdef FileRenameInformationEx
+        if (Class == FileRenameInformationEx) {
+            PFILE_RENAME_INFORMATION_EX Ex = Buffer;
+            Replace = (Ex->Flags & FILE_RENAME_REPLACE_IF_EXISTS) ?
+                INFILFS_WIN_NATIVE_REQ_REPLACE : 0;
+        } else
+#endif
+        {
+            Replace = Info->ReplaceIfExists ?
+                INFILFS_WIN_NATIVE_REQ_REPLACE : 0;
+        }
+
         Status = InfilfsServiceMutation(
             Volume, INFILFS_WIN_NATIVE_OP_RENAME,
-            &Fcb->Path, &Destination, 0,
-            Info->ReplaceIfExists ? INFILFS_WIN_NATIVE_REQ_REPLACE : 0);
+            &Fcb->Path, &Destination, 0, Replace);
         if (NT_SUCCESS(Status)) {
             USHORT Bytes = Destination.Length + sizeof(WCHAR);
             PWCHAR NewPath = ExAllocatePool2(
                 POOL_FLAG_NON_PAGED, Bytes, INFILFS_NATIVE_FCB_TAG);
             if (!NewPath) {
                 Status = STATUS_INSUFFICIENT_RESOURCES;
-                break;
+            } else {
+                RtlCopyMemory(
+                    NewPath, Destination.Buffer, Destination.Length);
+                NewPath[Destination.Length / sizeof(WCHAR)] = L'\0';
+                if (Fcb->Path.Buffer)
+                    ExFreePoolWithTag(
+                        Fcb->Path.Buffer, INFILFS_NATIVE_FCB_TAG);
+                Fcb->Path.Buffer = NewPath;
+                Fcb->Path.Length = Destination.Length;
+                Fcb->Path.MaximumLength = Bytes;
             }
-            RtlCopyMemory(NewPath, Destination.Buffer, Destination.Length);
-            NewPath[Destination.Length / sizeof(WCHAR)] = L'\0';
-            if (Fcb->Path.Buffer)
-                ExFreePoolWithTag(
-                    Fcb->Path.Buffer, INFILFS_NATIVE_FCB_TAG);
-            Fcb->Path.Buffer = NewPath;
-            Fcb->Path.Length = Destination.Length;
-            Fcb->Path.MaximumLength = Bytes;
         }
+        if (AllocatedDestination)
+            ExFreePoolWithTag(
+                AllocatedDestination, INFILFS_NATIVE_FCB_TAG);
+        break;
+    }
+    case FileLinkInformation: {
+        PFILE_LINK_INFORMATION Info = Buffer;
+        UNICODE_STRING Destination;
+        PWCHAR AllocatedDestination = NULL;
+        ULONG Replace = 0;
+        if (Fcb->ObjectType != INFILFS_WIN_NATIVE_OBJECT_FILE) {
+            Status = STATUS_FILE_IS_A_DIRECTORY;
+            break;
+        }
+        if (Length < FIELD_OFFSET(FILE_LINK_INFORMATION, FileName) ||
+            Info->FileNameLength == 0 ||
+            Info->FileNameLength >
+                Length - FIELD_OFFSET(FILE_LINK_INFORMATION, FileName)) {
+            Status = STATUS_INVALID_PARAMETER;
+            break;
+        }
+
+        Status = InfilfsResolveSetTargetPath(
+            Info->RootDirectory, Info->FileName, Info->FileNameLength,
+            Irp->RequestorMode, &Destination, &AllocatedDestination);
+        if (!NT_SUCCESS(Status))
+            break;
+        Replace = Info->ReplaceIfExists ?
+            INFILFS_WIN_NATIVE_REQ_REPLACE : 0;
+        Status = InfilfsServiceMutation(
+            Volume, INFILFS_WIN_NATIVE_OP_LINK,
+            &Fcb->Path, &Destination, 0, Replace);
+        if (NT_SUCCESS(Status))
+            Fcb->LinkCount++;
+        if (AllocatedDestination)
+            ExFreePoolWithTag(
+                AllocatedDestination, INFILFS_NATIVE_FCB_TAG);
         break;
     }
     case FilePositionInformation: {
@@ -2050,6 +2172,59 @@ static const CACHE_MANAGER_CALLBACKS g_InfilfsCacheCallbacks = {
     InfilfsReleaseFromReadAhead
 };
 
+static NTSTATUS InfilfsShutdown(PDEVICE_OBJECT DeviceObject, PIRP Irp)
+{
+    PLIST_ENTRY Entry;
+    NTSTATUS Result = STATUS_SUCCESS;
+
+    UNREFERENCED_PARAMETER(DeviceObject);
+
+    ExAcquireFastMutex(&g_Infilfs.VolumeLock);
+    for (Entry = g_Infilfs.Volumes.Flink;
+         Entry != &g_Infilfs.Volumes; Entry = Entry->Flink) {
+        INFILFS_NATIVE_VOLUME *Volume =
+            CONTAINING_RECORD(
+                Entry, INFILFS_NATIVE_VOLUME, GlobalLink);
+        struct infilfs_win_native_request *Request;
+        struct infilfs_win_native_response *Response;
+        NTSTATUS Status;
+
+        if (Volume->Dismounted)
+            continue;
+
+        Request = ExAllocatePool2(
+            POOL_FLAG_PAGED, sizeof(*Request),
+            INFILFS_NATIVE_REQUEST_TAG);
+        Response = ExAllocatePool2(
+            POOL_FLAG_PAGED, sizeof(*Response),
+            INFILFS_NATIVE_REQUEST_TAG);
+        if (!Request || !Response) {
+            if (Request)
+                ExFreePoolWithTag(
+                    Request, INFILFS_NATIVE_REQUEST_TAG);
+            if (Response)
+                ExFreePoolWithTag(
+                    Response, INFILFS_NATIVE_REQUEST_TAG);
+            if (NT_SUCCESS(Result))
+                Result = STATUS_INSUFFICIENT_RESOURCES;
+            continue;
+        }
+        RtlZeroMemory(Request, sizeof(*Request));
+        RtlZeroMemory(Response, sizeof(*Response));
+        Request->opcode = INFILFS_WIN_NATIVE_OP_FLUSH;
+        Status = InfilfsCallService(Volume, Request, Response);
+        if (NT_SUCCESS(Status))
+            Status = InfilfsTargetFlush(Volume->TargetDevice);
+        if (!NT_SUCCESS(Status) && NT_SUCCESS(Result))
+            Result = Status;
+        ExFreePoolWithTag(Response, INFILFS_NATIVE_REQUEST_TAG);
+        ExFreePoolWithTag(Request, INFILFS_NATIVE_REQUEST_TAG);
+    }
+    ExReleaseFastMutex(&g_Infilfs.VolumeLock);
+
+    return InfilfsCompleteIrp(Irp, Result, 0);
+}
+
 static NTSTATUS InfilfsDefaultDispatch(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 {
     UNREFERENCED_PARAMETER(DeviceObject);
@@ -2062,8 +2237,10 @@ static VOID InfilfsUnload(PDRIVER_OBJECT DriverObject)
     UNREFERENCED_PARAMETER(DriverObject);
     InterlockedExchange(&g_Infilfs.Unloading, 1);
 
-    if (g_Infilfs.FileSystemDevice)
+    if (g_Infilfs.FileSystemDevice) {
         IoUnregisterFileSystem(g_Infilfs.FileSystemDevice);
+        IoUnregisterShutdownNotification(g_Infilfs.FileSystemDevice);
+    }
 
     ExAcquireFastMutex(&g_Infilfs.VolumeLock);
     while (!IsListEmpty(&g_Infilfs.Volumes)) {
@@ -2175,12 +2352,25 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
         InfilfsFileSystemControl;
     DriverObject->MajorFunction[IRP_MJ_DEVICE_CONTROL] =
         InfilfsControlDeviceIo;
+    DriverObject->MajorFunction[IRP_MJ_SHUTDOWN] =
+        InfilfsShutdown;
     DriverObject->DriverUnload = InfilfsUnload;
 
     g_Infilfs.FileSystemDevice->Flags |= DO_DIRECT_IO;
     g_Infilfs.FileSystemDevice->Flags &= ~DO_DEVICE_INITIALIZING;
     g_Infilfs.ControlDevice->Flags |= DO_BUFFERED_IO;
     g_Infilfs.ControlDevice->Flags &= ~DO_DEVICE_INITIALIZING;
+
+    Status = IoRegisterShutdownNotification(
+        g_Infilfs.FileSystemDevice);
+    if (!NT_SUCCESS(Status)) {
+        IoDeleteSymbolicLink(&g_Infilfs.ControlDosName);
+        IoDeleteDevice(g_Infilfs.ControlDevice);
+        IoDeleteDevice(g_Infilfs.FileSystemDevice);
+        g_Infilfs.ControlDevice = NULL;
+        g_Infilfs.FileSystemDevice = NULL;
+        return Status;
+    }
 
     IoRegisterFileSystem(g_Infilfs.FileSystemDevice);
     return STATUS_SUCCESS;
