@@ -1751,17 +1751,66 @@ static NTSTATUS InfilfsFlushBuffers(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     return InfilfsCompleteIrp(Irp, Status, 0);
 }
 
-static NTSTATUS InfilfsCleanup(PDEVICE_OBJECT DeviceObject, PIRP Irp)
+static NTSTATUS InfilfsLockControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 {
     PIO_STACK_LOCATION IrpSp = IoGetCurrentIrpStackLocation(Irp);
     PFILE_OBJECT FileObject = IrpSp->FileObject;
+    INFILFS_NATIVE_FCB *Fcb = FileObject ?
+        (INFILFS_NATIVE_FCB *)FileObject->FsContext : NULL;
     UNREFERENCED_PARAMETER(DeviceObject);
 
-    if (FileObject && FileObject->SectionObjectPointer)
+    if (!Fcb || Fcb->ObjectType != INFILFS_WIN_NATIVE_OBJECT_FILE)
+        return InfilfsCompleteIrp(
+            Irp, STATUS_INVALID_DEVICE_REQUEST, 0);
+
+    /*
+     * FsRtl owns completion for IRP_MJ_LOCK_CONTROL. Keeping the FILE_LOCK on
+     * the shared FCB makes overlapping opens observe one Windows byte-range
+     * lock namespace rather than one lock set per handle.
+     */
+    return FsRtlProcessFileLock(&Fcb->FileLock, Irp, NULL);
+}
+
+static NTSTATUS InfilfsCleanup(PDEVICE_OBJECT DeviceObject, PIRP Irp)
+{
+    PIO_STACK_LOCATION IrpSp = IoGetCurrentIrpStackLocation(Irp);
+    INFILFS_NATIVE_VOLUME *Volume = InfilfsVolumeFromDevice(DeviceObject);
+    PFILE_OBJECT FileObject = IrpSp->FileObject;
+    INFILFS_NATIVE_FCB *Fcb = FileObject ?
+        (INFILFS_NATIVE_FCB *)FileObject->FsContext : NULL;
+    INFILFS_NATIVE_CCB *Ccb = FileObject ?
+        (INFILFS_NATIVE_CCB *)FileObject->FsContext2 : NULL;
+    NTSTATUS Status = STATUS_SUCCESS;
+
+    if (!FileObject)
+        return InfilfsCompleteIrp(Irp, STATUS_SUCCESS, 0);
+
+    if (Fcb && Fcb->ObjectType == INFILFS_WIN_NATIVE_OBJECT_FILE) {
+        (void)FsRtlFastUnlockAll(
+            &Fcb->FileLock, FileObject,
+            IoGetRequestorProcess(Irp), NULL);
+    }
+
+    if (FileObject->SectionObjectPointer)
         CcFlushCache(FileObject->SectionObjectPointer, NULL, 0, NULL);
-    if (FileObject)
-        CcUninitializeCacheMap(FileObject, NULL, NULL);
-    return InfilfsCompleteIrp(Irp, STATUS_SUCCESS, 0);
+    CcUninitializeCacheMap(FileObject, NULL, NULL);
+
+    if (Ccb && Ccb->ShareRegistered && Fcb) {
+        IoRemoveShareAccess(FileObject, &Fcb->ShareAccess);
+        Ccb->ShareRegistered = FALSE;
+    }
+
+    if (Volume && Fcb && Fcb->DeletePending) {
+        Status = InfilfsServiceMutation(
+            Volume,
+            Fcb->ObjectType == INFILFS_WIN_NATIVE_OBJECT_DIRECTORY ?
+                INFILFS_WIN_NATIVE_OP_RMDIR :
+                INFILFS_WIN_NATIVE_OP_UNLINK,
+            &Fcb->Path, NULL, 0, 0);
+        if (NT_SUCCESS(Status))
+            FileObject->DeletePending = TRUE;
+    }
+    return InfilfsCompleteIrp(Irp, Status, 0);
 }
 
 static NTSTATUS InfilfsClose(PDEVICE_OBJECT DeviceObject, PIRP Irp)
@@ -1778,8 +1827,10 @@ static NTSTATUS InfilfsClose(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     Ccb = (INFILFS_NATIVE_CCB *)FileObject->FsContext2;
     FileObject->FsContext = NULL;
     FileObject->FsContext2 = NULL;
-    if (Ccb && Ccb->ShareRegistered && Fcb)
+    if (Ccb && Ccb->ShareRegistered && Fcb) {
         IoRemoveShareAccess(FileObject, &Fcb->ShareAccess);
+        Ccb->ShareRegistered = FALSE;
+    }
     if (Ccb)
         ExFreePoolWithTag(Ccb, INFILFS_NATIVE_CCB_TAG);
     if (Fcb)
@@ -1938,6 +1989,8 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
         InfilfsQuerySecurity;
     DriverObject->MajorFunction[IRP_MJ_SET_SECURITY] =
         InfilfsSetSecurity;
+    DriverObject->MajorFunction[IRP_MJ_LOCK_CONTROL] =
+        InfilfsLockControl;
     DriverObject->MajorFunction[IRP_MJ_FLUSH_BUFFERS] = InfilfsFlushBuffers;
     DriverObject->MajorFunction[IRP_MJ_FILE_SYSTEM_CONTROL] =
         InfilfsFileSystemControl;
