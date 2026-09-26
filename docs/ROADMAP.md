@@ -90,10 +90,10 @@ Pre-1.0 development is current-format-only. A development format may be replaced
 - [x] Preservation rules for platform-specific security metadata.
 - [x] Portable named-attribute/named-stream objects distinct from adapter sidecars.
 - [x] Multi-device synchronous replicated storage with failover across complete replicas.
-- [ ] Per-object protection classes and placement policy across multiple devices.
+- [x] Per-object protection classes and deterministic placement policy across multiple devices.
 - [x] Replication via synchronous complete-volume mirroring; parity remains a future optional protection mode.
 - [x] Authenticated whole-volume encryption with PBKDF2-derived KEK and wrapped random 256-bit volume key.
-- [ ] Multiple/per-object encryption domains beyond the whole-volume key domain.
+- [x] Multiple/per-object encryption domains derived from the authenticated volume root key.
 - [x] Authenticated metadata and data for encrypted volumes through per-block AES-256-GCM.
 
 The intended security architecture is described in `SECURITY.md`. Current Linux ownership/mode/xattr metadata must not be mistaken for the final portable security model.
