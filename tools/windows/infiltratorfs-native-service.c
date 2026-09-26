@@ -38,6 +38,12 @@ struct native_volume {
 static CRITICAL_SECTION g_volume_lock;
 static struct native_volume *g_volumes;
 static volatile LONG g_stop;
+static HANDLE g_stop_event;
+static HANDLE g_worker_threads[INFILFS_NATIVE_WORKERS];
+static HANDLE g_worker_controls[INFILFS_NATIVE_WORKERS];
+static DWORD g_worker_count;
+static SERVICE_STATUS_HANDLE g_service_status_handle;
+static SERVICE_STATUS g_service_status;
 
 static infs_status win32_error_status(DWORD error)
 {
@@ -658,9 +664,9 @@ static void dispatch_request(
     LeaveCriticalSection(&v->lock);
 }
 
-static DWORD WINAPI worker_main(void *unused)
+static DWORD WINAPI worker_main(void *opaque)
 {
-    (void)unused;
+    size_t worker = (size_t)(uintptr_t)opaque;
     HANDLE control = CreateFileW(
         INFILFS_NATIVE_CONTROL,
         GENERIC_READ | GENERIC_WRITE,
@@ -668,6 +674,9 @@ static DWORD WINAPI worker_main(void *unused)
         NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     if (control == INVALID_HANDLE_VALUE)
         return GetLastError();
+    if (worker < INFILFS_NATIVE_WORKERS)
+        InterlockedExchangePointer(
+            (PVOID volatile *)&g_worker_controls[worker], control);
 
     struct infilfs_win_native_request *request =
         malloc(sizeof(*request));
@@ -702,6 +711,9 @@ static DWORD WINAPI worker_main(void *unused)
 
     free(response);
     free(request);
+    if (worker < INFILFS_NATIVE_WORKERS)
+        InterlockedExchangePointer(
+            (PVOID volatile *)&g_worker_controls[worker], NULL);
     CloseHandle(control);
     return ERROR_SUCCESS;
 }
@@ -722,33 +734,177 @@ static void close_volumes(void)
     }
 }
 
-int wmain(int argc, wchar_t **argv)
+static void request_stop(void)
+{
+    if (InterlockedExchange(&g_stop, 1) != 0)
+        return;
+    if (g_stop_event)
+        SetEvent(g_stop_event);
+    for (DWORD i = 0; i < INFILFS_NATIVE_WORKERS; ++i) {
+        HANDLE control = (HANDLE)InterlockedCompareExchangePointer(
+            (PVOID volatile *)&g_worker_controls[i], NULL, NULL);
+        if (control && control != INVALID_HANDLE_VALUE)
+            (void)CancelIoEx(control, NULL);
+    }
+}
+
+static int start_workers(void)
+{
+    g_worker_count = 0;
+    for (DWORD i = 0; i < INFILFS_NATIVE_WORKERS; ++i) {
+        g_worker_threads[i] = CreateThread(
+            NULL, 0, worker_main, (void *)(uintptr_t)i, 0, NULL);
+        if (!g_worker_threads[i])
+            break;
+        g_worker_count++;
+    }
+    return g_worker_count != 0;
+}
+
+static void wait_workers(void)
+{
+    if (g_worker_count)
+        WaitForMultipleObjects(
+            g_worker_count, g_worker_threads, TRUE, INFINITE);
+    for (DWORD i = 0; i < g_worker_count; ++i) {
+        if (g_worker_threads[i]) {
+            CloseHandle(g_worker_threads[i]);
+            g_worker_threads[i] = NULL;
+        }
+    }
+    g_worker_count = 0;
+}
+
+static void service_report(DWORD state, DWORD error, DWORD hint)
+{
+    if (!g_service_status_handle)
+        return;
+    memset(&g_service_status, 0, sizeof(g_service_status));
+    g_service_status.dwServiceType = SERVICE_WIN32_OWN_PROCESS;
+    g_service_status.dwCurrentState = state;
+    g_service_status.dwWin32ExitCode = error;
+    g_service_status.dwWaitHint = hint;
+    g_service_status.dwControlsAccepted =
+        state == SERVICE_RUNNING ?
+        SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SHUTDOWN : 0;
+    SetServiceStatus(g_service_status_handle, &g_service_status);
+}
+
+static DWORD WINAPI service_control(
+    DWORD control, DWORD event_type, void *event_data, void *context)
+{
+    (void)event_type;
+    (void)event_data;
+    (void)context;
+    switch (control) {
+    case SERVICE_CONTROL_STOP:
+    case SERVICE_CONTROL_SHUTDOWN:
+        service_report(SERVICE_STOP_PENDING, NO_ERROR, 5000);
+        request_stop();
+        return NO_ERROR;
+    case SERVICE_CONTROL_INTERROGATE:
+        SetServiceStatus(g_service_status_handle, &g_service_status);
+        return NO_ERROR;
+    default:
+        return ERROR_CALL_NOT_IMPLEMENTED;
+    }
+}
+
+static void WINAPI service_main(DWORD argc, wchar_t **argv)
 {
     (void)argc;
     (void)argv;
-    InitializeCriticalSection(&g_volume_lock);
+    g_service_status_handle = RegisterServiceCtrlHandlerExW(
+        L"InfiltratorFSNative", service_control, NULL);
+    if (!g_service_status_handle)
+        return;
 
-    HANDLE threads[INFILFS_NATIVE_WORKERS] = {0};
-    DWORD created = 0;
-    for (; created < INFILFS_NATIVE_WORKERS; ++created) {
-        threads[created] = CreateThread(
-            NULL, 0, worker_main, NULL, 0, NULL);
-        if (!threads[created])
-            break;
+    service_report(SERVICE_START_PENDING, NO_ERROR, 5000);
+    g_stop_event = CreateEventW(NULL, TRUE, FALSE, NULL);
+    if (!g_stop_event) {
+        service_report(
+            SERVICE_STOPPED, GetLastError(), 0);
+        return;
     }
-    if (!created) {
-        DeleteCriticalSection(&g_volume_lock);
-        fwprintf(stderr, L"InfiltratorFS native service: cannot open driver.\n");
+
+    InterlockedExchange(&g_stop, 0);
+    if (!start_workers()) {
+        DWORD error = GetLastError();
+        CloseHandle(g_stop_event);
+        g_stop_event = NULL;
+        service_report(
+            SERVICE_STOPPED, error ? error : ERROR_SERVICE_NOT_ACTIVE, 0);
+        return;
+    }
+
+    service_report(SERVICE_RUNNING, NO_ERROR, 0);
+    WaitForSingleObject(g_stop_event, INFINITE);
+    request_stop();
+    wait_workers();
+    close_volumes();
+    CloseHandle(g_stop_event);
+    g_stop_event = NULL;
+    service_report(SERVICE_STOPPED, NO_ERROR, 0);
+}
+
+static BOOL WINAPI console_control(DWORD control)
+{
+    if (control == CTRL_C_EVENT || control == CTRL_BREAK_EVENT ||
+        control == CTRL_CLOSE_EVENT || control == CTRL_SHUTDOWN_EVENT) {
+        request_stop();
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static int run_console(void)
+{
+    g_stop_event = CreateEventW(NULL, TRUE, FALSE, NULL);
+    if (!g_stop_event)
+        return 1;
+    InterlockedExchange(&g_stop, 0);
+    SetConsoleCtrlHandler(console_control, TRUE);
+    if (!start_workers()) {
+        CloseHandle(g_stop_event);
+        g_stop_event = NULL;
         return 1;
     }
 
-    wprintf(L"InfiltratorFS native filesystem service running with %lu workers.\n",
-            (unsigned long)created);
-    WaitForMultipleObjects(created, threads, TRUE, INFINITE);
-    InterlockedExchange(&g_stop, 1);
-    for (DWORD i = 0; i < created; ++i)
-        CloseHandle(threads[i]);
+    wprintf(
+        L"InfiltratorFS native filesystem service running with %lu workers.\n",
+        (unsigned long)g_worker_count);
+    WaitForSingleObject(g_stop_event, INFINITE);
+    request_stop();
+    wait_workers();
+    close_volumes();
+    SetConsoleCtrlHandler(console_control, FALSE);
+    CloseHandle(g_stop_event);
+    g_stop_event = NULL;
+    return 0;
+}
+
+int wmain(int argc, wchar_t **argv)
+{
+    InitializeCriticalSection(&g_volume_lock);
+
+    int result = 0;
+    if (argc > 1 && _wcsicmp(argv[1], L"--console") == 0) {
+        result = run_console();
+    } else {
+        SERVICE_TABLE_ENTRYW dispatch[] = {
+            { L"InfiltratorFSNative", service_main },
+            { NULL, NULL }
+        };
+        if (!StartServiceCtrlDispatcherW(dispatch)) {
+            DWORD error = GetLastError();
+            if (error == ERROR_FAILED_SERVICE_CONTROLLER_CONNECT)
+                result = run_console();
+            else
+                result = (int)error;
+        }
+    }
+
     close_volumes();
     DeleteCriticalSection(&g_volume_lock);
-    return 0;
+    return result;
 }
