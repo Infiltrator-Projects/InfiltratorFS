@@ -106,7 +106,8 @@ The intended security architecture is described in `SECURITY.md`. Current Linux 
 - [x] Linux/Windows Format 0.18 interoperability coverage.
 - [x] Driverless Windows Explorer projection using Microsoft's inbox ProjFS.
 - [x] Windows attribute/security/filename adapter completion.
-- [ ] Native Windows filesystem driver with Cache Manager/I/O Manager integration.
+- [x] Native Windows filesystem driver implementation with Cache Manager/I/O Manager integration.
+- [ ] Mounted native Windows driver qualification on Windows (real volume mount, cached/non-cached/paging I/O, mmap coherence, namespace/security semantics, service restart, Driver Verifier and cross-platform conformance).
 See `PLATFORM_ADAPTERS.md` for the adapter contract.
 
 ## Future ecosystem integration
