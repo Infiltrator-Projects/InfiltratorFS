@@ -461,6 +461,101 @@ static void dispatch_enum(
                               INFS_STATUS_OK : status);
 }
 
+static void dispatch_query_security(
+    struct native_volume *v,
+    const struct infilfs_win_native_request *request,
+    struct infilfs_win_native_response *response)
+{
+    char path[INFS_PATH_MAX + 1u];
+    if (!request_path_utf8(request->path, request->path_chars, path)) {
+        response_status(response, INFS_STATUS_NAME_TOO_LONG);
+        return;
+    }
+
+    struct infs_attributes attrs;
+    infs_status status = infs_get_attributes(
+        &v->volume, path, &attrs);
+    if (status != INFS_STATUS_OK) {
+        response_status(response, status);
+        return;
+    }
+
+    struct infs_security_descriptor descriptor;
+    memset(&descriptor, 0, sizeof(descriptor));
+    status = infs_get_security_descriptor(
+        &v->volume, path, &descriptor);
+    if (status == INFS_STATUS_NOT_FOUND) {
+        response_status(response, INFS_STATUS_NOT_FOUND);
+        return;
+    }
+    if (status != INFS_STATUS_OK) {
+        response_status(response, status);
+        return;
+    }
+
+    void *native = NULL;
+    uint32_t bytes = 0;
+    status = infilfs_windows_security_from_portable(
+        &v->volume, &descriptor,
+        attrs.object_type == INFS_OBJECT_DIRECTORY,
+        &native, &bytes);
+    infs_free_security_descriptor(&descriptor);
+    if (status != INFS_STATUS_OK) {
+        response_status(response, status);
+        return;
+    }
+    if (bytes > sizeof(response->output)) {
+        free(native);
+        response_status(response, INFS_STATUS_OVERFLOW);
+        return;
+    }
+    memcpy(response->output, native, bytes);
+    response->output_bytes = bytes;
+    free(native);
+    response_status(response, INFS_STATUS_OK);
+}
+
+static void dispatch_set_security(
+    struct native_volume *v,
+    const struct infilfs_win_native_request *request,
+    struct infilfs_win_native_response *response)
+{
+    char path[INFS_PATH_MAX + 1u];
+    if (!request_path_utf8(request->path, request->path_chars, path) ||
+        request->input_bytes == 0 ||
+        request->input_bytes > sizeof(request->input)) {
+        response_status(response, INFS_STATUS_INVALID_ARGUMENT);
+        return;
+    }
+
+    PSECURITY_DESCRIPTOR native =
+        (PSECURITY_DESCRIPTOR)(void *)request->input;
+    if (!IsValidSecurityDescriptor(native)) {
+        response_status(response, INFS_STATUS_CORRUPT);
+        return;
+    }
+
+    struct infs_attributes attrs;
+    infs_status status = infs_get_attributes(
+        &v->volume, path, &attrs);
+    if (status != INFS_STATUS_OK) {
+        response_status(response, status);
+        return;
+    }
+
+    struct infs_security_descriptor descriptor;
+    memset(&descriptor, 0, sizeof(descriptor));
+    status = infilfs_windows_security_to_portable(
+        &v->volume, native,
+        attrs.object_type == INFS_OBJECT_DIRECTORY,
+        &descriptor);
+    if (status == INFS_STATUS_OK)
+        status = infs_set_security_descriptor(
+            &v->volume, path, &descriptor);
+    infs_free_security_descriptor(&descriptor);
+    response_status(response, status);
+}
+
 static void dispatch_mutation(
     struct native_volume *v,
     const struct infilfs_win_native_request *request,
@@ -541,6 +636,12 @@ static void dispatch_request(
         break;
     case INFILFS_WIN_NATIVE_OP_FLUSH:
         response_status(response, infs_volume_sync(&v->volume));
+        break;
+    case INFILFS_WIN_NATIVE_OP_QUERY_SECURITY:
+        dispatch_query_security(v, request, response);
+        break;
+    case INFILFS_WIN_NATIVE_OP_SET_SECURITY:
+        dispatch_set_security(v, request, response);
         break;
     case INFILFS_WIN_NATIVE_OP_CREATE:
     case INFILFS_WIN_NATIVE_OP_MKDIR:
