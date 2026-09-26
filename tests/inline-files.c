@@ -18,6 +18,10 @@ struct memory_image {
     uint8_t *bytes;
     size_t visible_size;
     uint64_t random_state;
+    unsigned policy_reads;
+    unsigned policy_writes;
+    uint8_t last_protection_copies;
+    uint8_t last_encryption_domain;
 };
 
 static void fail(const char *message)
@@ -52,6 +56,32 @@ static infs_status memory_write(void *context, uint64_t offset,
         return INFS_STATUS_IO_ERROR;
     memcpy(image->bytes + (size_t)offset, buffer, size);
     return INFS_STATUS_OK;
+}
+
+static infs_status memory_read_policy(
+    void *context, uint64_t offset, void *buffer, size_t size,
+    const struct infs_storage_io_policy *policy)
+{
+    struct memory_image *image = context;
+    image->policy_reads++;
+    if (policy) {
+        image->last_protection_copies = policy->protection_copies;
+        image->last_encryption_domain = policy->encryption_domain;
+    }
+    return memory_read(context, offset, buffer, size);
+}
+
+static infs_status memory_write_policy(
+    void *context, uint64_t offset, const void *buffer, size_t size,
+    const struct infs_storage_io_policy *policy)
+{
+    struct memory_image *image = context;
+    image->policy_writes++;
+    if (policy) {
+        image->last_protection_copies = policy->protection_copies;
+        image->last_encryption_domain = policy->encryption_domain;
+    }
+    return memory_write(context, offset, buffer, size);
 }
 
 static infs_status memory_flush(void *context)
@@ -98,6 +128,8 @@ static infs_status memory_time(void *context, struct infs_timestamp *time)
 static const struct infs_storage_ops memory_ops = {
     .read_at = memory_read,
     .write_at = memory_write,
+    .read_at_policy = memory_read_policy,
+    .write_at_policy = memory_write_policy,
     .flush = memory_flush,
     .get_size = memory_size,
     .random_bytes = memory_random,
@@ -363,6 +395,10 @@ int main(void)
                &volume, "/policy", policy_bytes, sizeof(policy_bytes), 0) ==
                (int64_t)sizeof(policy_bytes),
            "write tiny storage-policy file");
+    expect(image.policy_writes > 0u &&
+           image.last_protection_copies == 1u &&
+           image.last_encryption_domain == 7u,
+           "storage-policy write reaches policy-aware backend");
     struct infs_attributes policy_attributes;
     expect(infs_get_attributes(
                &volume, "/policy", &policy_attributes) == INFS_STATUS_OK,
