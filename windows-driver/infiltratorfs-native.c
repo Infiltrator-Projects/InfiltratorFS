@@ -38,6 +38,8 @@ typedef struct _INFILFS_NATIVE_VOLUME {
     ULONGLONG SizeBytes;
     ULONG SectorSize;
     BOOLEAN ReadOnly;
+    BOOLEAN Locked;
+    BOOLEAN Dismounted;
     ERESOURCE Resource;
     FAST_MUTEX FcbLock;
     LIST_ENTRY Fcbs;
@@ -220,7 +222,7 @@ static INFILFS_NATIVE_VOLUME *InfilfsFindVolume(ULONGLONG VolumeId)
          Entry != &g_Infilfs.Volumes; Entry = Entry->Flink) {
         INFILFS_NATIVE_VOLUME *Volume =
             CONTAINING_RECORD(Entry, INFILFS_NATIVE_VOLUME, GlobalLink);
-        if (Volume->VolumeId == VolumeId) {
+        if (Volume->VolumeId == VolumeId && !Volume->Dismounted) {
             Found = Volume;
             break;
         }
@@ -579,6 +581,77 @@ static NTSTATUS InfilfsMountVolume(
     return InfilfsCompleteIrp(Irp, STATUS_SUCCESS, 0);
 }
 
+static NTSTATUS InfilfsUserFsctl(
+    PDEVICE_OBJECT DeviceObject, PIRP Irp, PIO_STACK_LOCATION IrpSp)
+{
+    INFILFS_NATIVE_VOLUME *Volume = InfilfsVolumeFromDevice(DeviceObject);
+    PFILE_OBJECT FileObject = IrpSp->FileObject;
+    INFILFS_NATIVE_FCB *Fcb = FileObject ?
+        (INFILFS_NATIVE_FCB *)FileObject->FsContext : NULL;
+    ULONG Code = IrpSp->Parameters.FileSystemControl.FsControlCode;
+
+    switch (Code) {
+    case FSCTL_REQUEST_OPLOCK_LEVEL_1:
+    case FSCTL_REQUEST_OPLOCK_LEVEL_2:
+    case FSCTL_REQUEST_BATCH_OPLOCK:
+    case FSCTL_REQUEST_FILTER_OPLOCK:
+    case FSCTL_OPLOCK_BREAK_ACKNOWLEDGE:
+    case FSCTL_OPBATCH_ACK_CLOSE_PENDING:
+    case FSCTL_OPLOCK_BREAK_NOTIFY:
+    case FSCTL_OPLOCK_BREAK_ACK_NO_2:
+    case FSCTL_REQUEST_OPLOCK:
+        if (!Fcb || Fcb->ObjectType != INFILFS_WIN_NATIVE_OBJECT_FILE)
+            return InfilfsCompleteIrp(
+                Irp, STATUS_INVALID_DEVICE_REQUEST, 0);
+        /*
+         * FsRtlOplockFsctrl owns completion/pending semantics for oplock
+         * requests. The shared FCB keeps one oplock state across all opens.
+         */
+        return FsRtlOplockFsctrl(
+            &Fcb->Oplock, Irp,
+            (ULONG)(Fcb->References > 0 ? Fcb->References : 0));
+
+    case FSCTL_LOCK_VOLUME:
+        if (!Volume)
+            return InfilfsCompleteIrp(
+                Irp, STATUS_INVALID_DEVICE_REQUEST, 0);
+        ExAcquireFastMutex(&Volume->FcbLock);
+        if (!IsListEmpty(&Volume->Fcbs)) {
+            ExReleaseFastMutex(&Volume->FcbLock);
+            return InfilfsCompleteIrp(
+                Irp, STATUS_ACCESS_DENIED, 0);
+        }
+        Volume->Locked = TRUE;
+        ExReleaseFastMutex(&Volume->FcbLock);
+        return InfilfsCompleteIrp(Irp, STATUS_SUCCESS, 0);
+
+    case FSCTL_UNLOCK_VOLUME:
+        if (!Volume)
+            return InfilfsCompleteIrp(
+                Irp, STATUS_INVALID_DEVICE_REQUEST, 0);
+        Volume->Locked = FALSE;
+        return InfilfsCompleteIrp(Irp, STATUS_SUCCESS, 0);
+
+    case FSCTL_DISMOUNT_VOLUME:
+        if (!Volume)
+            return InfilfsCompleteIrp(
+                Irp, STATUS_INVALID_DEVICE_REQUEST, 0);
+        if (!Volume->Locked)
+            return InfilfsCompleteIrp(
+                Irp, STATUS_ACCESS_DENIED, 0);
+        Volume->Dismounted = TRUE;
+        if (Volume->Vpb) {
+            Volume->Vpb->Flags &= ~VPB_MOUNTED;
+            Volume->Vpb->DeviceObject = NULL;
+        }
+        return InfilfsCompleteIrp(Irp, STATUS_SUCCESS, 0);
+
+    default:
+        return InfilfsCompleteIrp(
+            Irp, STATUS_INVALID_DEVICE_REQUEST, 0);
+    }
+}
+
 static NTSTATUS InfilfsFileSystemControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 {
     PIO_STACK_LOCATION IrpSp = IoGetCurrentIrpStackLocation(Irp);
@@ -587,8 +660,17 @@ static NTSTATUS InfilfsFileSystemControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         IrpSp->MinorFunction == IRP_MN_MOUNT_VOLUME)
         return InfilfsMountVolume(DeviceObject, Irp, IrpSp);
 
-    if (IrpSp->MinorFunction == IRP_MN_VERIFY_VOLUME)
+    if (IrpSp->MinorFunction == IRP_MN_VERIFY_VOLUME) {
+        INFILFS_NATIVE_VOLUME *Volume =
+            InfilfsVolumeFromDevice(DeviceObject);
+        if (!Volume || Volume->Dismounted)
+            return InfilfsCompleteIrp(
+                Irp, STATUS_WRONG_VOLUME, 0);
         return InfilfsCompleteIrp(Irp, STATUS_SUCCESS, 0);
+    }
+
+    if (IrpSp->MinorFunction == IRP_MN_USER_FS_REQUEST)
+        return InfilfsUserFsctl(DeviceObject, Irp, IrpSp);
 
     return InfilfsCompleteIrp(Irp, STATUS_INVALID_DEVICE_REQUEST, 0);
 }
@@ -892,6 +974,10 @@ static NTSTATUS InfilfsCreate(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         return InfilfsCompleteIrp(Irp, STATUS_SUCCESS, FILE_OPENED);
     if (!Volume || !FileObject)
         return InfilfsCompleteIrp(Irp, STATUS_INVALID_DEVICE_REQUEST, 0);
+    if (Volume->Dismounted)
+        return InfilfsCompleteIrp(Irp, STATUS_VOLUME_DISMOUNTED, 0);
+    if (Volume->Locked)
+        return InfilfsCompleteIrp(Irp, STATUS_ACCESS_DENIED, 0);
 
     Status = InfilfsResolveOpenPath(
         FileObject, &OpenPath, &AllocatedPath);
