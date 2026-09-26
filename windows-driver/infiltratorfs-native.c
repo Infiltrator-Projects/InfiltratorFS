@@ -59,6 +59,7 @@ typedef struct _INFILFS_NATIVE_FCB {
     FILE_LOCK FileLock;
     OPLOCK Oplock;
     volatile LONG References;
+    LONG OpenHandles;
     ULONGLONG FileId;
     ULONG ObjectType;
     ULONG FileAttributes;
@@ -1663,22 +1664,25 @@ static NTSTATUS InfilfsCreate(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         Status = STATUS_INVALID_PARAMETER;
         goto complete;
     }
-    Status = IoCheckShareAccess(
-        IrpSp->Parameters.Create.SecurityContext->DesiredAccess,
-        IrpSp->Parameters.Create.ShareAccess,
-        FileObject, &Fcb->ShareAccess, TRUE);
+    ExAcquireFastMutex(&Volume->FcbLock);
+    if (Fcb->OpenHandles == 0) {
+        IoSetShareAccess(
+            IrpSp->Parameters.Create.SecurityContext->DesiredAccess,
+            IrpSp->Parameters.Create.ShareAccess,
+            FileObject, &Fcb->ShareAccess);
+        Status = STATUS_SUCCESS;
+    } else {
+        Status = IoCheckShareAccess(
+            IrpSp->Parameters.Create.SecurityContext->DesiredAccess,
+            IrpSp->Parameters.Create.ShareAccess,
+            FileObject, &Fcb->ShareAccess, TRUE);
+    }
+    if (NT_SUCCESS(Status))
+        Fcb->OpenHandles++;
+    ExReleaseFastMutex(&Volume->FcbLock);
     if (!NT_SUCCESS(Status))
         goto complete;
     Ccb->ShareRegistered = TRUE;
-    FileObject->ReadAccess =
-        (DesiredAccess &
-         (FILE_READ_DATA | FILE_EXECUTE | FILE_READ_ATTRIBUTES |
-          FILE_READ_EA | READ_CONTROL)) != 0;
-    FileObject->WriteAccess =
-        (DesiredAccess &
-         (FILE_WRITE_DATA | FILE_APPEND_DATA | FILE_WRITE_ATTRIBUTES |
-          FILE_WRITE_EA | WRITE_DAC | WRITE_OWNER)) != 0;
-    FileObject->DeleteAccess = (DesiredAccess & DELETE) != 0;
 
     FileObject->FsContext = Fcb;
     FileObject->FsContext2 = Ccb;
@@ -1707,8 +1711,14 @@ static NTSTATUS InfilfsCreate(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 
 complete:
     if (Ccb) {
-        if (Ccb->ShareRegistered && Fcb)
+        if (Ccb->ShareRegistered && Fcb) {
+            ExAcquireFastMutex(&Volume->FcbLock);
             IoRemoveShareAccess(FileObject, &Fcb->ShareAccess);
+            if (Fcb->OpenHandles > 0)
+                Fcb->OpenHandles--;
+            ExReleaseFastMutex(&Volume->FcbLock);
+            Ccb->ShareRegistered = FALSE;
+        }
         InfilfsFreeOpenPath(&Ccb->OpenPath);
         ExFreePoolWithTag(Ccb, INFILFS_NATIVE_CCB_TAG);
     }
@@ -3082,8 +3092,12 @@ static NTSTATUS InfilfsCleanup(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         CcFlushCache(FileObject->SectionObjectPointer, NULL, 0, NULL);
     CcUninitializeCacheMap(FileObject, NULL, NULL);
 
-    if (Ccb && Ccb->ShareRegistered && Fcb) {
+    if (Ccb && Ccb->ShareRegistered && Fcb && Volume) {
+        ExAcquireFastMutex(&Volume->FcbLock);
         IoRemoveShareAccess(FileObject, &Fcb->ShareAccess);
+        if (Fcb->OpenHandles > 0)
+            Fcb->OpenHandles--;
+        ExReleaseFastMutex(&Volume->FcbLock);
         Ccb->ShareRegistered = FALSE;
     }
 
@@ -3116,8 +3130,12 @@ static NTSTATUS InfilfsClose(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     Ccb = (INFILFS_NATIVE_CCB *)FileObject->FsContext2;
     FileObject->FsContext = NULL;
     FileObject->FsContext2 = NULL;
-    if (Ccb && Ccb->ShareRegistered && Fcb) {
+    if (Ccb && Ccb->ShareRegistered && Fcb && Fcb->Volume) {
+        ExAcquireFastMutex(&Fcb->Volume->FcbLock);
         IoRemoveShareAccess(FileObject, &Fcb->ShareAccess);
+        if (Fcb->OpenHandles > 0)
+            Fcb->OpenHandles--;
+        ExReleaseFastMutex(&Fcb->Volume->FcbLock);
         Ccb->ShareRegistered = FALSE;
     }
     if (Ccb && Ccb->DeletePending && Fcb) {
