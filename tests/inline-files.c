@@ -382,6 +382,13 @@ int main(void)
                INFS_ATTR_WITH_STORAGE_POLICY(INFS_ATTR_HIDDEN, 1u, 7u)) ==
                INFS_STATUS_OK,
            "presentation flags may change without changing storage policy");
+    expect(infs_truncate_file(&volume, "/policy", 16u) == INFS_STATUS_OK,
+           "truncate protected file below inline threshold");
+    expect(infs_get_attributes(
+               &volume, "/policy", &policy_attributes) == INFS_STATUS_OK &&
+           policy_attributes.logical_size == 16u &&
+           policy_attributes.allocated_size >= INFS_BLOCK_SIZE,
+           "truncate keeps storage-policy file external");
 
     expect(infs_scrub(&volume, &report) == INFS_STATUS_OK,
            "scrub inline file");
