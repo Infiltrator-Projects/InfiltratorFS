@@ -139,6 +139,14 @@ static int set_portable_flags_tx(struct infs_volume *vol, const char *path,
     if (status != INFS_STATUS_OK) return status;
     struct infs_attributes_disk *attributes = object_attributes(block);
     if (!attributes) return INFS_STATUS_CORRUPT;
+
+    uint64_t old_flags = infs_le64_to_cpu(attributes->portable_flags);
+    uint64_t old_policy = old_flags & INFS_ATTR_STORAGE_POLICY_MASK;
+    uint64_t new_policy = portable_flags & INFS_ATTR_STORAGE_POLICY_MASK;
+    if (old_policy != new_policy && lookup.type == INFS_OBJECT_FILE &&
+        infs_le64_to_cpu(attributes->logical_size) != 0)
+        return INFS_STATUS_BUSY;
+
     struct infs_timestamp now = {0};
     status = infs_storage_current_time(&vol->storage, &now);
     if (status != INFS_STATUS_OK) return status;
