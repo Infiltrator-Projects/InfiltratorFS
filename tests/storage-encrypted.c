@@ -236,6 +236,36 @@ int main(void)
        !memcmp(readback, payload, sizeof(payload)),
        "encrypted round trip");
 
+    /*
+     * A nonzero per-object encryption domain derives a distinct AEAD key and
+     * authenticates the domain ID. The same physical record must therefore be
+     * readable only through the domain that wrote it.
+     */
+    struct infs_storage_io_policy domain_policy = {0};
+    for (size_t i = 0; i < sizeof(domain_policy.object_id); ++i)
+        domain_policy.object_id[i] = (uint8_t)(0xa0u + i);
+    domain_policy.encryption_domain = 7u;
+    const uint64_t domain_offset = 20u * 4096u;
+    uint8_t domain_payload[4096];
+    for (size_t i = 0; i < sizeof(domain_payload); ++i)
+        domain_payload[i] = (uint8_t)(i * 13u + 5u);
+    ok(infs_storage_write_policy(
+           &encrypted, domain_offset, domain_payload,
+           sizeof(domain_payload), &domain_policy) == INFS_STATUS_OK,
+       "write encryption domain 7");
+    uint8_t domain_readback[4096] = {0};
+    ok(infs_storage_read_policy(
+           &encrypted, domain_offset, domain_readback,
+           sizeof(domain_readback), &domain_policy) == INFS_STATUS_OK &&
+       !memcmp(domain_readback, domain_payload, sizeof(domain_payload)),
+       "read encryption domain 7");
+    struct infs_storage_io_policy wrong_domain = domain_policy;
+    wrong_domain.encryption_domain = 3u;
+    ok(infs_storage_read_policy(
+           &encrypted, domain_offset, domain_readback,
+           sizeof(domain_readback), &wrong_domain) == INFS_STATUS_CORRUPT,
+       "wrong encryption domain is authentication failure");
+
 #if !defined(_WIN32)
     /*
      * Two disjoint partial updates to one authenticated logical block must be
