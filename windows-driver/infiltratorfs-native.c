@@ -1598,7 +1598,7 @@ static NTSTATUS InfilfsDrainPendingDeletes(
 
     ExAcquireFastMutex(&Volume->FcbLock);
     if (InfilfsDeletePending(Fcb)) {
-        Status = STATUS_DELETE_PENDING;
+        Result = STATUS_DELETE_PENDING;
     } else if (Fcb->OpenHandles == 0) {
         while (!IsListEmpty(&Fcb->PendingDeletes)) {
             PLIST_ENTRY Link =
