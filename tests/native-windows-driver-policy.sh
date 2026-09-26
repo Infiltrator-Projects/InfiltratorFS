@@ -65,6 +65,9 @@ grep -Fq 'FileNamesInformation' "$driver" || fail 'directory enumeration lacks F
 grep -Fq 'FileIdFullDirectoryInformation' "$driver" || fail 'directory enumeration lacks FileIdFullDirectoryInformation'
 grep -Fq 'FileIdBothDirectoryInformation' "$driver" || fail 'directory enumeration lacks FileIdBothDirectoryInformation'
 grep -Fq 'DeletePendingCount' "$driver" || fail 'delete-pending state is not separated from per-open delete intent'
+grep -Fq 'UNICODE_STRING OpenPath' "$driver" || fail 'native Windows CCB does not retain the per-open namespace path'
+grep -Fq 'InfilfsHandlePath' "$driver" || fail 'native Windows operations do not route through per-open namespace identity'
+grep -Fq 'STATUS_BUFFER_OVERFLOW' "$driver" || fail 'native Windows security/directory sizing lacks overflow semantics'
 if grep -Fq 'FILE_SUPPORTS_REPARSE_POINTS' "$driver" ||
    grep -Fq 'FILE_SUPPORTS_SPARSE_FILES' "$driver"; then
     fail 'driver advertises Windows FSCTL contracts it does not implement'
