@@ -347,10 +347,15 @@ infs_status infs_read_symlink(struct infs_volume *vol, const char *path,
                               size_t *length_out);
 infs_status infs_link_file(struct infs_volume *vol, const char *existing_path,
                            const char *new_path);
+infs_status infs_link_file_ex(struct infs_volume *vol,
+                              const char *existing_path,
+                              const char *new_path, int replace);
 infs_status infs_unlink(struct infs_volume *vol, const char *path);
 infs_status infs_rmdir(struct infs_volume *vol, const char *path);
 infs_status infs_rename(struct infs_volume *vol, const char *oldpath,
                         const char *newpath);
+infs_status infs_rename_ex(struct infs_volume *vol, const char *oldpath,
+                           const char *newpath, int replace);
 
 int64_t infs_read_file(struct infs_volume *vol, const char *path, void *buf,
                        size_t size, uint64_t offset);
