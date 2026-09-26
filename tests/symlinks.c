@@ -244,6 +244,50 @@ int main(void)
                (int64_t)sizeof(linked_readback) &&
            memcmp(linked_readback, changed_data, sizeof(changed_data)) == 0,
            "hard-link write is visible through original name");
+    expect(infs_create_file(&volume, "/noreplace-src", NULL) ==
+               INFS_STATUS_OK &&
+           infs_create_file(&volume, "/noreplace-dst", NULL) ==
+               INFS_STATUS_OK,
+           "create no-replace rename pair");
+    expect(infs_rename_ex(
+               &volume, "/noreplace-src", "/noreplace-dst", 0) ==
+               INFS_STATUS_ALREADY_EXISTS,
+           "no-replace rename preserves existing destination");
+    expect(infs_get_attributes(
+               &volume, "/noreplace-src", &file_attributes) ==
+               INFS_STATUS_OK &&
+           infs_get_attributes(
+               &volume, "/noreplace-dst", &alias_attributes) ==
+               INFS_STATUS_OK &&
+           memcmp(file_attributes.object_id,
+                  alias_attributes.object_id, 16) != 0,
+           "failed no-replace rename leaves both objects intact");
+
+    expect(infs_create_file(&volume, "/link-replace-src", NULL) ==
+               INFS_STATUS_OK &&
+           infs_create_file(&volume, "/link-replace-dst", NULL) ==
+               INFS_STATUS_OK,
+           "create hard-link replacement pair");
+    expect(infs_link_file_ex(
+               &volume, "/link-replace-src", "/link-replace-dst", 0) ==
+               INFS_STATUS_ALREADY_EXISTS,
+           "no-replace hard link preserves existing destination");
+    expect(infs_link_file_ex(
+               &volume, "/link-replace-src", "/link-replace-dst", 1) ==
+               INFS_STATUS_OK,
+           "replace hard link atomically replaces destination");
+    expect(infs_get_attributes(
+               &volume, "/link-replace-src", &file_attributes) ==
+               INFS_STATUS_OK &&
+           infs_get_attributes(
+               &volume, "/link-replace-dst", &alias_attributes) ==
+               INFS_STATUS_OK &&
+           memcmp(file_attributes.object_id,
+                  alias_attributes.object_id, 16) == 0 &&
+           file_attributes.link_count == 2u &&
+           alias_attributes.link_count == 2u,
+           "replacement hard link shares source identity");
+
     expect(infs_link_file(&volume, "/replace", "/bad-link") ==
                INFS_STATUS_NOT_SUPPORTED,
            "reject hard link to symbolic link");
