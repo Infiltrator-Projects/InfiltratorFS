@@ -77,6 +77,7 @@ typedef struct _INFILFS_NATIVE_CCB {
     ULONG DirectoryIndex;
     BOOLEAN ShareRegistered;
     BOOLEAN DeletePending;
+    ACCESS_MASK GrantedAccess;
     UNICODE_STRING OpenPath;
 } INFILFS_NATIVE_CCB;
 
@@ -1184,8 +1185,18 @@ static NTSTATUS InfilfsCheckAccess(
 
     Status = InfilfsFetchSecurityDescriptor(
         Volume, Path, &Descriptor, &DescriptorLength);
-    if (Status == STATUS_OBJECT_NAME_NOT_FOUND)
+    if (Status == STATUS_OBJECT_NAME_NOT_FOUND) {
+        if (GrantedOut) {
+            ACCESS_MASK Granted =
+                DesiredAccess & ~MAXIMUM_ALLOWED;
+            if (DesiredAccess & MAXIMUM_ALLOWED)
+                Granted |= FILE_ALL_ACCESS;
+            RtlMapGenericMask(
+                &Granted, IoGetFileObjectGenericMapping());
+            *GrantedOut = Granted;
+        }
         return STATUS_SUCCESS;
+    }
     if (!NT_SUCCESS(Status))
         return Status;
 
@@ -1692,6 +1703,7 @@ static NTSTATUS InfilfsCreate(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     if (!NT_SUCCESS(Status))
         goto complete;
     Ccb->ShareRegistered = TRUE;
+    Ccb->GrantedAccess = GrantedAccess;
 
     FileObject->FsContext = Fcb;
     FileObject->FsContext2 = Ccb;
@@ -1867,6 +1879,12 @@ static NTSTATUS InfilfsRead(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     HandlePath = InfilfsHandlePath(FileObject, Fcb);
     if (!HandlePath || !HandlePath->Buffer)
         return InfilfsCompleteIrp(Irp, STATUS_INVALID_PARAMETER, 0);
+    {
+        INFILFS_NATIVE_CCB *Ccb =
+            (INFILFS_NATIVE_CCB *)FileObject->FsContext2;
+        if (!Ccb || !(Ccb->GrantedAccess & FILE_READ_DATA))
+            return InfilfsCompleteIrp(Irp, STATUS_ACCESS_DENIED, 0);
+    }
     if (Fcb->ObjectType != INFILFS_WIN_NATIVE_OBJECT_FILE)
         return InfilfsCompleteIrp(Irp, STATUS_INVALID_DEVICE_REQUEST, 0);
 
@@ -1939,13 +1957,21 @@ static NTSTATUS InfilfsWrite(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     HandlePath = InfilfsHandlePath(FileObject, Fcb);
     if (!HandlePath || !HandlePath->Buffer)
         return InfilfsCompleteIrp(Irp, STATUS_INVALID_PARAMETER, 0);
+    INFILFS_NATIVE_CCB *Ccb =
+        (INFILFS_NATIVE_CCB *)FileObject->FsContext2;
+    if (!Ccb ||
+        !(Ccb->GrantedAccess & (FILE_WRITE_DATA | FILE_APPEND_DATA)))
+        return InfilfsCompleteIrp(Irp, STATUS_ACCESS_DENIED, 0);
     if (Fcb->ObjectType != INFILFS_WIN_NATIVE_OBJECT_FILE)
         return InfilfsCompleteIrp(Irp, STATUS_INVALID_DEVICE_REQUEST, 0);
 
     Length = IrpSp->Parameters.Write.Length;
     Offset = IrpSp->Parameters.Write.ByteOffset;
-    if (Offset.HighPart == -1 &&
-        Offset.LowPart == FILE_WRITE_TO_END_OF_FILE) {
+    if (!(Ccb->GrantedAccess & FILE_WRITE_DATA) &&
+        (Ccb->GrantedAccess & FILE_APPEND_DATA)) {
+        Offset = Fcb->Header.FileSize;
+    } else if (Offset.HighPart == -1 &&
+               Offset.LowPart == FILE_WRITE_TO_END_OF_FILE) {
         Offset = Fcb->Header.FileSize;
     } else if (Offset.HighPart == -1 &&
                Offset.LowPart == FILE_USE_FILE_POINTER_POSITION) {
@@ -2174,6 +2200,9 @@ static NTSTATUS InfilfsSetInformation(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     switch (Class) {
     case FileBasicInformation: {
         PFILE_BASIC_INFORMATION Info = Buffer;
+        if (!(Ccb->GrantedAccess & FILE_WRITE_ATTRIBUTES))
+            return InfilfsCompleteIrp(
+                Irp, STATUS_ACCESS_DENIED, 0);
         struct infilfs_win_native_request *Request = NULL;
         struct infilfs_win_native_response *Response = NULL;
         struct infilfs_win_native_basic Basic;
@@ -2233,6 +2262,9 @@ static NTSTATUS InfilfsSetInformation(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     }
     case FileEndOfFileInformation: {
         PFILE_END_OF_FILE_INFORMATION Info = Buffer;
+        if (!(Ccb->GrantedAccess & FILE_WRITE_DATA))
+            return InfilfsCompleteIrp(
+                Irp, STATUS_ACCESS_DENIED, 0);
         CC_FILE_SIZES Sizes;
         if (Length < sizeof(*Info) || Info->EndOfFile.QuadPart < 0)
             return InfilfsCompleteIrp(
@@ -2257,6 +2289,9 @@ static NTSTATUS InfilfsSetInformation(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     }
     case FileDispositionInformation: {
         PFILE_DISPOSITION_INFORMATION Info = Buffer;
+        if (!(Ccb->GrantedAccess & DELETE))
+            return InfilfsCompleteIrp(
+                Irp, STATUS_ACCESS_DENIED, 0);
         if (Length < sizeof(*Info))
             return InfilfsCompleteIrp(
                 Irp, STATUS_BUFFER_TOO_SMALL, 0);
@@ -2275,6 +2310,12 @@ static NTSTATUS InfilfsSetInformation(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 #ifdef FileDispositionInformationEx
     case FileDispositionInformationEx: {
         PFILE_DISPOSITION_INFORMATION_EX Info = Buffer;
+        if (!(Ccb->GrantedAccess & DELETE))
+            return InfilfsCompleteIrp(
+                Irp, STATUS_ACCESS_DENIED, 0);
+        if (Info->Flags & FILE_DISPOSITION_POSIX_SEMANTICS)
+            return InfilfsCompleteIrp(
+                Irp, STATUS_NOT_SUPPORTED, 0);
         if (Length < sizeof(*Info))
             return InfilfsCompleteIrp(
                 Irp, STATUS_BUFFER_TOO_SMALL, 0);
@@ -2298,6 +2339,9 @@ static NTSTATUS InfilfsSetInformation(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 #endif
     {
         PFILE_RENAME_INFORMATION Info = Buffer;
+        if (!(Ccb->GrantedAccess & DELETE))
+            return InfilfsCompleteIrp(
+                Irp, STATUS_ACCESS_DENIED, 0);
         UNICODE_STRING Destination;
         PWCHAR AllocatedDestination = NULL;
         ULONG Replace = 0;
@@ -2894,6 +2938,12 @@ static NTSTATUS InfilfsQuerySecurity(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         return InfilfsCompleteIrp(Irp, STATUS_NOT_SUPPORTED, 0);
     if (!Information)
         return InfilfsCompleteIrp(Irp, STATUS_INVALID_PARAMETER, 0);
+    {
+        INFILFS_NATIVE_CCB *Ccb = FileObject ?
+            (INFILFS_NATIVE_CCB *)FileObject->FsContext2 : NULL;
+        if (!Ccb || !(Ccb->GrantedAccess & READ_CONTROL))
+            return InfilfsCompleteIrp(Irp, STATUS_ACCESS_DENIED, 0);
+    }
 
     Status = InfilfsFetchSecurityDescriptor(
         Volume, HandlePath, &FullDescriptor, &FullLength);
@@ -2980,6 +3030,18 @@ static NTSTATUS InfilfsSetSecurity(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         return InfilfsCompleteIrp(Irp, STATUS_NOT_SUPPORTED, 0);
     if (!Information)
         return InfilfsCompleteIrp(Irp, STATUS_INVALID_PARAMETER, 0);
+    {
+        INFILFS_NATIVE_CCB *Ccb = FileObject ?
+            (INFILFS_NATIVE_CCB *)FileObject->FsContext2 : NULL;
+        ACCESS_MASK Required = 0;
+        if (Information & DACL_SECURITY_INFORMATION)
+            Required |= WRITE_DAC;
+        if (Information &
+            (OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION))
+            Required |= WRITE_OWNER;
+        if (!Ccb || (Ccb->GrantedAccess & Required) != Required)
+            return InfilfsCompleteIrp(Irp, STATUS_ACCESS_DENIED, 0);
+    }
 
     __try {
         if (!RtlValidSecurityDescriptor(Descriptor))
