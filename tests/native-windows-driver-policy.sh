@@ -44,6 +44,7 @@ grep -Fq 'Timeout.QuadPart = -(LONGLONG)1 * 10 * 1000 * 1000' "$driver" || fail 
 grep -Fq 'InfilfsAbortServiceRequests' "$driver" || fail 'driver unload does not wake queued service callers'
 grep -Fq 'ExInitializeRundownProtection(&Volume->Rundown)' "$driver" || fail 'native Windows volume lifetime lacks rundown protection'
 grep -Fq 'ExWaitForRundownProtectionRelease(&Volume->Rundown)' "$driver" || fail 'native Windows teardown does not drain control-path volume references'
+grep -Fq 'Snapshot only live volumes and acquire rundown' "$driver" || fail 'native Windows shutdown does not pin volume lifetime'
 grep -Fq 'InfilfsFindVolumeReferenced' "$driver" || fail 'native Windows service/control volume lookup is not lifetime-protected'
 grep -Fq 'Volume->LockOwner = FileObject' "$driver" || fail 'native Windows volume lock does not track the owning handle'
 grep -Fq 'InfilfsFinalizeRetiredVolume' "$driver" || fail 'native Windows dismount does not defer VDO destruction until final close'
