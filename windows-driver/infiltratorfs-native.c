@@ -1489,6 +1489,65 @@ static NTSTATUS InfilfsSetInformation(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         return InfilfsCompleteIrp(Irp, STATUS_MEDIA_WRITE_PROTECTED, 0);
 
     switch (Class) {
+    case FileBasicInformation: {
+        PFILE_BASIC_INFORMATION Info = Buffer;
+        struct infilfs_win_native_request *Request = NULL;
+        struct infilfs_win_native_response *Response = NULL;
+        struct infilfs_win_native_basic Basic;
+
+        if (Length < sizeof(*Info))
+            return InfilfsCompleteIrp(
+                Irp, STATUS_BUFFER_TOO_SMALL, 0);
+
+        Request = ExAllocatePool2(
+            POOL_FLAG_PAGED, sizeof(*Request),
+            INFILFS_NATIVE_REQUEST_TAG);
+        Response = ExAllocatePool2(
+            POOL_FLAG_PAGED, sizeof(*Response),
+            INFILFS_NATIVE_REQUEST_TAG);
+        if (!Request || !Response) {
+            if (Request)
+                ExFreePoolWithTag(
+                    Request, INFILFS_NATIVE_REQUEST_TAG);
+            if (Response)
+                ExFreePoolWithTag(
+                    Response, INFILFS_NATIVE_REQUEST_TAG);
+            return InfilfsCompleteIrp(
+                Irp, STATUS_INSUFFICIENT_RESOURCES, 0);
+        }
+
+        RtlZeroMemory(Request, sizeof(*Request));
+        RtlZeroMemory(Response, sizeof(*Response));
+        RtlZeroMemory(&Basic, sizeof(Basic));
+        Basic.creation_time_100ns = Info->CreationTime.QuadPart;
+        Basic.access_time_100ns = Info->LastAccessTime.QuadPart;
+        Basic.write_time_100ns = Info->LastWriteTime.QuadPart;
+        Basic.change_time_100ns = Info->ChangeTime.QuadPart;
+        Basic.file_attributes = Info->FileAttributes;
+
+        Request->opcode = INFILFS_WIN_NATIVE_OP_SET_BASIC;
+        Request->input_bytes = sizeof(Basic);
+        RtlCopyMemory(Request->input, &Basic, sizeof(Basic));
+        InfilfsCopyPathToRequest(Request, &Fcb->Path);
+        Status = InfilfsCallService(Volume, Request, Response);
+
+        ExFreePoolWithTag(Response, INFILFS_NATIVE_REQUEST_TAG);
+        ExFreePoolWithTag(Request, INFILFS_NATIVE_REQUEST_TAG);
+        if (!NT_SUCCESS(Status))
+            break;
+
+        if (Info->CreationTime.QuadPart != 0)
+            Fcb->CreationTime = Info->CreationTime;
+        if (Info->LastAccessTime.QuadPart != 0)
+            Fcb->AccessTime = Info->LastAccessTime;
+        if (Info->LastWriteTime.QuadPart != 0)
+            Fcb->WriteTime = Info->LastWriteTime;
+        if (Info->ChangeTime.QuadPart != 0)
+            Fcb->ChangeTime = Info->ChangeTime;
+        if (Info->FileAttributes != 0)
+            Fcb->FileAttributes = Info->FileAttributes;
+        break;
+    }
     case FileEndOfFileInformation: {
         PFILE_END_OF_FILE_INFORMATION Info = Buffer;
         CC_FILE_SIZES Sizes;
