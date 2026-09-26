@@ -81,6 +81,7 @@
 #   infiltratorfs_shared_ownership.c owns shared-range discovery, exact fallback and incremental shared-extent reference accounting.
 #   infiltratorfs_orphan_scan.c owns N-1 parallel crash-orphan discovery.
 #   infiltratorfs_name_policy.c owns persistent cross-platform filename policy.
+#   infiltratorfs_media.c owns native media-profile admission and device policy.
 #   infiltratorfs_rw.inc is the only remaining nested implementation compositor;
 #   leaf .inc files must not start including each other or creating hidden cycles.
 #   Existing macro-renamed legacy/data entry points are migration debt, not a
@@ -94,7 +95,7 @@
 # KERNELRELEASE conditional, the initial DKMS make terminates with
 # "make: *** No targets. Stop." before Kbuild is ever entered.
 obj-m += infiltratorfs.o
-infiltratorfs-y := infiltratorfs_core.o infiltratorfs_cpu.o infiltratorfs_crypto.o infiltratorfs_security.o infiltratorfs_extension.o infiltratorfs_allocation_map.o infiltratorfs_resize.o infiltratorfs_index_tree.o infiltratorfs_extent_tree.o infiltratorfs_parallel_alloc.o infiltratorfs_allocation_publish.o infiltratorfs_read_cache.o infiltratorfs_pagecache.o infiltratorfs_directory_tree.o infiltratorfs_checksum_cache.o infiltratorfs_checksum_store.o infiltratorfs_locator_cache.o infiltratorfs_linux_meta_codec.o infiltratorfs_shared_ownership.o infiltratorfs_orphan_scan.o infiltratorfs_name_policy.o
+infiltratorfs-y := infiltratorfs_core.o infiltratorfs_cpu.o infiltratorfs_crypto.o infiltratorfs_security.o infiltratorfs_extension.o infiltratorfs_allocation_map.o infiltratorfs_resize.o infiltratorfs_index_tree.o infiltratorfs_extent_tree.o infiltratorfs_parallel_alloc.o infiltratorfs_allocation_publish.o infiltratorfs_read_cache.o infiltratorfs_pagecache.o infiltratorfs_directory_tree.o infiltratorfs_checksum_cache.o infiltratorfs_checksum_store.o infiltratorfs_locator_cache.o infiltratorfs_linux_meta_codec.o infiltratorfs_shared_ownership.o infiltratorfs_orphan_scan.o infiltratorfs_name_policy.o infiltratorfs_media.o
 ccflags-y += -I$(src)/../include/infilfs
 
 KDIR ?= /lib/modules/$(shell uname -r)/build
