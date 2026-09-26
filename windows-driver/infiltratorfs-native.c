@@ -1697,6 +1697,14 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
     DriverObject->MajorFunction[IRP_MJ_CLEANUP] = InfilfsCleanup;
     DriverObject->MajorFunction[IRP_MJ_READ] = InfilfsRead;
     DriverObject->MajorFunction[IRP_MJ_WRITE] = InfilfsWrite;
+    DriverObject->MajorFunction[IRP_MJ_QUERY_INFORMATION] =
+        InfilfsQueryInformation;
+    DriverObject->MajorFunction[IRP_MJ_SET_INFORMATION] =
+        InfilfsSetInformation;
+    DriverObject->MajorFunction[IRP_MJ_DIRECTORY_CONTROL] =
+        InfilfsDirectoryControl;
+    DriverObject->MajorFunction[IRP_MJ_QUERY_VOLUME_INFORMATION] =
+        InfilfsQueryVolumeInformation;
     DriverObject->MajorFunction[IRP_MJ_FLUSH_BUFFERS] = InfilfsFlushBuffers;
     DriverObject->MajorFunction[IRP_MJ_FILE_SYSTEM_CONTROL] =
         InfilfsFileSystemControl;
