@@ -2076,7 +2076,7 @@ static NTSTATUS InfilfsQueryInformation(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     }
     case FileNameInformation: {
         PFILE_NAME_INFORMATION Info = Buffer;
-        ULONG NameBytes = Fcb->Path.Length;
+        ULONG NameBytes = HandlePath ? HandlePath->Length : 0;
         ULONG Required = FIELD_OFFSET(FILE_NAME_INFORMATION, FileName) +
                          NameBytes;
         if (Length < FIELD_OFFSET(FILE_NAME_INFORMATION, FileName)) {
@@ -2088,7 +2088,7 @@ static NTSTATUS InfilfsQueryInformation(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         if (Copy > NameBytes)
             Copy = NameBytes;
         if (Copy)
-            RtlCopyMemory(Info->FileName, Fcb->Path.Buffer, Copy);
+            RtlCopyMemory(Info->FileName, HandlePath->Buffer, Copy);
         Used = FIELD_OFFSET(FILE_NAME_INFORMATION, FileName) + Copy;
         if (Length < Required)
             Status = STATUS_BUFFER_OVERFLOW;
@@ -2127,6 +2127,9 @@ static NTSTATUS InfilfsSetInformation(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     PFILE_OBJECT FileObject = IrpSp->FileObject;
     INFILFS_NATIVE_FCB *Fcb = FileObject ?
         (INFILFS_NATIVE_FCB *)FileObject->FsContext : NULL;
+    INFILFS_NATIVE_CCB *Ccb = FileObject ?
+        (INFILFS_NATIVE_CCB *)FileObject->FsContext2 : NULL;
+    PCUNICODE_STRING HandlePath;
     PVOID Buffer = Irp->AssociatedIrp.SystemBuffer;
     FILE_INFORMATION_CLASS Class =
         IrpSp->Parameters.SetFile.FileInformationClass;
@@ -2134,6 +2137,9 @@ static NTSTATUS InfilfsSetInformation(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     NTSTATUS Status = STATUS_SUCCESS;
 
     if (!Volume || !Fcb || !Ccb || !Buffer)
+        return InfilfsCompleteIrp(Irp, STATUS_INVALID_PARAMETER, 0);
+    HandlePath = InfilfsHandlePath(FileObject, Fcb);
+    if (!HandlePath || !HandlePath->Buffer)
         return InfilfsCompleteIrp(Irp, STATUS_INVALID_PARAMETER, 0);
     if (Volume->ReadOnly)
         return InfilfsCompleteIrp(Irp, STATUS_MEDIA_WRITE_PROTECTED, 0);
@@ -2178,7 +2184,7 @@ static NTSTATUS InfilfsSetInformation(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         Request->opcode = INFILFS_WIN_NATIVE_OP_SET_BASIC;
         Request->input_bytes = sizeof(Basic);
         RtlCopyMemory(Request->input, &Basic, sizeof(Basic));
-        InfilfsCopyPathToRequest(Request, &Fcb->Path);
+        InfilfsCopyPathToRequest(Request, HandlePath);
         Status = InfilfsCallService(Volume, Request, Response);
 
         ExFreePoolWithTag(Response, INFILFS_NATIVE_REQUEST_TAG);
@@ -2208,7 +2214,7 @@ static NTSTATUS InfilfsSetInformation(PDEVICE_OBJECT DeviceObject, PIRP Irp)
             CcFlushCache(FileObject->SectionObjectPointer, NULL, 0, NULL);
         Status = InfilfsServiceMutation(
             Volume, INFILFS_WIN_NATIVE_OP_TRUNCATE,
-            &Fcb->Path, NULL, (ULONGLONG)Info->EndOfFile.QuadPart, 0);
+            HandlePath, NULL, (ULONGLONG)Info->EndOfFile.QuadPart, 0);
         if (!NT_SUCCESS(Status))
             break;
         Fcb->Header.FileSize = Info->EndOfFile;
@@ -2295,23 +2301,14 @@ static NTSTATUS InfilfsSetInformation(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 
         Status = InfilfsServiceMutation(
             Volume, INFILFS_WIN_NATIVE_OP_RENAME,
-            &Fcb->Path, &Destination, 0, Replace);
+            HandlePath, &Destination, 0, Replace);
         if (NT_SUCCESS(Status)) {
-            USHORT Bytes = Destination.Length + sizeof(WCHAR);
-            PWCHAR NewPath = ExAllocatePool2(
-                POOL_FLAG_NON_PAGED, Bytes, INFILFS_NATIVE_FCB_TAG);
-            if (!NewPath) {
-                Status = STATUS_INSUFFICIENT_RESOURCES;
-            } else {
-                RtlCopyMemory(
-                    NewPath, Destination.Buffer, Destination.Length);
-                NewPath[Destination.Length / sizeof(WCHAR)] = L'\0';
-                if (Fcb->Path.Buffer)
-                    ExFreePoolWithTag(
-                        Fcb->Path.Buffer, INFILFS_NATIVE_FCB_TAG);
-                Fcb->Path.Buffer = NewPath;
-                Fcb->Path.Length = Destination.Length;
-                Fcb->Path.MaximumLength = Bytes;
+            UNICODE_STRING NewPath = {0};
+            Status = InfilfsDuplicatePath(&Destination, &NewPath);
+            if (NT_SUCCESS(Status)) {
+                InfilfsFreeOpenPath(&Ccb->OpenPath);
+                Ccb->OpenPath = NewPath;
+                HandlePath = &Ccb->OpenPath;
             }
         }
         if (AllocatedDestination)
@@ -2345,7 +2342,7 @@ static NTSTATUS InfilfsSetInformation(PDEVICE_OBJECT DeviceObject, PIRP Irp)
             INFILFS_WIN_NATIVE_REQ_REPLACE : 0;
         Status = InfilfsServiceMutation(
             Volume, INFILFS_WIN_NATIVE_OP_LINK,
-            &Fcb->Path, &Destination, 0, Replace);
+            HandlePath, &Destination, 0, Replace);
         if (NT_SUCCESS(Status))
             Fcb->LinkCount++;
         if (AllocatedDestination)
