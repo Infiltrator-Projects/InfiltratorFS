@@ -219,6 +219,26 @@ int main(void)
     ok(!memcmp(c_member.bytes + 3072, two_copy, sizeof(two_copy)) &&
        !memcmp(d_member.bytes + 3072, two_copy, sizeof(two_copy)),
        "two-copy policy reaches both members");
+
+    policy.encryption_domain = 7u;
+    static const char unsupported_domain[] = "needs-domain-backend";
+    ok(infs_storage_write_policy(
+           &mirror, 4096, unsupported_domain,
+           sizeof(unsupported_domain), &policy) ==
+           INFS_STATUS_NOT_SUPPORTED,
+       "mirror fails closed when members cannot provide encryption domain");
+    policy.encryption_domain = 0u;
+    static const char after_policy_error[] = "members-still-healthy";
+    ok(infs_storage_write_policy(
+           &mirror, 4608, after_policy_error,
+           sizeof(after_policy_error), &policy) == INFS_STATUS_OK,
+       "policy error does not quarantine healthy members");
+    ok(!memcmp(c_member.bytes + 4608, after_policy_error,
+               sizeof(after_policy_error)) &&
+       !memcmp(d_member.bytes + 4608, after_policy_error,
+               sizeof(after_policy_error)),
+       "healthy members remain available after semantic policy failure");
+
     infs_storage_close(&mirror);
     ok(c_member.closed && d_member.closed,
        "policy-aware mirror closes every member");
