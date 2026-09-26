@@ -76,6 +76,7 @@ typedef struct _INFILFS_NATIVE_CCB {
     ULONG DirectoryIndex;
     BOOLEAN ShareRegistered;
     BOOLEAN DeletePending;
+    UNICODE_STRING OpenPath;
 } INFILFS_NATIVE_CCB;
 
 typedef struct _INFILFS_NATIVE_REQUEST_ITEM {
@@ -1311,6 +1312,52 @@ out:
     return Status;
 }
 
+static NTSTATUS InfilfsDuplicatePath(
+    PCUNICODE_STRING Source, PUNICODE_STRING Destination)
+{
+    USHORT Bytes;
+    PWCHAR Buffer;
+
+    if (!Source || !Destination || !Source->Buffer)
+        return STATUS_INVALID_PARAMETER;
+    if (Source->Length > MAXUSHORT - sizeof(WCHAR))
+        return STATUS_NAME_TOO_LONG;
+
+    Bytes = Source->Length + sizeof(WCHAR);
+    Buffer = ExAllocatePool2(
+        POOL_FLAG_NON_PAGED, Bytes, INFILFS_NATIVE_CCB_TAG);
+    if (!Buffer)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    if (Source->Length)
+        RtlCopyMemory(Buffer, Source->Buffer, Source->Length);
+    Buffer[Source->Length / sizeof(WCHAR)] = L'\0';
+
+    Destination->Buffer = Buffer;
+    Destination->Length = Source->Length;
+    Destination->MaximumLength = Bytes;
+    return STATUS_SUCCESS;
+}
+
+static VOID InfilfsFreeOpenPath(PUNICODE_STRING Path)
+{
+    if (!Path)
+        return;
+    if (Path->Buffer)
+        ExFreePoolWithTag(Path->Buffer, INFILFS_NATIVE_CCB_TAG);
+    RtlZeroMemory(Path, sizeof(*Path));
+}
+
+static PCUNICODE_STRING InfilfsHandlePath(
+    PFILE_OBJECT FileObject, INFILFS_NATIVE_FCB *Fcb)
+{
+    INFILFS_NATIVE_CCB *Ccb = FileObject ?
+        (INFILFS_NATIVE_CCB *)FileObject->FsContext2 : NULL;
+
+    if (Ccb && Ccb->Signature == 'cSfI' && Ccb->OpenPath.Buffer)
+        return &Ccb->OpenPath;
+    return Fcb ? &Fcb->Path : NULL;
+}
+
 static NTSTATUS InfilfsResolveOpenPath(
     PFILE_OBJECT FileObject, PUNICODE_STRING Path, PWCHAR *Allocated)
 {
@@ -1338,42 +1385,47 @@ static NTSTATUS InfilfsResolveOpenPath(
 
     Parent = (INFILFS_NATIVE_FCB *)
         FileObject->RelatedFileObject->FsContext;
-    if (!Parent || Parent->Signature != 'fSfI' ||
-        !Parent->Path.Buffer)
+    if (!Parent || Parent->Signature != 'fSfI')
         return STATUS_INVALID_PARAMETER;
+    {
+        PCUNICODE_STRING ParentPath = InfilfsHandlePath(
+            FileObject->RelatedFileObject, Parent);
+        if (!ParentPath || !ParentPath->Buffer)
+            return STATUS_INVALID_PARAMETER;
+        ParentLength = ParentPath->Length;
+        ChildLength = FileObject->FileName.Length;
+        Separator = ParentLength >= sizeof(WCHAR) &&
+            ParentPath->Buffer[
+                ParentLength / sizeof(WCHAR) - 1u] != L'\\';
+        Bytes = (ULONG)ParentLength +
+            (Separator ? sizeof(WCHAR) : 0u) +
+            (ULONG)ChildLength;
+        if (Bytes > MAXUSHORT - sizeof(WCHAR))
+            return STATUS_NAME_TOO_LONG;
 
-    ParentLength = Parent->Path.Length;
-    ChildLength = FileObject->FileName.Length;
-    Separator = ParentLength >= sizeof(WCHAR) &&
-        Parent->Path.Buffer[
-            ParentLength / sizeof(WCHAR) - 1u] != L'\\';
-    Bytes = (ULONG)ParentLength +
-        (Separator ? sizeof(WCHAR) : 0u) +
-        (ULONG)ChildLength;
-    if (Bytes > MAXUSHORT - sizeof(WCHAR))
-        return STATUS_NAME_TOO_LONG;
+        PWCHAR Buffer = ExAllocatePool2(
+            POOL_FLAG_PAGED, Bytes + sizeof(WCHAR),
+            INFILFS_NATIVE_FCB_TAG);
+        if (!Buffer)
+            return STATUS_INSUFFICIENT_RESOURCES;
 
-    PWCHAR Buffer = ExAllocatePool2(
-        POOL_FLAG_PAGED, Bytes + sizeof(WCHAR),
-        INFILFS_NATIVE_FCB_TAG);
-    if (!Buffer)
-        return STATUS_INSUFFICIENT_RESOURCES;
+        ULONG Cursor = 0;
+        RtlCopyMemory(Buffer, ParentPath->Buffer, ParentLength);
+        Cursor += ParentLength / sizeof(WCHAR);
+        if (Separator)
+            Buffer[Cursor++] = L'\\';
+        RtlCopyMemory(
+            Buffer + Cursor, FileObject->FileName.Buffer, ChildLength);
+        Cursor += ChildLength / sizeof(WCHAR);
+        Buffer[Cursor] = L'\0';
 
-    ULONG Cursor = 0;
-    RtlCopyMemory(Buffer, Parent->Path.Buffer, ParentLength);
-    Cursor += ParentLength / sizeof(WCHAR);
-    if (Separator)
-        Buffer[Cursor++] = L'\\';
-    RtlCopyMemory(
-        Buffer + Cursor, FileObject->FileName.Buffer, ChildLength);
-    Cursor += ChildLength / sizeof(WCHAR);
-    Buffer[Cursor] = L'\0';
+        Path->Buffer = Buffer;
+        Path->Length = (USHORT)Bytes;
+        Path->MaximumLength = (USHORT)(Bytes + sizeof(WCHAR));
+        *Allocated = Buffer;
+        return STATUS_SUCCESS;
+    }
 
-    Path->Buffer = Buffer;
-    Path->Length = (USHORT)Bytes;
-    Path->MaximumLength = (USHORT)(Bytes + sizeof(WCHAR));
-    *Allocated = Buffer;
-    return STATUS_SUCCESS;
 }
 
 static NTSTATUS InfilfsResolveSetTargetPath(
@@ -1406,14 +1458,19 @@ static NTSTATUS InfilfsResolveSetTargetPath(
         return Status;
 
     Parent = (INFILFS_NATIVE_FCB *)RootFile->FsContext;
-    if (!Parent || Parent->Signature != 'fSfI' || !Parent->Path.Buffer) {
+    if (!Parent || Parent->Signature != 'fSfI') {
+        ObDereferenceObject(RootFile);
+        return STATUS_INVALID_PARAMETER;
+    }
+    PCUNICODE_STRING ParentPath = InfilfsHandlePath(RootFile, Parent);
+    if (!ParentPath || !ParentPath->Buffer) {
         ObDereferenceObject(RootFile);
         return STATUS_INVALID_PARAMETER;
     }
 
-    ParentLength = Parent->Path.Length;
+    ParentLength = ParentPath->Length;
     Separator = ParentLength >= sizeof(WCHAR) &&
-        Parent->Path.Buffer[ParentLength / sizeof(WCHAR) - 1u] != L'\\';
+        ParentPath->Buffer[ParentLength / sizeof(WCHAR) - 1u] != L'\\';
     Bytes = (ULONG)ParentLength +
         (Separator ? sizeof(WCHAR) : 0u) + FileNameLength;
     if (Bytes > MAXUSHORT - sizeof(WCHAR)) {
@@ -1430,7 +1487,7 @@ static NTSTATUS InfilfsResolveSetTargetPath(
     }
 
     ULONG Cursor = 0;
-    RtlCopyMemory(Buffer, Parent->Path.Buffer, ParentLength);
+    RtlCopyMemory(Buffer, ParentPath->Buffer, ParentLength);
     Cursor += ParentLength / sizeof(WCHAR);
     if (Separator)
         Buffer[Cursor++] = L'\\';
@@ -1598,6 +1655,9 @@ static NTSTATUS InfilfsCreate(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     }
     RtlZeroMemory(Ccb, sizeof(*Ccb));
     Ccb->Signature = 'cSfI';
+    Status = InfilfsDuplicatePath(&OpenPath, &Ccb->OpenPath);
+    if (!NT_SUCCESS(Status))
+        goto complete;
 
     if (!IrpSp->Parameters.Create.SecurityContext) {
         Status = STATUS_INVALID_PARAMETER;
@@ -1649,6 +1709,7 @@ complete:
     if (Ccb) {
         if (Ccb->ShareRegistered && Fcb)
             IoRemoveShareAccess(FileObject, &Fcb->ShareAccess);
+        InfilfsFreeOpenPath(&Ccb->OpenPath);
         ExFreePoolWithTag(Ccb, INFILFS_NATIVE_CCB_TAG);
     }
     if (Fcb)
@@ -1945,6 +2006,8 @@ static NTSTATUS InfilfsQueryInformation(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     PFILE_OBJECT FileObject = IrpSp->FileObject;
     INFILFS_NATIVE_FCB *Fcb = FileObject ?
         (INFILFS_NATIVE_FCB *)FileObject->FsContext : NULL;
+    INFILFS_NATIVE_CCB *Ccb = FileObject ?
+        (INFILFS_NATIVE_CCB *)FileObject->FsContext2 : NULL;
     PVOID Buffer = Irp->AssociatedIrp.SystemBuffer;
     ULONG Length = IrpSp->Parameters.QueryFile.Length;
     FILE_INFORMATION_CLASS Class =
@@ -2070,7 +2133,7 @@ static NTSTATUS InfilfsSetInformation(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     ULONG Length = IrpSp->Parameters.SetFile.Length;
     NTSTATUS Status = STATUS_SUCCESS;
 
-    if (!Volume || !Fcb || !Buffer)
+    if (!Volume || !Fcb || !Ccb || !Buffer)
         return InfilfsCompleteIrp(Irp, STATUS_INVALID_PARAMETER, 0);
     if (Volume->ReadOnly)
         return InfilfsCompleteIrp(Irp, STATUS_MEDIA_WRITE_PROTECTED, 0);
@@ -3038,8 +3101,10 @@ static NTSTATUS InfilfsClose(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         InterlockedDecrement(&Fcb->DeletePendingCount);
         Ccb->DeletePending = FALSE;
     }
-    if (Ccb)
+    if (Ccb) {
+        InfilfsFreeOpenPath(&Ccb->OpenPath);
         ExFreePoolWithTag(Ccb, INFILFS_NATIVE_CCB_TAG);
+    }
     if (Fcb)
         InfilfsDereferenceFcb(Fcb);
     return InfilfsCompleteIrp(Irp, STATUS_SUCCESS, 0);
