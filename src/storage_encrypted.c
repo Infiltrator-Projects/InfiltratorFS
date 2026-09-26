@@ -212,15 +212,15 @@ static size_t block_aad(
     return 25u;
 }
 
-static infs_status encrypted_read_block(struct encrypted_context *ctx,
-                                        uint64_t logical_block,
-                                        uint8_t domain,
-                                        uint8_t plain[4096])
+static infs_status encrypted_read_block(
+    struct encrypted_context *ctx, uint64_t logical_block,
+    const struct infs_storage_io_policy *policy,
+    uint8_t plain[4096])
 {
 #if !defined(INFS_HAVE_OPENSSL_AEAD)
     (void)ctx;
     (void)logical_block;
-    (void)domain;
+    (void)policy;
     (void)plain;
     return INFS_STATUS_NOT_SUPPORTED;
 #else
@@ -229,11 +229,21 @@ static infs_status encrypted_read_block(struct encrypted_context *ctx,
         !physical_record_offset(logical_block, &physical))
         return INFS_STATUS_IO_ERROR;
 
+    uint8_t domain = policy ? policy->encryption_domain : 0u;
+    struct infs_storage_io_policy backing_policy = {0};
+    const struct infs_storage_io_policy *backing_policy_ptr = NULL;
+    if (policy) {
+        backing_policy = *policy;
+        backing_policy.encryption_domain = 0u;
+        backing_policy_ptr = &backing_policy;
+    }
+
     uint8_t *record = malloc((size_t)ENC_RECORD_BYTES);
     if (!record)
         return INFS_STATUS_NO_MEMORY;
-    infs_status status = infs_storage_read(
-        &ctx->backing, physical, record, (size_t)ENC_RECORD_BYTES);
+    infs_status status = infs_storage_read_policy(
+        &ctx->backing, physical, record, (size_t)ENC_RECORD_BYTES,
+        backing_policy_ptr);
     if (status == INFS_STATUS_OK) {
         uint8_t aad[25];
         uint8_t key[ENC_KEY_BYTES] = {0};
@@ -260,15 +270,15 @@ static infs_status encrypted_read_block(struct encrypted_context *ctx,
 #endif
 }
 
-static infs_status encrypted_write_block(struct encrypted_context *ctx,
-                                         uint64_t logical_block,
-                                         uint8_t domain,
-                                         const uint8_t plain[4096])
+static infs_status encrypted_write_block(
+    struct encrypted_context *ctx, uint64_t logical_block,
+    const struct infs_storage_io_policy *policy,
+    const uint8_t plain[4096])
 {
 #if !defined(INFS_HAVE_OPENSSL_AEAD)
     (void)ctx;
     (void)logical_block;
-    (void)domain;
+    (void)policy;
     (void)plain;
     return INFS_STATUS_NOT_SUPPORTED;
 #else
@@ -276,6 +286,15 @@ static infs_status encrypted_write_block(struct encrypted_context *ctx,
     if (logical_block >= ctx->logical_blocks ||
         !physical_record_offset(logical_block, &physical))
         return INFS_STATUS_IO_ERROR;
+
+    uint8_t domain = policy ? policy->encryption_domain : 0u;
+    struct infs_storage_io_policy backing_policy = {0};
+    const struct infs_storage_io_policy *backing_policy_ptr = NULL;
+    if (policy) {
+        backing_policy = *policy;
+        backing_policy.encryption_domain = 0u;
+        backing_policy_ptr = &backing_policy;
+    }
 
     uint8_t *record = malloc((size_t)ENC_RECORD_BYTES);
     if (!record)
@@ -297,8 +316,9 @@ static infs_status encrypted_write_block(struct encrypted_context *ctx,
         secure_zero(key, sizeof(key));
     }
     if (status == INFS_STATUS_OK)
-        status = infs_storage_write(
-            &ctx->backing, physical, record, (size_t)ENC_RECORD_BYTES);
+        status = infs_storage_write_policy(
+            &ctx->backing, physical, record, (size_t)ENC_RECORD_BYTES,
+            backing_policy_ptr);
     secure_zero(record, (size_t)ENC_RECORD_BYTES);
     free(record);
     return status;
@@ -310,7 +330,6 @@ static infs_status encrypted_read_policy(
     const struct infs_storage_io_policy *policy)
 {
     struct encrypted_context *ctx = opaque;
-    uint8_t domain = policy ? policy->encryption_domain : 0u;
     if (!range_valid(ctx->logical_size, offset, size))
         return INFS_STATUS_IO_ERROR;
     size_t done = 0;
@@ -327,7 +346,7 @@ static infs_status encrypted_read_policy(
             &ctx->block_locks[logical % ENC_LOCK_STRIPES];
         infs_storage_lock_acquire(lock);
         infs_status status = encrypted_read_block(
-            ctx, logical, domain, block);
+            ctx, logical, policy, block);
         infs_storage_lock_release(lock);
         if (status != INFS_STATUS_OK) {
             secure_zero(block, sizeof(block));
@@ -351,7 +370,6 @@ static infs_status encrypted_write_policy(
     const struct infs_storage_io_policy *policy)
 {
     struct encrypted_context *ctx = opaque;
-    uint8_t domain = policy ? policy->encryption_domain : 0u;
     if (!range_valid(ctx->logical_size, offset, size))
         return INFS_STATUS_IO_ERROR;
     size_t done = 0;
@@ -369,12 +387,12 @@ static infs_status encrypted_write_policy(
         infs_storage_lock_acquire(lock);
         infs_status status = INFS_STATUS_OK;
         if (within != 0 || chunk != 4096u)
-            status = encrypted_read_block(ctx, logical, domain, block);
+            status = encrypted_read_block(ctx, logical, policy, block);
         else
             memset(block, 0, sizeof(block));
         if (status == INFS_STATUS_OK) {
             memcpy(block + within, (const uint8_t *)buffer + done, chunk);
-            status = encrypted_write_block(ctx, logical, domain, block);
+            status = encrypted_write_block(ctx, logical, policy, block);
         }
         infs_storage_lock_release(lock);
         if (status != INFS_STATUS_OK) {
