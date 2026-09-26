@@ -164,7 +164,13 @@ static infs_status mirror_write_policy(
         infs_status status = infs_storage_write_policy(
             &ctx->members[i], offset, buffer, size, child);
         if (status != INFS_STATUS_OK) {
-            mirror_quarantine_member(ctx, i);
+            /*
+             * Quarantine only a member that actually failed storage I/O.
+             * A semantic error such as NOT_SUPPORTED or CORRUPT must fail the
+             * operation without permanently misclassifying the device as bad.
+             */
+            if (status == INFS_STATUS_IO_ERROR)
+                mirror_quarantine_member(ctx, i);
             degraded = 1;
             if (result == INFS_STATUS_OK)
                 result = status;
