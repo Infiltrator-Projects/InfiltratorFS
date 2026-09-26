@@ -373,8 +373,10 @@ static void dispatch_query_volume(
     state.generation = infs_le64_to_cpu(v->volume.sb.generation);
     memcpy(state.filesystem_uuid, v->volume.sb.filesystem_uuid,
            sizeof(state.filesystem_uuid));
-    label_bytes = strnlen(
-        (const char *)v->volume.sb.label, INFS_LABEL_MAX);
+    label_bytes = 0;
+    while (label_bytes < INFS_LABEL_MAX &&
+           v->volume.sb.label[label_bytes] != 0)
+        label_bytes++;
     if (label_bytes > sizeof(state.label))
         label_bytes = sizeof(state.label);
     state.label_bytes = (uint32_t)label_bytes;
