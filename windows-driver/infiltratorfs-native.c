@@ -46,6 +46,8 @@ typedef struct _INFILFS_NATIVE_VOLUME {
     LIST_ENTRY GlobalLink;
 } INFILFS_NATIVE_VOLUME;
 
+typedef struct _INFILFS_NATIVE_DELETE_ENTRY INFILFS_NATIVE_DELETE_ENTRY;
+
 typedef struct _INFILFS_NATIVE_FCB {
     ULONG Signature;
     struct _INFILFS_NATIVE_VOLUME *Volume;
@@ -70,6 +72,7 @@ typedef struct _INFILFS_NATIVE_FCB {
     LARGE_INTEGER ChangeTime;
     UNICODE_STRING Path;
     volatile LONG DeletePendingCount;
+    LIST_ENTRY PendingDeletes;
 } INFILFS_NATIVE_FCB;
 
 typedef struct _INFILFS_NATIVE_CCB {
@@ -77,9 +80,18 @@ typedef struct _INFILFS_NATIVE_CCB {
     ULONG DirectoryIndex;
     BOOLEAN ShareRegistered;
     BOOLEAN DeletePending;
+    BOOLEAN DeleteOnClosePermanent;
     ACCESS_MASK GrantedAccess;
     UNICODE_STRING OpenPath;
+    INFILFS_NATIVE_DELETE_ENTRY *DeleteEntry;
 } INFILFS_NATIVE_CCB;
+
+struct _INFILFS_NATIVE_DELETE_ENTRY {
+    LIST_ENTRY Link;
+    UNICODE_STRING Path;
+    LONG References;
+    BOOLEAN Directory;
+};
 
 typedef struct _INFILFS_NATIVE_REQUEST_ITEM {
     LIST_ENTRY Link;
@@ -845,6 +857,17 @@ static VOID InfilfsFreeFcb(INFILFS_NATIVE_FCB *Fcb)
     FsRtlUninitializeOplock(&Fcb->Oplock);
     if (Fcb->Path.Buffer)
         ExFreePoolWithTag(Fcb->Path.Buffer, INFILFS_NATIVE_FCB_TAG);
+    while (!IsListEmpty(&Fcb->PendingDeletes)) {
+        INFILFS_NATIVE_DELETE_ENTRY *DeleteEntry =
+            CONTAINING_RECORD(
+                RemoveHeadList(&Fcb->PendingDeletes),
+                INFILFS_NATIVE_DELETE_ENTRY, Link);
+        if (DeleteEntry->Path.Buffer)
+            ExFreePoolWithTag(
+                DeleteEntry->Path.Buffer, INFILFS_NATIVE_CCB_TAG);
+        ExFreePoolWithTag(
+            DeleteEntry, INFILFS_NATIVE_CCB_TAG);
+    }
     ExDeleteResourceLite(&Fcb->PagingResource);
     ExDeleteResourceLite(&Fcb->MainResource);
     ExFreePoolWithTag(Fcb, INFILFS_NATIVE_FCB_TAG);
@@ -867,6 +890,7 @@ static INFILFS_NATIVE_FCB *InfilfsAllocateFcb(
     Fcb->Signature = 'fSfI';
     Fcb->Volume = Volume;
     InitializeListHead(&Fcb->VolumeLink);
+    InitializeListHead(&Fcb->PendingDeletes);
     Fcb->References = 1;
     Fcb->FileId = Attributes->file_id;
     Fcb->ObjectType = Attributes->object_type;
@@ -1412,6 +1436,169 @@ static PCUNICODE_STRING InfilfsHandlePath(
     return Fcb ? &Fcb->Path : NULL;
 }
 
+
+static NTSTATUS InfilfsSetDeleteIntent(
+    INFILFS_NATIVE_FCB *Fcb, INFILFS_NATIVE_CCB *Ccb,
+    PCUNICODE_STRING Path, BOOLEAN Delete, BOOLEAN Permanent)
+{
+    INFILFS_NATIVE_DELETE_ENTRY *Entry = NULL;
+    USHORT Bytes;
+
+    if (!Fcb || !Ccb || !Path || !Path->Buffer)
+        return STATUS_INVALID_PARAMETER;
+
+    if (!Delete) {
+        if (Ccb->DeleteOnClosePermanent)
+            return STATUS_SUCCESS;
+        ExAcquireFastMutex(&Fcb->Volume->FcbLock);
+        Entry = Ccb->DeleteEntry;
+        if (Entry) {
+            if (Entry->References > 0)
+                Entry->References--;
+            if (Entry->References == 0) {
+                RemoveEntryList(&Entry->Link);
+                InitializeListHead(&Entry->Link);
+            } else {
+                Entry = NULL;
+            }
+            Ccb->DeleteEntry = NULL;
+            Ccb->DeletePending = FALSE;
+            if (Fcb->DeletePendingCount > 0)
+                InterlockedDecrement(&Fcb->DeletePendingCount);
+        }
+        ExReleaseFastMutex(&Fcb->Volume->FcbLock);
+        if (Entry) {
+            if (Entry->Path.Buffer)
+                ExFreePoolWithTag(
+                    Entry->Path.Buffer, INFILFS_NATIVE_CCB_TAG);
+            ExFreePoolWithTag(
+                Entry, INFILFS_NATIVE_CCB_TAG);
+        }
+        return STATUS_SUCCESS;
+    }
+
+    if (Ccb->DeleteEntry) {
+        Ccb->DeletePending = TRUE;
+        if (Permanent)
+            Ccb->DeleteOnClosePermanent = TRUE;
+        return STATUS_SUCCESS;
+    }
+
+    Entry = ExAllocatePool2(
+        POOL_FLAG_NON_PAGED, sizeof(*Entry),
+        INFILFS_NATIVE_CCB_TAG);
+    if (!Entry)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    RtlZeroMemory(Entry, sizeof(*Entry));
+    InitializeListHead(&Entry->Link);
+    Entry->Directory =
+        Fcb->ObjectType == INFILFS_WIN_NATIVE_OBJECT_DIRECTORY;
+    Bytes = Path->Length + sizeof(WCHAR);
+    Entry->Path.Buffer = ExAllocatePool2(
+        POOL_FLAG_NON_PAGED, Bytes, INFILFS_NATIVE_CCB_TAG);
+    if (!Entry->Path.Buffer) {
+        ExFreePoolWithTag(Entry, INFILFS_NATIVE_CCB_TAG);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    if (Path->Length)
+        RtlCopyMemory(
+            Entry->Path.Buffer, Path->Buffer, Path->Length);
+    Entry->Path.Buffer[Path->Length / sizeof(WCHAR)] = L'\0';
+    Entry->Path.Length = Path->Length;
+    Entry->Path.MaximumLength = Bytes;
+
+    ExAcquireFastMutex(&Fcb->Volume->FcbLock);
+    {
+        PLIST_ENTRY Link;
+        INFILFS_NATIVE_DELETE_ENTRY *Existing = NULL;
+        for (Link = Fcb->PendingDeletes.Flink;
+             Link != &Fcb->PendingDeletes; Link = Link->Flink) {
+            INFILFS_NATIVE_DELETE_ENTRY *Candidate =
+                CONTAINING_RECORD(
+                    Link, INFILFS_NATIVE_DELETE_ENTRY, Link);
+            if (RtlEqualUnicodeString(
+                    &Candidate->Path, Path, TRUE)) {
+                Existing = Candidate;
+                break;
+            }
+        }
+        if (Existing) {
+            Existing->References++;
+            Ccb->DeleteEntry = Existing;
+        } else {
+            Entry->References = 1;
+            InsertTailList(&Fcb->PendingDeletes, &Entry->Link);
+            Ccb->DeleteEntry = Entry;
+            Entry = NULL;
+        }
+        Ccb->DeletePending = TRUE;
+        if (Permanent)
+            Ccb->DeleteOnClosePermanent = TRUE;
+        InterlockedIncrement(&Fcb->DeletePendingCount);
+    }
+    ExReleaseFastMutex(&Fcb->Volume->FcbLock);
+
+    if (Entry) {
+        if (Entry->Path.Buffer)
+            ExFreePoolWithTag(
+                Entry->Path.Buffer, INFILFS_NATIVE_CCB_TAG);
+        ExFreePoolWithTag(Entry, INFILFS_NATIVE_CCB_TAG);
+    }
+    return STATUS_SUCCESS;
+}
+
+static BOOLEAN InfilfsDeletePending(INFILFS_NATIVE_FCB *Fcb)
+{
+    return Fcb &&
+        InterlockedCompareExchange(
+            &Fcb->DeletePendingCount, 0, 0) > 0;
+}
+
+static NTSTATUS InfilfsDrainPendingDeletes(
+    INFILFS_NATIVE_VOLUME *Volume, INFILFS_NATIVE_FCB *Fcb)
+{
+    LIST_ENTRY Pending;
+    NTSTATUS Result = STATUS_SUCCESS;
+
+    if (!Volume || !Fcb)
+        return STATUS_INVALID_PARAMETER;
+    InitializeListHead(&Pending);
+
+    ExAcquireFastMutex(&Volume->FcbLock);
+    if (InfilfsDeletePending(Fcb)) {
+        Status = STATUS_DELETE_PENDING;
+    } else if (Fcb->OpenHandles == 0) {
+        while (!IsListEmpty(&Fcb->PendingDeletes)) {
+            PLIST_ENTRY Link =
+                RemoveHeadList(&Fcb->PendingDeletes);
+            InsertTailList(&Pending, Link);
+        }
+        InterlockedExchange(&Fcb->DeletePendingCount, 0);
+    }
+    ExReleaseFastMutex(&Volume->FcbLock);
+
+    while (!IsListEmpty(&Pending)) {
+        INFILFS_NATIVE_DELETE_ENTRY *Entry =
+            CONTAINING_RECORD(
+                RemoveHeadList(&Pending),
+                INFILFS_NATIVE_DELETE_ENTRY, Link);
+        NTSTATUS Status = InfilfsServiceMutation(
+            Volume,
+            Entry->Directory ?
+                INFILFS_WIN_NATIVE_OP_RMDIR :
+                INFILFS_WIN_NATIVE_OP_UNLINK,
+            &Entry->Path, NULL, 0, 0);
+        if (!NT_SUCCESS(Status) && NT_SUCCESS(Result))
+            Result = Status;
+        if (Entry->Path.Buffer)
+            ExFreePoolWithTag(
+                Entry->Path.Buffer, INFILFS_NATIVE_CCB_TAG);
+        ExFreePoolWithTag(
+            Entry, INFILFS_NATIVE_CCB_TAG);
+    }
+    return Result;
+}
+
 static NTSTATUS InfilfsResolveOpenPath(
     PFILE_OBJECT FileObject, PUNICODE_STRING Path, PWCHAR *Allocated)
 {
@@ -1748,8 +1935,14 @@ static NTSTATUS InfilfsCreate(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     FileObject->SectionObjectPointer = &Fcb->SectionObjectPointers;
 
     if (Options & FILE_DELETE_ON_CLOSE) {
-        Ccb->DeletePending = TRUE;
-        InterlockedIncrement(&Fcb->DeletePendingCount);
+        if (!(Ccb->GrantedAccess & DELETE)) {
+            Status = STATUS_ACCESS_DENIED;
+            goto complete_after_attach;
+        }
+        Status = InfilfsSetDeleteIntent(
+            Fcb, Ccb, &Ccb->OpenPath, TRUE, TRUE);
+        if (!NT_SUCCESS(Status))
+            goto complete_after_attach;
     }
 
     if (Fcb->ObjectType == INFILFS_WIN_NATIVE_OBJECT_FILE &&
@@ -1767,6 +1960,16 @@ static NTSTATUS InfilfsCreate(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         ExFreePoolWithTag(AllocatedPath, INFILFS_NATIVE_FCB_TAG);
     return InfilfsCompleteIrp(
         Irp, STATUS_SUCCESS, CreateInformation);
+
+complete_after_attach:
+    FileObject->FsContext = NULL;
+    FileObject->FsContext2 = NULL;
+    FileObject->SectionObjectPointer = NULL;
+    if (Ccb && Ccb->DeleteEntry) {
+        Ccb->DeleteOnClosePermanent = FALSE;
+        (void)InfilfsSetDeleteIntent(
+            Fcb, Ccb, &Ccb->OpenPath, FALSE, FALSE);
+    }
 
 complete:
     if (Ccb) {
@@ -2333,16 +2536,18 @@ static NTSTATUS InfilfsSetInformation(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         if (Length < sizeof(*Info))
             return InfilfsCompleteIrp(
                 Irp, STATUS_BUFFER_TOO_SMALL, 0);
-        {
-            BOOLEAN Delete = Info->DeleteFile ? TRUE : FALSE;
-            if (Delete != Ccb->DeletePending) {
-                if (Delete)
-                    InterlockedIncrement(&Fcb->DeletePendingCount);
-                else
-                    InterlockedDecrement(&Fcb->DeletePendingCount);
-                Ccb->DeletePending = Delete;
-            }
-        }
+        if (Info->DeleteFile &&
+            (Fcb->FileAttributes & FILE_ATTRIBUTE_READONLY))
+            return InfilfsCompleteIrp(
+                Irp, STATUS_CANNOT_DELETE, 0);
+        if (Info->DeleteFile &&
+            !MmFlushImageSection(
+                &Fcb->SectionObjectPointers, MmFlushForDelete))
+            return InfilfsCompleteIrp(
+                Irp, STATUS_CANNOT_DELETE, 0);
+        Status = InfilfsSetDeleteIntent(
+            Fcb, Ccb, HandlePath,
+            Info->DeleteFile ? TRUE : FALSE, FALSE);
         break;
     }
 #ifdef FileDispositionInformationEx
@@ -2360,13 +2565,19 @@ static NTSTATUS InfilfsSetInformation(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         {
             BOOLEAN Delete =
                 (Info->Flags & FILE_DISPOSITION_DELETE) != 0;
-            if (Delete != Ccb->DeletePending) {
-                if (Delete)
-                    InterlockedIncrement(&Fcb->DeletePendingCount);
-                else
-                    InterlockedDecrement(&Fcb->DeletePendingCount);
-                Ccb->DeletePending = Delete;
-            }
+            if (Delete &&
+                !(Info->Flags &
+                  FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE) &&
+                (Fcb->FileAttributes & FILE_ATTRIBUTE_READONLY))
+                return InfilfsCompleteIrp(
+                    Irp, STATUS_CANNOT_DELETE, 0);
+            if (Delete &&
+                !MmFlushImageSection(
+                    &Fcb->SectionObjectPointers, MmFlushForDelete))
+                return InfilfsCompleteIrp(
+                    Irp, STATUS_CANNOT_DELETE, 0);
+            Status = InfilfsSetDeleteIntent(
+                Fcb, Ccb, HandlePath, Delete, FALSE);
         }
         break;
     }
@@ -3233,16 +3444,10 @@ static NTSTATUS InfilfsCleanup(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         Ccb->ShareRegistered = FALSE;
     }
 
-    if (Volume && Fcb && Ccb && Ccb->DeletePending) {
-        Status = InfilfsServiceMutation(
-            Volume,
-            Fcb->ObjectType == INFILFS_WIN_NATIVE_OBJECT_DIRECTORY ?
-                INFILFS_WIN_NATIVE_OP_RMDIR :
-                INFILFS_WIN_NATIVE_OP_UNLINK,
-            HandlePath, NULL, 0, 0);
-        if (NT_SUCCESS(Status))
-            FileObject->DeletePending = TRUE;
-        InterlockedDecrement(&Fcb->DeletePendingCount);
+    if (Volume && Fcb)
+        Status = InfilfsDrainPendingDeletes(Volume, Fcb);
+    if (Ccb) {
+        Ccb->DeleteEntry = NULL;
         Ccb->DeletePending = FALSE;
     }
     return InfilfsCompleteIrp(Irp, Status, 0);
@@ -3269,10 +3474,6 @@ static NTSTATUS InfilfsClose(PDEVICE_OBJECT DeviceObject, PIRP Irp)
             Fcb->OpenHandles--;
         ExReleaseFastMutex(&Fcb->Volume->FcbLock);
         Ccb->ShareRegistered = FALSE;
-    }
-    if (Ccb && Ccb->DeletePending && Fcb) {
-        InterlockedDecrement(&Fcb->DeletePendingCount);
-        Ccb->DeletePending = FALSE;
     }
     if (Ccb) {
         InfilfsFreeOpenPath(&Ccb->OpenPath);
