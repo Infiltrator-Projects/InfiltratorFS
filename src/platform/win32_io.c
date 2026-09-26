@@ -404,13 +404,13 @@ static void win32_close(void *context)
 }
 
 static const struct infs_storage_ops win32_storage_ops = {
-    win32_read_at,
-    win32_write_at,
-    win32_flush,
-    win32_get_size,
-    win32_random,
-    win32_time,
-    win32_close
+    .read_at = win32_read_at,
+    .write_at = win32_write_at,
+    .flush = win32_flush,
+    .get_size = win32_get_size,
+    .random_bytes = win32_random,
+    .current_time = win32_time,
+    .close = win32_close,
 };
 
 static infs_status open_common(struct infs_storage *storage,
