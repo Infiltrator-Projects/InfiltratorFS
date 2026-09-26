@@ -424,6 +424,14 @@ if(WIN32)
     target_link_libraries(infilfs-win32-projfs-bridge PRIVATE
         infilfs_windows_bridge)
     infilfs_enable_warnings(infilfs-win32-projfs-bridge)
+
+    add_executable(infiltratorfs-native-service
+        tools/windows/infiltratorfs-native-service.c)
+    target_include_directories(infiltratorfs-native-service PRIVATE
+        tools/windows windows-driver)
+    target_link_libraries(infiltratorfs-native-service PRIVATE
+        infilfs_windows_bridge bcrypt advapi32)
+    infilfs_enable_warnings(infiltratorfs-native-service)
     if(MSVC)
         target_link_options(infiltratorfs-windows PRIVATE
             "/MANIFESTUAC:\"level='requireAdministrator' uiAccess='false'\""
