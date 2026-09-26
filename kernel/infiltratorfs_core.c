@@ -2650,6 +2650,21 @@ static int infilfs_populate_inode(struct inode *inode, u64 object_block,
         goto fail_private;
     }
     ii->portable_flags = le64_to_cpu(attributes->portable_flags);
+    /*
+     * Per-object protection/encryption changes the physical interpretation of
+     * file data. The portable storage backends implement that policy, but this
+     * native single-bdev adapter does not yet have a policy-aware block I/O
+     * layer. Refuse such files before exposing an inode rather than reading or
+     * modifying policy-encoded extents as ordinary raw filesystem blocks.
+     */
+    if (ii->object_type == INFILFS_OBJECT_FILE &&
+        (ii->portable_flags & INFILFS_ATTR_STORAGE_POLICY_MASK)) {
+        pr_warn_ratelimited(
+            "InfiltratorFS: native Linux cannot open file with nondefault storage policy (%*phN)\n",
+            16, ii->object_id);
+        ret = -EOPNOTSUPP;
+        goto fail_private;
+    }
     ii->birth_time = infilfs_timestamp_decode(&attributes->birth_time);
     inode_set_atime_to_ts(
         inode, infilfs_timestamp_decode(&attributes->access_time));
