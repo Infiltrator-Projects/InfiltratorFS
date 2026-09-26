@@ -91,6 +91,26 @@ Placement policy is deliberately volatile where possible. Sequential, random/in-
 
 Unsupported zoned-device write-pointer semantics are rejected rather than approximated unsafely.
 
+### Per-object protection and encryption policy
+
+Format 0.18 reserves disjoint high bits in the common object attributes word for
+a persistent protection-copy count and encryption-domain ID. The ordinary
+portable presentation flags occupy separate low bits.
+
+Policy-aware file-data I/O carries the owning object's stable 128-bit identity,
+requested replica count and encryption-domain ID into the storage stack.
+Replicated storage deterministically maps the object identity onto the requested
+number of healthy mirror members; encrypted storage derives a domain-specific
+AEAD subkey for nonzero domains. Metadata/checkpoint I/O intentionally remains
+on the backend default policy so object policy can always be discovered before
+object data is read.
+
+Nondefault policy data is never stored inline in metadata. Named streams inherit
+their owner's policy class. A nonempty file cannot switch policy by changing
+metadata alone because doing so would strand existing extents under the old
+placement/key; such changes fail closed until a relocation operation is
+performed.
+
 ## 5. File data and extents
 
 Regular files may be empty, inline, extent-backed, sparse or reflinked.
@@ -115,7 +135,7 @@ Named snapshots identify immutable earlier generations. Blocks referenced by any
 
 Snapshot semantics are a consequence of the common generation/CoW model rather than a separate storage mechanism.
 
-Whole-volume snapshot rollback now reuses that retained-generation model directly: the selected retained roots are republished as a fresh monotonically increasing live generation instead of copying the historical namespace into a new backup structure. Selected-object restore remains separate follow-on work.
+Whole-volume snapshot rollback reuses that retained-generation model directly: the selected retained roots are republished as a fresh monotonically increasing live generation instead of copying the historical namespace into a new backup structure. Selected-object restore can also materialize one retained file, directory subtree or symbolic link back into the live namespace without rolling back unrelated objects, while preserving portable metadata/security and named streams.
 
 Current geometry-change design is conservative: resize may reject retained snapshots instead of attempting snapshot-aware geometry migration.
 
