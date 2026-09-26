@@ -109,6 +109,16 @@ static struct infs_storage member_storage(struct memory_member *m)
     return storage;
 }
 
+static size_t policy_member_for_object(const uint8_t object_id[16])
+{
+    uint64_t hash = UINT64_C(1469598103934665603);
+    for (size_t i = 0; i < 16u; ++i) {
+        hash ^= object_id[i];
+        hash *= UINT64_C(1099511628211);
+    }
+    return (size_t)(hash % 2u);
+}
+
 static infs_status build_authenticated_mirror(
     struct memory_member member[2], const char *passphrase, int format,
     struct infs_storage *out)
@@ -178,6 +188,37 @@ int main(void)
            &volume, "/protected.txt", payload, sizeof(payload), 0) ==
            (int64_t)sizeof(payload),
        "write protected file");
+
+    struct infs_create_options policy_options = {
+        .portable_flags = INFS_ATTR_WITH_STORAGE_POLICY(0, 1u, 7u),
+        .posix_permissions = 0600u,
+    };
+    ok(infs_create_file(&volume, "/policy.txt", &policy_options) ==
+           INFS_STATUS_OK,
+       "create one-copy encryption-domain file");
+    uint8_t policy_payload[12288];
+    for (size_t i = 0; i < sizeof(policy_payload); ++i)
+        policy_payload[i] = (uint8_t)(i * 43u + 19u);
+    ok(infs_write_file(
+           &volume, "/policy.txt", policy_payload,
+           sizeof(policy_payload), 0) == (int64_t)sizeof(policy_payload),
+       "write one-copy encryption-domain file");
+
+    static const char stream_payload[] = "policy-named-stream";
+    ok(infs_named_stream_set(
+           &volume, "/policy.txt", "user.policy-proof",
+           stream_payload, sizeof(stream_payload)) == INFS_STATUS_OK,
+       "write named stream under owner storage policy");
+
+    struct infs_attributes policy_attributes;
+    ok(infs_get_attributes(
+           &volume, "/policy.txt", &policy_attributes) == INFS_STATUS_OK &&
+       INFS_ATTR_PROTECTION_COPIES(policy_attributes.portable_flags) == 1u &&
+       INFS_ATTR_ENCRYPTION_DOMAIN(policy_attributes.portable_flags) == 7u,
+       "persist per-object storage policy");
+    size_t selected_policy_member =
+        policy_member_for_object(policy_attributes.object_id);
+
     ok(infs_snapshot_create(&volume, "protected-baseline") ==
            INFS_STATUS_OK,
        "snapshot protected filesystem");
@@ -198,7 +239,8 @@ int main(void)
                INFS_STATUS_OK,
            "reopen encrypted member");
     }
-    member[0].fail_reads = 1;
+    size_t unselected_policy_member = selected_policy_member ^ 1u;
+    member[unselected_policy_member].fail_reads = 1;
     ok(infs_storage_mirror_create(encrypted, 2u, &protected_storage) ==
            INFS_STATUS_OK,
        "rebuild authenticated mirror");
@@ -211,16 +253,56 @@ int main(void)
     ok(infs_read_file(
            &volume, "/protected.txt", readback, sizeof(readback), 0) ==
            (int64_t)sizeof(readback),
-       "read through surviving replica");
+       "default all-copy file reads through surviving replica");
     ok(!memcmp(readback, payload, sizeof(payload)),
-       "replica data matches");
+       "default replica data matches");
+
+    uint8_t policy_readback[sizeof(policy_payload)];
+    memset(policy_readback, 0, sizeof(policy_readback));
+    ok(infs_read_file(
+           &volume, "/policy.txt", policy_readback,
+           sizeof(policy_readback), 0) ==
+           (int64_t)sizeof(policy_readback) &&
+       !memcmp(policy_readback, policy_payload, sizeof(policy_payload)),
+       "one-copy file reads when unselected member is unavailable");
+
+    char stream_readback[sizeof(stream_payload)] = {0};
+    ok(infs_named_stream_read(
+           &volume, "/policy.txt", "user.policy-proof",
+           stream_readback, sizeof(stream_readback), 0) ==
+           (int64_t)sizeof(stream_readback) &&
+       !memcmp(stream_readback, stream_payload, sizeof(stream_payload)),
+       "named stream inherits owner placement/encryption policy");
+
     struct infs_scrub_report report;
     ok(infs_scrub(&volume, &report) == INFS_STATUS_OK &&
            report.metadata_errors == 0 && report.checksum_errors == 0,
        "scrub protected filesystem");
     infs_volume_close(&volume);
+    member[unselected_policy_member].fail_reads = 0;
 
-    member[0].fail_reads = 0;
+    for (size_t i = 0; i < 2u; ++i) {
+        struct infs_storage backing = member_storage(&member[i]);
+        ok(infs_storage_encrypted_open(
+               &backing, passphrase, strlen(passphrase), &encrypted[i]) ==
+               INFS_STATUS_OK,
+           "reopen encrypted member for selected-copy failure");
+    }
+    member[selected_policy_member].fail_reads = 1;
+    ok(infs_storage_mirror_create(encrypted, 2u, &protected_storage) ==
+           INFS_STATUS_OK,
+       "rebuild mirror for selected-copy failure");
+    ok(infs_volume_open_storage(
+           &volume, &protected_storage, 0) == INFS_STATUS_OK,
+       "metadata opens from alternate complete replica");
+    memset(policy_readback, 0, sizeof(policy_readback));
+    ok(infs_read_file(
+           &volume, "/policy.txt", policy_readback,
+           sizeof(policy_readback), 0) == INFS_STATUS_IO_ERROR,
+       "one-copy file fails closed when selected member is unavailable");
+    infs_volume_close(&volume);
+    member[selected_policy_member].fail_reads = 0;
+
     free(member[0].bytes);
     free(member[1].bytes);
     puts("protected-volume: PASS");
