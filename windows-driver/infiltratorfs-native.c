@@ -238,6 +238,9 @@ static NTSTATUS InfilfsCallService(
 {
     INFILFS_NATIVE_REQUEST_ITEM *Item;
     LARGE_INTEGER Timeout;
+    LARGE_INTEGER ZeroTimeout;
+    BOOLEAN ReclaimSemaphore = FALSE;
+    BOOLEAN Completed = FALSE;
     NTSTATUS Status;
 
     if (!Volume || !Request || !Response || g_Infilfs.Unloading)
@@ -248,6 +251,7 @@ static NTSTATUS InfilfsCallService(
     if (!Item)
         return STATUS_INSUFFICIENT_RESOURCES;
     RtlZeroMemory(Item, sizeof(*Item));
+    InitializeListHead(&Item->Link);
     KeInitializeEvent(&Item->CompletionEvent, NotificationEvent, FALSE);
     Item->Request = Request;
     Item->Response = Response;
@@ -268,15 +272,36 @@ static NTSTATUS InfilfsCallService(
     Status = KeWaitForSingleObject(
         &Item->CompletionEvent, Executive, KernelMode, FALSE, &Timeout);
 
+    /*
+     * QueueLock owns both list membership and the completion transition. The
+     * completion path signals the event before dropping this lock, so once we
+     * remove the item here no other thread can retain a live kernel pointer to
+     * it. This closes the timeout/completion use-after-free race.
+     */
     ExAcquireFastMutex(&g_Infilfs.QueueLock);
-    if (!IsListEmpty(&Item->Link))
+    if (!IsListEmpty(&Item->Link)) {
+        ReclaimSemaphore = Item->Active ? FALSE : TRUE;
         RemoveEntryList(&Item->Link);
+    }
     InitializeListHead(&Item->Link);
+    Completed = Item->Completed;
     ExReleaseFastMutex(&g_Infilfs.QueueLock);
 
+    /*
+     * If a request timed out before a worker dequeued it, consume the matching
+     * semaphore credit when it is still present. A worker that already consumed
+     * the credit simply wins this zero-time race and observes an empty queue.
+     */
+    if (ReclaimSemaphore) {
+        ZeroTimeout.QuadPart = 0;
+        (void)KeWaitForSingleObject(
+            &g_Infilfs.PendingSemaphore, Executive, KernelMode,
+            FALSE, &ZeroTimeout);
+    }
+
     if (Status == STATUS_TIMEOUT)
-        Status = STATUS_DEVICE_NOT_READY;
-    else if (NT_SUCCESS(Status) && !Item->Completed)
+        Status = STATUS_IO_TIMEOUT;
+    else if (NT_SUCCESS(Status) && !Completed)
         Status = STATUS_DEVICE_NOT_READY;
     else if (NT_SUCCESS(Status))
         Status = InfilfsStatusFromPortable(Response->status);
@@ -285,18 +310,85 @@ static NTSTATUS InfilfsCallService(
     return Status;
 }
 
+static NTSTATUS InfilfsQueryPortableVolumeState(
+    INFILFS_NATIVE_VOLUME *Volume,
+    struct infilfs_win_native_volume_state *State)
+{
+    struct infilfs_win_native_request *Request = NULL;
+    struct infilfs_win_native_response *Response = NULL;
+    NTSTATUS Status;
+
+    if (!Volume || !State)
+        return STATUS_INVALID_PARAMETER;
+
+    Request = ExAllocatePool2(
+        POOL_FLAG_PAGED, sizeof(*Request), INFILFS_NATIVE_REQUEST_TAG);
+    Response = ExAllocatePool2(
+        POOL_FLAG_PAGED, sizeof(*Response), INFILFS_NATIVE_REQUEST_TAG);
+    if (!Request || !Response) {
+        Status = STATUS_INSUFFICIENT_RESOURCES;
+        goto out;
+    }
+
+    RtlZeroMemory(Request, sizeof(*Request));
+    RtlZeroMemory(Response, sizeof(*Response));
+    Request->opcode = INFILFS_WIN_NATIVE_OP_QUERY_VOLUME;
+    Status = InfilfsCallService(Volume, Request, Response);
+    if (!NT_SUCCESS(Status))
+        goto out;
+    if (Response->output_bytes != sizeof(*State)) {
+        Status = STATUS_DATA_ERROR;
+        goto out;
+    }
+    RtlCopyMemory(State, Response->output, sizeof(*State));
+    if (!State->total_blocks ||
+        State->free_blocks > State->total_blocks ||
+        State->label_bytes > sizeof(State->label))
+        Status = STATUS_FILE_CORRUPT_ERROR;
+
+out:
+    if (Response)
+        ExFreePoolWithTag(Response, INFILFS_NATIVE_REQUEST_TAG);
+    if (Request)
+        ExFreePoolWithTag(Request, INFILFS_NATIVE_REQUEST_TAG);
+    return Status;
+}
+
+static ULONG InfilfsVolumeSerial(
+    const struct infilfs_win_native_volume_state *State)
+{
+    ULONG Serial = 2166136261u;
+    ULONG Index;
+
+    for (Index = 0; Index < sizeof(State->filesystem_uuid); ++Index)
+        Serial = (Serial ^ State->filesystem_uuid[Index]) * 16777619u;
+    return Serial ? Serial : 1u;
+}
+
 static NTSTATUS InfilfsControlWaitRequest(PIRP Irp, PIO_STACK_LOCATION IrpSp)
 {
     INFILFS_NATIVE_REQUEST_ITEM *Item = NULL;
     PLIST_ENTRY Entry;
+    LARGE_INTEGER Timeout;
     NTSTATUS Status;
 
     if (IrpSp->Parameters.DeviceIoControl.OutputBufferLength <
         sizeof(struct infilfs_win_native_request))
         return InfilfsCompleteIrp(Irp, STATUS_BUFFER_TOO_SMALL, 0);
+    if (g_Infilfs.Unloading)
+        return InfilfsCompleteIrp(Irp, STATUS_DEVICE_NOT_READY, 0);
 
+    /*
+     * Keep the private service wait bounded. User-mode CancelIoEx cannot cancel
+     * a synchronous kernel semaphore wait after dispatch has entered it, so an
+     * infinite wait makes service stop/restart depend on unrelated filesystem
+     * traffic. One second keeps idle overhead negligible while bounding stop.
+     */
+    Timeout.QuadPart = -(LONGLONG)1 * 10 * 1000 * 1000;
     Status = KeWaitForSingleObject(
-        &g_Infilfs.PendingSemaphore, Executive, KernelMode, FALSE, NULL);
+        &g_Infilfs.PendingSemaphore, Executive, KernelMode, FALSE, &Timeout);
+    if (Status == STATUS_TIMEOUT)
+        return InfilfsCompleteIrp(Irp, STATUS_DEVICE_NOT_READY, 0);
     if (!NT_SUCCESS(Status))
         return InfilfsCompleteIrp(Irp, Status, 0);
 
@@ -344,6 +436,11 @@ static NTSTATUS InfilfsControlCompleteRequest(PIRP Irp, PIO_STACK_LOCATION IrpSp
             Item = Candidate;
             RtlCopyMemory(Item->Response, Input, sizeof(*Input));
             Item->Completed = TRUE;
+            /*
+             * Signal while QueueLock still protects Item lifetime. A timeout
+             * cannot unlink/free this request until after KeSetEvent returns.
+             */
+            KeSetEvent(&Item->CompletionEvent, IO_NO_INCREMENT, FALSE);
             break;
         }
     }
@@ -351,7 +448,6 @@ static NTSTATUS InfilfsControlCompleteRequest(PIRP Irp, PIO_STACK_LOCATION IrpSp
 
     if (!Item)
         return InfilfsCompleteIrp(Irp, STATUS_NOT_FOUND, 0);
-    KeSetEvent(&Item->CompletionEvent, IO_NO_INCREMENT, FALSE);
     return InfilfsCompleteIrp(Irp, STATUS_SUCCESS, 0);
 }
 
@@ -1842,9 +1938,26 @@ static NTSTATUS InfilfsQueryVolumeInformation(
     switch (Class) {
     case FileFsVolumeInformation: {
         PFILE_FS_VOLUME_INFORMATION Info = Buffer;
-        static const WCHAR Label[] = L"InfiltratorFS";
-        ULONG LabelBytes = sizeof(Label) - sizeof(WCHAR);
-        ULONG Required = FIELD_OFFSET(
+        struct infilfs_win_native_volume_state State;
+        WCHAR Label[INFILFS_WIN_NATIVE_LABEL_BYTES + 1u];
+        ULONG LabelBytes = 0;
+        ULONG Required;
+        ULONG Copy;
+
+        Status = InfilfsQueryPortableVolumeState(Volume, &State);
+        if (!NT_SUCCESS(Status))
+            break;
+        RtlZeroMemory(Label, sizeof(Label));
+        if (State.label_bytes) {
+            Status = RtlUTF8ToUnicodeN(
+                Label, sizeof(Label) - sizeof(WCHAR), &LabelBytes,
+                (PCCH)State.label, State.label_bytes);
+            if (!NT_SUCCESS(Status)) {
+                Status = STATUS_FILE_CORRUPT_ERROR;
+                break;
+            }
+        }
+        Required = FIELD_OFFSET(
             FILE_FS_VOLUME_INFORMATION, VolumeLabel) + LabelBytes;
         if (Length < FIELD_OFFSET(
                 FILE_FS_VOLUME_INFORMATION, VolumeLabel)) {
@@ -1852,15 +1965,15 @@ static NTSTATUS InfilfsQueryVolumeInformation(
             break;
         }
         RtlZeroMemory(Info, Length);
-        Info->VolumeSerialNumber =
-            (ULONG)(Volume->VolumeId ^ (Volume->VolumeId >> 32));
+        Info->VolumeSerialNumber = InfilfsVolumeSerial(&State);
         Info->SupportsObjects = TRUE;
         Info->VolumeLabelLength = LabelBytes;
-        ULONG Copy = Length -
+        Copy = Length -
             FIELD_OFFSET(FILE_FS_VOLUME_INFORMATION, VolumeLabel);
         if (Copy > LabelBytes)
             Copy = LabelBytes;
-        RtlCopyMemory(Info->VolumeLabel, Label, Copy);
+        if (Copy)
+            RtlCopyMemory(Info->VolumeLabel, Label, Copy);
         Used = FIELD_OFFSET(
             FILE_FS_VOLUME_INFORMATION, VolumeLabel) + Copy;
         if (Length < Required)
@@ -1869,15 +1982,37 @@ static NTSTATUS InfilfsQueryVolumeInformation(
     }
     case FileFsSizeInformation: {
         PFILE_FS_SIZE_INFORMATION Info = Buffer;
+        struct infilfs_win_native_volume_state State;
         if (Length < sizeof(*Info)) {
             Status = STATUS_BUFFER_TOO_SMALL;
             break;
         }
+        Status = InfilfsQueryPortableVolumeState(Volume, &State);
+        if (!NT_SUCCESS(Status))
+            break;
         RtlZeroMemory(Info, sizeof(*Info));
-        Info->TotalAllocationUnits.QuadPart =
-            Volume->SizeBytes / INFILFS_NATIVE_BLOCK_SIZE;
-        Info->AvailableAllocationUnits.QuadPart =
-            Info->TotalAllocationUnits.QuadPart;
+        Info->TotalAllocationUnits.QuadPart = State.total_blocks;
+        Info->AvailableAllocationUnits.QuadPart = State.free_blocks;
+        Info->SectorsPerAllocationUnit =
+            INFILFS_NATIVE_BLOCK_SIZE / Volume->SectorSize;
+        Info->BytesPerSector = Volume->SectorSize;
+        Used = sizeof(*Info);
+        break;
+    }
+    case FileFsFullSizeInformation: {
+        PFILE_FS_FULL_SIZE_INFORMATION Info = Buffer;
+        struct infilfs_win_native_volume_state State;
+        if (Length < sizeof(*Info)) {
+            Status = STATUS_BUFFER_TOO_SMALL;
+            break;
+        }
+        Status = InfilfsQueryPortableVolumeState(Volume, &State);
+        if (!NT_SUCCESS(Status))
+            break;
+        RtlZeroMemory(Info, sizeof(*Info));
+        Info->TotalAllocationUnits.QuadPart = State.total_blocks;
+        Info->CallerAvailableAllocationUnits.QuadPart = State.free_blocks;
+        Info->ActualAvailableAllocationUnits.QuadPart = State.free_blocks;
         Info->SectorsPerAllocationUnit =
             INFILFS_NATIVE_BLOCK_SIZE / Volume->SectorSize;
         Info->BytesPerSector = Volume->SectorSize;
@@ -1907,13 +2042,16 @@ static NTSTATUS InfilfsQueryVolumeInformation(
             break;
         }
         RtlZeroMemory(Info, Length);
+        /*
+         * Advertise only Windows contracts implemented by this FSD today.
+         * Portable sparse/reparse-like primitives do not make the corresponding
+         * Windows FSCTL contracts true until those FSCTLs are wired end to end.
+         */
         Info->FileSystemAttributes =
             FILE_CASE_PRESERVED_NAMES |
             FILE_UNICODE_ON_DISK |
             FILE_PERSISTENT_ACLS |
-            FILE_SUPPORTS_HARD_LINKS |
-            FILE_SUPPORTS_REPARSE_POINTS |
-            FILE_SUPPORTS_SPARSE_FILES;
+            FILE_SUPPORTS_HARD_LINKS;
         Info->MaximumComponentNameLength = 1023;
         Info->FileSystemNameLength = NameBytes;
         ULONG Copy = Length -
@@ -2319,11 +2457,36 @@ static NTSTATUS InfilfsDefaultDispatch(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     return InfilfsCompleteIrp(Irp, STATUS_INVALID_DEVICE_REQUEST, 0);
 }
 
+static VOID InfilfsAbortServiceRequests(VOID)
+{
+    PLIST_ENTRY Entry;
+
+    ExAcquireFastMutex(&g_Infilfs.QueueLock);
+    while (!IsListEmpty(&g_Infilfs.PendingRequests)) {
+        INFILFS_NATIVE_REQUEST_ITEM *Item;
+        Entry = RemoveHeadList(&g_Infilfs.PendingRequests);
+        Item = CONTAINING_RECORD(
+            Entry, INFILFS_NATIVE_REQUEST_ITEM, Link);
+        InitializeListHead(&Item->Link);
+        KeSetEvent(&Item->CompletionEvent, IO_NO_INCREMENT, FALSE);
+    }
+    while (!IsListEmpty(&g_Infilfs.ActiveRequests)) {
+        INFILFS_NATIVE_REQUEST_ITEM *Item;
+        Entry = RemoveHeadList(&g_Infilfs.ActiveRequests);
+        Item = CONTAINING_RECORD(
+            Entry, INFILFS_NATIVE_REQUEST_ITEM, Link);
+        InitializeListHead(&Item->Link);
+        KeSetEvent(&Item->CompletionEvent, IO_NO_INCREMENT, FALSE);
+    }
+    ExReleaseFastMutex(&g_Infilfs.QueueLock);
+}
+
 static VOID InfilfsUnload(PDRIVER_OBJECT DriverObject)
 {
     PLIST_ENTRY Entry;
     UNREFERENCED_PARAMETER(DriverObject);
     InterlockedExchange(&g_Infilfs.Unloading, 1);
+    InfilfsAbortServiceRequests();
 
     if (g_Infilfs.FileSystemDevice) {
         IoUnregisterFileSystem(g_Infilfs.FileSystemDevice);
