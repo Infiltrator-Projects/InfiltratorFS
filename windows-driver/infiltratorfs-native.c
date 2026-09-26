@@ -2174,22 +2174,49 @@ static const CACHE_MANAGER_CALLBACKS g_InfilfsCacheCallbacks = {
 
 static NTSTATUS InfilfsShutdown(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 {
+    INFILFS_NATIVE_VOLUME **Volumes = NULL;
     PLIST_ENTRY Entry;
+    ULONG Count = 0;
+    ULONG Index = 0;
     NTSTATUS Result = STATUS_SUCCESS;
 
     UNREFERENCED_PARAMETER(DeviceObject);
 
+    /*
+     * Never hold VolumeLock while calling the service. infs_volume_sync()
+     * reaches back through RAW_FLUSH, whose control path resolves the volume
+     * under this same lock. Mounted volume objects are not destroyed until
+     * driver unload, so a pointer snapshot is stable for this shutdown pass.
+     */
     ExAcquireFastMutex(&g_Infilfs.VolumeLock);
     for (Entry = g_Infilfs.Volumes.Flink;
-         Entry != &g_Infilfs.Volumes; Entry = Entry->Flink) {
-        INFILFS_NATIVE_VOLUME *Volume =
-            CONTAINING_RECORD(
-                Entry, INFILFS_NATIVE_VOLUME, GlobalLink);
+         Entry != &g_Infilfs.Volumes; Entry = Entry->Flink)
+        Count++;
+    if (Count)
+        Volumes = ExAllocatePool2(
+            POOL_FLAG_PAGED,
+            sizeof(*Volumes) * Count,
+            INFILFS_NATIVE_REQUEST_TAG);
+    if (Count && !Volumes) {
+        ExReleaseFastMutex(&g_Infilfs.VolumeLock);
+        return InfilfsCompleteIrp(
+            Irp, STATUS_INSUFFICIENT_RESOURCES, 0);
+    }
+    for (Entry = g_Infilfs.Volumes.Flink;
+         Entry != &g_Infilfs.Volumes && Index < Count;
+         Entry = Entry->Flink) {
+        Volumes[Index++] = CONTAINING_RECORD(
+            Entry, INFILFS_NATIVE_VOLUME, GlobalLink);
+    }
+    ExReleaseFastMutex(&g_Infilfs.VolumeLock);
+
+    for (Index = 0; Index < Count; ++Index) {
+        INFILFS_NATIVE_VOLUME *Volume = Volumes[Index];
         struct infilfs_win_native_request *Request;
         struct infilfs_win_native_response *Response;
         NTSTATUS Status;
 
-        if (Volume->Dismounted)
+        if (!Volume || Volume->Dismounted)
             continue;
 
         Request = ExAllocatePool2(
@@ -2209,6 +2236,7 @@ static NTSTATUS InfilfsShutdown(PDEVICE_OBJECT DeviceObject, PIRP Irp)
                 Result = STATUS_INSUFFICIENT_RESOURCES;
             continue;
         }
+
         RtlZeroMemory(Request, sizeof(*Request));
         RtlZeroMemory(Response, sizeof(*Response));
         Request->opcode = INFILFS_WIN_NATIVE_OP_FLUSH;
@@ -2220,8 +2248,9 @@ static NTSTATUS InfilfsShutdown(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         ExFreePoolWithTag(Response, INFILFS_NATIVE_REQUEST_TAG);
         ExFreePoolWithTag(Request, INFILFS_NATIVE_REQUEST_TAG);
     }
-    ExReleaseFastMutex(&g_Infilfs.VolumeLock);
 
+    if (Volumes)
+        ExFreePoolWithTag(Volumes, INFILFS_NATIVE_REQUEST_TAG);
     return InfilfsCompleteIrp(Irp, Result, 0);
 }
 
