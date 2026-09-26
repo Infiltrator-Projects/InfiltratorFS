@@ -135,6 +135,37 @@ int main(int argc, char **argv)
         fprintf(stderr, "RENAME_NOREPLACE did not return EEXIST\n");
         return 1;
     }
+
+    {
+        char dir_a[4096], dir_b[4096], cross_a[4096], cross_b[4096];
+        if (snprintf(dir_a, sizeof(dir_a), "%s/exchange-dir-a", argv[1]) >=
+                (int)sizeof(dir_a) ||
+            snprintf(dir_b, sizeof(dir_b), "%s/exchange-dir-b", argv[1]) >=
+                (int)sizeof(dir_b))
+            return 2;
+        if (mkdir(dir_a, 0700) != 0 || mkdir(dir_b, 0700) != 0)
+            die("mkdir cross-directory exchange");
+        if (snprintf(cross_a, sizeof(cross_a), "%s/left", dir_a) >=
+                (int)sizeof(cross_a) ||
+            snprintf(cross_b, sizeof(cross_b), "%s/right", dir_b) >=
+                (int)sizeof(cross_b))
+            return 2;
+
+        int left = open(cross_a, O_CREAT | O_TRUNC | O_WRONLY, 0600);
+        int right = open(cross_b, O_CREAT | O_TRUNC | O_WRONLY, 0600);
+        if (left < 0 || right < 0)
+            die("create cross-directory exchange");
+        if (write(left, "left", 4) != 4 || write(right, "right", 5) != 5)
+            die("write cross-directory exchange");
+        close(left);
+        close(right);
+
+        if (rename_exchange(cross_a, cross_b) != 0)
+            die("cross-directory RENAME_EXCHANGE");
+        read_exact(cross_a, "right");
+        read_exact(cross_b, "left");
+    }
+
     puts("Native Linux API compatibility: PASS");
     return 0;
 }
