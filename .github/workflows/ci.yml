@@ -331,7 +331,25 @@ jobs:
       - name: Build native Windows filesystem driver with official WDK NuGet
         shell: pwsh
         run: |
-          msbuild .\windows-driver\infiltratorfs-native.vcxproj /restore /t:Build /m /p:Configuration=Release /p:Platform=x64
+          $project = '.\windows-driver\infiltratorfs-native.vcxproj'
+          msbuild $project /restore /t:Restore /m /p:Configuration=Release /p:Platform=x64
+          if ($LASTEXITCODE -ne 0) { throw "WDK NuGet restore failed with exit code $LASTEXITCODE" }
+
+          # The official WDK NuGet package supplies build tools such as
+          # stampinf.exe, but MSBuild's NuGet integration does not add its host
+          # tool directories to PATH on a clean GitHub-hosted runner. Resolve
+          # the restored tool directly instead of depending on a machine-wide
+          # WDK installation.
+          $wdkRoot = Join-Path $env:USERPROFILE '.nuget\packages\microsoft.windows.wdk.x64'
+          $stampInf = Get-ChildItem $wdkRoot -Recurse -Filter stampinf.exe -File |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (!$stampInf) { throw "Official WDK NuGet restore did not provide stampinf.exe under $wdkRoot" }
+          $env:PATH = "$($stampInf.Directory.FullName);$env:PATH"
+          Write-Host "Using WDK tools from $($stampInf.Directory.FullName)"
+
+          msbuild $project /t:Build /m /p:Configuration=Release /p:Platform=x64 /p:RestoreIgnoreFailedSources=true
+          if ($LASTEXITCODE -ne 0) { throw "Native Windows filesystem driver build failed with exit code $LASTEXITCODE" }
           if (!(Test-Path .\windows-driver\x64\Release\infiltratorfs-native.sys) -and
               !(Test-Path .\windows-driver\Release\infiltratorfs-native.sys)) {
             Get-ChildItem .\windows-driver -Recurse -Filter infiltratorfs-native.sys | Format-Table FullName
