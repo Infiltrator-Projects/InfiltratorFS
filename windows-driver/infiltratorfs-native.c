@@ -68,13 +68,14 @@ typedef struct _INFILFS_NATIVE_FCB {
     LARGE_INTEGER WriteTime;
     LARGE_INTEGER ChangeTime;
     UNICODE_STRING Path;
-    BOOLEAN DeletePending;
+    volatile LONG DeletePendingCount;
 } INFILFS_NATIVE_FCB;
 
 typedef struct _INFILFS_NATIVE_CCB {
     ULONG Signature;
     ULONG DirectoryIndex;
     BOOLEAN ShareRegistered;
+    BOOLEAN DeletePending;
 } INFILFS_NATIVE_CCB;
 
 typedef struct _INFILFS_NATIVE_REQUEST_ITEM {
@@ -1268,8 +1269,10 @@ static NTSTATUS InfilfsCreate(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     FileObject->FsContext2 = Ccb;
     FileObject->SectionObjectPointer = &Fcb->SectionObjectPointers;
 
-    if (Options & FILE_DELETE_ON_CLOSE)
-        Fcb->DeletePending = TRUE;
+    if (Options & FILE_DELETE_ON_CLOSE) {
+        Ccb->DeletePending = TRUE;
+        InterlockedIncrement(&Fcb->DeletePendingCount);
+    }
 
     if (Fcb->ObjectType == INFILFS_WIN_NATIVE_OBJECT_FILE &&
         !(FileObject->Flags & FO_NO_INTERMEDIATE_BUFFERING)) {
@@ -1374,6 +1377,40 @@ static NTSTATUS InfilfsTransfer(
     return Status;
 }
 
+static NTSTATUS InfilfsFlushPortableVolume(
+    INFILFS_NATIVE_VOLUME *Volume, PCUNICODE_STRING Path)
+{
+    NTSTATUS Status;
+
+    if (!Volume)
+        return STATUS_INVALID_DEVICE_REQUEST;
+
+    Request = ExAllocatePool2(
+        POOL_FLAG_PAGED, sizeof(*Request), INFILFS_NATIVE_REQUEST_TAG);
+    Response = ExAllocatePool2(
+        POOL_FLAG_PAGED, sizeof(*Response), INFILFS_NATIVE_REQUEST_TAG);
+    if (!Request || !Response) {
+        if (Request)
+            ExFreePoolWithTag(Request, INFILFS_NATIVE_REQUEST_TAG);
+        if (Response)
+            ExFreePoolWithTag(Response, INFILFS_NATIVE_REQUEST_TAG);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    RtlZeroMemory(Request, sizeof(*Request));
+    RtlZeroMemory(Response, sizeof(*Response));
+    Request->opcode = INFILFS_WIN_NATIVE_OP_FLUSH;
+    if (Path)
+        InfilfsCopyPathToRequest(Request, Path);
+    Status = InfilfsCallService(Volume, Request, Response);
+    if (NT_SUCCESS(Status))
+        Status = InfilfsTargetFlush(Volume->TargetDevice);
+
+    ExFreePoolWithTag(Response, INFILFS_NATIVE_REQUEST_TAG);
+    ExFreePoolWithTag(Request, INFILFS_NATIVE_REQUEST_TAG);
+    return Status;
+}
+
 static NTSTATUS InfilfsRead(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 {
     PIO_STACK_LOCATION IrpSp = IoGetCurrentIrpStackLocation(Irp);
@@ -1394,6 +1431,15 @@ static NTSTATUS InfilfsRead(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 
     Length = IrpSp->Parameters.Read.Length;
     Offset = IrpSp->Parameters.Read.ByteOffset;
+    if (Offset.HighPart == -1 &&
+        Offset.LowPart == FILE_USE_FILE_POINTER_POSITION) {
+        if (!(FileObject->Flags & FO_SYNCHRONOUS_IO))
+            return InfilfsCompleteIrp(
+                Irp, STATUS_INVALID_PARAMETER, 0);
+        Offset = FileObject->CurrentByteOffset;
+    }
+    if (Offset.QuadPart < 0)
+        return InfilfsCompleteIrp(Irp, STATUS_INVALID_PARAMETER, 0);
     if (!Length)
         return InfilfsCompleteIrp(Irp, STATUS_SUCCESS, 0);
     Buffer = InfilfsGetIrpBuffer(Irp);
@@ -1402,9 +1448,19 @@ static NTSTATUS InfilfsRead(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 
     if (!(Irp->Flags & (IRP_NOCACHE | IRP_PAGING_IO))) {
         IO_STATUS_BLOCK Iosb;
-        if (!CcCopyRead(
-                FileObject, &Offset, Length, TRUE, Buffer, &Iosb))
-            return InfilfsCompleteIrp(Irp, STATUS_CANT_WAIT, 0);
+        __try {
+            if (!CcCopyRead(
+                    FileObject, &Offset, Length, TRUE, Buffer, &Iosb))
+                return InfilfsCompleteIrp(
+                    Irp, STATUS_CANT_WAIT, 0);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return InfilfsCompleteIrp(
+                Irp, GetExceptionCode(), 0);
+        }
+        if (NT_SUCCESS(Iosb.Status) &&
+            (FileObject->Flags & FO_SYNCHRONOUS_IO))
+            FileObject->CurrentByteOffset.QuadPart =
+                Offset.QuadPart + Iosb.Information;
         return InfilfsCompleteIrp(
             Irp, Iosb.Status, Iosb.Information);
     }
@@ -1413,6 +1469,10 @@ static NTSTATUS InfilfsRead(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         Volume, Fcb, FALSE, (ULONGLONG)Offset.QuadPart,
         Buffer, Length, (Irp->Flags & IRP_PAGING_IO) != 0,
         FALSE, &Done);
+    if (NT_SUCCESS(Status) &&
+        (FileObject->Flags & FO_SYNCHRONOUS_IO))
+        FileObject->CurrentByteOffset.QuadPart =
+            Offset.QuadPart + Done;
     return InfilfsCompleteIrp(Irp, Status, Done);
 }
 
@@ -1439,6 +1499,18 @@ static NTSTATUS InfilfsWrite(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 
     Length = IrpSp->Parameters.Write.Length;
     Offset = IrpSp->Parameters.Write.ByteOffset;
+    if (Offset.HighPart == -1 &&
+        Offset.LowPart == FILE_WRITE_TO_END_OF_FILE) {
+        Offset = Fcb->Header.FileSize;
+    } else if (Offset.HighPart == -1 &&
+               Offset.LowPart == FILE_USE_FILE_POINTER_POSITION) {
+        if (!(FileObject->Flags & FO_SYNCHRONOUS_IO))
+            return InfilfsCompleteIrp(
+                Irp, STATUS_INVALID_PARAMETER, 0);
+        Offset = FileObject->CurrentByteOffset;
+    }
+    if (Offset.QuadPart < 0)
+        return InfilfsCompleteIrp(Irp, STATUS_INVALID_PARAMETER, 0);
     if (!Length)
         return InfilfsCompleteIrp(Irp, STATUS_SUCCESS, 0);
     Buffer = InfilfsGetIrpBuffer(Irp);
@@ -1449,7 +1521,15 @@ static NTSTATUS InfilfsWrite(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         (FileObject->Flags & FO_WRITE_THROUGH) != 0;
 
     if (!(Irp->Flags & (IRP_NOCACHE | IRP_PAGING_IO))) {
-        if (!CcCopyWrite(FileObject, &Offset, Length, TRUE, Buffer))
+        BOOLEAN Copied = FALSE;
+        __try {
+            Copied = CcCopyWrite(
+                FileObject, &Offset, Length, TRUE, Buffer);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return InfilfsCompleteIrp(
+                Irp, GetExceptionCode(), 0);
+        }
+        if (!Copied)
             return InfilfsCompleteIrp(Irp, STATUS_CANT_WAIT, 0);
         if (Offset.QuadPart + Length > Fcb->Header.FileSize.QuadPart) {
             Fcb->Header.FileSize.QuadPart = Offset.QuadPart + Length;
@@ -1465,6 +1545,23 @@ static NTSTATUS InfilfsWrite(PDEVICE_OBJECT DeviceObject, PIRP Irp)
                 CcSetFileSizes(FileObject, &Sizes);
             }
         }
+        if (WriteThrough) {
+            IO_STATUS_BLOCK FlushStatus;
+            RtlZeroMemory(&FlushStatus, sizeof(FlushStatus));
+            CcFlushCache(
+                FileObject->SectionObjectPointer,
+                &Offset, Length, &FlushStatus);
+            if (!NT_SUCCESS(FlushStatus.Status))
+                return InfilfsCompleteIrp(
+                    Irp, FlushStatus.Status, 0);
+            Status = InfilfsFlushPortableVolume(
+                Volume, &Fcb->Path);
+            if (!NT_SUCCESS(Status))
+                return InfilfsCompleteIrp(Irp, Status, 0);
+        }
+        if (FileObject->Flags & FO_SYNCHRONOUS_IO)
+            FileObject->CurrentByteOffset.QuadPart =
+                Offset.QuadPart + Length;
         return InfilfsCompleteIrp(Irp, STATUS_SUCCESS, Length);
     }
 
@@ -1477,6 +1574,10 @@ static NTSTATUS InfilfsWrite(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         Fcb->Header.FileSize.QuadPart = Offset.QuadPart + Done;
         Fcb->Header.ValidDataLength = Fcb->Header.FileSize;
     }
+    if (NT_SUCCESS(Status) &&
+        (FileObject->Flags & FO_SYNCHRONOUS_IO))
+        FileObject->CurrentByteOffset.QuadPart =
+            Offset.QuadPart + Done;
     return InfilfsCompleteIrp(Irp, Status, Done);
 }
 
@@ -1525,7 +1626,9 @@ static NTSTATUS InfilfsQueryInformation(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         Info->AllocationSize = Fcb->Header.AllocationSize;
         Info->EndOfFile = Fcb->Header.FileSize;
         Info->NumberOfLinks = Fcb->LinkCount ? Fcb->LinkCount : 1u;
-        Info->DeletePending = Fcb->DeletePending;
+        Info->DeletePending =
+            InterlockedCompareExchange(
+                &Fcb->DeletePendingCount, 0, 0) > 0;
         Info->Directory =
             Fcb->ObjectType == INFILFS_WIN_NATIVE_OBJECT_DIRECTORY;
         Used = sizeof(*Info);
@@ -1704,7 +1807,16 @@ static NTSTATUS InfilfsSetInformation(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         if (Length < sizeof(*Info))
             return InfilfsCompleteIrp(
                 Irp, STATUS_BUFFER_TOO_SMALL, 0);
-        Fcb->DeletePending = Info->DeleteFile ? TRUE : FALSE;
+        {
+            BOOLEAN Delete = Info->DeleteFile ? TRUE : FALSE;
+            if (Delete != Ccb->DeletePending) {
+                if (Delete)
+                    InterlockedIncrement(&Fcb->DeletePendingCount);
+                else
+                    InterlockedDecrement(&Fcb->DeletePendingCount);
+                Ccb->DeletePending = Delete;
+            }
+        }
         break;
     }
 #ifdef FileDispositionInformationEx
@@ -1713,8 +1825,17 @@ static NTSTATUS InfilfsSetInformation(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         if (Length < sizeof(*Info))
             return InfilfsCompleteIrp(
                 Irp, STATUS_BUFFER_TOO_SMALL, 0);
-        Fcb->DeletePending =
-            (Info->Flags & FILE_DISPOSITION_DELETE) != 0;
+        {
+            BOOLEAN Delete =
+                (Info->Flags & FILE_DISPOSITION_DELETE) != 0;
+            if (Delete != Ccb->DeletePending) {
+                if (Delete)
+                    InterlockedIncrement(&Fcb->DeletePendingCount);
+                else
+                    InterlockedDecrement(&Fcb->DeletePendingCount);
+                Ccb->DeletePending = Delete;
+            }
+        }
         break;
     }
 #endif
@@ -2259,26 +2380,8 @@ static NTSTATUS InfilfsFlushBuffers(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         CcFlushCache(
             FileObject->SectionObjectPointer, NULL, 0, &Irp->IoStatus);
 
-    Request = ExAllocatePool2(
-        POOL_FLAG_PAGED, sizeof(*Request), INFILFS_NATIVE_REQUEST_TAG);
-    Response = ExAllocatePool2(
-        POOL_FLAG_PAGED, sizeof(*Response), INFILFS_NATIVE_REQUEST_TAG);
-    if (!Request || !Response) {
-        if (Request) ExFreePoolWithTag(Request, INFILFS_NATIVE_REQUEST_TAG);
-        if (Response) ExFreePoolWithTag(Response, INFILFS_NATIVE_REQUEST_TAG);
-        return InfilfsCompleteIrp(
-            Irp, STATUS_INSUFFICIENT_RESOURCES, 0);
-    }
-    RtlZeroMemory(Request, sizeof(*Request));
-    RtlZeroMemory(Response, sizeof(*Response));
-    Request->opcode = INFILFS_WIN_NATIVE_OP_FLUSH;
-    if (Fcb)
-        InfilfsCopyPathToRequest(Request, &Fcb->Path);
-    Status = InfilfsCallService(Volume, Request, Response);
-    if (NT_SUCCESS(Status))
-        Status = InfilfsTargetFlush(Volume->TargetDevice);
-    ExFreePoolWithTag(Response, INFILFS_NATIVE_REQUEST_TAG);
-    ExFreePoolWithTag(Request, INFILFS_NATIVE_REQUEST_TAG);
+    Status = InfilfsFlushPortableVolume(
+        Volume, Fcb ? &Fcb->Path : NULL);
     return InfilfsCompleteIrp(Irp, Status, 0);
 }
 
@@ -2331,7 +2434,7 @@ static NTSTATUS InfilfsCleanup(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         Ccb->ShareRegistered = FALSE;
     }
 
-    if (Volume && Fcb && Fcb->DeletePending) {
+    if (Volume && Fcb && Ccb && Ccb->DeletePending) {
         Status = InfilfsServiceMutation(
             Volume,
             Fcb->ObjectType == INFILFS_WIN_NATIVE_OBJECT_DIRECTORY ?
@@ -2340,6 +2443,8 @@ static NTSTATUS InfilfsCleanup(PDEVICE_OBJECT DeviceObject, PIRP Irp)
             &Fcb->Path, NULL, 0, 0);
         if (NT_SUCCESS(Status))
             FileObject->DeletePending = TRUE;
+        InterlockedDecrement(&Fcb->DeletePendingCount);
+        Ccb->DeletePending = FALSE;
     }
     return InfilfsCompleteIrp(Irp, Status, 0);
 }
@@ -2361,6 +2466,10 @@ static NTSTATUS InfilfsClose(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     if (Ccb && Ccb->ShareRegistered && Fcb) {
         IoRemoveShareAccess(FileObject, &Fcb->ShareAccess);
         Ccb->ShareRegistered = FALSE;
+    }
+    if (Ccb && Ccb->DeletePending && Fcb) {
+        InterlockedDecrement(&Fcb->DeletePendingCount);
+        Ccb->DeletePending = FALSE;
     }
     if (Ccb)
         ExFreePoolWithTag(Ccb, INFILFS_NATIVE_CCB_TAG);
