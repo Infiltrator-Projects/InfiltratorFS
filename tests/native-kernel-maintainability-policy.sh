@@ -8,6 +8,7 @@ driver="$kernel/infiltratorfs_core.c"
 rw="$kernel/infiltratorfs_rw.inc"
 data="$kernel/infiltratorfs_rw_data.inc"
 namespace="$kernel/infiltratorfs_rw_namespace.inc"
+namespace_exchange="$kernel/infiltratorfs_rw_namespace_exchange.inc"
 makefile="$kernel/Makefile"
 ioctl="$kernel/infiltratorfs_ioctl.h"
 resize="$kernel/infiltratorfs_resize.c"
@@ -20,7 +21,7 @@ fail() {
     exit 1
 }
 
-for file in "$driver" "$rw" "$data" "$namespace" "$makefile" "$ioctl" "$resize" "$quota" "$pagecache" "$orphan"; do
+for file in "$driver" "$rw" "$data" "$namespace" "$namespace_exchange" "$makefile" "$ioctl" "$resize" "$quota" "$pagecache" "$orphan"; do
     test -f "$file" || fail "missing $file"
 done
 
@@ -371,6 +372,7 @@ ordered=(
     infiltratorfs_rw_legacy.inc
     infiltratorfs_rw_data.inc
     infiltratorfs_rw_namespace.inc
+    infiltratorfs_rw_namespace_exchange.inc
     infiltratorfs_linux_meta.inc
 )
 previous=0
@@ -438,6 +440,7 @@ grep -Fq 'int infilfs_native_checksum_decode(' "$kernel/infiltratorfs_checksum_s
 grep -Fq 'int infilfs_native_index_locator_build(' "$kernel/infiltratorfs_locator_cache.c" || \
     fail 'compiled locator cache lost object-index locator ownership'
 check_bytes "$kernel/infiltratorfs_rw_namespace.inc" 90000
+check_bytes "$kernel/infiltratorfs_rw_namespace_exchange.inc" 20000
 check_bytes "$quota" 70000
 
 printf 'Native kernel locking/composition maintainability policy guard passed.\n'
