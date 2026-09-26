@@ -1242,6 +1242,9 @@ static NTSTATUS InfilfsCheckAccess(
     return Granted ? STATUS_SUCCESS : AccessStatus;
 }
 
+static NTSTATUS InfilfsParentPath(
+    PCUNICODE_STRING Path, PUNICODE_STRING Parent);
+
 static NTSTATUS InfilfsCheckCurrentSubjectAccess(
     INFILFS_NATIVE_VOLUME *Volume, PCUNICODE_STRING Path,
     ACCESS_MASK DesiredAccess, KPROCESSOR_MODE AccessMode)
