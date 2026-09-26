@@ -392,9 +392,10 @@ int main(void)
 
     expect(infs_scrub(&volume, &report) == INFS_STATUS_OK,
            "scrub inline file");
-    expect(report.files_checked == 1, "scrub sees inline file");
-    expect(report.data_blocks_checked == 1,
-           "scrub verifies inline logical data block");
+    expect(report.files_checked == 2,
+           "scrub sees inline and storage-policy files");
+    expect(report.data_blocks_checked == 2,
+           "scrub verifies inline and external policy data blocks");
     expect(report.checksum_errors == 0 && report.metadata_errors == 0,
            "inline scrub clean");
 
