@@ -547,6 +547,37 @@ static NTSTATUS InfilfsControlDeviceIo(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     }
 }
 
+static BOOLEAN InfilfsTargetReadOnly(PDEVICE_OBJECT Target)
+{
+    KEVENT Event;
+    IO_STATUS_BLOCK Iosb;
+    PIRP Irp;
+    NTSTATUS Status;
+
+    if (!Target)
+        return TRUE;
+
+    KeInitializeEvent(&Event, NotificationEvent, FALSE);
+    Irp = IoBuildDeviceIoControlRequest(
+        IOCTL_DISK_IS_WRITABLE, Target, NULL, 0, NULL, 0,
+        FALSE, &Event, &Iosb);
+    if (!Irp)
+        return TRUE;
+
+    Status = IoCallDriver(Target, Irp);
+    if (Status == STATUS_PENDING) {
+        KeWaitForSingleObject(&Event, Executive, KernelMode, FALSE, NULL);
+        Status = Iosb.Status;
+    }
+
+    /*
+     * Only a positive writable result permits mutation. A lower device that
+     * cannot establish writability is treated read-only rather than allowing
+     * the portable service to begin transactions that can never be committed.
+     */
+    return !NT_SUCCESS(Status);
+}
+
 static BOOLEAN InfilfsRecognizeVolume(
     PDEVICE_OBJECT Target, ULONGLONG *SizeBytes, ULONG *SectorSize)
 {
@@ -659,7 +690,7 @@ static NTSTATUS InfilfsMountVolume(
         (ULONGLONG)InterlockedIncrement64(&g_Infilfs.NextVolumeId);
     Volume->SizeBytes = SizeBytes;
     Volume->SectorSize = SectorSize;
-    Volume->ReadOnly = FALSE;
+    Volume->ReadOnly = InfilfsTargetReadOnly(Target);
     ExInitializeResourceLite(&Volume->Resource);
     ExInitializeFastMutex(&Volume->FcbLock);
     InitializeListHead(&Volume->Fcbs);
@@ -1966,7 +1997,7 @@ static NTSTATUS InfilfsQueryVolumeInformation(
         }
         RtlZeroMemory(Info, Length);
         Info->VolumeSerialNumber = InfilfsVolumeSerial(&State);
-        Info->SupportsObjects = TRUE;
+        Info->SupportsObjects = FALSE;
         Info->VolumeLabelLength = LabelBytes;
         Copy = Length -
             FIELD_OFFSET(FILE_FS_VOLUME_INFORMATION, VolumeLabel);
