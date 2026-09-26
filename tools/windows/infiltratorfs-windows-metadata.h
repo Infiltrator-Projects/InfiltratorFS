@@ -23,6 +23,13 @@ infs_status infilfs_windows_import_security(
 infs_status infilfs_windows_export_security(
     struct infs_volume *volume, const char *path,
     const wchar_t *native_path, int directory);
+infs_status infilfs_windows_security_to_portable(
+    struct infs_volume *volume, PSECURITY_DESCRIPTOR native,
+    int directory, struct infs_security_descriptor *descriptor);
+infs_status infilfs_windows_security_from_portable(
+    struct infs_volume *volume,
+    const struct infs_security_descriptor *descriptor,
+    int directory, void **self_relative, uint32_t *self_relative_bytes);
 #endif
 
 #endif
