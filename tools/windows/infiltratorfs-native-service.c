@@ -190,7 +190,12 @@ static infs_status native_time(
 
 static void native_close(void *opaque)
 {
-    (void)opaque;
+    struct native_storage_context *ctx = opaque;
+    if (ctx && ctx->control &&
+        ctx->control != INVALID_HANDLE_VALUE) {
+        CloseHandle(ctx->control);
+        ctx->control = NULL;
+    }
 }
 
 static const struct infs_storage_ops native_storage_ops = {
@@ -247,7 +252,16 @@ static struct native_volume *get_volume(
         return NULL;
     }
     v->volume_id = volume_id;
-    v->storage_context.control = control;
+    v->storage_context.control = CreateFileW(
+        INFILFS_NATIVE_CONTROL,
+        GENERIC_READ | GENERIC_WRITE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (v->storage_context.control == INVALID_HANDLE_VALUE) {
+        free(v);
+        LeaveCriticalSection(&g_volume_lock);
+        return NULL;
+    }
     v->storage_context.volume_id = volume_id;
     v->storage_context.size_bytes = info.size_bytes;
     InitializeCriticalSection(&v->lock);
@@ -259,6 +273,7 @@ static struct native_volume *get_volume(
     infs_status status = infs_volume_open_storage(
         &v->volume, &storage, info.read_only ? 0 : 1);
     if (status != INFS_STATUS_OK) {
+        native_close(&v->storage_context);
         DeleteCriticalSection(&v->lock);
         free(v);
         LeaveCriticalSection(&g_volume_lock);
