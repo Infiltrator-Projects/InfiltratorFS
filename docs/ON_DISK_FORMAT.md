@@ -180,17 +180,36 @@ Portable common attributes contain:
 
 - logical size;
 - link count;
-- portable flags;
+- a 64-bit portable flags/storage-policy word;
 - birth/access/modification/metadata-change timestamps;
 - portable security-object ID; and
-- future portable extended-metadata object ID.
+- portable extended-metadata object ID.
 
 These are not Linux `struct stat` or Windows file-information structures.
 
-The security reference may be nonzero when the portable-security
-incompatibility feature is enabled.
-The extended-metadata reference remains zero until its portable object class and
-compatibility contract are defined.
+The low portable-flag bits represent presentation semantics such as read-only,
+hidden, system, archive, temporary and not-content-indexed. The high policy bits
+are disjoint persistent storage policy:
+
+- bits 48..55: requested protection-copy count;
+- bits 56..63: encryption-domain ID.
+
+A zero protection-copy count means the backend default (all members for the
+current synchronous mirror). A nonzero count selects that many deterministic
+replica members from persistent object identity. Encryption domain zero uses the
+encrypted container's root volume key; nonzero IDs derive domain-separated
+AEAD subkeys and are authenticated as part of encrypted block AAD.
+
+Storage policy applies to object data, not structural metadata/checkpoints.
+Nondefault-policy regular-file data is therefore extent-backed even when small
+enough for the ordinary inline representation. Metadata-only policy changes on
+a nonempty file are invalid because they would reinterpret existing extents
+under a different placement/key without relocation.
+
+The security reference may be nonzero when the portable-security incompatibility
+feature is enabled. The extended-metadata reference may identify the current
+typed-extension or metadata-set/named-stream object family when its feature
+contract is enabled.
 
 A POSIX compatibility record stores current mode/UID/GID information for adapter use. It is compatibility metadata, not persistent object identity or the final portable security authority.
 
@@ -228,9 +247,9 @@ A regular file may be:
 
 ### Inline data
 
-Small non-empty files may store their payload and logical SHA-256 digest in the file metadata object and own no separate data blocks.
+Small non-empty files with default storage policy may store their payload and logical SHA-256 digest in the file metadata object and own no separate data blocks.
 
-Current `INFS_INLINE_DATA_MAX` is 3840 bytes. Growing beyond the inline bound promotes the file transactionally to extent-backed representation. Shrinking may return to inline representation when the implementation chooses a valid canonical form.
+Current `INFS_INLINE_DATA_MAX` is 3840 bytes. Growing beyond the inline bound promotes the file transactionally to extent-backed representation. Shrinking may return to inline representation only while storage policy is zero. A file with nonzero protection-copy or encryption-domain policy remains extent-backed so every data byte passes through policy-aware storage I/O.
 
 ### Ordinary and sparse extents
 
