@@ -307,7 +307,7 @@ static void manager_apply_theme(Manager *manager)
         connection_border, connection, summary, background, text);
 
     /*
-     * Common 1.19.24 exposes the complete Linux MBLINK-derived appearance roles in addition
+     * Common 1.19.35 exposes the complete Linux MBLINK-derived appearance roles in addition
      * to the base surfaces.  Use those roles directly instead of flattening
      * the Manager into neutral accent + fault only.
      */
