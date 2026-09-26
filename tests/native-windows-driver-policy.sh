@@ -46,6 +46,8 @@ grep -Fq 'ExInitializeRundownProtection(&Volume->Rundown)' "$driver" || fail 'na
 grep -Fq 'ExWaitForRundownProtectionRelease(&Volume->Rundown)' "$driver" || fail 'native Windows teardown does not drain control-path volume references'
 grep -Fq 'InfilfsFindVolumeReferenced' "$driver" || fail 'native Windows service/control volume lookup is not lifetime-protected'
 grep -Fq 'Volume->LockOwner = FileObject' "$driver" || fail 'native Windows volume lock does not track the owning handle'
+grep -Fq 'InfilfsFinalizeRetiredVolume' "$driver" || fail 'native Windows dismount does not defer VDO destruction until final close'
+grep -Fq 'Volume->Dismounted &&' "$driver" || fail 'native Windows final FCB close does not trigger retired-volume finalization'
 grep -Fq 'Volume->Vpb->Flags |= VPB_LOCKED' "$driver" || fail 'native Windows volume lock is not reflected in the VPB'
 grep -Fq 'ExAcquireResourceSharedLite(&Volume->Resource, TRUE)' "$driver" || fail 'native Windows create admission is not serialized against volume lock'
 grep -Fq 'InfilfsQueryPortableVolumeState' "$driver" || fail 'volume information is not sourced from authoritative portable state'
