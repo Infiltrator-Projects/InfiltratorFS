@@ -93,6 +93,11 @@ static infs_status file_store_inline(
         return status;
     (void)ext;
 
+    if (size != 0 &&
+        (infs_le64_to_cpu(file->attributes.portable_flags) &
+         INFS_ATTR_STORAGE_POLICY_MASK) != 0)
+        return INFS_STATUS_INVALID_ARGUMENT;
+
     status = file_release_external_storage(vol, object);
     if (status != INFS_STATUS_OK)
         return status;
