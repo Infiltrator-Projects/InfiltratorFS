@@ -206,9 +206,12 @@ static int infilfs_posix_fill_common_attributes(
  * creation. Every newly staged POSIX object therefore fails closed before
  * publication if the creator identity cannot be represented on disk.
  */
+#define INFILFS_NAMESPACE_EXCHANGE_EXTERNAL 1
 #define infilfs_rw_fill_common_attributes infilfs_posix_fill_common_attributes
 #include "infiltratorfs_rw_namespace.inc"
 #undef infilfs_rw_fill_common_attributes
+#undef INFILFS_NAMESPACE_EXCHANGE_EXTERNAL
+#include "infiltratorfs_rw_namespace_exchange.inc"
 
 /*
  * A crash can occur after the final directory name is removed but before the
