@@ -2,6 +2,16 @@
 
 This file records user-visible, compatibility, architecture and validation changes for InfiltratorFS.
 
+## 0.18.94 — 2026-09-26
+- Add persistent per-object protection-copy and encryption-domain policy for file data while keeping structural metadata and checkpoints on the backend default protection policy.
+- Route ordinary, compressed, truncate, hole-punch, scrub and named-stream data through policy-aware storage I/O; nondefault-policy files remain extent-backed so inline metadata cannot bypass placement or encryption.
+- Add deterministic object-identity-based mirror placement and per-domain AES-256-GCM key separation authenticated by domain ID.
+- Reject unsafe metadata-only storage-policy changes on nonempty files; presentation flags remain independently mutable.
+- Complete Windows basic-attribute, timestamp, owner/group/DACL and lossless filename projection through the ProjFS bridge.
+- Record selected-object restore from retained snapshots as implemented.
+- Keep macOS, BSD and Haiku out of the delivery roadmap; they are not current implementation targets.
+- On-disk Format remains 0.18.
+
 ## 0.18.93 — 2026-09-25
 - Align the Linux Manager minimum window geometry with the suite desktop shell while preserving the 1220×780 default size.
 - Keep filesystem format, kernel driver, storage, encryption, namespace, maintenance behaviour, dependencies and Common APIs unchanged.
