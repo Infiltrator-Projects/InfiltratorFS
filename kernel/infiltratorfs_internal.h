@@ -712,6 +712,9 @@ int infilfs_native_resize_volume(
 
 /* Services shared with the compiled volatile parallel allocator. */
 const char *infilfs_media_profile_name(enum infilfs_media_profile profile);
+int infilfs_resolve_media_profile(
+    struct super_block *sb, const struct infilfs_fs_context *ctx,
+    struct infilfs_sb_info *sbi);
 void infilfs_rw_free_extent_index_invalidate(struct infilfs_rw_tx *tx);
 int infilfs_rw_free_extent_index_remove(
     struct infilfs_rw_tx *tx, u64 start, u64 count);
