@@ -39,16 +39,23 @@ typedef struct _INFILFS_NATIVE_VOLUME {
     ULONG SectorSize;
     BOOLEAN ReadOnly;
     ERESOURCE Resource;
+    FAST_MUTEX FcbLock;
+    LIST_ENTRY Fcbs;
     LIST_ENTRY GlobalLink;
 } INFILFS_NATIVE_VOLUME;
 
 typedef struct _INFILFS_NATIVE_FCB {
     ULONG Signature;
+    struct _INFILFS_NATIVE_VOLUME *Volume;
+    LIST_ENTRY VolumeLink;
     FSRTL_ADVANCED_FCB_HEADER Header;
     FAST_MUTEX HeaderMutex;
     SECTION_OBJECT_POINTERS SectionObjectPointers;
     ERESOURCE MainResource;
     ERESOURCE PagingResource;
+    SHARE_ACCESS ShareAccess;
+    FILE_LOCK FileLock;
+    OPLOCK Oplock;
     volatile LONG References;
     ULONGLONG FileId;
     ULONG ObjectType;
@@ -65,6 +72,7 @@ typedef struct _INFILFS_NATIVE_FCB {
 typedef struct _INFILFS_NATIVE_CCB {
     ULONG Signature;
     ULONG DirectoryIndex;
+    BOOLEAN ShareRegistered;
 } INFILFS_NATIVE_CCB;
 
 typedef struct _INFILFS_NATIVE_REQUEST_ITEM {
@@ -555,6 +563,8 @@ static NTSTATUS InfilfsMountVolume(
     Volume->SectorSize = SectorSize;
     Volume->ReadOnly = FALSE;
     ExInitializeResourceLite(&Volume->Resource);
+    ExInitializeFastMutex(&Volume->FcbLock);
+    InitializeListHead(&Volume->Fcbs);
     InitializeListHead(&Volume->GlobalLink);
 
     VolumeDevice->Flags |= DO_DIRECT_IO;
@@ -587,6 +597,8 @@ static VOID InfilfsFreeFcb(INFILFS_NATIVE_FCB *Fcb)
 {
     if (!Fcb)
         return;
+    FsRtlUninitializeFileLock(&Fcb->FileLock);
+    FsRtlUninitializeOplock(&Fcb->Oplock);
     if (Fcb->Path.Buffer)
         ExFreePoolWithTag(Fcb->Path.Buffer, INFILFS_NATIVE_FCB_TAG);
     ExDeleteResourceLite(&Fcb->PagingResource);
@@ -595,7 +607,7 @@ static VOID InfilfsFreeFcb(INFILFS_NATIVE_FCB *Fcb)
 }
 
 static INFILFS_NATIVE_FCB *InfilfsAllocateFcb(
-    PCUNICODE_STRING Path,
+    INFILFS_NATIVE_VOLUME *Volume, PCUNICODE_STRING Path,
     const struct infilfs_win_native_attributes *Attributes)
 {
     INFILFS_NATIVE_FCB *Fcb;
@@ -609,6 +621,8 @@ static INFILFS_NATIVE_FCB *InfilfsAllocateFcb(
         return NULL;
     RtlZeroMemory(Fcb, sizeof(*Fcb));
     Fcb->Signature = 'fSfI';
+    Fcb->Volume = Volume;
+    InitializeListHead(&Fcb->VolumeLink);
     Fcb->References = 1;
     Fcb->FileId = Attributes->file_id;
     Fcb->ObjectType = Attributes->object_type;
@@ -624,6 +638,8 @@ static INFILFS_NATIVE_FCB *InfilfsAllocateFcb(
         InfilfsFreeFcb(Fcb);
         return NULL;
     }
+    FsRtlInitializeFileLock(&Fcb->FileLock, NULL, NULL);
+    FsRtlInitializeOplock(&Fcb->Oplock);
     FsRtlSetupAdvancedHeader(&Fcb->Header, &Fcb->HeaderMutex);
     Fcb->Header.Resource = &Fcb->MainResource;
     Fcb->Header.PagingIoResource = &Fcb->PagingResource;
@@ -648,6 +664,53 @@ static INFILFS_NATIVE_FCB *InfilfsAllocateFcb(
     RtlCopyMemory(Fcb->Path.Buffer, Path->Buffer, Path->Length);
     Fcb->Path.Buffer[Path->Length / sizeof(WCHAR)] = L'\0';
     return Fcb;
+}
+
+static INFILFS_NATIVE_FCB *InfilfsGetOrCreateFcb(
+    INFILFS_NATIVE_VOLUME *Volume, PCUNICODE_STRING Path,
+    const struct infilfs_win_native_attributes *Attributes)
+{
+    PLIST_ENTRY Entry;
+    INFILFS_NATIVE_FCB *Fcb = NULL;
+
+    ExAcquireFastMutex(&Volume->FcbLock);
+    for (Entry = Volume->Fcbs.Flink;
+         Entry != &Volume->Fcbs; Entry = Entry->Flink) {
+        INFILFS_NATIVE_FCB *Candidate =
+            CONTAINING_RECORD(Entry, INFILFS_NATIVE_FCB, VolumeLink);
+        if (Candidate->FileId == Attributes->file_id) {
+            InterlockedIncrement(&Candidate->References);
+            Fcb = Candidate;
+            break;
+        }
+    }
+    if (!Fcb) {
+        Fcb = InfilfsAllocateFcb(Volume, Path, Attributes);
+        if (Fcb)
+            InsertTailList(&Volume->Fcbs, &Fcb->VolumeLink);
+    }
+    ExReleaseFastMutex(&Volume->FcbLock);
+    return Fcb;
+}
+
+static VOID InfilfsDereferenceFcb(INFILFS_NATIVE_FCB *Fcb)
+{
+    INFILFS_NATIVE_VOLUME *Volume;
+    if (!Fcb)
+        return;
+    Volume = Fcb->Volume;
+    if (!Volume)
+        return;
+
+    ExAcquireFastMutex(&Volume->FcbLock);
+    LONG References = InterlockedDecrement(&Fcb->References);
+    if (References == 0) {
+        RemoveEntryList(&Fcb->VolumeLink);
+        InitializeListHead(&Fcb->VolumeLink);
+    }
+    ExReleaseFastMutex(&Volume->FcbLock);
+    if (References == 0)
+        InfilfsFreeFcb(Fcb);
 }
 
 static VOID InfilfsCopyPathToRequest(
@@ -815,17 +878,29 @@ static NTSTATUS InfilfsCreate(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     if (!NT_SUCCESS(Status))
         return InfilfsCompleteIrp(Irp, Status, 0);
 
-    Fcb = InfilfsAllocateFcb(&FileObject->FileName, &Attributes);
+    Fcb = InfilfsGetOrCreateFcb(
+        Volume, &FileObject->FileName, &Attributes);
     Ccb = ExAllocatePool2(
         POOL_FLAG_NON_PAGED, sizeof(*Ccb), INFILFS_NATIVE_CCB_TAG);
     if (!Fcb || !Ccb) {
-        if (Fcb) InfilfsFreeFcb(Fcb);
+        if (Fcb) InfilfsDereferenceFcb(Fcb);
         if (Ccb) ExFreePoolWithTag(Ccb, INFILFS_NATIVE_CCB_TAG);
         return InfilfsCompleteIrp(
             Irp, STATUS_INSUFFICIENT_RESOURCES, 0);
     }
     RtlZeroMemory(Ccb, sizeof(*Ccb));
     Ccb->Signature = 'cSfI';
+
+    Status = IoCheckShareAccess(
+        IrpSp->Parameters.Create.SecurityContext->DesiredAccess,
+        IrpSp->Parameters.Create.ShareAccess,
+        FileObject, &Fcb->ShareAccess, TRUE);
+    if (!NT_SUCCESS(Status)) {
+        ExFreePoolWithTag(Ccb, INFILFS_NATIVE_CCB_TAG);
+        InfilfsDereferenceFcb(Fcb);
+        return InfilfsCompleteIrp(Irp, Status, 0);
+    }
+    Ccb->ShareRegistered = TRUE;
 
     FileObject->FsContext = Fcb;
     FileObject->FsContext2 = Ccb;
@@ -1699,10 +1774,12 @@ static NTSTATUS InfilfsClose(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     Ccb = (INFILFS_NATIVE_CCB *)FileObject->FsContext2;
     FileObject->FsContext = NULL;
     FileObject->FsContext2 = NULL;
+    if (Ccb && Ccb->ShareRegistered && Fcb)
+        IoRemoveShareAccess(FileObject, &Fcb->ShareAccess);
     if (Ccb)
         ExFreePoolWithTag(Ccb, INFILFS_NATIVE_CCB_TAG);
-    if (Fcb && InterlockedDecrement(&Fcb->References) == 0)
-        InfilfsFreeFcb(Fcb);
+    if (Fcb)
+        InfilfsDereferenceFcb(Fcb);
     return InfilfsCompleteIrp(Irp, STATUS_SUCCESS, 0);
 }
 
@@ -1766,6 +1843,18 @@ static VOID InfilfsUnload(PDRIVER_OBJECT DriverObject)
         }
         if (Volume->TargetDevice)
             ObDereferenceObject(Volume->TargetDevice);
+        ExAcquireFastMutex(&Volume->FcbLock);
+        while (!IsListEmpty(&Volume->Fcbs)) {
+            INFILFS_NATIVE_FCB *Fcb =
+                CONTAINING_RECORD(
+                    RemoveHeadList(&Volume->Fcbs),
+                    INFILFS_NATIVE_FCB, VolumeLink);
+            InitializeListHead(&Fcb->VolumeLink);
+            ExReleaseFastMutex(&Volume->FcbLock);
+            InfilfsFreeFcb(Fcb);
+            ExAcquireFastMutex(&Volume->FcbLock);
+        }
+        ExReleaseFastMutex(&Volume->FcbLock);
         ExDeleteResourceLite(&Volume->Resource);
         IoDeleteDevice(Volume->DeviceObject);
     }
