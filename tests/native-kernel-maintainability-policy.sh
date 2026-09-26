@@ -181,6 +181,17 @@ grep -Fq 'ii->portable_flags & INFILFS_ATTR_STORAGE_POLICY_MASK' "$driver" || \
 grep -Fq 'native Linux cannot open file with nondefault storage policy' "$driver" || \
     fail 'native Linux storage-policy rejection is not diagnosable'
 
+# Linux namespace/API fallbacks must not silently regress once implemented.
+grep -Fq 'infilfs_ns_rename_exchange_cross_dir' "$namespace" || \
+    fail 'cross-directory RENAME_EXCHANGE implementation missing'
+fallocate_body="$(sed -n '/static long infilfs_file_fallocate(/,/^}/p' "$rw")"
+grep -Fq 'FALLOC_FL_ZERO_RANGE' <<<"$fallocate_body" || \
+    fail 'native ZERO_RANGE support missing'
+grep -Fq 'FALLOC_FL_UNSHARE_RANGE' <<<"$fallocate_body" || \
+    fail 'native UNSHARE_RANGE support missing'
+grep -Fq 'keep_size && end > original_size' <<<"$fallocate_body" || \
+    fail 'unrepresentable beyond-EOF KEEP_SIZE is not rejected explicitly'
+
 # Creator identity conversion is fail-closed. An id-mapped uid/gid that cannot
 # be represented in the init-user-namespace disk fields must never fall back to
 # numeric zero and manufacture root ownership.
