@@ -18,7 +18,7 @@
 #include <string.h>
 
 #define INFILFS_NATIVE_CONTROL L"\\\\.\\InfiltratorFSControl"
-#define INFILFS_NATIVE_WORKERS 8u
+#define INFILFS_NATIVE_MAX_WORKERS 64u
 
 struct native_storage_context {
     HANDLE control;
@@ -39,8 +39,8 @@ static CRITICAL_SECTION g_volume_lock;
 static struct native_volume *g_volumes;
 static volatile LONG g_stop;
 static HANDLE g_stop_event;
-static HANDLE g_worker_threads[INFILFS_NATIVE_WORKERS];
-static HANDLE g_worker_controls[INFILFS_NATIVE_WORKERS];
+static HANDLE g_worker_threads[INFILFS_NATIVE_MAX_WORKERS];
+static HANDLE g_worker_controls[INFILFS_NATIVE_MAX_WORKERS];
 static DWORD g_worker_count;
 static SERVICE_STATUS_HANDLE g_service_status_handle;
 static SERVICE_STATUS g_service_status;
@@ -358,6 +358,31 @@ static void response_status(
 {
     response->protocol_version = INFILFS_WIN_NATIVE_PROTOCOL_VERSION;
     response->status = status;
+}
+
+static void dispatch_query_volume(
+    struct native_volume *v,
+    struct infilfs_win_native_response *response)
+{
+    struct infilfs_win_native_volume_state state;
+    size_t label_bytes;
+
+    memset(&state, 0, sizeof(state));
+    state.total_blocks = infs_le64_to_cpu(v->volume.sb.total_blocks);
+    state.free_blocks = infs_le64_to_cpu(v->volume.sb.free_blocks);
+    state.generation = infs_le64_to_cpu(v->volume.sb.generation);
+    memcpy(state.filesystem_uuid, v->volume.sb.filesystem_uuid,
+           sizeof(state.filesystem_uuid));
+    label_bytes = strnlen(
+        (const char *)v->volume.sb.label, INFS_LABEL_MAX);
+    if (label_bytes > sizeof(state.label))
+        label_bytes = sizeof(state.label);
+    state.label_bytes = (uint32_t)label_bytes;
+    memcpy(state.label, v->volume.sb.label, label_bytes);
+
+    response_status(response, INFS_STATUS_OK);
+    response->output_bytes = sizeof(state);
+    memcpy(response->output, &state, sizeof(state));
 }
 
 static void dispatch_lookup(
@@ -743,6 +768,9 @@ static void dispatch_request(
     case INFILFS_WIN_NATIVE_OP_SET_BASIC:
         dispatch_set_basic(v, request, response);
         break;
+    case INFILFS_WIN_NATIVE_OP_QUERY_VOLUME:
+        dispatch_query_volume(v, response);
+        break;
     case INFILFS_WIN_NATIVE_OP_CREATE:
     case INFILFS_WIN_NATIVE_OP_MKDIR:
     case INFILFS_WIN_NATIVE_OP_UNLINK:
@@ -769,7 +797,7 @@ static DWORD WINAPI worker_main(void *opaque)
         NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     if (control == INVALID_HANDLE_VALUE)
         return GetLastError();
-    if (worker < INFILFS_NATIVE_WORKERS)
+    if (worker < INFILFS_NATIVE_MAX_WORKERS)
         InterlockedExchangePointer(
             (PVOID volatile *)&g_worker_controls[worker], control);
 
@@ -806,7 +834,7 @@ static DWORD WINAPI worker_main(void *opaque)
 
     free(response);
     free(request);
-    if (worker < INFILFS_NATIVE_WORKERS)
+    if (worker < INFILFS_NATIVE_MAX_WORKERS)
         InterlockedExchangePointer(
             (PVOID volatile *)&g_worker_controls[worker], NULL);
     CloseHandle(control);
@@ -835,7 +863,7 @@ static void request_stop(void)
         return;
     if (g_stop_event)
         SetEvent(g_stop_event);
-    for (DWORD i = 0; i < INFILFS_NATIVE_WORKERS; ++i) {
+    for (DWORD i = 0; i < g_worker_count; ++i) {
         HANDLE control = (HANDLE)InterlockedCompareExchangePointer(
             (PVOID volatile *)&g_worker_controls[i], NULL, NULL);
         if (control && control != INVALID_HANDLE_VALUE)
@@ -843,10 +871,55 @@ static void request_stop(void)
     }
 }
 
+static DWORD native_worker_budget(void)
+{
+    DWORD bytes = 0;
+    DWORD cores = 0;
+    SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *info = NULL;
+    BYTE *cursor;
+    BYTE *end;
+
+    if (GetLogicalProcessorInformationEx(RelationProcessorCore, NULL, &bytes) ||
+        GetLastError() != ERROR_INSUFFICIENT_BUFFER || !bytes)
+        return 1u;
+
+    info = malloc(bytes);
+    if (!info)
+        return 1u;
+    if (!GetLogicalProcessorInformationEx(
+            RelationProcessorCore, info, &bytes)) {
+        free(info);
+        return 1u;
+    }
+
+    cursor = (BYTE *)info;
+    end = cursor + bytes;
+    while (cursor + sizeof(*info) <= end) {
+        SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *entry =
+            (SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *)cursor;
+        if (!entry->Size || cursor + entry->Size > end)
+            break;
+        if (entry->Relationship == RelationProcessorCore)
+            cores++;
+        cursor += entry->Size;
+    }
+    free(info);
+
+    if (cores > 1u)
+        cores--;
+    if (!cores)
+        cores = 1u;
+    if (cores > INFILFS_NATIVE_MAX_WORKERS)
+        cores = INFILFS_NATIVE_MAX_WORKERS;
+    return cores;
+}
+
 static int start_workers(void)
 {
+    DWORD target = native_worker_budget();
+
     g_worker_count = 0;
-    for (DWORD i = 0; i < INFILFS_NATIVE_WORKERS; ++i) {
+    for (DWORD i = 0; i < target; ++i) {
         g_worker_threads[i] = CreateThread(
             NULL, 0, worker_main, (void *)(uintptr_t)i, 0, NULL);
         if (!g_worker_threads[i])
