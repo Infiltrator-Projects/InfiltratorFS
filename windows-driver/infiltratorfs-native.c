@@ -2898,7 +2898,7 @@ static NTSTATUS InfilfsQuerySecurity(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         goto out;
 
     if (Capacity < Required) {
-        Status = STATUS_BUFFER_TOO_SMALL;
+        Status = STATUS_BUFFER_OVERFLOW;
         goto out;
     }
     if (!Output && Required) {
@@ -2927,7 +2927,7 @@ out:
     return InfilfsCompleteIrp(
         Irp, Status,
         (Status == STATUS_SUCCESS ||
-         Status == STATUS_BUFFER_TOO_SMALL) ? Required : 0);
+         Status == STATUS_BUFFER_OVERFLOW) ? Required : 0);
 }
 
 static NTSTATUS InfilfsSetSecurity(PDEVICE_OBJECT DeviceObject, PIRP Irp)
@@ -2942,6 +2942,7 @@ static NTSTATUS InfilfsSetSecurity(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         IrpSp->Parameters.SetSecurity.SecurityDescriptor;
     PSECURITY_DESCRIPTOR Captured = NULL;
     PSECURITY_DESCRIPTOR Current = NULL;
+    PSECURITY_DESCRIPTOR PreviousCurrent = NULL;
     SECURITY_INFORMATION Information =
         IrpSp->Parameters.SetSecurity.SecurityInformation;
     ULONG CurrentLength = 0;
@@ -2988,10 +2989,15 @@ static NTSTATUS InfilfsSetSecurity(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     if (!NT_SUCCESS(Status))
         goto out;
 
+    PreviousCurrent = Current;
     Status = SeSetSecurityDescriptorInfoEx(
         NULL, &Information, Captured, &Current,
         SEF_DACL_AUTO_INHERIT,
         PagedPool, IoGetFileObjectGenericMapping());
+    if (Current != PreviousCurrent && PreviousCurrent)
+        ExFreePoolWithTag(
+            PreviousCurrent, INFILFS_NATIVE_REQUEST_TAG);
+    PreviousCurrent = NULL;
     if (!NT_SUCCESS(Status))
         goto out;
 
@@ -2999,6 +3005,9 @@ static NTSTATUS InfilfsSetSecurity(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         Volume, HandlePath, Current);
 
 out:
+    if (PreviousCurrent)
+        ExFreePoolWithTag(
+            PreviousCurrent, INFILFS_NATIVE_REQUEST_TAG);
     if (Current)
         ExFreePool(Current);
     if (Captured)
