@@ -117,6 +117,7 @@ jobs:
              kernel/infiltratorfs_shared_ownership.c \
              kernel/infiltratorfs_orphan_scan.c \
              kernel/infiltratorfs_name_policy.c \
+             kernel/infiltratorfs_media.c \
              kernel/infiltratorfs_rw.inc \
              kernel/infiltratorfs_rw_legacy.inc \
              kernel/infiltratorfs_rw_data.inc \
