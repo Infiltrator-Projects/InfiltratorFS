@@ -2,6 +2,7 @@
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
+#include <linux/falloc.h>
 #include <linux/fs.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -105,6 +106,82 @@ int main(int argc, char **argv)
             die("O_DIRECT unlink");
         free(direct_read);
         free(direct_write);
+    }
+
+    {
+        char falloc_path[4096];
+        unsigned char input[12288];
+        unsigned char output[16384];
+        struct stat st;
+        int falloc_fd;
+
+        if (snprintf(falloc_path, sizeof(falloc_path), "%s/fallocate-api", argv[1]) >=
+            (int)sizeof(falloc_path))
+            return 2;
+        memset(input, 0x5a, sizeof(input));
+        falloc_fd = open(falloc_path, O_CREAT | O_TRUNC | O_RDWR, 0600);
+        if (falloc_fd < 0)
+            die("open fallocate-api");
+        if (write(falloc_fd, input, sizeof(input)) != (ssize_t)sizeof(input))
+            die("seed fallocate-api");
+
+        if (fallocate(
+                falloc_fd, FALLOC_FL_KEEP_SIZE, 4096, 4096) != 0)
+            die("FALLOC_FL_KEEP_SIZE inside EOF");
+        if (fstat(falloc_fd, &st) != 0 || st.st_size != (off_t)sizeof(input)) {
+            fprintf(stderr, "KEEP_SIZE changed logical file size\n");
+            return 1;
+        }
+
+        if (fallocate(
+                falloc_fd, FALLOC_FL_ZERO_RANGE, 4096, 4096) != 0)
+            die("FALLOC_FL_ZERO_RANGE");
+        memset(output, 0, sizeof(output));
+        if (pread(falloc_fd, output, sizeof(input), 0) !=
+            (ssize_t)sizeof(input))
+            die("read ZERO_RANGE result");
+        for (size_t i = 0; i < sizeof(input); ++i) {
+            unsigned char expected =
+                (i >= 4096 && i < 8192) ? 0 : 0x5a;
+            if (output[i] != expected) {
+                fprintf(stderr, "ZERO_RANGE content mismatch at %zu\n", i);
+                return 1;
+            }
+        }
+
+        if (fallocate(
+                falloc_fd, FALLOC_FL_UNSHARE_RANGE, 0, 4096) != 0)
+            die("FALLOC_FL_UNSHARE_RANGE");
+        memset(output, 0, 4096);
+        if (pread(falloc_fd, output, 4096, 0) != 4096)
+            die("read UNSHARE_RANGE result");
+        for (size_t i = 0; i < 4096; ++i) {
+            if (output[i] != 0x5a) {
+                fprintf(stderr, "UNSHARE_RANGE changed data at %zu\n", i);
+                return 1;
+            }
+        }
+
+        if (fallocate(
+                falloc_fd, FALLOC_FL_ZERO_RANGE,
+                (off_t)sizeof(input), 4096) != 0)
+            die("ZERO_RANGE extend");
+        if (fstat(falloc_fd, &st) != 0 ||
+            st.st_size != (off_t)sizeof(output)) {
+            fprintf(stderr, "ZERO_RANGE did not extend file correctly\n");
+            return 1;
+        }
+        memset(output, 0xff, sizeof(output));
+        if (pread(falloc_fd, output + sizeof(input), 4096,
+                  (off_t)sizeof(input)) != 4096)
+            die("read ZERO_RANGE extended tail");
+        for (size_t i = sizeof(input); i < sizeof(output); ++i) {
+            if (output[i] != 0) {
+                fprintf(stderr, "ZERO_RANGE extended tail is not zero at %zu\n", i);
+                return 1;
+            }
+        }
+        close(falloc_fd);
     }
 
     close(dirfd);
