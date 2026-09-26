@@ -239,6 +239,21 @@ int main(void)
                INFS_STATUS_OK,
            "reopen encrypted member");
     }
+    /*
+     * Named streams inherit the owner's copies/domain class but retain their
+     * own object identity, so a one-copy stream may intentionally select a
+     * different mirror member from its owner. Verify the inherited protected
+     * stream while all members are healthy; member-failure placement is proven
+     * independently below for the owner file.
+     */
+    char stream_readback[sizeof(stream_payload)] = {0};
+    ok(infs_named_stream_read(
+           &volume, "/policy.txt", "user.policy-proof",
+           stream_readback, sizeof(stream_readback), 0) ==
+           (int64_t)sizeof(stream_readback) &&
+       !memcmp(stream_readback, stream_payload, sizeof(stream_payload)),
+       "named stream roundtrip under inherited storage policy");
+
     size_t unselected_policy_member = selected_policy_member ^ 1u;
     member[unselected_policy_member].fail_reads = 1;
     ok(infs_storage_mirror_create(encrypted, 2u, &protected_storage) ==
@@ -265,14 +280,6 @@ int main(void)
            (int64_t)sizeof(policy_readback) &&
        !memcmp(policy_readback, policy_payload, sizeof(policy_payload)),
        "one-copy file reads when unselected member is unavailable");
-
-    char stream_readback[sizeof(stream_payload)] = {0};
-    ok(infs_named_stream_read(
-           &volume, "/policy.txt", "user.policy-proof",
-           stream_readback, sizeof(stream_readback), 0) ==
-           (int64_t)sizeof(stream_readback) &&
-       !memcmp(stream_readback, stream_payload, sizeof(stream_payload)),
-       "named stream inherits owner placement/encryption policy");
 
     struct infs_scrub_report report;
     ok(infs_scrub(&volume, &report) == INFS_STATUS_OK &&
