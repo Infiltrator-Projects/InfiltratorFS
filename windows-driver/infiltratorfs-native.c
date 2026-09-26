@@ -1380,6 +1380,8 @@ static NTSTATUS InfilfsTransfer(
 static NTSTATUS InfilfsFlushPortableVolume(
     INFILFS_NATIVE_VOLUME *Volume, PCUNICODE_STRING Path)
 {
+    struct infilfs_win_native_request *Request;
+    struct infilfs_win_native_response *Response;
     NTSTATUS Status;
 
     if (!Volume)
@@ -2370,8 +2372,6 @@ static NTSTATUS InfilfsFlushBuffers(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     PFILE_OBJECT FileObject = IrpSp->FileObject;
     INFILFS_NATIVE_FCB *Fcb = FileObject ?
         (INFILFS_NATIVE_FCB *)FileObject->FsContext : NULL;
-    struct infilfs_win_native_request *Request;
-    struct infilfs_win_native_response *Response;
     NTSTATUS Status;
 
     if (!Volume)
