@@ -66,7 +66,7 @@ grep -Fq 'down_read(&sbi->write_lock);' "$quota" || fail 'quota topology read lo
 # The native driver must stay a genuine multi-object Kbuild module. The
 # allocation map is the first extracted subsystem and must never regress into
 # textual inclusion.
-grep -Fqx 'infiltratorfs-y := infiltratorfs_core.o infiltratorfs_cpu.o infiltratorfs_crypto.o infiltratorfs_security.o infiltratorfs_extension.o infiltratorfs_allocation_map.o infiltratorfs_resize.o infiltratorfs_index_tree.o infiltratorfs_extent_tree.o infiltratorfs_parallel_alloc.o infiltratorfs_allocation_publish.o infiltratorfs_read_cache.o infiltratorfs_pagecache.o infiltratorfs_directory_tree.o infiltratorfs_checksum_cache.o infiltratorfs_checksum_store.o infiltratorfs_locator_cache.o infiltratorfs_linux_meta_codec.o infiltratorfs_shared_ownership.o infiltratorfs_orphan_scan.o infiltratorfs_name_policy.o' "$makefile" || \
+grep -Fqx 'infiltratorfs-y := infiltratorfs_core.o infiltratorfs_cpu.o infiltratorfs_crypto.o infiltratorfs_security.o infiltratorfs_extension.o infiltratorfs_allocation_map.o infiltratorfs_resize.o infiltratorfs_index_tree.o infiltratorfs_extent_tree.o infiltratorfs_parallel_alloc.o infiltratorfs_allocation_publish.o infiltratorfs_read_cache.o infiltratorfs_pagecache.o infiltratorfs_directory_tree.o infiltratorfs_checksum_cache.o infiltratorfs_checksum_store.o infiltratorfs_locator_cache.o infiltratorfs_linux_meta_codec.o infiltratorfs_shared_ownership.o infiltratorfs_orphan_scan.o infiltratorfs_name_policy.o infiltratorfs_media.o' "$makefile" || \
     fail 'kernel module is no longer built from explicit component objects'
 test -f "$kernel/infiltratorfs_internal.h" || fail 'missing private kernel API header'
 test -f "$kernel/infiltratorfs_cpu.c" || fail 'native CPU policy object missing'
@@ -74,6 +74,7 @@ test -f "$kernel/infiltratorfs_crypto.c" || fail 'accelerated integrity object m
 test -f "$kernel/infiltratorfs_security.c" || fail 'portable security validator object missing'
 test -f "$kernel/infiltratorfs_extension.c" || fail 'typed extension validator object missing'
 test -f "$kernel/infiltratorfs_name_policy.c" || fail 'native filename-policy object missing'
+test -f "$kernel/infiltratorfs_media.c" || fail 'native media-policy object missing'
 test -f "$kernel/infiltratorfs_allocation_map.c" || fail 'allocation map object missing'
 test -f "$kernel/infiltratorfs_index_tree.c" || fail 'object-index tree object missing'
 test -f "$kernel/infiltratorfs_extent_tree.c" || fail 'extent-tree object missing'
