@@ -46,6 +46,9 @@ grep -Fq 'InfilfsQueryPortableVolumeState' "$driver" || fail 'volume information
 grep -Fq 'State.free_blocks' "$driver" || fail 'native Windows free-space reporting is not authoritative'
 grep -Fq 'INFILFS_WIN_NATIVE_OP_QUERY_VOLUME' "$service" || fail 'portable service volume-state query is missing'
 grep -Fq 'native_worker_budget' "$service" || fail 'native Windows worker pool is not derived from physical-core N-1 policy'
+grep -Fq 'IOCTL_DISK_IS_WRITABLE' "$driver" || fail 'native Windows mount does not probe target writability'
+grep -Fq 'Volume->ReadOnly = InfilfsTargetReadOnly(Target)' "$driver" || fail 'native Windows volume ignores lower-device read-only state'
+grep -Fq 'Info->SupportsObjects = FALSE' "$driver" || fail 'native Windows advertises object-ID support without object-ID FSCTLs'
 if grep -Fq 'FILE_SUPPORTS_REPARSE_POINTS' "$driver" ||
    grep -Fq 'FILE_SUPPORTS_SPARSE_FILES' "$driver"; then
     fail 'driver advertises Windows FSCTL contracts it does not implement'
