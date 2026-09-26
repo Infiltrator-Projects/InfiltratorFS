@@ -239,6 +239,14 @@ int main(void)
                INFS_STATUS_OK,
            "reopen encrypted member");
     }
+    size_t unselected_policy_member = selected_policy_member ^ 1u;
+    ok(infs_storage_mirror_create(encrypted, 2u, &protected_storage) ==
+           INFS_STATUS_OK,
+       "rebuild authenticated mirror");
+    ok(infs_volume_open_storage(
+           &volume, &protected_storage, 0) == INFS_STATUS_OK,
+       "open authenticated mirror");
+
     /*
      * Named streams inherit the owner's copies/domain class but retain their
      * own object identity, so a one-copy stream may intentionally select a
@@ -254,14 +262,7 @@ int main(void)
        !memcmp(stream_readback, stream_payload, sizeof(stream_payload)),
        "named stream roundtrip under inherited storage policy");
 
-    size_t unselected_policy_member = selected_policy_member ^ 1u;
     member[unselected_policy_member].fail_reads = 1;
-    ok(infs_storage_mirror_create(encrypted, 2u, &protected_storage) ==
-           INFS_STATUS_OK,
-       "rebuild authenticated mirror");
-    ok(infs_volume_open_storage(
-           &volume, &protected_storage, 0) == INFS_STATUS_OK,
-       "open through surviving authenticated replica");
 
     uint8_t readback[sizeof(payload)];
     memset(readback, 0, sizeof(readback));
