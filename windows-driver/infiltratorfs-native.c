@@ -893,7 +893,13 @@ static NTSTATUS InfilfsWrite(PDEVICE_OBJECT DeviceObject, PIRP Irp)
             if (Fcb->Header.AllocationSize.QuadPart <
                 Fcb->Header.FileSize.QuadPart)
                 Fcb->Header.AllocationSize = Fcb->Header.FileSize;
-            CcSetFileSizes(FileObject, (PCC_FILE_SIZES)&Fcb->Header.AllocationSize);
+            {
+                CC_FILE_SIZES Sizes;
+                Sizes.AllocationSize = Fcb->Header.AllocationSize;
+                Sizes.FileSize = Fcb->Header.FileSize;
+                Sizes.ValidDataLength = Fcb->Header.ValidDataLength;
+                CcSetFileSizes(FileObject, &Sizes);
+            }
         }
         return InfilfsCompleteIrp(Irp, STATUS_SUCCESS, Length);
     }
