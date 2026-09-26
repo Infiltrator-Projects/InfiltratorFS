@@ -1156,8 +1156,6 @@ static long infilfs_file_fallocate(struct file *file, int mode,
 {
     const int punch = FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE;
     const int keep = FALLOC_FL_KEEP_SIZE;
-    const int zero = FALLOC_FL_ZERO_RANGE;
-    const int unshare = FALLOC_FL_UNSHARE_RANGE;
     struct inode *inode = file_inode(file);
     u8 *buffer;
     u64 position;
