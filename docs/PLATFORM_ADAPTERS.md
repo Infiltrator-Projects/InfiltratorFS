@@ -75,9 +75,9 @@ The completed metadata adapter round-trips Windows basic attributes and all four
 
 The Windows Manager shares its application/presentation contract with the Linux Manager: the storage-target model, Overview structure, maintenance action set, wording and Common appearance roles are one product contract. Win32 owns only native control rendering, storage discovery/dialogs and Windows-specific file/Explorer integration. The Files page is an adapter capability because the current Windows path must provide userspace import/projection while Linux can hand an already-mounted filesystem to the native desktop file manager.
 
-This bridge is interoperability, not a native InfiltratorFS Windows filesystem driver. Windows still sees a projected NTFS surface, and Windows-specific kernel filesystem semantics remain outside this bridge.
+This bridge is interoperability, not the native InfiltratorFS Windows filesystem driver. Windows still sees a projected NTFS surface when this path is selected.
 
-A future native Windows adapter must integrate with the Windows I/O Manager, Cache Manager, Memory Manager, security descriptors, file/share/delete semantics, reparse/extension behaviour and native volume mounting while preserving the same persistent InfiltratorFS model.
+The repository now also contains a native Windows disk-filesystem driver plus companion portable-core service. The kernel side owns I/O Manager/Cache Manager integration, native volume mounting, FCB/CCB and section-object lifetime, cached/non-cached/paging I/O, share/delete semantics, byte-range locks, oplocks, security dispatch and durability boundaries; the service reuses the authoritative portable filesystem core rather than introducing a second Windows-only on-disk implementation. The source implementation is complete enough to build and qualify structurally, but release qualification still requires a real mounted Windows volume and Driver Verifier run.
 
 Windows should not emulate Linux syscalls, and Linux should not emulate NTFS. Equivalent operations on each platform should map to the same portable semantic operation.
 
