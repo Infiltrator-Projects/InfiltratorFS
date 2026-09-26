@@ -19,9 +19,10 @@
 
 #include <stdint.h>
 
-#define INFILFS_WIN_NATIVE_PROTOCOL_VERSION UINT32_C(1)
+#define INFILFS_WIN_NATIVE_PROTOCOL_VERSION UINT32_C(2)
 #define INFILFS_WIN_NATIVE_PATH_CHARS 32768u
 #define INFILFS_WIN_NATIVE_NAME_CHARS 1024u
+#define INFILFS_WIN_NATIVE_LABEL_BYTES 64u
 #define INFILFS_WIN_NATIVE_IO_CHUNK (1024u * 1024u)
 
 #define INFILFS_WIN_NATIVE_DEVICE_TYPE 0x00008337u
@@ -123,6 +124,16 @@ struct infilfs_win_native_dirent {
     uint32_t name_chars;
     uint32_t reserved;
     uint16_t name[INFILFS_WIN_NATIVE_NAME_CHARS];
+};
+
+struct infilfs_win_native_volume_state {
+    uint64_t total_blocks;
+    uint64_t free_blocks;
+    uint64_t generation;
+    uint8_t filesystem_uuid[16];
+    uint32_t label_bytes;
+    uint32_t reserved;
+    uint8_t label[INFILFS_WIN_NATIVE_LABEL_BYTES];
 };
 
 struct infilfs_win_native_response {
