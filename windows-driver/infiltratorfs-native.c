@@ -1951,6 +1951,192 @@ static NTSTATUS InfilfsSetInformation(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     return InfilfsCompleteIrp(Irp, Status, 0);
 }
 
+static NTSTATUS InfilfsFormatDirectoryEntry(
+    FILE_INFORMATION_CLASS Class, PUCHAR Buffer, ULONG Capacity,
+    const struct infilfs_win_native_dirent *Source, ULONG FileIndex,
+    ULONG *EntryBytesOut)
+{
+    ULONG NameBytes;
+    ULONG EntryBytes;
+
+    if (!Buffer || !Source || !EntryBytesOut)
+        return STATUS_INVALID_PARAMETER;
+    if (Source->name_chars >= INFILFS_WIN_NATIVE_NAME_CHARS)
+        return STATUS_FILE_CORRUPT_ERROR;
+
+    NameBytes = Source->name_chars * sizeof(WCHAR);
+    switch (Class) {
+    case FileDirectoryInformation: {
+        PFILE_DIRECTORY_INFORMATION Entry;
+        EntryBytes = FIELD_OFFSET(
+            FILE_DIRECTORY_INFORMATION, FileName) + NameBytes;
+        EntryBytes = (EntryBytes + 7u) & ~7u;
+        if (EntryBytes > Capacity)
+            return STATUS_BUFFER_OVERFLOW;
+        Entry = (PFILE_DIRECTORY_INFORMATION)Buffer;
+        RtlZeroMemory(Entry, EntryBytes);
+        Entry->FileIndex = FileIndex;
+        Entry->CreationTime.QuadPart =
+            (LONGLONG)Source->attributes.creation_time_100ns;
+        Entry->LastAccessTime.QuadPart =
+            (LONGLONG)Source->attributes.access_time_100ns;
+        Entry->LastWriteTime.QuadPart =
+            (LONGLONG)Source->attributes.write_time_100ns;
+        Entry->ChangeTime.QuadPart =
+            (LONGLONG)Source->attributes.change_time_100ns;
+        Entry->EndOfFile.QuadPart =
+            (LONGLONG)Source->attributes.logical_size;
+        Entry->AllocationSize.QuadPart =
+            (LONGLONG)Source->attributes.allocation_size;
+        Entry->FileAttributes = Source->attributes.file_attributes;
+        Entry->FileNameLength = NameBytes;
+        if (NameBytes)
+            RtlCopyMemory(Entry->FileName, Source->name, NameBytes);
+        break;
+    }
+    case FileFullDirectoryInformation: {
+        PFILE_FULL_DIR_INFORMATION Entry;
+        EntryBytes = FIELD_OFFSET(
+            FILE_FULL_DIR_INFORMATION, FileName) + NameBytes;
+        EntryBytes = (EntryBytes + 7u) & ~7u;
+        if (EntryBytes > Capacity)
+            return STATUS_BUFFER_OVERFLOW;
+        Entry = (PFILE_FULL_DIR_INFORMATION)Buffer;
+        RtlZeroMemory(Entry, EntryBytes);
+        Entry->FileIndex = FileIndex;
+        Entry->CreationTime.QuadPart =
+            (LONGLONG)Source->attributes.creation_time_100ns;
+        Entry->LastAccessTime.QuadPart =
+            (LONGLONG)Source->attributes.access_time_100ns;
+        Entry->LastWriteTime.QuadPart =
+            (LONGLONG)Source->attributes.write_time_100ns;
+        Entry->ChangeTime.QuadPart =
+            (LONGLONG)Source->attributes.change_time_100ns;
+        Entry->EndOfFile.QuadPart =
+            (LONGLONG)Source->attributes.logical_size;
+        Entry->AllocationSize.QuadPart =
+            (LONGLONG)Source->attributes.allocation_size;
+        Entry->FileAttributes = Source->attributes.file_attributes;
+        Entry->FileNameLength = NameBytes;
+        Entry->EaSize = 0;
+        if (NameBytes)
+            RtlCopyMemory(Entry->FileName, Source->name, NameBytes);
+        break;
+    }
+    case FileBothDirectoryInformation: {
+        PFILE_BOTH_DIR_INFORMATION Entry;
+        EntryBytes = FIELD_OFFSET(
+            FILE_BOTH_DIR_INFORMATION, FileName) + NameBytes;
+        EntryBytes = (EntryBytes + 7u) & ~7u;
+        if (EntryBytes > Capacity)
+            return STATUS_BUFFER_OVERFLOW;
+        Entry = (PFILE_BOTH_DIR_INFORMATION)Buffer;
+        RtlZeroMemory(Entry, EntryBytes);
+        Entry->FileIndex = FileIndex;
+        Entry->CreationTime.QuadPart =
+            (LONGLONG)Source->attributes.creation_time_100ns;
+        Entry->LastAccessTime.QuadPart =
+            (LONGLONG)Source->attributes.access_time_100ns;
+        Entry->LastWriteTime.QuadPart =
+            (LONGLONG)Source->attributes.write_time_100ns;
+        Entry->ChangeTime.QuadPart =
+            (LONGLONG)Source->attributes.change_time_100ns;
+        Entry->EndOfFile.QuadPart =
+            (LONGLONG)Source->attributes.logical_size;
+        Entry->AllocationSize.QuadPart =
+            (LONGLONG)Source->attributes.allocation_size;
+        Entry->FileAttributes = Source->attributes.file_attributes;
+        Entry->FileNameLength = NameBytes;
+        Entry->EaSize = 0;
+        Entry->ShortNameLength = 0;
+        if (NameBytes)
+            RtlCopyMemory(Entry->FileName, Source->name, NameBytes);
+        break;
+    }
+    case FileNamesInformation: {
+        PFILE_NAMES_INFORMATION Entry;
+        EntryBytes = FIELD_OFFSET(
+            FILE_NAMES_INFORMATION, FileName) + NameBytes;
+        EntryBytes = (EntryBytes + 7u) & ~7u;
+        if (EntryBytes > Capacity)
+            return STATUS_BUFFER_OVERFLOW;
+        Entry = (PFILE_NAMES_INFORMATION)Buffer;
+        RtlZeroMemory(Entry, EntryBytes);
+        Entry->FileIndex = FileIndex;
+        Entry->FileNameLength = NameBytes;
+        if (NameBytes)
+            RtlCopyMemory(Entry->FileName, Source->name, NameBytes);
+        break;
+    }
+    case FileIdFullDirectoryInformation: {
+        PFILE_ID_FULL_DIR_INFORMATION Entry;
+        EntryBytes = FIELD_OFFSET(
+            FILE_ID_FULL_DIR_INFORMATION, FileName) + NameBytes;
+        EntryBytes = (EntryBytes + 7u) & ~7u;
+        if (EntryBytes > Capacity)
+            return STATUS_BUFFER_OVERFLOW;
+        Entry = (PFILE_ID_FULL_DIR_INFORMATION)Buffer;
+        RtlZeroMemory(Entry, EntryBytes);
+        Entry->FileIndex = FileIndex;
+        Entry->CreationTime.QuadPart =
+            (LONGLONG)Source->attributes.creation_time_100ns;
+        Entry->LastAccessTime.QuadPart =
+            (LONGLONG)Source->attributes.access_time_100ns;
+        Entry->LastWriteTime.QuadPart =
+            (LONGLONG)Source->attributes.write_time_100ns;
+        Entry->ChangeTime.QuadPart =
+            (LONGLONG)Source->attributes.change_time_100ns;
+        Entry->EndOfFile.QuadPart =
+            (LONGLONG)Source->attributes.logical_size;
+        Entry->AllocationSize.QuadPart =
+            (LONGLONG)Source->attributes.allocation_size;
+        Entry->FileAttributes = Source->attributes.file_attributes;
+        Entry->FileNameLength = NameBytes;
+        Entry->EaSize = 0;
+        Entry->FileId.QuadPart = (LONGLONG)Source->attributes.file_id;
+        if (NameBytes)
+            RtlCopyMemory(Entry->FileName, Source->name, NameBytes);
+        break;
+    }
+    case FileIdBothDirectoryInformation: {
+        PFILE_ID_BOTH_DIR_INFORMATION Entry;
+        EntryBytes = FIELD_OFFSET(
+            FILE_ID_BOTH_DIR_INFORMATION, FileName) + NameBytes;
+        EntryBytes = (EntryBytes + 7u) & ~7u;
+        if (EntryBytes > Capacity)
+            return STATUS_BUFFER_OVERFLOW;
+        Entry = (PFILE_ID_BOTH_DIR_INFORMATION)Buffer;
+        RtlZeroMemory(Entry, EntryBytes);
+        Entry->FileIndex = FileIndex;
+        Entry->CreationTime.QuadPart =
+            (LONGLONG)Source->attributes.creation_time_100ns;
+        Entry->LastAccessTime.QuadPart =
+            (LONGLONG)Source->attributes.access_time_100ns;
+        Entry->LastWriteTime.QuadPart =
+            (LONGLONG)Source->attributes.write_time_100ns;
+        Entry->ChangeTime.QuadPart =
+            (LONGLONG)Source->attributes.change_time_100ns;
+        Entry->EndOfFile.QuadPart =
+            (LONGLONG)Source->attributes.logical_size;
+        Entry->AllocationSize.QuadPart =
+            (LONGLONG)Source->attributes.allocation_size;
+        Entry->FileAttributes = Source->attributes.file_attributes;
+        Entry->FileNameLength = NameBytes;
+        Entry->EaSize = 0;
+        Entry->ShortNameLength = 0;
+        Entry->FileId.QuadPart = (LONGLONG)Source->attributes.file_id;
+        if (NameBytes)
+            RtlCopyMemory(Entry->FileName, Source->name, NameBytes);
+        break;
+    }
+    default:
+        return STATUS_INVALID_INFO_CLASS;
+    }
+
+    *EntryBytesOut = EntryBytes;
+    return STATUS_SUCCESS;
+}
+
 static NTSTATUS InfilfsDirectoryControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 {
     PIO_STACK_LOCATION IrpSp = IoGetCurrentIrpStackLocation(Irp);
@@ -1962,10 +2148,12 @@ static NTSTATUS InfilfsDirectoryControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         (INFILFS_NATIVE_CCB *)FileObject->FsContext2 : NULL;
     struct infilfs_win_native_request *Request = NULL;
     struct infilfs_win_native_response *Response = NULL;
+    FILE_INFORMATION_CLASS Class;
     PUCHAR Output;
+    PUCHAR Previous = NULL;
     ULONG OutputLength;
     ULONG Used = 0;
-    PFILE_BOTH_DIR_INFORMATION Previous = NULL;
+    BOOLEAN Matched = FALSE;
     NTSTATUS Status = STATUS_SUCCESS;
 
     if (!Volume || !Fcb || !Ccb ||
@@ -1974,6 +2162,20 @@ static NTSTATUS InfilfsDirectoryControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     if (IrpSp->MinorFunction != IRP_MN_QUERY_DIRECTORY)
         return InfilfsCompleteIrp(
             Irp, STATUS_INVALID_DEVICE_REQUEST, 0);
+
+    Class = IrpSp->Parameters.QueryDirectory.FileInformationClass;
+    switch (Class) {
+    case FileDirectoryInformation:
+    case FileFullDirectoryInformation:
+    case FileBothDirectoryInformation:
+    case FileNamesInformation:
+    case FileIdFullDirectoryInformation:
+    case FileIdBothDirectoryInformation:
+        break;
+    default:
+        return InfilfsCompleteIrp(
+            Irp, STATUS_INVALID_INFO_CLASS, 0);
+    }
 
     Output = (PUCHAR)InfilfsGetIrpBuffer(Irp);
     OutputLength = IrpSp->Parameters.QueryDirectory.Length;
@@ -2003,17 +2205,19 @@ static NTSTATUS InfilfsDirectoryControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         SIZE_T Offset =
             (SIZE_T)i * sizeof(struct infilfs_win_native_dirent);
         struct infilfs_win_native_dirent *Source;
-        FILE_BOTH_DIR_INFORMATION *Entry;
+        ULONG EntryBytes = 0;
         ULONG NameBytes;
-        ULONG EntryBytes;
         UNICODE_STRING Name;
+        PUCHAR Entry;
 
         if (Offset + sizeof(*Source) > Response->output_bytes)
             break;
         Source = (struct infilfs_win_native_dirent *)
             (Response->output + Offset);
-        if (Source->name_chars >= INFILFS_WIN_NATIVE_NAME_CHARS)
-            continue;
+        if (Source->name_chars >= INFILFS_WIN_NATIVE_NAME_CHARS) {
+            Status = STATUS_FILE_CORRUPT_ERROR;
+            break;
+        }
         NameBytes = Source->name_chars * sizeof(WCHAR);
         Name.Buffer = (PWCHAR)Source->name;
         Name.Length = (USHORT)NameBytes;
@@ -2027,35 +2231,21 @@ static NTSTATUS InfilfsDirectoryControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
             continue;
         }
 
-        EntryBytes = FIELD_OFFSET(
-            FILE_BOTH_DIR_INFORMATION, FileName) + NameBytes;
-        EntryBytes = (EntryBytes + 7u) & ~7u;
-        if (Used + EntryBytes > OutputLength)
+        Matched = TRUE;
+        Entry = Output + Used;
+        Status = InfilfsFormatDirectoryEntry(
+            Class, Entry, OutputLength - Used, Source,
+            Ccb->DirectoryIndex, &EntryBytes);
+        if (Status == STATUS_BUFFER_OVERFLOW) {
+            if (Used)
+                Status = STATUS_SUCCESS;
+            break;
+        }
+        if (!NT_SUCCESS(Status))
             break;
 
-        Entry = (FILE_BOTH_DIR_INFORMATION *)(Output + Used);
-        RtlZeroMemory(Entry, EntryBytes);
-        Entry->FileIndex = Ccb->DirectoryIndex;
-        Entry->CreationTime.QuadPart =
-            (LONGLONG)Source->attributes.creation_time_100ns;
-        Entry->LastAccessTime.QuadPart =
-            (LONGLONG)Source->attributes.access_time_100ns;
-        Entry->LastWriteTime.QuadPart =
-            (LONGLONG)Source->attributes.write_time_100ns;
-        Entry->ChangeTime.QuadPart =
-            (LONGLONG)Source->attributes.change_time_100ns;
-        Entry->EndOfFile.QuadPart =
-            (LONGLONG)Source->attributes.logical_size;
-        Entry->AllocationSize.QuadPart =
-            (LONGLONG)Source->attributes.allocation_size;
-        Entry->FileAttributes = Source->attributes.file_attributes;
-        Entry->FileNameLength = NameBytes;
-        Entry->ShortNameLength = 0;
-        if (NameBytes)
-            RtlCopyMemory(Entry->FileName, Source->name, NameBytes);
         if (Previous)
-            Previous->NextEntryOffset =
-                (ULONG)((PUCHAR)Entry - (PUCHAR)Previous);
+            *(PULONG)Previous = (ULONG)(Entry - Previous);
         Previous = Entry;
         Used += EntryBytes;
         Ccb->DirectoryIndex++;
@@ -2063,9 +2253,10 @@ static NTSTATUS InfilfsDirectoryControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
             break;
     }
 
-    if (!Used)
-        Status = Ccb->DirectoryIndex == 0 ?
-            STATUS_NO_SUCH_FILE : STATUS_NO_MORE_FILES;
+    if (NT_SUCCESS(Status) && !Used)
+        Status = Matched ? STATUS_BUFFER_OVERFLOW :
+            (Ccb->DirectoryIndex == 0 ?
+                STATUS_NO_SUCH_FILE : STATUS_NO_MORE_FILES);
 out:
     if (Response)
         ExFreePoolWithTag(Response, INFILFS_NATIVE_REQUEST_TAG);
