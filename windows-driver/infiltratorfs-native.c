@@ -3738,8 +3738,9 @@ static NTSTATUS InfilfsShutdown(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     /*
      * Never hold VolumeLock while calling the service. infs_volume_sync()
      * reaches back through RAW_FLUSH, whose control path resolves the volume
-     * under this same lock. Mounted volume objects are not destroyed until
-     * driver unload, so a pointer snapshot is stable for this shutdown pass.
+     * under this same lock. Snapshot only live volumes and acquire rundown
+     * protection while VolumeLock still prevents retirement from crossing the
+     * selection point; dismount then waits until this shutdown pass releases it.
      */
     ExAcquireFastMutex(&g_Infilfs.VolumeLock);
     for (Entry = g_Infilfs.Volumes.Flink;
@@ -3755,13 +3756,19 @@ static NTSTATUS InfilfsShutdown(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         return InfilfsCompleteIrp(
             Irp, STATUS_INSUFFICIENT_RESOURCES, 0);
     }
+    Index = 0;
     for (Entry = g_Infilfs.Volumes.Flink;
          Entry != &g_Infilfs.Volumes && Index < Count;
          Entry = Entry->Flink) {
-        Volumes[Index++] = CONTAINING_RECORD(
-            Entry, INFILFS_NATIVE_VOLUME, GlobalLink);
+        INFILFS_NATIVE_VOLUME *Volume =
+            CONTAINING_RECORD(
+                Entry, INFILFS_NATIVE_VOLUME, GlobalLink);
+        if (!Volume->Dismounted &&
+            ExAcquireRundownProtection(&Volume->Rundown))
+            Volumes[Index++] = Volume;
     }
     ExReleaseFastMutex(&g_Infilfs.VolumeLock);
+    Count = Index;
 
     for (Index = 0; Index < Count; ++Index) {
         INFILFS_NATIVE_VOLUME *Volume = Volumes[Index];
@@ -3787,6 +3794,7 @@ static NTSTATUS InfilfsShutdown(PDEVICE_OBJECT DeviceObject, PIRP Irp)
                     Response, INFILFS_NATIVE_REQUEST_TAG);
             if (NT_SUCCESS(Result))
                 Result = STATUS_INSUFFICIENT_RESOURCES;
+            ExReleaseRundownProtection(&Volume->Rundown);
             continue;
         }
 
@@ -3800,6 +3808,7 @@ static NTSTATUS InfilfsShutdown(PDEVICE_OBJECT DeviceObject, PIRP Irp)
             Result = Status;
         ExFreePoolWithTag(Response, INFILFS_NATIVE_REQUEST_TAG);
         ExFreePoolWithTag(Request, INFILFS_NATIVE_REQUEST_TAG);
+        ExReleaseRundownProtection(&Volume->Rundown);
     }
 
     if (Volumes)
