@@ -1025,6 +1025,477 @@ static NTSTATUS InfilfsWrite(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     return InfilfsCompleteIrp(Irp, Status, Done);
 }
 
+
+static NTSTATUS InfilfsQueryInformation(PDEVICE_OBJECT DeviceObject, PIRP Irp)
+{
+    PIO_STACK_LOCATION IrpSp = IoGetCurrentIrpStackLocation(Irp);
+    PFILE_OBJECT FileObject = IrpSp->FileObject;
+    INFILFS_NATIVE_FCB *Fcb = FileObject ?
+        (INFILFS_NATIVE_FCB *)FileObject->FsContext : NULL;
+    PVOID Buffer = Irp->AssociatedIrp.SystemBuffer;
+    ULONG Length = IrpSp->Parameters.QueryFile.Length;
+    FILE_INFORMATION_CLASS Class =
+        IrpSp->Parameters.QueryFile.FileInformationClass;
+    ULONG_PTR Used = 0;
+    NTSTATUS Status = STATUS_SUCCESS;
+
+    UNREFERENCED_PARAMETER(DeviceObject);
+    if (!Fcb || !Buffer)
+        return InfilfsCompleteIrp(Irp, STATUS_INVALID_PARAMETER, 0);
+
+    switch (Class) {
+    case FileBasicInformation: {
+        PFILE_BASIC_INFORMATION Info = Buffer;
+        if (Length < sizeof(*Info)) {
+            Status = STATUS_BUFFER_TOO_SMALL;
+            break;
+        }
+        RtlZeroMemory(Info, sizeof(*Info));
+        Info->CreationTime = Fcb->CreationTime;
+        Info->LastAccessTime = Fcb->AccessTime;
+        Info->LastWriteTime = Fcb->WriteTime;
+        Info->ChangeTime = Fcb->ChangeTime;
+        Info->FileAttributes = Fcb->FileAttributes ?
+            Fcb->FileAttributes : FILE_ATTRIBUTE_NORMAL;
+        Used = sizeof(*Info);
+        break;
+    }
+    case FileStandardInformation: {
+        PFILE_STANDARD_INFORMATION Info = Buffer;
+        if (Length < sizeof(*Info)) {
+            Status = STATUS_BUFFER_TOO_SMALL;
+            break;
+        }
+        RtlZeroMemory(Info, sizeof(*Info));
+        Info->AllocationSize = Fcb->Header.AllocationSize;
+        Info->EndOfFile = Fcb->Header.FileSize;
+        Info->NumberOfLinks = Fcb->LinkCount ? Fcb->LinkCount : 1u;
+        Info->DeletePending = Fcb->DeletePending;
+        Info->Directory =
+            Fcb->ObjectType == INFILFS_WIN_NATIVE_OBJECT_DIRECTORY;
+        Used = sizeof(*Info);
+        break;
+    }
+    case FileInternalInformation: {
+        PFILE_INTERNAL_INFORMATION Info = Buffer;
+        if (Length < sizeof(*Info)) {
+            Status = STATUS_BUFFER_TOO_SMALL;
+            break;
+        }
+        Info->IndexNumber.QuadPart = (LONGLONG)Fcb->FileId;
+        Used = sizeof(*Info);
+        break;
+    }
+    case FilePositionInformation: {
+        PFILE_POSITION_INFORMATION Info = Buffer;
+        if (Length < sizeof(*Info)) {
+            Status = STATUS_BUFFER_TOO_SMALL;
+            break;
+        }
+        Info->CurrentByteOffset = FileObject->CurrentByteOffset;
+        Used = sizeof(*Info);
+        break;
+    }
+    case FileNameInformation: {
+        PFILE_NAME_INFORMATION Info = Buffer;
+        ULONG NameBytes = Fcb->Path.Length;
+        ULONG Required = FIELD_OFFSET(FILE_NAME_INFORMATION, FileName) +
+                         NameBytes;
+        if (Length < FIELD_OFFSET(FILE_NAME_INFORMATION, FileName)) {
+            Status = STATUS_BUFFER_TOO_SMALL;
+            break;
+        }
+        Info->FileNameLength = NameBytes;
+        ULONG Copy = Length - FIELD_OFFSET(FILE_NAME_INFORMATION, FileName);
+        if (Copy > NameBytes)
+            Copy = NameBytes;
+        if (Copy)
+            RtlCopyMemory(Info->FileName, Fcb->Path.Buffer, Copy);
+        Used = FIELD_OFFSET(FILE_NAME_INFORMATION, FileName) + Copy;
+        if (Length < Required)
+            Status = STATUS_BUFFER_OVERFLOW;
+        break;
+    }
+    case FileNetworkOpenInformation: {
+        PFILE_NETWORK_OPEN_INFORMATION Info = Buffer;
+        if (Length < sizeof(*Info)) {
+            Status = STATUS_BUFFER_TOO_SMALL;
+            break;
+        }
+        RtlZeroMemory(Info, sizeof(*Info));
+        Info->CreationTime = Fcb->CreationTime;
+        Info->LastAccessTime = Fcb->AccessTime;
+        Info->LastWriteTime = Fcb->WriteTime;
+        Info->ChangeTime = Fcb->ChangeTime;
+        Info->AllocationSize = Fcb->Header.AllocationSize;
+        Info->EndOfFile = Fcb->Header.FileSize;
+        Info->FileAttributes = Fcb->FileAttributes ?
+            Fcb->FileAttributes : FILE_ATTRIBUTE_NORMAL;
+        Used = sizeof(*Info);
+        break;
+    }
+    default:
+        Status = STATUS_INVALID_INFO_CLASS;
+        break;
+    }
+
+    return InfilfsCompleteIrp(Irp, Status, Used);
+}
+
+static NTSTATUS InfilfsSetInformation(PDEVICE_OBJECT DeviceObject, PIRP Irp)
+{
+    PIO_STACK_LOCATION IrpSp = IoGetCurrentIrpStackLocation(Irp);
+    INFILFS_NATIVE_VOLUME *Volume = InfilfsVolumeFromDevice(DeviceObject);
+    PFILE_OBJECT FileObject = IrpSp->FileObject;
+    INFILFS_NATIVE_FCB *Fcb = FileObject ?
+        (INFILFS_NATIVE_FCB *)FileObject->FsContext : NULL;
+    PVOID Buffer = Irp->AssociatedIrp.SystemBuffer;
+    FILE_INFORMATION_CLASS Class =
+        IrpSp->Parameters.SetFile.FileInformationClass;
+    ULONG Length = IrpSp->Parameters.SetFile.Length;
+    NTSTATUS Status = STATUS_SUCCESS;
+
+    if (!Volume || !Fcb || !Buffer)
+        return InfilfsCompleteIrp(Irp, STATUS_INVALID_PARAMETER, 0);
+    if (Volume->ReadOnly)
+        return InfilfsCompleteIrp(Irp, STATUS_MEDIA_WRITE_PROTECTED, 0);
+
+    switch (Class) {
+    case FileEndOfFileInformation: {
+        PFILE_END_OF_FILE_INFORMATION Info = Buffer;
+        CC_FILE_SIZES Sizes;
+        if (Length < sizeof(*Info) || Info->EndOfFile.QuadPart < 0)
+            return InfilfsCompleteIrp(
+                Irp, STATUS_INVALID_PARAMETER, 0);
+        if (FileObject->SectionObjectPointer)
+            CcFlushCache(FileObject->SectionObjectPointer, NULL, 0, NULL);
+        Status = InfilfsServiceMutation(
+            Volume, INFILFS_WIN_NATIVE_OP_TRUNCATE,
+            &Fcb->Path, NULL, (ULONGLONG)Info->EndOfFile.QuadPart, 0);
+        if (!NT_SUCCESS(Status))
+            break;
+        Fcb->Header.FileSize = Info->EndOfFile;
+        Fcb->Header.ValidDataLength = Info->EndOfFile;
+        if (Fcb->Header.AllocationSize.QuadPart <
+            Info->EndOfFile.QuadPart)
+            Fcb->Header.AllocationSize = Info->EndOfFile;
+        Sizes.AllocationSize = Fcb->Header.AllocationSize;
+        Sizes.FileSize = Fcb->Header.FileSize;
+        Sizes.ValidDataLength = Fcb->Header.ValidDataLength;
+        CcSetFileSizes(FileObject, &Sizes);
+        break;
+    }
+    case FileDispositionInformation: {
+        PFILE_DISPOSITION_INFORMATION Info = Buffer;
+        if (Length < sizeof(*Info))
+            return InfilfsCompleteIrp(
+                Irp, STATUS_BUFFER_TOO_SMALL, 0);
+        Fcb->DeletePending = Info->DeleteFile ? TRUE : FALSE;
+        break;
+    }
+#ifdef FileDispositionInformationEx
+    case FileDispositionInformationEx: {
+        PFILE_DISPOSITION_INFORMATION_EX Info = Buffer;
+        if (Length < sizeof(*Info))
+            return InfilfsCompleteIrp(
+                Irp, STATUS_BUFFER_TOO_SMALL, 0);
+        Fcb->DeletePending =
+            (Info->Flags & FILE_DISPOSITION_DELETE) != 0;
+        break;
+    }
+#endif
+    case FileRenameInformation:
+#ifdef FileRenameInformationEx
+    case FileRenameInformationEx:
+#endif
+    {
+        PFILE_RENAME_INFORMATION Info = Buffer;
+        UNICODE_STRING Destination;
+        if (Length < FIELD_OFFSET(FILE_RENAME_INFORMATION, FileName) ||
+            Info->FileNameLength == 0 ||
+            Info->FileNameLength >
+                Length - FIELD_OFFSET(FILE_RENAME_INFORMATION, FileName))
+            return InfilfsCompleteIrp(
+                Irp, STATUS_INVALID_PARAMETER, 0);
+        if (Info->RootDirectory != NULL)
+            return InfilfsCompleteIrp(
+                Irp, STATUS_NOT_SUPPORTED, 0);
+        Destination.Buffer = Info->FileName;
+        Destination.Length = (USHORT)Info->FileNameLength;
+        Destination.MaximumLength = Destination.Length;
+        Status = InfilfsServiceMutation(
+            Volume, INFILFS_WIN_NATIVE_OP_RENAME,
+            &Fcb->Path, &Destination, 0,
+            Info->ReplaceIfExists ? INFILFS_WIN_NATIVE_REQ_REPLACE : 0);
+        if (NT_SUCCESS(Status)) {
+            USHORT Bytes = Destination.Length + sizeof(WCHAR);
+            PWCHAR NewPath = ExAllocatePool2(
+                POOL_FLAG_NON_PAGED, Bytes, INFILFS_NATIVE_FCB_TAG);
+            if (!NewPath) {
+                Status = STATUS_INSUFFICIENT_RESOURCES;
+                break;
+            }
+            RtlCopyMemory(NewPath, Destination.Buffer, Destination.Length);
+            NewPath[Destination.Length / sizeof(WCHAR)] = L'\0';
+            if (Fcb->Path.Buffer)
+                ExFreePoolWithTag(
+                    Fcb->Path.Buffer, INFILFS_NATIVE_FCB_TAG);
+            Fcb->Path.Buffer = NewPath;
+            Fcb->Path.Length = Destination.Length;
+            Fcb->Path.MaximumLength = Bytes;
+        }
+        break;
+    }
+    case FilePositionInformation: {
+        PFILE_POSITION_INFORMATION Info = Buffer;
+        if (Length < sizeof(*Info) || Info->CurrentByteOffset.QuadPart < 0)
+            return InfilfsCompleteIrp(
+                Irp, STATUS_INVALID_PARAMETER, 0);
+        FileObject->CurrentByteOffset = Info->CurrentByteOffset;
+        break;
+    }
+    default:
+        Status = STATUS_INVALID_INFO_CLASS;
+        break;
+    }
+
+    return InfilfsCompleteIrp(Irp, Status, 0);
+}
+
+static NTSTATUS InfilfsDirectoryControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
+{
+    PIO_STACK_LOCATION IrpSp = IoGetCurrentIrpStackLocation(Irp);
+    INFILFS_NATIVE_VOLUME *Volume = InfilfsVolumeFromDevice(DeviceObject);
+    PFILE_OBJECT FileObject = IrpSp->FileObject;
+    INFILFS_NATIVE_FCB *Fcb = FileObject ?
+        (INFILFS_NATIVE_FCB *)FileObject->FsContext : NULL;
+    INFILFS_NATIVE_CCB *Ccb = FileObject ?
+        (INFILFS_NATIVE_CCB *)FileObject->FsContext2 : NULL;
+    struct infilfs_win_native_request *Request = NULL;
+    struct infilfs_win_native_response *Response = NULL;
+    PUCHAR Output;
+    ULONG OutputLength;
+    ULONG Used = 0;
+    PFILE_BOTH_DIR_INFORMATION Previous = NULL;
+    NTSTATUS Status = STATUS_SUCCESS;
+
+    if (!Volume || !Fcb || !Ccb ||
+        Fcb->ObjectType != INFILFS_WIN_NATIVE_OBJECT_DIRECTORY)
+        return InfilfsCompleteIrp(Irp, STATUS_NOT_A_DIRECTORY, 0);
+    if (IrpSp->MinorFunction != IRP_MN_QUERY_DIRECTORY)
+        return InfilfsCompleteIrp(
+            Irp, STATUS_INVALID_DEVICE_REQUEST, 0);
+
+    Output = (PUCHAR)InfilfsGetIrpBuffer(Irp);
+    OutputLength = IrpSp->Parameters.QueryDirectory.Length;
+    if (!Output || !OutputLength)
+        return InfilfsCompleteIrp(Irp, STATUS_INVALID_PARAMETER, 0);
+    if (IrpSp->Flags & SL_RESTART_SCAN)
+        Ccb->DirectoryIndex = 0;
+
+    Request = ExAllocatePool2(
+        POOL_FLAG_PAGED, sizeof(*Request), INFILFS_NATIVE_REQUEST_TAG);
+    Response = ExAllocatePool2(
+        POOL_FLAG_PAGED, sizeof(*Response), INFILFS_NATIVE_REQUEST_TAG);
+    if (!Request || !Response) {
+        Status = STATUS_INSUFFICIENT_RESOURCES;
+        goto out;
+    }
+    RtlZeroMemory(Request, sizeof(*Request));
+    RtlZeroMemory(Response, sizeof(*Response));
+    Request->opcode = INFILFS_WIN_NATIVE_OP_ENUMERATE;
+    Request->offset = Ccb->DirectoryIndex;
+    InfilfsCopyPathToRequest(Request, &Fcb->Path);
+    Status = InfilfsCallService(Volume, Request, Response);
+    if (!NT_SUCCESS(Status))
+        goto out;
+
+    for (ULONG i = 0; i < Response->entry_count; ++i) {
+        SIZE_T Offset =
+            (SIZE_T)i * sizeof(struct infilfs_win_native_dirent);
+        struct infilfs_win_native_dirent *Source;
+        FILE_BOTH_DIR_INFORMATION *Entry;
+        ULONG NameBytes;
+        ULONG EntryBytes;
+        UNICODE_STRING Name;
+
+        if (Offset + sizeof(*Source) > Response->output_bytes)
+            break;
+        Source = (struct infilfs_win_native_dirent *)
+            (Response->output + Offset);
+        if (Source->name_chars >= INFILFS_WIN_NATIVE_NAME_CHARS)
+            continue;
+        NameBytes = Source->name_chars * sizeof(WCHAR);
+        Name.Buffer = (PWCHAR)Source->name;
+        Name.Length = (USHORT)NameBytes;
+        Name.MaximumLength = Name.Length;
+
+        if (IrpSp->Parameters.QueryDirectory.FileName &&
+            !FsRtlIsNameInExpression(
+                IrpSp->Parameters.QueryDirectory.FileName,
+                &Name, TRUE, NULL)) {
+            Ccb->DirectoryIndex++;
+            continue;
+        }
+
+        EntryBytes = FIELD_OFFSET(
+            FILE_BOTH_DIR_INFORMATION, FileName) + NameBytes;
+        EntryBytes = (EntryBytes + 7u) & ~7u;
+        if (Used + EntryBytes > OutputLength)
+            break;
+
+        Entry = (FILE_BOTH_DIR_INFORMATION *)(Output + Used);
+        RtlZeroMemory(Entry, EntryBytes);
+        Entry->FileIndex = Ccb->DirectoryIndex;
+        Entry->CreationTime.QuadPart =
+            (LONGLONG)Source->attributes.creation_time_100ns;
+        Entry->LastAccessTime.QuadPart =
+            (LONGLONG)Source->attributes.access_time_100ns;
+        Entry->LastWriteTime.QuadPart =
+            (LONGLONG)Source->attributes.write_time_100ns;
+        Entry->ChangeTime.QuadPart =
+            (LONGLONG)Source->attributes.change_time_100ns;
+        Entry->EndOfFile.QuadPart =
+            (LONGLONG)Source->attributes.logical_size;
+        Entry->AllocationSize.QuadPart =
+            (LONGLONG)Source->attributes.allocation_size;
+        Entry->FileAttributes = Source->attributes.file_attributes;
+        Entry->FileNameLength = NameBytes;
+        Entry->ShortNameLength = 0;
+        if (NameBytes)
+            RtlCopyMemory(Entry->FileName, Source->name, NameBytes);
+        if (Previous)
+            Previous->NextEntryOffset =
+                (ULONG)((PUCHAR)Entry - (PUCHAR)Previous);
+        Previous = Entry;
+        Used += EntryBytes;
+        Ccb->DirectoryIndex++;
+        if (IrpSp->Flags & SL_RETURN_SINGLE_ENTRY)
+            break;
+    }
+
+    if (!Used)
+        Status = Ccb->DirectoryIndex == 0 ?
+            STATUS_NO_SUCH_FILE : STATUS_NO_MORE_FILES;
+out:
+    if (Response)
+        ExFreePoolWithTag(Response, INFILFS_NATIVE_REQUEST_TAG);
+    if (Request)
+        ExFreePoolWithTag(Request, INFILFS_NATIVE_REQUEST_TAG);
+    return InfilfsCompleteIrp(Irp, Status, Used);
+}
+
+static NTSTATUS InfilfsQueryVolumeInformation(
+    PDEVICE_OBJECT DeviceObject, PIRP Irp)
+{
+    PIO_STACK_LOCATION IrpSp = IoGetCurrentIrpStackLocation(Irp);
+    INFILFS_NATIVE_VOLUME *Volume = InfilfsVolumeFromDevice(DeviceObject);
+    PVOID Buffer = Irp->AssociatedIrp.SystemBuffer;
+    ULONG Length = IrpSp->Parameters.QueryVolume.Length;
+    FS_INFORMATION_CLASS Class =
+        IrpSp->Parameters.QueryVolume.FsInformationClass;
+    ULONG_PTR Used = 0;
+    NTSTATUS Status = STATUS_SUCCESS;
+
+    if (!Volume || !Buffer)
+        return InfilfsCompleteIrp(Irp, STATUS_INVALID_PARAMETER, 0);
+
+    switch (Class) {
+    case FileFsVolumeInformation: {
+        PFILE_FS_VOLUME_INFORMATION Info = Buffer;
+        static const WCHAR Label[] = L"InfiltratorFS";
+        ULONG LabelBytes = sizeof(Label) - sizeof(WCHAR);
+        ULONG Required = FIELD_OFFSET(
+            FILE_FS_VOLUME_INFORMATION, VolumeLabel) + LabelBytes;
+        if (Length < FIELD_OFFSET(
+                FILE_FS_VOLUME_INFORMATION, VolumeLabel)) {
+            Status = STATUS_BUFFER_TOO_SMALL;
+            break;
+        }
+        RtlZeroMemory(Info, Length);
+        Info->VolumeSerialNumber =
+            (ULONG)(Volume->VolumeId ^ (Volume->VolumeId >> 32));
+        Info->SupportsObjects = TRUE;
+        Info->VolumeLabelLength = LabelBytes;
+        ULONG Copy = Length -
+            FIELD_OFFSET(FILE_FS_VOLUME_INFORMATION, VolumeLabel);
+        if (Copy > LabelBytes)
+            Copy = LabelBytes;
+        RtlCopyMemory(Info->VolumeLabel, Label, Copy);
+        Used = FIELD_OFFSET(
+            FILE_FS_VOLUME_INFORMATION, VolumeLabel) + Copy;
+        if (Length < Required)
+            Status = STATUS_BUFFER_OVERFLOW;
+        break;
+    }
+    case FileFsSizeInformation: {
+        PFILE_FS_SIZE_INFORMATION Info = Buffer;
+        if (Length < sizeof(*Info)) {
+            Status = STATUS_BUFFER_TOO_SMALL;
+            break;
+        }
+        RtlZeroMemory(Info, sizeof(*Info));
+        Info->TotalAllocationUnits.QuadPart =
+            Volume->SizeBytes / INFILFS_NATIVE_BLOCK_SIZE;
+        Info->AvailableAllocationUnits.QuadPart =
+            Info->TotalAllocationUnits.QuadPart;
+        Info->SectorsPerAllocationUnit =
+            INFILFS_NATIVE_BLOCK_SIZE / Volume->SectorSize;
+        Info->BytesPerSector = Volume->SectorSize;
+        Used = sizeof(*Info);
+        break;
+    }
+    case FileFsDeviceInformation: {
+        PFILE_FS_DEVICE_INFORMATION Info = Buffer;
+        if (Length < sizeof(*Info)) {
+            Status = STATUS_BUFFER_TOO_SMALL;
+            break;
+        }
+        Info->DeviceType = FILE_DEVICE_DISK_FILE_SYSTEM;
+        Info->Characteristics = DeviceObject->Characteristics;
+        Used = sizeof(*Info);
+        break;
+    }
+    case FileFsAttributeInformation: {
+        PFILE_FS_ATTRIBUTE_INFORMATION Info = Buffer;
+        static const WCHAR Name[] = L"InfiltratorFS";
+        ULONG NameBytes = sizeof(Name) - sizeof(WCHAR);
+        ULONG Required = FIELD_OFFSET(
+            FILE_FS_ATTRIBUTE_INFORMATION, FileSystemName) + NameBytes;
+        if (Length < FIELD_OFFSET(
+                FILE_FS_ATTRIBUTE_INFORMATION, FileSystemName)) {
+            Status = STATUS_BUFFER_TOO_SMALL;
+            break;
+        }
+        RtlZeroMemory(Info, Length);
+        Info->FileSystemAttributes =
+            FILE_CASE_PRESERVED_NAMES |
+            FILE_UNICODE_ON_DISK |
+            FILE_PERSISTENT_ACLS |
+            FILE_SUPPORTS_HARD_LINKS |
+            FILE_SUPPORTS_REPARSE_POINTS |
+            FILE_SUPPORTS_SPARSE_FILES;
+        Info->MaximumComponentNameLength = 1023;
+        Info->FileSystemNameLength = NameBytes;
+        ULONG Copy = Length -
+            FIELD_OFFSET(FILE_FS_ATTRIBUTE_INFORMATION, FileSystemName);
+        if (Copy > NameBytes)
+            Copy = NameBytes;
+        RtlCopyMemory(Info->FileSystemName, Name, Copy);
+        Used = FIELD_OFFSET(
+            FILE_FS_ATTRIBUTE_INFORMATION, FileSystemName) + Copy;
+        if (Length < Required)
+            Status = STATUS_BUFFER_OVERFLOW;
+        break;
+    }
+    default:
+        Status = STATUS_INVALID_INFO_CLASS;
+        break;
+    }
+
+    return InfilfsCompleteIrp(Irp, Status, Used);
+}
+
 static NTSTATUS InfilfsFlushBuffers(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 {
     PIO_STACK_LOCATION IrpSp = IoGetCurrentIrpStackLocation(Irp);
