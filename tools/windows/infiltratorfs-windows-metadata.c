@@ -177,6 +177,79 @@ static infs_status windows_sid_principal(
     return status;
 }
 
+static infs_status windows_object_ace_sid(
+    const ACE_HEADER *header, ACCESS_MASK *mask_out, PSID *sid_out,
+    uint16_t *disposition_out)
+{
+    if (!header || !mask_out || !sid_out || !disposition_out)
+        return INFS_STATUS_INVALID_ARGUMENT;
+
+    const uint8_t *base = (const uint8_t *)header;
+    const uint8_t *end = base + header->AceSize;
+    const uint8_t *cursor = NULL;
+    DWORD object_flags = 0;
+
+    switch (header->AceType) {
+    case ACCESS_ALLOWED_ACE_TYPE:
+    case ACCESS_ALLOWED_CALLBACK_ACE_TYPE: {
+        const ACCESS_ALLOWED_ACE *ace = (const ACCESS_ALLOWED_ACE *)header;
+        *mask_out = ace->Mask;
+        cursor = (const uint8_t *)&ace->SidStart;
+        *disposition_out = INFS_ACE_ALLOW;
+        break;
+    }
+    case ACCESS_DENIED_ACE_TYPE:
+    case ACCESS_DENIED_CALLBACK_ACE_TYPE: {
+        const ACCESS_DENIED_ACE *ace = (const ACCESS_DENIED_ACE *)header;
+        *mask_out = ace->Mask;
+        cursor = (const uint8_t *)&ace->SidStart;
+        *disposition_out = INFS_ACE_DENY;
+        break;
+    }
+    case ACCESS_ALLOWED_OBJECT_ACE_TYPE:
+    case ACCESS_ALLOWED_CALLBACK_OBJECT_ACE_TYPE: {
+        const ACCESS_ALLOWED_OBJECT_ACE *ace =
+            (const ACCESS_ALLOWED_OBJECT_ACE *)header;
+        *mask_out = ace->Mask;
+        object_flags = ace->Flags;
+        cursor = (const uint8_t *)&ace->ObjectType;
+        *disposition_out = INFS_ACE_ALLOW;
+        break;
+    }
+    case ACCESS_DENIED_OBJECT_ACE_TYPE:
+    case ACCESS_DENIED_CALLBACK_OBJECT_ACE_TYPE: {
+        const ACCESS_DENIED_OBJECT_ACE *ace =
+            (const ACCESS_DENIED_OBJECT_ACE *)header;
+        *mask_out = ace->Mask;
+        object_flags = ace->Flags;
+        cursor = (const uint8_t *)&ace->ObjectType;
+        *disposition_out = INFS_ACE_DENY;
+        break;
+    }
+    default:
+        return INFS_STATUS_NOT_SUPPORTED;
+    }
+
+    if (header->AceType == ACCESS_ALLOWED_OBJECT_ACE_TYPE ||
+        header->AceType == ACCESS_ALLOWED_CALLBACK_OBJECT_ACE_TYPE ||
+        header->AceType == ACCESS_DENIED_OBJECT_ACE_TYPE ||
+        header->AceType == ACCESS_DENIED_CALLBACK_OBJECT_ACE_TYPE) {
+        if (object_flags & ACE_OBJECT_TYPE_PRESENT)
+            cursor += sizeof(GUID);
+        if (object_flags & ACE_INHERITED_OBJECT_TYPE_PRESENT)
+            cursor += sizeof(GUID);
+    }
+
+    if (!cursor || cursor >= end ||
+        (size_t)(end - cursor) < sizeof(SID) ||
+        !IsValidSid((PSID)cursor) ||
+        GetLengthSid((PSID)cursor) > (DWORD)(end - cursor))
+        return INFS_STATUS_CORRUPT;
+
+    *sid_out = (PSID)cursor;
+    return INFS_STATUS_OK;
+}
+
 static infs_status windows_ace_to_portable(
     struct infs_volume *volume, const ACE_HEADER *header, int directory,
     struct infs_security_ace *out)
@@ -184,33 +257,16 @@ static infs_status windows_ace_to_portable(
     if (!volume || !header || !out)
         return INFS_STATUS_INVALID_ARGUMENT;
 
-    ACCESS_MASK mask;
-    PSID sid;
-    uint16_t disposition;
-    switch (header->AceType) {
-    case ACCESS_ALLOWED_ACE_TYPE: {
-        const ACCESS_ALLOWED_ACE *ace = (const ACCESS_ALLOWED_ACE *)header;
-        mask = ace->Mask;
-        sid = (PSID)&ace->SidStart;
-        disposition = INFS_ACE_ALLOW;
-        break;
-    }
-    case ACCESS_DENIED_ACE_TYPE: {
-        const ACCESS_DENIED_ACE *ace = (const ACCESS_DENIED_ACE *)header;
-        mask = ace->Mask;
-        sid = (PSID)&ace->SidStart;
-        disposition = INFS_ACE_DENY;
-        break;
-    }
-    default:
-        return INFS_STATUS_NOT_SUPPORTED;
-    }
-
-    if (!IsValidSid(sid))
-        return INFS_STATUS_CORRUPT;
+    ACCESS_MASK mask = 0;
+    PSID sid = NULL;
+    uint16_t disposition = 0;
+    infs_status status = windows_object_ace_sid(
+        header, &mask, &sid, &disposition);
+    if (status != INFS_STATUS_OK)
+        return status;
 
     memset(out, 0, sizeof(*out));
-    infs_status status = windows_sid_principal(
+    status = windows_sid_principal(
         volume, sid, INFS_PRINCIPAL_USER, out->principal_id);
     if (status != INFS_STATUS_OK)
         return status;
