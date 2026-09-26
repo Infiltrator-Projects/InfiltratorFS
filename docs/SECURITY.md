@@ -37,17 +37,35 @@ logical-data digest verification, copy-on-write publication, checkpoint
 recovery and fail-closed handling of unsupported/malformed persistent
 structures.
 
-Current Format 0.18 supports an optional authenticated whole-volume
-storage wrapper. A random 256-bit volume key encrypts every logical 4096-byte
-block with AES-256-GCM; a PBKDF2-HMAC-SHA256-derived key-encryption key wraps
-that volume key in the encrypted-container header. Block number and volume salt
-are authenticated as associated data, so metadata and file-data blocks are both
-confidential and authenticated when the encrypted storage layer is used.
+Current Format 0.18 supports an optional authenticated encrypted-storage
+wrapper. A random 256-bit root volume key is wrapped by a
+PBKDF2-HMAC-SHA256-derived key-encryption key in the encrypted-container header.
+Domain zero uses that root key directly. Nonzero persistent per-object
+encryption-domain IDs derive independent AES-256-GCM subkeys from the root key;
+the domain ID is also authenticated in the block AAD. Reading ciphertext with
+the wrong object domain therefore fails authentication rather than producing
+plaintext under a different policy.
 
-This is currently one whole-volume encryption domain. Per-object/multiple
-encryption domains and independently selectable protection classes remain
-roadmap work. Unencrypted Format 0.18 volumes retain the existing CRC64/SHA-256
-integrity model and do not provide offline confidentiality.
+Persistent per-object protection policy shares the common attributes word with
+portable presentation flags but occupies a disjoint reserved high-bit field.
+The protection-copy count selects how many members of a replicated storage
+backend carry that object's data. Placement is deterministic from persistent
+object identity, so reopening a volume chooses the same member subset without a
+volatile placement table. A zero copy count retains complete-volume mirroring.
+Named streams inherit their owner's copy-count/encryption-domain class while
+retaining their own object identity and therefore their own deterministic
+member placement.
+
+Structural filesystem metadata and checkpoints continue to use the backend
+default policy so the filesystem can discover and authenticate object policy
+before reading object data. A non-default protected/encrypted file is kept out
+of inline metadata: even small contents are extent-backed so its data passes
+through the policy-aware storage boundary. Changing a nonempty regular file's
+storage policy without relocating its existing extents is rejected; ordinary
+presentation-flag changes that preserve the storage policy remain allowed.
+
+Unencrypted Format 0.18 volumes retain the CRC64/SHA-256 integrity model and do
+not provide offline confidentiality.
 
 Availability under hostile resource-exhaustion input is bounded where practical
 through explicit record limits, traversal guards and malformed-topology
