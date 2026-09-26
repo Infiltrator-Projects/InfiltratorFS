@@ -38,6 +38,18 @@ grep -Fq 'INFILFS_WIN_NATIVE_OP_SET_SECURITY' "$service" || fail 'portable-core 
 grep -Fq 'IoBuildSynchronousFsdRequest' "$driver" || fail 'raw target-device I/O path is missing'
 grep -Fq 'IOCTL_INFILFS_NATIVE_WAIT_REQUEST' "$driver" || fail 'kernel-to-portable-core request path is missing'
 grep -Fq 'IOCTL_INFILFS_NATIVE_COMPLETE_REQUEST' "$service" || fail 'portable-core service completion path is missing'
+grep -Fq 'Signal while QueueLock still protects Item lifetime' "$driver" || fail 'request completion is not lifetime-safe against timeout'
+grep -Fq 'ReclaimSemaphore = Item->Active ? FALSE : TRUE' "$driver" || fail 'timed-out pending requests can leak semaphore credits'
+grep -Fq 'Timeout.QuadPart = -(LONGLONG)1 * 10 * 1000 * 1000' "$driver" || fail 'service wait is still unbounded'
+grep -Fq 'InfilfsAbortServiceRequests' "$driver" || fail 'driver unload does not wake queued service callers'
+grep -Fq 'InfilfsQueryPortableVolumeState' "$driver" || fail 'volume information is not sourced from authoritative portable state'
+grep -Fq 'State.free_blocks' "$driver" || fail 'native Windows free-space reporting is not authoritative'
+grep -Fq 'INFILFS_WIN_NATIVE_OP_QUERY_VOLUME' "$service" || fail 'portable service volume-state query is missing'
+grep -Fq 'native_worker_budget' "$service" || fail 'native Windows worker pool is not derived from physical-core N-1 policy'
+if grep -Fq 'FILE_SUPPORTS_REPARSE_POINTS' "$driver" ||
+   grep -Fq 'FILE_SUPPORTS_SPARSE_FILES' "$driver"; then
+    fail 'driver advertises Windows FSCTL contracts it does not implement'
+fi
 grep -Fq 'infs_volume_open_storage' "$service" || fail 'native service does not use the authoritative portable core'
 grep -Fq 'IOCTL_INFILFS_NATIVE_RAW_READ' "$service" || fail 'native service does not route raw reads through the driver'
 grep -Fq 'IOCTL_INFILFS_NATIVE_RAW_WRITE' "$service" || fail 'native service does not route raw writes through the driver'
