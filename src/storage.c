@@ -35,6 +35,10 @@ infs_status infs_storage_read_policy(
     if (storage->ops->read_at_policy)
         return storage->ops->read_at_policy(
             storage->context, offset, buffer, size, policy);
+    if (policy &&
+        (policy->protection_copies != 0u ||
+         policy->encryption_domain != 0u))
+        return INFS_STATUS_NOT_SUPPORTED;
     return storage->ops->read_at(storage->context, offset, buffer, size);
 }
 
@@ -48,6 +52,10 @@ infs_status infs_storage_write_policy(
     if (storage->ops->write_at_policy)
         return storage->ops->write_at_policy(
             storage->context, offset, buffer, size, policy);
+    if (policy &&
+        (policy->protection_copies != 0u ||
+         policy->encryption_domain != 0u))
+        return INFS_STATUS_NOT_SUPPORTED;
     return storage->ops->write_at(storage->context, offset, buffer, size);
 }
 
