@@ -1730,7 +1730,7 @@ static PVOID InfilfsGetIrpBuffer(PIRP Irp)
 }
 
 static NTSTATUS InfilfsTransfer(
-    INFILFS_NATIVE_VOLUME *Volume, INFILFS_NATIVE_FCB *Fcb,
+    INFILFS_NATIVE_VOLUME *Volume, PCUNICODE_STRING Path,
     BOOLEAN Write, ULONGLONG Offset, PVOID Buffer, ULONG Length,
     BOOLEAN PagingIo, BOOLEAN WriteThrough, ULONG *Transferred)
 {
@@ -1763,7 +1763,7 @@ static NTSTATUS InfilfsTransfer(
             Request->flags |= INFILFS_WIN_NATIVE_REQ_PAGING_IO;
         if (WriteThrough)
             Request->flags |= INFILFS_WIN_NATIVE_REQ_WRITE_THROUGH;
-        InfilfsCopyPathToRequest(Request, &Fcb->Path);
+        InfilfsCopyPathToRequest(Request, Path);
         if (Write) {
             Request->input_bytes = Chunk;
             RtlCopyMemory(Request->input, (PUCHAR)Buffer + Done, Chunk);
@@ -1835,6 +1835,7 @@ static NTSTATUS InfilfsRead(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     INFILFS_NATIVE_VOLUME *Volume = InfilfsVolumeFromDevice(DeviceObject);
     PFILE_OBJECT FileObject = IrpSp->FileObject;
     INFILFS_NATIVE_FCB *Fcb;
+    PCUNICODE_STRING HandlePath;
     PVOID Buffer;
     ULONG Length;
     LARGE_INTEGER Offset;
@@ -1844,6 +1845,9 @@ static NTSTATUS InfilfsRead(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     if (!Volume || !FileObject || !FileObject->FsContext)
         return InfilfsCompleteIrp(Irp, STATUS_INVALID_DEVICE_REQUEST, 0);
     Fcb = (INFILFS_NATIVE_FCB *)FileObject->FsContext;
+    HandlePath = InfilfsHandlePath(FileObject, Fcb);
+    if (!HandlePath || !HandlePath->Buffer)
+        return InfilfsCompleteIrp(Irp, STATUS_INVALID_PARAMETER, 0);
     if (Fcb->ObjectType != INFILFS_WIN_NATIVE_OBJECT_FILE)
         return InfilfsCompleteIrp(Irp, STATUS_INVALID_DEVICE_REQUEST, 0);
 
@@ -1884,7 +1888,7 @@ static NTSTATUS InfilfsRead(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     }
 
     Status = InfilfsTransfer(
-        Volume, Fcb, FALSE, (ULONGLONG)Offset.QuadPart,
+        Volume, HandlePath, FALSE, (ULONGLONG)Offset.QuadPart,
         Buffer, Length, (Irp->Flags & IRP_PAGING_IO) != 0,
         FALSE, &Done);
     if (NT_SUCCESS(Status) &&
@@ -1900,6 +1904,7 @@ static NTSTATUS InfilfsWrite(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     INFILFS_NATIVE_VOLUME *Volume = InfilfsVolumeFromDevice(DeviceObject);
     PFILE_OBJECT FileObject = IrpSp->FileObject;
     INFILFS_NATIVE_FCB *Fcb;
+    PCUNICODE_STRING HandlePath;
     PVOID Buffer;
     ULONG Length;
     LARGE_INTEGER Offset;
@@ -1912,6 +1917,9 @@ static NTSTATUS InfilfsWrite(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     if (Volume->ReadOnly)
         return InfilfsCompleteIrp(Irp, STATUS_MEDIA_WRITE_PROTECTED, 0);
     Fcb = (INFILFS_NATIVE_FCB *)FileObject->FsContext;
+    HandlePath = InfilfsHandlePath(FileObject, Fcb);
+    if (!HandlePath || !HandlePath->Buffer)
+        return InfilfsCompleteIrp(Irp, STATUS_INVALID_PARAMETER, 0);
     if (Fcb->ObjectType != INFILFS_WIN_NATIVE_OBJECT_FILE)
         return InfilfsCompleteIrp(Irp, STATUS_INVALID_DEVICE_REQUEST, 0);
 
@@ -1973,7 +1981,7 @@ static NTSTATUS InfilfsWrite(PDEVICE_OBJECT DeviceObject, PIRP Irp)
                 return InfilfsCompleteIrp(
                     Irp, FlushStatus.Status, 0);
             Status = InfilfsFlushPortableVolume(
-                Volume, &Fcb->Path);
+                Volume, HandlePath);
             if (!NT_SUCCESS(Status))
                 return InfilfsCompleteIrp(Irp, Status, 0);
         }
@@ -1984,7 +1992,7 @@ static NTSTATUS InfilfsWrite(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     }
 
     Status = InfilfsTransfer(
-        Volume, Fcb, TRUE, (ULONGLONG)Offset.QuadPart,
+        Volume, HandlePath, TRUE, (ULONGLONG)Offset.QuadPart,
         Buffer, Length, (Irp->Flags & IRP_PAGING_IO) != 0,
         WriteThrough, &Done);
     if (NT_SUCCESS(Status) &&
@@ -2561,6 +2569,7 @@ static NTSTATUS InfilfsDirectoryControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         (INFILFS_NATIVE_FCB *)FileObject->FsContext : NULL;
     INFILFS_NATIVE_CCB *Ccb = FileObject ?
         (INFILFS_NATIVE_CCB *)FileObject->FsContext2 : NULL;
+    PCUNICODE_STRING HandlePath;
     struct infilfs_win_native_request *Request = NULL;
     struct infilfs_win_native_response *Response = NULL;
     FILE_INFORMATION_CLASS Class;
@@ -2574,6 +2583,9 @@ static NTSTATUS InfilfsDirectoryControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     if (!Volume || !Fcb || !Ccb ||
         Fcb->ObjectType != INFILFS_WIN_NATIVE_OBJECT_DIRECTORY)
         return InfilfsCompleteIrp(Irp, STATUS_NOT_A_DIRECTORY, 0);
+    HandlePath = InfilfsHandlePath(FileObject, Fcb);
+    if (!HandlePath || !HandlePath->Buffer)
+        return InfilfsCompleteIrp(Irp, STATUS_INVALID_PARAMETER, 0);
     if (IrpSp->MinorFunction != IRP_MN_QUERY_DIRECTORY)
         return InfilfsCompleteIrp(
             Irp, STATUS_INVALID_DEVICE_REQUEST, 0);
@@ -2611,7 +2623,7 @@ static NTSTATUS InfilfsDirectoryControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     RtlZeroMemory(Response, sizeof(*Response));
     Request->opcode = INFILFS_WIN_NATIVE_OP_ENUMERATE;
     Request->offset = Ccb->DirectoryIndex;
-    InfilfsCopyPathToRequest(Request, &Fcb->Path);
+    InfilfsCopyPathToRequest(Request, HandlePath);
     Status = InfilfsCallService(Volume, Request, Response);
     if (!NT_SUCCESS(Status))
         goto out;
