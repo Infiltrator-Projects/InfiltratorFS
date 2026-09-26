@@ -367,3 +367,34 @@ Detailed step logs and performance telemetry remain in the corresponding GitHub 
 The real UEFI root-boot workflow constructs an EFI + ext4 `/boot` + InfiltratorFS `/` VM, reaches systemd with InfiltratorFS as `/`, exercises metadata and dpkg workloads, installs a newer InfiltratorFS package while the root is live, rebuilds initramfs, reboots, forces power loss during writes, requires an offline CLEAN scrub, boots the same root again, verifies dpkg and metadata state, and requires a final CLEAN scrub.
 
 Because this qualification intentionally exceeds 10 minutes, it is manual-only. Run it deliberately for changes that materially affect root mounting, boot/initramfs, package upgrade semantics, crash recovery, checkpoint recovery or similarly high-risk paths. Historical root-boot evidence remains valid only for the exact source on which it ran; ordinary fast CI does not silently inherit it.
+
+### 0.18.94 per-object protection/encryption qualification
+
+Format 0.18 per-object storage policy is qualified at the portable-storage and
+filesystem layers. The policy contract persists a protection-copy count and
+encryption-domain ID with the object, keeps nondefault-policy file data out of
+inline metadata, and fails closed when a backend cannot honor a requested
+semantic.
+
+Qualification includes:
+
+- deterministic one-copy and two-copy placement across mirror members;
+- domain-separated AES-256-GCM read/write and authentication failure under the
+  wrong domain;
+- composed mirror/encryption wrappers without silently discarding one policy
+  dimension;
+- no replica quarantine for semantic policy errors;
+- end-to-end protected file creation, reopen/read, named-stream inheritance,
+  selected-member failure behavior and scrub;
+- protected small-file and truncate behavior that remains extent-backed; and
+- ordinary presentation-flag mutation without changing the storage policy.
+
+GitHub Actions build-and-conformance run `36221054899` on source
+`f967b5c33fc9e4be48c229cd60de5d7abaaa7f66` passed the Linux full suite,
+Clang conformance and ASan/UBSan test suites, including the policy tests. The
+Windows build also compiled the same portable core and passed
+`infilfs-storage-mirror`, `infilfs-storage-encrypted`,
+`infilfs-protected-volume` and `infilfs-inline-files`; two unrelated Win32
+storage-backend callback-layout regressions were identified separately and
+subsequently repaired with designated initializers.
+
