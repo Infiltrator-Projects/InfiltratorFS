@@ -40,6 +40,7 @@ typedef struct _INFILFS_NATIVE_VOLUME {
     BOOLEAN ReadOnly;
     BOOLEAN Locked;
     BOOLEAN Dismounted;
+    PFILE_OBJECT LockOwner;
     EX_RUNDOWN_REF Rundown;
     ERESOURCE Resource;
     FAST_MUTEX FcbLock;
@@ -274,9 +275,11 @@ static VOID InfilfsRetireVolume(INFILFS_NATIVE_VOLUME *Volume)
     ExWaitForRundownProtectionRelease(&Volume->Rundown);
 
     if (Volume->Vpb) {
-        Volume->Vpb->Flags &= ~VPB_MOUNTED;
+        Volume->Vpb->Flags &= ~(VPB_MOUNTED | VPB_LOCKED);
         Volume->Vpb->DeviceObject = NULL;
     }
+    Volume->Locked = FALSE;
+    Volume->LockOwner = NULL;
     if (Volume->TargetDevice) {
         ObDereferenceObject(Volume->TargetDevice);
         Volume->TargetDevice = NULL;
@@ -802,41 +805,84 @@ static NTSTATUS InfilfsUserFsctl(
             &Fcb->Oplock, Irp,
             (ULONG)(Fcb->References > 0 ? Fcb->References : 0));
 
-    case FSCTL_LOCK_VOLUME:
-        if (!Volume)
+    case FSCTL_LOCK_VOLUME: {
+        ULONG OpenHandles = 0;
+        PLIST_ENTRY Entry;
+        NTSTATUS FlushStatus;
+
+        if (!Volume || !FileObject || !Fcb)
             return InfilfsCompleteIrp(
                 Irp, STATUS_INVALID_DEVICE_REQUEST, 0);
+
+        /*
+         * Serialize lock acquisition against IRP_MJ_CREATE. The requesting
+         * volume/root handle is itself a legitimate open and must not make the
+         * volume appear busy; every other open handle does.
+         */
+        ExAcquireResourceExclusiveLite(&Volume->Resource, TRUE);
         ExAcquireFastMutex(&Volume->FcbLock);
-        if (!IsListEmpty(&Volume->Fcbs)) {
+        for (Entry = Volume->Fcbs.Flink;
+             Entry != &Volume->Fcbs; Entry = Entry->Flink) {
+            INFILFS_NATIVE_FCB *OpenFcb =
+                CONTAINING_RECORD(
+                    Entry, INFILFS_NATIVE_FCB, VolumeLink);
+            if (OpenFcb->OpenHandles > 0)
+                OpenHandles += (ULONG)OpenFcb->OpenHandles;
+        }
+        if (Volume->Locked ||
+            OpenHandles != 1u || Fcb->OpenHandles != 1) {
             ExReleaseFastMutex(&Volume->FcbLock);
+            ExReleaseResourceLite(&Volume->Resource);
             return InfilfsCompleteIrp(
                 Irp, STATUS_ACCESS_DENIED, 0);
         }
-        ExReleaseFastMutex(&Volume->FcbLock);
-        {
-            NTSTATUS FlushStatus =
-                InfilfsFlushPortableVolume(Volume, NULL);
-            if (!NT_SUCCESS(FlushStatus))
-                return InfilfsCompleteIrp(
-                    Irp, FlushStatus, 0);
-        }
         Volume->Locked = TRUE;
-        return InfilfsCompleteIrp(Irp, STATUS_SUCCESS, 0);
+        Volume->LockOwner = FileObject;
+        if (Volume->Vpb)
+            Volume->Vpb->Flags |= VPB_LOCKED;
+        ExReleaseFastMutex(&Volume->FcbLock);
+
+        FlushStatus = InfilfsFlushPortableVolume(Volume, NULL);
+        if (!NT_SUCCESS(FlushStatus)) {
+            ExAcquireFastMutex(&Volume->FcbLock);
+            Volume->Locked = FALSE;
+            Volume->LockOwner = NULL;
+            if (Volume->Vpb)
+                Volume->Vpb->Flags &= ~VPB_LOCKED;
+            ExReleaseFastMutex(&Volume->FcbLock);
+        }
+        ExReleaseResourceLite(&Volume->Resource);
+        return InfilfsCompleteIrp(Irp, FlushStatus, 0);
+    }
 
     case FSCTL_UNLOCK_VOLUME:
-        if (!Volume)
+        if (!Volume || !FileObject)
             return InfilfsCompleteIrp(
                 Irp, STATUS_INVALID_DEVICE_REQUEST, 0);
+        ExAcquireResourceExclusiveLite(&Volume->Resource, TRUE);
+        if (!Volume->Locked || Volume->LockOwner != FileObject) {
+            ExReleaseResourceLite(&Volume->Resource);
+            return InfilfsCompleteIrp(
+                Irp, STATUS_ACCESS_DENIED, 0);
+        }
         Volume->Locked = FALSE;
+        Volume->LockOwner = NULL;
+        if (Volume->Vpb)
+            Volume->Vpb->Flags &= ~VPB_LOCKED;
+        ExReleaseResourceLite(&Volume->Resource);
         return InfilfsCompleteIrp(Irp, STATUS_SUCCESS, 0);
 
     case FSCTL_DISMOUNT_VOLUME:
-        if (!Volume)
+        if (!Volume || !FileObject)
             return InfilfsCompleteIrp(
                 Irp, STATUS_INVALID_DEVICE_REQUEST, 0);
-        if (!Volume->Locked)
+        ExAcquireResourceExclusiveLite(&Volume->Resource, TRUE);
+        if (!Volume->Locked || Volume->LockOwner != FileObject) {
+            ExReleaseResourceLite(&Volume->Resource);
             return InfilfsCompleteIrp(
                 Irp, STATUS_ACCESS_DENIED, 0);
+        }
+        ExReleaseResourceLite(&Volume->Resource);
         InfilfsRetireVolume(Volume);
         return InfilfsCompleteIrp(Irp, STATUS_SUCCESS, 0);
 
@@ -1828,6 +1874,7 @@ static NTSTATUS InfilfsCreate(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     PACCESS_STATE AccessState;
     ACCESS_MASK DesiredAccess;
     ACCESS_MASK GrantedAccess = 0;
+    BOOLEAN VolumeResourceHeld = FALSE;
     ULONG_PTR CreateInformation = FILE_OPENED;
 
     if (InfilfsIsControlDevice(DeviceObject) ||
@@ -1842,15 +1889,27 @@ static NTSTATUS InfilfsCreate(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         IrpSp->Parameters.Create.SecurityContext->AccessState;
     DesiredAccess =
         IrpSp->Parameters.Create.SecurityContext->DesiredAccess;
-    if (Volume->Dismounted)
-        return InfilfsCompleteIrp(Irp, STATUS_VOLUME_DISMOUNTED, 0);
-    if (Volume->Locked)
-        return InfilfsCompleteIrp(Irp, STATUS_ACCESS_DENIED, 0);
+
+    /*
+     * A volume lock must be atomic with respect to namespace opens. Shared
+     * create admission lets FSCTL_LOCK_VOLUME take the exclusive side, wait
+     * for already-started creates, then prevent every later create via Locked.
+     */
+    ExAcquireResourceSharedLite(&Volume->Resource, TRUE);
+    VolumeResourceHeld = TRUE;
+    if (Volume->Dismounted) {
+        Status = STATUS_VOLUME_DISMOUNTED;
+        goto complete;
+    }
+    if (Volume->Locked) {
+        Status = STATUS_ACCESS_DENIED;
+        goto complete;
+    }
 
     Status = InfilfsResolveOpenPath(
         FileObject, &OpenPath, &AllocatedPath);
     if (!NT_SUCCESS(Status))
-        return InfilfsCompleteIrp(Irp, Status, 0);
+        goto complete;
 
     Disposition = (IrpSp->Parameters.Create.Options >> 24) & 0xffu;
     Options = IrpSp->Parameters.Create.Options & 0x00ffffffu;
@@ -2029,6 +2088,8 @@ static NTSTATUS InfilfsCreate(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 
     if (AllocatedPath)
         ExFreePoolWithTag(AllocatedPath, INFILFS_NATIVE_FCB_TAG);
+    if (VolumeResourceHeld)
+        ExReleaseResourceLite(&Volume->Resource);
     return InfilfsCompleteIrp(
         Irp, STATUS_SUCCESS, CreateInformation);
 
@@ -2059,6 +2120,8 @@ complete:
         InfilfsDereferenceFcb(Fcb);
     if (AllocatedPath)
         ExFreePoolWithTag(AllocatedPath, INFILFS_NATIVE_FCB_TAG);
+    if (VolumeResourceHeld)
+        ExReleaseResourceLite(&Volume->Resource);
     return InfilfsCompleteIrp(Irp, Status, 0);
 }
 
@@ -3507,6 +3570,21 @@ static NTSTATUS InfilfsCleanup(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 
     if (!FileObject)
         return InfilfsCompleteIrp(Irp, STATUS_SUCCESS, 0);
+
+    /*
+     * Closing the handle that owns a volume lock must not strand the volume in
+     * a permanently locked state if the caller never issued UNLOCK_VOLUME.
+     */
+    if (Volume && Volume->LockOwner == FileObject) {
+        ExAcquireResourceExclusiveLite(&Volume->Resource, TRUE);
+        if (Volume->LockOwner == FileObject) {
+            Volume->Locked = FALSE;
+            Volume->LockOwner = NULL;
+            if (Volume->Vpb)
+                Volume->Vpb->Flags &= ~VPB_LOCKED;
+        }
+        ExReleaseResourceLite(&Volume->Resource);
+    }
 
     if (Fcb && Fcb->ObjectType == INFILFS_WIN_NATIVE_OBJECT_FILE) {
         (void)FsRtlFastUnlockAll(
