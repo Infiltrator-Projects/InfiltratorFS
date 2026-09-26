@@ -196,6 +196,26 @@ int main(void)
 #endif
 
     static const char passphrase[] = "correct horse battery staple";
+
+    /*
+     * A backend that has no policy callback must not silently pretend it
+     * honored requested replication/encryption semantics.
+     */
+    struct infs_storage plain_probe = storage(&memory);
+    struct infs_storage_io_policy unsupported_policy = {0};
+    unsupported_policy.object_id[0] = 1u;
+    unsupported_policy.protection_copies = 1u;
+    unsupported_policy.encryption_domain = 7u;
+    uint8_t probe_byte = 0x5a;
+    ok(infs_storage_write_policy(
+           &plain_probe, 0, &probe_byte, 1u, &unsupported_policy) ==
+           INFS_STATUS_NOT_SUPPORTED,
+       "plain backend rejects unsupported write policy");
+    ok(infs_storage_read_policy(
+           &plain_probe, 0, &probe_byte, 1u, &unsupported_policy) ==
+           INFS_STATUS_NOT_SUPPORTED,
+       "plain backend rejects unsupported read policy");
+
     struct infs_storage backing = storage(&memory);
     struct infs_storage encrypted = {0};
     infs_status status = infs_storage_encrypted_format(
