@@ -1165,7 +1165,7 @@ out:
 static NTSTATUS InfilfsCheckAccess(
     INFILFS_NATIVE_VOLUME *Volume, PCUNICODE_STRING Path,
     PACCESS_STATE AccessState, ACCESS_MASK DesiredAccess,
-    KPROCESSOR_MODE AccessMode)
+    KPROCESSOR_MODE AccessMode, PACCESS_MASK GrantedOut)
 {
     PSECURITY_DESCRIPTOR Descriptor = NULL;
     PPRIVILEGE_SET Privileges = NULL;
@@ -1175,6 +1175,8 @@ static NTSTATUS InfilfsCheckAccess(
     NTSTATUS Status;
     BOOLEAN Granted;
 
+    if (GrantedOut)
+        *GrantedOut = 0;
     if (!DesiredAccess)
         return STATUS_SUCCESS;
     if (!AccessState)
@@ -1200,6 +1202,8 @@ static NTSTATUS InfilfsCheckAccess(
     SeUnlockSubjectContext(&AccessState->SubjectSecurityContext);
 
     ExFreePoolWithTag(Descriptor, INFILFS_NATIVE_REQUEST_TAG);
+    if (Granted && GrantedOut)
+        *GrantedOut = GrantedAccess;
     return Granted ? STATUS_SUCCESS : AccessStatus;
 }
 
@@ -1238,7 +1242,7 @@ static NTSTATUS InfilfsCheckTraverseAccess(
         Prefix.Length = (USHORT)(i * sizeof(WCHAR));
         Prefix.MaximumLength = Prefix.Length + sizeof(WCHAR);
         Status = InfilfsCheckAccess(
-            Volume, &Prefix, AccessState, FILE_TRAVERSE, AccessMode);
+            Volume, &Prefix, AccessState, FILE_TRAVERSE, AccessMode, NULL);
         Buffer[i] = Saved;
         if (!NT_SUCCESS(Status))
             break;
@@ -1520,6 +1524,7 @@ static NTSTATUS InfilfsCreate(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     BOOLEAN DirectoryRequested;
     PACCESS_STATE AccessState;
     ACCESS_MASK DesiredAccess;
+    ACCESS_MASK GrantedAccess = 0;
     ULONG_PTR CreateInformation = FILE_OPENED;
 
     if (InfilfsIsControlDevice(DeviceObject) ||
@@ -1567,7 +1572,7 @@ static NTSTATUS InfilfsCreate(PDEVICE_OBJECT DeviceObject, PIRP Irp)
             if (NT_SUCCESS(Status))
                 Status = InfilfsCheckAccess(
                     Volume, &ParentPath, AccessState,
-                    ParentAccess, Irp->RequestorMode);
+                    ParentAccess, Irp->RequestorMode, NULL);
         }
         if (!NT_SUCCESS(Status))
             goto complete;
@@ -1589,6 +1594,7 @@ static NTSTATUS InfilfsCreate(PDEVICE_OBJECT DeviceObject, PIRP Irp)
                 &OpenPath, NULL, 0, 0);
             goto complete;
         }
+        GrantedAccess = DesiredAccess & ~MAXIMUM_ALLOWED;
         CreateInformation = FILE_CREATED;
         RtlZeroMemory(&Attributes, sizeof(Attributes));
         Status = InfilfsLookupPath(
@@ -1604,7 +1610,7 @@ static NTSTATUS InfilfsCreate(PDEVICE_OBJECT DeviceObject, PIRP Irp)
                 DELETE | FILE_WRITE_EA | FILE_WRITE_ATTRIBUTES;
         Status = InfilfsCheckAccess(
             Volume, &OpenPath, AccessState,
-            RequiredAccess, Irp->RequestorMode);
+            RequiredAccess, Irp->RequestorMode, &GrantedAccess);
         if (!NT_SUCCESS(Status))
             goto complete;
 
@@ -1667,13 +1673,13 @@ static NTSTATUS InfilfsCreate(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     ExAcquireFastMutex(&Volume->FcbLock);
     if (Fcb->OpenHandles == 0) {
         IoSetShareAccess(
-            IrpSp->Parameters.Create.SecurityContext->DesiredAccess,
+            GrantedAccess,
             IrpSp->Parameters.Create.ShareAccess,
             FileObject, &Fcb->ShareAccess);
         Status = STATUS_SUCCESS;
     } else {
         Status = IoCheckShareAccess(
-            IrpSp->Parameters.Create.SecurityContext->DesiredAccess,
+            GrantedAccess,
             IrpSp->Parameters.Create.ShareAccess,
             FileObject, &Fcb->ShareAccess, TRUE);
     }
