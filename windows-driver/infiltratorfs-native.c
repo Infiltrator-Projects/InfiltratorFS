@@ -106,6 +106,8 @@ typedef struct _INFILFS_NATIVE_GLOBAL {
 static INFILFS_NATIVE_GLOBAL g_Infilfs;
 
 static const CACHE_MANAGER_CALLBACKS g_InfilfsCacheCallbacks;
+static NTSTATUS InfilfsFlushPortableVolume(
+    INFILFS_NATIVE_VOLUME *Volume, PCUNICODE_STRING Path);
 
 static NTSTATUS InfilfsCompleteIrp(PIRP Irp, NTSTATUS Status, ULONG_PTR Information)
 {
@@ -230,6 +232,32 @@ static INFILFS_NATIVE_VOLUME *InfilfsFindVolume(ULONGLONG VolumeId)
     }
     ExReleaseFastMutex(&g_Infilfs.VolumeLock);
     return Found;
+}
+
+static VOID InfilfsRetireVolume(INFILFS_NATIVE_VOLUME *Volume)
+{
+    if (!Volume)
+        return;
+
+    ExAcquireFastMutex(&g_Infilfs.VolumeLock);
+    if (!IsListEmpty(&Volume->GlobalLink)) {
+        RemoveEntryList(&Volume->GlobalLink);
+        InitializeListHead(&Volume->GlobalLink);
+    }
+    ExReleaseFastMutex(&g_Infilfs.VolumeLock);
+
+    if (Volume->Vpb) {
+        Volume->Vpb->Flags &= ~VPB_MOUNTED;
+        Volume->Vpb->DeviceObject = NULL;
+    }
+    Volume->Dismounted = TRUE;
+    if (Volume->TargetDevice) {
+        ObDereferenceObject(Volume->TargetDevice);
+        Volume->TargetDevice = NULL;
+    }
+    ExDeleteResourceLite(&Volume->Resource);
+    Volume->Signature = 0;
+    IoDeleteDevice(Volume->DeviceObject);
 }
 
 static NTSTATUS InfilfsCallService(
@@ -749,8 +777,15 @@ static NTSTATUS InfilfsUserFsctl(
             return InfilfsCompleteIrp(
                 Irp, STATUS_ACCESS_DENIED, 0);
         }
-        Volume->Locked = TRUE;
         ExReleaseFastMutex(&Volume->FcbLock);
+        {
+            NTSTATUS FlushStatus =
+                InfilfsFlushPortableVolume(Volume, NULL);
+            if (!NT_SUCCESS(FlushStatus))
+                return InfilfsCompleteIrp(
+                    Irp, FlushStatus, 0);
+        }
+        Volume->Locked = TRUE;
         return InfilfsCompleteIrp(Irp, STATUS_SUCCESS, 0);
 
     case FSCTL_UNLOCK_VOLUME:
@@ -767,11 +802,7 @@ static NTSTATUS InfilfsUserFsctl(
         if (!Volume->Locked)
             return InfilfsCompleteIrp(
                 Irp, STATUS_ACCESS_DENIED, 0);
-        Volume->Dismounted = TRUE;
-        if (Volume->Vpb) {
-            Volume->Vpb->Flags &= ~VPB_MOUNTED;
-            Volume->Vpb->DeviceObject = NULL;
-        }
+        InfilfsRetireVolume(Volume);
         return InfilfsCompleteIrp(Irp, STATUS_SUCCESS, 0);
 
     default:
