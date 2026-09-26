@@ -2102,6 +2102,7 @@ static int infilfs_ns_rename_exchange_same_dir(
     return ret;
 }
 
+#ifndef INFILFS_NAMESPACE_EXCHANGE_EXTERNAL
 static int infilfs_ns_rename_exchange_cross_dir(
     struct inode *old_dir, struct dentry *old_dentry,
     struct inode *new_dir, struct dentry *new_dentry)
@@ -2308,6 +2309,12 @@ unlock:
     kvfree(changes);
     return ret;
 }
+
+#else
+static int infilfs_ns_rename_exchange_cross_dir(
+    struct inode *old_dir, struct dentry *old_dentry,
+    struct inode *new_dir, struct dentry *new_dentry);
+#endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
 static int infilfs_ns_rename(struct mnt_idmap *idmap,
