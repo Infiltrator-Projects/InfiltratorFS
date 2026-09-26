@@ -176,6 +176,53 @@ int main(void)
     infs_storage_close(&mirror);
     ok(a.closed && b.closed, "reopened mirror closes every member");
 
+    /*
+     * Per-object protection policy must select an exact deterministic subset
+     * of mirror members rather than silently falling back to complete-volume
+     * mirroring. A one-copy class therefore writes exactly one member.
+     */
+    struct member c_member = {0}, d_member = {0};
+    struct infs_storage policy_members[2] = {
+        { .ops = &ops, .context = &c_member },
+        { .ops = &ops, .context = &d_member },
+    };
+    memset(&mirror, 0, sizeof(mirror));
+    ok(infs_storage_mirror_create(policy_members, 2, &mirror) ==
+           INFS_STATUS_OK,
+       "create policy-aware mirror");
+    struct infs_storage_io_policy policy = {0};
+    for (size_t i = 0; i < sizeof(policy.object_id); ++i)
+        policy.object_id[i] = (uint8_t)(i * 17u + 3u);
+    policy.protection_copies = 1u;
+    static const char one_copy[] = "one-copy-policy";
+    ok(infs_storage_write_policy(
+           &mirror, 2048, one_copy, sizeof(one_copy), &policy) ==
+           INFS_STATUS_OK,
+       "one-copy policy write");
+    int on_c = !memcmp(c_member.bytes + 2048, one_copy, sizeof(one_copy));
+    int on_d = !memcmp(d_member.bytes + 2048, one_copy, sizeof(one_copy));
+    ok(on_c != on_d, "one-copy policy lands on exactly one member");
+
+    char policy_readback[sizeof(one_copy)] = {0};
+    ok(infs_storage_read_policy(
+           &mirror, 2048, policy_readback, sizeof(policy_readback), &policy) ==
+           INFS_STATUS_OK &&
+       !memcmp(policy_readback, one_copy, sizeof(one_copy)),
+       "one-copy policy reads from selected member");
+
+    policy.protection_copies = 2u;
+    static const char two_copy[] = "two-copy-policy";
+    ok(infs_storage_write_policy(
+           &mirror, 3072, two_copy, sizeof(two_copy), &policy) ==
+           INFS_STATUS_OK,
+       "two-copy policy write");
+    ok(!memcmp(c_member.bytes + 3072, two_copy, sizeof(two_copy)) &&
+       !memcmp(d_member.bytes + 3072, two_copy, sizeof(two_copy)),
+       "two-copy policy reaches both members");
+    infs_storage_close(&mirror);
+    ok(c_member.closed && d_member.closed,
+       "policy-aware mirror closes every member");
+
     puts("replicated storage backend: PASS");
     return 0;
 }
