@@ -633,9 +633,13 @@ static INFILFS_NATIVE_FCB *InfilfsAllocateFcb(
     Fcb->WriteTime.QuadPart = (LONGLONG)Attributes->write_time_100ns;
     Fcb->ChangeTime.QuadPart = (LONGLONG)Attributes->change_time_100ns;
     ExInitializeFastMutex(&Fcb->HeaderMutex);
-    if (!NT_SUCCESS(ExInitializeResourceLite(&Fcb->MainResource)) ||
-        !NT_SUCCESS(ExInitializeResourceLite(&Fcb->PagingResource))) {
-        InfilfsFreeFcb(Fcb);
+    if (!NT_SUCCESS(ExInitializeResourceLite(&Fcb->MainResource))) {
+        ExFreePoolWithTag(Fcb, INFILFS_NATIVE_FCB_TAG);
+        return NULL;
+    }
+    if (!NT_SUCCESS(ExInitializeResourceLite(&Fcb->PagingResource))) {
+        ExDeleteResourceLite(&Fcb->MainResource);
+        ExFreePoolWithTag(Fcb, INFILFS_NATIVE_FCB_TAG);
         return NULL;
     }
     FsRtlInitializeFileLock(&Fcb->FileLock, NULL, NULL);
