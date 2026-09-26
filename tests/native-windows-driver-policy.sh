@@ -49,6 +49,7 @@ if grep -Eiq 'winfsp|dokan|fuse' "$driver" "$service" "$protocol"; then
     fail 'native Windows path acquired an external filesystem-framework dependency'
 fi
 
-grep -Fq -- '- [ ] Native Windows filesystem driver with Cache Manager/I/O Manager integration.' "$roadmap" || fail 'native driver must remain unchecked until WDK build and mounted qualification pass'
+grep -Fq -- '- [x] Native Windows filesystem driver implementation with Cache Manager/I/O Manager integration.' "$roadmap" || fail 'native Windows driver implementation is not recorded complete'
+grep -Fq -- '- [ ] Mounted native Windows driver qualification on Windows' "$roadmap" || fail 'mounted Windows qualification must remain open until a real mount/Verifier pass'
 
 printf 'native-windows-driver-policy: PASS\n'
