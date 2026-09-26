@@ -615,6 +615,13 @@ static void dispatch_mutation(
         else
             status = infs_rename(&v->volume, path, second);
         break;
+    case INFILFS_WIN_NATIVE_OP_LINK:
+        if (!request_path_utf8(
+                request->second_path, request->second_path_chars, second))
+            status = INFS_STATUS_NAME_TOO_LONG;
+        else
+            status = infs_link_file(&v->volume, path, second);
+        break;
     default:
         break;
     }
@@ -670,6 +677,7 @@ static void dispatch_request(
     case INFILFS_WIN_NATIVE_OP_RMDIR:
     case INFILFS_WIN_NATIVE_OP_RENAME:
     case INFILFS_WIN_NATIVE_OP_TRUNCATE:
+    case INFILFS_WIN_NATIVE_OP_LINK:
         dispatch_mutation(v, request, response);
         break;
     default:
