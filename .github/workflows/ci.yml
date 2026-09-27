@@ -80,7 +80,7 @@ jobs:
 
   linux:
     name: Linux full suite
-    runs-on: ${{ startsWith(github.event.head_commit.message, 'Release ') && 'ubuntu-latest' || 'linux-native' }}
+    runs-on: ${{ startsWith(github.event.head_commit.message, 'Release ') && 'ubuntu-latest' || 'bigbedroom' }}
     timeout-minutes: 10
     steps:
       - name: Check out source
@@ -238,7 +238,7 @@ jobs:
 
   clang:
     name: Clang conformance
-    runs-on: ${{ startsWith(github.event.head_commit.message, 'Release ') && 'ubuntu-latest' || 'linux-native' }}
+    runs-on: ${{ startsWith(github.event.head_commit.message, 'Release ') && 'ubuntu-latest' || 'bigbedroom' }}
     timeout-minutes: 10
     env:
       CC: clang
@@ -258,7 +258,7 @@ jobs:
 
   sanitizers:
     name: ASan and UBSan
-    runs-on: ${{ startsWith(github.event.head_commit.message, 'Release ') && 'ubuntu-latest' || 'linux-native' }}
+    runs-on: ${{ startsWith(github.event.head_commit.message, 'Release ') && 'ubuntu-latest' || 'bigbedroom' }}
     timeout-minutes: 10
     env:
       ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
@@ -282,7 +282,7 @@ jobs:
 
   analyzer:
     name: GCC static analyzer
-    runs-on: ${{ startsWith(github.event.head_commit.message, 'Release ') && 'ubuntu-latest' || 'linux-native' }}
+    runs-on: ${{ startsWith(github.event.head_commit.message, 'Release ') && 'ubuntu-latest' || 'bigbedroom' }}
     timeout-minutes: 10
     steps:
       - name: Check out source
@@ -302,7 +302,7 @@ jobs:
 
   local-userspace:
     name: Local Linux userspace qualification
-    runs-on: ${{ startsWith(github.event.head_commit.message, 'Release ') && 'ubuntu-latest' || 'linux-native' }}
+    runs-on: ${{ startsWith(github.event.head_commit.message, 'Release ') && 'ubuntu-latest' || 'bigbedroom' }}
     timeout-minutes: 10
     steps:
       - name: Check out source
@@ -466,7 +466,7 @@ jobs:
   linux-packages:
     name: Native Linux packages
     needs: [linux]
-    runs-on: ${{ startsWith(github.event.head_commit.message, 'Release ') && 'ubuntu-latest' || 'linux-native' }}
+    runs-on: ${{ startsWith(github.event.head_commit.message, 'Release ') && 'ubuntu-latest' || 'bigbedroom' }}
     timeout-minutes: 10
     steps:
       - name: Check out source
