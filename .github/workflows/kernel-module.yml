@@ -1690,7 +1690,7 @@ jobs:
     concurrency:
       group: native-kernel-local-${{ github.ref }}
       cancel-in-progress: true
-    runs-on: linux-native
+    runs-on: [self-hosted, Linux, X64, linux-native, bigbedroom]
     timeout-minutes: 20
     steps:
       - name: Check out source
