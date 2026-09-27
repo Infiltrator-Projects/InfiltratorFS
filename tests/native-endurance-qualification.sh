@@ -16,13 +16,13 @@ fi
 
 BUILD="$(readlink -f "$1")"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-STRESS="$ROOT/tests/native-endurance-stress.py"
+STRESS_SOURCE="$ROOT/tests/native-endurance-stress.c"
 IMAGE_SIZE="${INFS_ENDURANCE_IMAGE_SIZE:-4G}"
 SECONDS="${INFS_ENDURANCE_SECONDS:-300}"
 WORKERS="${INFS_ENDURANCE_WORKERS:-4}"
 RESERVE_MIB="${INFS_ENDURANCE_RESERVE_MIB:-384}"
 
-for path in "$BUILD/mkfs.infilfs" "$BUILD/fsck.infiltratorfs" "$BUILD/infilfs-inspect" "$STRESS"; do
+for path in "$BUILD/mkfs.infilfs" "$BUILD/fsck.infiltratorfs" "$BUILD/infilfs-inspect" "$STRESS_SOURCE"; do
     [[ -e "$path" ]] || { echo "Missing qualification input: $path" >&2; exit 1; }
 done
 
@@ -40,6 +40,9 @@ grep -qw infiltratorfs /proc/filesystems || {
 
 TMP_BASE="${RUNNER_TEMP:-/tmp}"
 WORK="$(mktemp -d "$TMP_BASE/infiltratorfs-endurance.XXXXXX")"
+STRESS="$WORK/native-endurance-stress"
+${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -pedantic -pthread \
+    "$STRESS_SOURCE" -lcrypto -o "$STRESS"
 IMAGE="$WORK/endurance.img"
 MOUNTPOINT="$WORK/mnt"
 MANIFEST="$WORK/endurance-manifest.json"
@@ -99,7 +102,7 @@ test "$(findmnt -rn -T "$MOUNTPOINT" -o FSTYPE)" = infiltratorfs
 findmnt -rn -T "$MOUNTPOINT" -o OPTIONS | grep -Eq '(^|,)rw(,|$)'
 
 echo "=== Near-full fragmentation and mixed workload ==="
-timed "mixed-workload" python3 "$STRESS" "$MOUNTPOINT/endurance"     --seconds "$SECONDS" --workers "$WORKERS" --reserve-mib "$RESERVE_MIB"     --manifest-out "$MANIFEST"
+timed "mixed-workload" "$STRESS" "$MOUNTPOINT/endurance"     --seconds "$SECONDS" --workers "$WORKERS" --reserve-mib "$RESERVE_MIB"     --manifest-out "$MANIFEST"
 
 python3 - "$MOUNTPOINT" <<'PY'
 import os
@@ -155,7 +158,7 @@ timed "mount-ro" sudo mount -t infiltratorfs -o ro "$LOOPDEV" "$MOUNTPOINT"
 MOUNTED=1
 findmnt -rn -T "$MOUNTPOINT" -o OPTIONS | grep -Eq '(^|,)ro(,|$)'
 
-timed "durable-verify" python3 "$STRESS" "$MOUNTPOINT/endurance"     --verify-manifest "$MANIFEST"
+timed "durable-verify" "$STRESS" "$MOUNTPOINT/endurance"     --verify-manifest "$MANIFEST"
 
 test "$(stat -c '%b' "$MOUNTPOINT/endurance/punch-cycle.bin")" -lt "$before_blocks"
 test "$(find "$MOUNTPOINT/endurance/punch-refill" -maxdepth 1 -type f | wc -l)" -eq 16

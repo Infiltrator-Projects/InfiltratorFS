@@ -79,7 +79,7 @@ jobs:
       - name: Install endurance qualification dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake kmod util-linux
+          sudo apt-get install -y build-essential cmake kmod util-linux libssl-dev
       - name: Require running-kernel headers
         id: endurance_headers
         shell: bash
@@ -96,6 +96,8 @@ jobs:
           bash tests/native-endurance-policy.sh .
           bash -n tests/native-endurance-qualification.sh
           python3 -m py_compile tests/native-endurance-stress.py
+          cc -std=c11 -O2 -Wall -Wextra -Werror -pedantic -pthread \
+            tests/native-endurance-stress.c -lcrypto -o "$RUNNER_TEMP/native-endurance-stress"
       - name: Build endurance userspace tools
         run: |
           cmake -S . -B build-endurance -DCMAKE_BUILD_TYPE=Release

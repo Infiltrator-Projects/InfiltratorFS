@@ -569,8 +569,11 @@ jobs:
 
           # Exercise the native global write-serialization contract under
           # real process contention before crash/recovery qualification.
+          cc -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
+            tests/native-concurrency-qualification.c \
+            -o "$RUNNER_TEMP/native-concurrency-qualification"
           for concurrency_round in 1 2 3 4; do
-            sudo python3 tests/native-concurrency-qualification.py \
+            sudo "$RUNNER_TEMP/native-concurrency-qualification" \
               "$mountpoint/native-rw/concurrency-${concurrency_round}"
           done
 

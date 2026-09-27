@@ -107,6 +107,9 @@ jobs:
                   packaging/debian/prerm.in \
                   tests/native-root-metadata-qualification.sh
           python3 -m py_compile tests/native-posix-acl-qualification.py
+          cc -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
+            tests/native-posix-acl-qualification.c -o "$RUNNER_TEMP/native-posix-acl-qualification"
+          "$RUNNER_TEMP/native-posix-acl-qualification" --encode-smoke
           command -v setfacl
           command -v getfacl
           command -v setfattr

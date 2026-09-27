@@ -8,6 +8,7 @@ quota="$build/infiltratorfs-quota"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
 work="$(mktemp -d)"
+acl_qualification="$work/native-posix-acl-qualification"
 image="$work/quota.img"
 mnt="$work/mnt"
 loopdev=""
@@ -71,6 +72,8 @@ PY
 
 stage "static POSIX ACL policy guard"
 bash "$script_dir/native-posix-acl-policy.sh" "$repo_root"
+${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
+    "$script_dir/native-posix-acl-qualification.c" -o "$acl_qualification"
 
 stage "project quota scalability policy guard"
 bash "$script_dir/native-quota-scalability-policy.sh" "$repo_root"
@@ -256,7 +259,7 @@ test "$(field used_objects "$mnt" project 78)" -eq 0
 # the same image is scrubbed and remounted below.
 stage "exercise POSIX ACL semantics before remount"
 sudo chmod 0755 "$work" "$mnt"
-sudo python3 "$script_dir/native-posix-acl-qualification.py" prepare "$mnt"
+sudo "$acl_qualification" prepare "$mnt"
 
 # Policy and project-root metadata are persistent, but volatile usage is
 # deliberately rebuilt from authoritative objects after remount.
@@ -270,7 +273,7 @@ mounted=0
 sudo mount -t infiltratorfs -o rw "$loopdev" "$mnt"
 mounted=1
 sudo chmod 0755 "$mnt"
-sudo python3 "$script_dir/native-posix-acl-qualification.py" verify "$mnt"
+sudo "$acl_qualification" verify "$mnt"
 test "$(timeout --foreground 90s sudo "$quota" project-get "$mnt/project-a/sub" | \
         awk -F= '$1 == "effective_project_id" { print $2 }')" -eq 42
 after42="$(field used_bytes "$mnt" project 42)"

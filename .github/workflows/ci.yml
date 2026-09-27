@@ -91,7 +91,7 @@ jobs:
         if: runner.environment == 'github-hosted'
         run: |
           sudo apt-get update
-          sudo apt-get install -y desktop-file-utils libgtk-3-dev pkg-config policykit-1 xdg-utils xvfb
+          sudo apt-get install -y desktop-file-utils libgtk-3-dev libssl-dev pkg-config policykit-1 xdg-utils xvfb
       - name: Validate Mint desktop integration
         run: desktop-file-validate packaging/infiltratorfs-manager.desktop
       - name: Validate native Manager source policy
@@ -160,6 +160,8 @@ jobs:
           bash tests/native-endurance-policy.sh .
           bash -n tests/native-endurance-qualification.sh
           python3 -m py_compile tests/native-endurance-stress.py
+          cc -std=c11 -O2 -Wall -Wextra -Werror -pedantic -pthread \
+            tests/native-endurance-stress.c -lcrypto -o "$RUNNER_TEMP/native-endurance-stress"
       - name: Smoke native mixed-workload generator
         shell: bash
         run: |
@@ -170,6 +172,14 @@ jobs:
             --seconds 2 --workers 2 --skip-fill --manifest-out "$manifest"
           python3 tests/native-endurance-stress.py "$root" \
             --verify-manifest "$manifest"
+          "$RUNNER_TEMP/native-endurance-stress" "$root" \
+            --verify-manifest "$manifest"
+          native_root="$RUNNER_TEMP/infiltratorfs-native-endurance-generator-smoke"
+          native_manifest="$RUNNER_TEMP/infiltratorfs-native-endurance-generator-smoke.json"
+          "$RUNNER_TEMP/native-endurance-stress" "$native_root" \
+            --seconds 2 --workers 2 --skip-fill --manifest-out "$native_manifest"
+          python3 tests/native-endurance-stress.py "$native_root" \
+            --verify-manifest "$native_manifest"
       - name: Smoke scale workload generator
         shell: bash
         run: |
@@ -186,6 +196,15 @@ jobs:
             --files 5000 --directories 50 --workers 4 --churn-files 500
           python3 tests/native-scale-stress.py "$native_root" \
             --files 5000 --directories 50 --workers 4 --churn-files 500 --verify-only
+      - name: Smoke native concurrency workload
+        shell: bash
+        run: |
+          set -euo pipefail
+          cc -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
+            tests/native-concurrency-qualification.c \
+            -o "$RUNNER_TEMP/native-concurrency-qualification"
+          "$RUNNER_TEMP/native-concurrency-qualification" \
+            "$RUNNER_TEMP/native-concurrency-smoke" --skip-privilege-smoke
       - name: Configure native-only userspace
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
       - name: Build

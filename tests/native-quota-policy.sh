@@ -35,6 +35,7 @@ grep -Fq 'infiltratorfs_quota.inc' "$root/packaging/build-linux-packages.sh"
 # the same scrub/remount boundary. Keep the quota PASS marker explicit while
 # requiring the ACL test to remain wired into that mounted native gate.
 grep -Fq 'native user/group/project quota + POSIX ACL qualification: PASS' "$root/tests/native-quota-qualification.sh"
-grep -Fq 'native-posix-acl-qualification.py" prepare' "$root/tests/native-quota-qualification.sh"
-grep -Fq 'native-posix-acl-qualification.py" verify' "$root/tests/native-quota-qualification.sh"
+grep -Fq '"$acl_qualification" prepare' "$root/tests/native-quota-qualification.sh"
+grep -Fq '"$acl_qualification" verify' "$root/tests/native-quota-qualification.sh"
+grep -Fq 'native-posix-acl-qualification.c' "$root/tests/native-quota-qualification.sh"
 echo 'native quota policy: PASS'

@@ -23,6 +23,13 @@ to catch changes to file naming, sentinel contents, or population checks.
 The live remount harness compiles `tests/native-remount-qualification.c` to
 exercise `mount(2)` directly; its Python predecessor remains as a reference
 until both implementations can be compared on a disposable native mount.
+The mounted concurrency gate compiles `tests/native-concurrency-qualification.c`
+and runs its separate-process mutators four times. The ACL remount gate
+compiles `tests/native-posix-acl-qualification.c`, which encodes the Linux ACL
+xattr format directly and still checks `setfacl`, `getfacl`, and `rsync -aA`.
+The near-full qualification compiles `tests/native-endurance-stress.c`; its
+SHAKE-256 data and JSON integrity manifest are cross-verified in both
+directions against the retained Python reference during ordinary CI.
 - **Real root-boot qualification** — real UEFI boot, live-root package upgrade, forced power-loss recovery and repeated scrub. This is manual-only and is run when root/boot/recovery risk warrants it.
 - **Formatter integration qualification** — pinned libblockdev/UDisks/GNOME Disks integration build and end-to-end formatter/probe checks. The full upstream-stack build is manual-only because it intentionally exceeds the automatic CI ceiling.
 - **Physical partition qualification** — explicitly destructive operator-run qualification on dedicated media; never unattended ordinary CI.

@@ -5,8 +5,13 @@ set -euo pipefail
 root="${1:-.}"
 harness="$root/tests/native-endurance-qualification.sh"
 stress="$root/tests/native-endurance-stress.py"
+native="$root/tests/native-endurance-stress.c"
 
-[[ -f "$harness" && -f "$stress" ]]
+[[ -f "$harness" && -f "$stress" && -f "$native" ]]
+grep -Fq '"$STRESS"' "$harness"
+grep -Fq 'EVP_shake256' "$native"
+grep -Fq 'verify_manifest' "$native"
+grep -Fq 'pthread_create' "$native"
 
 grep -Fq 'INFS_ENDURANCE_SECONDS:-300' "$harness"
 grep -Fq 'INFS_ENDURANCE_IMAGE_SIZE:-4G' "$harness"
