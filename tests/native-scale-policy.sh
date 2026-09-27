@@ -5,8 +5,13 @@ set -euo pipefail
 root="${1:-.}"
 harness="$root/tests/native-scale-qualification.sh"
 stress="$root/tests/native-scale-stress.py"
+native="$root/tests/native-scale-stress.c"
 
-[[ -f "$harness" && -f "$stress" ]]
+[[ -f "$harness" && -f "$stress" && -f "$native" ]]
+grep -Fq '"$STRESS"' "$harness"
+grep -Fq 'pthread_create' "$native"
+grep -Fq 'verify(&opt)' "$native"
+grep -Fq 'drop_caches' "$native"
 grep -Fq 'INFS_SCALE_FILE_COUNT:-1000000' "$harness"
 grep -Fq 'INFS_SCALE_LARGE_IMAGE_SIZE:-1T' "$harness"
 grep -Fq 'INFS_SCALE_CHURN_FILES:-100000' "$harness"

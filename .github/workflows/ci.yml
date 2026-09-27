@@ -151,6 +151,10 @@ jobs:
           bash tests/native-scale-policy.sh .
           bash -n tests/native-scale-qualification.sh
           python3 -m py_compile tests/native-scale-stress.py
+          cc -std=c11 -O2 -Wall -Wextra -Werror -pedantic -pthread \
+            tests/native-scale-stress.c -o "$RUNNER_TEMP/native-scale-stress"
+          cc -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
+            tests/native-remount-qualification.c -o "$RUNNER_TEMP/native-remount-qualification"
       - name: Guard native near-full/endurance harness
         run: |
           bash tests/native-endurance-policy.sh .
@@ -174,6 +178,13 @@ jobs:
           python3 tests/native-scale-stress.py "$root" \
             --files 5000 --directories 50 --workers 4 --churn-files 500
           python3 tests/native-scale-stress.py "$root" \
+            --files 5000 --directories 50 --workers 4 --churn-files 500 --verify-only
+          "$RUNNER_TEMP/native-scale-stress" "$root" \
+            --files 5000 --directories 50 --workers 4 --churn-files 500 --verify-only
+          native_root="$RUNNER_TEMP/infiltratorfs-native-scale-generator-smoke"
+          "$RUNNER_TEMP/native-scale-stress" "$native_root" \
+            --files 5000 --directories 50 --workers 4 --churn-files 500
+          python3 tests/native-scale-stress.py "$native_root" \
             --files 5000 --directories 50 --workers 4 --churn-files 500 --verify-only
       - name: Configure native-only userspace
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release

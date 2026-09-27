@@ -15,6 +15,14 @@ Historical results apply only to the source commit on which they ran. A later gr
 - **Native Linux kernel module** — mounted kernel qualification for relevant kernel/core/package changes. It builds the module/DKMS source and, when the running-kernel environment is available, exercises native mounted behaviour.
 - **Native resize qualification** — dedicated mounted grow/shrink qualification independent of the quota gate; automatic execution is capped at 10 minutes.
 - **Heavy filesystem qualification** — million-file/1 TiB scale plus near-full mixed-workload endurance. This is manual-only milestone evidence because it intentionally exceeds the automatic CI ceiling.
+
+The mounted scale harness compiles `tests/native-scale-stress.c` and uses it for
+the million-file create, churn, and post-remount verification phases. CI runs
+small cross-verification workloads against the retained Python implementation
+to catch changes to file naming, sentinel contents, or population checks.
+The live remount harness compiles `tests/native-remount-qualification.c` to
+exercise `mount(2)` directly; its Python predecessor remains as a reference
+until both implementations can be compared on a disposable native mount.
 - **Real root-boot qualification** — real UEFI boot, live-root package upgrade, forced power-loss recovery and repeated scrub. This is manual-only and is run when root/boot/recovery risk warrants it.
 - **Formatter integration qualification** — pinned libblockdev/UDisks/GNOME Disks integration build and end-to-end formatter/probe checks. The full upstream-stack build is manual-only because it intentionally exceeds the automatic CI ceiling.
 - **Physical partition qualification** — explicitly destructive operator-run qualification on dedicated media; never unattended ordinary CI.
@@ -397,4 +405,3 @@ Windows build also compiled the same portable core and passed
 `infilfs-protected-volume` and `infilfs-inline-files`; two unrelated Win32
 storage-backend callback-layout regressions were identified separately and
 subsequently repaired with designated initializers.
-

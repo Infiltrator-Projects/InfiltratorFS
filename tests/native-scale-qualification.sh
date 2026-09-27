@@ -13,7 +13,7 @@ fi
 
 BUILD="$(readlink -f "$1")"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-STRESS_PY="$ROOT/tests/native-scale-stress.py"
+STRESS_SOURCE="$ROOT/tests/native-scale-stress.c"
 FILE_COUNT="${INFS_SCALE_FILE_COUNT:-1000000}"
 DIRECTORY_COUNT="${INFS_SCALE_DIRECTORY_COUNT:-1000}"
 WORKERS="${INFS_SCALE_WORKERS:-8}"
@@ -24,10 +24,10 @@ LARGE_IMAGE_SIZE="${INFS_SCALE_LARGE_IMAGE_SIZE:-1T}"
 LARGE_PROBE_BYTES="${INFS_SCALE_LARGE_PROBE_BYTES:-268435456}"
 LARGE_SPARSE_BYTES="${INFS_SCALE_LARGE_SPARSE_BYTES:-966367641600}"
 
-for path in "$BUILD/mkfs.infilfs" "$BUILD/fsck.infiltratorfs" "$BUILD/infilfs-inspect" "$STRESS_PY"; do
+for path in "$BUILD/mkfs.infilfs" "$BUILD/fsck.infiltratorfs" "$BUILD/infilfs-inspect" "$STRESS_SOURCE"; do
     [[ -e "$path" ]] || { echo "Missing qualification input: $path" >&2; exit 1; }
 done
-for cmd in python3 sudo losetup mount umount truncate findmnt timeout df du awk grep sync tee; do
+for cmd in cc python3 sudo losetup mount umount truncate findmnt timeout df du awk grep sync tee; do
     command -v "$cmd" >/dev/null 2>&1 || { echo "Missing command: $cmd" >&2; exit 1; }
 done
 grep -qw infiltratorfs /proc/filesystems || {
@@ -37,6 +37,8 @@ grep -qw infiltratorfs /proc/filesystems || {
 
 TMP_BASE="${RUNNER_TEMP:-/tmp}"
 WORK="$(mktemp -d "$TMP_BASE/infiltratorfs-scale.XXXXXX")"
+STRESS="$WORK/native-scale-stress"
+${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -pthread "$STRESS_SOURCE" -o "$STRESS"
 FILE_IMAGE="$WORK/million-files.img"
 FILE_MOUNT="$WORK/million-files-mnt"
 LARGE_IMAGE="$WORK/large-volume.img"
@@ -92,7 +94,7 @@ timed "million-volume-mount-rw" sudo mount -t infiltratorfs -o rw "$FILE_LOOP" "
 FILE_MOUNTED=1
 test "$(findmnt -rn -T "$FILE_MOUNT" -o FSTYPE)" = infiltratorfs
 
-timed "million-file-workload" python3 "$STRESS_PY" "$FILE_MOUNT/million-files" \
+timed "million-file-workload" "$STRESS" "$FILE_MOUNT/million-files" \
     --files "$FILE_COUNT" --directories "$DIRECTORY_COUNT" \
     --workers "$WORKERS" --churn-files "$CHURN_FILES" \
     --batch-directories "$BATCH_DIRECTORIES" --reclaim-vfs-cache
@@ -118,7 +120,7 @@ grep -Fq 'Result:              CLEAN' "$million_scrub"
 
 timed "million-volume-mount-ro" sudo mount -t infiltratorfs -o ro "$FILE_LOOP" "$FILE_MOUNT"
 FILE_MOUNTED=1
-timed "million-file-remount-verify" python3 "$STRESS_PY" "$FILE_MOUNT/million-files" \
+timed "million-file-remount-verify" "$STRESS" "$FILE_MOUNT/million-files" \
     --files "$FILE_COUNT" --directories "$DIRECTORY_COUNT" \
     --workers "$WORKERS" --churn-files "$CHURN_FILES" --verify-only
 timed "million-volume-final-unmount" sudo umount "$FILE_MOUNT"

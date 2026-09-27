@@ -9,6 +9,7 @@ script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 work=$(mktemp -d)
 mnt="$work/mnt"
 image="$work/remount.img"
+qualification="$work/native-remount-qualification"
 loop=''
 loaded=0
 cleanup() {
@@ -34,6 +35,8 @@ if grep -qw infiltratorfs /proc/filesystems; then
     exit 2
 fi
 mkdir "$mnt"
+${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror \
+    "$script_dir/native-remount-qualification.c" -o "$qualification"
 truncate -s 512M "$image"
 "$build/mkfs.infilfs" --force -L RemountQualification "$image" >/dev/null
 printf 'before-remount\n' > "$work/before"
@@ -45,13 +48,13 @@ insmod "$module"
 loaded=1
 loop=$(losetup --find --show "$image")
 mount -i -t infiltratorfs -o ro,compress=off,media=balanced "$loop" "$mnt"
-python3 "$script_dir/native-remount-qualification.py" "$mnt"
+"$qualification" "$mnt"
 "$build/infiltratorfs-quota" set "$mnt" user 0 32MiB 0 >/dev/null
 umount "$mnt"
 
 # Fresh RO mount with persisted quota and snapshot state, then live promotion.
 mount -i -t infiltratorfs -o ro,compress=off,media=balanced "$loop" "$mnt"
-python3 "$script_dir/native-remount-qualification.py" "$mnt" quota
+"$qualification" "$mnt" quota
 umount "$mnt"
 "$build/infilfs-tool" "$image" cat /snapshot-live.txt > "$work/after"
 printf 'after-remount\n' | cmp - "$work/after"
