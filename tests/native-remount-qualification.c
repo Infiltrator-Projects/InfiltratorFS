@@ -61,9 +61,11 @@ static void check_bytes(int fd, const unsigned char *expected, size_t length)
         ssize_t n = read(fd, buffer, want);
         if (n < 0 && errno == EINTR)
             continue;
-        require(n == (ssize_t)want && !memcmp(buffer, expected, want), "payload readback");
-        expected += want;
-        length -= want;
+        if (n <= 0 || (size_t)n > want)
+            fail("short payload readback");
+        require(!memcmp(buffer, expected, (size_t)n), "payload readback");
+        expected += n;
+        length -= (size_t)n;
     }
     unsigned char extra;
     require(read(fd, &extra, 1) == 0, "payload has unexpected extra bytes");
