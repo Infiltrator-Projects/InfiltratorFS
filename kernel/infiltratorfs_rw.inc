@@ -2157,7 +2157,7 @@ static loff_t infilfs_file_llseek(struct file *file, loff_t offset, int whence)
     u8 *object = NULL;
     u64 blocks = 0;
     u64 size;
-    u64 logical;
+    u64 position;
     u32 count = 0;
     u32 i;
     bool was_inline = false;
@@ -2191,45 +2191,62 @@ static loff_t infilfs_file_llseek(struct file *file, loff_t offset, int whence)
         goto set;
     }
 
-    logical = (u64)offset >> INFILFS_DISK_BLOCK_SHIFT;
-    for (i = 0; i < count; ++i) {
-        u64 extent_start = le64_to_cpu(extents[i].logical_block);
-        u64 extent_end = extent_start + le32_to_cpu(extents[i].block_count);
+    /*
+     * The extent list describes allocated ranges.  Gaps between entries are
+     * valid sparse holes and must not be treated as corrupt metadata.  Walk
+     * forward from the requested byte, alternating explicit extents and
+     * implicit gaps until the requested class is found.
+     */
+    position = (u64)offset;
+    for (i = 0; i < count && position < size; ++i) {
+        u64 extent_start =
+            le64_to_cpu(extents[i].logical_block) <<
+            INFILFS_DISK_BLOCK_SHIFT;
+        u64 extent_length =
+            (u64)le32_to_cpu(extents[i].block_count) <<
+            INFILFS_DISK_BLOCK_SHIFT;
+        u64 extent_end;
         bool data;
 
-        if (logical < extent_start || logical >= extent_end)
+        if (extent_start >= size)
+            break;
+        extent_end = extent_start > U64_MAX - extent_length ?
+            U64_MAX : extent_start + extent_length;
+        if (extent_end > size)
+            extent_end = size;
+        if (extent_end <= position)
             continue;
+
+        if (extent_start > position) {
+            if (whence == SEEK_HOLE) {
+                result = (loff_t)position;
+                goto set;
+            }
+            position = extent_start;
+        }
+
+        if (position >= extent_end)
+            continue;
+
         data = infilfs_extent_kind(le32_to_cpu(extents[i].flags)) ==
             INFILFS_EXTENT_NORMAL;
         if ((whence == SEEK_DATA && data) ||
             (whence == SEEK_HOLE && !data)) {
-            result = offset;
+            result = (loff_t)position;
             goto set;
         }
 
-        for (++i; i < count; ++i) {
-            data = infilfs_extent_kind(le32_to_cpu(extents[i].flags)) ==
-                INFILFS_EXTENT_NORMAL;
-            if ((whence == SEEK_DATA && data) ||
-                (whence == SEEK_HOLE && !data)) {
-                u64 candidate =
-                    le64_to_cpu(extents[i].logical_block) <<
-                    INFILFS_DISK_BLOCK_SHIFT;
-                result = candidate > size ? (loff_t)size :
-                    (loff_t)candidate;
-                goto set;
-            }
-        }
-
-        if (whence == SEEK_HOLE) {
-            result = (loff_t)size;
-            goto set;
-        }
-        ret = -ENXIO;
-        goto out;
+        position = extent_end;
     }
 
-    ret = -EFSCORRUPTED;
+    if (whence == SEEK_HOLE) {
+        result = (loff_t)position;
+        if ((u64)result > size)
+            result = (loff_t)size;
+        goto set;
+    }
+
+    ret = -ENXIO;
     goto out;
 
 set:
