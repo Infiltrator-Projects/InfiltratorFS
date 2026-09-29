@@ -122,6 +122,7 @@ jobs:
              kernel/infiltratorfs_rw_legacy.inc \
              kernel/infiltratorfs_rw_data.inc \
              kernel/infiltratorfs_rw_namespace.inc \
+             kernel/infiltratorfs_rw_namespace_exchange.inc \
              kernel/infiltratorfs_read_cache.c \
              kernel/infiltratorfs_pagecache.c \
              kernel/infiltratorfs_linux_meta.inc \
