@@ -24,7 +24,7 @@ diff --git a/src/plugins/fs.c b/src/plugins/fs.c
              return bd_fs_btrfs_is_tech_avail (tech, mode, error);
          case BD_FS_TECH_UDF:
              return bd_fs_udf_is_tech_avail (tech, mode, error);
-+        case BD_FS_TECH_INFILTRATORFS: {
++        case ((BDFSTech) 13): {
 +            const guint64 supported =
 +                BD_FS_TECH_MODE_MKFS | BD_FS_TECH_MODE_CHECK |
 +                BD_FS_TECH_MODE_REPAIR | BD_FS_TECH_MODE_RESIZE;
@@ -111,7 +111,7 @@ diff --git a/src/plugins/fs/generic.c b/src/plugins/fs/generic.c
      } else if (g_strcmp0 (fstype, "udf") == 0) {
          return BD_FS_TECH_UDF;
 +    } else if (g_strcmp0 (fstype, "infiltratorfs") == 0) {
-+        return BD_FS_TECH_INFILTRATORFS;
++        return (BDFSTech) 13;
      } else {
          return BD_FS_TECH_GENERIC;
      }
