@@ -4,12 +4,13 @@ set -euo pipefail
 
 root="${1:-.}"
 driver="$root/kernel/infiltratorfs_core.c"
+media="$root/kernel/infiltratorfs_media.c"
 state="$root/kernel/infiltratorfs_internal.h"
 allocator="$root/kernel/infiltratorfs_parallel_alloc.c"
 data="$root/kernel/infiltratorfs_rw_data.inc"
 workflow="$root/.github/workflows/kernel-module.yml"
 
-for file in "$driver" "$state" "$allocator" "$data" "$workflow"; do
+for file in "$driver" "$media" "$state" "$allocator" "$data" "$workflow"; do
     test -f "$file"
 done
 
@@ -20,10 +21,10 @@ grep -Fq 'INFILFS_MEDIA_BALANCED' "$state"
 grep -Fq 'fsparam_enum("media", Opt_media, infilfs_media_param_values)' "$driver"
 grep -Fq 'vfs_parse_fs_param_source' "$driver"
 grep -Fq '#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)' "$driver"
-grep -Fq 'bdev_rot(sb->s_bdev)' "$driver"
-grep -Fq 'blk_queue_nonrot(queue)' "$driver"
-grep -Fq 'blk_queue_is_zoned(queue)' "$driver"
-grep -Fq 'zoned block devices require zone-aware allocation' "$driver"
+grep -Fq 'bdev_rot(sb->s_bdev)' "$media"
+grep -Fq 'blk_queue_nonrot(queue)' "$media"
+grep -Fq 'blk_queue_is_zoned(queue)' "$media"
+grep -Fq 'zoned block devices require zone-aware allocation' "$media"
 grep -Fq '.show_options = infilfs_show_options' "$driver"
 
 grep -Fq 'static void infilfs_native_media_scores' "$data"
