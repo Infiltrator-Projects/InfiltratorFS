@@ -95,6 +95,18 @@ static void write_file(const char *name, const unsigned char *data, size_t lengt
     free(p);
 }
 
+static void overwrite_file(const char *name, const unsigned char *data, size_t length)
+{
+    char *p = path(name);
+    int fd = open(p, O_WRONLY | O_TRUNC);
+    if (fd < 0)
+        fail("open existing output");
+    write_all(fd, data, length);
+    if (close(fd))
+        fail("close existing output");
+    free(p);
+}
+
 static void remount(bool readonly, const char *options, int expected)
 {
     errno = 0;
@@ -230,7 +242,7 @@ int main(int argc, char **argv)
     if (rename(before, durable))
         fail("rename buffered to durable");
     free(before);
-    write_file("snapshot-live.txt", (const unsigned char *)"after-remount\n", 14);
+    overwrite_file("snapshot-live.txt", (const unsigned char *)"after-remount\n", 14);
 
     char *busy = path("remount-work/busy");
     int fd = open(busy, O_CREAT | O_TRUNC | O_WRONLY, 0666);
