@@ -76,7 +76,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tag="$(gh release list --limit 100 --json tagName,isPrerelease,publishedAt --jq '[.[] | select(.isPrerelease == true and (.tagName | startswith("desktop-integration-ubuntu24.04-")))] | sort_by(.publishedAt) | last | .tagName')"
+          tag="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq '[.[] | select(.prerelease == true and (.tag_name | startswith("desktop-integration-ubuntu24.04-")))] | sort_by(.published_at) | last | .tag_name')"
           test -n "$tag"
           dir="$RUNNER_TEMP/desktop-integration"
           mkdir -p "$dir"
