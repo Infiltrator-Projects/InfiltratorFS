@@ -468,4 +468,15 @@ check_bytes "$kernel/infiltratorfs_rw_namespace.inc" 90000
 check_bytes "$kernel/infiltratorfs_rw_namespace_exchange.inc" 20000
 check_bytes "$quota" 70000
 
+# Keep proven-unreferenced compatibility helpers retired. These had no callers
+# and existed only behind __maybe_unused, so reintroducing them would recreate
+# dead maintenance surface without changing runtime behaviour.
+for retired in \
+    infilfs_checkpoint_bitmap_get \
+    infilfs_vfs_attributes \
+    infilfs_native_available_data_blocks; do
+    ! grep -Rq --include='*.c' --include='*.inc' "$retired" "$kernel" || \
+        fail "dead kernel helper returned: $retired"
+done
+
 printf 'Native kernel locking/composition maintainability policy guard passed.\n'

@@ -1015,11 +1015,6 @@ int infilfs_index_lookup(struct super_block *sb, const u8 object_id[16],
                                         type_out);
 }
 
-static __maybe_unused bool infilfs_checkpoint_bitmap_get(const u8 *bitmap, u64 block)
-{
-    return (bitmap[block >> 3] & (u8)(1u << (block & 7u))) != 0;
-}
-
 struct infilfs_checkpoint_tree_node {
     u64 block;
     u32 depth;

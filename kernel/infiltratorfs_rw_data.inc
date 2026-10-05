@@ -303,14 +303,6 @@ u64 infilfs_native_visible_free_blocks(struct super_block *sb)
     return free_blocks;
 }
 
-static __maybe_unused u64 infilfs_native_available_data_blocks(struct super_block *sb)
-{
-    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
-    u64 free_blocks = infilfs_native_visible_free_blocks(sb);
-    u64 reserve = infilfs_native_metadata_reserve_blocks(sbi);
-    return free_blocks > reserve ? free_blocks - reserve : 0;
-}
-
 static void infilfs_native_idle_work(struct work_struct *work);
 
 static struct infilfs_native_pending *

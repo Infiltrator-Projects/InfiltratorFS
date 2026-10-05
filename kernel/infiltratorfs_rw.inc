@@ -2024,27 +2024,6 @@ static ssize_t infilfs_file_read_iter_dispatch(
  * portable on-disk attributes.  Report those authoritative values through
  * ->getattr so desktop file managers see creation time as well as POSIX times.
  */
-static __maybe_unused const struct infilfs_attributes_disk *
-infilfs_vfs_attributes(const u8 object[INFILFS_DISK_BLOCK_SIZE])
-{
-    const struct infilfs_object_header_disk *header =
-        (const struct infilfs_object_header_disk *)object;
-
-    switch (le16_to_cpu(header->object_type)) {
-    case INFILFS_OBJECT_DIRECTORY:
-        return &((const struct infilfs_directory_payload_disk *)(header + 1))
-                    ->attributes;
-    case INFILFS_OBJECT_FILE:
-        return &((const struct infilfs_file_payload_disk *)(header + 1))
-                    ->attributes;
-    case INFILFS_OBJECT_SYMLINK:
-        return &((const struct infilfs_symlink_payload_disk *)(header + 1))
-                    ->attributes;
-    default:
-        return NULL;
-    }
-}
-
 static __maybe_unused struct timespec64 infilfs_vfs_decode_time(
     const struct infilfs_timestamp_disk *encoded)
 {
