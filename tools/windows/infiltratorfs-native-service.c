@@ -6,6 +6,7 @@
 #include <bcrypt.h>
 
 #include "infilfs/storage.h"
+#include "infilfs/endian.h"
 #include "infilfs/volume.h"
 #include "infiltratorfs-windows-metadata.h"
 #include "../../windows-driver/infiltratorfs-native-protocol.h"
