@@ -1,0 +1,108 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Release candidate Linux
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/release-trigger
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-candidate-linux-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  qualify:
+    name: Qualify Linux release candidate
+    if: startsWith(github.event.head_commit.message, 'Release ')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Verify release identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(sed -nE 's/^project\(InfiltratorFS VERSION ([0-9]+\.[0-9]+\.[0-9]+) LANGUAGES C\)$/\1/p' CMakeLists.txt)"
+          trigger="$(head -n1 .github/release-trigger | tr -d '[:space:]')"
+          subject="$(git log -1 --format=%s)"
+          test -n "$version"
+          test "$trigger" = "$version"
+          [[ "$subject" == "Release ${version}" || "$subject" == "Release ${version}:"* ]]
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Install build dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake desktop-file-utils libgtk-3-dev libssl-dev \
+            pkg-config policykit-1 xdg-utils python3
+
+      - name: Guard native Linux policies
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash tests/fsck-structural-policy.sh .
+          bash tests/native-random-write-optimization-policy.sh .
+          bash tests/native-sequential-write-scaling-policy.sh .
+          bash tests/native-cpu-parallelism-policy.sh .
+          bash tests/native-small-file-scaling-policy.sh .
+          bash tests/native-free-extent-index-policy.sh .
+          bash tests/native-parallel-allocation-policy.sh .
+          bash tests/native-workload-placement-policy.sh .
+          bash tests/native-media-placement-policy.sh .
+          bash tests/native-index-tree-policy.sh .
+          bash tests/index-tree-format-policy.sh .
+          bash tests/allocation-tree-format-policy.sh .
+          bash tests/directory-tree-policy.sh .
+
+      - name: Configure and build
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Require accelerated SHA-256 and no FUSE artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          ldd build/infilfs-checksum-test | grep -Fq libcrypto
+          test ! -e build/infilfs-fuse
+
+      - name: Build and validate Linux release packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash packaging/build-linux-packages.sh build dist
+          installer="dist/infiltratorfs-${VERSION}-linux-native.run"
+          deb="dist/infiltratorfs_${VERSION}_amd64.deb"
+          test -s "$installer"
+          test -s "$deb"
+          "$installer" --verify
+          test "$(dpkg-deb --field "$deb" Version)" = "$VERSION"
+          contents="$RUNNER_TEMP/infiltratorfs-release-candidate-contents.txt"
+          dpkg-deb --contents "$deb" > "$contents"
+          ! grep -q 'usr/bin/infilfs-fuse$' "$contents"
+
+      - name: Upload exact Linux installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: InfiltratorFS-Linux
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
