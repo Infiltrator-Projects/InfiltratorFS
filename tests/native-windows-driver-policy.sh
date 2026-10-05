@@ -87,7 +87,12 @@ grep -Fq 'infs_volume_open_storage' "$service" || fail 'native service does not 
 grep -Fq 'IOCTL_INFILFS_NATIVE_RAW_READ' "$service" || fail 'native service does not route raw reads through the driver'
 grep -Fq 'IOCTL_INFILFS_NATIVE_RAW_WRITE' "$service" || fail 'native service does not route raw writes through the driver'
 grep -Fq '<PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>' "$project" || fail 'native driver project is not a WDK kernel-driver project'
-grep -Fq 'Class=FileSystem' "$inf" || fail 'native driver INF is not a filesystem driver package'
+grep -Fxq 'Class=InfiltratorFS' "$inf" || fail 'native driver INF has an unsupported setup class'
+grep -Fxiq 'ClassGuid={099E2F6B-75F8-4ED7-8C04-6B21F7749206}' "$inf" || fail 'native driver INF setup class GUID does not match InfiltratorFS'
+grep -Fxq '[SourceDisksFiles]' "$inf" || fail 'native driver INF has no source file table'
+grep -Fxq 'infiltratorfs-native.sys=1,,' "$inf" || fail 'native driver INF source file table omits the driver'
+grep -Fq '<FileDigestAlgorithm>sha256</FileDigestAlgorithm>' "$project" || fail 'native driver signing must use SHA-256'
+grep -Fq '<FilesToPackage Include="$(TargetPath)" />' "$project" || fail 'native driver package omits its binary'
 grep -Fq 'ServiceType=2' "$inf" || fail 'native driver INF is not installing a filesystem driver service'
 
 if grep -Eiq 'winfsp|dokan|fuse' "$driver" "$service" "$protocol"; then

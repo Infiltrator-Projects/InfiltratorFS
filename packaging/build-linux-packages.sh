@@ -55,7 +55,7 @@ for file in Makefile infiltratorfs_core.c infiltratorfs_cpu.c infiltratorfs_cryp
             infiltratorfs_index_tree.c infiltratorfs_extent_tree.c infiltratorfs_directory_tree.c \
             infiltratorfs_rw.inc \
             infiltratorfs_rw_legacy.inc infiltratorfs_checksum_cache.c infiltratorfs_checksum_store.c infiltratorfs_locator_cache.c infiltratorfs_rw_data.inc \
-            infiltratorfs_rw_namespace.inc infiltratorfs_read_cache.c \
+            infiltratorfs_rw_namespace.inc infiltratorfs_rw_namespace_exchange.inc infiltratorfs_read_cache.c \
             infiltratorfs_pagecache.c infiltratorfs_linux_meta_codec.c infiltratorfs_shared_ownership.c infiltratorfs_orphan_scan.c infiltratorfs_name_policy.c infiltratorfs_media.c infiltratorfs_linux_meta.inc \
             infiltratorfs_resize.c infiltratorfs_quota.inc \
             infiltratorfs_defrag.inc infiltratorfs_ioctl.h; do
@@ -166,6 +166,7 @@ for required in \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_locator_cache.c$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_rw_data.inc$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_rw_namespace.inc$" \
+    "usr/src/infiltratorfs-${package_version}/infiltratorfs_rw_namespace_exchange.inc$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_read_cache.c$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_pagecache.c$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_linux_meta_codec.c$" \
@@ -313,7 +314,7 @@ verify_installer() {
         kernel/infiltratorfs_parallel_alloc.c kernel/infiltratorfs_extent_tree.c \
         kernel/infiltratorfs_rw_legacy.inc kernel/infiltratorfs_checksum_cache.c kernel/infiltratorfs_locator_cache.c \
         kernel/infiltratorfs_rw_data.inc \
-        kernel/infiltratorfs_rw_namespace.inc kernel/infiltratorfs_read_cache.c \
+        kernel/infiltratorfs_rw_namespace.inc kernel/infiltratorfs_rw_namespace_exchange.inc kernel/infiltratorfs_read_cache.c \
         kernel/infiltratorfs_pagecache.c kernel/infiltratorfs_linux_meta_codec.c kernel/infiltratorfs_name_policy.c kernel/infiltratorfs_linux_meta.inc \
         kernel/infiltratorfs_resize.c kernel/infiltratorfs_quota.inc \
         kernel/infiltratorfs_defrag.inc kernel/infiltratorfs_ioctl.h; do
