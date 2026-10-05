@@ -1,11 +1,15 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 name: One-shot obsolete read chain cleanup
+
 on:
   push:
     branches: [main]
-    paths: [.github/workflows/one-shot-read-chain-cleanup.yml]
+    paths:
+      - .github/workflows/one-shot-read-chain-cleanup.yml
+
 permissions:
   contents: write
+
 jobs:
   cleanup:
     runs-on: ubuntu-latest
@@ -14,6 +18,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - name: Remove obsolete read chain
         shell: bash
         run: |
@@ -22,35 +27,57 @@ jobs:
           from pathlib import Path
 
           def drop_function(path, name):
-              p = Path(path); text = p.read_text(); needle = name + '('
+              p = Path(path)
+              text = p.read_text()
+              needle = name + '('
               hits = text.count(needle)
-              if hits != 1: raise SystemExit(f'{path}: expected one {needle}, found {hits}')
+              if hits != 1:
+                  raise SystemExit(f'{path}: expected one {needle}, found {hits}')
               n = text.index(needle)
               start = text.rfind('\nstatic ', 0, n)
               start = 0 if start < 0 else start + 1
               brace = text.find('{', n)
-              if brace < 0: raise SystemExit(f'{path}: no body for {name}')
-              depth = 0; i = brace; state = 'code'; quote = ''
+              if brace < 0:
+                  raise SystemExit(f'{path}: no body for {name}')
+              depth = 0
+              i = brace
+              state = 'code'
+              quote = ''
               while i < len(text):
-                  c = text[i]; nxt = text[i+1] if i+1 < len(text) else ''
+                  c = text[i]
+                  nxt = text[i + 1] if i + 1 < len(text) else ''
                   if state == 'code':
-                      if c == '/' and nxt == '*': state='block'; i += 2; continue
-                      if c == '/' and nxt == '/': state='line'; i += 2; continue
-                      if c in ('"', "'"): state='string'; quote=c; i += 1; continue
-                      if c == '{': depth += 1
+                      if c == '/' and nxt == '*':
+                          state = 'block'; i += 2; continue
+                      if c == '/' and nxt == '/':
+                          state = 'line'; i += 2; continue
+                      if c in ('"', "'"):
+                          state = 'string'; quote = c; i += 1; continue
+                      if c == '{':
+                          depth += 1
                       elif c == '}':
                           depth -= 1
                           if depth == 0:
                               end = i + 1
-                              while end < len(text) and text[end] in ' \t': end += 1
-                              if end < len(text) and text[end] == '\n': end += 1
-                              if end < len(text) and text[end] == '\n': end += 1
-                              p.write_text(text[:start] + text[end:]); return
-                  elif state == 'block' and c == '*' and nxt == '/': state='code'; i += 2; continue
-                  elif state == 'line' and c == '\n': state='code'
+                              while end < len(text) and text[end] in ' \t':
+                                  end += 1
+                              if end < len(text) and text[end] == '\n':
+                                  end += 1
+                              if end < len(text) and text[end] == '\n':
+                                  end += 1
+                              p.write_text(text[:start] + text[end:])
+                              return
+                  elif state == 'block':
+                      if c == '*' and nxt == '/':
+                          state = 'code'; i += 2; continue
+                  elif state == 'line':
+                      if c == '\n':
+                          state = 'code'
                   elif state == 'string':
-                      if c == '\\': i += 2; continue
-                      if c == quote: state='code'
+                      if c == '\\':
+                          i += 2; continue
+                      if c == quote:
+                          state = 'code'
                   i += 1
               raise SystemExit(f'{path}: unterminated {name}')
 
@@ -60,48 +87,53 @@ jobs:
           data = Path('kernel/infiltratorfs_rw_data.inc')
           s = data.read_text()
           alias = '\n#define infilfs_file_read_iter infilfs_file_read_iter_verified\n'
-          if s.count(alias) != 1: raise SystemExit('verified read alias changed')
+          if s.count(alias) != 1:
+              raise SystemExit('verified read alias changed')
           data.write_text(s.replace(alias, '\n', 1))
 
           rw = Path('kernel/infiltratorfs_rw.inc')
           s = rw.read_text()
-          bridge = '''#ifdef infilfs_file_read_iter
-#undef infilfs_file_read_iter
-#endif
-#define infilfs_file_read_iter infilfs_file_read_iter_atime
-
-'''
-          if s.count(bridge) != 1: raise SystemExit('atime alias bridge changed')
+          bridge = '#ifdef infilfs_file_read_iter\n#undef infilfs_file_read_iter\n#endif\n#define infilfs_file_read_iter infilfs_file_read_iter_atime\n\n'
+          if s.count(bridge) != 1:
+              raise SystemExit('atime alias bridge changed')
           s = s.replace(bridge, '', 1)
-          old = 'static __maybe_unused ssize_t infilfs_file_read_iter_atime('
-          if s.count(old) != 1: raise SystemExit('atime reader declaration changed')
-          rw.write_text(s.replace(old, 'static ssize_t infilfs_file_read_iter_atime(', 1))
+          old_decl = 'static __maybe_unused ssize_t infilfs_file_read_iter_atime('
+          if s.count(old_decl) != 1:
+              raise SystemExit('atime reader declaration changed')
+          rw.write_text(s.replace(old_decl, 'static ssize_t infilfs_file_read_iter_atime(', 1))
 
           policy = Path('tests/native-kernel-maintainability-policy.sh')
           s = policy.read_text()
-          old = '''grep -Fq '#define infilfs_file_read_iter infilfs_file_read_iter_atime' "$rw" || \\
-    fail 'read-cache/atime alias bridge changed'
-'''
-          new = '''! grep -Fq '#define infilfs_file_read_iter' "$rw" || \\
-    fail 'read callback alias bridge returned in RW compositor'
-! grep -Fq '#define infilfs_file_read_iter' "$data" || \\
-    fail 'read callback alias bridge returned in RW data layer'
-grep -Fq 'return infilfs_file_read_iter_atime(iocb, to);' "$rw" || \\
-    fail 'direct-read dispatcher no longer calls the live atime reader explicitly'
-! grep -Fq 'infilfs_file_read_iter_verified' "$data" || \\
-    fail 'dead verified read callback returned'
-! grep -Fq 'static __maybe_unused ssize_t infilfs_file_read_iter(' "$driver" || \\
-    fail 'dead pre-native core read callback returned'
-'''
-          if s.count(old) != 1: raise SystemExit('read policy bridge check changed')
+          old_lines = [
+              "grep -Fq '#define infilfs_file_read_iter infilfs_file_read_iter_atime' \"$rw\" || \\",
+              "    fail 'read-cache/atime alias bridge changed'",
+          ]
+          old = '\n'.join(old_lines) + '\n'
+          new_lines = [
+              "! grep -Fq '#define infilfs_file_read_iter' \"$rw\" || \\",
+              "    fail 'read callback alias bridge returned in RW compositor'",
+              "! grep -Fq '#define infilfs_file_read_iter' \"$data\" || \\",
+              "    fail 'read callback alias bridge returned in RW data layer'",
+              "grep -Fq 'return infilfs_file_read_iter_atime(iocb, to);' \"$rw\" || \\",
+              "    fail 'direct-read dispatcher no longer calls the live atime reader explicitly'",
+              "! grep -Fq 'infilfs_file_read_iter_verified' \"$data\" || \\",
+              "    fail 'dead verified read callback returned'",
+              "! grep -Fq 'static __maybe_unused ssize_t infilfs_file_read_iter(' \"$driver\" || \\",
+              "    fail 'dead pre-native core read callback returned'",
+          ]
+          new = '\n'.join(new_lines) + '\n'
+          if s.count(old) != 1:
+              raise SystemExit('read policy bridge check changed')
           policy.write_text(s.replace(old, new, 1))
           PY
+
           git diff --check
           bash tests/native-kernel-maintainability-policy.sh .
           ! git grep -n 'infilfs_file_read_iter_verified' -- kernel
           ! git grep -n '#define infilfs_file_read_iter' -- kernel/infiltratorfs_rw.inc kernel/infiltratorfs_rw_data.inc
           grep -Fq '.read_iter = infilfs_file_read_iter_dispatch' kernel/infiltratorfs_core.c
           grep -Fq 'return infilfs_file_read_iter_atime(iocb, to);' kernel/infiltratorfs_rw.inc
+
       - name: Commit source cleanup
         shell: bash
         run: |
