@@ -25,7 +25,7 @@ data_alloc="$(sed -n '/static int infilfs_native_alloc_data_exact_reserved(/,/^}
 grep -Fq 'infilfs_rw_free_extent_choose_forward' <<<"$data_alloc"
 grep -Fq 'for (scanned = 0; scanned < total - 1u; ++scanned)' <<<"$data_alloc"
 
-tx_begin="$(sed -n '/static int infilfs_rw_tx_begin(/,/^}/p' "$legacy")"
+tx_begin="$(sed -n '/static int infilfs_rw_tx_begin_legacy(/,/^}/p' "$legacy")"
 ! grep -Fq 'infilfs_rw_free_extent_index_rebuild' <<<"$tx_begin"
 grep -Fq 'infilfs_rw_free_extent_index_take(tx, sbi);' <<<"$tx_begin"
 
