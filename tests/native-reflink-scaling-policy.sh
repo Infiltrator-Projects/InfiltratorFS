@@ -3,15 +3,8 @@
 set -euo pipefail
 
 root="${1:-.}"
-reflink="$(mktemp)"
+reflink="$root/kernel/infiltratorfs_defrag.inc"
 ownership="$root/kernel/infiltratorfs_shared_ownership.c"
-trap 'rm -f "$reflink"' EXIT
-cat \
-    "$root/kernel/infiltratorfs_reflink_checksum.inc" \
-    "$root/kernel/infiltratorfs_reflink_full.inc" \
-    "$root/kernel/infiltratorfs_reflink_range_helpers.inc" \
-    "$root/kernel/infiltratorfs_reflink_range.inc" \
-    "$root/kernel/infiltratorfs_reflink_ioctl.inc" > "$reflink"
 
 fail() { echo "native reflink scaling policy: $*" >&2; exit 1; }
 
