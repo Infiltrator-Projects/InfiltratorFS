@@ -364,11 +364,18 @@ static infs_status link_file_tx(struct infs_volume *vol,
         if (destination.type != INFS_OBJECT_FILE &&
             destination.type != INFS_OBJECT_SYMLINK)
             return INFS_STATUS_NOT_SUPPORTED;
-        status = destroy_replaced_object_tx(vol, &destination);
-        if (status != INFS_STATUS_OK)
-            return status;
+        /*
+         * Retire the namespace reference before retiring the indexed object.
+         * This matches ordinary unlink ordering and keeps every intermediate
+         * transaction state internally consistent for directory/index helpers.
+         * The whole mutation remains atomic because publication happens only
+         * after the replacement link, source link count and parent are staged.
+         */
         status = dir_remove_volume(
             vol, parent_block, name, NULL);
+        if (status != INFS_STATUS_OK)
+            return status;
+        status = destroy_replaced_object_tx(vol, &destination);
         if (status != INFS_STATUS_OK)
             return status;
         parent_payload = (struct infs_directory_payload_disk *)(
