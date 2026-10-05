@@ -383,22 +383,32 @@ for include in "${ordered[@]}"; do
     previous="$line"
 done
 
-# The include-time symbol-renaming bridge is retired. Live compatibility
-# primitives carry explicit _legacy names in their defining source, and VFS
-# callbacks are named directly by the operation tables in core.c.
+# The include-time symbol-renaming bridge is retired. Only the transaction and
+# mount-lifecycle compatibility primitives remain explicitly named _legacy;
+# obsolete VFS callbacks and their private helper chains must stay deleted.
 for name in \
     infilfs_rw_tx_begin \
-    infilfs_file_write_iter \
-    infilfs_rw_create \
-    infilfs_rw_mkdir \
-    infilfs_rw_setattr \
     infilfs_rw_mount_init \
     infilfs_rw_mount_destroy; do
     ! grep -Eq "^#(define|undef)[[:space:]]+${name}([[:space:]]|$)" "$rw" || \
         fail "retired legacy alias bridge returned for $name"
     grep -Fq "${name}_legacy" "$kernel/infiltratorfs_rw_legacy.inc" || \
-        fail "explicit legacy implementation name missing for $name"
+        fail "explicit live legacy primitive missing for $name"
 done
+for retired in \
+    infilfs_file_write_iter_legacy \
+    infilfs_rw_create_legacy \
+    infilfs_rw_mkdir_legacy \
+    infilfs_rw_setattr_legacy \
+    infilfs_rw_create_object \
+    infilfs_rw_create_named_child \
+    infilfs_rw_create_child \
+    infilfs_rw_replace_inline_locked; do
+    ! grep -Fq "$retired" "$kernel/infiltratorfs_rw_legacy.inc" || \
+        fail "dead legacy RW path returned: $retired"
+done
+grep -Fq 'static int infilfs_rw_load_inline(' "$kernel/infiltratorfs_rw_legacy.inc" || \
+    fail 'live inline reader was removed with dead inline writer'
 ! grep -Fq '#define simple_statfs infilfs_statfs' "$rw" || \
     fail 'VFS statfs callback injection macro returned'
 ! grep -Fq '#define infilfs_get_link infilfs_get_link' "$rw" || \
