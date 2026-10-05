@@ -41,14 +41,6 @@ jobs:
           if text.count(block) != 1:
               raise SystemExit('dead file-block wrapper shape changed')
           core.write_text(text.replace(block, '', 1))
-
-          policy = Path('tests/native-kernel-maintainability-policy.sh')
-          text = policy.read_text()
-          anchor = '    infilfs_vfs_decode_time \\\n    infilfs_native_available_data_blocks; do\n'
-          replacement = '    infilfs_vfs_decode_time \\\n    infilfs_map_file_block \\\n    infilfs_native_available_data_blocks; do\n'
-          if text.count(anchor) != 1:
-              raise SystemExit('retired helper list anchor changed')
-          policy.write_text(text.replace(anchor, replacement, 1))
           PY
 
       - name: Validate cleanup
@@ -67,7 +59,7 @@ jobs:
           git config user.name 'The First Infiltrator'
           git config user.email 'infiltratr@yandex.com'
           git rm .github/workflows/one-shot-remove-dead-map-wrapper.yml
-          git add kernel/infiltratorfs_core.c tests/native-kernel-maintainability-policy.sh
+          git add kernel/infiltratorfs_core.c
           git diff --cached --check
           git commit -m 'kernel: remove dead file-block wrapper'
           git push origin HEAD:main
