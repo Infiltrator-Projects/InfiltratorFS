@@ -1,0 +1,84 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: One-shot Windows hold release policy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/one-shot-windows-hold-release.yml
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Put Windows qualification and artifacts on manual hold
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          ci = Path('.github/workflows/ci.yml')
+          text = ci.read_text()
+          old = '''  windows:\n    name: Windows native app and portable core\n    needs: [linux]\n    runs-on: windows-latest\n'''
+          new = '''  windows:\n    name: Windows native app and portable core\n    # Windows native qualification is deliberately on hold. Keep the job\n    # available for deliberate manual qualification without gating Linux\n    # source, packages, or release publication.\n    if: github.event_name == 'workflow_dispatch'\n    needs: [linux]\n    runs-on: windows-latest\n'''
+          if text.count(old) != 1:
+              raise SystemExit('Windows job header changed')
+          ci.write_text(text.replace(old, new, 1))
+
+          artifacts = Path('.github/workflows/release-artifacts.yml')
+          text = artifacts.read_text()
+          old = '''          gh run download "$SOURCE_RUN_ID" --name InfiltratorFS-Linux --dir "$RUNNER_TEMP/build-linux"\n          gh run download "$SOURCE_RUN_ID" --name InfiltratorFS-Windows --dir "$RUNNER_TEMP/build-windows"\n          installer="$RUNNER_TEMP/build-linux/infiltratorfs-${VERSION}-linux-native.run"\n          test -s "$installer"\n          chmod 0755 "$installer"\n          test -s "$RUNNER_TEMP/build-windows/InfiltratorFS-Windows-${VERSION}.exe"\n'''
+          new = '''          gh run download "$SOURCE_RUN_ID" --name InfiltratorFS-Linux --dir "$RUNNER_TEMP/build-linux"\n          installer="$RUNNER_TEMP/build-linux/infiltratorfs-${VERSION}-linux-native.run"\n          test -s "$installer"\n          chmod 0755 "$installer"\n'''
+          if text.count(old) != 1:
+              raise SystemExit('release artifact download block changed')
+          text = text.replace(old, new, 1)
+          old = '''          deb="infiltratorfs_${VERSION}_amd64.deb"\n          installer="infiltratorfs-${VERSION}-linux-native.run"\n          windows="InfiltratorFS-Windows-${VERSION}.exe"\n          cp "dist/$deb" release-assets/\n          cp "dist/$installer" release-assets/\n          cp "$RUNNER_TEMP/build-windows/$windows" release-assets/\n'''
+          new = '''          deb="infiltratorfs_${VERSION}_amd64.deb"\n          installer="infiltratorfs-${VERSION}-linux-native.run"\n          cp "dist/$deb" release-assets/\n          cp "dist/$installer" release-assets/\n'''
+          if text.count(old) != 1:
+              raise SystemExit('release asset assembly block changed')
+          text = text.replace(old, new, 1)
+          old = '''          test -s "release-assets/$windows"\n'''
+          if text.count(old) != 1:
+              raise SystemExit('Windows release asset validation changed')
+          artifacts.write_text(text.replace(old, '', 1))
+
+          publisher = Path('.github/workflows/release-packages.yml')
+          text = publisher.read_text()
+          old = '''          deb="infiltratorfs_${VERSION}_amd64.deb"\n          installer="infiltratorfs-${VERSION}-linux-native.run"\n          windows="InfiltratorFS-Windows-${VERSION}.exe"\n          for asset in "$deb" "$installer" "$windows"; do test -s "release-assets/$asset"; done\n'''
+          new = '''          deb="infiltratorfs_${VERSION}_amd64.deb"\n          installer="infiltratorfs-${VERSION}-linux-native.run"\n          for asset in "$deb" "$installer"; do test -s "release-assets/$asset"; done\n'''
+          if text.count(old) != 1:
+              raise SystemExit('publisher core asset validation changed')
+          publisher.write_text(text.replace(old, new, 1))
+          PY
+
+      - name: Validate release policy update
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          grep -Fq "if: github.event_name == 'workflow_dispatch'" .github/workflows/ci.yml
+          ! grep -Fq 'InfiltratorFS-Windows --dir' .github/workflows/release-artifacts.yml
+          ! grep -Fq 'build-windows' .github/workflows/release-artifacts.yml
+          ! grep -Fq 'windows="InfiltratorFS-Windows-' .github/workflows/release-artifacts.yml
+          ! grep -Fq 'windows="InfiltratorFS-Windows-' .github/workflows/release-packages.yml
+          grep -Fq 'for asset in "$deb" "$installer";' .github/workflows/release-packages.yml
+
+      - name: Commit policy change
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'The First Infiltrator'
+          git config user.email 'infiltratr@yandex.com'
+          git add .github/workflows/ci.yml .github/workflows/release-artifacts.yml .github/workflows/release-packages.yml
+          git diff --cached --check
+          git commit -m 'ci: defer Windows qualification and release artifacts'
+          git push origin HEAD:main
