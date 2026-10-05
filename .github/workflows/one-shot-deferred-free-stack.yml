@@ -98,3 +98,5 @@ jobs:
           git diff --cached --check
           git commit -m 'kernel: move deferred-free scratch off stack'
           git push origin HEAD:main
+
+# retriggered 2026-10-06 for release finalization
