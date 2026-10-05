@@ -20,30 +20,6 @@ jobs:
         uses: microsoft/setup-msbuild@v2
         with:
           msbuild-architecture: x64
-      - name: Patch validated source warning
-        shell: pwsh
-        run: |
-          @'
-          from pathlib import Path
-          p = Path('windows-driver/infiltratorfs-native.c')
-          s = p.read_text(encoding='utf-8')
-          marker = 'static NTSTATUS InfilfsCleanup(PDEVICE_OBJECT DeviceObject, PIRP Irp)'
-          start = s.index(marker)
-          end = s.index('static NTSTATUS InfilfsClose(', start)
-          block = s[start:end]
-          lines = block.splitlines(keepends=True)
-          kept = []
-          removed = 0
-          for line in lines:
-              if ('PCUNICODE_STRING HandlePath' in line and
-                  'InfilfsHandlePath(FileObject, Fcb)' in line):
-                  removed += 1
-                  continue
-              kept.append(line)
-          if removed != 1:
-              raise SystemExit(f'expected exactly one unused cleanup HandlePath, found {removed}')
-          p.write_text(s[:start] + ''.join(kept) + s[end:], encoding='utf-8')
-          '@ | python -
       - name: Build native Windows filesystem driver
         shell: pwsh
         run: |
