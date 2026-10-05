@@ -19,7 +19,7 @@ jobs:
     name: Qualify Linux release candidate
     if: startsWith(github.event.head_commit.message, 'Release ')
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - name: Check out exact source
         uses: actions/checkout@v6

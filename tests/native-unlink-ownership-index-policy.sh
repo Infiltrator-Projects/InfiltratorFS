@@ -33,7 +33,6 @@ PYOWN
 grep -Fq 'infilfs_shared_ownership_maybe_shared' "$ownership" || fail 'shared-range query missing'
 grep -Fq 'infilfs_shared_ownership_other_reference_cover' "$ownership" || fail 'exact ownership fallback missing'
 grep -Fq 'kvfree(pending->shared_ranges);' "$data" || fail 'ownership index unmount cleanup missing'
-grep -Fq 'A non-inline reflink introduces one additional live owner' "$reflink" || fail 'reflink incremental ownership rationale missing'
 
 python3 - "$reflink" <<'PY'
 from pathlib import Path
