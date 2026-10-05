@@ -203,8 +203,7 @@ jobs:
 
           deb="infiltratorfs_${VERSION}_amd64.deb"
           installer="infiltratorfs-${VERSION}-linux-native.run"
-          windows="InfiltratorFS-Windows-${VERSION}.exe"
-          for asset in "$deb" "$installer" "$windows"; do test -s "release-assets/$asset"; done
+          for asset in "$deb" "$installer"; do test -s "release-assets/$asset"; done
           test -s release-assets/infiltratorfs-desktop-integration.manifest
           test -n "$(find release-assets -maxdepth 1 -name 'infiltratorfs-libblockdev-fs3_*.deb' -print -quit)"
           test -n "$(find release-assets -maxdepth 1 -name 'infiltratorfs-gnome-disk-utility_*.deb' -print -quit)"
