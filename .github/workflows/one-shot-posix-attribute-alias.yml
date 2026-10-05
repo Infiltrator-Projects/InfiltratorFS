@@ -1,0 +1,114 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: One-shot POSIX attribute alias cleanup
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/one-shot-posix-attribute-alias.yml
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Retire POSIX attribute alias bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          rw = Path('kernel/infiltratorfs_rw.inc')
+          text = rw.read_text()
+          old = '''/*
+           * Namespace symlink creation is compiled after the legacy layer and aliases
+           * the same checked credential-aware initializer used by native file/directory
+           * creation. Every newly staged POSIX object therefore fails closed before
+           * publication if the creator identity cannot be represented on disk.
+           */
+          #define INFILFS_NAMESPACE_EXCHANGE_EXTERNAL 1
+          #define infilfs_rw_fill_common_attributes infilfs_posix_fill_common_attributes
+          #include "infiltratorfs_rw_namespace.inc"
+          #undef infilfs_rw_fill_common_attributes
+          #undef INFILFS_NAMESPACE_EXCHANGE_EXTERNAL
+          '''
+          old = '\n'.join(line[10:] if line.startswith('          ') else line for line in old.splitlines()) + '\n'
+          new = '''/*
+           * Namespace symlink creation uses the same checked credential-aware
+           * initializer as native file/directory creation. Every newly staged POSIX
+           * object therefore fails closed before publication if the creator identity
+           * cannot be represented on disk.
+           */
+          #define INFILFS_NAMESPACE_EXCHANGE_EXTERNAL 1
+          #include "infiltratorfs_rw_namespace.inc"
+          #undef INFILFS_NAMESPACE_EXCHANGE_EXTERNAL
+          '''
+          new = '\n'.join(line[10:] if line.startswith('          ') else line for line in new.splitlines()) + '\n'
+          if text.count(old) != 1:
+              raise SystemExit('RW attribute alias composition changed')
+          rw.write_text(text.replace(old, new, 1))
+
+          ns = Path('kernel/infiltratorfs_rw_namespace.inc')
+          text = ns.read_text()
+          old_call = 'ret = infilfs_rw_fill_common_attributes(\n        &payload->attributes, &payload->posix, 0777, 1);'
+          new_call = 'ret = infilfs_posix_fill_common_attributes(\n        &payload->attributes, &payload->posix, 0777, 1);'
+          if text.count(old_call) != 1:
+              raise SystemExit('symlink attribute initializer call changed')
+          ns.write_text(text.replace(old_call, new_call, 1))
+
+          policy = Path('tests/native-kernel-maintainability-policy.sh')
+          text = policy.read_text()
+          old_check = '''grep -Fq 'ret = infilfs_rw_fill_common_attributes(' <<<"$symlink_object" || \\
+              fail 'native symlink creation bypasses checked creator identity'
+          '''
+          old_check = '\n'.join(line[10:] if line.startswith('          ') else line for line in old_check.splitlines()) + '\n'
+          new_check = '''grep -Fq 'ret = infilfs_posix_fill_common_attributes(' <<<"$symlink_object" || \\
+              fail 'native symlink creation bypasses checked creator identity'
+          '''
+          new_check = '\n'.join(line[10:] if line.startswith('          ') else line for line in new_check.splitlines()) + '\n'
+          if text.count(old_check) != 1:
+              raise SystemExit('symlink creator identity policy check changed')
+          text = text.replace(old_check, new_check, 1)
+          old_alias = '''grep -Fq '#define infilfs_rw_fill_common_attributes infilfs_posix_fill_common_attributes' "$rw" || \\
+              fail 'POSIX attribute alias bridge changed'
+          '''
+          old_alias = '\n'.join(line[10:] if line.startswith('          ') else line for line in old_alias.splitlines()) + '\n'
+          new_alias = '''! grep -Fq 'infilfs_rw_fill_common_attributes' "$rw" || \\
+              fail 'POSIX attribute alias bridge returned in RW compositor'
+          ! grep -Fq 'infilfs_rw_fill_common_attributes' "$namespace" || \\
+              fail 'namespace layer regained obsolete attribute alias name'
+          '''
+          new_alias = '\n'.join(line[10:] if line.startswith('          ') else line for line in new_alias.splitlines()) + '\n'
+          if text.count(old_alias) != 1:
+              raise SystemExit('attribute alias policy check changed')
+          policy.write_text(text.replace(old_alias, new_alias, 1))
+          PY
+
+      - name: Validate alias cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          ! git grep -n 'infilfs_rw_fill_common_attributes' -- kernel tests/native-kernel-maintainability-policy.sh
+          grep -Fq 'ret = infilfs_posix_fill_common_attributes(' kernel/infiltratorfs_rw_namespace.inc
+          bash tests/native-kernel-maintainability-policy.sh .
+
+      - name: Commit cleanup and remove one-shot workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'The First Infiltrator'
+          git config user.email 'infiltratr@yandex.com'
+          git rm .github/workflows/one-shot-posix-attribute-alias.yml
+          git add kernel/infiltratorfs_rw.inc kernel/infiltratorfs_rw_namespace.inc tests/native-kernel-maintainability-policy.sh
+          git diff --cached --check
+          git commit -m 'kernel: retire POSIX attribute alias bridge'
+          git push origin HEAD:main
