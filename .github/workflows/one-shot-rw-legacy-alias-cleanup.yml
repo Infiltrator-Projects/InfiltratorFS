@@ -65,11 +65,11 @@ jobs:
 
           policy_path = Path('tests/native-kernel-maintainability-policy.sh')
           policy = policy_path.read_text()
-          old_mount = "mount_init_body=\"$(sed -n '/int infilfs_rw_mount_init(struct super_block \\\\*sb)/,/^}/p' \"$kernel/infiltratorfs_rw_legacy.inc\")\""
-          new_mount = "mount_init_body=\"$(sed -n '/int infilfs_rw_mount_init_legacy(struct super_block \\\\*sb)/,/^}/p' \"$kernel/infiltratorfs_rw_legacy.inc\")\""
-          if old_mount not in policy:
-              raise SystemExit('mount-init policy probe not found')
-          policy = policy.replace(old_mount, new_mount, 1)
+          old_mount_name = r'infilfs_rw_mount_init(struct super_block \*sb)'
+          new_mount_name = r'infilfs_rw_mount_init_legacy(struct super_block \*sb)'
+          if policy.count(old_mount_name) != 1:
+              raise SystemExit(f'mount-init policy probe count changed: {policy.count(old_mount_name)}')
+          policy = policy.replace(old_mount_name, new_mount_name, 1)
 
           start = policy.find('# Macro-renamed entry points are migration debt.')
           end = policy.find('grep -Fq \'#include "infiltratorfs_rw_data.inc"\' "$rw" || \\\n', start)
