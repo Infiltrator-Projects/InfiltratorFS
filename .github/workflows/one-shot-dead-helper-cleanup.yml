@@ -1,0 +1,144 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: One-shot dead kernel helper cleanup
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/one-shot-dead-helper-cleanup.yml
+
+permissions:
+  contents: write
+
+jobs:
+  refactor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Remove proven-unreferenced helpers
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          targets = [
+              (Path('kernel/infiltratorfs_core.c'), 'infilfs_checkpoint_bitmap_get'),
+              (Path('kernel/infiltratorfs_rw.inc'), 'infilfs_vfs_attributes'),
+              (Path('kernel/infiltratorfs_rw_data.inc'), 'infilfs_native_available_data_blocks'),
+          ]
+
+          def strip_function(path: Path, name: str) -> None:
+              text = path.read_text()
+              if text.count(name) != 1:
+                  raise SystemExit(f'{path}: expected exactly one occurrence of {name}, found {text.count(name)}')
+              name_pos = text.index(name)
+              start = text.rfind('\nstatic ', 0, name_pos)
+              if start < 0:
+                  if text.startswith('static '):
+                      start = 0
+                  else:
+                      raise SystemExit(f'{path}: could not find static declaration start for {name}')
+              else:
+                  start += 1
+              brace = text.find('{', name_pos)
+              if brace < 0:
+                  raise SystemExit(f'{path}: could not find function body for {name}')
+
+              i = brace
+              depth = 0
+              state = 'code'
+              quote = ''
+              while i < len(text):
+                  c = text[i]
+                  n = text[i + 1] if i + 1 < len(text) else ''
+                  if state == 'code':
+                      if c == '/' and n == '*':
+                          state = 'block_comment'; i += 2; continue
+                      if c == '/' and n == '/':
+                          state = 'line_comment'; i += 2; continue
+                      if c in ('"', "'"):
+                          state = 'string'; quote = c; i += 1; continue
+                      if c == '{':
+                          depth += 1
+                      elif c == '}':
+                          depth -= 1
+                          if depth == 0:
+                              end = i + 1
+                              while end < len(text) and text[end] in ' \t':
+                                  end += 1
+                              if end < len(text) and text[end] == '\n':
+                                  end += 1
+                              if end < len(text) and text[end] == '\n':
+                                  end += 1
+                              path.write_text(text[:start] + text[end:])
+                              return
+                  elif state == 'block_comment':
+                      if c == '*' and n == '/':
+                          state = 'code'; i += 2; continue
+                  elif state == 'line_comment':
+                      if c == '\n':
+                          state = 'code'
+                  elif state == 'string':
+                      if c == '\\':
+                          i += 2; continue
+                      if c == quote:
+                          state = 'code'
+                  i += 1
+              raise SystemExit(f'{path}: unterminated function body for {name}')
+
+          for path, name in targets:
+              strip_function(path, name)
+
+          policy_path = Path('tests/native-kernel-maintainability-policy.sh')
+          policy = policy_path.read_text()
+          marker = "printf 'Native kernel locking/composition maintainability policy guard passed.\\n'\n"
+          if policy.count(marker) != 1:
+              raise SystemExit('maintainability policy terminal marker changed')
+          guard = '''# Keep proven-unreferenced compatibility helpers retired. These had no callers
+          # and existed only behind __maybe_unused, so reintroducing them would recreate
+          # dead maintenance surface without changing runtime behaviour.
+          for retired in \\
+              infilfs_checkpoint_bitmap_get \\
+              infilfs_vfs_attributes \\
+              infilfs_native_available_data_blocks; do
+              ! grep -Rq --include='*.c' --include='*.inc' "$retired" "$kernel" || \\
+                  fail "dead kernel helper returned: $retired"
+          done
+
+          '''
+          guard = '\n'.join(line[10:] if line.startswith('          ') else line
+                            for line in guard.splitlines()) + '\n'
+          policy_path.write_text(policy.replace(marker, guard + marker, 1))
+          PY
+
+      - name: Validate cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          for retired in \
+            infilfs_checkpoint_bitmap_get \
+            infilfs_vfs_attributes \
+            infilfs_native_available_data_blocks; do
+            ! git grep -n "$retired" -- kernel ':!tests' || exit 1
+          done
+          bash tests/native-kernel-maintainability-policy.sh .
+          git diff --stat
+          git diff -- kernel/infiltratorfs_core.c kernel/infiltratorfs_rw.inc kernel/infiltratorfs_rw_data.inc tests/native-kernel-maintainability-policy.sh
+
+      - name: Commit cleanup and remove one-shot workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'The First Infiltrator'
+          git config user.email 'infiltratr@yandex.com'
+          git rm .github/workflows/one-shot-dead-helper-cleanup.yml
+          git add kernel/infiltratorfs_core.c kernel/infiltratorfs_rw.inc kernel/infiltratorfs_rw_data.inc tests/native-kernel-maintainability-policy.sh
+          git diff --cached --check
+          git commit -m 'kernel: remove dead compatibility helpers'
+          git push origin HEAD:main
