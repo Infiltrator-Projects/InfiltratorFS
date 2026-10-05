@@ -85,7 +85,7 @@ run_as_root() {
 
 require_no_active_infiltratorfs_mounts() {
     local active
-    active="$(findmnt -rn -t infiltratorfs,fuse.infilfs-fuse 2>/dev/null || true)"
+    active="$(findmnt -rn -t infiltratorfs 2>/dev/null || true)"
     if [[ -n "$active" ]]; then
         echo "InfiltratorFS: active mounts must be unmounted before upgrading the driver:" >&2
         printf '%s\n' "$active" >&2
@@ -194,7 +194,7 @@ if [[ "$MODE" == dry-run ]]; then
     printf 'InfiltratorFS %s native local-machine build installer\n' "$VERSION"
     printf 'Native package version: %s\n' "$NATIVE_PACKAGE_VERSION"
     printf 'Dry run only; no packages will be installed and no files will be changed.\n'
-    printf 'Any active native or legacy FUSE InfiltratorFS mount must be unmounted first.\n'
+    printf 'Any active InfiltratorFS mount must be unmounted first.\n'
     if (( ${#missing_packages[@]} > 0 )); then
         printf 'Missing build or runtime requirements:\n  %s\n' "${missing_packages[@]}"
         printf 'Commands that would install them:\n'
