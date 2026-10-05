@@ -1403,7 +1403,7 @@ static loff_t infilfs_file_remap_file_range(
     struct inode *source = file_inode(file_in);
     struct inode *destination = file_inode(file_out);
     struct infilfs_quota_reservation quota = {0};
-    loff_t source_size = i_size_read(source);
+    loff_t source_size;
     u64 old_destination_size;
     u64 new_destination_size;
     u64 logical_growth;
@@ -1413,35 +1413,70 @@ static loff_t infilfs_file_remap_file_range(
         return -EOPNOTSUPP;
     if (pos_in < 0 || pos_out < 0)
         return -EINVAL;
+    if (source == destination || !S_ISREG(source->i_mode) ||
+        !S_ISREG(destination->i_mode))
+        return -EINVAL;
+    if (source->i_sb != destination->i_sb)
+        return -EXDEV;
+
+    lock_two_nondirectories(source, destination);
+    source_size = i_size_read(source);
+    ret = -EINVAL;
     if (len == 0) {
         if (pos_in > source_size)
-            return -EINVAL;
+            goto out_inode;
         len = source_size - pos_in;
     }
     if (len <= 0 || pos_in > source_size || len > source_size - pos_in)
-        return -EINVAL;
+        goto out_inode;
 
     old_destination_size = (u64)i_size_read(destination);
-    if ((u64)pos_out > U64_MAX - (u64)len)
-        return -EOVERFLOW;
+    if ((u64)pos_out > (u64)LLONG_MAX - (u64)len) {
+        ret = -EOVERFLOW;
+        goto out_inode;
+    }
     new_destination_size =
         max_t(u64, old_destination_size, (u64)pos_out + (u64)len);
     logical_growth = new_destination_size - old_destination_size;
 
     ret = infilfs_quota_reserve_inode(destination, logical_growth, 0, &quota);
     if (ret)
-        return ret;
+        goto out_inode;
+
+    /*
+     * Extent replacement bypasses buffered I/O. Block new faults and writers,
+     * publish dirty source/destination data, and evict the old destination
+     * pages before changing its mapping. Existing shared mappings must refault
+     * too; otherwise read(2) and mmap keep returning the pre-clone bytes.
+     */
+    filemap_invalidate_lock_two(source->i_mapping, destination->i_mapping);
+    unmap_mapping_range(source->i_mapping, pos_in, len, 0);
+    unmap_mapping_range(destination->i_mapping, pos_out, len, 0);
+    ret = filemap_write_and_wait(source->i_mapping);
+    if (ret)
+        goto out_mapping;
+    ret = filemap_write_and_wait(destination->i_mapping);
+    if (ret)
+        goto out_mapping;
+    ret = invalidate_inode_pages2_range(destination->i_mapping,
+                                        pos_out >> PAGE_SHIFT,
+                                        (pos_out + len - 1) >> PAGE_SHIFT);
+    if (ret)
+        goto out_mapping;
 
     if (pos_in == 0 && pos_out == 0 && len == source_size && old_destination_size == 0)
         ret = infilfs_native_reflink_full(file_in, file_out);
     else
         ret = infilfs_native_reflink_range(file_in, pos_in, file_out, pos_out, len);
-    if (ret) {
+out_mapping:
+    filemap_invalidate_unlock_two(source->i_mapping, destination->i_mapping);
+    if (ret)
         infilfs_quota_reservation_abort(&quota);
-        return ret;
-    }
-    infilfs_quota_reservation_finish(&quota, logical_growth, 0);
-    return len;
+    else
+        infilfs_quota_reservation_finish(&quota, logical_growth, 0);
+out_inode:
+    unlock_two_nondirectories(source, destination);
+    return ret ? ret : len;
 }
 
 static long infilfs_file_ioctl(

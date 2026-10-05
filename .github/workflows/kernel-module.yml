@@ -961,6 +961,7 @@ jobs:
           sudo python3 - "$mountpoint/native-rw/reflink-range-source.bin"               "$mountpoint/native-rw/reflink-range-destination.bin" <<'PY'
           import fcntl
           import hashlib
+          import mmap
           import os
           import struct
           import sys
@@ -983,6 +984,8 @@ jobs:
 
           src_fd = os.open(src_path, os.O_RDONLY | os.O_CLOEXEC)
           dst_fd = os.open(dst_path, os.O_RDWR | os.O_CLOEXEC)
+          mapped = mmap.mmap(dst_fd, len(dst), access=mmap.ACCESS_READ)
+          assert mapped[:] == dst
           try:
               # _IOW(0x94, 13, struct file_clone_range), size 32.
               ficlonerange = (1 << 30) | (32 << 16) | (0x94 << 8) | 13
@@ -1003,12 +1006,20 @@ jobs:
                       except OSError as error:
                           print(f"Read at {offset}: {error}", flush=True)
                   raise AssertionError("FICLONERANGE must preserve every destination byte")
+              assert mapped[:] == expected, "Mapped readers must see the clone"
+              mapped.close()
+              os.posix_fadvise(dst_fd, 0, 0, os.POSIX_FADV_DONTNEED)
+              assert os.pread(dst_fd, len(expected), 0) == expected
               source_digest = hashlib.sha256(os.pread(src_fd, len(src), 0)).digest()
               patch = b'Z' * 4096
               assert os.pwrite(dst_fd, patch, dst_offset) == len(patch)
               os.fsync(dst_fd)
+              expected[dst_offset:dst_offset + len(patch)] = patch
+              assert os.pread(dst_fd, len(expected), 0) == expected
               assert hashlib.sha256(os.pread(src_fd, len(src), 0)).digest() == source_digest
           finally:
+              if not mapped.closed:
+                  mapped.close()
               os.close(dst_fd)
               os.close(src_fd)
           PY
