@@ -121,6 +121,7 @@ grep -qw infiltratorfs /proc/filesystems || { printf '[FATAL] Native infiltrator
 pass "Native infiltratorfs filesystem is registered in /proc/filesystems"
 printf 'Module file: %s\n' "$(modinfo -n infiltratorfs 2>/dev/null || echo unknown)"
 printf 'Module version: %s\n' "$(modinfo -F version infiltratorfs 2>/dev/null || echo unspecified)"
+
 section "Destructive format"
 timed "mkfs.infilfs partition 22" mkfs.infilfs --force -L "$LABEL" "$TARGET"
 sync
