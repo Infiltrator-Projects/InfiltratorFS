@@ -47,6 +47,9 @@
     <Link>
       <EntryPointSymbol>DriverEntry</EntryPointSymbol>
     </Link>
+    <DriverSign>
+      <FileDigestAlgorithm>sha256</FileDigestAlgorithm>
+    </DriverSign>
   </ItemDefinitionGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Windows.WDK.x64" Version="10.0.28000.2526" />
