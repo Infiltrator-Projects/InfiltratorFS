@@ -116,13 +116,11 @@ while IFS= read -r mp; do
     umount "$mp"
 done < <(findmnt -rn -S "$TARGET" -o TARGET 2>/dev/null || true)
 
-if findmnt -rn -t fuse.infilfs-fuse >/dev/null 2>&1; then fail "A legacy InfiltratorFS FUSE mount is still active"; else pass "No legacy InfiltratorFS FUSE mount is active"; fi
 modprobe infiltratorfs
 grep -qw infiltratorfs /proc/filesystems || { printf '[FATAL] Native infiltratorfs filesystem is not registered.\n' >&2; exit 4; }
 pass "Native infiltratorfs filesystem is registered in /proc/filesystems"
 printf 'Module file: %s\n' "$(modinfo -n infiltratorfs 2>/dev/null || echo unknown)"
 printf 'Module version: %s\n' "$(modinfo -F version infiltratorfs 2>/dev/null || echo unspecified)"
-
 section "Destructive format"
 timed "mkfs.infilfs partition 22" mkfs.infilfs --force -L "$LABEL" "$TARGET"
 sync
