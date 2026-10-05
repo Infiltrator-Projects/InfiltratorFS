@@ -47,10 +47,23 @@ static int dir_remove_volume(struct infs_volume *vol,
         status = paged_dir_remove(vol, block, name, removed_copy);
     else
         status = dir_remove(vol, block, name, removed_copy);
-    if (status == INFS_STATUS_OK &&
-        infs_le16_to_cpu(header->object_version) != INFS_OBJECT_VERSION_PAGED &&
+    if (status != INFS_STATUS_OK)
+        return status;
+
+    if (infs_le16_to_cpu(header->object_version) != INFS_OBJECT_VERSION_PAGED &&
         infs_le16_to_cpu(header->object_version) != INFS_OBJECT_VERSION_TREE)
         directory_cache_remove(vol, header->object_id, name);
+
+    /*
+     * Directory mutation helpers are routinely chained inside one CoW
+     * transaction.  dir_add_volume() and every lookup helper begin by
+     * validating the supplied directory block, so leaving an inline directory
+     * with its old CRC after removal makes the very next mutation see its own
+     * transaction-local buffer as corrupt.  Keep the in-memory object valid at
+     * the helper boundary; callers may still change timestamps/link counts and
+     * write_object() will finalize it again before staging.
+     */
+    status = infs_object_finalize(block);
     return status;
 }
 
