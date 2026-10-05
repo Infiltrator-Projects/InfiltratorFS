@@ -3614,7 +3614,6 @@ static NTSTATUS InfilfsCleanup(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         (INFILFS_NATIVE_FCB *)FileObject->FsContext : NULL;
     INFILFS_NATIVE_CCB *Ccb = FileObject ?
         (INFILFS_NATIVE_CCB *)FileObject->FsContext2 : NULL;
-    PCUNICODE_STRING HandlePath = InfilfsHandlePath(FileObject, Fcb);
     NTSTATUS Status = STATUS_SUCCESS;
 
     if (!FileObject)
