@@ -25,103 +25,51 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
+          import re
+
           path = Path('kernel/infiltratorfs_rw_legacy.inc')
           text = path.read_text()
-          old = '''int infilfs_rw_tx_apply_deferred(struct infilfs_rw_tx *tx)
-          {
-              struct infilfs_rw_free_range freed[INFILFS_RW_DEFERRED_INCREMENTAL_BLOCKS];
-              size_t freed_count = 0;
-              u64 deferred_blocks = 0;
-              bool incremental = tx->free_extent_index_valid;
-              size_t r;
-              u64 i;
-          '''
-          new = '''int infilfs_rw_tx_apply_deferred(struct infilfs_rw_tx *tx)
-          {
-              struct infilfs_rw_free_range *freed = NULL;
-              size_t freed_count = 0;
-              u64 deferred_blocks = 0;
-              bool incremental = tx->free_extent_index_valid;
-              size_t r;
-              u64 i;
-          '''
-          old = '\n'.join(line[10:] if line.startswith('          ') else line for line in old.splitlines()) + '\n'
-          new = '\n'.join(line[10:] if line.startswith('          ') else line for line in new.splitlines()) + '\n'
-          if text.count(old) != 1:
-              raise SystemExit('deferred-free function prologue changed')
-          text = text.replace(old, new, 1)
+          start = text.index('int infilfs_rw_tx_apply_deferred(struct infilfs_rw_tx *tx)')
+          end = text.index('\n\n#define INFILFS_RW_DEPENDENCY_BATCH_BLOCKS', start)
+          body = text[start:end]
 
-          marker = '''    if (incremental) {
-              for (r = 0; r < tx->deferred_count; ++r) {
-                  u64 count = tx->deferred[r].count;
+          old_decl = '    struct infilfs_rw_free_range freed[INFILFS_RW_DEFERRED_INCREMENTAL_BLOCKS];'
+          new_decl = '    struct infilfs_rw_free_range *freed = NULL;'
+          if body.count(old_decl) != 1:
+              raise SystemExit('deferred-free stack array declaration changed')
+          body = body.replace(old_decl, new_decl, 1)
 
-                  if (count > INFILFS_RW_DEFERRED_INCREMENTAL_BLOCKS -
-                              deferred_blocks) {
-                      incremental = false;
-                      break;
-                  }
-                  deferred_blocks += count;
-              }
-          }
-
-          write_lock(&tx->sbi->bitmap_lock);
-          '''
-          replacement = '''    if (incremental) {
-              for (r = 0; r < tx->deferred_count; ++r) {
-                  u64 count = tx->deferred[r].count;
-
-                  if (count > INFILFS_RW_DEFERRED_INCREMENTAL_BLOCKS -
-                              deferred_blocks) {
-                      incremental = false;
-                      break;
-                  }
-                  deferred_blocks += count;
-              }
-          }
+          lock_marker = '\n    write_lock(&tx->sbi->bitmap_lock);'
+          if body.count(lock_marker) != 1:
+              raise SystemExit('deferred-free bitmap lock marker changed')
+          allocation = '''
           if (incremental && deferred_blocks) {
               freed = kmalloc_array((size_t)deferred_blocks, sizeof(*freed),
                                     GFP_NOFS);
               if (!freed)
                   incremental = false;
           }
+          '''
+          allocation = '\n'.join(
+              line[10:] if line.startswith('          ') else line
+              for line in allocation.splitlines()
+          )
+          body = body.replace(lock_marker, allocation + lock_marker, 1)
 
-          write_lock(&tx->sbi->bitmap_lock);
-          '''
-          marker = '\n'.join(line[10:] if line.startswith('          ') else line for line in marker.splitlines()) + '\n'
-          replacement = '\n'.join(line[10:] if line.startswith('          ') else line for line in replacement.splitlines()) + '\n'
-          if text.count(marker) != 1:
-              raise SystemExit('deferred-free sizing block changed')
-          text = text.replace(marker, replacement, 1)
-
-          old_bound = '''                } else if (freed_count <
-                                     INFILFS_RW_DEFERRED_INCREMENTAL_BLOCKS) {
-          '''
-          new_bound = '''                } else if (freed_count < deferred_blocks) {
-          '''
-          old_bound = '\n'.join(line[10:] if line.startswith('          ') else line for line in old_bound.splitlines()) + '\n'
-          new_bound = '\n'.join(line[10:] if line.startswith('          ') else line for line in new_bound.splitlines()) + '\n'
-          if text.count(old_bound) != 1:
+          body, substitutions = re.subn(
+              r'} else if \(freed_count <\s*INFILFS_RW_DEFERRED_INCREMENTAL_BLOCKS\) \{',
+              '} else if (freed_count < deferred_blocks) {',
+              body,
+              count=1,
+          )
+          if substitutions != 1:
               raise SystemExit('deferred-free range bound changed')
-          text = text.replace(old_bound, new_bound, 1)
 
-          old_tail = '''        if (index_ret)
-              infilfs_rw_free_extent_index_invalidate(tx);
-          }
-          return 0;
-          }
-          '''
-          new_tail = '''        if (index_ret)
-              infilfs_rw_free_extent_index_invalidate(tx);
-          }
-          kfree(freed);
-          return 0;
-          }
-          '''
-          old_tail = '\n'.join(line[10:] if line.startswith('          ') else line for line in old_tail.splitlines()) + '\n'
-          new_tail = '\n'.join(line[10:] if line.startswith('          ') else line for line in new_tail.splitlines()) + '\n'
-          if text.count(old_tail) != 1:
+          tail = '\n    return 0;\n}'
+          if body.count(tail) != 1:
               raise SystemExit('deferred-free function tail changed')
-          text = text.replace(old_tail, new_tail, 1)
+          body = body.replace(tail, '\n    kfree(freed);\n    return 0;\n}', 1)
+          text = text[:start] + body + text[end:]
           path.write_text(text)
           PY
 
