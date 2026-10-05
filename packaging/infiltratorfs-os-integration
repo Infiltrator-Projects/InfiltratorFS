@@ -80,7 +80,7 @@ verify_clean() {
 }
 
 case "${1:-}" in
-    install|remove|repair-legacy) repair_legacy ;;
+    repair-legacy) repair_legacy ;;
     verify) verify_clean ;;
     *) echo 'Usage: infiltratorfs-os-integration {repair-legacy|verify}' >&2; exit 2 ;;
 esac
