@@ -17,7 +17,22 @@
  * persistent object identity.
  */
 
+/* The WDK kernel CRT and the user-mode MSVC CRT are not interchangeable.
+ * Keep this shared wire-format header independent of the user-mode <stdint.h>
+ * implementation when it is compiled into the kernel filesystem driver. */
+#if defined(INFILFS_WINDOWS_KERNEL)
+typedef unsigned char uint8_t;
+typedef unsigned short uint16_t;
+typedef unsigned long uint32_t;
+typedef unsigned long long uint64_t;
+typedef long int32_t;
+typedef long long int64_t;
+#ifndef UINT32_C
+#define UINT32_C(value) value##U
+#endif
+#else
 #include <stdint.h>
+#endif
 
 #define INFILFS_WIN_NATIVE_PROTOCOL_VERSION UINT32_C(2)
 #define INFILFS_WIN_NATIVE_PATH_CHARS 32768u
