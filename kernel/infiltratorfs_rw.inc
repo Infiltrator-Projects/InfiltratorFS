@@ -187,9 +187,7 @@ static int infilfs_posix_fill_common_attributes(
  * object therefore fails closed before publication if the creator identity
  * cannot be represented on disk.
  */
-#define INFILFS_NAMESPACE_EXCHANGE_EXTERNAL 1
 #include "infiltratorfs_rw_namespace.inc"
-#undef INFILFS_NAMESPACE_EXCHANGE_EXTERNAL
 #include "infiltratorfs_rw_namespace_exchange.inc"
 
 /*

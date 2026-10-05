@@ -452,6 +452,8 @@ grep -Fq 'return infilfs_file_read_iter_atime(iocb, to);' "$rw" || \
     fail 'POSIX attribute alias bridge returned in RW compositor'
 ! grep -Fq 'infilfs_rw_fill_common_attributes' "$namespace" || \
     fail 'namespace layer regained obsolete attribute alias name'
+! grep -Rq --include='*.c' --include='*.inc' 'INFILFS_NAMESPACE_EXCHANGE_EXTERNAL' "$kernel" || \
+    fail 'dead namespace exchange composition marker returned'
 
 # Do not let the single-TU implementation silently become larger while it is
 # being retired layer-by-layer. These ceilings leave practical edit headroom
