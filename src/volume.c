@@ -402,28 +402,6 @@ static int tree_index_snapshot(struct infs_volume *vol,
                                struct infs_index_entry_disk **entries_out,
                                uint32_t *count_out);
 
-/* These narrowly-scoped helpers are retained for planned cache/extent fast
- * paths but are deliberately dormant in Format 0.18. Apply the unused
- * attribute to their declarations (rather than rewriting their identifiers
- * with macros), so GCC/Clang attach it reliably to the actual functions while
- * newly orphaned helpers still produce diagnostics. */
-#if defined(__GNUC__) || defined(__clang__)
-static int object_cache_lookup_page(struct infs_volume *vol,
-                                    const uint8_t id[16],
-                                    uint32_t *page_out)
-    __attribute__((unused));
-static uint64_t bitmap_count_free(const uint8_t *bitmap, uint64_t total)
-    __attribute__((unused));
-static uint64_t *metadata_head_page_pointers(void *payload)
-    __attribute__((unused));
-static int paged_extent_replace(struct infs_volume *vol,
-                                uint8_t object[INFS_BLOCK_SIZE],
-                                struct infs_file_payload_disk *file,
-                                uint64_t logical_start, uint64_t block_count,
-                                uint64_t new_physical, uint32_t new_flags)
-    __attribute__((unused));
-#endif
-
 static void file_storage_policy(
     const struct infs_file_payload_disk *file,
     const uint8_t owner_id[16],

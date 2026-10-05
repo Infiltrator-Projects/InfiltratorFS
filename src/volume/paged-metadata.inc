@@ -22,12 +22,6 @@ static int metadata_page_generation_valid(struct infs_volume *vol,
     return generation != 0 && generation <= limit;
 }
 
-static uint64_t *metadata_head_page_pointers(void *payload)
-{
-    return (uint64_t *)((uint8_t *)payload +
-                        (payload ? 0u : 0u));
-}
-
 static uint64_t *directory_page_pointers(
     struct infs_directory_payload_disk *payload)
 {

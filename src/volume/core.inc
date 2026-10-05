@@ -436,17 +436,6 @@ static int object_cache_lookup(struct infs_volume *vol, const uint8_t id[16],
     return 1;
 }
 
-static int object_cache_lookup_page(struct infs_volume *vol,
-                                    const uint8_t id[16], uint32_t *page_out)
-{
-    struct infs_object_cache_entry *entry = object_cache_find_entry(vol, id);
-    if (!entry || entry->index_page == INFS_INDEX_PAGE_UNKNOWN)
-        return 0;
-    if (page_out)
-        *page_out = entry->index_page;
-    return 1;
-}
-
 static int object_cache_store_page(struct infs_volume *vol,
                                    const uint8_t id[16], uint64_t block,
                                    uint16_t type, uint32_t index_page)
