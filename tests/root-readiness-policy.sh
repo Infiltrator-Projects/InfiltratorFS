@@ -2,7 +2,7 @@
 set -euo pipefail
 root="${1:-.}"
 
-grep -Fq '.tmpfile = infilfs_posix_acl_tmpfile' "$root/kernel/infiltratorfs_rw.inc"
+grep -Fq '.tmpfile = infilfs_posix_acl_tmpfile' "$root/kernel/infiltratorfs_core.c"
 grep -Fq 'RENAME_EXCHANGE' "$root/kernel/infiltratorfs_rw_namespace.inc"
 grep -Fq 'infs_compression_metrics' "$root/include/infilfs/volume.h"
 grep -Fq 'infilfs-compression' "$root/CMakeLists.txt"
