@@ -103,11 +103,6 @@ static int infilfs_rw_tx_begin(struct super_block *sb,
  * separate calls, so compose the bounded cross-call cursor cache here and make
  * it the final VFS read callback.
  */
-#ifdef infilfs_file_read_iter
-#undef infilfs_file_read_iter
-#endif
-#define infilfs_file_read_iter infilfs_file_read_iter_atime
-
 /*
  * New native objects must carry the credentials of the task that created them.
  * The original bring-up code deliberately used uid/gid zero while write support
@@ -1977,7 +1972,7 @@ size_change_done:
     return 0;
 }
 
-static __maybe_unused ssize_t infilfs_file_read_iter_atime(struct kiocb *iocb,
+static ssize_t infilfs_file_read_iter_atime(struct kiocb *iocb,
                                               struct iov_iter *to)
 {
     struct file *file = iocb->ki_filp;

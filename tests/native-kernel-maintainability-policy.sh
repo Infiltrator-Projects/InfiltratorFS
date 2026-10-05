@@ -438,8 +438,16 @@ grep -Fq '#include "infiltratorfs_rw_data.inc"' "$rw" || \
     fail 'RW data layer regained legacy mkdir bridge'
 ! grep -Fq 'infilfs_rw_setattr_legacy' "$data" || \
     fail 'RW data layer regained legacy setattr bridge'
-grep -Fq '#define infilfs_file_read_iter infilfs_file_read_iter_atime' "$rw" || \
-    fail 'read-cache/atime alias bridge changed'
+! grep -Fq '#define infilfs_file_read_iter' "$rw" || \
+    fail 'read callback alias bridge returned in RW compositor'
+! grep -Fq '#define infilfs_file_read_iter' "$data" || \
+    fail 'read callback alias bridge returned in RW data layer'
+grep -Fq 'return infilfs_file_read_iter_atime(iocb, to);' "$rw" || \
+    fail 'direct-read dispatcher no longer calls the live atime reader explicitly'
+! grep -Fq 'infilfs_file_read_iter_verified' "$data" || \
+    fail 'dead verified read callback returned'
+! grep -Fq 'static __maybe_unused ssize_t infilfs_file_read_iter(' "$driver" || \
+    fail 'dead pre-native core read callback returned'
 grep -Fq '#define infilfs_rw_fill_common_attributes infilfs_posix_fill_common_attributes' "$rw" || \
     fail 'POSIX attribute alias bridge changed'
 
