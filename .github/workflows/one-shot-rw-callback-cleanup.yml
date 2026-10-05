@@ -1,0 +1,149 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: One-shot RW callback cleanup
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/one-shot-rw-callback-cleanup.yml
+
+permissions:
+  contents: write
+
+jobs:
+  refactor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply exact callback-wiring cleanup
+        shell: python
+        run: |
+          from pathlib import Path
+
+          rw_path = Path('kernel/infiltratorfs_rw.inc')
+          rw = rw_path.read_text()
+          marker = '''/*
+           * infiltratorfs.c declares the operation tables immediately after including
+           * this composition file.  Supply the final native callbacks here while keeping
+           * that table compact.
+           */
+          '''
+          if rw.count(marker) != 1:
+              raise SystemExit(f'expected exactly one callback injection marker, found {rw.count(marker)}')
+          prefix, tail = rw.split(marker, 1)
+          required = [
+              '#define simple_statfs infilfs_statfs',
+              '#define infilfs_rw_create infilfs_posix_acl_create',
+              '#define infilfs_rw_mkdir infilfs_posix_acl_mkdir',
+              '#define infilfs_rw_setattr infilfs_posix_acl_setattr',
+              '#define infilfs_get_link infilfs_get_link',
+          ]
+          for token in required:
+              if token not in tail:
+                  raise SystemExit(f'missing expected callback injection token: {token}')
+          rw_path.write_text(prefix.rstrip() + '\n')
+
+          core_path = Path('kernel/infiltratorfs_core.c')
+          core = core_path.read_text()
+          old = '''static const struct super_operations infilfs_super_operations = {
+              .statfs = simple_statfs,
+              .sync_fs = infilfs_sync_fs,
+              .evict_inode = infilfs_evict_inode,
+              .put_super = infilfs_put_super,
+              .show_options = infilfs_show_options,
+          };
+
+          static const struct inode_operations infilfs_dir_inode_operations = {
+              .lookup = infilfs_lookup,
+              .create = infilfs_rw_create,
+              .mkdir = infilfs_rw_mkdir,
+              .listxattr = infilfs_linux_listxattr,
+          };
+
+          static const struct inode_operations infilfs_file_inode_operations = {
+              .setattr = infilfs_rw_setattr,
+              .fiemap = infilfs_file_fiemap,
+              .listxattr = infilfs_linux_listxattr,
+          };
+
+          static const struct inode_operations infilfs_symlink_inode_operations = {
+              .get_link = infilfs_get_link,
+              .listxattr = infilfs_linux_listxattr,
+          };
+          '''
+          new = '''static const struct super_operations infilfs_super_operations = {
+              .statfs = infilfs_statfs,
+              .sync_fs = infilfs_sync_fs,
+              .evict_inode = infilfs_evict_inode,
+              .put_super = infilfs_put_super,
+              .show_options = infilfs_show_options,
+          };
+
+          static const struct inode_operations infilfs_dir_inode_operations = {
+              .lookup = infilfs_lookup,
+              .create = infilfs_posix_acl_create,
+              .mknod = infilfs_posix_acl_mknod,
+              .tmpfile = infilfs_posix_acl_tmpfile,
+              .mkdir = infilfs_posix_acl_mkdir,
+              .unlink = infilfs_ns_unlink,
+              .rmdir = infilfs_ns_rmdir,
+              .link = infilfs_ns_link,
+              .symlink = infilfs_posix_symlink,
+              .rename = infilfs_ns_rename,
+              .setattr = infilfs_posix_acl_setattr,
+              .getattr = infilfs_getattr,
+              .get_inode_acl = infilfs_posix_acl_get,
+              .set_acl = infilfs_posix_acl_set,
+              .listxattr = infilfs_linux_listxattr,
+          };
+
+          static const struct inode_operations infilfs_file_inode_operations = {
+              .setattr = infilfs_posix_acl_setattr,
+              .getattr = infilfs_getattr,
+              .get_inode_acl = infilfs_posix_acl_get,
+              .set_acl = infilfs_posix_acl_set,
+              .fiemap = infilfs_file_fiemap,
+              .listxattr = infilfs_linux_listxattr,
+          };
+
+          static const struct inode_operations infilfs_symlink_inode_operations = {
+              .get_link = infilfs_get_link,
+              .setattr = infilfs_posix_setattr,
+              .getattr = infilfs_getattr,
+              .listxattr = infilfs_linux_listxattr,
+          };
+          '''
+          if core.count(old) != 1:
+              raise SystemExit(f'expected exactly one VFS operation-table block, found {core.count(old)}')
+          core_path.write_text(core.replace(old, new, 1))
+
+      - name: Validate refactor diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          ! grep -q '^#define simple_statfs infilfs_statfs$' kernel/infiltratorfs_rw.inc
+          ! grep -q '^#define infilfs_rw_create infilfs_posix_acl_create' kernel/infiltratorfs_rw.inc
+          grep -Fq '.statfs = infilfs_statfs,' kernel/infiltratorfs_core.c
+          grep -Fq '.create = infilfs_posix_acl_create,' kernel/infiltratorfs_core.c
+          grep -Fq '.mknod = infilfs_posix_acl_mknod,' kernel/infiltratorfs_core.c
+          grep -Fq '.tmpfile = infilfs_posix_acl_tmpfile,' kernel/infiltratorfs_core.c
+          grep -Fq '.rename = infilfs_ns_rename,' kernel/infiltratorfs_core.c
+          test "$(git diff --numstat -- kernel/infiltratorfs_rw.inc | awk '{print $1}')" = 0
+          git diff -- kernel/infiltratorfs_rw.inc kernel/infiltratorfs_core.c
+
+      - name: Commit source cleanup and remove one-shot workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'The First Infiltrator'
+          git config user.email 'infiltratr@yandex.com'
+          git rm .github/workflows/one-shot-rw-callback-cleanup.yml
+          git add kernel/infiltratorfs_rw.inc kernel/infiltratorfs_core.c
+          git diff --cached --check
+          git commit -m 'kernel: make VFS callback wiring explicit'
+          git push origin HEAD:main
