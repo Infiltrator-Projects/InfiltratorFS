@@ -51,8 +51,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tag="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq '[.[] | select(.prerelease == true and (.tag_name | startswith("desktop-integration-ubuntu24.04-")))] | sort_by(.published_at) | last | .tag_name')"
-          test -n "$tag"
+          tag="$(
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+              --jq '.[] | select(.prerelease == true and (.tag_name | startswith("desktop-integration-ubuntu24.04-"))) | [.published_at, .tag_name] | @tsv' |
+              LC_ALL=C sort |
+              tail -n 1 |
+              cut -f2-
+          )"
+          if [[ -z "$tag" ]]; then
+            echo "::error::No qualified managed desktop integration prerelease found matching desktop-integration-ubuntu24.04-*"
+            exit 1
+          fi
           dir="$RUNNER_TEMP/desktop-integration"
           mkdir -p "$dir"
           gh release download "$tag" --dir "$dir" \
