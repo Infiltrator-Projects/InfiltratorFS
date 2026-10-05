@@ -126,7 +126,7 @@ grep -Fq 'Replaces' "$noble_bundle_builder"
 # while leaving stock GNOME Disks to render "Unknown (infiltratorfs 0.18)".
 # The core package therefore requires the managed integration package, and the
 # native .run path carries the exact ABI-matched replacement packages with it.
-grep -Fq 'desktop_depends=", udisks2, infiltratorfs-desktop-integration"' \
+grep -Fq 'desktop_depends=", udisks2, infiltratorfs-desktop-integration (>= 1.0.0+ubuntu24.04.2)"' \
     "$repo_root/packaging/build-linux-packages.sh"
 grep -Fq 'INFILTRATORFS_DESKTOP_BUNDLE_DIR' \
     "$repo_root/packaging/build-linux-packages.sh"

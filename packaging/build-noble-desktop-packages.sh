@@ -38,7 +38,7 @@ repackage_replacement() {
     root="$(mktemp -d "$work/repack.XXXXXX")"
     dpkg-deb -R "$source_deb" "$root"
     base_version="$(dpkg-deb --field "$source_deb" Version)"
-    replacement_version="${base_version}+infiltratorfs1"
+    replacement_version="${base_version}+infiltratorfs2"
     python3 - "$root/DEBIAN/control" "$replacement" "$replacement_version" "$original" "$base_version" <<'PY'
 from pathlib import Path
 import sys
@@ -73,7 +73,7 @@ PY
 lib_replacement_version="$(repackage_replacement "$libdeb" infiltratorfs-libblockdev-fs3 libblockdev-fs3)"
 gdu_replacement_version="$(repackage_replacement "$gdudeb" infiltratorfs-gnome-disk-utility gnome-disk-utility)"
 
-meta_version="1.0.0+ubuntu24.04.1"
+meta_version="1.0.0+ubuntu24.04.2"
 meta_root="$(mktemp -d "$work/meta.XXXXXX")"; install -d "$meta_root/DEBIAN"
 cat > "$meta_root/DEBIAN/control" <<EOF
 Package: infiltratorfs-desktop-integration

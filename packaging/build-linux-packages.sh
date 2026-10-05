@@ -74,7 +74,7 @@ EOF
 
 install -d "$package_root/DEBIAN"
 installed_size="$(du -sk "$package_root/usr" | cut -f1)"
-desktop_depends=", udisks2, infiltratorfs-desktop-integration"
+desktop_depends=", udisks2, infiltratorfs-desktop-integration (>= 1.0.0+ubuntu24.04.2)"
 desktop_identity="managed-packages"
 cat > "$package_root/DEBIAN/control" <<EOF
 Package: infiltratorfs
