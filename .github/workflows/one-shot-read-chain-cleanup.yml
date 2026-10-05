@@ -89,7 +89,8 @@ jobs:
           alias = '\n#define infilfs_file_read_iter infilfs_file_read_iter_verified\n'
           if s.count(alias) != 1:
               raise SystemExit('verified read alias changed')
-          data.write_text(s.replace(alias, '\n', 1))
+          s = s.replace(alias, '\n', 1)
+          data.write_text(s.rstrip() + '\n')
 
           rw = Path('kernel/infiltratorfs_rw.inc')
           s = rw.read_text()
