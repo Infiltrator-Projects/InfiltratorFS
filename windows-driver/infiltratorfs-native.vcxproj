@@ -58,6 +58,7 @@
     <ClCompile Include="infiltratorfs-native.c" />
     <ClInclude Include="infiltratorfs-native-protocol.h" />
     <Inf Include="infiltratorfs-native.inf" />
+    <FilesToPackage Include="$(TargetPath)" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>
