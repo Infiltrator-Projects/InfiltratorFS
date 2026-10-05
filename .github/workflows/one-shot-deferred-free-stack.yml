@@ -1,0 +1,152 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: One-shot deferred-free stack cleanup
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/one-shot-deferred-free-stack.yml
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Move bounded deferred-free scratch off kernel stack
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('kernel/infiltratorfs_rw_legacy.inc')
+          text = path.read_text()
+          old = '''int infilfs_rw_tx_apply_deferred(struct infilfs_rw_tx *tx)
+          {
+              struct infilfs_rw_free_range freed[INFILFS_RW_DEFERRED_INCREMENTAL_BLOCKS];
+              size_t freed_count = 0;
+              u64 deferred_blocks = 0;
+              bool incremental = tx->free_extent_index_valid;
+              size_t r;
+              u64 i;
+          '''
+          new = '''int infilfs_rw_tx_apply_deferred(struct infilfs_rw_tx *tx)
+          {
+              struct infilfs_rw_free_range *freed = NULL;
+              size_t freed_count = 0;
+              u64 deferred_blocks = 0;
+              bool incremental = tx->free_extent_index_valid;
+              size_t r;
+              u64 i;
+          '''
+          old = '\n'.join(line[10:] if line.startswith('          ') else line for line in old.splitlines()) + '\n'
+          new = '\n'.join(line[10:] if line.startswith('          ') else line for line in new.splitlines()) + '\n'
+          if text.count(old) != 1:
+              raise SystemExit('deferred-free function prologue changed')
+          text = text.replace(old, new, 1)
+
+          marker = '''    if (incremental) {
+              for (r = 0; r < tx->deferred_count; ++r) {
+                  u64 count = tx->deferred[r].count;
+
+                  if (count > INFILFS_RW_DEFERRED_INCREMENTAL_BLOCKS -
+                              deferred_blocks) {
+                      incremental = false;
+                      break;
+                  }
+                  deferred_blocks += count;
+              }
+          }
+
+          write_lock(&tx->sbi->bitmap_lock);
+          '''
+          replacement = '''    if (incremental) {
+              for (r = 0; r < tx->deferred_count; ++r) {
+                  u64 count = tx->deferred[r].count;
+
+                  if (count > INFILFS_RW_DEFERRED_INCREMENTAL_BLOCKS -
+                              deferred_blocks) {
+                      incremental = false;
+                      break;
+                  }
+                  deferred_blocks += count;
+              }
+          }
+          if (incremental && deferred_blocks) {
+              freed = kmalloc_array((size_t)deferred_blocks, sizeof(*freed),
+                                    GFP_NOFS);
+              if (!freed)
+                  incremental = false;
+          }
+
+          write_lock(&tx->sbi->bitmap_lock);
+          '''
+          marker = '\n'.join(line[10:] if line.startswith('          ') else line for line in marker.splitlines()) + '\n'
+          replacement = '\n'.join(line[10:] if line.startswith('          ') else line for line in replacement.splitlines()) + '\n'
+          if text.count(marker) != 1:
+              raise SystemExit('deferred-free sizing block changed')
+          text = text.replace(marker, replacement, 1)
+
+          old_bound = '''                } else if (freed_count <
+                                     INFILFS_RW_DEFERRED_INCREMENTAL_BLOCKS) {
+          '''
+          new_bound = '''                } else if (freed_count < deferred_blocks) {
+          '''
+          old_bound = '\n'.join(line[10:] if line.startswith('          ') else line for line in old_bound.splitlines()) + '\n'
+          new_bound = '\n'.join(line[10:] if line.startswith('          ') else line for line in new_bound.splitlines()) + '\n'
+          if text.count(old_bound) != 1:
+              raise SystemExit('deferred-free range bound changed')
+          text = text.replace(old_bound, new_bound, 1)
+
+          old_tail = '''        if (index_ret)
+              infilfs_rw_free_extent_index_invalidate(tx);
+          }
+          return 0;
+          }
+          '''
+          new_tail = '''        if (index_ret)
+              infilfs_rw_free_extent_index_invalidate(tx);
+          }
+          kfree(freed);
+          return 0;
+          }
+          '''
+          old_tail = '\n'.join(line[10:] if line.startswith('          ') else line for line in old_tail.splitlines()) + '\n'
+          new_tail = '\n'.join(line[10:] if line.startswith('          ') else line for line in new_tail.splitlines()) + '\n'
+          if text.count(old_tail) != 1:
+              raise SystemExit('deferred-free function tail changed')
+          text = text.replace(old_tail, new_tail, 1)
+          path.write_text(text)
+          PY
+
+      - name: Validate stack cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          body="$(sed -n '/^int infilfs_rw_tx_apply_deferred(/,/^}/p' kernel/infiltratorfs_rw_legacy.inc)"
+          ! grep -Fq 'freed[INFILFS_RW_DEFERRED_INCREMENTAL_BLOCKS]' <<<"$body"
+          grep -Fq 'struct infilfs_rw_free_range *freed = NULL;' <<<"$body"
+          grep -Fq 'kmalloc_array((size_t)deferred_blocks, sizeof(*freed),' <<<"$body"
+          grep -Fq 'kfree(freed);' <<<"$body"
+          bash tests/native-kernel-maintainability-policy.sh .
+          bash tests/native-free-extent-index-policy.sh .
+          git diff -- kernel/infiltratorfs_rw_legacy.inc
+
+      - name: Commit cleanup and remove one-shot workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'The First Infiltrator'
+          git config user.email 'infiltratr@yandex.com'
+          git rm .github/workflows/one-shot-deferred-free-stack.yml
+          git add kernel/infiltratorfs_rw_legacy.inc
+          git diff --cached --check
+          git commit -m 'kernel: move deferred-free scratch off stack'
+          git push origin HEAD:main
