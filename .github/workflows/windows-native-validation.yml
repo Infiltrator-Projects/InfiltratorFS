@@ -31,11 +31,18 @@ jobs:
           start = s.index(marker)
           end = s.index('static NTSTATUS InfilfsClose(', start)
           block = s[start:end]
-          old = '    PCUNICODE_STRING HandlePath = InfilfsHandlePath(FileObject, Fcb);\n'
-          if block.count(old) != 1:
-              raise SystemExit(f'expected exactly one unused cleanup HandlePath, found {block.count(old)}')
-          block = block.replace(old, '', 1)
-          p.write_text(s[:start] + block + s[end:], encoding='utf-8')
+          lines = block.splitlines(keepends=True)
+          kept = []
+          removed = 0
+          for line in lines:
+              if ('PCUNICODE_STRING HandlePath' in line and
+                  'InfilfsHandlePath(FileObject, Fcb)' in line):
+                  removed += 1
+                  continue
+              kept.append(line)
+          if removed != 1:
+              raise SystemExit(f'expected exactly one unused cleanup HandlePath, found {removed}')
+          p.write_text(s[:start] + ''.join(kept) + s[end:], encoding='utf-8')
           '@ | python -
       - name: Build native Windows filesystem driver
         shell: pwsh
