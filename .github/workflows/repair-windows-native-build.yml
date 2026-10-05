@@ -19,7 +19,7 @@ jobs:
         with:
           ref: fix/windows-native-build-0.18.94
           fetch-depth: 0
-      - name: Apply verified Windows build repairs
+      - name: Apply verified source repairs
         shell: python
         run: |
           from pathlib import Path
@@ -34,9 +34,6 @@ jobs:
                   raise SystemExit(f'expected {expected} occurrence(s), found {count}: {old[:120]!r}')
               text = text.replace(old, new)
 
-          # A file-scope const tentative definition is rejected by current MSVC
-          # under /W4 /WX.  The Cache Manager API also takes a mutable callback
-          # table pointer, so keep one ordinary static table and remove the cast.
           replace_exact(
               'static const CACHE_MANAGER_CALLBACKS g_InfilfsCacheCallbacks;',
               'static CACHE_MANAGER_CALLBACKS g_InfilfsCacheCallbacks;')
@@ -47,10 +44,6 @@ jobs:
               '            (PCACHE_MANAGER_CALLBACKS)&g_InfilfsCacheCallbacks, Fcb);',
               '            &g_InfilfsCacheCallbacks, Fcb);')
 
-          # The per-open namespace conversion changed QueryInformation to use
-          # HandlePath but omitted the declaration/initialisation in this one
-          # dispatch path.  Restore the same contract used by the other native
-          # Windows metadata operations.
           replace_exact(
               '    INFILFS_NATIVE_CCB *Ccb = FileObject ?\n'
               '        (INFILFS_NATIVE_CCB *)FileObject->FsContext2 : NULL;\n'
@@ -72,8 +65,6 @@ jobs:
               '        return InfilfsCompleteIrp(Irp, STATUS_INVALID_PARAMETER, 0);\n\n'
               '    switch (Class) {\n')
 
-          # Avoid shadowing the SeAccessCheck result flag in the missing-object
-          # fallback path; /W4 /WX correctly treats that ambiguity as fatal.
           replace_exact(
               '        if (GrantedOut) {\n'
               '            ACCESS_MASK Granted =\n'
@@ -94,9 +85,6 @@ jobs:
               '            *GrantedOut = FallbackGranted;\n'
               '        }\n')
 
-          # FIELD_OFFSET is LONG in the WDK.  Every affected buffer length is an
-          # ULONG, so make the intended non-negative width explicit instead of
-          # leaving signed/unsigned comparisons to /W4.
           offset_types = (
               'struct infilfs_win_native_raw_io, data',
               'FILE_NAME_INFORMATION, FileName',
@@ -113,42 +101,20 @@ jobs:
               text = text.replace(old, f'(ULONG)FIELD_OFFSET({spec})')
 
           driver.write_text(text, encoding='utf-8', newline='\n')
-
-          workflow = Path('.github/workflows/ci.yml')
-          ci = workflow.read_text(encoding='utf-8')
-          old = (
-              '      - name: Configure MSBuild for WDK\n'
-              '        uses: microsoft/setup-msbuild@v2\n'
-          )
-          new = (
-              '      - name: Configure MSBuild for WDK\n'
-              '        uses: microsoft/setup-msbuild@v2\n'
-              '        with:\n'
-              '          msbuild-architecture: x64\n'
-          )
-          if ci.count(old) != 1:
-              raise SystemExit('MSBuild setup block did not match exactly once')
-          workflow.write_text(ci.replace(old, new), encoding='utf-8', newline='\n')
-
-          # This staging workflow is deliberately self-removing.  The repair
-          # branch should contain only the product and normal-CI changes.
-          Path('.github/workflows/repair-windows-native-build.yml').unlink()
-      - name: Validate repair diff
+      - name: Validate source diff
         shell: bash
         run: |
           set -euo pipefail
           git diff --check
-          git diff -- windows-driver/infiltratorfs-native.c .github/workflows/ci.yml
-          test ! -e .github/workflows/repair-windows-native-build.yml
+          git diff -- windows-driver/infiltratorfs-native.c
           grep -Fq 'PCUNICODE_STRING HandlePath;' windows-driver/infiltratorfs-native.c
           grep -Fq 'HandlePath = InfilfsHandlePath(FileObject, Fcb);' windows-driver/infiltratorfs-native.c
-          grep -Fq 'msbuild-architecture: x64' .github/workflows/ci.yml
-      - name: Commit repaired branch
+      - name: Commit repaired source
         shell: bash
         run: |
           set -euo pipefail
           git config user.name 'InfiltratorFS CI Repair'
           git config user.email 'actions@users.noreply.github.com'
-          git add windows-driver/infiltratorfs-native.c .github/workflows/ci.yml .github/workflows/repair-windows-native-build.yml
-          git commit -m '[branch-repair] Repair native Windows driver build'
+          git add windows-driver/infiltratorfs-native.c
+          git commit -m '[branch-repair] Repair native Windows driver source'
           git push origin HEAD:fix/windows-native-build-0.18.94
