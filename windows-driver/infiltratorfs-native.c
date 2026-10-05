@@ -123,7 +123,7 @@ typedef struct _INFILFS_NATIVE_GLOBAL {
 
 static INFILFS_NATIVE_GLOBAL g_Infilfs;
 
-static const CACHE_MANAGER_CALLBACKS g_InfilfsCacheCallbacks;
+static CACHE_MANAGER_CALLBACKS g_InfilfsCacheCallbacks;
 static NTSTATUS InfilfsFlushPortableVolume(
     INFILFS_NATIVE_VOLUME *Volume, PCUNICODE_STRING Path);
 
@@ -548,7 +548,7 @@ static NTSTATUS InfilfsControlRawIo(
     NTSTATUS Status;
 
     if (IrpSp->Parameters.DeviceIoControl.InputBufferLength <
-        FIELD_OFFSET(struct infilfs_win_native_raw_io, data))
+        (ULONG)FIELD_OFFSET(struct infilfs_win_native_raw_io, data))
         return InfilfsCompleteIrp(Irp, STATUS_BUFFER_TOO_SMALL, 0);
     Io = (struct infilfs_win_native_raw_io *)Irp->AssociatedIrp.SystemBuffer;
     if (!Io ||
@@ -556,7 +556,7 @@ static NTSTATUS InfilfsControlRawIo(
         Io->size > INFILFS_WIN_NATIVE_IO_CHUNK)
         return InfilfsCompleteIrp(Irp, STATUS_INVALID_PARAMETER, 0);
 
-    Required = FIELD_OFFSET(struct infilfs_win_native_raw_io, data) + Io->size;
+    Required = (ULONG)FIELD_OFFSET(struct infilfs_win_native_raw_io, data) + Io->size;
     if (IrpSp->Parameters.DeviceIoControl.InputBufferLength < Required ||
         (!Write &&
          IrpSp->Parameters.DeviceIoControl.OutputBufferLength < Required))
@@ -1319,13 +1319,13 @@ static NTSTATUS InfilfsCheckAccess(
         Volume, Path, &Descriptor, &DescriptorLength);
     if (Status == STATUS_OBJECT_NAME_NOT_FOUND) {
         if (GrantedOut) {
-            ACCESS_MASK Granted =
+            ACCESS_MASK FallbackGranted =
                 DesiredAccess & ~MAXIMUM_ALLOWED;
             if (DesiredAccess & MAXIMUM_ALLOWED)
-                Granted |= FILE_ALL_ACCESS;
+                FallbackGranted |= FILE_ALL_ACCESS;
             RtlMapGenericMask(
-                &Granted, IoGetFileObjectGenericMapping());
-            *GrantedOut = Granted;
+                &FallbackGranted, IoGetFileObjectGenericMapping());
+            *GrantedOut = FallbackGranted;
         }
         return STATUS_SUCCESS;
     }
@@ -2125,7 +2125,7 @@ static NTSTATUS InfilfsCreate(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         Sizes.ValidDataLength = Fcb->Header.ValidDataLength;
         CcInitializeCacheMap(
             FileObject, &Sizes, FALSE,
-            (PCACHE_MANAGER_CALLBACKS)&g_InfilfsCacheCallbacks, Fcb);
+            &g_InfilfsCacheCallbacks, Fcb);
     }
 
     if (AllocatedPath)
@@ -2478,6 +2478,7 @@ static NTSTATUS InfilfsQueryInformation(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         (INFILFS_NATIVE_FCB *)FileObject->FsContext : NULL;
     INFILFS_NATIVE_CCB *Ccb = FileObject ?
         (INFILFS_NATIVE_CCB *)FileObject->FsContext2 : NULL;
+    PCUNICODE_STRING HandlePath;
     PVOID Buffer = Irp->AssociatedIrp.SystemBuffer;
     ULONG Length = IrpSp->Parameters.QueryFile.Length;
     FILE_INFORMATION_CLASS Class =
@@ -2486,7 +2487,10 @@ static NTSTATUS InfilfsQueryInformation(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     NTSTATUS Status = STATUS_SUCCESS;
 
     UNREFERENCED_PARAMETER(DeviceObject);
-    if (!Fcb || !Buffer)
+    if (!Fcb || !Ccb || !Buffer)
+        return InfilfsCompleteIrp(Irp, STATUS_INVALID_PARAMETER, 0);
+    HandlePath = InfilfsHandlePath(FileObject, Fcb);
+    if (!HandlePath || !HandlePath->Buffer)
         return InfilfsCompleteIrp(Irp, STATUS_INVALID_PARAMETER, 0);
 
     switch (Class) {
@@ -2546,19 +2550,19 @@ static NTSTATUS InfilfsQueryInformation(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     case FileNameInformation: {
         PFILE_NAME_INFORMATION Info = Buffer;
         ULONG NameBytes = HandlePath ? HandlePath->Length : 0;
-        ULONG Required = FIELD_OFFSET(FILE_NAME_INFORMATION, FileName) +
+        ULONG Required = (ULONG)FIELD_OFFSET(FILE_NAME_INFORMATION, FileName) +
                          NameBytes;
-        if (Length < FIELD_OFFSET(FILE_NAME_INFORMATION, FileName)) {
+        if (Length < (ULONG)FIELD_OFFSET(FILE_NAME_INFORMATION, FileName)) {
             Status = STATUS_BUFFER_TOO_SMALL;
             break;
         }
         Info->FileNameLength = NameBytes;
-        ULONG Copy = Length - FIELD_OFFSET(FILE_NAME_INFORMATION, FileName);
+        ULONG Copy = Length - (ULONG)FIELD_OFFSET(FILE_NAME_INFORMATION, FileName);
         if (Copy > NameBytes)
             Copy = NameBytes;
         if (Copy)
             RtlCopyMemory(Info->FileName, HandlePath->Buffer, Copy);
-        Used = FIELD_OFFSET(FILE_NAME_INFORMATION, FileName) + Copy;
+        Used = (ULONG)FIELD_OFFSET(FILE_NAME_INFORMATION, FileName) + Copy;
         if (Length < Required)
             Status = STATUS_BUFFER_OVERFLOW;
         break;
@@ -2769,10 +2773,10 @@ static NTSTATUS InfilfsSetInformation(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         UNICODE_STRING Destination;
         PWCHAR AllocatedDestination = NULL;
         ULONG Replace = 0;
-        if (Length < FIELD_OFFSET(FILE_RENAME_INFORMATION, FileName) ||
+        if (Length < (ULONG)FIELD_OFFSET(FILE_RENAME_INFORMATION, FileName) ||
             Info->FileNameLength == 0 ||
             Info->FileNameLength >
-                Length - FIELD_OFFSET(FILE_RENAME_INFORMATION, FileName))
+                Length - (ULONG)FIELD_OFFSET(FILE_RENAME_INFORMATION, FileName))
             return InfilfsCompleteIrp(
                 Irp, STATUS_INVALID_PARAMETER, 0);
 
@@ -2840,10 +2844,10 @@ static NTSTATUS InfilfsSetInformation(PDEVICE_OBJECT DeviceObject, PIRP Irp)
             Status = STATUS_FILE_IS_A_DIRECTORY;
             break;
         }
-        if (Length < FIELD_OFFSET(FILE_LINK_INFORMATION, FileName) ||
+        if (Length < (ULONG)FIELD_OFFSET(FILE_LINK_INFORMATION, FileName) ||
             Info->FileNameLength == 0 ||
             Info->FileNameLength >
-                Length - FIELD_OFFSET(FILE_LINK_INFORMATION, FileName)) {
+                Length - (ULONG)FIELD_OFFSET(FILE_LINK_INFORMATION, FileName)) {
             Status = STATUS_INVALID_PARAMETER;
             break;
         }
@@ -3264,7 +3268,7 @@ static NTSTATUS InfilfsQueryVolumeInformation(
         Info->SupportsObjects = FALSE;
         Info->VolumeLabelLength = LabelBytes;
         Copy = Length -
-            FIELD_OFFSET(FILE_FS_VOLUME_INFORMATION, VolumeLabel);
+            (ULONG)FIELD_OFFSET(FILE_FS_VOLUME_INFORMATION, VolumeLabel);
         if (Copy > LabelBytes)
             Copy = LabelBytes;
         if (Copy)
@@ -3352,7 +3356,7 @@ static NTSTATUS InfilfsQueryVolumeInformation(
         Info->MaximumComponentNameLength = 1023;
         Info->FileSystemNameLength = NameBytes;
         ULONG Copy = Length -
-            FIELD_OFFSET(FILE_FS_ATTRIBUTE_INFORMATION, FileSystemName);
+            (ULONG)FIELD_OFFSET(FILE_FS_ATTRIBUTE_INFORMATION, FileSystemName);
         if (Copy > NameBytes)
             Copy = NameBytes;
         RtlCopyMemory(Info->FileSystemName, Name, Copy);
@@ -3718,7 +3722,7 @@ static VOID InfilfsReleaseFromReadAhead(PVOID Context)
     ExReleaseResourceLite(&Fcb->MainResource);
 }
 
-static const CACHE_MANAGER_CALLBACKS g_InfilfsCacheCallbacks = {
+static CACHE_MANAGER_CALLBACKS g_InfilfsCacheCallbacks = {
     InfilfsAcquireForLazyWrite,
     InfilfsReleaseFromLazyWrite,
     InfilfsAcquireForReadAhead,
