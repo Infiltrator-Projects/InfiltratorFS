@@ -484,6 +484,7 @@ check_bytes "$quota" 70000
 for retired in \
     infilfs_checkpoint_bitmap_get \
     infilfs_vfs_attributes \
+    infilfs_vfs_decode_time \
     infilfs_native_available_data_blocks; do
     ! grep -Rq --include='*.c' --include='*.inc' "$retired" "$kernel" || \
         fail "dead kernel helper returned: $retired"

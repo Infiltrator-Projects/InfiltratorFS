@@ -2010,19 +2010,6 @@ static ssize_t infilfs_file_read_iter_dispatch(
     return generic_file_read_iter(iocb, to);
 }
 
-/*
- * Native VFS metadata bridge.
- *
- * InfiltratorFS stores all four timestamps, including birth time, in its
- * portable on-disk attributes.  Report those authoritative values through
- * ->getattr so desktop file managers see creation time as well as POSIX times.
- */
-static __maybe_unused struct timespec64 infilfs_vfs_decode_time(
-    const struct infilfs_timestamp_disk *encoded)
-{
-    return infilfs_timestamp_decode(encoded);
-}
-
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
 static int infilfs_getattr(struct mnt_idmap *idmap, const struct path *path,
                            struct kstat *stat, u32 request_mask,
