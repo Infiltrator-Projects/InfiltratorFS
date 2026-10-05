@@ -990,7 +990,19 @@ jobs:
               fcntl.ioctl(dst_fd, ficlonerange, request)
               os.fsync(dst_fd)
               actual = os.pread(dst_fd, len(expected), 0)
-              assert actual == expected
+              if actual != expected:
+                  mismatch = next((i for i, (a, b) in enumerate(zip(actual, expected))
+                                   if a != b), min(len(actual), len(expected)))
+                  print(f"Range clone read {len(actual)} of {len(expected)} bytes; "
+                        f"first mismatch at {mismatch}", flush=True)
+                  for offset in (0, dst_offset, dst_offset + length, len(expected) - 4096):
+                      try:
+                          block = os.pread(dst_fd, 4096, offset)
+                          print(f"Read at {offset}: {len(block)} bytes, "
+                                f"matches={block == expected[offset:offset + 4096]}", flush=True)
+                      except OSError as error:
+                          print(f"Read at {offset}: {error}", flush=True)
+                  raise AssertionError("FICLONERANGE must preserve every destination byte")
               source_digest = hashlib.sha256(os.pread(src_fd, len(src), 0)).digest()
               patch = b'Z' * 4096
               assert os.pwrite(dst_fd, patch, dst_offset) == len(patch)

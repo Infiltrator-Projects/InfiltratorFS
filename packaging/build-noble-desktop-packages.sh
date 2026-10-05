@@ -5,7 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 out="${1:?Usage: build-noble-desktop-packages.sh OUTPUT_DIR}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-for command in apt-get dpkg-buildpackage dpkg-deb dpkg-parsechangelog patch python3 sha256sum; do
+for command in apt-get dpkg-buildpackage dpkg-deb dpkg-parsechangelog git python3 sha256sum; do
     command -v "$command" >/dev/null 2>&1 || { echo "Missing required command: $command" >&2; exit 1; }
 done
 if [[ -r /etc/os-release ]]; then . /etc/os-release; fi
@@ -20,8 +20,12 @@ libver="$(dpkg-parsechangelog -l"$libsrc/debian/changelog" -SVersion)"
 gduver="$(dpkg-parsechangelog -l"$gdusrc/debian/changelog" -SVersion)"
 case "$libver" in 3.1.*) ;; *) echo "Unsupported Ubuntu libblockdev source: $libver" >&2; exit 1 ;; esac
 case "$gduver" in 46.*) ;; *) echo "Unsupported Ubuntu GNOME Disks source: $gduver" >&2; exit 1 ;; esac
-patch -d "$libsrc" -p1 --forward < "$repo_root/packaging/libblockdev-3.1-infiltratorfs.patch"
-patch -d "$gdusrc" -p1 --forward < "$repo_root/packaging/gnome-disks-46-infiltratorfs.patch"
+# Validate complete patches before applying either. GNU patch can report
+# success while skipping later hunks with malformed counts or separators.
+git -C "$libsrc" apply --check "$repo_root/packaging/libblockdev-3.1-infiltratorfs.patch"
+git -C "$gdusrc" apply --check "$repo_root/packaging/gnome-disks-46-infiltratorfs.patch"
+git -C "$libsrc" apply "$repo_root/packaging/libblockdev-3.1-infiltratorfs.patch"
+git -C "$gdusrc" apply "$repo_root/packaging/gnome-disks-46-infiltratorfs.patch"
 (cd "$libsrc"; DEB_BUILD_OPTIONS="${DEB_BUILD_OPTIONS:-nocheck}" dpkg-buildpackage -b -uc -us)
 (cd "$gdusrc"; DEB_BUILD_OPTIONS="${DEB_BUILD_OPTIONS:-nocheck}" dpkg-buildpackage -b -uc -us)
 architecture="$(dpkg --print-architecture)"

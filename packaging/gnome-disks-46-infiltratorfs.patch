@@ -10,17 +10,18 @@ available. Also provide the native filesystem name in the main Contents field
 and volume grid without replacing the distro libudisks2 client library.
 
 diff --git a/src/disks/gducreateotherpage.c b/src/disks/gducreateotherpage.c
+index d8d8d7f..d00b40b 100644
 --- a/src/disks/gducreateotherpage.c
 +++ b/src/disks/gducreateotherpage.c
-@@ -17,6 +17,7 @@ static const char *other_fs[][2] = {
+@@ -19,6 +19,7 @@ static const char *other_fs[][2] = {
    {"f2fs", N_("F2FS — Flash Storage Linux Filesystem")},
    {"exfat", N_("exFAT — Flash Storage Windows Filesystem, used on SDXC cards")},
    {"udf", N_("UDF — Universal Disk Format, for removable devices on many systems")},
 +  {"infiltratorfs", N_("InfiltratorFS — Portable checksummed copy-on-write filesystem")},
    {"empty", N_("No Filesystem")},
  };
-
-@@ -73,8 +74,17 @@ can_format_cb (UDisksManager *manager,
+ 
+@@ -85,9 +86,18 @@ can_format_cb (UDisksManager *manager,
    if (!available)
      {
        g_autofree char *tooltip = NULL;
@@ -39,8 +40,36 @@ diff --git a/src/disks/gducreateotherpage.c b/src/disks/gducreateotherpage.c
 +                                   util ? util : _("unknown"));
        gtk_widget_set_tooltip_text (GTK_WIDGET (toggle_button), tooltip);
      }
-
+ 
+diff --git a/src/disks/gduvolumegrid.c b/src/disks/gduvolumegrid.c
+index 98a5d97..fed38eb 100644
+--- a/src/disks/gduvolumegrid.c
++++ b/src/disks/gduvolumegrid.c
+@@ -1644,11 +1644,17 @@ create_common_device_info_string (UDisksClient *client,
+       gchar *type_for_display;
+       gchar *size_with_type_str;
+ 
+-      type_for_display = udisks_client_get_id_for_display (client,
+-                                                           usage,
+-                                                           type,
+-                                                           version,
+-                                                           NO_LONG_STRING);
++      if (g_strcmp0 (usage, "filesystem") == 0 &&
++          g_strcmp0 (type, "infiltratorfs") == 0)
++        type_for_display = (version && *version)
++                           ? g_strdup_printf (_("InfiltratorFS (format %s)"), version)
++                           : g_strdup (_("InfiltratorFS"));
++      else
++        type_for_display = udisks_client_get_id_for_display (client,
++                                                             usage,
++                                                             type,
++                                                             version,
++                                                             NO_LONG_STRING);
+ 
+       size_with_type_str = g_strdup_printf ("%s %s", size_str, type_for_display);
+       g_free (type_for_display);
 diff --git a/src/disks/gduwindow.c b/src/disks/gduwindow.c
+index 1a8f898..4fd55ba 100644
 --- a/src/disks/gduwindow.c
 +++ b/src/disks/gduwindow.c
 @@ -2630,7 +2630,14 @@ update_device_page_for_block (GduWindow          *window,
@@ -59,30 +88,3 @@ diff --git a/src/disks/gduwindow.c b/src/disks/gduwindow.c
          }
      }
    else
-
-diff --git a/src/disks/gduvolumegrid.c b/src/disks/gduvolumegrid.c
---- a/src/disks/gduvolumegrid.c
-+++ b/src/disks/gduvolumegrid.c
-@@ -1644,11 +1644,17 @@ create_size_string (UDisksClient *client,
-       gchar *type_for_display;
-       gchar *size_with_type_str;
-
--      type_for_display = udisks_client_get_id_for_display (client,
--                                                           usage,
--                                                           type,
--                                                           version,
--                                                           NO_LONG_STRING);
-+      if (g_strcmp0 (usage, "filesystem") == 0 &&
-+          g_strcmp0 (type, "infiltratorfs") == 0)
-+        type_for_display = (version && *version)
-+                           ? g_strdup_printf (_("InfiltratorFS (format %s)"), version)
-+                           : g_strdup (_("InfiltratorFS"));
-+      else
-+        type_for_display = udisks_client_get_id_for_display (client,
-+                                                             usage,
-+                                                             type,
-+                                                             version,
-+                                                             NO_LONG_STRING);
-
-       size_with_type_str = g_strdup_printf ("%s %s", size_str, type_for_display);
-       g_free (type_for_display);

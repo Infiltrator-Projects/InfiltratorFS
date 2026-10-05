@@ -7,24 +7,26 @@ required by UDisks reformatting; the mounted filesystem itself is provided by
 the native InfiltratorFS VFS driver.
 
 diff --git a/src/lib/plugin_apis/fs.api b/src/lib/plugin_apis/fs.api
+index 1685c23..da2a211 100644
 --- a/src/lib/plugin_apis/fs.api
 +++ b/src/lib/plugin_apis/fs.api
-@@ -528,5 +528,6 @@ typedef enum {
+@@ -527,6 +527,7 @@ typedef enum {
      BD_FS_TECH_EXFAT,
      BD_FS_TECH_BTRFS,
      BD_FS_TECH_UDF,
 +    BD_FS_TECH_INFILTRATORFS,
  } BDFSTech;
-
+ 
  typedef enum {
 diff --git a/src/plugins/fs.c b/src/plugins/fs.c
+index 8fcf0bb..37f855e 100644
 --- a/src/plugins/fs.c
 +++ b/src/plugins/fs.c
-@@ -120,6 +120,30 @@ gboolean bd_fs_is_tech_avail (BDFSTech tech, guint64 mode, GError **error) {
+@@ -116,6 +116,30 @@ gboolean bd_fs_is_tech_avail (BDFSTech tech, guint64 mode, GError **error) {
              return bd_fs_btrfs_is_tech_avail (tech, mode, error);
          case BD_FS_TECH_UDF:
              return bd_fs_udf_is_tech_avail (tech, mode, error);
-+        case ((BDFSTech) 13): {
++        case BD_FS_TECH_INFILTRATORFS: {
 +            const guint64 supported =
 +                BD_FS_TECH_MODE_MKFS | BD_FS_TECH_MODE_CHECK |
 +                BD_FS_TECH_MODE_REPAIR | BD_FS_TECH_MODE_RESIZE;
@@ -52,10 +54,11 @@ diff --git a/src/plugins/fs.c b/src/plugins/fs.c
          default:
              /* this should never be reached (see the comparison with LAST_FS
 diff --git a/src/plugins/fs.h b/src/plugins/fs.h
+index 3c38f5c..591545e 100644
 --- a/src/plugins/fs.h
 +++ b/src/plugins/fs.h
-@@ -23,6 +23,6 @@ typedef enum {
-
+@@ -23,7 +23,7 @@ typedef enum {
+ 
  /* XXX: where the file systems start at the enum of technologies */
  #define BD_FS_OFFSET 2
 -#define BD_FS_LAST_FS 13
@@ -63,18 +66,19 @@ diff --git a/src/plugins/fs.h b/src/plugins/fs.h
  typedef enum {
      BD_FS_TECH_GENERIC  = 0,
      BD_FS_TECH_MOUNT    = 1,
-@@ -38,5 +38,6 @@ typedef enum {
+@@ -38,6 +38,7 @@ typedef enum {
      BD_FS_TECH_EXFAT    = 10,
      BD_FS_TECH_BTRFS    = 11,
      BD_FS_TECH_UDF      = 12,
 +    BD_FS_TECH_INFILTRATORFS = 13,
  } BDFSTech;
-
+ 
  /* XXX: number of the highest bit of all modes */
 diff --git a/src/plugins/fs/generic.c b/src/plugins/fs/generic.c
+index 2b2180a..9582403 100644
 --- a/src/plugins/fs/generic.c
 +++ b/src/plugins/fs/generic.c
-@@ -171,5 +171,13 @@ static const BDFSFeatures fs_features[BD_FS_LAST_FS] = {
+@@ -152,6 +152,14 @@ static const BDFSFeatures fs_features[BD_FS_LAST_FS] = {
        .features = BD_FS_FEATURE_OWNERS | BD_FS_FEATURE_PARTITION_TABLE,
        .partition_id = "0x07",
        .partition_type = "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7" },
@@ -87,9 +91,9 @@ diff --git a/src/plugins/fs/generic.c b/src/plugins/fs/generic.c
 +      .partition_id = "0x83",
 +      .partition_type = "0fc63daf-8483-4772-8e79-3d69d8477de4" },
  };
-
+ 
  /**
-@@ -306,5 +314,15 @@ const BDFSInfo fs_info[BD_FS_LAST_FS] = {
+@@ -290,6 +298,16 @@ const BDFSInfo fs_info[BD_FS_LAST_FS] = {
        .label_util = "udflabel",
        .info_util = "udfinfo",
        .uuid_util = "udflabel" },
@@ -104,79 +108,23 @@ diff --git a/src/plugins/fs/generic.c b/src/plugins/fs/generic.c
 +      .info_util = NULL,
 +      .uuid_util = NULL },
  };
-
+ 
  /**
-@@ -343,6 +361,9 @@ static BDFSTech fstype_to_tech (const gchar *fstype) {
+@@ -344,9 +362,12 @@ static BDFSTech fstype_to_tech (const gchar *fstype) {
          return BD_FS_TECH_BTRFS;
      } else if (g_strcmp0 (fstype, "udf") == 0) {
          return BD_FS_TECH_UDF;
 +    } else if (g_strcmp0 (fstype, "infiltratorfs") == 0) {
-+        return (BDFSTech) 13;
++        return BD_FS_TECH_INFILTRATORFS;
      } else {
          return BD_FS_TECH_GENERIC;
      }
 +
-@@ -426,4 +462,43 @@ static gboolean btrfs_set_label (const gchar *device, const gchar *label, GError **error) {
-     return success;
  }
  
-+static gboolean infiltratorfs_check_or_repair (const gchar *device,
-+                                                gboolean repair,
-+                                                GError **error) {
-+    const gchar *args[] = {
-+        "fsck.infiltratorfs", repair ? "-p" : "-n", device, NULL
-+    };
-+    return bd_utils_exec_and_report_error (args, NULL, error);
-+}
-+
-+static gboolean infiltratorfs_resize_device (const gchar *device,
-+                                              guint64 new_size,
-+                                              GError **error) {
-+    g_autofree gchar *mountpoint = NULL;
-+    g_autofree gchar *size_text = NULL;
-+    gboolean unmount = FALSE;
-+    gboolean success = FALSE;
-+    gboolean unmount_ok = TRUE;
-+    GError *local_error = NULL;
-+
-+    mountpoint = fs_mount (device, "infiltratorfs", FALSE, &unmount, error);
-+    if (!mountpoint)
-+        return FALSE;
-+    size_text = new_size == 0 ?
-+        g_strdup ("max") : g_strdup_printf ("%" G_GUINT64_FORMAT, new_size);
-+    const gchar *args[] = {
-+        "infiltratorfs-resize", mountpoint, size_text, NULL
-+    };
-+    success = bd_utils_exec_and_report_error (args, NULL, error);
-+    if (unmount) {
-+        unmount_ok = fs_unmount (device, mountpoint, "resizing", &local_error);
-+        if (!unmount_ok) {
-+            if (success)
-+                g_propagate_error (error, local_error);
-+            else
-+                g_clear_error (&local_error);
-+        }
-+    }
-+    return success && unmount_ok;
-+}
- static gboolean device_operation (const gchar *device, const gchar *fstype, BDFSOpType op, guint64 new_size, const gchar *label, const gchar *uuid, GError **error) {
-@@ -430,4 +466,15 @@ static gboolean device_operation (const gchar *device, const gchar *fstype, BDFS
-         }
-+    } else if (g_strcmp0 (detected_fstype, "infiltratorfs") == 0) {
-+        switch (op) {
-+            case BD_FS_RESIZE:
-+                return infiltratorfs_resize_device (device, new_size, error);
-+            case BD_FS_REPAIR:
-+                return infiltratorfs_check_or_repair (device, TRUE, error);
-+            case BD_FS_CHECK:
-+                return infiltratorfs_check_or_repair (device, FALSE, error);
-+            default:
-+                break;
-+        }
-     }
- 
-     switch (op) {
-@@ -513,4 +533,36 @@ gboolean bd_fs_clean (const gchar *device, gboolean force, GError **error) {
+ /**
+@@ -501,6 +522,38 @@ gboolean bd_fs_wipe (const gchar *device, gboolean all, gboolean force, GError *
+ gboolean bd_fs_clean (const gchar *device, gboolean force, GError **error) {
    gboolean ret = FALSE;
    GError *l_error = NULL;
 +  gchar *infiltrator_mkfs = NULL;
@@ -213,10 +161,76 @@ diff --git a/src/plugins/fs/generic.c b/src/plugins/fs/generic.c
 +  }
  
    ret = bd_fs_wipe (device, TRUE, force, &l_error);
-@@ -1896,5 +1916,25 @@ extern BDExtraArg** bd_fs_xfs_mkfs_options (BDFSMkfsOptions *options, const BDEx
+ 
+@@ -899,6 +952,46 @@ static gboolean btrfs_set_label (const gchar *device, const gchar *label, GError
+     return success;
+ }
+ 
++static gboolean infiltratorfs_check_or_repair (const gchar *device,
++                                                gboolean repair,
++                                                GError **error) {
++    const gchar *args[] = {
++        "fsck.infiltratorfs", repair ? "-p" : "-n", device, NULL
++    };
++    return bd_utils_exec_and_report_error (args, NULL, error);
++}
++
++static gboolean infiltratorfs_resize_device (const gchar *device,
++                                              guint64 new_size,
++                                              GError **error) {
++    g_autofree gchar *mountpoint = NULL;
++    g_autofree gchar *size_text = NULL;
++    gboolean unmount = FALSE;
++    gboolean success = FALSE;
++    gboolean unmount_ok = TRUE;
++    GError *local_error = NULL;
++
++    mountpoint = fs_mount (device, "infiltratorfs", FALSE, &unmount, error);
++    if (!mountpoint)
++        return FALSE;
++    size_text = new_size == 0 ?
++        g_strdup ("max") : g_strdup_printf ("%" G_GUINT64_FORMAT, new_size);
++    const gchar *args[] = {
++        "infiltratorfs-resize", mountpoint, size_text, NULL
++    };
++    success = bd_utils_exec_and_report_error (args, NULL, error);
++    if (unmount) {
++        unmount_ok = bd_fs_unmount (mountpoint, FALSE, FALSE, NULL, &local_error);
++        if (!unmount_ok) {
++            if (success)
++                g_propagate_error (error, local_error);
++            else
++                g_clear_error (&local_error);
++        } else
++            g_rmdir (mountpoint);
++    }
++    return success && unmount_ok;
++}
+ static gboolean device_operation (const gchar *device, const gchar *fstype, BDFSOpType op, guint64 new_size, const gchar *label, const gchar *uuid, GError **error) {
+     const gchar* op_name = NULL;
+     g_autofree gchar* detected_fstype = NULL;
+@@ -1099,6 +1192,17 @@ static gboolean device_operation (const gchar *device, const gchar *fstype, BDFS
+             default:
+                 g_assert_not_reached ();
+         }
++    } else if (g_strcmp0 (detected_fstype, "infiltratorfs") == 0) {
++        switch (op) {
++            case BD_FS_RESIZE:
++                return infiltratorfs_resize_device (device, new_size, error);
++            case BD_FS_REPAIR:
++                return infiltratorfs_check_or_repair (device, TRUE, error);
++            case BD_FS_CHECK:
++                return infiltratorfs_check_or_repair (device, FALSE, error);
++            default:
++                break;
++        }
+     }
+     switch (op) {
+         case BD_FS_RESIZE:
+@@ -1897,6 +2001,26 @@ extern BDExtraArg** bd_fs_xfs_mkfs_options (BDFSMkfsOptions *options, const BDEx
  extern BDExtraArg** bd_fs_btrfs_mkfs_options (BDFSMkfsOptions *options, const BDExtraArg **extra);
  extern BDExtraArg** bd_fs_udf_mkfs_options (BDFSMkfsOptions *options, const BDExtraArg **extra);
-
+ 
 +static BDExtraArg** bd_fs_infiltratorfs_mkfs_options (BDFSMkfsOptions *options,
 +                                                       const BDExtraArg **extra) {
 +    GPtrArray *options_array = g_ptr_array_new ();
@@ -240,7 +254,7 @@ diff --git a/src/plugins/fs/generic.c b/src/plugins/fs/generic.c
  /**
   * bd_fs_mkfs:
   * @device: the device to create the new filesystem on
-@@ -1959,6 +1999,11 @@ gboolean bd_fs_mkfs (const gchar *device, const gchar *fstype, BDFSMkfsOptions *
+@@ -1959,6 +2083,11 @@ gboolean bd_fs_mkfs (const gchar *device, const gchar *fstype, BDFSMkfsOptions *
      } else if (g_strcmp0 (fstype, "udf") == 0) {
          extra_args = bd_fs_udf_mkfs_options (options, extra);
          ret = bd_fs_udf_mkfs (device, NULL, NULL, 0, (const BDExtraArg **) extra_args, error);
