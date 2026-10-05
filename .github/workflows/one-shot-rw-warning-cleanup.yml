@@ -1,0 +1,81 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: One-shot remaining dead RW helper cleanup
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/one-shot-rw-warning-cleanup.yml
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Remove dead directory rebuild and attribute helpers
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('kernel/infiltratorfs_rw_legacy.inc')
+          text = path.read_text()
+          start = text.find('static int infilfs_rw_directory_contains(')
+          end = text.find('static int infilfs_rw_generate_id(', start)
+          if start < 0 or end < 0:
+              raise SystemExit('dead directory helper block boundary not found')
+          block = text[start:end]
+          if block.count('static int infilfs_rw_directory_contains(') != 1:
+              raise SystemExit('unexpected directory_contains count')
+          if block.count('static int infilfs_rw_rebuild_directory(') != 1:
+              raise SystemExit('unexpected rebuild_directory count')
+          text = text[:start] + text[end:]
+          start = text.find('static void infilfs_rw_fill_common_attributes(')
+          end = text.find('static int infilfs_rw_load_inline(', start)
+          if start < 0 or end < 0:
+              raise SystemExit('dead common-attribute helper boundary not found')
+          block = text[start:end]
+          if block.count('static void infilfs_rw_fill_common_attributes(') != 1:
+              raise SystemExit('unexpected fill_common_attributes count')
+          text = text[:start] + text[end:]
+          for retired in ('infilfs_rw_directory_contains', 'infilfs_rw_rebuild_directory', 'static void infilfs_rw_fill_common_attributes'):
+              if retired in text:
+                  raise SystemExit(f'retired helper survived: {retired}')
+          for live in ('static int infilfs_rw_collect_directory(', 'static int infilfs_rw_generate_id(', 'static int infilfs_rw_load_inline('):
+              if live not in text:
+                  raise SystemExit(f'live neighbour lost: {live}')
+          path.write_text(text)
+          PY
+
+      - name: Validate cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          bash tests/native-kernel-maintainability-policy.sh .
+          bash tests/native-deferred-publication-policy.sh .
+          ! grep -Fq 'static int infilfs_rw_directory_contains(' kernel/infiltratorfs_rw_legacy.inc
+          ! grep -Fq 'static int infilfs_rw_rebuild_directory(' kernel/infiltratorfs_rw_legacy.inc
+          ! grep -Fq 'static void infilfs_rw_fill_common_attributes(' kernel/infiltratorfs_rw_legacy.inc
+          grep -Fq 'static int infilfs_rw_collect_directory(' kernel/infiltratorfs_rw_legacy.inc
+          grep -Fq 'static int infilfs_rw_load_inline(' kernel/infiltratorfs_rw_legacy.inc
+          git diff --stat
+
+      - name: Commit cleanup and remove one-shot workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'The First Infiltrator'
+          git config user.email 'infiltratr@yandex.com'
+          git rm .github/workflows/one-shot-rw-warning-cleanup.yml
+          git add kernel/infiltratorfs_rw_legacy.inc
+          git diff --cached --check
+          git commit -m 'kernel: remove obsolete legacy directory helpers'
+          git push origin HEAD:main
