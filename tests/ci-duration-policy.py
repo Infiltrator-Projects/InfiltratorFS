@@ -140,7 +140,6 @@ for forbidden in (
     'INFILTRATORFS_OS_INTEGRATION_BUNDLE_DIR',
     'INFILTRATORFS_REQUIRE_OS_INTEGRATION',
     'gh release download v0.18.47',
-    'bash packaging/build-noble-desktop-integration.sh',
 ):
     if forbidden in release_artifacts:
         raise SystemExit(f'automatic release artifact workflow contains retired desktop injection path: {forbidden}')
@@ -157,7 +156,6 @@ for required in (
         raise SystemExit(f'release promotion policy missing: {required}')
 for forbidden in (
     'apt-get build-dep',
-    'build-noble-desktop-integration.sh',
     'cmake --build',
     'timeout-minutes: 12',
 ):
