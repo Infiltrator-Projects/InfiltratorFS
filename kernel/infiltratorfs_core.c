@@ -1989,14 +1989,6 @@ paged_out:
 }
 
 
-static int infilfs_map_file_block(
-    struct inode *inode, const u8 *object, u64 logical,
-    u64 *physical_out, u32 *flags_out)
-{
-    return infilfs_map_file_block_detail(
-        inode, object, logical, physical_out, flags_out, NULL, NULL);
-}
-
 static const char *infilfs_get_link(struct dentry *dentry, struct inode *inode,
                                     struct delayed_call *done)
 {
