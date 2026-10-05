@@ -10,21 +10,21 @@ if [ "$root_fstype" = infiltratorfs ]; then
     root_active=1
 fi
 
-active="$(findmnt -rn -t infiltratorfs,fuse.infilfs-fuse 2>/dev/null || true)"
+active="$(findmnt -rn -t infiltratorfs 2>/dev/null || true)"
 if [ -n "$active" ]; then
     echo 'InfiltratorFS: mounted volumes detected before driver upgrade.'
     echo "$active"
     sync
     if [ "$root_active" -eq 1 ]; then
         echo 'InfiltratorFS: / is an InfiltratorFS root; keeping the live root driver mounted and unloading only non-root volumes.'
-        findmnt -rn -t infiltratorfs,fuse.infilfs-fuse -o TARGET 2>/dev/null |
+        findmnt -rn -t infiltratorfs -o TARGET 2>/dev/null |
             awk '$1 != "/" { print length($0), $0 }' |
             sort -rn | cut -d' ' -f2- |
             while IFS= read -r target; do
                 [ -n "$target" ] || continue
                 umount -- "$target" 2>/dev/null || true
             done
-        remaining="$(findmnt -rn -t infiltratorfs,fuse.infilfs-fuse -o TARGET 2>/dev/null |
+        remaining="$(findmnt -rn -t infiltratorfs -o TARGET 2>/dev/null |
             awk '$1 != "/"' || true)"
         if [ -n "$remaining" ]; then
             echo 'InfiltratorFS: non-root volumes are still busy; refusing driver upgrade.' >&2
@@ -34,8 +34,8 @@ if [ -n "$active" ]; then
         echo 'InfiltratorFS: live root remains mounted; the replacement DKMS driver will take effect after reboot.'
     else
         echo 'InfiltratorFS: attempting a clean automatic unmount before upgrading the driver.'
-        umount -a -t infiltratorfs,fuse.infilfs-fuse 2>/dev/null || true
-        active="$(findmnt -rn -t infiltratorfs,fuse.infilfs-fuse 2>/dev/null || true)"
+        umount -a -t infiltratorfs 2>/dev/null || true
+        active="$(findmnt -rn -t infiltratorfs 2>/dev/null || true)"
         if [ -n "$active" ]; then
             echo 'InfiltratorFS: clean automatic unmount could not complete because a volume is still busy.' >&2
             echo "$active" >&2
