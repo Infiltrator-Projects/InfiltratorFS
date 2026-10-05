@@ -343,12 +343,13 @@ static infs_status link_file_tx(struct infs_volume *vol,
     status = dir_validate(parent_block, &parent_payload);
     if (status != INFS_STATUS_OK)
         return status;
+
+    struct infs_lookup destination = {0};
+    int have_destination = 0;
     struct infs_dirent_disk destination_entry;
     status = dir_lookup_volume(
         vol, parent_block, name, &destination_entry);
     if (status == INFS_STATUS_OK) {
-        struct infs_lookup destination;
-
         if (memcmp(
                 destination_entry.object_id,
                 source.object_id, 16) == 0)
@@ -364,22 +365,13 @@ static infs_status link_file_tx(struct infs_volume *vol,
         if (destination.type != INFS_OBJECT_FILE &&
             destination.type != INFS_OBJECT_SYMLINK)
             return INFS_STATUS_NOT_SUPPORTED;
-        /*
-         * Retire the namespace reference before retiring the indexed object.
-         * This matches ordinary unlink ordering and keeps every intermediate
-         * transaction state internally consistent for directory/index helpers.
-         * The whole mutation remains atomic because publication happens only
-         * after the replacement link, source link count and parent are staged.
-         */
         status = dir_remove_volume(
             vol, parent_block, name, NULL);
         if (status != INFS_STATUS_OK)
             return status;
-        status = destroy_replaced_object_tx(vol, &destination);
-        if (status != INFS_STATUS_OK)
-            return status;
         parent_payload = (struct infs_directory_payload_disk *)(
             parent_block + sizeof(struct infs_object_header_disk));
+        have_destination = 1;
     } else if (status != INFS_STATUS_NOT_FOUND) {
         return status;
     }
@@ -411,13 +403,24 @@ static infs_status link_file_tx(struct infs_volume *vol,
     touch_mctime(vol, &parent_payload->attributes);
     if (vol->tx_error != INFS_STATUS_OK)
         return vol->tx_error;
+
+    /* Stage the final namespace and source link count before retiring the
+     * replaced object.  Helpers used by teardown can therefore observe a
+     * transaction-consistent namespace/index graph instead of either of the
+     * two invalid intermediate states (dangling name or missing name). */
     status = write_object(vol, source.block, source_block);
     if (status != INFS_STATUS_OK)
         return status;
     status = write_object(vol, parent.block, parent_block);
     if (status != INFS_STATUS_OK)
         return status;
-    return finish_mutation(vol, (uint64_t)INFS_BLOCK_SIZE * 5u);
+    if (have_destination) {
+        status = destroy_replaced_object_tx(vol, &destination);
+        if (status != INFS_STATUS_OK)
+            return status;
+    }
+    return finish_mutation(
+        vol, (uint64_t)INFS_BLOCK_SIZE * (have_destination ? 6u : 5u));
 }
 
 infs_status infs_link_file_ex(struct infs_volume *vol,
