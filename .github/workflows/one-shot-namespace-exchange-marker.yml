@@ -1,0 +1,68 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: One-shot namespace exchange marker cleanup
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/one-shot-namespace-exchange-marker.yml
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Remove dead namespace exchange marker
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git grep -n 'INFILFS_NAMESPACE_EXCHANGE_EXTERNAL' -- kernel | wc -l)" -eq 2
+          ! grep -Fq 'INFILFS_NAMESPACE_EXCHANGE_EXTERNAL' kernel/infiltratorfs_rw_namespace.inc
+          ! grep -Fq 'INFILFS_NAMESPACE_EXCHANGE_EXTERNAL' kernel/infiltratorfs_rw_namespace_exchange.inc
+          python3 - <<'PY'
+          from pathlib import Path
+
+          rw = Path('kernel/infiltratorfs_rw.inc')
+          text = rw.read_text()
+          define = '#define INFILFS_NAMESPACE_EXCHANGE_EXTERNAL 1\n'
+          undef = '#undef INFILFS_NAMESPACE_EXCHANGE_EXTERNAL\n'
+          if text.count(define) != 1 or text.count(undef) != 1:
+              raise SystemExit('namespace exchange marker shape changed')
+          text = text.replace(define, '', 1).replace(undef, '', 1)
+          rw.write_text(text)
+
+          policy = Path('tests/native-kernel-maintainability-policy.sh')
+          text = policy.read_text()
+          anchor = "! grep -Fq 'infilfs_rw_fill_common_attributes' \"$namespace\" || \\\n    fail 'namespace layer regained obsolete attribute alias name'\n"
+          addition = anchor + "! grep -Rq --include='*.c' --include='*.inc' 'INFILFS_NAMESPACE_EXCHANGE_EXTERNAL' \"$kernel\" || \\\n    fail 'dead namespace exchange composition marker returned'\n"
+          if text.count(anchor) != 1:
+              raise SystemExit('namespace alias guard anchor changed')
+          policy.write_text(text.replace(anchor, addition, 1))
+          PY
+
+      - name: Validate marker cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          ! git grep -n 'INFILFS_NAMESPACE_EXCHANGE_EXTERNAL' -- kernel
+          bash tests/native-kernel-maintainability-policy.sh .
+
+      - name: Commit cleanup and remove one-shot workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'The First Infiltrator'
+          git config user.email 'infiltratr@yandex.com'
+          git rm .github/workflows/one-shot-namespace-exchange-marker.yml
+          git add kernel/infiltratorfs_rw.inc tests/native-kernel-maintainability-policy.sh
+          git diff --cached --check
+          git commit -m 'kernel: remove dead namespace exchange marker'
+          git push origin HEAD:main
