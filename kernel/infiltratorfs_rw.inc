@@ -2364,35 +2364,3 @@ out:
 }
 
 #include "infiltratorfs_linux_meta.inc"
-
-/*
- * infiltratorfs.c declares the operation tables immediately after including
- * this composition file.  Supply the final native callbacks here while keeping
- * that table compact.
- */
-#define simple_statfs infilfs_statfs
-#define infilfs_rw_create infilfs_posix_acl_create, \
-    .mknod = infilfs_posix_acl_mknod, \
-    .tmpfile = infilfs_posix_acl_tmpfile, \
-    .get_inode_acl = infilfs_posix_acl_get, \
-    .set_acl = infilfs_posix_acl_set, \
-    .listxattr = infilfs_linux_listxattr
-#define infilfs_rw_mkdir infilfs_posix_acl_mkdir, \
-    .unlink = infilfs_ns_unlink, \
-    .rmdir = infilfs_ns_rmdir, \
-    .link = infilfs_ns_link, \
-    .symlink = infilfs_posix_symlink, \
-    .rename = infilfs_ns_rename, \
-    .setattr = infilfs_posix_acl_setattr, \
-    .getattr = infilfs_getattr, \
-    .get_inode_acl = infilfs_posix_acl_get, \
-    .set_acl = infilfs_posix_acl_set
-#define infilfs_rw_setattr infilfs_posix_acl_setattr, \
-    .getattr = infilfs_getattr, \
-    .get_inode_acl = infilfs_posix_acl_get, \
-    .set_acl = infilfs_posix_acl_set, \
-    .listxattr = infilfs_linux_listxattr
-#define infilfs_get_link infilfs_get_link, \
-    .setattr = infilfs_posix_setattr, \
-    .getattr = infilfs_getattr, \
-    .listxattr = infilfs_linux_listxattr

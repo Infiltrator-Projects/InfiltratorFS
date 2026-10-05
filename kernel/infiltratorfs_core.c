@@ -2924,7 +2924,7 @@ static int infilfs_show_options(struct seq_file *seq, struct dentry *root)
 }
 
 static const struct super_operations infilfs_super_operations = {
-    .statfs = simple_statfs,
+    .statfs = infilfs_statfs,
     .sync_fs = infilfs_sync_fs,
     .evict_inode = infilfs_evict_inode,
     .put_super = infilfs_put_super,
@@ -2933,19 +2933,35 @@ static const struct super_operations infilfs_super_operations = {
 
 static const struct inode_operations infilfs_dir_inode_operations = {
     .lookup = infilfs_lookup,
-    .create = infilfs_rw_create,
-    .mkdir = infilfs_rw_mkdir,
+    .create = infilfs_posix_acl_create,
+    .mknod = infilfs_posix_acl_mknod,
+    .tmpfile = infilfs_posix_acl_tmpfile,
+    .mkdir = infilfs_posix_acl_mkdir,
+    .unlink = infilfs_ns_unlink,
+    .rmdir = infilfs_ns_rmdir,
+    .link = infilfs_ns_link,
+    .symlink = infilfs_posix_symlink,
+    .rename = infilfs_ns_rename,
+    .setattr = infilfs_posix_acl_setattr,
+    .getattr = infilfs_getattr,
+    .get_inode_acl = infilfs_posix_acl_get,
+    .set_acl = infilfs_posix_acl_set,
     .listxattr = infilfs_linux_listxattr,
 };
 
 static const struct inode_operations infilfs_file_inode_operations = {
-    .setattr = infilfs_rw_setattr,
+    .setattr = infilfs_posix_acl_setattr,
+    .getattr = infilfs_getattr,
+    .get_inode_acl = infilfs_posix_acl_get,
+    .set_acl = infilfs_posix_acl_set,
     .fiemap = infilfs_file_fiemap,
     .listxattr = infilfs_linux_listxattr,
 };
 
 static const struct inode_operations infilfs_symlink_inode_operations = {
     .get_link = infilfs_get_link,
+    .setattr = infilfs_posix_setattr,
+    .getattr = infilfs_getattr,
     .listxattr = infilfs_linux_listxattr,
 };
 
