@@ -313,7 +313,7 @@ grep -Fq 'sbi->bitmap = bitmap;' <<<"$checkpoint_graph_body" || \
     fail 'validated allocation bitmap is not transferred to mount state'
 grep -Fq 'infilfs_allocation_cache_replace(sbi, &committed_layout);' <<<"$checkpoint_graph_body" || \
     fail 'validated allocation-tree geometry is not transferred to mount state'
-mount_init_body="$(sed -n '/int infilfs_rw_mount_init(struct super_block \*sb)/,/^}/p' "$kernel/infiltratorfs_rw_legacy.inc")"
+mount_init_body="$(sed -n '/int infilfs_rw_mount_init_legacy(struct super_block \*sb)/,/^}/p' "$kernel/infiltratorfs_rw_legacy.inc")"
 grep -Fq 'if (sbi->bitmap)' <<<"$mount_init_body" || \
     fail 'RW mount init no longer adopts checkpoint-selected allocation state'
 grep -Fq 'infilfs_allocation_cache_view(' <<<"$mount_init_body" || \
@@ -383,21 +383,36 @@ for include in "${ordered[@]}"; do
     previous="$line"
 done
 
-# Macro-renamed entry points are migration debt. Guard the known alias bridges
-# structurally instead of counting every macro in rw.inc (which also contains
-# operation-table construction macros and caused false positives). The seventh
-# retained legacy alias is mount_init: the public wrapper now adds SB_POSIXACL
-# after the unchanged legacy mount-state initializer succeeds. The obsolete
-# legacy fsync alias is intentionally gone; the active data-layer fsync is the
-# only implementation allowed to reach the VFS.
-legacy_block="$(sed -n \
-    '/^#define infilfs_rw_tx_begin infilfs_rw_tx_begin_legacy$/,/^#include "infiltratorfs_rw_legacy.inc"$/p' \
-    "$rw")"
-legacy_aliases="$(grep -Ec '^#define infilfs_[a-z0-9_]+[[:space:]]+infilfs_[a-z0-9_]+_legacy$' <<<"$legacy_block" || true)"
-test "$legacy_aliases" -eq 7 || \
-    fail "legacy alias bridge changed ($legacy_aliases entries; expected 7)"
-grep -Fq '#define infilfs_rw_mount_init infilfs_rw_mount_init_legacy' <<<"$legacy_block" || \
-    fail 'POSIX ACL mount-init alias bridge changed'
+# The include-time symbol-renaming bridge is retired. Live compatibility
+# primitives carry explicit _legacy names in their defining source, and VFS
+# callbacks are named directly by the operation tables in core.c.
+for name in \
+    infilfs_rw_tx_begin \
+    infilfs_file_write_iter \
+    infilfs_rw_create \
+    infilfs_rw_mkdir \
+    infilfs_rw_setattr \
+    infilfs_rw_mount_init \
+    infilfs_rw_mount_destroy; do
+    ! grep -Eq "^#(define|undef)[[:space:]]+${name}([[:space:]]|$)" "$rw" || \
+        fail "retired legacy alias bridge returned for $name"
+    grep -Fq "${name}_legacy" "$kernel/infiltratorfs_rw_legacy.inc" || \
+        fail "explicit legacy implementation name missing for $name"
+done
+! grep -Fq '#define simple_statfs infilfs_statfs' "$rw" || \
+    fail 'VFS statfs callback injection macro returned'
+! grep -Fq '#define infilfs_get_link infilfs_get_link' "$rw" || \
+    fail 'VFS symlink callback injection macro returned'
+grep -Fq '.statfs = infilfs_statfs,' "$driver" || \
+    fail 'superblock statfs callback is no longer explicit'
+grep -Fq '.create = infilfs_posix_acl_create,' "$driver" || \
+    fail 'directory create callback is no longer explicit'
+grep -Fq '.mknod = infilfs_posix_acl_mknod,' "$driver" || \
+    fail 'directory mknod callback is no longer explicit'
+grep -Fq '.tmpfile = infilfs_posix_acl_tmpfile,' "$driver" || \
+    fail 'directory tmpfile callback is no longer explicit'
+grep -Fq '.rename = infilfs_ns_rename,' "$driver" || \
+    fail 'directory rename callback is no longer explicit'
 
 grep -Fq '#include "infiltratorfs_rw_data.inc"' "$rw" || \
     fail 'RW data compositor include missing'

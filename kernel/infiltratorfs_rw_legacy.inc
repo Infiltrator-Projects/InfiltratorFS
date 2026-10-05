@@ -1046,7 +1046,7 @@ static int infilfs_rw_enable(struct super_block *sb)
     return 0;
 }
 
-static int infilfs_rw_mount_init(struct super_block *sb)
+static int infilfs_rw_mount_init_legacy(struct super_block *sb)
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
     struct infilfs_allocation_layout committed_layout = {0};
@@ -1118,7 +1118,7 @@ fail:
     return ret;
 }
 
-static void infilfs_rw_mount_destroy(struct super_block *sb)
+static void infilfs_rw_mount_destroy_legacy(struct super_block *sb)
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
 
@@ -1145,7 +1145,7 @@ static void infilfs_rw_mount_destroy(struct super_block *sb)
     sbi->rw_enabled = false;
 }
 
-static int infilfs_rw_tx_begin(struct super_block *sb, struct infilfs_rw_tx *tx)
+static int infilfs_rw_tx_begin_legacy(struct super_block *sb, struct infilfs_rw_tx *tx)
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
     u64 generation;
@@ -2323,7 +2323,7 @@ static int infilfs_rw_create_named_child(
     ret = infilfs_rw_generate_id(dir->i_sb, object_id);
     if (ret)
         goto unlock;
-    ret = infilfs_rw_tx_begin(dir->i_sb, &tx);
+    ret = infilfs_rw_tx_begin_legacy(dir->i_sb, &tx);
     if (ret)
         goto unlock;
     ret = infilfs_rw_create_object(&tx, dir, type, mode, portable_flags,
@@ -2429,7 +2429,7 @@ static int infilfs_rw_replace_inline_locked(struct inode *inode,
 
     if (size > INFILFS_INLINE_DATA_MAX)
         return -EFBIG;
-    ret = infilfs_rw_tx_begin(inode->i_sb, &tx);
+    ret = infilfs_rw_tx_begin_legacy(inode->i_sb, &tx);
     if (ret)
         return ret;
     old_object = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
@@ -2503,7 +2503,7 @@ abort:
     return ret;
 }
 
-static __maybe_unused ssize_t infilfs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
+static __maybe_unused ssize_t infilfs_file_write_iter_legacy(struct kiocb *iocb, struct iov_iter *from)
 {
     struct file *filep = iocb->ki_filp;
     struct inode *inode = file_inode(filep);
@@ -2549,10 +2549,10 @@ out:
 }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
-static __maybe_unused int infilfs_rw_create(struct mnt_idmap *idmap, struct inode *dir,
+static __maybe_unused int infilfs_rw_create_legacy(struct mnt_idmap *idmap, struct inode *dir,
                              struct dentry *dentry, umode_t mode, bool excl)
 #else
-static __maybe_unused int infilfs_rw_create(struct user_namespace *idmap, struct inode *dir,
+static __maybe_unused int infilfs_rw_create_legacy(struct user_namespace *idmap, struct inode *dir,
                              struct dentry *dentry, umode_t mode, bool excl)
 #endif
 {
@@ -2575,14 +2575,14 @@ static __maybe_unused int infilfs_rw_create(struct user_namespace *idmap, struct
 }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
-static __maybe_unused struct dentry *infilfs_rw_mkdir(struct mnt_idmap *idmap,
+static __maybe_unused struct dentry *infilfs_rw_mkdir_legacy(struct mnt_idmap *idmap,
                                        struct inode *dir,
                                        struct dentry *dentry, umode_t mode)
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
-static __maybe_unused int infilfs_rw_mkdir(struct mnt_idmap *idmap, struct inode *dir,
+static __maybe_unused int infilfs_rw_mkdir_legacy(struct mnt_idmap *idmap, struct inode *dir,
                             struct dentry *dentry, umode_t mode)
 #else
-static __maybe_unused int infilfs_rw_mkdir(struct user_namespace *idmap, struct inode *dir,
+static __maybe_unused int infilfs_rw_mkdir_legacy(struct user_namespace *idmap, struct inode *dir,
                             struct dentry *dentry, umode_t mode)
 #endif
 {
@@ -2619,10 +2619,10 @@ static __maybe_unused int infilfs_rw_mkdir(struct user_namespace *idmap, struct 
 }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
-static __maybe_unused int infilfs_rw_setattr(struct mnt_idmap *idmap, struct dentry *dentry,
+static __maybe_unused int infilfs_rw_setattr_legacy(struct mnt_idmap *idmap, struct dentry *dentry,
                               struct iattr *attr)
 #else
-static __maybe_unused int infilfs_rw_setattr(struct user_namespace *idmap, struct dentry *dentry,
+static __maybe_unused int infilfs_rw_setattr_legacy(struct user_namespace *idmap, struct dentry *dentry,
                               struct iattr *attr)
 #endif
 {

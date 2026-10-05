@@ -40,21 +40,7 @@ static int infilfs_quota_persist_locked(struct super_block *sb);
 static void infilfs_quota_project_cache_bump_locked(
     struct infilfs_sb_info *sbi);
 
-#define infilfs_rw_tx_begin infilfs_rw_tx_begin_legacy
-#define infilfs_file_write_iter infilfs_file_write_iter_legacy
-#define infilfs_rw_create infilfs_rw_create_legacy
-#define infilfs_rw_mkdir infilfs_rw_mkdir_legacy
-#define infilfs_rw_setattr infilfs_rw_setattr_legacy
-#define infilfs_rw_mount_init infilfs_rw_mount_init_legacy
-#define infilfs_rw_mount_destroy infilfs_rw_mount_destroy_legacy
 #include "infiltratorfs_rw_legacy.inc"
-#undef infilfs_rw_tx_begin
-#undef infilfs_file_write_iter
-#undef infilfs_rw_create
-#undef infilfs_rw_mkdir
-#undef infilfs_rw_setattr
-#undef infilfs_rw_mount_init
-#undef infilfs_rw_mount_destroy
 
 static int infilfs_rw_mount_init(struct super_block *sb)
 {
