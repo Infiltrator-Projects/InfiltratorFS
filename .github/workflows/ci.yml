@@ -360,6 +360,8 @@ jobs:
         run: cmake --build build --config Release --parallel
       - name: Configure MSBuild for WDK
         uses: microsoft/setup-msbuild@v2
+        with:
+          msbuild-architecture: x64
       - name: Build native Windows filesystem driver with official WDK NuGet
         shell: pwsh
         run: |
