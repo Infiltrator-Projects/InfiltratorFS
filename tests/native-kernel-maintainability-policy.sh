@@ -208,7 +208,7 @@ create_object="$(sed -n '/static int infilfs_posix_create_object_native(/,/^}/p'
 test "$(grep -Fc 'ret = infilfs_posix_fill_common_attributes(' <<<"$create_object")" -eq 2 || \
     fail 'native file/directory creation bypasses checked creator identity'
 symlink_object="$(sed -n '/static int infilfs_ns_create_symlink_object(/,/^}/p' "$namespace")"
-grep -Fq 'ret = infilfs_rw_fill_common_attributes(' <<<"$symlink_object" || \
+grep -Fq 'ret = infilfs_posix_fill_common_attributes(' <<<"$symlink_object" || \
     fail 'native symlink creation bypasses checked creator identity'
 grep -Fq 'if (ret)' <<<"$symlink_object" || \
     fail 'native symlink creator identity failure is ignored'
@@ -448,8 +448,10 @@ grep -Fq 'return infilfs_file_read_iter_atime(iocb, to);' "$rw" || \
     fail 'dead verified read callback returned'
 ! grep -Fq 'static __maybe_unused ssize_t infilfs_file_read_iter(' "$driver" || \
     fail 'dead pre-native core read callback returned'
-grep -Fq '#define infilfs_rw_fill_common_attributes infilfs_posix_fill_common_attributes' "$rw" || \
-    fail 'POSIX attribute alias bridge changed'
+! grep -Fq 'infilfs_rw_fill_common_attributes' "$rw" || \
+    fail 'POSIX attribute alias bridge returned in RW compositor'
+! grep -Fq 'infilfs_rw_fill_common_attributes' "$namespace" || \
+    fail 'namespace layer regained obsolete attribute alias name'
 
 # Do not let the single-TU implementation silently become larger while it is
 # being retired layer-by-layer. These ceilings leave practical edit headroom

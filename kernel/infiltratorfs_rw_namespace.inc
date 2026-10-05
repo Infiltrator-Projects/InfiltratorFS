@@ -1709,7 +1709,7 @@ static int infilfs_ns_create_symlink_object(
     memcpy(header->parent_id, parent_ii->object_id, 16);
     header->checksum_type = cpu_to_le32(INFILFS_CHECKSUM_CRC64_ECMA);
     payload = (struct infilfs_symlink_payload_disk *)(header + 1);
-    ret = infilfs_rw_fill_common_attributes(
+    ret = infilfs_posix_fill_common_attributes(
         &payload->attributes, &payload->posix, 0777, 1);
     if (ret)
         goto out;
