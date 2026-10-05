@@ -25,6 +25,10 @@ grep -Fq 'static int infilfs_native_reflink_range(' "$reflink" ||
     fail 'native block-range reflink implementation missing'
 grep -Fq 'infilfs_reflink_extract_range(' "$reflink" ||
     fail 'range reflink does not extract source extent ranges'
+grep -Fq 'infilfs_reflink_materialize_boundaries(' "$reflink" ||
+    fail 'range reflink does not materialize compressed boundary streams'
+grep -Fq 'infilfs_native_materialize_compressed_at_locked(' "$reflink" ||
+    fail 'compressed range-reflink boundary materialization is disconnected'
 grep -Fq 'infilfs_reflink_splice_range(' "$reflink" ||
     fail 'range reflink does not splice destination extent ranges'
 grep -Fq 'infilfs_native_checksum_set_range(' "$reflink" ||
