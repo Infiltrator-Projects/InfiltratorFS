@@ -11,6 +11,7 @@ release-finalization=20261006-linux-release-windows-held-v1
 release-retry=linux7-dead-wrapper-fixed-v2
 rsync-mtime-writeback-serialization-fix=qualified-v1
 single-package-desktop-integration=published-v1
+desktop-integration-stock-path-qualification=qualified-v1
 
 small-file-writeback-lock-scope=forensic-v1
 project-quota-scalability=qualified-v1
