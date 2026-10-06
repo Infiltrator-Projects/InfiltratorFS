@@ -26,13 +26,14 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           p = Path('tools/migrate-desktop-integration.py')
-          s = p.read_text()
-          bad = "    '    '* echo \"INFILTRATORFS_REQUIRE_OS_INTEGRATION must be 0 or 1.\" >&2; exit 1 ;;\\nesac\\n'"
-          good = "    '    *) echo \"INFILTRATORFS_REQUIRE_OS_INTEGRATION must be 0 or 1.\" >&2; exit 1 ;;\\nesac\\n'"
-          if s.count(bad) != 1:
-              raise SystemExit('migration generator shell-case correction did not match exactly once')
-          p.write_text(s.replace(bad, good, 1))
+          lines = p.read_text().splitlines()
+          hits = [i for i, line in enumerate(lines) if 'INFILTRATORFS_REQUIRE_OS_INTEGRATION must be 0 or 1.' in line]
+          if len(hits) != 1:
+              raise SystemExit(f'migration generator correction expected one line, found {len(hits)}')
+          lines[hits[0]] = "    '    *) echo \"INFILTRATORFS_REQUIRE_OS_INTEGRATION must be 0 or 1.\" >&2; exit 1 ;;\\nesac\\n'"
+          p.write_text('\n'.join(lines) + '\n')
           PY
+          python3 -m py_compile tools/migrate-desktop-integration.py
           python3 tools/migrate-desktop-integration.py
           bash -n packaging/build-linux-packages.sh
           bash -n support/installer/bootstrap.sh
