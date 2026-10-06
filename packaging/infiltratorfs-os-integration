@@ -1,29 +1,69 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Legacy repair helper. Current packages never install, divert or replace
-# UDisks, libblockdev, GNOME Disks or Mintstick files.
 set -Eeuo pipefail
+
 readonly OWNER="infiltratorfs"
+readonly BUNDLE="/usr/lib/infiltratorfs/os-integration"
 readonly GDU_TARGET="/usr/bin/gnome-disks"
 readonly MINT_UI="/usr/lib/mintstick/mintstick.py"
 readonly MINT_FORMATTER="/usr/lib/mintstick/raw_format.py"
 readonly MINT_NEMO_FORMAT="/usr/share/nemo/actions/mintstick-format.nemo_action"
 readonly MINT_NEMO_FORMAT_STOCK="${MINT_NEMO_FORMAT}.infiltratorfs-stock"
+readonly INFILTRATOR_NEMO_FORMAT="/usr/lib/infiltratorfs/infiltratorfs-format-partition.nemo_action"
 readonly LEGACY_INFILTRATOR_NEMO_FORMAT="/usr/share/nemo/actions/infiltratorfs-format-partition.nemo_action"
 
-log() { printf 'InfiltratorFS desktop integration: %s\n' "$*"; }
-diversion_for() { dpkg-divert --list "$1" 2>/dev/null || true; }
-is_our_diversion() { diversion_for "$1" | grep -Fq "by ${OWNER}"; }
-
-restore_path() {
-    local path="$1" stock="$2"
-    if ! is_our_diversion "$path"; then return 1; fi
-    rm -f -- "$path"
-    dpkg-divert --package "$OWNER" --remove --rename --divert "$stock" "$path" >/dev/null
-    return 0
+log()
+{
+    printf 'InfiltratorFS desktop integration: %s\n' "$*"
 }
 
-find_libblockdev_plugin() {
+diversion_for()
+{
+    dpkg-divert --list "$1" 2>/dev/null || true
+}
+
+is_our_diversion()
+{
+    diversion_for "$1" | grep -Fq "by ${OWNER}"
+}
+
+require_no_foreign_diversion()
+{
+    local path="$1" current
+    current="$(diversion_for "$path")"
+    if [[ -n "$current" ]] && ! grep -Fq "by ${OWNER}" <<<"$current"; then
+        printf 'InfiltratorFS: refusing to replace %s because another package already diverts it:\n%s\n' \
+            "$path" "$current" >&2
+        return 1
+    fi
+}
+
+divert_path()
+{
+    local path="$1" stock="$2"
+    if is_our_diversion "$path"; then
+        return 0
+    fi
+    require_no_foreign_diversion "$path"
+    [[ -e "$path" || -L "$path" ]] || {
+        printf 'InfiltratorFS: required desktop component is missing: %s\n' "$path" >&2
+        return 1
+    }
+    dpkg-divert --package "$OWNER" --add --rename --divert "$stock" "$path" >/dev/null
+}
+
+restore_path()
+{
+    local path="$1" stock="$2"
+    if ! is_our_diversion "$path"; then
+        return 0
+    fi
+    rm -f -- "$path"
+    dpkg-divert --package "$OWNER" --remove --rename --divert "$stock" "$path" >/dev/null
+}
+
+find_libblockdev_plugin()
+{
     local candidate
     while IFS= read -r candidate; do
         case "$candidate" in
@@ -31,56 +71,194 @@ find_libblockdev_plugin() {
                 if [[ -e "$candidate" || -L "$candidate" ]]; then
                     printf '%s\n' "$candidate"
                     return 0
-                fi ;;
+                fi
+                ;;
         esac
     done < <(dpkg-query -L libblockdev-fs3 2>/dev/null || true)
     return 1
 }
 
-repair_legacy() {
-    local changed=0 plugin="" line path
-    restore_path "$MINT_FORMATTER" "${MINT_FORMATTER}.infiltratorfs-stock" && changed=1 || true
-    restore_path "$MINT_UI" "${MINT_UI}.infiltratorfs-stock" && changed=1 || true
-    restore_path "$MINT_NEMO_FORMAT" "$MINT_NEMO_FORMAT_STOCK" && changed=1 || true
+check_supported_stack()
+{
+    local gdu_version bd_version
+    gdu_version="$(dpkg-query -W -f='${Version}' gnome-disk-utility 2>/dev/null || true)"
+    bd_version="$(dpkg-query -W -f='${Version}' libblockdev-fs3 2>/dev/null || true)"
+    case "$gdu_version" in
+        46.*) ;;
+        *)
+            printf 'InfiltratorFS: bundled GNOME Disks integration requires 46.x; found %s.\n' \
+                "${gdu_version:-none}" >&2
+            return 1
+            ;;
+    esac
+    case "$bd_version" in
+        3.1.*) ;;
+        *)
+            printf 'InfiltratorFS: bundled libblockdev integration requires 3.1.x; found %s.\n' \
+                "${bd_version:-none}" >&2
+            return 1
+            ;;
+    esac
+}
+
+restart_udisks()
+{
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl restart udisks2.service >/dev/null 2>&1 ||
+            systemctl try-restart udisks2.service >/dev/null 2>&1 || true
+    elif command -v service >/dev/null 2>&1; then
+        service udisks2 restart >/dev/null 2>&1 || true
+    fi
+}
+
+udisks_can_format_infiltratorfs()
+{
+    local result
+    command -v gdbus >/dev/null 2>&1 || return 1
+    result="$(gdbus call --system \
+        --dest org.freedesktop.UDisks2 \
+        --object-path /org/freedesktop/UDisks2/Manager \
+        --method org.freedesktop.UDisks2.Manager.CanFormat infiltratorfs \
+        2>/dev/null || true)"
+    [[ "$result" == *"true"* ]]
+}
+
+wait_for_udisks_formatter()
+{
+    local attempt
+    for attempt in $(seq 1 20); do
+        if udisks_can_format_infiltratorfs; then
+            return 0
+        fi
+        sleep 0.25
+    done
+    return 1
+}
+
+require_udisks_formatter()
+{
+    command -v mkfs.infiltratorfs >/dev/null 2>&1 || {
+        echo 'InfiltratorFS: mkfs.infiltratorfs is not installed in PATH.' >&2
+        return 1
+    }
+
+    if wait_for_udisks_formatter; then
+        return 0
+    fi
+
+    restart_udisks
+    if wait_for_udisks_formatter; then
+        return 0
+    fi
+
+    echo 'InfiltratorFS: UDisks still does not advertise CanFormat(infiltratorfs) after desktop integration was installed.' >&2
+    return 1
+}
+
+remove_all()
+{
+    local plugin="" line path
+
+    restore_path "$MINT_FORMATTER" "${MINT_FORMATTER}.infiltratorfs-stock" || true
+    restore_path "$MINT_UI" "${MINT_UI}.infiltratorfs-stock" || true
+    restore_path "$MINT_NEMO_FORMAT" "$MINT_NEMO_FORMAT_STOCK" || true
     rm -f -- "$LEGACY_INFILTRATOR_NEMO_FORMAT"
 
     plugin="$(find_libblockdev_plugin || true)"
     if [[ -n "$plugin" ]]; then
-        restore_path "$plugin" "${plugin}.infiltratorfs-stock" && changed=1 || true
-    fi
-    while IFS= read -r line; do
-        [[ "$line" == *"libbd_fs.so."*" by ${OWNER}"* ]] || continue
-        path="${line#diversion of }"
-        path="${path%% to *}"
-        restore_path "$path" "${path}.infiltratorfs-stock" && changed=1 || true
-    done < <(dpkg-divert --list 2>/dev/null || true)
-    restore_path "$GDU_TARGET" "${GDU_TARGET}.infiltratorfs-stock" && changed=1 || true
-
-    if command -v systemctl >/dev/null 2>&1; then
-        if [[ "$changed" -eq 1 ]] || systemctl is-failed --quiet udisks2.service 2>/dev/null; then
-            systemctl reset-failed udisks2.service >/dev/null 2>&1 || true
-            systemctl restart udisks2.service >/dev/null 2>&1 || true
-        fi
-    fi
-    if [[ "$changed" -eq 1 ]]; then
-        log "legacy system-component diversions removed; distro-owned desktop storage components restored."
+        restore_path "$plugin" "${plugin}.infiltratorfs-stock" || true
     else
-        log "no legacy system-component diversions present."
+        while IFS= read -r line; do
+            [[ "$line" == *"libbd_fs.so."*" by ${OWNER}"* ]] || continue
+            path="${line#diversion of }"
+            path="${path%% to *}"
+            restore_path "$path" "${path}.infiltratorfs-stock" || true
+        done < <(dpkg-divert --list 2>/dev/null || true)
     fi
+
+    restore_path "$GDU_TARGET" "${GDU_TARGET}.infiltratorfs-stock" || true
+    restart_udisks
+    log "stock desktop components restored."
 }
 
-verify_clean() {
-    local plugin=""
-    ! is_our_diversion "$GDU_TARGET"
-    ! is_our_diversion "$MINT_FORMATTER"
-    ! is_our_diversion "$MINT_UI"
-    ! is_our_diversion "$MINT_NEMO_FORMAT"
-    plugin="$(find_libblockdev_plugin || true)"
-    [[ -z "$plugin" ]] || ! is_our_diversion "$plugin"
+install_all()
+{
+    restore_path "$MINT_FORMATTER" "${MINT_FORMATTER}.infiltratorfs-stock" || true
+    restore_path "$MINT_UI" "${MINT_UI}.infiltratorfs-stock" || true
+    rm -f -- "$LEGACY_INFILTRATOR_NEMO_FORMAT"
+
+    if [[ ! -s "$BUNDLE/gnome-disks" ||
+          ! -s "$BUNDLE/libbd_fs.so" ||
+          ! -s "$BUNDLE/manifest" ]]; then
+        log "no distro integration bundle in this package; nothing to install."
+        return 0
+    fi
+
+    check_supported_stack
+
+    local plugin plugin_stock
+    plugin="$(find_libblockdev_plugin)" || {
+        echo 'InfiltratorFS: could not locate the libblockdev filesystem plugin.' >&2
+        return 1
+    }
+    plugin_stock="${plugin}.infiltratorfs-stock"
+
+    require_no_foreign_diversion "$GDU_TARGET"
+    require_no_foreign_diversion "$plugin"
+    if [[ -e "$MINT_NEMO_FORMAT" || -L "$MINT_NEMO_FORMAT" ]]; then
+        require_no_foreign_diversion "$MINT_NEMO_FORMAT"
+    fi
+    [[ -s "$INFILTRATOR_NEMO_FORMAT" ]] || {
+        echo 'InfiltratorFS: partition-safe Nemo Format action is missing.' >&2
+        return 1
+    }
+
+    trap 'remove_all' ERR
+
+    divert_path "$GDU_TARGET" "${GDU_TARGET}.infiltratorfs-stock"
+    install -m 0755 "$BUNDLE/gnome-disks" "$GDU_TARGET"
+
+    divert_path "$plugin" "$plugin_stock"
+    install -m 0644 "$BUNDLE/libbd_fs.so" "$plugin"
+
+    if [[ -e "$MINT_NEMO_FORMAT" || -L "$MINT_NEMO_FORMAT" ||
+          -e "$MINT_NEMO_FORMAT_STOCK" || -L "$MINT_NEMO_FORMAT_STOCK" ]]; then
+        divert_path "$MINT_NEMO_FORMAT" "$MINT_NEMO_FORMAT_STOCK"
+        install -m 0644 "$INFILTRATOR_NEMO_FORMAT" "$MINT_NEMO_FORMAT"
+    fi
+
+    restart_udisks
+    require_udisks_formatter
+    trap - ERR
+    log "GNOME Disks and libblockdev integration installed in-place; distro packages remain installed and Mintstick remains stock."
 }
 
 case "${1:-}" in
-    repair-legacy) repair_legacy ;;
-    verify) verify_clean ;;
-    *) echo 'Usage: infiltratorfs-os-integration {repair-legacy|verify}' >&2; exit 2 ;;
+    install)
+        install_all
+        ;;
+    remove)
+        remove_all
+        ;;
+    repair-legacy)
+        remove_all
+        ;;
+    verify)
+        [[ -s "$BUNDLE/gnome-disks" && -s "$BUNDLE/libbd_fs.so" ]]
+        is_our_diversion "$GDU_TARGET"
+        plugin="$(find_libblockdev_plugin)"
+        is_our_diversion "$plugin"
+        grep -aFq 'InfiltratorFS' "$GDU_TARGET"
+        grep -aFq 'infiltratorfs' "$plugin"
+        if is_our_diversion "$MINT_NEMO_FORMAT"; then
+            grep -Fq 'Name=Format' "$MINT_NEMO_FORMAT"
+            grep -Fq 'Exec=/usr/bin/gnome-disks --block-device %D --format-device' "$MINT_NEMO_FORMAT"
+            [[ ! -e "$LEGACY_INFILTRATOR_NEMO_FORMAT" ]]
+        fi
+        require_udisks_formatter
+        ;;
+    *)
+        echo 'Usage: infiltratorfs-os-integration {install|remove|repair-legacy|verify}' >&2
+        exit 2
+        ;;
 esac

@@ -68,7 +68,7 @@ jobs:
           test -s "$installer"
           chmod 0755 "$installer"
 
-      - name: Download qualified managed desktop integration packages
+      - name: Download qualified desktop integration bundle
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -82,31 +82,31 @@ jobs:
               cut -f2-
           )"
           if [[ -z "$tag" ]]; then
-            echo "::error::No qualified managed desktop integration prerelease found matching desktop-integration-ubuntu24.04-*"
+            echo "::error::No qualified desktop integration prerelease found matching desktop-integration-ubuntu24.04-*"
             exit 1
           fi
           dir="$RUNNER_TEMP/desktop-integration"
           mkdir -p "$dir"
           gh release download "$tag" --dir "$dir" \
-            --pattern 'infiltratorfs-libblockdev-fs3_*.deb' \
-            --pattern 'infiltratorfs-gnome-disk-utility_*.deb' \
-            --pattern 'infiltratorfs-desktop-integration_*.deb' \
-            --pattern 'infiltratorfs-desktop-integration.manifest'
-          manifest="$dir/infiltratorfs-desktop-integration.manifest"
-          test -s "$manifest"
-          expected_patch="$(cat packaging/libblockdev-3.1-infiltratorfs.patch packaging/gnome-disks-46-infiltratorfs.patch packaging/build-noble-desktop-packages.sh | sha256sum | awk '{print $1}')"
-          test "$(sed -n 's/^patch_sha256=//p' "$manifest")" = "$expected_patch"
-          test "$(sed -n 's/^target=//p' "$manifest")" = ubuntu-24.04-linuxmint-22.x
-          for pattern in 'infiltratorfs-libblockdev-fs3_*.deb' 'infiltratorfs-gnome-disk-utility_*.deb' 'infiltratorfs-desktop-integration_*.deb'; do
-            file="$(find "$dir" -maxdepth 1 -name "$pattern" -print -quit)"
-            test -s "$file"
-            dpkg-deb --info "$file" >/dev/null
+            --pattern 'gnome-disks' \
+            --pattern 'libbd_fs.so' \
+            --pattern 'manifest'
+          for required in gnome-disks libbd_fs.so manifest; do
+            test -s "$dir/$required"
           done
+          expected_patch="$(cat packaging/libblockdev-3.1-infiltratorfs.patch packaging/gnome-disks-46-infiltratorfs.patch packaging/build-noble-desktop-integration.sh | sha256sum | awk '{print $1}')"
+          test "$(sed -n 's/^patch_sha256=//p' "$dir/manifest")" = "$expected_patch"
+          test "$(sed -n 's/^target=//p' "$dir/manifest")" = ubuntu-24.04-linuxmint-22.x
+          if find "$dir" -maxdepth 1 -type f -name '*.deb' -print -quit | grep -q .; then
+            echo 'Qualified desktop integration must not contain replacement Debian packages.' >&2
+            exit 1
+          fi
 
-      - name: Build current core package and self-contained native installer
+      - name: Build current single Debian package and self-contained native installer
         env:
           INFILTRATORFS_EMIT_RUN: "1"
-          INFILTRATORFS_DESKTOP_BUNDLE_DIR: ${{ runner.temp }}/desktop-integration
+          INFILTRATORFS_OS_INTEGRATION_BUNDLE_DIR: ${{ runner.temp }}/desktop-integration
+          INFILTRATORFS_REQUIRE_OS_INTEGRATION: "1"
         shell: bash
         run: |
           set -euo pipefail
@@ -124,22 +124,37 @@ jobs:
           installer="infiltratorfs-${VERSION}-linux-native.run"
           cp "dist/$deb" release-assets/
           cp "dist/$installer" release-assets/
-          cp "$RUNNER_TEMP/desktop-integration/"*.deb release-assets/
-          cp "$RUNNER_TEMP/desktop-integration/infiltratorfs-desktop-integration.manifest" release-assets/
           chmod 0755 "release-assets/$installer"
+
           test "$(dpkg-deb --field "release-assets/$deb" Version)" = "$VERSION"
-          test "$(dpkg-deb --field "release-assets/$deb" X-InfiltratorFS-Desktop-Integration)" = managed-packages
+          test "$(dpkg-deb --field "release-assets/$deb" X-InfiltratorFS-Desktop-Integration)" = ubuntu24.04-mint22-bundled
           contents="$RUNNER_TEMP/release-contents.txt"
           dpkg-deb --contents "release-assets/$deb" > "$contents"
-          ! grep -q 'usr/lib/infiltratorfs/os-integration/gnome-disks$' "$contents"
-          ! grep -q 'usr/lib/infiltratorfs/os-integration/libbd_fs.so$' "$contents"
+          grep -q 'usr/lib/infiltratorfs/os-integration/gnome-disks$' "$contents"
+          grep -q 'usr/lib/infiltratorfs/os-integration/libbd_fs.so$' "$contents"
+          grep -q 'usr/lib/infiltratorfs/os-integration/manifest$' "$contents"
           ! grep -q 'usr/bin/infilfs-fuse$' "$contents"
-          dpkg-deb --field "release-assets/$deb" Depends | grep -Fq infiltratorfs-desktop-integration
+
+          depends="$(dpkg-deb --field "release-assets/$deb" Depends)"
+          for dependency in udisks2 gnome-disk-utility libblockdev-fs3; do
+            grep -Eq "(^|, )${dependency}([ ,|]|$)" <<<"$depends"
+          done
+          ! grep -Eq '(^|, )infiltratorfs-(desktop-integration|gnome-disk-utility|libblockdev-fs3)([ ,]|$)' <<<"$depends"
+
           "release-assets/$installer" --verify
           payload_start="$(awk '/^__INFILTRATORFS_NATIVE_PAYLOAD__$/ { print NR + 1; exit }' "release-assets/$installer")"
           test -n "$payload_start"
           tail -n +"$payload_start" "release-assets/$installer" | tar -tzf - | \
-            grep -Fxq './infiltratorfs-desktop-integration-bundle.tar'
+            grep -Fxq './infiltratorfs-os-integration-bundle.tar'
+
+          if find release-assets -maxdepth 1 -type f \
+              \( -name 'infiltratorfs-desktop-integration_*.deb' \
+                 -o -name 'infiltratorfs-gnome-disk-utility_*.deb' \
+                 -o -name 'infiltratorfs-libblockdev-fs3_*.deb' \) \
+              -print -quit | grep -q .; then
+            echo 'Obsolete desktop replacement package reached release assets.' >&2
+            exit 1
+          fi
 
       - name: Preserve exact release assets
         uses: actions/upload-artifact@v4
