@@ -4,7 +4,7 @@ Signature="$WINDOWS NT$"
 Class=InfiltratorFS
 ClassGuid={099E2F6B-75F8-4ED7-8C04-6B21F7749206}
 Provider=%ProviderName%
-DriverVer=09/26/2026,0.18.94.0
+DriverVer=10/06/2026,0.18.95.0
 CatalogFile=infiltratorfs-native.cat
 PnpLockdown=1
 
