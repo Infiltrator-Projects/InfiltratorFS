@@ -1,17 +1,18 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-name: Desktop integration packages
+name: Desktop integration bundle
 
-# This workflow is also the qualification source consumed by release assembly.
-# Touching this workflow deliberately refreshes the managed Ubuntu/Mint package
-# prerelease when its current package-build contract has changed.
-# Refresh marker: 2026-10-06 requalify the repaired desktop packages for 0.18.94.
+# Build and qualify the ABI-matched binaries carried inside the single
+# InfiltratorFS package.  The distro GNOME Disks/libblockdev packages remain
+# installed and retain package ownership; InfiltratorFS uses reversible
+# dpkg-divert integration only while the filesystem package is installed.
 on:
   push:
     branches: [main]
     paths:
       - packaging/libblockdev-3.1-infiltratorfs.patch
       - packaging/gnome-disks-46-infiltratorfs.patch
-      - packaging/build-noble-desktop-packages.sh
+      - packaging/build-noble-desktop-integration.sh
+      - packaging/infiltratorfs-os-integration
       - .github/workflows/desktop-integration-packages.yml
   workflow_dispatch:
 
@@ -19,12 +20,12 @@ permissions:
   contents: write
 
 concurrency:
-  group: desktop-integration-packages
+  group: desktop-integration-bundle
   cancel-in-progress: true
 
 jobs:
   build:
-    name: Build ABI-matched Ubuntu/Mint packages
+    name: Build ABI-matched Ubuntu/Mint integration bundle
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -40,49 +41,61 @@ jobs:
           set -euo pipefail
           sudo sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential cmake devscripts dpkg-dev patch python3-gi gir1.2-blockdev-3.0 libssl-dev
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake devscripts dpkg-dev git libgtk-3-dev libssl-dev \
+            udisks2 gnome-disk-utility libblockdev-fs3
           sudo apt-get build-dep -y libblockdev gnome-disk-utility
 
-      - name: Build managed replacement packages
+      - name: Build raw in-place integration bundle
         shell: bash
         run: |
           set -euo pipefail
-          bash packaging/build-noble-desktop-packages.sh "$RUNNER_TEMP/desktop-integration"
-          ls -l "$RUNNER_TEMP/desktop-integration"
-
-      - name: Verify package ownership contract
-        shell: bash
-        run: |
-          set -euo pipefail
+          bash packaging/build-noble-desktop-integration.sh "$RUNNER_TEMP/desktop-integration"
           dir="$RUNNER_TEMP/desktop-integration"
-          lib="$(find "$dir" -maxdepth 1 -name 'infiltratorfs-libblockdev-fs3_*.deb' -print -quit)"
-          gdu="$(find "$dir" -maxdepth 1 -name 'infiltratorfs-gnome-disk-utility_*.deb' -print -quit)"
-          meta="$(find "$dir" -maxdepth 1 -name 'infiltratorfs-desktop-integration_*.deb' -print -quit)"
-          test -s "$lib" && test -s "$gdu" && test -s "$meta"
-          test "$(dpkg-deb --field "$lib" Package)" = infiltratorfs-libblockdev-fs3
-          dpkg-deb --field "$lib" Provides | grep -Fq 'libblockdev-fs3'
-          dpkg-deb --field "$lib" Conflicts | grep -Fq 'libblockdev-fs3'
-          test "$(dpkg-deb --field "$gdu" Package)" = infiltratorfs-gnome-disk-utility
-          dpkg-deb --field "$gdu" Provides | grep -Fq 'gnome-disk-utility'
-          dpkg-deb --field "$gdu" Conflicts | grep -Fq 'gnome-disk-utility'
-          test "$(dpkg-deb --field "$meta" Package)" = infiltratorfs-desktop-integration
+          test -x "$dir/gnome-disks"
+          test -s "$dir/libbd_fs.so"
+          test -s "$dir/manifest"
+          test "$(sed -n 's/^target=//p' "$dir/manifest")" = ubuntu-24.04-linuxmint-22.x
+          if find "$dir" -maxdepth 1 -type f -name '*.deb' -print -quit | grep -q .; then
+            echo 'Desktop integration bundle must not contain replacement Debian packages.' >&2
+            exit 1
+          fi
 
-      - name: Install and exercise the real desktop stack
+      - name: Install and exercise single-package integration
         shell: bash
         run: |
           set -euo pipefail
           cmake -S . -B build-integration -DCMAKE_BUILD_TYPE=Release
           cmake --build build-integration --parallel
           sudo cmake --install build-integration --prefix /usr
-          dir="$RUNNER_TEMP/desktop-integration"
-          sudo apt-get install -y             "$(find "$dir" -maxdepth 1 -name 'infiltratorfs-libblockdev-fs3_*.deb' -print -quit)"             "$(find "$dir" -maxdepth 1 -name 'infiltratorfs-gnome-disk-utility_*.deb' -print -quit)"             "$(find "$dir" -maxdepth 1 -name 'infiltratorfs-desktop-integration_*.deb' -print -quit)"
-          # UDisks is the real consumer of libblockdev here. Testing its D-Bus
-          # capability exercises the installed C plugin without depending on
-          # optional Python GI override helpers.
-          sudo systemctl restart udisks2.service
-          gdbus call --system --dest org.freedesktop.UDisks2 --object-path /org/freedesktop/UDisks2/Manager --method org.freedesktop.UDisks2.Manager.CanFormat infiltratorfs | grep -Fq true
-          gdbus call --system --dest org.freedesktop.UDisks2 --object-path /org/freedesktop/UDisks2/Manager --method org.freedesktop.DBus.Properties.Get org.freedesktop.UDisks2.Manager SupportedFilesystems | grep -Fq infiltratorfs
+
+          stock_gdu_sha="$(sha256sum /usr/bin/gnome-disks | awk '{print $1}')"
+          plugin="$(dpkg-query -L libblockdev-fs3 | grep -E '/libbd_fs\.so\.[0-9]+\.[0-9]+\.[0-9]+$' | head -n1)"
+          test -n "$plugin"
+          stock_plugin_sha="$(sha256sum "$plugin" | awk '{print $1}')"
+
+          sudo install -d /usr/lib/infiltratorfs/os-integration
+          sudo install -m 0755 "$RUNNER_TEMP/desktop-integration/gnome-disks" /usr/lib/infiltratorfs/os-integration/gnome-disks
+          sudo install -m 0644 "$RUNNER_TEMP/desktop-integration/libbd_fs.so" /usr/lib/infiltratorfs/os-integration/libbd_fs.so
+          sudo install -m 0644 "$RUNNER_TEMP/desktop-integration/manifest" /usr/lib/infiltratorfs/os-integration/manifest
+
+          sudo /usr/lib/infiltratorfs/infiltratorfs-os-integration install
+          test "$(dpkg-query -S /usr/bin/gnome-disks | head -n1 | cut -d: -f1)" = gnome-disk-utility
+          dpkg-query -W -f='${Status}\n' libblockdev-fs3 | grep -Fxq 'install ok installed'
+          dpkg-query -W -f='${Status}\n' gnome-disk-utility | grep -Fxq 'install ok installed'
+          gdbus call --system --dest org.freedesktop.UDisks2 \
+            --object-path /org/freedesktop/UDisks2/Manager \
+            --method org.freedesktop.UDisks2.Manager.CanFormat infiltratorfs | grep -Fq true
           grep -aFq 'InfiltratorFS' /usr/bin/gnome-disks
+
+          sudo /usr/lib/infiltratorfs/infiltratorfs-os-integration remove
+          test "$(sha256sum /usr/bin/gnome-disks | awk '{print $1}')" = "$stock_gdu_sha"
+          test "$(sha256sum "$plugin" | awk '{print $1}')" = "$stock_plugin_sha"
+          if dpkg-divert --list | grep -Fq 'by infiltratorfs'; then
+            echo 'InfiltratorFS diversion remained after integration removal.' >&2
+            dpkg-divert --list | grep -F 'by infiltratorfs' >&2 || true
+            exit 1
+          fi
 
       - name: Publish qualified integration prerelease
         env:
@@ -91,7 +104,7 @@ jobs:
         run: |
           set -euo pipefail
           dir="$RUNNER_TEMP/desktop-integration"
-          manifest="$dir/infiltratorfs-desktop-integration.manifest"
+          manifest="$dir/manifest"
           libver="$(sed -n 's/^libblockdev_source_version=//p' "$manifest")"
           gduver="$(sed -n 's/^gnome_disk_utility_source_version=//p' "$manifest")"
           patch="$(sed -n 's/^patch_sha256=//p' "$manifest")"
@@ -102,4 +115,9 @@ jobs:
             echo "Qualified desktop integration prerelease already exists: $tag"
             exit 0
           fi
-          gh release create "$tag" "$dir"/*.deb "$manifest"             --target "$GITHUB_SHA"             --title "InfiltratorFS desktop integration for Ubuntu 24.04 / Mint 22.x"             --notes "ABI-matched managed packages for libblockdev and GNOME Disks. These packages replace the retired postinst binary-diversion mechanism."             --prerelease --latest=false
+          gh release create "$tag" \
+            "$dir/gnome-disks" "$dir/libbd_fs.so" "$manifest" \
+            --target "$GITHUB_SHA" \
+            --title "InfiltratorFS desktop integration for Ubuntu 24.04 / Mint 22.x" \
+            --notes "ABI-matched in-place integration bundle for the single InfiltratorFS package. Distro GNOME Disks and libblockdev packages remain installed and are restored byte-for-byte on removal." \
+            --prerelease --latest=false
