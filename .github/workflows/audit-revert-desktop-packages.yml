@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Audit obsolete desktop package revert
+
+on:
+  push:
+    branches: [fix/remove-obsolete-desktop-replacements]
+    paths:
+      - .github/workflows/audit-revert-desktop-packages.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Attempt inverse of replacement-package introduction
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          git revert --no-commit 63a57145b7bd267c26611fd7e447c09417a4b170
+          rc=$?
+          set -e
+          echo "revert_rc=$rc"
+          git status --short
+          if (( rc != 0 )); then
+            echo '--- unmerged paths ---'
+            git diff --name-only --diff-filter=U
+            exit "$rc"
+          fi
+          echo '--- changed files ---'
+          git diff --name-status
+          echo '--- obsolete package names remaining ---'
+          git grep -n -E 'infiltratorfs-(desktop-integration|gnome-disk-utility|libblockdev-fs3)' -- ':!CHANGELOG.md' ':!docs/**' || true
