@@ -23,6 +23,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('tools/migrate-desktop-integration.py')
+          s = p.read_text()
+          bad = "    '    '* echo \"INFILTRATORFS_REQUIRE_OS_INTEGRATION must be 0 or 1.\" >&2; exit 1 ;;\\nesac\\n'"
+          good = "    '    *) echo \"INFILTRATORFS_REQUIRE_OS_INTEGRATION must be 0 or 1.\" >&2; exit 1 ;;\\nesac\\n'"
+          if s.count(bad) != 1:
+              raise SystemExit('migration generator shell-case correction did not match exactly once')
+          p.write_text(s.replace(bad, good, 1))
+          PY
           python3 tools/migrate-desktop-integration.py
           bash -n packaging/build-linux-packages.sh
           bash -n support/installer/bootstrap.sh
