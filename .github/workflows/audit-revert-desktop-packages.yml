@@ -30,7 +30,7 @@ jobs:
           hits = [i for i, line in enumerate(lines) if 'INFILTRATORFS_REQUIRE_OS_INTEGRATION must be 0 or 1.' in line]
           if len(hits) != 1:
               raise SystemExit(f'migration generator correction expected one line, found {len(hits)}')
-          lines[hits[0]] = "    '    *) echo \"INFILTRATORFS_REQUIRE_OS_INTEGRATION must be 0 or 1.\" >&2; exit 1 ;;\\nesac\\n'"
+          lines[hits[0]] = "    'case \"$require_integration\" in\\n    0|1) ;;\\n    *) echo \"INFILTRATORFS_REQUIRE_OS_INTEGRATION must be 0 or 1.\" >&2; exit 1 ;;\\nesac\\n'"
           p.write_text('\n'.join(lines) + '\n')
           PY
           python3 -m py_compile tools/migrate-desktop-integration.py
