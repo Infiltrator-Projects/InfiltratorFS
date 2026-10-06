@@ -17,7 +17,7 @@ mint_guard="$repo_root/packaging/patch-mintstick.py"
 nemo_action="$repo_root/packaging/infiltratorfs-format-partition.nemo_action"
 noble_libblockdev_patch="$repo_root/packaging/libblockdev-3.1-infiltratorfs.patch"
 noble_gnome_patch="$repo_root/packaging/gnome-disks-46-infiltratorfs.patch"
-noble_bundle_builder="$repo_root/packaging/build-noble-desktop-packages.sh"
+noble_bundle_builder="$repo_root/packaging/build-noble-desktop-integration.sh"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
@@ -92,13 +92,15 @@ grep -Fq 'options->label' "$libblockdev_patch"
 grep -Fq 'GDU_OTHER_FS_TYPE_INFILTRATORFS' "$gnome_disks_patch"
 grep -Fq '"infiltratorfs"' "$gnome_disks_patch"
 
-# Public Ubuntu 24.04 / Linux Mint 22.x desktop integration is delivered
-# as explicit managed Debian replacement packages. The core helper is
-# cleanup-only and may never add diversions or install replacement binaries.
+# Public Ubuntu 24.04 / Linux Mint 22.x integration remains inside the one
+# InfiltratorFS package.  The distro-owned GNOME Disks and libblockdev packages
+# stay installed; only their exact ABI-matched binaries are diverted while
+# InfiltratorFS is installed, and uninstall restores the originals.
 for integration_file in "$os_helper" "$mint_guard" "$noble_libblockdev_patch" \
                         "$noble_gnome_patch" "$noble_bundle_builder"; do
     test -s "$integration_file"
 done
+test ! -e "$repo_root/packaging/build-noble-desktop-packages.sh"
 bash -n "$os_helper"
 bash -n "$noble_bundle_builder"
 git apply --numstat "$noble_libblockdev_patch" >/dev/null
@@ -109,38 +111,42 @@ import pathlib
 import sys
 ast.parse(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 PY
-grep -Fq 'repair-legacy' "$os_helper"
+grep -Fq 'dpkg-divert --package "$OWNER" --add --rename' "$os_helper"
 grep -Fq 'dpkg-divert --package "$OWNER" --remove --rename' "$os_helper"
-if grep -Fq 'dpkg-divert --package "$OWNER" --add --rename' "$os_helper"; then
-    echo 'desktop-integration: core helper must never add a system diversion' >&2
-    exit 1
-fi
-grep -Fq 'infiltratorfs-libblockdev-fs3' "$noble_bundle_builder"
-grep -Fq 'infiltratorfs-gnome-disk-utility' "$noble_bundle_builder"
-grep -Fq 'infiltratorfs-desktop-integration' "$noble_bundle_builder"
-grep -Fq 'Provides' "$noble_bundle_builder"
-grep -Fq 'Conflicts' "$noble_bundle_builder"
-grep -Fq 'Replaces' "$noble_bundle_builder"
-
-# A normal InfiltratorFS install must not be allowed to stop at udev identity
-# while leaving stock GNOME Disks to render "Unknown (infiltratorfs 0.18)".
-# The core package therefore requires the managed integration package, and the
-# native .run path carries the exact ABI-matched replacement packages with it.
-grep -Fq 'desktop_depends=", udisks2, infiltratorfs-desktop-integration (>= 1.0.0+ubuntu24.04.2)"' \
-    "$repo_root/packaging/build-linux-packages.sh"
-grep -Fq 'INFILTRATORFS_DESKTOP_BUNDLE_DIR' \
-    "$repo_root/packaging/build-linux-packages.sh"
-grep -Fq 'infiltratorfs-desktop-integration-bundle.tar' "$bootstrap"
-grep -Fq 'verify_desktop_integration' "$bootstrap"
-grep -Fq 'dpkg-query -S /usr/bin/gnome-disks' "$bootstrap"
-bash -n "$repo_root/packaging/build-linux-packages.sh"
-grep -Fq 'BD_FS_TECH_INFILTRATORFS' "$noble_libblockdev_patch"
+grep -Fq 'restart_udisks' "$os_helper"
+grep -Fq 'require_udisks_formatter' "$os_helper"
+grep -Fq 'org.freedesktop.UDisks2.Manager.CanFormat infiltratorfs' "$os_helper"
+grep -Fq 'libblockdev-fs3' "$os_helper"
 grep -Fq 'InfiltratorFS formatter service is unavailable' "$noble_gnome_patch"
 grep -Fq 'src/disks/gducreateotherpage.c' "$noble_gnome_patch"
 grep -Fq '{"infiltratorfs", N_("InfiltratorFS' "$noble_gnome_patch"
 grep -Fq 'src/disks/gduwindow.c' "$noble_gnome_patch"
 grep -Fq 'src/disks/gduvolumegrid.c' "$noble_gnome_patch"
 grep -Fq 'InfiltratorFS (format %s)' "$noble_gnome_patch"
+grep -Fq 'BD_FS_TECH_INFILTRATORFS' "$noble_libblockdev_patch"
+
+# The core package may carry migration Conflicts/Replaces for the three retired
+# package names, but it must never depend on, build, bundle, install or publish
+# those packages again.
+grep -Fq 'INFILTRATORFS_OS_INTEGRATION_BUNDLE_DIR' "$repo_root/packaging/build-linux-packages.sh"
+grep -Fq 'ubuntu24.04-mint22-bundled' "$repo_root/packaging/build-linux-packages.sh"
+grep -Fq 'gnome-disk-utility (>= 46~)' "$repo_root/packaging/build-linux-packages.sh"
+grep -Fq 'libblockdev-fs3 (>= 3.1~)' "$repo_root/packaging/build-linux-packages.sh"
+grep -Fq 'infiltratorfs-os-integration-bundle.tar' "$repo_root/packaging/build-linux-packages.sh"
+if grep -Fq 'INFILTRATORFS_DESKTOP_BUNDLE_DIR' "$repo_root/packaging/build-linux-packages.sh"; then
+    echo 'desktop-integration: obsolete managed-package bundle variable returned' >&2
+    exit 1
+fi
+for retired_pattern in \
+    'infiltratorfs-libblockdev-fs3_*.deb' \
+    'infiltratorfs-gnome-disk-utility_*.deb' \
+    'infiltratorfs-desktop-integration_*.deb'; do
+    if grep -Fq "$retired_pattern" "$repo_root/packaging/build-linux-packages.sh" || \
+       grep -Fq "$retired_pattern" "$bootstrap"; then
+        echo "desktop-integration: retired replacement package path returned: $retired_pattern" >&2
+        exit 1
+    fi
+done
 
 # Mintstick/Nemo's USB Stick Formatter is intentionally NOT an InfiltratorFS
 # formatter. It repartitions the entire target device, so a selected partition

@@ -128,17 +128,17 @@ for path in workflow_paths:
 release_artifacts = (wf / 'release-artifacts.yml').read_text()
 for required in (
     'desktop-integration-ubuntu24.04-',
-    'infiltratorfs-desktop-integration.manifest',
-    'infiltratorfs-desktop-integration-bundle.tar',
-    'managed-packages',
+    'infiltratorfs-os-integration-bundle.tar',
+    'ubuntu24.04-mint22-bundled',
+    'INFILTRATORFS_OS_INTEGRATION_BUNDLE_DIR',
     'gh run download',
 ):
     if required not in release_artifacts:
         raise SystemExit(f'release artifact promotion policy missing: {required}')
 for forbidden in (
     'apt-get build-dep',
-    'INFILTRATORFS_OS_INTEGRATION_BUNDLE_DIR',
-    'INFILTRATORFS_REQUIRE_OS_INTEGRATION',
+    'INFILTRATORFS_DESKTOP_BUNDLE_DIR',
+    'managed-packages',
     'gh release download v0.18.47',
 ):
     if forbidden in release_artifacts:

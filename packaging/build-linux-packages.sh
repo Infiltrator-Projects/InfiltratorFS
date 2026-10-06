@@ -13,7 +13,9 @@ version="$(sed -n 's/^project(InfiltratorFS VERSION \([^ ]*\) LANGUAGES C)$/\1/p
 package_version="${INFILTRATORFS_PACKAGE_VERSION:-$version}"
 build_identity="${INFILTRATORFS_BUILD_IDENTITY:-generic-apt}"
 emit_run="${INFILTRATORFS_EMIT_RUN:-1}"
-desktop_bundle_dir="${INFILTRATORFS_DESKTOP_BUNDLE_DIR:-}"
+integration_bundle="${INFILTRATORFS_OS_INTEGRATION_BUNDLE_DIR:-}"
+require_integration="${INFILTRATORFS_REQUIRE_OS_INTEGRATION:-0}"
+integration_enabled=0
 [[ "$package_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\+native[0-9]+)?$ ]] || {
     echo "Invalid InfiltratorFS package version: $package_version" >&2
     exit 1
@@ -26,6 +28,22 @@ case "$emit_run" in
     0|1) ;;
     *) echo "INFILTRATORFS_EMIT_RUN must be 0 or 1." >&2; exit 1 ;;
 esac
+case "$require_integration" in
+    0|1) ;;
+    *) echo "INFILTRATORFS_REQUIRE_OS_INTEGRATION must be 0 or 1." >&2; exit 1 ;;
+esac
+if [[ -n "$integration_bundle" ]]; then
+    for required in gnome-disks libbd_fs.so manifest; do
+        [[ -s "$integration_bundle/$required" ]] || {
+            echo "Desktop integration bundle is missing $required." >&2
+            exit 1
+        }
+    done
+    integration_enabled=1
+elif [[ "$require_integration" = 1 ]]; then
+    echo "This package build requires the Ubuntu/Mint desktop integration bundle." >&2
+    exit 1
+fi
 [[ -f src/infiltratr-common/CMakeLists.txt ]] || {
     echo "The pinned Infiltratr Common submodule is not initialised." >&2
     exit 1
@@ -44,6 +62,12 @@ cmake --install "$build_dir" --prefix "$package_root/usr"
 install -d "$package_root/usr/share/doc/infiltratorfs"
 install -m 0644 LICENSE "$package_root/usr/share/doc/infiltratorfs/copyright"
 install -m 0644 README.md "$package_root/usr/share/doc/infiltratorfs/README.md"
+if [[ "$integration_enabled" = 1 ]]; then
+    install -d "$package_root/usr/lib/infiltratorfs/os-integration"
+    install -m 0755 "$integration_bundle/gnome-disks" "$package_root/usr/lib/infiltratorfs/os-integration/gnome-disks"
+    install -m 0644 "$integration_bundle/libbd_fs.so" "$package_root/usr/lib/infiltratorfs/os-integration/libbd_fs.so"
+    install -m 0644 "$integration_bundle/manifest" "$package_root/usr/lib/infiltratorfs/os-integration/manifest"
+fi
 # DKMS source must be self-contained. Every RW composition file is required;
 # omitting an implementation include makes host-side DKMS builds fail even
 # though the repository build itself succeeds.
@@ -74,8 +98,14 @@ EOF
 
 install -d "$package_root/DEBIAN"
 installed_size="$(du -sk "$package_root/usr" | cut -f1)"
-desktop_depends=", udisks2, infiltratorfs-desktop-integration (>= 1.0.0+ubuntu24.04.2)"
-desktop_identity="managed-packages"
+desktop_depends=""
+desktop_recommends=", udisks2"
+desktop_identity="core-only"
+if [[ "$integration_enabled" = 1 ]]; then
+    desktop_depends=", udisks2, gnome-disk-utility (>= 46~), gnome-disk-utility (<< 47~), libblockdev-fs3 (>= 3.1~), libblockdev-fs3 (<< 3.2~)"
+    desktop_recommends=""
+    desktop_identity="ubuntu24.04-mint22-bundled"
+fi
 cat > "$package_root/DEBIAN/control" <<EOF
 Package: infiltratorfs
 Version: ${package_version}
@@ -86,7 +116,9 @@ Maintainer: The First Infiltrator
 X-InfiltratorFS-Build: ${build_identity}
 X-InfiltratorFS-Desktop-Integration: ${desktop_identity}
 Depends: dkms, initramfs-tools, kmod, policykit-1, util-linux, xdg-utils, fontconfig, libssl3t64 | libssl3, libgtk-3-0t64 | libgtk-3-0, libglib2.0-0t64 | libglib2.0-0${desktop_depends}
-Recommends: linux-headers-generic, udev
+Conflicts: infiltratorfs-desktop-integration, infiltratorfs-gnome-disk-utility, infiltratorfs-libblockdev-fs3
+Replaces: infiltratorfs-desktop-integration, infiltratorfs-gnome-disk-utility, infiltratorfs-libblockdev-fs3
+Recommends: linux-headers-generic, udev${desktop_recommends}
 Installed-Size: ${installed_size}
 Homepage: https://github.com/Infiltrator-Projects/InfiltratorFS
 Description: native Linux InfiltratorFS filesystem and tools
@@ -177,10 +209,16 @@ for required in \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_ioctl.h$"; do
     grep -q "$required" "$contents"
 done
-test "$(dpkg-deb --field "$dist_dir/$deb_name" X-InfiltratorFS-Desktop-Integration)" = managed-packages
-if grep -Eq 'usr/lib/infiltratorfs/os-integration/(gnome-disks|libbd_fs\.so|manifest)$' "$contents"; then
-    echo 'Core InfiltratorFS package must not carry replacement desktop-stack binaries.' >&2
-    exit 1
+test "$(dpkg-deb --field "$dist_dir/$deb_name" X-InfiltratorFS-Desktop-Integration)" = "$desktop_identity"
+if [[ "$integration_enabled" = 1 ]]; then
+    for required in gnome-disks libbd_fs.so manifest; do
+        grep -q "usr/lib/infiltratorfs/os-integration/${required}$" "$contents"
+    done
+else
+    if grep -Eq 'usr/lib/infiltratorfs/os-integration/(gnome-disks|libbd_fs\.so|manifest)$' "$contents"; then
+        echo 'Core-only InfiltratorFS package unexpectedly contains a desktop integration bundle.' >&2
+        exit 1
+    fi
 fi
 if grep -q 'usr/bin/infilfs-fuse$' "$contents"; then
     echo 'Native release package unexpectedly contains infilfs-fuse.' >&2
@@ -196,10 +234,14 @@ if grep -q 'usr/share/nemo/actions/infiltratorfs-format-partition.nemo_action$' 
 fi
 test "$(dpkg-deb --field "$dist_dir/$deb_name" Version)" = "$package_version"
 depends="$(dpkg-deb --field "$dist_dir/$deb_name" Depends)"
-grep -Eq '(^|, )infiltratorfs-desktop-integration([ ,]|$)' <<<"$depends" || {
-    echo 'Core package must require the managed desktop integration package.' >&2
-    exit 1
-}
+if [[ "$integration_enabled" = 1 ]]; then
+    for dependency in udisks2 gnome-disk-utility libblockdev-fs3; do
+        grep -Eq "(^|, )${dependency}([ ,|]|$)" <<<"$depends" || {
+            echo "Integrated package must depend on distro-owned ${dependency}." >&2
+            exit 1
+        }
+    done
+fi
 for dependency in dkms initramfs-tools kmod policykit-1 util-linux xdg-utils fontconfig libgtk-3-0t64 libglib2.0-0t64; do
     grep -Eq "(^|, )${dependency}([ ,|]|$)" <<<"$depends"
 done
@@ -239,8 +281,10 @@ grep -Fq 'offline/chroot root target staged' <<<"$postinst_text"
 grep -Fq 'root-volume upgrade staged safely' <<<"$postinst_text"
 grep -Fq 'modprobe --dry-run --verbose "$module"' <<<"$postinst_text"
 grep -Fq 'module loading is administratively disabled' <<<"$postinst_text"
+grep -Fq 'infiltratorfs-os-integration install' <<<"$postinst_text"
 prerm_text="$(dpkg-deb --ctrl-tarfile "$dist_dir/$deb_name" | tar -xOf - ./prerm)"
 grep -Fq 'refusing to remove the filesystem package while / is mounted as InfiltratorFS' <<<"$prerm_text"
+grep -Fq 'infiltratorfs-os-integration remove' <<<"$prerm_text"
 rm -f "$contents"
 
 if [[ "$emit_run" = 0 ]]; then
@@ -253,28 +297,20 @@ fi
 source_epoch="$(git log -1 --format=%ct 2>/dev/null || date +%s)"
 bundle_work=""
 bundle_payload=""
-if [[ -n "$desktop_bundle_dir" ]]; then
-    [[ -d "$desktop_bundle_dir" ]] || {
-        echo "Desktop integration bundle directory does not exist: $desktop_bundle_dir" >&2
+if [[ -n "$integration_bundle" ]]; then
+    [[ -d "$integration_bundle" ]] || {
+        echo "Desktop integration bundle directory does not exist: $integration_bundle" >&2
         exit 1
     }
     bundle_work="$(mktemp -d)"
-    bundle_payload="$bundle_work/infiltratorfs-desktop-integration-bundle.tar"
-    for pattern in 'infiltratorfs-libblockdev-fs3_*.deb' \
-                   'infiltratorfs-gnome-disk-utility_*.deb' \
-                   'infiltratorfs-desktop-integration_*.deb' \
-                   'infiltratorfs-desktop-integration.manifest'; do
-        file="$(find "$desktop_bundle_dir" -maxdepth 1 -type f -name "$pattern" -print -quit)"
-        [[ -s "$file" ]] || {
-            echo "Desktop integration bundle is incomplete: $pattern" >&2
+    bundle_payload="$bundle_work/infiltratorfs-os-integration-bundle.tar"
+    for required in gnome-disks libbd_fs.so manifest; do
+        [[ -s "$integration_bundle/$required" ]] || {
+            echo "Desktop integration bundle is incomplete: $required" >&2
             exit 1
         }
     done
-    tar -C "$desktop_bundle_dir" -cf "$bundle_payload" \
-        "$(basename "$(find "$desktop_bundle_dir" -maxdepth 1 -type f -name 'infiltratorfs-libblockdev-fs3_*.deb' -print -quit)")" \
-        "$(basename "$(find "$desktop_bundle_dir" -maxdepth 1 -type f -name 'infiltratorfs-gnome-disk-utility_*.deb' -print -quit)")" \
-        "$(basename "$(find "$desktop_bundle_dir" -maxdepth 1 -type f -name 'infiltratorfs-desktop-integration_*.deb' -print -quit)")" \
-        infiltratorfs-desktop-integration.manifest
+    tar -C "$integration_bundle" -cf "$bundle_payload" gnome-disks libbd_fs.so manifest
 fi
 
 tar_args=(
@@ -306,6 +342,7 @@ verify_installer() {
     tail -n +"$payload_start" "$self" | tar --no-same-owner -xzf - -C "$verify_root"
     for required in CMakeLists.txt README.md support/installer/bootstrap.sh \
         packaging/build-linux-packages.sh packaging/infiltratorfs-os-integration \
+        packaging/build-noble-desktop-integration.sh \
         packaging/patch-mintstick.py packaging/infiltratorfs-manager.svg \
         src/infiltratr-common/CMakeLists.txt kernel/Makefile kernel/infiltratorfs_core.c \
         kernel/infiltratorfs_cpu.c kernel/infiltratorfs_crypto.c \
@@ -323,15 +360,12 @@ verify_installer() {
     test -x "$verify_root/support/installer/bootstrap.sh"
     bash -n "$verify_root/support/installer/bootstrap.sh"
     bash -n "$verify_root/packaging/build-linux-packages.sh"
-    if [[ -f "$verify_root/infiltratorfs-desktop-integration-bundle.tar" ]]; then
+    if [[ -f "$verify_root/infiltratorfs-os-integration-bundle.tar" ]]; then
         bundle_verify="$verify_root/.desktop-bundle-verify"
         mkdir -p "$bundle_verify"
-        tar -xf "$verify_root/infiltratorfs-desktop-integration-bundle.tar" -C "$bundle_verify"
-        for pattern in 'infiltratorfs-libblockdev-fs3_*.deb' \
-                       'infiltratorfs-gnome-disk-utility_*.deb' \
-                       'infiltratorfs-desktop-integration_*.deb' \
-                       'infiltratorfs-desktop-integration.manifest'; do
-            test -n "$(find "$bundle_verify" -maxdepth 1 -type f -name "$pattern" -print -quit)"
+        tar -xf "$verify_root/infiltratorfs-os-integration-bundle.tar" -C "$bundle_verify"
+        for required in gnome-disks libbd_fs.so manifest; do
+            test -s "$bundle_verify/$required"
         done
     fi
     grep -Fq 'bash "$ROOT/packaging/build-linux-packages.sh"' \
