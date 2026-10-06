@@ -23,3 +23,4 @@ internal-type-order=guarded-v1
 dkms-orphan-source=guarded-v1
 physical-core-n-minus-one=hybrid-responsiveness-v1
 recovery-qualification=consolidated-main-20261005-v1
+maintainability-hardening=native-rw-decomposition-v1
