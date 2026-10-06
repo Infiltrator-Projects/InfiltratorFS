@@ -5,6 +5,7 @@ name: Desktop integration bundle
 # InfiltratorFS package.  The distro GNOME Disks/libblockdev packages remain
 # installed and retain package ownership; InfiltratorFS uses reversible
 # dpkg-divert integration only while the filesystem package is installed.
+# Re-running this workflow refreshes the raw bundle consumed by release gates.
 on:
   push:
     branches: [main]
