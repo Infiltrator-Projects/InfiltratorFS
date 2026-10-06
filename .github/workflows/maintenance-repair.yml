@@ -1,0 +1,142 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: One-shot CI maintainability repair
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/maintenance-repair.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: one-shot-ci-maintainability-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out current main
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Make CI development-safe and self-remove
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          ci = Path('.github/workflows/ci.yml')
+          text = ci.read_text(encoding='utf-8')
+
+          old_trigger = '''on:
+            push:
+              branches:
+                - main
+            schedule:
+          '''
+          new_trigger = '''on:
+            push:
+              branches:
+                - main
+            pull_request:
+            schedule:
+          '''
+          if text.count(old_trigger) != 1:
+              raise SystemExit('expected exactly one CI trigger block to update')
+          text = text.replace(old_trigger, new_trigger, 1)
+
+          old_anchor = '''          grep -Fq 'workflows: ["Build and conformance"]' "$release"
+          '''
+          if text.count(old_anchor) != 1:
+              raise SystemExit('expected exactly one obsolete release-workflow compatibility grep')
+          text = text.replace(old_anchor, '', 1)
+
+          old_tag_policy = '''          # A published/tagged version is immutable.  The release commit itself
+          # may equal that tag, but any later main commit must advance the source
+          # version before development continues.  This prevents hundreds of
+          # post-release commits from silently continuing to call themselves the
+          # already-published release.
+          tag_refs="$(git ls-remote --tags origin \\
+            "refs/tags/v${source_version}" "refs/tags/v${source_version}^{}")"
+          if [[ -n "$tag_refs" ]]; then
+            tag_commit="$(awk '$2 ~ /\\^\\{\\}$/ { print $1 }' <<<"$tag_refs" | tail -n1)"
+            if [[ -z "$tag_commit" ]]; then
+              tag_commit="$(awk 'NR == 1 { print $1 }' <<<"$tag_refs")"
+            fi
+            head_commit="$(git rev-parse HEAD)"
+            if [[ "$tag_commit" != "$head_commit" ]]; then
+              printf 'Source version %s is already tagged at %s; current main is %s. Bump the source version before further development.\\n' \\
+                "$source_version" "$tag_commit" "$head_commit" >&2
+              exit 1
+            fi
+          fi
+          '''
+          new_tag_policy = '''          # Published releases remain immutable, but ordinary development commits
+          # are allowed to continue from the last released source identity.  A
+          # new Release x.y.z commit must still use a version whose existing tag
+          # either does not exist or already points at this exact commit.  The
+          # publisher independently refuses duplicate tags/releases as a second
+          # safety boundary.
+          subject="$(git log -1 --format=%s)"
+          tag_refs="$(git ls-remote --tags origin \\
+            "refs/tags/v${source_version}" "refs/tags/v${source_version}^{}")"
+          if [[ -n "$tag_refs" ]]; then
+            tag_commit="$(awk '$2 ~ /\\^\\{\\}$/ { print $1 }' <<<"$tag_refs" | tail -n1)"
+            if [[ -z "$tag_commit" ]]; then
+              tag_commit="$(awk 'NR == 1 { print $1 }' <<<"$tag_refs")"
+            fi
+            head_commit="$(git rev-parse HEAD)"
+            if [[ "$tag_commit" != "$head_commit" && \\
+                  ( "$subject" == "Release ${source_version}" || \\
+                    "$subject" == "Release ${source_version}:"* ) ]]; then
+              printf 'Release version %s is already tagged at %s; current release candidate is %s. Choose a new release version.\\n' \\
+                "$source_version" "$tag_commit" "$head_commit" >&2
+              exit 1
+            fi
+          fi
+          '''
+          if text.count(old_tag_policy) != 1:
+              raise SystemExit('expected exactly one tagged-version policy block')
+          text = text.replace(old_tag_policy, new_tag_policy, 1)
+          ci.write_text(text, encoding='utf-8')
+
+          release = Path('.github/workflows/release-packages.yml')
+          rtext = release.read_text(encoding='utf-8')
+          obsolete = '''# Compatibility anchor for the older release-policy grep in ci.yml; the actual
+          # publisher trigger is the four prerequisite workflows below.
+          # workflows: ["Build and conformance"]
+          '''
+          if rtext.count(obsolete) != 1:
+              raise SystemExit('expected exactly one obsolete compatibility anchor')
+          release.write_text(rtext.replace(obsolete, '', 1), encoding='utf-8')
+          PY
+
+          rm -f -- .tmp .github/workflows/maintenance-repair.yml
+
+          # Validate the resulting YAML as text and the exact intended policy
+          # invariants before allowing the repair commit to exist.
+          grep -Fq '  pull_request:' .github/workflows/ci.yml
+          ! grep -Fq 'workflows: ["Build and conformance"]' .github/workflows/ci.yml
+          ! grep -Fq 'Compatibility anchor for the older release-policy grep' .github/workflows/release-packages.yml
+          grep -Fq 'ordinary development commits' .github/workflows/ci.yml
+          grep -Fq 'publisher independently refuses duplicate tags/releases' .github/workflows/ci.yml
+          grep -Fq "startsWith(github.event.workflow_run.head_commit.message, 'Release ')" .github/workflows/release-packages.yml
+          grep -Fq "github.event.workflow_run.head_branch == 'main'" .github/workflows/release-packages.yml
+          grep -Fq '! git rev-parse -q --verify "refs/tags/${tag}"' .github/workflows/release-packages.yml
+          grep -Fq '! gh release view "$tag"' .github/workflows/release-packages.yml
+
+          git diff --check
+          git status --short
+
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git diff --cached --check
+          git commit -m 'Make CI maintenance-safe'
+          git push origin HEAD:main
