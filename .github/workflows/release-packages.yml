@@ -6,9 +6,6 @@ name: Publish release
 # prerequisite that completed last is allowed to publish. This prevents a
 # runner from spending its ten-minute budget polling for slower qualifications.
 #
-# Compatibility anchor for the older release-policy grep in ci.yml; the actual
-# publisher trigger is the four prerequisite workflows below.
-# workflows: ["Build and conformance"]
 on:
   workflow_run:
     workflows:

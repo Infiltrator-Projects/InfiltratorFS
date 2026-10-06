@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+  pull_request:
   schedule:
     - cron: "17 3 * * 0"
   workflow_dispatch:
@@ -32,7 +33,6 @@ jobs:
           set -euo pipefail
           release=.github/workflows/release-packages.yml
           grep -Fq '  workflow_run:' "$release"
-          grep -Fq 'workflows: ["Build and conformance"]' "$release"
           grep -Fq "startsWith(github.event.workflow_run.head_commit.message, 'Release ')" "$release"
           grep -Fq "github.event.workflow_run.head_branch == 'main'" "$release"
           grep -Fq 'published releases are immutable' "$release"
@@ -50,11 +50,13 @@ jobs:
             fi
           done
 
-          # A published/tagged version is immutable.  The release commit itself
-          # may equal that tag, but any later main commit must advance the source
-          # version before development continues.  This prevents hundreds of
-          # post-release commits from silently continuing to call themselves the
-          # already-published release.
+          # Published releases remain immutable, but ordinary development commits
+          # are allowed to continue from the last released source identity. A
+          # new Release x.y.z commit must still use a version whose existing tag
+          # either does not exist or already points at this exact commit. The
+          # publisher independently refuses duplicate tags/releases as a second
+          # safety boundary.
+          subject="$(git log -1 --format=%s)"
           tag_refs="$(git ls-remote --tags origin \
             "refs/tags/v${source_version}" "refs/tags/v${source_version}^{}")"
           if [[ -n "$tag_refs" ]]; then
@@ -63,8 +65,10 @@ jobs:
               tag_commit="$(awk 'NR == 1 { print $1 }' <<<"$tag_refs")"
             fi
             head_commit="$(git rev-parse HEAD)"
-            if [[ "$tag_commit" != "$head_commit" ]]; then
-              printf 'Source version %s is already tagged at %s; current main is %s. Bump the source version before further development.\n' \
+            if [[ "$tag_commit" != "$head_commit" && \
+                  ( "$subject" == "Release ${source_version}" || \
+                    "$subject" == "Release ${source_version}:"* ) ]]; then
+              printf 'Release version %s is already tagged at %s; current release candidate is %s. Choose a new release version.\n' \
                 "$source_version" "$tag_commit" "$head_commit" >&2
               exit 1
             fi
