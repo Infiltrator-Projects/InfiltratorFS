@@ -1,4 +1,4 @@
-0.18.94
+0.18.95
 qualification=exact-source-release-gate-hosted
 publication-gate=event-driven-v10
 apt-publication-verification=asynchronous-central-v1
@@ -10,6 +10,7 @@ allocation-publication-recovery=live-phase-telemetry-v1
 release-finalization=20261006-linux-release-windows-held-v1
 release-retry=linux7-dead-wrapper-fixed-v2
 rsync-mtime-writeback-serialization-fix=qualified-v1
+single-package-desktop-integration=published-v1
 
 small-file-writeback-lock-scope=forensic-v1
 project-quota-scalability=qualified-v1
