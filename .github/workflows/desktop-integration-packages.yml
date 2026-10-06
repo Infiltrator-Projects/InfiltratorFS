@@ -81,9 +81,15 @@ jobs:
           sudo install -m 0644 "$RUNNER_TEMP/desktop-integration/manifest" /usr/lib/infiltratorfs/os-integration/manifest
 
           sudo /usr/lib/infiltratorfs/infiltratorfs-os-integration install
-          test "$(dpkg-query -S /usr/bin/gnome-disks | head -n1 | cut -d: -f1)" = gnome-disk-utility
+          # dpkg-divert intentionally changes path ownership reporting while the
+          # InfiltratorFS integration is active.  Verify the distro packages are
+          # still installed and that their originals are preserved by diversion
+          # instead of incorrectly requiring dpkg-query -S to report the live path.
           dpkg-query -W -f='${Status}\n' libblockdev-fs3 | grep -Fxq 'install ok installed'
           dpkg-query -W -f='${Status}\n' gnome-disk-utility | grep -Fxq 'install ok installed'
+          dpkg-divert --list | grep -Fq 'diversion of /usr/bin/gnome-disks'
+          test -x /usr/bin/gnome-disks.distrib
+          test -s "${plugin}.distrib"
           gdbus call --system --dest org.freedesktop.UDisks2 \
             --object-path /org/freedesktop/UDisks2/Manager \
             --method org.freedesktop.UDisks2.Manager.CanFormat infiltratorfs | grep -Fq true
