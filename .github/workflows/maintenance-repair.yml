@@ -24,7 +24,9 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Make CI development-safe and self-remove
+      - name: Generate and validate maintenance-safe CI blobs
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
@@ -110,8 +112,6 @@ jobs:
           release.write_text(rtext.replace(obsolete, '', 1), encoding='utf-8')
           PY
 
-          rm -f -- .tmp .github/workflows/maintenance-repair.yml
-
           grep -Fq '  pull_request:' .github/workflows/ci.yml
           ! grep -Fq 'workflows: ["Build and conformance"]' .github/workflows/ci.yml
           ! grep -Fq 'Compatibility anchor for the older release-policy grep' .github/workflows/release-packages.yml
@@ -121,13 +121,13 @@ jobs:
           grep -Fq "github.event.workflow_run.head_branch == 'main'" .github/workflows/release-packages.yml
           grep -Fq '! git rev-parse -q --verify "refs/tags/${tag}"' .github/workflows/release-packages.yml
           grep -Fq '! gh release view "$tag"' .github/workflows/release-packages.yml
-
           git diff --check
-          git status --short
 
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add -A
-          git diff --cached --check
-          git commit -m 'Make CI maintenance-safe'
-          git push origin HEAD:main
+          ci_blob="$(jq -Rs '{content: ., encoding: "utf-8"}' .github/workflows/ci.yml | \
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/git/blobs" --input - --jq .sha)"
+          release_blob="$(jq -Rs '{content: ., encoding: "utf-8"}' .github/workflows/release-packages.yml | \
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/git/blobs" --input - --jq .sha)"
+
+          printf 'VALIDATED_CI_BLOB=%s\n' "$ci_blob"
+          printf 'VALIDATED_RELEASE_BLOB=%s\n' "$release_blob"
+          git diff --stat
