@@ -146,7 +146,9 @@ for forbidden in (
 
 release = (wf / 'release-packages.yml').read_text()
 for required in (
-    'workflows: ["Build and conformance"]',
+    '"Native Linux kernel module"',
+    '"Linux root-volume qualification"',
+    '"Linux metadata qualification"',
     '"Release artifacts"',
     'gh run download',
     'published releases are immutable',
