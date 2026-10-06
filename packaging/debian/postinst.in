@@ -112,6 +112,10 @@ else
     fi
 fi
 
+if [ -x /usr/lib/infiltratorfs/infiltratorfs-os-integration ]; then
+    /usr/lib/infiltratorfs/infiltratorfs-os-integration install
+fi
+
 if command -v udevadm >/dev/null 2>&1; then
     udevadm control --reload-rules || true
     udevadm trigger --subsystem-match=block --action=change || true
