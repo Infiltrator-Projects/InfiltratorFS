@@ -1,6 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "infilfs/storage.h"
 
+static int storage_policy_requires_extended_io(
+    const struct infs_storage_io_policy *policy)
+{
+    return policy &&
+        (policy->protection_copies != 0u ||
+         policy->encryption_domain != 0u);
+}
+
 int infs_storage_valid(const struct infs_storage *storage)
 {
     return storage && storage->ops && storage->context &&
@@ -35,9 +43,7 @@ infs_status infs_storage_read_policy(
     if (storage->ops->read_at_policy)
         return storage->ops->read_at_policy(
             storage->context, offset, buffer, size, policy);
-    if (policy &&
-        (policy->protection_copies != 0u ||
-         policy->encryption_domain != 0u))
+    if (storage_policy_requires_extended_io(policy))
         return INFS_STATUS_NOT_SUPPORTED;
     return storage->ops->read_at(storage->context, offset, buffer, size);
 }
@@ -52,9 +58,7 @@ infs_status infs_storage_write_policy(
     if (storage->ops->write_at_policy)
         return storage->ops->write_at_policy(
             storage->context, offset, buffer, size, policy);
-    if (policy &&
-        (policy->protection_copies != 0u ||
-         policy->encryption_domain != 0u))
+    if (storage_policy_requires_extended_io(policy))
         return INFS_STATUS_NOT_SUPPORTED;
     return storage->ops->write_at(storage->context, offset, buffer, size);
 }
