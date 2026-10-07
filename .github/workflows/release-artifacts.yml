@@ -156,6 +156,24 @@ jobs:
             exit 1
           fi
 
+      - name: Install and verify exact integrated release package
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        shell: bash
+        run: |
+          set -euo pipefail
+          deb="$(readlink -f "release-assets/infiltratorfs_${VERSION}_amd64.deb")"
+          test -s "$deb"
+          test "$(dpkg-deb --field "$deb" X-InfiltratorFS-Desktop-Integration)" = ubuntu24.04-mint22-bundled
+          sudo apt-get install -y "$deb"
+          dpkg-query -W -f='${Status}\n' infiltratorfs | grep -Fxq 'install ok installed'
+          dpkg-query -W -f='${Status}\n' gnome-disk-utility | grep -Fxq 'install ok installed'
+          dpkg-query -W -f='${Status}\n' libblockdev-fs3 | grep -Fxq 'install ok installed'
+          sudo /usr/lib/infiltratorfs/infiltratorfs-os-integration verify
+          test -x /usr/share/initramfs-tools/hooks/infiltratorfs
+          grep -Fq 'manual_add_modules infiltratorfs' /usr/share/initramfs-tools/hooks/infiltratorfs
+          dkms status -m infiltratorfs -v "$VERSION" | grep -q .
+
       - name: Preserve exact release assets
         uses: actions/upload-artifact@v4
         with:
