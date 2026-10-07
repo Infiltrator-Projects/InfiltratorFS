@@ -26,3 +26,4 @@ physical-core-n-minus-one=hybrid-responsiveness-v1
 recovery-qualification=consolidated-main-20261005-v1
 maintainability-hardening=native-rw-decomposition-v1
 release-publish-retry=maintainability-hardening-v1
+swarm-release-path=qualified-v1
