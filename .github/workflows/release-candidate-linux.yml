@@ -151,6 +151,7 @@ jobs:
               > SHA256SUMS.txt
             sha256sum -c SHA256SUMS.txt
           )
+          rm -f "$deb.sha256" "$installer.sha256"
 
           expected="$(printf '%s\n' \
             "SHA256SUMS.txt" \
