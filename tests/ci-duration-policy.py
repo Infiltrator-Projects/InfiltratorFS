@@ -122,27 +122,51 @@ for path in workflow_paths:
     # workflow_run, repository_dispatch, workflow_dispatch, or something new.
     enforce_runner_timeouts(name, text)
 
-# Automatic publication promotes tested artifacts and a separately qualified
-# managed desktop-stack prerelease. It must never rebuild or inject raw
-# desktop binaries into the core package.
+# The release candidate owns all inputs needed to produce the final shipping
+# Linux artifacts. The desktop integration input is pinned in source; it must
+# not be selected dynamically at promotion time.
+release_candidate = (wf / 'release-candidate-linux.yml').read_text()
+for required in (
+    '.github/desktop-integration-release',
+    'desktop-integration-ubuntu24.04-',
+    'INFILTRATORFS_OS_INTEGRATION_BUNDLE_DIR',
+    'INFILTRATORFS_REQUIRE_OS_INTEGRATION',
+    'packaging/build-linux-packages.sh build dist',
+    'SHA256SUMS.txt',
+):
+    if required not in release_candidate:
+        raise SystemExit(f'release candidate final-artifact policy missing: {required}')
+for forbidden in (
+    'releases?per_page=100',
+    'tail -n 1',
+    'INFILTRATORFS_DESKTOP_BUNDLE_DIR',
+    'managed-packages',
+):
+    if forbidden in release_candidate:
+        raise SystemExit(f'release candidate contains dynamic or retired desktop integration path: {forbidden}')
+
+# Release artifacts may validate and install the exact candidate artifacts, but
+# it must not rebuild them or re-resolve desktop integration inputs.
 release_artifacts = (wf / 'release-artifacts.yml').read_text()
 for required in (
-    'desktop-integration-ubuntu24.04-',
     'infiltratorfs-os-integration-bundle.tar',
     'ubuntu24.04-mint22-bundled',
-    'INFILTRATORFS_OS_INTEGRATION_BUNDLE_DIR',
     'gh run download',
+    'SHA256SUMS.txt',
+    'sha256sum -c SHA256SUMS.txt',
 ):
     if required not in release_artifacts:
         raise SystemExit(f'release artifact promotion policy missing: {required}')
 for forbidden in (
     'apt-get build-dep',
+    'packaging/build-linux-packages.sh',
+    'INFILTRATORFS_OS_INTEGRATION_BUNDLE_DIR',
+    'gh release download',
     'INFILTRATORFS_DESKTOP_BUNDLE_DIR',
     'managed-packages',
-    'gh release download v0.18.47',
 ):
     if forbidden in release_artifacts:
-        raise SystemExit(f'automatic release artifact workflow contains retired desktop injection path: {forbidden}')
+        raise SystemExit(f'automatic release artifact workflow is rebuilding or re-resolving inputs: {forbidden}')
 
 release = (wf / 'release-packages.yml').read_text()
 for required in (
@@ -153,6 +177,7 @@ for required in (
     'gh run download',
     'published releases are immutable',
     'git tag --annotate',
+    'sha256sum -c SHA256SUMS.txt',
 ):
     if required not in release:
         raise SystemExit(f'release promotion policy missing: {required}')

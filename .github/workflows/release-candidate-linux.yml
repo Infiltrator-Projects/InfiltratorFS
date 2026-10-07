@@ -84,7 +84,40 @@ jobs:
           ldd build/infilfs-checksum-test | grep -Fq libcrypto
           test ! -e build/infilfs-fuse
 
-      - name: Build and validate Linux release packages
+      - name: Download pinned desktop integration bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$(head -n1 .github/desktop-integration-release | tr -d '[:space:]')"
+          test -n "$tag"
+          [[ "$tag" == desktop-integration-ubuntu24.04-* ]]
+          test "$(gh release view "$tag" --json isPrerelease --jq '.isPrerelease')" = true
+
+          dir="$RUNNER_TEMP/desktop-integration"
+          mkdir -p "$dir"
+          gh release download "$tag" --dir "$dir" \
+            --pattern 'gnome-disks' \
+            --pattern 'libbd_fs.so' \
+            --pattern 'manifest'
+
+          for required in gnome-disks libbd_fs.so manifest; do
+            test -s "$dir/$required"
+          done
+          expected_patch="$(cat packaging/libblockdev-3.1-infiltratorfs.patch packaging/gnome-disks-46-infiltratorfs.patch packaging/build-noble-desktop-integration.sh | sha256sum | awk '{print $1}')"
+          test "$(sed -n 's/^patch_sha256=//p' "$dir/manifest")" = "$expected_patch"
+          test "$(sed -n 's/^target=//p' "$dir/manifest")" = ubuntu-24.04-linuxmint-22.x
+          if find "$dir" -maxdepth 1 -type f -name '*.deb' -print -quit | grep -q .; then
+            echo 'Qualified desktop integration must not contain replacement Debian packages.' >&2
+            exit 1
+          fi
+
+      - name: Build and validate final Linux release packages once
+        env:
+          INFILTRATORFS_EMIT_RUN: "1"
+          INFILTRATORFS_OS_INTEGRATION_BUNDLE_DIR: ${{ runner.temp }}/desktop-integration
+          INFILTRATORFS_REQUIRE_OS_INTEGRATION: "1"
         shell: bash
         run: |
           set -euo pipefail
@@ -95,11 +128,39 @@ jobs:
           test -s "$deb"
           "$installer" --verify
           test "$(dpkg-deb --field "$deb" Version)" = "$VERSION"
+          test "$(dpkg-deb --field "$deb" X-InfiltratorFS-Desktop-Integration)" = ubuntu24.04-mint22-bundled
+
           contents="$RUNNER_TEMP/infiltratorfs-release-candidate-contents.txt"
           dpkg-deb --contents "$deb" > "$contents"
+          grep -q 'usr/lib/infiltratorfs/os-integration/gnome-disks$' "$contents"
+          grep -q 'usr/lib/infiltratorfs/os-integration/libbd_fs.so$' "$contents"
+          grep -q 'usr/lib/infiltratorfs/os-integration/manifest$' "$contents"
           ! grep -q 'usr/bin/infilfs-fuse$' "$contents"
 
-      - name: Upload exact Linux installers
+          depends="$(dpkg-deb --field "$deb" Depends)"
+          for dependency in udisks2 gnome-disk-utility libblockdev-fs3; do
+            grep -Eq "(^|, )${dependency}([ ,|]|$)" <<<"$depends"
+          done
+          ! grep -Eq '(^|, )infiltratorfs-(desktop-integration|gnome-disk-utility|libblockdev-fs3)([ ,]|$)' <<<"$depends"
+
+          (
+            cd dist
+            sha256sum \
+              "infiltratorfs_${VERSION}_amd64.deb" \
+              "infiltratorfs-${VERSION}-linux-native.run" \
+              > SHA256SUMS.txt
+            sha256sum -c SHA256SUMS.txt
+          )
+          rm -f "$deb.sha256" "$installer.sha256"
+
+          expected="$(printf '%s\n' \
+            "SHA256SUMS.txt" \
+            "infiltratorfs-${VERSION}-linux-native.run" \
+            "infiltratorfs_${VERSION}_amd64.deb" | sort)"
+          actual="$(find dist -maxdepth 1 -type f -printf '%f\n' | sort)"
+          test "$actual" = "$expected"
+
+      - name: Upload exact final Linux release artifacts
         uses: actions/upload-artifact@v4
         with:
           name: InfiltratorFS-Linux

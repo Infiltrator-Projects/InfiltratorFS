@@ -167,6 +167,11 @@ jobs:
           set -euo pipefail
           mkdir -p release-assets
           gh run download "$ARTIFACTS_RUN_ID" --name InfiltratorFS-release-assets --dir release-assets
+          test -s release-assets/SHA256SUMS.txt
+          (
+            cd release-assets
+            sha256sum -c SHA256SUMS.txt
+          )
 
       - name: Create exact tag and publish all assets
         env:
@@ -188,6 +193,10 @@ jobs:
           deb="infiltratorfs_${VERSION}_amd64.deb"
           installer="infiltratorfs-${VERSION}-linux-native.run"
           for asset in "$deb" "$installer"; do test -s "release-assets/$asset"; done
+          (
+            cd release-assets
+            sha256sum -c SHA256SUMS.txt
+          )
 
           if find release-assets -maxdepth 1 -type f \
               \( -name 'infiltratorfs-desktop-integration_*.deb' \
@@ -220,9 +229,6 @@ jobs:
           for font in mb_corpo_a_cond_regular.ttf mb_corpo_s_bold.ttf mb_corpo_s_regular.ttf; do
             grep -q "usr/share/fonts/truetype/infiltratorfs/$font$" "$contents"
           done
-
-          mapfile -t release_files < <(find release-assets -maxdepth 1 -type f ! -name SHA256SUMS.txt -printf '%f\n' | sort)
-          (cd release-assets && sha256sum "${release_files[@]}" > SHA256SUMS.txt)
 
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
