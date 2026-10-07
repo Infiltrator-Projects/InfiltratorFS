@@ -23,7 +23,7 @@ jobs:
       github.event.workflow_run.head_branch == 'main' &&
       startsWith(github.event.workflow_run.head_commit.message, 'Release ')
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - name: Check out exact tested source
         uses: actions/checkout@v6
