@@ -17,7 +17,6 @@ concurrency:
 jobs:
   qualify:
     name: Qualify Linux release candidate
-    if: startsWith(github.event.head_commit.message, 'Release ')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -27,20 +26,16 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      - name: Verify release identity
+      - name: Resolve semantic release request
+        id: release
         shell: bash
         run: |
           set -euo pipefail
-          version="$(sed -nE 's/^project\(InfiltratorFS VERSION ([0-9]+\.[0-9]+\.[0-9]+) LANGUAGES C\)$/\1/p' CMakeLists.txt)"
-          trigger="$(head -n1 .github/release-trigger | tr -d '[:space:]')"
-          subject="$(git log -1 --format=%s)"
-          test -n "$version"
-          test "$trigger" = "$version"
-          [[ "$subject" == "Release ${version}" || "$subject" == "Release ${version}:"* ]]
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          echo "VERSION=$version" >> "$GITHUB_ENV"
+          bash tools/release/resolve-request.sh . "$GITHUB_OUTPUT"
 
       - name: Install build dependencies
+        if: steps.release.outputs.requested == 'true'
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
@@ -51,6 +46,7 @@ jobs:
             pkg-config policykit-1 xdg-utils python3
 
       - name: Guard native Linux policies
+        if: steps.release.outputs.requested == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -69,15 +65,19 @@ jobs:
           bash tests/directory-tree-policy.sh .
 
       - name: Configure and build
+        if: steps.release.outputs.requested == 'true'
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
+        if: steps.release.outputs.requested == 'true'
         run: cmake --build build --parallel
 
       - name: Test
+        if: steps.release.outputs.requested == 'true'
         run: ctest --test-dir build --output-on-failure
 
       - name: Require accelerated SHA-256 and no FUSE artifact
+        if: steps.release.outputs.requested == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -85,6 +85,7 @@ jobs:
           test ! -e build/infilfs-fuse
 
       - name: Download pinned desktop integration bundle
+        if: steps.release.outputs.requested == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -114,6 +115,7 @@ jobs:
           fi
 
       - name: Build and validate final Linux release packages once
+        if: steps.release.outputs.requested == 'true'
         env:
           INFILTRATORFS_EMIT_RUN: "1"
           INFILTRATORFS_OS_INTEGRATION_BUNDLE_DIR: ${{ runner.temp }}/desktop-integration
@@ -161,6 +163,7 @@ jobs:
           test "$actual" = "$expected"
 
       - name: Upload exact final Linux release artifacts
+        if: steps.release.outputs.requested == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: InfiltratorFS-Linux

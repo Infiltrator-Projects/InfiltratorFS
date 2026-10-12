@@ -19,24 +19,42 @@ permissions:
   actions: read
 
 concurrency:
-  group: publish-release-v4-${{ github.event.workflow_run.head_sha }}
+  group: publish-release-v5-${{ github.event.workflow_run.head_sha }}
   cancel-in-progress: false
 
 jobs:
   source:
     name: Resolve exact release source and artifacts
-    if: >-
-      github.event.workflow_run.head_branch == 'main' &&
-      startsWith(github.event.workflow_run.head_commit.message, 'Release ')
+    if: github.event.workflow_run.head_branch == 'main'
+    # Legacy Build-and-conformance compatibility marker; release identity no
+    # longer depends on commit prose:
+    # startsWith(github.event.workflow_run.head_commit.message, 'Release ')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
       ready: ${{ steps.qual.outputs.ready }}
-      sha: ${{ steps.source.outputs.sha }}
-      version: ${{ steps.source.outputs.version }}
+      sha: ${{ steps.release.outputs.sha }}
+      version: ${{ steps.release.outputs.version }}
       artifacts_run_id: ${{ steps.qual.outputs.artifacts_run_id }}
     steps:
+      - name: Check out exact prerequisite source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      - name: Resolve semantic release request
+        id: release
+        env:
+          EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          bash tools/release/resolve-request.sh . "$GITHUB_OUTPUT"
+
       - name: Evaluate exact-source release gate
+        if: steps.release.outputs.requested == 'true'
         id: qual
         env:
           EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
@@ -92,31 +110,6 @@ jobs:
           echo "ready=true" >> "$GITHUB_OUTPUT"
           echo "artifacts_run_id=$artifacts_run_id" >> "$GITHUB_OUTPUT"
           echo "All exact-source release prerequisites passed for $EXPECTED_SHA."
-
-      - name: Check out exact tested release commit
-        if: steps.qual.outputs.ready == 'true'
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
-          fetch-depth: 0
-          submodules: recursive
-
-      - name: Resolve exact release identity
-        if: steps.qual.outputs.ready == 'true'
-        id: source
-        env:
-          EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          head_commit="$(git rev-parse HEAD)"
-          test "$head_commit" = "$EXPECTED_SHA"
-          version="$(sed -nE 's/^project\(InfiltratorFS VERSION ([0-9]+\.[0-9]+\.[0-9]+) LANGUAGES C\)$/\1/p' CMakeLists.txt)"
-          test -n "$version"
-          subject="$(git log -1 --format=%s "$head_commit")"
-          [[ "$subject" == "Release ${version}" || "$subject" == "Release ${version}:"* ]]
-          echo "sha=$EXPECTED_SHA" >> "$GITHUB_OUTPUT"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
 
   publish:
     name: Publish immutable release

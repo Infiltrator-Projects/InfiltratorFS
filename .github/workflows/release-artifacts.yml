@@ -20,8 +20,7 @@ jobs:
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_branch == 'main' &&
-      startsWith(github.event.workflow_run.head_commit.message, 'Release ')
+      github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -31,20 +30,18 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
 
-      - name: Verify exact release identity
+      - name: Resolve semantic release request
+        id: release
         env:
           EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
-          subject="$(git log -1 --format=%s "$EXPECTED_SHA")"
-          version="$(sed -nE 's/^project\(InfiltratorFS VERSION ([0-9]+\.[0-9]+\.[0-9]+) LANGUAGES C\)$/\1/p' CMakeLists.txt)"
-          test -n "$version"
-          [[ "$subject" == "Release ${version}" || "$subject" == "Release ${version}:"* ]]
-          echo "VERSION=$version" >> "$GITHUB_ENV"
+          bash tools/release/resolve-request.sh . "$GITHUB_OUTPUT"
 
       - name: Download exact tested final Linux release artifacts
+        if: steps.release.outputs.requested == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
@@ -70,6 +67,7 @@ jobs:
           )
 
       - name: Promote exact release assets unchanged
+        if: steps.release.outputs.requested == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -92,6 +90,7 @@ jobs:
           test "$actual" = "$expected"
 
       - name: Install and verify exact integrated release package
+        if: steps.release.outputs.requested == 'true'
         env:
           DEBIAN_FRONTEND: noninteractive
         shell: bash
@@ -111,6 +110,7 @@ jobs:
           dkms status -m infiltratorfs -v "$VERSION" | grep -q .
 
       - name: Preserve exact release assets unchanged
+        if: steps.release.outputs.requested == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: InfiltratorFS-release-assets
