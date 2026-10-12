@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 name: Publish release
 
-# published releases are immutable. Every required exact-source prerequisite
+# Published releases are immutable. Every required exact-source prerequisite
 # completion re-evaluates the gate. Once all prerequisites are green for the
 # same SHA, publication is safe to run; concurrency serializes duplicate gate
 # evaluations and the publication step itself is deliberately idempotent.
@@ -11,7 +11,7 @@ on:
       - "Native Linux kernel module"
       - "Linux root-volume qualification"
       - "Linux metadata qualification"
-      - "Release artifacts"
+      - "Release candidate Linux"
     types: [completed]
 
 permissions:
@@ -19,7 +19,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: publish-release-v5-${{ github.event.workflow_run.head_sha }}
+  group: publish-release-v6-${{ github.event.workflow_run.head_sha }}
   cancel-in-progress: false
 
 jobs:
@@ -64,7 +64,7 @@ jobs:
             "Native Linux kernel module"
             "Linux root-volume qualification"
             "Linux metadata qualification"
-            "Release artifacts"
+            "Release candidate Linux"
           )
           json="$(gh api "$api")"
           all_complete=1
@@ -89,7 +89,7 @@ jobs:
                 "$workflow" "$EXPECTED_SHA" "$conclusion" "$run_url" >&2
               exit 1
             fi
-            if [[ "$workflow" == "Release artifacts" ]]; then
+            if [[ "$workflow" == "Release candidate Linux" ]]; then
               artifacts_run_id="$run_id"
             fi
           done
@@ -100,7 +100,7 @@ jobs:
             exit 0
           fi
           if [[ -z "$artifacts_run_id" || "$artifacts_run_id" == 0 ]]; then
-            echo "Release artifacts completed without a resolvable run id." >&2
+            echo "Release candidate completed without a resolvable run id." >&2
             exit 1
           fi
 
@@ -136,7 +136,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release-assets
-          gh run download "$ARTIFACTS_RUN_ID" --name InfiltratorFS-release-assets --dir release-assets
+          gh run download "$ARTIFACTS_RUN_ID" --name InfiltratorFS-Linux --dir release-assets
           test -s release-assets/SHA256SUMS.txt
           (
             cd release-assets
@@ -152,7 +152,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
-          source_version="$(sed -nE 's/^project\(InfiltratorFS VERSION ([0-9]+\.[0-9]+\.[0-9]+) LANGUAGES C\)$/\1/p' CMakeLists.txt)"
+          source_version="$(bash tools/project-version.sh CMakeLists.txt)"
           test "$source_version" = "$VERSION"
 
           tag="v${VERSION}"

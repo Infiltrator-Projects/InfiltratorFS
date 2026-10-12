@@ -6,28 +6,29 @@ root="${1:-.}"
 output="${2:-}"
 cd "$root"
 
-fail() {
-    echo "release request identity: $*" >&2
-    exit 1
-}
-
 sha="$(git rev-parse HEAD)"
-version="$(sed -nE 's/^project\(InfiltratorFS VERSION ([0-9]+\.[0-9]+\.[0-9]+) LANGUAGES C\)$/\1/p' CMakeLists.txt)"
-[[ -n "$version" ]] || fail 'could not resolve source version from CMakeLists.txt'
-
-mapfile -t trigger_lines < .github/release-trigger
-(( ${#trigger_lines[@]} == 1 )) || fail '.github/release-trigger must contain exactly one line'
-trigger="${trigger_lines[0]//[[:space:]]/}"
-[[ "$trigger" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "invalid release trigger version: ${trigger:-empty}"
-[[ "$trigger" == "$version" ]] || fail "release trigger $trigger does not match source version $version"
-
+version="$(bash tools/project-version.sh CMakeLists.txt)"
 previous=""
-if git rev-parse --verify HEAD^ >/dev/null 2>&1; then
-    previous="$(git show HEAD^:.github/release-trigger 2>/dev/null | head -n1 | tr -d '[:space:]' || true)"
+
+# A release is needed while the source version is newer than the newest
+# published semantic-version tag reachable from this source. This remains true
+# across merge commits, squash merges, rebases and multi-commit pushes. Shallow
+# CI checkouts may not contain tags, so fall back to the immediate parent only
+# for policy/testing contexts; release workflows use full history and tags.
+latest_tag="$(git tag --merged HEAD --list 'v*' --sort=-version:refname 2>/dev/null |
+    grep -Em1 '^v[0-9]+\.[0-9]+\.[0-9]+$' || true)"
+if [[ -n "$latest_tag" ]]; then
+    previous="${latest_tag#v}"
+elif git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+    previous_cmake="$(mktemp)"
+    trap 'rm -f "$previous_cmake"' EXIT
+    if git show HEAD^:CMakeLists.txt >"$previous_cmake" 2>/dev/null; then
+        previous="$(bash tools/project-version.sh "$previous_cmake")"
+    fi
 fi
 
 requested=false
-if [[ -n "$previous" && "$trigger" != "$previous" ]]; then
+if [[ -n "$previous" && "$version" != "$previous" ]]; then
     requested=true
 fi
 
@@ -51,7 +52,7 @@ if [[ -n "${GITHUB_ENV:-}" ]]; then
 fi
 
 if [[ "$requested" == true ]]; then
-    echo "Release request: $previous -> $version at $sha"
+    echo "Release request: published $previous -> source $version at $sha"
 else
-    echo "No release request: version remains $version at $sha"
+    echo "No release request: source $version matches published/fallback $previous at $sha"
 fi

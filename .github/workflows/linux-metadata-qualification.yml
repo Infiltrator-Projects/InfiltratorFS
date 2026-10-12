@@ -13,7 +13,6 @@ on:
       - 'tests/**'
       - 'CMakeLists.txt'
       - '.github/workflows/linux-metadata-qualification.yml'
-      - '.github/release-trigger'
   workflow_dispatch:
 
 permissions:

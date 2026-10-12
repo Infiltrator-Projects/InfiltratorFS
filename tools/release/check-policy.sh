@@ -17,12 +17,11 @@ bash tools/release/resolve-request.sh . "$state" >/dev/null
 # shellcheck disable=SC1090
 source "$state"
 
-readme_version="$(sed -nE 's/^\*\*Current source version:\*\* ([0-9]+\.[0-9]+\.[0-9]+) \(Format [0-9]+\.[0-9]+\)<br>$/\1/p' README.md)"
-visible_readme_version="$(sed -nE 's/^\*\*Current source:\*\* ([0-9]+\.[0-9]+\.[0-9]+)<br>$/\1/p' README.md)"
-for declared in "$readme_version" "$visible_readme_version"; do
-    [[ "$declared" == "$version" ]] || \
-        fail "README version ${declared:-missing} does not match source $version"
-done
+visible_readme_version="$(sed -nE \
+    's/.*\*\*Current source:\*\*[[:space:]]*([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' \
+    README.md | head -n1)"
+[[ "$visible_readme_version" == "$version" ]] || \
+    fail "README version ${visible_readme_version:-missing} does not match source $version"
 
 publisher=.github/workflows/release-packages.yml
 [[ -f "$publisher" ]] || fail 'release publisher workflow is missing'
