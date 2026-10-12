@@ -122,6 +122,12 @@ for path in workflow_paths:
     # workflow_run, repository_dispatch, workflow_dispatch, or something new.
     enforce_runner_timeouts(name, text)
 
+# The release trigger is only an explicit release identity. Qualification state
+# belongs to CI evidence and release artifacts, not to a hand-maintained ledger.
+release_trigger = (root / '.github' / 'release-trigger').read_text().splitlines()
+if len(release_trigger) != 1 or not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', release_trigger[0]):
+    raise SystemExit('release trigger must contain exactly one semantic version line')
+
 # The release candidate owns all inputs needed to produce the final shipping
 # Linux artifacts. The desktop integration input is pinned in source; it must
 # not be selected dynamically at promotion time.
@@ -135,7 +141,7 @@ for required in (
     'SHA256SUMS.txt',
 ):
     if required not in release_candidate:
-        raise SystemExit(f'release candidate final-artifact policy missing: {required}')
+        raise SystemExit(f'release candidate invariant missing: {required}')
 for forbidden in (
     'releases?per_page=100',
     'tail -n 1',
@@ -143,20 +149,21 @@ for forbidden in (
     'managed-packages',
 ):
     if forbidden in release_candidate:
-        raise SystemExit(f'release candidate contains dynamic or retired desktop integration path: {forbidden}')
+        raise SystemExit(f'release candidate contains dynamic or retired input path: {forbidden}')
 
-# Release artifacts may validate and install the exact candidate artifacts, but
-# it must not rebuild them or re-resolve desktop integration inputs.
+# Promotion may validate and install the exact candidate artifacts, but it must
+# never rebuild them, re-resolve their inputs, or depend on main still pointing
+# at the already-tested SHA.
 release_artifacts = (wf / 'release-artifacts.yml').read_text()
 for required in (
-    'infiltratorfs-os-integration-bundle.tar',
-    'ubuntu24.04-mint22-bundled',
     'gh run download',
     'SHA256SUMS.txt',
     'sha256sum -c SHA256SUMS.txt',
+    'ubuntu24.04-mint22-bundled',
+    'infiltratorfs-os-integration verify',
 ):
     if required not in release_artifacts:
-        raise SystemExit(f'release artifact promotion policy missing: {required}')
+        raise SystemExit(f'release artifact promotion invariant missing: {required}')
 for forbidden in (
     'apt-get build-dep',
     'packaging/build-linux-packages.sh',
@@ -164,10 +171,14 @@ for forbidden in (
     'gh release download',
     'INFILTRATORFS_DESKTOP_BUNDLE_DIR',
     'managed-packages',
+    'git rev-parse origin/main',
 ):
     if forbidden in release_artifacts:
-        raise SystemExit(f'automatic release artifact workflow is rebuilding or re-resolving inputs: {forbidden}')
+        raise SystemExit(f'release artifact promotion is coupled to build/input/main state: {forbidden}')
 
+# Publication consumes exact promoted bytes. It must be retry-safe and must not
+# elect one workflow run as a special "last finisher"; concurrency plus
+# idempotent tag/release verification owns duplicate completion events.
 release = (wf / 'release-packages.yml').read_text()
 for required in (
     '"Native Linux kernel module"',
@@ -175,19 +186,24 @@ for required in (
     '"Linux metadata qualification"',
     '"Release artifacts"',
     'gh run download',
-    'published releases are immutable',
     'git tag --annotate',
+    'gh release download',
+    'cmp -s',
     'sha256sum -c SHA256SUMS.txt',
 ):
     if required not in release:
-        raise SystemExit(f'release promotion policy missing: {required}')
+        raise SystemExit(f'release publication invariant missing: {required}')
 for forbidden in (
     'apt-get build-dep',
     'cmake --build',
     'timeout-minutes: 12',
+    'git rev-parse origin/main',
+    'TRIGGER_RUN_ID',
+    'gate_run_id',
+    'gate_updated_at',
 ):
     if forbidden in release:
-        raise SystemExit(f'automatic publisher is rebuilding instead of promoting: {forbidden}')
+        raise SystemExit(f'release publisher contains obsolete coupling: {forbidden}')
 
 # The native kernel workflow deliberately retains deeper mounted steps with
 # longer internal diagnostic allowances. Automatic runs are bounded externally:
