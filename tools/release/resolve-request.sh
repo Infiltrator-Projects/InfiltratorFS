@@ -11,6 +11,7 @@ fail() {
     exit 1
 }
 
+sha="$(git rev-parse HEAD)"
 version="$(sed -nE 's/^project\(InfiltratorFS VERSION ([0-9]+\.[0-9]+\.[0-9]+) LANGUAGES C\)$/\1/p' CMakeLists.txt)"
 [[ -n "$version" ]] || fail 'could not resolve source version from CMakeLists.txt'
 
@@ -43,13 +44,14 @@ emit() {
 emit requested "$requested"
 emit version "$version"
 emit previous_version "$previous"
+emit sha "$sha"
 
 if [[ -n "${GITHUB_ENV:-}" ]]; then
     printf 'VERSION=%s\n' "$version" >> "$GITHUB_ENV"
 fi
 
 if [[ "$requested" == true ]]; then
-    echo "Release request: $previous -> $version"
+    echo "Release request: $previous -> $version at $sha"
 else
-    echo "No release request: version remains $version"
+    echo "No release request: version remains $version at $sha"
 fi
