@@ -13,7 +13,6 @@ on:
       - 'tests/**'
       - 'packaging/**'
       - 'CMakeLists.txt'
-      - '.github/release-trigger'
       - '.github/workflows/root-volume-qualification.yml'
   workflow_dispatch:
 
