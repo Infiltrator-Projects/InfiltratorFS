@@ -19,6 +19,9 @@ jobs:
     name: Qualify Linux release candidate
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    outputs:
+      requested: ${{ steps.release.outputs.requested }}
+      version: ${{ steps.release.outputs.version }}
     steps:
       - name: Check out exact source
         uses: actions/checkout@v6
@@ -162,13 +165,39 @@ jobs:
           actual="$(find dist -maxdepth 1 -type f -printf '%f\n' | sort)"
           test "$actual" = "$expected"
 
-      - name: Install and verify exact integrated release package
+      - name: Upload exact final Linux release artifacts
         if: steps.release.outputs.requested == 'true'
-        env:
-          DEBIAN_FRONTEND: noninteractive
+        uses: actions/upload-artifact@v4
+        with:
+          name: InfiltratorFS-Linux
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+  install-verify:
+    name: Install and verify exact candidate package
+    needs: qualify
+    if: needs.qualify.outputs.requested == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      VERSION: ${{ needs.qualify.outputs.version }}
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Download exact candidate artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: InfiltratorFS-Linux
+          path: dist
+
+      - name: Verify checksums and installed integration
         shell: bash
         run: |
           set -euo pipefail
+          (
+            cd dist
+            sha256sum -c SHA256SUMS.txt
+          )
           deb="$(readlink -f "dist/infiltratorfs_${VERSION}_amd64.deb")"
           test -s "$deb"
           test "$(dpkg-deb --field "$deb" X-InfiltratorFS-Desktop-Integration)" = ubuntu24.04-mint22-bundled
@@ -181,12 +210,3 @@ jobs:
           test -x /usr/share/initramfs-tools/hooks/infiltratorfs
           grep -Fq 'manual_add_modules infiltratorfs' /usr/share/initramfs-tools/hooks/infiltratorfs
           dkms status -m infiltratorfs -v "$VERSION" | grep -q .
-
-      - name: Upload exact final Linux release artifacts
-        if: steps.release.outputs.requested == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: InfiltratorFS-Linux
-          path: dist/*
-          if-no-files-found: error
-          retention-days: 30
