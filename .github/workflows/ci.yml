@@ -26,61 +26,14 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v6
         with:
+          fetch-depth: 2
           submodules: recursive
-      - name: Enforce main-only automatic immutable publishing
+      - name: Enforce semantic immutable release policy
         shell: bash
         run: |
           set -euo pipefail
-          release=.github/workflows/release-packages.yml
-          grep -Fq '  workflow_run:' "$release"
-          grep -Fq "startsWith(github.event.workflow_run.head_commit.message, 'Release ')" "$release"
-          grep -Fq "github.event.workflow_run.head_branch == 'main'" "$release"
-          grep -Fq 'published releases are immutable' "$release"
-          grep -Fq 'git tag --annotate' "$release"
-          source_version="$(sed -nE 's/^project\(InfiltratorFS VERSION ([0-9]+\.[0-9]+\.[0-9]+) LANGUAGES C\)$/\1/p' CMakeLists.txt)"
-          readme_version="$(sed -nE 's/^\*\*Current source version:\*\* ([0-9]+\.[0-9]+\.[0-9]+) \(Format [0-9]+\.[0-9]+\)<br>$/\1/p' README.md)"
-          visible_readme_version="$(sed -nE 's/^\*\*Current source:\*\* ([0-9]+\.[0-9]+\.[0-9]+)<br>$/\1/p' README.md)"
-          trigger_version="$(head -n1 .github/release-trigger | tr -d '[:space:]')"
-          test -n "$source_version"
-          for declared in "$readme_version" "$visible_readme_version" "$trigger_version"; do
-            if [[ "$declared" != "$source_version" ]]; then
-              printf 'Release version declaration %s does not match CMake %s.\n' \
-                "${declared:-missing}" "$source_version" >&2
-              exit 1
-            fi
-          done
-
-          # Published releases remain immutable, but ordinary development commits
-          # are allowed to continue from the last released source identity. A
-          # new Release x.y.z commit must still use a version whose existing tag
-          # either does not exist or already points at this exact commit. The
-          # publisher independently refuses duplicate tags/releases as a second
-          # safety boundary.
-          subject="$(git log -1 --format=%s)"
-          tag_refs="$(git ls-remote --tags origin \
-            "refs/tags/v${source_version}" "refs/tags/v${source_version}^{}")"
-          if [[ -n "$tag_refs" ]]; then
-            tag_commit="$(awk '$2 ~ /\^\{\}$/ { print $1 }' <<<"$tag_refs" | tail -n1)"
-            if [[ -z "$tag_commit" ]]; then
-              tag_commit="$(awk 'NR == 1 { print $1 }' <<<"$tag_refs")"
-            fi
-            head_commit="$(git rev-parse HEAD)"
-            if [[ "$tag_commit" != "$head_commit" && \
-                  ( "$subject" == "Release ${source_version}" || \
-                    "$subject" == "Release ${source_version}:"* ) ]]; then
-              printf 'Release version %s is already tagged at %s; current release candidate is %s. Choose a new release version.\n' \
-                "$source_version" "$tag_commit" "$head_commit" >&2
-              exit 1
-            fi
-          fi
-          if grep -Eq '^  workflow_dispatch:|^  pull_request:|^  schedule:' "$release"; then
-            echo "Release publication must be automatic from tested main only." >&2
-            exit 1
-          fi
-          if grep -Eq -- '--clobber|gh release edit' "$release"; then
-            echo "Published releases must never be modified in place." >&2
-            exit 1
-          fi
+          python3 tests/ci-duration-policy.py
+          bash tools/release/check-policy.sh .
 
   linux:
     name: Linux full suite
@@ -534,4 +487,3 @@ jobs:
           name: InfiltratorFS-Linux
           path: dist/*
           if-no-files-found: error
-
