@@ -5,7 +5,7 @@ on:
   push:
     branches: [main]
     paths:
-      - .github/release-trigger
+      - CMakeLists.txt
 
 permissions:
   contents: read
@@ -161,6 +161,26 @@ jobs:
             "infiltratorfs_${VERSION}_amd64.deb" | sort)"
           actual="$(find dist -maxdepth 1 -type f -printf '%f\n' | sort)"
           test "$actual" = "$expected"
+
+      - name: Install and verify exact integrated release package
+        if: steps.release.outputs.requested == 'true'
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        shell: bash
+        run: |
+          set -euo pipefail
+          deb="$(readlink -f "dist/infiltratorfs_${VERSION}_amd64.deb")"
+          test -s "$deb"
+          test "$(dpkg-deb --field "$deb" X-InfiltratorFS-Desktop-Integration)" = ubuntu24.04-mint22-bundled
+          sudo apt-get update
+          sudo apt-get install -y "$deb"
+          dpkg-query -W -f='${Status}\n' infiltratorfs | grep -Fxq 'install ok installed'
+          dpkg-query -W -f='${Status}\n' gnome-disk-utility | grep -Fxq 'install ok installed'
+          dpkg-query -W -f='${Status}\n' libblockdev-fs3 | grep -Fxq 'install ok installed'
+          sudo /usr/lib/infiltratorfs/infiltratorfs-os-integration verify
+          test -x /usr/share/initramfs-tools/hooks/infiltratorfs
+          grep -Fq 'manual_add_modules infiltratorfs' /usr/share/initramfs-tools/hooks/infiltratorfs
+          dkms status -m infiltratorfs -v "$VERSION" | grep -q .
 
       - name: Upload exact final Linux release artifacts
         if: steps.release.outputs.requested == 'true'
