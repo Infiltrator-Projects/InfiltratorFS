@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 name: Publish release
 
-# published releases are immutable. Publication is event-driven: each required
-# exact-source prerequisite completion re-evaluates the gate, and only the
-# prerequisite that completed last is allowed to publish. This prevents a
-# runner from spending its ten-minute budget polling for slower qualifications.
+# published releases are immutable. Every required exact-source prerequisite
+# completion re-evaluates the gate. Once all prerequisites are green for the
+# same SHA, publication is safe to run; concurrency serializes duplicate gate
+# evaluations and the publication step itself is deliberately idempotent.
 on:
   workflow_run:
     workflows:
@@ -19,7 +19,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: publish-release-v3-${{ github.event.workflow_run.head_sha }}
+  group: publish-release-v4-${{ github.event.workflow_run.head_sha }}
   cancel-in-progress: false
 
 jobs:
@@ -40,7 +40,6 @@ jobs:
         id: qual
         env:
           EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
-          TRIGGER_RUN_ID: ${{ github.event.workflow_run.id }}
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
@@ -55,8 +54,6 @@ jobs:
           json="$(gh api "$api")"
           all_complete=1
           artifacts_run_id=""
-          gate_run_id=""
-          gate_updated_at=""
 
           for workflow in "${required[@]}"; do
             state="$(jq -r --arg name "$workflow" '
@@ -64,15 +61,11 @@ jobs:
               | sort_by(.created_at, .id)
               | last
               | [(.status // ""), (.conclusion // ""), (.html_url // ""),
-                 ((.id // 0)|tostring), (.updated_at // "")]
+                 ((.id // 0)|tostring)]
               | @tsv' <<<"$json")"
-            IFS=$'\t' read -r status conclusion run_url run_id updated_at <<<"$state"
+            IFS=$'\t' read -r status conclusion run_url run_id <<<"$state"
 
-            if [[ -z "$run_id" || "$run_id" == 0 || "$status" != completed ]]; then
-              all_complete=0
-              continue
-            fi
-            if [[ "$conclusion" == skipped ]]; then
+            if [[ -z "$run_id" || "$run_id" == 0 || "$status" != completed || "$conclusion" == skipped ]]; then
               all_complete=0
               continue
             fi
@@ -84,33 +77,23 @@ jobs:
             if [[ "$workflow" == "Release artifacts" ]]; then
               artifacts_run_id="$run_id"
             fi
-            if [[ -z "$gate_updated_at" || "$updated_at" > "$gate_updated_at" || \
-                  ( "$updated_at" == "$gate_updated_at" && "$run_id" -gt "$gate_run_id" ) ]]; then
-              gate_updated_at="$updated_at"
-              gate_run_id="$run_id"
-            fi
           done
 
           if [[ "$all_complete" != 1 ]]; then
             echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "Release gate not ready for $EXPECTED_SHA; a later prerequisite completion will re-evaluate it."
+            echo "Release gate not ready for $EXPECTED_SHA; another prerequisite completion will re-evaluate it."
             exit 0
           fi
           if [[ -z "$artifacts_run_id" || "$artifacts_run_id" == 0 ]]; then
             echo "Release artifacts completed without a resolvable run id." >&2
             exit 1
           fi
-          if [[ "$TRIGGER_RUN_ID" != "$gate_run_id" ]]; then
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "Release gate is complete, but trigger run $TRIGGER_RUN_ID was not the final prerequisite ($gate_run_id)."
-            exit 0
-          fi
 
           echo "ready=true" >> "$GITHUB_OUTPUT"
           echo "artifacts_run_id=$artifacts_run_id" >> "$GITHUB_OUTPUT"
           echo "All exact-source release prerequisites passed for $EXPECTED_SHA."
 
-      - name: Check out exact tested main commit
+      - name: Check out exact tested release commit
         if: steps.qual.outputs.ready == 'true'
         uses: actions/checkout@v6
         with:
@@ -118,7 +101,7 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      - name: Resolve exact current main and version
+      - name: Resolve exact release identity
         if: steps.qual.outputs.ready == 'true'
         id: source
         env:
@@ -126,16 +109,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git fetch origin main --tags
           head_commit="$(git rev-parse HEAD)"
-          main_commit="$(git rev-parse origin/main)"
           test "$head_commit" = "$EXPECTED_SHA"
-          test "$main_commit" = "$EXPECTED_SHA"
           version="$(sed -nE 's/^project\(InfiltratorFS VERSION ([0-9]+\.[0-9]+\.[0-9]+) LANGUAGES C\)$/\1/p' CMakeLists.txt)"
           test -n "$version"
           subject="$(git log -1 --format=%s "$head_commit")"
           [[ "$subject" == "Release ${version}" || "$subject" == "Release ${version}:"* ]]
-          echo "sha=$main_commit" >> "$GITHUB_OUTPUT"
+          echo "sha=$EXPECTED_SHA" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
   publish:
@@ -173,7 +153,7 @@ jobs:
             sha256sum -c SHA256SUMS.txt
           )
 
-      - name: Create exact tag and publish qualified assets unchanged
+      - name: Publish or verify exact immutable release
         env:
           GH_TOKEN: ${{ github.token }}
           EXPECTED_SHA: ${{ needs.source.outputs.sha }}
@@ -181,15 +161,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git fetch origin main --tags
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
-          test "$(git rev-parse origin/main)" = "$EXPECTED_SHA"
           source_version="$(sed -nE 's/^project\(InfiltratorFS VERSION ([0-9]+\.[0-9]+\.[0-9]+) LANGUAGES C\)$/\1/p' CMakeLists.txt)"
           test "$source_version" = "$VERSION"
-          tag="v${VERSION}"
-          ! git rev-parse -q --verify "refs/tags/${tag}" >/dev/null
-          ! gh release view "$tag" >/dev/null 2>&1
 
+          tag="v${VERSION}"
           deb="infiltratorfs_${VERSION}_amd64.deb"
           installer="infiltratorfs-${VERSION}-linux-native.run"
           for asset in "$deb" "$installer" SHA256SUMS.txt; do
@@ -203,18 +179,46 @@ jobs:
             sha256sum -c SHA256SUMS.txt
           )
 
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git tag --annotate "$tag" "$EXPECTED_SHA" --message "InfiltratorFS $VERSION"
-          test "$(git cat-file -t "refs/tags/${tag}")" = tag
-          git push origin "$tag"
-          mapfile -t publish_assets < <(find release-assets -maxdepth 1 -type f -printf '%p\n' | sort)
-          gh release create "$tag" "${publish_assets[@]}" \
-            --verify-tag --target "$EXPECTED_SHA" \
-            --title "InfiltratorFS $VERSION" --generate-notes --latest
+          git fetch origin --tags
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            tagged_sha="$(git rev-list -n 1 "$tag")"
+            if [[ "$tagged_sha" != "$EXPECTED_SHA" ]]; then
+              echo "Existing tag $tag points to $tagged_sha, expected $EXPECTED_SHA." >&2
+              exit 1
+            fi
+          else
+            git config user.name github-actions[bot]
+            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+            git tag --annotate "$tag" "$EXPECTED_SHA" --message "InfiltratorFS $VERSION"
+            test "$(git cat-file -t "refs/tags/${tag}")" = tag
+            git push origin "$tag"
+          fi
 
-          published_assets="$(gh release view "$tag" --json assets --jq '.assets[].name' | sort)"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            state="$(gh release view "$tag" --json isDraft,isPrerelease --jq '[.isDraft,.isPrerelease] | @tsv')"
+            IFS=$'\t' read -r is_draft is_prerelease <<<"$state"
+            test "$is_draft" = false
+            test "$is_prerelease" = false
+          else
+            mapfile -t publish_assets < <(find release-assets -maxdepth 1 -type f -printf '%p\n' | sort)
+            gh release create "$tag" "${publish_assets[@]}" \
+              --verify-tag --target "$EXPECTED_SHA" \
+              --title "InfiltratorFS $VERSION" --generate-notes --latest
+          fi
+
+          published_dir="$RUNNER_TEMP/published-release"
+          rm -rf "$published_dir"
+          mkdir -p "$published_dir"
+          gh release download "$tag" --dir "$published_dir"
+          published_assets="$(find "$published_dir" -maxdepth 1 -type f -printf '%f\n' | sort)"
           test "$published_assets" = "$expected_assets"
+          for asset in "$deb" "$installer" SHA256SUMS.txt; do
+            cmp -s "release-assets/$asset" "$published_dir/$asset" || {
+              echo "Published asset $asset differs from the qualified artifact." >&2
+              exit 1
+            }
+          done
+          echo "Release $tag is published from exact qualified bytes for $EXPECTED_SHA."
 
   apt:
     name: Defer APT publication to central pull
