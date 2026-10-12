@@ -12,22 +12,19 @@ fail() {
 }
 
 sha="$(git rev-parse HEAD)"
-version="$(sed -nE 's/^project\(InfiltratorFS VERSION ([0-9]+\.[0-9]+\.[0-9]+) LANGUAGES C\)$/\1/p' CMakeLists.txt)"
-[[ -n "$version" ]] || fail 'could not resolve source version from CMakeLists.txt'
-
-mapfile -t trigger_lines < .github/release-trigger
-(( ${#trigger_lines[@]} == 1 )) || fail '.github/release-trigger must contain exactly one line'
-trigger="${trigger_lines[0]//[[:space:]]/}"
-[[ "$trigger" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "invalid release trigger version: ${trigger:-empty}"
-[[ "$trigger" == "$version" ]] || fail "release trigger $trigger does not match source version $version"
-
+version="$(bash tools/project-version.sh CMakeLists.txt)"
 previous=""
+
 if git rev-parse --verify HEAD^ >/dev/null 2>&1; then
-    previous="$(git show HEAD^:.github/release-trigger 2>/dev/null | head -n1 | tr -d '[:space:]' || true)"
+    previous_cmake="$(mktemp)"
+    trap 'rm -f "$previous_cmake"' EXIT
+    if git show HEAD^:CMakeLists.txt >"$previous_cmake" 2>/dev/null; then
+        previous="$(bash tools/project-version.sh "$previous_cmake")"
+    fi
 fi
 
 requested=false
-if [[ -n "$previous" && "$trigger" != "$previous" ]]; then
+if [[ -n "$previous" && "$version" != "$previous" ]]; then
     requested=true
 fi
 
