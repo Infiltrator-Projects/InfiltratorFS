@@ -6,22 +6,21 @@ import subprocess
 root = Path(__file__).resolve().parents[1]
 wf = root / '.github' / 'workflows'
 
-# These are intentionally heavyweight and may exceed ten minutes, but only
-# because they are manual-only qualifications. Any new long workflow must be
-# deliberately added here and must still pass the dispatch-only trigger check.
+# Long destructive/integration qualifications are deliberately manual-only.
 manual_long = {
     'heavy-qualification.yml',
     'root-boot-qualification.yml',
     'desktop-formatter-qualification.yml',
 }
 
+# This input-producing integration build is allowed to run longer, but only
+# when path-gated or manually dispatched.
 automatic_long = {
     'desktop-integration-packages.yml',
 }
 
-# The native kernel workflow is the one automatic exception to an in-file job
-# timeout because manual runs are intentionally allowed to continue deeply.
-# Automatic executions are bounded by automatic-ci-watchdog.yml at 570 seconds.
+# The native kernel workflow retains deep mounted checks for manual runs.
+# Automatic executions are bounded by the dedicated ten-minute watchdog.
 external_watchdog = {
     'kernel-module.yml',
 }
@@ -31,11 +30,13 @@ obsolete = {
     'apply-linux-meta-empty-sidecar-fix.yml',
     'apply-posix-private-cow-fix.yml',
     'apply-special-otrunc-fix.yml',
+    'cancel-stale-runs.yml',
     'diagnose-linux-meta-publication.yml',
     'kernel-checksum-cache-object-refactor.yml',
     'qualify-posix-private-inplace.yml',
     'qualify-quota-ctime-isolation.yml',
     'release-0.18.48.yml',
+    'release-artifacts.yml',
 }
 
 
@@ -74,9 +75,11 @@ def enforce_runner_timeouts(name: str, text: str) -> None:
         )
         if timeout is None:
             raise SystemExit(f'{name}:{job}: runner job has no timeout')
-        minutes = int(timeout.split(':', 1)[1].strip())
-        if minutes > 10:
-            raise SystemExit(f'{name}:{job}: automatic-capable timeout is {minutes} minutes')
+        value = timeout.split(':', 1)[1].strip()
+        if not value.isdigit():
+            raise SystemExit(f'{name}:{job}: automatic timeout must be a fixed integer')
+        if int(value) > 10:
+            raise SystemExit(f'{name}:{job}: automatic-capable timeout is {value} minutes')
 
 
 def contains_uncommented(text: str, needle: str) -> bool:
@@ -86,23 +89,17 @@ def contains_uncommented(text: str, needle: str) -> bool:
     )
 
 
-# Fail closed over the entire workflow directory. A brand-new workflow is
-# automatically checked; it cannot escape just because somebody forgot to add
-# its filename to a hand-maintained "automatic" list.
 workflow_paths = sorted(wf.glob('*.yml')) + sorted(wf.glob('*.yaml'))
 if not workflow_paths:
     raise SystemExit('no workflows found')
 
 workflow_names = {path.name for path in workflow_paths}
-missing_manual = manual_long - workflow_names
-if missing_manual:
-    raise SystemExit(f'manual long workflow(s) missing: {sorted(missing_manual)}')
-missing_watchdog = external_watchdog - workflow_names
-if missing_watchdog:
-    raise SystemExit(f'externally watched workflow(s) missing: {sorted(missing_watchdog)}')
-missing_automatic_long = automatic_long - workflow_names
-if missing_automatic_long:
-    raise SystemExit(f'automatic long workflow(s) missing: {sorted(missing_automatic_long)}')
+for name in obsolete:
+    if name in workflow_names:
+        raise SystemExit(f'obsolete one-shot workflow remains: {name}')
+for name in manual_long | automatic_long | external_watchdog:
+    if name not in workflow_names:
+        raise SystemExit(f'required workflow is missing: {name}')
 
 for path in workflow_paths:
     name = path.name
@@ -122,133 +119,111 @@ for path in workflow_paths:
 
     if name in automatic_long:
         if 'push' not in triggers or 'workflow_dispatch' not in triggers or 'paths:' not in text:
-            raise SystemExit(f'{name}: heavyweight automatic integration build must be path-gated and manually dispatchable')
+            raise SystemExit(
+                f'{name}: heavyweight automatic integration build must be '
+                'path-gated and manually dispatchable'
+            )
         continue
 
-    # Every other current or future runner-backed workflow is capped at ten
-    # minutes, regardless of whether its trigger is push, schedule,
-    # workflow_run, repository_dispatch, workflow_dispatch, or something new.
     enforce_runner_timeouts(name, text)
 
-# The release trigger is only an explicit release identity. Qualification state
-# belongs to CI evidence and release artifacts, not to a hand-maintained ledger.
-release_trigger = (root / '.github' / 'release-trigger').read_text().splitlines()
-if len(release_trigger) != 1 or not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', release_trigger[0]):
-    raise SystemExit('release trigger must contain exactly one semantic version line')
+# CMake is the sole semantic release-version authority. There must be no second
+# hand-maintained release trigger carrying the same version.
+if (root / '.github' / 'release-trigger').exists():
+    raise SystemExit('duplicate .github/release-trigger release identity remains')
 
-# Release intent is semantic, not prose. One helper owns the definition: the
-# one-line release version must match CMake, and a release is requested only
-# when that version differs from the first parent's trigger version.
+version_helper = root / 'tools' / 'project-version.sh'
+if not version_helper.is_file():
+    raise SystemExit('canonical project-version resolver is missing')
+subprocess.run(['bash', '-n', str(version_helper)], check=True)
+
 release_identity = root / 'tools' / 'release' / 'resolve-request.sh'
 if not release_identity.is_file():
     raise SystemExit('semantic release request resolver is missing')
 subprocess.run(['bash', '-n', str(release_identity)], check=True)
 identity_text = release_identity.read_text()
 for required in (
-    'HEAD^:.github/release-trigger',
-    'trigger" == "$version',
-    'trigger" != "$previous',
+    'tools/project-version.sh CMakeLists.txt',
+    'git show HEAD^:CMakeLists.txt',
+    '"$version" != "$previous"',
     'emit requested',
     'emit version',
     'emit sha',
 ):
     if required not in identity_text:
         raise SystemExit(f'release request resolver invariant missing: {required}')
+for forbidden in ('.github/release-trigger', 'head_commit.message', 'git log -1 --format=%s'):
+    if contains_uncommented(identity_text, forbidden):
+        raise SystemExit(f'release request resolver contains obsolete coupling: {forbidden}')
 
 release_candidate = (wf / 'release-candidate-linux.yml').read_text()
-release_artifacts = (wf / 'release-artifacts.yml').read_text()
 release = (wf / 'release-packages.yml').read_text()
-release_workflows = {
+for name, text in {
     'release-candidate-linux.yml': release_candidate,
-    'release-artifacts.yml': release_artifacts,
     'release-packages.yml': release,
-}
-for name, text in release_workflows.items():
+}.items():
     if 'tools/release/resolve-request.sh' not in text:
         raise SystemExit(f'{name}: release identity is not delegated to the semantic resolver')
     if "steps.release.outputs.requested == 'true'" not in text:
         raise SystemExit(f'{name}: release work is not gated by semantic request identity')
-    for forbidden in ('head_commit.message', 'git log -1 --format=%s'):
+    for forbidden in ('head_commit.message', 'git log -1 --format=%s', '.github/release-trigger'):
         if contains_uncommented(text, forbidden):
-            raise SystemExit(f'{name}: release identity still depends on commit prose: {forbidden}')
+            raise SystemExit(f'{name}: release identity contains obsolete coupling: {forbidden}')
 
-# The release candidate owns all inputs needed to produce the final shipping
-# Linux artifacts. The desktop integration input is pinned in source; it must
-# not be selected dynamically at promotion time.
+# The candidate builds, validates, installs and uploads the final bytes once.
 for required in (
     '.github/desktop-integration-release',
     'desktop-integration-ubuntu24.04-',
     'INFILTRATORFS_OS_INTEGRATION_BUNDLE_DIR',
     'INFILTRATORFS_REQUIRE_OS_INTEGRATION',
     'packaging/build-linux-packages.sh build dist',
-    'SHA256SUMS.txt',
+    'sha256sum -c SHA256SUMS.txt',
+    'infiltratorfs-os-integration verify',
+    'dkms status -m infiltratorfs -v "$VERSION"',
+    'name: InfiltratorFS-Linux',
 ):
     if required not in release_candidate:
         raise SystemExit(f'release candidate invariant missing: {required}')
 for forbidden in (
     'releases?per_page=100',
-    'tail -n 1',
     'INFILTRATORFS_DESKTOP_BUNDLE_DIR',
     'managed-packages',
 ):
     if forbidden in release_candidate:
         raise SystemExit(f'release candidate contains dynamic or retired input path: {forbidden}')
 
-# Promotion may validate and install the exact candidate artifacts, but it must
-# never rebuild them, re-resolve their inputs, or depend on main still pointing
-# at the already-tested SHA.
-for required in (
-    'gh run download',
-    'SHA256SUMS.txt',
-    'sha256sum -c SHA256SUMS.txt',
-    'ubuntu24.04-mint22-bundled',
-    'infiltratorfs-os-integration verify',
-):
-    if required not in release_artifacts:
-        raise SystemExit(f'release artifact promotion invariant missing: {required}')
-for forbidden in (
-    'apt-get build-dep',
-    'packaging/build-linux-packages.sh',
-    'INFILTRATORFS_OS_INTEGRATION_BUNDLE_DIR',
-    'gh release download',
-    'INFILTRATORFS_DESKTOP_BUNDLE_DIR',
-    'managed-packages',
-    'git rev-parse origin/main',
-):
-    if forbidden in release_artifacts:
-        raise SystemExit(f'release artifact promotion is coupled to build/input/main state: {forbidden}')
-
-# Publication consumes exact promoted bytes. It must be retry-safe and must not
-# elect one workflow run as a special "last finisher"; concurrency plus
-# idempotent tag/release verification owns duplicate completion events.
+# Publication consumes the exact candidate artifact. It may re-check bytes and
+# tag/release state, but must never rebuild or mutate an existing release.
 for required in (
     '"Native Linux kernel module"',
     '"Linux root-volume qualification"',
     '"Linux metadata qualification"',
-    '"Release artifacts"',
-    'gh run download',
+    '"Release candidate Linux"',
+    '--name InfiltratorFS-Linux',
     'git tag --annotate',
     'gh release download',
     'cmp -s',
     'sha256sum -c SHA256SUMS.txt',
+    'tools/project-version.sh CMakeLists.txt',
 ):
     if required not in release:
         raise SystemExit(f'release publication invariant missing: {required}')
 for forbidden in (
     'apt-get build-dep',
     'cmake --build',
-    'timeout-minutes: 12',
     'git rev-parse origin/main',
     'TRIGGER_RUN_ID',
     'gate_run_id',
     'gate_updated_at',
+    'InfiltratorFS-release-assets',
+    'gh release edit',
+    '--clobber',
 ):
     if forbidden in release:
         raise SystemExit(f'release publisher contains obsolete coupling: {forbidden}')
 
-# The native kernel workflow deliberately retains deeper mounted steps with
-# longer internal diagnostic allowances. Automatic runs are bounded externally:
-# only manual workflow_dispatch executions may continue beyond ten minutes.
+# The native kernel workflow retains longer internal diagnostic allowances for
+# manual runs; automatic runs are still stopped by this one focused watchdog.
 watchdog = (wf / 'automatic-ci-watchdog.yml').read_text()
 for required in (
     'workflows: ["Native Linux kernel module"]',
@@ -268,9 +243,5 @@ if 'workflow_dispatch:' not in kernel:
     raise SystemExit('native kernel workflow must remain manually dispatchable')
 if 'push' not in on_triggers(kernel):
     raise SystemExit('native kernel workflow automatic trigger unexpectedly removed')
-
-for name in obsolete:
-    if (wf / name).exists():
-        raise SystemExit(f'obsolete one-shot workflow remains: {name}')
 
 print('CI duration policy: PASS')
