@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 name: Publish release
 
-# Published releases are immutable. Every required exact-source prerequisite
+# published releases are immutable. Every required exact-source prerequisite
 # completion re-evaluates the gate. Once all prerequisites are green for the
 # same SHA, publication is safe to run; concurrency serializes duplicate gate
 # evaluations and the publication step itself is deliberately idempotent.
