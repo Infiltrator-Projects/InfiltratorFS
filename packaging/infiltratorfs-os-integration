@@ -195,6 +195,10 @@ install_all()
     fi
 
     check_supported_stack
+    command -v mkfs.infiltratorfs >/dev/null 2>&1 || {
+        echo 'InfiltratorFS: mkfs.infiltratorfs is not installed in PATH.' >&2
+        return 1
+    }
 
     local plugin plugin_stock
     plugin="$(find_libblockdev_plugin)" || {
@@ -228,7 +232,12 @@ install_all()
     fi
 
     restart_udisks
-    require_udisks_formatter
+    if ! wait_for_udisks_formatter; then
+        restart_udisks
+        if ! wait_for_udisks_formatter; then
+            log "UDisks has not advertised CanFormat(infiltratorfs) yet; retaining the installed integration so package configuration can complete. Run infiltratorfs-os-integration verify after UDisks has settled to perform the strict runtime check."
+        fi
+    fi
     trap - ERR
     log "GNOME Disks and libblockdev integration installed in-place; distro packages remain installed and Mintstick remains stock."
 }
