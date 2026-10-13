@@ -8,7 +8,7 @@
 
 InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem. The persistent format and portable core define the filesystem; Linux, Windows and future operating-system adapters map their native APIs onto the same objects, transactions, extents, snapshots and integrity model.
 
-**Current source:** 0.18.98<br>
+**Current source:** 0.18.99<br>
 **On-disk format:** 0.18<br>
 **Published releases:** [GitHub Releases](https://github.com/Infiltrator-Projects/InfiltratorFS/releases)<br>
 **Shared foundation:** Infiltratr Common 1.19.35<br>
@@ -52,7 +52,7 @@ Linux is the most complete mounted adapter. The normal Linux path is the native 
 
 Current development source includes native user/group/project quotas with mounted qualification. Resize is implemented and independently mounted-qualified. The authoritative feature status is `docs/ROADMAP.md`; exact evidence is `docs/QUALIFICATION.md`.
 
-Windows currently provides native image/raw-partition access and a driverless Explorer bridge using Microsoft's inbox Projected File System (ProjFS). It is useful interoperability, but it is not a native InfiltratorFS Windows kernel driver. The native Windows filesystem driver remains future work.
+Windows provides native image/raw-partition access and a driverless Explorer bridge using Microsoft's inbox Projected File System (ProjFS). The repository also contains a native Windows filesystem driver implementation. That driver's source and structural qualification are complete, but it is not release-qualified until real mounted Windows operation, paging/cache behaviour, namespace/security semantics, service restart and Driver Verifier qualification have been completed. `docs/ROADMAP.md` is authoritative for that remaining gate.
 
 ## Linux quick start
 
