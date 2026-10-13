@@ -123,6 +123,7 @@ jobs:
       - name: Build and validate final Linux release packages once
         if: steps.release.outputs.requested == 'true'
         env:
+          VERSION: ${{ steps.release.outputs.version }}
           INFILTRATORFS_EMIT_RUN: "1"
           INFILTRATORFS_OS_INTEGRATION_BUNDLE_DIR: ${{ runner.temp }}/desktop-integration
           INFILTRATORFS_REQUIRE_OS_INTEGRATION: "1"
