@@ -39,7 +39,7 @@ The encoder is allowed, and expected, to be much more aggressive internally:
 - asynchronous/buffered writeback;
 - batched allocation and metadata preparation;
 - memory-bandwidth-aware algorithms; and
-- filesystem-wide concurrency governed by the N-1 online-logical-CPU budget, with memory/storage conditions controlling how much useful work is actually runnable within that budget.
+- filesystem-wide concurrency governed by the N-1 online-physical-core budget, with memory/storage conditions controlling how much useful work is actually runnable within that budget.
 
 A modern encoder may therefore be very different internally while still emitting fully valid IAC1 v1 streams that the small portable decoder can read.
 
@@ -205,7 +205,7 @@ The scheduler should adapt rather than assume that one queue depth or one worker
 
 Do not encode assumptions such as 'four compression threads' or 'eight
 filesystem workers' into the design. The maximum active filesystem concurrency
-is derived from the online logical CPU count by the N-1 rule.
+is derived from the online physical-core count by the N-1 rule.
 
 Within that ceiling, the amount of work actually dispatched at a moment in time
 may respond to:
@@ -218,8 +218,8 @@ may respond to:
 
 These factors may reduce runnable work because doing more would not improve
 useful throughput, but they must not redefine the CPU ceiling to an arbitrary
-smaller fixed pool. A 4-logical-CPU machine has a filesystem budget of 3; a
-64-logical-CPU machine has a filesystem budget of 63.
+smaller fixed pool. On a 4-physical-core machine, up to 3 CPU-bound filesystem worker units may run concurrently.
+On a 64-physical-core machine, up to 63 may run concurrently.
 
 ## Decoder policy
 

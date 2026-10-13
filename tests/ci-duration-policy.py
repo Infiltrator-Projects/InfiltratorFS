@@ -129,6 +129,21 @@ for path in workflow_paths:
 
 # CMake is the sole semantic release-version authority. There must be no second
 # hand-maintained release trigger carrying the same version.
+
+# DKMS source composition also has one authority. Packaging, hosted module
+# reproduction and destructive qualification must all consume the same stager.
+dkms_manifest = root / 'packaging' / 'kernel-dkms-files.list'
+dkms_stager = root / 'packaging' / 'stage-kernel-dkms-source.sh'
+if not dkms_manifest.is_file() or not dkms_stager.is_file():
+    raise SystemExit('canonical DKMS source manifest/stager is missing')
+for consumer in (
+    root / 'packaging' / 'build-linux-packages.sh',
+    root / '.github' / 'workflows' / 'kernel-module.yml',
+    root / 'tests' / 'native-complete-qualification.sh',
+):
+    if 'stage-kernel-dkms-source.sh' not in consumer.read_text():
+        raise SystemExit(f'{consumer.relative_to(root)} bypasses canonical DKMS staging')
+
 if (root / '.github' / 'release-trigger').exists():
     raise SystemExit('duplicate .github/release-trigger release identity remains')
 
@@ -145,7 +160,8 @@ identity_text = release_identity.read_text()
 for required in (
     'tools/project-version.sh CMakeLists.txt',
     'git show HEAD^:CMakeLists.txt',
-    '"$version" != "$previous"',
+    'version_is_newer',
+    'Release version rollback',
     'emit requested',
     'emit version',
     'emit sha',
@@ -241,6 +257,8 @@ if 'name: Native Linux kernel module' not in kernel:
     raise SystemExit('native kernel workflow identity changed')
 if 'workflow_dispatch:' not in kernel:
     raise SystemExit('native kernel workflow must remain manually dispatchable')
+if contains_uncommented(kernel, '.github/release-trigger'):
+    raise SystemExit('native kernel workflow retains deleted release-trigger coupling')
 if 'push' not in on_triggers(kernel):
     raise SystemExit('native kernel workflow automatic trigger unexpectedly removed')
 

@@ -2,6 +2,30 @@
 
 This file records user-visible, compatibility, architecture and validation changes for InfiltratorFS.
 
+## 0.18.98 — 2026-10-13
+- Complete a philosophy-governed forensic architecture, test, packaging and release review without changing Format 0.18 semantics.
+- Centralize DKMS source staging so packaging, hosted kernel reproduction and destructive qualification consume one authoritative component manifest.
+- Strengthen release identity so source cannot reuse an already-published semantic version at a different commit, and reject version rollback relative to reachable releases.
+- Remove the retired `.github/release-trigger` path from native CI and correct the IAC1 hardware document to the implemented physical-core N-1 policy.
+- Clarify that Windows source-shape guards are not a substitute for mounted Windows and Driver Verifier qualification.
+- On-disk Format remains 0.18.
+
+## 0.18.97 — 2026-10-07
+- Build final Linux release artifacts once from pinned inputs and publish the exact qualified bytes instead of rebuilding during publication.
+- Remove duplicated release-qualification coupling and verify exact artifact lineage through checksums and byte-for-byte post-publication comparison.
+- On-disk Format remains 0.18.
+
+## 0.18.96 — 2026-10-07
+- Simplify the release qualification pipeline while retaining exact-source native kernel, root-volume, Linux metadata and package qualification prerequisites.
+- Decouple root-volume semantic qualification from the separately pinned desktop integration bundle.
+- On-disk Format remains 0.18.
+
+## 0.18.95 — 2026-10-07
+- Restore the single-package Linux desktop integration model and publish corrected integrated Linux packages.
+- Decouple root-volume filesystem semantics from desktop bundle mechanics and prove installation of the released package.
+- Remove a duplicated storage-policy fallback check without weakening persistent storage policy semantics.
+- On-disk Format remains 0.18.
+
 ## 0.18.94 — 2026-09-26
 - Add persistent per-object protection-copy and encryption-domain policy for file data while keeping structural metadata and checkpoints on the backend default protection policy.
 - Route ordinary, compressed, truncate, hole-punch, scrub and named-stream data through policy-aware storage I/O; nondefault-policy files remain extent-backed so inline metadata cannot bypass placement or encryption.

@@ -68,24 +68,10 @@ if [[ "$integration_enabled" = 1 ]]; then
     install -m 0644 "$integration_bundle/libbd_fs.so" "$package_root/usr/lib/infiltratorfs/os-integration/libbd_fs.so"
     install -m 0644 "$integration_bundle/manifest" "$package_root/usr/lib/infiltratorfs/os-integration/manifest"
 fi
-# DKMS source must be self-contained. Every RW composition file is required;
-# omitting an implementation include makes host-side DKMS builds fail even
-# though the repository build itself succeeds.
+# DKMS source must be self-contained. One manifest/stager owns the exact source
+# set used by packages, hosted DKMS reproduction and destructive qualification.
 dkms_root="$package_root/usr/src/infiltratorfs-$package_version"
-install -d "$dkms_root"
-for file in Makefile infiltratorfs_core.c infiltratorfs_cpu.c infiltratorfs_crypto.c infiltratorfs_security.c infiltratorfs_extension.c infiltratorfs_internal.h infiltratorfs_format.h \
-            infiltratorfs_allocation_map.c infiltratorfs_allocation_publish.c \
-            infiltratorfs_parallel_alloc.c \
-            infiltratorfs_index_tree.c infiltratorfs_extent_tree.c infiltratorfs_directory_tree.c \
-            infiltratorfs_rw.inc \
-            infiltratorfs_rw_legacy.inc infiltratorfs_checksum_cache.c infiltratorfs_checksum_store.c infiltratorfs_locator_cache.c infiltratorfs_rw_data.inc \
-            infiltratorfs_rw_namespace.inc infiltratorfs_rw_namespace_exchange.inc infiltratorfs_read_cache.c \
-            infiltratorfs_pagecache.c infiltratorfs_linux_meta_codec.c infiltratorfs_shared_ownership.c infiltratorfs_orphan_scan.c infiltratorfs_name_policy.c infiltratorfs_media.c infiltratorfs_linux_meta.inc \
-            infiltratorfs_resize.c infiltratorfs_quota.inc \
-            infiltratorfs_defrag.inc infiltratorfs_ioctl.h; do
-    install -m 0644 "kernel/$file" "$dkms_root/$file"
-done
-install -m 0644 "include/infilfs/iac1.h" "$dkms_root/iac1.h"
+bash packaging/stage-kernel-dkms-source.sh "$dkms_root"
 cat > "$dkms_root/dkms.conf" <<EOF
 PACKAGE_NAME="infiltratorfs"
 PACKAGE_VERSION="${package_version}"

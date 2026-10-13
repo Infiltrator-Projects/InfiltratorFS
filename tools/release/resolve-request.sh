@@ -27,9 +27,23 @@ elif git rev-parse --verify HEAD^ >/dev/null 2>&1; then
     fi
 fi
 
+version_is_newer() {
+    local older="$1"
+    local newer="$2"
+    [[ "$older" != "$newer" ]] &&
+        [[ "$(printf '%s\n%s\n' "$older" "$newer" | sort -V | head -n1)" == "$older" ]]
+}
+
 requested=false
-if [[ -n "$previous" && "$version" != "$previous" ]]; then
-    requested=true
+if [[ -n "$previous" ]]; then
+    if [[ "$version" == "$previous" ]]; then
+        :
+    elif version_is_newer "$previous" "$version"; then
+        requested=true
+    else
+        echo "Release version rollback: source $version is older than reachable release $previous" >&2
+        exit 1
+    fi
 fi
 
 emit() {

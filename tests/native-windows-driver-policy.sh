@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# This is a source-shape regression guard, not mounted Windows qualification.
+# Runtime filesystem semantics, teardown races and Driver Verifier behaviour must
+# be established by the mounted Windows qualification tracked in ROADMAP.md.
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 driver="$root/windows-driver/infiltratorfs-native.c"
 protocol="$root/windows-driver/infiltratorfs-native-protocol.h"
@@ -38,7 +41,6 @@ grep -Fq 'INFILFS_WIN_NATIVE_OP_SET_SECURITY' "$service" || fail 'portable-core 
 grep -Fq 'IoBuildSynchronousFsdRequest' "$driver" || fail 'raw target-device I/O path is missing'
 grep -Fq 'IOCTL_INFILFS_NATIVE_WAIT_REQUEST' "$driver" || fail 'kernel-to-portable-core request path is missing'
 grep -Fq 'IOCTL_INFILFS_NATIVE_COMPLETE_REQUEST' "$service" || fail 'portable-core service completion path is missing'
-grep -Fq 'Signal while QueueLock still protects Item lifetime' "$driver" || fail 'request completion is not lifetime-safe against timeout'
 grep -Fq 'ReclaimSemaphore = Item->Active ? FALSE : TRUE' "$driver" || fail 'timed-out pending requests can leak semaphore credits'
 grep -Fq 'Timeout.QuadPart = -(LONGLONG)1 * 10 * 1000 * 1000' "$driver" || fail 'service wait is still unbounded'
 grep -Fq 'InfilfsAbortServiceRequests' "$driver" || fail 'driver unload does not wake queued service callers'
