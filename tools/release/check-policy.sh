@@ -26,8 +26,17 @@ visible_readme_version="$(sed -nE \
 grep -Fq "## ${version} —" CHANGELOG.md || \
     fail "CHANGELOG has no entry for source version $version"
 
-# CMake is the semantic version authority. Windows INF syntax requires a numeric
-# DriverVer mirror, but it is not allowed to become an independent version.
+# CMake is the semantic version authority. Shell consumers must use the single
+# validated resolver rather than carrying private sed/awk parsers that can drift
+# from release semantics. The Windows INF remains a required numeric mirror.
+for consumer in packaging/build-linux-packages.sh support/installer/bootstrap.sh; do
+    grep -Fq 'tools/project-version.sh' "$consumer" || \
+        fail "$consumer must use tools/project-version.sh for source identity"
+    if grep -Eq 'project\(InfiltratorFS VERSION.*(sed|awk)|sed .*project\(InfiltratorFS VERSION' "$consumer"; then
+        fail "$consumer contains an independent CMake version parser"
+    fi
+done
+
 inf_version="$(sed -nE \
     's/^DriverVer=[^,]+,([0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+$/\1/p' \
     windows-driver/infiltratorfs-native.inf | head -n1)"
