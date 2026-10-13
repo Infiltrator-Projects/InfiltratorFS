@@ -20,12 +20,12 @@ jobs:
         with:
           fetch-depth: 0
       - name: Apply reviewed repairs
-        run: python3 tools/forensic-repair.py
+        run: python3 tools/forensic-repair-v2.py
       - name: Commit repaired source
         shell: bash
         run: |
           set -euo pipefail
-          git rm .github/workflows/forensic-repair.yml tools/forensic-repair.py
+          git rm .github/workflows/forensic-repair.yml tools/forensic-repair.py tools/forensic-repair-v2.py
           git add -A
           git diff --check --cached
           git config user.name 'github-actions[bot]'
