@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Remove merged branch debris
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/branch-cleanup.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Delete proven-merged release repair branches
+        shell: bash
+        run: |
+          set -euo pipefail
+          for branch in \
+            hal/release-machinery-decoupling \
+            hal/release-policy-centralization \
+            hal/release-request-identity \
+            hal/simplify-release-machinery; do
+            git merge-base --is-ancestor "origin/$branch" origin/main
+            git push origin --delete "$branch"
+          done
