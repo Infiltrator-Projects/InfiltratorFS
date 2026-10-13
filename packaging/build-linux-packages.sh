@@ -7,8 +7,7 @@ cd "$repo_root"
 
 build_dir="${1:-build}"
 dist_dir="${2:-dist}"
-version="$(sed -n 's/^project(InfiltratorFS VERSION \([^ ]*\) LANGUAGES C)$/\1/p' "$repo_root/CMakeLists.txt")"
-[[ -n "$version" ]] || { echo "Could not determine InfiltratorFS version from CMakeLists.txt" >&2; exit 1; }
+version="$(bash "$repo_root/tools/project-version.sh" "$repo_root/CMakeLists.txt")"
 
 package_version="${INFILTRATORFS_PACKAGE_VERSION:-$version}"
 build_identity="${INFILTRATORFS_BUILD_IDENTITY:-generic-apt}"
