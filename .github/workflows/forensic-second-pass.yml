@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 name: Forensic second-pass corrections
+# One-shot repair workflow. It is removed after the validated source correction.
 
 on:
   push:
