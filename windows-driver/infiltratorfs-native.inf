@@ -4,7 +4,7 @@ Signature="$WINDOWS NT$"
 Class=InfiltratorFS
 ClassGuid={099E2F6B-75F8-4ED7-8C04-6B21F7749206}
 Provider=%ProviderName%
-DriverVer=10/13/2026,0.18.98.0
+DriverVer=10/13/2026,0.18.99.0
 CatalogFile=infiltratorfs-native.cat
 PnpLockdown=1
 
@@ -28,7 +28,7 @@ AddService=InfiltratorFS,0x00000002,InfiltratorFS_Service
 infiltratorfs-native.sys
 
 [InfiltratorFS_Service]
-DisplayName=%ServiceName%
+DisplayName=%ServiceDescription%
 Description=%ServiceDescription%
 ServiceType=2
 StartType=3
@@ -38,6 +38,5 @@ LoadOrderGroup=File System
 
 [Strings]
 ProviderName="Infiltrator Projects"
-Disk1="InfiltratorFS Native Filesystem Driver"
-ServiceName="InfiltratorFS"
-ServiceDescription="Native InfiltratorFS Windows filesystem driver"
+ServiceDescription="InfiltratorFS native filesystem driver"
+Disk1="InfiltratorFS native filesystem driver installation media"
