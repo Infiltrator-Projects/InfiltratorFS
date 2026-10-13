@@ -1,11 +1,14 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 name: Release candidate Linux
 
+# While the current semantic version is newer than the newest published tag,
+# every main revision is a potential release source. Running on every main push
+# prevents a justified post-bump correction from inheriting release artifacts
+# qualified against an older SHA. The semantic resolver makes published/no-op
+# revisions cheap by skipping all release work once no release is requested.
 on:
   push:
     branches: [main]
-    paths:
-      - CMakeLists.txt
 
 permissions:
   contents: read
