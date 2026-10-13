@@ -1,0 +1,56 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: One-time repository maintenance
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  maintain:
+    if: github.event.head_commit.message == 'Run one-time repository maintenance'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out exact maintenance source
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Restore changelog history and clean repository refs
+        shell: bash
+        env:
+          BASE_CHANGELOG_SHA: 42e816f45f8397e954274fa8b9d94e5b342801d8
+          STALE_BRANCH: fix/udisks-postinst-race-0.18.99
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+
+          git show "${BASE_CHANGELOG_SHA}:CHANGELOG.md" > CHANGELOG.md
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('CHANGELOG.md')
+          text = path.read_text()
+          marker = '## 0.18.98 — 2026-10-13\n'
+          section = '''## 0.18.99 — 2026-10-13
+          - Repair the Linux package configuration race so delayed UDisks formatter advertisement cannot make an otherwise valid package installation fail; explicit integration verification remains strict.
+          - Advance the semantic source identity after the published 0.18.98 release so post-release work cannot reuse an immutable release version.
+          - Correct current-status documentation for the native Windows driver: implementation exists, while real mounted Windows and Driver Verifier qualification remain the explicit release gate.
+          - Consolidate shell-side version consumers on the project version authority and remove stale documentation claims discovered by the philosophy-governed forensic review.
+          - On-disk Format remains 0.18; the exact Infiltratr Common 1.19.35 pin is unchanged.
+
+          '''
+          if marker not in text:
+              raise SystemExit('0.18.98 changelog marker is missing')
+          path.write_text(text.replace(marker, section + marker, 1))
+          PY
+
+          git rm .github/workflows/repository-maintenance-once.yml
+          git add CHANGELOG.md
+          git diff --cached --check
+          git commit -m 'Restore changelog history and finalize repository cleanup'
+
+          git push origin --delete "$STALE_BRANCH"
+          git push origin HEAD:main
