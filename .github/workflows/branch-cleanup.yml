@@ -36,8 +36,7 @@ jobs:
             [[ "${fields[2]}" == "$branch" ]]
             git push origin --delete "$branch"
           done <<'EOF'
-          39	hal/release-machinery-decoupling
-          40	hal/release-policy-centralization
-          41	hal/release-request-identity
+          40	hal/release-request-identity
+          41	hal/release-policy-centralization
           42	hal/simplify-release-machinery
           EOF
