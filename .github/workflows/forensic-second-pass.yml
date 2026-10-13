@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Forensic second-pass corrections
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/forensic-second-pass.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Apply reviewed second-pass corrections
+        run: python3 tools/forensic-second-pass.py
+      - name: Validate corrected policy guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash tests/native-kernel-maintainability-policy.sh .
+          bash tests/native-transaction-durability-policy.sh .
+          python3 tests/ci-duration-policy.py .
+          git diff --check
+      - name: Commit permanent source corrections
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm tools/forensic-second-pass.py
+          git add CHANGELOG.md docs/README.md docs/QUALIFICATION.md tests/native-kernel-maintainability-policy.sh
+          git diff --check --cached
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Align qualification guards with canonical authorities'
+          git push origin HEAD:main
