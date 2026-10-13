@@ -3,8 +3,9 @@ name: Publish release
 
 # Published releases are immutable. Every required exact-source prerequisite
 # completion re-evaluates the gate. Once all prerequisites are green for the
-# same SHA, publication is safe to run; concurrency serializes duplicate gate
-# evaluations and the publication step itself is deliberately idempotent.
+# same current main SHA, publication is safe to run; concurrency serializes
+# duplicate gate evaluations and the publication step is deliberately
+# idempotent. Completions from a superseded main SHA are clean no-ops.
 on:
   workflow_run:
     workflows:
@@ -59,6 +60,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          current_main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          if [[ "$EXPECTED_SHA" != "$current_main_sha" ]]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Superseded release source $EXPECTED_SHA; current main is $current_main_sha."
+            exit 0
+          fi
+
           api="repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${EXPECTED_SHA}&per_page=100"
           required=(
             "Native Linux kernel module"
