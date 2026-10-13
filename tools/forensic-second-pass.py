@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 from pathlib import Path
+import re
 
 
 def replace_once(path, old, new):
@@ -10,30 +11,31 @@ def replace_once(path, old, new):
         raise SystemExit(f'{path}: expected exactly one occurrence of {old!r}, found {text.count(old)}')
     p.write_text(text.replace(old, new, 1))
 
-maint = Path('tests/native-kernel-maintainability-policy.sh')
-text = maint.read_text()
-old = '''grep -Fq 'kernel/infiltratorfs_orphan_scan.c \\' "$root/.github/workflows/kernel-module.yml" || \\
-    fail 'DKMS qualification source root omits orphan scanner component'
-'''
-new = '''dkms_manifest="$root/packaging/kernel-dkms-files.list"
+
+def replace_pattern_once(path, pattern, replacement, description):
+    p = Path(path)
+    text = p.read_text()
+    updated, count = re.subn(pattern, replacement, text, count=1, flags=re.MULTILINE | re.DOTALL)
+    if count != 1:
+        raise SystemExit(f'{path}: expected one {description} block, found {count}')
+    p.write_text(updated)
+
+
+replace_pattern_once(
+    'tests/native-kernel-maintainability-policy.sh',
+    r"grep -Fq 'kernel/infiltratorfs_orphan_scan\.c \\' \"\$root/\.github/workflows/kernel-module\.yml\" \|\| \\\n    fail 'DKMS qualification source root omits orphan scanner component'\n",
+    '''dkms_manifest="$root/packaging/kernel-dkms-files.list"
 test -f "$dkms_manifest" || fail 'canonical DKMS source manifest missing'
 grep -Fqx $'kernel/infiltratorfs_orphan_scan.c\\tinfiltratorfs_orphan_scan.c' "$dkms_manifest" || \\
     fail 'canonical DKMS source manifest omits orphan scanner component'
-'''
-if text.count(old) != 1:
-    raise SystemExit('maintainability guard: old workflow-coupled orphan assertion not found exactly once')
-text = text.replace(old, new, 1)
-old = '''package_builder="$root/packaging/build-linux-packages.sh"
-test -f "$package_builder" || fail 'Linux package builder missing'
-module_objects="$(sed -nE 's/^infiltratorfs-y := (.*)$/\\1/p' "$makefile")"
-test -n "$module_objects" || fail 'could not resolve Kbuild object list'
-for object in $module_objects; do
-    source="${object%.o}.c"
-    grep -Fq "$source" "$package_builder" || \\
-        fail "DKMS package source list omits $source"
-done
-'''
-new = '''dkms_stager="$root/packaging/stage-kernel-dkms-source.sh"
+''',
+    'workflow-coupled orphan-source assertion',
+)
+
+replace_pattern_once(
+    'tests/native-kernel-maintainability-policy.sh',
+    r'''package_builder="\$root/packaging/build-linux-packages\.sh"\ntest -f "\$package_builder" \|\| fail 'Linux package builder missing'\nmodule_objects=.*?\nfor object in \$module_objects; do\n    source=.*?\n    grep -Fq .*?\n        fail .*?\ndone\n''',
+    '''dkms_stager="$root/packaging/stage-kernel-dkms-source.sh"
 test -x "$dkms_stager" || fail 'canonical DKMS source stager missing or not executable'
 module_objects="$(sed -nE 's/^infiltratorfs-y := (.*)$/\\1/p' "$makefile")"
 test -n "$module_objects" || fail 'could not resolve Kbuild object list'
@@ -49,10 +51,9 @@ for consumer in \\
     grep -Fq 'stage-kernel-dkms-source.sh' "$consumer" || \\
         fail "$(realpath --relative-to="$root" "$consumer") bypasses canonical DKMS staging"
 done
-'''
-if text.count(old) != 1:
-    raise SystemExit('maintainability guard: old package-builder source-list assertion not found exactly once')
-maint.write_text(text.replace(old, new, 1))
+''',
+    'duplicated package-builder DKMS source assertion',
+)
 
 replace_once(
     'docs/QUALIFICATION.md',
