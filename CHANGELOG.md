@@ -2,6 +2,12 @@
 
 This file records user-visible, compatibility, architecture and validation changes for InfiltratorFS.
 
+## 0.18.102 — 2026-10-14
+- Pin retained LZ4 codec source to immutable upstream commit `ebb370ca83af193212df4dcbadcc5d87bc0de2f0` and use the non-shallow fetch required for exact arbitrary-commit checkout.
+- Pin every remote GitHub Action used by maintained workflows to an immutable commit SHA while retaining the human-readable source ref in a comment, so re-running one InfiltratorFS SHA cannot silently execute different automation code.
+- Make native Linux mounted qualification fail closed when headers for the running kernel are unavailable; compile-only evidence can no longer masquerade as the mounted qualification required by policy.
+- Add an executable dependency-identity policy guard covering mutable workflow actions, the LZ4 source identity and the mounted-native fail-closed boundary. Format 0.18 and the Infiltratr Common 1.19.35 pin remain unchanged.
+
 ## 0.18.101 — 2026-10-14
 - Complete a second philosophy-governed forensic review across architecture, dependency ownership, tests, packaging, documentation and release machinery without changing Format 0.18 semantics.
 - Remove hidden GitHub environment coupling from semantic release resolution; release-candidate packaging now binds its version explicitly from the resolver output, and release policy guards that boundary.

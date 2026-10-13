@@ -29,7 +29,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Install kernel build dependencies
         run: |
@@ -54,13 +54,12 @@ jobs:
               :
             fi
           fi
-          if [[ -f "$runtime_kdir/Makefile" ]]; then
-            printf 'runtime_kdir=%s\n' "$runtime_kdir" >> "$GITHUB_OUTPUT"
-            printf 'Runtime mount qualification available: %s\n' "$runtime_kdir"
-          else
-            printf 'runtime_kdir=\n' >> "$GITHUB_OUTPUT"
-            printf 'Runtime headers for %s are unavailable; load/mount test will be skipped.\n' "$runtime_release"
+          if [[ ! -f "$runtime_kdir/Makefile" ]]; then
+            printf 'Runtime headers for %s are unavailable; mounted native qualification cannot proceed.\n' "$runtime_release" >&2
+            exit 1
           fi
+          printf 'runtime_kdir=%s\n' "$runtime_kdir" >> "$GITHUB_OUTPUT"
+          printf 'Runtime mount qualification available: %s\n' "$runtime_kdir"
 
       - name: Guard native free-extent index
         run: bash tests/native-free-extent-index-policy.sh .
@@ -111,13 +110,11 @@ jobs:
           cp kernel/infiltratorfs.ko kernel/infiltratorfs-generic.ko
 
       - name: Build userspace image tools for native mount test
-        if: steps.headers.outputs.runtime_kdir != ''
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build --parallel --target mkfs.infilfs infilfs-tool fsck.infiltratorfs infilfs-forensic infilfs-optimize infiltratorfs-resize infiltratorfs-quota
 
       - name: Build module for the running kernel
-        if: steps.headers.outputs.runtime_kdir != ''
         env:
           KDIR: ${{ steps.headers.outputs.runtime_kdir }}
         run: |
@@ -126,12 +123,10 @@ jobs:
           test "$(modinfo -F vermagic kernel/infiltratorfs.ko | awk '{print $1}')" = "$(uname -r)"
 
       - name: Native live read-only and read-write remount qualification
-        if: steps.headers.outputs.runtime_kdir != ''
         timeout-minutes: 10
         run: sudo bash tests/native-remount-qualification.sh build kernel/infiltratorfs.ko
 
       - name: Native removable-volume filename profile
-        if: steps.headers.outputs.runtime_kdir != ''
         timeout-minutes: 10
         shell: bash
         run: |
@@ -140,7 +135,6 @@ jobs:
           bash tests/native-removable-name-profile.sh build kernel/infiltratorfs.ko
 
       - name: Native case-folded namespace policy
-        if: steps.headers.outputs.runtime_kdir != ''
         timeout-minutes: 10
         shell: bash
         run: |
@@ -149,7 +143,6 @@ jobs:
           bash tests/native-casefold-qualification.sh build kernel/infiltratorfs.ko
 
       - name: Native N-1 CPU parallelism qualification
-        if: steps.headers.outputs.runtime_kdir != ''
         timeout-minutes: 10
         shell: bash
         run: |
@@ -159,7 +152,6 @@ jobs:
           bash tests/native-cpu-parallelism-qualification.sh build kernel/infiltratorfs.ko
 
       - name: Native user group and project quota qualification
-        if: steps.headers.outputs.runtime_kdir != ''
         timeout-minutes: 15
         shell: bash
         run: |
@@ -169,7 +161,6 @@ jobs:
           bash tests/native-quota-qualification.sh build kernel/infiltratorfs.ko
 
       - name: Native read-write mount transaction and scrub qualification
-        if: steps.headers.outputs.runtime_kdir != ''
         timeout-minutes: 30
         shell: bash
         run: |
@@ -1575,13 +1566,11 @@ jobs:
           printf 'extent/remount/scrub qualification passed on %s\n' "$(uname -r)"
 
       - name: Native mounted online grow and bounded shrink
-        if: steps.headers.outputs.runtime_kdir != ''
         timeout-minutes: 10
         shell: bash
         run: bash tests/native-resize-qualification.sh build kernel/infiltratorfs.ko
 
       - name: Native media-aware rotational/non-rotational placement
-        if: steps.headers.outputs.runtime_kdir != ''
         timeout-minutes: 15
         shell: bash
         run: |
@@ -1591,7 +1580,6 @@ jobs:
           bash tests/native-media-placement-qualification.sh build kernel/infiltratorfs.ko
 
       - name: Native fragmentation metrics and online defragmentation
-        if: steps.headers.outputs.runtime_kdir != ''
         timeout-minutes: 20
         shell: bash
         run: |
@@ -1601,9 +1589,6 @@ jobs:
           bash -n tests/native-defrag-qualification.sh
           bash tests/native-defrag-qualification.sh build kernel/infiltratorfs.ko
 
-      - name: Report runtime mount test availability
-        if: steps.headers.outputs.runtime_kdir == ''
-        run: echo 'Native module compiled successfully; runtime load/mount skipped because matching hosted-runner kernel headers were unavailable.'
   upstream-linux-7-compile:
     name: Upstream Linux 7.0 compile compatibility
     concurrency:
@@ -1613,7 +1598,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Install upstream kernel build dependencies
         env:
@@ -1682,7 +1667,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Resolve local running-kernel headers
         id: local_headers
         shell: bash

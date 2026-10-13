@@ -20,7 +20,7 @@ jobs:
     timeout-minutes: 70
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           submodules: recursive
 
@@ -78,7 +78,7 @@ jobs:
 
       - name: Preserve root-boot evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: InfiltratorFS-root-boot-${{ github.sha }}
           path: |

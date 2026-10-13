@@ -54,6 +54,12 @@ fi
 # qualification consumes that contract rather than duplicating its rules here.
 bash tests/documentation-authority-policy.sh .
 
+# External automation and retained third-party codec source are part of the
+# qualified source identity, not ambient mutable infrastructure. The same guard
+# also enforces that mounted-native evidence fails closed instead of silently
+# degrading to compile-only evidence when the running kernel cannot be built.
+python3 tests/dependency-identity-policy.py .
+
 # An unpublished semantic version remains a release candidate across every
 # justified follow-up commit. The candidate workflow therefore runs on every
 # main push and lets the semantic resolver cheaply skip work once the version

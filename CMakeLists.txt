@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.20)
-project(InfiltratorFS VERSION 0.18.101 LANGUAGES C)
-# Development qualification anchor: 0.18.101
+project(InfiltratorFS VERSION 0.18.102 LANGUAGES C)
+# Development qualification anchor: 0.18.102
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -99,9 +99,9 @@ set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(BUILD_STATIC_LIBS ON CACHE BOOL "" FORCE)
 FetchContent_Declare(infilfs_lz4
     GIT_REPOSITORY https://github.com/lz4/lz4.git
-    GIT_TAG v1.10.0
+    GIT_TAG ebb370ca83af193212df4dcbadcc5d87bc0de2f0 # v1.10.0
     SOURCE_SUBDIR build/cmake
-    GIT_SHALLOW TRUE)
+    GIT_SHALLOW FALSE)
 FetchContent_MakeAvailable(infilfs_lz4)
 
 # InfiltratorFS desktop applications use the same bundled typography on Linux

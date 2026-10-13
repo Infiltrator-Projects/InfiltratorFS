@@ -24,7 +24,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 2
           submodules: recursive
@@ -41,7 +41,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           submodules: recursive
       - name: Install Linux native adapter dependencies
@@ -187,7 +187,7 @@ jobs:
           build/infilfs-tool build/linux-cross-platform.img put build/linux-cross-platform.txt /linux-cross-platform.txt
           build/fsck.infiltratorfs --scrub build/linux-cross-platform.img
       - name: Upload Linux-created cross-platform image
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: InfiltratorFS-Linux-CrossPlatform-TestImage
           path: build/linux-cross-platform.img
@@ -201,7 +201,7 @@ jobs:
       CC: clang
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           submodules: recursive
       - name: Configure native-only userspace
@@ -222,7 +222,7 @@ jobs:
       UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           submodules: recursive
       - name: Configure sanitizers
@@ -243,7 +243,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           submodules: recursive
       - name: Configure analyzer
@@ -265,7 +265,7 @@ jobs:
       PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           submodules: recursive
       - name: Guard native allocation and transaction policies
@@ -303,11 +303,11 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           submodules: recursive
       - name: Download Linux-created cross-platform image
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: InfiltratorFS-Linux-CrossPlatform-TestImage
           path: cross-platform
@@ -316,7 +316,7 @@ jobs:
       - name: Build Windows targets
         run: cmake --build build --config Release --parallel
       - name: Configure MSBuild for WDK
-        uses: microsoft/setup-msbuild@v2
+        uses: microsoft/setup-msbuild@6fb02220983dee41ce7ae257b6f4d8f9bf5ed4ce # v2
         with:
           msbuild-architecture: x64
       - name: Build native Windows filesystem driver with official WDK NuGet
@@ -409,7 +409,7 @@ jobs:
           Select-String -Path tools/windows/infiltratorfs-windows.manifest -Pattern '<longPathAware' -SimpleMatch
           Select-String -Path tools/windows/infiltratorfs-windows.manifest -Pattern '>true</longPathAware>' -SimpleMatch
       - name: Upload native Windows filesystem driver qualification artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: InfiltratorFS-Windows-Native-Driver
           path: |
@@ -418,7 +418,7 @@ jobs:
             windows-driver/infiltratorfs-native.inf
           if-no-files-found: error
       - name: Upload Windows transfer app
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: InfiltratorFS-Windows
           path: build/Release/InfiltratorFS-Windows-*.exe
@@ -431,7 +431,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
           submodules: recursive
@@ -482,7 +482,7 @@ jobs:
           grep -Fq 'bash "$ROOT/packaging/build-linux-packages.sh"' support/installer/bootstrap.sh
           rm -f dist/native-installer-dry-run.txt
       - name: Upload Linux installers
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: InfiltratorFS-Linux
           path: dist/*
