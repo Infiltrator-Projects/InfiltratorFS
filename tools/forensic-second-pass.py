@@ -74,8 +74,8 @@ replace_once(
     '## Curated development milestone evidence\n\nThe entries below preserve useful milestone evidence. For the current source revision, automatic qualification state must be read from the checks attached to that exact Git commit; absence of a newer hand-entered row here does not imply absence of automatic qualification.\n\n')
 replace_once(
     'docs/README.md',
-    '- [`QUALIFICATION.md`](QUALIFICATION.md) — released-baseline and exact-source qualification ledger; the authority for what evidence exists for a specific source revision.\n',
-    '- [`QUALIFICATION.md`](QUALIFICATION.md) — qualification classes, policy, and curated milestone/manual evidence; live automatic exact-SHA evidence is owned by the GitHub Actions checks attached to that commit and published release identity by its immutable tag/release.\n')
+    '- `QUALIFICATION.md` — the only authoritative exact-source qualification\n  ledger.\n',
+    '- `QUALIFICATION.md` — qualification classes, policy, and curated milestone/manual evidence. Live automatic exact-SHA evidence is owned by the GitHub Actions checks attached to that commit; published release identity is owned by its immutable tag and GitHub Release.\n')
 replace_once(
     'CHANGELOG.md',
     '- Clarify that Windows source-shape guards are not a substitute for mounted Windows and Driver Verifier qualification.\n',
