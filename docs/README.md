@@ -19,6 +19,10 @@ sources of truth.
   failure semantics that are broader than byte layout.
 - `SECURITY.md` — current security guarantees, threat boundaries and portable
   principal/ACL architecture.
+- `PORTABLE_SECURITY_OBJECTS.md` — current binary/API contract for portable
+  principals, bindings, ACL objects and their deterministic identities. It is
+  subordinate to `ON_DISK_FORMAT.md` for packed format fields and complements
+  the higher-level security guarantees in `SECURITY.md`.
 - `PLATFORM_ADAPTERS.md` — operating-system adapter responsibilities and
   cross-platform preservation rules.
 - `COMPRESSION.md` — IAC1 and compressed-extent representation/selection
@@ -36,6 +40,9 @@ sources of truth.
 
 ## Operational and specialist material
 
+- `FILESYSTEM-PAPER-AUDIT-2026.md` — maintained research/quality cross-check
+  against filesystem literature and the current implementation. It is evidence
+  and design review material, not a normative format or qualification authority.
 - `FORENSICS.md` — forensic scanner semantics and evidentiary limits.
 - `FUTURE_ECOSYSTEM_INTEGRATION.md` — non-binding future ideas for optional capability-based integration with the wider Infiltrator software family; it is not a completion checklist or release promise.
 - `kernel/README.md` — local native-Linux module build/ownership guidance.
