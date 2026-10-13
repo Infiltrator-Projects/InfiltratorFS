@@ -80,21 +80,20 @@ grep -Fq 'git/ref/heads/main' "$publisher" || \
 grep -Fq 'Superseded release source' "$publisher" || \
     fail 'release publisher does not cleanly ignore superseded gate evaluations'
 
-# Each expensive native release prerequisite may retain path filters to avoid
-# needless mounted qualification on unrelated development pushes, but it must
-# remain explicitly dispatchable. That is the recovery path when the current
-# release-candidate SHA needs exact-source evidence after a non-code correction.
-# The publisher still accepts evidence only when the prerequisite run's head SHA
-# is exactly the current main SHA; manual recoverability therefore cannot weaken
-# the exact-source contract.
-declare -A prerequisite_files=(
+# The expensive native qualification workflows may retain path filters to avoid
+# needless mounted qualification on unrelated development pushes, but each must
+# remain explicitly dispatchable. That is the recovery path when an unpublished
+# release-candidate SHA needs exact-source native evidence after a change outside
+# those filters. Release candidate Linux is deliberately different: it is
+# already required above to run on every main push with no path filter, so it
+# needs no redundant manual-dispatch contract.
+declare -A dispatchable_prerequisite_files=(
     ["Native Linux kernel module"]=".github/workflows/kernel-module.yml"
     ["Linux root-volume qualification"]=".github/workflows/root-volume-qualification.yml"
     ["Linux metadata qualification"]=".github/workflows/linux-metadata-qualification.yml"
-    ["Release candidate Linux"]=".github/workflows/release-candidate-linux.yml"
 )
-for prerequisite in "${!prerequisite_files[@]}"; do
-    workflow="${prerequisite_files[$prerequisite]}"
+for prerequisite in "${!dispatchable_prerequisite_files[@]}"; do
+    workflow="${dispatchable_prerequisite_files[$prerequisite]}"
     [[ -f "$workflow" ]] || fail "release prerequisite workflow is missing: $workflow"
     grep -Fq "name: $prerequisite" "$workflow" || \
         fail "$workflow does not declare required workflow name '$prerequisite'"
@@ -103,6 +102,8 @@ for prerequisite in "${!prerequisite_files[@]}"; do
     grep -Fq "      - \"$prerequisite\"" "$publisher" || \
         fail "publisher does not subscribe to required workflow '$prerequisite'"
 done
+grep -Fq '      - "Release candidate Linux"' "$publisher" || \
+    fail 'publisher does not subscribe to required workflow Release candidate Linux'
 
 # A semantic version may identify exactly one source revision. This check is
 # unconditional: after a version has been published, any later source change
