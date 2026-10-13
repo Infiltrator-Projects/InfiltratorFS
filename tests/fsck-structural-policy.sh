@@ -35,6 +35,8 @@ grep -Fq 'validate_bitmap_ownership_progress' "$ownership" || \
     fail 'authoritative ownership scrub implementation missing'
 grep -Fq 'does not reconstruct a block-by-block live ownership bitmap' "$doc" || \
     fail 'fsck/scrub ownership boundary is undocumented'
+grep -Fq 'deterministic checkpoint-replica degradation' "$doc" || \
+    fail 'documented fsck repair boundary drifted from the implemented contract'
 
 fsck_tool="$root/tools/fsck.infiltratorfs.c"
 test -f "$fsck_tool" || fail 'fsck command implementation missing'

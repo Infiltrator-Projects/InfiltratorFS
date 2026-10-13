@@ -55,7 +55,7 @@ There is no standalone installed `infilfs-scrub` command. InfiltratorFS is pre-1
 
 The standard Linux fsck helper and initramfs integration use the fast structural check by default. Boot-time filesystem checking must not silently perform a complete data scrub. Deep scrub remains opt-in only through `fsck.infiltratorfs --scrub`.
 
-Existing conventional fsck flags (`-a`, `-f`, `-n`, `-p`) continue to be accepted where required by Linux integration. Until repair semantics are implemented, the checker remains fail-closed/read-only and reports corruption rather than pretending it repaired anything.
+Existing conventional fsck flags (`-a`, `-f`, `-n`, `-p`) are accepted where required by Linux integration. Automatic/preen repair (`-a` or `-p`) is deliberately limited to deterministic checkpoint-replica degradation: at least one valid replica must survive, the selected generation and remaining structural graph must already validate, and repair only rewrites stale or invalid checkpoint replicas from that authoritative superblock. `-n` forbids modification. Any corruption that would require synthesising metadata, choosing between competing graphs or guessing user intent remains fail-closed and uncorrected.
 
 ## Qualification contract
 
@@ -69,6 +69,7 @@ Tests must enforce that:
 6. structural metadata corruption is rejected by the fast check;
 7. file-data checksum corruption that leaves metadata structurally valid is reserved for `--scrub` detection rather than forcing ordinary fsck to read the complete payload;
 8. initramfs packages only the unified fsck executable for filesystem checking;
-9. Manager, qualification scripts and packaging invoke `fsck.infiltratorfs --scrub` for explicit deep verification.
+9. Manager, qualification scripts and packaging invoke `fsck.infiltratorfs --scrub` for explicit deep verification; and
+10. automatic repair remains restricted to unambiguous checkpoint-replica degradation and is verified by a second structural check before reporting correction.
 
 This separation and consolidation are product requirements, not implementation details.

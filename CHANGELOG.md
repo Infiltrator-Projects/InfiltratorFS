@@ -2,6 +2,11 @@
 
 This file records user-visible, compatibility, architecture and validation changes for InfiltratorFS.
 
+## 0.18.100 — 2026-10-13
+- Correct the normative fsck/scrub contract so it reflects the already-qualified deterministic checkpoint-replica repair path instead of claiming that repair is unimplemented.
+- Strengthen the fsck structural policy guard so documentation cannot regress away from the deliberately narrow repair boundary: automatic repair requires a surviving valid checkpoint replica and an otherwise valid structural graph; ambiguous corruption remains fail-closed.
+- Advance the semantic source identity after the published 0.18.99 release without changing Format 0.18 or the exact Infiltratr Common 1.19.35 pin.
+
 ## 0.18.99 — 2026-10-13
 - Repair the Linux package configuration race so delayed UDisks formatter advertisement cannot make an otherwise valid package installation fail; explicit integration verification remains strict.
 - Advance the semantic source identity after the published 0.18.98 release so post-release work cannot reuse an immutable release version.
