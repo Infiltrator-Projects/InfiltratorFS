@@ -251,7 +251,7 @@ The preservation rule is independent of whether a particular adapter can expose
 the metadata in its native UI. Adapters must follow this order:
 
 1. Map semantics that have a portable InfiltratorFS equivalent into the portable
-   principal, ACL, rights or future generic metadata model.
+   principal, ACL, rights or generic metadata model.
 2. Keep genuinely platform-specific residual semantics separate from that
    portable meaning. They must never be flattened into a weaker representation
    merely because the current host cannot interpret them.
@@ -265,15 +265,18 @@ the metadata in its native UI. Adapters must follow this order:
 5. Unknown feature or payload versions are preserved only when an explicitly
    versioned container declares opaque round-trip semantics. Otherwise readers
    fail closed instead of guessing.
-6. Copy, reflink, snapshot and restore operations must carry attached preserved
-   metadata with the object once the corresponding persistent extension class
-   exists; cross-platform edits must not detach it accidentally.
+6. Copy, reflink, snapshot and restore operations carry attached preserved
+   metadata with the object according to the owning metadata class; cross-platform
+   edits must not detach it accidentally.
 
-This completes the preservation *rules*. It does not claim that Format 0.18
-already has a generic container for every platform-specific security payload.
-That storage mechanism remains part of the separate generic typed/reparse and
-portable named-metadata roadmap work. Current opaque principal bindings are
-already preservation-only and obey the same non-resolution rule.
+The preservation rules are independent of adapter exposure. Format 0.18 now has
+the generic typed/reparse extension-object and portable named-metadata/named-stream
+mechanisms needed for lossless cross-platform storage where those contracts fit.
+That does not imply that every operating-system-specific security payload has an
+implemented adapter mapping: unsupported semantics must still be preserved by an
+appropriate versioned container or rejected explicitly rather than flattened.
+Current opaque principal bindings remain preservation-only and obey the same
+non-resolution rule.
 
 ## Security invariants
 
