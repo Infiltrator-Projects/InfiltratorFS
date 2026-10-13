@@ -62,6 +62,14 @@ fi
 if grep -Eq -- '--clobber|gh release edit' "$publisher"; then
     fail 'published releases must never be modified in place'
 fi
+# A superseded exact-SHA qualification may be cancelled when main advances.
+# That is not a failed release: the publisher must prove the trigger SHA still
+# equals current main before interpreting prerequisite conclusions. A failure
+# on current main remains a hard gate failure.
+grep -Fq 'git/ref/heads/main' "$publisher" || \
+    fail 'release publisher does not resolve the current main SHA before gate evaluation'
+grep -Fq 'Superseded release source' "$publisher" || \
+    fail 'release publisher does not cleanly ignore superseded gate evaluations'
 
 # A semantic version may identify exactly one source revision. This check is
 # unconditional: after a version has been published, any later source change
