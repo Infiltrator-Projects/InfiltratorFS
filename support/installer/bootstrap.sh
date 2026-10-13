@@ -4,7 +4,7 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BUILD_DIR="${ROOT}/build-native"
-VERSION="$(sed -n 's/^project(InfiltratorFS VERSION \([^ ]*\) LANGUAGES C)$/\1/p' "$ROOT/CMakeLists.txt")"
+VERSION="$(bash "$ROOT/tools/project-version.sh" "$ROOT/CMakeLists.txt")"
 NATIVE_PACKAGE_VERSION="${VERSION}+native1"
 KERNEL_RELEASE="$(uname -r)"
 PACKAGE_DIR="$BUILD_DIR/native-package"
@@ -12,8 +12,6 @@ DESKTOP_BUNDLE="$ROOT/infiltratorfs-os-integration-bundle.tar"
 MODE="install"
 OUTPUT_PATH=""
 declare -a missing_packages=()
-
-[[ -n "$VERSION" ]] || { echo "Could not determine InfiltratorFS version from CMakeLists.txt" >&2; exit 1; }
 
 case "${1:-}" in
     --dry-run)
@@ -277,7 +275,7 @@ if [[ "$integration_enabled" = 1 ]]; then
     verify_desktop_integration
 fi
 
-installed_version="$(dpkg-query -W -f='${Version}' infiltratorfs 2>/dev/null || true)"
+installed_version="$(dpkg-query -W -f='${Version}' infiltratorfs 2>//null || true)"
 installed_build="$(dpkg-query -W -f='${X-InfiltratorFS-Build}' infiltratorfs 2>/dev/null || true)"
 [[ "$installed_version" == "$NATIVE_PACKAGE_VERSION" ]] || {
     printf 'Native package installation verification failed: expected %s, found %s\n' "$NATIVE_PACKAGE_VERSION" "$installed_version" >&2
