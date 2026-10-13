@@ -275,7 +275,7 @@ if [[ "$integration_enabled" = 1 ]]; then
     verify_desktop_integration
 fi
 
-installed_version="$(dpkg-query -W -f='${Version}' infiltratorfs 2>//null || true)"
+installed_version="$(dpkg-query -W -f='${Version}' infiltratorfs 2>/dev/null || true)"
 installed_build="$(dpkg-query -W -f='${X-InfiltratorFS-Build}' infiltratorfs 2>/dev/null || true)"
 [[ "$installed_version" == "$NATIVE_PACKAGE_VERSION" ]] || {
     printf 'Native package installation verification failed: expected %s, found %s\n' "$NATIVE_PACKAGE_VERSION" "$installed_version" >&2
