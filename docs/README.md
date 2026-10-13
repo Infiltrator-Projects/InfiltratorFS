@@ -12,12 +12,13 @@ sources of truth.
 
 ## Normative and architectural documents
 
+- `DESIGN.md` — concise engineering-design principles and subsystem shape for contributors. It is subordinate to the canonical project philosophy, `ARCHITECTURE.md` and the byte-level format contract; it is not a separate status authority.
 - `ON_DISK_FORMAT.md` — persistent Format 0.18 structural contract. Exact
   packed fields/constants remain authoritative in `include/infilfs/format.h`.
 - `ARCHITECTURE.md` — architecture, invariants, ownership boundaries and
   failure semantics that are broader than byte layout.
-- `SECURITY.md` — current security guarantees, threat boundaries and the
-  planned portable principal/ACL architecture.
+- `SECURITY.md` — current security guarantees, threat boundaries and portable
+  principal/ACL architecture.
 - `PLATFORM_ADAPTERS.md` — operating-system adapter responsibilities and
   cross-platform preservation rules.
 - `COMPRESSION.md` — IAC1 and compressed-extent representation/selection
@@ -29,6 +30,7 @@ sources of truth.
 
 - `ROADMAP.md` — the only authoritative feature-completion list.
 - `QUALIFICATION.md` — qualification classes, policy, and curated milestone/manual evidence. Live automatic exact-SHA evidence is owned by the GitHub Actions checks attached to that commit; published release identity is owned by its immutable tag and GitHub Release.
+- `VALIDATION.md` — explanatory validation strategy and test-boundary guidance. It may describe how evidence is produced but never owns live pass/fail state; exact-SHA automatic evidence remains in GitHub Actions and curated manual/milestone evidence remains in `QUALIFICATION.md`.
 - root `README.md` — concise project/product entry point; it may summarise but
   must not become a second roadmap or qualification ledger.
 
