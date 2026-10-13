@@ -5,9 +5,9 @@ The forensic cross-check of current kernel invariants against the 2026
 filesystem research/advisory failure modes is recorded in
 [`FILESYSTEM-PAPER-AUDIT-2026.md`](FILESYSTEM-PAPER-AUDIT-2026.md).
 
-This file is the **single authoritative exact-source evidence record** for InfiltratorFS. It records what was actually exercised on named commits and workflows. It is not a feature list; feature completion belongs in `ROADMAP.md`.
+This file is the **authoritative qualification contract and curated milestone/manual evidence ledger** for InfiltratorFS. Live automatic exact-source evidence is owned by the immutable GitHub Actions checks attached to the exact commit and, for a published version, by its immutable tag and GitHub Release. This file is not a feature list; feature completion belongs in `ROADMAP.md`.
 
-Historical results apply only to the source commit on which they ran. A later green portable CI run does not silently inherit an older mounted, heavy or destructive qualification result.
+Historical results recorded here apply only to the source commit on which they ran. They are deliberately not a hand-maintained mirror of every automatic workflow run. A later green portable CI run does not silently inherit an older mounted, heavy or destructive qualification result.
 
 ## Qualification classes
 
@@ -41,7 +41,10 @@ A workflow should fail closed when a qualification class claims mounted coverage
 
 Automatic qualification and conformance jobs are hard-capped at 10 minutes where they are part of the ordinary CI set. A test that intrinsically needs more than 10 minutes must be a manual-only qualification and is launched deliberately when its coverage is warranted. The current long-running manual set is the real UEFI/root crash-recovery qualification, the full GNOME/libblockdev/UDisks formatter build, and the million-file/1 TiB plus endurance qualification.
 
-## Current development evidence boundary
+## Curated development milestone evidence
+
+The entries below preserve useful milestone evidence. For the current source revision, automatic qualification state must be read from the checks attached to that exact Git commit; absence of a newer hand-entered row here does not imply absence of automatic qualification.
+
 
 ### 0.18.78 deferred-publication failure hardening baseline
 

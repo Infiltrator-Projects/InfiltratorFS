@@ -90,8 +90,10 @@ test -f "$kernel/infiltratorfs_linux_meta_codec.c" || fail 'Linux metadata codec
 test -f "$kernel/infiltratorfs_locator_cache.c" || fail 'native locator cache object missing'
 test -f "$kernel/infiltratorfs_shared_ownership.c" || fail 'shared ownership accelerator object missing'
 test -f "$kernel/infiltratorfs_orphan_scan.c" || fail 'parallel orphan scanner object missing'
-grep -Fq 'kernel/infiltratorfs_orphan_scan.c \' "$root/.github/workflows/kernel-module.yml" || \
-    fail 'DKMS qualification source root omits orphan scanner component'
+dkms_manifest="$root/packaging/kernel-dkms-files.list"
+test -f "$dkms_manifest" || fail 'canonical DKMS source manifest missing'
+grep -Fqx $'kernel/infiltratorfs_orphan_scan.c\tinfiltratorfs_orphan_scan.c' "$dkms_manifest" || \
+    fail 'canonical DKMS source manifest omits orphan scanner component'
 grep -Fqx '#   infiltratorfs_orphan_scan.c owns N-1 parallel crash-orphan discovery.' "$makefile" || \
     fail 'orphan scanner ownership line is not a valid Makefile comment'
 visit_line="$(grep -nF 'struct infilfs_visit_set {' "$kernel/infiltratorfs_internal.h" | head -n1 | cut -d: -f1)"
@@ -102,14 +104,21 @@ test -n "$visit_line" && test -n "$pending_line" && (( visit_line < pending_line
 # Every compiled Kbuild object must also ship in the self-contained DKMS source
 # installed by the Debian/.run packaging path. A repository build can succeed
 # while package installation fails later if a newly split object is omitted.
-package_builder="$root/packaging/build-linux-packages.sh"
-test -f "$package_builder" || fail 'Linux package builder missing'
+dkms_stager="$root/packaging/stage-kernel-dkms-source.sh"
+test -x "$dkms_stager" || fail 'canonical DKMS source stager missing or not executable'
 module_objects="$(sed -nE 's/^infiltratorfs-y := (.*)$/\1/p' "$makefile")"
 test -n "$module_objects" || fail 'could not resolve Kbuild object list'
 for object in $module_objects; do
     source="${object%.o}.c"
-    grep -Fq "$source" "$package_builder" || \
-        fail "DKMS package source list omits $source"
+    grep -Fqx "kernel/${source}"$'\t'"${source}" "$dkms_manifest" || \
+        fail "canonical DKMS source manifest omits kernel/${source} -> ${source}"
+done
+for consumer in \
+    "$root/packaging/build-linux-packages.sh" \
+    "$root/.github/workflows/kernel-module.yml" \
+    "$root/tests/native-complete-qualification.sh"; do
+    grep -Fq 'stage-kernel-dkms-source.sh' "$consumer" || \
+        fail "$(realpath --relative-to="$root" "$consumer") bypasses canonical DKMS staging"
 done
 
 test ! -e "$kernel/infiltratorfs_directory_tree.inc" || fail 'directory tree regressed to textual include'

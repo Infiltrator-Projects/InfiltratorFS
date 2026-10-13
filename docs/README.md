@@ -28,8 +28,7 @@ sources of truth.
 ## Status and evidence
 
 - `ROADMAP.md` — the only authoritative feature-completion list.
-- `QUALIFICATION.md` — the only authoritative exact-source qualification
-  ledger.
+- `QUALIFICATION.md` — qualification classes, policy, and curated milestone/manual evidence. Live automatic exact-SHA evidence is owned by the GitHub Actions checks attached to that commit; published release identity is owned by its immutable tag and GitHub Release.
 - root `README.md` — concise project/product entry point; it may summarise but
   must not become a second roadmap or qualification ledger.
 

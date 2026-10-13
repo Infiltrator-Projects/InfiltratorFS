@@ -8,6 +8,7 @@ This file records user-visible, compatibility, architecture and validation chang
 - Strengthen release identity so source cannot reuse an already-published semantic version at a different commit, and reject version rollback relative to reachable releases.
 - Remove the retired `.github/release-trigger` path from native CI and correct the IAC1 hardware document to the implemented physical-core N-1 policy.
 - Clarify that Windows source-shape guards are not a substitute for mounted Windows and Driver Verifier qualification.
+- Make the native maintainability guard consume the canonical DKMS manifest instead of asserting the removed duplicated source lists, and make GitHub checks—not a stale hand-maintained table—the live authority for automatic exact-SHA qualification evidence.
 - On-disk Format remains 0.18.
 
 ## 0.18.97 — 2026-10-07
