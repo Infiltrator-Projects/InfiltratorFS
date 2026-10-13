@@ -6,16 +6,20 @@ Validation is layered. Compilation proves source compatibility; automated tests 
 
 ## Automated gates
 
-- .github/workflows/ci.yml
-- .github/workflows/kernel-module.yml
-- .github/workflows/resize-qualification.yml
-- .github/workflows/root-boot-qualification.yml
-- .github/workflows/root-volume-qualification.yml
-- .github/workflows/heavy-qualification.yml
-- .github/workflows/desktop-formatter-qualification.yml
-- .github/workflows/release-packages.yml
+The executable authority for the current automatic gate set is the workflow
+configuration under `.github/workflows/`. This document intentionally does not
+copy an exhaustive workflow filename list, because such a list becomes a second
+source of truth as qualification is added, retired or reorganised.
 
-The tests/ tree covers format conformance, allocation/index trees, compression, inline/sparse/large files, fsck policy, desktop integration and portable hardening. Dedicated workflows add mounted kernel, resize, root-volume, formatter and heavy qualification.
+The automatic suite currently spans portable build/conformance, policy and
+static-analysis gates, native Linux module qualification, metadata and
+root-volume qualification, resize, desktop/package integration, Windows bridge
+source qualification, exact release-candidate construction and immutable
+release publication. The tests/ tree covers format conformance,
+allocation/index trees, compression, inline/sparse/large files, fsck policy,
+desktop integration and portable hardening. Environment-specific workflows add
+mounted kernel, resize, root-volume, formatter and heavier qualification where
+that environment is actually available.
 
 ## Manual/environment-dependent evidence
 
