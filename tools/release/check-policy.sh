@@ -34,6 +34,24 @@ inf_version="$(sed -nE \
 [[ "$inf_version" == "$version" ]] || \
     fail "Windows INF version ${inf_version:-missing} does not match source $version"
 
+# An unpublished semantic version remains a release candidate across every
+# justified follow-up commit. The candidate workflow therefore runs on every
+# main push and lets the semantic resolver cheaply skip work once the version
+# is already published. Path-gating here would allow release artifacts from an
+# older SHA to survive a source correction made after the version bump.
+candidate=.github/workflows/release-candidate-linux.yml
+[[ -f "$candidate" ]] || fail 'release candidate workflow is missing'
+candidate_trigger="$(sed -n '/^on:/,/^permissions:/p' "$candidate")"
+grep -Fq '  push:' <<<"$candidate_trigger" || \
+    fail 'release candidate must run on main pushes'
+grep -Fq '    branches: [main]' <<<"$candidate_trigger" || \
+    fail 'release candidate push trigger must target main'
+if grep -Eq '^[[:space:]]+(paths|paths-ignore):' <<<"$candidate_trigger"; then
+    fail 'release candidate must not path-filter unpublished exact-source revisions'
+fi
+grep -Fq 'tools/release/resolve-request.sh' "$candidate" || \
+    fail 'release candidate must delegate release identity to the semantic resolver'
+
 publisher=.github/workflows/release-packages.yml
 [[ -f "$publisher" ]] || fail 'release publisher workflow is missing'
 grep -Fq '  workflow_run:' "$publisher" || \
