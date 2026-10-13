@@ -10,24 +10,34 @@ on:
 
 permissions:
   contents: write
+  pull-requests: read
 
 jobs:
   cleanup:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - name: Delete proven-merged release repair branches
+      - name: Delete branches only after exact merged-PR proof
         shell: bash
         run: |
           set -euo pipefail
-          for branch in \
-            hal/release-machinery-decoupling \
-            hal/release-policy-centralization \
-            hal/release-request-identity \
-            hal/simplify-release-machinery; do
-            git merge-base --is-ancestor "origin/$branch" origin/main
+          while IFS=$'\t' read -r pr branch; do
+            [[ -n "$pr" && -n "$branch" ]] || continue
+            readarray -t fields < <(gh pr view "$pr" --repo "$GITHUB_REPOSITORY" \
+              --json state,mergedAt,headRefName \
+              --jq '[.state, (.mergedAt // ""), .headRefName] | .[]')
+            [[ "${fields[0]}" == MERGED || ( "${fields[0]}" == CLOSED && -n "${fields[1]}" ) ]]
+            [[ -n "${fields[1]}" ]]
+            [[ "${fields[2]}" == "$branch" ]]
             git push origin --delete "$branch"
-          done
+          done <<'EOF'
+          39	hal/release-machinery-decoupling
+          40	hal/release-policy-centralization
+          41	hal/release-request-identity
+          42	hal/simplify-release-machinery
+          EOF
