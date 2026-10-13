@@ -43,6 +43,26 @@ inf_version="$(sed -nE \
 [[ "$inf_version" == "$version" ]] || \
     fail "Windows INF version ${inf_version:-missing} does not match source $version"
 
+# The release resolver is a pure semantic-state producer. Workflows must bind
+# emitted values explicitly rather than depending on process-wide GitHub
+# environment mutation from an earlier step.
+if grep -Fq 'GITHUB_ENV' tools/release/resolve-request.sh; then
+    fail 'release resolver must not communicate through hidden GITHUB_ENV state'
+fi
+
+# Maintained documents must have an explicit role in the documentation map, and
+# specialist performance notes must not contradict the normative codec format.
+for document in PORTABLE_SECURITY_OBJECTS.md FILESYSTEM-PAPER-AUDIT-2026.md; do
+    grep -Fq "\`${document}\`" docs/README.md || \
+        fail "documentation map does not classify ${document}"
+done
+if grep -Fq 'IAC1 is the only compressed on-disk representation' \
+        docs/IAC1-2026-HARDWARE-DESIGN.md; then
+    fail 'IAC1 hardware note contradicts retained Format 0.18 LZ4 codec support'
+fi
+grep -Fq 'codec identifier 1 for LZ4' docs/IAC1-2026-HARDWARE-DESIGN.md || \
+    fail 'IAC1 hardware note does not acknowledge retained Format 0.18 LZ4 support'
+
 # An unpublished semantic version remains a release candidate across every
 # justified follow-up commit. The candidate workflow therefore runs on every
 # main push and lets the semantic resolver cheaply skip work once the version
@@ -60,6 +80,8 @@ if grep -Eq '^[[:space:]]+(paths|paths-ignore):' <<<"$candidate_trigger"; then
 fi
 grep -Fq 'tools/release/resolve-request.sh' "$candidate" || \
     fail 'release candidate must delegate release identity to the semantic resolver'
+grep -Fq 'VERSION: ${{ steps.release.outputs.version }}' "$candidate" || \
+    fail 'release candidate must bind its package version from the explicit resolver output'
 
 publisher=.github/workflows/release-packages.yml
 [[ -f "$publisher" ]] || fail 'release publisher workflow is missing'
