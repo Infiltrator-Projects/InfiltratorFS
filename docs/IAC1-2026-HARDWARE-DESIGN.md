@@ -240,10 +240,16 @@ This asymmetric philosophy is intentional: **aggressive modern encoder, conserva
 
 ## Relationship to other codecs
 
-IAC1 is the only compressed on-disk representation. Comparative codecs may be
-used by external research tooling, but they are not dependencies, accepted
-extent formats, or release qualification baselines. IAC1 should justify itself
-at filesystem level by combining:
+IAC1 is the automatic/default compressed representation and the target of the
+filesystem's modern encoder and hardware-acceleration work. Format 0.18 also
+retains codec identifier 1 for LZ4 as a non-default interoperability/reference
+representation; readers must continue to accept that defined format exactly as
+specified by `COMPRESSION.md` and `ON_DISK_FORMAT.md`, while automatic writes do
+not select it.
+
+Other comparative codecs may be used by external research tooling, but they are
+not dependencies or accepted extent formats. IAC1 should justify itself at
+filesystem level by combining:
 
 - useful physical block savings;
 - low CPU work per logical byte;
