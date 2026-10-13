@@ -2,6 +2,14 @@
 
 This file records user-visible, compatibility, architecture and validation changes for InfiltratorFS.
 
+## 0.18.101 — 2026-10-14
+- Complete a second philosophy-governed forensic review across architecture, dependency ownership, tests, packaging, documentation and release machinery without changing Format 0.18 semantics.
+- Remove hidden GitHub environment coupling from semantic release resolution; release-candidate packaging now binds its version explicitly from the resolver output, and release policy guards that boundary.
+- Restore one documentation authority map by classifying the maintained portable-security and filesystem-paper audit documents, and make the workflow definitions themselves the executable authority for the automatic validation gate set.
+- Correct the maintained IAC1 hardware-design note so it no longer contradicts Format 0.18's retained non-default LZ4 codec representation.
+- Preserve the exact Infiltratr Common 1.19.35 pin after rechecking newer Common releases against the filesystem-facing contracts actually consumed here.
+- On-disk Format remains 0.18.
+
 ## 0.18.100 — 2026-10-13
 - Correct the normative fsck/scrub contract so it reflects the already-qualified deterministic checkpoint-replica repair path instead of claiming that repair is unimplemented.
 - Strengthen the fsck structural policy guard so documentation cannot regress away from the deliberately narrow repair boundary: automatic repair requires a surviving valid checkpoint replica and an otherwise valid structural graph; ambiguous corruption remains fail-closed.
