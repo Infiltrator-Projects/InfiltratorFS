@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 name: Forensic second-pass corrections
 # One-shot repair workflow. It is removed after the validated source correction.
-# Retry uses semantic block matching while preserving fail-closed replacement counts.
+# The repair now selects uniquely anchored shell blocks instead of escaped text.
 
 on:
   push:
