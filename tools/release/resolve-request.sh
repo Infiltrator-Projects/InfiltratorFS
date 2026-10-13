@@ -61,10 +61,6 @@ emit version "$version"
 emit previous_version "$previous"
 emit sha "$sha"
 
-if [[ -n "${GITHUB_ENV:-}" ]]; then
-    printf 'VERSION=%s\n' "$version" >> "$GITHUB_ENV"
-fi
-
 if [[ "$requested" == true ]]; then
     echo "Release request: published $previous -> source $version at $sha"
 else
