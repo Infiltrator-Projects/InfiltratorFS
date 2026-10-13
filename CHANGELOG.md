@@ -60,6 +60,7 @@ This file records user-visible, compatibility, architecture and validation chang
 - Keep filesystem format, kernel driver, storage, encryption, namespace and maintenance behaviour unchanged.
 - On-disk Format remains 0.18.
 
+
 ## 0.18.90 — 2026-09-25
 - Align Linux Manager stack-switcher tabs with the suite-wide 5 px / 10 px compact tab rhythm.
 - Keep filesystem format, kernel driver, storage, encryption, namespace and maintenance behaviour unchanged.
@@ -96,7 +97,7 @@ This file records user-visible, compatibility, architecture and validation chang
 
 ## 0.18.85 — 2026-09-24
 - Align the Linux Manager sidebar divider with the suite-wide 248 px desktop navigation width.
-- Keep filesystem format, kernel driver, storage, encryption, namespace, maintenance behaviour unchanged.
+- Keep filesystem format, kernel driver, storage, encryption, namespace and maintenance behaviour unchanged.
 - On-disk Format remains 0.18.
 
 ## 0.18.84 — 2026-09-24
@@ -158,11 +159,13 @@ This file records user-visible, compatibility, architecture and validation chang
 
 ## 0.18.76 — 2026-09-23
 - Remove the per-file buffered-write drain from explicit regular-file mtime updates without weakening timestamp correctness: POSIX metadata rewrite now keeps the topology writer lock through VFS mtime/ctime publication, so delayed writeback cannot overwrite a newer `touch`, `cp -p` or `rsync -a` timestamp. This restores asynchronous page-cache behaviour for metadata-preserving copy workloads instead of forcing every file through `filemap_write_and_wait()`.
+
 - Advance development after publishing 0.18.75; on-disk Format remains 0.18.
 - Correct APT publication verification so a source release does not fail merely because the central pull-based repository publisher has not run yet. An accepted immediate repository dispatch is still verified synchronously; otherwise publication is left to the authoritative scheduled central workflow.
 - Preserve the exact Infiltratr Common 1.19.24 pin at `748e089ae175329471d4cf375522c44081371bd5`.
 
 ## 0.18.75 — 2026-09-22
+
 - Fix the residual sustained-write publication stall isolated by the 0.18.74 live phase telemetry: transaction publication was spending almost all tail latency inside allocation-map publication while dependency draining had fallen to only tens of milliseconds.
 - Replace per-range incremental free-extent cache insertion during transaction publication with one authoritative word-at-a-time rebuild from the post-publication allocation bitmap. This removes the fragmented-volume O(n²) scan/memmove path while preserving the exact bitmap as allocation authority.
 - Add allocation-map subphase telemetry for preparation, retired-range journalling, bitmap/index reclamation, leaf writes and branch writes, including dirty-tree counts, so any remaining publication tail can be attributed without another broad kernel trace.
@@ -170,6 +173,7 @@ This file records user-visible, compatibility, architecture and validation chang
 - On-disk Format remains 0.18.
 
 ## 0.18.74 — 2026-09-22
+
 - Publish 0.18.74 as the sustained native-write stall recovery release after the 0.18.73 development cycle; on-disk Format remains 0.18.
 - Advance the exact Infiltratr Common dependency from 1.19.23 to 1.19.24 at `748e089ae175329471d4cf375522c44081371bd5`. This Common release hardens graphics surface range/alias handling; InfiltratorFS does not consume that graphics API, so the pin changes no filesystem or on-disk semantics.
 - Split the filesystem-wide N-1 CPU/workqueue policy from the VFS/checkpoint core into a dedicated compiled `infiltratorfs_cpu.o`, preserving the same hotplug-aware execution gate while reducing `infiltratorfs_core.c` coupling.
@@ -181,7 +185,9 @@ This file records user-visible, compatibility, architecture and validation chang
 - Add per-phase slow-publication telemetry for allocation-map construction, dependency draining, the dependency durability barrier, checkpoint writes and the final publication barrier so any residual tail latency can be attributed to a concrete publication phase.
 - Harden the progressive-I/O design so staged ranges are submitted only after the individual operation is committed into the deferred transaction; volatile reservations are never reusable while stale I/O to the same physical range can remain in flight.
 
+
 ## 0.18.72 — 2026-09-22
+
 - Publish 0.18.72 directly after 0.18.70; 0.18.71 was used only as an intermediate development identity and was never published.
 - Advance the exact Infiltratr Common dependency from 1.19.20 to 1.19.23 at `a9cf2957cffeefe6001830916b8a32c2ef58a551`; the intervening Common releases are backward-compatible hardening plus a temporal helper and do not alter InfiltratorFS persistent semantics.
 - Mark optional case-folded directories roadmap-complete after portable cross-platform conformance plus mounted native VFS/dcache qualification and CLEAN scrub.
@@ -190,11 +196,13 @@ This file records user-visible, compatibility, architecture and validation chang
 - Retain Format 0.18; this release does not introduce a backward-compatibility promise before 1.0.
 
 ## 0.18.70 — 2026-09-22
+
 - Advance development after publishing 0.18.69; on-disk Format remains 0.18.
 - Retain the validated mount-state reuse and persistent native free-space index improvements made after 0.18.69.
 - Back out the unqualified list/token allocation-reservation refactor after mounted quota, metadata, parallel-write and resize qualification exposed user-visible `EAGAIN`/`Resource temporarily unavailable` regressions; retain the previously qualified reservation implementation until a replacement passes the full native suite.
 
 ## 0.18.69 — 2026-09-21
+
 - Replace serial 4 KiB allocated-run reads with bounded 4 MiB buffer-head batches submitted under a block plug before waiting, while retaining buffer-cache coherence and SHA-256 verification.
 - Keep speculative single-block readahead only for the partial-read fallback so multi-block reads do not submit the same physical range twice.
 - Add explicit modern Linux O_DIRECT admission and aligned native read/write dispatch while preserving the page cache for ordinary I/O.
@@ -204,17 +212,22 @@ This file records user-visible, compatibility, architecture and validation chang
 - Keep the on-disk format at 0.18.
 
 ## 0.18.68 — 2026-09-21
+
 - Make desktop integration mandatory for normal InfiltratorFS package installation so a system cannot stop at correct udev/UDisks identity while stock GNOME Disks still renders "Unknown (infiltratorfs 0.18)".
 - Make the published native .run self-contained by embedding the qualified Ubuntu 24.04 / Linux Mint 22.x libblockdev, GNOME Disks and integration packages, installing them atomically with the locally compiled core package, then verifying package ownership and UDisks formatter capability.
 - Gate release assembly and publication on the presence of that embedded desktop-integration bundle and on the core Debian package carrying a hard dependency on infiltratorfs-desktop-integration.
+
 - Standardise Linux and Windows About presentation on the suite-wide System Monitor contract, including canonical Build, Website, Credits, Licence and Close semantics.
 - Remove the Linux About-specific styling/tagline and replace the oversized Windows technical-information message with a compact native TaskDialog.
+
+
 - Fix a Manager discovery deadlock where Inspect was disabled unless the target had already been identified as InfiltratorFS. Inspect is now available for any selected unmounted target, while Check, Scrub, Mount and filesystem-specific operations still require positive InfiltratorFS identification.
 - Add an executable regression test proving an unknown unmounted target remains inspectable without weakening the safety gates on filesystem-specific maintenance.
 
 ## 0.18.66 — 2026-09-21
+
 - Replace foreground portable-security scans with bounded persistent lookup: resolvable bindings gain deterministic secondary-index objects in the existing object index, immutable descriptors use content-derived collision-slot IDs for direct reuse, opaque bindings remain non-resolvable, and ACL detach/unlink becomes independent of total namespace size with reclamation deferred to graph-tracing maintenance.
-- Correct the portable-security identity model before further feature work: advance the development payload contract to version 2, scope POSIX numeric bindings by a 128-bit identity authority, require canonical binary Windows SIDs, make opaque bindings preservation-only, reserve implicit OWNER/GROUP/EVERYONE/CREATOR_OWNER/CREATOR_GROUP principals, and specify graph-traced rather than persistent-refcount based reclamation.
+- Correct the portable-security identity model before further feature work: advance the development payload contract to version 2, scope POSIX numeric bindings by a 128-bit identity authority, require canonical binary Windows SIDs, make opaque bindings preservation-only, reserve implicit OWNER/GROUP/EVERYONE/CREATOR_OWNER/CREATOR_GROUP principals, and specify graph-traced rather than foreground full-namespace reclamation.
 - Harden the portable ACL evaluator and inheritance engine to reject malformed in-memory descriptors fail-closed, preserve ordered allow/deny decisions, and canonicalise the file-only/no-propagate directory inheritance edge case.
 - Redesign the development portable-security model before format freeze: principal identities become volume-level indexed objects with multiple platform bindings, security descriptors become shareable owner/group + ordered-ACL objects, descriptor reachability is graph-derived rather than persistent-refcount based, and large ACLs are permitted to page beyond one metadata block.
 - Implement versioned portable security objects with stable 128-bit principals, typed POSIX/Windows/opaque identity bindings, ordered allow/deny ACL entries, inheritance flags, transactional attachment/replacement/removal, native-reader recognition and bidirectional scrub validation.
@@ -227,12 +240,14 @@ This file records user-visible, compatibility, architecture and validation chang
 - Add mounted N-1 CPU-budget qualification with real prepared-write concurrency telemetry, proving CPU-heavy write preparation can fill the filesystem budget before short serialized publication.
 - Mark the cross-platform removable-volume filename profile as roadmap-complete after exact-source portable, mounted native, metadata, root-volume and resize qualification.
 - Add an optional persistent removable-volume filename profile with cross-platform component constraints, portable/native enforcement, fail-closed graph validation, mkfs selection, and mounted qualification.
+
 - Mark the versioned Unicode namespace policy and deterministic unambiguous fsck repair as roadmap-complete after exact-source conformance, mounted metadata and root-volume qualification.
 - Define and persist Unicode namespace policy v1: valid UTF-8 is preserved byte-for-byte with no implicit normalization, and both portable/native readers reject current-format media that omits the explicit policy bit.
 - Strengthen deterministic fsck repair qualification: preen proves recovery from either one or two damaged checkpoint replicas when the surviving graph is authoritative, while non-checkpoint metadata corruption is verified fail-closed and byte-preserving.
 - Allow the release APT verification gate a bounded eight-plus-minute propagation window so the five-minute scheduled repository importer and GitHub Pages deployment cannot race the previous seven-minute verifier cutoff.
 
 ## 0.18.65 — 2026-09-20
+
 - Modernise the native Linux page-cache read path on Linux 7.0 and newer by delegating folio read/readahead state management to iomap while retaining InfiltratorFS's verified native transport for sparse extents, compression and SHA-256 integrity.
 - Keep pre-7.0 kernels on the already-qualified direct-bvec page-cache implementation rather than introducing an emulated iomap compatibility layer.
 - Reserve folio private state for iomap and track InfiltratorFS pending-CoW accounting independently with the auxiliary folio flag.
@@ -240,20 +255,25 @@ This file records user-visible, compatibility, architecture and validation chang
 - Keep page-cache reads and writeback zero-copy at the folio/native-iterator boundary and prohibit generic iomap bio reads that would bypass filesystem verification.
 - Add an exact upstream Linux 7.0 compile gate for the out-of-tree module and prove the iomap symbols consumed by InfiltratorFS are exported for modules.
 - Move the extent-pointer-tree metadata-page workspace off the kernel stack after the upstream Linux 7.0 build exposed a 4 KiB stack frame.
+
 - Give the Linux Manager its own project-owned application identity icon: the same graphite tile and canonical `#00ADEF` filesystem glyph used by the Software Centre, installed once for hicolor and as the `infiltratorfs` Mint app-install alias; UDisks/device surfaces deliberately keep the platform drive icon because they represent volumes rather than the application.
+
 - Complete the shared Manager behaviour contract across Linux and Windows: action success copy, target/action enablement policy and GUI capacity formatting now come from one platform-neutral module, leaving GTK/Win32 storage, mount and native-file-manager mechanics in their adapters.
 - Match Windows capacity presentation to Linux by using the same Common auto-scaling disk-capacity contract rather than a Windows-only fixed-GiB formatter.
 - Update the UI/Common policy gates to assert the shared Manager capacity contract instead of the superseded Windows-only fixed-GiB implementation.
 - Move common target-state copy (ready/mounted/unmounted/unknown filesystem), image naming, basic header controls and filesystem labels into the shared Manager contract so GTK and Win32 cannot silently drift in wording.
+
 - Begin converging the Linux and Windows Managers onto one shared application/presentation contract: identical core wording, maintenance actions, structure labels and semantic action roles now come from one C module while GTK/Win32 remain thin native presentation adapters.
 - Advance the development source to 0.18.65 so post-0.18.64 cross-platform Manager work cannot be mistaken for the immutable published release.
 - Rebuild the Windows Manager around the same application structure as Linux: storage sidebar, shared hero/mount controls, Overview/Files pages, capacity/filesystem/status cards, volume information, identical four maintenance actions, destructive-format zone and activity log. Windows-only file transfer remains an adapter capability on the Files page rather than defining a separate application.
 - Add Windows parity for Create Image, fast structural Check and Forensic Scan through the same portable-core APIs used by the Linux tooling, while retaining the ProjFS Explorer bridge as the Windows-only mount adapter.
 - Apply the full Common 1.19.10 Night presentation roles to the Win32 Manager, including connection surface, headings, summaries, kickers, detail/note text and semantic success/warning/info/fault/accent states.
+
 - Advance to Infiltratr Common 1.19.10 and consume the complete Linux MBLINK-derived appearance roles in the native Manager, including titlebar, connection/status surface, heading/summary/kicker/detail/note text, selected-summary, accent-hover/foreground and muted state-border colours.
 - Keep filesystem-specific semantic colouring on top of those canonical roles: success for mounted/check, warning for offline/scrub, fault for destructive formatting, information for inspection and the canonical blue accent for filesystem/forensic operations, without changing layout or behaviour.
 
 ## 0.18.63 — 2026-09-19
+
 - Complete native Linux mutation of scalable extent-pointer trees, including promotion beyond the direct page-head ceiling and safe demotion when extent metadata shrinks.
 - Avoid a second whole-device writeback walk during transaction publication: stage dependencies durably, synchronously submit the three checkpoint buffers, then issue the device-cache flush.
 - Avoid whole-device `sync_blockdev()` work for clean `fsync()` calls when no native transaction exists to publish.
@@ -269,6 +289,7 @@ This file records user-visible, compatibility, architecture and validation chang
 - Route mkfs block I/O through Common's uint64 exact positioned-I/O contract without pre-narrowing offsets to off_t, and check block-to-byte/bitmap-coverage multiplication before issuing I/O.
 
 ## 0.18.62 — 2026-09-19
+
 - Fix the native prepared-append queue-failure path so a failed workqueue enqueue cannot strand a completion waiter.
 - Replace the fixed direct extent-page ceiling with scalable extent-pointer trees while retaining the compact direct representation for smaller extent maps.
 - Retain snapshots by immutable allocation-tree root instead of copying a whole-volume allocation bitmap at snapshot creation.
@@ -278,12 +299,15 @@ This file records user-visible, compatibility, architecture and validation chang
 - Remove obsolete one-shot source-rewrite helpers left behind by earlier refactors.
 - Keep the development on-disk format identifier at 0.18 while replacing the prior development representation; backward compatibility is not claimed before format freeze.
 
+
 ## 0.18.61 — 2026-09-19
+
 - Fix GTK3 headerbar contrast by allowing button child labels/icons to inherit the active button foreground instead of forcing the global text colour onto every child CSS node.
 - Strengthen InfiltratorFS title/subtitle readability and keep header controls fully opaque in System/Day/Night themes.
 - Add a UI policy guard so a universal foreground cannot silently reintroduce the contrast regression.
 
 ## 0.18.60 — 2026-09-19
+
 - Enforce the native Linux N-1 logical-CPU execution budget for scalable background/prepared work.
 - Move crash-orphan recovery off the synchronous mount path and bound its topology-lock hold times.
 - Maintain shared-extent ownership incrementally so unlink/final eviction avoid repeated whole-catalogue scans.
@@ -295,6 +319,7 @@ This file records user-visible, compatibility, architecture and validation chang
 - Keep the on-disk format at 0.18.
 
 ## 0.18.59 — 2026-09-18
+
 - Consolidate product-neutral userspace parsing, exact I/O and checked dynamic-array growth on Infiltratr Common 1.19.2.
 - Keep filesystem semantics and the on-disk Format 0.18 contract unchanged.
 
