@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 from pathlib import Path
-import re
 
 
 def replace_once(path, old, new):
@@ -12,48 +11,58 @@ def replace_once(path, old, new):
     p.write_text(text.replace(old, new, 1))
 
 
-def replace_pattern_once(path, pattern, replacement, description):
-    p = Path(path)
-    text = p.read_text()
-    updated, count = re.subn(pattern, replacement, text, count=1, flags=re.MULTILINE | re.DOTALL)
-    if count != 1:
-        raise SystemExit(f'{path}: expected one {description} block, found {count}')
-    p.write_text(updated)
+maint = Path('tests/native-kernel-maintainability-policy.sh')
+lines = maint.read_text().splitlines(keepends=True)
 
+orphan_hits = [i for i, line in enumerate(lines)
+               if 'kernel/infiltratorfs_orphan_scan.c' in line
+               and '.github/workflows/kernel-module.yml' in line]
+if len(orphan_hits) != 1:
+    raise SystemExit(f'maintainability guard: expected one workflow-coupled orphan assertion, found {len(orphan_hits)}')
+i = orphan_hits[0]
+if i + 1 >= len(lines) or 'DKMS qualification source root omits orphan scanner component' not in lines[i + 1]:
+    raise SystemExit('maintainability guard: orphan assertion continuation changed unexpectedly')
+lines[i:i + 2] = [
+    'dkms_manifest="$root/packaging/kernel-dkms-files.list"\n',
+    'test -f "$dkms_manifest" || fail \'canonical DKMS source manifest missing\'\n',
+    'grep -Fqx $\'kernel/infiltratorfs_orphan_scan.c\\tinfiltratorfs_orphan_scan.c\' "$dkms_manifest" || \\\n',
+    '    fail \'canonical DKMS source manifest omits orphan scanner component\'\n',
+]
 
-replace_pattern_once(
-    'tests/native-kernel-maintainability-policy.sh',
-    r"grep -Fq 'kernel/infiltratorfs_orphan_scan\.c \\' \"\$root/\.github/workflows/kernel-module\.yml\" \|\| \\\n    fail 'DKMS qualification source root omits orphan scanner component'\n",
-    '''dkms_manifest="$root/packaging/kernel-dkms-files.list"
-test -f "$dkms_manifest" || fail 'canonical DKMS source manifest missing'
-grep -Fqx $'kernel/infiltratorfs_orphan_scan.c\\tinfiltratorfs_orphan_scan.c' "$dkms_manifest" || \\
-    fail 'canonical DKMS source manifest omits orphan scanner component'
-''',
-    'workflow-coupled orphan-source assertion',
-)
-
-replace_pattern_once(
-    'tests/native-kernel-maintainability-policy.sh',
-    r'''package_builder="\$root/packaging/build-linux-packages\.sh"\ntest -f "\$package_builder" \|\| fail 'Linux package builder missing'\nmodule_objects=.*?\nfor object in \$module_objects; do\n    source=.*?\n    grep -Fq .*?\n        fail .*?\ndone\n''',
-    '''dkms_stager="$root/packaging/stage-kernel-dkms-source.sh"
-test -x "$dkms_stager" || fail 'canonical DKMS source stager missing or not executable'
-module_objects="$(sed -nE 's/^infiltratorfs-y := (.*)$/\\1/p' "$makefile")"
-test -n "$module_objects" || fail 'could not resolve Kbuild object list'
-for object in $module_objects; do
-    source="${object%.o}.c"
-    grep -Fqx "kernel/${source}"$'\\t'"${source}" "$dkms_manifest" || \\
-        fail "canonical DKMS source manifest omits kernel/${source} -> ${source}"
-done
-for consumer in \\
-    "$root/packaging/build-linux-packages.sh" \\
-    "$root/.github/workflows/kernel-module.yml" \\
-    "$root/tests/native-complete-qualification.sh"; do
-    grep -Fq 'stage-kernel-dkms-source.sh' "$consumer" || \\
-        fail "$(realpath --relative-to="$root" "$consumer") bypasses canonical DKMS staging"
-done
-''',
-    'duplicated package-builder DKMS source assertion',
-)
+package_hits = [i for i, line in enumerate(lines) if line.startswith('package_builder="$root/packaging/build-linux-packages.sh"')]
+if len(package_hits) != 1:
+    raise SystemExit(f'maintainability guard: expected one duplicated package-builder DKMS block, found {len(package_hits)}')
+start = package_hits[0]
+end = None
+for j in range(start, min(start + 20, len(lines))):
+    if lines[j] == 'done\n':
+        end = j
+        break
+if end is None:
+    raise SystemExit('maintainability guard: package-builder DKMS block terminator not found')
+block = ''.join(lines[start:end + 1])
+for marker in ('module_objects=', 'for object in $module_objects', 'grep -Fq "$source" "$package_builder"'):
+    if marker not in block:
+        raise SystemExit(f'maintainability guard: package-builder block lost expected marker {marker!r}')
+lines[start:end + 1] = [
+    'dkms_stager="$root/packaging/stage-kernel-dkms-source.sh"\n',
+    'test -x "$dkms_stager" || fail \'canonical DKMS source stager missing or not executable\'\n',
+    'module_objects="$(sed -nE \'s/^infiltratorfs-y := (.*)$/\\1/p\' "$makefile")"\n',
+    'test -n "$module_objects" || fail \'could not resolve Kbuild object list\'\n',
+    'for object in $module_objects; do\n',
+    '    source="${object%.o}.c"\n',
+    '    grep -Fqx "kernel/${source}"$\'\\t\'"${source}" "$dkms_manifest" || \\\n',
+    '        fail "canonical DKMS source manifest omits kernel/${source} -> ${source}"\n',
+    'done\n',
+    'for consumer in \\\n',
+    '    "$root/packaging/build-linux-packages.sh" \\\n',
+    '    "$root/.github/workflows/kernel-module.yml" \\\n',
+    '    "$root/tests/native-complete-qualification.sh"; do\n',
+    '    grep -Fq \'stage-kernel-dkms-source.sh\' "$consumer" || \\\n',
+    '        fail "$(realpath --relative-to="$root" "$consumer") bypasses canonical DKMS staging"\n',
+    'done\n',
+]
+maint.write_text(''.join(lines))
 
 replace_once(
     'docs/QUALIFICATION.md',
