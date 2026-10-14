@@ -9,6 +9,7 @@ name: Publish release
 on:
   workflow_run:
     workflows:
+      - "Build and conformance"
       - "Native Linux kernel module"
       - "Linux root-volume qualification"
       - "Linux metadata qualification"
@@ -70,6 +71,7 @@ jobs:
 
           api="repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${EXPECTED_SHA}&per_page=100"
           required=(
+            "Build and conformance"
             "Native Linux kernel module"
             "Linux root-volume qualification"
             "Linux metadata qualification"

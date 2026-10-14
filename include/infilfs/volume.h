@@ -270,6 +270,8 @@ struct infs_named_stream_info {
 /* Public portable-volume contract:
  * - a successful open transfers the supplied storage context into the volume;
  *   infs_volume_close() releases all owned runtime/storage resources;
+ * - a failed open leaves the supplied storage handle caller-owned and unchanged;
+ *   the failed volume retains no storage or runtime-resource ownership;
  * - the volume object is mutable session state. Direct concurrent callers must
  *   provide the serialization required by their adapter rather than assuming
  *   implicit locking in the portable core;

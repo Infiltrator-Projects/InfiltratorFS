@@ -12,6 +12,7 @@
 #include "../../windows-driver/infiltratorfs-native-protocol.h"
 
 #include <intrin.h>
+#include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -162,10 +163,18 @@ static infs_status native_random(void *opaque, void *buffer, size_t size)
     (void)opaque;
     if (!buffer && size)
         return INFS_STATUS_INVALID_ARGUMENT;
-    return BCryptGenRandom(
-               NULL, buffer, (ULONG)size,
-               BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0 ?
-           INFS_STATUS_OK : INFS_STATUS_IO_ERROR;
+
+    uint8_t *out = buffer;
+    while (size) {
+        ULONG chunk = size > ULONG_MAX ? ULONG_MAX : (ULONG)size;
+        NTSTATUS result = BCryptGenRandom(
+            NULL, out, chunk, BCRYPT_USE_SYSTEM_PREFERRED_RNG);
+        if (result < 0)
+            return INFS_STATUS_IO_ERROR;
+        out += chunk;
+        size -= chunk;
+    }
+    return INFS_STATUS_OK;
 }
 
 static infs_status native_time(

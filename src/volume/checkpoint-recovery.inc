@@ -228,11 +228,13 @@ infs_status infs_volume_open_storage(struct infs_volume *vol,
         return INFS_STATUS_INVALID_ARGUMENT;
     memset(vol, 0, sizeof(*vol));
     vol->writable = writable != 0;
+    /* Keep caller ownership intact until open has completed successfully.
+     * The volume may borrow the handle while validating candidates, but a
+     * failed open must not consume or close a backend the API still assigns
+     * to the caller. */
     vol->storage = *storage;
     vol->data_allocation_cursor = 1u;
     vol->metadata_allocation_cursor = 0;
-    storage->ops = NULL;
-    storage->context = NULL;
 
     infs_status status = INFS_STATUS_OK;
     if (vol->writable &&
@@ -323,11 +325,15 @@ infs_status infs_volume_open_storage(struct infs_volume *vol,
     vol->data_allocation_cursor = 1u;
     vol->metadata_allocation_cursor =
         infs_le64_to_cpu(vol->sb.total_blocks);
+    storage->ops = NULL;
+    storage->context = NULL;
     return INFS_STATUS_OK;
 
 fail:
     discard_candidate_state(vol);
-    infs_storage_close(&vol->storage);
+    /* The caller still owns the original storage handle. Clear the borrowed
+     * alias and all failed-open session state without invoking backend close. */
+    memset(vol, 0, sizeof(*vol));
     return status == INFS_STATUS_OK ? INFS_STATUS_ERROR : status;
 }
 

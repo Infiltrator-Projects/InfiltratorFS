@@ -16,6 +16,7 @@
 struct fake_storage {
     uint8_t checkpoint[INFS_BLOCK_SIZE];
     uint64_t size_bytes;
+    unsigned close_count;
 };
 
 static void fail(const char *message)
@@ -57,9 +58,16 @@ static infs_status fake_size(void *context, uint64_t *size_bytes,
     return INFS_STATUS_OK;
 }
 
+static void fake_close(void *context)
+{
+    struct fake_storage *fake = context;
+    fake->close_count++;
+}
+
 static const struct infs_storage_ops read_only_ops = {
     .read_at = fake_read,
     .get_size = fake_size,
+    .close = fake_close,
 };
 
 static void build_geometry_checkpoint(struct fake_storage *fake)
@@ -117,6 +125,13 @@ static void check_undersized_bitmap(void)
     infs_status status = infs_volume_open_storage(&volume, &storage, 0);
     expect(status == INFS_STATUS_CORRUPT,
            "reject allocation tree too small for total_blocks before page traversal");
+    expect(storage.ops == &read_only_ops && storage.context == &fake,
+           "failed structural open preserves caller storage ownership");
+    expect(fake.close_count == 0,
+           "failed structural open must not close caller storage");
+    infs_storage_close(&storage);
+    expect(fake.close_count == 1,
+           "caller closes preserved structural-failure storage exactly once");
 }
 
 static void check_writable_backend_requirements(void)
@@ -133,6 +148,13 @@ static void check_writable_backend_requirements(void)
     infs_status status = infs_volume_open_storage(&volume, &storage, 1);
     expect(status == INFS_STATUS_INVALID_ARGUMENT,
            "writable open requires write, flush, random and clock services");
+    expect(storage.ops == &read_only_ops && storage.context == &fake,
+           "failed capability open preserves caller storage ownership");
+    expect(fake.close_count == 0,
+           "failed capability open must not close caller storage");
+    infs_storage_close(&storage);
+    expect(fake.close_count == 1,
+           "caller closes preserved capability-failure storage exactly once");
 }
 
 int main(void)

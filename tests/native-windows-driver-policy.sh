@@ -57,6 +57,10 @@ grep -Fq 'InfilfsQueryPortableVolumeState' "$driver" || fail 'volume information
 grep -Fq 'State.free_blocks' "$driver" || fail 'native Windows free-space reporting is not authoritative'
 grep -Fq 'INFILFS_WIN_NATIVE_OP_QUERY_VOLUME' "$service" || fail 'portable service volume-state query is missing'
 grep -Fq 'native_worker_budget' "$service" || fail 'native Windows worker pool is not derived from physical-core N-1 policy'
+grep -Fq 'ULONG chunk = size > ULONG_MAX ? ULONG_MAX : (ULONG)size;' "$service" || fail 'native Windows random callback can narrow size_t requests'
+if grep -Fq 'NULL, buffer, (ULONG)size' "$service"; then
+    fail 'native Windows random callback still casts the complete request to ULONG'
+fi
 grep -Fq 'IOCTL_DISK_IS_WRITABLE' "$driver" || fail 'native Windows mount does not probe target writability'
 grep -Fq 'Volume->ReadOnly = InfilfsTargetReadOnly(Target)' "$driver" || fail 'native Windows volume ignores lower-device read-only state'
 grep -Fq 'Info->Characteristics |= FILE_READ_ONLY_DEVICE' "$driver" || fail 'native Windows read-only state is not reported through FileFsDeviceInformation'

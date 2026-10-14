@@ -123,6 +123,10 @@ for prerequisite in "${!dispatchable_prerequisite_files[@]}"; do
 done
 grep -Fq '      - "Release candidate Linux"' "$publisher" || \
     fail 'publisher does not subscribe to required workflow Release candidate Linux'
+grep -Fq '      - "Build and conformance"' "$publisher" || \
+    fail 'publisher does not subscribe to project-wide Build and conformance evidence'
+grep -Fq '            "Build and conformance"' "$publisher" || \
+    fail 'publisher exact-source gate does not require Build and conformance success'
 
 # A semantic version may identify exactly one source revision. This check is
 # unconditional: after a version has been published, any later source change

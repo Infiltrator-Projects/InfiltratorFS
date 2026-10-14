@@ -2,6 +2,13 @@
 
 This file records user-visible, compatibility, architecture and validation changes for InfiltratorFS.
 
+## 0.18.103 — 2026-10-14
+- Restore the public storage-ownership contract on failed portable-volume opens: storage remains caller-owned unless open succeeds, and failed volume state retains no backend alias. Add behavioral regression coverage at both early capability rejection and structural-validation failure.
+- Require the project-wide `Build and conformance` workflow as an exact-source release-publication prerequisite, preventing release publication from outrunning sanitizer, static-analysis, portable-core, packaging or Windows build evidence.
+- Make the native Windows service random-byte callback fill the complete `size_t` request by chunking BCrypt calls at `ULONG_MAX`, matching the established Win32 storage-adapter contract instead of silently narrowing oversized requests.
+- Clarify that native Linux mounted qualification requires a usable running-kernel build environment and fails closed when that evidence cannot be produced.
+- On-disk Format remains 0.18; Infiltratr Common remains pinned to 1.19.35.
+
 ## 0.18.102 — 2026-10-14
 - Pin retained LZ4 codec source to immutable upstream commit `ebb370ca83af193212df4dcbadcc5d87bc0de2f0` and use the non-shallow fetch required for exact arbitrary-commit checkout.
 - Pin every remote GitHub Action used by maintained workflows to an immutable commit SHA while retaining the human-readable source ref in a comment, so re-running one InfiltratorFS SHA cannot silently execute different automation code.

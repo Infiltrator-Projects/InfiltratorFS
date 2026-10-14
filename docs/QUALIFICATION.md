@@ -12,7 +12,7 @@ Historical results recorded here apply only to the source commit on which they r
 ## Qualification classes
 
 - **Build and conformance** — ordinary broad CI: GCC/Linux, Clang, sanitizers, static analysis, Windows portability/interoperability, policy guards and package construction. Every automatic job is capped at 10 minutes.
-- **Native Linux kernel module** — mounted kernel qualification for relevant kernel/core/package changes. It builds the module/DKMS source and, when the running-kernel environment is available, exercises native mounted behaviour.
+- **Native Linux kernel module** — mounted kernel qualification for relevant kernel/core/package changes. It builds the module/DKMS source and requires a usable build environment for the runner's exact running kernel before exercising native mounted behaviour; inability to establish that environment fails the claimed mounted qualification rather than degrading it to compile-only evidence.
 - **Native resize qualification** — dedicated mounted grow/shrink qualification independent of the quota gate; automatic execution is capped at 10 minutes.
 - **Heavy filesystem qualification** — million-file/1 TiB scale plus near-full mixed-workload endurance. This is manual-only milestone evidence because it intentionally exceeds the automatic CI ceiling.
 
