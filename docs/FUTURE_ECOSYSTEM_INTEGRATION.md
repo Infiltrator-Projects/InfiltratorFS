@@ -149,7 +149,7 @@ No hint may weaken ordinary durability or correctness guarantees.
 
 ## Durable diagnostic evidence
 
-LINK-family applications produce captures, diagnostic evidence and exported
+Link-family applications produce captures, diagnostic evidence and exported
 reports where successful publication should have a clear durability meaning.
 
 A future integration could combine Common's generic durable-publication
@@ -167,7 +167,7 @@ atomic rename/publication
 durable parent publication
 ```
 
-LINK remains filesystem-neutral; InfiltratorFS simply provides a strong
+Link remains filesystem-neutral; InfiltratorFS simply provides a strong
 implementation of the generic durability contract.
 
 ## File history for applications
@@ -236,7 +236,7 @@ Representative workloads include:
 - Software: package metadata, repository refresh, staging and durable
   transactions;
 - Calculator/Calendar: small configuration and history updates;
-- LINK/MBLINK/JAGLINK: append-heavy captures and durable evidence publication;
+- Link/MBLink/JAGLink: append-heavy captures and durable evidence publication;
 - Character Profiler: database-style metadata plus larger visual assets;
 - Backyard Racer: save-game replacement and asset streaming;
 - Git/build trees: high metadata churn, parallel creation and temporary files;

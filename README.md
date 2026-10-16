@@ -11,9 +11,9 @@ InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem. The
 **Release identity:** [`CMakeLists.txt`](CMakeLists.txt)<br>
 **On-disk format:** 0.18<br>
 **Published releases:** [GitHub Releases](https://github.com/Infiltrator-Projects/InfiltratorFS/releases)<br>
-**Shared foundation:** Libraries 1.19.35<br>
+**Shared foundation:** Libraries 1.19.46<br>
 
-The Manager consumes the complete Libraries 1.19.35 appearance contract: **Day** is the white Infiltrator palette, **Night** is the layered Linux MBLINK reference palette (canvas, titlebar, graphite surfaces, semantic state colours and canonical blue accent), and **System** follows the host light/dark preference by selecting exactly one of those two palettes.
+The Manager consumes the complete Libraries 1.19.46 appearance contract: **Day** is the white Infiltrator palette, **Night** is the layered Linux MBLink reference palette (canvas, titlebar, graphite surfaces, semantic state colours and canonical blue accent), and **System** follows the host light/dark preference by selecting exactly one of those two palettes.
 **Licence:** GPL-3.0-or-later
 
 Pre-1.0 development is current-format-only. Development-format compatibility is not promised, so test media may need reformatting after an on-disk-format revision.

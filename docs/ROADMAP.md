@@ -112,7 +112,7 @@ See `PLATFORM_ADAPTERS.md` for the adapter contract.
 
 ## Future ecosystem integration
 
-Possible future integrations with Software, System Monitor, Defragmenter, LINK-family applications, RunnerScope and other Infiltrator projects are recorded in `FUTURE_ECOSYSTEM_INTEGRATION.md`.
+Possible future integrations with Software, System Monitor, Defragmenter, Link-family applications, RunnerScope and other Infiltrator projects are recorded in `FUTURE_ECOSYSTEM_INTEGRATION.md`.
 
 These are **not current feature-completion gates**. They remain subordinate to the present priority: make the native Linux filesystem boot, mount, recover and sustain ordinary desktop/server workloads with normal latency and throughput before adding ecosystem-specific enhancement layers.
 

@@ -1,18 +1,18 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.20)
-project(InfiltratorFS VERSION 0.18.106 LANGUAGES C)
+project(InfiltratorFS VERSION 0.18.107 LANGUAGES C)
 # Development qualification anchor: 0.18.106
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
-set(INFILTRATR_COMMON_REQUIRED_VERSION "1.19.35")
+set(INFILTRATR_COMMON_REQUIRED_VERSION "1.19.46")
 set(INFILTRATR_COMMON_REQUIRED_COMMIT
-    "7cc5de3de0e94ed2cfcff0840bbb5346eb5c9c9f")
+    "fc2c72cb038a8e4c1e0bc62145adf533fbfd7923")
 
 # InfiltratorFS consumes the same Common contract as the other Infiltrator
-# projects. Prefer a parent-provided/installed 1.19.35 package, then the pinned
+# projects. Prefer a parent-provided/installed 1.19.46 package, then the pinned
 # submodule. A source checkout without initialised submodules still remains
 # buildable by fetching the exact immutable Common commit.
 if(NOT TARGET InfiltratrCommon::Portable)
@@ -70,7 +70,7 @@ if(NOT TARGET InfiltratrCommon::Portable OR
         "Libraries ${INFILTRATR_COMMON_REQUIRED_VERSION} is required")
 endif()
 
-# Common 1.19.35 owns the canonical MB Corpo asset provenance. Installed
+# Common 1.19.46 owns the canonical MB Corpo asset provenance. Installed
 # packages import this contract through InfiltratrCommonConfig.cmake; vendored
 # and FetchContent builds include the same module directly from the exact
 # pinned Common source.
