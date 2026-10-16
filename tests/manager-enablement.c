@@ -1,9 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "manager/infiltratorfs-manager-contract.h"
 
-#include <assert.h>
+#include <stdlib.h>
+#include <stdio.h>
 #include <stdbool.h>
 #include <string.h>
+
+// Checks remain executable under NDEBUG in optimized qualification builds.
+#define CHECK(condition) do { \
+    if (!(condition)) { \
+        fprintf(stderr, "%s:%d: check failed: %s\n", __FILE__, __LINE__, #condition); \
+        exit(EXIT_FAILURE); \
+    } \
+} while (0)
 
 static struct infilfs_manager_enablement enabled_for(
     bool has_target, bool is_infiltrator, bool mounted, bool busy)
@@ -30,44 +39,44 @@ int main(void)
      */
     struct infilfs_manager_enablement unknown =
         enabled_for(true, false, false, false);
-    assert(unknown.inspect);
-    assert(!unknown.maintenance);
-    assert(unknown.format);
-    assert(!unknown.mount);
-    assert(!unknown.unmount);
-    assert(!unknown.files);
+    CHECK(unknown.inspect);
+    CHECK(!unknown.maintenance);
+    CHECK(unknown.format);
+    CHECK(!unknown.mount);
+    CHECK(!unknown.unmount);
+    CHECK(!unknown.files);
 
     struct infilfs_manager_enablement known =
         enabled_for(true, true, false, false);
-    assert(known.inspect);
-    assert(known.maintenance);
-    assert(known.format);
-    assert(known.mount);
-    assert(!known.unmount);
-    assert(known.files);
+    CHECK(known.inspect);
+    CHECK(known.maintenance);
+    CHECK(known.format);
+    CHECK(known.mount);
+    CHECK(!known.unmount);
+    CHECK(known.files);
 
     struct infilfs_manager_enablement mounted =
         enabled_for(true, true, true, false);
-    assert(!mounted.inspect);
-    assert(!mounted.maintenance);
-    assert(!mounted.format);
-    assert(mounted.mount);
-    assert(mounted.unmount);
-    assert(mounted.files);
+    CHECK(!mounted.inspect);
+    CHECK(!mounted.maintenance);
+    CHECK(!mounted.format);
+    CHECK(mounted.mount);
+    CHECK(mounted.unmount);
+    CHECK(mounted.files);
 
     struct infilfs_manager_enablement busy =
         enabled_for(true, false, false, true);
-    assert(!busy.inspect);
-    assert(!busy.maintenance);
-    assert(!busy.format);
-    assert(!busy.mount);
+    CHECK(!busy.inspect);
+    CHECK(!busy.maintenance);
+    CHECK(!busy.format);
+    CHECK(!busy.mount);
 
     struct infilfs_manager_enablement empty =
         enabled_for(false, false, false, false);
-    assert(!empty.inspect);
-    assert(!empty.maintenance);
-    assert(!empty.format);
-    assert(!empty.mount);
+    CHECK(!empty.inspect);
+    CHECK(!empty.maintenance);
+    CHECK(!empty.format);
+    CHECK(!empty.mount);
 
     return 0;
 }

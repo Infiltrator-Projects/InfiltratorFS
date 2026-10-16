@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.18.104 — 2026-10-16
+
+Keep desktop/presentation regression checks active in optimized builds. A failed contract now reports its expression and exits unsuccessfully even when `NDEBUG` is defined. Production behaviour is unchanged.
+
 This file records user-visible, compatibility, architecture and validation changes for InfiltratorFS.
 
 ## 0.18.103 — 2026-10-14
