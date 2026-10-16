@@ -37,7 +37,10 @@ version_is_newer() {
 requested=false
 if [[ -n "$previous" ]]; then
     if [[ "$version" == "$previous" ]]; then
-        :
+        # An exact-commit rerun can finish staged publication or verify public bytes.
+        if [[ "$(git rev-list -n 1 "$latest_tag" 2>/dev/null)" == "$sha" ]]; then
+            requested=true
+        fi
     elif version_is_newer "$previous" "$version"; then
         requested=true
     else

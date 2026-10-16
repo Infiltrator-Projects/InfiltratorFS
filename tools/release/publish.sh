@@ -43,6 +43,13 @@ verify_remote() {
     rm -rf "$destination"
 }
 verify_remote
+# Publish an annotated immutable tag only after staged bytes are verified.
+if ! git rev-parse -q --verify "refs/tags/$tag^{commit}" >/dev/null; then
+    git config user.name github-actions[bot]
+    git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+    git tag --annotate "$tag" "$EXPECTED_SHA" --message "InfiltratorFS $VERSION"
+    git push origin "refs/tags/$tag"
+fi
 if [[ "$draft" == true ]]; then
     gh release edit "$tag" --draft=false --latest
 fi

@@ -208,35 +208,35 @@ for forbidden in (
     if forbidden in release_candidate:
         raise SystemExit(f'release candidate contains dynamic or retired input path: {forbidden}')
 
-# Publication consumes the exact candidate artifact. It may re-check bytes and
-# tag/release state, but must never rebuild or mutate an existing release.
+# Publication consumes exact candidate artifacts. Procedure has a separate owner;
+# tests of the workflow protect orchestration rather than duplicating script prose.
 for required in (
     '"Native Linux kernel module"',
     '"Linux root-volume qualification"',
     '"Linux metadata qualification"',
     '"Release candidate Linux"',
     '--name InfiltratorFS-Linux',
-    'git tag --annotate',
-    'gh release download',
-    'cmp -s',
-    'sha256sum -c SHA256SUMS.txt',
-    'tools/project-version.sh CMakeLists.txt',
+    'bash tools/release/publish.sh',
 ):
     if required not in release:
         raise SystemExit(f'release publication invariant missing: {required}')
-for forbidden in (
-    'apt-get build-dep',
-    'cmake --build',
-    'git rev-parse origin/main',
-    'TRIGGER_RUN_ID',
-    'gate_run_id',
-    'gate_updated_at',
-    'InfiltratorFS-release-assets',
-    'gh release edit',
-    '--clobber',
-):
+for forbidden in ('apt-get build-dep', 'cmake --build', 'git rev-parse origin/main',
+                  'TRIGGER_RUN_ID', 'gate_run_id', 'gate_updated_at',
+                  'InfiltratorFS-release-assets'):
     if forbidden in release:
         raise SystemExit(f'release publisher contains obsolete coupling: {forbidden}')
+publication = root / 'tools' / 'release' / 'publish.sh'
+subprocess.run(['bash', '-n', str(publication)], check=True)
+publication_text = publication.read_text()
+for required in ('git tag --annotate', 'verify_remote', 'diff -qr release-assets',
+                 'sha256sum -c SHA256SUMS.txt',
+                 'tools/project-version.sh CMakeLists.txt',
+                 'if [[ "$draft" == true ]]; then'):
+    if required not in publication_text:
+        raise SystemExit(f'release implementation invariant missing: {required}')
+for forbidden in ('--force', 'force=true', 'cmake --build'):
+    if forbidden in publication_text:
+        raise SystemExit(f'unsafe publication operation: {forbidden}')
 
 # The native kernel workflow retains longer internal diagnostic allowances for
 # manual runs; automatic runs are still stopped by this one focused watchdog.
