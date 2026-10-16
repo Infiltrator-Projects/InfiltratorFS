@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.18.107 — 2026-10-16
+
+- Pin Libraries 1.19.46 and use the canonical System Settings provider identity.
+- Normalize current product names in source, dependency links and documentation. On-disk Format remains 0.18.
+
 ## 0.18.106 — 2026-10-16
 
 - Move the governing engineering philosophy into `docs/PHILOSOPHY.md` and update the documentation index.
