@@ -12,6 +12,7 @@ sources of truth.
 
 ## Normative and architectural documents
 
+- [`PHILOSOPHY.md`](PHILOSOPHY.md) — governing engineering and documentation standard.
 - `DESIGN.md` — concise engineering-design principles and subsystem shape for contributors. It is subordinate to the canonical project philosophy, `ARCHITECTURE.md` and the byte-level format contract; it is not a separate status authority.
 - `ON_DISK_FORMAT.md` — persistent Format 0.18 structural contract. Exact
   packed fields/constants remain authoritative in `include/infilfs/format.h`.
@@ -78,5 +79,3 @@ This category currently includes:
    must not be presented as current performance without remeasurement.
 6. Pre-1.0 format history is informative only; current accepted-format rules are
    defined by the current format sources.
-
-- [Engineering philosophy](PHILOSOPHY.md) — governing engineering and documentation standard.
