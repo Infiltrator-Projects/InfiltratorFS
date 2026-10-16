@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.18.106 — 2026-10-16
+
+- Move the governing engineering philosophy into `docs/PHILOSOPHY.md` and update the documentation index.
+
 ## 0.18.105 — 2026-10-16
 
 - Stage and verify release drafts before publication; recover safely from an ambiguous GitHub creation response. Unpublished 0.18.104 is superseded by this candidate.

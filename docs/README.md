@@ -78,3 +78,5 @@ This category currently includes:
    must not be presented as current performance without remeasurement.
 6. Pre-1.0 format history is informative only; current accepted-format rules are
    defined by the current format sources.
+
+- [Engineering philosophy](PHILOSOPHY.md) — governing engineering and documentation standard.
