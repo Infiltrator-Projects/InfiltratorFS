@@ -17,33 +17,33 @@ This file records user-visible, compatibility, architecture and validation chang
 - Require the project-wide `Build and conformance` workflow as an exact-source release-publication prerequisite, preventing release publication from outrunning sanitizer, static-analysis, portable-core, packaging or Windows build evidence.
 - Make the native Windows service random-byte callback fill the complete `size_t` request by chunking BCrypt calls at `ULONG_MAX`, matching the established Win32 storage-adapter contract instead of silently narrowing oversized requests.
 - Clarify that native Linux mounted qualification requires a usable running-kernel build environment and fails closed when that evidence cannot be produced.
-- On-disk Format remains 0.18; Infiltratr Common remains pinned to 1.19.35.
+- On-disk Format remains 0.18; Libraries remains pinned to 1.19.35.
 
 ## 0.18.102 — 2026-10-14
 - Pin retained LZ4 codec source to immutable upstream commit `ebb370ca83af193212df4dcbadcc5d87bc0de2f0` and use the non-shallow fetch required for exact arbitrary-commit checkout.
 - Pin every remote GitHub Action used by maintained workflows to an immutable commit SHA while retaining the human-readable source ref in a comment, so re-running one InfiltratorFS SHA cannot silently execute different automation code.
 - Make native Linux mounted qualification fail closed when headers for the running kernel are unavailable; compile-only evidence can no longer masquerade as the mounted qualification required by policy.
-- Add an executable dependency-identity policy guard covering mutable workflow actions, the LZ4 source identity and the mounted-native fail-closed boundary. Format 0.18 and the Infiltratr Common 1.19.35 pin remain unchanged.
+- Add an executable dependency-identity policy guard covering mutable workflow actions, the LZ4 source identity and the mounted-native fail-closed boundary. Format 0.18 and the Libraries 1.19.35 pin remain unchanged.
 
 ## 0.18.101 — 2026-10-14
 - Complete a second philosophy-governed forensic review across architecture, dependency ownership, tests, packaging, documentation and release machinery without changing Format 0.18 semantics.
 - Remove hidden GitHub environment coupling from semantic release resolution; release-candidate packaging now binds its version explicitly from the resolver output, and release policy guards that boundary.
 - Restore one documentation authority map by classifying the maintained portable-security and filesystem-paper audit documents, and make the workflow definitions themselves the executable authority for the automatic validation gate set.
 - Correct the maintained IAC1 hardware-design note so it no longer contradicts Format 0.18's retained non-default LZ4 codec representation.
-- Preserve the exact Infiltratr Common 1.19.35 pin after rechecking newer Common releases against the filesystem-facing contracts actually consumed here.
+- Preserve the exact Libraries 1.19.35 pin after rechecking newer Common releases against the filesystem-facing contracts actually consumed here.
 - On-disk Format remains 0.18.
 
 ## 0.18.100 — 2026-10-13
 - Correct the normative fsck/scrub contract so it reflects the already-qualified deterministic checkpoint-replica repair path instead of claiming that repair is unimplemented.
 - Strengthen the fsck structural policy guard so documentation cannot regress away from the deliberately narrow repair boundary: automatic repair requires a surviving valid checkpoint replica and an otherwise valid structural graph; ambiguous corruption remains fail-closed.
-- Advance the semantic source identity after the published 0.18.99 release without changing Format 0.18 or the exact Infiltratr Common 1.19.35 pin.
+- Advance the semantic source identity after the published 0.18.99 release without changing Format 0.18 or the exact Libraries 1.19.35 pin.
 
 ## 0.18.99 — 2026-10-13
 - Repair the Linux package configuration race so delayed UDisks formatter advertisement cannot make an otherwise valid package installation fail; explicit integration verification remains strict.
 - Advance the semantic source identity after the published 0.18.98 release so post-release work cannot reuse an immutable release version.
 - Correct current-status documentation for the native Windows driver: implementation exists, while real mounted Windows and Driver Verifier qualification remain the explicit release gate.
 - Consolidate shell-side version consumers on the project version authority and remove stale documentation claims discovered by the philosophy-governed forensic review.
-- On-disk Format remains 0.18; the exact Infiltratr Common 1.19.35 pin is unchanged.
+- On-disk Format remains 0.18; the exact Libraries 1.19.35 pin is unchanged.
 
 ## 0.18.98 — 2026-10-13
 - Complete a philosophy-governed forensic architecture, test, packaging and release review without changing Format 0.18 semantics.
@@ -198,7 +198,7 @@ This file records user-visible, compatibility, architecture and validation chang
 
 - Advance development after publishing 0.18.75; on-disk Format remains 0.18.
 - Correct APT publication verification so a source release does not fail merely because the central pull-based repository publisher has not run yet. An accepted immediate repository dispatch is still verified synchronously; otherwise publication is left to the authoritative scheduled central workflow.
-- Preserve the exact Infiltratr Common 1.19.24 pin at `748e089ae175329471d4cf375522c44081371bd5`.
+- Preserve the exact Libraries 1.19.24 pin at `748e089ae175329471d4cf375522c44081371bd5`.
 
 ## 0.18.75 — 2026-09-22
 
@@ -211,7 +211,7 @@ This file records user-visible, compatibility, architecture and validation chang
 ## 0.18.74 — 2026-09-22
 
 - Publish 0.18.74 as the sustained native-write stall recovery release after the 0.18.73 development cycle; on-disk Format remains 0.18.
-- Advance the exact Infiltratr Common dependency from 1.19.23 to 1.19.24 at `748e089ae175329471d4cf375522c44081371bd5`. This Common release hardens graphics surface range/alias handling; InfiltratorFS does not consume that graphics API, so the pin changes no filesystem or on-disk semantics.
+- Advance the exact Libraries dependency from 1.19.23 to 1.19.24 at `748e089ae175329471d4cf375522c44081371bd5`. This Common release hardens graphics surface range/alias handling; InfiltratorFS does not consume that graphics API, so the pin changes no filesystem or on-disk semantics.
 - Split the filesystem-wide N-1 CPU/workqueue policy from the VFS/checkpoint core into a dedicated compiled `infiltratorfs_cpu.o`, preserving the same hotplug-aware execution gate while reducing `infiltratorfs_core.c` coupling.
 - Consolidate native shared-range ownership discovery, exact fallback and incremental multiplicity accounting in `infiltratorfs_shared_ownership.c`, removing the duplicate range-append helper from the namespace compositor and shrinking its ownership surface.
 - Split Linux Manager storage discovery, protected-device filtering and mount observation into a dedicated internal module, leaving the GTK source responsible for presentation/workflow rather than device inventory policy.
@@ -225,7 +225,7 @@ This file records user-visible, compatibility, architecture and validation chang
 ## 0.18.72 — 2026-09-22
 
 - Publish 0.18.72 directly after 0.18.70; 0.18.71 was used only as an intermediate development identity and was never published.
-- Advance the exact Infiltratr Common dependency from 1.19.20 to 1.19.23 at `a9cf2957cffeefe6001830916b8a32c2ef58a551`; the intervening Common releases are backward-compatible hardening plus a temporal helper and do not alter InfiltratorFS persistent semantics.
+- Advance the exact Libraries dependency from 1.19.20 to 1.19.23 at `a9cf2957cffeefe6001830916b8a32c2ef58a551`; the intervening Common releases are backward-compatible hardening plus a temporal helper and do not alter InfiltratorFS persistent semantics.
 - Mark optional case-folded directories roadmap-complete after portable cross-platform conformance plus mounted native VFS/dcache qualification and CLEAN scrub.
 - Add and mark generic typed/reparse extension objects roadmap-complete: stable 128-bit type IDs, type versions, opaque SHA-256-protected payloads, generic reparse/preserve flags, portable set/get APIs, scrub/reference validation, native-reader recognition and reflink preservation.
 - Preserve the qualified CoW durability and reflink-scaling hardening accumulated during 0.18.71/0.18.72 development.
@@ -305,7 +305,7 @@ This file records user-visible, compatibility, architecture and validation chang
 - Add Windows parity for Create Image, fast structural Check and Forensic Scan through the same portable-core APIs used by the Linux tooling, while retaining the ProjFS Explorer bridge as the Windows-only mount adapter.
 - Apply the full Common 1.19.10 Night presentation roles to the Win32 Manager, including connection surface, headings, summaries, kickers, detail/note text and semantic success/warning/info/fault/accent states.
 
-- Advance to Infiltratr Common 1.19.10 and consume the complete Linux MBLINK-derived appearance roles in the native Manager, including titlebar, connection/status surface, heading/summary/kicker/detail/note text, selected-summary, accent-hover/foreground and muted state-border colours.
+- Advance to Libraries 1.19.10 and consume the complete Linux MBLINK-derived appearance roles in the native Manager, including titlebar, connection/status surface, heading/summary/kicker/detail/note text, selected-summary, accent-hover/foreground and muted state-border colours.
 - Keep filesystem-specific semantic colouring on top of those canonical roles: success for mounted/check, warning for offline/scrub, fault for destructive formatting, information for inspection and the canonical blue accent for filesystem/forensic operations, without changing layout or behaviour.
 
 ## 0.18.63 — 2026-09-19
@@ -316,7 +316,7 @@ This file records user-visible, compatibility, architecture and validation chang
 - Add slow-path diagnostics for checkpoint selection, writable mount initialisation, checkpoint healing, quota reconstruction, snapshot retention-map construction and transaction publication.
 - Report checkpoint-replica divergence when it forces expensive deep graph validation so recovery-time stalls are directly attributable in the kernel log.
 - Preserve crash-safe checkpoint ordering and fail-closed write poisoning on indeterminate durability failures.
-- Advance userspace to Infiltratr Common 1.19.8 and consume its canonical typography, design metrics, font provenance, project identity, formatting and POSIX path contracts where they fit without moving filesystem semantics into Common.
+- Advance userspace to Libraries 1.19.8 and consume its canonical typography, design metrics, font provenance, project identity, formatting and POSIX path contracts where they fit without moving filesystem semantics into Common.
 - Fix the native Manager's failed-command capture leak exposed by ASan/LeakSanitizer.
 - Forensically audit Common 1.19.8 call sites: use checked shared arithmetic for extent/allocation and Win32 growth paths, and use the generic Common scaler for Windows capacity text while preserving the established two-decimal GiB presentation.
 - Add a Common-usage policy gate so these call-site choices cannot silently drift back to local duplicate arithmetic or capacity scaling.
@@ -351,12 +351,12 @@ This file records user-visible, compatibility, architecture and validation chang
 - Preserve VFS timestamps across defrag, hard links, delayed writes and remount.
 - Extract shared ownership, locator-cache and persistent checksum-store logic into explicit compiled kernel objects.
 - Keep ordinary fsck structural and topology-bounded while reserving exhaustive payload verification for `--scrub`.
-- Advance the shared userspace foundation to Infiltratr Common 1.19.3.
+- Advance the shared userspace foundation to Libraries 1.19.3.
 - Keep the on-disk format at 0.18.
 
 ## 0.18.59 — 2026-09-18
 
-- Consolidate product-neutral userspace parsing, exact I/O and checked dynamic-array growth on Infiltratr Common 1.19.2.
+- Consolidate product-neutral userspace parsing, exact I/O and checked dynamic-array growth on Libraries 1.19.2.
 - Keep filesystem semantics and the on-disk Format 0.18 contract unchanged.
 
 ## Historical source

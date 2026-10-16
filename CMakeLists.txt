@@ -21,9 +21,9 @@ if(NOT TARGET InfiltratrCommon::Portable)
 endif()
 if(NOT TARGET InfiltratrCommon::Portable)
     set(INFILTRATR_COMMON_BUILD_TESTS OFF CACHE BOOL
-        "Build Infiltratr Common tests as part of InfiltratorFS" FORCE)
+        "Build Libraries tests as part of InfiltratorFS" FORCE)
     set(INFILTRATR_COMMON_WARNINGS_AS_ERRORS OFF CACHE BOOL
-        "Treat vendored Infiltratr Common warnings as errors" FORCE)
+        "Treat vendored Libraries warnings as errors" FORCE)
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/infiltratr-common/CMakeLists.txt")
         file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/infiltratr-common/VERSION"
              INFILTRATR_COMMON_SOURCE_VERSION)
@@ -32,7 +32,7 @@ if(NOT TARGET InfiltratrCommon::Portable)
         if(NOT INFILTRATR_COMMON_SOURCE_VERSION STREQUAL
                INFILTRATR_COMMON_REQUIRED_VERSION)
             message(FATAL_ERROR
-                "Stale Infiltratr Common submodule: expected ${INFILTRATR_COMMON_REQUIRED_VERSION}, "
+                "Stale Libraries submodule: expected ${INFILTRATR_COMMON_REQUIRED_VERSION}, "
                 "found ${INFILTRATR_COMMON_SOURCE_VERSION}. Update submodules before building.")
         endif()
         find_package(Git QUIET)
@@ -49,7 +49,7 @@ if(NOT TARGET InfiltratrCommon::Portable)
                NOT INFILTRATR_COMMON_SOURCE_COMMIT STREQUAL
                    INFILTRATR_COMMON_REQUIRED_COMMIT)
                 message(FATAL_ERROR
-                    "Stale Infiltratr Common submodule commit: expected "
+                    "Stale Libraries submodule commit: expected "
                     "${INFILTRATR_COMMON_REQUIRED_COMMIT}, found "
                     "${INFILTRATR_COMMON_SOURCE_COMMIT}. Update submodules before building.")
             endif()
@@ -58,7 +58,7 @@ if(NOT TARGET InfiltratrCommon::Portable)
     else()
         include(FetchContent)
         FetchContent_Declare(infiltratr_common
-            GIT_REPOSITORY https://github.com/Infiltrator-Projects/Infiltrator-Libraries.git
+            GIT_REPOSITORY https://github.com/Infiltrator-Projects/Libraries.git
             GIT_TAG ${INFILTRATR_COMMON_REQUIRED_COMMIT}
             GIT_SHALLOW FALSE)
         FetchContent_MakeAvailable(infiltratr_common)
@@ -67,7 +67,7 @@ endif()
 if(NOT TARGET InfiltratrCommon::Portable OR
    NOT TARGET InfiltratrCommon::Common)
     message(FATAL_ERROR
-        "Infiltratr Common ${INFILTRATR_COMMON_REQUIRED_VERSION} is required")
+        "Libraries ${INFILTRATR_COMMON_REQUIRED_VERSION} is required")
 endif()
 
 # Common 1.19.35 owns the canonical MB Corpo asset provenance. Installed
@@ -85,7 +85,7 @@ if(NOT DEFINED INFILTRATR_MB_CORPO_ARCHIVE_SHA256)
             "${infiltratr_common_SOURCE_DIR}/cmake/InfiltratrTypographyAssets.cmake")
     else()
         message(FATAL_ERROR
-            "Infiltratr Common typography asset contract is unavailable")
+            "Libraries typography asset contract is unavailable")
     endif()
 endif()
 

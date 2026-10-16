@@ -3,7 +3,7 @@
 
 **Published:** 2026-09-18.
 
-Use Infiltratr Common 1.19.2 more deeply only where it improves InfiltratorFS
+Use Libraries 1.19.2 more deeply only where it improves InfiltratorFS
 itself.
 
 This release removes duplicate userspace numeric and binary-size parsing from

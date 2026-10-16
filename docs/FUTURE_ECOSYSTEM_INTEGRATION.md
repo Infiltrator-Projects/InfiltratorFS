@@ -177,7 +177,7 @@ features without every application inventing a private backup-rotation format.
 
 Potential consumers include:
 
-- Character Manager documents and archives;
+- Character Profiler documents and archives;
 - Backyard Racer save files;
 - configuration/state files;
 - exported diagnostic evidence; and
@@ -208,7 +208,7 @@ Possible uses include:
 - low-cost parallel experiment trees; and
 - measuring logical versus unique physical build-space consumption.
 
-Runner Monitor could eventually expose filesystem-backed runner workspace
+RunnerScope could eventually expose filesystem-backed runner workspace
 metrics when such data is available, without making runners dependent on
 InfiltratorFS.
 
@@ -237,7 +237,7 @@ Representative workloads include:
   transactions;
 - Calculator/Calendar: small configuration and history updates;
 - LINK/MBLINK/JAGLINK: append-heavy captures and durable evidence publication;
-- Character Manager: database-style metadata plus larger visual assets;
+- Character Profiler: database-style metadata plus larger visual assets;
 - Backyard Racer: save-game replacement and asset streaming;
 - Git/build trees: high metadata churn, parallel creation and temporary files;
 - Repository/site generators: deterministic bulk publication; and
@@ -254,7 +254,7 @@ unit, crash/recovery, mounted stress or destructive qualification.
 ## Common integration
 
 Generic mechanisms discovered through these integrations should move into
-Infiltratr Common only when they are truly product-neutral and at least as
+Libraries only when they are truly product-neutral and at least as
 correct as the strongest existing implementation.
 
 Examples may include:

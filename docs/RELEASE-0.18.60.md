@@ -46,7 +46,7 @@ ordinary fsck into a full payload/ownership scrub. Exhaustive data reading,
 checksum recomputation and retained-generation traversal remain the explicit
 `--scrub` path.
 
-Userspace advances to Infiltratr Common 1.19.3 where the shared primitive is
+Userspace advances to Libraries 1.19.3 where the shared primitive is
 genuinely product-neutral, while persistent-format policy, allocation,
 transactions, snapshots/reflinks, IAC1 and kernel locking remain owned by
 InfiltratorFS. Managed Linux desktop-integration packaging is also kept separate

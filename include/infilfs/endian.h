@@ -5,7 +5,7 @@
 #include "infiltratr/endian.h"
 
 /* Compatibility names retained for the InfiltratorFS on-disk format code.
- * The implementation lives in Infiltratr Common 1.11+ so byte-order handling
+ * The implementation lives in Libraries 1.11+ so byte-order handling
  * is identical across projects. */
 #define infs_bswap16(value) infiltratr_bswap16((uint16_t)(value))
 #define infs_bswap32(value) infiltratr_bswap32((uint32_t)(value))

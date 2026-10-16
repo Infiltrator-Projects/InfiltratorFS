@@ -44,7 +44,7 @@ elif [[ "$require_integration" = 1 ]]; then
     exit 1
 fi
 [[ -f src/infiltratr-common/CMakeLists.txt ]] || {
-    echo "The pinned Infiltratr Common submodule is not initialised." >&2
+    echo "The pinned Libraries submodule is not initialised." >&2
     exit 1
 }
 

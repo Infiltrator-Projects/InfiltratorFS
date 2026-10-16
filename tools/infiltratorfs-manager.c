@@ -1373,7 +1373,7 @@ static GtkWidget *build_ui(Manager *manager)
     gtk_header_bar_pack_end(GTK_HEADER_BAR(bar), refresh);
     manager->theme_button = gtk_button_new_with_label("Theme: System");
     gtk_widget_set_tooltip_text(manager->theme_button,
-        "Cycle Infiltratr Common System, Day and Night themes");
+        "Cycle Libraries System, Day and Night themes");
     g_signal_connect(manager->theme_button, "clicked", G_CALLBACK(on_theme), manager);
     gtk_header_bar_pack_end(GTK_HEADER_BAR(bar), manager->theme_button);
     GtkWidget *about = gtk_button_new();
