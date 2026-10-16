@@ -160,66 +160,7 @@ jobs:
           EXPECTED_SHA: ${{ needs.source.outputs.sha }}
           VERSION: ${{ needs.source.outputs.version }}
         shell: bash
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
-          source_version="$(bash tools/project-version.sh CMakeLists.txt)"
-          test "$source_version" = "$VERSION"
-
-          tag="v${VERSION}"
-          deb="infiltratorfs_${VERSION}_amd64.deb"
-          installer="infiltratorfs-${VERSION}-linux-native.run"
-          for asset in "$deb" "$installer" SHA256SUMS.txt; do
-            test -s "release-assets/$asset"
-          done
-          expected_assets="$(printf '%s\n' "SHA256SUMS.txt" "$deb" "$installer" | sort)"
-          actual_assets="$(find release-assets -maxdepth 1 -type f -printf '%f\n' | sort)"
-          test "$actual_assets" = "$expected_assets"
-          (
-            cd release-assets
-            sha256sum -c SHA256SUMS.txt
-          )
-
-          git fetch origin --tags
-          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
-            tagged_sha="$(git rev-list -n 1 "$tag")"
-            if [[ "$tagged_sha" != "$EXPECTED_SHA" ]]; then
-              echo "Existing tag $tag points to $tagged_sha, expected $EXPECTED_SHA." >&2
-              exit 1
-            fi
-          else
-            git config user.name github-actions[bot]
-            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-            git tag --annotate "$tag" "$EXPECTED_SHA" --message "InfiltratorFS $VERSION"
-            test "$(git cat-file -t "refs/tags/${tag}")" = tag
-            git push origin "$tag"
-          fi
-
-          if gh release view "$tag" >/dev/null 2>&1; then
-            state="$(gh release view "$tag" --json isDraft,isPrerelease --jq '[.isDraft,.isPrerelease] | @tsv')"
-            IFS=$'\t' read -r is_draft is_prerelease <<<"$state"
-            test "$is_draft" = false
-            test "$is_prerelease" = false
-          else
-            mapfile -t publish_assets < <(find release-assets -maxdepth 1 -type f -printf '%p\n' | sort)
-            gh release create "$tag" "${publish_assets[@]}" \
-              --verify-tag --target "$EXPECTED_SHA" \
-              --title "InfiltratorFS $VERSION" --generate-notes --latest
-          fi
-
-          published_dir="$RUNNER_TEMP/published-release"
-          rm -rf "$published_dir"
-          mkdir -p "$published_dir"
-          gh release download "$tag" --dir "$published_dir"
-          published_assets="$(find "$published_dir" -maxdepth 1 -type f -printf '%f\n' | sort)"
-          test "$published_assets" = "$expected_assets"
-          for asset in "$deb" "$installer" SHA256SUMS.txt; do
-            cmp -s "release-assets/$asset" "$published_dir/$asset" || {
-              echo "Published asset $asset differs from the qualified artifact." >&2
-              exit 1
-            }
-          done
-          echo "Release $tag is published from exact qualified bytes for $EXPECTED_SHA."
+        run: bash tools/release/publish.sh
 
   apt:
     name: Defer APT publication to central pull

@@ -1,6 +1,8 @@
 # Changelog
 
-## 0.18.104 — 2026-10-16
+## 0.18.105 — 2026-10-16
+
+- Stage and verify release drafts before publication; recover safely from an ambiguous GitHub creation response. Unpublished 0.18.104 is superseded by this candidate.
 
 Keep desktop/presentation regression checks active in optimized builds. A failed contract now reports its expression and exits unsuccessfully even when `NDEBUG` is defined. Production behaviour is unchanged.
 

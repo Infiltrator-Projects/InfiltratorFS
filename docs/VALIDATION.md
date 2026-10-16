@@ -36,3 +36,5 @@ The exact release revision must pass its required gates, and generated assets mu
 Reproducible defects should gain permanent regression coverage at the narrowest layer that captures the original failure. Validation documentation should distinguish automatic release blockers from optional, manual or milestone evidence.
 
 Optimized qualification retains executable checks in the desktop/presentation regression paths. These checks report a failing expression and terminate unsuccessfully independently of `NDEBUG`; Release compilation cannot silently turn the suite into a successful no-op.
+
+Publication is owned by tools/release/publish.sh. It repairs only drafts, compares qualified assets before and after publishing, and re-reads durable state after an ambiguous creation response. Public tags and bytes remain immutable.

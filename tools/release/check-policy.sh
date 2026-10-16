@@ -85,8 +85,14 @@ grep -Fq '  workflow_run:' "$publisher" || \
 if grep -Eq '^  (workflow_dispatch|pull_request|schedule|push):' "$publisher"; then
     fail 'release publisher must not have a direct publication trigger'
 fi
-if grep -Eq -- '--clobber|gh release edit' "$publisher"; then
-    fail 'published releases must never be modified in place'
+# Publication owns draft repair; public bytes are compared and left untouched.
+grep -Fq 'bash tools/release/publish.sh' "$publisher" || fail 'publisher must use the maintained publication contract'
+publication=tools/release/publish.sh
+bash -n "$publication"
+grep -Fq 'if [[ "$draft" == true ]]; then' "$publication" || fail 'release mutation must be draft-only'
+grep -Fq 'diff -qr release-assets' "$publication" || fail 'publication must compare exact remote bytes'
+if grep -Eq 'force=true|git push .*--force' "$publication"; then
+    fail 'release tags must not be rewritten'
 fi
 # A superseded exact-SHA qualification may be cancelled when main advances.
 # That is not a failed release: the publisher must prove the trigger SHA still
