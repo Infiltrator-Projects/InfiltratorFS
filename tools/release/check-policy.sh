@@ -17,11 +17,9 @@ bash tools/release/resolve-request.sh . "$state" >/dev/null
 # shellcheck disable=SC1090
 source "$state"
 
-visible_readme_version="$(sed -nE \
-    's/.*\*\*Current source:\*\*[[:space:]]*([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' \
-    README.md | head -n1)"
-[[ "$visible_readme_version" == "$version" ]] || \
-    fail "README version ${visible_readme_version:-missing} does not match source $version"
+# The README points to the version authority instead of copying its value.
+grep -Fq '[`CMakeLists.txt`](CMakeLists.txt)' README.md || \
+    fail "README must link to the authoritative CMake release identity"
 
 grep -Fq "## ${version} —" CHANGELOG.md || \
     fail "CHANGELOG has no entry for source version $version"
