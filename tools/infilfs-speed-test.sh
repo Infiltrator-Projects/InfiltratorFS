@@ -82,6 +82,7 @@ rmdir "$testdir/meta"
 
 section "INCOMPRESSIBLE SEQUENTIAL WRITE"
 dd if=/dev/urandom of="$rand_source" bs=16M count=64 status=progress
+read -r expected_sha _ < <(sha256sum "$rand_source")
 drop_caches
 timed "1 GiB buffered incompressible write"     dd if="$rand_source" of="$testdir/random.bin" bs=16M status=progress
 timed "target sync after 1 GiB write" sync -f "$testdir"
@@ -89,6 +90,12 @@ timed "target sync after 1 GiB write" sync -f "$testdir"
 section "COLD VERIFIED SEQUENTIAL READ"
 drop_caches
 timed "1 GiB cold filesystem read"     dd if="$testdir/random.bin" of=/dev/null bs=16M status=progress
+read -r actual_sha _ < <(sha256sum "$testdir/random.bin")
+if [[ "$actual_sha" != "$expected_sha" ]]; then
+    echo "ERROR: sequential read integrity verification failed" >&2
+    exit 1
+fi
+echo "Sequential read integrity: SHA-256 MATCH"
 
 section "O_DIRECT FILE I/O"
 timed "1 GiB O_DIRECT write"     dd if="$rand_source" of="$testdir/direct.bin" bs=4M oflag=direct status=progress

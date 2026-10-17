@@ -19,18 +19,20 @@
 
 static const uint8_t snapshot_catalog_id[16] = INFS_SNAPSHOT_CATALOG_ID;
 
+/* Keep compatibility-flag admission identical across portable features. */
+static int volume_incompat_enabled(const struct infs_volume *vol, uint64_t flag)
+{
+    return vol && (infs_le64_to_cpu(vol->sb.incompat_flags) & flag) != 0;
+}
+
 static int removable_names_enabled(const struct infs_volume *vol)
 {
-    return vol &&
-        (infs_le64_to_cpu(vol->sb.incompat_flags) &
-         INFS_INCOMPAT_REMOVABLE_NAMES_V1) != 0;
+    return volume_incompat_enabled(vol, INFS_INCOMPAT_REMOVABLE_NAMES_V1);
 }
 
 static int casefold_names_enabled(const struct infs_volume *vol)
 {
-    return vol &&
-        (infs_le64_to_cpu(vol->sb.incompat_flags) &
-         INFS_INCOMPAT_CASEFOLD_V1) != 0;
+    return volume_incompat_enabled(vol, INFS_INCOMPAT_CASEFOLD_V1);
 }
 
 static uint8_t namespace_casefold_byte_v1(uint8_t value)
@@ -295,44 +297,32 @@ static int namespace_object_type(uint16_t type)
 
 static int symbolic_links_enabled(const struct infs_volume *vol)
 {
-    return vol &&
-        (infs_le64_to_cpu(vol->sb.incompat_flags) &
-         INFS_INCOMPAT_SYMBOLIC_LINKS) != 0;
+    return volume_incompat_enabled(vol, INFS_INCOMPAT_SYMBOLIC_LINKS);
 }
 
 static int hard_links_enabled(const struct infs_volume *vol)
 {
-    return vol &&
-        (infs_le64_to_cpu(vol->sb.incompat_flags) &
-         INFS_INCOMPAT_HARD_LINKS) != 0;
+    return volume_incompat_enabled(vol, INFS_INCOMPAT_HARD_LINKS);
 }
 
 static int snapshots_enabled(const struct infs_volume *vol)
 {
-    return vol &&
-        (infs_le64_to_cpu(vol->sb.incompat_flags) &
-         INFS_INCOMPAT_SNAPSHOTS) != 0;
+    return volume_incompat_enabled(vol, INFS_INCOMPAT_SNAPSHOTS);
 }
 
 static int security_objects_enabled(const struct infs_volume *vol)
 {
-    return vol &&
-        (infs_le64_to_cpu(vol->sb.incompat_flags) &
-         INFS_INCOMPAT_PORTABLE_SECURITY) != 0;
+    return volume_incompat_enabled(vol, INFS_INCOMPAT_PORTABLE_SECURITY);
 }
 
 static int typed_extensions_enabled(const struct infs_volume *vol)
 {
-    return vol &&
-        (infs_le64_to_cpu(vol->sb.incompat_flags) &
-         INFS_INCOMPAT_TYPED_EXTENSIONS) != 0;
+    return volume_incompat_enabled(vol, INFS_INCOMPAT_TYPED_EXTENSIONS);
 }
 
 static int named_streams_enabled(const struct infs_volume *vol)
 {
-    return vol &&
-        (infs_le64_to_cpu(vol->sb.incompat_flags) &
-         INFS_INCOMPAT_NAMED_STREAMS_V1) != 0;
+    return volume_incompat_enabled(vol, INFS_INCOMPAT_NAMED_STREAMS_V1);
 }
 
 static int file_data_object_type(uint16_t type)

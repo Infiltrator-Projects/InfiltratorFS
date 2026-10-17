@@ -48,6 +48,17 @@ static enum infilfs_data_workload infilfs_native_classify_write(
     return INFILFS_DATA_WORKLOAD_RANDOM;
 }
 
+/* Reuse the per-inode locality hint only while it fits this volume. */
+static u64 infilfs_native_preferred_data_block(
+    const struct infilfs_sb_info *sbi, const struct infilfs_inode_info *ii)
+{
+    u64 preferred = READ_ONCE(ii->data_allocation_hint);
+
+    if (preferred < 1u || preferred >= infilfs_volume_blocks(sbi))
+        return infilfs_parallel_object_preferred(sbi, ii->object_id);
+    return preferred;
+}
+
 static u64 infilfs_native_block_distance(u64 a, u64 b)
 {
     return a > b ? a - b : b - a;
@@ -3276,11 +3287,7 @@ generic_extent_write:
         goto out;
     }
     workload = infilfs_native_classify_write(pos, bytes, old_size);
-    preferred = READ_ONCE(ii->data_allocation_hint);
-    if (preferred < 1u ||
-        preferred >= infilfs_volume_blocks(pending->tx.sbi))
-        preferred = infilfs_parallel_object_preferred(
-            pending->tx.sbi, ii->object_id);
+    preferred = infilfs_native_preferred_data_block(pending->tx.sbi, ii);
     if (workload == INFILFS_DATA_WORKLOAD_RANDOM && old_extent_count) {
         u64 old_physical = 0;
         u32 old_flags = INFILFS_EXTENT_HOLE;
@@ -3568,11 +3575,7 @@ static ssize_t infilfs_native_parallel_append_batch(
         ret = -EFAULT;
         goto out;
     }
-    base_preferred = READ_ONCE(ii->data_allocation_hint);
-    if (base_preferred < 1u ||
-        base_preferred >= infilfs_volume_blocks(sbi))
-        base_preferred = infilfs_parallel_object_preferred(
-            sbi, ii->object_id);
+    base_preferred = infilfs_native_preferred_data_block(sbi, ii);
     offset = 0;
     for (i = 0; i < count; ++i) {
         size_t bytes = min_t(size_t, compression_bytes,
@@ -3779,10 +3782,7 @@ static ssize_t infilfs_native_extent_write_iter_mode(
             chunk = min_t(size_t, chunk, (size_t)compression_bytes);
         workload = infilfs_native_classify_write(
             current_pos, chunk, old_size);
-        preferred = READ_ONCE(ii->data_allocation_hint);
-        if (preferred < 1u || preferred >= infilfs_volume_blocks(sbi))
-            preferred = infilfs_parallel_object_preferred(
-                sbi, ii->object_id);
+        preferred = infilfs_native_preferred_data_block(sbi, ii);
 
         /*
          * Aligned sequential appends dominate filesystem migration. Copy user
