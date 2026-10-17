@@ -157,7 +157,7 @@ jobs:
           test "$(dpkg-deb --field "$deb" X-InfiltratorFS-Desktop-Integration)" = core-only
           depends="$(dpkg-deb --field "$deb" Depends)"
           grep -Eq '(^|, )initramfs-tools([ ,|]|$)' <<<"$depends"
-          ! grep -Eq '(^|, )(gnome-disk-utility|libblockdev-fs3|infiltratorfs-desktop-integration|infiltratorfs-gnome-disk-utility|infiltratorfs-libblockdev-fs3)([ ,|]|$)' <<<"$depends"
+          ! grep -Eq '(^|, )(gnome-disk-utility|libblockdev-fs3|infiltratorfs-[^ ,|]+)([ ,|]|$)' <<<"$depends"
           dpkg-deb -e "$deb" "$control_dir"
           grep -Fq 'live root remains mounted' "$control_dir/preinst"
           grep -Fq 'root-volume upgrade staged safely' "$control_dir/postinst"

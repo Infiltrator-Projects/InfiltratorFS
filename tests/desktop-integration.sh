@@ -125,9 +125,7 @@ grep -Fq 'src/disks/gduvolumegrid.c' "$noble_gnome_patch"
 grep -Fq 'InfiltratorFS (format %s)' "$noble_gnome_patch"
 grep -Fq 'BD_FS_TECH_INFILTRATORFS' "$noble_libblockdev_patch"
 
-# The core package may carry migration Conflicts/Replaces for the three retired
-# package names, but it must never depend on, build, bundle, install or publish
-# those packages again.
+# The alpha core package owns its bundled integration directly.
 grep -Fq 'INFILTRATORFS_OS_INTEGRATION_BUNDLE_DIR' "$repo_root/packaging/build-linux-packages.sh"
 grep -Fq 'ubuntu24.04-mint22-bundled' "$repo_root/packaging/build-linux-packages.sh"
 grep -Fq 'gnome-disk-utility (>= 46~)' "$repo_root/packaging/build-linux-packages.sh"
@@ -137,16 +135,10 @@ if grep -Fq 'INFILTRATORFS_DESKTOP_BUNDLE_DIR' "$repo_root/packaging/build-linux
     echo 'desktop-integration: obsolete managed-package bundle variable returned' >&2
     exit 1
 fi
-for retired_pattern in \
-    'infiltratorfs-libblockdev-fs3_*.deb' \
-    'infiltratorfs-gnome-disk-utility_*.deb' \
-    'infiltratorfs-desktop-integration_*.deb'; do
-    if grep -Fq "$retired_pattern" "$repo_root/packaging/build-linux-packages.sh" || \
-       grep -Fq "$retired_pattern" "$bootstrap"; then
-        echo "desktop-integration: retired replacement package path returned: $retired_pattern" >&2
-        exit 1
-    fi
-done
+if grep -Eq '^(Provides|Breaks|Conflicts|Replaces):' "$repo_root/packaging/build-linux-packages.sh"; then
+    echo 'desktop-integration: alpha package migration metadata is not permitted' >&2
+    exit 1
+fi
 
 # Mintstick/Nemo's USB Stick Formatter is intentionally NOT an InfiltratorFS
 # formatter. It repartitions the entire target device, so a selected partition
