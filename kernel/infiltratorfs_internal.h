@@ -856,6 +856,9 @@ ssize_t infilfs_native_extent_write_iter(
 ssize_t infilfs_native_writeback_iter(
     struct inode *inode, loff_t *position, struct iov_iter *from,
     size_t requested);
+bool infilfs_pagecache_next_pending_data(
+    struct address_space *mapping, u64 start, u64 end,
+    u64 *data_start, u64 *data_end);
 int infilfs_quota_reserve_inode(
     struct inode *inode, u64 bytes, u64 objects,
     struct infilfs_quota_reservation *reservation);

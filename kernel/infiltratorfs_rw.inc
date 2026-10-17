@@ -2088,9 +2088,9 @@ static int infilfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 
 
 /*
- * Expose the explicit sparse extent map through standard Linux APIs.  These
- * helpers snapshot the same validated extent list used by native mutation and
- * defrag code, so classic and paged extent maps have identical semantics.
+ * SEEK_DATA/SEEK_HOLE describe the live sparse map. The persistent extent map
+ * is merged with pending CoW page-cache folios so buffered writes are visible
+ * immediately without forcing allocation, writeback or checkpoint publication.
  */
 static loff_t infilfs_file_llseek(struct file *file, loff_t offset, int whence)
 {
@@ -2098,11 +2098,8 @@ static loff_t infilfs_file_llseek(struct file *file, loff_t offset, int whence)
     struct infilfs_sb_info *sbi = INFILFS_SB(inode->i_sb);
     struct infilfs_extent_disk *extents = NULL;
     u8 *object = NULL;
-    u64 blocks = 0;
-    u64 size;
-    u64 position;
-    u32 count = 0;
-    u32 i;
+    u64 blocks = 0, size, position, inline_end = 0;
+    u32 count = 0, cursor = 0;
     bool was_inline = false;
     loff_t result = 0;
     int ret;
@@ -2128,70 +2125,97 @@ static loff_t infilfs_file_llseek(struct file *file, loff_t offset, int whence)
         NULL, inode, object, &extents, &count, &blocks, &was_inline);
     if (ret)
         goto out;
-
     if (was_inline) {
-        result = whence == SEEK_DATA ? offset : (loff_t)size;
-        goto set;
+        const struct infilfs_object_header_disk *header =
+            (const struct infilfs_object_header_disk *)object;
+        const struct infilfs_file_payload_disk *payload =
+            (const struct infilfs_file_payload_disk *)(header + 1);
+
+        inline_end = min_t(
+            u64, size, le64_to_cpu(payload->attributes.logical_size));
     }
 
-    /*
-     * The extent list describes allocated ranges.  Gaps between entries are
-     * valid sparse holes and must not be treated as corrupt metadata.  Walk
-     * forward from the requested byte, alternating explicit extents and
-     * implicit gaps until the requested class is found.
-     */
     position = (u64)offset;
-    for (i = 0; i < count && position < size; ++i) {
-        u64 extent_start =
-            le64_to_cpu(extents[i].logical_block) <<
-            INFILFS_DISK_BLOCK_SHIFT;
-        u64 extent_length =
-            (u64)le32_to_cpu(extents[i].block_count) <<
-            INFILFS_DISK_BLOCK_SHIFT;
-        u64 extent_end;
-        bool data;
+    while (position < size) {
+        bool have_disk = false;
+        bool have_cache;
+        u64 disk_start = 0, disk_end = 0;
+        u64 cache_start = 0, cache_end = 0;
+        u64 data_start, data_end;
 
-        if (extent_start >= size)
-            break;
-        extent_end = extent_start > U64_MAX - extent_length ?
-            U64_MAX : extent_start + extent_length;
-        if (extent_end > size)
-            extent_end = size;
-        if (extent_end <= position)
-            continue;
+        if (position < inline_end) {
+            have_disk = true;
+            disk_start = position;
+            disk_end = inline_end;
+        } else {
+            while (cursor < count) {
+                u64 extent_start =
+                    le64_to_cpu(extents[cursor].logical_block) <<
+                    INFILFS_DISK_BLOCK_SHIFT;
+                u64 extent_length =
+                    (u64)le32_to_cpu(extents[cursor].block_count) <<
+                    INFILFS_DISK_BLOCK_SHIFT;
+                u64 extent_end =
+                    extent_start > U64_MAX - extent_length ?
+                    U64_MAX : extent_start + extent_length;
+                u32 flags = le32_to_cpu(extents[cursor].flags);
 
-        if (extent_start > position) {
-            if (whence == SEEK_HOLE) {
-                result = (loff_t)position;
-                goto set;
+                if (extent_start >= size) {
+                    cursor = count;
+                    break;
+                }
+                if (extent_end > size)
+                    extent_end = size;
+                if (extent_end <= position ||
+                    infilfs_extent_kind(flags) != INFILFS_EXTENT_NORMAL) {
+                    cursor++;
+                    continue;
+                }
+                have_disk = true;
+                disk_start = max_t(u64, position, extent_start);
+                disk_end = extent_end;
+                break;
             }
-            position = extent_start;
         }
 
-        if (position >= extent_end)
-            continue;
-
-        data = infilfs_extent_kind(le32_to_cpu(extents[i].flags)) ==
-            INFILFS_EXTENT_NORMAL;
-        if ((whence == SEEK_DATA && data) ||
-            (whence == SEEK_HOLE && !data)) {
+        have_cache = infilfs_pagecache_next_pending_data(
+            inode->i_mapping, position, size, &cache_start, &cache_end);
+        if (!have_disk && !have_cache) {
+            if (whence == SEEK_DATA) {
+                ret = -ENXIO;
+                goto out;
+            }
             result = (loff_t)position;
             goto set;
         }
 
-        position = extent_end;
+        if (!have_cache || (have_disk && disk_start < cache_start)) {
+            data_start = disk_start;
+            data_end = disk_end;
+        } else if (!have_disk || cache_start < disk_start) {
+            data_start = cache_start;
+            data_end = cache_end;
+        } else {
+            data_start = disk_start;
+            data_end = max_t(u64, disk_end, cache_end);
+        }
+
+        if (whence == SEEK_DATA) {
+            result = (loff_t)data_start;
+            goto set;
+        }
+        if (data_start > position) {
+            result = (loff_t)position;
+            goto set;
+        }
+        if (data_end <= position) {
+            ret = -EFSCORRUPTED;
+            goto out;
+        }
+        position = data_end;
     }
 
-    if (whence == SEEK_HOLE) {
-        result = (loff_t)position;
-        if ((u64)result > size)
-            result = (loff_t)size;
-        goto set;
-    }
-
-    ret = -ENXIO;
-    goto out;
-
+    result = (loff_t)size;
 set:
     result = vfs_setpos(file, result, inode->i_sb->s_maxbytes);
     ret = 0;

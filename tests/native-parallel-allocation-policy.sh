@@ -55,9 +55,11 @@ test -n "$lock_line"
 # The parallel allocator is one of the principal reasons the native driver has
 # multiple synchronization domains, so every ordinary allocation-policy pass
 # also verifies the source-level lock/composition contract and the migration
-# debt budget. Reclamation remains part of the same scaling contract.
+# debt budget. Reclamation and live sparse-seek coherence remain part of the
+# same native VFS contract.
 bash "$root/tests/native-kernel-maintainability-policy.sh" "$root"
 bash "$root/tests/native-rw-debt-budget.sh" "$root"
 bash "$root/tests/native-unlink-ownership-index-policy.sh" "$root"
+bash "$root/tests/native-sparse-seek-policy.sh" "$root"
 
 printf 'Native parallel-allocation policy guard passed.\n'

@@ -91,6 +91,48 @@ static bool infilfs_release_folio(struct folio *folio, gfp_t gfp)
     return !folio_test_private_2(folio);
 }
 
+bool infilfs_pagecache_next_pending_data(
+    struct address_space *mapping, u64 start, u64 end,
+    u64 *data_start, u64 *data_end)
+{
+    struct folio_batch fbatch;
+    pgoff_t index;
+    pgoff_t last;
+
+    if (!mapping || !data_start || !data_end || start >= end)
+        return false;
+
+    index = start >> PAGE_SHIFT;
+    last = (end - 1u) >> PAGE_SHIFT;
+    folio_batch_init(&fbatch);
+    while (index <= last && filemap_get_folios(mapping, &index, last, &fbatch)) {
+        unsigned int i;
+
+        for (i = 0; i < folio_batch_count(&fbatch); ++i) {
+            struct folio *folio = fbatch.folios[i];
+            loff_t position = folio_pos(folio);
+            u64 first;
+            u64 limit;
+
+            if (folio->mapping != mapping || !folio_test_private_2(folio) ||
+                position < 0)
+                continue;
+            first = (u64)position;
+            limit = first > U64_MAX - (u64)folio_size(folio) ?
+                U64_MAX : first + (u64)folio_size(folio);
+            if (limit <= start)
+                continue;
+            *data_start = max_t(u64, start, first);
+            *data_end = min_t(u64, end, limit);
+            folio_batch_release(&fbatch);
+            return true;
+        }
+        folio_batch_release(&fbatch);
+        cond_resched();
+    }
+    return false;
+}
+
 struct infilfs_pagecache_write_ctx {
     struct infilfs_quota_reservation quota;
     loff_t old_size;
