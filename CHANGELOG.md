@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.18.109 — 2026-10-17
+
+- Make native Linux `SEEK_DATA`/`SEEK_HOLE` account for dirty buffered page-cache data before writeback, preserving delayed allocation while presenting a coherent sparse-file view.
+- Add regression coverage that prevents future sparse-seek fixes from forcing writeback or `fsync`; on-disk Format remains 0.18.
+
 ## 0.18.108 — 2026-10-17
 
 - Remove obsolete desktop-package migration metadata; the alpha package owns its bundled integration directly.
@@ -103,24 +108,24 @@ This file records user-visible, compatibility, architecture and validation chang
 
 ## 0.18.91 — 2026-09-25
 - Give the Linux Manager titlebar the suite-wide 6 px side padding used by the publisher shell.
-- Keep filesystem format, kernel driver, storage, encryption, namespace and maintenance behaviour unchanged.
+- Keep filesystem format, kernel driver, storage, encryption, namespace, maintenance behaviour unchanged.
 - On-disk Format remains 0.18.
 
 
 ## 0.18.90 — 2026-09-25
 - Align Linux Manager stack-switcher tabs with the suite-wide 5 px / 10 px compact tab rhythm.
-- Keep filesystem format, kernel driver, storage, encryption, namespace and maintenance behaviour unchanged.
+- Keep filesystem format, kernel driver, storage, encryption, namespace, maintenance behaviour unchanged.
 - On-disk Format remains 0.18.
 
 ## 0.18.89 — 2026-09-25
 - Align Linux Manager action rows with Common's 10 px control radius instead of the 6 px compact radius.
-- Keep filesystem format, kernel driver, storage, encryption, namespace and maintenance behaviour unchanged.
+- Keep filesystem format, kernel driver, storage, encryption, namespace, maintenance behaviour unchanged.
 - On-disk Format remains 0.18.
 
 ## 0.18.88 — 2026-09-25
 - Align ordinary Linux Manager cards with Common's 12 px card radius instead of the 10 px control radius.
 - Make hosted N-1 CPU qualification explicitly skip the runtime multi-worker proof when the runner exposes only one filesystem worker slot; the physical-core budget check still runs, and multi-worker proof remains mandatory on capable runners.
-- Keep filesystem format, kernel driver, storage, encryption, namespace and maintenance behaviour unchanged.
+- Keep filesystem format, kernel driver, storage, encryption, namespace, maintenance behaviour unchanged.
 - On-disk Format remains 0.18.
 
 ## 0.18.87 — 2026-09-25
@@ -143,7 +148,7 @@ This file records user-visible, compatibility, architecture and validation chang
 
 ## 0.18.85 — 2026-09-24
 - Align the Linux Manager sidebar divider with the suite-wide 248 px desktop navigation width.
-- Keep filesystem format, kernel driver, storage, encryption, namespace and maintenance behaviour unchanged.
+- Keep filesystem format, kernel driver, storage, encryption, namespace, maintenance behaviour unchanged.
 - On-disk Format remains 0.18.
 
 ## 0.18.84 — 2026-09-24
@@ -155,22 +160,22 @@ This file records user-visible, compatibility, architecture and validation chang
 
 ## 0.18.83 — 2026-09-24
 - Align Manager secondary device metadata with the suite-wide 11 px supporting-text scale.
-- Keep filesystem format, kernel driver, storage, encryption, namespace and maintenance behaviour unchanged.
+- Keep filesystem format, kernel driver, storage, encryption, namespace, maintenance behaviour unchanged.
 - On-disk Format remains 0.18.
 
 ## 0.18.82 — 2026-09-24
 - Align Manager device navigation side margins with the suite-wide 8 px navigation rhythm.
-- Keep filesystem format, kernel driver, storage, encryption, namespace and maintenance behaviour unchanged.
+- Keep filesystem format, kernel driver, storage, encryption, namespace, maintenance behaviour unchanged.
 - On-disk Format remains 0.18.
 
 ## 0.18.81 — 2026-09-24
 - Align the Manager empty-state heading with the same 28 px publisher title scale as populated Manager pages.
-- Keep filesystem format, kernel driver, storage, encryption, namespace and maintenance behaviour unchanged.
+- Keep filesystem format, kernel driver, storage, encryption, namespace, maintenance behaviour unchanged.
 - On-disk Format remains 0.18.
 
 ## 0.18.80 — 2026-09-24
 - Align the Manager hero heading with the 28 px publisher-wide desktop heading scale.
-- Keep filesystem format, kernel driver, storage, encryption, namespace and maintenance behaviour unchanged.
+- Keep filesystem format, kernel driver, storage, encryption, namespace, maintenance behaviour unchanged.
 - On-disk Format remains 0.18.
 
 ## 0.18.79 — 2026-09-24
