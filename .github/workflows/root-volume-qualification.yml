@@ -1,19 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 name: Linux root-volume qualification
 
+# Run every required exact-source gate on every main revision. Path filters
+# can otherwise deadlock immutable release publication after CI-only fixes.
 on:
   push:
     branches:
       - main
-    paths:
-      - 'kernel/**'
-      - 'src/**'
-      - 'include/**'
-      - 'tools/**'
-      - 'tests/**'
-      - 'packaging/**'
-      - 'CMakeLists.txt'
-      - '.github/workflows/root-volume-qualification.yml'
   workflow_dispatch:
 
 permissions:

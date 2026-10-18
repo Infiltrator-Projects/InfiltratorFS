@@ -2,6 +2,7 @@
 
 ## 0.18.141 — 2026-10-18
 
+- Require all exact-source native kernel, root-volume and Linux metadata release prerequisites on every `main` push, including CI-only corrections, preventing path-filtered revisions from deadlocking immutable publication.
 - Update native kernel CI's exact userspace tool list to build the POSIX 0.19 fixture writer before native loopback tests; keep the fixture and kernel module on the same source revision.
 - Extend native Linux Format 0.19 disposable loopback qualification from an empty bootstrap directory to a real POSIX-generated, multi-generation 256 KiB file. Require byte-exact namespace and data reads on intact, block-zero-lost, one-locator-lost, and primary-only recovery mounts.
 - Continue rejecting native Format 0.19 read-write mounts and read-write remounts. Use only disposable regular-file test images; no physical device formatting, native 0.19 writes, resize or repair is enabled.
