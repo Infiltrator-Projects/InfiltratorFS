@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.18.126 — 2026-10-18
+
+- Restore native kernel source maintainability limit for the experimental Format 0.19 read-only selector by simplifying redundant implementation comments. No persistent format or logic change.
+- Requalify native Format 0.19 disposable image mounts and existing Format 0.18 mounted regressions under the immutable new source revision.
+
 ## 0.18.125 — 2026-10-18
 
 - Add guarded native Linux read-only Format 0.19 recovery from both fixed discovery locators, validating up to six independent checkpoint header candidates and the selected root/index/allocation graph without geometry fallback.

@@ -547,11 +547,7 @@ static bool infilfs_checkpoint_basic_valid(
     return true;
 }
 
-/*
- * In Format 0.19 each of the two independent fixed discovery locators may
- * describe a different checkpoint map during an interrupted resize. Keep all
- * six hints independently; a locator checksum never certifies a checkpoint.
- */
+/* Keep both independent Format 0.19 locator maps across interrupted resize. */
 #define INFILFS_RECOVERY_CANDIDATE_MAX (2u * INFILFS_CHECKPOINT_COUNT)
 
 struct infilfs_checkpoint_candidates {
@@ -583,11 +579,7 @@ static int infilfs_read_checkpoint_candidates(
     if (!raw)
         return -ENOMEM;
 
-    /*
-     * First discover Format 0.19 solely from its two fixed, checksummed
-     * locator records. No device-geometry midpoint fallback is permitted:
-     * such offsets cease to be reliable following resize.
-     */
+    /* Format 0.19 never trusts physical midpoint/end fallback. */
     if (device_blocks >= INFILFS_LOCATOR_MIN_VOLUME_BLOCKS) {
         static const u64 addresses[2] = {
             INFILFS_LOCATOR_BLOCK_A, INFILFS_LOCATOR_BLOCK_B
@@ -662,10 +654,7 @@ static int infilfs_read_checkpoint_candidates(
         goto done;
     }
 
-    /*
-     * Format 0.18 stays isolated from 0.19: old geometry discovery cannot
-     * be used as an accidental alternative for damaged 0.19 locators.
-     */
+    /* Legacy geometry discovery accepts only Format 0.18. */
     {
         int ret = infilfs_read_block(sb, 0, raw);
         if (!ret &&
@@ -3033,9 +3022,7 @@ static int infilfs_fill_super(struct super_block *sb, struct fs_context *fc)
     if (ret)
         goto fail;
 
-    /* The 0.19 native read path is experimental until 0.19 write/resize and
-     * locator crash recovery are qualified. Never enable an unqualified
-     * writable mount, including RO->RW remount. */
+    /* Format 0.19 remains read-only until crash-safe writes qualify. */
     if (le16_to_cpu(sbi->disk.format_minor) ==
             INFILFS_LOCATOR_FORMAT_MINOR && !sb_rdonly(sb)) {
         ret = -EROFS;
