@@ -18,4 +18,10 @@ infs_status infs_format_storage_with_options(struct infs_storage *storage,
                                              const char *label,
                                              uint32_t options);
 
+/* Experimental Format 0.19 fixture creation for in-memory/regular-file
+ * qualification only. This rejects physical block-device storage targets.
+ * It does NOT imply the incomplete format is safe for mount or production. */
+infs_status infs_format_storage_019_test_image(
+    struct infs_storage *storage, const char *label);
+
 #endif

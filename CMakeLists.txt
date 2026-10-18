@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.20)
-project(InfiltratorFS VERSION 0.18.119 LANGUAGES C)
+project(InfiltratorFS VERSION 0.18.120 LANGUAGES C)
 # Development qualification anchor: 0.18.106
 
 set(CMAKE_C_STANDARD 17)
@@ -342,6 +342,13 @@ infilfs_enable_warnings(infilfs-locator-format-019)
 
 enable_testing()
 add_test(NAME infilfs-locator-format-019 COMMAND infilfs-locator-format-019)
+
+# Experimental 0.19 formatting is memory-image-only until native mounted
+# readers, resize and scrub are qualified. It refuses physical block targets.
+add_executable(infilfs-format-019-image tests/format-019-image.c)
+target_link_libraries(infilfs-format-019-image PRIVATE infilfs_core)
+infilfs_enable_warnings(infilfs-format-019-image)
+add_test(NAME infilfs-format-019-image COMMAND infilfs-format-019-image)
 
 # Exercise every staged locator/checkpoint publication interruption using a
 # deterministic model before enabling Format 0.19 native media operations.

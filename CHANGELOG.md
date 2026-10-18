@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.120 — 2026-10-18
+
+- Add a guarded in-memory Format 0.19 test-image formatter, sharing the core fresh-format metadata builder while choosing canonical locator-aware initial metadata positions.
+- Create and durably flush both fixed discovery locators, account for them in the initial allocation bitmap, and publish three boot checkpoints individually.
+- Add image-level assertions for reserved locator blocks, physical-device refusal, exact 0.19 geometry and continued rejection by the active 0.18 reader. Normal mkfs and kernel mounting still use Format 0.18.
+
 ## 0.18.119 — 2026-10-18
 
 - Complete DKMS packaging registration for the preparatory native Format 0.19 locator codec source and header; update the explicit native object policy manifest.

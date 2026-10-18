@@ -3,6 +3,7 @@
 
 #include "infilfs/endian.h"
 #include "infilfs/format.h"
+#include "infilfs/locator.h"
 #include "infilfs/fs.h"
 #include "infilfs/utf8.h"
 #include "infiltratr/arithmetic.h"
@@ -91,10 +92,13 @@ static infs_status formatter_write_allocation_page(
                               block, sizeof(block));
 }
 
-infs_status infs_format_storage_with_options(struct infs_storage *storage,
-                                             const char *label,
-                                             uint32_t options)
+static infs_status format_storage_development(
+    struct infs_storage *storage, const char *label,
+    uint32_t options, uint16_t minor)
 {
+    if (minor != INFS_FORMAT_MINOR &&
+        minor != INFS_LOCATOR_FORMAT_MINOR)
+        return INFS_STATUS_INVALID_ARGUMENT;
     if (options & ~INFS_KNOWN_FORMAT_OPTIONS)
         return INFS_STATUS_INVALID_ARGUMENT;
     if (!storage || !infs_storage_valid(storage) || !storage->ops->write_at ||
@@ -113,7 +117,11 @@ infs_status infs_format_storage_with_options(struct infs_storage *storage,
     infs_status status = infs_storage_get_size(storage, &size_bytes, &is_device);
     if (status != INFS_STATUS_OK)
         return status;
-    (void)is_device;
+    /* Format 0.19 is test-image-only until native mounted recovery is
+     * qualified. Never allow this experimental entry point to erase a real
+     * block device even if its caller asks to do so. */
+    if (minor == INFS_LOCATOR_FORMAT_MINOR && is_device)
+        return INFS_STATUS_NOT_SUPPORTED;
     if (size_bytes < INFS_MIN_SIZE_BYTES)
         return INFS_STATUS_NO_SPACE;
 
@@ -126,7 +134,16 @@ infs_status infs_format_storage_with_options(struct infs_storage *storage,
     if (status != INFS_STATUS_OK)
         return status;
 
-    const uint64_t allocation_root = 1u;
+    uint64_t allocation_root = 1u;
+    if (minor == INFS_LOCATOR_FORMAT_MINOR) {
+        /* Root + branch levels + leaves + the initial three metadata
+         * objects form one contiguous bootstrap allocation region. */
+        status = infs_locator_plan_initial_metadata(
+            total_blocks, branch_count + leaf_count + UINT64_C(3),
+            &allocation_root);
+        if (status != INFS_STATUS_OK)
+            return status;
+    }
     const uint64_t level2_start = allocation_root + 1u;
     const uint64_t level1_start = level2_start + level2_count;
     const uint64_t leaf_start = level1_start + level1_count;
@@ -164,6 +181,10 @@ infs_status infs_format_storage_with_options(struct infs_storage *storage,
     formatter_bitmap_set(bitmap, checkpoints[0]);
     formatter_bitmap_set(bitmap, checkpoints[1]);
     formatter_bitmap_set(bitmap, checkpoints[2]);
+    if (minor == INFS_LOCATOR_FORMAT_MINOR) {
+        formatter_bitmap_set(bitmap, INFS_LOCATOR_BLOCK_A);
+        formatter_bitmap_set(bitmap, INFS_LOCATOR_BLOCK_B);
+    }
     for (uint64_t block = allocation_root;
          block < leaf_start + leaf_count; ++block)
         formatter_bitmap_set(bitmap, block);
@@ -202,7 +223,7 @@ infs_status infs_format_storage_with_options(struct infs_storage *storage,
     memset(&sb, 0, sizeof(sb));
     memcpy(sb.magic, INFS_MAGIC, 8u);
     sb.format_major = infs_cpu_to_le16(INFS_FORMAT_MAJOR);
-    sb.format_minor = infs_cpu_to_le16(INFS_FORMAT_MINOR);
+    sb.format_minor = infs_cpu_to_le16(minor);
     sb.header_size = infs_cpu_to_le16((uint16_t)sizeof(sb));
     sb.block_shift = infs_cpu_to_le16(INFS_BLOCK_SHIFT);
     sb.checksum_type = infs_cpu_to_le32(INFS_CHECKSUM_CRC64_ECMA);
@@ -240,6 +261,18 @@ infs_status infs_format_storage_with_options(struct infs_storage *storage,
     for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i) {
         status = infs_storage_write(storage,
             checkpoints[i] * INFS_BLOCK_SIZE, block, sizeof(block));
+        if (status != INFS_STATUS_OK)
+            goto done;
+    }
+    if (minor == INFS_LOCATOR_FORMAT_MINOR) {
+        /* Invalidate old fixed locators as part of destructive formatting,
+         * before any new metadata can be mistaken for a committed graph. */
+        status = infs_storage_write(storage,
+            INFS_LOCATOR_BLOCK_A * INFS_BLOCK_SIZE, block, sizeof(block));
+        if (status != INFS_STATUS_OK)
+            goto done;
+        status = infs_storage_write(storage,
+            INFS_LOCATOR_BLOCK_B * INFS_BLOCK_SIZE, block, sizeof(block));
         if (status != INFS_STATUS_OK)
             goto done;
     }
@@ -350,11 +383,45 @@ infs_status infs_format_storage_with_options(struct infs_storage *storage,
     status = infs_encode_superblock(block, &sb);
     if (status != INFS_STATUS_OK)
         goto done;
+    if (minor == INFS_LOCATOR_FORMAT_MINOR) {
+        /* Locators are discovery hints, never the generation commit.
+         * Flush both before publishing the first valid 0.19 checkpoint. */
+        struct infs_locator locator = {0};
+        locator.generation = 1u;
+        locator.total_blocks = total_blocks;
+        for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i)
+            locator.checkpoint[i] = checkpoints[i];
+        memcpy(locator.filesystem_uuid, filesystem_uuid, 16u);
+        status = infs_locator_encode(block, &locator);
+        if (status != INFS_STATUS_OK)
+            goto done;
+        status = infs_storage_write(storage,
+            INFS_LOCATOR_BLOCK_A * INFS_BLOCK_SIZE, block, sizeof(block));
+        if (status != INFS_STATUS_OK)
+            goto done;
+        status = infs_storage_write(storage,
+            INFS_LOCATOR_BLOCK_B * INFS_BLOCK_SIZE, block, sizeof(block));
+        if (status != INFS_STATUS_OK)
+            goto done;
+        status = infs_storage_flush(storage);
+        if (status != INFS_STATUS_OK)
+            goto done;
+        status = infs_encode_superblock(block, &sb);
+        if (status != INFS_STATUS_OK)
+            goto done;
+    }
     for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i) {
         status = infs_storage_write(storage,
             checkpoints[i] * INFS_BLOCK_SIZE, block, sizeof(block));
         if (status != INFS_STATUS_OK)
             goto done;
+        /* Format 0.19 publishes checkpoint replicas sequentially even at
+         * format time; Format 0.18 retains its proven original path. */
+        if (minor == INFS_LOCATOR_FORMAT_MINOR) {
+            status = infs_storage_flush(storage);
+            if (status != INFS_STATUS_OK)
+                goto done;
+        }
     }
     status = infs_storage_flush(storage);
 
@@ -363,6 +430,22 @@ done:
     return status;
 }
 
+
+infs_status infs_format_storage_with_options(struct infs_storage *storage,
+                                             const char *label,
+                                             uint32_t options)
+{
+    return format_storage_development(storage, label, options, INFS_FORMAT_MINOR);
+}
+
+/* Only tests may use this while the on-disk 0.19 reader is incomplete.
+ * It refuses all physical block-device targets and is not a mkfs CLI mode. */
+infs_status infs_format_storage_019_test_image(
+    struct infs_storage *storage, const char *label)
+{
+    return format_storage_development(
+        storage, label, 0u, INFS_LOCATOR_FORMAT_MINOR);
+}
 
 infs_status infs_format_storage(struct infs_storage *storage, const char *label)
 {
