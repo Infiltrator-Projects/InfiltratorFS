@@ -26,6 +26,9 @@ struct infs_check_report {
     int allocation_ownership_valid;
     int namespace_valid;
     int checksum_metadata_valid;
+    /* Zero on legacy 0.18, two expected on experimental 0.19. */
+    uint32_t recovery_locators_valid;
+    uint32_t recovery_locators_expected;
 };
 
 /*

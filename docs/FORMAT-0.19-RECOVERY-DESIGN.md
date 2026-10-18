@@ -1,10 +1,9 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # Format 0.19 — independently discoverable checkpoint locations
 
-**Status: design accepted; portable/native locator codecs and a read-only portable image-volume verifier exist. An experimental native Linux read-only loop-mounted recovery path is under qualification; native writable Format 0.19, resize, fsck and crash recovery are not complete.** Native mounted recovery, online resize, fsck/scrub and physical power-loss qualification remain incomplete. Normal mkfs and mounts still use Format 0.18.**
-Until a complete native/portable implementation and exact-source validation
-land together, the only shipping persistent format remains Format 0.18.
-The authoritative current Format 0.18 byte layout remains `include/infilfs/format.h`. The proposed Format 0.19 locator schema, bounded candidate-list builder and initial allocation geometry planner are defined by `include/infilfs/locator.h` and `src/locator.c` (not yet active in mounted filesystems).
+**Status: partially implemented, experimental only.** Format 0.19 now has portable image formatting, read-only portable/native recovery, regular-file portable writes and sync, deep image scrub and read-only structural fsck including recovery-locator validation. Native writable mounting, crash-safe grow/shrink relocation, repair, full power-loss qualification and physical-media deployment remain incomplete. Normal production formatting and mounting still use Format 0.18.
+
+Until the complete native/portable implementation and exact-source qualification land together, the only shipping production persistent format remains Format 0.18. Its authoritative byte layout is `include/infilfs/format.h`; experimental Format 0.19 locator records and the bounded discovery planner are `include/infilfs/locator.h` and `src/locator.c`.
 
 ## Problem and preserved commitments
 

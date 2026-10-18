@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.140 — 2026-10-18
+
+- Complete experimental read-only fast structural fsck's Format 0.19 redundancy accounting: authenticate both permanent locator records against the selected committed geometry and UUID, while permitting locator generation hints to lag ordinary writes.
+- Report recovery-locator health separately from checkpoint replicas. A recovery from block zero may be readable and pass deep scrub but must not report CLEAN fast structural fsck when its independent locators are damaged.
+- Extend regular-file regression tests for 2/2 healthy locator records and 0/2 degraded locator records without any modifications during fsck. Production persistent Format remains 0.18; no 0.19 physical writing, native RW or resize is enabled.
+
 ## 0.18.139 — 2026-10-18
 
 - Implement experimental read-only **fast structural fsck** on Format 0.19 regular images (`fsck.infiltratorfs -n --experimental-019-image <file>`), separate from the existing deep scrub. Validate actual 0.19 checkpoint replica CRCs, index, allocation and namespace metadata without allowing writes or repair.

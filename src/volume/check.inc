@@ -339,6 +339,44 @@ static infs_status check_allocation_structure(struct infs_volume *vol)
     return status;
 }
 
+/* Check each permanent 0.19 recovery locator independently. A checkpoint
+ * may allow read-only recovery after a damaged locator; fsck must still
+ * report degraded discovery redundancy rather than declaring the volume
+ * clean. Locator generation is a hint and may lag ordinary commits. */
+static uint32_t check_019_locators(struct infs_volume *vol)
+{
+    const uint64_t address[2] = {
+        INFS_LOCATOR_BLOCK_A, INFS_LOCATOR_BLOCK_B
+    };
+    uint32_t valid = 0;
+    uint64_t physical_blocks = vol->size_bytes / INFS_BLOCK_SIZE;
+    const uint64_t generation = infs_le64_to_cpu(vol->sb.generation);
+    const uint64_t total = infs_le64_to_cpu(vol->sb.total_blocks);
+
+    for (unsigned i = 0; i < 2u; ++i) {
+        uint8_t raw[INFS_BLOCK_SIZE];
+        struct infs_locator loc = {0};
+        int geometry_matches = 1;
+        if (infs_storage_read(
+                &vol->storage, address[i] * INFS_BLOCK_SIZE,
+                raw, sizeof(raw)) != INFS_STATUS_OK)
+            continue;
+        if (infs_locator_decode(raw, physical_blocks, &loc) !=
+                INFS_STATUS_OK ||
+            loc.total_blocks != total || loc.generation > generation ||
+            memcmp(loc.filesystem_uuid, vol->sb.filesystem_uuid, 16u) != 0)
+            continue;
+
+        for (unsigned j = 0; j < INFS_CHECKPOINT_COUNT; ++j)
+            if (loc.checkpoint[j] !=
+                    infs_le64_to_cpu(vol->sb.checkpoint_block[j]))
+                geometry_matches = 0;
+        if (geometry_matches)
+            ++valid;
+    }
+    return valid;
+}
+
 /*
  * Fast structural filesystem check.
  *
@@ -361,6 +399,11 @@ infs_status infs_check(struct infs_volume *vol,
         uint64_t block = infs_le64_to_cpu(vol->sb.checkpoint_block[i]);
         if (checkpoint_matches(vol, block, &vol->sb))
             ++report->checkpoint_replicas_valid;
+    }
+    if (infs_le16_to_cpu(vol->sb.format_minor) ==
+            INFS_LOCATOR_FORMAT_MINOR) {
+        report->recovery_locators_expected = 2u;
+        report->recovery_locators_valid = check_019_locators(vol);
     }
 
     infs_status status = check_index_structure(vol);
@@ -391,7 +434,10 @@ infs_status infs_check(struct infs_volume *vol,
      */
     report->checksum_metadata_valid = 1;
 
-    if (report->checkpoint_replicas_valid != INFS_CHECKPOINT_COUNT) {
+    if (report->checkpoint_replicas_valid != INFS_CHECKPOINT_COUNT ||
+        (report->recovery_locators_expected &&
+         report->recovery_locators_valid !=
+             report->recovery_locators_expected)) {
         report->failed_stage = INFS_CHECK_STAGE_CHECKPOINTS;
         return INFS_STATUS_CORRUPT;
     }

@@ -20,6 +20,7 @@ before="$(sha256sum "$image" | cut -d' ' -f1)"
 "$build/fsck.infiltratorfs" -n --experimental-019-image "$image" >"$work/struct"
 grep -Fq 'Format:                0.19 (experimental read-only image)' "$work/struct"
 grep -Fq 'Checkpoint replicas:   3/3 OK' "$work/struct"
+grep -Fq 'Recovery locators:     2/2 OK' "$work/struct"
 grep -Fq 'Result:                CLEAN' "$work/struct"
 [[ "$(sha256sum "$image" | cut -d' ' -f1)" == "$before" ]] || {
     echo 'Unsafe: structural 0.19 fsck modified the image' >&2; exit 1
@@ -29,6 +30,7 @@ grep -Fq 'Result:                CLEAN' "$work/struct"
 grep -Fq 'Result:              CLEAN' "$work/written"
 "$build/fsck.infiltratorfs" -n --experimental-019-image "$image" >"$work/postwrite"
 grep -Fq 'Checkpoint replicas:   3/3 OK' "$work/postwrite"
+grep -Fq 'Recovery locators:     2/2 OK' "$work/postwrite"
 grep -Fq 'Result:                CLEAN' "$work/postwrite"
 # Damage one secondary checkpoint; fast check must expose degraded
 # redundancy without healing it or modifying the disposable image.
@@ -68,6 +70,21 @@ printf '\xff' | dd of="$image" bs=1 seek=4096 count=1 conv=notrunc status=none
 printf '\xff' | dd of="$image" bs=1 seek=8384512 count=1 conv=notrunc status=none
 "$build/fsck.infiltratorfs" --scrub -n --experimental-019-image "$image" >"$work/recovered"
 grep -Fq 'Result:              CLEAN' "$work/recovered"
+# The graph remains recoverable by block zero, but BOTH permanent discovery
+# copies must be reported as degraded by the dedicated structural checker.
+before="$(sha256sum "$image" | cut -d' ' -f1)"
+set +e
+"$build/fsck.infiltratorfs" -n --experimental-019-image "$image" >"$work/bad-locators"
+result=$?
+set -e
+[[ "$result" == 4 ]] || {
+    echo "Expected 0.19 locator degradation exit 4, got $result" >&2; exit 1
+}
+grep -Fq 'Checkpoint replicas:   3/3 OK' "$work/bad-locators"
+grep -Fq 'Recovery locators:     0/2 DEGRADED' "$work/bad-locators"
+[[ "$(sha256sum "$image" | cut -d' ' -f1)" == "$before" ]] || {
+    echo 'Unsafe: locator integrity fsck modified the image' >&2; exit 1
+}
 # No locator nor valid block-zero checkpoint: no speculative geometry scan.
 printf '\xff' | dd of="$image" bs=1 seek=0 count=1 conv=notrunc status=none
 set +e

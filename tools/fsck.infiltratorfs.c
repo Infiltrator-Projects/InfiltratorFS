@@ -149,6 +149,12 @@ static int run_structural_check(const char *target, int repair,
            report.checkpoint_replicas_valid, INFS_CHECKPOINT_COUNT,
            report.checkpoint_replicas_valid == INFS_CHECKPOINT_COUNT ?
                "OK" : "DEGRADED");
+    if (report.recovery_locators_expected)
+        printf("  Recovery locators:     %u/%u %s\n",
+               report.recovery_locators_valid,
+               report.recovery_locators_expected,
+               report.recovery_locators_valid ==
+                   report.recovery_locators_expected ? "OK" : "DEGRADED");
     printf("  Object index:          %s\n",
            check_word(report.object_index_valid, report.failed_stage,
                       INFS_CHECK_STAGE_OBJECT_INDEX));
