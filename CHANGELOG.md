@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.18.133 — 2026-10-18
+
+- Update the 0.19 fault-injection conformance matrix to distinguish recoverable double-locator read failure (valid block-zero checkpoint still exists) from total discovery loss (both locators and block zero return I/O errors).
+- Preserve media I/O error reporting when all independent discovery sources fail, with portable and native recovery remaining read-only test features. Production disk Format remains 0.18.
+
 ## 0.18.132 — 2026-10-18
 
 - Recover read-only Format 0.19 test images after loss of both discovery locators when block zero is independently CRC-valid and explicitly identifies valid checkpoint geometry. Portable and native Linux readers use the primary's bounded checkpoint map; no speculative physical midpoint/end scan.

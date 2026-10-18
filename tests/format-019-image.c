@@ -22,7 +22,7 @@ struct memory_volume {
     unsigned flushes;
     uint8_t random_counter;
     int device;
-    uint64_t unreadable_blocks[2];
+    uint64_t unreadable_blocks[3];
     unsigned unreadable_count;
 };
 
@@ -235,11 +235,21 @@ int main(int argc, char **argv)
         m.unreadable_blocks[1] = INFS_LOCATOR_BLOCK_B;
         expect(infs_locator_discover_019_headers(
                    &storage, IMAGE_BYTES, found, valid, &count) ==
+                   INFS_STATUS_OK && count == 3,
+               "valid primary checkpoint survives both locator read errors");
+        expect(infs_volume_verify_019_test_image(&storage, &committed) ==
+                   INFS_STATUS_OK,
+               "full verifier recovers through primary with unreadable locators");
+
+        m.unreadable_count = 3;
+        m.unreadable_blocks[2] = 0;
+        expect(infs_locator_discover_019_headers(
+                   &storage, IMAGE_BYTES, found, valid, &count) ==
                    INFS_STATUS_IO_ERROR,
-               "both unreadable locators report media I/O, not corruption");
+               "all three unreadable discovery pages preserve media I/O error");
         expect(infs_volume_verify_019_test_image(&storage, &committed) ==
                    INFS_STATUS_IO_ERROR,
-               "full verifier preserves unrecoverable locator read errors");
+               "full verifier cannot invent addresses when every source fails");
         m.unreadable_count = 0;
         expect(m.writes == before, "read-only I/O recovery never writes media");
     }
