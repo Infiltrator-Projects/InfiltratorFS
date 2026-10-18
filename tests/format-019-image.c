@@ -142,7 +142,8 @@ int main(void)
     /* 16 MiB: allocation root=2, level2=3, level1=4, leaf=5.
      * The authoritative bitmap MUST account for the new locator blocks. */
     leaf = m.contents + 5u * INFS_BLOCK_SIZE;
-    expect(infs_validate_allocation_page(leaf),
+    expect(infs_validate_allocation_page(
+               leaf, INFS_ALLOCATION_LEAF_PAGE_MAGIC, 1u, 0u, 0u),
            "verify initial allocation bitmap leaf CRC64");
     bits = leaf + sizeof(struct infs_allocation_page_disk);
     expect((bits[INFS_LOCATOR_BLOCK_A / 8] &
