@@ -428,6 +428,19 @@ struct infilfs_linux_meta_cache_entry {
     u64 sidecar_object_block;
 };
 
+#define INFILFS_RECOVERY_CANDIDATE_MAX (2u * INFILFS_CHECKPOINT_COUNT)
+
+struct infilfs_checkpoint_candidates {
+    struct infilfs_superblock_disk disks[INFILFS_RECOVERY_CANDIDATE_MAX];
+    bool valid[INFILFS_RECOVERY_CANDIDATE_MAX];
+    bool format019;
+    int first_read_error;
+};
+
+/* Independently compiled Format 0.18/0.19 checkpoint recovery discovery. */
+int infilfs_read_checkpoint_candidates(
+    struct super_block *sb, struct infilfs_checkpoint_candidates *set);
+
 struct infilfs_sb_info {
     struct infilfs_superblock_disk disk;
     u64 device_blocks;

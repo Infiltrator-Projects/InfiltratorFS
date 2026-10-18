@@ -53,7 +53,9 @@ PY
 # The experimental native 0.19 selector must use both locators and must
 # reject writable mount/remount while geometry publication is unqualified.
 core="$root/kernel/infiltratorfs_core.c"
-grep -Fq 'infilfs_locator_decode_019(' "$core"
-grep -Fq 'INFILFS_RECOVERY_CANDIDATE_MAX' "$core"
-grep -Fq 'Never enable an unqualified' "$core"
+discovery="$root/kernel/infiltratorfs_checkpoint_discovery.c"
+[[ -f "$discovery" ]]
+grep -Fq 'infilfs_locator_decode_019(' "$discovery"
+grep -Fq 'INFILFS_RECOVERY_CANDIDATE_MAX' "$root/kernel/infiltratorfs_internal.h"
+grep -Fq 'Format 0.19 remains read-only' "$core"
 grep -Fq 'return -EROFS;' "$core"

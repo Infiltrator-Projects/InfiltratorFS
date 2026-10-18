@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.127 — 2026-10-18
+
+- Extract native Format 0.18/0.19 checkpoint validation and bounded recovery-locator discovery into a separately compiled `infiltratorfs_checkpoint_discovery.o` kernel subsystem, without changing on-disk bytes or the read-only 0.19 experimental scope.
+- Reduce native `infiltratorfs_core.c` from 117,873 to 108,058 bytes, below the 115,000-byte source-debt ceiling; move the shared candidate contract to the internal header and update the exact native build manifest and source-ownership tests.
+- Keep Format 0.19 native writes, resize and physical formatting disabled until full crash-safety validation.
+
 ## 0.18.126 — 2026-10-18
 
 - Restore native kernel source maintainability limit for the experimental Format 0.19 read-only selector by simplifying redundant implementation comments. No persistent format or logic change.
