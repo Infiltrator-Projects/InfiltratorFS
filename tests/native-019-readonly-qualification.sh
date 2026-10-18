@@ -101,8 +101,8 @@ check_ro
 # pages before the subsequent block-zero-loss recovery matrix.
 dd if="$image" of="$work/locator-a.saved" bs=4096 skip=1 count=1 status=none
 dd if="$image" of="$work/locator-b.saved" bs=4096 skip=2047 count=1 status=none
-printf '\\xff' | dd of="$image" bs=1 seek=4096 count=1 conv=notrunc status=none
-printf '\\xff' | dd of="$image" bs=1 seek=8384512 count=1 conv=notrunc status=none
+printf '\xff' | dd of="$image" bs=1 seek=4096 count=1 conv=notrunc status=none
+printf '\xff' | dd of="$image" bs=1 seek=8384512 count=1 conv=notrunc status=none
 sync "$image"
 blockdev --flushbufs "$loop" || true
 check_ro
