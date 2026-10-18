@@ -292,6 +292,102 @@ infs_status infs_volume_verify_019_test_image(
     return selected_valid ? INFS_STATUS_OK : status;
 }
 
+/*
+ * Experimental read-only Format 0.19 image volume open. Unlike the header
+ * verifier, this returns a usable portable volume with all namespace/read
+ * APIs, after independent fixed-locator recovery and full committed-graph
+ * validation. It intentionally refuses block devices and writable mode.
+ * The normal 0.18 open path is unchanged until native 0.19 qualification.
+ */
+infs_status infs_volume_open_019_test_image(
+    struct infs_volume *vol, struct infs_storage *storage)
+{
+    struct infs_superblock_disk checkpoints[INFS_LOCATOR_MAX_CANDIDATES];
+    uint8_t valid[INFS_LOCATOR_MAX_CANDIDATES] = {0};
+    uint64_t bytes = 0;
+    int is_device = 0;
+    unsigned found = 0;
+    int selected = 0;
+    infs_status status = INFS_STATUS_OK;
+
+    if (!vol || !storage || !infs_storage_valid(storage))
+        return INFS_STATUS_INVALID_ARGUMENT;
+
+    memset(vol, 0, sizeof(*vol));
+    /* Keep the storage handle caller-owned if any validation step fails. */
+    vol->storage = *storage;
+    vol->data_allocation_cursor = 1u;
+    status = infs_storage_get_size(&vol->storage, &bytes, &is_device);
+    if (status != INFS_STATUS_OK)
+        goto fail;
+    if (is_device) {
+        status = INFS_STATUS_NOT_SUPPORTED;
+        goto fail;
+    }
+    vol->size_bytes = bytes;
+
+    status = infs_locator_discover_019_headers(
+        &vol->storage, bytes, checkpoints, valid, &found);
+    if (status != INFS_STATUS_OK)
+        goto fail;
+
+    for (unsigned attempt = 0; attempt < INFS_LOCATOR_MAX_CANDIDATES;
+         ++attempt) {
+        int best = -1;
+        uint64_t generation = 0;
+        for (unsigned i = 0; i < INFS_LOCATOR_MAX_CANDIDATES; ++i) {
+            uint64_t candidate_generation;
+            if (!valid[i])
+                continue;
+            candidate_generation =
+                infs_le64_to_cpu(checkpoints[i].generation);
+            if (best < 0 || candidate_generation > generation) {
+                best = (int)i;
+                generation = candidate_generation;
+            }
+        }
+        if (best < 0)
+            break;
+        valid[best] = 0;
+        status = load_checkpoint_graph(
+            vol, &checkpoints[best], 1, INFS_LOCATOR_FORMAT_MINOR);
+        if (status == INFS_STATUS_OK) {
+            selected = 1;
+            break;
+        }
+        if (status != INFS_STATUS_CORRUPT)
+            goto fail;
+    }
+    if (!selected) {
+        status = INFS_STATUS_CORRUPT;
+        goto fail;
+    }
+
+    /* Persistent locator blocks must be reserved by the committed bitmap,
+     * not merely present in the two discovery records. */
+    if (!vol->bitmap ||
+        !bitmap_get(vol->bitmap, INFS_LOCATOR_BLOCK_A) ||
+        !bitmap_get(vol->bitmap, INFS_LOCATOR_BLOCK_B)) {
+        status = INFS_STATUS_CORRUPT;
+        goto fail;
+    }
+
+    (void)free_extent_index_rebuild(vol);
+    object_cache_init(vol);
+    directory_cache_init(vol);
+    (void)object_cache_rebuild(vol);
+    vol->metadata_allocation_cursor =
+        infs_le64_to_cpu(vol->sb.total_blocks);
+    storage->ops = NULL;
+    storage->context = NULL;
+    return INFS_STATUS_OK;
+
+fail:
+    discard_candidate_state(vol);
+    memset(vol, 0, sizeof(*vol));
+    return status == INFS_STATUS_OK ? INFS_STATUS_CORRUPT : status;
+}
+
 infs_status infs_volume_open_storage(struct infs_volume *vol,
                                      struct infs_storage *storage, int writable)
 {

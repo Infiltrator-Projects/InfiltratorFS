@@ -152,6 +152,37 @@ int main(void)
                "full graph verifier selects committed initial generation");
     }
 
+    /* The experimental image can be opened as a real *read-only* portable
+     * volume, not just scanned for valid checkpoint headers. */
+    {
+        struct infs_volume view = {0};
+        struct infs_storage view_storage = { .ops = &ops, .context = &m };
+        struct infs_lookup root_lookup = {0};
+        unsigned before = m.writes;
+        expect(infs_volume_open_019_test_image(
+                   &view, &view_storage) == INFS_STATUS_OK,
+               "0.19 image opens as read-only portable volume");
+        expect(view.writable == 0 && !view_storage.ops,
+               "read-only open transfers storage ownership");
+        expect(infs_lookup_path(&view, "/", &root_lookup) == INFS_STATUS_OK &&
+               root_lookup.type == INFS_OBJECT_DIRECTORY,
+               "0.19 mounted image resolves its root directory");
+        infs_volume_close(&view);
+        expect(m.writes == before, "read-only open/close never writes media");
+    }
+    {
+        struct infs_volume view = {0};
+        struct infs_storage view_storage = { .ops = &ops, .context = &m };
+        unsigned before = m.writes;
+        m.device = 1;
+        expect(infs_volume_open_019_test_image(
+                   &view, &view_storage) == INFS_STATUS_NOT_SUPPORTED,
+               "experimental 0.19 portable open refuses physical devices");
+        expect(view_storage.ops == &ops && m.writes == before,
+               "rejected physical open preserves ownership and media");
+        m.device = 0;
+    }
+
     /* 16 MiB: allocation root=2, level2=3, level1=4, leaf=5.
      * The authoritative bitmap MUST account for the new locator blocks. */
     leaf = m.contents + 5u * INFS_BLOCK_SIZE;
@@ -184,6 +215,19 @@ int main(void)
                    &storage, IMAGE_BYTES, found, valid, &count) ==
                    INFS_STATUS_OK && count >= 2,
                "surviving 0.19 checkpoints discoverable without block zero");
+        {
+            struct infs_volume view = {0};
+            struct infs_storage view_storage = { .ops = &ops, .context = &m };
+            struct infs_lookup root_lookup = {0};
+            expect(infs_volume_open_019_test_image(
+                       &view, &view_storage) == INFS_STATUS_OK,
+                   "0.19 read-only volume recovers after block-zero loss");
+            expect(infs_lookup_path(&view, "/", &root_lookup) ==
+                       INFS_STATUS_OK,
+                   "recovered 0.19 volume reads root through normal namespace");
+            infs_volume_close(&view);
+        }
+
         expect(infs_le64_to_cpu(found[1].generation) == 1 ||
                infs_le64_to_cpu(found[2].generation) == 1,
                "recovered secondary checkpoint carries valid generation");

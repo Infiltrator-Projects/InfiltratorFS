@@ -286,6 +286,11 @@ struct infs_named_stream_info {
 infs_status infs_volume_open_storage(struct infs_volume *vol,
                                      struct infs_storage *storage,
                                      int writable);
+/* Experimental read-only Format 0.19 in-memory/regular image mount for
+ * portable namespace and read tests; refuses physical block devices.
+ * Success transfers storage ownership; normal mount and fsck stay 0.18. */
+infs_status infs_volume_open_019_test_image(
+    struct infs_volume *vol, struct infs_storage *storage);
 void infs_volume_close(struct infs_volume *vol);
 infs_status infs_volume_sync(struct infs_volume *vol);
 /* Resize the filesystem geometry inside an already-sized backing store.

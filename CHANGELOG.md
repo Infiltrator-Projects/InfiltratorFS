@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.123 — 2026-10-18
+
+- Add an explicit read-only Format 0.19 portable image-volume open API, reusing full committed-graph validation across up to six candidates discovered from independently valid fixed locators.
+- Reject 0.19 physical block-device opens and protect caller storage ownership on failures; verify the recovered 0.19 root namespace after block-zero loss, not just its checksum header.
+- The current normal filesystem format remains 0.18. Format 0.19 native write/mount, resize and fsck are not yet qualified; do not format physical devices.
+
 ## 0.18.122 — 2026-10-18
 
 - Preserve real physical-NVMe performance observations from Format 0.18.110 and 0.18.114 as PERF-019 with benchmark provenance, exact sync-vs-copy timings and qualified interpretation.
