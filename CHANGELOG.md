@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.18.116 — 2026-10-18
+
+- Extend preparatory Format 0.19 locator APIs with bounded discovery from two independent maps, explicitly preserving old and new checkpoint candidates across interrupted resize.
+- Add initial metadata placement planning for fixed locator blocks 1 and 2047, preventing initial contiguous allocation metadata from overwriting the second recovery anchor on large media.
+- Require individually durable secondary checkpoint refresh in the proposed Format 0.19 resize protocol and strengthen geometry/corruption tests.
+- The active on-disk format remains 0.18 pending coordinated native/portable formatter, recovery, resize and fsck integration and fault qualification.
+
 ## 0.18.115 — 2026-10-18
 
 - Introduce the independently testable Format 0.19 locator binary codec and fixed-position geometry validator, with CRC64, canonical padding, explicit header/version checks and fail-closed invalid pointers.

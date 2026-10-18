@@ -33,6 +33,18 @@
 #define INFS_LOCATOR_OFF_UUID 56u
 #define INFS_LOCATOR_OFF_CRC64 72u
 
+/* A fixed upper bound, not a device-wide or metadata-tree search. Each of
+ * two independently validated locator maps may identify three checkpoints. */
+#define INFS_LOCATOR_MAX_CANDIDATES (2u * INFS_CHECKPOINT_COUNT)
+
+struct infs_locator_candidate {
+    uint64_t physical_block;
+    uint64_t declared_total_blocks;
+    uint64_t declared_checkpoint[INFS_CHECKPOINT_COUNT];
+    uint8_t filesystem_uuid[16];
+    uint8_t source_locator;
+};
+
 struct infs_locator {
     uint64_t generation;
     uint64_t total_blocks;
@@ -49,5 +61,22 @@ infs_status infs_locator_encode(uint8_t block[INFS_BLOCK_SIZE],
 infs_status infs_locator_decode(const uint8_t block[INFS_BLOCK_SIZE],
                                 uint64_t physical_device_blocks,
                                 struct infs_locator *out);
+
+/* Plan the canonical first allocation-tree block so the contiguous mkfs
+ * bootstrap metadata cannot overlap either permanent 0.19 locator, the
+ * midpoint checkpoint or the end checkpoint. metadata_blocks includes the
+ * allocation tree, initial objects and initial index metadata. */
+infs_status infs_locator_plan_initial_metadata(uint64_t total_blocks,
+                                                 uint64_t metadata_blocks,
+                                                 uint64_t *root_block);
+
+/* Build a bounded candidate list from two previously validated locator
+ * records. Both old and new checkpoint maps must be retained across resize.
+ * No candidate here is authoritative until a full committed-graph check. */
+infs_status infs_locator_candidates(
+    const struct infs_locator locators[2], uint8_t valid_mask,
+    uint64_t physical_blocks,
+    struct infs_locator_candidate out[INFS_LOCATOR_MAX_CANDIDATES],
+    unsigned *count);
 
 #endif

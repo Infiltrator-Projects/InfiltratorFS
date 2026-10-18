@@ -95,6 +95,64 @@ int main(void)
     locator.checkpoint[2] = locator.checkpoint[1];
     expect(infs_locator_encode(raw, &locator) == INFS_STATUS_INVALID_ARGUMENT,
            "reject duplicate checkpoint positions");
+
+    {
+        uint64_t root = 0;
+        expect(infs_locator_plan_initial_metadata(4096, 64, &root) ==
+               INFS_STATUS_OK && root == 2,
+               "small 16 MiB volume boot metadata fits before locator B");
+        expect(infs_locator_plan_initial_metadata(4096, 2046, &root) ==
+               INFS_STATUS_NO_SPACE,
+               "unplaceable bootstrap metadata must fail rather than collide");
+        expect(infs_locator_plan_initial_metadata(UINT64_C(8000000), 2046,
+                                                  &root) == INFS_STATUS_OK &&
+               root == 2048,
+               "large-volume bootstrap metadata starts after locator B");
+        expect(infs_locator_plan_initial_metadata(4096, 1, &root) ==
+               INFS_STATUS_OK && root == 2,
+               "canonical metadata starting block is two");
+    }
+
+    {
+        struct infs_locator copies[2] = {
+            {
+                .generation = 10,
+                .total_blocks = 32768,
+                .checkpoint = {0, 16384, 32767},
+                .filesystem_uuid = {1}
+            }, {
+                .generation = 11,
+                .total_blocks = 32768,
+                .checkpoint = {0, 14000, 30000},
+                .filesystem_uuid = {1}
+            }
+        };
+        struct infs_locator_candidate list[INFS_LOCATOR_MAX_CANDIDATES];
+        unsigned found = 0;
+        expect(infs_locator_candidates(copies, 3, 32768, list, &found) ==
+               INFS_STATUS_OK && found == 6,
+               "preserve both old and new checkpoint maps during resize");
+        expect(list[1].physical_block == 16384 &&
+               list[4].physical_block == 14000 &&
+               list[1].source_locator == 0 &&
+               list[4].source_locator == 1,
+               "do not select only the newer locator's metadata addresses");
+        expect(infs_locator_candidates(copies, 2, 32768, list, &found) ==
+               INFS_STATUS_OK && found == 3 &&
+               list[0].source_locator == 1,
+               "one damaged locator can be excluded independently");
+        expect(infs_locator_candidates(copies, 0, 32768, list, &found) ==
+               INFS_STATUS_CORRUPT,
+               "both locators absent must fail without speculative scanning");
+        expect(infs_locator_candidates(copies, 4, 32768, list, &found) ==
+               INFS_STATUS_INVALID_ARGUMENT,
+               "reject invalid locator source-mask");
+        copies[1].checkpoint[1] = INFS_LOCATOR_BLOCK_B;
+        expect(infs_locator_candidates(copies, 3, 32768, list, &found) ==
+               INFS_STATUS_CORRUPT,
+               "reject locator map pointing to reserved locator position");
+    }
+
     puts("locator-format-019: PASS");
     return 0;
 }

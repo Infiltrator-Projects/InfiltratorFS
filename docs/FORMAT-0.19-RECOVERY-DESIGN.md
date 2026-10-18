@@ -4,7 +4,7 @@
 **Status: design accepted; portable locator codec implemented and unit-testable, but no complete 0.19 formatter/mount/resize implementation or qualification.**
 Until a complete native/portable implementation and exact-source validation
 land together, the only shipping persistent format remains Format 0.18.
-The authoritative current Format 0.18 byte layout remains `include/infilfs/format.h`. The proposed Format 0.19 locator schema is defined by `include/infilfs/locator.h` and `src/locator.c` (not yet active in mounted filesystems).
+The authoritative current Format 0.18 byte layout remains `include/infilfs/format.h`. The proposed Format 0.19 locator schema, bounded candidate-list builder and initial allocation geometry planner are defined by `include/infilfs/locator.h` and `src/locator.c` (not yet active in mounted filesystems).
 
 ## Problem and preserved commitments
 
@@ -95,8 +95,10 @@ checkpoint locations** is:
 3. Publish and durably flush the selected new-generation checkpoint at the
    designated commit boundary, without destroying the final recoverable old
    checkpoint before that boundary.
-4. Write/flush secondary checkpoint replicas at their new positions, and
-   only then update and durably flush locator B. Do not report successful
+4. Write and **durably flush each secondary checkpoint individually** at its
+   new position. Never submit both secondary replacements together while a
+   corrupted or torn block-zero checkpoint could make every backup unusable.
+   Only then update and durably flush locator B. Do not report successful
    resize/permit backing-partition reduction before this completes.
 5. Keep storage referenced by either still-authoritative old checkpoint
    protected until the recovery protocol no longer requires it. Any
