@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.117 — 2026-10-18
+
+- Add deterministic model qualification for Format 0.19 crash/resize publication. Test every durable write boundary with an optional torn page and unavailable block zero, for unchanged, partially relocated and fully relocated secondary checkpoints.
+- Include a negative control demonstrating why both backup checkpoints must not be overwritten concurrently.
+- The model does not replace native mounted fault injection. Active disk format stays at 0.18 pending full 0.19 integration.
+
 ## 0.18.116 — 2026-10-18
 
 - Extend preparatory Format 0.19 locator APIs with bounded discovery from two independent maps, explicitly preserving old and new checkpoint candidates across interrupted resize.
