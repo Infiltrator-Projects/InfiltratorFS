@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.122 — 2026-10-18
+
+- Preserve real physical-NVMe performance observations from Format 0.18.110 and 0.18.114 as PERF-019 with benchmark provenance, exact sync-vs-copy timings and qualified interpretation.
+- Require bounded microsecond-resolution instrumentation of page-cache writeback, deferred native CoW stages, lock contention and the entire filesystem sync; retain durability barriers and discovery-only locator semantics for Format 0.19.
+- Define repeatable physical-hardware performance and post-remount integrity qualifications as independent, currently unmet Format 0.19 release gates. No claims of a performance fix and no on-disk format or runtime changes.
+
 ## 0.18.121 — 2026-10-18
 
 - Add an explicit read-only Format 0.19 in-memory/regular-image verification function that searches all locator-discovered checkpoint candidates and reuses the portable core's full allocation, index, namespace, integrity and checksum graph validation.

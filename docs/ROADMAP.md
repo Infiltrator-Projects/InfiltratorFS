@@ -14,6 +14,8 @@ Pre-1.0 development is current-format-only. A development format may be replaced
 - [ ] Native Linux mount, recovery and resize use the same locator schema and commit ordering, verified against portable media.
 - [ ] Deterministic crash/tear/corruption matrix: block-zero loss after grow/shrink, stale/divergent locators, interrupted publication, old-format rejection and remount/scrub.
 - [ ] Exact-source native mounted and physical-media validation before switching the released formatter/default mount path to Format 0.19.
+- [ ] PERF-019: instrument and attribute native Linux final-sync latency across VFS writeback, deferred CoW preparation, lock contention and durability publication without removing required crash-consistency barriers.
+- [ ] PERF-019: demonstrate repeatable 0.19 physical-NVMe performance and post-remount integrity for 256 MiB sequential writes, the deterministic 1,460-file Windows tree, 4 KiB fsync latency distribution and metadata-heavy operations (see `PERF-019-SYNC-LATENCY.md`).
 
 ## Core filesystem foundation
 

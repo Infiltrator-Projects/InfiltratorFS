@@ -113,7 +113,11 @@ at every flush, checkpoint and locator write is an implementation prerequisite.
 
 Ordinary transactions that do *not* move checkpoint locations need no
 locator rewrite; their selected checkpoint publication still follows the
-native/portable durability protocol.
+native/portable durability protocol. Any ordinary `fsync` that rewrites a
+fixed locator is a correctness/performance regression, and must be tested
+explicitly. PERF-019 separately tracks physical writeback, `sync -f` latency,
+write amplification and durability stage attribution; it does not authorise
+reducing the recovery ordering barriers.
 
 ## Proof and release gates
 

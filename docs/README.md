@@ -64,7 +64,8 @@ This category currently includes:
 
 - `RELEASE-*.md`;
 - `UNLINK-PERFORMANCE-HANDOFF.md`; and
-- `IAC1-WRITE-PERFORMANCE-HANDOFF.md`.
+- `IAC1-WRITE-PERFORMANCE-HANDOFF.md`;
+- `PERF-019-SYNC-LATENCY.md`.
 
 ## Documentation change discipline
 
