@@ -75,6 +75,7 @@
 #   infiltratorfs_checksum_cache.c owns bounded checksum cursor/group caches.
 #   infiltratorfs_checksum_store.c owns persistent checksum-chain object mutation.
 #   infiltratorfs_locator_cache.c owns rebuildable native index/name/writer locators.
+#   infiltratorfs_locator_format.c owns the future Format 0.19 locator byte contract (not mounted yet).
 #   infiltratorfs_pagecache.c owns Linux folio/page-cache integration.
 #   infiltratorfs_directory_tree.c owns scalable Format 0.18 directory trees.
 #   infiltratorfs_linux_meta_codec.c owns Linux sidecar blob/naming codec rules.
@@ -98,7 +99,7 @@
 # KERNELRELEASE conditional, the initial DKMS make terminates with
 # "make: *** No targets. Stop." before Kbuild is ever entered.
 obj-m += infiltratorfs.o
-infiltratorfs-y := infiltratorfs_core.o infiltratorfs_cpu.o infiltratorfs_crypto.o infiltratorfs_security.o infiltratorfs_extension.o infiltratorfs_allocation_map.o infiltratorfs_resize.o infiltratorfs_index_tree.o infiltratorfs_extent_tree.o infiltratorfs_parallel_alloc.o infiltratorfs_allocation_publish.o infiltratorfs_read_cache.o infiltratorfs_pagecache.o infiltratorfs_directory_tree.o infiltratorfs_checksum_cache.o infiltratorfs_checksum_store.o infiltratorfs_locator_cache.o infiltratorfs_linux_meta_codec.o infiltratorfs_shared_ownership.o infiltratorfs_orphan_scan.o infiltratorfs_name_policy.o infiltratorfs_media.o
+infiltratorfs-y := infiltratorfs_core.o infiltratorfs_cpu.o infiltratorfs_crypto.o infiltratorfs_security.o infiltratorfs_extension.o infiltratorfs_allocation_map.o infiltratorfs_resize.o infiltratorfs_index_tree.o infiltratorfs_extent_tree.o infiltratorfs_parallel_alloc.o infiltratorfs_allocation_publish.o infiltratorfs_read_cache.o infiltratorfs_pagecache.o infiltratorfs_directory_tree.o infiltratorfs_checksum_cache.o infiltratorfs_checksum_store.o infiltratorfs_locator_cache.o infiltratorfs_locator_format.o infiltratorfs_linux_meta_codec.o infiltratorfs_shared_ownership.o infiltratorfs_orphan_scan.o infiltratorfs_name_policy.o infiltratorfs_media.o
 ccflags-y += -I$(src)/../include/infilfs
 
 KDIR ?= /lib/modules/$(shell uname -r)/build

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.20)
-project(InfiltratorFS VERSION 0.18.117 LANGUAGES C)
+project(InfiltratorFS VERSION 0.18.118 LANGUAGES C)
 # Development qualification anchor: 0.18.106
 
 set(CMAKE_C_STANDARD 17)
@@ -349,6 +349,13 @@ add_executable(infilfs-locator-019-crash-model tests/locator-019-crash-model.c)
 infilfs_enable_warnings(infilfs-locator-019-crash-model)
 add_test(NAME infilfs-locator-019-crash-model
          COMMAND infilfs-locator-019-crash-model)
+
+if(UNIX)
+    add_test(NAME infilfs-019-native-locator-parity
+             COMMAND bash
+                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/native-locator-019-policy.sh
+                 ${CMAKE_CURRENT_SOURCE_DIR})
+endif()
 add_test(NAME infilfs-checksum-known-answer COMMAND infilfs-checksum-test)
 add_test(NAME infilfs-storage-mirror COMMAND infilfs-storage-mirror)
 add_test(NAME infilfs-storage-encrypted COMMAND infilfs-storage-encrypted)

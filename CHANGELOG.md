@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.118 — 2026-10-18
+
+- Introduce an isolated native Linux kernel Format 0.19 recovery-locator encoder/decoder matching the portable 80-byte CRC64 record contract, with strict geometry, UUID, schema, zero-padding and checkpoint-placement checks.
+- Link the new codec into the native DKMS module but leave active mounting/formatting on on-disk Format 0.18 until complete platform recovery and resize qualification.
+- Add native/portable byte-contract source parity policy test. No physical drive format changes.
+
 ## 0.18.117 — 2026-10-18
 
 - Add deterministic model qualification for Format 0.19 crash/resize publication. Test every durable write boundary with an optional torn page and unavailable block zero, for unchanged, partially relocated and fully relocated secondary checkpoints.

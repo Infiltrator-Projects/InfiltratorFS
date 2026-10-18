@@ -49,6 +49,7 @@
 #include <linux/xattr.h>
 
 #include "infiltratorfs_format.h"
+#include "infiltratorfs_locator_format.h"
 #include "infiltratorfs_ioctl.h"
 #include "iac1.h"
 
