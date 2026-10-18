@@ -16,6 +16,8 @@ kernel/infiltratorfs_directory_tree.c	infiltratorfs_directory_tree.c
 kernel/infiltratorfs_checksum_cache.c	infiltratorfs_checksum_cache.c
 kernel/infiltratorfs_checksum_store.c	infiltratorfs_checksum_store.c
 kernel/infiltratorfs_locator_cache.c	infiltratorfs_locator_cache.c
+kernel/infiltratorfs_locator_format.c	infiltratorfs_locator_format.c
+kernel/infiltratorfs_locator_format.h	infiltratorfs_locator_format.h
 kernel/infiltratorfs_linux_meta_codec.c	infiltratorfs_linux_meta_codec.c
 kernel/infiltratorfs_shared_ownership.c	infiltratorfs_shared_ownership.c
 kernel/infiltratorfs_orphan_scan.c	infiltratorfs_orphan_scan.c

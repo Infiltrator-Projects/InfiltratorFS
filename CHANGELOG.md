@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.18.119 — 2026-10-18
+
+- Complete DKMS packaging registration for the preparatory native Format 0.19 locator codec source and header; update the explicit native object policy manifest.
+- Restore exact-source release-policy and native package qualification. Active on-disk Format remains 0.18.
+
 ## 0.18.118 — 2026-10-18
 
 - Introduce an isolated native Linux kernel Format 0.19 recovery-locator encoder/decoder matching the portable 80-byte CRC64 record contract, with strict geometry, UUID, schema, zero-padding and checkpoint-placement checks.
