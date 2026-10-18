@@ -89,6 +89,8 @@ A system-volume adapter must satisfy normal filesystem semantics plus the platfo
 
 Those requirements belong to platform integration unless they expose a genuinely useful generic filesystem primitive.
 
+The eventual InfiltratorOS Setup process will treat InfiltratorFS like any other selectable format: its UEFI boot-payload reader and its kernel/runtime module are distinct, independently qualified capabilities. See the shared [Bootable Filesystem Integration Contract](https://github.com/Infiltrator-Projects/Filesystems/blob/main/docs/BOOTABLE_FILESYSTEM_CONTRACT.md). A boot payload stored on InfiltratorFS is not evidence that the complete operating-system root is qualified there; the EFI reader currently ships disabled in Boot's release bundle.
+
 ## Metadata preservation
 
 An adapter must not destroy metadata merely because its host operating system cannot expose it naturally.
