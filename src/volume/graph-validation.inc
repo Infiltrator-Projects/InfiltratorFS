@@ -160,6 +160,90 @@ static int checkpoint_matches(struct infs_volume *vol, uint64_t block_no,
     return memcmp(&sb, &expected, sizeof(sb)) == 0;
 }
 
+static void phase2_failpoint(const char *stage);
+
+struct volume_checkpoint_publication {
+    struct infs_volume *volume;
+    const struct infs_superblock_disk *checkpoint;
+    const uint8_t *encoded;
+};
+
+static int volume_publish_locator(void *context, unsigned copy)
+{
+    struct volume_checkpoint_publication *p = context;
+    struct infs_locator locator = {0};
+    uint8_t raw[INFS_BLOCK_SIZE];
+    locator.generation = infs_le64_to_cpu(p->checkpoint->generation);
+    locator.total_blocks = infs_le64_to_cpu(p->checkpoint->total_blocks);
+    memcpy(locator.filesystem_uuid, p->checkpoint->filesystem_uuid, 16u);
+    for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i)
+        locator.checkpoint[i] =
+            infs_le64_to_cpu(p->checkpoint->checkpoint_block[i]);
+    infs_status status = infs_locator_encode(raw, &locator);
+    if (status != INFS_STATUS_OK)
+        return status;
+    return infs_storage_write(&p->volume->storage,
+        (copy ? INFS_LOCATOR_BLOCK_B : INFS_LOCATOR_BLOCK_A) *
+            INFS_BLOCK_SIZE, raw, sizeof(raw));
+}
+
+static int volume_publish_checkpoint(void *context, unsigned copy)
+{
+    struct volume_checkpoint_publication *p = context;
+    return infs_storage_write(&p->volume->storage,
+        infs_le64_to_cpu(p->checkpoint->checkpoint_block[copy]) *
+            INFS_BLOCK_SIZE, p->encoded, INFS_BLOCK_SIZE);
+}
+
+static int volume_publish_flush(void *context)
+{
+    struct volume_checkpoint_publication *p = context;
+    return infs_storage_flush(&p->volume->storage);
+}
+
+static void volume_publish_committed(void *context)
+{
+    (void)context;
+    phase2_failpoint("after-checkpoint");
+}
+
+static const struct infs_checkpoint_io volume_checkpoint_io = {
+    .locator = volume_publish_locator,
+    .checkpoint = volume_publish_checkpoint,
+    .flush = volume_publish_flush,
+    .committed = volume_publish_committed,
+};
+
+static infs_status heal_locators(struct infs_volume *vol)
+{
+    struct volume_checkpoint_publication p = {vol, &vol->sb, NULL};
+    for (unsigned i = 0; i < 2u; ++i) {
+        uint8_t raw[INFS_BLOCK_SIZE];
+        struct infs_locator locator = {0};
+        infs_status status = infs_storage_read(&vol->storage,
+            (i ? INFS_LOCATOR_BLOCK_B : INFS_LOCATOR_BLOCK_A) *
+                INFS_BLOCK_SIZE, raw, sizeof(raw));
+        if (status != INFS_STATUS_OK)
+            return status;
+        int matches = infs_locator_decode(raw,
+            vol->size_bytes / INFS_BLOCK_SIZE, &locator) == INFS_STATUS_OK &&
+            locator.total_blocks == infs_le64_to_cpu(vol->sb.total_blocks) &&
+            locator.generation <= infs_le64_to_cpu(vol->sb.generation) &&
+            memcmp(locator.filesystem_uuid, vol->sb.filesystem_uuid, 16u) == 0;
+        for (unsigned c = 0; matches && c < INFS_CHECKPOINT_COUNT; ++c)
+            matches = locator.checkpoint[c] ==
+                infs_le64_to_cpu(vol->sb.checkpoint_block[c]);
+        if (matches)
+            continue;
+        status = volume_publish_locator(&p, i);
+        if (status == INFS_STATUS_OK)
+            status = infs_storage_flush(&vol->storage);
+        if (status != INFS_STATUS_OK)
+            return status;
+    }
+    return INFS_STATUS_OK;
+}
+
 static int heal_checkpoints(struct infs_volume *vol)
 {
     uint8_t repair[INFS_CHECKPOINT_COUNT] = {0};
@@ -194,6 +278,9 @@ static int heal_checkpoints(struct infs_volume *vol)
             continue;
         b = infs_le64_to_cpu(vol->sb.checkpoint_block[i]);
         status = write_block(vol, b, raw);
+        if (status != INFS_STATUS_OK)
+            return status;
+        status = infs_storage_flush(&vol->storage);
         if (status != INFS_STATUS_OK)
             return status;
     }

@@ -33,7 +33,7 @@ directions against the retained Python reference during ordinary CI.
 - **Real root-boot qualification** — real UEFI boot, live-root package upgrade, forced power-loss recovery and repeated scrub. This is manual-only and is run when root/boot/recovery risk warrants it.
 - **Formatter integration qualification** — pinned libblockdev/UDisks/GNOME Disks integration build and end-to-end formatter/probe checks. The full upstream-stack build is manual-only because it intentionally exceeds the automatic CI ceiling.
 - **Physical partition qualification** — explicitly destructive operator-run qualification on dedicated media; never unattended ordinary CI.
-- **Release publication gate** — requires successful same-source automatic release prerequisites, then installs the generated package, verifies native filesystem registration, mounts a real Format 0.18 image, performs non-zero write/read verification, syncs, unmounts and requires a CLEAN scrub. It also rejects restoration of the legacy FUSE product path. Long manual qualifications are supporting evidence, not mandatory automatic release blockers.
+- **Release publication gate** — requires successful same-source automatic release prerequisites, then installs the generated package, verifies native filesystem registration, mounts a real Format 0.19 image, performs non-zero write/read verification, syncs, unmounts and requires a CLEAN scrub. It also rejects restoration of the legacy FUSE product path. Long manual qualifications are supporting evidence, not mandatory automatic release blockers.
 
 A workflow should fail closed when a qualification class claims mounted coverage but the required running-kernel environment is unavailable. Merely skipping mounted work must not be treated as equivalent evidence.
 
@@ -45,6 +45,16 @@ Automatic qualification and conformance jobs are hard-capped at 10 minutes where
 
 The entries below preserve useful milestone evidence. For the current source revision, automatic qualification state must be read from the checks attached to that exact Git commit; absence of a newer hand-entered row here does not imply absence of automatic qualification.
 
+
+### 0.19.0 recovery implementation and local mounted qualification
+
+The 18 October 2026 testing implementation replaces the former image-only/read-only scope with normal Format 0.19 formatting, portable and native writes, staged grow/shrink and writable checkpoint/locator repair. Portable and Linux writers share the same publication ordering header. Live exact-source release status remains the Actions authority described above.
+
+Local GCC 13.3 Debug conformance includes the real-storage fault harness: 148 ordinary publication interruption/recovery cases and 128 grow/shrink interruption/recovery cases, with torn writes, ambiguous flush completion, block-zero loss, cold graph/data verification, writable healing and resumed writes. Default CLI tests reject unaligned images without modifying them and repair locator-only degradation. The older standalone crash model is retained independently.
+
+An isolated QEMU VM booted Ubuntu Linux `6.8.0-138-generic` with the module built from this working source. Native qualification passed normal formatting, portable/native data exchange, initial writable mount, RO-to-RW remount, namespace writes, grow/shrink/repeated relocation, stale fixed hints with a newer primary, physical reduction of the backing file, and deep post-remount scrub. Damage cases `[0]`, `[1]`, `[2047]`, `[1,2047]`, `[0,1]` and `[0,2047]` each passed non-mutating read-only recovery followed by writable repair and new writes. Loss of all three bootstrap positions was refused without modifying the image.
+
+These results establish readiness for testing. They do not claim physical NVMe performance, real hardware power-loss durability, root-boot/endurance requalification or mounted native-Windows qualification; those classes remain separately tracked.
 
 ### 0.18.78 deferred-publication failure hardening baseline
 

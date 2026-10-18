@@ -1,9 +1,9 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # Format 0.19 — independently discoverable checkpoint locations
 
-**Status: partially implemented, experimental only.** Format 0.19 now has portable image formatting, read-only portable/native recovery, regular-file portable writes and sync, deep image scrub and read-only structural fsck including recovery-locator validation. Native writable mounting, crash-safe grow/shrink relocation, repair, full power-loss qualification and physical-media deployment remain incomplete. Normal production formatting and mounting still use Format 0.18.
+**Status: implemented and ready for testing in software 0.19.0.** Normal formatting, portable/native writable recovery, ordered checkpoint publication, grow/shrink relocation, writable repair, structural fsck and deep scrub use Format 0.19. Portable interruption/tear tests and mounted native VM tests exercise the actual implementation. Physical-media power-loss/endurance and PERF-019 measurements remain separate operator-run qualification work.
 
-Until the complete native/portable implementation and exact-source qualification land together, the only shipping production persistent format remains Format 0.18. Its authoritative byte layout is `include/infilfs/format.h`; experimental Format 0.19 locator records and the bounded discovery planner are `include/infilfs/locator.h` and `src/locator.c`.
+The authoritative checkpoint byte layout is `include/infilfs/format.h`; locator encoding is `include/infilfs/locator.h`. Both writers execute the ordering in `include/infilfs/checkpoint_protocol.h`. Current development accepts Format 0.19 only; it does not migrate or reinterpret Format 0.18 media.
 
 ## Problem and preserved commitments
 
@@ -13,12 +13,12 @@ can preserve or relocate the secondary positions. If block zero is corrupt,
 fallback to the *current physical* midpoint/end can miss surviving copies
 despite their correct CRCs.
 
-Format 0.19 must retain three widely separated *actual* checkpoints and their
+Format 0.19 retains three widely separated *actual* checkpoints and their
 generation-based commit/recovery semantics. Locator records add discovery;
 they do not replace checkpoints, do not confer data integrity, and are not
 the commit marker.
 
-## Persistent layout proposal
+## Persistent layout
 
 - Minimum formatted filesystem remains 16 MiB with 4096-byte blocks.
 - Two **permanent locator blocks** have zero-based physical block addresses
@@ -39,7 +39,7 @@ the commit marker.
   incompatible minor version, not a hidden optional compatible feature.
 
 Each locator is one zero-padded, fixed-width, little-endian 4096-byte record.
-The eventual authoritative packed header MUST define an 8-byte distinct magic,
+The authoritative canonical header defines an 8-byte distinct magic,
 locator schema version, exact header size, Format 0.19 identity, volume UUID,
 the *hinted* committed generation, committed filesystem block count, exactly
 three checkpoint physical offsets, and a CRC64-ECMA of the canonical page
@@ -59,11 +59,12 @@ silent rollback on an external read error.
 ## Recovery algorithm
 
 1. Attempt block zero, and read both fixed locators independently.
-2. Build a finite, deduplicated candidate-address set from the checkpoint
-   offsets declared by structurally valid Format 0.19 locators and from a
-   structurally valid block-zero checkpoint. Reject positions outside the
-   actual backing device. Bound all attempts even under attacker-controlled
-   checksummed bytes.
+2. Build a finite candidate set from the checkpoint offsets declared by
+   structurally valid Format 0.19 locators and an independent structurally
+   valid block-zero checkpoint. Reuse an existing map when the primary
+   geometry already appears in a locator; otherwise retain its three
+   candidates as well. Map contexts may share physical addresses. Reject
+   positions outside the backing device and bound attempts to nine candidates.
 3. Read independent checkpoint candidates, require their internally recorded
    positions to agree with the source locator being used, and prefer the
    newest **fully validated, durably committed** generation. Different
@@ -82,9 +83,7 @@ durability behaviour.
 
 ## Resize and crash-ordering obligations
 
-The protocol needs an invariant strong enough to cover *every* interruption
-point, not just a successful final result. A candidate sequence for **changing
-checkpoint locations** is:
+The shared protocol preserves a recoverable committed graph at each modeled interruption point. The implemented sequence for **changing checkpoint locations** is:
 
 1. Keep all old committed checkpoints/CoW dependencies reachable. Construct
    and durably flush the next allocation graph and all replacement records.
@@ -104,11 +103,7 @@ checkpoint locations** is:
    ambiguous publication/locator durability failure must poison or suspend
    further writes rather than claiming a clean success.
 
-**This is a proposed write ordering, not yet a proven algorithm.** The
-implementation must explicitly model all pending writes and candidate
-generations and prove that no crash window can leave locators pointing only
-to unreachable/deallocated state. A validated unit/fault model that fails
-at every flush, checkpoint and locator write is an implementation prerequisite.
+`tests/format-019-durability.c` injects errors into the actual portable writer at every write/flush boundary, including torn writes and flushes that persisted before reporting an error. Recovery reopens cold storage, verifies the complete graph and file data, repairs writable replicas and resumes mutation. The independent crash model remains a separate ordering check. `tests/native-019-qualification.sh` exercises native writes, remounts, repeated relocation, physical backing-file shrink and recovery/repair after bootstrap damage. See `QUALIFICATION.md` for the evidence boundary.
 
 Ordinary transactions that do *not* move checkpoint locations need no
 locator rewrite; their selected checkpoint publication still follows the
@@ -118,7 +113,7 @@ explicitly. PERF-019 separately tracks physical writeback, `sync -f` latency,
 write amplification and durability stage attribution; it does not authorise
 reducing the recovery ordering barriers.
 
-## Proof and release gates
+## Qualification boundaries
 
 - New formatter creates Format 0.19 and reserves correct locator blocks;
   existing Format 0.18 is rejected rather than reformatted on mount.
@@ -136,10 +131,7 @@ reducing the recovery ordering barriers.
   hardware, mount options and full results. Tests must not run destructively
   on an unconfirmed device. In particular no part of this decision authorizes
   formatting `/dev/nvme0n1p5`.
-- The change is released as a new minor *disk* format only **after** all
-  affected formatter/recovery/resize/fsck/native paths pass together. Never
-  increment `INFS_FORMAT_MINOR` in isolation and publish an unqualified
-  version with incompatible media.
+- The testing release requires the affected formatter/recovery/resize/fsck/native paths to pass together under the exact-source automatic release gate. Physical-media endurance, real power cuts and performance are additional production-deployment qualifications; no VM or storage model result substitutes for them.
 
 ## Rejected shortcuts
 

@@ -14,7 +14,7 @@ sources of truth.
 
 - [`PHILOSOPHY.md`](PHILOSOPHY.md) — governing engineering and documentation standard.
 - `DESIGN.md` — concise engineering-design principles and subsystem shape for contributors. It is subordinate to the canonical project philosophy, `ARCHITECTURE.md` and the byte-level format contract; it is not a separate status authority.
-- `FORMAT-0.19-RECOVERY-DESIGN.md` — accepted future recovery-locator design; not yet the byte-level format authority or an implemented feature.
+- `FORMAT-0.19-RECOVERY-DESIGN.md` — implemented recovery-locator protocol and interruption invariants; byte-level constants remain in the format/locator headers.
 - `ON_DISK_FORMAT.md` — persistent Format 0.18 structural contract. Exact
   packed fields/constants remain authoritative in `include/infilfs/format.h`.
 - `ARCHITECTURE.md` — architecture, invariants, ownership boundaries and

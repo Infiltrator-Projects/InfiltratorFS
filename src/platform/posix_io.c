@@ -199,6 +199,23 @@ static const struct infs_storage_ops posix_storage_ops = {
     .close = posix_close,
 };
 
+infs_status infs_posix_storage_adopt_fd(struct infs_storage *storage, int fd)
+{
+    uint64_t bytes;
+    int device;
+    if (!storage || fd < 0)
+        return INFS_STATUS_INVALID_ARGUMENT;
+    if (infs_get_size_bytes(fd, &bytes, &device) != 0)
+        return infs_status_from_errno(errno);
+    struct infs_posix_storage_context *context = malloc(sizeof(*context));
+    if (!context)
+        return INFS_STATUS_NO_MEMORY;
+    context->fd = fd;
+    storage->ops = &posix_storage_ops;
+    storage->context = context;
+    return INFS_STATUS_OK;
+}
+
 infs_status infs_posix_storage_open(struct infs_storage *storage,
                                     const char *path, int writable)
 {

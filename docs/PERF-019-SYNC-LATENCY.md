@@ -3,11 +3,11 @@
 
 **Status:** confirmed historical measurements; bottleneck attribution and
 Format 0.19 regression qualification are **open**. This is a performance
-investigation, not evidence of a bug fix or Format 0.19 mounted support.
+investigation. Format 0.19 functional mounted qualification is recorded separately in `QUALIFICATION.md`; these historical timings do not establish its performance.
 
 **Provenance:** operator-supplied real-machine engineering handoff, received
 18 October 2026. Numbers below are reproduced from that handoff; they have
-not been rerun by this source-only change. The observations are not
+not been rerun as physical-media Format 0.19 measurements. The observations are not
 normalised for differing cache state. Performance conclusions must not be
 silently promoted to Format 0.19 qualification.
 

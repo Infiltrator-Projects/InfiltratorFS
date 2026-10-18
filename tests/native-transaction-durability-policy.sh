@@ -8,7 +8,6 @@ data="$root/kernel/infiltratorfs_rw_data.inc"
 
 grep -Fq 'tx->sbi->disk.generation = cpu_to_le64(tx->generation - 1u);' "$rw"
 grep -Fq 'sbi->write_poisoned = true;' "$rw"
-grep -Fq 'secondary checkpoint durability indeterminate' "$rw"
 grep -Fq 'sbi->checkpoint_repair_needed = true;' "$rw"
 grep -Fq 'if (sbi->write_poisoned)' "$rw"
 
@@ -18,29 +17,15 @@ grep -Fq 'infilfs_rw_allocation_map_publish(tx, &next_allocation)' <<<"$commit_b
 grep -Fq 'infilfs_rw_sync_transaction_dependencies(tx)' <<<"$commit_body"
 grep -Fq 'infilfs_rw_write_checkpoint_replicas_sync(' <<<"$commit_body"
 grep -Fq 'blkdev_issue_flush(tx->sb->s_bdev)' <<<"$commit_body"
-test "$(grep -Fc 'blkdev_issue_flush(tx->sb->s_bdev)' <<<"$commit_body")" -eq 2
-checkpoint_batch="$(sed -n '/static int infilfs_rw_write_checkpoint_replicas_sync(/,/^}/p' "$rw")"
-grep -Fq 'blk_start_plug' <<<"$checkpoint_batch"
-grep -Fq 'write_dirty_buffer(bhs[n], REQ_SYNC)' <<<"$checkpoint_batch"
-grep -Fq 'wait_on_buffer(bhs[n])' <<<"$checkpoint_batch"
-# Source order guard: secondary publication cannot precede primary durability.
-python3 - "$rw" <<'PY'
-from pathlib import Path
-import sys
-source = Path(sys.argv[1]).read_text()
-start = source.index('static int infilfs_rw_write_checkpoint_replicas_sync(')
-end = source.index('static const u64 infilfs_rw_crc64_table', start)
-body = source[start:end]
-w = body.index('write_dirty_buffer(bh, REQ_SYNC)')
-await_primary = body.index('wait_on_buffer(bh)', w)
-flush_primary = body.index('blkdev_issue_flush(sb->s_bdev)', await_primary)
-write_backups = body.index('write_dirty_buffer(bhs[n], REQ_SYNC)', flush_primary)
-if not (w < await_primary < flush_primary < write_backups):
-    raise SystemExit('secondary checkpoint may precede durable primary')
-commit = source[source.index('static int infilfs_rw_tx_commit('):]
-if 'if (ret && !replica_error)' not in commit:
-    raise SystemExit('secondary flush error may be misreported as failed commit')
-PY
+test "$(grep -Fc 'blkdev_issue_flush(tx->sb->s_bdev)' <<<"$commit_body")" -eq 1
+# Both adapters invoke the same ordering state machine. The native writer
+# waits for each checkpoint I/O and a hardware cache barrier before the next.
+publisher="$root/kernel/infiltratorfs_checkpoint_publish.c"
+grep -Fq 'infilfs_checkpoint_publish(sb, disk, data, first, false,' "$rw"
+grep -Fq 'infs_checkpoint_publish(&infilfs_publication_io,' "$publisher"
+grep -Fq 'write_dirty_buffer(bh, REQ_SYNC)' "$publisher"
+grep -Fq 'wait_on_buffer(bh)' "$publisher"
+grep -Fq 'blkdev_issue_flush(p->sb->s_bdev)' "$publisher"
 python3 - "$rw" <<'PY'
 from pathlib import Path
 import sys
@@ -52,8 +37,7 @@ body = s[start:end]
 dependencies = body.index('infilfs_rw_sync_transaction_dependencies(tx)')
 first_flush = body.index('blkdev_issue_flush(tx->sb->s_bdev)', dependencies)
 checkpoint = body.index('infilfs_rw_write_checkpoint_replicas_sync(', first_flush)
-second_flush = body.index('blkdev_issue_flush(tx->sb->s_bdev)', checkpoint)
-if not (dependencies < first_flush < checkpoint < second_flush):
+if not (dependencies < first_flush < checkpoint):
     raise SystemExit('CoW dependencies are not durable before checkpoint publication')
 PY
 dependency_sync="$(sed -n '/static int infilfs_rw_sync_transaction_dependencies(/,/^}/p' "$rw")"

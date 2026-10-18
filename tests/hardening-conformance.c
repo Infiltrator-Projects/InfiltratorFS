@@ -238,7 +238,7 @@ static void build_valid_image(struct memory_image *image)
     sb.checksum_type = infs_cpu_to_le32(INFS_CHECKSUM_CRC64_ECMA);
     sb.generation = infs_cpu_to_le64(1);
     sb.total_blocks = infs_cpu_to_le64(TEST_BLOCKS);
-    sb.free_blocks = infs_cpu_to_le64(TEST_BLOCKS - 9u);
+    sb.free_blocks = infs_cpu_to_le64(TEST_BLOCKS - 11u);
     sb.allocation_root_block = infs_cpu_to_le64(TEST_ALLOCATION_ROOT_BLOCK);
     sb.allocation_leaf_count = infs_cpu_to_le64(1);
     sb.object_index_block = infs_cpu_to_le64(2);
@@ -256,6 +256,7 @@ static void build_valid_image(struct memory_image *image)
     for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i)
         memcpy(image->bytes + checkpoints[i] * INFS_BLOCK_SIZE,
                block, sizeof(block));
+    test_write_recovery_locators(image->bytes);
 }
 
 static infs_status open_image(struct memory_image *image, int writable,
@@ -471,7 +472,7 @@ static void check_bitmap_ownership(struct memory_image *image)
 
     struct infs_superblock_disk sb;
     memcpy(&sb, image->bytes, sizeof(sb));
-    sb.free_blocks = infs_cpu_to_le64(TEST_BLOCKS - 7u);
+    sb.free_blocks = infs_cpu_to_le64(TEST_BLOCKS - 9u);
     rewrite_all_checkpoints(image, &sb);
 
     struct infs_volume volume;
@@ -747,26 +748,22 @@ static void check_post_commit_replica_failure(struct memory_image *image)
     image->fail_write_block = 0;
     image->fail_writes = 1;
     expect(infs_create_file(&volume, "/committed", &file_options) ==
-               INFS_STATUS_OK,
-           "committed mutation survives replica failure");
-    expect(volume.checkpoint_repair_needed != 0,
-           "record degraded checkpoint replication");
-
+               INFS_STATUS_IO_ERROR,
+           "ambiguous replica failure reports an I/O error");
+    expect(!volume.writable && volume.reopen_required_status == INFS_STATUS_IO_ERROR,
+           "ambiguous replica failure poisons the writer");
+    expect(infs_volume_sync(&volume) == INFS_STATUS_IO_ERROR,
+           "poisoned writer cannot retry publication");
+    infs_volume_close(&volume);
+    image->fail_writes = 0;
+    image->fail_write_block = UINT64_MAX;
+    expect(open_image(image, 1, &volume) == INFS_STATUS_OK,
+           "fresh writable open heals the selected committed generation");
     struct infs_lookup lookup;
     expect(infs_lookup_path(&volume, "/committed", &lookup) == INFS_STATUS_OK,
-           "committed namespace change remains visible");
-
-    image->fail_writes = 0;
+           "committed namespace survives checkpoint-replica failure");
     expect(infs_volume_sync(&volume) == INFS_STATUS_OK,
-           "heal checkpoint replicas on sync");
-    expect(volume.checkpoint_repair_needed == 0,
-           "clear checkpoint repair state after heal");
-    infs_volume_close(&volume);
-
-    expect(open_image(image, 0, &volume) == INFS_STATUS_OK,
-           "reopen healed image");
-    expect(infs_lookup_path(&volume, "/committed", &lookup) == INFS_STATUS_OK,
-           "committed file survives reopen");
+           "recovered writer is usable");
     infs_volume_close(&volume);
 }
 

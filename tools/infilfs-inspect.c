@@ -208,8 +208,11 @@ int main(int argc, char **argv)
            root_no, root_ok ? "valid" : "INVALID");
     printf("  Valid checkpoints: %u/%u\n", valid, INFS_CHECKPOINT_COUNT);
     printf("  Checkpoint generations:");
-    const uint64_t total_blocks = size_bytes / INFS_BLOCK_SIZE;
-    const uint64_t cp[INFS_CHECKPOINT_COUNT] = {0, total_blocks / 2u, total_blocks - 1u};
+    const uint64_t cp[INFS_CHECKPOINT_COUNT] = {
+        infs_le64_to_cpu(sb.checkpoint_block[0]),
+        infs_le64_to_cpu(sb.checkpoint_block[1]),
+        infs_le64_to_cpu(sb.checkpoint_block[2])
+    };
     for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i) {
         uint8_t raw[INFS_BLOCK_SIZE];
         struct infs_superblock_disk copy;

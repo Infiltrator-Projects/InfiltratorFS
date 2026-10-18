@@ -52,8 +52,8 @@ int main(void)
 
     /* A current 0.18 implementation must not accept the future locator as a
      * checkpoint or confuse locator schema with a committed generation. */
-    expect(INFS_FORMAT_MINOR == 18u,
-           "current production disk format must remain unchanged");
+    expect(INFS_FORMAT_MINOR == 19u,
+           "current production disk format is 0.19");
 
     memcpy(bad, raw, sizeof(bad));
     bad[INFS_LOCATOR_OFF_GENERATION] ^= 1u;

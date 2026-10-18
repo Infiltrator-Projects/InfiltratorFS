@@ -4,7 +4,7 @@ The native Windows target is an InfiltratorFS filesystem driver (infiltratorfs-n
 
 ## Architecture
 
-Windows I/O Manager and Cache Manager semantics live in the kernel driver. The driver registers as a disk filesystem, recognises Format 0.18 volumes during IRP_MN_MOUNT_VOLUME, owns VPB/volume-device lifetime, FCB/CCB state, byte-range locking, oplock integration, cached/non-cached I/O, paging I/O and volume teardown.
+Windows I/O Manager and Cache Manager semantics live in the kernel driver. The driver registers as a disk filesystem, recognises Format 0.19 volumes during IRP_MN_MOUNT_VOLUME, owns VPB/volume-device lifetime, FCB/CCB state, byte-range locking, oplock integration, cached/non-cached I/O, paging I/O and volume teardown.
 
 The existing portable InfiltratorFS core remains the authoritative implementation of namespace, CoW, checksums, compression, snapshots, portable security, storage policy and crash-consistent publication. A companion native service links that same core. The kernel driver and service communicate through the private versioned protocol in infiltratorfs-native-protocol.h.
 
@@ -46,6 +46,6 @@ The final driver must qualify:
 7. fsync/flush durability;
 8. snapshot/reflink/storage-policy semantics through the shared core;
 9. boot-time service ordering and recovery after service restart;
-10. stress under Driver Verifier plus cross-platform Format 0.18 conformance.
+10. stress under Driver Verifier plus cross-platform Format 0.19 conformance.
 
 The existing ProjFS bridge remains a useful driverless interoperability/recovery path, but it is not counted as the native-driver qualification.

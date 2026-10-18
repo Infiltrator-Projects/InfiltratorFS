@@ -20,110 +20,6 @@ static infs_status checkpoint_graph_status(infs_status status)
     return status;
 }
 
-static infs_status read_checkpoint_candidates(
-    struct infs_volume *vol,
-    struct infs_superblock_disk candidates[INFS_CHECKPOINT_COUNT],
-    uint8_t valid[INFS_CHECKPOINT_COUNT])
-{
-    if (!vol || !candidates || !valid ||
-        vol->size_bytes < INFS_BLOCK_SIZE * 3u)
-        return INFS_STATUS_INVALID_ARGUMENT;
-
-    memset(valid, 0, INFS_CHECKPOINT_COUNT);
-    const uint64_t storage_blocks = vol->size_bytes / INFS_BLOCK_SIZE;
-    uint64_t blocks[INFS_CHECKPOINT_COUNT] = {
-        0, storage_blocks / 2u, storage_blocks - 1u
-    };
-    struct infs_superblock_disk anchor;
-    int anchored = 0;
-    uint8_t raw[INFS_BLOCK_SIZE];
-
-    infs_status anchor_read = infs_storage_read(
-        &vol->storage, 0, raw, sizeof(raw));
-    if (anchor_read == INFS_STATUS_OK &&
-        infs_validate_superblock_block(raw)) {
-        memcpy(&anchor, raw, sizeof(anchor));
-        uint64_t total = infs_le64_to_cpu(anchor.total_blocks);
-        uint64_t c0 = infs_le64_to_cpu(anchor.checkpoint_block[0]);
-        uint64_t c1 = infs_le64_to_cpu(anchor.checkpoint_block[1]);
-        uint64_t c2 = infs_le64_to_cpu(anchor.checkpoint_block[2]);
-        if (total >= 3u && total <= storage_blocks &&
-            c0 == 0 && c1 < total && c2 < total &&
-            c1 != c0 && c2 != c0 && c2 != c1) {
-            blocks[0] = c0;
-            blocks[1] = c1;
-            blocks[2] = c2;
-            anchored = 1;
-        }
-    }
-
-    unsigned found = 0;
-    infs_status first_read_error = anchor_read == INFS_STATUS_OK ?
-        INFS_STATUS_OK : anchor_read;
-
-    for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i) {
-        infs_status status = infs_storage_read(
-            &vol->storage, blocks[i] * INFS_BLOCK_SIZE, raw, sizeof(raw));
-        if (status != INFS_STATUS_OK) {
-            if (first_read_error == INFS_STATUS_OK)
-                first_read_error = status;
-            continue;
-        }
-        if (!infs_validate_superblock_block(raw))
-            continue;
-
-        struct infs_superblock_disk sb;
-        memcpy(&sb, raw, sizeof(sb));
-        uint64_t total = infs_le64_to_cpu(sb.total_blocks);
-        if (total < 3u || total > storage_blocks ||
-            infs_le64_to_cpu(sb.checkpoint_block[0]) != blocks[0] ||
-            infs_le64_to_cpu(sb.checkpoint_block[1]) != blocks[1] ||
-            infs_le64_to_cpu(sb.checkpoint_block[2]) != blocks[2])
-            continue;
-        if (anchored &&
-            (total != infs_le64_to_cpu(anchor.total_blocks) ||
-             memcmp(sb.filesystem_uuid, anchor.filesystem_uuid,
-                    sizeof(sb.filesystem_uuid)) != 0))
-            continue;
-
-        candidates[i] = sb;
-        valid[i] = 1;
-        ++found;
-    }
-
-    if (first_read_error != INFS_STATUS_OK && vol->writable)
-        return first_read_error;
-    if (found)
-        return INFS_STATUS_OK;
-    return first_read_error != INFS_STATUS_OK ?
-        first_read_error : INFS_STATUS_CORRUPT;
-}
-
-static int checkpoint_candidates_all_agree(
-    const struct infs_superblock_disk candidates[INFS_CHECKPOINT_COUNT],
-    const uint8_t valid[INFS_CHECKPOINT_COUNT])
-{
-    int first = -1;
-    unsigned count = 0;
-    for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i) {
-        if (!valid[i])
-            continue;
-        if (first < 0)
-            first = (int)i;
-        ++count;
-    }
-    if (count != INFS_CHECKPOINT_COUNT || first < 0)
-        return 0;
-    for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i) {
-        if (i == (unsigned)first)
-            continue;
-        if (memcmp(&candidates[i], &candidates[first],
-                   sizeof(candidates[i])) != 0)
-            return 0;
-    }
-    return 1;
-}
-
 static infs_status load_checkpoint_graph(
     struct infs_volume *vol, const struct infs_superblock_disk *candidate,
     int full_verify, uint16_t expected_minor)
@@ -292,12 +188,12 @@ infs_status infs_volume_verify_019_test_image(
     return selected_valid ? INFS_STATUS_OK : status;
 }
 
-/* Experimental Format 0.19 disposable-image open. The writable mode needs
- * two consistent locators, three identical checkpoint replicas and a fully
- * verified graph; it never accepts physical devices or silently repairs
- * degraded media. The production 0.18 open path remains separate. */
-static infs_status open_019_test_image_mode(
-    struct infs_volume *vol, struct infs_storage *storage, int writable)
+/* Common Format 0.19 graph admission. Normal writable open repairs replicas
+ * after validation; strict fixture mode instead requires intact redundancy
+ * and refuses physical devices. Read-only open never changes storage. */
+static infs_status open_019_volume_mode(
+    struct infs_volume *vol, struct infs_storage *storage, int writable,
+    int image_only, int repair)
 {
     struct infs_superblock_disk checkpoints[INFS_LOCATOR_MAX_CANDIDATES];
     uint8_t valid[INFS_LOCATOR_MAX_CANDIDATES] = {0};
@@ -317,7 +213,7 @@ static infs_status open_019_test_image_mode(
     status = infs_storage_get_size(&vol->storage, &bytes, &is_device);
     if (status != INFS_STATUS_OK)
         goto fail;
-    if (is_device) {
+    if (is_device && image_only) {
         status = INFS_STATUS_NOT_SUPPORTED;
         goto fail;
     }
@@ -328,8 +224,11 @@ static infs_status open_019_test_image_mode(
         goto fail;
     }
     vol->size_bytes = bytes;
+    /* Admission must validate the requested access mode. Graph loading is
+     * read-only; setting this now cannot publish writes before validation. */
+    vol->writable = writable != 0;
 
-    if (writable) {
+    if (writable && !repair) {
         uint8_t raw[INFS_BLOCK_SIZE];
         struct infs_locator a = {0}, b = {0};
         /* Locator generation may lag ordinary same-geometry commits, but
@@ -354,18 +253,23 @@ static infs_status open_019_test_image_mode(
         }
     }
 
-    status = infs_locator_discover_019_headers(
-        &vol->storage, bytes, checkpoints, valid, &found);
+    infs_status read_error = INFS_STATUS_OK;
+    status = infs_locator_discover_019_headers_with_errors(
+        &vol->storage, bytes, checkpoints, valid, &found, &read_error);
     if (status != INFS_STATUS_OK)
         goto fail;
-    if (writable) {
+    if (writable && read_error != INFS_STATUS_OK) {
+        status = read_error;
+        goto fail;
+    }
+    if (writable && !repair) {
         /* Six independently valid candidate copies: 2 x 3 replicas.
          * Refuse an ambiguous startup, including any torn last commit. */
-        if (found != INFS_LOCATOR_MAX_CANDIDATES) {
+        if (found != 2u * INFS_CHECKPOINT_COUNT) {
             status = INFS_STATUS_CORRUPT;
             goto fail;
         }
-        for (unsigned i = 0; i < INFS_LOCATOR_MAX_CANDIDATES; ++i) {
+        for (unsigned i = 0; i < 2u * INFS_CHECKPOINT_COUNT; ++i) {
             if (!valid[i] || memcmp(&checkpoints[i], &checkpoints[0],
                                     sizeof(checkpoints[0])) != 0) {
                 status = INFS_STATUS_CORRUPT;
@@ -374,6 +278,11 @@ static infs_status open_019_test_image_mode(
         }
     }
 
+    int full_verify = !is_device || found != 2u * INFS_CHECKPOINT_COUNT;
+    for (unsigned i = 0; !full_verify && i < 2u * INFS_CHECKPOINT_COUNT; ++i)
+        if (!valid[i] || memcmp(&checkpoints[i], &checkpoints[0],
+                                sizeof(checkpoints[0])) != 0)
+            full_verify = 1;
     for (unsigned attempt = 0; attempt < INFS_LOCATOR_MAX_CANDIDATES;
          ++attempt) {
         int best = -1;
@@ -393,7 +302,7 @@ static infs_status open_019_test_image_mode(
             break;
         valid[best] = 0;
         status = load_checkpoint_graph(
-            vol, &checkpoints[best], 1, INFS_LOCATOR_FORMAT_MINOR);
+            vol, &checkpoints[best], full_verify, INFS_LOCATOR_FORMAT_MINOR);
         if (status == INFS_STATUS_OK) {
             selected = 1;
             break;
@@ -415,10 +324,18 @@ static infs_status open_019_test_image_mode(
         goto fail;
     }
 
+    if (writable && repair) {
+        status = heal_checkpoints(vol);
+        if (status == INFS_STATUS_OK)
+            status = heal_locators(vol);
+        if (status != INFS_STATUS_OK)
+            goto fail;
+    }
     (void)free_extent_index_rebuild(vol);
     object_cache_init(vol);
     directory_cache_init(vol);
-    (void)object_cache_rebuild(vol);
+    if (!is_device)
+        (void)object_cache_rebuild(vol);
     vol->metadata_allocation_cursor =
         infs_le64_to_cpu(vol->sb.total_blocks);
     /* Enable writes only after all full-graph/replica/locator checks. */
@@ -436,130 +353,25 @@ fail:
 infs_status infs_volume_open_019_test_image(
     struct infs_volume *vol, struct infs_storage *storage)
 {
-    return open_019_test_image_mode(vol, storage, 0);
+    return open_019_volume_mode(vol, storage, 0, 1, 0);
 }
 
 infs_status infs_volume_open_019_rw_test_image(
     struct infs_volume *vol, struct infs_storage *storage)
 {
-    return open_019_test_image_mode(vol, storage, 1);
+    return open_019_volume_mode(vol, storage, 1, 1, 0);
+}
+
+infs_status infs_volume_open_019_storage(
+    struct infs_volume *vol, struct infs_storage *storage, int writable)
+{
+    return open_019_volume_mode(vol, storage, writable, 0, 1);
 }
 
 infs_status infs_volume_open_storage(struct infs_volume *vol,
                                      struct infs_storage *storage, int writable)
 {
-    if (!vol || !storage || !infs_storage_valid(storage))
-        return INFS_STATUS_INVALID_ARGUMENT;
-    memset(vol, 0, sizeof(*vol));
-    vol->writable = writable != 0;
-    /* Keep caller ownership intact until open has completed successfully.
-     * The volume may borrow the handle while validating candidates, but a
-     * failed open must not consume or close a backend the API still assigns
-     * to the caller. */
-    vol->storage = *storage;
-    vol->data_allocation_cursor = 1u;
-    vol->metadata_allocation_cursor = 0;
-
-    infs_status status = INFS_STATUS_OK;
-    if (vol->writable &&
-        (!vol->storage.ops->write_at || !vol->storage.ops->flush ||
-         !vol->storage.ops->random_bytes ||
-         !vol->storage.ops->current_time)) {
-        status = INFS_STATUS_INVALID_ARGUMENT;
-        goto fail;
-    }
-
-    int is_block = 0;
-    status = infs_storage_get_size(&vol->storage, &vol->size_bytes, &is_block);
-    if (status != INFS_STATUS_OK)
-        goto fail;
-
-    struct infs_superblock_disk candidates[INFS_CHECKPOINT_COUNT];
-    uint8_t valid[INFS_CHECKPOINT_COUNT];
-    status = read_checkpoint_candidates(vol, candidates, valid);
-    if (status != INFS_STATUS_OK)
-        goto fail;
-
-    /* Ordinary healthy block-device mounts stay lightweight. A writable
-     * recovery mount is different: if checkpoint replicas are missing or do
-     * not agree byte-for-byte, healing them could destroy the last known-good
-     * generation. In that degraded state require the complete graph checks
-     * while selecting the recovery candidate, then and only then repair the
-     * replicas. */
-    int full_verify = !is_block;
-    if (vol->writable && is_block &&
-        !checkpoint_candidates_all_agree(candidates, valid))
-        full_verify = 1;
-
-    int selected = 0;
-    for (unsigned attempt = 0; attempt < INFS_CHECKPOINT_COUNT; ++attempt) {
-        int best = -1;
-        uint64_t best_generation = 0;
-        for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i) {
-            if (!valid[i])
-                continue;
-            uint64_t generation = infs_le64_to_cpu(candidates[i].generation);
-            if (best < 0 || generation > best_generation) {
-                best = (int)i;
-                best_generation = generation;
-            }
-        }
-        if (best < 0)
-            break;
-
-        valid[best] = 0;
-        status = load_checkpoint_graph(
-            vol, &candidates[best], full_verify, INFS_FORMAT_MINOR);
-        if (status == INFS_STATUS_OK) {
-            selected = 1;
-            break;
-        }
-
-        discard_candidate_state(vol);
-        if (status != INFS_STATUS_CORRUPT)
-            goto fail;
-    }
-
-    if (!selected) {
-        status = INFS_STATUS_CORRUPT;
-        goto fail;
-    }
-
-    if (vol->writable) {
-        status = heal_checkpoints(vol);
-        if (status != INFS_STATUS_OK)
-            goto fail;
-    }
-
-    /* The bitmap is authoritative. Build the free-run index from it once;
-     * allocation remains correct if memory pressure disables this cache. */
-    (void)free_extent_index_rebuild(vol);
-
-    /* Runtime caches are deliberately best-effort: failure to allocate a
-     * cache must never make an otherwise valid filesystem unmountable. */
-    object_cache_init(vol);
-    directory_cache_init(vol);
-    /*
-     * A raw block-device mount must not become an implicit object-index walk.
-     * The cache is only an accelerator: the tree supplies bounded lookup
-     * without pre-population, and individual successful lookups fill it
-     * naturally. Offline/image workflows retain eager cache population.
-     */
-    if (!is_block)
-        (void)object_cache_rebuild(vol);
-    vol->data_allocation_cursor = 1u;
-    vol->metadata_allocation_cursor =
-        infs_le64_to_cpu(vol->sb.total_blocks);
-    storage->ops = NULL;
-    storage->context = NULL;
-    return INFS_STATUS_OK;
-
-fail:
-    discard_candidate_state(vol);
-    /* The caller still owns the original storage handle. Clear the borrowed
-     * alias and all failed-open session state without invoking backend close. */
-    memset(vol, 0, sizeof(*vol));
-    return status == INFS_STATUS_OK ? INFS_STATUS_ERROR : status;
+    return open_019_volume_mode(vol, storage, writable, 0, 1);
 }
 
 void infs_volume_close(struct infs_volume *vol)

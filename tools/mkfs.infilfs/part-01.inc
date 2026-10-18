@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "infilfs/format.h"
 #include "infilfs/format_volume.h"
+#include "infilfs/locator.h"
 #include "infilfs/fs.h"
 #include "infilfs/posix_io.h"
 #include "infilfs/utf8.h"
@@ -76,92 +77,6 @@ static void resolve_root_owner(uint32_t *uid_out, uint32_t *gid_out)
 
     *uid_out = uid;
     *gid_out = gid;
-}
-
-static void bitmap_set(uint8_t *bitmap, uint64_t block)
-{
-    bitmap[block >> 3] |= (uint8_t)(1u << (block & 7u));
-}
-
-static int bitmap_get(const uint8_t *bitmap, uint64_t block)
-{
-    return (bitmap[block >> 3] >> (block & 7u)) & 1u;
-}
-
-static int block_byte_offset(uint64_t block, uint64_t *offset)
-{
-    if (!offset ||
-        !infiltratr_u64_multiply_checked(
-            block, (uint64_t)INFS_BLOCK_SIZE, offset)) {
-        errno = EOVERFLOW;
-        return -1;
-    }
-    return 0;
-}
-
-static int pread_block_full_fd(int fd, uint64_t block,
-                               void *buffer, size_t size)
-{
-    uint64_t offset = 0;
-    if (block_byte_offset(block, &offset) != 0)
-        return -1;
-    return infs_pread_full(fd, buffer, size, offset);
-}
-
-static int pwrite_block_full_fd(int fd, uint64_t block,
-                                const void *buffer, size_t size)
-{
-    uint64_t offset = 0;
-    if (block_byte_offset(block, &offset) != 0)
-        return -1;
-    return infs_pwrite_full(fd, buffer, size, offset);
-}
-
-static int write_allocation_page_fd(
-    int fd, uint64_t physical_block, const uint8_t magic[8],
-    uint64_t logical_index, uint32_t level, uint32_t entries,
-    const void *payload, uint32_t bytes)
-{
-    uint8_t block[INFS_BLOCK_SIZE];
-    if (infs_allocation_page_init(block, magic, 1u, logical_index, level) !=
-        INFS_STATUS_OK)
-        return -1;
-    struct infs_allocation_page_disk *page =
-        (struct infs_allocation_page_disk *)block;
-    page->entry_count = infs_cpu_to_le32(entries);
-    page->bytes_used = infs_cpu_to_le32(bytes);
-    if (bytes)
-        memcpy(page + 1, payload, bytes);
-    if (infs_allocation_page_finalize(block) != INFS_STATUS_OK)
-        return -1;
-    return pwrite_block_full_fd(
-        fd, physical_block, block, sizeof(block));
-}
-
-static int id_is_zero_local(const uint8_t id[16])
-{
-    uint8_t combined = 0;
-    for (unsigned i = 0; i < 16u; ++i)
-        combined |= id[i];
-    return combined == 0;
-}
-
-static int generate_id(uint8_t id[16], const uint8_t avoid1[16],
-                       const uint8_t avoid2[16])
-{
-    for (unsigned attempt = 0; attempt < 32u; ++attempt) {
-        if (infs_random_bytes(id, 16) != 0)
-            return -1;
-        if (id_is_zero_local(id))
-            continue;
-        if (avoid1 && memcmp(id, avoid1, 16) == 0)
-            continue;
-        if (avoid2 && memcmp(id, avoid2, 16) == 0)
-            continue;
-        return 0;
-    }
-    errno = EIO;
-    return -1;
 }
 
 static int same_or_descendant_path(const char *parent, const char *candidate)

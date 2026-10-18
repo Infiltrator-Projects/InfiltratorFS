@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.19.0 — 2026-10-18
+
+- Complete Format 0.19 as the current testing format: normal portable/Linux formatting, writable opens/mounts/remounts, relocation-aware grow/shrink, checkpoint/locator repair, structural fsck and deep scrub. Superseded development formats are rejected.
+- Share one durability protocol between portable and native writers: flush dependencies, publish each checkpoint with its own barrier, and stage relocation through locator A and finally locator B. Poison writes after ambiguous publication and preserve valid survivors during repair; ordinary transactions never rewrite locators.
+- Discover both fixed maps and an independent primary map with a finite nine-candidate bound, recover relocated backups after block-zero loss, preserve I/O errors and reject reserved-block aliases. Fix writable feature admission and reject unaligned formatting before any writes.
+- Add actual-writer fault qualification (148 transaction and 128 resize cases), default CLI repair tests, and native VM write/remount/resize/physical-image-shrink/recovery/repair qualification. Physical NVMe performance, hardware power-loss/endurance and mounted native-Windows qualification remain separate test work.
+
 ## 0.18.143 — 2026-10-18
 
 - Extend experimental writable Format 0.19 regular-image qualification across separately injected I/O failures at each of the three checkpoint durability flushes. Require immediate writer poisoning, no further writes after failure, unchanged fixed recovery locators, full committed-graph recovery and a verified read-only reopen for every case.

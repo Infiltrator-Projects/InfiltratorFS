@@ -24,7 +24,7 @@ flowchart TB
     Linux[Linux VFS adapter] --> Core[Portable InfiltratorFS core]
     Windows[Windows / ProjFS tools] --> Core
     Future[Future native adapters] --> Core
-    Core --> Format[Format 0.18 objects, extents, allocation, checkpoints]
+    Core --> Format[Format 0.19 objects, extents, allocation, checkpoints]
     Core --> Storage[Storage service contract]
     Storage --> Media[Image / partition / block device]
     LinuxMeta[Linux-only sidecar metadata] --> Linux
@@ -42,7 +42,7 @@ Filesystem and object identities are 128-bit persistent values. Paths are namesp
 
 Directories map UTF-8 names to persistent objects. Regular files may have multiple namespace references through hard links. Symbolic links are their own persistent objects with stored targets. Namespace operations are transactional and must preserve exact parent/reference/link-count invariants.
 
-Format 0.18 uses 1023-byte UTF-8 component names and explicit validation of forbidden traversal/reserved forms. Unicode-name policy v1 performs no implicit normalization and preserves valid UTF-8 exactly. The default namespace remains byte-exact and case-sensitive. An optional incompatible case-fold policy v1 canonicalizes ASCII A-Z to a-z for lookup identity while retaining original spelling and treating every non-ASCII UTF-8 byte exactly; portable and native directory caches/tree routing use that same rule. Any broader normalization or Unicode case-folding semantics require a new versioned policy rather than silently changing current lookup behavior.
+Format 0.19 uses 1023-byte UTF-8 component names and explicit validation of forbidden traversal/reserved forms. Unicode-name policy v1 performs no implicit normalization and preserves valid UTF-8 exactly. The default namespace remains byte-exact and case-sensitive. An optional incompatible case-fold policy v1 canonicalizes ASCII A-Z to a-z for lookup identity while retaining original spelling and treating every non-ASCII UTF-8 byte exactly; portable and native directory caches/tree routing use that same rule. Any broader normalization or Unicode case-folding semantics require a new versioned policy rather than silently changing current lookup behavior.
 
 ## 3. Transactions, generations and checkpoints
 
@@ -55,7 +55,9 @@ The commit boundary is fail-closed:
 1. replacement data/metadata and allocation state are written;
 2. required durability operations complete;
 3. the first new checkpoint is durably published, making the new generation authoritative;
-4. remaining checkpoint replicas may then be refreshed.
+4. each remaining checkpoint replica is written and durably flushed separately.
+
+Fixed recovery locators at blocks 1 and 2047 independently describe checkpoint geometry. Ordinary commits never rewrite them. Resize first flushes replacement dependencies, then locator A, then each new checkpoint individually, then locator B. The shared protocol lives in `include/infilfs/checkpoint_protocol.h`; both portable and native writers use it. Writable open repairs checkpoint copies before obsolete locator hints, preserving valid survivors throughout.
 
 If durability of the first publication cannot be established, further mutation must not continue as though the transaction definitely committed.
 
@@ -87,13 +89,13 @@ This preserves the simplicity of bitmap ownership while allowing scalable public
 
 Linux additionally uses volatile sharded reservation state so independent writers can search and reserve candidate data runs before the serialized metadata transaction. Reservation state is never authoritative persistent allocation.
 
-Placement policy is deliberately volatile where possible. Sequential, random/in-place and sparse workloads may select different free runs; rotational and non-rotational media may score those runs differently. These choices must not redefine persistent object identity or Format 0.18 semantics.
+Placement policy is deliberately volatile where possible. Sequential, random/in-place and sparse workloads may select different free runs; rotational and non-rotational media may score those runs differently. These choices must not redefine persistent object identity or Format 0.19 semantics.
 
 Unsupported zoned-device write-pointer semantics are rejected rather than approximated unsafely.
 
 ### Per-object protection and encryption policy
 
-Format 0.18 reserves disjoint high bits in the common object attributes word for
+Format 0.19 reserves disjoint high bits in the common object attributes word for
 a persistent protection-copy count and encryption-domain ID. The ordinary
 portable presentation flags occupy separate low bits.
 
@@ -220,7 +222,7 @@ The native adapter registers as a disk filesystem and owns Windows I/O Manager a
 
 Current POSIX compatibility fields and Linux xattr sidecars are not the portable security authority.
 
-Format 0.18 implements versioned portable security objects, stable typed principals, portable rights and explicit Linux/Windows mapping. Platform-specific security metadata remains preservable even when another adapter cannot interpret it. See `SECURITY.md`.
+Format 0.19 implements versioned portable security objects, stable typed principals, portable rights and explicit Linux/Windows mapping. Platform-specific security metadata remains preservable even when another adapter cannot interpret it. See `SECURITY.md`.
 
 ## 13. Design guardrails
 
@@ -231,4 +233,4 @@ Format 0.18 implements versioned portable security objects, stable typed princip
 - Compression, encryption, protection classes, replication, case-folding and named streams should build on existing primitives instead of creating parallel incompatible models.
 - Fail closed when integrity, durability or recovery correctness cannot be established.
 
-For field-level Format 0.18 details, use `ON_DISK_FORMAT.md`. For what is finished, use `ROADMAP.md`. For proof, use `QUALIFICATION.md`.
+For field-level Format 0.19 details, use `ON_DISK_FORMAT.md`. For what is finished, use `ROADMAP.md`. For proof, use `QUALIFICATION.md`.

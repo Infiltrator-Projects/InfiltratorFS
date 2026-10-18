@@ -1005,81 +1005,40 @@ infs_status infs_read_best_superblock(const struct infs_storage *storage,
                                       struct infs_superblock_disk *out,
                                       unsigned *valid_copies)
 {
-    if (!infs_storage_valid(storage) ||
-        size_bytes < INFS_BLOCK_SIZE * 3u || !out)
+    if (!storage || !out)
         return INFS_STATUS_INVALID_ARGUMENT;
-
-    const uint64_t storage_blocks = size_bytes / INFS_BLOCK_SIZE;
-    uint64_t candidates[INFS_CHECKPOINT_COUNT] = {
-        0, storage_blocks / 2u, storage_blocks - 1u
-    };
-    struct infs_superblock_disk anchor;
-    int anchored = 0;
-    uint8_t block[INFS_BLOCK_SIZE];
-
-    /*
-     * Block zero is the stable geometry anchor.  This lets a filesystem be
-     * smaller than its backing partition while an online grow (or staged
-     * shrink) is in progress.  Existing unresized volumes keep the historical
-     * half/end fallback when block zero is unreadable.
-     */
-    if (infs_storage_read(storage, 0, block, sizeof(block)) ==
-            INFS_STATUS_OK &&
-        infs_validate_superblock_block(block)) {
-        memcpy(&anchor, block, sizeof(anchor));
-        uint64_t total = infs_le64_to_cpu(anchor.total_blocks);
-        uint64_t c0 = infs_le64_to_cpu(anchor.checkpoint_block[0]);
-        uint64_t c1 = infs_le64_to_cpu(anchor.checkpoint_block[1]);
-        uint64_t c2 = infs_le64_to_cpu(anchor.checkpoint_block[2]);
-        if (total >= 3u && total <= storage_blocks &&
-            c0 == 0 && c1 < total && c2 < total &&
-            c1 != c0 && c2 != c0 && c2 != c1) {
-            candidates[0] = c0;
-            candidates[1] = c1;
-            candidates[2] = c2;
-            anchored = 1;
+    struct infs_superblock_disk candidates[INFS_LOCATOR_MAX_CANDIDATES];
+    uint8_t valid[INFS_LOCATOR_MAX_CANDIDATES];
+    unsigned count = 0;
+    infs_status status = infs_locator_discover_019_headers(storage, size_bytes,
+        candidates, valid, &count);
+    if (status != INFS_STATUS_OK)
+        return status;
+    unsigned best = 0;
+    uint64_t generation = 0;
+    for (unsigned i = 0; i < INFS_LOCATOR_MAX_CANDIDATES; ++i)
+        if (valid[i] && infs_le64_to_cpu(candidates[i].generation) > generation) {
+            best = i;
+            generation = infs_le64_to_cpu(candidates[i].generation);
         }
-    }
-
-    uint64_t best_generation = 0;
-    int found = 0;
-    unsigned valid = 0;
-
+    *out = candidates[best];
+    unsigned copies = 0;
     for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i) {
-        uint64_t offset = candidates[i] * INFS_BLOCK_SIZE;
-        if (infs_storage_read(storage, offset, block, sizeof(block)) !=
-            INFS_STATUS_OK)
+        uint8_t raw[INFS_BLOCK_SIZE];
+        struct infs_superblock_disk copy;
+        if (infs_storage_read(storage,
+                infs_le64_to_cpu(out->checkpoint_block[i]) * INFS_BLOCK_SIZE,
+                raw, sizeof(raw)) != INFS_STATUS_OK ||
+            infs_decode_superblock(raw, &copy) != INFS_STATUS_OK)
             continue;
-        if (!infs_validate_superblock_block(block))
-            continue;
-
-        struct infs_superblock_disk sb;
-        memcpy(&sb, block, sizeof(sb));
-        uint64_t total = infs_le64_to_cpu(sb.total_blocks);
-        if (total < 3u || total > storage_blocks ||
-            infs_le64_to_cpu(sb.checkpoint_block[0]) != candidates[0] ||
-            infs_le64_to_cpu(sb.checkpoint_block[1]) != candidates[1] ||
-            infs_le64_to_cpu(sb.checkpoint_block[2]) != candidates[2])
-            continue;
-        if (anchored &&
-            (total != infs_le64_to_cpu(anchor.total_blocks) ||
-             memcmp(sb.filesystem_uuid, anchor.filesystem_uuid,
-                    sizeof(sb.filesystem_uuid)) != 0))
-            continue;
-
-        ++valid;
-        uint64_t gen = infs_le64_to_cpu(sb.generation);
-        if (!found || gen > best_generation) {
-            memcpy(out, &sb, sizeof(*out));
-            best_generation = gen;
-            found = 1;
-        }
+        if (copy.total_blocks == out->total_blocks &&
+            memcmp(copy.filesystem_uuid, out->filesystem_uuid, 16u) == 0 &&
+            memcmp(copy.checkpoint_block, out->checkpoint_block,
+                   sizeof(copy.checkpoint_block)) == 0)
+            ++copies;
     }
-
     if (valid_copies)
-        *valid_copies = valid;
-    if (!found)
-        return INFS_STATUS_CORRUPT;
+        *valid_copies = copies;
     return INFS_STATUS_OK;
 }
 

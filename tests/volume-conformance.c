@@ -187,7 +187,7 @@ static void build_valid_image(struct memory_image *image)
     sb.checksum_type = infs_cpu_to_le32(INFS_CHECKSUM_CRC64_ECMA);
     sb.generation = infs_cpu_to_le64(1);
     sb.total_blocks = infs_cpu_to_le64(TEST_BLOCKS);
-    sb.free_blocks = infs_cpu_to_le64(TEST_BLOCKS - 9u);
+    sb.free_blocks = infs_cpu_to_le64(TEST_BLOCKS - 11u);
     sb.allocation_root_block = infs_cpu_to_le64(TEST_ALLOCATION_ROOT_BLOCK);
     sb.allocation_leaf_count = infs_cpu_to_le64(1);
     sb.object_index_block = infs_cpu_to_le64(2);
@@ -205,6 +205,7 @@ static void build_valid_image(struct memory_image *image)
     for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i)
         memcpy(image->bytes + checkpoints[i] * INFS_BLOCK_SIZE,
                block, sizeof(block));
+    test_write_recovery_locators(image->bytes);
 }
 
 static int open_image(struct memory_image *image)
@@ -474,12 +475,18 @@ int main(void)
 
     build_valid_image(&image);
     sb = current_superblock(&image);
-    sb.free_blocks = infs_cpu_to_le64(TEST_BLOCKS - 7u);
+    sb.free_blocks = infs_cpu_to_le64(TEST_BLOCKS - 9u);
     rewrite_checkpoints(&image, &sb);
     expect(open_image(&image) != 0, "reject allocation accounting mismatch");
 
     build_valid_image(&image);
-    bitmap_set(image.bytes + INFS_BLOCK_SIZE, 3, 0);
+    uint8_t *leaf = image.bytes + TEST_ALLOCATION_LEAF_BLOCK * INFS_BLOCK_SIZE;
+    bitmap_set(leaf + sizeof(struct infs_allocation_page_disk), 3, 0);
+    expect(infs_allocation_page_finalize(leaf) == INFS_STATUS_OK,
+           "finalize free-root allocation fixture");
+    sb = current_superblock(&image);
+    sb.free_blocks = infs_cpu_to_le64(TEST_BLOCKS - 10u);
+    rewrite_checkpoints(&image, &sb);
     expect(open_image(&image) != 0, "reject free root block");
 
     build_valid_image(&image);

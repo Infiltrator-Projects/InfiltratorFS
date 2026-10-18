@@ -268,11 +268,8 @@ infs_status infs_volume_resize(struct infs_volume *vol,
         return INFS_STATUS_INVALID_ARGUMENT;
     if (vol->snapshot_view)
         return INFS_STATUS_READ_ONLY;
-    /* Format 0.18 resize cannot perform the required two-locator 0.19
-     * recovery publication. Refuse before changing any media or metadata. */
-    if (infs_le16_to_cpu(vol->sb.format_minor) ==
-        INFS_LOCATOR_FORMAT_MINOR)
-        return INFS_STATUS_NOT_SUPPORTED;
+    int format019 = infs_le16_to_cpu(vol->sb.format_minor) ==
+        INFS_LOCATOR_FORMAT_MINOR;
 
     status = infs_volume_sync(vol);
     if (status != INFS_STATUS_OK)
@@ -343,7 +340,7 @@ infs_status infs_volume_resize(struct infs_volume *vol,
     };
     bitmap_set(next_bitmap, 0, 1);
 
-    if (checkpoint[1] >= new_total) {
+    if (format019 || checkpoint[1] >= new_total) {
         checkpoint[1] = resize_pick_free_near(
             next_bitmap, new_total, new_total / 2u);
         if (!checkpoint[1]) {
@@ -353,7 +350,7 @@ infs_status infs_volume_resize(struct infs_volume *vol,
     } else {
         bitmap_set(next_bitmap, checkpoint[1], 1);
     }
-    if (checkpoint[2] >= new_total ||
+    if (format019 || checkpoint[2] >= new_total ||
         checkpoint[2] == checkpoint[1]) {
         checkpoint[2] = resize_pick_free_near(
             next_bitmap, new_total, new_total - 1u);
@@ -433,12 +430,26 @@ infs_status infs_volume_resize(struct infs_volume *vol,
      * tree has not been overwritten, so either side of this flush is a
      * complete mountable generation.
      */
-    status = infs_storage_write(
-        &vol->storage, 0, sb_block, sizeof(sb_block));
-    if (status != INFS_STATUS_OK)
-        goto out;
-    status = infs_storage_flush(&vol->storage);
+    if (format019) {
+        struct volume_checkpoint_publication publication = {
+            vol, &next_sb, sb_block
+        };
+        int committed = 0;
+        /* Dependencies are durable, and old graph pages/checkpoints have
+         * not been overwritten. A-new, checkpoint zero, each backup, B-new
+         * are individually durable before any subsequent write can begin. */
+        status = infs_checkpoint_publish(&volume_checkpoint_io,
+            &publication, 0u, 1, &committed);
+    } else {
+        status = infs_storage_write(
+            &vol->storage, 0, sb_block, sizeof(sb_block));
+        if (status == INFS_STATUS_OK)
+            status = infs_storage_flush(&vol->storage);
+    }
     if (status != INFS_STATUS_OK) {
+        /* A locator or checkpoint write can have reached media even when
+         * its completion failed. No allocations may reuse old graph pages
+         * until a fresh open has selected and healed a complete generation. */
         vol->reopen_required_status = status;
         vol->writable = 0;
         goto out;
@@ -466,7 +477,7 @@ infs_status infs_volume_resize(struct infs_volume *vol,
     (void)object_cache_rebuild(vol);
 
     infs_status replica_status = INFS_STATUS_OK;
-    for (unsigned i = 1; i < INFS_CHECKPOINT_COUNT; ++i) {
+    for (unsigned i = 1; !format019 && i < INFS_CHECKPOINT_COUNT; ++i) {
         status = infs_storage_write(
             &vol->storage, checkpoint[i] * INFS_BLOCK_SIZE,
             sb_block, sizeof(sb_block));
@@ -474,7 +485,7 @@ infs_status infs_volume_resize(struct infs_volume *vol,
             replica_status == INFS_STATUS_OK)
             replica_status = status;
     }
-    status = infs_storage_flush(&vol->storage);
+    status = format019 ? INFS_STATUS_OK : infs_storage_flush(&vol->storage);
     if (status != INFS_STATUS_OK &&
         replica_status == INFS_STATUS_OK)
         replica_status = status;

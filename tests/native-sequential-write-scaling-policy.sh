@@ -54,8 +54,8 @@ grep -Fq 'const u64 max_publish = 512ULL * 1024ULL * 1024ULL;' "$data"
 grep -Fq '#define INFILFS_NATIVE_METADATA_PUBLISH_CHARGE (64ULL * 1024ULL)' "$ns"
 
 # Publication drains only this transaction's CoW dependency set, makes those
-# writes stable, then writes checkpoint replicas and performs the publication
-# stable-media flush.
+# writes stable, then publishes each checkpoint with its own stable-media
+# flush through the shared portable/native protocol.
 legacy="$root/kernel/infiltratorfs_rw_legacy.inc"
 commit_body="$(sed -n '/static int infilfs_rw_tx_commit(/,/^}/p' "$legacy")"
 ! grep -Fq 'sync_blockdev(tx->sb->s_bdev)' <<<"$commit_body"
@@ -63,11 +63,14 @@ grep -Fq 'infilfs_rw_allocation_map_publish(tx, &next_allocation)' <<<"$commit_b
 grep -Fq 'infilfs_rw_sync_transaction_dependencies(tx)' <<<"$commit_body"
 grep -Fq 'infilfs_rw_write_checkpoint_replicas_sync(' <<<"$commit_body"
 grep -Fq 'blkdev_issue_flush(tx->sb->s_bdev)' <<<"$commit_body"
-test "$(grep -Fc 'blkdev_issue_flush(tx->sb->s_bdev)' <<<"$commit_body")" -eq 2
-checkpoint_batch="$(sed -n '/static int infilfs_rw_write_checkpoint_replicas_sync(/,/^}/p' "$legacy")"
-grep -Fq 'blk_start_plug' <<<"$checkpoint_batch"
-grep -Fq 'write_dirty_buffer(bhs[n], REQ_SYNC)' <<<"$checkpoint_batch"
-grep -Fq 'wait_on_buffer(bhs[n])' <<<"$checkpoint_batch"
+test "$(grep -Fc 'blkdev_issue_flush(tx->sb->s_bdev)' <<<"$commit_body")" -eq 1
+checkpoint_publication="$(sed -n '/static int infilfs_rw_write_checkpoint_replicas_sync(/,/^}/p' "$legacy")"
+grep -Fq 'infilfs_checkpoint_publish(' <<<"$checkpoint_publication"
+publisher="$root/kernel/infiltratorfs_checkpoint_publish.c"
+grep -Fq 'infs_checkpoint_publish(&infilfs_publication_io,' "$publisher"
+grep -Fq 'write_dirty_buffer(bh, REQ_SYNC)' "$publisher"
+grep -Fq 'wait_on_buffer(bh)' "$publisher"
+grep -Fq 'blkdev_issue_flush(p->sb->s_bdev)' "$publisher"
 dependency_sync="$(sed -n '/static int infilfs_rw_sync_transaction_dependencies(/,/^}/p' "$legacy")"
 grep -Fq 'sb_find_get_block' <<<"$dependency_sync"
 grep -Fq 'tx->allocated' <<<"$dependency_sync"

@@ -428,13 +428,14 @@ struct infilfs_linux_meta_cache_entry {
     u64 sidecar_object_block;
 };
 
-#define INFILFS_RECOVERY_CANDIDATE_MAX (2u * INFILFS_CHECKPOINT_COUNT)
+#define INFILFS_RECOVERY_CANDIDATE_MAX (3u * INFILFS_CHECKPOINT_COUNT)
 
 struct infilfs_checkpoint_candidates {
     struct infilfs_superblock_disk disks[INFILFS_RECOVERY_CANDIDATE_MAX];
     bool valid[INFILFS_RECOVERY_CANDIDATE_MAX];
     bool format019;
     int first_read_error;
+    unsigned count;
 };
 
 /* Independently compiled Format 0.18/0.19 checkpoint recovery discovery. */
@@ -714,6 +715,12 @@ int infilfs_rw_encode_superblock(
     const struct infilfs_superblock_disk *disk,
     u8 block[INFILFS_DISK_BLOCK_SIZE]);
 int infilfs_rw_write_block(struct super_block *sb, u64 block, const void *data);
+int infilfs_checkpoint_write_sync(struct super_block *sb, u64 block,
+                                    const void *data);
+int infilfs_checkpoint_publish(struct super_block *sb,
+    const struct infilfs_superblock_disk *disk, const u8 *encoded,
+    unsigned first, bool relocate, int *committed);
+int infilfs_checkpoint_heal(struct super_block *sb, bool promoting);
 int infilfs_rw_allocation_write_page(
     struct super_block *sb, u64 physical, const u8 magic[8],
     u64 generation, u64 logical, u32 level, u32 entries,

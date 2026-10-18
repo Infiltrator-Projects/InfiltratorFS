@@ -65,9 +65,9 @@
 #   infiltratorfs_crypto.c owns accelerated integrity hashing.
 #   infiltratorfs_security.c owns portable-security format validation helpers.
 #   infiltratorfs_extension.c owns typed-extension envelope validation.
-#   infiltratorfs_allocation_map.c owns Format 0.18 allocation-map loading.
+#   infiltratorfs_allocation_map.c owns Format 0.19 allocation-map loading.
 #   infiltratorfs_resize.c owns mounted geometry transitions.
-#   infiltratorfs_index_tree.c owns Format 0.18 object-index reads/snapshots.
+#   infiltratorfs_index_tree.c owns Format 0.19 object-index reads/snapshots.
 #   infiltratorfs_extent_tree.c owns scalable file extent-page indirection.
 #   infiltratorfs_parallel_alloc.c owns volatile sharded data reservations.
 #   infiltratorfs_allocation_publish.c owns CoW allocation-tree publication.
@@ -75,9 +75,10 @@
 #   infiltratorfs_checksum_cache.c owns bounded checksum cursor/group caches.
 #   infiltratorfs_checksum_store.c owns persistent checksum-chain object mutation.
 #   infiltratorfs_locator_cache.c owns rebuildable native index/name/writer locators.
-#   infiltratorfs_locator_format.c owns the future Format 0.19 locator byte contract (not mounted yet).
+#   infiltratorfs_checkpoint_publish.c owns shared ordered publication and repair.
+#   infiltratorfs_locator_format.c owns the Format 0.19 locator byte contract.
 #   infiltratorfs_pagecache.c owns Linux folio/page-cache integration.
-#   infiltratorfs_directory_tree.c owns scalable Format 0.18 directory trees.
+#   infiltratorfs_directory_tree.c owns scalable Format 0.19 directory trees.
 #   infiltratorfs_linux_meta_codec.c owns Linux sidecar blob/naming codec rules.
 #   infiltratorfs_shared_ownership.c owns shared-range discovery, exact fallback and incremental shared-extent reference accounting.
 #   infiltratorfs_orphan_scan.c owns N-1 parallel crash-orphan discovery.
@@ -99,7 +100,7 @@
 # KERNELRELEASE conditional, the initial DKMS make terminates with
 # "make: *** No targets. Stop." before Kbuild is ever entered.
 obj-m += infiltratorfs.o
-infiltratorfs-y := infiltratorfs_core.o infiltratorfs_cpu.o infiltratorfs_crypto.o infiltratorfs_security.o infiltratorfs_extension.o infiltratorfs_allocation_map.o infiltratorfs_resize.o infiltratorfs_index_tree.o infiltratorfs_extent_tree.o infiltratorfs_parallel_alloc.o infiltratorfs_allocation_publish.o infiltratorfs_read_cache.o infiltratorfs_pagecache.o infiltratorfs_directory_tree.o infiltratorfs_checksum_cache.o infiltratorfs_checksum_store.o infiltratorfs_locator_cache.o infiltratorfs_locator_format.o infiltratorfs_checkpoint_discovery.o infiltratorfs_linux_meta_codec.o infiltratorfs_shared_ownership.o infiltratorfs_orphan_scan.o infiltratorfs_name_policy.o infiltratorfs_media.o
+infiltratorfs-y := infiltratorfs_core.o infiltratorfs_cpu.o infiltratorfs_crypto.o infiltratorfs_security.o infiltratorfs_extension.o infiltratorfs_allocation_map.o infiltratorfs_resize.o infiltratorfs_index_tree.o infiltratorfs_extent_tree.o infiltratorfs_parallel_alloc.o infiltratorfs_allocation_publish.o infiltratorfs_read_cache.o infiltratorfs_pagecache.o infiltratorfs_directory_tree.o infiltratorfs_checksum_cache.o infiltratorfs_checksum_store.o infiltratorfs_locator_cache.o infiltratorfs_locator_format.o infiltratorfs_checkpoint_discovery.o infiltratorfs_checkpoint_publish.o infiltratorfs_linux_meta_codec.o infiltratorfs_shared_ownership.o infiltratorfs_orphan_scan.o infiltratorfs_name_policy.o infiltratorfs_media.o
 ccflags-y += -I$(src)/../include/infilfs
 
 KDIR ?= /lib/modules/$(shell uname -r)/build

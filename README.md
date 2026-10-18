@@ -9,7 +9,7 @@
 InfiltratorFS is a clean-sheet, platform-neutral general-purpose filesystem. The persistent format and portable core define the filesystem; Linux, Windows and future operating-system adapters map their native APIs onto the same objects, transactions, extents, snapshots and integrity model.
 
 **Release identity:** [`CMakeLists.txt`](CMakeLists.txt)<br>
-**On-disk format:** 0.18<br>
+**On-disk format:** 0.19<br>
 **Published releases:** [GitHub Releases](https://github.com/Infiltrator-Projects/InfiltratorFS/releases)<br>
 **Shared foundation:** Libraries 1.19.46<br>
 
@@ -32,10 +32,11 @@ The project does not equate newer with better. Proven ideas are retained when th
 
 ## What exists today
 
-Format 0.18 provides:
+Format 0.19 provides:
 
 - 4096-byte little-endian blocks and 128-bit filesystem/object identities;
 - three physically separated checksummed checkpoints with generation-based recovery;
+- two fixed checksummed recovery locators that find relocated checkpoints after grow/shrink and block-zero loss;
 - copy-on-write transactions and retained historical generations;
 - a sharded persistent allocation tree with rebuildable runtime free-extent indexes;
 - generation-aware object and directory trees plus paged extent metadata;
@@ -132,7 +133,7 @@ The full documentation taxonomy and change discipline are defined in
 `docs/README.md`. To prevent documentation drift, each kind of fact has one
 authoritative home:
 
-- `docs/ON_DISK_FORMAT.md` — persistent Format 0.18 layout and encoding contract.
+- `docs/ON_DISK_FORMAT.md` — persistent Format 0.19 layout and encoding contract.
 - `docs/ARCHITECTURE.md` — design model and architectural invariants.
 - `docs/ROADMAP.md` — **the only authoritative feature-completion list**.
 - `docs/QUALIFICATION.md` — **the only authoritative exact-source qualification/evidence ledger**.

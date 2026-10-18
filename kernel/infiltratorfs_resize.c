@@ -271,6 +271,8 @@ static int infilfs_native_resize_locked(
     u32 slot;
     int ret;
     int replica_error = 0;
+    bool format019 = le16_to_cpu(sbi->disk.format_minor) ==
+        INFILFS_LOCATOR_FORMAT_MINOR;
 
     if ((new_size_bytes & (INFILFS_DISK_BLOCK_SIZE - 1u)) != 0 ||
         new_size_bytes < INFILFS_NATIVE_RESIZE_MIN_BYTES)
@@ -322,7 +324,7 @@ static int infilfs_native_resize_locked(
     checkpoint[2] = le64_to_cpu(sbi->disk.checkpoint_block[2]);
     infilfs_rw_bitmap_set(next_bitmap, 0, true);
 
-    if (checkpoint[1] >= new_total) {
+    if (format019 || checkpoint[1] >= new_total) {
         checkpoint[1] = infilfs_resize_pick_free_near(
             next_bitmap, new_total, new_total / 2u);
         if (!checkpoint[1]) {
@@ -332,7 +334,7 @@ static int infilfs_native_resize_locked(
     } else {
         infilfs_rw_bitmap_set(next_bitmap, checkpoint[1], true);
     }
-    if (checkpoint[2] >= new_total || checkpoint[2] == checkpoint[1]) {
+    if (format019 || checkpoint[2] >= new_total || checkpoint[2] == checkpoint[1]) {
         checkpoint[2] = infilfs_resize_pick_free_near(
             next_bitmap, new_total, new_total - 1u);
         if (!checkpoint[2]) {
@@ -393,6 +395,8 @@ static int infilfs_native_resize_locked(
     if (ret)
         goto out;
     ret = sync_blockdev(sb->s_bdev);
+    if (!ret)
+        ret = blkdev_issue_flush(sb->s_bdev);
     if (ret)
         goto out;
 
@@ -419,10 +423,17 @@ static int infilfs_native_resize_locked(
      * are already durable and old metadata was never overwritten, so recovery
      * sees either the complete old geometry or the complete new geometry.
      */
-    ret = infilfs_rw_write_block(sb, 0, sb_block);
-    if (ret)
-        goto out;
-    ret = sync_blockdev(sb->s_bdev);
+    if (format019) {
+        int committed = 0;
+        ret = infilfs_checkpoint_publish(sb, &next_sb, sb_block,
+                                         0u, true, &committed);
+    } else {
+        ret = infilfs_rw_write_block(sb, 0, sb_block);
+        if (!ret)
+            ret = sync_blockdev(sb->s_bdev);
+        if (!ret)
+            ret = blkdev_issue_flush(sb->s_bdev);
+    }
     if (ret) {
         sbi->write_poisoned = true;
         sbi->checkpoint_repair_needed = true;
@@ -465,13 +476,15 @@ static int infilfs_native_resize_locked(
     kvfree(old_bitmap);
     kvfree(old_reservations);
 
-    for (slot = 1; slot < INFILFS_CHECKPOINT_COUNT; ++slot) {
+    for (slot = 1; !format019 && slot < INFILFS_CHECKPOINT_COUNT; ++slot) {
         int one = infilfs_rw_write_block(sb, checkpoint[slot], sb_block);
 
         if (one && !replica_error)
             replica_error = one;
     }
-    ret = sync_blockdev(sb->s_bdev);
+    ret = format019 ? 0 : sync_blockdev(sb->s_bdev);
+    if (!ret && !format019)
+        ret = blkdev_issue_flush(sb->s_bdev);
     if (ret && !replica_error)
         replica_error = ret;
     sbi->checkpoint_repair_needed = replica_error != 0;

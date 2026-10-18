@@ -50,12 +50,15 @@ for rule in ('infilfs_crc64_block_valid(', 'memchr_inv(block + sizeof(*disk)',
 print('Format 0.19 native/portable locator-source parity: PASS')
 PY
 
-# The experimental native 0.19 selector must use both locators and must
-# reject writable mount/remount while geometry publication is unqualified.
+# Native recovery must use fixed locators and the shared writable
+# publication protocol, including the installed DKMS source manifest.
 core="$root/kernel/infiltratorfs_core.c"
 discovery="$root/kernel/infiltratorfs_checkpoint_discovery.c"
 [[ -f "$discovery" ]]
 grep -Fq 'infilfs_locator_decode_019(' "$discovery"
 grep -Fq 'INFILFS_RECOVERY_CANDIDATE_MAX' "$root/kernel/infiltratorfs_internal.h"
-grep -Fq 'Format 0.19 remains read-only' "$core"
-grep -Fq 'return -EROFS;' "$core"
+grep -Fq 'infs_checkpoint_publish(' "$root/kernel/infiltratorfs_checkpoint_publish.c"
+grep -Fq 'infs_checkpoint_publish(' "$root/src/volume/checkpoint-publication.inc"
+grep -Fq 'infs_checkpoint_publish(' "$root/src/volume/resize.inc"
+grep -Fq 'infilfs_checkpoint_publish(' "$root/kernel/infiltratorfs_resize.c"
+grep -Fq 'include/infilfs/checkpoint_protocol.h' "$root/packaging/kernel-dkms-files.list"

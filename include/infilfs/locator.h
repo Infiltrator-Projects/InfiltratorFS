@@ -8,9 +8,9 @@
 #include <stdint.h>
 
 /*
- * Format 0.19 discovery-only record. This API does not enable Format 0.19
- * mounting/formatting. The current shipping disk format remains 0.18 until
- * formatter, both recovery paths, fsck, and resize qualify together.
+ * Format 0.19 recovery-locator contract shared by formatter, recovery,
+ * resize and checking. Locators describe geometry but never authorize a
+ * checkpoint or replace committed-graph validation.
  *
  * The two positions are physical 4096-byte block offsets and do not move
  * during filesystem grow/shrink. The records are hints, NOT commit records.
@@ -34,8 +34,9 @@
 #define INFS_LOCATOR_OFF_CRC64 72u
 
 /* A fixed upper bound, not a device-wide or metadata-tree search. Each of
- * two independently validated locator maps may identify three checkpoints. */
-#define INFS_LOCATOR_MAX_CANDIDATES (2u * INFS_CHECKPOINT_COUNT)
+ * two fixed locator maps and an independent primary map each identify
+ * three checkpoints. Duplicate addresses may retain distinct map contexts. */
+#define INFS_LOCATOR_MAX_CANDIDATES (3u * INFS_CHECKPOINT_COUNT)
 
 struct infs_storage;
 
@@ -81,16 +82,23 @@ infs_status infs_locator_candidates(
     struct infs_locator_candidate out[INFS_LOCATOR_MAX_CANDIDATES],
     unsigned *count);
 
-/* Preliminary read-only Format 0.19 *checkpoint-header* discovery. This
- * examines both fixed locators and their six candidate positions, requires
+/* Read-only Format 0.19 checkpoint-header discovery. Examines both fixed
+ * locators and an independent primary map (at most nine candidates), requires
  * exact locator/volume identity and canonical checkpoint CRC/shape, but
  * performs NO object-graph or allocation integrity validation. Callers MUST
  * NOT mount/write/heal from these headers without full graph qualification.
- * Normal production volume open deliberately does not call this function. */
+ * Volume open performs graph admission separately before use or repair. */
 infs_status infs_locator_discover_019_headers(
     const struct infs_storage *storage, uint64_t physical_size_bytes,
     struct infs_superblock_disk out[INFS_LOCATOR_MAX_CANDIDATES],
     uint8_t valid[INFS_LOCATOR_MAX_CANDIDATES],
     unsigned *valid_count);
+
+/* Writable recovery must preserve operational read errors. */
+infs_status infs_locator_discover_019_headers_with_errors(
+    const struct infs_storage *storage, uint64_t physical_size_bytes,
+    struct infs_superblock_disk out[INFS_LOCATOR_MAX_CANDIDATES],
+    uint8_t valid[INFS_LOCATOR_MAX_CANDIDATES], unsigned *valid_count,
+    infs_status *read_error);
 
 #endif

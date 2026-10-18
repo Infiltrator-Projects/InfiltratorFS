@@ -148,8 +148,8 @@ int main(int argc, char **argv)
     sb = (const struct infs_superblock_disk *)root;
     expect(infs_le16_to_cpu(sb->format_minor) == INFS_LOCATOR_FORMAT_MINOR,
            "test image checkpoint carries new 0.19 format identity");
-    expect(!infs_validate_superblock_block(root),
-           "0.18 reader rejects an unqualified 0.19 volume");
+    expect(infs_validate_superblock_block(root),
+           "current reader accepts Format 0.19");
     expect(infs_validate_superblock_block_minor(
                root, INFS_LOCATOR_FORMAT_MINOR),
            "explicit test-only 0.19 checkpoint validator accepts fixture");
@@ -251,8 +251,8 @@ int main(int argc, char **argv)
                    INFS_STATUS_OK && writer.writable && !ws.ops,
                "fully validated experimental writable 0.19 image open");
         expect(infs_volume_resize(&writer, IMAGE_BYTES) ==
-                   INFS_STATUS_NOT_SUPPORTED,
-               "unfinished 0.19 resize is blocked without media changes");
+                   INFS_STATUS_OK,
+               "same-size 0.19 resize is an idle operation");
         unsigned checkpoint_before = m.checkpoint_flushes;
         expect(infs_create_file(&writer, "/written", &options) ==
                    INFS_STATUS_OK, "create file using 0.19 image transaction");
@@ -303,7 +303,7 @@ int main(int argc, char **argv)
             m.unreadable_blocks[0] = IMAGE_BYTES / INFS_BLOCK_SIZE - 1u;
             m.unreadable_count = 1;
             expect(infs_volume_open_019_rw_test_image(&denied, &probe) ==
-                       INFS_STATUS_CORRUPT &&
+                       INFS_STATUS_IO_ERROR &&
                    m.writes == before && probe.ops == &ops,
                    "0.19 writable opener rejects unreadable checkpoint");
             m.unreadable_count = 0;
@@ -560,11 +560,11 @@ int main(int argc, char **argv)
 
     reset(&m);
     expect(infs_format_storage(&storage, "Legacy") == INFS_STATUS_OK,
-           "old default format remains available during transition");
+           "normal formatter creates current Format 0.19");
     sb = (const struct infs_superblock_disk *)m.contents;
     expect(infs_le16_to_cpu(sb->format_minor) == INFS_FORMAT_MINOR &&
-           INFS_FORMAT_MINOR == 18u,
-           "production formatter identity remains exactly 0.18");
+           INFS_FORMAT_MINOR == 19u,
+           "production formatter identity is Format 0.19");
 
     free(m.contents);
     puts("Format 0.19 experimental memory-image fixture: PASS");

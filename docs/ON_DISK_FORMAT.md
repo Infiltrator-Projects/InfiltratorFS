@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-# InfiltratorFS On-Disk Format 0.18
+# InfiltratorFS On-Disk Format 0.19
 
-This document explains the persistent Format 0.18 model. Exact packed field order, sizes, constants and feature identifiers in `include/infilfs/format.h` are the byte-level authority. Architectural intent lives in `ARCHITECTURE.md`; feature completion and qualification do not belong in this specification.
+This document explains the persistent Format 0.19 model. Exact packed field order, sizes, constants and feature identifiers in `include/infilfs/format.h` are the byte-level authority. Architectural intent lives in `ARCHITECTURE.md`; feature completion and qualification do not belong in this specification.
 
 Pre-1.0 development accepts the current development format only and does not promise readers or migrations for superseded development formats.
 
@@ -23,27 +23,35 @@ A newly formatted volume of `N` committed filesystem blocks initially places thr
 - `floor(N/2)`; and
 - `N-1`.
 
-Those positions are then recorded in the checkpoint and become part of committed filesystem geometry. Readers use the recorded checkpoint locations; they do not recompute them from current backing-device capacity. If block zero is unavailable after an online resize, Format 0.18 fallback discovery cannot always find relocated surviving secondary checkpoints; see ADR-009.
+Those positions are recorded in each checkpoint. The committed filesystem size may be smaller than the physical backing device. Grow/shrink relocates secondary checkpoints near the new midpoint and end while preserving block zero. Readers never infer checkpoint positions from the backing device's current midpoint/end.
 
-The committed filesystem size may be smaller than the physical backing device. Online resize may preserve existing valid checkpoint locations or relocate secondary checkpoints when the new committed geometry requires it. Block 0 remains the bootstrap checkpoint.
+Two permanent recovery locators occupy blocks **1** and **2047**. Both are reserved in every allocation graph, including retained generations, and may not hold allocation pages, objects, tree pages or file data. The minimum volume is 4096 blocks (16 MiB); backing size must be a multiple of 4096 bytes. The formatter places bootstrap allocation metadata around these reserved positions.
+
+Each locator uses the canonical encoding in `include/infilfs/locator.h`: magic `INFSL019`, schema 1, an 80-byte header, Format 0.19 identity, hinted generation, committed block count, three checkpoint offsets, filesystem UUID and CRC64-ECMA at byte 72. All remaining bytes are zero. Each locator is checked independently against physical capacity. Its generation is a hint and may lag ordinary commits.
+
+Discovery examines the two fixed locator maps and a valid block-zero map independently, retaining at most nine map/checkpoint candidates. Valid maps must agree on filesystem identity. A stale locator must not hide newer primary geometry. Every candidate must agree with its source map and pass checkpoint and committed-graph validation before recovery or repair. If all three bootstrap records are lost, ordinary mount fails without scanning the device.
+
+Ordinary publication flushes CoW dependencies, then writes and flushes each checkpoint separately, rotating the first copy by generation. Locator blocks remain untouched. For relocation, dependencies become durable before locator A is written and flushed; all three new checkpoints are then written and flushed separately; locator B is written and flushed last. The first durable checkpoint commits the generation. Resize reports success only after locator B is durable, permitting physical reduction after shrink. Publication errors prohibit further mutation until close and recovery.
+
+Writable recovery preserves matching checkpoint survivors, repairs other copies one at a time with individual flushes, then repairs stale or damaged locators one at a time. Read-only recovery never repairs media. The ordering implementation is shared by portable and native writers in `include/infilfs/checkpoint_protocol.h`.
 
 A checkpoint records the generation, committed total/free block accounting, allocation-tree root, object-index root, namespace root, checkpoint locations, filesystem UUID, root object identity, feature sets, label and integrity metadata.
 
 Filesystem UUID, root object identity and generation are nonzero.
 
-Each physical checkpoint copy is independently validated for magic, exact Format 0.18 identity, header/block geometry, feature compatibility, canonical reserved bytes, checksum and recorded checkpoint-position consistency before its referenced graph can be considered.
+Each physical checkpoint copy is independently validated for magic, exact Format 0.19 identity, header/block geometry, feature compatibility, canonical reserved bytes, checksum and recorded checkpoint-position consistency before its referenced graph can be considered.
 
 Recovery considers candidate checkpoints in descending generation order and selects the newest complete structurally valid committed graph. Structural corruption may justify fallback to an older committed generation. External I/O failures, unsupported features, memory failure or other operational errors must not be silently reclassified as corruption merely to force fallback.
 
 ## 3. Feature compatibility
 
-Format 0.18 uses separate compatible, read-only-compatible and incompatible feature classes.
+Format 0.19 uses separate compatible, read-only-compatible and incompatible feature classes.
 
 - Unknown incompatible bits prevent open.
 - Unknown read-only-compatible bits prevent writable open.
 - Unknown compatible bits may be ignored according to their contract.
 
-Current Format 0.18 requires UTF-8 names, sparse extents, the allocation-tree representation and Unicode-name policy v1. Unicode-name policy v1 validates UTF-8 but performs no implicit Unicode normalization: namespace components are preserved exactly as supplied. Unflagged volumes compare those bytes exactly. The optional `INFS_INCOMPAT_CASEFOLD_V1` policy changes lookup identity by folding ASCII `A` through `Z` to `a` through `z`; every other UTF-8 byte remains identity-significant. Original spelling is retained in directory entries. The fold is deliberately versioned and independent of host Unicode tables, so any broader Unicode case-fold or NFC/NFD policy requires a new feature/version identity rather than silently changing lookup semantics. Current formatters enable the established known feature set for inline data, shared extents, paged metadata/extents, symbolic links, hard links, snapshots, object-index tree, directory tree, allocation tree and compressed extents.
+Current Format 0.19 requires UTF-8 names, sparse extents, the allocation-tree representation and Unicode-name policy v1. Unicode-name policy v1 validates UTF-8 but performs no implicit Unicode normalization: namespace components are preserved exactly as supplied. Unflagged volumes compare those bytes exactly. The optional `INFS_INCOMPAT_CASEFOLD_V1` policy changes lookup identity by folding ASCII `A` through `Z` to `a` through `z`; every other UTF-8 byte remains identity-significant. Original spelling is retained in directory entries. The fold is deliberately versioned and independent of host Unicode tables, so any broader Unicode case-fold or NFC/NFD policy requires a new feature/version identity rather than silently changing lookup semantics. Current formatters enable the established known feature set for inline data, shared extents, paged metadata/extents, symbolic links, hard links, snapshots, object-index tree, directory tree, allocation tree and compressed extents.
 
 A representation is accepted only when its feature bit/version contract agrees with the structure actually stored. A feature bit that contradicts the selected record version is corruption.
 
@@ -83,17 +91,17 @@ contract.
 
 Logical allocation ownership remains one authoritative bit per filesystem block: zero means free; one means allocated or unavailable.
 
-Format 0.18 persists that bitset as a checkpoint-rooted copy-on-write allocation tree rather than a monolithic bitmap image.
+Format 0.19 persists that bitset as a checkpoint-rooted copy-on-write allocation tree rather than a monolithic bitmap image.
 
 Allocation leaves use `INFSAL01`; branch pages use `INFSAB01`. Allocation pages carry generation, logical index, level, entry count, payload length and CRC64 metadata.
 
-The current packed allocation-page header is 72 bytes, leaving 4024 payload bytes in one 4096-byte page. Each leaf therefore represents 32,192 allocation bits except the final partially used leaf. Branch payloads contain little-endian 64-bit child block pointers with fanout 503. Format 0.18 fixes the allocation root at level 3.
+The current packed allocation-page header is 72 bytes, leaving 4024 payload bytes in one 4096-byte page. Each leaf therefore represents 32,192 allocation bits except the final partially used leaf. Branch payloads contain little-endian 64-bit child block pointers with fanout 503. Format 0.19 fixes the allocation root at level 3.
 
 The checkpoint stores the allocation root and leaf count. The declared leaf count must agree with committed `total_blocks`. Missing, duplicate, out-of-range, malformed or checkpoint-overlapping allocation pages are corruption.
 
 Allocation pages are bootstrap metadata, not persistent namespace objects, and have no object IDs. Unchanged pages may be shared by later committed generations, so a referenced page generation may be older than the selected checkpoint but never zero or newer than that checkpoint.
 
-Transactions maintain the authoritative allocation state plus rebuildable runtime free-extent acceleration. Publication rewrites only affected allocation leaves and the required replacement branch paths/root. Whole-volume bitmap cloning or whole-bitmap publication is not part of Format 0.18.
+Transactions maintain the authoritative allocation state plus rebuildable runtime free-extent acceleration. Publication rewrites only affected allocation leaves and the required replacement branch paths/root. Whole-volume bitmap cloning or whole-bitmap publication is not part of Format 0.19.
 
 Every allocated block must be accounted for by the committed graph: checkpoints, allocation pages, metadata tree pages, indexed objects, extent metadata, file data or retained snapshot state. Metadata ownership overlap is corruption. Shared ordinary file-data ownership is permitted only by the shared-extents contract.
 
@@ -168,7 +176,7 @@ The exact persistent and evaluation contract is in
 
 The object index maps a persistent 128-bit object ID to the physical block containing that object's metadata plus its type.
 
-Current Format 0.18 uses a generation-aware radix/tree representation. Directory entries refer to persistent object IDs rather than physical object blocks, so metadata relocation changes the index rather than every namespace reference.
+Current Format 0.19 uses a generation-aware radix/tree representation. Directory entries refer to persistent object IDs rather than physical object blocks, so metadata relocation changes the index rather than every namespace reference.
 
 Index tree pages are independently bounds/allocation/owner/generation/checksum validated. Entries require nonzero unique object IDs, valid target blocks, matching object identity/type and canonical flags.
 
@@ -285,7 +293,7 @@ Blocks remain unavailable for reuse while referenced by the live graph or any re
 
 Snapshot reads are read-only. Live writes must copy on write rather than mutate blocks still referenced by a snapshot.
 
-Format 0.18 does not require snapshot-aware resize migration. An implementation may conservatively reject resize while retained snapshots exist.
+Format 0.19 does not require snapshot-aware resize migration. An implementation may conservatively reject resize while retained snapshots exist.
 
 ## 13. Transaction publication
 
@@ -307,7 +315,7 @@ Shrink must fail before commit if any live allocation would fall outside the req
 
 ## 15. Integrity and graph validity
 
-A structurally valid Format 0.18 graph requires:
+A structurally valid Format 0.19 graph requires:
 
 - valid checksums and canonical encodings;
 - in-range allocated physical references;
@@ -332,7 +340,7 @@ See `PLATFORM_ADAPTERS.md` and `SECURITY.md`.
 
 ## 17. Normative sources
 
-For Format 0.18 maintenance, use these sources in order:
+For Format 0.19 maintenance, use these sources in order:
 
 1. `include/infilfs/format.h` for exact persistent constants, packed layouts and compile-time size contracts.
 2. This document for the persistent structural model and acceptance intent.

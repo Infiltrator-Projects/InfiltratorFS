@@ -11,7 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define TEST_BLOCKS UINT64_C(256)
+#define TEST_BLOCKS UINT64_C(4096)
 #define TEST_SIZE ((size_t)(TEST_BLOCKS * INFS_BLOCK_SIZE))
 
 struct memory_image {
@@ -168,7 +168,7 @@ static void build_valid_image(struct memory_image *image)
         0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37,
         0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f,
     };
-    const uint64_t checkpoints[INFS_CHECKPOINT_COUNT] = {0, 128, 255};
+    const uint64_t checkpoints[INFS_CHECKPOINT_COUNT] = {0, 2048, 4095};
 
     memset(image->bytes, 0, TEST_SIZE);
     image->visible_size = TEST_SIZE;
@@ -214,7 +214,7 @@ static void build_valid_image(struct memory_image *image)
     sb.checksum_type = infs_cpu_to_le32(INFS_CHECKSUM_CRC64_ECMA);
     sb.generation = infs_cpu_to_le64(1);
     sb.total_blocks = infs_cpu_to_le64(TEST_BLOCKS);
-    sb.free_blocks = infs_cpu_to_le64(TEST_BLOCKS - 9u);
+    sb.free_blocks = infs_cpu_to_le64(TEST_BLOCKS - 11u);
     sb.allocation_root_block = infs_cpu_to_le64(TEST_ALLOCATION_ROOT_BLOCK);
     sb.allocation_leaf_count = infs_cpu_to_le64(1);
     sb.object_index_block = infs_cpu_to_le64(2);
@@ -233,6 +233,7 @@ static void build_valid_image(struct memory_image *image)
     for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i)
         memcpy(image->bytes + checkpoints[i] * INFS_BLOCK_SIZE,
                block, sizeof(block));
+    test_write_recovery_locators(image->bytes);
 }
 
 static void expect_inline(struct infs_volume *volume,

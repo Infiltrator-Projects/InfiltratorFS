@@ -31,6 +31,8 @@ int infs_current_time(struct infs_timestamp *time);
 
 infs_status infs_posix_storage_open(struct infs_storage *storage,
                                     const char *path, int writable);
+/* Transfer an already opened/locked descriptor on success only. */
+infs_status infs_posix_storage_adopt_fd(struct infs_storage *storage, int fd);
 infs_status infs_posix_volume_open(struct infs_volume *vol,
                                    const char *path, int writable);
 

@@ -167,157 +167,89 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    const uint64_t total_blocks = size_bytes / INFS_BLOCK_SIZE;
-    if (!total_blocks || total_blocks > INFS_ALLOCATION_TREE_MAX_BLOCKS) {
-        fprintf(stderr, "Target exceeds the Format 0.18 allocation-map capacity.\n");
+    struct infs_storage storage = {0};
+    infs_status status = infs_posix_storage_adopt_fd(&storage, fd);
+    if (status != INFS_STATUS_OK) {
+        fprintf(stderr, "Storage setup: %s\n", infs_status_string(status));
         close(fd);
         return 1;
     }
-    const uint64_t leaf_count =
-        total_blocks / INFS_ALLOCATION_BITS_PER_LEAF +
-        ((total_blocks % INFS_ALLOCATION_BITS_PER_LEAF) != 0);
-    const uint64_t level1_count =
-        leaf_count / INFS_ALLOCATION_TREE_FANOUT +
-        ((leaf_count % INFS_ALLOCATION_TREE_FANOUT) != 0);
-    const uint64_t level2_count =
-        level1_count / INFS_ALLOCATION_TREE_FANOUT +
-        ((level1_count % INFS_ALLOCATION_TREE_FANOUT) != 0);
-    const uint64_t allocation_root = 1u;
-    const uint64_t level2_start = allocation_root + 1u;
-    const uint64_t level1_start = level2_start + level2_count;
-    const uint64_t leaf_start = level1_start + level1_count;
-    const uint64_t index_block = leaf_start + leaf_count;
-    const uint64_t root_block = index_block + 1u;
-    const uint64_t index_page_block = root_block + 1u;
-    const uint64_t checkpoints[INFS_CHECKPOINT_COUNT] = {
-        0,
-        total_blocks / 2u,
-        total_blocks - 1u
-    };
-
-    /*
-     * UDisks/libblockdev performs a signature-clean step before mkfs and waits
-     * for the block object to become filesystem-empty.  util-linux/libblkid
-     * does not yet know the InfiltratorFS on-disk signature, so provide a
-     * narrow helper mode that removes only a positively identified
-     * InfiltratorFS checkpoint set.  Exit status 3 means "not InfiltratorFS";
-     * callers may then continue with their normal generic signature cleaner.
-     */
     if (wipe_only) {
-        uint8_t raw[INFS_BLOCK_SIZE];
-        struct infs_superblock_disk existing;
-        uint64_t wipe_checkpoints[INFS_CHECKPOINT_COUNT] = {
-            checkpoints[0], checkpoints[1], checkpoints[2]
-        };
-        int identified = 0;
-
-        /*
-         * Resize deliberately allows filesystem geometry to differ from the
-         * backing partition.  Prefer the valid block-zero geometry anchor and
-         * wipe the checkpoint locations recorded by the filesystem itself.
-         * The geometric fallback retains recovery for historical, unresized
-         * volumes whose block-zero copy is damaged.
-         */
-        if (infs_pread_full(fd, raw, sizeof(raw), 0) == 0 &&
-            infs_decode_superblock(raw, &existing) == 0) {
-            uint64_t fs_blocks = infs_le64_to_cpu(existing.total_blocks);
-            uint64_t c0 =
-                infs_le64_to_cpu(existing.checkpoint_block[0]);
-            uint64_t c1 =
-                infs_le64_to_cpu(existing.checkpoint_block[1]);
-            uint64_t c2 =
-                infs_le64_to_cpu(existing.checkpoint_block[2]);
-            if (fs_blocks >= 3u && fs_blocks <= total_blocks &&
-                c0 == 0 && c1 < fs_blocks && c2 < fs_blocks &&
-                c1 != c0 && c2 != c0 && c2 != c1) {
-                wipe_checkpoints[0] = c0;
-                wipe_checkpoints[1] = c1;
-                wipe_checkpoints[2] = c2;
-                identified = 1;
-            }
-        }
-
-        if (!identified) {
-            for (unsigned i = 1; i < INFS_CHECKPOINT_COUNT; ++i) {
-                if (pread_block_full_fd(
-                        fd, checkpoints[i], raw, sizeof(raw)) != 0 ||
-                    infs_decode_superblock(raw, &existing) != 0 ||
-                    infs_le64_to_cpu(existing.total_blocks) != total_blocks)
-                    continue;
-                if (infs_le64_to_cpu(existing.checkpoint_block[0]) !=
-                        checkpoints[0] ||
-                    infs_le64_to_cpu(existing.checkpoint_block[1]) !=
-                        checkpoints[1] ||
-                    infs_le64_to_cpu(existing.checkpoint_block[2]) !=
-                        checkpoints[2])
-                    continue;
-                identified = 1;
-                break;
-            }
-        }
-
-        if (!identified) {
-            fprintf(stderr, "Target is not an InfiltratorFS volume.\n");
-            close(fd);
+        struct infs_superblock_disk candidates[INFS_LOCATOR_MAX_CANDIDATES];
+        uint8_t valid[INFS_LOCATOR_MAX_CANDIDATES];
+        unsigned found = 0;
+        status = infs_locator_discover_019_headers(&storage, size_bytes,
+                                                   candidates, valid, &found);
+        if (status != INFS_STATUS_OK) {
+            infs_storage_close(&storage);
+            fputs("Target is not an identifiable InfiltratorFS volume.\n", stderr);
             return 3;
         }
-
-        memset(raw, 0, sizeof(raw));
-        for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i) {
-            if (pwrite_block_full_fd(
-                    fd, wipe_checkpoints[i], raw, sizeof(raw)) != 0) {
-                perror("wipe checkpoint");
-                close(fd);
-                return 1;
-            }
+        uint8_t zero[INFS_BLOCK_SIZE] = {0};
+        for (unsigned i = 0; status == INFS_STATUS_OK &&
+                             i < INFS_LOCATOR_MAX_CANDIDATES; ++i) {
+            if (!valid[i])
+                continue;
+            for (unsigned c = 0; status == INFS_STATUS_OK &&
+                                 c < INFS_CHECKPOINT_COUNT; ++c)
+                status = infs_storage_write(&storage,
+                    infs_le64_to_cpu(candidates[i].checkpoint_block[c]) *
+                        INFS_BLOCK_SIZE, zero, sizeof(zero));
         }
-        if (fsync(fd) != 0) {
-            perror("fsync signature wipe");
-            close(fd);
+        for (unsigned i = 0; status == INFS_STATUS_OK && i < 2u; ++i)
+            status = infs_storage_write(&storage,
+                (i ? INFS_LOCATOR_BLOCK_B : INFS_LOCATOR_BLOCK_A) *
+                    INFS_BLOCK_SIZE, zero, sizeof(zero));
+        if (status == INFS_STATUS_OK)
+            status = infs_storage_flush(&storage);
+        infs_storage_close(&storage);
+        if (status != INFS_STATUS_OK) {
+            fprintf(stderr, "Signature wipe: %s\n", infs_status_string(status));
             return 1;
         }
-
-        close(fd);
         printf("Cleared InfiltratorFS signatures on %s.\n", path);
         return 0;
     }
-
-    if (index_page_block >= checkpoints[1]) {
-        fprintf(stderr, "Target is too small for the Format 0.18 metadata layout.\n");
-        close(fd);
+    uint32_t root_uid = 0, root_gid = 0;
+    resolve_root_owner(&root_uid, &root_gid);
+    uint32_t options =
+        (removable_profile ? INFS_FORMAT_OPTION_REMOVABLE_NAMES_V1 : 0u) |
+        (casefold ? INFS_FORMAT_OPTION_CASEFOLD_V1 : 0u);
+    status = infs_format_storage_with_root_owner(&storage, label, options,
+                                                 root_uid, root_gid);
+    uint8_t raw[INFS_BLOCK_SIZE];
+    struct infs_superblock_disk sb;
+    if (status == INFS_STATUS_OK)
+        status = infs_storage_read(&storage, 0, raw, sizeof(raw));
+    if (status == INFS_STATUS_OK)
+        status = infs_decode_superblock(raw, &sb);
+    infs_storage_close(&storage);
+    if (status != INFS_STATUS_OK) {
+        fprintf(stderr, "Format: %s\n", infs_status_string(status));
         return 1;
     }
-
-    uint64_t rounded_bitmap_bits = 0;
-    uint64_t rounded_bitmap_bytes = 0;
-    if (!infiltratr_u64_add_checked(
-            total_blocks, UINT64_C(7), &rounded_bitmap_bits) ||
-        !infiltratr_u64_add_checked(
-            rounded_bitmap_bits / UINT64_C(8), INFS_BLOCK_SIZE - 1u,
-            &rounded_bitmap_bytes)) {
-        fprintf(stderr, "Target allocation bitmap is too large for this build.\n");
-        close(fd);
-        return 1;
-    }
-    const uint64_t bitmap_blocks =
-        rounded_bitmap_bytes / INFS_BLOCK_SIZE;
-    uint64_t bitmap_coverage_blocks = 0;
-    size_t bitmap_alloc = 0;
-    if (!bitmap_blocks || bitmap_blocks > SIZE_MAX ||
-        !infiltratr_size_multiply_checked(
-            (size_t)bitmap_blocks, (size_t)INFS_BLOCK_SIZE,
-            &bitmap_alloc) ||
-        !infiltratr_u64_multiply_checked(
-            bitmap_blocks,
-            (uint64_t)INFS_BLOCK_SIZE * UINT64_C(8),
-            &bitmap_coverage_blocks)) {
-        fprintf(stderr, "Target allocation bitmap is too large for this build.\n");
-        close(fd);
-        return 1;
-    }
-    uint8_t *bitmap = calloc(1, bitmap_alloc);
-    if (!bitmap) {
-        perror("calloc");
-        close(fd);
-        return 1;
-    }
+    char uuid[37];
+    infs_uuid_to_string(sb.filesystem_uuid, uuid);
+    puts("InfiltratorFS formatted successfully");
+    printf("  Implementation: %s\n", INFILFS_IMPLEMENTATION_VERSION);
+    printf("  Format:          %u.%u\n", INFS_FORMAT_MAJOR, INFS_FORMAT_MINOR);
+    printf("  UUID:            %s\n", uuid);
+    printf("  Label:           %s\n", label);
+    printf("  Root owner:      %" PRIu32 ":%" PRIu32 "\n", root_uid, root_gid);
+    printf("  Block size:      %u bytes\n", INFS_BLOCK_SIZE);
+    printf("  Total blocks:    %" PRIu64 "\n", infs_le64_to_cpu(sb.total_blocks));
+    printf("  Free blocks:     %" PRIu64 "\n", infs_le64_to_cpu(sb.free_blocks));
+    printf("  Allocation root: block %" PRIu64 "\n",
+           infs_le64_to_cpu(sb.allocation_root_block));
+    printf("  Allocation leaves: %" PRIu64 "\n",
+           infs_le64_to_cpu(sb.allocation_leaf_count));
+    printf("  Object index:    block %" PRIu64 "\n",
+           infs_le64_to_cpu(sb.object_index_block));
+    printf("  Root block:      block %" PRIu64 "\n",
+           infs_le64_to_cpu(sb.root_object_block));
+    printf("  Checkpoints:     %" PRIu64 ", %" PRIu64 ", %" PRIu64 "\n",
+           infs_le64_to_cpu(sb.checkpoint_block[0]),
+           infs_le64_to_cpu(sb.checkpoint_block[1]),
+           infs_le64_to_cpu(sb.checkpoint_block[2]));
+    return 0;
+}

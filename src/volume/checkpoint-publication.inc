@@ -87,66 +87,23 @@ infs_status infs_volume_sync(struct infs_volume *vol)
     }
     uint64_t generation = infs_le64_to_cpu(vol->sb.generation);
     unsigned first = (unsigned)(generation % INFS_CHECKPOINT_COUNT);
-    uint64_t first_block =
-        infs_le64_to_cpu(vol->sb.checkpoint_block[first]);
-    status = write_block(vol, first_block, sb_block);
-    if (status != INFS_STATUS_OK) {
-        allocation_map_layout_destroy(&next_allocation);
+    struct volume_checkpoint_publication publication = {
+        vol, &vol->sb, sb_block
+    };
+    int committed = 0;
+    status = infs_checkpoint_publish(&volume_checkpoint_io,
+        &publication, first, 0, &committed);
+    if (committed) {
+        allocation_map_cache_replace(vol, &next_allocation);
+        vol->tx_allocated_count = 0;
+        vol->tx_deferred_count = 0;
+        vol->tx_error = INFS_STATUS_OK;
+        vol->tx_active = 0;
+        vol->tx_pending_bytes = 0;
+    }
+    allocation_map_layout_destroy(&next_allocation);
+    if (status != INFS_STATUS_OK)
         return require_checkpoint_recovery(vol, status);
-    }
-    status = infs_storage_flush(&vol->storage);
-    if (status != INFS_STATUS_OK) {
-        allocation_map_layout_destroy(&next_allocation);
-        return require_checkpoint_recovery(vol, status);
-    }
-
-    allocation_map_cache_replace(vol, &next_allocation);
-
-    /* The transaction is durably committed from this point onward. A failure
-     * while replicating secondary checkpoints must not be reported to callers
-     * as if the namespace/data mutation itself failed. Track the degraded
-     * redundancy state and let fsync/sync heal it explicitly. */
-    vol->tx_allocated_count = 0;
-    vol->tx_deferred_count = 0;
-    vol->tx_error = INFS_STATUS_OK;
-    vol->tx_active = 0;
-    vol->tx_pending_bytes = 0;
-    phase2_failpoint("after-checkpoint");
-
-    infs_status replica_status = INFS_STATUS_OK;
-    int format019 = infs_le16_to_cpu(vol->sb.format_minor) ==
-        INFS_LOCATOR_FORMAT_MINOR;
-    for (unsigned n = 1; n < INFS_CHECKPOINT_COUNT; ++n) {
-        unsigned i = (first + n) % INFS_CHECKPOINT_COUNT;
-        uint64_t b = infs_le64_to_cpu(vol->sb.checkpoint_block[i]);
-        status = write_block(vol, b, sb_block);
-        if (status != INFS_STATUS_OK && replica_status == INFS_STATUS_OK)
-            replica_status = status;
-        /* Format 0.19 requires independently durable replicas and never
-         * touches its locator pages for same-geometry transactions. */
-        if (format019 && replica_status == INFS_STATUS_OK) {
-            status = infs_storage_flush(&vol->storage);
-            if (status != INFS_STATUS_OK)
-                replica_status = status;
-        }
-        if (format019 && replica_status != INFS_STATUS_OK)
-            break;
-    }
-    if (!format019) {
-        status = infs_storage_flush(&vol->storage);
-        if (status != INFS_STATUS_OK && replica_status == INFS_STATUS_OK)
-            replica_status = status;
-    }
-    if (format019 && replica_status != INFS_STATUS_OK) {
-        /* Publication may already have committed: poison the session,
-         * rather than writing through uncertain replica durability. */
-        return require_checkpoint_recovery(vol, replica_status);
-    }
-    if (replica_status != INFS_STATUS_OK) {
-        vol->checkpoint_repair_needed = 1;
-        return INFS_STATUS_OK;
-    }
-
     vol->checkpoint_repair_needed = 0;
     return INFS_STATUS_OK;
 }

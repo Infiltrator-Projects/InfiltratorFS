@@ -7,13 +7,14 @@ A checked item means the capability is implemented **and** has the qualification
 
 Pre-1.0 development is current-format-only. A development format may be replaced without a backward reader or migration path; stable compatibility begins with the first stable release.
 
-## Format 0.19 recovery redesign (not yet implemented)
+## Format 0.19 recovery redesign
 
-- [ ] Two independent fixed-position, checksummed checkpoint-location records in the new on-disk format, with no locator authority over checkpoint graph validation.
-- [ ] Portable formatter, recovery, allocation accounting, resize and fsck/scrub agree on the new locator and reserved-block contract.
-- [ ] Native Linux mount, recovery and resize use the same locator schema and commit ordering, verified against portable media.
-- [ ] Deterministic crash/tear/corruption matrix: block-zero loss after grow/shrink, stale/divergent locators, interrupted publication, old-format rejection and remount/scrub.
-- [ ] Exact-source native mounted and physical-media validation before switching the released formatter/default mount path to Format 0.19.
+- [x] Two independent fixed-position, checksummed checkpoint-location records in the new on-disk format, with no locator authority over checkpoint graph validation.
+- [x] Portable formatter, recovery, allocation accounting, resize and fsck/scrub agree on the new locator and reserved-block contract.
+- [x] Native Linux mount, recovery and resize use the same locator schema and commit ordering, verified against portable media.
+- [x] Deterministic crash/tear/corruption matrix: block-zero loss after grow/shrink, stale/divergent locators, interrupted publication, old-format rejection and remount/scrub.
+- [x] Native mounted write/remount/grow/shrink, physical backing-image reduction, block-zero/locator loss and writable repair qualification for the Format 0.19 testing release.
+- [ ] Operator-run physical-media power-loss/endurance qualification before production deployment; virtual-machine and injected-storage results do not establish hardware durability.
 - [ ] PERF-019: instrument and attribute native Linux final-sync latency across VFS writeback, deferred CoW preparation, lock contention and durability publication without removing required crash-consistency barriers.
 - [ ] PERF-019: demonstrate repeatable 0.19 physical-NVMe performance and post-remount integrity for 256 MiB sequential writes, the deterministic 1,460-file Windows tree, 4 KiB fsync latency distribution and metadata-heavy operations (see `PERF-019-SYNC-LATENCY.md`).
 
@@ -64,7 +65,7 @@ Pre-1.0 development is current-format-only. A development format may be replaced
 
 - [x] Native out-of-tree VFS driver `infiltratorfs.ko`.
 - [x] DKMS package/build/install path.
-- [x] Native read-only and read-write mounting of current Format 0.18.
+- [x] Native read-only and read-write mounting of current Format 0.19.
 - [x] Create/mkdir/mknod, rename/unlink/rmdir and persistent setattr.
 - [x] Random, sparse and high-offset writes; truncate and `fallocate`.
 - [x] Hole punching and logical/allocated block reporting.
@@ -113,7 +114,7 @@ The intended security architecture is described in `SECURITY.md`. Current Linux 
 - [x] Native Linux VFS adapter as the current mounted reference implementation.
 - [x] Win32 image/raw-partition storage backend.
 - [x] Windows formatter, transfer/listing and scrub application.
-- [x] Linux/Windows Format 0.18 interoperability coverage.
+- [x] Linux/Windows Format 0.19 interoperability coverage.
 - [x] Driverless Windows Explorer projection using Microsoft's inbox ProjFS.
 - [x] Windows attribute/security/filename adapter completion.
 - [x] Native Windows filesystem driver implementation with Cache Manager/I/O Manager integration.

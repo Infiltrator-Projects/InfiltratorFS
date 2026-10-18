@@ -200,10 +200,11 @@ infs_status infs_locator_candidates(
     return INFS_STATUS_OK;
 }
 
-infs_status infs_locator_discover_019_headers(
+infs_status infs_locator_discover_019_headers_with_errors(
     const struct infs_storage *storage, uint64_t physical_size_bytes,
     struct infs_superblock_disk out[INFS_LOCATOR_MAX_CANDIDATES],
-    uint8_t valid[INFS_LOCATOR_MAX_CANDIDATES], unsigned *valid_count)
+    uint8_t valid[INFS_LOCATOR_MAX_CANDIDATES], unsigned *valid_count,
+    infs_status *read_error)
 {
     const uint64_t physical_blocks = physical_size_bytes / INFS_BLOCK_SIZE;
     const uint64_t locator_address[2] = {
@@ -216,6 +217,8 @@ infs_status infs_locator_discover_019_headers(
     unsigned entries = 0;
     infs_status status;
     infs_status first_read_error = INFS_STATUS_OK;
+    if (read_error)
+        *read_error = INFS_STATUS_OK;
 
     if (!storage || !infs_storage_valid(storage) || !out || !valid ||
         !valid_count || physical_size_bytes % INFS_BLOCK_SIZE != 0 ||
@@ -237,40 +240,60 @@ infs_status infs_locator_discover_019_headers(
                 INFS_STATUS_OK)
             mask |= (uint8_t)(1u << i);
     }
-    if (!mask) {
-        /* Both independent locator pages are unavailable. A CRC-valid,
-         * structurally valid primary checkpoint can still supply bounded
-         * backup addresses; it is not a replacement for graph validation. */
+    /* The primary is an independent map even when one or both locators
+     * survive. A stale hint must not hide a newer, valid primary geometry. */
+    struct infs_locator primary = {0};
+    int primary_valid = 0;
+    status = infs_storage_read(storage, 0, raw, sizeof(raw));
+    if (status != INFS_STATUS_OK) {
+        if (first_read_error == INFS_STATUS_OK)
+            first_read_error = status;
+    } else if (infs_validate_superblock_block_minor(
+                   raw, INFS_LOCATOR_FORMAT_MINOR)) {
         struct infs_superblock_disk anchor;
-        struct infs_locator hint = {0};
-        status = infs_storage_read(storage, 0, raw, sizeof(raw));
-        if (status != INFS_STATUS_OK) {
-            if (first_read_error == INFS_STATUS_OK)
-                first_read_error = status;
-        } else if (infs_validate_superblock_block_minor(
-                       raw, INFS_LOCATOR_FORMAT_MINOR)) {
-            memcpy(&anchor, raw, sizeof(anchor));
-            hint.generation = infs_le64_to_cpu(anchor.generation);
-            hint.total_blocks = infs_le64_to_cpu(anchor.total_blocks);
-            for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i)
-                hint.checkpoint[i] =
-                    infs_le64_to_cpu(anchor.checkpoint_block[i]);
-            memcpy(hint.filesystem_uuid, anchor.filesystem_uuid, 16u);
-            if (locator_fields_valid(&hint) &&
-                hint.total_blocks <= physical_blocks) {
-                locator[0] = hint;
-                mask = 1u;
+        memcpy(&anchor, raw, sizeof(anchor));
+        primary.generation = infs_le64_to_cpu(anchor.generation);
+        primary.total_blocks = infs_le64_to_cpu(anchor.total_blocks);
+        memcpy(primary.filesystem_uuid, anchor.filesystem_uuid, 16u);
+        for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i)
+            primary.checkpoint[i] = infs_le64_to_cpu(anchor.checkpoint_block[i]);
+        primary_valid = locator_fields_valid(&primary) &&
+            primary.total_blocks <= physical_blocks;
+    }
+    if (mask) {
+        status = infs_locator_candidates(locator, mask, physical_blocks,
+                                          locations, &entries);
+        if (status != INFS_STATUS_OK)
+            return status;
+    }
+    if (primary_valid) {
+        int same_geometry = 0;
+        for (unsigned i = 0; i < 2u; ++i) {
+            if (!(mask & (1u << i)))
+                continue;
+            if (memcmp(primary.filesystem_uuid, locator[i].filesystem_uuid,
+                       16u) != 0)
+                return INFS_STATUS_CORRUPT;
+            if (primary.total_blocks == locator[i].total_blocks &&
+                memcmp(primary.checkpoint, locator[i].checkpoint,
+                       sizeof(primary.checkpoint)) == 0)
+                same_geometry = 1;
+        }
+        if (!same_geometry) {
+            for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i) {
+                struct infs_locator_candidate *hint = &locations[entries++];
+                hint->physical_block = primary.checkpoint[i];
+                hint->declared_total_blocks = primary.total_blocks;
+                memcpy(hint->declared_checkpoint, primary.checkpoint,
+                       sizeof(primary.checkpoint));
+                memcpy(hint->filesystem_uuid, primary.filesystem_uuid, 16u);
+                hint->source_locator = 2u;
             }
         }
-        if (!mask)
-            return first_read_error == INFS_STATUS_OK ?
-                INFS_STATUS_CORRUPT : first_read_error;
     }
-
-    status = infs_locator_candidates(
-        locator, mask, physical_blocks, locations, &entries);
-    if (status != INFS_STATUS_OK)
-        return status;
+    if (!entries)
+        return first_read_error == INFS_STATUS_OK ?
+            INFS_STATUS_CORRUPT : first_read_error;
 
     for (unsigned i = 0; i < entries; ++i) {
         const struct infs_locator_candidate *hint = &locations[i];
@@ -307,9 +330,20 @@ infs_status infs_locator_discover_019_headers(
         valid[i] = 1u;
         ++*valid_count;
     }
+    if (read_error)
+        *read_error = first_read_error;
     if (*valid_count)
         return INFS_STATUS_OK;
     /* Preserve operational I/O errors when no usable replica remains. */
     return first_read_error == INFS_STATUS_OK ?
         INFS_STATUS_CORRUPT : first_read_error;
+}
+
+infs_status infs_locator_discover_019_headers(
+    const struct infs_storage *storage, uint64_t physical_size_bytes,
+    struct infs_superblock_disk out[INFS_LOCATOR_MAX_CANDIDATES],
+    uint8_t valid[INFS_LOCATOR_MAX_CANDIDATES], unsigned *valid_count)
+{
+    return infs_locator_discover_019_headers_with_errors(storage,
+        physical_size_bytes, out, valid, valid_count, NULL);
 }

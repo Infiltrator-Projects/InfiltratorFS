@@ -443,12 +443,20 @@ int infilfs_read_allocated_blocks(
     }
     for (i = 0; i < count; ++i) {
         u64 block = start + i;
+        unsigned int cp;
 
-        if ((block >> 3) >= bytes ||
+        if (block == INFILFS_LOCATOR_BLOCK_A ||
+            block == INFILFS_LOCATOR_BLOCK_B || (block >> 3) >= bytes ||
             (READ_ONCE(bitmap[block >> 3]) &
              (u8)(1u << (block & 7u))) == 0) {
             ret = -EFSCORRUPTED;
             goto unlock;
+        }
+        for (cp = 0; cp < INFILFS_CHECKPOINT_COUNT; ++cp) {
+            if (block == le64_to_cpu(sbi->disk.checkpoint_block[cp])) {
+                ret = -EFSCORRUPTED;
+                goto unlock;
+            }
         }
     }
 unlock:
@@ -789,7 +797,7 @@ static int infilfs_index_lookup_indexed(struct super_block *sb,
                 ret = -EFSCORRUPTED;
                 goto out;
             }
-            ret = infilfs_read_block(sb, block_no, page_block);
+            ret = infilfs_read_allocated_block(sb, block_no, page_block);
             if (ret)
                 goto out;
             if (!infilfs_metadata_page_valid(sb, page_block,
@@ -1072,9 +1080,19 @@ static int infilfs_validate_checkpoint_extents(
                 infilfs_volume_blocks(INFILFS_SB(sb)) - physical)
             return -EFSCORRUPTED;
         *has_normal = true;
-        for (b = 0; b < physical_blocks; ++b)
-            if (!infilfs_block_allocated(sb, physical + b))
+        for (b = 0; b < physical_blocks; ++b) {
+            u64 block = physical + b;
+            unsigned int cp;
+
+            if (block == INFILFS_LOCATOR_BLOCK_A ||
+                block == INFILFS_LOCATOR_BLOCK_B ||
+                !infilfs_block_allocated(sb, block))
                 return -EFSCORRUPTED;
+            for (cp = 0; cp < INFILFS_CHECKPOINT_COUNT; ++cp)
+                if (block == le64_to_cpu(
+                        INFILFS_SB(sb)->disk.checkpoint_block[cp]))
+                    return -EFSCORRUPTED;
+        }
     }
     return 0;
 }
@@ -1264,6 +1282,9 @@ static int infilfs_validate_checkpoint_graph(
      * if the current one is rejected. */
     sbi->disk = *candidate;
 
+    if (!sb_rdonly(sb) && le64_to_cpu(candidate->ro_compat_flags))
+        return -EROFS;
+
     ret = infilfs_allocation_map_load(
         sb, candidate, &bitmap, &bitmap_bytes, &committed_layout);
     if (ret)
@@ -1386,10 +1407,7 @@ static int infilfs_select_checkpoint(struct super_block *sb,
     ret = infilfs_read_checkpoint_candidates(sb, set);
     if (ret)
         goto out;
-    candidate_count = set->format019 ?
-        INFILFS_RECOVERY_CANDIDATE_MAX : INFILFS_CHECKPOINT_COUNT;
-    if (set->format019)
-        deep_validation = true;
+    candidate_count = set->count;
     for (attempt = 0; attempt < candidate_count; ++attempt) {
         if (!set->valid[attempt] || !set->valid[0] ||
             memcmp(&set->disks[attempt], &set->disks[0],
@@ -2768,28 +2786,20 @@ static int infilfs_fill_super(struct super_block *sb, struct fs_context *fc)
     if (ret)
         goto fail;
 
-    /* Format 0.19 remains read-only until crash-safe writes qualify. */
-    if (le16_to_cpu(sbi->disk.format_minor) ==
-            INFILFS_LOCATOR_FORMAT_MINOR &&
-        (!fc || !(fc->sb_flags & SB_RDONLY) || !sb_rdonly(sb))) {
-        ret = -EROFS;
+    phase_started = ktime_get_ns();
+    ret = infilfs_rw_heal_checkpoints(sb);
+    phase_ms = div_u64(ktime_get_ns() - phase_started, NSEC_PER_MSEC);
+    if (phase_ms >= 250)
+        pr_warn("InfiltratorFS: slow mount phase checkpoint-heal=%llums\n",
+                (unsigned long long)phase_ms);
+    if (ret)
         goto fail;
-    }
 
     phase_started = ktime_get_ns();
     ret = infilfs_rw_mount_init(sb);
     phase_ms = div_u64(ktime_get_ns() - phase_started, NSEC_PER_MSEC);
     if (phase_ms >= 250)
         pr_warn("InfiltratorFS: slow mount phase rw-init=%llums\n",
-                (unsigned long long)phase_ms);
-    if (ret)
-        goto fail;
-
-    phase_started = ktime_get_ns();
-    ret = infilfs_rw_heal_checkpoints(sb);
-    phase_ms = div_u64(ktime_get_ns() - phase_started, NSEC_PER_MSEC);
-    if (phase_ms >= 250)
-        pr_warn("InfiltratorFS: slow mount phase checkpoint-heal=%llums\n",
                 (unsigned long long)phase_ms);
     if (ret)
         goto fail;
@@ -2969,8 +2979,7 @@ static int infilfs_reconfigure(struct fs_context *fc)
          */
         return sync_filesystem(sb);
     }
-    if (le16_to_cpu(sbi->disk.format_minor) ==
-            INFILFS_LOCATOR_FORMAT_MINOR)
+    if (le64_to_cpu(sbi->disk.ro_compat_flags))
         return -EROFS;
     if (sbi->write_poisoned)
         return -EIO;
@@ -2988,7 +2997,7 @@ static int infilfs_reconfigure(struct fs_context *fc)
     if (!ret)
         ret = set->first_read_error;
     matches = false;
-    for (i = 0; !ret && i < INFILFS_CHECKPOINT_COUNT; ++i)
+    for (i = 0; !ret && i < set->count; ++i)
         if (set->valid[i] &&
             !memcmp(&set->disks[i], &sbi->disk, sizeof(sbi->disk)))
             matches = true;
@@ -2997,6 +3006,9 @@ static int infilfs_reconfigure(struct fs_context *fc)
         return ret;
     if (!matches)
         return -EFSCORRUPTED;
+    ret = infilfs_checkpoint_heal(sb, true);
+    if (ret)
+        return ret;
     ret = infilfs_rw_enable(sb);
     if (ret)
         return ret;

@@ -107,7 +107,6 @@ static int run_structural_check(const char *target, int repair,
         status == INFS_STATUS_CORRUPT &&
         report.failed_stage == INFS_CHECK_STAGE_CHECKPOINTS &&
         report.checkpoint_replicas_valid > 0 &&
-        report.checkpoint_replicas_valid < INFS_CHECKPOINT_COUNT &&
         report.object_index_valid &&
         report.allocation_ownership_valid &&
         report.namespace_valid &&

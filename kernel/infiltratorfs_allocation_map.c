@@ -384,6 +384,8 @@ int infilfs_allocation_map_load(
          infilfs_allocation_u64_compare, NULL);
     for (size_t i = 0; i < leaves + branches; ++i) {
         if (!all_pages[i] || all_pages[i] >= total ||
+            all_pages[i] == INFILFS_LOCATOR_BLOCK_A ||
+            all_pages[i] == INFILFS_LOCATOR_BLOCK_B ||
             (i && all_pages[i] == all_pages[i - 1])) {
             ret = -EFSCORRUPTED;
             goto fail;

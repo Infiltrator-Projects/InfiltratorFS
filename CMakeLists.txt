@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.20)
-project(InfiltratorFS VERSION 0.18.143 LANGUAGES C)
+project(InfiltratorFS VERSION 0.19.0 LANGUAGES C)
 # Development qualification anchor: 0.18.106
 
 set(CMAKE_C_STANDARD 17)
@@ -343,15 +343,19 @@ infilfs_enable_warnings(infilfs-locator-format-019)
 enable_testing()
 add_test(NAME infilfs-locator-format-019 COMMAND infilfs-locator-format-019)
 
-# Experimental 0.19 formatting is memory-image-only until native mounted
-# readers, resize and scrub are qualified. It refuses physical block targets.
+# Isolated image fixtures retain a strict image-only entry point alongside
+# the normal Format 0.19 formatter and repair-capable volume API.
 add_executable(infilfs-format-019-image tests/format-019-image.c)
 target_link_libraries(infilfs-format-019-image PRIVATE infilfs_core)
 infilfs_enable_warnings(infilfs-format-019-image)
 add_test(NAME infilfs-format-019-image COMMAND infilfs-format-019-image)
 
-# Exercise every staged locator/checkpoint publication interruption using a
-# deterministic model before enabling Format 0.19 native media operations.
+add_executable(infilfs-format-019-durability tests/format-019-durability.c)
+target_link_libraries(infilfs-format-019-durability PRIVATE infilfs_core)
+infilfs_enable_warnings(infilfs-format-019-durability)
+add_test(NAME infilfs-format-019-durability COMMAND infilfs-format-019-durability)
+
+# Model the staged protocol independently of the real-writer fault matrix.
 add_executable(infilfs-locator-019-crash-model tests/locator-019-crash-model.c)
 infilfs_enable_warnings(infilfs-locator-019-crash-model)
 add_test(NAME infilfs-locator-019-crash-model
@@ -512,6 +516,9 @@ if(UNIX)
              COMMAND bash
                  ${CMAKE_CURRENT_SOURCE_DIR}/tests/format-019-fsck.sh
                  ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME infilfs-format-019-cli
+             COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/format-019-cli.sh
+                     ${CMAKE_CURRENT_BINARY_DIR})
     add_executable(infilfs-forensic tools/infilfs-forensic.c)
     add_executable(infilfs-optimize tools/infilfs-optimize.c)
     add_executable(infilfs-compression tools/infilfs-compression.c)

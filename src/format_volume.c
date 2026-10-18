@@ -94,7 +94,7 @@ static infs_status formatter_write_allocation_page(
 
 static infs_status format_storage_development(
     struct infs_storage *storage, const char *label,
-    uint32_t options, uint16_t minor)
+    uint32_t options, uint16_t minor, uint32_t root_uid, uint32_t root_gid)
 {
     if (minor != INFS_FORMAT_MINOR &&
         minor != INFS_LOCATOR_FORMAT_MINOR)
@@ -117,11 +117,9 @@ static infs_status format_storage_development(
     infs_status status = infs_storage_get_size(storage, &size_bytes, &is_device);
     if (status != INFS_STATUS_OK)
         return status;
-    /* Format 0.19 is test-image-only until native mounted recovery is
-     * qualified. Never allow this experimental entry point to erase a real
-     * block device even if its caller asks to do so. */
-    if (minor == INFS_LOCATOR_FORMAT_MINOR && is_device)
-        return INFS_STATUS_NOT_SUPPORTED;
+    /* Validate alignment before invalidation or any other destructive write. */
+    if (size_bytes % INFS_BLOCK_SIZE != 0)
+        return INFS_STATUS_INVALID_ARGUMENT;
     if (size_bytes < INFS_MIN_SIZE_BYTES)
         return INFS_STATUS_NO_SPACE;
 
@@ -368,7 +366,7 @@ static infs_status format_storage_development(
         goto done;
 
     status = infs_encode_tree_root_directory(
-        block, root_id, 1u, 0755u, 0u, 0u, &root_time);
+        block, root_id, 1u, 0755u, root_uid, root_gid, &root_time);
     if (status != INFS_STATUS_OK)
         goto done;
     status = infs_storage_write(storage, root_block * INFS_BLOCK_SIZE,
@@ -435,16 +433,31 @@ infs_status infs_format_storage_with_options(struct infs_storage *storage,
                                              const char *label,
                                              uint32_t options)
 {
-    return format_storage_development(storage, label, options, INFS_FORMAT_MINOR);
+    return format_storage_development(storage, label, options,
+                                       INFS_FORMAT_MINOR, 0u, 0u);
 }
 
-/* Only tests may use this while the on-disk 0.19 reader is incomplete.
- * It refuses all physical block-device targets and is not a mkfs CLI mode. */
+infs_status infs_format_storage_with_root_owner(struct infs_storage *storage,
+    const char *label, uint32_t options, uint32_t root_uid, uint32_t root_gid)
+{
+    return format_storage_development(storage, label, options,
+                                       INFS_FORMAT_MINOR, root_uid, root_gid);
+}
+
+/* Deliberately bounded image fixture entry point, independent of the
+ * normal formatter's support for exclusively held physical storage. */
 infs_status infs_format_storage_019_test_image(
     struct infs_storage *storage, const char *label)
 {
+    uint64_t bytes = 0;
+    int device = 0;
+    infs_status status = infs_storage_get_size(storage, &bytes, &device);
+    if (status != INFS_STATUS_OK)
+        return status;
+    if (device)
+        return INFS_STATUS_NOT_SUPPORTED;
     return format_storage_development(
-        storage, label, 0u, INFS_LOCATOR_FORMAT_MINOR);
+        storage, label, 0u, INFS_LOCATOR_FORMAT_MINOR, 0u, 0u);
 }
 
 infs_status infs_format_storage(struct infs_storage *storage, const char *label)

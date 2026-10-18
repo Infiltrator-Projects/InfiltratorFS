@@ -2,13 +2,15 @@
 #ifndef INFILFS_TEST_ALLOCATION_TREE_H
 #define INFILFS_TEST_ALLOCATION_TREE_H
 
+#include "infilfs/locator.h"
+#include "infilfs/endian.h"
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#define TEST_ALLOCATION_ROOT_BLOCK UINT64_C(1)
+#define TEST_ALLOCATION_ROOT_BLOCK UINT64_C(2046)
 #define TEST_ALLOCATION_LEVEL2_BLOCK UINT64_C(4)
 #define TEST_ALLOCATION_LEVEL1_BLOCK UINT64_C(5)
 #define TEST_ALLOCATION_LEAF_BLOCK UINT64_C(6)
@@ -37,6 +39,8 @@ static void test_write_single_leaf_allocation_tree(
     }
 
     memset(bits, 0, sizeof(bits));
+    test_allocation_bit_set(bits, INFS_LOCATOR_BLOCK_A);
+    test_allocation_bit_set(bits, INFS_LOCATOR_BLOCK_B);
     for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i)
         test_allocation_bit_set(bits, checkpoints[i]);
     test_allocation_bit_set(bits, TEST_ALLOCATION_ROOT_BLOCK);
@@ -117,6 +121,25 @@ static void test_write_single_leaf_allocation_tree(
     }
     memcpy(image + TEST_ALLOCATION_ROOT_BLOCK * INFS_BLOCK_SIZE,
            block, sizeof(block));
+}
+
+static void test_write_recovery_locators(uint8_t *image)
+{
+    const struct infs_superblock_disk *sb =
+        (const struct infs_superblock_disk *)image;
+    struct infs_locator loc = {0};
+    uint8_t raw[INFS_BLOCK_SIZE];
+    loc.generation = infs_le64_to_cpu(sb->generation);
+    loc.total_blocks = infs_le64_to_cpu(sb->total_blocks);
+    memcpy(loc.filesystem_uuid, sb->filesystem_uuid, 16u);
+    for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i)
+        loc.checkpoint[i] = infs_le64_to_cpu(sb->checkpoint_block[i]);
+    if (infs_locator_encode(raw, &loc) != INFS_STATUS_OK) {
+        fputs("invalid test recovery locator\n", stderr);
+        exit(1);
+    }
+    memcpy(image + INFS_LOCATOR_BLOCK_A * INFS_BLOCK_SIZE, raw, sizeof(raw));
+    memcpy(image + INFS_LOCATOR_BLOCK_B * INFS_BLOCK_SIZE, raw, sizeof(raw));
 }
 
 #endif

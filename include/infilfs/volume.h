@@ -87,7 +87,7 @@ struct infs_volume {
     size_t bitmap_bytes;
 
     /*
-     * Runtime cache of the committed Format 0.18 allocation-tree geometry.
+     * Runtime cache of the committed Format 0.19 allocation-tree geometry.
      * The page addresses are validated while opening a checkpoint graph and
      * replaced only after a newer primary checkpoint is durably committed.
      * This avoids rereading every allocation leaf/branch on each fsync.
@@ -286,15 +286,17 @@ struct infs_named_stream_info {
 infs_status infs_volume_open_storage(struct infs_volume *vol,
                                      struct infs_storage *storage,
                                      int writable);
-/* Experimental read-only Format 0.19 in-memory/regular image mount for
- * portable namespace and read tests; refuses physical block devices.
- * Success transfers storage ownership; normal mount and fsck stay 0.18. */
+/* Read-only in-memory/regular-image fixture mount; refuses block devices.
+ * Success transfers storage ownership. */
 infs_status infs_volume_open_019_test_image(
     struct infs_volume *vol, struct infs_storage *storage);
-/* Experimental writable regular-image-only path. Requires a fully validated
- * clean checkpoint set. No physical devices or Format 0.19 resize support. */
+/* Strict writable image fixture path. Requires a fully validated, clean
+ * checkpoint set and refuses physical devices instead of repairing them. */
 infs_status infs_volume_open_019_rw_test_image(
     struct infs_volume *vol, struct infs_storage *storage);
+/* Format 0.19 storage open with staged checkpoint/locator repair on writes. */
+infs_status infs_volume_open_019_storage(
+    struct infs_volume *vol, struct infs_storage *storage, int writable);
 void infs_volume_close(struct infs_volume *vol);
 infs_status infs_volume_sync(struct infs_volume *vol);
 /* Resize the filesystem geometry inside an already-sized backing store.
@@ -487,7 +489,7 @@ infs_status infs_snapshot_scrub(struct infs_volume *vol, const char *snapshot,
 infs_status infs_scrub_online(struct infs_volume *vol,
                               struct infs_scrub_report *report);
 
-/* Experimental verification of the complete committed graph on a 0.19
+/* Verification of the complete committed graph on a 0.19
  * regular-file/in-memory image only. This does not open a mounted volume,
  * heal metadata, write data or take ownership of the caller's storage. */
 infs_status infs_volume_verify_019_test_image(
