@@ -20,8 +20,9 @@ static void usage(const char *program)
             "Usage: %s [-afnp] <image-or-device>\n"
             "       %s --scrub [-afnp] <image-or-device>\n"
             "       %s --scrub --online [-afnp] <image-or-device>\n"
-            "       %s --scrub --snapshot <name> [-afnp] <image-or-device>\n",
-            program, program, program, program);
+            "       %s --scrub --snapshot <name> [-afnp] <image-or-device>\n"
+            "       %s --scrub -n --experimental-019-image <regular-image>\n",
+            program, program, program, program, program);
 }
 
 static const char *check_stage_name(uint32_t stage)
@@ -252,10 +253,21 @@ static void scrub_progress(const struct infs_scrub_progress *progress,
 }
 
 static int run_deep_scrub(const char *target, int online,
-                          const char *snapshot_name)
+                          const char *snapshot_name, int experimental019)
 {
     struct infs_volume vol;
-    infs_status status = infs_posix_volume_open(&vol, target, online ? 1 : 0);
+    infs_status status;
+    if (experimental019) {
+        struct infs_storage storage = {0};
+        status = infs_posix_storage_open(&storage, target, 0);
+        if (status == INFS_STATUS_OK) {
+            status = infs_volume_open_019_test_image(&vol, &storage);
+            if (status != INFS_STATUS_OK)
+                infs_storage_close(&storage);
+        }
+    } else {
+        status = infs_posix_volume_open(&vol, target, online ? 1 : 0);
+    }
     if (status != INFS_STATUS_OK) {
         fprintf(stderr, "fsck.infiltratorfs --scrub: open: %s\n",
                 infs_status_string(status));
@@ -285,6 +297,8 @@ static int run_deep_scrub(const char *target, int online,
     infs_volume_close(&vol);
 
     printf("InfiltratorFS scrub\n");
+    if (experimental019)
+        puts("  Format:              0.19 (experimental read-only image)");
     printf("  Generation:          %" PRIu64 "\n", report.scrub_generation);
     printf("  Files checked:       %" PRIu64 "\n", report.files_checked);
     printf("  Data blocks checked: %" PRIu64 "\n", report.data_blocks_checked);
@@ -306,6 +320,7 @@ int main(int argc, char **argv)
     int online = 0;
     int automatic_repair = 0;
     int no_modify = 0;
+    int experimental019 = 0;
     const char *snapshot_name = NULL;
     const char *target = NULL;
 
@@ -313,6 +328,8 @@ int main(int argc, char **argv)
         const char *arg = argv[i];
         if (strcmp(arg, "--scrub") == 0) {
             deep_scrub = 1;
+        } else if (strcmp(arg, "--experimental-019-image") == 0) {
+            experimental019 = 1;
         } else if (strcmp(arg, "--online") == 0) {
             online = 1;
         } else if (strcmp(arg, "--snapshot") == 0) {
@@ -367,7 +384,14 @@ int main(int argc, char **argv)
         return FSCK_EXIT_USAGE;
     }
 
+    if (experimental019 && (!deep_scrub || !no_modify || automatic_repair ||
+                             online || snapshot_name)) {
+        fprintf(stderr,
+                "fsck.infiltratorfs: experimental 0.19 image requires "
+                "--scrub -n without repair/online/snapshot options\n");
+        return FSCK_EXIT_USAGE;
+    }
     if (deep_scrub)
-        return run_deep_scrub(target, online, snapshot_name);
+        return run_deep_scrub(target, online, snapshot_name, experimental019);
     return run_structural_check(target, automatic_repair && !no_modify);
 }

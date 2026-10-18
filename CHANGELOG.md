@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.136 — 2026-10-18
+
+- Add read-only experimental Format 0.19 regular-image deep scrub to fsck.infiltratorfs using `--scrub -n --experimental-019-image`. Ordinary fsck/repair remain restricted to Format 0.18; device targets and experimental online/repair modes are refused.
+- Qualify disposable image scrub, recovery from two damaged locator pages using a validated primary, and fail-closed behaviour when primary and both locators are corrupted. No changes to normal or physical block-device paths.
+- Writable Format 0.19 remains experimental image-only; native writable, crash-safe resize and real physical qualification are outstanding.
+
 ## 0.18.135 — 2026-10-18
 
 - Harden experimental writable Format 0.19 image qualification with actual checkpoint flush counters and injected failure after primary publication. Assert the writer reports uncertainty and stays write-poisoned until reopened, and the committed graph remains recoverable read-only.
