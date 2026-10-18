@@ -24,6 +24,9 @@ struct memory_volume {
     int device;
     uint64_t unreadable_blocks[3];
     unsigned unreadable_count;
+    unsigned checkpoint_flushes;
+    unsigned fail_checkpoint_flush;
+    int checkpoint_pending_flush;
 };
 
 static void expect(int condition, const char *what)
@@ -54,11 +57,23 @@ static infs_status mem_write(void *context, uint64_t offset,
         return INFS_STATUS_IO_ERROR;
     memcpy(m->contents + (size_t)offset, source, length);
     ++m->writes;
+    if (length == INFS_BLOCK_SIZE &&
+        (offset == 0 ||
+         offset == (IMAGE_BYTES / 2u) ||
+         offset == IMAGE_BYTES - INFS_BLOCK_SIZE))
+        m->checkpoint_pending_flush = 1;
     return INFS_STATUS_OK;
 }
 static infs_status mem_flush(void *context)
 {
-    ++((struct memory_volume *)context)->flushes;
+    struct memory_volume *m = context;
+    ++m->flushes;
+    if (m->checkpoint_pending_flush) {
+        m->checkpoint_pending_flush = 0;
+        ++m->checkpoint_flushes;
+        if (m->fail_checkpoint_flush == m->checkpoint_flushes)
+            return INFS_STATUS_IO_ERROR;
+    }
     return INFS_STATUS_OK;
 }
 static infs_status mem_size(void *context, uint64_t *bytes, int *device)
@@ -95,6 +110,9 @@ static void reset(struct memory_volume *m)
     m->random_counter = 0;
     m->device = 0;
     m->unreadable_count = 0;
+    m->checkpoint_flushes = 0;
+    m->fail_checkpoint_flush = 0;
+    m->checkpoint_pending_flush = 0;
 }
 
 int main(int argc, char **argv)
@@ -218,8 +236,11 @@ int main(int argc, char **argv)
         expect(infs_volume_resize(&writer, IMAGE_BYTES) ==
                    INFS_STATUS_NOT_SUPPORTED,
                "unfinished 0.19 resize is blocked without media changes");
+        unsigned checkpoint_before = m.checkpoint_flushes;
         expect(infs_create_file(&writer, "/written", &options) ==
                    INFS_STATUS_OK, "create file using 0.19 image transaction");
+        expect(m.checkpoint_flushes == checkpoint_before + 3u,
+               "0.19 committed all three checkpoint flushes separately");
         expect(infs_write_file(&writer, "/written", payload,
                    sizeof(payload)-1u, 0) == (int64_t)(sizeof(payload)-1u),
                "write and commit actual 0.19 file data");
@@ -246,10 +267,64 @@ int main(int argc, char **argv)
                memcmp(readback, payload, sizeof(payload)-1u) == 0,
                "0.19 read-only reopen preserves committed payload bytes");
         infs_volume_close(&reader);
+        {
+            struct infs_volume denied = {0};
+            struct infs_storage probe = { .ops = &ops, .context = &m };
+            unsigned before = m.writes;
+            m.device = 1;
+            expect(infs_volume_open_019_rw_test_image(&denied, &probe) ==
+                       INFS_STATUS_NOT_SUPPORTED &&
+                   m.writes == before && probe.ops == &ops,
+                   "0.19 experimental writer refuses physical media without writes");
+            m.device = 0;
+            m.contents[INFS_LOCATOR_BLOCK_A * INFS_BLOCK_SIZE] ^= 0xffu;
+            expect(infs_volume_open_019_rw_test_image(&denied, &probe) ==
+                       INFS_STATUS_CORRUPT &&
+                   m.writes == before && probe.ops == &ops,
+                   "0.19 writable opener rejects damaged locator without healing");
+            m.contents[INFS_LOCATOR_BLOCK_A * INFS_BLOCK_SIZE] ^= 0xffu;
+            m.unreadable_blocks[0] = IMAGE_BYTES / INFS_BLOCK_SIZE - 1u;
+            m.unreadable_count = 1;
+            expect(infs_volume_open_019_rw_test_image(&denied, &probe) ==
+                       INFS_STATUS_CORRUPT &&
+                   m.writes == before && probe.ops == &ops,
+                   "0.19 writable opener rejects unreadable checkpoint");
+            m.unreadable_count = 0;
+        }
         reset(&m);
         expect(infs_format_storage_019_test_image(&storage, "Fixture19") ==
                    INFS_STATUS_OK,
                "restore empty 0.19 image for independent recovery tests");
+    }
+
+    /* Fail a secondary checkpoint flush after the primary commit. The
+     * write result is ambiguous, but the writer must become permanently
+     * poisoned until a fresh verified mount; it must not keep modifying a
+     * potentially half-replicated generation. */
+    {
+        struct infs_volume writer = {0};
+        struct infs_storage ws = { .ops = &ops, .context = &m };
+        struct infs_superblock_disk recovered = {0};
+        struct infs_create_options options = { .posix_permissions = 0644u };
+        expect(infs_volume_open_019_rw_test_image(&writer, &ws) ==
+                   INFS_STATUS_OK, "open clean 0.19 image before injected fault");
+        m.fail_checkpoint_flush = m.checkpoint_flushes + 2u;
+        expect(infs_create_file(&writer, "/ambiguous", &options) ==
+                   INFS_STATUS_IO_ERROR,
+               "secondary checkpoint flush failure reported to the writer");
+        expect(!writer.writable &&
+                   writer.reopen_required_status == INFS_STATUS_IO_ERROR &&
+                   infs_volume_sync(&writer) == INFS_STATUS_IO_ERROR,
+               "fault poisons 0.19 writer and blocks all future transactions");
+        m.fail_checkpoint_flush = 0;
+        infs_volume_close(&writer);
+        expect(infs_volume_verify_019_test_image(&storage, &recovered) ==
+                   INFS_STATUS_OK,
+               "fresh read-only 0.19 graph recovery after ambiguous commit");
+        reset(&m);
+        expect(infs_format_storage_019_test_image(&storage, "Fixture19") ==
+                   INFS_STATUS_OK,
+               "restore 0.19 image after injected checkpoint fault");
     }
 
     /* A failed read is not proof that every independent recovery copy is

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.135 — 2026-10-18
+
+- Harden experimental writable Format 0.19 image qualification with actual checkpoint flush counters and injected failure after primary publication. Assert the writer reports uncertainty and stays write-poisoned until reopened, and the committed graph remains recoverable read-only.
+- Refuse experimental 0.19 writable open when either discovery locator is corrupt, a checkpoint replica is unreadable, or storage identifies a physical device; all rejections preserve the caller-owned handle and write zero media bytes.
+- Check that each of the three checkpoint replicas is durably flushed separately during ordinary portable 0.19 transactions. On-disk production Format 0.18 and native writable lockouts are unchanged.
+
 ## 0.18.134 — 2026-10-18
 
 - Implement a strictly gated experimental Format 0.19 **writable regular-image** open path: require matching valid locators, three identical readable checkpoint replicas and full committed-graph validation before enabling portable CoW writes. Physical devices and native writable mounting remain disabled.
