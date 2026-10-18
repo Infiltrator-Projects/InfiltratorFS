@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.141 — 2026-10-18
+
+- Extend native Linux Format 0.19 disposable loopback qualification from an empty bootstrap directory to a real POSIX-generated, multi-generation 256 KiB file. Require byte-exact namespace and data reads on intact, block-zero-lost, one-locator-lost, and primary-only recovery mounts.
+- Continue rejecting native Format 0.19 read-write mounts and read-write remounts. Use only disposable regular-file test images; no physical device formatting, native 0.19 writes, resize or repair is enabled.
+- Production persistent Format remains 0.18.
+
 ## 0.18.140 — 2026-10-18
 
 - Complete experimental read-only fast structural fsck's Format 0.19 redundancy accounting: authenticate both permanent locator records against the selected committed geometry and UUID, while permitting locator generation hints to lag ordinary writes.

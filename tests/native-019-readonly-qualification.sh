@@ -10,8 +10,9 @@ set -Eeuo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 build="$(realpath "$1")"
 module="$(realpath "$2")"
-[[ -x "$build/infilfs-format-019-image" && -f "$module" ]] || {
-    echo 'Required Format 0.19 image generator or native module missing.' >&2
+[[ -x "$build/infilfs-format-019-image" &&
+   -x "$build/infilfs-format-019-posix" && -f "$module" ]] || {
+    echo 'Required Format 0.19 image generator, POSIX writer or native module missing.' >&2
     exit 2
 }
 
@@ -33,6 +34,10 @@ cleanup() {
 trap cleanup EXIT INT TERM
 mkdir "$mnt"
 "$build/infilfs-format-019-image" --emit-image "$image"
+# Qualify the native reader against a real committed Format 0.19 file graph,
+# not merely the empty formatter bootstrap directory. POSIX writer uses
+# disposable regular-file images and verifies persistence and deep scrub.
+"$build/infilfs-format-019-posix" "$image"
 [[ -f "$image" && "$(stat -c %s "$image")" == 16777216 ]] || {
     echo 'Format 0.19 image builder produced invalid length.' >&2; exit 1;
 }
@@ -70,8 +75,19 @@ check_ro() {
     mount -t infiltratorfs -o ro "$loop" "$mnt"
     mounted=1
     [[ "$(findmnt -n -o FSTYPE -T "$mnt")" == infiltratorfs ]]
-    [[ -z "$(find "$mnt" -mindepth 1 -maxdepth 1 -print -quit)" ]]
+    [[ -f "$mnt/persistent" ]]
     [[ "$(findmnt -n -o OPTIONS -T "$mnt")" == *ro* ]]
+    # Bit-for-bit portable/native parity across fresh, recovered and
+    # locator-damaged mounts. This catches namespace and data-path regressions.
+    python3 - "$mnt/persistent" <<'PYVERIFY'
+import pathlib
+import sys
+path = pathlib.Path(sys.argv[1])
+expected = bytes((i * 109 + (i >> 9)) & 255 for i in range(256 * 1024))
+actual = path.read_bytes()
+if actual != expected:
+    raise SystemExit(f"Native 0.19 data mismatch: {len(actual)} bytes")
+PYVERIFY
     python3 - "$mnt" <<'PY'
 import ctypes
 import errno
