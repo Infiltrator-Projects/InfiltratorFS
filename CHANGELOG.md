@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.115 — 2026-10-18
+
+- Introduce the independently testable Format 0.19 locator binary codec and fixed-position geometry validator, with CRC64, canonical padding, explicit header/version checks and fail-closed invalid pointers.
+- Add conformance tests for corrupted/checksummed-but-malformed records, invalid geometry, old-format identity, duplicate pointers, and stale-but-well-formed candidate records.
+- These are preparatory APIs only: Format 0.19 media production, native mount, fsck, and resize remain disabled until qualification is complete. Currently shipped disk Format stays at 0.18.
+
 ## 0.18.114 — 2026-10-18
 
 - Accept and document the engineering design for a future Format 0.19 with redundant, fixed-position checkpoint-location records; retain three separately validated authoritative checkpoints.

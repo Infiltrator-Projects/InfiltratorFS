@@ -1,10 +1,10 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # Format 0.19 — independently discoverable checkpoint locations
 
-**Status: accepted engineering design, NOT implemented or qualified.**
+**Status: design accepted; portable locator codec implemented and unit-testable, but no complete 0.19 formatter/mount/resize implementation or qualification.**
 Until a complete native/portable implementation and exact-source validation
 land together, the only shipping persistent format remains Format 0.18.
-The authoritative current byte layout remains `include/infilfs/format.h`.
+The authoritative current Format 0.18 byte layout remains `include/infilfs/format.h`. The proposed Format 0.19 locator schema is defined by `include/infilfs/locator.h` and `src/locator.c` (not yet active in mounted filesystems).
 
 ## Problem and preserved commitments
 

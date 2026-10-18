@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.20)
-project(InfiltratorFS VERSION 0.18.114 LANGUAGES C)
+project(InfiltratorFS VERSION 0.18.115 LANGUAGES C)
 # Development qualification anchor: 0.18.106
 
 set(CMAKE_C_STANDARD 17)
@@ -168,6 +168,7 @@ find_package(Threads REQUIRED)
 
 add_library(infilfs_core STATIC
     src/checksum.c
+    src/locator.c
     src/status.c
     src/storage.c
     src/storage_mirror.c
@@ -335,7 +336,12 @@ add_executable(infilfs-free-extent-index tests/free-extent-index.c)
 target_link_libraries(infilfs-free-extent-index PRIVATE infilfs_core)
 infilfs_enable_warnings(infilfs-free-extent-index)
 
+add_executable(infilfs-locator-format-019 tests/locator-format-019.c)
+target_link_libraries(infilfs-locator-format-019 PRIVATE infilfs_core)
+infilfs_enable_warnings(infilfs-locator-format-019)
+
 enable_testing()
+add_test(NAME infilfs-locator-format-019 COMMAND infilfs-locator-format-019)
 add_test(NAME infilfs-checksum-known-answer COMMAND infilfs-checksum-test)
 add_test(NAME infilfs-storage-mirror COMMAND infilfs-storage-mirror)
 add_test(NAME infilfs-storage-encrypted COMMAND infilfs-storage-encrypted)
