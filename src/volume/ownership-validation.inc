@@ -355,6 +355,22 @@ static int build_live_ownership_bitmap_progress(
             goto out;
     }
 
+    /*
+     * In Format 0.19 the two fixed recovery locators are permanently
+     * allocated objects. They are not index entries or checkpoints and must
+     * still be independently owned. Claiming them here also catches aliases
+     * where an object or allocation-tree page overwrites a locator.
+     */
+    if (infs_le16_to_cpu(vol->sb.format_minor) ==
+        INFS_LOCATOR_FORMAT_MINOR) {
+        status = ownership_claim(owners, total, INFS_LOCATOR_BLOCK_A);
+        if (status != INFS_STATUS_OK)
+            goto out;
+        status = ownership_claim(owners, total, INFS_LOCATOR_BLOCK_B);
+        if (status != INFS_STATUS_OK)
+            goto out;
+    }
+
     {
         struct infs_allocation_layout map = {0};
         status = allocation_map_load(vol, &vol->sb, NULL, NULL, &map);

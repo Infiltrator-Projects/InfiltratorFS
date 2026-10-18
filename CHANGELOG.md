@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.124 — 2026-10-18
+
+- Fix portable Format 0.19 full-graph verification by claiming both fixed discovery-locator blocks as independent, persistently reserved owners, without treating them as ordinary file or checkpoint metadata.
+- Reject any allocation-tree page placed on a locator block, and fail closed when either permanent locator block is missing from the committed allocation bitmap.
+- Restore the experimental Format 0.19 image conformance test before advancing native mounting or physical formatting. Shipping on-disk Format remains 0.18.
+
 ## 0.18.123 — 2026-10-18
 
 - Add an explicit read-only Format 0.19 portable image-volume open API, reusing full committed-graph validation across up to six candidates discovered from independently valid fixed locators.

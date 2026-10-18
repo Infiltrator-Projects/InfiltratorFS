@@ -346,6 +346,14 @@ static infs_status allocation_map_load(
                 goto fail;
             }
         }
+        if (infs_le16_to_cpu(sb->format_minor) ==
+                INFS_LOCATOR_FORMAT_MINOR &&
+            (all_pages[i] == INFS_LOCATOR_BLOCK_A ||
+             all_pages[i] == INFS_LOCATOR_BLOCK_B)) {
+            free(all_pages);
+            status = INFS_STATUS_CORRUPT;
+            goto fail;
+        }
     }
     free(all_pages);
 
@@ -383,6 +391,13 @@ static infs_status allocation_map_load(
                 status = INFS_STATUS_CORRUPT;
                 goto fail;
             }
+        }
+        if (infs_le16_to_cpu(sb->format_minor) ==
+                INFS_LOCATOR_FORMAT_MINOR &&
+            (!bitmap_get(bitmap, INFS_LOCATOR_BLOCK_A) ||
+             !bitmap_get(bitmap, INFS_LOCATOR_BLOCK_B))) {
+            status = INFS_STATUS_CORRUPT;
+            goto fail;
         }
     }
 
