@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "infilfs/format.h"
+#include "infilfs/format_volume.h"
 #include "infilfs/fs.h"
 #include "infilfs/posix_io.h"
 #include "infilfs/utf8.h"
@@ -27,6 +28,7 @@
 static void usage(const char *prog)
 {
     fprintf(stderr, "Usage: %s [--force] [--wipe-only] [--removable-profile] [--casefold] [-L label] <image-or-block-device>\n", prog);
+    fprintf(stderr, "       %s --experimental-019-image --force [-L label] <regular-image>\n", prog);
 }
 
 static int parse_identity_component(const char *text, uint32_t *value)

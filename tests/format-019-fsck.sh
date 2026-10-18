@@ -7,11 +7,16 @@ build="$(realpath "$1")"
 work="$(mktemp -d)"
 trap 'rm -rf -- "$work"' EXIT
 image="$work/format-019.img"
-"$build/infilfs-format-019-image" --emit-image "$image" >/dev/null
+truncate -s 16777216 "$image"
+"$build/mkfs.infilfs" --experimental-019-image --force -L Fixture19 "$image" >"$work/mkfs"
+grep -Fq 'Format 0.19 image created' "$work/mkfs"
 [[ "$(stat -c %s "$image")" == 16777216 ]]
 "$build/fsck.infiltratorfs" --scrub -n --experimental-019-image "$image" >"$work/out"
 grep -Fq '0.19 (experimental read-only image)' "$work/out"
 grep -Fq 'Result:              CLEAN' "$work/out"
+if "$build/mkfs.infilfs" --experimental-019-image "$image" >/dev/null 2>&1; then
+    echo 'Unsafe: 0.19 image formatting without explicit --force' >&2; exit 1
+fi
 if "$build/fsck.infiltratorfs" --scrub -a --experimental-019-image "$image" >/dev/null 2>&1; then
     echo 'Unsafe: experimental 0.19 fsck accepted repair' >&2; exit 1
 fi

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.137 — 2026-10-18
+
+- Expose the guarded portable Format 0.19 formatter through `mkfs.infilfs --experimental-019-image --force <existing-regular-image>`. It requires explicit destructive consent, preserves production default Format 0.18, and refuses physical block devices even with force.
+- Run the experimental image-only `mkfs` and `fsck --scrub -n` together in actual Linux CLI qualification; test missing-force refusal and read-only recovery through a surviving primary checkpoint.
+- Normal filesystem formatting/mounting and physical-device qualification are unchanged. Writable 0.19 remains restricted to the portable disposable-image API.
+
 ## 0.18.136 — 2026-10-18
 
 - Add read-only experimental Format 0.19 regular-image deep scrub to fsck.infiltratorfs using `--scrub -n --experimental-019-image`. Ordinary fsck/repair remain restricted to Format 0.18; device targets and experimental online/repair modes are refused.

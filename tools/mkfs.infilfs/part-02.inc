@@ -5,6 +5,7 @@ int main(int argc, char **argv)
     int wipe_only = 0;
     int removable_profile = 0;
     int casefold = 0;
+    int experimental019 = 0;
     const char *label = "InfiltratorFS";
     const char *path = NULL;
 
@@ -17,6 +18,8 @@ int main(int argc, char **argv)
             removable_profile = 1;
         } else if (strcmp(argv[i], "--casefold") == 0) {
             casefold = 1;
+        } else if (strcmp(argv[i], "--experimental-019-image") == 0) {
+            experimental019 = 1;
         } else if (strcmp(argv[i], "-L") == 0 && i + 1 < argc) {
             label = argv[++i];
         } else if (argv[i][0] == '-') {
@@ -42,6 +45,41 @@ int main(int argc, char **argv)
     if (!infs_utf8_validate(label, strlen(label))) {
         fprintf(stderr, "Label must be valid UTF-8.\n");
         return 2;
+    }
+
+    if (experimental019) {
+        /* Physical Format 0.19 is not qualified. This explicit experimental
+         * path formats ONLY an existing regular file through the guarded
+         * portable format-0.19 writer. No block-device force override. */
+        if (!force || wipe_only || removable_profile || casefold) {
+            fprintf(stderr, "Format 0.19 image requires --force and "
+                    "rejects wipe/profile/casefold options.\n");
+            return 2;
+        }
+        struct infs_storage image = {0};
+        infs_status status = infs_posix_storage_open(&image, path, 1);
+        if (status != INFS_STATUS_OK) {
+            fprintf(stderr, "Experimental 0.19 image open: %s\n",
+                    infs_status_string(status));
+            return 1;
+        }
+        uint64_t image_size = 0;
+        int is_device = 0;
+        status = infs_storage_get_size(&image, &image_size, &is_device);
+        if (status == INFS_STATUS_OK && is_device)
+            status = INFS_STATUS_NOT_SUPPORTED;
+        if (status == INFS_STATUS_OK)
+            status = infs_format_storage_019_test_image(&image, label);
+        infs_storage_close(&image);
+        if (status != INFS_STATUS_OK) {
+            fprintf(stderr, "Experimental 0.19 image format refused: %s\n",
+                    infs_status_string(status));
+            return 1;
+        }
+        printf("Experimental InfiltratorFS Format 0.19 image created "
+               "(%" PRIu64 " bytes; NOT qualified for physical devices).\n",
+               image_size);
+        return 0;
     }
 
     int fd = open(path, O_RDWR | O_CLOEXEC);
