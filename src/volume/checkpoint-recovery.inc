@@ -292,15 +292,12 @@ infs_status infs_volume_verify_019_test_image(
     return selected_valid ? INFS_STATUS_OK : status;
 }
 
-/*
- * Experimental read-only Format 0.19 image volume open. Unlike the header
- * verifier, this returns a usable portable volume with all namespace/read
- * APIs, after independent fixed-locator recovery and full committed-graph
- * validation. It intentionally refuses block devices and writable mode.
- * The normal 0.18 open path is unchanged until native 0.19 qualification.
- */
-infs_status infs_volume_open_019_test_image(
-    struct infs_volume *vol, struct infs_storage *storage)
+/* Experimental Format 0.19 disposable-image open. The writable mode needs
+ * two consistent locators, three identical checkpoint replicas and a fully
+ * verified graph; it never accepts physical devices or silently repairs
+ * degraded media. The production 0.18 open path remains separate. */
+static infs_status open_019_test_image_mode(
+    struct infs_volume *vol, struct infs_storage *storage, int writable)
 {
     struct infs_superblock_disk checkpoints[INFS_LOCATOR_MAX_CANDIDATES];
     uint8_t valid[INFS_LOCATOR_MAX_CANDIDATES] = {0};
@@ -324,12 +321,58 @@ infs_status infs_volume_open_019_test_image(
         status = INFS_STATUS_NOT_SUPPORTED;
         goto fail;
     }
+    if (writable && (!storage->ops->write_at || !storage->ops->flush ||
+                     !storage->ops->random_bytes ||
+                     !storage->ops->current_time)) {
+        status = INFS_STATUS_INVALID_ARGUMENT;
+        goto fail;
+    }
     vol->size_bytes = bytes;
+
+    if (writable) {
+        uint8_t raw[INFS_BLOCK_SIZE];
+        struct infs_locator a = {0}, b = {0};
+        /* Locator generation may lag ordinary same-geometry commits, but
+         * the two durable records must still describe identical geometry. */
+        status = infs_storage_read(&vol->storage,
+            INFS_LOCATOR_BLOCK_A * INFS_BLOCK_SIZE, raw, sizeof(raw));
+        if (status != INFS_STATUS_OK)
+            goto fail;
+        status = infs_locator_decode(raw, bytes / INFS_BLOCK_SIZE, &a);
+        if (status != INFS_STATUS_OK)
+            goto fail;
+        status = infs_storage_read(&vol->storage,
+            INFS_LOCATOR_BLOCK_B * INFS_BLOCK_SIZE, raw, sizeof(raw));
+        if (status != INFS_STATUS_OK)
+            goto fail;
+        status = infs_locator_decode(raw, bytes / INFS_BLOCK_SIZE, &b);
+        if (status != INFS_STATUS_OK)
+            goto fail;
+        if (memcmp(&a, &b, sizeof(a)) != 0) {
+            status = INFS_STATUS_CORRUPT;
+            goto fail;
+        }
+    }
 
     status = infs_locator_discover_019_headers(
         &vol->storage, bytes, checkpoints, valid, &found);
     if (status != INFS_STATUS_OK)
         goto fail;
+    if (writable) {
+        /* Six independently valid candidate copies: 2 x 3 replicas.
+         * Refuse an ambiguous startup, including any torn last commit. */
+        if (found != INFS_LOCATOR_MAX_CANDIDATES) {
+            status = INFS_STATUS_CORRUPT;
+            goto fail;
+        }
+        for (unsigned i = 0; i < INFS_LOCATOR_MAX_CANDIDATES; ++i) {
+            if (!valid[i] || memcmp(&checkpoints[i], &checkpoints[0],
+                                    sizeof(checkpoints[0])) != 0) {
+                status = INFS_STATUS_CORRUPT;
+                goto fail;
+            }
+        }
+    }
 
     for (unsigned attempt = 0; attempt < INFS_LOCATOR_MAX_CANDIDATES;
          ++attempt) {
@@ -378,6 +421,8 @@ infs_status infs_volume_open_019_test_image(
     (void)object_cache_rebuild(vol);
     vol->metadata_allocation_cursor =
         infs_le64_to_cpu(vol->sb.total_blocks);
+    /* Enable writes only after all full-graph/replica/locator checks. */
+    vol->writable = writable != 0;
     storage->ops = NULL;
     storage->context = NULL;
     return INFS_STATUS_OK;
@@ -386,6 +431,18 @@ fail:
     discard_candidate_state(vol);
     memset(vol, 0, sizeof(*vol));
     return status == INFS_STATUS_OK ? INFS_STATUS_CORRUPT : status;
+}
+
+infs_status infs_volume_open_019_test_image(
+    struct infs_volume *vol, struct infs_storage *storage)
+{
+    return open_019_test_image_mode(vol, storage, 0);
+}
+
+infs_status infs_volume_open_019_rw_test_image(
+    struct infs_volume *vol, struct infs_storage *storage)
+{
+    return open_019_test_image_mode(vol, storage, 1);
 }
 
 infs_status infs_volume_open_storage(struct infs_volume *vol,

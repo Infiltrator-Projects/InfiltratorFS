@@ -195,6 +195,63 @@ int main(int argc, char **argv)
         m.device = 0;
     }
 
+    /* Real copy-on-write transactions on a disposable 0.19 memory image. */
+    {
+        struct infs_volume writer = {0}, reader = {0};
+        struct infs_storage ws = { .ops = &ops, .context = &m };
+        struct infs_storage rs = { .ops = &ops, .context = &m };
+        struct infs_superblock_disk committed = {0};
+        struct infs_create_options options = {
+            .posix_permissions = 0644u, .posix_uid = 1000u,
+            .posix_gid = 1000u,
+        };
+        static const char payload[] = "Format 0.19 committed payload";
+        char readback[sizeof(payload)] = {0};
+        uint8_t locator_a[INFS_BLOCK_SIZE], locator_b[INFS_BLOCK_SIZE];
+        memcpy(locator_a, m.contents + INFS_LOCATOR_BLOCK_A * INFS_BLOCK_SIZE,
+               sizeof(locator_a));
+        memcpy(locator_b, m.contents + INFS_LOCATOR_BLOCK_B * INFS_BLOCK_SIZE,
+               sizeof(locator_b));
+        expect(infs_volume_open_019_rw_test_image(&writer, &ws) ==
+                   INFS_STATUS_OK && writer.writable && !ws.ops,
+               "fully validated experimental writable 0.19 image open");
+        expect(infs_volume_resize(&writer, IMAGE_BYTES) ==
+                   INFS_STATUS_NOT_SUPPORTED,
+               "unfinished 0.19 resize is blocked without media changes");
+        expect(infs_create_file(&writer, "/written", &options) ==
+                   INFS_STATUS_OK, "create file using 0.19 image transaction");
+        expect(infs_write_file(&writer, "/written", payload,
+                   sizeof(payload)-1u, 0) == (int64_t)(sizeof(payload)-1u),
+               "write and commit actual 0.19 file data");
+        expect(infs_volume_sync(&writer) == INFS_STATUS_OK &&
+               infs_le64_to_cpu(writer.sb.generation) > 1u,
+               "durably publish multiple 0.19 generations");
+        expect(memcmp(locator_a,
+                      m.contents + INFS_LOCATOR_BLOCK_A * INFS_BLOCK_SIZE,
+                      sizeof(locator_a)) == 0 &&
+               memcmp(locator_b,
+                      m.contents + INFS_LOCATOR_BLOCK_B * INFS_BLOCK_SIZE,
+                      sizeof(locator_b)) == 0,
+               "ordinary 0.19 writes do not rewrite discovery locators");
+        infs_volume_close(&writer);
+        expect(infs_volume_verify_019_test_image(&storage, &committed) ==
+                   INFS_STATUS_OK &&
+               infs_le64_to_cpu(committed.generation) > 1u,
+               "committed 0.19 graph verifies after writer closes");
+        expect(infs_volume_open_019_test_image(&reader, &rs) ==
+                   INFS_STATUS_OK,
+               "read-only 0.19 reopen sees newly committed generation");
+        expect(infs_read_file(&reader, "/written", readback,
+                   sizeof(payload)-1u, 0) == (int64_t)(sizeof(payload)-1u) &&
+               memcmp(readback, payload, sizeof(payload)-1u) == 0,
+               "0.19 read-only reopen preserves committed payload bytes");
+        infs_volume_close(&reader);
+        reset(&m);
+        expect(infs_format_storage_019_test_image(&storage, "Fixture19") ==
+                   INFS_STATUS_OK,
+               "restore empty 0.19 image for independent recovery tests");
+    }
+
     /* A failed read is not proof that every independent recovery copy is
      * unusable. Exercise unreadable locator and checkpoint pages, not just
      * validly read pages with corrupted checksums. */

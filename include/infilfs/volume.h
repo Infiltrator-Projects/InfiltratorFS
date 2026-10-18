@@ -291,6 +291,10 @@ infs_status infs_volume_open_storage(struct infs_volume *vol,
  * Success transfers storage ownership; normal mount and fsck stay 0.18. */
 infs_status infs_volume_open_019_test_image(
     struct infs_volume *vol, struct infs_storage *storage);
+/* Experimental writable regular-image-only path. Requires a fully validated
+ * clean checkpoint set. No physical devices or Format 0.19 resize support. */
+infs_status infs_volume_open_019_rw_test_image(
+    struct infs_volume *vol, struct infs_storage *storage);
 void infs_volume_close(struct infs_volume *vol);
 infs_status infs_volume_sync(struct infs_volume *vol);
 /* Resize the filesystem geometry inside an already-sized backing store.

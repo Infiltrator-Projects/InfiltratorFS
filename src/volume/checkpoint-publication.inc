@@ -114,17 +114,34 @@ infs_status infs_volume_sync(struct infs_volume *vol)
     phase2_failpoint("after-checkpoint");
 
     infs_status replica_status = INFS_STATUS_OK;
+    int format019 = infs_le16_to_cpu(vol->sb.format_minor) ==
+        INFS_LOCATOR_FORMAT_MINOR;
     for (unsigned n = 1; n < INFS_CHECKPOINT_COUNT; ++n) {
         unsigned i = (first + n) % INFS_CHECKPOINT_COUNT;
         uint64_t b = infs_le64_to_cpu(vol->sb.checkpoint_block[i]);
         status = write_block(vol, b, sb_block);
         if (status != INFS_STATUS_OK && replica_status == INFS_STATUS_OK)
             replica_status = status;
+        /* Format 0.19 requires independently durable replicas and never
+         * touches its locator pages for same-geometry transactions. */
+        if (format019 && replica_status == INFS_STATUS_OK) {
+            status = infs_storage_flush(&vol->storage);
+            if (status != INFS_STATUS_OK)
+                replica_status = status;
+        }
+        if (format019 && replica_status != INFS_STATUS_OK)
+            break;
     }
-    status = infs_storage_flush(&vol->storage);
-    if (status != INFS_STATUS_OK && replica_status == INFS_STATUS_OK)
-        replica_status = status;
-
+    if (!format019) {
+        status = infs_storage_flush(&vol->storage);
+        if (status != INFS_STATUS_OK && replica_status == INFS_STATUS_OK)
+            replica_status = status;
+    }
+    if (format019 && replica_status != INFS_STATUS_OK) {
+        /* Publication may already have committed: poison the session,
+         * rather than writing through uncertain replica durability. */
+        return require_checkpoint_recovery(vol, replica_status);
+    }
     if (replica_status != INFS_STATUS_OK) {
         vol->checkpoint_repair_needed = 1;
         return INFS_STATUS_OK;

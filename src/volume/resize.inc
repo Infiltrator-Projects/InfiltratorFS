@@ -268,6 +268,11 @@ infs_status infs_volume_resize(struct infs_volume *vol,
         return INFS_STATUS_INVALID_ARGUMENT;
     if (vol->snapshot_view)
         return INFS_STATUS_READ_ONLY;
+    /* Format 0.18 resize cannot perform the required two-locator 0.19
+     * recovery publication. Refuse before changing any media or metadata. */
+    if (infs_le16_to_cpu(vol->sb.format_minor) ==
+        INFS_LOCATOR_FORMAT_MINOR)
+        return INFS_STATUS_NOT_SUPPORTED;
 
     status = infs_volume_sync(vol);
     if (status != INFS_STATUS_OK)

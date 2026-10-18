@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.18.134 — 2026-10-18
+
+- Implement a strictly gated experimental Format 0.19 **writable regular-image** open path: require matching valid locators, three identical readable checkpoint replicas and full committed-graph validation before enabling portable CoW writes. Physical devices and native writable mounting remain disabled.
+- Persist 0.19 secondary checkpoints individually and poison the session after uncertain replica durability. Refuse Format 0.19 resizing until the separate crash-safe locator relocation protocol is complete.
+- Test real portable create/write/sync, unchanged locator pages on same-geometry commits, full graph validation and fresh read-only reopen of committed data in disposable image memory.
+- Production on-disk Format remains 0.18. This is not physical-media qualification or permission to reformat NVMe.
+
 ## 0.18.133 — 2026-10-18
 
 - Update the 0.19 fault-injection conformance matrix to distinguish recoverable double-locator read failure (valid block-zero checkpoint still exists) from total discovery loss (both locators and block zero return I/O errors).
