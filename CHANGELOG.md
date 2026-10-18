@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.18.143 — 2026-10-18
+
+- Extend experimental writable Format 0.19 regular-image qualification across separately injected I/O failures at each of the three checkpoint durability flushes. Require immediate writer poisoning, no further writes after failure, unchanged fixed recovery locators, full committed-graph recovery and a verified read-only reopen for every case.
+- Distinguish simulated flush error handling from full power-loss and torn-write qualification; physical devices and native writable 0.19 remain disabled. Production disk Format remains 0.18.
+
 ## 0.18.142 — 2026-10-18
 
 - Reject portable Format 0.19 recovery candidate sets that combine two individually checksum-valid locator records claiming different filesystem UUIDs, matching the native Linux fail-closed identity rule.

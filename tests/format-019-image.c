@@ -314,34 +314,66 @@ int main(int argc, char **argv)
                "restore empty 0.19 image for independent recovery tests");
     }
 
-    /* Fail a secondary checkpoint flush after the primary commit. The
-     * write result is ambiguous, but the writer must become permanently
-     * poisoned until a fresh verified mount; it must not keep modifying a
-     * potentially half-replicated generation. */
-    {
-        struct infs_volume writer = {0};
+    /* Exercise all three independent checkpoint flush failures in a
+     * regular-image-only writer. An ambiguous publication MUST poison the
+     * writer, preserve the fixed locators, and leave a graph which can be
+     * independently validated after a fresh read-only reopen. This is an
+     * I/O-error model, not physical power-loss durability qualification. */
+    for (unsigned fault = 1u; fault <= INFS_CHECKPOINT_COUNT; ++fault) {
+        struct infs_volume writer = {0}, reader = {0};
         struct infs_storage ws = { .ops = &ops, .context = &m };
+        struct infs_storage rs = { .ops = &ops, .context = &m };
         struct infs_superblock_disk recovered = {0};
+        struct infs_lookup root_lookup = {0};
         struct infs_create_options options = { .posix_permissions = 0644u };
+        uint8_t locator_a[INFS_BLOCK_SIZE], locator_b[INFS_BLOCK_SIZE];
+        unsigned before = m.checkpoint_flushes;
+        unsigned poisoned_writes;
+        memcpy(locator_a,
+               m.contents + INFS_LOCATOR_BLOCK_A * INFS_BLOCK_SIZE,
+               sizeof(locator_a));
+        memcpy(locator_b,
+               m.contents + INFS_LOCATOR_BLOCK_B * INFS_BLOCK_SIZE,
+               sizeof(locator_b));
         expect(infs_volume_open_019_rw_test_image(&writer, &ws) ==
-                   INFS_STATUS_OK, "open clean 0.19 image before injected fault");
-        m.fail_checkpoint_flush = m.checkpoint_flushes + 2u;
+                   INFS_STATUS_OK,
+               "open clean 0.19 image before flush-failure matrix");
+        m.fail_checkpoint_flush = before + fault;
         expect(infs_create_file(&writer, "/ambiguous", &options) ==
                    INFS_STATUS_IO_ERROR,
-               "secondary checkpoint flush failure reported to the writer");
+               "fault at independently flushed 0.19 checkpoint is reported");
+        expect(m.checkpoint_flushes == before + fault,
+               "fault injection stopped at requested checkpoint flush");
+        poisoned_writes = m.writes;
         expect(!writer.writable &&
                    writer.reopen_required_status == INFS_STATUS_IO_ERROR &&
-                   infs_volume_sync(&writer) == INFS_STATUS_IO_ERROR,
-               "fault poisons 0.19 writer and blocks all future transactions");
+                   infs_volume_sync(&writer) == INFS_STATUS_IO_ERROR &&
+                   m.writes == poisoned_writes,
+               "checkpoint failure poisons writer without further I/O writes");
         m.fail_checkpoint_flush = 0;
         infs_volume_close(&writer);
+        expect(memcmp(locator_a,
+                      m.contents + INFS_LOCATOR_BLOCK_A * INFS_BLOCK_SIZE,
+                      sizeof(locator_a)) == 0 &&
+               memcmp(locator_b,
+                      m.contents + INFS_LOCATOR_BLOCK_B * INFS_BLOCK_SIZE,
+                      sizeof(locator_b)) == 0,
+               "same-geometry fault does not rewrite recovery locators");
         expect(infs_volume_verify_019_test_image(&storage, &recovered) ==
                    INFS_STATUS_OK,
-               "fresh read-only 0.19 graph recovery after ambiguous commit");
+               "full 0.19 graph remains recoverable after checkpoint I/O error");
+        expect(infs_volume_open_019_test_image(&reader, &rs) ==
+                   INFS_STATUS_OK && !reader.writable,
+               "fresh read-only 0.19 reopen after interrupted publication");
+        expect(infs_lookup_path(&reader, "/", &root_lookup) ==
+                   INFS_STATUS_OK &&
+                   root_lookup.type == INFS_OBJECT_DIRECTORY,
+               "post-error recovery preserves validated root directory");
+        infs_volume_close(&reader);
         reset(&m);
         expect(infs_format_storage_019_test_image(&storage, "Fixture19") ==
                    INFS_STATUS_OK,
-               "restore 0.19 image after injected checkpoint fault");
+               "restore fresh 0.19 image before next flush-failure case");
     }
 
     /* A failed read is not proof that every independent recovery copy is
