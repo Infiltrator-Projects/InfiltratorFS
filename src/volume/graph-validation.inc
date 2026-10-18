@@ -134,8 +134,17 @@ static int checkpoint_matches(struct infs_volume *vol, uint64_t block_no,
         return 0;
 
     struct infs_superblock_disk sb;
-    if (infs_decode_superblock(raw, &sb) != 0)
+    /* Production 0.18 opens remain strict, while the experimental 0.19
+     * read-only structural check authenticates its own checkpoint replicas
+     * against the explicitly selected on-disk minor version. */
+    if (infs_le16_to_cpu(best->format_minor) == INFS_LOCATOR_FORMAT_MINOR) {
+        if (!infs_validate_superblock_block_minor(
+                raw, INFS_LOCATOR_FORMAT_MINOR))
+            return 0;
+        memcpy(&sb, raw, sizeof(sb));
+    } else if (infs_decode_superblock(raw, &sb) != INFS_STATUS_OK) {
         return 0;
+    }
 
     /*
      * checksum is an encoding field, not live superblock state.

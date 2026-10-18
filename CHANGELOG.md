@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.18.139 — 2026-10-18
+
+- Implement experimental read-only **fast structural fsck** on Format 0.19 regular images (`fsck.infiltratorfs -n --experimental-019-image <file>`), separate from the existing deep scrub. Validate actual 0.19 checkpoint replica CRCs, index, allocation and namespace metadata without allowing writes or repair.
+- Correct shared checkpoint comparison to explicitly authenticate Format 0.19 superblocks while preserving the strict Format 0.18 production decoder.
+- Qualify clean and post-write 0.19 image checks, deliberately degraded 2/3 checkpoint reporting, restored integrity, no-write SHA-256 invariants and refusal of repair/default write-capable modes.
+- Disk Format 0.18 remains the production default. Experimental 0.19 native write, locator relocation/resize, repair and physical-media qualification remain incomplete.
+
 ## 0.18.138 — 2026-10-18
 
 - Add real POSIX-backend regular-image Format 0.19 write qualification: create a file, write a deterministic 256-KiB payload, durably sync via operating-system fsync, close, read-only reopen and byte-compare the data, run deep metadata/data scrub, and reopen the healthy image writable.

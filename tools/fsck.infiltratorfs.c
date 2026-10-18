@@ -21,8 +21,9 @@ static void usage(const char *program)
             "       %s --scrub [-afnp] <image-or-device>\n"
             "       %s --scrub --online [-afnp] <image-or-device>\n"
             "       %s --scrub --snapshot <name> [-afnp] <image-or-device>\n"
+            "       %s -n --experimental-019-image <regular-image>\n"
             "       %s --scrub -n --experimental-019-image <regular-image>\n",
-            program, program, program, program, program);
+            program, program, program, program, program, program);
 }
 
 static const char *check_stage_name(uint32_t stage)
@@ -74,10 +75,22 @@ static infs_status repair_checkpoint_replicas(const char *target)
     return INFS_STATUS_OK;
 }
 
-static int run_structural_check(const char *target, int repair)
+static int run_structural_check(const char *target, int repair,
+                                int experimental019)
 {
     struct infs_volume vol;
-    infs_status status = infs_posix_volume_open(&vol, target, 0);
+    infs_status status;
+    if (experimental019) {
+        struct infs_storage storage = {0};
+        status = infs_posix_storage_open(&storage, target, 0);
+        if (status == INFS_STATUS_OK) {
+            status = infs_volume_open_019_test_image(&vol, &storage);
+            if (status != INFS_STATUS_OK)
+                infs_storage_close(&storage);
+        }
+    } else {
+        status = infs_posix_volume_open(&vol, target, 0);
+    }
     if (status != INFS_STATUS_OK) {
         fprintf(stderr, "fsck.infiltratorfs: open: %s\n",
                 infs_status_string(status));
@@ -129,6 +142,8 @@ static int run_structural_check(const char *target, int repair)
     }
 
     printf("InfiltratorFS filesystem check\n");
+    if (experimental019)
+        puts("  Format:                0.19 (experimental read-only image)");
     printf("  Generation:            %" PRIu64 "\n", report.check_generation);
     printf("  Checkpoint replicas:   %u/%u %s\n",
            report.checkpoint_replicas_valid, INFS_CHECKPOINT_COUNT,
@@ -384,14 +399,15 @@ int main(int argc, char **argv)
         return FSCK_EXIT_USAGE;
     }
 
-    if (experimental019 && (!deep_scrub || !no_modify || automatic_repair ||
+    if (experimental019 && (!no_modify || automatic_repair ||
                              online || snapshot_name)) {
         fprintf(stderr,
                 "fsck.infiltratorfs: experimental 0.19 image requires "
-                "--scrub -n without repair/online/snapshot options\n");
+                "-n without repair/online/snapshot options\n");
         return FSCK_EXIT_USAGE;
     }
     if (deep_scrub)
         return run_deep_scrub(target, online, snapshot_name, experimental019);
-    return run_structural_check(target, automatic_repair && !no_modify);
+    return run_structural_check(
+        target, automatic_repair && !no_modify, experimental019);
 }
