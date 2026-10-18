@@ -419,14 +419,15 @@ static int infilfs_native_resize_locked(
     infilfs_rw_encode_superblock(&next_sb, sb_block);
 
     /*
-     * Block zero is the resize commit point. All replacement allocation pages
-     * are already durable and old metadata was never overwritten, so recovery
-     * sees either the complete old geometry or the complete new geometry.
+     * Publish the new remote checkpoints before replacing block zero. If B is
+     * already damaged, the old primary is the last old geometry map after A
+     * changes. Keep it intact until A can discover a durable new backup.
+     * Replacement allocation pages are already durable; old pages stay intact.
      */
     if (format019) {
         int committed = 0;
         ret = infilfs_checkpoint_publish(sb, &next_sb, sb_block,
-                                         0u, true, &committed);
+                                         1u, true, &committed);
     } else {
         ret = infilfs_rw_write_block(sb, 0, sb_block);
         if (!ret)

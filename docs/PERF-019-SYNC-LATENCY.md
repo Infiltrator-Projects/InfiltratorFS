@@ -106,8 +106,10 @@ writeback and persistence, not merely the final checkpoint writer:
 
 **Do not infer** flushes are costly merely because multiple flush calls exist.
 Do not change ordering or eliminate required barriers without crash-safety
-proof. In particular, the primary new checkpoint must be independently
-durable before secondary replicas are replaced.
+proof. In particular, preserve a discoverable complete generation while
+replacing checkpoints. Relocation retains the old primary geometry map until
+new remote checkpoints are independently durable, as specified in
+`FORMAT-0.19-RECOVERY-DESIGN.md`.
 
 ## Format 0.19 required invariants
 

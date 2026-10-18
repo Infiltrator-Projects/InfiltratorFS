@@ -71,17 +71,23 @@ static void setup(struct simulation *s, uint64_t old1, uint64_t old2,
     for (unsigned i = 0; i < 3; ++i)
         put_checkpoint(s, s->old_map.block[i], &s->old_map, 0);
 }
-static int discover_without_block_zero(const struct simulation *s)
+static int discover(const struct simulation *s, int primary_lost)
 {
-    const struct checkpoint_map *locators[2] = {&s->a, &s->b};
-    for (unsigned i = 0; i < 2; ++i) {
+    const struct checkpoint_map *locators[3] = {&s->a, &s->b, NULL};
+    if (!primary_lost) {
+        for (unsigned i = 0; i < s->disk_count; ++i)
+            if (!s->disk[i].block && s->disk[i].valid)
+                locators[2] = &s->disk[i].identity;
+    }
+    for (unsigned i = 0; i < 3; ++i) {
         const struct checkpoint_map *hint = locators[i];
-        if (!hint->valid)
+        if (!hint || !hint->valid)
             continue;
         for (unsigned j = 0; j < s->disk_count; ++j) {
             const struct checkpoint_copy *cp = &s->disk[j];
-            if (cp->valid && cp->block &&
-                (cp->block == hint->block[1] ||
+            if (cp->valid && (!primary_lost || cp->block) &&
+                (cp->block == hint->block[0] ||
+                 cp->block == hint->block[1] ||
                  cp->block == hint->block[2]) &&
                 same_map(&cp->identity, hint))
                 return 1;
@@ -90,16 +96,16 @@ static int discover_without_block_zero(const struct simulation *s)
     return 0;
 }
 /*
- * 0: publish A hint; 1: publish block-zero checkpoint; 2: flush backup 1;
- * 3: flush backup 2 (separately!); 4: publish B hint.
+ * 0: publish A hint; 1: flush backup 1; 2: flush backup 2 (separately!);
+ * 3: publish block zero only after both new backups; 4: publish B hint.
  */
 static void do_step(struct simulation *s, unsigned step, int torn)
 {
     switch (step) {
     case 0: s->a = s->new_map; s->a.valid = !torn; break;
-    case 1: put_checkpoint(s, 0, &s->new_map, torn); break;
-    case 2: put_checkpoint(s, s->new_map.block[1], &s->new_map, torn); break;
-    case 3: put_checkpoint(s, s->new_map.block[2], &s->new_map, torn); break;
+    case 1: put_checkpoint(s, s->new_map.block[1], &s->new_map, torn); break;
+    case 2: put_checkpoint(s, s->new_map.block[2], &s->new_map, torn); break;
+    case 3: put_checkpoint(s, 0, &s->new_map, torn); break;
     case 4: s->b = s->new_map; s->b.valid = !torn; break;
     default: ensure(0, "unknown protocol step");
     }
@@ -109,35 +115,49 @@ static void scenario(uint64_t old1, uint64_t old2,
 {
     struct simulation s;
     setup(&s, old1, old2, new1, new2);
-    ensure(discover_without_block_zero(&s),
+    ensure(discover(&s, 1),
            "old secondary checkpoints not recoverable");
+    for (unsigned damaged = 0; damaged < 3; ++damaged)
     for (unsigned interrupted = 0; interrupted < 5; ++interrupted) {
         for (int torn = 0; torn <= 1; ++torn) {
             setup(&s, old1, old2, new1, new2);
+            if (damaged == 1u) s.a.valid = 0;
+            if (damaged == 2u) s.b.valid = 0;
             for (unsigned completed = 0; completed < interrupted; ++completed)
                 do_step(&s, completed, 0);
             do_step(&s, interrupted, torn);
             /* Fail closed: never proceed to the next write after a failed
              * flush, torn write, or indeterminate publication. */
-            ensure(discover_without_block_zero(&s),
+            ensure(discover(&s, damaged == 0u),
                    "torn publication lost all checkpoint discoverability");
         }
     }
     setup(&s, old1, old2, new1, new2);
     for (unsigned step = 0; step < 5; ++step)
         do_step(&s, step, 0);
-    ensure(discover_without_block_zero(&s),
+    ensure(discover(&s, 1),
            "fully published geometry not recoverable");
     if (old1 == new1 && old2 == new2) {
         /* Negative control: a parallel torn overwrite of both backups
          * destroys recovery if block zero is also damaged. */
         setup(&s, old1, old2, new1, new2);
         do_step(&s, 0, 0);
-        do_step(&s, 1, 0);
+        put_checkpoint(&s, 0, &s.new_map, 0);
+        do_step(&s, 1, 1);
         do_step(&s, 2, 1);
-        do_step(&s, 3, 1);
-        ensure(!discover_without_block_zero(&s),
+        ensure(!discover(&s, 1),
                "concurrent secondary overwrite should be rejected");
+    }
+    if (old1 != new1 && old2 != new2) {
+        /* Negative control for the released primary-first resize defect:
+         * B was already damaged, A points only to unwritten new backups,
+         * and tearing the primary removes the last old geometry map. */
+        setup(&s, old1, old2, new1, new2);
+        s.b.valid = 0;
+        do_step(&s, 0, 0);
+        put_checkpoint(&s, 0, &s.new_map, 1);
+        ensure(!discover(&s, 0),
+               "primary-first relocation should lose old geometry discovery");
     }
 }
 int main(void)

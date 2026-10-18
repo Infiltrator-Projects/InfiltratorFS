@@ -45,6 +45,40 @@ Automatic qualification and conformance jobs are hard-capped at 10 minutes where
 
 The entries below preserve useful milestone evidence. For the current source revision, automatic qualification state must be read from the checks attached to that exact Git commit; absence of a newer hand-entered row here does not imply absence of automatic qualification.
 
+### 0.19.1 interrupted-resize recovery correction
+
+The 18 October 2026 forensic comparison reproduced a gap in 0.19.0: damage
+locator B after writable open, durably publish A's new resize map, then tear
+the first primary-checkpoint write. Two valid old backups survived, but their
+positions were no longer discoverable. Restoring only the old B hint recovered
+the complete data and a CLEAN scrub. The extended real-writer test failed
+against the released primary-first protocol before the correction.
+
+The corrected shared publisher enforces A, secondary 1, secondary 2, primary,
+B, with each record independently flushed. The old primary's geometry remains
+available until the new backups are durable. No disk layout or Format 0.19
+version change is required.
+
+Local GCC 13.3 Debug qualification passed all 57 CTest cases and all 24 policy
+guards referenced by the workflows. The actual-writer matrix passed 296
+ordinary-publication recovery/scrub cases, 256 grow/shrink recovery/repair
+cases, and 28 interruptions during writable checkpoint/locator healing (580
+total). Latent locator damage is injected after writable admission; cold
+recovery uses the normal volume API, storage enforces physical bounds, and
+writable reopen must repair all redundancy before resumed mutation.
+
+The updated module also passed the disposable QEMU Linux
+`6.8.0-138-generic` mounted Format 0.19 suite: portable/native exchange,
+write/remount, repeated grow/shrink relocation, actual backing-file reduction,
+stale hints, bootstrap damage, read-only non-mutation, writable repair,
+feature admission and old-format rejection. Windows prefix offsets were
+cross-checked against the canonical packed superblock and a freshly formatted
+image; WDK compile-time assertions now preserve those offsets.
+
+Exact-source automatic release gates remain the Actions authority. Physical
+power-loss/endurance, PERF-019 measurements and mounted native-Windows
+qualification retain the separate scope recorded below.
+
 
 ### 0.19.0 recovery implementation and local mounted qualification
 

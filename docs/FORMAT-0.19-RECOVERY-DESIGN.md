@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # Format 0.19 — independently discoverable checkpoint locations
 
-**Status: implemented and ready for testing in software 0.19.0.** Normal formatting, portable/native writable recovery, ordered checkpoint publication, grow/shrink relocation, writable repair, structural fsck and deep scrub use Format 0.19. Portable interruption/tear tests and mounted native VM tests exercise the actual implementation. Physical-media power-loss/endurance and PERF-019 measurements remain separate operator-run qualification work.
+**Status: implemented for testing; software 0.19.1 corrects resize publication ordering.** Normal formatting, portable/native writable recovery, ordered checkpoint publication, grow/shrink relocation, writable repair, structural fsck and deep scrub use Format 0.19. Portable interruption/tear tests and mounted native VM tests exercise the actual implementation. Physical-media power-loss/endurance and PERF-019 measurements remain separate operator-run qualification work.
 
 The authoritative checkpoint byte layout is `include/infilfs/format.h`; locator encoding is `include/infilfs/locator.h`. Both writers execute the ordering in `include/infilfs/checkpoint_protocol.h`. Current development accepts Format 0.19 only; it does not migrate or reinterpret Format 0.18 media.
 
@@ -90,20 +90,22 @@ The shared protocol preserves a recoverable committed graph at each modeled inte
 2. Write and durably flush locator A as a *hint* for the proposed new
    checkpoint positions. Locator B still describes the old positions.
    The new locator alone is **not** a commit.
-3. Publish and durably flush the selected new-generation checkpoint at the
-   designated commit boundary, without destroying the final recoverable old
-   checkpoint before that boundary.
-4. Write and **durably flush each secondary checkpoint individually** at its
-   new position. Never submit both secondary replacements together while a
-   corrupted or torn block-zero checkpoint could make every backup unusable.
-   Only then update and durably flush locator B. Do not report successful
+3. Publish and durably flush new-generation **secondary checkpoint 1 first**.
+   This is the commit boundary. Until it is durable, preserve block zero as
+   an independent map to the old checkpoints: locator B may already be
+   damaged, and locator A now describes the new positions. A locator alone
+   never commits a generation.
+4. Write and **durably flush secondary checkpoint 2 individually**, then
+   write and durably flush block zero. Only then update and durably flush
+   locator B. The complete order is A, checkpoint 1, checkpoint 2, checkpoint
+   0, B, with a separate flush after each record. Do not report successful
    resize/permit backing-partition reduction before this completes.
 5. Keep storage referenced by either still-authoritative old checkpoint
    protected until the recovery protocol no longer requires it. Any
    ambiguous publication/locator durability failure must poison or suspend
    further writes rather than claiming a clean success.
 
-`tests/format-019-durability.c` injects errors into the actual portable writer at every write/flush boundary, including torn writes and flushes that persisted before reporting an error. Recovery reopens cold storage, verifies the complete graph and file data, repairs writable replicas and resumes mutation. The independent crash model remains a separate ordering check. `tests/native-019-qualification.sh` exercises native writes, remounts, repeated relocation, physical backing-file shrink and recovery/repair after bootstrap damage. See `QUALIFICATION.md` for the evidence boundary.
+`tests/format-019-durability.c` injects errors into the actual portable writer at every write/flush boundary, including torn writes and flushes that persisted before reporting an error. Each publication matrix also covers either locator becoming damaged after writable open, so startup repair cannot conceal the combined-failure case. Separate matrices interrupt writable checkpoint and locator healing. Recovery reopens cold storage through the normal API, verifies the complete graph and file data, repairs writable replicas and resumes mutation. The storage adapter enforces actual reported physical capacity. The independent crash model remains a separate ordering check. `tests/native-019-qualification.sh` exercises native writes, remounts, repeated relocation, physical backing-file shrink and recovery/repair after bootstrap damage. See `QUALIFICATION.md` for the evidence boundary.
 
 Ordinary transactions that do *not* move checkpoint locations need no
 locator rewrite; their selected checkpoint publication still follows the

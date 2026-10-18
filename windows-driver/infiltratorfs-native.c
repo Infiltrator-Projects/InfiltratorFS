@@ -12,6 +12,7 @@
 #define INFILFS_NATIVE_FORMAT_MAJOR 0u
 #define INFILFS_NATIVE_FORMAT_MINOR 19u
 
+#pragma pack(push, 1)
 typedef struct _INFILFS_NATIVE_SUPERBLOCK_PREFIX {
     UCHAR Magic[8];
     USHORT FormatMajor;
@@ -28,6 +29,13 @@ typedef struct _INFILFS_NATIVE_SUPERBLOCK_PREFIX {
     ULONGLONG RootObjectBlock;
     ULONGLONG CheckpointBlock[3];
 } INFILFS_NATIVE_SUPERBLOCK_PREFIX;
+#pragma pack(pop)
+
+/* The disk prefix is byte-packed, independently of the host/WDK ABI. */
+C_ASSERT(FIELD_OFFSET(INFILFS_NATIVE_SUPERBLOCK_PREFIX, Generation) == 20);
+C_ASSERT(FIELD_OFFSET(INFILFS_NATIVE_SUPERBLOCK_PREFIX, TotalBlocks) == 28);
+C_ASSERT(FIELD_OFFSET(INFILFS_NATIVE_SUPERBLOCK_PREFIX, CheckpointBlock) == 76);
+C_ASSERT(sizeof(INFILFS_NATIVE_SUPERBLOCK_PREFIX) == 100);
 
 typedef struct _INFILFS_NATIVE_VOLUME {
     ULONG Signature;

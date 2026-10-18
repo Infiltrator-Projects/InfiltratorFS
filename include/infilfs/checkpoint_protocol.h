@@ -6,7 +6,9 @@
  * The caller has already made every CoW dependency durable. A locator is a
  * hint, never a commit record. No subsequent stage runs after an error.
  * Once publication starts, any error requires recovery before more writes.
- * Ordinary commits leave fixed locators untouched. */
+ * Ordinary commits leave fixed locators untouched and may rotate first.
+ * Relocation always publishes backups 1 and 2 before primary 0, preserving
+ * the old primary's independent geometry map until new backups are durable. */
 struct infs_checkpoint_io {
     int (*locator)(void *context, unsigned copy);
     int (*checkpoint)(void *context, unsigned copy);
@@ -22,6 +24,7 @@ static inline int infs_checkpoint_publish(
     int status;
     *committed = 0;
     if (relocate) {
+        first = 1u;
         status = io->locator(context, 0u);
         if (status)
             return status;

@@ -284,7 +284,7 @@ static int heal_checkpoints(struct infs_volume *vol)
         if (status != INFS_STATUS_OK)
             return status;
     }
-    return infs_storage_flush(&vol->storage);
+    return INFS_STATUS_OK;
 }
 
 static void phase2_failpoint(const char *stage)

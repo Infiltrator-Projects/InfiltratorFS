@@ -364,8 +364,8 @@ infs_status infs_volume_resize(struct infs_volume *vol,
 
     /*
      * Keep the current allocation tree reserved until every replacement page
-     * has a distinct previously-free home. A crash before block-zero
-     * publication can therefore always return to the old checkpoint graph.
+     * has a distinct previously-free home. Until a new checkpoint is durable,
+     * the old checkpoint graph therefore remains intact.
      */
     status = resize_allocate_layout(
         next_bitmap, new_total, &next_layout);
@@ -425,21 +425,20 @@ infs_status infs_volume_resize(struct infs_volume *vol,
         goto out;
 
     /*
-     * Block zero is the resize commit point because it also publishes the new
-     * geometry. Replacement allocation pages are already durable and the old
-     * tree has not been overwritten, so either side of this flush is a
-     * complete mountable generation.
+     * Format 0.19 publishes both new remote checkpoints before block zero.
+     * Until a new backup is durable, the old primary must retain its geometry
+     * map: locator B may already be damaged and locator A now hints at the new
+     * positions. Replacement allocation pages are durable and old pages remain
+     * intact, so the first durable new backup can safely commit the generation.
      */
     if (format019) {
         struct volume_checkpoint_publication publication = {
             vol, &next_sb, sb_block
         };
         int committed = 0;
-        /* Dependencies are durable, and old graph pages/checkpoints have
-         * not been overwritten. A-new, checkpoint zero, each backup, B-new
-         * are individually durable before any subsequent write can begin. */
+        /* A-new, backup 1, backup 2, primary, B-new; flush each separately. */
         status = infs_checkpoint_publish(&volume_checkpoint_io,
-            &publication, 0u, 1, &committed);
+            &publication, 1u, 1, &committed);
     } else {
         status = infs_storage_write(
             &vol->storage, 0, sb_block, sizeof(sb_block));

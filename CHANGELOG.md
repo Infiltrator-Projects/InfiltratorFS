@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.19.1 — 2026-10-18
+
+- Fix interrupted resize recovery when locator B was already damaged: retain the old primary geometry map while publishing the two new remote checkpoints, then publish the primary and final locator. Enforce this backup-first relocation order in the shared portable/native publisher. Existing Format 0.19 media remains compatible.
+- Extend actual-writer fault qualification to latent damage of either locator after writable open, every grow/shrink publication boundary, and interrupted checkpoint/locator healing. Recover through the normal API, verify complete data and graphs, require repaired redundancy before resuming writes, and enforce reported physical capacity in the test backend.
+- Remove a redundant portable repair flush after all repaired checkpoints were already individually flushed.
+- Correct native Windows checkpoint-prefix packing and assert canonical disk offsets at WDK compile time. Mounted native-Windows qualification remains separately tracked.
+
 ## 0.19.0 — 2026-10-18
 
 - Complete Format 0.19 as the current testing format: normal portable/Linux formatting, writable opens/mounts/remounts, relocation-aware grow/shrink, checkpoint/locator repair, structural fsck and deep scrub. Superseded development formats are rejected.

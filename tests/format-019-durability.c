@@ -7,6 +7,7 @@
 #include "infilfs/format_volume.h"
 #include "infilfs/endian.h"
 #include "infilfs/fs.h"
+#include "infilfs/locator.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,17 +22,25 @@ struct media {
     uint64_t physical_bytes;
     int crashed, armed;
 };
+static const char *probe_stage="setup";
+static unsigned damaged_locator;
 static void require(int ok, const char *what) {
-    if (!ok) { fprintf(stderr, "PROBE FAIL: %s\n", what); exit(1); }
+    if (!ok) {
+        fprintf(stderr,"PROBE FAIL: %s (stage=%s damaged_locator=%u)\n",
+                what,probe_stage,damaged_locator);
+        exit(1);
+    }
 }
 static infs_status rd(void *p, uint64_t off, void *out, size_t n) {
     struct media *m=p;
-    if (m->crashed || off>BYTES || n>BYTES-off) return INFS_STATUS_IO_ERROR;
+    if (m->crashed || off>m->physical_bytes || n>m->physical_bytes-off)
+        return INFS_STATUS_IO_ERROR;
     memcpy(out,m->live+off,n); return INFS_STATUS_OK;
 }
 static infs_status wr(void *p, uint64_t off, const void *in, size_t n) {
     struct media *m=p;
-    if (m->crashed || off>BYTES || n>BYTES-off) return INFS_STATUS_IO_ERROR;
+    if (m->crashed || off>m->physical_bytes || n>m->physical_bytes-off)
+        return INFS_STATUS_IO_ERROR;
     if (m->armed && ++m->event==m->fail_at) {
         if (m->mode) { /* torn write reaches stable storage before failure */
             size_t partial=n>64u?64u:n/2u;
@@ -65,7 +74,16 @@ static const struct infs_create_options options={.posix_permissions=0644};
 static unsigned char payload[PAYLOAD], readback[PAYLOAD], seed[4096];
 static void open_rw(struct media *m,struct infs_volume *v) {
     struct infs_storage s={.ops=&ops,.context=m};
-    require(infs_volume_open_019_storage(v,&s,1)==INFS_STATUS_OK,"open writer");
+    require(infs_volume_open_storage(v,&s,1)==INFS_STATUS_OK,"open writer");
+}
+/* Damage must occur after writable admission: opening an already damaged
+ * image would heal the locator and conceal this combined-failure case. */
+static void damage_locator(struct media *m,unsigned damaged) {
+    if (damaged) {
+        uint64_t block=damaged==1u?INFS_LOCATOR_BLOCK_A:INFS_LOCATOR_BLOCK_B;
+        m->live[block*INFS_BLOCK_SIZE]^=255u;
+        m->durable[block*INFS_BLOCK_SIZE]^=255u;
+    }
 }
 static infs_status mutation(struct infs_volume *v) {
     infs_status s=infs_volume_set_deferred_publish(v,1,UINT64_C(1073741824));
@@ -84,7 +102,7 @@ static void verify_crashed(struct media *m,int corrupt_primary) {
     m->armed=0; m->crashed=0;
     memcpy(m->live,m->durable,BYTES);
     if (corrupt_primary) m->live[0]^=255u;
-    require(infs_volume_open_019_test_image(&v,&s)==INFS_STATUS_OK,
+    require(infs_volume_open_storage(&v,&s,0)==INFS_STATUS_OK,
             "fresh read-only complete-graph recovery");
     require(infs_read_file(&v,"/stable",readback,sizeof(seed),0)==sizeof(seed)
             && !memcmp(seed,readback,sizeof(seed)),"last committed stable data survives");
@@ -97,6 +115,38 @@ static void verify_crashed(struct media *m,int corrupt_primary) {
     require(infs_scrub(&v,&report)==INFS_STATUS_OK && !report.metadata_errors
             && !report.checksum_errors,"recovered committed graph deep-scrubs clean");
     infs_volume_close(&v);
+}
+static void verify_repaired(struct media *m,int corrupt_primary) {
+    struct infs_volume v={0};
+    struct infs_check_report check={0};
+    struct infs_scrub_report scrub={0};
+    memcpy(m->live,m->durable,BYTES);
+    if (corrupt_primary) m->live[0]^=255u;
+    m->armed=0; m->crashed=0;
+    open_rw(m,&v);
+    require(infs_check(&v,&check)==INFS_STATUS_OK &&
+            check.checkpoint_replicas_valid==3u &&
+            check.recovery_locators_valid==2u,"open repairs all discovery redundancy");
+    require(infs_create_file(&v,"/resumed",&options)==INFS_STATUS_OK,
+            "resume writes after interrupted recovery");
+    require(infs_volume_sync(&v)==INFS_STATUS_OK,"persist resumed writes");
+    require(infs_scrub(&v,&scrub)==INFS_STATUS_OK && !scrub.metadata_errors &&
+            !scrub.checksum_errors,"repaired graph and resumed writes scrub clean");
+    infs_volume_close(&v);
+}
+static void damage_repair_fixture(struct media *m,unsigned fixture) {
+    struct infs_superblock_disk disk;
+    memcpy(&disk,m->live,sizeof(disk));
+    for (unsigned copy=0;copy<INFS_CHECKPOINT_COUNT;++copy) {
+        /* Retain only backup 2, or only the primary, respectively. */
+        if ((fixture==0u && copy==2u) || (fixture==1u && copy==0u))
+            continue;
+        uint64_t block=infs_le64_to_cpu(disk.checkpoint_block[copy]);
+        m->live[block*INFS_BLOCK_SIZE]^=255u;
+        m->durable[block*INFS_BLOCK_SIZE]^=255u;
+    }
+    damage_locator(m,2u);
+    if (fixture==1u) damage_locator(m,1u);
 }
 int main(void) {
     struct media m={0};
@@ -121,17 +171,22 @@ int main(void) {
     unsigned events=m.event;
     m.armed=0; infs_volume_close(&v);
     unsigned cases=0;
+    probe_stage="ordinary publication";
+    for (unsigned damaged=0;damaged<3u;damaged++)
     for (unsigned mode=0;mode<2;mode++) for (unsigned event=1;event<=events;event++) {
+        damaged_locator=damaged;
         memcpy(m.live,baseline,BYTES); memcpy(m.durable,baseline,BYTES);
         m.armed=0; m.crashed=0; m.event=0; m.fail_at=event;
         m.mode=mode; m.random_counter=saved_random;
-        open_rw(&m,&v); m.armed=1;
+        open_rw(&m,&v); damage_locator(&m,damaged); m.armed=1;
         infs_status status=mutation(&v);
         require(m.crashed&&status!=INFS_STATUS_OK,"each selected storage event faulted");
         memcpy(crash,m.durable,BYTES);
         infs_volume_close(&v);
-        memcpy(m.durable,crash,BYTES); verify_crashed(&m,0); cases++;
-        memcpy(m.durable,crash,BYTES); verify_crashed(&m,1); cases++;
+        for (unsigned primary_loss=0;primary_loss<(damaged?1u:2u);primary_loss++) {
+            memcpy(m.durable,crash,BYTES);
+            verify_crashed(&m,primary_loss); cases++;
+        }
     }
     printf("Actual portable Format 0.19 crash probe: %u storage boundaries, %u recovery/scrub cases PASS\n",events,cases);
     memcpy(m.live,baseline,BYTES); memcpy(m.durable,baseline,BYTES);
@@ -203,6 +258,7 @@ int main(void) {
     puts("Format 0.18 rejection without mutation: PASS");
     unsigned resize_cases=0;
     for (unsigned shrinking=0; shrinking<2u; ++shrinking) {
+        probe_stage=shrinking?"shrink":"grow";
         memcpy(m.live,baseline,BYTES); memcpy(m.durable,baseline,BYTES);
         m.armed=0; m.crashed=0; m.fail_at=0; m.event=0;
         m.random_counter=saved_random;
@@ -226,34 +282,56 @@ int main(void) {
             verify_crashed(&m,1);
             m.physical_bytes=BYTES;
         }
+        for (unsigned damaged=0; damaged<3u; ++damaged)
         for (unsigned mode=0; mode<2u; ++mode)
         for (unsigned event=1; event<=boundaries; ++event) {
+            damaged_locator=damaged;
             memcpy(m.live,baseline,BYTES); memcpy(m.durable,baseline,BYTES);
             m.armed=0; m.crashed=0; m.event=0; m.fail_at=event; m.mode=mode;
-            open_rw(&m,&v); m.armed=1;
+            open_rw(&m,&v); damage_locator(&m,damaged); m.armed=1;
             infs_status failed=infs_volume_resize(&v,target);
             require(failed!=INFS_STATUS_OK && m.crashed,"resize interruption is reported");
             memcpy(crash,m.durable,BYTES); infs_volume_close(&v);
-            for (unsigned primary_loss=0; primary_loss<2u; ++primary_loss) {
+            for (unsigned primary_loss=0; primary_loss<(damaged?1u:2u); ++primary_loss) {
                 memcpy(m.durable,crash,BYTES);
                 verify_crashed(&m,primary_loss); ++resize_cases;
-                memcpy(m.live,m.durable,BYTES);
-                if (primary_loss) m.live[0]^=255u;
-                m.armed=0; m.crashed=0;
-                open_rw(&m,&v);
-                require(infs_create_file(&v,"/resumed",&options)==INFS_STATUS_OK,
-                        "resume writes after interrupted geometry recovery");
-                struct infs_check_report check={0};
-                require(infs_check(&v,&check)==INFS_STATUS_OK &&
-                        check.checkpoint_replicas_valid==3u &&
-                        check.recovery_locators_valid==2u,"repair all discovery redundancy");
-                infs_volume_close(&v);
+                verify_repaired(&m,primary_loss);
             }
         }
         printf("Format 0.19 %s: %u storage interruption boundaries PASS\n",
                shrinking?"shrink":"grow",boundaries);
     }
     printf("Format 0.19 actual resize crash/recovery/repair: %u cases PASS\n",resize_cases);
+    unsigned repair_cases=0;
+    probe_stage="writable repair";
+    for (unsigned fixture=0;fixture<2u;++fixture) {
+        damaged_locator=fixture?3u:2u;
+        memcpy(m.live,baseline,BYTES); memcpy(m.durable,baseline,BYTES);
+        m.armed=0; m.crashed=0; m.event=0; m.fail_at=0;
+        damage_repair_fixture(&m,fixture);
+        m.armed=1;
+        open_rw(&m,&v);
+        unsigned boundaries=m.event;
+        m.armed=0; infs_volume_close(&v);
+        require(boundaries>0u,"degraded open actually repairs media");
+        for (unsigned mode=0;mode<2u;++mode)
+        for (unsigned event=1;event<=boundaries;++event) {
+            memcpy(m.live,baseline,BYTES); memcpy(m.durable,baseline,BYTES);
+            m.armed=0; m.crashed=0; m.event=0; m.fail_at=event; m.mode=mode;
+            damage_repair_fixture(&m,fixture);
+            struct infs_storage repair_storage={.ops=&ops,.context=&m};
+            m.armed=1;
+            require(infs_volume_open_storage(&v,&repair_storage,1)!=INFS_STATUS_OK &&
+                    m.crashed,"each repair write or flush interruption is reported");
+            memcpy(crash,m.durable,BYTES);
+            infs_volume_close(&v);
+            memcpy(m.durable,crash,BYTES);
+            verify_crashed(&m,0);
+            verify_repaired(&m,0);
+            ++repair_cases;
+        }
+    }
+    printf("Format 0.19 interrupted checkpoint/locator healing: %u cases PASS\n",repair_cases);
     free(m.live); free(m.durable); free(baseline); free(crash);
     return 0;
 }
