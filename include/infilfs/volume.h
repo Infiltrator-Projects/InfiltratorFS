@@ -478,4 +478,11 @@ infs_status infs_snapshot_scrub(struct infs_volume *vol, const char *snapshot,
 infs_status infs_scrub_online(struct infs_volume *vol,
                               struct infs_scrub_report *report);
 
+/* Experimental verification of the complete committed graph on a 0.19
+ * regular-file/in-memory image only. This does not open a mounted volume,
+ * heal metadata, write data or take ownership of the caller's storage. */
+infs_status infs_volume_verify_019_test_image(
+    const struct infs_storage *storage,
+    struct infs_superblock_disk *selected);
+
 #endif

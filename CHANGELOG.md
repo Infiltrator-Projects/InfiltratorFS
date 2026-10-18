@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.18.121 — 2026-10-18
+
+- Add an explicit read-only Format 0.19 in-memory/regular-image verification function that searches all locator-discovered checkpoint candidates and reuses the portable core's full allocation, index, namespace, integrity and checksum graph validation.
+- Require complete graph validity before accepting a checkpoint generation, and fail closed on operational I/O, resource and incompatible-feature errors instead of treating them as corruption.
+- Add test coverage for full-graph selection after primary checkpoint loss, after damage to one locator, and rejection when both locators are unreadable/corrupt.
+- Normal formatter/mount, native Linux mounted recovery, resize and fsck remain on Format 0.18; do not enable physical Format 0.19 volumes yet.
+
 ## 0.18.120 — 2026-10-18
 
 - Add a guarded in-memory Format 0.19 test-image formatter, sharing the core fresh-format metadata builder while choosing canonical locator-aware initial metadata positions.

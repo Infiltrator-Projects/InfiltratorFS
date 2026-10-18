@@ -126,7 +126,7 @@ static int checkpoint_candidates_all_agree(
 
 static infs_status load_checkpoint_graph(
     struct infs_volume *vol, const struct infs_superblock_disk *candidate,
-    int full_verify)
+    int full_verify, uint16_t expected_minor)
 {
     if (!vol || !candidate)
         return INFS_STATUS_INVALID_ARGUMENT;
@@ -134,7 +134,7 @@ static infs_status load_checkpoint_graph(
     discard_candidate_state(vol);
     vol->sb = *candidate;
 
-    if (infs_le16_to_cpu(vol->sb.format_minor) != INFS_FORMAT_MINOR)
+    if (infs_le16_to_cpu(vol->sb.format_minor) != expected_minor)
         return INFS_STATUS_NOT_SUPPORTED;
     if (vol->writable &&
         (infs_le64_to_cpu(vol->sb.ro_compat_flags) &
@@ -221,6 +221,77 @@ static infs_status load_checkpoint_graph(
     return checkpoint_graph_status(validate_checksum_graph(vol));
 }
 
+/*
+ * Standalone Format 0.19 *read-only test-image* graph verification. This
+ * does not give the caller a mounted volume, does not consume or close their
+ * storage handle, and never heals/writes checkpoint or locator records.
+ * It deliberately refuses block-device targets until native and portable
+ * 0.19 mount, resize, scrub and crash qualifications are complete.
+ */
+infs_status infs_volume_verify_019_test_image(
+    const struct infs_storage *storage,
+    struct infs_superblock_disk *selected)
+{
+    struct infs_volume candidate_vol = {0};
+    struct infs_superblock_disk checkpoints[INFS_LOCATOR_MAX_CANDIDATES];
+    uint8_t valid[INFS_LOCATOR_MAX_CANDIDATES] = {0};
+    uint64_t bytes = 0;
+    int is_device = 0;
+    unsigned found = 0;
+    infs_status status;
+    int selected_valid = 0;
+
+    if (!storage || !infs_storage_valid(storage) || !selected)
+        return INFS_STATUS_INVALID_ARGUMENT;
+    status = infs_storage_get_size(storage, &bytes, &is_device);
+    if (status != INFS_STATUS_OK)
+        return status;
+    if (is_device)
+        return INFS_STATUS_NOT_SUPPORTED;
+
+    status = infs_locator_discover_019_headers(
+        storage, bytes, checkpoints, valid, &found);
+    if (status != INFS_STATUS_OK)
+        return status;
+
+    candidate_vol.storage = *storage; /* Borrowed; never close backend. */
+    candidate_vol.size_bytes = bytes;
+    candidate_vol.writable = 0;
+
+    for (unsigned attempt = 0; attempt < INFS_LOCATOR_MAX_CANDIDATES;
+         ++attempt) {
+        int best = -1;
+        uint64_t generation = 0;
+        for (unsigned i = 0; i < INFS_LOCATOR_MAX_CANDIDATES; ++i) {
+            if (!valid[i])
+                continue;
+            uint64_t g = infs_le64_to_cpu(checkpoints[i].generation);
+            if (best < 0 || g > generation) {
+                best = (int)i;
+                generation = g;
+            }
+        }
+        if (best < 0)
+            break;
+        valid[best] = 0;
+        status = load_checkpoint_graph(
+            &candidate_vol, &checkpoints[best], 1,
+            INFS_LOCATOR_FORMAT_MINOR);
+        if (status == INFS_STATUS_OK) {
+            *selected = checkpoints[best];
+            selected_valid = 1;
+            break;
+        }
+        /* A bad checkpoint graph may be skipped; I/O, OOM and unsupported
+         * features are operational errors, never masked by older data. */
+        if (status != INFS_STATUS_CORRUPT)
+            break;
+    }
+    discard_candidate_state(&candidate_vol);
+    memset(&candidate_vol, 0, sizeof(candidate_vol));
+    return selected_valid ? INFS_STATUS_OK : status;
+}
+
 infs_status infs_volume_open_storage(struct infs_volume *vol,
                                      struct infs_storage *storage, int writable)
 {
@@ -284,7 +355,8 @@ infs_status infs_volume_open_storage(struct infs_volume *vol,
             break;
 
         valid[best] = 0;
-        status = load_checkpoint_graph(vol, &candidates[best], full_verify);
+        status = load_checkpoint_graph(
+            vol, &candidates[best], full_verify, INFS_FORMAT_MINOR);
         if (status == INFS_STATUS_OK) {
             selected = 1;
             break;

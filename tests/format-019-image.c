@@ -2,6 +2,7 @@
 /* Qualify the isolated Format 0.19 in-memory image writer. Not a mounted
  * filesystem qualification, and not permission to format a real device. */
 #include "infilfs/format_volume.h"
+#include "infilfs/volume.h"
 #include "infilfs/locator.h"
 #include "infilfs/format.h"
 #include "infilfs/endian.h"
@@ -142,6 +143,15 @@ int main(void)
     expect(memcmp(a.filesystem_uuid, sb->filesystem_uuid, 16) == 0,
            "locator identity matches checkpoint identity");
 
+    {
+        struct infs_superblock_disk committed = {0};
+        expect(infs_volume_verify_019_test_image(&storage, &committed) ==
+               INFS_STATUS_OK,
+               "0.19 fresh image passes full committed-graph validation");
+        expect(infs_le64_to_cpu(committed.generation) == 1u,
+               "full graph verifier selects committed initial generation");
+    }
+
     /* 16 MiB: allocation root=2, level2=3, level1=4, leaf=5.
      * The authoritative bitmap MUST account for the new locator blocks. */
     leaf = m.contents + 5u * INFS_BLOCK_SIZE;
@@ -164,6 +174,12 @@ int main(void)
         /* Simulate losing the primary checkpoint without changing the two
          * durable secondary checkpoints or either locator. */
         m.contents[0] ^= 0xffu;
+        {
+            struct infs_superblock_disk committed = {0};
+            expect(infs_volume_verify_019_test_image(
+                       &storage, &committed) == INFS_STATUS_OK,
+                   "0.19 full graph recovered after primary checkpoint loss");
+        }
         expect(infs_locator_discover_019_headers(
                    &storage, IMAGE_BYTES, found, valid, &count) ==
                    INFS_STATUS_OK && count >= 2,
@@ -174,6 +190,12 @@ int main(void)
 
         /* One corrupt fixed locator must not hide the surviving backup. */
         m.contents[INFS_BLOCK_SIZE * INFS_LOCATOR_BLOCK_A] ^= 0xffu;
+        {
+            struct infs_superblock_disk committed = {0};
+            expect(infs_volume_verify_019_test_image(
+                       &storage, &committed) == INFS_STATUS_OK,
+                   "full graph still recoverable with damaged primary and locator A");
+        }
         expect(infs_locator_discover_019_headers(
                    &storage, IMAGE_BYTES, found, valid, &count) ==
                    INFS_STATUS_OK && count >= 2,
@@ -185,6 +207,12 @@ int main(void)
                    &storage, IMAGE_BYTES, found, valid, &count) ==
                    INFS_STATUS_CORRUPT,
                "two damaged locator records fail without speculative scan");
+        {
+            struct infs_superblock_disk committed = {0};
+            expect(infs_volume_verify_019_test_image(
+                       &storage, &committed) == INFS_STATUS_CORRUPT,
+                   "full graph verifier cannot invent missing locator addresses");
+        }
     }
 
     reset(&m);
