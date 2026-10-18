@@ -112,7 +112,7 @@ jobs:
       - name: Build userspace image tools for native mount test
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --parallel --target mkfs.infilfs infilfs-tool fsck.infiltratorfs infilfs-forensic infilfs-optimize infiltratorfs-resize infiltratorfs-quota
+          cmake --build build --parallel --target mkfs.infilfs infilfs-tool fsck.infiltratorfs infilfs-forensic infilfs-optimize infiltratorfs-resize infiltratorfs-quota infilfs-format-019-image
 
       - name: Build module for the running kernel
         env:
@@ -121,6 +121,10 @@ jobs:
           make -C kernel clean KDIR="$KDIR"
           make -C kernel KDIR="$KDIR"
           test "$(modinfo -F vermagic kernel/infiltratorfs.ko | awk '{print $1}')" = "$(uname -r)"
+
+      - name: Format 0.19 experimental native read-only recovery
+        if: ${{ runner.os == 'Linux' }}
+        run: sudo bash tests/native-019-readonly-qualification.sh build kernel/infiltratorfs.ko
 
       - name: Native live read-only and read-write remount qualification
         timeout-minutes: 10

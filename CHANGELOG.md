@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.18.125 — 2026-10-18
+
+- Add guarded native Linux read-only Format 0.19 recovery from both fixed discovery locators, validating up to six independent checkpoint header candidates and the selected root/index/allocation graph without geometry fallback.
+- Refuse native Format 0.19 initial read-write mounts and read-only-to-read-write remounts until writable checkpoint and resize crash protocols qualify; retain normal Format 0.18 behaviour.
+- Add disposable 16 MiB in-memory Format 0.19 image emitter and loop-backed native read-only qualification for normal mount, damaged block zero and damaged individual locator. No physical block devices formatted.
+- Disk Format 0.19 is **not production-ready**. Writable native mounting, resize, fsck, real interruption and physical-media qualification remain incomplete.
+
 ## 0.18.124 — 2026-10-18
 
 - Fix portable Format 0.19 full-graph verification by claiming both fixed discovery-locator blocks as independent, persistently reserved owners, without treating them as ordinary file or checkpoint metadata.

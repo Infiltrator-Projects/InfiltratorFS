@@ -90,8 +90,13 @@ static void reset(struct memory_volume *m)
     m->device = 0;
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
+    if (argc != 1 && (argc != 3 || strcmp(argv[1], "--emit-image") != 0)) {
+        fprintf(stderr, "Usage: %s [--emit-image <regular-image-path>]\n",
+                argv[0]);
+        return 2;
+    }
     struct memory_volume m = {0};
     struct infs_storage storage = { .ops = &ops, .context = &m };
     struct infs_locator a = {0}, b = {0};
@@ -181,6 +186,19 @@ int main(void)
         expect(view_storage.ops == &ops && m.writes == before,
                "rejected physical open preserves ownership and media");
         m.device = 0;
+    }
+
+    /* Before destructive crash-fixture mutations, optionally emit the exact
+     * fully validated Format 0.19 image for native loop-mounted RO tests. */
+    if (argc == 3) {
+        FILE *out = fopen(argv[2], "wb");
+        expect(out != NULL, "create disposable 0.19 image fixture");
+        expect(fwrite(m.contents, 1u, IMAGE_BYTES, out) == IMAGE_BYTES,
+               "write complete 0.19 image fixture");
+        expect(fclose(out) == 0, "close 0.19 fixture image");
+        free(m.contents);
+        puts("Format 0.19 image emitted: PASS");
+        return 0;
     }
 
     /* 16 MiB: allocation root=2, level2=3, level1=4, leaf=5.

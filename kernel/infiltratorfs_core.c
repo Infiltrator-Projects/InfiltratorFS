@@ -480,7 +480,8 @@ static bool infilfs_checkpoint_basic_valid(
                sizeof(infilfs_disk_magic)) != 0)
         return false;
     if (le16_to_cpu(disk->format_major) != INFILFS_FORMAT_MAJOR ||
-        le16_to_cpu(disk->format_minor) != INFILFS_FORMAT_MINOR ||
+        (le16_to_cpu(disk->format_minor) != INFILFS_FORMAT_MINOR &&
+         le16_to_cpu(disk->format_minor) != INFILFS_LOCATOR_FORMAT_MINOR) ||
         le16_to_cpu(disk->header_size) != sizeof(*disk) ||
         le16_to_cpu(disk->block_shift) != INFILFS_DISK_BLOCK_SHIFT ||
         le32_to_cpu(disk->checksum_type) != INFILFS_CHECKSUM_CRC64_ECMA ||
@@ -546,9 +547,17 @@ static bool infilfs_checkpoint_basic_valid(
     return true;
 }
 
+/*
+ * In Format 0.19 each of the two independent fixed discovery locators may
+ * describe a different checkpoint map during an interrupted resize. Keep all
+ * six hints independently; a locator checksum never certifies a checkpoint.
+ */
+#define INFILFS_RECOVERY_CANDIDATE_MAX (2u * INFILFS_CHECKPOINT_COUNT)
+
 struct infilfs_checkpoint_candidates {
-    struct infilfs_superblock_disk disks[INFILFS_CHECKPOINT_COUNT];
-    bool valid[INFILFS_CHECKPOINT_COUNT];
+    struct infilfs_superblock_disk disks[INFILFS_RECOVERY_CANDIDATE_MAX];
+    bool valid[INFILFS_RECOVERY_CANDIDATE_MAX];
+    bool format019;
     int first_read_error;
 };
 
@@ -556,14 +565,17 @@ static int infilfs_read_checkpoint_candidates(
     struct super_block *sb, struct infilfs_checkpoint_candidates *set)
 {
     u64 device_blocks = INFILFS_SB(sb)->device_blocks;
-    u64 candidates[INFILFS_CHECKPOINT_COUNT] = {
+    u64 old_candidates[INFILFS_CHECKPOINT_COUNT] = {
         0, device_blocks / 2, device_blocks - 1
     };
     struct infilfs_superblock_disk anchor;
     struct infilfs_superblock_disk current;
+    struct infilfs_recovery_locator locators[2] = {0};
     bool anchored = false;
     unsigned int found = 0;
-    unsigned int i;
+    unsigned int mask = 0;
+    int first_locator_error = 0;
+    unsigned int i, j;
     u8 *raw;
 
     memset(set, 0, sizeof(*set));
@@ -572,11 +584,87 @@ static int infilfs_read_checkpoint_candidates(
         return -ENOMEM;
 
     /*
-     * Block zero is a stable geometry anchor. This permits the filesystem
-     * geometry to lag a newly enlarged backing partition while online grow is
-     * prepared, and permits a safely staged shrink before the partition is
-     * reduced. If block zero is invalid, retain the historic physical
-     * half/end fallback for ordinary unresized volumes.
+     * First discover Format 0.19 solely from its two fixed, checksummed
+     * locator records. No device-geometry midpoint fallback is permitted:
+     * such offsets cease to be reliable following resize.
+     */
+    if (device_blocks >= INFILFS_LOCATOR_MIN_VOLUME_BLOCKS) {
+        static const u64 addresses[2] = {
+            INFILFS_LOCATOR_BLOCK_A, INFILFS_LOCATOR_BLOCK_B
+        };
+        for (i = 0; i < 2; ++i) {
+            int ret = infilfs_read_block(sb, addresses[i], raw);
+            if (ret) {
+                if (!first_locator_error)
+                    first_locator_error = ret;
+                continue;
+            }
+            if (!infilfs_locator_decode_019(
+                    raw, device_blocks, &locators[i]))
+                mask |= 1u << i;
+        }
+    }
+
+    if (mask) {
+        set->format019 = true;
+        set->first_read_error = first_locator_error;
+        if (mask == 3u &&
+            memcmp(locators[0].filesystem_uuid,
+                   locators[1].filesystem_uuid, 16u)) {
+            kfree(raw);
+            return -EFSCORRUPTED;
+        }
+        for (i = 0; i < 2; ++i) {
+            if (!(mask & (1u << i)))
+                continue;
+            for (j = 0; j < INFILFS_CHECKPOINT_COUNT; ++j) {
+                unsigned int idx = i * INFILFS_CHECKPOINT_COUNT + j;
+                const struct infilfs_recovery_locator *hint = &locators[i];
+                u64 pos = hint->checkpoint[j];
+                bool consistent = true;
+                unsigned int k;
+                int ret = infilfs_read_block(sb, pos, raw);
+
+                if (ret) {
+                    if (!set->first_read_error)
+                        set->first_read_error = ret;
+                    continue;
+                }
+                if (!infilfs_crc64_block_valid(
+                        raw, offsetof(struct infilfs_superblock_disk,
+                                      checksum),
+                        sizeof(((struct infilfs_superblock_disk *)raw)->
+                               checksum)) ||
+                    memchr_inv(raw + sizeof(current), 0,
+                               INFILFS_DISK_BLOCK_SIZE -
+                               sizeof(current)))
+                    continue;
+                memcpy(&current, raw, sizeof(current));
+                if (!infilfs_checkpoint_basic_valid(
+                        &current, device_blocks) ||
+                    le16_to_cpu(current.format_minor) !=
+                        INFILFS_LOCATOR_FORMAT_MINOR ||
+                    le64_to_cpu(current.total_blocks) != hint->total_blocks ||
+                    memcmp(current.filesystem_uuid,
+                           hint->filesystem_uuid, 16u))
+                    continue;
+                for (k = 0; k < INFILFS_CHECKPOINT_COUNT; ++k)
+                    if (le64_to_cpu(current.checkpoint_block[k]) !=
+                        hint->checkpoint[k])
+                        consistent = false;
+                if (!consistent)
+                    continue;
+                set->disks[idx] = current;
+                set->valid[idx] = true;
+                found++;
+            }
+        }
+        goto done;
+    }
+
+    /*
+     * Format 0.18 stays isolated from 0.19: old geometry discovery cannot
+     * be used as an accidental alternative for damaged 0.19 locators.
      */
     {
         int ret = infilfs_read_block(sb, 0, raw);
@@ -587,19 +675,20 @@ static int infilfs_read_checkpoint_candidates(
             !memchr_inv(raw + sizeof(anchor), 0,
                         INFILFS_DISK_BLOCK_SIZE - sizeof(anchor))) {
             memcpy(&anchor, raw, sizeof(anchor));
-            if (infilfs_checkpoint_basic_valid(&anchor, device_blocks)) {
+            if (infilfs_checkpoint_basic_valid(&anchor, device_blocks) &&
+                le16_to_cpu(anchor.format_minor) == INFILFS_FORMAT_MINOR) {
                 for (i = 0; i < INFILFS_CHECKPOINT_COUNT; ++i)
-                    candidates[i] =
+                    old_candidates[i] =
                         le64_to_cpu(anchor.checkpoint_block[i]);
                 anchored = true;
             }
-        } else if (ret) {
+        } else if (ret && !set->first_read_error) {
             set->first_read_error = ret;
         }
     }
 
     for (i = 0; i < INFILFS_CHECKPOINT_COUNT; ++i) {
-        int ret = infilfs_read_block(sb, candidates[i], raw);
+        int ret = infilfs_read_block(sb, old_candidates[i], raw);
 
         if (ret) {
             if (!set->first_read_error)
@@ -608,35 +697,38 @@ static int infilfs_read_checkpoint_candidates(
         }
         if (!infilfs_crc64_block_valid(
                 raw, offsetof(struct infilfs_superblock_disk, checksum),
-                sizeof(((struct infilfs_superblock_disk *)raw)->checksum)))
-            continue;
-        if (memchr_inv(raw + sizeof(current), 0,
+                sizeof(((struct infilfs_superblock_disk *)raw)->checksum)) ||
+            memchr_inv(raw + sizeof(current), 0,
                        INFILFS_DISK_BLOCK_SIZE - sizeof(current)))
             continue;
         memcpy(&current, raw, sizeof(current));
-        if (!infilfs_checkpoint_basic_valid(&current, device_blocks))
+        if (!infilfs_checkpoint_basic_valid(&current, device_blocks) ||
+            le16_to_cpu(current.format_minor) != INFILFS_FORMAT_MINOR)
             continue;
-        if (le64_to_cpu(current.checkpoint_block[0]) != candidates[0] ||
-            le64_to_cpu(current.checkpoint_block[1]) != candidates[1] ||
-            le64_to_cpu(current.checkpoint_block[2]) != candidates[2])
+        for (j = 0; j < INFILFS_CHECKPOINT_COUNT; ++j)
+            if (le64_to_cpu(current.checkpoint_block[j]) !=
+                old_candidates[j])
+                break;
+        if (j != INFILFS_CHECKPOINT_COUNT)
             continue;
         if (anchored &&
             (le64_to_cpu(current.total_blocks) !=
                  le64_to_cpu(anchor.total_blocks) ||
              memcmp(current.filesystem_uuid, anchor.filesystem_uuid,
-                    sizeof(current.filesystem_uuid)) != 0))
+                    sizeof(current.filesystem_uuid))))
             continue;
-
         set->disks[i] = current;
         set->valid[i] = true;
         found++;
     }
-
+done:
     kfree(raw);
     if (set->first_read_error && !sb_rdonly(sb))
         return set->first_read_error;
     if (found)
         return 0;
+    if (first_locator_error && !set->first_read_error)
+        set->first_read_error = first_locator_error;
     return set->first_read_error ?
         set->first_read_error : -EFSCORRUPTED;
 }
@@ -1441,6 +1533,15 @@ static int infilfs_validate_checkpoint_graph(
         sb, candidate, &bitmap, &bitmap_bytes, &committed_layout);
     if (ret)
         goto out;
+    if (le16_to_cpu(candidate->format_minor) ==
+            INFILFS_LOCATOR_FORMAT_MINOR &&
+        (!(bitmap[INFILFS_LOCATOR_BLOCK_A >> 3] &
+            (1u << (INFILFS_LOCATOR_BLOCK_A & 7u))) ||
+         !(bitmap[INFILFS_LOCATOR_BLOCK_B >> 3] &
+            (1u << (INFILFS_LOCATOR_BLOCK_B & 7u))))) {
+        ret = -EFSCORRUPTED;
+        goto out;
+    }
 
     root = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_KERNEL);
     index = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_KERNEL);
@@ -1538,7 +1639,8 @@ static int infilfs_select_checkpoint(struct super_block *sb,
                                      struct infilfs_superblock_disk *selected)
 {
     struct infilfs_checkpoint_candidates *set;
-    bool tried[INFILFS_CHECKPOINT_COUNT] = { false };
+    bool tried[INFILFS_RECOVERY_CANDIDATE_MAX] = { false };
+    unsigned int candidate_count;
     bool deep_validation = false;
     int ret;
     unsigned int attempt;
@@ -1549,7 +1651,11 @@ static int infilfs_select_checkpoint(struct super_block *sb,
     ret = infilfs_read_checkpoint_candidates(sb, set);
     if (ret)
         goto out;
-    for (attempt = 0; attempt < INFILFS_CHECKPOINT_COUNT; ++attempt) {
+    candidate_count = set->format019 ?
+        INFILFS_RECOVERY_CANDIDATE_MAX : INFILFS_CHECKPOINT_COUNT;
+    if (set->format019)
+        deep_validation = true;
+    for (attempt = 0; attempt < candidate_count; ++attempt) {
         if (!set->valid[attempt] || !set->valid[0] ||
             memcmp(&set->disks[attempt], &set->disks[0],
                    sizeof(set->disks[0])) != 0) {
@@ -1559,12 +1665,12 @@ static int infilfs_select_checkpoint(struct super_block *sb,
     }
     if (deep_validation)
         pr_warn("InfiltratorFS: checkpoint replicas differ; performing deep object-graph validation\n");
-    for (attempt = 0; attempt < INFILFS_CHECKPOINT_COUNT; ++attempt) {
+    for (attempt = 0; attempt < candidate_count; ++attempt) {
         int best = -1;
         u64 best_generation = 0;
         unsigned int i;
 
-        for (i = 0; i < INFILFS_CHECKPOINT_COUNT; ++i) {
+        for (i = 0; i < candidate_count; ++i) {
             u64 generation;
 
             if (!set->valid[i] || tried[i])
@@ -1586,7 +1692,7 @@ static int infilfs_select_checkpoint(struct super_block *sb,
             *selected = set->disks[best];
             INFILFS_SB(sb)->disk = *selected;
             INFILFS_SB(sb)->checkpoint_repair_needed = false;
-            for (i = 0; i < INFILFS_CHECKPOINT_COUNT; ++i) {
+            for (i = 0; i < candidate_count; ++i) {
                 if (!set->valid[i] ||
                     memcmp(&set->disks[i], selected, sizeof(*selected)) != 0) {
                     INFILFS_SB(sb)->checkpoint_repair_needed = true;
@@ -2927,6 +3033,15 @@ static int infilfs_fill_super(struct super_block *sb, struct fs_context *fc)
     if (ret)
         goto fail;
 
+    /* The 0.19 native read path is experimental until 0.19 write/resize and
+     * locator crash recovery are qualified. Never enable an unqualified
+     * writable mount, including RO->RW remount. */
+    if (le16_to_cpu(sbi->disk.format_minor) ==
+            INFILFS_LOCATOR_FORMAT_MINOR && !sb_rdonly(sb)) {
+        ret = -EROFS;
+        goto fail;
+    }
+
     phase_started = ktime_get_ns();
     ret = infilfs_rw_mount_init(sb);
     phase_ms = div_u64(ktime_get_ns() - phase_started, NSEC_PER_MSEC);
@@ -2983,7 +3098,8 @@ static int infilfs_fill_super(struct super_block *sb, struct fs_context *fc)
 
     pr_info("InfiltratorFS: native %s mount Format %u.%u generation %llu media=%s media_source=%s compress=%s cpu_budget=%u\n",
             sb_rdonly(sb) ? "read-only" : "read-write",
-            INFILFS_FORMAT_MAJOR, INFILFS_FORMAT_MINOR,
+            INFILFS_FORMAT_MAJOR,
+            le16_to_cpu(sbi->disk.format_minor),
             (unsigned long long)le64_to_cpu(sbi->disk.generation),
             infilfs_media_profile_name(sbi->media_profile),
             sbi->media_profile_overridden ? "override" : "auto",
@@ -3119,6 +3235,9 @@ static int infilfs_reconfigure(struct fs_context *fc)
          */
         return sync_filesystem(sb);
     }
+    if (le16_to_cpu(sbi->disk.format_minor) ==
+            INFILFS_LOCATOR_FORMAT_MINOR)
+        return -EROFS;
     if (sbi->write_poisoned)
         return -EIO;
     if (sbi->rw_enabled)

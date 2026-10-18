@@ -49,3 +49,11 @@ for rule in ('infilfs_crc64_block_valid(', 'memchr_inv(block + sizeof(*disk)',
         raise SystemExit(f'native CRC/geometry rule missing: {rule}')
 print('Format 0.19 native/portable locator-source parity: PASS')
 PY
+
+# The experimental native 0.19 selector must use both locators and must
+# reject writable mount/remount while geometry publication is unqualified.
+core="$root/kernel/infiltratorfs_core.c"
+grep -Fq 'infilfs_locator_decode_019(' "$core"
+grep -Fq 'INFILFS_RECOVERY_CANDIDATE_MAX' "$core"
+grep -Fq 'Never enable an unqualified' "$core"
+grep -Fq 'return -EROFS;' "$core"
