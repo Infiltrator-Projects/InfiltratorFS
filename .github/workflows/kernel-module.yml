@@ -112,7 +112,7 @@ jobs:
       - name: Build userspace image tools for native mount test
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --parallel --target mkfs.infilfs infilfs-tool fsck.infiltratorfs infilfs-forensic infilfs-optimize infiltratorfs-resize infiltratorfs-quota infilfs-format-019-image
+          cmake --build build --parallel --target mkfs.infilfs infilfs-tool fsck.infiltratorfs infilfs-forensic infilfs-optimize infiltratorfs-resize infiltratorfs-quota infilfs-format-019-image infilfs-format-019-posix
 
       - name: Build module for the running kernel
         env:
