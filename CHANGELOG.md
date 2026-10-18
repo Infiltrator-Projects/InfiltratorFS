@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.111 — 2026-10-18
+
+- Link platform-adapter system-volume requirements to Filesystems' shared Boot/Setup design and phased acceptance tests.
+- Distinguish a working EFI kernel-image reader from a qualified operating-system root adapter.
+- Advance immutable source version and Windows INF identity for a documentation-only release; no change to on-disk Format 0.18 or filesystem runtime behaviour.
+
 ## 0.18.110 — 2026-10-18
 
 - Consolidate eight duplicated portable format-feature checks behind one shared helper, preserving the original feature predicates and Format 0.18 semantics.
