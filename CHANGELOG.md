@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.114 — 2026-10-18
+
+- Accept and document the engineering design for a future Format 0.19 with redundant, fixed-position checkpoint-location records; retain three separately validated authoritative checkpoints.
+- Define the compatibility boundary, fault-injection prerequisites and native/portable recovery/resize release gates; leave implementation explicitly unqualified and incomplete.
+- No disk format, on-disk representation, driver semantics or runtime behaviour changed. Current disk Format remains 0.18.
+
 ## 0.18.113 — 2026-10-18
 
 - Correct the checkpoint-order regression guard to locate the C function boundary without interpreting a literal backslash-n as a line break. No filesystem code or disk format change.
