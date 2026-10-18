@@ -2,6 +2,9 @@
 #include "infilfs/locator.h"
 
 #include "infilfs/checksum.h"
+#include "infilfs/endian.h"
+#include "infilfs/fs.h"
+#include "infilfs/storage.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -188,4 +191,78 @@ infs_status infs_locator_candidates(
         return INFS_STATUS_CORRUPT;
     *count = used;
     return INFS_STATUS_OK;
+}
+
+infs_status infs_locator_discover_019_headers(
+    const struct infs_storage *storage, uint64_t physical_size_bytes,
+    struct infs_superblock_disk out[INFS_LOCATOR_MAX_CANDIDATES],
+    uint8_t valid[INFS_LOCATOR_MAX_CANDIDATES], unsigned *valid_count)
+{
+    const uint64_t physical_blocks = physical_size_bytes / INFS_BLOCK_SIZE;
+    const uint64_t locator_address[2] = {
+        INFS_LOCATOR_BLOCK_A, INFS_LOCATOR_BLOCK_B
+    };
+    struct infs_locator locator[2] = {0};
+    struct infs_locator_candidate locations[INFS_LOCATOR_MAX_CANDIDATES];
+    uint8_t raw[INFS_BLOCK_SIZE];
+    uint8_t mask = 0;
+    unsigned entries = 0;
+    infs_status status;
+
+    if (!storage || !infs_storage_valid(storage) || !out || !valid ||
+        !valid_count || physical_size_bytes % INFS_BLOCK_SIZE != 0 ||
+        physical_blocks < INFS_LOCATOR_MIN_VOLUME_BLOCKS)
+        return INFS_STATUS_INVALID_ARGUMENT;
+
+    memset(valid, 0, INFS_LOCATOR_MAX_CANDIDATES);
+    *valid_count = 0;
+    for (unsigned i = 0; i < 2; ++i) {
+        status = infs_storage_read(
+            storage, locator_address[i] * INFS_BLOCK_SIZE, raw, sizeof(raw));
+        if (status != INFS_STATUS_OK)
+            return status; /* Operational I/O failure must not look corrupt. */
+        if (infs_locator_decode(raw, physical_blocks, &locator[i]) ==
+                INFS_STATUS_OK)
+            mask |= (uint8_t)(1u << i);
+    }
+    if (!mask)
+        return INFS_STATUS_CORRUPT;
+
+    status = infs_locator_candidates(
+        locator, mask, physical_blocks, locations, &entries);
+    if (status != INFS_STATUS_OK)
+        return status;
+
+    for (unsigned i = 0; i < entries; ++i) {
+        const struct infs_locator_candidate *hint = &locations[i];
+        struct infs_superblock_disk sb;
+        int consistent = 1;
+
+        status = infs_storage_read(
+            storage, hint->physical_block * INFS_BLOCK_SIZE,
+            raw, sizeof(raw));
+        if (status != INFS_STATUS_OK)
+            return status;
+        if (!infs_validate_superblock_block_minor(
+                raw, INFS_LOCATOR_FORMAT_MINOR))
+            continue;
+
+        memcpy(&sb, raw, sizeof(sb));
+        if (infs_le64_to_cpu(sb.total_blocks) !=
+                hint->declared_total_blocks ||
+            memcmp(sb.filesystem_uuid, hint->filesystem_uuid, 16) != 0)
+            continue;
+        for (unsigned j = 0; j < INFS_CHECKPOINT_COUNT; ++j)
+            if (infs_le64_to_cpu(sb.checkpoint_block[j]) !=
+                    hint->declared_checkpoint[j]) {
+                consistent = 0;
+                break;
+            }
+        if (!consistent)
+            continue;
+        out[i] = sb;
+        valid[i] = 1u;
+        ++*valid_count;
+    }
+    return *valid_count ? INFS_STATUS_OK : INFS_STATUS_CORRUPT;
 }

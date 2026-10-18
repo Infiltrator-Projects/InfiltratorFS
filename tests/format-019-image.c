@@ -119,6 +119,9 @@ int main(void)
            "test image checkpoint carries new 0.19 format identity");
     expect(!infs_validate_superblock_block(root),
            "0.18 reader rejects an unqualified 0.19 volume");
+    expect(infs_validate_superblock_block_minor(
+               root, INFS_LOCATOR_FORMAT_MINOR),
+           "explicit test-only 0.19 checkpoint validator accepts fixture");
     expect(infs_le64_to_cpu(sb->allocation_root_block) == 2,
            "initial allocation starts after block-zero and locator A");
 
@@ -153,6 +156,36 @@ int main(void)
             (1u << (INFS_LOCATOR_BLOCK_B % 8))) != 0,
            "reserve fixed locator B in allocation map");
     expect(m.flushes >= 6, "locators and each checkpoint durably flushed");
+
+    {
+        struct infs_superblock_disk found[INFS_LOCATOR_MAX_CANDIDATES];
+        uint8_t valid[INFS_LOCATOR_MAX_CANDIDATES] = {0};
+        unsigned count = 0;
+        /* Simulate losing the primary checkpoint without changing the two
+         * durable secondary checkpoints or either locator. */
+        m.contents[0] ^= 0xffu;
+        expect(infs_locator_discover_019_headers(
+                   &storage, IMAGE_BYTES, found, valid, &count) ==
+                   INFS_STATUS_OK && count >= 2,
+               "surviving 0.19 checkpoints discoverable without block zero");
+        expect(infs_le64_to_cpu(found[1].generation) == 1 ||
+               infs_le64_to_cpu(found[2].generation) == 1,
+               "recovered secondary checkpoint carries valid generation");
+
+        /* One corrupt fixed locator must not hide the surviving backup. */
+        m.contents[INFS_BLOCK_SIZE * INFS_LOCATOR_BLOCK_A] ^= 0xffu;
+        expect(infs_locator_discover_019_headers(
+                   &storage, IMAGE_BYTES, found, valid, &count) ==
+                   INFS_STATUS_OK && count >= 2,
+               "secondary locator independently discovers checkpoint copies");
+
+        /* Both damaged locator copies give no authority to invent positions. */
+        m.contents[INFS_BLOCK_SIZE * INFS_LOCATOR_BLOCK_B] ^= 0xffu;
+        expect(infs_locator_discover_019_headers(
+                   &storage, IMAGE_BYTES, found, valid, &count) ==
+                   INFS_STATUS_CORRUPT,
+               "two damaged locator records fail without speculative scan");
+    }
 
     reset(&m);
     expect(infs_format_storage(&storage, "Legacy") == INFS_STATUS_OK,

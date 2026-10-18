@@ -4,7 +4,8 @@
 
 - Add a guarded in-memory Format 0.19 test-image formatter, sharing the core fresh-format metadata builder while choosing canonical locator-aware initial metadata positions.
 - Create and durably flush both fixed discovery locators, account for them in the initial allocation bitmap, and publish three boot checkpoints individually.
-- Add image-level assertions for reserved locator blocks, physical-device refusal, exact 0.19 geometry and continued rejection by the active 0.18 reader. Normal mkfs and kernel mounting still use Format 0.18.
+- Add image-level assertions for reserved locator blocks, physical-device refusal, exact 0.19 geometry and continued rejection by the active 0.18 reader.
+- Add explicit Format 0.19 checkpoint-header validation and bounded, locator-assisted backup header discovery tests with damaged block zero and one or two damaged locators. This does NOT validate complete allocation/object graphs or enable 0.19 mounting. Normal mkfs and kernel mounting still use Format 0.18.
 
 ## 0.18.119 — 2026-10-18
 

@@ -37,6 +37,8 @@
  * two independently validated locator maps may identify three checkpoints. */
 #define INFS_LOCATOR_MAX_CANDIDATES (2u * INFS_CHECKPOINT_COUNT)
 
+struct infs_storage;
+
 struct infs_locator_candidate {
     uint64_t physical_block;
     uint64_t declared_total_blocks;
@@ -78,5 +80,17 @@ infs_status infs_locator_candidates(
     uint64_t physical_blocks,
     struct infs_locator_candidate out[INFS_LOCATOR_MAX_CANDIDATES],
     unsigned *count);
+
+/* Preliminary read-only Format 0.19 *checkpoint-header* discovery. This
+ * examines both fixed locators and their six candidate positions, requires
+ * exact locator/volume identity and canonical checkpoint CRC/shape, but
+ * performs NO object-graph or allocation integrity validation. Callers MUST
+ * NOT mount/write/heal from these headers without full graph qualification.
+ * Normal production volume open deliberately does not call this function. */
+infs_status infs_locator_discover_019_headers(
+    const struct infs_storage *storage, uint64_t physical_size_bytes,
+    struct infs_superblock_disk out[INFS_LOCATOR_MAX_CANDIDATES],
+    uint8_t valid[INFS_LOCATOR_MAX_CANDIDATES],
+    unsigned *valid_count);
 
 #endif

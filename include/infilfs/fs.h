@@ -22,6 +22,11 @@ infs_status infs_decode_superblock(const uint8_t block[INFS_BLOCK_SIZE],
                                    struct infs_superblock_disk *sb);
 int infs_validate_superblock_block(const uint8_t block[INFS_BLOCK_SIZE]);
 
+/* Only the explicit Format 0.19 fixture/recovery reader may ask for minor
+ * 19; ordinary mount, fsck and public decode remain exact-current-version. */
+int infs_validate_superblock_block_minor(
+    const uint8_t block[INFS_BLOCK_SIZE], uint16_t expected_minor);
+
 infs_status infs_object_init(uint8_t block[INFS_BLOCK_SIZE],
                              uint16_t object_type,
                              const uint8_t object_id[16],

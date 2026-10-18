@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "infilfs/fs.h"
+#include "infilfs/locator.h"
 
 #include "infilfs/checksum.h"
 #include "infilfs/endian.h"
@@ -455,8 +456,14 @@ infs_status infs_encode_superblock(uint8_t block[INFS_BLOCK_SIZE],
     return INFS_STATUS_OK;
 }
 
-int infs_validate_superblock_block(const uint8_t block[INFS_BLOCK_SIZE])
+int infs_validate_superblock_block_minor(
+    const uint8_t block[INFS_BLOCK_SIZE], uint16_t expected_minor)
 {
+    /* Explicitly gated development semantics; the normal mount/open helper
+     * below continues to accept only the current production format. */
+    if (expected_minor != INFS_FORMAT_MINOR &&
+        expected_minor != INFS_LOCATOR_FORMAT_MINOR)
+        return 0;
     const struct infs_superblock_disk *sb =
         (const struct infs_superblock_disk *)block;
 
@@ -464,7 +471,7 @@ int infs_validate_superblock_block(const uint8_t block[INFS_BLOCK_SIZE])
         return 0;
     if (infs_le16_to_cpu(sb->format_major) != INFS_FORMAT_MAJOR)
         return 0;
-    if (infs_le16_to_cpu(sb->format_minor) != INFS_FORMAT_MINOR)
+    if (infs_le16_to_cpu(sb->format_minor) != expected_minor)
         return 0;
     if (infs_le16_to_cpu(sb->header_size) != sizeof(*sb))
         return 0;
@@ -499,6 +506,11 @@ int infs_validate_superblock_block(const uint8_t block[INFS_BLOCK_SIZE])
     uint64_t actual = block_crc_with_zeroed_checksum(
         block, off, sizeof(sb->checksum));
     return stored == actual;
+}
+
+int infs_validate_superblock_block(const uint8_t block[INFS_BLOCK_SIZE])
+{
+    return infs_validate_superblock_block_minor(block, INFS_FORMAT_MINOR);
 }
 
 infs_status infs_decode_superblock(const uint8_t block[INFS_BLOCK_SIZE],
