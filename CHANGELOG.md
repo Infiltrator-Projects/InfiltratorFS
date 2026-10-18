@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.18.113 — 2026-10-18
+
+- Correct the checkpoint-order regression guard to locate the C function boundary without interpreting a literal backslash-n as a line break. No filesystem code or disk format change.
+
 ## 0.18.112 — 2026-10-18
 
 - Make native Linux checkpoint publication durably commit one new checkpoint before overwriting secondary recovery copies; preserve transaction-success semantics when later replica flush fails.

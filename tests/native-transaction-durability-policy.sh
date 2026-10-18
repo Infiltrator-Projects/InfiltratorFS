@@ -29,7 +29,7 @@ from pathlib import Path
 import sys
 source = Path(sys.argv[1]).read_text()
 start = source.index('static int infilfs_rw_write_checkpoint_replicas_sync(')
-end = source.index('\\nstatic const u64 infilfs_rw_crc64_table', start)
+end = source.index('static const u64 infilfs_rw_crc64_table', start)
 body = source[start:end]
 w = body.index('write_dirty_buffer(bh, REQ_SYNC)')
 await_primary = body.index('wait_on_buffer(bh)', w)
