@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.138 — 2026-10-18
+
+- Add real POSIX-backend regular-image Format 0.19 write qualification: create a file, write a deterministic 256-KiB payload, durably sync via operating-system fsync, close, read-only reopen and byte-compare the data, run deep metadata/data scrub, and reopen the healthy image writable.
+- Extend the end-to-end experimental mkfs/fsck image test to use the production POSIX storage adapter, not only the in-memory fixture. No block devices are opened in experimental writable mode.
+- Native 0.19 mounting remains read-only; crash-safe geometry relocation and NVMe qualification are still unfinished.
+
 ## 0.18.137 — 2026-10-18
 
 - Expose the guarded portable Format 0.19 formatter through `mkfs.infilfs --experimental-019-image --force <existing-regular-image>`. It requires explicit destructive consent, preserves production default Format 0.18, and refuses physical block devices even with force.

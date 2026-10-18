@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.20)
-project(InfiltratorFS VERSION 0.18.137 LANGUAGES C)
+project(InfiltratorFS VERSION 0.18.138 LANGUAGES C)
 # Development qualification anchor: 0.18.106
 
 set(CMAKE_C_STANDARD 17)
@@ -504,6 +504,9 @@ if(UNIX)
     add_executable(mkfs.infilfs tools/mkfs.infilfs.c)
     add_executable(infilfs-inspect tools/infilfs-inspect.c)
     add_executable(infilfs-tool tools/infilfs-tool.c)
+    add_executable(infilfs-format-019-posix tests/format-019-posix.c)
+    target_link_libraries(infilfs-format-019-posix PRIVATE infilfs_posix)
+    infilfs_enable_warnings(infilfs-format-019-posix)
     add_executable(fsck.infiltratorfs tools/fsck.infiltratorfs.c)
     add_test(NAME infilfs-format-019-fsck
              COMMAND bash

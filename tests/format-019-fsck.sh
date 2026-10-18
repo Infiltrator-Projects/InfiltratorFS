@@ -14,6 +14,9 @@ grep -Fq 'Format 0.19 image created' "$work/mkfs"
 "$build/fsck.infiltratorfs" --scrub -n --experimental-019-image "$image" >"$work/out"
 grep -Fq '0.19 (experimental read-only image)' "$work/out"
 grep -Fq 'Result:              CLEAN' "$work/out"
+"$build/infilfs-format-019-posix" "$image"
+"$build/fsck.infiltratorfs" --scrub -n --experimental-019-image "$image" >"$work/written"
+grep -Fq 'Result:              CLEAN' "$work/written"
 if "$build/mkfs.infilfs" --experimental-019-image "$image" >/dev/null 2>&1; then
     echo 'Unsafe: 0.19 image formatting without explicit --force' >&2; exit 1
 fi
