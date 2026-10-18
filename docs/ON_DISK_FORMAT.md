@@ -23,7 +23,7 @@ A newly formatted volume of `N` committed filesystem blocks initially places thr
 - `floor(N/2)`; and
 - `N-1`.
 
-Those positions are then recorded in the checkpoint and become part of committed filesystem geometry. Readers use the recorded checkpoint locations; they do not recompute them from current backing-device capacity.
+Those positions are then recorded in the checkpoint and become part of committed filesystem geometry. Readers use the recorded checkpoint locations; they do not recompute them from current backing-device capacity. If block zero is unavailable after an online resize, Format 0.18 fallback discovery cannot always find relocated surviving secondary checkpoints; see ADR-009.
 
 The committed filesystem size may be smaller than the physical backing device. Online resize may preserve existing valid checkpoint locations or relocate secondary checkpoints when the new committed geometry requires it. Block 0 remains the bootstrap checkpoint.
 

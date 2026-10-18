@@ -210,6 +210,20 @@ int main(void)
        !memcmp(policy_readback, one_copy, sizeof(one_copy)),
        "one-copy policy reads from selected member");
 
+    policy.protection_copies = 3u;
+    static const char impossible[] = "three-copy-policy";
+    ok(infs_storage_write_policy(
+           &mirror, 3072, impossible, sizeof(impossible), &policy) ==
+           INFS_STATUS_NOT_SUPPORTED,
+       "impossible copy count rejected before write");
+    ok(c_member.bytes[3072] == 0 && d_member.bytes[3072] == 0,
+       "impossible copy count does not write a partial replica");
+    memset(policy_readback, 0, sizeof(policy_readback));
+    ok(infs_storage_read_policy(
+           &mirror, 3072, policy_readback, sizeof(policy_readback),
+           &policy) == INFS_STATUS_NOT_SUPPORTED,
+       "impossible copy count rejected before read");
+
     policy.protection_copies = 2u;
     static const char two_copy[] = "two-copy-policy";
     ok(infs_storage_write_policy(

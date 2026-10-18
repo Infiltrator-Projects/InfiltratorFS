@@ -14,6 +14,8 @@
  * writes and durability flushes are issued to every member and report failure
  * if any replica fails. This keeps replication below filesystem semantics:
  * every member contains a complete ordinary InfiltratorFS image.
+ * Explicit per-object protection counts exceeding the configured number of
+ * members are rejected before I/O, never silently weakened.
  */
 infs_status infs_storage_mirror_create(struct infs_storage *members,
                                        size_t member_count,

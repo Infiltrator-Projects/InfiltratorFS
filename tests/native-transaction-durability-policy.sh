@@ -8,7 +8,7 @@ data="$root/kernel/infiltratorfs_rw_data.inc"
 
 grep -Fq 'tx->sbi->disk.generation = cpu_to_le64(tx->generation - 1u);' "$rw"
 grep -Fq 'sbi->write_poisoned = true;' "$rw"
-grep -Fq 'checkpoint durability indeterminate' "$rw"
+grep -Fq 'secondary checkpoint durability indeterminate' "$rw"
 grep -Fq 'sbi->checkpoint_repair_needed = true;' "$rw"
 grep -Fq 'if (sbi->write_poisoned)' "$rw"
 
@@ -23,6 +23,24 @@ checkpoint_batch="$(sed -n '/static int infilfs_rw_write_checkpoint_replicas_syn
 grep -Fq 'blk_start_plug' <<<"$checkpoint_batch"
 grep -Fq 'write_dirty_buffer(bhs[n], REQ_SYNC)' <<<"$checkpoint_batch"
 grep -Fq 'wait_on_buffer(bhs[n])' <<<"$checkpoint_batch"
+# Source order guard: secondary publication cannot precede primary durability.
+python3 - "$rw" <<'PY'
+from pathlib import Path
+import sys
+source = Path(sys.argv[1]).read_text()
+start = source.index('static int infilfs_rw_write_checkpoint_replicas_sync(')
+end = source.index('\\nstatic const u64 infilfs_rw_crc64_table', start)
+body = source[start:end]
+w = body.index('write_dirty_buffer(bh, REQ_SYNC)')
+await_primary = body.index('wait_on_buffer(bh)', w)
+flush_primary = body.index('blkdev_issue_flush(sb->s_bdev)', await_primary)
+write_backups = body.index('write_dirty_buffer(bhs[n], REQ_SYNC)', flush_primary)
+if not (w < await_primary < flush_primary < write_backups):
+    raise SystemExit('secondary checkpoint may precede durable primary')
+commit = source[source.index('static int infilfs_rw_tx_commit('):]
+if 'if (ret && !replica_error)' not in commit:
+    raise SystemExit('secondary flush error may be misreported as failed commit')
+PY
 python3 - "$rw" <<'PY'
 from pathlib import Path
 import sys

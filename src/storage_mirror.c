@@ -19,7 +19,7 @@ static size_t mirror_policy_copies(
     const struct infs_storage_io_policy *policy)
 {
     size_t copies = policy ? policy->protection_copies : 0u;
-    if (!copies || copies > ctx->count)
+    if (!copies)
         copies = ctx->count;
     return copies;
 }
@@ -72,6 +72,9 @@ static infs_status mirror_read_policy(
     const struct infs_storage_io_policy *policy)
 {
     struct mirror_context *ctx = opaque;
+    /* An explicit protection class cannot silently request fewer replicas. */
+    if (policy && policy->protection_copies > ctx->count)
+        return INFS_STATUS_NOT_SUPPORTED;
     struct infs_storage_io_policy child_policy = {0};
     const struct infs_storage_io_policy *child = NULL;
     if (policy) {
@@ -142,6 +145,9 @@ static infs_status mirror_write_policy(
     const struct infs_storage_io_policy *policy)
 {
     struct mirror_context *ctx = opaque;
+    /* An explicit protection class cannot silently request fewer replicas. */
+    if (policy && policy->protection_copies > ctx->count)
+        return INFS_STATUS_NOT_SUPPORTED;
     struct infs_storage_io_policy child_policy = {0};
     const struct infs_storage_io_policy *child = NULL;
     if (policy) {

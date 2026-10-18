@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.112 — 2026-10-18
+
+- Make native Linux checkpoint publication durably commit one new checkpoint before overwriting secondary recovery copies; preserve transaction-success semantics when later replica flush fails.
+- Fail closed when a requested per-object mirror copy count exceeds the configured member count, with no partial write or read.
+- Strengthen native durability policy checks and document the unresolved backup-locator recovery case after online resize. On-disk Format remains 0.18 and Libraries stays pinned.
+
 ## 0.18.111 — 2026-10-18
 
 - Link platform-adapter system-volume requirements to Filesystems' shared Boot/Setup design and phased acceptance tests.

@@ -420,25 +420,52 @@ static int infilfs_rw_write_checkpoint_replicas_sync(
         return -EINVAL;
 
     /*
-     * The dependency barrier has already made every object reachable from this
-     * generation durable.  Prepare all checkpoint replicas first, submit them
-     * together under one block plug, then wait for each buffer.  Serial
-     * sync_dirty_buffer() calls unnecessarily paid one device completion
-     * latency per replica on every fsync.
+     * Do not overwrite secondary checkpoints until the first new-generation
+     * checkpoint is independently durable. An interrupted first write must
+     * leave the old committed checkpoints untouched and recoverable.
      */
-    for (n = 0; n < INFILFS_CHECKPOINT_COUNT; ++n) {
+    {
+        u64 block = le64_to_cpu(disk->checkpoint_block[first]);
+        struct buffer_head *bh;
+
+        if (block >= sbi->device_blocks)
+            return -EIO;
+        bh = sb_getblk(sb, (sector_t)block);
+        if (!bh)
+            return -ENOMEM;
+        bhs[0] = bh;
+        lock_buffer(bh);
+        memcpy(bh->b_data, data, INFILFS_DISK_BLOCK_SIZE);
+        set_buffer_uptodate(bh);
+        mark_buffer_dirty(bh);
+        unlock_buffer(bh);
+        write_dirty_buffer(bh, REQ_SYNC);
+        wait_on_buffer(bh);
+        if (buffer_write_io_error(bh) || !buffer_uptodate(bh))
+            primary_error = -EIO;
+    }
+    if (primary_error)
+        goto out_release;
+
+    /* Primary generation publication requires a stable-media barrier. */
+    primary_error = blkdev_issue_flush(sb->s_bdev);
+    if (primary_error)
+        goto out_release;
+
+    /* Only now may secondary checkpoints be submitted together. */
+    for (n = 1; n < INFILFS_CHECKPOINT_COUNT; ++n) {
         unsigned int idx = (first + n) % INFILFS_CHECKPOINT_COUNT;
         u64 block = le64_to_cpu(disk->checkpoint_block[idx]);
         struct buffer_head *bh;
 
         if (block >= sbi->device_blocks) {
-            primary_error = -EIO;
-            goto out_release;
+            replica_error = -EIO;
+            break;
         }
         bh = sb_getblk(sb, (sector_t)block);
         if (!bh) {
-            primary_error = -EIO;
-            goto out_release;
+            replica_error = -ENOMEM;
+            break;
         }
         bhs[n] = bh;
         lock_buffer(bh);
@@ -447,24 +474,20 @@ static int infilfs_rw_write_checkpoint_replicas_sync(
         mark_buffer_dirty(bh);
         unlock_buffer(bh);
     }
-
     blk_start_plug(&plug);
-    for (n = 0; n < INFILFS_CHECKPOINT_COUNT; ++n)
-        write_dirty_buffer(bhs[n], REQ_SYNC);
+    for (n = 1; n < INFILFS_CHECKPOINT_COUNT; ++n)
+        if (bhs[n])
+            write_dirty_buffer(bhs[n], REQ_SYNC);
     blk_finish_plug(&plug);
 
-    for (n = 0; n < INFILFS_CHECKPOINT_COUNT; ++n) {
-        int error = 0;
-
+    for (n = 1; n < INFILFS_CHECKPOINT_COUNT; ++n) {
+        if (!bhs[n])
+            continue;
         wait_on_buffer(bhs[n]);
-        if (buffer_write_io_error(bhs[n]) || !buffer_uptodate(bhs[n]))
-            error = -EIO;
-        if (!n && error)
-            primary_error = error;
-        else if (n && error && !replica_error)
-            replica_error = error;
+        if ((buffer_write_io_error(bhs[n]) ||
+             !buffer_uptodate(bhs[n])) && !replica_error)
+            replica_error = -EIO;
     }
-
 out_release:
     for (n = 0; n < INFILFS_CHECKPOINT_COUNT; ++n)
         if (bhs[n])
@@ -1583,9 +1606,8 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
     first = (unsigned int)(tx->generation % INFILFS_CHECKPOINT_COUNT);
 
     /*
-     * The dependency graph is now on stable media.  Checkpoint replicas may be
-     * issued in any order because none can reference volatile dependency data.
-     * The final cache flush below is the generation-N+1 publication barrier.
+     * CoW dependencies are stable. Publish and flush the first checkpoint
+     * before touching backups; the final flush protects backup copies only.
      */
     ret = infilfs_rw_write_checkpoint_replicas_sync(
         tx->sb, &tx->next_sb, first, sb_block, &replica_error);
@@ -1601,26 +1623,22 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
         ktime_get_ns() - phase_started, NSEC_PER_MSEC);
     phase_started = ktime_get_ns();
 
+    /*
+     * The first checkpoint is already durable. A failed flush here only
+     * degrades the backup copies; it does not undo the committed mutation.
+     */
     ret = blkdev_issue_flush(tx->sb->s_bdev);
-    if (ret) {
-        /*
-         * Checkpoint buffers were submitted synchronously above, but without a
-         * successful cache flush their stable-media state is indeterminate.
-         */
-        sbi->write_poisoned = true;
-        sbi->checkpoint_repair_needed = true;
-        pr_warn("InfiltratorFS: checkpoint durability indeterminate; further writes disabled until remount\n");
-        infilfs_allocation_layout_destroy(&next_allocation);
-        kfree(sb_block);
-        return ret;
-    }
+    if (ret && !replica_error)
+        replica_error = ret;
+    if (ret)
+        pr_warn("InfiltratorFS: secondary checkpoint durability indeterminate; checkpoint repair required\n");
     publication_flush_ms = div_u64(
         ktime_get_ns() - phase_started, NSEC_PER_MSEC);
     kfree(sb_block);
 
     /*
-     * The primary checkpoint is now durable, which is the atomic publication
-     * point. Replace the volatile allocation layout only after that barrier.
+     * The selected primary checkpoint was already made durable independently
+     * of backup refresh, so backup failure cannot undo its commit.
      */
     infilfs_allocation_cache_replace(sbi, &next_allocation);
     sbi->disk = tx->next_sb;

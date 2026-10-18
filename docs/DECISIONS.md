@@ -65,3 +65,24 @@ This file records durable architectural decisions for InfiltratorFS. Detailed fo
 **Rationale.** Compression affects persistent extents, qualification and performance and therefore belongs to the filesystem contract.
 
 **Consequence.** Generic compression-library convenience does not override format ownership.
+
+## ADR-009 — Backup checkpoint discovery after resize (unresolved design gate)
+
+**Status:** Required before a permanent on-disk format freeze.
+
+Block zero records committed secondary checkpoint positions. Online grow/shrink
+can preserve or relocate those positions. If block zero is invalid, both the
+native and portable Format 0.18 openers fall back to physical midpoint/end
+locations; those positions need not contain valid backups after resize.
+
+A future stable format must make backup locator recovery independent of block
+zero and physical capacity, with bounded discovery cost, correct recovery
+across geometry changes, torn checkpoint writes and power loss. Do not assign
+a locator into an existing occupied Format 0.18 block or silently change the
+current disk contract. An explicit offline media scan can be a rescue option,
+but cannot masquerade as normal rapid mount recovery.
+
+**Qualification:** Repeated grow/shrink with secondary relocation; corrupt
+block zero; recover and deep scrub the newest complete committed generation
+using surviving locators alone. Include interrupted geometry publication and
+independently corrupted or relocated replicas.
