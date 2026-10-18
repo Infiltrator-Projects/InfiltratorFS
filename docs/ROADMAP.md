@@ -7,6 +7,14 @@ A checked item means the capability is implemented **and** has the qualification
 
 Pre-1.0 development is current-format-only. A development format may be replaced without a backward reader or migration path; stable compatibility begins with the first stable release.
 
+## Format 0.19 recovery redesign (not yet implemented)
+
+- [ ] Two independent fixed-position, checksummed checkpoint-location records in the new on-disk format, with no locator authority over checkpoint graph validation.
+- [ ] Portable formatter, recovery, allocation accounting, resize and fsck/scrub agree on the new locator and reserved-block contract.
+- [ ] Native Linux mount, recovery and resize use the same locator schema and commit ordering, verified against portable media.
+- [ ] Deterministic crash/tear/corruption matrix: block-zero loss after grow/shrink, stale/divergent locators, interrupted publication, old-format rejection and remount/scrub.
+- [ ] Exact-source native mounted and physical-media validation before switching the released formatter/default mount path to Format 0.19.
+
 ## Core filesystem foundation
 
 - [x] 128-bit persistent filesystem and object identities.

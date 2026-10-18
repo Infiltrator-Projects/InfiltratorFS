@@ -66,7 +66,7 @@ This file records durable architectural decisions for InfiltratorFS. Detailed fo
 
 **Consequence.** Generic compression-library convenience does not override format ownership.
 
-## ADR-009 — Backup checkpoint discovery after resize (unresolved design gate)
+## ADR-009 — Backup checkpoint discovery after resize (Format 0.19 design selected; not implemented)
 
 **Status:** Required before a permanent on-disk format freeze.
 
@@ -86,3 +86,13 @@ but cannot masquerade as normal rapid mount recovery.
 block zero; recover and deep scrub the newest complete committed generation
 using surviving locators alone. Include interrupted geometry publication and
 independently corrupted or relocated replicas.
+
+## ADR-010 — Independent checkpoint location anchors for Format 0.19
+
+**Decision:** Retain three geographically separated authoritative checkpoints, but add two permanently located, checksummed *discovery-only* locator records. Their fixed positions and versioned representation are defined by `FORMAT-0.19-RECOVERY-DESIGN.md`. The locator is never an authoritative transaction commit and cannot authorize a generation on its own.
+
+**Rationale:** Format 0.18 cannot always locate secondary checkpoints after a resize if block zero is lost. Moving the checkpoints to a compact fixed cluster would compromise the original three-copy placement objective. Two fixed, independently readable locator positions preserve three distant checkpoint locations without a device scan.
+
+**Compatibility:** This requires a genuine new Format 0.19 layout and explicit, destructive reformat or a separately qualified migration. Format 0.18 media must not be silently reinterpreted or mutated by Format 0.19.
+
+**Status:** Architecture accepted for implementation only. It is **not** a claim that Format 0.19 exists, mounts, or has passed recovery qualification.
