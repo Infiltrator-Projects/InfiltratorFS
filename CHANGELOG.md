@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.18.128 — 2026-10-18
+
+- Add the extracted native checkpoint-discovery object to the canonical self-contained DKMS packaging manifest so Linux .deb and .run installations compile exactly the same source as the in-repository kernel build.
+- Requalify the bounded native Format 0.19 experimental read-only recovery and existing Format 0.18 mounted behaviour. No on-disk change.
+
 ## 0.18.127 — 2026-10-18
 
 - Extract native Format 0.18/0.19 checkpoint validation and bounded recovery-locator discovery into a separately compiled `infiltratorfs_checkpoint_discovery.o` kernel subsystem, without changing on-disk bytes or the read-only 0.19 experimental scope.
