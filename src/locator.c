@@ -169,6 +169,13 @@ infs_status infs_locator_candidates(
     if (!locators || !out || !count || (valid_mask & (uint8_t)~3u))
         return INFS_STATUS_INVALID_ARGUMENT;
     *count = 0;
+    /* A resize may leave stale generations, but the filesystem UUID is
+     * immutable. Never build candidates from two incompatible identities.
+     * Native Linux recovery makes the same fail-closed distinction. */
+    if ((valid_mask & 3u) == 3u &&
+        memcmp(locators[0].filesystem_uuid, locators[1].filesystem_uuid,
+               sizeof(locators[0].filesystem_uuid)) != 0)
+        return INFS_STATUS_CORRUPT;
     for (unsigned i = 0; i < 2; ++i) {
         const struct infs_locator *loc = &locators[i];
         if (!(valid_mask & (1u << i)))

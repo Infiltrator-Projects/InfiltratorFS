@@ -147,6 +147,11 @@ int main(void)
         expect(infs_locator_candidates(copies, 4, 32768, list, &found) ==
                INFS_STATUS_INVALID_ARGUMENT,
                "reject invalid locator source-mask");
+        copies[1].filesystem_uuid[0] = 2;
+        expect(infs_locator_candidates(copies, 3, 32768, list, &found) ==
+               INFS_STATUS_CORRUPT,
+               "reject mixed filesystem identities from both valid locators");
+        copies[1].filesystem_uuid[0] = 1;
         copies[1].checkpoint[1] = INFS_LOCATOR_BLOCK_B;
         expect(infs_locator_candidates(copies, 3, 32768, list, &found) ==
                INFS_STATUS_CORRUPT,

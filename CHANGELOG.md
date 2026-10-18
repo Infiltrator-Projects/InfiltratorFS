@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.142 — 2026-10-18
+
+- Reject portable Format 0.19 recovery candidate sets that combine two individually checksum-valid locator records claiming different filesystem UUIDs, matching the native Linux fail-closed identity rule.
+- Add both isolated locator-candidate and full committed-graph image tests with a forged, CRC-valid second UUID, then confirm the restored original locator recovers. No on-disk format migration or physical-device writes.
+- Production persistent Format remains 0.18; Format 0.19 writable native mounts and geometry-changing operations remain prohibited until complete crash-safety qualification.
+
 ## 0.18.141 — 2026-10-18
 
 - Require all exact-source native kernel, root-volume and Linux metadata release prerequisites on every `main` push, including CI-only corrections, preventing path-filtered revisions from deadlocking immutable publication.

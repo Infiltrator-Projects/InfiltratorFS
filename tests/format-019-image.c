@@ -166,6 +166,23 @@ int main(int argc, char **argv)
            "decode second fixed recovery locator");
     expect(memcmp(&a, &b, sizeof(a)) == 0,
            "both bootstrap locator records agree");
+    {
+        struct infs_locator foreign = b;
+        struct infs_superblock_disk rejected = {0};
+        uint8_t *page = m.contents +
+            INFS_LOCATOR_BLOCK_B * INFS_BLOCK_SIZE;
+        foreign.filesystem_uuid[0] ^= 0x5au;
+        expect(infs_locator_encode(page, &foreign) == INFS_STATUS_OK,
+               "construct individually CRC-valid foreign locator record");
+        expect(infs_volume_verify_019_test_image(&storage, &rejected) ==
+                   INFS_STATUS_CORRUPT,
+               "portable recovery rejects two conflicting filesystem UUIDs");
+        expect(infs_locator_encode(page, &b) == INFS_STATUS_OK,
+               "restore original locator after foreign-UUID rejection");
+        expect(infs_volume_verify_019_test_image(&storage, &rejected) ==
+                   INFS_STATUS_OK,
+               "normal recovery resumes with matching locator identities");
+    }
     expect(a.generation == 1 && a.total_blocks == 4096 &&
            a.checkpoint[0] == 0 && a.checkpoint[1] == 2048 &&
            a.checkpoint[2] == 4095,
