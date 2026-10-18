@@ -22,6 +22,8 @@ struct memory_volume {
     unsigned flushes;
     uint8_t random_counter;
     int device;
+    uint64_t unreadable_blocks[2];
+    unsigned unreadable_count;
 };
 
 static void expect(int condition, const char *what)
@@ -37,6 +39,10 @@ static infs_status mem_read(void *context, uint64_t offset,
     struct memory_volume *m = context;
     if (offset > m->bytes || length > m->bytes - offset)
         return INFS_STATUS_IO_ERROR;
+    for (unsigned i = 0; i < m->unreadable_count; ++i)
+        if (length == INFS_BLOCK_SIZE &&
+            offset == m->unreadable_blocks[i] * INFS_BLOCK_SIZE)
+            return INFS_STATUS_IO_ERROR;
     memcpy(out, m->contents + (size_t)offset, length);
     return INFS_STATUS_OK;
 }
@@ -88,6 +94,7 @@ static void reset(struct memory_volume *m)
     m->flushes = 0;
     m->random_counter = 0;
     m->device = 0;
+    m->unreadable_count = 0;
 }
 
 int main(int argc, char **argv)
@@ -186,6 +193,55 @@ int main(int argc, char **argv)
         expect(view_storage.ops == &ops && m.writes == before,
                "rejected physical open preserves ownership and media");
         m.device = 0;
+    }
+
+    /* A failed read is not proof that every independent recovery copy is
+     * unusable. Exercise unreadable locator and checkpoint pages, not just
+     * validly read pages with corrupted checksums. */
+    {
+        struct infs_superblock_disk committed = {0};
+        struct infs_superblock_disk found[INFS_LOCATOR_MAX_CANDIDATES];
+        uint8_t valid[INFS_LOCATOR_MAX_CANDIDATES];
+        unsigned count = 0;
+        unsigned before = m.writes;
+
+        m.unreadable_count = 1;
+        m.unreadable_blocks[0] = INFS_LOCATOR_BLOCK_A;
+        expect(infs_locator_discover_019_headers(
+                   &storage, IMAGE_BYTES, found, valid, &count) ==
+                   INFS_STATUS_OK && count >= 2,
+               "unreadable locator A does not hide surviving locator B");
+        expect(infs_volume_verify_019_test_image(&storage, &committed) ==
+                   INFS_STATUS_OK,
+               "complete graph recovers with unreadable locator A");
+
+        m.unreadable_blocks[0] = 0;
+        expect(infs_locator_discover_019_headers(
+                   &storage, IMAGE_BYTES, found, valid, &count) ==
+                   INFS_STATUS_OK && count >= 4,
+               "unreadable primary checkpoint does not hide secondaries");
+        expect(infs_volume_verify_019_test_image(&storage, &committed) ==
+                   INFS_STATUS_OK,
+               "complete graph recovers after primary checkpoint read error");
+
+        m.unreadable_count = 2;
+        m.unreadable_blocks[0] = 0;
+        m.unreadable_blocks[1] = IMAGE_BYTES / INFS_BLOCK_SIZE - 1u;
+        expect(infs_volume_verify_019_test_image(&storage, &committed) ==
+                   INFS_STATUS_OK,
+               "complete graph recovers with only middle checkpoint readable");
+
+        m.unreadable_blocks[0] = INFS_LOCATOR_BLOCK_A;
+        m.unreadable_blocks[1] = INFS_LOCATOR_BLOCK_B;
+        expect(infs_locator_discover_019_headers(
+                   &storage, IMAGE_BYTES, found, valid, &count) ==
+                   INFS_STATUS_IO_ERROR,
+               "both unreadable locators report media I/O, not corruption");
+        expect(infs_volume_verify_019_test_image(&storage, &committed) ==
+                   INFS_STATUS_IO_ERROR,
+               "full verifier preserves unrecoverable locator read errors");
+        m.unreadable_count = 0;
+        expect(m.writes == before, "read-only I/O recovery never writes media");
     }
 
     /* Before destructive crash-fixture mutations, optionally emit the exact

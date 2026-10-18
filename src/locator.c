@@ -208,6 +208,7 @@ infs_status infs_locator_discover_019_headers(
     uint8_t mask = 0;
     unsigned entries = 0;
     infs_status status;
+    infs_status first_read_error = INFS_STATUS_OK;
 
     if (!storage || !infs_storage_valid(storage) || !out || !valid ||
         !valid_count || physical_size_bytes % INFS_BLOCK_SIZE != 0 ||
@@ -219,14 +220,19 @@ infs_status infs_locator_discover_019_headers(
     for (unsigned i = 0; i < 2; ++i) {
         status = infs_storage_read(
             storage, locator_address[i] * INFS_BLOCK_SIZE, raw, sizeof(raw));
-        if (status != INFS_STATUS_OK)
-            return status; /* Operational I/O failure must not look corrupt. */
+        if (status != INFS_STATUS_OK) {
+            /* Either independent locator can survive a failed media read. */
+            if (first_read_error == INFS_STATUS_OK)
+                first_read_error = status;
+            continue;
+        }
         if (infs_locator_decode(raw, physical_blocks, &locator[i]) ==
                 INFS_STATUS_OK)
             mask |= (uint8_t)(1u << i);
     }
     if (!mask)
-        return INFS_STATUS_CORRUPT;
+        return first_read_error == INFS_STATUS_OK ?
+            INFS_STATUS_CORRUPT : first_read_error;
 
     status = infs_locator_candidates(
         locator, mask, physical_blocks, locations, &entries);
@@ -241,8 +247,12 @@ infs_status infs_locator_discover_019_headers(
         status = infs_storage_read(
             storage, hint->physical_block * INFS_BLOCK_SIZE,
             raw, sizeof(raw));
-        if (status != INFS_STATUS_OK)
-            return status;
+        if (status != INFS_STATUS_OK) {
+            /* Keep trying independent checkpoint replicas before failing. */
+            if (first_read_error == INFS_STATUS_OK)
+                first_read_error = status;
+            continue;
+        }
         if (!infs_validate_superblock_block_minor(
                 raw, INFS_LOCATOR_FORMAT_MINOR))
             continue;
@@ -264,5 +274,9 @@ infs_status infs_locator_discover_019_headers(
         valid[i] = 1u;
         ++*valid_count;
     }
-    return *valid_count ? INFS_STATUS_OK : INFS_STATUS_CORRUPT;
+    if (*valid_count)
+        return INFS_STATUS_OK;
+    /* Preserve operational I/O errors when no usable replica remains. */
+    return first_read_error == INFS_STATUS_OK ?
+        INFS_STATUS_CORRUPT : first_read_error;
 }

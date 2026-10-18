@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.131 — 2026-10-18
+
+- Continue portable Format 0.19 recovery after an individual locator or checkpoint read failure when another independently validated recovery copy survives. Preserve the first operational I/O error if none can be recovered, rather than reporting false corruption.
+- Qualify single-locator and multi-checkpoint unreadable-page cases, both locators unreadable, and no media writes during read-only recovery.
+- This is a portable recovery hardening change only. Production disk Format 0.18 is unchanged; Format 0.19 native writes, resize and physical formatting remain disabled pending qualification.
+
 ## 0.18.130 — 2026-10-18
 
 - Strengthen experimental Format 0.19 native read-only qualification to use direct Linux mount/remount syscalls, avoiding util-linux's automatic read-only retry after a refused RW mount.
