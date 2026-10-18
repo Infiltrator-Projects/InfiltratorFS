@@ -41,23 +41,56 @@ if ! grep -q '^infiltratorfs ' /proc/modules; then
     loaded=1
 fi
 loop="$(losetup --find --show "$image")"
-# Verify a fresh superblock cannot be mounted writable. A later RO->RW
-# remount has a separate VFS gate checked in check_ro().
-if mount -t infiltratorfs -o rw "$loop" "$mnt" 2>/dev/null; then
-    mounted=1
-    echo 'Unqualified Format 0.19 fresh RW mount succeeded!' >&2
-    exit 1
-fi
+# Do not use /bin/mount to assert rejection of a requested RW mount:
+# util-linux may fall back transparently to RO after an EROFS kernel error.
+# Call the kernel directly, with no implicit retry or fallback.
+python3 - "$loop" "$mnt" <<'PY'
+import ctypes
+import errno
+import os
+import subprocess
+import sys
+
+libc = ctypes.CDLL(None, use_errno=True)
+libc.mount.argtypes = [
+    ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p,
+    ctypes.c_ulong, ctypes.c_void_p
+]
+libc.mount.restype = ctypes.c_int
+target = os.fsencode(sys.argv[2])
+ret = libc.mount(os.fsencode(sys.argv[1]), target, b"infiltratorfs", 0, None)
+if ret == 0:
+    subprocess.run(["umount", sys.argv[2]], check=True)
+    raise SystemExit("Unsafe: native 0.19 accepted a raw RW mount syscall")
+err = ctypes.get_errno()
+if err != errno.EROFS:
+    raise SystemExit(f"Unexpected native 0.19 RW error: {os.strerror(err)}")
+PY
 check_ro() {
     mount -t infiltratorfs -o ro "$loop" "$mnt"
     mounted=1
     [[ "$(findmnt -n -o FSTYPE -T "$mnt")" == infiltratorfs ]]
     [[ -z "$(find "$mnt" -mindepth 1 -maxdepth 1 -print -quit)" ]]
     [[ "$(findmnt -n -o OPTIONS -T "$mnt")" == *ro* ]]
-    if mount -o remount,rw "$mnt" 2>/dev/null; then
-        echo 'Unqualified Format 0.19 writable remount was accepted!' >&2
-        exit 1
-    fi
+    python3 - "$mnt" <<'PY'
+import ctypes
+import errno
+import os
+import sys
+
+libc = ctypes.CDLL(None, use_errno=True)
+libc.mount.argtypes = [
+    ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p,
+    ctypes.c_ulong, ctypes.c_void_p
+]
+libc.mount.restype = ctypes.c_int
+ret = libc.mount(None, os.fsencode(sys.argv[1]), None, 32, None)
+if ret == 0 and not (os.statvfs(sys.argv[1]).f_flag & os.ST_RDONLY):
+    raise SystemExit("Unsafe: native 0.19 accepted a writable remount")
+if ret != 0 and ctypes.get_errno() != errno.EROFS:
+    err = ctypes.get_errno()
+    raise SystemExit(f"Unexpected native 0.19 remount error: {os.strerror(err)}")
+PY
     umount "$mnt"
     mounted=0
 }

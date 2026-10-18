@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.130 — 2026-10-18
+
+- Strengthen experimental Format 0.19 native read-only qualification to use direct Linux mount/remount syscalls, avoiding util-linux's automatic read-only retry after a refused RW mount.
+- Require raw RW mount attempts to return EROFS, and reject any successful writable remount; preserve strict native 0.19 writer lockout and the disposable-loop-only test boundary.
+- This is a test-harness correction, not a declaration that mounted writable Format 0.19 exists. Disk Format 0.18 remains production.
+
 ## 0.18.129 — 2026-10-18
 
 - Fail closed on initial Format 0.19 read-write mount requests using the requested VFS mount flags as well as superblock mode; keep the existing RO-to-RW promotion guard.
