@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.18.110 — 2026-10-18
+
+- Consolidate eight duplicated portable format-feature checks behind one shared helper, preserving the original feature predicates and Format 0.18 semantics.
+- Centralize three native Linux allocation-locality hint fallbacks without changing placement choices, transaction handling or on-disk structures.
+- Verify the sequential-read payload against its source SHA-256 in the maintained InfiltratorFS speed-test utility.
+- Advance the semantic release identity to satisfy the immutable-release policy. On-disk Format remains 0.18; Libraries remains pinned to 1.19.46.
+
 ## 0.18.109 — 2026-10-17
 
 - Make native Linux `SEEK_DATA`/`SEEK_HOLE` account for dirty buffered page-cache data before writeback, preserving delayed allocation while presenting a coherent sparse-file view.
