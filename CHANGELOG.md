@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.129 — 2026-10-18
+
+- Fail closed on initial Format 0.19 read-write mount requests using the requested VFS mount flags as well as superblock mode; keep the existing RO-to-RW promotion guard.
+- Independently prevent the native writer from enabling Format 0.19 even if a VFS state transition fails to reject a request. Writable Format 0.19 remains disabled until complete crash-safe transaction/resize qualification.
+- Strengthen disposable native loopback qualification to request a fresh RW mount before the initial RO mount, avoiding reuse of a previously read-only superblock.
+
 ## 0.18.128 — 2026-10-18
 
 - Add the extracted native checkpoint-discovery object to the canonical self-contained DKMS packaging manifest so Linux .deb and .run installations compile exactly the same source as the in-repository kernel build.

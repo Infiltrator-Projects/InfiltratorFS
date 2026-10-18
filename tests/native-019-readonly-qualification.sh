@@ -41,6 +41,13 @@ if ! grep -q '^infiltratorfs ' /proc/modules; then
     loaded=1
 fi
 loop="$(losetup --find --show "$image")"
+# Verify a fresh superblock cannot be mounted writable. A later RO->RW
+# remount has a separate VFS gate checked in check_ro().
+if mount -t infiltratorfs -o rw "$loop" "$mnt" 2>/dev/null; then
+    mounted=1
+    echo 'Unqualified Format 0.19 fresh RW mount succeeded!' >&2
+    exit 1
+fi
 check_ro() {
     mount -t infiltratorfs -o ro "$loop" "$mnt"
     mounted=1
@@ -55,13 +62,6 @@ check_ro() {
     mounted=0
 }
 check_ro
-
-# A Format 0.19 image is not yet writable through the native driver.
-if mount -t infiltratorfs -o rw "$loop" "$mnt" 2>/dev/null; then
-    mounted=1
-    echo 'Unqualified Format 0.19 initial RW mount succeeded!' >&2
-    exit 1
-fi
 
 # Corrupt block zero; both fixed locators still locate remote checkpoints.
 printf '\xff' | dd of="$image" bs=1 seek=0 count=1 conv=notrunc status=none

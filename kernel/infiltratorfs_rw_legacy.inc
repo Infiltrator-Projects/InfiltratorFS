@@ -1039,6 +1039,10 @@ static int infilfs_rw_enable(struct super_block *sb)
     u32 snapshots = 0;
     int ret;
 
+    /* The 0.19 commit/resize protocol is not ready: no writer can enable it. */
+    if (le16_to_cpu(sbi->disk.format_minor) ==
+        INFILFS_LOCATOR_FORMAT_MINOR)
+        return -EROFS;
     if (sbi->write_poisoned)
         return -EIO;
     if (sbi->rw_enabled)

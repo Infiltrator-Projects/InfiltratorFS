@@ -2770,7 +2770,8 @@ static int infilfs_fill_super(struct super_block *sb, struct fs_context *fc)
 
     /* Format 0.19 remains read-only until crash-safe writes qualify. */
     if (le16_to_cpu(sbi->disk.format_minor) ==
-            INFILFS_LOCATOR_FORMAT_MINOR && !sb_rdonly(sb)) {
+            INFILFS_LOCATOR_FORMAT_MINOR &&
+        (!fc || !(fc->sb_flags & SB_RDONLY) || !sb_rdonly(sb))) {
         ret = -EROFS;
         goto fail;
     }
