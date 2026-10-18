@@ -244,6 +244,40 @@ int main(int argc, char **argv)
         expect(m.writes == before, "read-only I/O recovery never writes media");
     }
 
+    /* Losing BOTH discovery locators must not hide an independently valid
+     * primary checkpoint and its explicitly recorded backup locations. */
+    {
+        uint8_t saved_a[INFS_BLOCK_SIZE];
+        uint8_t saved_b[INFS_BLOCK_SIZE];
+        struct infs_superblock_disk committed = {0};
+        struct infs_volume view = {0};
+        struct infs_storage view_storage = { .ops = &ops, .context = &m };
+        struct infs_lookup root_lookup = {0};
+        unsigned before = m.writes;
+        memcpy(saved_a, m.contents + INFS_LOCATOR_BLOCK_A * INFS_BLOCK_SIZE,
+               sizeof(saved_a));
+        memcpy(saved_b, m.contents + INFS_LOCATOR_BLOCK_B * INFS_BLOCK_SIZE,
+               sizeof(saved_b));
+        m.contents[INFS_LOCATOR_BLOCK_A * INFS_BLOCK_SIZE] ^= 0xffu;
+        m.contents[INFS_LOCATOR_BLOCK_B * INFS_BLOCK_SIZE] ^= 0xffu;
+        expect(infs_volume_verify_019_test_image(&storage, &committed) ==
+                   INFS_STATUS_OK,
+               "valid primary recovers committed graph without either locator");
+        expect(infs_volume_open_019_test_image(&view, &view_storage) ==
+                   INFS_STATUS_OK,
+               "read-only image opens after losing both fixed locators");
+        expect(infs_lookup_path(&view, "/", &root_lookup) == INFS_STATUS_OK &&
+                   root_lookup.type == INFS_OBJECT_DIRECTORY,
+               "recovered primary supplies trustworthy root namespace");
+        infs_volume_close(&view);
+        memcpy(m.contents + INFS_LOCATOR_BLOCK_A * INFS_BLOCK_SIZE,
+               saved_a, sizeof(saved_a));
+        memcpy(m.contents + INFS_LOCATOR_BLOCK_B * INFS_BLOCK_SIZE,
+               saved_b, sizeof(saved_b));
+        expect(m.writes == before,
+               "primary-only read-only recovery never rewrites locators");
+    }
+
     /* Before destructive crash-fixture mutations, optionally emit the exact
      * fully validated Format 0.19 image for native loop-mounted RO tests. */
     if (argc == 3) {

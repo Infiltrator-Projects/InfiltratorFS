@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.132 — 2026-10-18
+
+- Recover read-only Format 0.19 test images after loss of both discovery locators when block zero is independently CRC-valid and explicitly identifies valid checkpoint geometry. Portable and native Linux readers use the primary's bounded checkpoint map; no speculative physical midpoint/end scan.
+- Retain full committed-graph validation, reserved locator-block checks, and all native writable mount/physical formatting restrictions. Add disposable memory-image and native loop-mounted regression tests for primary-only recovery.
+- Production persistent Format remains 0.18; 0.19 writable publication, crash-safe resize and physical qualification are still outstanding.
+
 ## 0.18.131 — 2026-10-18
 
 - Continue portable Format 0.19 recovery after an individual locator or checkpoint read failure when another independently validated recovery copy survives. Preserve the first operational I/O error if none can be recovered, rather than reporting false corruption.

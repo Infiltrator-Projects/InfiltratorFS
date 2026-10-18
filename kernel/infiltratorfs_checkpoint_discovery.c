@@ -128,6 +128,47 @@ int infilfs_read_checkpoint_candidates(
         }
     }
 
+    if (!mask && device_blocks >= INFILFS_LOCATOR_MIN_VOLUME_BLOCKS) {
+        /* A valid primary 0.19 checkpoint is an independent source of
+         * bounded backup locations when BOTH fixed locators are lost.
+         * Never guess the current midpoint/end and never trust this header
+         * without the normal full committed-graph verification. */
+        int ret = infilfs_read_block(sb, 0, raw);
+        if (ret) {
+            if (!first_locator_error)
+                first_locator_error = ret;
+        } else if (infilfs_crc64_block_valid(
+                       raw, offsetof(struct infilfs_superblock_disk,
+                                     checksum),
+                       sizeof(((struct infilfs_superblock_disk *)raw)->
+                              checksum)) &&
+                   !memchr_inv(raw + sizeof(anchor), 0,
+                               INFILFS_DISK_BLOCK_SIZE - sizeof(anchor))) {
+            bool admissible = true;
+            memcpy(&anchor, raw, sizeof(anchor));
+            if (infilfs_checkpoint_basic_valid(&anchor, device_blocks) &&
+                le16_to_cpu(anchor.format_minor) ==
+                    INFILFS_LOCATOR_FORMAT_MINOR &&
+                le64_to_cpu(anchor.total_blocks) >=
+                    INFILFS_LOCATOR_MIN_VOLUME_BLOCKS) {
+                locators[0].generation = le64_to_cpu(anchor.generation);
+                locators[0].total_blocks =
+                    le64_to_cpu(anchor.total_blocks);
+                memcpy(locators[0].filesystem_uuid,
+                       anchor.filesystem_uuid, 16u);
+                for (i = 0; i < INFILFS_CHECKPOINT_COUNT; ++i) {
+                    u64 pos = le64_to_cpu(anchor.checkpoint_block[i]);
+                    locators[0].checkpoint[i] = pos;
+                    if (pos == INFILFS_LOCATOR_BLOCK_A ||
+                        pos == INFILFS_LOCATOR_BLOCK_B)
+                        admissible = false;
+                }
+                if (admissible)
+                    mask = 1u;
+            }
+        }
+    }
+
     if (mask) {
         set->format019 = true;
         set->first_read_error = first_locator_error;

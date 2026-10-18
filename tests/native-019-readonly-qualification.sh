@@ -96,6 +96,22 @@ PY
 }
 check_ro
 
+# Both fixed locators can be lost while block zero remains an intact,
+# independently validated checkpoint. Restore the disposable image's locator
+# pages before the subsequent block-zero-loss recovery matrix.
+dd if="$image" of="$work/locator-a.saved" bs=4096 skip=1 count=1 status=none
+dd if="$image" of="$work/locator-b.saved" bs=4096 skip=2047 count=1 status=none
+printf '\\xff' | dd of="$image" bs=1 seek=4096 count=1 conv=notrunc status=none
+printf '\\xff' | dd of="$image" bs=1 seek=8384512 count=1 conv=notrunc status=none
+sync "$image"
+blockdev --flushbufs "$loop" || true
+check_ro
+dd if="$work/locator-a.saved" of="$image" bs=4096 seek=1 count=1 conv=notrunc status=none
+dd if="$work/locator-b.saved" of="$image" bs=4096 seek=2047 count=1 conv=notrunc status=none
+sync "$image"
+blockdev --flushbufs "$loop" || true
+check_ro
+
 # Corrupt block zero; both fixed locators still locate remote checkpoints.
 printf '\xff' | dd of="$image" bs=1 seek=0 count=1 conv=notrunc status=none
 sync "$image"

@@ -230,9 +230,35 @@ infs_status infs_locator_discover_019_headers(
                 INFS_STATUS_OK)
             mask |= (uint8_t)(1u << i);
     }
-    if (!mask)
-        return first_read_error == INFS_STATUS_OK ?
-            INFS_STATUS_CORRUPT : first_read_error;
+    if (!mask) {
+        /* Both independent locator pages are unavailable. A CRC-valid,
+         * structurally valid primary checkpoint can still supply bounded
+         * backup addresses; it is not a replacement for graph validation. */
+        struct infs_superblock_disk anchor;
+        struct infs_locator hint = {0};
+        status = infs_storage_read(storage, 0, raw, sizeof(raw));
+        if (status != INFS_STATUS_OK) {
+            if (first_read_error == INFS_STATUS_OK)
+                first_read_error = status;
+        } else if (infs_validate_superblock_block_minor(
+                       raw, INFS_LOCATOR_FORMAT_MINOR)) {
+            memcpy(&anchor, raw, sizeof(anchor));
+            hint.generation = infs_le64_to_cpu(anchor.generation);
+            hint.total_blocks = infs_le64_to_cpu(anchor.total_blocks);
+            for (unsigned i = 0; i < INFS_CHECKPOINT_COUNT; ++i)
+                hint.checkpoint[i] =
+                    infs_le64_to_cpu(anchor.checkpoint_block[i]);
+            memcpy(hint.filesystem_uuid, anchor.filesystem_uuid, 16u);
+            if (locator_fields_valid(&hint) &&
+                hint.total_blocks <= physical_blocks) {
+                locator[0] = hint;
+                mask = 1u;
+            }
+        }
+        if (!mask)
+            return first_read_error == INFS_STATUS_OK ?
+                INFS_STATUS_CORRUPT : first_read_error;
+    }
 
     status = infs_locator_candidates(
         locator, mask, physical_blocks, locations, &entries);
