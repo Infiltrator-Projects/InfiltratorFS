@@ -1163,7 +1163,7 @@ static long infilfs_file_fallocate(struct file *file, int mode,
     }
 
     /*
-     * Format 0.18 extent coverage ends exactly at logical EOF. Therefore an
+     * The current on-disk extent coverage ends exactly at logical EOF. Therefore an
      * allocated KEEP_SIZE tail beyond EOF cannot be represented without a new
      * on-disk extent state. KEEP_SIZE is nevertheless fully meaningful inside
      * the existing file, where materialising a hole or unsharing a CoW range
