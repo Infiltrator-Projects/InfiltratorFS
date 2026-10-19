@@ -7,7 +7,7 @@ This README is intentionally limited to local kernel-module guidance. Filesystem
 
 ## Role
 
-The module registers filesystem type `infiltratorfs` and maps Linux VFS operations onto the portable Format 0.18 object, extent, transaction, checkpoint and integrity model.
+The module registers filesystem type `infiltratorfs` and maps Linux VFS operations onto the portable Format 0.19 object, extent, transaction, checkpoint and integrity model.
 
 The current product path is native VFS only. The former userspace FUSE implementation is not part of the current source or package path and survives only in Git history.
 
@@ -29,7 +29,7 @@ Load the installed module normally:
 sudo modprobe infiltratorfs
 ```
 
-Mount a current Format 0.18 volume:
+Mount a current Format 0.19 volume:
 
 ```bash
 sudo mount -i -t infiltratorfs -o rw /dev/<partition> /mnt/infiltratorfs

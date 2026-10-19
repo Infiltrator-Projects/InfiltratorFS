@@ -15,7 +15,7 @@ sources of truth.
 - [`PHILOSOPHY.md`](PHILOSOPHY.md) — governing engineering and documentation standard.
 - `DESIGN.md` — concise engineering-design principles and subsystem shape for contributors. It is subordinate to the canonical project philosophy, `ARCHITECTURE.md` and the byte-level format contract; it is not a separate status authority.
 - `FORMAT-0.19-RECOVERY-DESIGN.md` — implemented recovery-locator protocol and interruption invariants; byte-level constants remain in the format/locator headers.
-- `ON_DISK_FORMAT.md` — persistent Format 0.18 structural contract. Exact
+- `ON_DISK_FORMAT.md` — persistent Format 0.19 structural contract. Exact
   packed fields/constants remain authoritative in `include/infilfs/format.h`.
 - `ARCHITECTURE.md` — architecture, invariants, ownership boundaries and
   failure semantics that are broader than byte layout.
@@ -43,7 +43,7 @@ sources of truth.
 ## Operational and specialist material
 
 - `FILESYSTEM-PAPER-AUDIT-2026.md` — maintained research/quality cross-check
-  against filesystem literature and the current implementation. It is evidence
+  against filesystem literature and its recorded Format 0.18 source baseline. It is evidence
   and design review material, not a normative format or qualification authority.
 - `FORENSICS.md` — forensic scanner semantics and evidentiary limits.
 - `FUTURE_ECOSYSTEM_INTEGRATION.md` — non-binding future ideas for optional capability-based integration with the wider Infiltrator software family; it is not a completion checklist or release promise.

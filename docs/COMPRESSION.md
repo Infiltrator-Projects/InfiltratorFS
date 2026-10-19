@@ -3,11 +3,11 @@
 
 ## Status
 
-Format 0.18 uses adaptive per-extent compression as a normal filesystem
+Format 0.19 uses adaptive per-extent compression as a normal filesystem
 capability. Newly formatted volumes enable `INFS_INCOMPAT_COMPRESSED_EXTENTS`.
 The automatic native codec is **IAC1 version 1** (codec identifier 2).
 
-IAC1 is the InfiltratorFS-native bounded codec selected for Format 0.18. LZ4
+IAC1 is the InfiltratorFS-native bounded codec selected for Format 0.19. LZ4
 (codec identifier 1) remains supported as a development/reference and
 interoperability codec, but new automatic writes do not select LZ4.
 
@@ -34,9 +34,9 @@ The stream header records the IAC1 version and predictor mode. Unknown versions,
 invalid modes, zero-distance matches, malformed fills, truncated streams and
 output-length mismatches are rejected.
 
-Format 0.18 keeps codec identification in each compressed extent. The low two
+Format 0.19 keeps codec identification in each compressed extent. The low two
 codec bits encode identifiers 0-3 and additional flag bits extend the codec
-namespace to 11 bits (0-2047). This permits future Format 0.18 codec identifiers
+namespace to 11 bits (0-2047). This permits future Format 0.19 codec identifiers
 without changing file identity or requiring every extent on a volume to use the
 same representation. Pre-1.0 development does not promise backward readers for
 superseded development formats; the compatibility requirement here is that a
@@ -102,7 +102,7 @@ allocation, but an individual codec stream is never split.
 IAC1 predictors, ratio on simple compressible classes, deterministic output,
 cheap high-entropy rejection and malformed-stream rejection.
 
-`tests/compression-extents.c` qualifies the actual Format 0.18 extent
+`tests/compression-extents.c` qualifies the actual Format 0.19 extent
 representation, adaptive fallback, snapshots, mutation, scrub and corruption
 handling.
 
@@ -123,7 +123,7 @@ already-compressed/encrypted-style high-entropy content. It requires:
 The qualification runs the production selected-mode IAC1 encoder over the same
 corpus and emits per-class and aggregate size plus encode/decode throughput
 telemetry. Comparative codecs may be measured by external research tooling,
-but they are not Format 0.18 dependencies and are not required to mount or
+but they are not Format 0.19 dependencies and are not required to mount or
 recover an InfiltratorFS volume.
 
 The native codec is not required to beat a general-purpose codec on every
@@ -134,15 +134,15 @@ small kernel implementation surface and bounded mutation amplification.
 
 ## Format discipline
 
-For Format 0.18, codec identifier 2 means IAC1 v1 and codec identifier 1 means
+For Format 0.19, codec identifier 2 means IAC1 v1 and codec identifier 1 means
 the retained LZ4 representation. The codec identifier, stored-byte count and logical
 extent length are sufficient to locate and decode each bounded stream.
 
 Future codec research may allocate any unused identifier in the 11-bit Format
-0.18 codec namespace or may justify a future development-format revision. It
+0.19 codec namespace or may justify a future development-format revision. It
 must not silently change the meaning of an existing IAC1 v1 stream.
 
-Pre-1.0 development may still replace Format 0.18 as a whole, but within a
+Pre-1.0 development may still replace Format 0.19 as a whole, but within a
 given accepted format a committed compressed stream must remain deterministic,
 recoverable and independently decodable.
 

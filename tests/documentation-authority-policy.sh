@@ -46,4 +46,23 @@ if grep -Eq '\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml' docs/VALIDATION.md; then
     fail 'VALIDATION duplicates individual workflow filenames instead of the live authority'
 fi
 
+
+# Derive current format identity from the byte-level authority, not from the
+# software release number or a duplicated documentation constant.
+major="$(sed -nE 's/^#define INFS_FORMAT_MAJOR ([0-9]+)u$/\1/p' include/infilfs/format.h)"
+minor="$(sed -nE 's/^#define INFS_FORMAT_MINOR ([0-9]+)u$/\1/p' include/infilfs/format.h)"
+[[ "$major" =~ ^[0-9]+$ && "$minor" =~ ^[0-9]+$ ]] ||
+    fail 'canonical format version is missing'
+current_format="$major.$minor"
+grep -Fq "# InfiltratorFS On-Disk Format $current_format" docs/ON_DISK_FORMAT.md ||
+    fail 'normative on-disk document contradicts canonical format version'
+grep -Fq "persistent Format $current_format structural contract" "$map" ||
+    fail 'documentation authority map names an obsolete format'
+# ADRs and historical qualification remain historical; the following files
+# purport to describe the live current-format contract.
+for normative in docs/COMPRESSION.md docs/SECURITY.md docs/FORENSICS.md docs/INSPIRATIONS.md kernel/README.md kernel/infiltratorfs_rw.inc kernel/infiltratorfs_rw_data.inc include/infilfs/format.h; do
+    obsolete="$(grep -Eo 'Format [0-9]+\.[0-9]+' "$normative" | sort -u | grep -Fvx "Format $current_format" || true)"
+    [[ -z "$obsolete" ]] || fail "$normative names obsolete $obsolete as a current-format contract"
+done
+
 printf 'Documentation authority policy: PASS\n'

@@ -93,7 +93,7 @@ static int infilfs_rw_tx_begin(struct super_block *sb,
 #include "infiltratorfs_rw_data.inc"
 
 /*
- * Format 0.18 directory-tree code is composed here: checksum helpers and
+ * The native directory-tree implementation is composed here: checksum helpers and
  * native CoW transaction primitives are both available at this point.
  */
 

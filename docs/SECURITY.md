@@ -32,12 +32,12 @@ authentication. They do not establish that bytes came from a trusted writer.
 
 ## Current guarantees and non-goals
 
-Current Format 0.18 provides structural validation, checksummed metadata,
+Current Format 0.19 provides structural validation, checksummed metadata,
 logical-data digest verification, copy-on-write publication, checkpoint
 recovery and fail-closed handling of unsupported/malformed persistent
 structures.
 
-Current Format 0.18 supports an optional authenticated encrypted-storage
+Current Format 0.19 supports an optional authenticated encrypted-storage
 wrapper. A random 256-bit root volume key is wrapped by a
 PBKDF2-HMAC-SHA256-derived key-encryption key in the encrypted-container header.
 Domain zero uses that root key directly. Nonzero persistent per-object
@@ -64,7 +64,7 @@ through the policy-aware storage boundary. Changing a nonempty regular file's
 storage policy without relocating its existing extents is rejected; ordinary
 presentation-flag changes that preserve the storage policy remain allowed.
 
-Unencrypted Format 0.18 volumes retain the CRC64/SHA-256 integrity model and do
+Unencrypted Format 0.19 volumes retain the CRC64/SHA-256 integrity model and do
 not provide offline confidentiality.
 
 Availability under hostile resource-exhaustion input is bounded where practical
@@ -222,7 +222,7 @@ The same approach applies to adjacent metadata classes such as named attributes,
 
 ## On-disk security objects
 
-Format 0.18 uses separate persistent principal and security-descriptor object
+Format 0.19 uses separate persistent principal and security-descriptor object
 classes when the portable-security incompatibility feature is enabled.
 Current security-object payload version 2 is the only accepted development
 representation. Namespace common attributes
@@ -269,7 +269,7 @@ the metadata in its native UI. Adapters must follow this order:
    metadata with the object according to the owning metadata class; cross-platform
    edits must not detach it accidentally.
 
-The preservation rules are independent of adapter exposure. Format 0.18 now has
+The preservation rules are independent of adapter exposure. Format 0.19 now has
 the generic typed/reparse extension-object and portable named-metadata/named-stream
 mechanisms needed for lossless cross-platform storage where those contracts fit.
 That does not imply that every operating-system-specific security payload has an

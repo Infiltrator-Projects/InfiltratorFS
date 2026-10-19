@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.19.2 — 2026-10-19
+
+- Align maintained format, security, compression, forensic, kernel and architectural documentation with the already-implemented Format 0.19. Preserve historical Format 0.18 decision rationale while stating its resolution and outstanding physical-media qualification accurately.
+- Correct the directory-tree specification so it explicitly distinguishes the default byte-exact namespace from the optional ASCII case-fold policy.
+- Strengthen the documentation authority check against the actual version constants in the canonical packed-format header, without adding a second format-version authority. Disk bytes, public APIs and filesystem execution paths are unchanged.
+
 ## 0.19.1 — 2026-10-18
 
 - Fix interrupted resize recovery when locator B was already damaged: retain the old primary geometry map while publishing the two new remote checkpoints, then publish the primary and final locator. Enforce this backup-first relocation order in the shared portable/native publisher. Existing Format 0.19 media remains compatible.

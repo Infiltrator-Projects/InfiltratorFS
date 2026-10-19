@@ -223,7 +223,7 @@ A POSIX compatibility record stores current mode/UID/GID information for adapter
 
 ## 8. Directories and names
 
-Current directory heads reference checksummed directory-tree pages. Hashing selects a storage path, but exact UTF-8 name bytes remain namespace identity and comparison is byte-exact/case-sensitive.
+Current directory heads reference checksummed directory-tree pages. Hashing selects a storage path using the volume's declared namespace policy. The default identity and comparison are byte-exact and case-sensitive; volumes declaring `INFS_INCOMPAT_CASEFOLD_V1` instead fold ASCII A-Z for lookup and tree routing while retaining the exact original UTF-8 spelling in each directory entry.
 
 Stored component names:
 

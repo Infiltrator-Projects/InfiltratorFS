@@ -20,7 +20,7 @@ This file records durable architectural decisions for InfiltratorFS. Detailed fo
 
 ## ADR-003 — Three physically separated checkpoints
 
-**Decision.** Format 0.18 maintains three independently validated checkpoint copies.
+**Decision.** Current Format 0.19 maintains three independently validated checkpoint copies.
 
 **Rationale.** Small deliberate metadata redundancy improves recoverability from torn/corrupt primary metadata.
 
@@ -66,16 +66,18 @@ This file records durable architectural decisions for InfiltratorFS. Detailed fo
 
 **Consequence.** Generic compression-library convenience does not override format ownership.
 
-## ADR-009 — Backup checkpoint discovery after resize (Format 0.19 design selected; not implemented)
+## ADR-009 — Backup checkpoint discovery after resize (resolved by Format 0.19)
 
-**Status:** Required before a permanent on-disk format freeze.
+**Status:** Implemented and qualified for testing in Format 0.19. Physical-media power-loss/endurance and performance qualification remain open; see `ROADMAP.md` and `QUALIFICATION.md` for their separate evidence classes.
+
+The following records the original Format 0.18 limitation that motivated this decision.
 
 Block zero records committed secondary checkpoint positions. Online grow/shrink
 can preserve or relocate those positions. If block zero is invalid, both the
 native and portable Format 0.18 openers fall back to physical midpoint/end
 locations; those positions need not contain valid backups after resize.
 
-A future stable format must make backup locator recovery independent of block
+The replacement format was required to make backup locator recovery independent of block
 zero and physical capacity, with bounded discovery cost, correct recovery
 across geometry changes, torn checkpoint writes and power loss. Do not assign
 a locator into an existing occupied Format 0.18 block or silently change the
@@ -95,4 +97,4 @@ independently corrupted or relocated replicas.
 
 **Compatibility:** This requires a genuine new Format 0.19 layout and explicit, destructive reformat or a separately qualified migration. Format 0.18 media must not be silently reinterpreted or mutated by Format 0.19.
 
-**Status:** Architecture accepted for implementation only. It is **not** a claim that Format 0.19 exists, mounts, or has passed recovery qualification.
+**Status:** Implemented and exercised by Format 0.19 portable interruption tests and native Linux mounted qualification for testing. This does not establish production physical-media durability, performance or mounted Windows-driver qualification; see `ROADMAP.md` and `QUALIFICATION.md`.

@@ -216,7 +216,7 @@ struct INFS_PACKED infs_object_header_disk {
     uint8_t  checksum[32];
 };
 
-/* Format 0.18 metadata pages are deliberately not persistent objects. They are
+/* Current-format metadata pages are deliberately not persistent objects. They are
  * owned by one directory or by the object-index head and are reached through
  * physical block pointers stored in that head object. They nevertheless carry
  * their own generation, owner identity and checksum so scrub/recovery can
@@ -299,7 +299,7 @@ struct INFS_PACKED infs_file_payload_disk {
     uint8_t  checksum_head_id[16];
 };
 
-/* Format 0.18 symbolic links store their UTF-8 target bytes directly after
+/* Current-format symbolic links store their UTF-8 target bytes directly after
  * this fixed payload. Targets may be absolute or relative and are never
  * interpreted by the portable core. */
 struct INFS_PACKED infs_symlink_payload_disk {
@@ -313,7 +313,7 @@ struct INFS_PACKED infs_symlink_payload_disk {
     (INFS_BLOCK_SIZE - sizeof(struct infs_object_header_disk) - \
      sizeof(struct infs_symlink_payload_disk))
 
-/* Format 0.18 version-2 file objects keep the fixed file payload and then
+/* Current-format version-2 file objects keep the fixed file payload and then
  * store this extent-head followed by little-endian uint64 physical pointers
  * to independently checksummed extent metadata pages. extent_count remains
  * the total number of extents across all pages. */
@@ -474,7 +474,7 @@ struct INFS_PACKED infs_metadata_stream_entry_disk {
       sizeof(struct infs_checksum_payload_disk)) / \
      sizeof(struct infs_data_checksum_disk))
 
-/* Format 0.18 inline files reuse the existing file object block. A non-empty
+/* Current-format inline files reuse the existing file object block. A non-empty
  * inline file stores one SHA-256 digest immediately after the fixed file
  * payload, followed by logical_size bytes of data. The digest authenticates
  * the same zero-padded 4096-byte logical block used by normal data storage. */

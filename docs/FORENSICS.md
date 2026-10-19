@@ -1,14 +1,14 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # Forensic metadata scanning
 
-`infilfs-forensic` is a read-only physical-block scanner for current Format 0.18 media. It does not require the current namespace graph to open and does not modify, repair, mount or replay the target.
+`infilfs-forensic` is a read-only physical-block scanner for current Format 0.19 media. It does not require the current namespace graph to open and does not modify, repair, mount or replay the target.
 
 ```bash
 infilfs-forensic volume.img
 infilfs-forensic --jsonl /dev/sdb1 > evidence.jsonl
 ```
 
-The scanner authenticates each recognized current-format record independently using the Format 0.18 validation contract, including symbolic-link, hard-link and snapshot-catalog objects:
+The scanner authenticates each recognized current-format record independently using the Format 0.19 validation contract, including symbolic-link, hard-link and snapshot-catalog objects:
 
 - checkpoint structure, geometry-independent fields and CRC64;
 - object magic, type/version, identity, payload shape, canonical padding and CRC64;
