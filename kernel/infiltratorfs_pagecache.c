@@ -344,8 +344,20 @@ static int infilfs_read_folio_legacy(struct file *file, struct folio *folio)
     /*
      * Publish validated page data and release the read lock as one page-cache
      * completion. A failed verification must leave the folio non-uptodate.
+     *
+     * For the intermittent ACL cold-remount read failure, trace only the
+     * 18-byte inline-file case. Distinguish a verified producer failure from
+     * a folio whose completion unexpectedly failed to set PG_uptodate.
      */
+    if (i_size_read(folio->mapping->host) == 18)
+        pr_info("InfiltratorFS: inline18 read_folio before ino=%lu pos=%lld ret=%d locked=%d uptodate=%d\n",
+            folio->mapping->host->i_ino, (long long)folio_pos(folio),
+            ret, folio_test_locked(folio), folio_test_uptodate(folio));
     folio_end_read(folio, !ret);
+    if (i_size_read(folio->mapping->host) == 18)
+        pr_info("InfiltratorFS: inline18 read_folio after ino=%lu pos=%lld ret=%d locked=%d uptodate=%d\n",
+            folio->mapping->host->i_ino, (long long)folio_pos(folio),
+            ret, folio_test_locked(folio), folio_test_uptodate(folio));
     return ret;
 }
 
@@ -410,7 +422,15 @@ static int infilfs_readahead_cluster_submit(
             flush_dcache_folio(folio);
         else
             mapping_set_error(folio->mapping, ret);
+        if (i_size_read(folio->mapping->host) == 18)
+            pr_info("InfiltratorFS: inline18 readahead before ino=%lu pos=%lld ret=%d locked=%d uptodate=%d\n",
+                folio->mapping->host->i_ino, (long long)folio_pos(folio),
+                ret, folio_test_locked(folio), folio_test_uptodate(folio));
         folio_end_read(folio, !ret);
+        if (i_size_read(folio->mapping->host) == 18)
+            pr_info("InfiltratorFS: inline18 readahead after ino=%lu pos=%lld ret=%d locked=%d uptodate=%d\n",
+                folio->mapping->host->i_ino, (long long)folio_pos(folio),
+                ret, folio_test_locked(folio), folio_test_uptodate(folio));
     }
 
     cluster->count = 0;

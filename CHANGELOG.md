@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.19.12 — 2026-10-20
+
+- Instrument 18-byte native inline-file readahead and synchronous folio completion immediately around `folio_end_read` to isolate the intermittent ACL cold-remount `EIO` (issue #44). Preserve the existing verified read path and record whether the producer returned an error or folio state changed unexpectedly; do not suppress the failure or weaken integrity verification.
+- Keep the unresolved native mounted-read defect open until repeated exact-source qualification identifies and verifies a correction. No Format 0.19 disk-layout change.
+
 ## 0.19.11 — 2026-10-20
 
 - Prepare non-uptodate native Linux folios from verified existing contents even for full-folio buffered overwrites, preserving the original suffix when a user-memory fault interrupts the write. Add a mounted cold-cache regression to the native kernel gate.
