@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.19.17 — 2026-10-21
+
+- Correct the automatic native qualification/release deadlock: a ten-minute watchdog was cancelling a workflow that still contained a 30-minute exhaustive mounted suite, and the exact-SHA publisher properly refused cancelled native evidence. Run a bounded real-mounted short-write, 1023-byte name, statfs and CLEAN scrub gate automatically; retain the 512 MiB transaction, media, maintenance and defragmentation suites for manual dispatch.
+- Enforce the automatic/manual split in the CI duration-policy test and document the distinct qualification evidence. Do not relax the exact-SHA release gate, omit native mounting, or alter filesystem persistent format and durability logic.
+
 ## 0.19.16 — 2026-10-21
 
 - Return zero immediately for valid zero-byte portable reads before reaching inline-file memcpy; the read API permits a NULL buffer with zero size, so passing it to memcpy was undefined C behaviour even when the copy length was zero.

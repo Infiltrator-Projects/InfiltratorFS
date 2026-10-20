@@ -261,5 +261,20 @@ if contains_uncommented(kernel, '.github/release-trigger'):
     raise SystemExit('native kernel workflow retains deleted release-trigger coupling')
 if 'push' not in on_triggers(kernel):
     raise SystemExit('native kernel workflow automatic trigger unexpectedly removed')
+# A release must receive real, bounded native mount evidence on its exact SHA,
+# without accidentally launching long qualification before the watchdog.
+if ('run: sudo bash tests/native-mounted-smoke-qualification.sh build '
+        'kernel/infiltratorfs.ko') not in kernel:
+    raise SystemExit('automatic native mounted smoke gate missing')
+for step in (
+    'Native read-write mount transaction and scrub qualification',
+    'Native mounted online grow and bounded shrink',
+    'Native media-aware rotational/non-rotational placement',
+    'Native fragmentation metrics and online defragmentation',
+):
+    required = (f'      - name: {step}\n'
+                "        if: github.event_name == 'workflow_dispatch'\n")
+    if required not in kernel:
+        raise SystemExit(f'exhaustive native step not manual-only: {step}')
 
 print('CI duration policy: PASS')

@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 name: Native Linux kernel module
 
-# Run every required exact-source gate on every main revision. Path filters
-# can otherwise deadlock immutable release publication after CI-only fixes.
+# Run the bounded native mounted release gate on every main revision. Exhaustive
+# 512 MiB transactions, online maintenance and stress cases are manual-only:
+# the ten-minute automatic watchdog must never invalidate a required release gate.
 on:
   push:
     branches:
@@ -156,7 +157,12 @@ jobs:
           bash -n tests/native-quota-qualification.sh
           bash tests/native-quota-qualification.sh build kernel/infiltratorfs.ko
 
+      - name: Native bounded mounted write and name-boundary qualification
+        timeout-minutes: 3
+        run: sudo bash tests/native-mounted-smoke-qualification.sh build kernel/infiltratorfs.ko
+
       - name: Native read-write mount transaction and scrub qualification
+        if: github.event_name == 'workflow_dispatch'
         timeout-minutes: 30
         shell: bash
         run: |
@@ -1567,11 +1573,13 @@ jobs:
           printf 'extent/remount/scrub qualification passed on %s\n' "$(uname -r)"
 
       - name: Native mounted online grow and bounded shrink
+        if: github.event_name == 'workflow_dispatch'
         timeout-minutes: 10
         shell: bash
         run: bash tests/native-resize-qualification.sh build kernel/infiltratorfs.ko
 
       - name: Native media-aware rotational/non-rotational placement
+        if: github.event_name == 'workflow_dispatch'
         timeout-minutes: 15
         shell: bash
         run: |
@@ -1581,6 +1589,7 @@ jobs:
           bash tests/native-media-placement-qualification.sh build kernel/infiltratorfs.ko
 
       - name: Native fragmentation metrics and online defragmentation
+        if: github.event_name == 'workflow_dispatch'
         timeout-minutes: 20
         shell: bash
         run: |

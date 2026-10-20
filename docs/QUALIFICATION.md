@@ -12,7 +12,7 @@ Historical results recorded here apply only to the source commit on which they r
 ## Qualification classes
 
 - **Build and conformance** — ordinary broad CI: GCC/Linux, Clang, sanitizers, static analysis, Windows portability/interoperability, policy guards and package construction. Every automatic job is capped at 10 minutes.
-- **Native Linux kernel module** — mounted kernel qualification for relevant kernel/core/package changes. It builds the module/DKMS source and requires a usable build environment for the runner's exact running kernel before exercising native mounted behaviour; inability to establish that environment fails the claimed mounted qualification rather than degrading it to compile-only evidence.
+- **Native Linux kernel module** — builds the module/DKMS source on every main revision and requires the runner's exact running-kernel headers. Its automatic release gate includes Format 0.19 native write/recovery, real live remounts, removable/casefold names, quotas, CPU parallelism and a bounded mounted short-write/1023-byte filename/scrub test. Unavailable mount prerequisites fail closed, not compile-only. The exhaustive 512 MiB transaction/scrub workload and separate mounted grow/shrink, media-placement and defragmentation suites run on explicit manual dispatch; they are not represented as automatic release evidence.
 - **Native resize qualification** — dedicated mounted grow/shrink qualification independent of the quota gate; automatic execution is capped at 10 minutes.
 - **Heavy filesystem qualification** — million-file/1 TiB scale plus near-full mixed-workload endurance. This is manual-only milestone evidence because it intentionally exceeds the automatic CI ceiling.
 
@@ -39,7 +39,7 @@ A workflow should fail closed when a qualification class claims mounted coverage
 
 ## CI duration policy
 
-Automatic qualification and conformance jobs are hard-capped at 10 minutes where they are part of the ordinary CI set. A test that intrinsically needs more than 10 minutes must be a manual-only qualification and is launched deliberately when its coverage is warranted. The current long-running manual set is the real UEFI/root crash-recovery qualification, the full GNOME/libblockdev/UDisks formatter build, and the million-file/1 TiB plus endurance qualification.
+Automatic qualification and conformance jobs are hard-capped at 10 minutes where they are part of the ordinary CI set. A test that intrinsically needs more than 10 minutes must be a manual-only qualification and is launched deliberately when its coverage is warranted. The native kernel workflow therefore runs a separate bounded, real-mounted smoke gate automatically and reserves the 512 MiB extended read/write/scrub and online maintenance tests for manual dispatch. Native resize also has an independent automatic qualification workflow. The other long-running manual suites include real UEFI/root crash recovery, full GNOME/libblockdev/UDisks formatter build, and million-file/1 TiB endurance. A watchdog cancellation never counts as passing evidence.
 
 ## Curated development milestone evidence
 
