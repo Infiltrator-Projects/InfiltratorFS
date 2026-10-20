@@ -142,11 +142,22 @@ static bool readable_as(const char *path, uid_t uid, gid_t gid)
         if (setgroups(0, NULL) || setgid(gid) || setuid(uid))
             _exit(2);
         int fd = open(path, O_RDONLY);
-        if (fd < 0)
+        if (fd < 0) {
+            if (getenv("INFILFS_ACL_DIAGNOSTIC"))
+                fprintf(stderr,
+                        "POSIX ACL access probe: open %s as %u:%u failed: %s\n",
+                        path, (unsigned)uid, (unsigned)gid, strerror(errno));
             _exit(1);
+        }
         char byte;
-        if (read(fd, &byte, 1) < 0)
+        if (read(fd, &byte, 1) < 0) {
+            if (getenv("INFILFS_ACL_DIAGNOSTIC"))
+                fprintf(stderr,
+                        "POSIX ACL access probe: read %s as %u:%u failed: %s\n",
+                        path, (unsigned)uid, (unsigned)gid, strerror(errno));
+            close(fd);
             _exit(1);
+        }
         close(fd);
         _exit(0);
     }
@@ -376,8 +387,32 @@ static void verify(const char *root)
     nobody(&uid, &gid);
     char *base = path2(root, "posix-acl-qualification");
     char *access_file = path2(base, "access.txt");
+    struct stat st;
+    /*
+     * Retain the actual permission-denial evidence. The former assertion
+     * called every unprivileged access failure "ACL lost", even when the ACL
+     * xattr remained byte-for-byte intact across remount.
+     */
+    if (stat(root, &st))
+        fail("stat mounted root during ACL verification");
+    fprintf(stderr, "ACL remount root mode=%04o owner=%u:%u\n",
+            (unsigned)(st.st_mode & 07777),
+            (unsigned)st.st_uid, (unsigned)st.st_gid);
+    if (stat(base, &st))
+        fail("stat ACL fixture directory during verification");
+    fprintf(stderr, "ACL remount directory mode=%04o owner=%u:%u\n",
+            (unsigned)(st.st_mode & 07777),
+            (unsigned)st.st_uid, (unsigned)st.st_gid);
+    if (stat(access_file, &st))
+        fail("stat ACL fixture during verification");
+    fprintf(stderr, "ACL remount file mode=%04o owner=%u:%u expected-named=%u:%u\n",
+            (unsigned)(st.st_mode & 07777),
+            (unsigned)st.st_uid, (unsigned)st.st_gid,
+            (unsigned)uid, (unsigned)gid);
     check_named_read(access_file, uid, ACL_READ);
-    require(readable_as(access_file, uid, gid), "access ACL lost on remount");
+    setenv("INFILFS_ACL_DIAGNOSTIC", "1", 1);
+    require(readable_as(access_file, uid, gid),
+            "named ACL access denied after remount");
     char *real = path2(base, "setfacl.txt");
     if (access(real, F_OK) == 0) {
         check_setfacl(real, uid);
