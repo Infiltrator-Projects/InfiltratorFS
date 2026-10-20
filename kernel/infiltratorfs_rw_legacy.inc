@@ -10,6 +10,15 @@
  * immutable while the live generation advances.
  */
 
+/*
+ * Persistent snapshot catalog identity is part of the on-disk format, not a
+ * private choice made by individual mount-time readers. Keep its one native
+ * representation immutable and include the terminating NUL in neither lookup
+ * nor object identity.
+ */
+static const u8 infilfs_snapshot_catalog_id[16] =
+    INFILFS_SNAPSHOT_CATALOG_ID;
+
 bool infilfs_rw_bitmap_get(const u8 *bitmap, u64 block)
 {
     return (bitmap[block >> 3] & (u8)(1u << (block & 7u))) != 0;
@@ -606,9 +615,6 @@ bool infilfs_rw_utf8_valid(const u8 *s, size_t len)
 
 int infilfs_rw_snapshot_count(struct super_block *sb, u32 *count_out)
 {
-    static const u8 snapshot_id[16] = {
-        'I','N','F','S','-','S','N','A','P','-','C','A','T','-','0','1'
-    };
     struct infilfs_snapshot_catalog_payload_disk *payload;
     struct infilfs_object_header_disk *header;
     u64 block;
@@ -617,7 +623,7 @@ int infilfs_rw_snapshot_count(struct super_block *sb, u32 *count_out)
     int ret;
 
     *count_out = 0;
-    ret = infilfs_index_lookup(sb, snapshot_id, &block, &type);
+    ret = infilfs_index_lookup(sb, infilfs_snapshot_catalog_id, &block, &type);
     if (ret == -ENOENT)
         return 0;
     if (ret)
@@ -629,7 +635,7 @@ int infilfs_rw_snapshot_count(struct super_block *sb, u32 *count_out)
     if (!object)
         return -ENOMEM;
     ret = infilfs_read_object(sb, block, INFILFS_OBJECT_SNAPSHOT_CATALOG,
-                              snapshot_id, object);
+                              infilfs_snapshot_catalog_id, object);
     if (!ret) {
         header = (struct infilfs_object_header_disk *)object;
         payload = (struct infilfs_snapshot_catalog_payload_disk *)(header + 1);
@@ -657,9 +663,6 @@ int infilfs_rw_snapshot_count(struct super_block *sb, u32 *count_out)
 static int infilfs_rw_snapshot_union(struct super_block *sb, u32 snapshots)
 {
     u64 started = ktime_get_ns();
-    static const u8 snapshot_id[16] = {
-        'I','N','F','S','-','S','N','A','P','-','C','A','T','-','0','1'
-    };
     struct infilfs_sb_info *sbi = INFILFS_SB(sb);
     struct infilfs_object_header_disk *header;
     struct infilfs_snapshot_catalog_payload_disk *payload;
@@ -679,7 +682,7 @@ static int infilfs_rw_snapshot_union(struct super_block *sb, u32 snapshots)
         ret = -ENOMEM;
         goto out;
     }
-    ret = infilfs_index_lookup(sb, snapshot_id, &catalog_block, &type);
+    ret = infilfs_index_lookup(sb, infilfs_snapshot_catalog_id, &catalog_block, &type);
     if (ret)
         goto out;
     if (type != INFILFS_OBJECT_SNAPSHOT_CATALOG) {
@@ -688,7 +691,7 @@ static int infilfs_rw_snapshot_union(struct super_block *sb, u32 snapshots)
     }
     ret = infilfs_read_object(sb, catalog_block,
                               INFILFS_OBJECT_SNAPSHOT_CATALOG,
-                              snapshot_id, object);
+                              infilfs_snapshot_catalog_id, object);
     if (ret)
         goto out;
 
@@ -716,7 +719,7 @@ static int infilfs_rw_snapshot_union(struct super_block *sb, u32 snapshots)
             goto out;
         if (!infilfs_metadata_page_valid(
                 sb, page, (const u8 *)INFILFS_SNAPSHOT_PAGE_MAGIC,
-                snapshot_id)) {
+                infilfs_snapshot_catalog_id)) {
             ret = -EFSCORRUPTED;
             goto out;
         }

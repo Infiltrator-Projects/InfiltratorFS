@@ -33,6 +33,8 @@
 #define INFILFS_FORMAT_MAJOR 0u
 #define INFILFS_FORMAT_MINOR 19u
 #define INFILFS_CHECKPOINT_COUNT 3u
+/* A 16-byte persistent object identity; the source string includes a NUL. */
+#define INFILFS_SNAPSHOT_CATALOG_ID "INFS-SNAP-CAT-01"
 #define INFILFS_NAME_MAX 1023u
 
 #define INFILFS_CHECKSUM_CRC64_ECMA 1u

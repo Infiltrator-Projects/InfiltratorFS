@@ -521,6 +521,21 @@ for retired in \
         fail "dead kernel helper returned: $retired"
 done
 
+# The Format 0.19 snapshot identity must remain identical in the portable
+# and native formats, with exactly one native declaration for its 16 bytes.
+grep -Fqx '#define INFILFS_SNAPSHOT_CATALOG_ID "INFS-SNAP-CAT-01"' \
+    "$kernel/infiltratorfs_format.h" || \
+    fail 'native snapshot catalog identity drifted'
+grep -Fqx '#define INFS_SNAPSHOT_CATALOG_ID "INFS-SNAP-CAT-01"' \
+    "$root/include/infilfs/format.h" || \
+    fail 'portable snapshot catalog identity drifted'
+test "$(grep -Fc 'static const u8 infilfs_snapshot_catalog_id[16]' \
+    "$kernel/infiltratorfs_rw_legacy.inc")" -eq 1 || \
+    fail 'snapshot catalog identity duplicated in the native implementation'
+! grep -Fq 'static const u8 snapshot_id[16]' \
+    "$kernel/infiltratorfs_rw_legacy.inc" || \
+    fail 'ad-hoc snapshot identity returned to the native reader'
+
 # The standalone DKMS source must include the common on-disk namespace
 # predicate required by both native directory readers and name validation.
 grep -Eq '^include/infilfs/namespace_policy[.]h[[:space:]]+namespace_policy[.]h$' \
