@@ -44,7 +44,8 @@ echo 'Native smoke: partial user-copy and post-fault readback'
 timeout -k 3s 30s "$work/short-write" "$mnt"
 echo 'Native smoke: statfs capacity/name limit and root ownership'
 test "$(timeout -k 3s 20s stat -f -c %l "$mnt")" = 1023
-test "$(timeout -k 3s 20s stat -c '%u:%g' "$mnt")" = '0:0'
+# mkfs preserves the calling desktop user's ownership under sudo.
+test "$(timeout -k 3s 20s stat -c '%u:%g' "$mnt")" = "${SUDO_UID:-0}:${SUDO_GID:-0}"
 
 # The on-disk 1023-byte component limit must be usable from the native VFS,
 # while 1024 bytes must fail specifically as ENAMETOOLONG.
