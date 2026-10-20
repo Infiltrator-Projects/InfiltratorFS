@@ -387,28 +387,11 @@ static void verify(const char *root)
     nobody(&uid, &gid);
     char *base = path2(root, "posix-acl-qualification");
     char *access_file = path2(base, "access.txt");
-    struct stat st;
     /*
-     * Retain the actual permission-denial evidence. The former assertion
-     * called every unprivileged access failure "ACL lost", even when the ACL
-     * xattr remained byte-for-byte intact across remount.
+     * ACL existence is not proof of permission enforcement. Keep syscall
+     * diagnostics in the unprivileged child without pre-stat() calls: these
+     * warm the inode/cache state and can conceal remount races.
      */
-    if (stat(root, &st))
-        fail("stat mounted root during ACL verification");
-    fprintf(stderr, "ACL remount root mode=%04o owner=%u:%u\n",
-            (unsigned)(st.st_mode & 07777),
-            (unsigned)st.st_uid, (unsigned)st.st_gid);
-    if (stat(base, &st))
-        fail("stat ACL fixture directory during verification");
-    fprintf(stderr, "ACL remount directory mode=%04o owner=%u:%u\n",
-            (unsigned)(st.st_mode & 07777),
-            (unsigned)st.st_uid, (unsigned)st.st_gid);
-    if (stat(access_file, &st))
-        fail("stat ACL fixture during verification");
-    fprintf(stderr, "ACL remount file mode=%04o owner=%u:%u expected-named=%u:%u\n",
-            (unsigned)(st.st_mode & 07777),
-            (unsigned)st.st_uid, (unsigned)st.st_gid,
-            (unsigned)uid, (unsigned)gid);
     check_named_read(access_file, uid, ACL_READ);
     setenv("INFILFS_ACL_DIAGNOSTIC", "1", 1);
     require(readable_as(access_file, uid, gid),
