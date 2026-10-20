@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.19.13 — 2026-10-20
+
+- Extend issue #44 tracing to the regular-file buffered-read dispatch boundary. For the 18-byte ACL fixture, identify the active `f_mapping`, address-space operation table, read-folio callback and I/O flags when `generic_file_read_iter` runs. Prior 0.19.12 failure reproduced `EIO` without any inline folio callback messages, so checksum-path changes are not justified yet.
+- Leave regular read semantics, kernel VFS callback ownership, Format 0.19 and durability intact while collecting missing boundary evidence. No claim that issue #44 is fixed.
+
 ## 0.19.12 — 2026-10-20
 
 - Instrument 18-byte native inline-file readahead and synchronous folio completion immediately around `folio_end_read` to isolate the intermittent ACL cold-remount `EIO` (issue #44). Preserve the existing verified read path and record whether the producer returned an error or folio state changed unexpectedly; do not suppress the failure or weaken integrity verification.

@@ -2000,11 +2000,26 @@ static ssize_t infilfs_file_read_iter_dispatch(
     }
     {
         loff_t start = iocb->ki_pos;
+        struct file *file = iocb->ki_filp;
+        struct inode *inode = file_inode(file);
+        /*
+         * Inline18 trace: a failed read without any folio callbacks means
+         * that the VFS may be using a different address-space contract or
+         * rejecting the page before ->read_folio. Log only this fixture and
+         * keep normal error propagation unchanged.
+         */
+        if (i_size_read(inode) == 18)
+            pr_info("InfiltratorFS: inline18 dispatch enter ino=%lu pos=%lld aops_ok=%d readfolio_ok=%d map_ok=%d flags=%x\n",
+                inode->i_ino, (long long)start,
+                file->f_mapping->a_ops == &infilfs_aops,
+                file->f_mapping->a_ops->read_folio == infilfs_aops.read_folio,
+                file->f_mapping == inode->i_mapping,
+                iocb->ki_flags);
         ssize_t result = generic_file_read_iter(iocb, to);
 
         if (result < 0)
             infilfs_pagecache_report_buffered_error(
-                file_inode(iocb->ki_filp), start, result);
+                inode, start, result);
         return result;
     }
 }
