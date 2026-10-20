@@ -24,7 +24,7 @@ snapshot="$(sed -n '/static int infilfs_native_inline_snapshot(/,/^}/p' "$data")
 grep -Fq 'down_read(&sbi->write_lock);' <<<"$snapshot"
 grep -Fq 'up_read(&sbi->write_lock);' <<<"$snapshot"
 inline="$(sed -n '/static ssize_t infilfs_native_inline_write_iter(/,/^}/p' "$data")"
-grep -Fq 'infilfs_rw_inline_digest(data, new_size, prepared_digest);' <<<"$inline"
+grep -Fq 'infilfs_native_inline_digest(data, new_size, prepared_digest);' <<<"$inline"
 grep -Fq 'memcmp(current_object, old_object,' <<<"$inline"
 grep -Fq 'READ_ONCE(ii->object_block) != old_block' <<<"$inline"
 python3 - "$data" <<'PY'
@@ -34,7 +34,7 @@ text = Path(sys.argv[1]).read_text()
 start = text.index("static ssize_t infilfs_native_inline_write_iter(")
 end = text.index("\nssize_t infilfs_native_writeback_iter(", start)
 body = text[start:end]
-digest = body.index("infilfs_rw_inline_digest(data, new_size, prepared_digest);")
+digest = body.index("infilfs_native_inline_digest(data, new_size, prepared_digest);")
 writer = body.index("down_write(&sbi->write_lock);")
 revalidate = body.index("memcmp(current_object, old_object,")
 if not digest < writer < revalidate:

@@ -509,4 +509,17 @@ grep -Eq '^include/infilfs/namespace_policy[.]h[[:space:]]+namespace_policy[.]h$
     "$root/packaging/kernel-dkms-files.list" || \
     fail 'shared namespace policy missing from standalone DKMS source manifest'
 
+# Integrity primitives belong to the compiled crypto service, never to
+# transaction or write-data textual compositors.
+grep -Fq 'void infilfs_software_sha256_init(' "$kernel/infiltratorfs_crypto.c" ||
+    fail 'software SHA-256 missing from crypto authority'
+grep -Fq 'int infilfs_native_inline_digest(' "$kernel/infiltratorfs_crypto.c" ||
+    fail 'inline digest missing from crypto authority'
+grep -Fq 'void infilfs_native_block_digest(' "$kernel/infiltratorfs_crypto.c" ||
+    fail 'block digest missing from crypto authority'
+! grep -Fq 'infilfs_software_sha256_transform' "$kernel/infiltratorfs_rw_legacy.inc" ||
+    fail 'software SHA-256 returned to native transaction code'
+! grep -Fq 'void infilfs_native_block_digest(' "$kernel/infiltratorfs_rw_data.inc" ||
+    fail 'block digest returned to write-data compositor'
+
 printf 'Native kernel locking/composition maintainability policy guard passed.\n'

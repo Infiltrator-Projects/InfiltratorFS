@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.19.7 — 2026-10-20
+
+- Move native software SHA-256 and block/inline digests from write-transaction compositors into the compiled crypto service. Preserve kernel-crypto acceleration, deterministic software fallback and identical committed digest values.
+- Replace write-layer names of the software SHA stream with integrity-owned names. Hash case-folded native directory names in bounded 64-byte chunks without changing Format 0.19 name identity.
+- Enforce integrity-source ownership in the native maintainability policy and correct an obsolete Format 0.18 allocation-test message. Checkpoint barriers and native mounted I/O contracts remain unchanged.
+
 ## 0.19.6 — 2026-10-20
 
 - Consolidate Format 0.19 removable-name and ASCII case-fold byte predicates into a single portable/native header, preventing silent divergence in persistent namespace policy.

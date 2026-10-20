@@ -6,26 +6,38 @@
  *
  * File names are routed by SHA-256, one digest byte per 256-way branch level.
  * Leaf records retain the original UTF-8 bytes and are compared with the
- * versioned namespace identity policy, so a hash never becomes namespace identity. Every modified
- * path is copy-on-written through the native pending transaction.
+ * versioned namespace identity policy, so a hash never becomes namespace
+ * identity. Modified paths are copy-on-written by the pending transaction.
  */
 
 static void infilfs_tree_dir_digest(struct super_block *sb,
                                     const u8 *name, size_t len, u8 digest[32])
 {
-    struct infilfs_rw_sha256_ctx ctx;
-    size_t i;
+    struct infilfs_software_sha256_ctx ctx;
 
-    infilfs_rw_sha256_init(&ctx);
+    infilfs_software_sha256_init(&ctx);
     if (!infilfs_casefold_names_enabled(sb)) {
-        infilfs_rw_sha256_update(&ctx, name, len);
+        infilfs_software_sha256_update(&ctx, name, len);
     } else {
-        for (i = 0; i < len; ++i) {
-            u8 folded = infs_namespace_casefold_byte_v1(name[i]);
-            infilfs_rw_sha256_update(&ctx, &folded, 1u);
+        /*
+         * Format 0.19 folds only ASCII; all other UTF-8 bytes retain their
+         * identity. Fixed-size chunks avoid a name-sized stack buffer and
+         * one SHA update call per character.
+         */
+        u8 folded[64];
+        size_t offset = 0;
+
+        while (offset < len) {
+            size_t count = min_t(size_t, sizeof(folded), len - offset);
+            size_t i;
+
+            for (i = 0; i < count; ++i)
+                folded[i] = infs_namespace_casefold_byte_v1(name[offset + i]);
+            infilfs_software_sha256_update(&ctx, folded, count);
+            offset += count;
         }
     }
-    infilfs_rw_sha256_final(&ctx, digest);
+    infilfs_software_sha256_final(&ctx, digest);
 }
 
 static u64 infilfs_tree_dir_root(

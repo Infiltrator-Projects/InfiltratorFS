@@ -860,19 +860,6 @@ static int infilfs_native_alloc_data_exact(
         NULL, start_out);
 }
 
-void infilfs_native_block_digest(
-    const u8 data[INFILFS_DISK_BLOCK_SIZE],
-    struct infilfs_data_checksum_disk *digest)
-{
-    struct infilfs_rw_sha256_ctx ctx;
-    if (!infilfs_crypto_sha256(data, INFILFS_DISK_BLOCK_SIZE, digest->bytes))
-        return;
-    infilfs_rw_sha256_init(&ctx);
-    infilfs_rw_sha256_update(&ctx, data, INFILFS_DISK_BLOCK_SIZE);
-    infilfs_rw_sha256_final(&ctx, digest->bytes);
-}
-
-
 int infilfs_native_collect_extents(
     struct infilfs_native_pending *pending, struct inode *inode,
     u8 object[INFILFS_DISK_BLOCK_SIZE],
@@ -4043,7 +4030,7 @@ static int infilfs_native_inline_snapshot(
             return -EFSCORRUPTED;
         digest = (struct infilfs_data_checksum_disk *)(file + 1);
         memcpy(data, digest + 1, (size_t)size);
-        ret = infilfs_rw_inline_digest(data, (size_t)size, actual);
+        ret = infilfs_native_inline_digest(data, (size_t)size, actual);
         if (ret)
             return ret;
         if (memcmp(actual, digest->bytes, sizeof(actual)) != 0)
@@ -4117,7 +4104,7 @@ static ssize_t infilfs_native_inline_write_iter(
         new_size = max_t(size_t, old_size, (size_t)pos + copied);
 
         /* Hash outside the filesystem-wide writer. */
-        ret = infilfs_rw_inline_digest(data, new_size, prepared_digest);
+        ret = infilfs_native_inline_digest(data, new_size, prepared_digest);
         if (ret)
             goto out_revert;
 

@@ -62,7 +62,7 @@
 #   infiltratorfs.ko is a composite Kbuild module.
 #   infiltratorfs_core.c owns VFS/mount/checkpoint orchestration.
 #   infiltratorfs_cpu.c owns the module-wide N-1 CPU execution pool/gate.
-#   infiltratorfs_crypto.c owns accelerated integrity hashing.
+#   infiltratorfs_crypto.c owns accelerated/fallback SHA-256 and native data digests.
 #   infiltratorfs_security.c owns portable-security format validation helpers.
 #   infiltratorfs_extension.c owns typed-extension envelope validation.
 #   infiltratorfs_allocation_map.c owns Format 0.19 allocation-map loading.

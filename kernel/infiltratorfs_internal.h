@@ -212,7 +212,7 @@ struct infilfs_rw_tx {
     bool free_extent_index_valid;
 };
 
-struct infilfs_rw_sha256_ctx {
+struct infilfs_software_sha256_ctx {
     u32 state[8];
     u64 total;
     u8 block[64];
@@ -867,7 +867,7 @@ int infilfs_native_read_expected_digest(
 void infilfs_native_block_digest(
     const u8 data[INFILFS_DISK_BLOCK_SIZE],
     struct infilfs_data_checksum_disk *digest);
-int infilfs_rw_inline_digest(const u8 *data, size_t size, u8 out[32]);
+int infilfs_native_inline_digest(const u8 *data, size_t size, u8 out[32]);
 ssize_t infilfs_native_read_iter_cached(
     struct inode *inode, loff_t *position, struct iov_iter *to);
 ssize_t infilfs_file_read_iter_cached(struct kiocb *iocb, struct iov_iter *to);
@@ -892,14 +892,14 @@ void infilfs_pagecache_report_buffered_error(
     struct inode *inode, loff_t position, ssize_t error);
 extern const struct address_space_operations infilfs_aops;
 
-/* Services shared with the compiled Format 0.18 directory-tree layer. */
+/* Services used by the compiled Format 0.19 directory-tree layer. */
 extern const u8 infilfs_object_magic[8];
 extern const u8 infilfs_directory_page_magic[8];
 extern const u8 infilfs_directory_branch_page_magic[8];
-void infilfs_rw_sha256_init(struct infilfs_rw_sha256_ctx *ctx);
-void infilfs_rw_sha256_update(
-    struct infilfs_rw_sha256_ctx *ctx, const u8 *data, size_t length);
-void infilfs_rw_sha256_final(struct infilfs_rw_sha256_ctx *ctx, u8 out[32]);
+void infilfs_software_sha256_init(struct infilfs_software_sha256_ctx *ctx);
+void infilfs_software_sha256_update(
+    struct infilfs_software_sha256_ctx *ctx, const u8 *data, size_t length);
+void infilfs_software_sha256_final(struct infilfs_software_sha256_ctx *ctx, u8 out[32]);
 bool infilfs_rw_utf8_valid(const u8 *s, size_t len);
 void infilfs_rw_init_page(
     u8 *block, const u8 magic[8], const u8 owner[16], u64 generation);

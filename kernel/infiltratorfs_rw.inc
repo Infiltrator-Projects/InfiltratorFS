@@ -634,7 +634,7 @@ static int infilfs_native_truncate(struct inode *inode, u64 new_size)
         memset(old_file->checksum_head_id, 0, sizeof(old_file->checksum_head_id));
         if (new_size) {
             digest = (struct infilfs_data_checksum_disk *)(old_file + 1);
-            ret = infilfs_rw_inline_digest(data, (size_t)new_size,
+            ret = infilfs_native_inline_digest(data, (size_t)new_size,
                                            digest->bytes);
             if (ret)
                 goto finish;
@@ -985,7 +985,7 @@ static int infilfs_native_punch_hole(struct inode *inode,
         infilfs_timestamp_encode_ns(&file->attributes.modification_time, ktime_get_real_ns());
         file->attributes.change_time = file->attributes.modification_time;
         digest = (struct infilfs_data_checksum_disk *)(file + 1);
-        ret = infilfs_rw_inline_digest(inline_data, (size_t)file_size,
+        ret = infilfs_native_inline_digest(inline_data, (size_t)file_size,
                                        digest->bytes);
         if (ret)
             goto finish;

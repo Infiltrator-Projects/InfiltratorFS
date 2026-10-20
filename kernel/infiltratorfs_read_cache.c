@@ -450,7 +450,7 @@ ssize_t infilfs_native_read_iter_cached(struct inode *inode,
             ret = -EFSCORRUPTED;
             goto out;
         }
-        ret = infilfs_rw_inline_digest(
+        ret = infilfs_native_inline_digest(
             inline_bytes, (size_t)file_size, actual_inline);
         if (ret || memcmp(expected_inline->bytes, actual_inline,
                           sizeof(actual_inline)) != 0) {

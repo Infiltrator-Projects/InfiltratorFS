@@ -772,7 +772,7 @@ static int infilfs_native_reflink_full(
                sizeof(new_file->checksum_head_id));
         if (source_size) {
             digest = (struct infilfs_data_checksum_disk *)(new_file + 1);
-            ret = infilfs_rw_inline_digest(
+            ret = infilfs_native_inline_digest(
                 inline_data, (size_t)source_size, digest->bytes);
             if (ret)
                 goto finish;

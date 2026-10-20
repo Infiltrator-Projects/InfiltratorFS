@@ -45,4 +45,4 @@ grep -Fq 'tx_allocated' "$volume"
 ! grep -Fq 'new_bitmap_start * INFS_BLOCK_SIZE' "$commit"
 ! grep -Fq 'new_bitmap + n' "$krw"
 
-printf 'Format 0.18 sharded allocation-tree policy guard passed.\n'
+printf 'Format 0.19 sharded allocation-tree policy guard passed.\n'
