@@ -1,8 +1,12 @@
 # Changelog
 
-## 0.19.9 — 2026-10-20
+## 0.19.10 — 2026-10-20
 
 - Consolidate duplicated mount-time native snapshot-catalog identifiers into one immutable, format-declared 16-byte identity and guard parity with the portable Format 0.19 header.
+- Advance the immutable release identity following publication of 0.19.9; preserve the already-published bytes and tag of that version.
+
+## 0.19.9 — 2026-10-20
+
 - Correct stale current-format language in portable object-index, extent-promotion and timestamp contracts and native media-profile admission. Preserve historical Format 0.18 explanatory material where the old-format path or migration decision remains relevant.
 - Align the object-index policy guard's success banner with its enforced Format 0.19 constants, avoiding false qualification attribution in CI logs.
 - Preserve all on-disk bytes, native runtime behaviour and transaction publication barriers; advance the exact immutable CMake/Windows INF release identity together.
