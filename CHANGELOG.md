@@ -1,10 +1,17 @@
 # Changelog
 
+## 0.19.5 — 2026-10-20
+
+- Complete verified Linux page-cache folios atomically using the standard kernel read-completion API, including correct fail-closed completion after unsuccessful verification.
+- Finish queued readahead folios before taking the single-folio recovery path if batching cannot represent a folio.
+- Exercise 24 independent cold remounts per native quota/ACL/data qualification; leave the original first-byte read failure test enabled. Format 0.19 on-disk structures remain unchanged.
+
+
 ## 0.19.4 — 2026-10-20
 
-- Complete verified folio reads with the native page-cache's atomic read-completion operation, instead of separately publishing an uptodate flag and unlocking. Preserve failed-read error propagation and do not expose unverified contents.
-- Finish previously accumulated locked readahead folios before switching to per-folio reads if batch-vector construction fails. Extend repeat cold-remount ACL/data checks to 24 mounts per qualification run without disabling the original failing assertion.
-- Attribute any remaining buffered read errors at the VFS folio boundary without clearing error state or bypassing verification. Keep diagnostics in the owning page-cache module and keep the native RW compositor below its technical-debt ceiling.
+- Record the VFS folio state when a buffered read returns an error without clearing the mapping error or bypassing data verification.
+- Keep page-cache diagnostics in their owning module and reduce the native RW compositor below its enforced maintenance limit.
+- Advance immutable release identity from the previous diagnostic/review commit.
 
 
 ## 0.19.3 — 2026-10-20
