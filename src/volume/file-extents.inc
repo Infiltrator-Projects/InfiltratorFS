@@ -39,7 +39,7 @@ static int file_ensure_logical_blocks(struct infs_volume *vol,
             }
         }
 
-        /* Format 0.18 has scalable extent pages, so a classic file reaching
+        /* The current format has scalable extent pages, so a classic file reaching
          * its inline vector limit during EOF growth is not a large-file
          * boundary. Promote the complete vector transactionally and continue
          * through the paged representation rather than treating metadata-vector

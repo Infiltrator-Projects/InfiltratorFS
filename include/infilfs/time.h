@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 /*
- * Portable timestamp value used by Format 0.18 and the storage/API boundary.
+ * Portable timestamp representation for Format 0.19 and storage/API boundaries.
  * Seconds are signed Unix-epoch seconds; nanoseconds are always 0..999999999.
  * Keeping the sub-second field separate avoids the signed 64-bit nanosecond
  * overflow around year 2262 while retaining nanosecond precision.

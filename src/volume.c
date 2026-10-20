@@ -330,8 +330,8 @@ static infs_status metadata_reference_replace_typed_extension(
     struct infs_attributes_disk *attributes,
     const uint8_t extension_id[16]);
 
-/* Format 0.18 paged-index dispatch targets. core.inc owns the classic index
- * implementation and calls these when it encounters a version-2 index head. */
+/* Paged-index dispatch targets. core.inc handles the classic index and
+ * dispatches to these functions when the persisted head is version 2. */
 static int paged_index_find(struct infs_volume *vol, const uint8_t id[16],
                             struct infs_lookup *out);
 static int paged_index_repoint(struct infs_volume *vol, const uint8_t id[16],
@@ -340,7 +340,7 @@ static int paged_index_add(struct infs_volume *vol, const uint8_t id[16],
                            uint64_t object_block, uint16_t type);
 static int paged_index_remove(struct infs_volume *vol, const uint8_t id[16]);
 
-/* Format 0.18 scalable object-index radix tree. */
+/* Scalable object-index radix tree for the current format. */
 static int tree_index_find(struct infs_volume *vol, const uint8_t id[16],
                            struct infs_lookup *out);
 static int tree_index_repoint(struct infs_volume *vol, const uint8_t id[16],

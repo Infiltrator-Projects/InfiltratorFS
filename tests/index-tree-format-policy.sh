@@ -20,4 +20,4 @@ grep -Fq 'tree_index_repoint' "$core"
 grep -Fq 'tree_index_remove' "$core"
 grep -Fq 'index_tree_feature' "$checkpoint"
 
-printf 'Format 0.18 object-index tree policy guard passed.\n'
+printf 'Format 0.19 object-index tree policy guard passed.\n'

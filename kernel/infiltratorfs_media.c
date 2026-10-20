@@ -4,7 +4,7 @@
 /*
  * Media-profile admission and naming are isolated from mount orchestration so
  * the core translation unit does not grow every time media policy evolves.
- * Format 0.18 allocation remains conventional-block-addressed; zoned devices
+ * Format 0.19 allocation remains conventional-block-addressed; zoned devices
  * therefore fail closed until a zone-aware allocator exists.
  */
 
