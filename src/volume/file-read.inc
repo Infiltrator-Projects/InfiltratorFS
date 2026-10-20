@@ -10,6 +10,12 @@ static int64_t read_file_lookup(struct infs_volume *vol,
     if (lookup->type != INFS_OBJECT_FILE &&
         lookup->type != INFS_OBJECT_NAMED_STREAM)
         return INFS_STATUS_IS_DIRECTORY;
+    /*
+     * A zero-length read needs no data access. In particular, the public API
+     * allows a NULL buffer when size is zero; it must never reach memcpy.
+     */
+    if (size == 0)
+        return 0;
 
     uint8_t object[INFS_BLOCK_SIZE];
     infs_status status = read_object(vol, lookup->block, object);

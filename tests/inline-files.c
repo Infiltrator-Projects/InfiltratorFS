@@ -311,6 +311,10 @@ int main(void)
     expect(attributes.logical_size == sizeof(first), "tiny logical size");
     expect(attributes.allocated_size == 0, "tiny file uses no data blocks");
     expect_inline(&volume, &image, sizeof(first));
+    expect(infs_read_file(&volume, "/tiny", NULL, 0, 0) == 0,
+           "zero-byte read accepts a null buffer on nonempty inline data");
+    expect(infs_read_file(&volume, "/tiny", NULL, 0, 20) == 0,
+           "zero-byte inline read accepts an interior offset");
 
     const uint8_t marker = 0xa5;
     expect(infs_write_file(&volume, "/tiny", &marker, 1, 3000) == 1,
@@ -359,6 +363,8 @@ int main(void)
     expect(attributes.allocated_size == INFS_BLOCK_SIZE,
            "promoted file owns one data block");
     expect_external(&volume, &image);
+    expect(infs_read_file(&volume, "/tiny", NULL, 0, 0) == 0,
+           "zero-byte extent read accepts a null buffer");
     expect(infs_read_file(&volume, "/tiny", readback, 1,
                           INFS_INLINE_DATA_MAX) == 1,
            "read promoted boundary byte");

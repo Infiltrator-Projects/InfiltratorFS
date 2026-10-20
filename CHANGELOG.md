@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.19.16 — 2026-10-21
+
+- Return zero immediately for valid zero-byte portable reads before reaching inline-file memcpy; the read API permits a NULL buffer with zero size, so passing it to memcpy was undefined C behaviour even when the copy length was zero.
+- Cover zero-byte NULL-buffer reads at the start and middle of nonempty inline data and on an extent-backed file. Preserve the existing non-file rejection and Format 0.19 persistent layout/checkpoint contract.
+
 ## 0.19.15 — 2026-10-21
 
 - Admit encrypted-storage backing media containing exactly one complete authenticated 4 KiB data record (4096-byte header plus 4124-byte record). The formatter previously rejected this valid minimum capacity with an off-by-one comparison.
