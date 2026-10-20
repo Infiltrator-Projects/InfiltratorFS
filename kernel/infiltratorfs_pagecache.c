@@ -1238,6 +1238,38 @@ static int infilfs_migrate_folio(struct address_space *mapping,
 }
 #endif
 
+/*
+ * Diagnose the VFS page-cache boundary independently of the verified reader.
+ * If no verified-reader failure is logged, the folio's state tells us whether
+ * generic_file_read_iter rejected a non-uptodate cached folio or saw an error
+ * before any folio was instantiated. Never clear a mapping error to inspect it.
+ */
+void infilfs_pagecache_report_buffered_error(
+    struct inode *inode, loff_t position, ssize_t error)
+{
+    struct infilfs_inode_info *ii = INFILFS_I(inode);
+    struct folio *folio = position >= 0 ?
+        filemap_get_folio(inode->i_mapping, position >> PAGE_SHIFT) :
+        ERR_PTR(-EINVAL);
+
+    if (IS_ERR(folio)) {
+        pr_err_ratelimited(
+            "InfiltratorFS: buffered read failed ino=%lu off=%lld err=%zd folio=missing(%ld) size=%lld persisted=%llu\n",
+            inode->i_ino, (long long)position, error, PTR_ERR(folio),
+            (long long)i_size_read(inode),
+            (unsigned long long)(ii ? READ_ONCE(ii->persisted_size) : 0));
+        return;
+    }
+    pr_err_ratelimited(
+        "InfiltratorFS: buffered read failed ino=%lu off=%lld err=%zd folio=present uptodate=%d locked=%d error=%d dirty=%d size=%lld persisted=%llu\n",
+        inode->i_ino, (long long)position, error,
+        folio_test_uptodate(folio), folio_test_locked(folio),
+        folio_test_error(folio), folio_test_dirty(folio),
+        (long long)i_size_read(inode),
+        (unsigned long long)(ii ? READ_ONCE(ii->persisted_size) : 0));
+    folio_put(folio);
+}
+
 const struct address_space_operations infilfs_aops = {
     .read_folio = infilfs_read_folio,
     .readahead = infilfs_readahead,

@@ -1,12 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-/*
- * Native Linux RW composition.
- *
- * Keep the already-qualified inline transaction engine intact as the legacy
- * implementation, then layer the extent-backed/deferred native data path,
- * transactional namespace mutations and the POSIX metadata bridge over the
- * VFS entry points that need them.
- */
+/* Native RW assembly. Subsystem ownership and lock order: kernel/Makefile. */
 
 #include <linux/statfs.h>
 
@@ -2006,18 +1999,12 @@ static ssize_t infilfs_file_read_iter_dispatch(
         return infilfs_file_read_iter_atime(iocb, to);
     }
     {
-        struct inode *inode = file_inode(iocb->ki_filp);
+        loff_t start = iocb->ki_pos;
         ssize_t result = generic_file_read_iter(iocb, to);
 
-        if (result < 0) {
-            struct infilfs_inode_info *ii = INFILFS_I(inode);
-            pr_err_ratelimited(
-                "InfiltratorFS: buffered read failed ino=%lu ret=%zd i_size=%lld persisted=%llu pos=%lld\n",
-                inode->i_ino, result,
-                (long long)i_size_read(inode),
-                (unsigned long long)(ii ? READ_ONCE(ii->persisted_size) : 0),
-                (long long)iocb->ki_pos);
-        }
+        if (result < 0)
+            infilfs_pagecache_report_buffered_error(
+                file_inode(iocb->ki_filp), start, result);
         return result;
     }
 }

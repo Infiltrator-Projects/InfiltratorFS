@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.19.4 — 2026-10-20
+
+- Keep the mounted Format 0.19 ACL/read regression fail-closed while recording its verified VFS page-cache state at the point of buffered read failure. This distinguishes a missing/non-uptodate folio from an underlying content-integrity failure without clearing error state or bypassing verification.
+- Move temporary buffered-read diagnostics out of the native write-composition unit and behind a single page-cache-owned helper, returning that unit below its enforced technical-debt ceiling. This revision remains unqualified until the remount/read regression is corrected.
+
+
 ## 0.19.3 — 2026-10-20
 
 - Reject output handles that alias input storage members in the portable mirror and authenticated-encryption constructors, preserving caller ownership on invalid requests rather than clearing live source handles.

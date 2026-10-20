@@ -888,6 +888,8 @@ void infilfs_quota_reservation_finish(
     u64 actual_bytes, u64 actual_objects);
 void infilfs_quota_reservation_abort(
     struct infilfs_quota_reservation *reservation);
+void infilfs_pagecache_report_buffered_error(
+    struct inode *inode, loff_t position, ssize_t error);
 extern const struct address_space_operations infilfs_aops;
 
 /* Services shared with the compiled Format 0.18 directory-tree layer. */
