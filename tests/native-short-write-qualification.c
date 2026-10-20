@@ -59,13 +59,16 @@ int main(int argc, char **argv)
     faulting = mapping + page_size - AVAILABLE;
     errno = 0;
     written = pwrite(fd, faulting, BLOCK, 0);
-    if (written >= BLOCK || (written < 0 && errno != EFAULT)) {
-        fprintf(stderr, "unexpected short write %zd errno=%d\n",
+    /*
+     * A total EFAULT without an accepted prefix does not exercise the
+     * interrupted-copy invariant. Require an actual partial overwrite so
+     * this regression cannot pass without testing the vulnerable state.
+     */
+    if (written <= 0 || written > AVAILABLE) {
+        fprintf(stderr, "expected a positive short write, got %zd errno=%d\n",
                 written, errno);
         return 1;
     }
-    if (written < 0)
-        written = 0;
     if (fsync(fd))
         fail("post-fault fsync");
     if (posix_fadvise(fd, 0, BLOCK, POSIX_FADV_DONTNEED))
