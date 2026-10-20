@@ -373,7 +373,20 @@ static void prepare(const char *root)
         fail("open rsync copy");
     char data[32];
     ssize_t n = read(fd, data, sizeof data);
+    int read_errno = errno;
     close(fd);
+    if (n != 10 || (n > 0 && memcmp(data, "rsync-acl\n", 10))) {
+        /*
+         * Keep the failed read fatal. Report the actual syscall result and
+         * returned bytes so an EOF/short read, verified EIO and stale data
+         * cannot all masquerade as the same synthetic assertion error.
+         */
+        fprintf(stderr, "POSIX ACL rsync copy: read=%zd errno=%d bytes=", n,
+                read_errno);
+        for (ssize_t i = 0; i < n && i < 16; ++i)
+            fprintf(stderr, "%02x", (unsigned char)data[i]);
+        fputc('\n', stderr);
+    }
     require(n == 10 && !memcmp(data, "rsync-acl\n", 10), "rsync data mismatch");
     size_t left = sizeof observed, right = sizeof default_acl;
     unsigned char other[44];
