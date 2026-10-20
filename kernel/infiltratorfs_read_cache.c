@@ -706,6 +706,10 @@ partial:
         ret = done;
     }
 out:
+    if (ret < 0 && ii)
+        pr_err_ratelimited(
+            "InfiltratorFS: verified read failed ino=%lu off=%lld status=%d\n",
+            inode->i_ino, (long long)pos, ret);
     if (object && data_block && checksum_object && extent_page) {
         if (ii)
             infilfs_native_read_cursor_publish(

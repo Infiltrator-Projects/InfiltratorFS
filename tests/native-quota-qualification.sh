@@ -19,6 +19,10 @@ on_error() {
     local rc=$?
     printf 'native quota qualification: FAIL line=%s rc=%d command=%s\n' \
         "${BASH_LINENO[0]:-$LINENO}" "$rc" "$BASH_COMMAND" >&2
+    # Report driver diagnostics only on failure, without drowning the
+    # qualification log in unrelated host kernel messages.
+    sudo dmesg --color=never 2>/dev/null |
+        grep -i 'InfiltratorFS:' | tail -n 80 >&2 || true
     return "$rc"
 }
 trap on_error ERR

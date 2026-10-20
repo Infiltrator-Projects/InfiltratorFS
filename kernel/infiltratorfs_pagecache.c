@@ -315,6 +315,10 @@ static int infilfs_pagecache_fill_folio(struct folio *folio)
         got = infilfs_native_read_iter_cached(inode, &position, &iter);
         if (got != wanted) {
             ret = got < 0 ? (int)got : -EIO;
+            pr_err_ratelimited(
+                "InfiltratorFS: pagecache fill failed ino=%lu off=%lld persisted=%llu wanted=%zu got=%zd error=%d\n",
+                inode->i_ino, (long long)folio_pos(folio),
+                (unsigned long long)persisted, wanted, got, ret);
             goto out;
         }
     }
