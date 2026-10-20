@@ -646,6 +646,19 @@ infs_status infs_storage_encrypted_open(
         return INFS_STATUS_CORRUPT;
     }
 
+    /*
+     * The authenticated envelope has a versioned 116-byte payload. Its
+     * remaining bytes are reserved and canonical zero. Reject unexpected
+     * extensions rather than silently accepting unauthenticated metadata.
+     */
+    for (size_t i = H_OFF_WRAP_TAG + ENC_TAG_BYTES;
+         i < sizeof(header); ++i) {
+        if (header[i] != 0u) {
+            secure_zero(header, sizeof(header));
+            return INFS_STATUS_CORRUPT;
+        }
+    }
+
     uint64_t logical_blocks =
         infs_load_le64(header + H_OFF_LOGICAL_BLOCKS);
     uint32_t iterations =

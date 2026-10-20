@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.19.18 — 2026-10-21
+
+- Reject noncanonical nonzero reserved trailer bytes (116–4095) in the authenticated encrypted-storage envelope. The formatter already writes zero padding; previously the opener accepted unversioned, unauthenticated bytes in this region.
+- Qualify both trailer boundaries and preservation of backing ownership on malformed input. Retain Format 0.19 filesystem bytes, existing encrypted records, checkpoint ordering and all native filesystem semantics.
+
 ## 0.19.17 — 2026-10-21
 
 - Correct the automatic native qualification/release deadlock: a ten-minute watchdog was cancelling a workflow that still contained a 30-minute exhaustive mounted suite, and the exact-SHA publisher properly refused cancelled native evidence. Run a bounded real-mounted short-write, 1023-byte name, statfs and CLEAN scrub gate automatically; retain the 512 MiB transaction, media, maintenance and defragmentation suites for manual dispatch.

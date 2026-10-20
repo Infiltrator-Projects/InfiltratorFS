@@ -44,7 +44,10 @@ Domain zero uses that root key directly. Nonzero persistent per-object
 encryption-domain IDs derive independent AES-256-GCM subkeys from the root key;
 the domain ID is also authenticated in the block AAD. Reading ciphertext with
 the wrong object domain therefore fails authentication rather than producing
-plaintext under a different policy.
+plaintext under a different policy. The version-one 4 KiB encrypted-container
+header has 116 defined bytes; all subsequent reserved bytes must be zero and
+are rejected on open when noncanonical. This validation does not change the
+underlying Format 0.19 on-disk filesystem schema.
 
 Persistent per-object protection policy shares the common attributes word with
 portable presentation flags but occupies a disjoint reserved high-bit field.

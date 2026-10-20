@@ -373,6 +373,27 @@ int main(void)
     infs_storage_close(&encrypted);
 
     /*
+     * The 4 KiB encrypted envelope reserves bytes 116..4095 as canonical
+     * zero. Neither the first nor the last reserved byte may be ignored:
+     * otherwise future extensions or tampering become silently ambiguous.
+     */
+    static const size_t reserved_positions[] = {116u, 4095u};
+    for (size_t i = 0;
+         i < sizeof(reserved_positions) / sizeof(reserved_positions[0]);
+         ++i) {
+        const size_t pos = reserved_positions[i];
+        memory.bytes[pos] = 0xa5u;
+        backing = storage(&memory);
+        ok(infs_storage_encrypted_open(
+               &backing, passphrase, sizeof(passphrase) - 1u,
+               &encrypted) == INFS_STATUS_CORRUPT,
+           "reject noncanonical encrypted envelope padding");
+        ok(backing.ops == &ops && !encrypted.ops,
+           "rejected envelope padding preserves backing ownership");
+        memory.bytes[pos] = 0u;
+    }
+
+    /*
      * The envelope is untrusted input. A CRC-independent, syntactically
      * recognisable header with an impossible PBKDF2 cost must be rejected
      * as corrupt without attempting a signed-overflow KDF call.
