@@ -413,7 +413,16 @@ static void verify(const char *root)
             "default ACL did not persist");
     char *before = path2(inherit, "before-remount.txt");
     check_named_read(before, uid, ACL_READ);
-    make_inherited(inherit, "after-remount.txt", uid, gid);
+    char *after = path2(inherit, "after-remount.txt");
+    if (access(after, F_OK) == 0) {
+        check_named_read(after, uid, ACL_READ);
+        require(readable_as(after, uid, gid),
+                "inherited ACL did not survive repeated remount");
+    } else if (errno == ENOENT) {
+        make_inherited(inherit, "after-remount.txt", uid, gid);
+    } else {
+        fail("inspect inherited ACL fixture after remount");
+    }
     char *source = path2(base, "rsync-src/file.txt");
     char *copied = path2(base, "rsync-dst/file.txt");
     unsigned char left[1024], right[1024];
@@ -423,7 +432,7 @@ static void verify(const char *root)
     require(a == b && !memcmp(left, right, a), "rsync ACL divergence");
     require(readable_as(copied, uid, gid), "rsync ACL lost after remount");
     free(base); free(access_file); free(real); free(inherit);
-    free(before); free(source); free(copied);
+    free(before); free(after); free(source); free(copied);
     puts("native POSIX ACL qualification: REMOUNT PASS");
 }
 

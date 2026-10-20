@@ -278,6 +278,20 @@ sudo mount -t infiltratorfs -o rw "$loopdev" "$mnt"
 mounted=1
 sudo chmod 0755 "$mnt"
 sudo "$acl_qualification" verify "$mnt"
+
+# Reopening the same clean volume is intentionally inexpensive. Exercise
+# first-read permission and data integrity across independent cold mounts:
+# one lucky cache/timing schedule must not qualify intermittent EIO.
+for remount_pass in 1 2 3 4 5 6; do
+    stage "repeat cold ACL/data read after remount $remount_pass"
+    sudo sync
+    sudo umount "$mnt"
+    mounted=0
+    sudo mount -t infiltratorfs -o rw "$loopdev" "$mnt"
+    mounted=1
+    sudo "$acl_qualification" verify "$mnt"
+done
+
 test "$(timeout --foreground 90s sudo "$quota" project-get "$mnt/project-a/sub" | \
         awk -F= '$1 == "effective_project_id" { print $2 }')" -eq 42
 after42="$(field used_bytes "$mnt" project 42)"
