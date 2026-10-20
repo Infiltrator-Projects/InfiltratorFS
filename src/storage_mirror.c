@@ -11,7 +11,7 @@ struct mirror_context {
     size_t count;
     uint64_t size_bytes;
     int is_device;
-    struct infs_storage_lock state_lock;
+    struct infs_storage_lock operation_lock;
 };
 
 /*
@@ -21,7 +21,7 @@ struct mirror_context {
  */
 static void mirror_release_context(struct mirror_context *ctx)
 {
-    infs_storage_lock_destroy(&ctx->state_lock);
+    infs_storage_lock_destroy(&ctx->operation_lock);
     free(ctx->healthy);
     free(ctx->members);
     free(ctx);
@@ -66,21 +66,16 @@ static int mirror_policy_member(
 
 static int mirror_member_healthy(struct mirror_context *ctx, size_t member)
 {
-    int healthy;
-    infs_storage_lock_acquire(&ctx->state_lock);
-    healthy = ctx->healthy[member] != 0;
-    infs_storage_lock_release(&ctx->state_lock);
-    return healthy;
+    /* Every replica operation holds operation_lock across all members. */
+    return ctx->healthy[member] != 0;
 }
 
 static void mirror_quarantine_member(struct mirror_context *ctx, size_t member)
 {
-    infs_storage_lock_acquire(&ctx->state_lock);
     ctx->healthy[member] = 0;
-    infs_storage_lock_release(&ctx->state_lock);
 }
 
-static infs_status mirror_read_policy(
+static infs_status mirror_read_policy_unlocked(
     void *opaque, uint64_t offset, void *buffer, size_t size,
     const struct infs_storage_io_policy *policy)
 {
@@ -150,13 +145,35 @@ static infs_status mirror_read_policy(
     return have_copy ? INFS_STATUS_OK : first_error;
 }
 
+/*
+ * A mirrored operation is one logical I/O spanning multiple independently
+ * owned backends. A single blocking lock serializes reads, writes and flushes
+ * across the complete set: two overlapping writes must not publish different
+ * winners on different replicas, and a flush must not pass an in-flight
+ * replication. The lock never changes the persistent file format.
+ *
+ * This deliberately favours coherent synchronous replication over parallel
+ * execution within one mirror. Ordinary single-device I/O stays unaffected.
+ */
+static infs_status mirror_read_policy(
+    void *opaque, uint64_t offset, void *buffer, size_t size,
+    const struct infs_storage_io_policy *policy)
+{
+    struct mirror_context *ctx = opaque;
+    infs_storage_lock_acquire(&ctx->operation_lock);
+    infs_status result = mirror_read_policy_unlocked(
+        opaque, offset, buffer, size, policy);
+    infs_storage_lock_release(&ctx->operation_lock);
+    return result;
+}
+
 static infs_status mirror_read(void *opaque, uint64_t offset,
                                void *buffer, size_t size)
 {
     return mirror_read_policy(opaque, offset, buffer, size, NULL);
 }
 
-static infs_status mirror_write_policy(
+static infs_status mirror_write_policy_unlocked(
     void *opaque, uint64_t offset, const void *buffer, size_t size,
     const struct infs_storage_io_policy *policy)
 {
@@ -204,13 +221,25 @@ static infs_status mirror_write_policy(
         (degraded ? INFS_STATUS_IO_ERROR : INFS_STATUS_OK);
 }
 
+static infs_status mirror_write_policy(
+    void *opaque, uint64_t offset, const void *buffer, size_t size,
+    const struct infs_storage_io_policy *policy)
+{
+    struct mirror_context *ctx = opaque;
+    infs_storage_lock_acquire(&ctx->operation_lock);
+    infs_status result = mirror_write_policy_unlocked(
+        opaque, offset, buffer, size, policy);
+    infs_storage_lock_release(&ctx->operation_lock);
+    return result;
+}
+
 static infs_status mirror_write(void *opaque, uint64_t offset,
                                 const void *buffer, size_t size)
 {
     return mirror_write_policy(opaque, offset, buffer, size, NULL);
 }
 
-static infs_status mirror_flush(void *opaque)
+static infs_status mirror_flush_unlocked(void *opaque)
 {
     struct mirror_context *ctx = opaque;
     infs_status result = INFS_STATUS_OK;
@@ -235,6 +264,15 @@ static infs_status mirror_flush(void *opaque)
         return INFS_STATUS_IO_ERROR;
     return result != INFS_STATUS_OK ? result :
         (degraded ? INFS_STATUS_IO_ERROR : INFS_STATUS_OK);
+}
+
+static infs_status mirror_flush(void *opaque)
+{
+    struct mirror_context *ctx = opaque;
+    infs_storage_lock_acquire(&ctx->operation_lock);
+    infs_status result = mirror_flush_unlocked(opaque);
+    infs_storage_lock_release(&ctx->operation_lock);
+    return result;
 }
 
 static infs_status mirror_size(void *opaque, uint64_t *size_bytes,
@@ -323,7 +361,7 @@ infs_status infs_storage_mirror_create(struct infs_storage *members,
     struct mirror_context *ctx = calloc(1, sizeof(*ctx));
     if (!ctx)
         return INFS_STATUS_NO_MEMORY;
-    if (!infs_storage_lock_init(&ctx->state_lock)) {
+    if (!infs_storage_lock_init(&ctx->operation_lock)) {
         free(ctx);
         return INFS_STATUS_ERROR;
     }

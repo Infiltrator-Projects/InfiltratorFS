@@ -5,12 +5,51 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if !defined(_WIN32)
+#include <pthread.h>
+#include <time.h>
+#endif
+
+#if !defined(_WIN32)
+struct race_state {
+    pthread_mutex_t lock;
+    pthread_cond_t changed;
+    int first_on_primary;
+    int second_finished;
+};
+
+struct concurrent_write {
+    struct infs_storage *storage;
+    struct race_state *race;
+    char value;
+    infs_status status;
+};
+
+static void *concurrent_write_thread(void *opaque)
+{
+    struct concurrent_write *op = opaque;
+    unsigned char bytes[128];
+    memset(bytes, op->value, sizeof(bytes));
+    op->status = infs_storage_write(op->storage, 6144, bytes, sizeof(bytes));
+    if (op->value == 'B') {
+        pthread_mutex_lock(&op->race->lock);
+        op->race->second_finished = 1;
+        pthread_cond_broadcast(&op->race->changed);
+        pthread_mutex_unlock(&op->race->lock);
+    }
+    return NULL;
+}
+#endif
+
 struct member {
     unsigned char bytes[8192];
     int fail_reads;
     int fail_writes;
     unsigned flushes;
     int closed;
+#if !defined(_WIN32)
+    struct race_state *race;
+#endif
 };
 
 static void die(const char *message)
@@ -45,6 +84,34 @@ static infs_status wr(void *opaque, uint64_t offset,
     if (offset > sizeof(m->bytes) || size > sizeof(m->bytes) - (size_t)offset)
         return INFS_STATUS_IO_ERROR;
     memcpy(m->bytes + (size_t)offset, buffer, size);
+#if !defined(_WIN32)
+    if (m->race && offset == 6144 && size == 128 &&
+        ((const unsigned char *)buffer)[0] == 'A') {
+        /*
+         * The first writer has completed its first replica and pauses.
+         * Before the correction, writer B could pass it and finish both
+         * members; writer A then wrote the second member last, splitting the
+         * replicas. A complete-operation lock makes B wait, so A reaches
+         * the deadline before finishing and B overwrites both members last.
+         */
+        struct race_state *race = m->race;
+        pthread_mutex_lock(&race->lock);
+        race->first_on_primary = 1;
+        pthread_cond_broadcast(&race->changed);
+        struct timespec deadline;
+        timespec_get(&deadline, TIME_UTC);
+        deadline.tv_nsec += 300000000L;
+        if (deadline.tv_nsec >= 1000000000L) {
+            ++deadline.tv_sec;
+            deadline.tv_nsec -= 1000000000L;
+        }
+        while (!race->second_finished)
+            if (pthread_cond_timedwait(
+                    &race->changed, &race->lock, &deadline) != 0)
+                break;
+        pthread_mutex_unlock(&race->lock);
+    }
+#endif
     return INFS_STATUS_OK;
 }
 
@@ -279,6 +346,64 @@ int main(void)
     infs_storage_close(&mirror);
     ok(c_member.closed && d_member.closed,
        "policy-aware mirror closes every member");
+
+#if !defined(_WIN32)
+    /*
+     * Exercise two overlapping writes to the same logical range, with a
+     * deterministic interruption after the first writer's primary replica.
+     * Both writers must report success and every replica must converge on
+     * the final (second) writer; no stale split-brain data may remain.
+     */
+    struct race_state race;
+    ok(pthread_mutex_init(&race.lock, NULL) == 0 &&
+       pthread_cond_init(&race.changed, NULL) == 0,
+       "initialise mirror race coordination");
+    race.first_on_primary = 0;
+    race.second_finished = 0;
+    struct member race_a = {0}, race_b = {0};
+    race_a.race = &race;
+    struct infs_storage race_members[2] = {
+        { .ops = &ops, .context = &race_a },
+        { .ops = &ops, .context = &race_b },
+    };
+    memset(&mirror, 0, sizeof(mirror));
+    ok(infs_storage_mirror_create(race_members, 2, &mirror) ==
+           INFS_STATUS_OK,
+       "create concurrently written mirror");
+    struct concurrent_write first = {
+        .storage = &mirror, .race = &race, .value = 'A',
+        .status = INFS_STATUS_ERROR,
+    };
+    struct concurrent_write second = {
+        .storage = &mirror, .race = &race, .value = 'B',
+        .status = INFS_STATUS_ERROR,
+    };
+    pthread_t first_thread, second_thread;
+    ok(pthread_create(&first_thread, NULL,
+                      concurrent_write_thread, &first) == 0,
+       "start first concurrent mirror writer");
+    pthread_mutex_lock(&race.lock);
+    while (!race.first_on_primary)
+        pthread_cond_wait(&race.changed, &race.lock);
+    pthread_mutex_unlock(&race.lock);
+    ok(pthread_create(&second_thread, NULL,
+                      concurrent_write_thread, &second) == 0,
+       "start competing mirror writer");
+    ok(pthread_join(first_thread, NULL) == 0 &&
+       pthread_join(second_thread, NULL) == 0,
+       "join concurrent mirror writers");
+    ok(first.status == INFS_STATUS_OK &&
+       second.status == INFS_STATUS_OK,
+       "both mirror writes succeeded");
+    for (size_t i = 6144; i < 6272; ++i)
+        ok(race_a.bytes[i] == 'B' && race_b.bytes[i] == 'B',
+           "concurrent mirror writes converge on both replicas");
+    infs_storage_close(&mirror);
+    ok(race_a.closed && race_b.closed,
+       "concurrent mirror closes owned members");
+    pthread_cond_destroy(&race.changed);
+    pthread_mutex_destroy(&race.lock);
+#endif
 
     puts("replicated storage backend: PASS");
     return 0;

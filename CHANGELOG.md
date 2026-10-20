@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.19.14 — 2026-10-21
+
+- Serialize each complete replicated-storage read, write and durability barrier across all mirror members. Previously a health-state-only mutex permitted overlapping writers to interleave different final values on different healthy replicas, or a flush to overtake an unfinished replication. One operation-level lock now owns both replica state and sequencing, removing the redundant separate health lock.
+- Add a deterministic concurrent overlapping-write regression in the portable mirror suite, update the storage-lock policy and document the intentional per-mirror serialization boundary. Ordinary single-device filesystem I/O and Format 0.19 on-disk data/checkpoint semantics are unchanged.
+
 ## 0.19.13 — 2026-10-20
 
 - Correct the Linux 7.0 iomap verified-read adapter at partial EOF: request only the committed bytes from the native reader, zero the remainder of each mapped folio range, then finish the iomap read as successful. Apply the same rule to both synchronous and contiguous batched reads, preserving checksum verification and fail-closed behavior on genuinely incomplete in-range reads.

@@ -15,7 +15,11 @@
  * if any replica fails. This keeps replication below filesystem semantics:
  * every member contains a complete ordinary InfiltratorFS image.
  * Explicit per-object protection counts exceeding the configured number of
- * members are rejected before I/O, never silently weakened.
+ * members are rejected before I/O, never silently weakened. The wrapper
+ * serializes a whole multi-replica read, write or flush as one operation;
+ * without that boundary overlapping writers could leave healthy replicas
+ * containing different final bytes despite reporting success. This provides
+ * deterministic consistency at the cost of concurrent I/O through one mirror.
  *
  * The destination must be a distinct, otherwise unused storage handle, not
  * an element of the supplied member array. Every member must independently

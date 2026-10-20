@@ -24,11 +24,11 @@ grep -Fq '&ctx->block_locks[logical % ENC_LOCK_STRIPES]' "$encrypted" ||     fai
 grep -Fq 'infs_storage_lock_acquire(lock);' "$encrypted" ||     fail 'encrypted read-modify-write is not serialized'
 grep -Fq 'for (size_t i = 0; i < ENC_LOCK_STRIPES; ++i)' "$encrypted" ||     fail 'encrypted durability barrier no longer fences every stripe'
 
-grep -Fq 'struct infs_storage_lock state_lock;' "$mirror" ||     fail 'mirror member state lock missing'
-grep -Fq 'mirror_member_healthy' "$mirror" ||     fail 'mirror health reads bypass synchronized helper'
-grep -Fq 'mirror_quarantine_member' "$mirror" ||     fail 'mirror quarantine writes bypass synchronized helper'
-if grep -Fq 'ctx->healthy[i]' "$mirror"; then
-    fail 'mirror I/O loop directly races on member health state'
-fi
+grep -Fq 'struct infs_storage_lock operation_lock;' "$mirror" || fail 'mirror operation lock missing'
+grep -Fq 'mirror_read_policy_unlocked' "$mirror" || fail 'mirror read not fenced'
+grep -Fq 'mirror_write_policy_unlocked' "$mirror" || fail 'mirror write not fenced'
+grep -Fq 'mirror_flush_unlocked' "$mirror" || fail 'mirror flush not fenced'
+grep -Fq 'infs_storage_lock_acquire(&ctx->operation_lock);' "$mirror" || fail 'mirror I/O cannot establish serialization'
+grep -Fq 'infs_storage_lock_release(&ctx->operation_lock);' "$mirror" || fail 'mirror operation lock is not released'
 
 echo "storage thread-safety policy: PASS"
