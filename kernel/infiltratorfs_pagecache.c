@@ -1261,10 +1261,10 @@ void infilfs_pagecache_report_buffered_error(
         return;
     }
     pr_err_ratelimited(
-        "InfiltratorFS: buffered read failed ino=%lu off=%lld err=%zd folio=present uptodate=%d locked=%d error=%d dirty=%d size=%lld persisted=%llu\n",
+        "InfiltratorFS: buffered read failed ino=%lu off=%lld err=%zd folio=present uptodate=%d locked=%d dirty=%d size=%lld persisted=%llu\n",
         inode->i_ino, (long long)position, error,
         folio_test_uptodate(folio), folio_test_locked(folio),
-        folio_test_error(folio), folio_test_dirty(folio),
+        folio_test_dirty(folio),
         (long long)i_size_read(inode),
         (unsigned long long)(ii ? READ_ONCE(ii->persisted_size) : 0));
     folio_put(folio);
