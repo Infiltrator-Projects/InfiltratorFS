@@ -751,8 +751,7 @@ static void infilfs_readahead(struct readahead_control *rac)
 #endif
 
 static int infilfs_pagecache_prepare_folio(struct address_space *mapping,
-                                 loff_t pos, unsigned int len,
-                                 struct folio **folio_out)
+                                 loff_t pos, struct folio **folio_out)
 {
     struct folio *folio;
     int ret = 0;
@@ -762,20 +761,16 @@ static int infilfs_pagecache_prepare_folio(struct address_space *mapping,
     if (IS_ERR(folio))
         return PTR_ERR(folio);
     if (!folio_test_uptodate(folio)) {
-        if (pos == folio_pos(folio) && len >= folio_size(folio))
+        /*
+         * A full-folio write can still copy fewer bytes when userspace
+         * faults. Preserve every untouched byte from the verified committed
+         * representation (or zero beyond persisted EOF) before VFS copies
+         * user data. Otherwise an interrupted overwrite can publish stale
+         * or uninitialised folio bytes as valid file contents.
+         */
+        ret = infilfs_pagecache_fill_folio(folio);
+        if (!ret)
             folio_mark_uptodate(folio);
-        else {
-            ret = infilfs_pagecache_fill_folio(folio);
-            if (!ret) {
-                /*
-                 * write_begin retains the folio lock while VFS copies new
-                 * bytes into it. Unlike ->read_folio, there is no read
-                 * completion callback to publish verified existing contents.
-                 * Keep the up-to-date transition here before write_end.
-                 */
-                folio_mark_uptodate(folio);
-            }
-        }
         if (ret) {
             folio_unlock(folio);
             folio_put(folio);
@@ -812,7 +807,7 @@ static int infilfs_pagecache_write_begin_common(
         }
     }
 
-    ret = infilfs_pagecache_prepare_folio(mapping, pos, len, folio_out);
+    ret = infilfs_pagecache_prepare_folio(mapping, pos, folio_out);
     if (ret) {
         if (ctx) {
             infilfs_quota_reservation_abort(&ctx->quota);

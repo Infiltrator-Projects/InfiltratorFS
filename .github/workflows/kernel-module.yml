@@ -253,6 +253,11 @@ jobs:
 
           test "$(findmnt -n -o FSTYPE -T "$mountpoint")" = infiltratorfs
           findmnt -n -o OPTIONS -T "$mountpoint" | grep -Eq '(^|,)rw(,|$)'
+          # A fault-shortened full-page overwrite must preserve untouched data.
+          cc -std=gnu11 -O2 -Wall -Wextra -Werror \
+            -o "$RUNNER_TEMP/infiltratorfs-short-write" \
+            tests/native-short-write-qualification.c
+          "$RUNNER_TEMP/infiltratorfs-short-write" "$mountpoint"
           test "$(stat -f -c '%l' "$mountpoint")" = 1023
           test "$(stat -c '%u:%g' "$mountpoint")" = "$(id -u):$(id -g)"
 
