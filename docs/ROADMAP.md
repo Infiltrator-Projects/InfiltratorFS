@@ -42,7 +42,7 @@ Pre-1.0 development is current-format-only. A development format may be replaced
 - [x] Regular-file hard links.
 - [x] Named read-only snapshots and retained historical generations.
 - [x] Portable attributes with POSIX compatibility metadata isolated from the portable model.
-- [x] Versioned Unicode normalization policy.
+- [x] Versioned Unicode-name policy v1 (validated UTF-8 preserved byte-for-byte, without Unicode normalization).
 - [x] Optional case-folded directory policy.
 - [x] Cross-platform removable-volume filename profile.
 - [x] Generic typed/reparse extension objects.

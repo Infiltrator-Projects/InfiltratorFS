@@ -134,9 +134,9 @@ static int checkpoint_matches(struct infs_volume *vol, uint64_t block_no,
         return 0;
 
     struct infs_superblock_disk sb;
-    /* Production 0.18 opens remain strict, while the experimental 0.19
-     * read-only structural check authenticates its own checkpoint replicas
-     * against the explicitly selected on-disk minor version. */
+    /* Current Format 0.19 checkpoint replicas must validate against their
+     * explicitly selected minor, not the default legacy decode path. This
+     * helper also retains that decode for classic in-memory fixtures. */
     if (infs_le16_to_cpu(best->format_minor) == INFS_LOCATOR_FORMAT_MINOR) {
         if (!infs_validate_superblock_block_minor(
                 raw, INFS_LOCATOR_FORMAT_MINOR))

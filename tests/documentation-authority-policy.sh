@@ -32,10 +32,10 @@ done < <(find docs -maxdepth 1 -type f -name '*.md' -print | sort)
 # not redefine persistent codec semantics owned by COMPRESSION/ON_DISK_FORMAT.
 if grep -Fq 'IAC1 is the only compressed on-disk representation' \
         docs/IAC1-2026-HARDWARE-DESIGN.md; then
-    fail 'IAC1 hardware note contradicts retained Format 0.18 LZ4 support'
+    fail 'IAC1 hardware note contradicts retained Format 0.19 LZ4 support'
 fi
 grep -Fq 'codec identifier 1 for LZ4' docs/IAC1-2026-HARDWARE-DESIGN.md || \
-    fail 'IAC1 hardware note omits retained Format 0.18 LZ4 support'
+    fail 'IAC1 hardware note omits retained Format 0.19 LZ4 support'
 
 # Live automatic evidence belongs to workflow definitions and exact-SHA Actions
 # results; VALIDATION must name that executable authority instead of becoming a

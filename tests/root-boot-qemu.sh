@@ -2,6 +2,8 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
+version="$(bash "$root/tools/project-version.sh" "$root/CMakeLists.txt")"
+upgrade_version="${version}+native1"
 build="${1:-build-root-boot}"
 module="${2:-kernel/infiltratorfs.ko}"
 work="${RUNNER_TEMP:-/tmp}/infiltratorfs-root-boot"
@@ -35,7 +37,7 @@ bash "$root/packaging/build-linux-packages.sh" "$build" "$work/base-dist"
 # Build a strictly newer package for the disposable guest so dpkg performs a
 # genuine upgrade while staying inside the package builder's accepted version
 # grammar. This package is qualification-only and is never published.
-INFILTRATORFS_PACKAGE_VERSION=0.18.48+native1 \
+INFILTRATORFS_PACKAGE_VERSION="$upgrade_version" \
 INFILTRATORFS_EMIT_RUN=0 \
 bash "$root/packaging/build-linux-packages.sh" "$build" "$work/upgrade-dist"
 base_deb="$(find "$work/base-dist" -name 'infiltratorfs_*.deb' -print -quit)"
@@ -66,6 +68,7 @@ mount "${loop}p1" "$mnt/boot/efi"
 debootstrap --variant=minbase noble "$mnt" http://archive.ubuntu.com/ubuntu
 cp "$base_deb" "$mnt/root/infiltratorfs-base.deb"
 cp "$upgrade_deb" "$mnt/root/infiltratorfs-upgrade.deb"
+printf '%s\n' "$upgrade_version" > "$mnt/etc/infiltrator-root-ci-upgrade-version"
 
 mount --bind /dev "$mnt/dev"
 mount --bind /dev/pts "$mnt/dev/pts"
@@ -153,7 +156,8 @@ EOF
     echo "ROOT_UPGRADE_STAGED_PASS"
     systemctl reboot
 elif [[ "$phase" == 2 ]]; then
-    [[ "$(dpkg-query -W -f='${Version}' infiltratorfs)" == "0.18.48+native1" ]]
+    [[ "$(dpkg-query -W -f='${Version}' infiltratorfs)" ==
+       "$(cat /etc/infiltrator-root-ci-upgrade-version)" ]]
     [[ "$(cat /var/lib/infiltrator-root-ci/persistent)" == root-persistent ]]
     getfacl -n /var/lib/infiltrator-root-ci/acl/file | grep -Eq '^user:12345:r--$'
     [[ "$(getfattr --only-values -n user.rootci /var/lib/infiltrator-root-ci/acl/file)" == yes ]]
@@ -169,7 +173,8 @@ elif [[ "$phase" == 2 ]]; then
     done
 else
     [[ "$(findmnt -n -o FSTYPE /)" == infiltratorfs ]]
-    [[ "$(dpkg-query -W -f='${Version}' infiltratorfs)" == "0.18.48+native1" ]]
+    [[ "$(dpkg-query -W -f='${Version}' infiltratorfs)" ==
+       "$(cat /etc/infiltrator-root-ci-upgrade-version)" ]]
     dpkg --audit
     [[ "$(cat /var/lib/infiltrator-root-ci/persistent)" == root-persistent ]]
     getfacl -n /var/lib/infiltrator-root-ci/acl/file | grep -Eq '^user:12345:r--$'

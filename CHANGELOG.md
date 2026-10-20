@@ -5,7 +5,9 @@
 - Preserve existing DKMS registration during Debian pre-installation instead of deleting the working fallback before the replacement package can be built, configured and validated. Retain mounted-volume fail-closed admission.
 - Require the release-package and root-volume policy guards to enforce this rollback boundary.
 - Replace the native maintainability test's duplicate hard-coded Kbuild object inventory with validation of the authoritative module object list, source existence, uniqueness and DKMS manifest parity.
-- Update the Linux adapter upgrade contract. The persistent Format 0.19 layout and checkpoint rules are unchanged; real root-boot upgrade evidence remains manual.
+- Repair the real-root QEMU upgrade harness: derive its disposable +native1 package version from the authoritative project version rather than hard-coding obsolete 0.18.48; persist the expected guest version once and protect it with ordinary root-readiness CI.
+- Align current-format comments and codec/test descriptions with Format 0.19 and clarify the roadmap's Unicode-name policy: validated UTF-8 bytes are preserved exactly, without implicit normalization.
+- Update the Linux adapter upgrade contract. Persistent Format 0.19 bytes and checkpoint rules are unchanged; real root-boot upgrade evidence remains manual.
 
 ## 0.19.7 — 2026-10-20
 

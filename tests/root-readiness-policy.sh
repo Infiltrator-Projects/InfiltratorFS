@@ -26,6 +26,10 @@ fi
 
 grep -Fq 'ROOT_RECOVERY_PASS' "$root/tests/root-boot-qemu.sh"
 grep -Fq 'if=virtio,cache=none' "$root/tests/root-boot-qemu.sh"
+grep -Fq 'upgrade_version="${version}+native1"' "$root/tests/root-boot-qemu.sh"
+grep -Fq 'INFILTRATORFS_PACKAGE_VERSION="$upgrade_version"' "$root/tests/root-boot-qemu.sh"
+grep -Fq 'infiltrator-root-ci-upgrade-version' "$root/tests/root-boot-qemu.sh"
+! grep -Fq '0.18.48+native1' "$root/tests/root-boot-qemu.sh"
 ! grep -R -Fq 'INFS_IAC1_MIN_SAVINGS_DIVISOR' \
     "$root/kernel" "$root/src" "$root/include" || exit 1
 

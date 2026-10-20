@@ -88,7 +88,7 @@ if(NOT DEFINED INFILTRATR_MB_CORPO_ARCHIVE_SHA256)
     endif()
 endif()
 
-# LZ4 codec identifier 1 remains a retained, non-default Format 0.18
+# LZ4 codec identifier 1 remains a retained, non-default Format 0.19
 # interoperability representation. Pin it so every userspace adapter
 # decodes the same byte stream; automatic writes continue to use IAC1.
 include(FetchContent)

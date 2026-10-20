@@ -57,7 +57,7 @@ int infs_validate_allocation_page(const uint8_t block[INFS_BLOCK_SIZE],
 
 /*
  * The classic encoders remain intentionally available for fixtures and format
- * validation. Current Format 0.18 formatters use the tree variants. Keeping
+ * validation. Current Format 0.19 formatters use the tree variants. Keeping
  * the helpers separate prevents a test fixture from silently changing shape
  * when the normal formatter policy evolves.
  */
