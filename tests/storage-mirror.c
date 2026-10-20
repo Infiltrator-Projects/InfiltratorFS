@@ -113,6 +113,18 @@ int main(void)
        aliased_members[1].context == &b,
        "rejected alias preserves ownership of every caller member");
 
+    struct infs_storage duplicate_members[2] = {
+        { .ops = &ops, .context = &a },
+        { .ops = &ops, .context = &a },
+    };
+    ok(infs_storage_mirror_create(duplicate_members, 2, &mirror) ==
+           INFS_STATUS_INVALID_ARGUMENT,
+       "reject duplicate ownership of one backend as two replicas");
+    ok(duplicate_members[0].ops == &ops &&
+       duplicate_members[1].ops == &ops && !mirror.ops &&
+       !a.closed,
+       "duplicate backend refusal leaves both handles untouched");
+
     ok(infs_storage_mirror_create(members, 2, &mirror) == INFS_STATUS_OK,
        "create mirror");
     ok(!members[0].ops && !members[1].ops, "member ownership transferred");

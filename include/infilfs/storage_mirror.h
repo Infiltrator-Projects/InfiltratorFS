@@ -18,8 +18,10 @@
  * members are rejected before I/O, never silently weakened.
  *
  * The destination must be a distinct, otherwise unused storage handle, not
- * an element of the supplied member array. Invalid aliased destinations are
- * rejected without touching the caller-owned members.
+ * an element of the supplied member array. Every member must independently
+ * own a distinct backing context; duplicate contexts would be closed twice
+ * and cannot provide independent redundancy. Aliasing is rejected without
+ * touching the caller-owned members.
  */
 infs_status infs_storage_mirror_create(struct infs_storage *members,
                                        size_t member_count,

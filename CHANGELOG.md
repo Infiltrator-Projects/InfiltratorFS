@@ -4,6 +4,7 @@
 
 - Prepare non-uptodate native Linux folios from verified existing contents even for full-folio buffered overwrites, preserving the original suffix when a user-memory fault interrupts the write. Add a mounted cold-cache regression to the native kernel gate.
 - Reject PBKDF2 iteration counts beyond OpenSSL's signed-integer range during encrypted-volume formatting and reject impossible counts in untrusted envelope headers; preserve caller ownership on failure and cover both boundaries with portable tests.
+- Refuse replicated-storage constructors that receive duplicate backend ownership contexts, preventing double closure and false independent-replica guarantees; test the non-destructive refusal.
 - Advance CMake and native Windows INF version identities together without changing Format 0.19 on-disk semantics or previously published 0.19.10 assets.
 
 ## 0.19.10 — 2026-10-20

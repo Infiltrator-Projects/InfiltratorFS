@@ -306,9 +306,18 @@ infs_status infs_storage_mirror_create(struct infs_storage *members,
      * Source and destination handles have distinct ownership. Clearing an
      * aliased destination would erase an input handle before validation.
      */
-    for (size_t i = 0; i < member_count; ++i)
-        if (out == &members[i])
+    for (size_t i = 0; i < member_count; ++i) {
+        if (out == &members[i] || !infs_storage_valid(&members[i]))
             return INFS_STATUS_INVALID_ARGUMENT;
+        /*
+         * Ownership is transferred and each member is closed independently.
+         * The same backend context cannot be transferred twice: doing so
+         * would also make two supposed replicas the very same storage.
+         */
+        for (size_t j = 0; j < i; ++j)
+            if (members[i].context == members[j].context)
+                return INFS_STATUS_INVALID_ARGUMENT;
+    }
     memset(out, 0, sizeof(*out));
 
     struct mirror_context *ctx = calloc(1, sizeof(*ctx));
