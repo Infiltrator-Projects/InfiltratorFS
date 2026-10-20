@@ -764,8 +764,18 @@ static int infilfs_pagecache_prepare_folio(struct address_space *mapping,
     if (!folio_test_uptodate(folio)) {
         if (pos == folio_pos(folio) && len >= folio_size(folio))
             folio_mark_uptodate(folio);
-        else
+        else {
             ret = infilfs_pagecache_fill_folio(folio);
+            if (!ret) {
+                /*
+                 * write_begin retains the folio lock while VFS copies new
+                 * bytes into it. Unlike ->read_folio, there is no read
+                 * completion callback to publish verified existing contents.
+                 * Keep the up-to-date transition here before write_end.
+                 */
+                folio_mark_uptodate(folio);
+            }
+        }
         if (ret) {
             folio_unlock(folio);
             folio_put(folio);
