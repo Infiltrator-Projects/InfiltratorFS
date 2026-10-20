@@ -136,6 +136,8 @@ jobs:
           test -s "$installer"
           test -s "$deb"
           "$installer" --verify
+          # Verify actual pinned-source and asset downloads without installing.
+          "$installer" --source-check
           test "$(dpkg-deb --field "$deb" Version)" = "$VERSION"
           test "$(dpkg-deb --field "$deb" X-InfiltratorFS-Desktop-Integration)" = ubuntu24.04-mint22-bundled
 

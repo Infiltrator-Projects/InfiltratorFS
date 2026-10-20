@@ -1,0 +1,169 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Small, source-fetching release bootstrap. These identities are set only by
+# the release build; they are not derived from a mutable branch or tag when the
+# installer executes. No source tree or third-party executable is embedded.
+set -Eeuo pipefail
+
+readonly SOURCE_URL='https://github.com/Infiltrator-Projects/InfiltratorFS.git'
+readonly SOURCE_SHA='@SOURCE_SHA@'
+readonly RELEASE_VERSION='@RELEASE_VERSION@'
+readonly DESKTOP_TAG='@DESKTOP_TAG@'
+readonly GNOME_DISKS_SHA256='@GNOME_DISKS_SHA256@'
+readonly LIBBD_FS_SHA256='@LIBBD_FS_SHA256@'
+readonly MANIFEST_SHA256='@MANIFEST_SHA256@'
+
+verify_installer() {
+    [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+        echo 'Installer has no valid immutable source SHA.' >&2
+        exit 1
+    }
+    [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+        echo 'Installer has no valid semantic release version.' >&2
+        exit 1
+    }
+    if [[ -n "$DESKTOP_TAG" ]]; then
+        [[ "$DESKTOP_TAG" =~ ^desktop-integration-ubuntu24\.04-[A-Za-z0-9.+_-]+$ ]] || exit 1
+        for digest in "$GNOME_DISKS_SHA256" "$LIBBD_FS_SHA256" "$MANIFEST_SHA256"; do
+            [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || {
+                echo 'Installer is missing a pinned desktop asset SHA-256.' >&2
+                exit 1
+            }
+        done
+    else
+        [[ -z "$GNOME_DISKS_SHA256$LIBBD_FS_SHA256$MANIFEST_SHA256" ]] || exit 1
+    fi
+    [[ "$(head -n 1 "$0")" == '#!/usr/bin/env bash' ]] || exit 1
+    # This is deliberately a small text-only bootstrap; accidentally appending
+    # source or binaries is a release failure, not a supported packaging mode.
+    (( $(wc -c < "$0") < 16384 )) || {
+        echo 'Installer unexpectedly contains an attached payload.' >&2
+        exit 1
+    }
+}
+
+dry_run() {
+    printf 'InfiltratorFS %s exact-source native installer\n' "$RELEASE_VERSION"
+    printf 'Pinned Git commit: %s\n' "$SOURCE_SHA"
+    printf 'Source: %s\n' "$SOURCE_URL"
+    printf 'Dry run only; no packages will be installed and no files will be changed.\n'
+    printf 'The installer downloads and verifies this commit and its pinned submodules before building.\n'
+    if [[ -n "$DESKTOP_TAG" ]]; then
+        printf 'Desktop integration: %s (three SHA-256-pinned release assets).\n' "$DESKTOP_TAG"
+    else
+        printf 'Desktop integration: core-only source build.\n'
+    fi
+    printf 'Native build commands:\n'
+    printf '  cmake -S <verified-source> -B <verified-source>/build-native -DCMAKE_BUILD_TYPE=Release\n'
+    printf '  cmake --build <verified-source>/build-native --parallel\n'
+    printf '  ctest --test-dir <verified-source>/build-native --output-on-failure\n'
+    printf 'Native kernel module commands:\n'
+    printf '  Debian DKMS package builds the native VFS driver for the running kernel.\n'
+    printf 'The completed installation is Debian-managed as infiltratorfs %s+native1.\n' "$RELEASE_VERSION"
+}
+
+download_source() {
+    local destination="$1" sha version status
+    command -v git >/dev/null 2>&1 || { echo 'git is required to fetch source.' >&2; return 1; }
+    git clone --quiet --filter=blob:none --no-checkout "$SOURCE_URL" "$destination"
+    git -C "$destination" checkout --quiet --detach "$SOURCE_SHA"
+    sha="$(git -C "$destination" rev-parse HEAD)"
+    [[ "$sha" == "$SOURCE_SHA" ]] || {
+        echo "Source identity mismatch: expected $SOURCE_SHA, got $sha" >&2
+        return 1
+    }
+    git -C "$destination" submodule update --init --recursive
+    # The index pins each gitlink; never accept an uninitialised or moved
+    # submodule and never resolve its source from a moving branch.
+    status="$(git -C "$destination" submodule status --recursive)"
+    [[ -n "$status" ]] || { echo 'Pinned Libraries submodule is missing.' >&2; return 1; }
+    if grep -Eq '^[+-U]' <<<"$status"; then
+        echo 'Submodule checkout does not match the pinned source commit.' >&2
+        return 1
+    fi
+    [[ -f "$destination/src/infiltratr-common/CMakeLists.txt" ]] || return 1
+    version="$(bash "$destination/tools/project-version.sh" "$destination/CMakeLists.txt")"
+    [[ "$version" == "$RELEASE_VERSION" ]] || {
+        echo "Source version mismatch: $version != $RELEASE_VERSION" >&2
+        return 1
+    }
+    [[ "$(head -n 1 "$destination/.github/desktop-integration-release" | tr -d '[:space:]')" ==         "@DESKTOP_SOURCE_TAG@" ]] || {
+        echo 'Desktop release-source identity differs from the validated manifest.' >&2
+        return 1
+    }
+}
+
+download_desktop_assets() {
+    local directory="$1" asset expected url
+    [[ -n "$DESKTOP_TAG" ]] || return 0
+    command -v curl >/dev/null 2>&1 || {
+        echo 'curl is required to fetch pinned desktop integration assets.' >&2
+        return 1
+    }
+    mkdir -p "$directory"
+    for asset in gnome-disks libbd_fs.so manifest; do
+        url="https://github.com/Infiltrator-Projects/InfiltratorFS/releases/download/${DESKTOP_TAG}/${asset}"
+        curl --fail --location --silent --show-error --retry 3 \
+            --output "$directory/$asset" "$url"
+    done
+    (
+        cd "$directory"
+        printf '%s  %s\n' "$GNOME_DISKS_SHA256" gnome-disks \
+            "$LIBBD_FS_SHA256" libbd_fs.so \
+            "$MANIFEST_SHA256" manifest | sha256sum --check --status
+    ) || {
+        echo 'Downloaded desktop integration assets failed pinned SHA-256 verification.' >&2
+        return 1
+    }
+    [[ "$(sed -n 's/^target=//p' "$directory/manifest")" ==         ubuntu-24.04-linuxmint-22.x ]] || {
+        echo 'Downloaded desktop integration target does not match the tested platform.' >&2
+        return 1
+    }
+}
+
+mode="${1:-}"
+case "$mode" in
+    --verify|--dry-run|--source-check)
+        [[ $# -eq 1 ]] || exit 2 ;;
+    --build-only)
+        [[ $# -eq 2 ]] || {
+            echo 'Usage: installer.run --build-only OUTPUT.deb' >&2
+            exit 2
+        } ;;
+    '')
+        [[ $# -eq 0 ]] || exit 2 ;;
+    --help|-h)
+        printf 'Usage: installer.run [--verify|--dry-run|--source-check|--build-only OUTPUT.deb]\n'
+        exit 0 ;;
+    *) exit 2 ;;
+esac
+
+verify_installer
+case "$mode" in
+    --verify)
+        echo 'InfiltratorFS pinned-source native installer verified.'
+        exit 0 ;;
+    --dry-run)
+        dry_run
+        exit 0 ;;
+esac
+
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+download_source "$work/source"
+download_desktop_assets "$work/desktop"
+if [[ -n "$DESKTOP_TAG" ]]; then
+    tar -C "$work/desktop" -cf "$work/source/infiltratorfs-os-integration-bundle.tar" \
+        gnome-disks libbd_fs.so manifest
+fi
+if [[ "$mode" == --source-check ]]; then
+    echo 'Pinned InfiltratorFS source, submodules and desktop assets verified.'
+    exit 0
+fi
+
+if [[ "$mode" == --build-only ]]; then
+    "$work/source/support/installer/bootstrap.sh" --build-only "$2"
+else
+    "$work/source/support/installer/bootstrap.sh"
+fi

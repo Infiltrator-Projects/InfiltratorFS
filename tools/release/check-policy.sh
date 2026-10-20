@@ -41,6 +41,28 @@ inf_version="$(sed -nE \
 [[ "$inf_version" == "$version" ]] || \
     fail "Windows INF version ${inf_version:-missing} does not match source $version"
 
+# A native .run is a small, immutable-source bootstrap, never an archive.
+# Pin the entire source commit and every downloaded executable asset;
+# verify the behavior as source policy and in release-candidate CI.
+grep -Fq 'support/installer/native-release.run.in' packaging/build-linux-packages.sh ||
+    fail 'the native installer must use its maintained source-fetching template'
+grep -Fq 'source_sha="$(git rev-parse --verify HEAD)"' packaging/build-linux-packages.sh ||
+    fail 'native installer is missing the exact source revision'
+grep -Fq 'tests/native-installer-source-policy.sh' packaging/build-linux-packages.sh ||
+    fail 'native installer lacks source and no-embedded-payload verification'
+if grep -Fq '__INFILTRATORFS_NATIVE_PAYLOAD__' packaging/build-linux-packages.sh ||
+   grep -Fq 'tail -n +"$payload_start"' packaging/build-linux-packages.sh ||
+   grep -Fq 'tar_args=(' packaging/build-linux-packages.sh; then
+    fail 'native installer builder still embeds a source archive'
+fi
+grep -Fq 'git clone --quiet --filter=blob:none --no-checkout' support/installer/native-release.run.in ||
+    fail 'native installer must download its own source'
+grep -Fq 'sha256sum --check --status' support/installer/native-release.run.in ||
+    fail 'native installer must verify exact desktop integration assets'
+grep -Fq '"$installer" --source-check' .github/workflows/release-candidate-linux.yml ||
+    fail 'release candidate does not verify real source download'
+bash -n tests/native-installer-source-policy.sh
+
 # The release resolver is a pure semantic-state producer. Workflows must bind
 # emitted values explicitly rather than depending on process-wide GitHub
 # environment mutation from an earlier step.

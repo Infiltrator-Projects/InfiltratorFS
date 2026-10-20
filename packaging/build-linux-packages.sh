@@ -53,8 +53,7 @@ architecture="$(dpkg --print-architecture)"
 deb_name="infiltratorfs_${package_version}_${architecture}.deb"
 run_name="infiltratorfs-${version}-linux-native.run"
 package_root="$(mktemp -d)"
-payload="$(mktemp)"
-trap 'rm -rf "$package_root" "$payload"' EXIT
+trap 'rm -rf "$package_root"' EXIT
 chmod 0755 "$package_root"
 
 cmake --install "$build_dir" --prefix "$package_root/usr"
@@ -279,127 +278,52 @@ if [[ "$emit_run" = 0 ]]; then
     exit 0
 fi
 
-# The .run payload contains the source tree and always builds the native Linux
-# VFS/DKMS product path.
-source_epoch="$(git log -1 --format=%ct 2>/dev/null || date +%s)"
-bundle_work=""
-bundle_payload=""
-if [[ -n "$integration_bundle" ]]; then
-    [[ -d "$integration_bundle" ]] || {
-        echo "Desktop integration bundle directory does not exist: $integration_bundle" >&2
-        exit 1
-    }
-    bundle_work="$(mktemp -d)"
-    bundle_payload="$bundle_work/infiltratorfs-os-integration-bundle.tar"
-    for required in gnome-disks libbd_fs.so manifest; do
-        [[ -s "$integration_bundle/$required" ]] || {
-            echo "Desktop integration bundle is incomplete: $required" >&2
-            exit 1
-        }
-    done
-    tar -C "$integration_bundle" -cf "$bundle_payload" gnome-disks libbd_fs.so manifest
-fi
-
-tar_args=(
-    --sort=name --mtime="@${source_epoch}" --owner=0 --group=0 --numeric-owner
-    --exclude='./.git' --exclude='*/.git' --exclude='./build*' --exclude='./dist'
-    -czf "$payload" -C "$repo_root" .
-)
-if [[ -n "$bundle_payload" ]]; then
-    tar_args+=( -C "$bundle_work" "./$(basename "$bundle_payload")" )
-fi
-tar "${tar_args[@]}"
-rm -rf "$bundle_work"
-
-cat > "$dist_dir/$run_name" <<'RUN_HEADER'
-#!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
-set -Eeuo pipefail
-self="$0"
-marker='__INFILTRATORFS_NATIVE_PAYLOAD__'
-payload_start="$(awk -v marker="$marker" '$0 == marker { print NR + 1; exit }' "$self")"
-[[ -n "$payload_start" ]] || { echo "Installer payload marker not found." >&2; exit 1; }
-
-verify_installer() {
-    local verify_root
-    test "$(head -n 1 "$self")" = '#!/usr/bin/env bash'
-    tail -n +"$payload_start" "$self" | gzip -t
-    verify_root="$(mktemp -d)"
-    trap 'rm -rf "$verify_root"' RETURN
-    tail -n +"$payload_start" "$self" | tar --no-same-owner -xzf - -C "$verify_root"
-    for required in CMakeLists.txt README.md support/installer/bootstrap.sh \
-        packaging/build-linux-packages.sh packaging/infiltratorfs-os-integration \
-        packaging/build-noble-desktop-integration.sh \
-        packaging/patch-mintstick.py packaging/infiltratorfs-manager.svg \
-        src/infiltratr-common/CMakeLists.txt kernel/Makefile kernel/infiltratorfs_core.c \
-        kernel/infiltratorfs_cpu.c kernel/infiltratorfs_crypto.c \
-        kernel/infiltratorfs_format.h include/infilfs/iac1.h kernel/infiltratorfs_allocation_map.c \
-        kernel/infiltratorfs_allocation_publish.c kernel/infiltratorfs_rw.inc \
-        kernel/infiltratorfs_parallel_alloc.c kernel/infiltratorfs_extent_tree.c \
-        kernel/infiltratorfs_rw_legacy.inc kernel/infiltratorfs_checksum_cache.c kernel/infiltratorfs_locator_cache.c \
-        kernel/infiltratorfs_rw_data.inc \
-        kernel/infiltratorfs_rw_namespace.inc kernel/infiltratorfs_rw_namespace_exchange.inc kernel/infiltratorfs_read_cache.c \
-        kernel/infiltratorfs_pagecache.c kernel/infiltratorfs_linux_meta_codec.c kernel/infiltratorfs_name_policy.c kernel/infiltratorfs_linux_meta.inc \
-        kernel/infiltratorfs_resize.c kernel/infiltratorfs_quota.inc \
-        kernel/infiltratorfs_defrag.inc kernel/infiltratorfs_ioctl.h; do
-        test -f "$verify_root/$required"
-    done
-    test -x "$verify_root/support/installer/bootstrap.sh"
-    bash -n "$verify_root/support/installer/bootstrap.sh"
-    bash -n "$verify_root/packaging/build-linux-packages.sh"
-    if [[ -f "$verify_root/infiltratorfs-os-integration-bundle.tar" ]]; then
-        bundle_verify="$verify_root/.desktop-bundle-verify"
-        mkdir -p "$bundle_verify"
-        tar -xf "$verify_root/infiltratorfs-os-integration-bundle.tar" -C "$bundle_verify"
-        for required in gnome-disks libbd_fs.so manifest; do
-            test -s "$bundle_verify/$required"
-        done
-    fi
-    grep -Fq 'bash "$ROOT/packaging/build-linux-packages.sh"' \
-        "$verify_root/support/installer/bootstrap.sh"
-    rm -rf "$verify_root"
-    trap - RETURN
+# The .run is deliberately a small text-only, source-fetching bootstrap.
+# Git commit, recursive gitlinks and external desktop assets are fixed at
+# package-generation time. Neither source nor executable extras are attached.
+command -v git >/dev/null 2>&1 || {
+    echo 'git is required to pin native installer source.' >&2
+    exit 1
 }
-
-case "${1:-}" in
-    --verify)
-        [[ $# -eq 1 ]] || exit 2
-        verify_installer
-        echo 'InfiltratorFS native installer verified.'
-        exit 0
-        ;;
-    --dry-run)
-        [[ $# -eq 1 ]] || exit 2
-        ;;
-    --build-only)
-        [[ $# -eq 2 ]] || { echo 'Usage: infiltratorfs-<version>-linux-native.run --build-only OUTPUT.deb' >&2; exit 2; }
-        ;;
-    '')
-        [[ $# -eq 0 ]] || exit 2
-        ;;
-    --help|-h)
-        echo 'Usage: infiltratorfs-<version>-linux-native.run [--verify|--dry-run|--build-only OUTPUT.deb]'
-        exit 0
-        ;;
-    *) exit 2 ;;
-esac
-verify_installer
-work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
-mkdir -p "$work/source"
-tail -n +"$payload_start" "$self" | tar --no-same-owner -xzf - -C "$work/source"
-"$work/source/support/installer/bootstrap.sh" "$@"
-exit 0
-__INFILTRATORFS_NATIVE_PAYLOAD__
-RUN_HEADER
-cat "$payload" >> "$dist_dir/$run_name"
+source_sha="$(git rev-parse --verify HEAD)"
+[[ "$source_sha" =~ ^[0-9a-f]{40}$ ]] || {
+    echo 'Native installer source must be a full Git commit identity.' >&2
+    exit 1
+}
+desktop_source_tag="$(head -n 1 .github/desktop-integration-release | tr -d '[:space:]')"
+[[ "$desktop_source_tag" =~ ^desktop-integration-ubuntu24\.04-[A-Za-z0-9.+_-]+$ ]] || {
+    echo 'The pinned desktop integration release identity is invalid.' >&2
+    exit 1
+}
+desktop_tag=""
+gnome_disks_sha=""
+libbd_fs_sha=""
+manifest_sha=""
+if [[ "$integration_enabled" = 1 ]]; then
+    desktop_tag="$desktop_source_tag"
+    gnome_disks_sha="$(sha256sum "$integration_bundle/gnome-disks" | cut -d' ' -f1)"
+    libbd_fs_sha="$(sha256sum "$integration_bundle/libbd_fs.so" | cut -d' ' -f1)"
+    manifest_sha="$(sha256sum "$integration_bundle/manifest" | cut -d' ' -f1)"
+fi
+template="support/installer/native-release.run.in"
+test -s "$template"
+sed -e "s/@SOURCE_SHA@/$source_sha/g" \
+    -e "s/@RELEASE_VERSION@/$version/g" \
+    -e "s/@DESKTOP_SOURCE_TAG@/$desktop_source_tag/g" \
+    -e "s/@DESKTOP_TAG@/$desktop_tag/g" \
+    -e "s/@GNOME_DISKS_SHA256@/$gnome_disks_sha/g" \
+    -e "s/@LIBBD_FS_SHA256@/$libbd_fs_sha/g" \
+    -e "s/@MANIFEST_SHA256@/$manifest_sha/g" \
+    "$template" > "$dist_dir/$run_name"
 chmod 0755 "$dist_dir/$run_name"
-
+bash -n "$dist_dir/$run_name"
 "$dist_dir/$run_name" --verify
 "$dist_dir/$run_name" --dry-run > "$dist_dir/native-installer-dry-run.txt"
 grep -Fq 'Dry run only; no packages will be installed' "$dist_dir/native-installer-dry-run.txt"
+grep -Fq 'Native build commands:' "$dist_dir/native-installer-dry-run.txt"
 grep -Fq 'Native kernel module commands:' "$dist_dir/native-installer-dry-run.txt"
 grep -Fq 'The completed installation is Debian-managed as infiltratorfs' "$dist_dir/native-installer-dry-run.txt"
+bash tests/native-installer-source-policy.sh "$dist_dir/$run_name" "$source_sha" "$version"
 rm -f "$dist_dir/native-installer-dry-run.txt"
 
 (

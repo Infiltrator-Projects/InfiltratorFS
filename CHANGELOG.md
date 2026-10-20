@@ -4,6 +4,7 @@
 
 - Serialize each complete replicated-storage read, write and durability barrier across all mirror members. Previously a health-state-only mutex permitted overlapping writers to interleave different final values on different healthy replicas, or a flush to overtake an unfinished replication. One operation-level lock now owns both replica state and sequencing, removing the redundant separate health lock.
 - Add a deterministic concurrent overlapping-write regression in the portable mirror suite, update the storage-lock policy and document the intentional per-mirror serialization boundary. Ordinary single-device filesystem I/O and Format 0.19 on-disk data/checkpoint semantics are unchanged.
+- Replace the source-archive-carrying `.run` installer with a small text-only bootstrap that clones the exact qualified Git commit and its pinned recursive submodules, downloads optional desktop integration release assets and verifies each SHA-256, then builds the native Debian/DKMS package locally. Offline `--verify` and `--dry-run` remain non-installing; `--source-check` exercises the complete network-source verification without building or installing. Release candidate and source-policy tests reject embedded payloads and require exact-source retrieval.
 
 ## 0.19.13 — 2026-10-20
 

@@ -125,7 +125,7 @@ Linux packages include the native module/DKMS integration, `mkfs.infiltratorfs`,
 
 InfiltratorFS Manager formats and mounts selected non-system partitions through constrained privileged helpers. On Linux Mint, the project uses its own **Format partition as InfiltratorFS…** Nemo action rather than modifying Mintstick's whole-device formatting behaviour.
 
-Published release assets are available from the repository's GitHub Releases page. Release publication performs its own installed-package native mount/scrub gate; milestone-scale million-file/1 TiB and endurance suites remain separate weekly/manual qualification rather than an automatic requirement for every release.
+Published release assets are available from the repository's GitHub Releases page. The native `.run` installer is a small network bootstrap, not a bundled source tree: it downloads the release's exact Git commit and its pinned submodules, verifies any downloaded desktop integration assets by their fixed SHA-256 values, then builds and packages the native driver and tools on the target machine. `--verify` and `--dry-run` work without downloading anything; `--source-check` verifies the actual downloads without installing. An offline installation should use the already-built release Debian package instead. Release publication performs its own installed-package native mount/scrub gate; milestone-scale million-file/1 TiB and endurance suites remain separate weekly/manual qualification rather than an automatic requirement for every release.
 
 ## Documentation ownership
 
