@@ -503,10 +503,9 @@ for retired in \
         fail "dead kernel helper returned: $retired"
 done
 
-# The staged DKMS tree is standalone: every public format-policy header used
-# by a native .c object must be explicitly present in its one source manifest.
-grep -Fqx 
-include/infilfs/namespace_policy.h\tnamespace_policy.h' \
+# The standalone DKMS source must include the common on-disk namespace
+# predicate required by both native directory readers and name validation.
+grep -Eq '^include/infilfs/namespace_policy[.]h[[:space:]]+namespace_policy[.]h$' \
     "$root/packaging/kernel-dkms-files.list" || \
     fail 'shared namespace policy missing from standalone DKMS source manifest'
 
