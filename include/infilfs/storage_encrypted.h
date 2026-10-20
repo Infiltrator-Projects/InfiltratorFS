@@ -19,7 +19,9 @@
  *
  * format/open take ownership of backing only on success and clear the caller's
  * handle. The returned storage exposes a normal byte-addressed logical device
- * to the filesystem.
+ * to the filesystem. The output must be a separate, unused storage
+ * handle: aliasing it with backing is rejected without transferring ownership
+ * or altering the existing backing handle.
  */
 infs_status infs_storage_encrypted_format(
     struct infs_storage *backing,

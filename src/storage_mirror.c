@@ -14,6 +14,19 @@ struct mirror_context {
     struct infs_storage_lock state_lock;
 };
 
+/*
+ * Release only wrapper-owned allocations. Before successful construction the
+ * caller retains every member; closing those borrowed handles here would make
+ * a failed constructor destructive.
+ */
+static void mirror_release_context(struct mirror_context *ctx)
+{
+    infs_storage_lock_destroy(&ctx->state_lock);
+    free(ctx->healthy);
+    free(ctx->members);
+    free(ctx);
+}
+
 static size_t mirror_policy_copies(
     const struct mirror_context *ctx,
     const struct infs_storage_io_policy *policy)
@@ -87,12 +100,6 @@ static infs_status mirror_read_policy(
     uint8_t *verify = NULL;
     const size_t verify_capacity = size < 65536u ? size : 65536u;
 
-    if (size) {
-        verify = malloc(verify_capacity);
-        if (!verify)
-            return INFS_STATUS_NO_MEMORY;
-    }
-
     for (size_t i = 0; i < ctx->count; ++i) {
         if (!mirror_policy_member(ctx, policy, i) ||
             !mirror_member_healthy(ctx, i))
@@ -110,6 +117,15 @@ static infs_status mirror_read_policy(
             continue;
         }
 
+        /*
+         * A single surviving replica needs no comparison buffer. Allocate
+         * lazily only when a second healthy replica must be cross-checked.
+         */
+        if (size && !verify) {
+            verify = malloc(verify_capacity);
+            if (!verify)
+                return INFS_STATUS_NO_MEMORY;
+        }
         size_t checked = 0;
         while (checked < size) {
             size_t chunk = size - checked;
@@ -265,10 +281,7 @@ static void mirror_close(void *opaque)
         return;
     for (size_t i = 0; i < ctx->count; ++i)
         infs_storage_close(&ctx->members[i]);
-    infs_storage_lock_destroy(&ctx->state_lock);
-    free(ctx->healthy);
-    free(ctx->members);
-    free(ctx);
+    mirror_release_context(ctx);
 }
 
 static const struct infs_storage_ops mirror_ops = {
@@ -289,6 +302,13 @@ infs_status infs_storage_mirror_create(struct infs_storage *members,
 {
     if (!members || member_count < 2u || !out)
         return INFS_STATUS_INVALID_ARGUMENT;
+    /*
+     * Source and destination handles have distinct ownership. Clearing an
+     * aliased destination would erase an input handle before validation.
+     */
+    for (size_t i = 0; i < member_count; ++i)
+        if (out == &members[i])
+            return INFS_STATUS_INVALID_ARGUMENT;
     memset(out, 0, sizeof(*out));
 
     struct mirror_context *ctx = calloc(1, sizeof(*ctx));
@@ -301,10 +321,7 @@ infs_status infs_storage_mirror_create(struct infs_storage *members,
     ctx->members = calloc(member_count, sizeof(*ctx->members));
     ctx->healthy = calloc(member_count, sizeof(*ctx->healthy));
     if (!ctx->members || !ctx->healthy) {
-        free(ctx->healthy);
-        free(ctx->members);
-        infs_storage_lock_destroy(&ctx->state_lock);
-        free(ctx);
+        mirror_release_context(ctx);
         return INFS_STATUS_NO_MEMORY;
     }
 
@@ -314,19 +331,13 @@ infs_status infs_storage_mirror_create(struct infs_storage *members,
         uint64_t bytes = 0;
         int device = 0;
         if (!infs_storage_valid(&members[i])) {
-            free(ctx->healthy);
-            free(ctx->members);
-            infs_storage_lock_destroy(&ctx->state_lock);
-            free(ctx);
+            mirror_release_context(ctx);
             return INFS_STATUS_INVALID_ARGUMENT;
         }
         infs_status status = infs_storage_get_size(
             &members[i], &bytes, &device);
         if (status != INFS_STATUS_OK || bytes == 0) {
-            free(ctx->healthy);
-            free(ctx->members);
-            infs_storage_lock_destroy(&ctx->state_lock);
-            free(ctx);
+            mirror_release_context(ctx);
             return status != INFS_STATUS_OK ?
                 status : INFS_STATUS_INVALID_ARGUMENT;
         }

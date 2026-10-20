@@ -522,7 +522,7 @@ infs_status infs_storage_encrypted_format(
     return INFS_STATUS_NOT_SUPPORTED;
 #else
     if (!infs_storage_valid(backing) || !passphrase || !passphrase_size ||
-        !out)
+        !out || out == backing)
         return INFS_STATUS_INVALID_ARGUMENT;
     memset(out, 0, sizeof(*out));
     if (!kdf_iterations)
@@ -626,7 +626,7 @@ infs_status infs_storage_encrypted_open(
     return INFS_STATUS_NOT_SUPPORTED;
 #else
     if (!infs_storage_valid(backing) || !passphrase || !passphrase_size ||
-        !out)
+        !out || out == backing)
         return INFS_STATUS_INVALID_ARGUMENT;
     memset(out, 0, sizeof(*out));
 

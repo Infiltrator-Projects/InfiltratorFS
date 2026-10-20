@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.19.3 — 2026-10-20
+
+- Reject output handles that alias input storage members in the portable mirror and authenticated-encryption constructors, preserving caller ownership on invalid requests rather than clearing live source handles.
+- Centralize mirror-wrapper allocation teardown while retaining its explicit ownership-transfer boundary. Defer comparison-buffer allocation until a second healthy replica actually requires verification; preserve replica disagreement rejection and read failover.
+- Add regression coverage for mirrored and encrypted storage-handle aliasing and document the constructor ownership precondition. Persistent Format 0.19 bytes and durability protocol are unchanged.
+
 ## 0.19.2 — 2026-10-19
 
 - Align maintained format, security, compression, forensic, kernel and architectural documentation with the already-implemented Format 0.19. Preserve historical Format 0.18 decision rationale while stating its resolution and outstanding physical-media qualification accurately.

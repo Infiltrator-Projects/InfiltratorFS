@@ -233,6 +233,24 @@ int main(void)
     ok(status == INFS_STATUS_OK, "format encrypted storage");
     ok(!backing.ops, "format transfers backing ownership");
 
+    /*
+     * Construction must reject handle aliasing before clearing the output.
+     * Both failure paths leave the caller's live backing handle intact.
+     */
+    struct infs_storage aliased_backing = storage(&memory);
+    ok(infs_storage_encrypted_format(
+           &aliased_backing, passphrase, sizeof(passphrase) - 1u,
+           100000u, &aliased_backing) == INFS_STATUS_INVALID_ARGUMENT,
+       "encrypted format rejects aliased output");
+    ok(aliased_backing.ops == &ops && aliased_backing.context == &memory,
+       "failed encrypted format preserves backing ownership");
+    ok(infs_storage_encrypted_open(
+           &aliased_backing, passphrase, sizeof(passphrase) - 1u,
+           &aliased_backing) == INFS_STATUS_INVALID_ARGUMENT,
+       "encrypted open rejects aliased output");
+    ok(aliased_backing.ops == &ops && aliased_backing.context == &memory,
+       "failed encrypted open preserves backing ownership");
+
     uint64_t logical_size = 0;
     int is_device = 1;
     ok(infs_storage_get_size(&encrypted, &logical_size, &is_device) ==

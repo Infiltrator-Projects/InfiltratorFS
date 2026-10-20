@@ -102,6 +102,17 @@ int main(void)
     };
     struct infs_storage mirror = {0};
 
+    struct infs_storage aliased_members[2] = {
+        { .ops = &ops, .context = &a },
+        { .ops = &ops, .context = &b },
+    };
+    ok(infs_storage_mirror_create(aliased_members, 2, &aliased_members[1]) ==
+           INFS_STATUS_INVALID_ARGUMENT,
+       "mirror rejects an output aliased to an input member");
+    ok(aliased_members[0].ops == &ops && aliased_members[1].ops == &ops &&
+       aliased_members[1].context == &b,
+       "rejected alias preserves ownership of every caller member");
+
     ok(infs_storage_mirror_create(members, 2, &mirror) == INFS_STATUS_OK,
        "create mirror");
     ok(!members[0].ops && !members[1].ops, "member ownership transferred");
