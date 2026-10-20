@@ -2005,7 +2005,21 @@ static ssize_t infilfs_file_read_iter_dispatch(
             return -EINVAL;
         return infilfs_file_read_iter_atime(iocb, to);
     }
-    return generic_file_read_iter(iocb, to);
+    {
+        struct inode *inode = file_inode(iocb->ki_filp);
+        ssize_t result = generic_file_read_iter(iocb, to);
+
+        if (result < 0) {
+            struct infilfs_inode_info *ii = INFILFS_I(inode);
+            pr_err_ratelimited(
+                "InfiltratorFS: buffered read failed ino=%lu ret=%zd i_size=%lld persisted=%llu pos=%lld\n",
+                inode->i_ino, result,
+                (long long)i_size_read(inode),
+                (unsigned long long)(ii ? READ_ONCE(ii->persisted_size) : 0),
+                (long long)iocb->ki_pos);
+        }
+        return result;
+    }
 }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)

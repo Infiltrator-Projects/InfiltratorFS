@@ -151,10 +151,20 @@ static bool readable_as(const char *path, uid_t uid, gid_t gid)
         }
         char byte;
         if (read(fd, &byte, 1) < 0) {
-            if (getenv("INFILFS_ACL_DIAGNOSTIC"))
+            int saved_errno = errno;
+            if (getenv("INFILFS_ACL_DIAGNOSTIC")) {
+                /*
+                 * The first-read failure remains fatal. A second read is
+                 * evidence only: it distinguishes a transient cached error
+                 * from persistent data corruption without masking either.
+                 */
+                ssize_t second = read(fd, &byte, 1);
+                int second_errno = errno;
                 fprintf(stderr,
-                        "POSIX ACL access probe: read %s as %u:%u failed: %s\n",
-                        path, (unsigned)uid, (unsigned)gid, strerror(errno));
+                        "POSIX ACL access probe: read %s as %u:%u failed: %s; next read=%zd errno=%d\n",
+                        path, (unsigned)uid, (unsigned)gid,
+                        strerror(saved_errno), second, second_errno);
+            }
             close(fd);
             _exit(1);
         }
