@@ -1,9 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
 set -e
-module='infiltratorfs'
-version='@PACKAGE_VERSION@'
-
 root_fstype="$(findmnt -n -o FSTYPE / 2>/dev/null || true)"
 root_active=0
 if [ "$root_fstype" = infiltratorfs ]; then
@@ -46,17 +43,10 @@ if [ -n "$active" ]; then
     fi
 fi
 
-if [ "$root_active" -eq 0 ] && command -v dkms >/dev/null 2>&1; then
-    dkms status -m "$module" 2>/dev/null | while IFS= read -r line; do
-        case "$line" in "$module"/*) ;; *) continue ;; esac
-        head="${line%%,*}"
-        head="${head%%:*}"
-        old_version="${head#${module}/}"
-        if [ -n "$old_version" ]; then
-            echo "InfiltratorFS: removing existing DKMS registration $old_version before installing $version."
-            dkms remove -m "$module" -v "$old_version" --all || true
-            rm -rf "/usr/src/$module-$old_version" "/var/lib/dkms/$module/$old_version" || true
-        fi
-    done
-fi
+# The replacement module has not been unpacked or built at preinst time.
+# Keep the previous DKMS registration and any package-managed source intact.
+# Removing the working driver here would destroy the rollback path if the
+# subsequent unpack, DKMS build, initramfs update or postinst fails. The new
+# module is built and activated by postinst only after its source is installed.
+# dpkg, rather than this script, owns package-file replacement.
 exit 0

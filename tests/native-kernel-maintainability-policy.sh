@@ -67,8 +67,28 @@ grep -Fq 'down_read(&sbi->write_lock);' "$quota" || fail 'quota topology read lo
 # The native driver must stay a genuine multi-object Kbuild module. The
 # allocation map is the first extracted subsystem and must never regress into
 # textual inclusion.
-grep -Fqx 'infiltratorfs-y := infiltratorfs_core.o infiltratorfs_cpu.o infiltratorfs_crypto.o infiltratorfs_security.o infiltratorfs_extension.o infiltratorfs_allocation_map.o infiltratorfs_resize.o infiltratorfs_index_tree.o infiltratorfs_extent_tree.o infiltratorfs_parallel_alloc.o infiltratorfs_allocation_publish.o infiltratorfs_read_cache.o infiltratorfs_pagecache.o infiltratorfs_directory_tree.o infiltratorfs_checksum_cache.o infiltratorfs_checksum_store.o infiltratorfs_locator_cache.o infiltratorfs_locator_format.o infiltratorfs_checkpoint_discovery.o infiltratorfs_checkpoint_publish.o infiltratorfs_linux_meta_codec.o infiltratorfs_shared_ownership.o infiltratorfs_orphan_scan.o infiltratorfs_name_policy.o infiltratorfs_media.o' "$makefile" || \
-    fail 'kernel module is no longer built from explicit component objects'
+# Kbuild is the one authority for the component inventory. Validate its
+# structure, source existence, uniqueness and DKMS parity below, without
+# maintaining a second hard-coded copy of the entire object list in this test.
+test "$(grep -c '^infiltratorfs-y :=' "$makefile")" -eq 1 ||
+    fail 'native Kbuild must declare exactly one module object list'
+module_objects="$(sed -nE 's/^infiltratorfs-y := (.*)$/\1/p' "$makefile")"
+test -n "$module_objects" || fail 'native Kbuild module object list is empty'
+[[ "${module_objects%% *}" == infiltratorfs_core.o ]] ||
+    fail 'native VFS core must head the composite Kbuild object list'
+declare -A seen_module_objects=()
+object_count=0
+for object in $module_objects; do
+    [[ "$object" =~ ^infiltratorfs_[a-z0-9_]+[.]o$ ]] ||
+        fail "invalid Kbuild object: $object"
+    [[ -z "${seen_module_objects[$object]+x}" ]] ||
+        fail "duplicated Kbuild object: $object"
+    seen_module_objects[$object]=1
+    test -s "$kernel/${object%.o}.c" ||
+        fail "missing compiled Kbuild source: ${object%.o}.c"
+    (( ++object_count ))
+done
+(( object_count >= 2 )) || fail 'native Kbuild regressed to a single object'
 test -f "$kernel/infiltratorfs_internal.h" || fail 'missing private kernel API header'
 test -f "$kernel/infiltratorfs_cpu.c" || fail 'native CPU policy object missing'
 test -f "$kernel/infiltratorfs_crypto.c" || fail 'accelerated integrity object missing'
@@ -108,8 +128,6 @@ test -n "$visit_line" && test -n "$pending_line" && (( visit_line < pending_line
 # while package installation fails later if a newly split object is omitted.
 dkms_stager="$root/packaging/stage-kernel-dkms-source.sh"
 test -x "$dkms_stager" || fail 'canonical DKMS source stager missing or not executable'
-module_objects="$(sed -nE 's/^infiltratorfs-y := (.*)$/\1/p' "$makefile")"
-test -n "$module_objects" || fail 'could not resolve Kbuild object list'
 for object in $module_objects; do
     source="${object%.o}.c"
     grep -Fqx "kernel/${source}"$'\t'"${source}" "$dkms_manifest" || \

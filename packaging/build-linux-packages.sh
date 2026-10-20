@@ -242,9 +242,13 @@ grep -Fq 'umount -a -t infiltratorfs' <<<"$preinst_text"
 grep -Fq 'live root remains mounted' <<<"$preinst_text"
 grep -Fq 'clean automatic unmount complete' <<<"$preinst_text"
 grep -Fq 'volume is still busy' <<<"$preinst_text"
-grep -Fq 'removing existing DKMS registration $old_version before installing $version' \
-    <<<"$preinst_text"
-! grep -Fq '[ "$old_version" != "$version" ]' <<<"$preinst_text"
+# preinst runs before the replacement is unpacked, built or qualified. A
+# failed package transaction must not first destroy its working DKMS fallback.
+grep -Fq 'Keep the previous DKMS registration' <<<"$preinst_text"
+if grep -Eq 'dkms[[:space:]]+remove|rm[[:space:]]+-rf' <<<"$preinst_text"; then
+    echo 'preinst destroys previous DKMS state before replacement qualification.' >&2
+    exit 1
+fi
 if awk '
     /^[[:space:]]*umount[[:space:]]/ {
         for (field = 2; field <= NF; ++field)

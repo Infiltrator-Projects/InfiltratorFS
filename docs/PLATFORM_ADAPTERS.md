@@ -63,6 +63,14 @@ Linux uses the native out-of-tree `infiltratorfs.ko` VFS adapter. Linux API voca
 
 The former FUSE implementation is not a current adapter path.
 
+Debian driver upgrades must preserve a recovery path until the replacement
+DKMS build and initramfs configuration succeed. The pre-installation phase
+checks mount safety without unregistering the previous driver; the
+post-installation phase owns compilation and activation. Existing DKMS
+registrations are intentionally not deleted during the pre-unpack phase.
+Actual root-volume upgrade and rollback testing remain manual qualification,
+not something implied by successful CI or a Debian package build.
+
 Linux Mint's Mintstick/Nemo USB Stick Formatter is intentionally not used as an InfiltratorFS partition formatter because it is a whole-device repartitioner. Existing-partition formatting belongs to InfiltratorFS Manager or the libblockdev/UDisks/GNOME Disks path so surrounding partitions are preserved.
 
 ## Windows

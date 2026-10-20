@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.19.8 — 2026-10-20
+
+- Preserve existing DKMS registration during Debian pre-installation instead of deleting the working fallback before the replacement package can be built, configured and validated. Retain mounted-volume fail-closed admission.
+- Require the release-package and root-volume policy guards to enforce this rollback boundary.
+- Replace the native maintainability test's duplicate hard-coded Kbuild object inventory with validation of the authoritative module object list, source existence, uniqueness and DKMS manifest parity.
+- Update the Linux adapter upgrade contract. The persistent Format 0.19 layout and checkpoint rules are unchanged; real root-boot upgrade evidence remains manual.
+
 ## 0.19.7 — 2026-10-20
 
 - Move native software SHA-256 and block/inline digests from write-transaction compositors into the compiled crypto service. Preserve kernel-crypto acceleration, deterministic software fallback and identical committed digest values.
