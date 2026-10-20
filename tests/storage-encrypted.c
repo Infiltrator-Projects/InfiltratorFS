@@ -234,6 +234,23 @@ int main(void)
     ok(!backing.ops, "format transfers backing ownership");
 
     /*
+     * OpenSSL's PBKDF2 API accepts a signed iteration count. The public
+     * format API must reject an out-of-range count before modifying storage
+     * or taking ownership of the caller's handle.
+     */
+    struct infs_storage invalid_iterations_backing = storage(&memory);
+    struct infs_storage invalid_iterations_out = {0};
+    ok(infs_storage_encrypted_format(
+           &invalid_iterations_backing, passphrase,
+           sizeof(passphrase) - 1u, UINT32_MAX,
+           &invalid_iterations_out) == INFS_STATUS_INVALID_ARGUMENT,
+       "reject KDF iterations outside provider range");
+    ok(invalid_iterations_backing.ops == &ops &&
+       invalid_iterations_backing.context == &memory &&
+       !invalid_iterations_out.ops,
+       "invalid iteration count preserves source ownership");
+
+    /*
      * Construction must reject handle aliasing before clearing the output.
      * Both failure paths leave the caller's live backing handle intact.
      */
@@ -354,6 +371,23 @@ int main(void)
            "second concurrent partial write preserved");
 #endif
     infs_storage_close(&encrypted);
+
+    /*
+     * The envelope is untrusted input. A CRC-independent, syntactically
+     * recognisable header with an impossible PBKDF2 cost must be rejected
+     * as corrupt without attempting a signed-overflow KDF call.
+     */
+    uint8_t saved_iterations[4];
+    memcpy(saved_iterations, memory.bytes + 32u, sizeof(saved_iterations));
+    memset(memory.bytes + 32u, 0xff, sizeof(saved_iterations));
+    backing = storage(&memory);
+    ok(infs_storage_encrypted_open(
+           &backing, passphrase, sizeof(passphrase) - 1u, &encrypted) ==
+           INFS_STATUS_CORRUPT,
+       "reject impossible persisted KDF iteration count");
+    ok(backing.ops == &ops && !encrypted.ops,
+       "malformed encrypted header preserves backing ownership");
+    memcpy(memory.bytes + 32u, saved_iterations, sizeof(saved_iterations));
 
     backing = storage(&memory);
     static const char wrong[] = "wrong password";

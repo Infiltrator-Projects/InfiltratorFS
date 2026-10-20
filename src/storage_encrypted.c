@@ -80,7 +80,8 @@ static infs_status derive_kek(const void *passphrase, size_t passphrase_size,
                               uint8_t kek[ENC_KEY_BYTES])
 {
     if (!passphrase || passphrase_size == 0 ||
-        passphrase_size > INT_MAX || iterations < 100000u)
+        passphrase_size > INT_MAX ||
+        iterations < 100000u || iterations > INT_MAX)
         return INFS_STATUS_INVALID_ARGUMENT;
     return PKCS5_PBKDF2_HMAC(
         (const char *)passphrase, (int)passphrase_size,
@@ -527,7 +528,7 @@ infs_status infs_storage_encrypted_format(
     memset(out, 0, sizeof(*out));
     if (!kdf_iterations)
         kdf_iterations = INFS_ENCRYPTED_STORAGE_DEFAULT_KDF_ITERATIONS;
-    if (kdf_iterations < 100000u)
+    if (kdf_iterations < 100000u || kdf_iterations > INT_MAX)
         return INFS_STATUS_INVALID_ARGUMENT;
 
     uint64_t physical_size = 0;
@@ -656,6 +657,7 @@ infs_status infs_storage_encrypted_open(
     if (status != INFS_STATUS_OK)
         goto out;
     if (!logical_blocks || iterations < 100000u ||
+        iterations > INT_MAX ||
         logical_blocks > (UINT64_MAX - ENC_HEADER_BYTES) / ENC_RECORD_BYTES ||
         ENC_HEADER_BYTES + logical_blocks * ENC_RECORD_BYTES > physical_size) {
         status = INFS_STATUS_CORRUPT;
