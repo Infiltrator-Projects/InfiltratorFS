@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "infiltratorfs_internal.h"
+#include "namespace_policy.h"
 /*
  * Native scalable directory tree.
  *
@@ -20,8 +21,7 @@ static void infilfs_tree_dir_digest(struct super_block *sb,
         infilfs_rw_sha256_update(&ctx, name, len);
     } else {
         for (i = 0; i < len; ++i) {
-            u8 folded = name[i] >= 'A' && name[i] <= 'Z' ?
-                (u8)(name[i] + ('a' - 'A')) : name[i];
+            u8 folded = infs_namespace_casefold_byte_v1(name[i]);
             infilfs_rw_sha256_update(&ctx, &folded, 1u);
         }
     }

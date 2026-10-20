@@ -5,6 +5,7 @@
 #include "infilfs/endian.h"
 #include "infilfs/fs.h"
 #include "infilfs/locator.h"
+#include "infilfs/namespace_policy.h"
 #include "infilfs/checkpoint_protocol.h"
 #include "infilfs/iac1.h"
 #include "infilfs/storage.h"
@@ -37,12 +38,6 @@ static int casefold_names_enabled(const struct infs_volume *vol)
     return volume_incompat_enabled(vol, INFS_INCOMPAT_CASEFOLD_V1);
 }
 
-static uint8_t namespace_casefold_byte_v1(uint8_t value)
-{
-    return value >= 'A' && value <= 'Z' ?
-        (uint8_t)(value + ('a' - 'A')) : value;
-}
-
 static int namespace_name_equal(
     const struct infs_volume *vol,
     const uint8_t *left, size_t left_length,
@@ -53,8 +48,8 @@ static int namespace_name_equal(
     if (!casefold_names_enabled(vol))
         return memcmp(left, right, left_length) == 0;
     for (size_t i = 0; i < left_length; ++i)
-        if (namespace_casefold_byte_v1(left[i]) !=
-            namespace_casefold_byte_v1(right[i]))
+        if (infs_namespace_casefold_byte_v1(left[i]) !=
+            infs_namespace_casefold_byte_v1(right[i]))
             return 0;
     return 1;
 }
@@ -65,7 +60,7 @@ static uint64_t namespace_name_hash(
     uint64_t hash = UINT64_C(1469598103934665603);
     for (size_t i = 0; i < length; ++i) {
         uint8_t value = casefold_names_enabled(vol) ?
-            namespace_casefold_byte_v1(name[i]) : name[i];
+            infs_namespace_casefold_byte_v1(name[i]) : name[i];
         hash ^= value;
         hash *= UINT64_C(1099511628211);
     }
@@ -82,45 +77,8 @@ static void namespace_name_digest(
     }
     uint8_t folded[INFS_NAME_MAX];
     for (size_t i = 0; i < length; ++i)
-        folded[i] = namespace_casefold_byte_v1(name[i]);
+        folded[i] = infs_namespace_casefold_byte_v1(name[i]);
     infs_sha256(folded, length, digest);
-}
-
-static int removable_name_valid_v1(const uint8_t *name, size_t length)
-{
-    static const char *reserved[] = {
-        "CON", "PRN", "AUX", "NUL",
-        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
-        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
-    };
-    char base[5] = {0};
-    size_t base_length = 0;
-    if (!name || !length || length > 255u ||
-        name[length - 1u] == '.' || name[length - 1u] == ' ')
-        return 0;
-    for (size_t i = 0; i < length; ++i) {
-        uint8_t c = name[i];
-        if (c < 0x20u || c == 0x7fu ||
-            c == '<' || c == '>' || c == ':' || c == '"' ||
-            c == '/' || c == '\\' || c == '|' || c == '?' || c == '*')
-            return 0;
-        if (c == '.')
-            break;
-        if (base_length < sizeof(base) - 1u) {
-            if (c >= 'a' && c <= 'z')
-                c = (uint8_t)(c - ('a' - 'A'));
-            base[base_length++] = (char)c;
-        } else {
-            base_length = sizeof(base);
-        }
-    }
-    if (base_length < sizeof(base)) {
-        for (size_t i = 0; i < sizeof(reserved) / sizeof(reserved[0]); ++i)
-            if (strlen(reserved[i]) == base_length &&
-                memcmp(base, reserved[i], base_length) == 0)
-                return 0;
-    }
-    return 1;
 }
 
 static int timestamp_disk_valid(const struct infs_timestamp_disk *disk)

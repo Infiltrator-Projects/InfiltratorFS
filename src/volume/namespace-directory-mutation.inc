@@ -157,7 +157,7 @@ static int next_component(struct infs_volume *vol, const char **cursor,
         return INFS_STATUS_NAME_TOO_LONG;
     if (!infs_utf8_validate(start, len) ||
         (removable_names_enabled(vol) &&
-         !removable_name_valid_v1((const uint8_t *)start, len)))
+         !infs_namespace_removable_name_valid_v1((const uint8_t *)start, len)))
         return INFS_STATUS_INVALID_ARGUMENT;
     memcpy(out, start, len);
     out[len] = '\0';

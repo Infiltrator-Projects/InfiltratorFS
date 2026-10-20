@@ -55,7 +55,7 @@ static int split_parent(struct infs_volume *vol, const char *path,
     if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0 ||
         !infs_utf8_validate(name, name_len) ||
         (removable_names_enabled(vol) &&
-         !removable_name_valid_v1((const uint8_t *)name, name_len)))
+         !infs_namespace_removable_name_valid_v1((const uint8_t *)name, name_len)))
         return INFS_STATUS_INVALID_ARGUMENT;
 
     char parent_path[INFS_PATH_MAX];

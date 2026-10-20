@@ -149,8 +149,8 @@ static int directory_name_ref_casefold_compare(
     const struct directory_name_ref *b = right;
     uint16_t common = a->length < b->length ? a->length : b->length;
     for (uint16_t i = 0; i < common; ++i) {
-        uint8_t av = namespace_casefold_byte_v1(a->name[i]);
-        uint8_t bv = namespace_casefold_byte_v1(b->name[i]);
+        uint8_t av = infs_namespace_casefold_byte_v1(a->name[i]);
+        uint8_t bv = infs_namespace_casefold_byte_v1(b->name[i]);
         if (av < bv)
             return -1;
         if (av > bv)
@@ -315,7 +315,7 @@ static int validate_namespace_graph_progress(
             uint16_t type = infs_le16_to_cpu(entry->object_type);
             uint32_t target = 0;
             if (removable_names_enabled(vol) &&
-                !removable_name_valid_v1(entry_name, name_length)) {
+                !infs_namespace_removable_name_valid_v1(entry_name, name_length)) {
                 free(owned);
                 status = INFS_STATUS_CORRUPT;
                 goto out;
