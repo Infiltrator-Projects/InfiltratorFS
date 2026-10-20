@@ -344,20 +344,8 @@ static int infilfs_read_folio_legacy(struct file *file, struct folio *folio)
     /*
      * Publish validated page data and release the read lock as one page-cache
      * completion. A failed verification must leave the folio non-uptodate.
-     *
-     * For the intermittent ACL cold-remount read failure, trace only the
-     * 18-byte inline-file case. Distinguish a verified producer failure from
-     * a folio whose completion unexpectedly failed to set PG_uptodate.
      */
-    if (i_size_read(folio->mapping->host) == 18)
-        pr_info("InfiltratorFS: inline18 read_folio before ino=%lu pos=%lld ret=%d locked=%d uptodate=%d\n",
-            folio->mapping->host->i_ino, (long long)folio_pos(folio),
-            ret, folio_test_locked(folio), folio_test_uptodate(folio));
     folio_end_read(folio, !ret);
-    if (i_size_read(folio->mapping->host) == 18)
-        pr_info("InfiltratorFS: inline18 read_folio after ino=%lu pos=%lld ret=%d locked=%d uptodate=%d\n",
-            folio->mapping->host->i_ino, (long long)folio_pos(folio),
-            ret, folio_test_locked(folio), folio_test_uptodate(folio));
     return ret;
 }
 
@@ -422,15 +410,7 @@ static int infilfs_readahead_cluster_submit(
             flush_dcache_folio(folio);
         else
             mapping_set_error(folio->mapping, ret);
-        if (i_size_read(folio->mapping->host) == 18)
-            pr_info("InfiltratorFS: inline18 readahead before ino=%lu pos=%lld ret=%d locked=%d uptodate=%d\n",
-                folio->mapping->host->i_ino, (long long)folio_pos(folio),
-                ret, folio_test_locked(folio), folio_test_uptodate(folio));
         folio_end_read(folio, !ret);
-        if (i_size_read(folio->mapping->host) == 18)
-            pr_info("InfiltratorFS: inline18 readahead after ino=%lu pos=%lld ret=%d locked=%d uptodate=%d\n",
-                folio->mapping->host->i_ino, (long long)folio_pos(folio),
-                ret, folio_test_locked(folio), folio_test_uptodate(folio));
     }
 
     cluster->count = 0;
@@ -557,6 +537,23 @@ static const struct iomap_ops infilfs_iomap_read_ops = {
     .iomap_begin = infilfs_iomap_read_begin,
 };
 
+/*
+ * iomap requests filesystem-block ranges, not necessarily just the bytes
+ * inside i_size. A short read at the persisted EOF is successful only when
+ * the verified prefix is complete and the remaining folio bytes are zeroed.
+ * Never present an unverified partial read as a successful completion.
+ */
+static size_t infilfs_iomap_persisted_bytes(
+    struct inode *inode, loff_t position, size_t requested)
+{
+    const struct infilfs_inode_info *ii = INFILFS_I(inode);
+    u64 persisted = ii ? READ_ONCE(ii->persisted_size) : 0;
+
+    if (position < 0 || (u64)position >= persisted)
+        return 0;
+    return min_t(u64, requested, persisted - (u64)position);
+}
+
 static int infilfs_iomap_read_range_sync(
     const struct iomap_iter *iter, struct folio *folio, size_t length)
 {
@@ -565,17 +562,19 @@ static int infilfs_iomap_read_range_sync(
     struct iov_iter to;
     loff_t position = iter->pos;
     size_t offset = offset_in_folio(folio, position);
+    size_t wanted;
     unsigned int bvec_count = 0;
     unsigned int bvec_capacity;
     ssize_t got;
-    int ret;
+    int ret = 0;
 
     if (!length || offset > folio_size(folio) ||
         length > folio_size(folio) - offset)
         return -EIO;
 
-    bvec_capacity =
-        DIV_ROUND_UP((offset & (PAGE_SIZE - 1u)) + length, PAGE_SIZE);
+    wanted = infilfs_iomap_persisted_bytes(iter->inode, position, length);
+    bvec_capacity = wanted ?
+        DIV_ROUND_UP((offset & (PAGE_SIZE - 1u)) + wanted, PAGE_SIZE) : 0;
     if (bvec_capacity > 1u) {
         bvecs = kvmalloc_array(
             bvec_capacity, sizeof(*bvecs), GFP_NOFS);
@@ -583,18 +582,24 @@ static int infilfs_iomap_read_range_sync(
             return -ENOMEM;
     }
 
-    ret = infilfs_pagecache_append_bvec_range(
-        bvecs, bvec_capacity, &bvec_count, folio, offset, length);
-    if (ret)
-        goto out;
+    if (wanted) {
+        ret = infilfs_pagecache_append_bvec_range(
+            bvecs, bvec_capacity, &bvec_count, folio, offset, wanted);
+        if (ret)
+            goto out;
 
-    iov_iter_bvec(&to, ITER_DEST, bvecs, bvec_count, length);
-    got = infilfs_native_read_iter_cached(
-        iter->inode, &position, &to);
-    if (got != length)
-        ret = got < 0 ? (int)got : -EIO;
-    else
-        flush_dcache_folio(folio);
+        iov_iter_bvec(&to, ITER_DEST, bvecs, bvec_count, wanted);
+        got = infilfs_native_read_iter_cached(
+            iter->inode, &position, &to);
+        if (got != wanted) {
+            ret = got < 0 ? (int)got : -EIO;
+            goto out;
+        }
+    }
+    if (wanted < length)
+        infilfs_pagecache_zero_folio(
+            folio, offset + wanted, length - wanted);
+    flush_dcache_folio(folio);
 
 out:
     if (ret)
@@ -609,6 +614,8 @@ static int infilfs_iomap_read_batch_submit(
 {
     struct iov_iter to;
     loff_t position;
+    size_t wanted;
+    size_t keep;
     ssize_t got;
     unsigned int i;
     int ret = 0;
@@ -617,12 +624,36 @@ static int infilfs_iomap_read_batch_submit(
         return 0;
 
     position = batch->position;
-    iov_iter_bvec(
-        &to, ITER_DEST, batch->bvecs, batch->bvec_count, batch->bytes);
-    got = infilfs_native_read_iter_cached(
-        batch->inode, &position, &to);
-    if (got != batch->bytes)
-        ret = got < 0 ? (int)got : -EIO;
+    wanted = infilfs_iomap_persisted_bytes(
+        batch->inode, position, batch->bytes);
+    if (wanted) {
+        iov_iter_bvec(
+            &to, ITER_DEST, batch->bvecs, batch->bvec_count, wanted);
+        got = infilfs_native_read_iter_cached(
+            batch->inode, &position, &to);
+        if (got != wanted)
+            ret = got < 0 ? (int)got : -EIO;
+    }
+    if (!ret && wanted < batch->bytes) {
+        /*
+         * The batch represents one contiguous logical range, but may span
+         * several folios. Zero only its post-EOF suffix, never bytes that
+         * the verified reader has already supplied.
+         */
+        keep = wanted;
+        for (i = 0; i < batch->range_count; ++i) {
+            struct infilfs_iomap_read_range *range = &batch->ranges[i];
+
+            if (keep >= range->length) {
+                keep -= range->length;
+                continue;
+            }
+            infilfs_pagecache_zero_folio(
+                range->folio, range->offset + keep,
+                range->length - keep);
+            keep = 0;
+        }
+    }
     if (ret)
         mapping_set_error(batch->inode->i_mapping, ret);
 

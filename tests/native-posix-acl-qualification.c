@@ -419,6 +419,23 @@ static void verify(const char *root)
     setenv("INFILFS_ACL_DIAGNOSTIC", "1", 1);
     require(readable_as(access_file, uid, gid),
             "named ACL access denied after remount");
+    /*
+     * The 18-byte inline fixture occupies part of a 4 KiB filesystem block.
+     * A full buffered read must preserve those 18 verified bytes and report
+     * EOF normally; the iomap adapter must zero only the unused page tail.
+     * Keep the unprivileged first-byte probe above cold to retain the
+     * original failure's scheduling and access-control conditions.
+     */
+    int inline_fd = open(access_file, O_RDONLY | O_CLOEXEC);
+    if (inline_fd < 0)
+        fail("open inline ACL payload after remount");
+    char inline_data[64];
+    ssize_t inline_size = read(inline_fd, inline_data, sizeof inline_data);
+    if (close(inline_fd))
+        fail("close inline ACL payload");
+    require(inline_size == 18 &&
+            memcmp(inline_data, "named-user-access\n", 18) == 0,
+            "inline ACL payload/partial EOF corrupted after remount");
     char *real = path2(base, "setfacl.txt");
     if (access(real, F_OK) == 0) {
         check_setfacl(real, uid);

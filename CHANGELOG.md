@@ -2,8 +2,8 @@
 
 ## 0.19.13 — 2026-10-20
 
-- Extend issue #44 tracing to the regular-file buffered-read dispatch boundary. For the 18-byte ACL fixture, identify the active `f_mapping`, address-space operation table, read-folio callback and I/O flags when `generic_file_read_iter` runs. Prior 0.19.12 failure reproduced `EIO` without any inline folio callback messages, so checksum-path changes are not justified yet.
-- Leave regular read semantics, kernel VFS callback ownership, Format 0.19 and durability intact while collecting missing boundary evidence. No claim that issue #44 is fixed.
+- Correct the Linux 7.0 iomap verified-read adapter at partial EOF: request only the committed bytes from the native reader, zero the remainder of each mapped folio range, then finish the iomap read as successful. Apply the same rule to both synchronous and contiguous batched reads, preserving checksum verification and fail-closed behavior on genuinely incomplete in-range reads.
+- Retain the ACL cold-remount regression and remove the temporary 18-byte tracing from 0.19.12/early 0.19.13 investigations. The failing hosted kernel was 7.0.0-1017-azure, selecting iomap rather than the legacy Linux page-cache callback. Existing Format 0.19 media and all checkpoint/durability barriers are unchanged.
 
 ## 0.19.12 — 2026-10-20
 
