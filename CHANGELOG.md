@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.19.15 — 2026-10-21
+
+- Admit encrypted-storage backing media containing exactly one complete authenticated 4 KiB data record (4096-byte header plus 4124-byte record). The formatter previously rejected this valid minimum capacity with an off-by-one comparison.
+- Qualify the just-undersized and exactly-sized boundaries, including ownership preservation on failure and an authenticated write/flush/reopen round trip. Portable encrypted-wrapper semantics are corrected without changing Format 0.19 bytes, the native filesystem module or checkpoint durability ordering.
+
 ## 0.19.14 — 2026-10-21
 
 - Serialize each complete replicated-storage read, write and durability barrier across all mirror members. Previously a health-state-only mutex permitted overlapping writers to interleave different final values on different healthy replicas, or a flush to overtake an unfinished replication. One operation-level lock now owns both replica state and sequencing, removing the redundant separate health lock.

@@ -442,6 +442,48 @@ int main(void)
        "erased ciphertext record rejected");
     infs_storage_close(&encrypted);
 
+    /*
+     * The smallest valid encrypted backing contains precisely one envelope
+     * and one complete authenticated data record. An undersized backing must
+     * fail without transferring ownership; equality must admit its one block.
+     */
+    memory.size = 4096u + 4124u - 1u;
+    backing = storage(&memory);
+    ok(infs_storage_encrypted_format(
+           &backing, passphrase, sizeof(passphrase) - 1u,
+           100000u, &encrypted) == INFS_STATUS_NO_SPACE &&
+       backing.ops == &ops && !encrypted.ops,
+       "reject a backing one byte short of an authenticated record");
+
+    ++memory.size;
+    ok(infs_storage_encrypted_format(
+           &backing, passphrase, sizeof(passphrase) - 1u,
+           100000u, &encrypted) == INFS_STATUS_OK &&
+       !backing.ops,
+       "accept an exact one-record encrypted backing");
+    logical_size = 0;
+    ok(infs_storage_get_size(&encrypted, &logical_size, &is_device) ==
+           INFS_STATUS_OK && logical_size == 4096u,
+       "exact one-record backing exposes one logical block");
+    uint8_t minimum_payload[4096];
+    uint8_t minimum_readback[4096] = {0};
+    memset(minimum_payload, 0x7bu, sizeof(minimum_payload));
+    ok(infs_storage_write(&encrypted, 0, minimum_payload,
+                          sizeof(minimum_payload)) == INFS_STATUS_OK &&
+       infs_storage_flush(&encrypted) == INFS_STATUS_OK,
+       "write and durably flush the minimum encrypted volume");
+    infs_storage_close(&encrypted);
+    backing = storage(&memory);
+    ok(infs_storage_encrypted_open(
+           &backing, passphrase, sizeof(passphrase) - 1u,
+           &encrypted) == INFS_STATUS_OK,
+       "reopen exact one-record encrypted backing");
+    ok(infs_storage_read(&encrypted, 0, minimum_readback,
+                         sizeof(minimum_readback)) == INFS_STATUS_OK &&
+       !memcmp(minimum_readback, minimum_payload, sizeof(minimum_payload)),
+       "minimum encrypted volume survives reopen and authentication");
+    infs_storage_close(&encrypted);
+
 #if !defined(_WIN32)
     pthread_cond_destroy(&memory.race_cond);
     pthread_mutex_destroy(&memory.race_lock);

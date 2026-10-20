@@ -537,7 +537,7 @@ infs_status infs_storage_encrypted_format(
         backing, &physical_size, &ignored_device);
     if (status != INFS_STATUS_OK)
         return status;
-    if (physical_size <= ENC_HEADER_BYTES + ENC_RECORD_BYTES)
+    if (physical_size < ENC_HEADER_BYTES + ENC_RECORD_BYTES)
         return INFS_STATUS_NO_SPACE;
     uint64_t logical_blocks =
         (physical_size - ENC_HEADER_BYTES) / ENC_RECORD_BYTES;
