@@ -130,7 +130,11 @@ grep -Fq 'INFILTRATORFS_OS_INTEGRATION_BUNDLE_DIR' "$repo_root/packaging/build-l
 grep -Fq 'ubuntu24.04-mint22-bundled' "$repo_root/packaging/build-linux-packages.sh"
 grep -Fq 'gnome-disk-utility (>= 46~)' "$repo_root/packaging/build-linux-packages.sh"
 grep -Fq 'libblockdev-fs3 (>= 3.1~)' "$repo_root/packaging/build-linux-packages.sh"
-grep -Fq 'infiltratorfs-os-integration-bundle.tar' "$repo_root/packaging/build-linux-packages.sh"
+# The .run downloads and verifies integration assets, then supplies the
+# same canonical local bundle to bootstrap; the .deb builder never embeds
+# that archive in the text-only release installer.
+grep -Fq 'infiltratorfs-os-integration-bundle.tar' "$repo_root/support/installer/native-release.run.in"
+grep -Fq 'sha256sum --check --status' "$repo_root/support/installer/native-release.run.in"
 if grep -Fq 'INFILTRATORFS_DESKTOP_BUNDLE_DIR' "$repo_root/packaging/build-linux-packages.sh"; then
     echo 'desktop-integration: obsolete managed-package bundle variable returned' >&2
     exit 1
