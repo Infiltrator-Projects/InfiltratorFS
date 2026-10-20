@@ -388,8 +388,14 @@ static int infilfs_readahead_cluster_submit(
             &iter, ITER_DEST, cluster->bvecs,
             cluster->bvec_count, wanted);
         got = infilfs_native_read_iter_cached(inode, &position, &iter);
-        if (got != wanted)
+        if (got != wanted) {
             ret = got < 0 ? (int)got : -EIO;
+            pr_err_ratelimited(
+                "InfiltratorFS: clustered readahead failed ino=%lu start=%lld persisted=%llu cluster=%zu wanted=%zu got=%zd error=%d\n",
+                inode->i_ino, (long long)cluster->position,
+                (unsigned long long)persisted, cluster->bytes,
+                wanted, got, ret);
+        }
     }
     if (!ret && wanted < cluster->bytes)
         infilfs_readahead_zero_tail(cluster, wanted);
