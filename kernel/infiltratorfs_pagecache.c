@@ -326,7 +326,6 @@ static int infilfs_pagecache_fill_folio(struct folio *folio)
     if (wanted < bytes)
         infilfs_pagecache_zero_folio(folio, wanted, bytes - wanted);
     flush_dcache_folio(folio);
-    folio_mark_uptodate(folio);
 
 out:
     if (bvecs != &inline_bvec)
@@ -342,7 +341,11 @@ static int infilfs_read_folio_legacy(struct file *file, struct folio *folio)
     ret = infilfs_pagecache_fill_folio(folio);
     if (ret)
         mapping_set_error(folio->mapping, ret);
-    folio_unlock(folio);
+    /*
+     * Publish validated page data and release the read lock as one page-cache
+     * completion. A failed verification must leave the folio non-uptodate.
+     */
+    folio_end_read(folio, !ret);
     return ret;
 }
 
@@ -403,13 +406,11 @@ static int infilfs_readahead_cluster_submit(
     for (i = 0; i < cluster->count; ++i) {
         struct folio *folio = cluster->folios[i];
 
-        if (!ret) {
+        if (!ret)
             flush_dcache_folio(folio);
-            folio_mark_uptodate(folio);
-        } else {
+        else
             mapping_set_error(folio->mapping, ret);
-        }
-        folio_unlock(folio);
+        folio_end_read(folio, !ret);
     }
 
     cluster->count = 0;
@@ -470,6 +471,12 @@ static void infilfs_readahead_legacy(struct readahead_control *rac)
             cluster.bvecs, cluster.bvec_capacity,
             &cluster.bvec_count, folio, bytes);
         if (ret) {
+            /*
+             * The current folio was not added. The earlier batch still owns
+             * locked folios, so finish it before processing the remaining
+             * readahead request via individual verified reads.
+             */
+            (void)infilfs_readahead_cluster_submit(&cluster);
             infilfs_read_folio_legacy(rac->file, folio);
             goto fallback_remaining;
         }

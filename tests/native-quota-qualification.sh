@@ -282,7 +282,7 @@ sudo "$acl_qualification" verify "$mnt"
 # Reopening the same clean volume is intentionally inexpensive. Exercise
 # first-read permission and data integrity across independent cold mounts:
 # one lucky cache/timing schedule must not qualify intermittent EIO.
-for remount_pass in 1 2 3 4 5 6; do
+for remount_pass in $(seq 1 24); do
     stage "repeat cold ACL/data read after remount $remount_pass"
     sudo sync
     sudo umount "$mnt"

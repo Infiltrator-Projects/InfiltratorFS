@@ -2,8 +2,9 @@
 
 ## 0.19.4 — 2026-10-20
 
-- Keep the mounted Format 0.19 ACL/read regression fail-closed while recording its verified VFS page-cache state at the point of buffered read failure. This distinguishes a missing/non-uptodate folio from an underlying content-integrity failure without clearing error state or bypassing verification.
-- Move temporary buffered-read diagnostics out of the native write-composition unit and behind a single page-cache-owned helper, returning that unit below its enforced technical-debt ceiling. This revision remains unqualified until the remount/read regression is corrected.
+- Complete verified folio reads with the native page-cache's atomic read-completion operation, instead of separately publishing an uptodate flag and unlocking. Preserve failed-read error propagation and do not expose unverified contents.
+- Finish previously accumulated locked readahead folios before switching to per-folio reads if batch-vector construction fails. Extend repeat cold-remount ACL/data checks to 24 mounts per qualification run without disabling the original failing assertion.
+- Attribute any remaining buffered read errors at the VFS folio boundary without clearing error state or bypassing verification. Keep diagnostics in the owning page-cache module and keep the native RW compositor below its technical-debt ceiling.
 
 
 ## 0.19.3 — 2026-10-20
