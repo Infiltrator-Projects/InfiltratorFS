@@ -5,6 +5,7 @@
 - Consolidate Format 0.19 removable-name and ASCII case-fold byte predicates into a single portable/native header, preventing silent divergence in persistent namespace policy.
 - Preserve the existing UTF-8, traversal and operating-system adapter boundaries; native VFS integration and the disk format do not change.
 - Add direct byte-policy regression coverage, document its authority and remove an obsolete 0.18 development qualification comment from the current CMake build.
+- Stage the shared namespace header in the explicit standalone DKMS source manifest, and guard its presence in native maintainability qualification.
 - Advance the immutable source and Windows INF release identities together.
 
 ## 0.19.5 — 2026-10-20

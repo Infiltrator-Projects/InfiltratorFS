@@ -39,3 +39,4 @@ kernel/infiltratorfs_ioctl.h	infiltratorfs_ioctl.h
 include/infilfs/iac1.h	iac1.h
 kernel/infiltratorfs_checkpoint_publish.c	infiltratorfs_checkpoint_publish.c
 include/infilfs/checkpoint_protocol.h	checkpoint_protocol.h
+include/infilfs/namespace_policy.h	namespace_policy.h
