@@ -2,7 +2,7 @@
 
 ## 0.19.5 — 2026-10-20
 
-- Complete verified Linux page-cache folios atomically using the standard kernel read-completion API, including correct fail-closed completion after unsuccessful verification.
+- Complete verified Linux page-cache folios atomically using the standard kernel read-completion API, including correct fail-closed completion after unsuccessful verification. Preserve the separate up-to-date transition for partial buffered writes, whose write-begin caller keeps the folio locked while copying updated bytes.
 - Finish queued readahead folios before taking the single-folio recovery path if batching cannot represent a folio.
 - Exercise 24 independent cold remounts per native quota/ACL/data qualification; leave the original first-byte read failure test enabled. Format 0.19 on-disk structures remain unchanged.
 
