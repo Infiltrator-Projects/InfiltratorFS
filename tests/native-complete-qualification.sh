@@ -12,7 +12,7 @@ TARGET="/dev/mmcblk0p22"
 EXPECTED_PARENT="/dev/mmcblk0"
 EXPECTED_PARTNO="22"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="$(sed -nE 's/^project\(InfiltratorFS VERSION ([0-9]+\.[0-9]+\.[0-9]+) LANGUAGES C\)$/\1/p' "$ROOT/CMakeLists.txt")"
+VERSION="$(bash "$ROOT/tools/project-version.sh" "$ROOT/CMakeLists.txt")"
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 LOG_DIR="${HOME}/Downloads"
 [[ -d "$LOG_DIR" ]] || LOG_DIR="$PWD"
@@ -172,7 +172,6 @@ bash tests/allocation-tree-format-policy.sh .
 bash tests/directory-tree-policy.sh .
 bash tests/native-scale-policy.sh .
 bash tests/native-endurance-policy.sh .
-bash -n tests/native-partition22-full-test.sh
 bash -n tests/native-partition22-qualification.sh
 bash -n tests/native-defrag-qualification.sh
 bash -n tests/native-media-placement-qualification.sh
@@ -209,7 +208,7 @@ grep -q 'usr/bin/infilfs-optimize$' "$deb_contents_file"
 
 section "Installed-release destructive partition-22 qualification"
 partition_started="$(date +%s)"
-run_timed "partition-22 full native qualification" 3h     bash tests/native-partition22-full-test.sh --destroy-partition-22
+run_timed "partition-22 full native qualification" 3h     bash tests/native-partition22-qualification.sh --destroy-partition-22
 partition_log="$(find "$ROOT" -maxdepth 1 -type f     -name 'infiltratorfs-partition22-test-*.log'     -newermt "@$partition_started" -printf '%T@ %p\n' |
     sort -nr | head -n1 | cut -d' ' -f2-)"
 [[ -n "$partition_log" && -f "$partition_log" ]] || fatal "Could not locate the partition-22 qualification log."

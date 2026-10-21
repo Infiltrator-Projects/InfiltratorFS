@@ -27,7 +27,8 @@ grep -Fq "## ${version} —" CHANGELOG.md || \
 # CMake is the semantic version authority. Shell consumers must use the single
 # validated resolver rather than carrying private sed/awk parsers that can drift
 # from release semantics. The Windows INF remains a required numeric mirror.
-for consumer in packaging/build-linux-packages.sh support/installer/bootstrap.sh; do
+for consumer in packaging/build-linux-packages.sh support/installer/bootstrap.sh \
+                tests/native-complete-qualification.sh .github/workflows/ci.yml; do
     grep -Fq 'tools/project-version.sh' "$consumer" || \
         fail "$consumer must use tools/project-version.sh for source identity"
     if grep -Eq 'project\(InfiltratorFS VERSION.*(sed|awk)|sed .*project\(InfiltratorFS VERSION' "$consumer"; then

@@ -64,10 +64,12 @@ jobs:
           test ! -e tools/infiltratorfs-manager
       - name: Validate partition 22 torture-test shell syntax and safety gate
         run: |
-          bash -n tests/native-partition22-full-test.sh
+          bash -n tests/native-partition22-qualification.sh
           bash -n tests/native-complete-qualification.sh
-          grep -Fq 'TARGET="/dev/mmcblk0p22"' tests/native-partition22-full-test.sh
-          grep -Fq 'EXPECTED_PARTNO="22"' tests/native-partition22-full-test.sh
+          grep -Fq 'TARGET="/dev/mmcblk0p22"' tests/native-partition22-qualification.sh
+          grep -Fq 'EXPECTED_PARENT="/dev/mmcblk0"' tests/native-partition22-qualification.sh
+          grep -Fq 'EXPECTED_PARTNO="22"' tests/native-partition22-qualification.sh
+          grep -Fq 'ERASE /dev/mmcblk0p22' tests/native-partition22-qualification.sh
           grep -Fq 'TARGET="/dev/mmcblk0p22"' tests/native-complete-qualification.sh
           grep -Fq 'ERASE /dev/mmcblk0p22 AND RUN COMPLETE QUALIFICATION' tests/native-complete-qualification.sh
       - name: Guard fast fsck structural mode
@@ -458,7 +460,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="$(sed -nE 's/^project\(InfiltratorFS VERSION ([0-9]+\.[0-9]+\.[0-9]+) LANGUAGES C\)$/\1/p' CMakeLists.txt)"
+          version="$(bash tools/project-version.sh CMakeLists.txt)"
           installer="dist/infiltratorfs-${version}-linux-native.run"
           deb="dist/infiltratorfs_${version}_amd64.deb"
           "$installer" --verify

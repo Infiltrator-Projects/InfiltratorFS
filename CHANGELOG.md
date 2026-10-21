@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.19.24 — 2026-10-21
+
+- Retire the obsolete partition-22 qualification forwarding script. The canonical native qualification remains the sole destructive implementation and entry point; retain the explicit target, parent, partition-number and confirmation checks directly in the CI safety gate.
+- Remove an unreferenced, unqualified ad-hoc speed-test script that disabled global caches and silently ignored optional fio failures. Retain the maintained native performance qualification and same-card comparative benchmark as separate, explicit evidence classes.
+- Route native complete qualification and Linux package-validation version lookups through the established CMake version resolver rather than duplicating release-version parsers. Extend the release policy to guard these consumers.
+- No persistent Format 0.19, Linux VFS, Windows filesystem-driver or portable-core behaviour changes.
+
 ## 0.19.23 — 2026-10-21
 
 - Consolidate checksum-object validation and persistence, cached index traversal and mutation into one responsibility-owned portable implementation unit. Preserve existing function order and checksum/transaction semantics while retiring two needless implementation boundaries. Move the classic file-extent capacity bound out of the checksum implementation to its owning file-layout unit.
