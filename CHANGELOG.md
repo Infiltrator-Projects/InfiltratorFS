@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.19.20 — 2026-10-21
+
+- Remove the redundant DKMS manifest destination column. All 41 recorded mappings use their source basename, so the canonical stager now derives that basename and rejects malformed or colliding entries; packaged file identities remain unchanged.
+- Retire the duplicate driver synchronization narrative in the ioctl header. The DKMS-shipped Kbuild Makefile remains the single authoritative lock-order and transaction-ownership contract, with policy checks updated accordingly.
+- Preserve all native filesystem and portable behavior, Format 0.19 persistent bytes and checkpoint ordering. Keep CMake and Windows driver release identities aligned.
+
 ## 0.19.19 — 2026-10-21
 
 - Keep synchronous mirror reads fail-closed when any selected replica reports corruption, unsupported policy or a resource/semantic error; only device I/O failures permit read failover. Previously a successful read from another replica masked such failures, despite byte divergence being rejected.

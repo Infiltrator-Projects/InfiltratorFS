@@ -25,9 +25,8 @@ for file in "$driver" "$rw" "$data" "$namespace" "$namespace_exchange" "$makefil
     test -f "$file" || fail "missing $file"
 done
 
-# The synchronization contract must live with the shipped kernel source, not
-# only in prose documentation. Keep Kbuild and the always-copied DKMS header in
-# agreement about the permitted nesting directions.
+# Kbuild is the shipped single authority for kernel synchronization rules.
+# The DKMS-staged ioctl header names that authority instead of duplicating it.
 for marker in \
     'resize_lock -> write_lock' \
     'quota_lock -> write_lock' \
@@ -35,18 +34,19 @@ for marker in \
     'allocation-reservation shard spinlock -> bitmap_lock' \
     'shared_range_build_lock -> write_lock (read side only)'; do
     grep -Fq "$marker" "$makefile" || fail "Makefile lost lock rule: $marker"
-    grep -Fq "$marker" "$ioctl" || fail "ioctl header lost lock rule: $marker"
 done
 grep -Fq 'A path holding write_lock must never acquire resize_lock.' "$makefile" || \
     fail 'write_lock -> resize_lock prohibition is undocumented'
 grep -Fq 'Ordinary data writers must not acquire quota_lock while holding' "$makefile" || \
     fail 'write_lock -> quota_lock prohibition is undocumented'
-grep -Fq 'linux_meta_lock owns compound' "$ioctl" || \
+grep -Fq 'linux_meta_lock' "$makefile" || \
     fail 'linux_meta_lock ownership is undocumented'
-grep -Fq 'write_lock is the authoritative pending-transaction merge/checkpoint' "$ioctl" || \
+grep -Fq 'write_lock is the authoritative pending-transaction merge/checkpoint' "$makefile" || \
     fail 'transaction/publication ownership is undocumented'
-grep -Fq 'max(1, online physical cores - 1)' "$ioctl" || \
+grep -Fq 'max(1, online physical cores - 1)' "$makefile" || \
     fail 'physical-core N-1 native CPU budget is missing from shipped synchronization contract'
+grep -Fq 'Makefile' "$ioctl" || \
+    fail 'ioctl header must point to the canonical lock-order rules'
 
 # Keep the geometry path aligned with the declared resize_lock -> write_lock
 # order. The second lock must be acquired after resize_lock in the public resize
@@ -114,7 +114,7 @@ test -f "$kernel/infiltratorfs_shared_ownership.c" || fail 'shared ownership acc
 test -f "$kernel/infiltratorfs_orphan_scan.c" || fail 'parallel orphan scanner object missing'
 dkms_manifest="$root/packaging/kernel-dkms-files.list"
 test -f "$dkms_manifest" || fail 'canonical DKMS source manifest missing'
-grep -Fqx $'kernel/infiltratorfs_orphan_scan.c\tinfiltratorfs_orphan_scan.c' "$dkms_manifest" || \
+grep -Fqx 'kernel/infiltratorfs_orphan_scan.c' "$dkms_manifest" || \
     fail 'canonical DKMS source manifest omits orphan scanner component'
 grep -Fqx '#   infiltratorfs_orphan_scan.c owns N-1 parallel crash-orphan discovery.' "$makefile" || \
     fail 'orphan scanner ownership line is not a valid Makefile comment'
@@ -130,8 +130,8 @@ dkms_stager="$root/packaging/stage-kernel-dkms-source.sh"
 test -x "$dkms_stager" || fail 'canonical DKMS source stager missing or not executable'
 for object in $module_objects; do
     source="${object%.o}.c"
-    grep -Fqx "kernel/${source}"$'\t'"${source}" "$dkms_manifest" || \
-        fail "canonical DKMS source manifest omits kernel/${source} -> ${source}"
+    grep -Fqx "kernel/${source}" "$dkms_manifest" || \
+        fail "canonical DKMS source manifest omits kernel/${source}"
 done
 for consumer in \
     "$root/packaging/build-linux-packages.sh" \

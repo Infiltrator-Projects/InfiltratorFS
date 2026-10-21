@@ -9,13 +9,16 @@ manifest="$root/packaging/kernel-dkms-files.list"
 [[ -f "$manifest" ]] || { echo "DKMS source manifest is missing: $manifest" >&2; exit 1; }
 mkdir -p "$destination"
 declare -A targets=()
-while IFS=$'\t' read -r source target; do
-    [[ -n "$source" ]] || continue
-    [[ "$source" == \#* ]] && continue
-    [[ -n "$target" && "$target" != */* ]] || {
-        echo "Invalid DKMS manifest target for $source: ${target:-missing}" >&2
+while IFS= read -r source; do
+    [[ -n "$source" && "$source" != \#* ]] || continue
+    # Entries are repository paths, not arbitrary target names. The stager
+    # derives an identical basename and prevents traversal and collisions.
+    [[ "$source" =~ ^(kernel|include/infilfs)/[A-Za-z0-9_.-]+$ &&
+       "$source" != *..* ]] || {
+        echo "Invalid DKMS manifest source: $source" >&2
         exit 1
     }
+    target="${source##*/}"
     [[ -z "${targets[$target]+x}" ]] || {
         echo "Duplicate DKMS manifest target: $target" >&2
         exit 1
