@@ -1,9 +1,12 @@
 # Changelog
 
-## 0.19.20 — 2026-10-21
+## 0.19.21 — 2026-10-21
 
 - Preserve the actual I/O and semantic failure states of mirrored entropy and clock services: an exhausted device-I/O failover must not be recast as NOT_SUPPORTED, and corruption must not be masked by another backend. Cover both service boundaries with portable regressions.
 - Preserve retryability after a transient mirrored-storage durability failure: propagate every failed flush barrier, but quarantine a replica only for device I/O failures rather than treating INTERRUPTED or unsupported operations as permanent media loss. A portable regression verifies a failed barrier followed by successful full replication on retry; filesystem format and checkpoint ordering are unchanged.
+
+## 0.19.20 — 2026-10-21
+
 - Remove the redundant DKMS manifest destination column. All 41 recorded mappings use their source basename, so the canonical stager now derives that basename and rejects malformed or colliding entries; packaged file identities remain unchanged.
 - Retire the duplicate driver synchronization narrative in the ioctl header. The DKMS-shipped Kbuild Makefile remains the single authoritative lock-order and transaction-ownership contract, with policy checks updated accordingly.
 - Preserve all native filesystem and portable behavior, Format 0.19 persistent bytes and checkpoint ordering. Keep CMake and Windows driver release identities aligned.
