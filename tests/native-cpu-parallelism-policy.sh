@@ -52,8 +52,8 @@ grep -Fq 'filesystem_cpu_budget = max(1, online_physical_cores - 1)' "$architect
     fail 'architecture lost the normative physical-core N-1 formula'
 grep -Fq 'max(1, online physical cores - 1)' "$makefile" || \
     fail 'Kbuild synchronization contract lost physical-core N-1 policy'
-grep -Fq 'max(1, online physical cores - 1)' "$ioctl" || \
-    fail 'DKMS synchronization contract lost physical-core N-1 policy'
+grep -Fq 'adjacent Makefile' "$ioctl" || \
+    fail 'DKMS ioctl header no longer points to the canonical CPU/lock contract'
 grep -Fq -- '- [x] Filesystem-wide native Linux CPU-heavy concurrency budget of `max(1, online physical cores - 1)`' "$roadmap" || \
     fail 'qualified physical-core N-1 concurrency capability is no longer marked complete'
 

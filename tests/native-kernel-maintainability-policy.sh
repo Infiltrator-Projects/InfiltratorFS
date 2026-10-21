@@ -538,7 +538,7 @@ test "$(grep -Fc 'static const u8 infilfs_snapshot_catalog_id[16]' \
 
 # The standalone DKMS source must include the common on-disk namespace
 # predicate required by both native directory readers and name validation.
-grep -Eq '^include/infilfs/namespace_policy[.]h[[:space:]]+namespace_policy[.]h$' \
+grep -Fqx 'include/infilfs/namespace_policy.h' \
     "$root/packaging/kernel-dkms-files.list" || \
     fail 'shared namespace policy missing from standalone DKMS source manifest'
 
