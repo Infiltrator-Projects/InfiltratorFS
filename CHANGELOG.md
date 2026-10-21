@@ -2,7 +2,7 @@
 
 ## 0.19.23 — 2026-10-21
 
-- Consolidate checksum-object validation and persistence, cached index traversal and mutation into one responsibility-owned portable implementation unit. Preserve existing function order and checksum/transaction semantics while retiring two needless implementation boundaries.
+- Consolidate checksum-object validation and persistence, cached index traversal and mutation into one responsibility-owned portable implementation unit. Preserve existing function order and checksum/transaction semantics while retiring two needless implementation boundaries. Move the classic file-extent capacity bound out of the checksum implementation to its owning file-layout unit.
 - No on-disk Format 0.19, native VFS, Windows driver behavior or public API changes; align CMake and Windows INF revision identifiers.
 
 ## 0.19.22 — 2026-10-21

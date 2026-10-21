@@ -1,4 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/* Classic file-object extent capacity is a layout contract, not a checksum concern. */
+#define INFS_MAX_FILE_EXTENTS \
+    ((INFS_BLOCK_SIZE - sizeof(struct infs_object_header_disk) - \
+      sizeof(struct infs_file_payload_disk)) / sizeof(struct infs_extent_disk))
+
 static struct infs_data_checksum_disk *file_inline_digest(
     struct infs_file_payload_disk *file)
 {

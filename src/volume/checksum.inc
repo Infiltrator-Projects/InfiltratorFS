@@ -378,7 +378,3 @@ static int checksum_destroy_chain(struct infs_volume *vol,
     memset(file->checksum_head_id, 0, 16);
     return INFS_STATUS_OK;
 }
-
-#define INFS_MAX_FILE_EXTENTS \
-    ((INFS_BLOCK_SIZE - sizeof(struct infs_object_header_disk) - \
-      sizeof(struct infs_file_payload_disk)) / sizeof(struct infs_extent_disk))
