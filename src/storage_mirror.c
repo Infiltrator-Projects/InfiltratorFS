@@ -90,7 +90,6 @@ static infs_status mirror_read_policy_unlocked(
         child_policy.protection_copies = 0u;
         child = &child_policy;
     }
-    infs_status first_error = INFS_STATUS_IO_ERROR;
     int have_copy = 0;
     uint8_t *verify = NULL;
     const size_t verify_capacity = size < 65536u ? size : 65536u;
@@ -104,8 +103,13 @@ static infs_status mirror_read_policy_unlocked(
             infs_status status = infs_storage_read_policy(
                 &ctx->members[i], offset, buffer, size, child);
             if (status != INFS_STATUS_OK) {
-                if (first_error == INFS_STATUS_IO_ERROR)
-                    first_error = status;
+                /*
+                 * Device I/O failure permits replica failover. Corruption,
+                 * unsupported policy and resource errors must remain visible
+                 * even when another replica can supply the requested bytes.
+                 */
+                if (status != INFS_STATUS_IO_ERROR)
+                    return status;
                 continue;
             }
             have_copy = 1;
@@ -129,8 +133,10 @@ static infs_status mirror_read_policy_unlocked(
             infs_status status = infs_storage_read_policy(
                 &ctx->members[i], offset + checked, verify, chunk, child);
             if (status != INFS_STATUS_OK) {
-                if (first_error == INFS_STATUS_IO_ERROR)
-                    first_error = status;
+                if (status != INFS_STATUS_IO_ERROR) {
+                    free(verify);
+                    return status;
+                }
                 break;
             }
             if (memcmp((const uint8_t *)buffer + checked, verify, chunk) != 0) {
@@ -142,7 +148,7 @@ static infs_status mirror_read_policy_unlocked(
     }
 
     free(verify);
-    return have_copy ? INFS_STATUS_OK : first_error;
+    return have_copy ? INFS_STATUS_OK : INFS_STATUS_IO_ERROR;
 }
 
 /*

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.19.19 — 2026-10-21
+
+- Keep synchronous mirror reads fail-closed when any selected replica reports corruption, unsupported policy or a resource/semantic error; only device I/O failures permit read failover. Previously a successful read from another replica masked such failures, despite byte divergence being rejected.
+- Cover primary and secondary corruption, secondary unsupported-policy failure, and surviving-replica I/O failover in the portable mirror regression suite. No persistent Format 0.19 bytes, checkpoint durability rules or native VFS interfaces change.
+
 ## 0.19.18 — 2026-10-21
 
 - Reject noncanonical nonzero reserved trailer bytes (116–4095) in the authenticated encrypted-storage envelope. The formatter already writes zero padding; previously the opener accepted unversioned, unauthenticated bytes in this region.

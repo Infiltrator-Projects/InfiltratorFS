@@ -44,6 +44,7 @@ static void *concurrent_write_thread(void *opaque)
 struct member {
     unsigned char bytes[8192];
     int fail_reads;
+    infs_status forced_read_status;
     int fail_writes;
     unsigned flushes;
     int closed;
@@ -69,6 +70,8 @@ static infs_status rd(void *opaque, uint64_t offset, void *buffer, size_t size)
     struct member *m = opaque;
     if (m->fail_reads)
         return INFS_STATUS_IO_ERROR;
+    if (m->forced_read_status != INFS_STATUS_OK)
+        return m->forced_read_status;
     if (offset > sizeof(m->bytes) || size > sizeof(m->bytes) - (size_t)offset)
         return INFS_STATUS_IO_ERROR;
     memcpy(buffer, m->bytes + (size_t)offset, size);
@@ -213,6 +216,26 @@ int main(void)
            INFS_STATUS_OK &&
        !memcmp(readback, payload, sizeof(payload)),
        "read fails over to surviving replica");
+
+    /*
+     * A readable mirror is not necessarily a valid mirror: a semantic error
+     * on either replica cannot be hidden by bytes read from the other one.
+     */
+    a.fail_reads = 0;
+    a.forced_read_status = INFS_STATUS_CORRUPT;
+    ok(infs_storage_read(&mirror, 123, readback, sizeof(readback)) ==
+           INFS_STATUS_CORRUPT,
+       "primary corruption is not masked by secondary success");
+    a.forced_read_status = INFS_STATUS_OK;
+    b.forced_read_status = INFS_STATUS_CORRUPT;
+    ok(infs_storage_read(&mirror, 123, readback, sizeof(readback)) ==
+           INFS_STATUS_CORRUPT,
+       "secondary corruption is not masked by primary success");
+    b.forced_read_status = INFS_STATUS_NOT_SUPPORTED;
+    ok(infs_storage_read(&mirror, 123, readback, sizeof(readback)) ==
+           INFS_STATUS_NOT_SUPPORTED,
+       "secondary policy failure is not masked by primary success");
+    b.forced_read_status = INFS_STATUS_OK;
 
     b.fail_writes = 1;
     static const char degraded[] = "degraded";

@@ -12,7 +12,9 @@
  * and the supplied member handles are cleared. The visible capacity is the
  * smallest member capacity. Reads try members in order until one succeeds;
  * writes and durability flushes are issued to every member and report failure
- * if any replica fails. This keeps replication below filesystem semantics:
+ * if any replica fails. Read failover is limited to device I/O errors; a
+ * replica's integrity, policy or resource error is never masked by another
+ * readable copy. This keeps replication below filesystem semantics:
  * every member contains a complete ordinary InfiltratorFS image.
  * Explicit per-object protection counts exceeding the configured number of
  * members are rejected before I/O, never silently weakened. The wrapper
