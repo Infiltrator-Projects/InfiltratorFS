@@ -260,7 +260,14 @@ static infs_status mirror_flush_unlocked(void *opaque)
         attempted = 1;
         infs_status status = infs_storage_flush(&ctx->members[i]);
         if (status != INFS_STATUS_OK) {
-            mirror_quarantine_member(ctx, i);
+            /*
+             * Only a device I/O failure establishes a broken replica.
+             * Interrupted/unsupported flushes still fail this durability
+             * barrier, but must not make a usable member permanently stale.
+             * The caller decides whether the ambiguous commit can continue.
+             */
+            if (status == INFS_STATUS_IO_ERROR)
+                mirror_quarantine_member(ctx, i);
             degraded = 1;
             if (result == INFS_STATUS_OK)
                 result = status;

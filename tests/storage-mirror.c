@@ -46,6 +46,7 @@ struct member {
     int fail_reads;
     infs_status forced_read_status;
     int fail_writes;
+    infs_status forced_flush_status;
     unsigned flushes;
     int closed;
 #if !defined(_WIN32)
@@ -122,6 +123,8 @@ static infs_status fl(void *opaque)
 {
     struct member *m = opaque;
     ++m->flushes;
+    if (m->forced_flush_status != INFS_STATUS_OK)
+        return m->forced_flush_status;
     return m->fail_writes ? INFS_STATUS_IO_ERROR : INFS_STATUS_OK;
 }
 
@@ -236,6 +239,18 @@ int main(void)
            INFS_STATUS_NOT_SUPPORTED,
        "secondary policy failure is not masked by primary success");
     b.forced_read_status = INFS_STATUS_OK;
+
+    /*
+     * A failed durability barrier is not a successful commit. However a
+     * transient non-I/O failure must remain retryable without re-opening the
+     * entire mirror or silently dropping replication protection.
+     */
+    b.forced_flush_status = INFS_STATUS_INTERRUPTED;
+    ok(infs_storage_flush(&mirror) == INFS_STATUS_INTERRUPTED,
+       "interrupted replica flush propagates failure");
+    b.forced_flush_status = INFS_STATUS_OK;
+    ok(infs_storage_flush(&mirror) == INFS_STATUS_OK,
+       "interrupted flush does not permanently quarantine replica");
 
     b.fail_writes = 1;
     static const char degraded[] = "degraded";
