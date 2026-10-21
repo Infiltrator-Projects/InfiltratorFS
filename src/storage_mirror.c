@@ -297,9 +297,16 @@ static infs_status mirror_size(void *opaque, uint64_t *size_bytes,
     return INFS_STATUS_OK;
 }
 
+/*
+ * Ancillary services may fail over after a device I/O error. The absence of
+ * providers is NOT_SUPPORTED; exhausted providers reporting actual I/O errors
+ * remain IO_ERROR. Semantic/resource failures are not interchangeable with
+ * service absence and must never be hidden by another replica.
+ */
 static infs_status mirror_random(void *opaque, void *buffer, size_t size)
 {
     struct mirror_context *ctx = opaque;
+    infs_status failure = INFS_STATUS_NOT_SUPPORTED;
     for (size_t i = 0; i < ctx->count; ++i) {
         if (!ctx->members[i].ops->random_bytes)
             continue;
@@ -307,13 +314,18 @@ static infs_status mirror_random(void *opaque, void *buffer, size_t size)
             &ctx->members[i], buffer, size);
         if (status == INFS_STATUS_OK)
             return status;
+        if (status == INFS_STATUS_IO_ERROR)
+            failure = status;
+        else if (status != INFS_STATUS_NOT_SUPPORTED)
+            return status;
     }
-    return INFS_STATUS_NOT_SUPPORTED;
+    return failure;
 }
 
 static infs_status mirror_time(void *opaque, struct infs_timestamp *time)
 {
     struct mirror_context *ctx = opaque;
+    infs_status failure = INFS_STATUS_NOT_SUPPORTED;
     for (size_t i = 0; i < ctx->count; ++i) {
         if (!ctx->members[i].ops->current_time)
             continue;
@@ -321,8 +333,12 @@ static infs_status mirror_time(void *opaque, struct infs_timestamp *time)
             &ctx->members[i], time);
         if (status == INFS_STATUS_OK)
             return status;
+        if (status == INFS_STATUS_IO_ERROR)
+            failure = status;
+        else if (status != INFS_STATUS_NOT_SUPPORTED)
+            return status;
     }
-    return INFS_STATUS_NOT_SUPPORTED;
+    return failure;
 }
 
 static void mirror_close(void *opaque)

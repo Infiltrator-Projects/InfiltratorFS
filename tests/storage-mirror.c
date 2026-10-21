@@ -47,6 +47,8 @@ struct member {
     infs_status forced_read_status;
     int fail_writes;
     infs_status forced_flush_status;
+    infs_status forced_random_status;
+    infs_status forced_time_status;
     unsigned flushes;
     int closed;
 #if !defined(_WIN32)
@@ -138,14 +140,18 @@ static infs_status sz(void *opaque, uint64_t *bytes, int *is_device)
 
 static infs_status rnd(void *opaque, void *buffer, size_t size)
 {
-    (void)opaque;
+    struct member *m = opaque;
+    if (m->forced_random_status != INFS_STATUS_OK)
+        return m->forced_random_status;
     memset(buffer, 0xa5, size);
     return INFS_STATUS_OK;
 }
 
 static infs_status now(void *opaque, struct infs_timestamp *time)
 {
-    (void)opaque;
+    struct member *m = opaque;
+    if (m->forced_time_status != INFS_STATUS_OK)
+        return m->forced_time_status;
     time->seconds = 1;
     time->nanoseconds = 2;
     return INFS_STATUS_OK;
@@ -201,6 +207,38 @@ int main(void)
     ok(infs_storage_mirror_create(members, 2, &mirror) == INFS_STATUS_OK,
        "create mirror");
     ok(!members[0].ops && !members[1].ops, "member ownership transferred");
+
+    /*
+     * A temporary service failure is not an absent service. Only device I/O
+     * permits fallback, and an exhausted failover must retain its real error.
+     */
+    uint8_t entropy[16] = {0};
+    a.forced_random_status = INFS_STATUS_IO_ERROR;
+    b.forced_random_status = INFS_STATUS_IO_ERROR;
+    ok(infs_storage_random(&mirror, entropy, sizeof(entropy)) ==
+           INFS_STATUS_IO_ERROR, "entropy failure is not unsupported");
+    b.forced_random_status = INFS_STATUS_OK;
+    ok(infs_storage_random(&mirror, entropy, sizeof(entropy)) ==
+           INFS_STATUS_OK && entropy[0] == 0xa5,
+       "entropy device I/O can fail over");
+    a.forced_random_status = INFS_STATUS_CORRUPT;
+    ok(infs_storage_random(&mirror, entropy, sizeof(entropy)) ==
+           INFS_STATUS_CORRUPT, "entropy semantic failure is not masked");
+    a.forced_random_status = INFS_STATUS_OK;
+
+    struct infs_timestamp timestamp = {0};
+    a.forced_time_status = INFS_STATUS_IO_ERROR;
+    b.forced_time_status = INFS_STATUS_NOT_SUPPORTED;
+    ok(infs_storage_current_time(&mirror, &timestamp) ==
+           INFS_STATUS_IO_ERROR, "clock I/O failure is not unsupported");
+    b.forced_time_status = INFS_STATUS_OK;
+    ok(infs_storage_current_time(&mirror, &timestamp) ==
+           INFS_STATUS_OK && timestamp.nanoseconds == 2,
+       "clock device I/O can fail over");
+    a.forced_time_status = INFS_STATUS_CORRUPT;
+    ok(infs_storage_current_time(&mirror, &timestamp) ==
+           INFS_STATUS_CORRUPT, "clock semantic failure is not masked");
+    a.forced_time_status = INFS_STATUS_OK;
 
     static const char payload[] = "replicated";
     ok(infs_storage_write(&mirror, 123, payload, sizeof(payload)) ==
