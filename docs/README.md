@@ -62,7 +62,7 @@ not override the current format, architecture, roadmap or qualification ledger.
 
 This category currently includes:
 
-- `RELEASE-*.md`;
+- `RELEASE-HISTORY-0.18.md` — consolidated historical notes for 0.18.56–0.18.74, preserving each release's original engineering account;
 - `UNLINK-PERFORMANCE-HANDOFF.md`; and
 - `IAC1-WRITE-PERFORMANCE-HANDOFF.md`;
 - `PERF-019-SYNC-LATENCY.md`.

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.19.22 — 2026-10-21
+
+- Consolidate the two portable command-line tools' numbered textual implementation fragments into their respective cohesive C translation units. Preserve original function order and behavior; update the Common-consumption policy to guard the simpler structure.
+- Consolidate eight historical 0.18 release-note documents into a single provenance-preserving historical record. Update the documentation authority map and policy to require an explicit archive entry, with no change to historical release facts.
+- No persistent Format 0.19, checkpoint, native Linux VFS or Windows-driver behavioral changes. Align the CMake and Windows INF release identities for the new qualified source revision.
+
 ## 0.19.21 — 2026-10-21
 
 - Preserve the actual I/O and semantic failure states of mirrored entropy and clock services: an exhausted device-I/O failover must not be recast as NOT_SUPPORTED, and corruption must not be masked by another backend. Cover both service boundaries with portable regressions.

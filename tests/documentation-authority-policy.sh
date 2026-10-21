@@ -13,17 +13,11 @@ fail() {
 map=docs/README.md
 [[ -f "$map" ]] || fail 'documentation authority map is missing'
 
-# Every maintained top-level documentation file must have exactly one visible
-# place in the authority map. Historical per-release notes are intentionally
-# covered by the RELEASE-*.md class rather than enumerated one by one.
+# Every maintained top-level documentation file, including consolidated
+# release history, must have exactly one visible place in the authority map.
 while IFS= read -r path; do
     name="${path#docs/}"
     [[ "$name" == README.md ]] && continue
-    if [[ "$name" == RELEASE-*.md ]]; then
-        grep -Fq '`RELEASE-*.md`' "$map" || \
-            fail 'release-history class is missing from the documentation map'
-        continue
-    fi
     grep -Fq "\`${name}\`" "$map" || \
         fail "${name} is not classified by docs/README.md"
 done < <(find docs -maxdepth 1 -type f -name '*.md' -print | sort)
