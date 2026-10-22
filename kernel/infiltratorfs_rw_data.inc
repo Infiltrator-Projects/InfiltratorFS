@@ -3511,6 +3511,32 @@ out:
     return ret;
 }
 
+/*
+ * Borrow only the immutable, page-cache-owned single-kvec writeback image.
+ * The snapshot remains live until the synchronous native writer returns.
+ * Generic/direct writers cannot promise that lifetime and retain their own
+ * copy. As with copy_from_iter(), consuming bytes advances the caller's
+ * iterator; the existing operation exit restores uncommitted bytes.
+ */
+static u8 *infilfs_native_borrow_staged_kvec(
+    struct iov_iter *from, size_t bytes, bool authorized)
+{
+    const struct kvec *vec;
+    u8 *data;
+
+    if (!authorized || !iov_iter_is_kvec(from) ||
+        from->nr_segs != 1 || !from->kvec)
+        return NULL;
+    vec = from->kvec;
+    if (!vec->iov_base || from->iov_offset > vec->iov_len ||
+        bytes > vec->iov_len - from->iov_offset)
+        return NULL;
+
+    data = (u8 *)vec->iov_base + from->iov_offset;
+    iov_iter_advance(from, bytes);
+    return data;
+}
+
 static ssize_t infilfs_native_parallel_append_batch(
     struct inode *inode, loff_t *position, struct iov_iter *from,
     size_t requested, bool allow_compression, bool borrow_staged)
@@ -3556,23 +3582,10 @@ static ssize_t infilfs_native_parallel_append_batch(
         goto out;
     }
 
-    /*
-     * The page-cache caller already owns an immutable snapshot until all
-     * preparation workers join below. Borrow that single-segment kernel
-     * buffer rather than allocate and copy it a second time. Direct/user
-     * iterators still require an owned snapshot: their source lifetime and
-     * stability are not guaranteed across asynchronous preparation.
-     * Advancing the iterator here preserves the established partial-commit
-     * rollback contract at revert_all and the common completion path.
-     */
-    if (borrow_staged && iov_iter_is_kvec(from) &&
-        from->nr_segs == 1 && from->kvec &&
-        from->iov_offset <= from->kvec->iov_len &&
-        requested <= from->kvec->iov_len - from->iov_offset) {
-        plain = (u8 *)from->kvec->iov_base + from->iov_offset;
-        borrowed = true;
-        iov_iter_advance(from, requested);
-    } else {
+    plain = infilfs_native_borrow_staged_kvec(
+        from, requested, borrow_staged);
+    borrowed = plain != NULL;
+    if (!borrowed) {
         plain = kvmalloc(requested, GFP_NOFS);
         if (!plain) {
             ret = -ENOMEM;
@@ -3768,6 +3781,7 @@ static ssize_t infilfs_native_extent_write_iter_mode(
         struct iov_iter *input = from;
         struct kvec staged_vec;
         u8 *staged_plain = NULL;
+        bool staged_borrowed = false;
         size_t chunk = min_t(size_t, requested - done,
                              INFILFS_NATIVE_WRITE_CHUNK);
         size_t staged_bytes = 0;
@@ -3811,18 +3825,25 @@ static ssize_t infilfs_native_extent_write_iter_mode(
             (chunk >> INFILFS_DISK_BLOCK_SHIFT) <=
                 INFILFS_COMPRESSION_CLUSTER_BLOCKS) {
             atomic64_inc(&sbi->prepared_append_attempts);
-            staged_plain = kvmalloc(chunk, GFP_NOFS);
-            if (staged_plain) {
-                size_t copied = copy_from_iter(
-                    staged_plain, chunk, from);
+            staged_plain = infilfs_native_borrow_staged_kvec(
+                from, chunk, borrow_staged);
+            staged_borrowed = staged_plain != NULL;
+            if (!staged_borrowed) {
+                staged_plain = kvmalloc(chunk, GFP_NOFS);
+                if (staged_plain) {
+                    size_t copied = copy_from_iter(
+                        staged_plain, chunk, from);
 
-                if (copied != chunk) {
-                    if (copied)
-                        iov_iter_revert(from, copied);
-                    ret = -EFAULT;
-                    kvfree(staged_plain);
-                    break;
+                    if (copied != chunk) {
+                        if (copied)
+                            iov_iter_revert(from, copied);
+                        ret = -EFAULT;
+                        kvfree(staged_plain);
+                        break;
+                    }
                 }
+            }
+            if (staged_plain) {
                 staged_bytes = chunk;
                 if (infilfs_native_prepare_append(
                         inode, staged_plain, chunk, preferred,
@@ -3986,7 +4007,8 @@ chunk_unlock:
         infilfs_native_prepared_append_destroy(inode, &prepared);
         infilfs_parallel_release_reservation(
             inode->i_sb, &reservation);
-        kvfree(staged_plain);
+        if (!staged_borrowed)
+            kvfree(staged_plain);
 
         if (ret)
             break;

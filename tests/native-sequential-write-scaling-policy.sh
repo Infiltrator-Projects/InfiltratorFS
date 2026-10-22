@@ -108,6 +108,22 @@ grep -Fq 'infilfs_queue_cpu_work(&items[i].work)' "$data"
 grep -Fq 'infilfs_writeback_cluster_submit' "$pagecache"
 grep -Fq 'infilfs_native_writeback_iter' "$pagecache"
 
+# Both writeback preparation modes must borrow only the stable page-cache
+# snapshot, keep external/direct writers on the owned-copy path, and revert
+# uncommitted iterator bytes before the borrowed snapshot's owner releases it.
+grep -Fq 'infilfs_native_borrow_staged_kvec(' "$data"
+borrow="$(sed -n '/static u8 \*infilfs_native_borrow_staged_kvec(/,/^}/p' "$data")"
+grep -Fq 'authorized || !iov_iter_is_kvec(from)' <<<"$borrow"
+grep -Fq 'from->nr_segs != 1' <<<"$borrow"
+grep -Fq 'iov_iter_advance(from, bytes)' <<<"$borrow"
+parallel="$(sed -n '/static ssize_t infilfs_native_parallel_append_batch(/,/^}/p' "$data")"
+grep -Fq 'from, requested, borrow_staged' <<<"$parallel"
+grep -Fq 'if (!borrowed)' <<<"$parallel"
+single="$(sed -n '/static ssize_t infilfs_native_extent_write_iter_mode(/,/^}/p' "$data")"
+grep -Fq 'from, chunk, borrow_staged' <<<"$single"
+grep -Fq 'if (!staged_borrowed)' <<<"$single"
+grep -Fq 'iov_iter_revert(from, staged_bytes - keep)' <<<"$single"
+
 # Newly allocated CoW dependencies are unreachable until checkpoint
 # publication. Submit them as soon as the individual operation is committed
 # into the deferred transaction, but never while they are only volatile

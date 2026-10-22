@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.19.34 — 2026-10-22
+
+- Reuse the immutable, page-cache-owned single-kvec snapshot for ordinary single-cluster sequential append preparation as well as multi-cluster parallel preparation, avoiding a second allocation/copy where the kernel writeback caller already owns stable bytes. Both use one shared bounded borrow helper, with iterator advance/revert, fallback ownership and crash-consistency publication unchanged.
+- Extend native sequential-write policy coverage to guard the shared lifetime and iterator contract. Record 0.19.33's measured 329-file real-data integrity PASS and unproven throughput effect in PERF-019. Native mounted throughput and hardware power-loss qualification remain open; no on-disk format revision.
+
+
 ## 0.19.33 — 2026-10-22
 
 - Eliminate a demonstrable duplicate allocation and memory copy when native Linux page-cache writeback supplies an already-owned, stable, single-segment kernel buffer to multi-cluster parallel append preparation. Borrow the page-cache snapshot only until all preparation workers complete; preserve owned snapshots for other iterators, the existing iterator rollback semantics, and all CoW/checkpoint durability boundaries.

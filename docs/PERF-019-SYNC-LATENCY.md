@@ -158,6 +158,34 @@ final-sync separately across repeated runs, remount and deep scrub before
 claiming a speedup. Investigate remaining writeback work if the reduction
 does not materially change the three-second loop-backed latency.
 
+## 22 October 2026 — 0.19.33 operator qualification and next source change
+
+On the same Dell laptop, the operator compiled the exact
+`e86edab1b0424093f4eb7a29464c11ff4941ceab` 0.19.33 kernel
+module for `7.0.0-38-generic`, loaded it temporarily and mounted a new
+disposable 2 GiB Format 0.19 image. The installed 0.19.31 formatter
+created the volume; on-disk Format 0.19 was unchanged. The same 329-file,
+512 MiB staged real-data set was copied and verified after a read-only
+remount. Structural check and deep scrub were CLEAN (131,237 data blocks,
+zero data checksum errors, zero metadata errors).
+
+| Module tested | Copy (ms) | Final sync (ms) | Total (ms) |
+|---|---:|---:|---:|
+| Installed 0.19.31 reference | 649 | 2,809 | 3,458 |
+| Temporary 0.19.33 | 1,031 | 2,617 | 3,649 |
+
+These are different single-run observations; do **not** interpret the
+192 ms lower sync time as demonstrated improvement, especially as total time
+was higher. No performance release gate is closed.
+
+Source inspection found the one-copy optimisation from 0.19.33 covers
+only *multi-cluster* parallel append. The ordinary sequential append path
+still copied each already-staged immutable page-cache kvec into a second
+temporary buffer before checksum/compression preparation. The next candidate
+reuses the same bounded borrow helper for both paths, preserving iterator
+advance/rollback and owned copies for non-page-cache writers. This is a
+source-level reduction of redundant work, **not a proven latency fix**.
+
 ## Instrumentation plan — measure before tuning
 
 Use opt-in tracepoints or bounded counters, preferably reporting counts,
