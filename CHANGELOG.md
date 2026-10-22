@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.19.30 — 2026-10-22
+
+- Separate non-mutating on-disk format **identity** from format **admission**: the portable core now exposes a bounded block-zero signature/version probe, independent of checkpoint validation and without an old-format mount, read or migration implementation.
+- Identify 0.18 signatures explicitly as an unsupported development format in `infilfs-inspect` (including `--check` and udev identity) and in structural/deep `fsck.infiltratorfs`; stop misreporting the observed legacy format as corruption merely because 0.19 rejects it.
+- Qualify the CLI and udev diagnostics against an isolated synthetic legacy signature and assert byte-for-byte immutability. Signature detection is not integrity verification; Format 0.19's persistent format, driver and recovery admission remain unchanged.
+
+
 ## 0.19.29 — 2026-10-22
 
 - Make the portable image tool's `write` path use the existing bounded 256 KiB host-file transfer semantics rather than allocating an entire host file in memory; share one streaming write implementation with `put` to remove duplicated read/error-handling logic.

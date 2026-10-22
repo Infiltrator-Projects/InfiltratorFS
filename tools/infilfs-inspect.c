@@ -130,9 +130,6 @@ int main(int argc, char **argv)
         return 2;
     }
 
-    if (check_mode)
-        return run_structural_check(target);
-
     struct infs_storage storage = {0};
     infs_status status = infs_posix_storage_open(&storage, target, 0);
     if (status != INFS_STATUS_OK) {
@@ -151,6 +148,34 @@ int main(int argc, char **argv)
         return 1;
     }
     (void)is_block;
+
+    uint16_t detected_major = 0, detected_minor = 0;
+    status = infs_probe_format_signature(&storage, &detected_major,
+                                         &detected_minor);
+    if (status == INFS_STATUS_OK &&
+        (detected_major != INFS_FORMAT_MAJOR ||
+         detected_minor != INFS_FORMAT_MINOR)) {
+        if (udev_mode) {
+            puts("ID_FS_USAGE=filesystem");
+            puts("ID_FS_TYPE=infiltratorfs");
+            printf("ID_FS_VERSION=%u.%u\n", detected_major, detected_minor);
+            puts("ID_FS_UNSUPPORTED=1");
+        } else {
+            fprintf(stderr,
+                    "InfiltratorFS format signature %u.%u detected; "
+                    "supported format %u.%u. Unsupported development format. "
+                    "Signature only: filesystem integrity not validated; "
+                    "no changes made.\n",
+                    detected_major, detected_minor,
+                    INFS_FORMAT_MAJOR, INFS_FORMAT_MINOR);
+        }
+        infs_storage_close(&storage);
+        return udev_mode ? 0 : 2;
+    }
+    if (check_mode) {
+        infs_storage_close(&storage);
+        return run_structural_check(target);
+    }
 
     struct infs_superblock_disk sb;
     unsigned valid = 0;

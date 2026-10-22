@@ -22,6 +22,13 @@ infs_status infs_decode_superblock(const uint8_t block[INFS_BLOCK_SIZE],
                                    struct infs_superblock_disk *sb);
 int infs_validate_superblock_block(const uint8_t block[INFS_BLOCK_SIZE]);
 
+/* Read only the block-zero InfiltratorFS signature and version, without
+ * admitting that version for mount, fsck, migration or recovery. A matching
+ * signature is an unverified identity hint, NOT proof of a valid volume.
+ * Returns NOT_FOUND for any other magic; no storage writes occur. */
+infs_status infs_probe_format_signature(const struct infs_storage *storage,
+                                        uint16_t *major, uint16_t *minor);
+
 /* Only the explicit Format 0.19 fixture/recovery reader may ask for minor
  * 19; ordinary mount, fsck and public decode remain exact-current-version. */
 int infs_validate_superblock_block_minor(

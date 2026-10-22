@@ -75,6 +75,30 @@ static infs_status repair_checkpoint_replicas(const char *target)
     return INFS_STATUS_OK;
 }
 
+/* Signature recognition precedes full current-format admission. Rejecting an
+ * older version is not a corruption diagnosis and never implies migration. */
+static int unsupported_format_signature(const char *target)
+{
+    struct infs_storage storage = {0};
+    if (infs_posix_storage_open(&storage, target, 0) != INFS_STATUS_OK)
+        return 0;
+
+    uint16_t major = 0, minor = 0;
+    infs_status status = infs_probe_format_signature(&storage, &major, &minor);
+    infs_storage_close(&storage);
+    if (status != INFS_STATUS_OK ||
+        (major == INFS_FORMAT_MAJOR && minor == INFS_FORMAT_MINOR))
+        return 0;
+
+    fprintf(stderr,
+            "fsck.infiltratorfs: InfiltratorFS format signature %u.%u "
+            "detected; supported format %u.%u. Unsupported development "
+            "format; not checked, no changes made. Signature is not "
+            "an integrity validation.\n",
+            major, minor, INFS_FORMAT_MAJOR, INFS_FORMAT_MINOR);
+    return 1;
+}
+
 static int run_structural_check(const char *target, int repair,
                                 int experimental019)
 {
@@ -411,6 +435,8 @@ int main(int argc, char **argv)
                 "-n without repair/online/snapshot options\n");
         return FSCK_EXIT_USAGE;
     }
+    if (unsupported_format_signature(target))
+        return FSCK_EXIT_OPERATIONAL;
     if (deep_scrub)
         return run_deep_scrub(target, online, snapshot_name, experimental019);
     return run_structural_check(

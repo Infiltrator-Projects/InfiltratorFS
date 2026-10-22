@@ -95,4 +95,42 @@ set -e
     echo "Unsafe: unrecoverable experimental 0.19 image exited $result, expected 4" >&2
     exit 1
 }
-echo 'Format 0.19 read-only image fsck: PASS'
+# Recognition is not format compatibility. A legacy signature must be
+# identified, never reported as corrupted solely for being unsupported.
+legacy="$work/legacy-018.img"
+truncate -s 16777216 "$legacy"
+python3 - "$legacy" <<'PY'
+import struct
+import sys
+with open(sys.argv[1], "r+b") as volume:
+    volume.write(b"INFS2026" + struct.pack("<HH", 0, 18))
+PY
+before="$(sha256sum "$legacy" | cut -d' ' -f1)"
+set +e
+"$build/infilfs-inspect" "$legacy" >"$work/inspect-legacy" 2>&1
+inspect_exit=$?
+"$build/infilfs-inspect" --check "$legacy" >"$work/check-legacy" 2>&1
+check_exit=$?
+"$build/fsck.infiltratorfs" -n "$legacy" >"$work/fsck-legacy" 2>&1
+fsck_exit=$?
+"$build/fsck.infiltratorfs" --scrub -n "$legacy" >"$work/scrub-legacy" 2>&1
+scrub_exit=$?
+set -e
+[[ "$inspect_exit" == 2 && "$check_exit" == 2 &&
+   "$fsck_exit" == 8 && "$scrub_exit" == 8 ]] || {
+    echo 'Legacy signature did not produce unsupported-format status' >&2
+    exit 1
+}
+grep -Fq 'format signature 0.18 detected' "$work/inspect-legacy"
+grep -Fq 'format signature 0.18 detected' "$work/check-legacy"
+grep -Fq 'format signature 0.18 detected' "$work/fsck-legacy"
+grep -Fq 'format signature 0.18 detected' "$work/scrub-legacy"
+"$build/infilfs-inspect" --udev "$legacy" >"$work/udev-legacy"
+grep -Fxq 'ID_FS_TYPE=infiltratorfs' "$work/udev-legacy"
+grep -Fxq 'ID_FS_VERSION=0.18' "$work/udev-legacy"
+grep -Fxq 'ID_FS_UNSUPPORTED=1' "$work/udev-legacy"
+[[ "$(sha256sum "$legacy" | cut -d' ' -f1)" == "$before" ]] || {
+    echo 'Legacy signature inspection modified the image' >&2
+    exit 1
+}
+echo 'Format 0.19 read-only image fsck and legacy identity: PASS'

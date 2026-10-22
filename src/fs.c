@@ -508,6 +508,24 @@ int infs_validate_superblock_block_minor(
     return stored == actual;
 }
 
+infs_status infs_probe_format_signature(const struct infs_storage *storage,
+                                        uint16_t *major, uint16_t *minor)
+{
+    uint8_t prefix[12];
+    if (!storage || !major || !minor)
+        return INFS_STATUS_INVALID_ARGUMENT;
+
+    infs_status status = infs_storage_read(storage, 0, prefix, sizeof(prefix));
+    if (status != INFS_STATUS_OK)
+        return status;
+    if (memcmp(prefix, INFS_MAGIC, 8) != 0)
+        return INFS_STATUS_NOT_FOUND;
+
+    *major = (uint16_t)((uint16_t)prefix[8] | ((uint16_t)prefix[9] << 8));
+    *minor = (uint16_t)((uint16_t)prefix[10] | ((uint16_t)prefix[11] << 8));
+    return INFS_STATUS_OK;
+}
+
 int infs_validate_superblock_block(const uint8_t block[INFS_BLOCK_SIZE])
 {
     return infs_validate_superblock_block_minor(block, INFS_FORMAT_MINOR);
