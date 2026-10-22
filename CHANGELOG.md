@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.19.33 — 2026-10-22
+
+- Eliminate a demonstrable duplicate allocation and memory copy when native Linux page-cache writeback supplies an already-owned, stable, single-segment kernel buffer to multi-cluster parallel append preparation. Borrow the page-cache snapshot only until all preparation workers complete; preserve owned snapshots for other iterators, the existing iterator rollback semantics, and all CoW/checkpoint durability boundaries.
+- The measured Format 0.19 multi-file final-sync delay remains **unqualified after this change** until comparative native mounted testing verifies an improvement. No on-disk format change.
+
+
 ## 0.19.32 — 2026-10-22
 
 - Replace the removed Ubuntu 26.04 `policykit-1` transitional dependency with the distro-maintained `polkitd` and `pkexec` packages throughout CI, installer bootstrap, Linux packaging validation and build instructions. This repairs a demonstrable CI dependency-install failure without altering filesystem runtime or disk format.

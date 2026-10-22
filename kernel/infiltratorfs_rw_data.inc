@@ -3513,13 +3513,14 @@ out:
 
 static ssize_t infilfs_native_parallel_append_batch(
     struct inode *inode, loff_t *position, struct iov_iter *from,
-    size_t requested, bool allow_compression)
+    size_t requested, bool allow_compression, bool borrow_staged)
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(inode->i_sb);
     struct infilfs_inode_info *ii = INFILFS_I(inode);
     struct infilfs_native_pending *pending;
     struct infilfs_native_prepare_work *items = NULL;
     u8 *plain = NULL;
+    bool borrowed = false;
     const size_t compression_bytes =
         (size_t)INFILFS_COMPRESSION_CLUSTER_BLOCKS *
         INFILFS_DISK_BLOCK_SIZE;
@@ -3549,18 +3550,41 @@ static ssize_t infilfs_native_parallel_append_batch(
     pending = infilfs_native_pending_get(inode->i_sb, true);
     if (!pending)
         return -ENOMEM;
-    plain = kvmalloc(requested, GFP_NOFS);
     items = kcalloc(count, sizeof(*items), GFP_NOFS);
-    if (!plain || !items) {
+    if (!items) {
         ret = -ENOMEM;
         goto out;
     }
-    copied = copy_from_iter(plain, requested, from);
-    if (copied != requested) {
-        if (copied)
-            iov_iter_revert(from, copied);
-        ret = -EFAULT;
-        goto out;
+
+    /*
+     * The page-cache caller already owns an immutable snapshot until all
+     * preparation workers join below. Borrow that single-segment kernel
+     * buffer rather than allocate and copy it a second time. Direct/user
+     * iterators still require an owned snapshot: their source lifetime and
+     * stability are not guaranteed across asynchronous preparation.
+     * Advancing the iterator here preserves the established partial-commit
+     * rollback contract at revert_all and the common completion path.
+     */
+    if (borrow_staged && iov_iter_is_kvec(from) &&
+        from->nr_segs == 1 && from->kvec &&
+        from->iov_offset <= from->kvec->iov_len &&
+        requested <= from->kvec->iov_len - from->iov_offset) {
+        plain = (u8 *)from->kvec->iov_base + from->iov_offset;
+        borrowed = true;
+        iov_iter_advance(from, requested);
+    } else {
+        plain = kvmalloc(requested, GFP_NOFS);
+        if (!plain) {
+            ret = -ENOMEM;
+            goto out;
+        }
+        copied = copy_from_iter(plain, requested, from);
+        if (copied != requested) {
+            if (copied)
+                iov_iter_revert(from, copied);
+            ret = -EFAULT;
+            goto out;
+        }
     }
     base_preferred = infilfs_native_preferred_data_block(sbi, ii);
     offset = 0;
@@ -3708,13 +3732,14 @@ out:
                 inode, &items[i].prepared);
     }
     kfree(items);
-    kvfree(plain);
+    if (!borrowed)
+        kvfree(plain);
     return ret;
 }
 
 static ssize_t infilfs_native_extent_write_iter_mode(
     struct inode *inode, loff_t *position, struct iov_iter *from,
-    size_t requested, bool allow_compression)
+    size_t requested, bool allow_compression, bool borrow_staged)
 {
     struct infilfs_sb_info *sbi = INFILFS_SB(inode->i_sb);
     struct infilfs_inode_info *ii = INFILFS_I(inode);
@@ -3728,7 +3753,7 @@ static ssize_t infilfs_native_extent_write_iter_mode(
         return 0;
     if (allow_compression) {
         ssize_t batched = infilfs_native_parallel_append_batch(
-            inode, position, from, requested, true);
+            inode, position, from, requested, true, borrow_staged);
 
         if (batched != -EOPNOTSUPP)
             return batched;
@@ -3980,7 +4005,7 @@ ssize_t infilfs_native_extent_write_iter(struct inode *inode,
                                                 size_t requested)
 {
     return infilfs_native_extent_write_iter_mode(
-        inode, position, from, requested, true);
+        inode, position, from, requested, true, false);
 }
 
 /*
@@ -4235,8 +4260,8 @@ ssize_t infilfs_native_writeback_iter(
         if (ret != -EOPNOTSUPP)
             return ret;
     }
-    return infilfs_native_extent_write_iter(
-        inode, position, from, requested);
+    return infilfs_native_extent_write_iter_mode(
+        inode, position, from, requested, true, true);
 }
 
 static ssize_t infilfs_file_write_iter_common(struct kiocb *iocb,
@@ -4315,7 +4340,7 @@ static ssize_t infilfs_file_write_iter_common(struct kiocb *iocb,
     }
     iocb->ki_pos = pos;
     ret = infilfs_native_extent_write_iter_mode(
-        inode, &iocb->ki_pos, from, requested, allow_compression);
+        inode, &iocb->ki_pos, from, requested, allow_compression, false);
 
 out_mapping:
     filemap_invalidate_unlock(mapping);

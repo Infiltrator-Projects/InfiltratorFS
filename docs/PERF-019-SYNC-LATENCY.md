@@ -139,6 +139,25 @@ checkpoint ordering. Do not remove the dirty-folio snapshot, transaction
 publication barriers or recovery requirements solely to reduce this
 benchmark time. No performance fix is claimed by recording these results.
 
+## Format 0.19.33 source optimisation candidate (22 October 2026)
+
+The native page-cache cluster submitter already stages an immutable contiguous
+snapshot and keeps it alive throughout `infilfs_native_writeback_iter()`.
+Previously, the multi-cluster parallel-append helper allocated another buffer
+and copied the entire staged writeback window before queuing its workers.
+For this **specific page-cache-owned single-kvec path only**, the helper now
+borrows the existing snapshot and skips the redundant allocation/copy.
+All preparation completions are joined before returning to the owner;
+generic/direct/user iterators continue to use an owned snapshot. Iterator
+advance/revert and partial-commit rules are unchanged. No disk-format or
+durability-ordering changes are made.
+
+This removes real redundant work but **is not yet a measured PERF-019
+resolution**. Test the same 512 MiB real-file source tree, compare copy and
+final-sync separately across repeated runs, remount and deep scrub before
+claiming a speedup. Investigate remaining writeback work if the reduction
+does not materially change the three-second loop-backed latency.
+
 ## Instrumentation plan — measure before tuning
 
 Use opt-in tracepoints or bounded counters, preferably reporting counts,
