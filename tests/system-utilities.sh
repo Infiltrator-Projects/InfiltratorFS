@@ -34,6 +34,7 @@ expected=(
     '-v'
     '-o'
     'nodev,nosuid,ro'
+    '--'
     '/tmp/image with spaces'
     '/tmp/mount point'
 )
@@ -56,7 +57,16 @@ INFILFS_MOUNT="$mock_mount" INFILFS_MODPROBE="$mock_modprobe" \
 INFILFS_TEST_ARGUMENTS="$arguments" INFILFS_TEST_MODPROBE_ARGUMENTS="$modprobe_arguments" \
     "$mount_helper" "$image" '/tmp/native mount' -w
 mapfile -t observed < "$arguments"
-expected=(-i -t infiltratorfs -o loop,rw "$image" '/tmp/native mount')
+expected=(-i -t infiltratorfs -o loop,rw -- "$image" '/tmp/native mount')
+[[ "${observed[*]}" == "${expected[*]}" ]]
+
+# Relative paths beginning with '-' must remain operands of mount(8), not
+# options. This is a command-line boundary check, not a privileged mount.
+INFILFS_MOUNT="$mock_mount" INFILFS_MODPROBE="$mock_modprobe" \
+INFILFS_TEST_ARGUMENTS="$arguments" INFILFS_TEST_MODPROBE_ARGUMENTS="$modprobe_arguments" \
+    "$mount_helper" '-source.img' '-target' -r
+mapfile -t observed < "$arguments"
+expected=(-i -t infiltratorfs -o ro -- '-source.img' '-target')
 [[ "${observed[*]}" == "${expected[*]}" ]]
 
 # fsck is deliberately a native executable now, not a shell dispatcher. Guard

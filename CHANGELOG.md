@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.19.25 — 2026-10-22
+
+- Terminate util-linux mount option parsing before source and mountpoint operands. Relative paths beginning with `-` are now passed as filenames instead of being interpreted as mount options.
+- Extend the system-utilities regression test to check operand separation for ordinary, loop-image and option-like paths. The change does not alter the persistent Format 0.19, core transaction model or native VFS driver.
+
 ## 0.19.24 — 2026-10-21
 
 - Retire the obsolete partition-22 qualification forwarding script. The canonical native qualification remains the sole destructive implementation and entry point; retain the explicit target, parent, partition-number and confirmation checks directly in the CI safety gate.

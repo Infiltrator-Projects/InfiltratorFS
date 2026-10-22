@@ -95,5 +95,6 @@ fi
 declare -a args=(-i -t infiltratorfs)
 (( verbose )) && args+=(-v)
 [[ -n "$options" ]] && args+=(-o "$options")
-args+=("$source_path" "$mountpoint")
+# A path beginning with '-' is an operand, never a mount(8) option.
+args+=(-- "$source_path" "$mountpoint")
 exec "$mount_program" "${args[@]}"
