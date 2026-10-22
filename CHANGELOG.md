@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.19.32 — 2026-10-22
+
+- Preserve operator-reported Format 0.19 mounted real-file, post-remount integrity and kernel function-graph measurements in the canonical PERF-019 investigation, distinguishing inclusive writeback timings from syscall wall time and identifying unproven optimisation hypotheses.
+- The evidence comes from disposable loop-backed media and does not close physical-NVMe performance or hardware power-loss qualification. No kernel code, persistent filesystem format, barriers or runtime behaviour changes. Advance version and release identity as required for published source.
+
+
 ## 0.19.31 — 2026-10-22
 
 - Include the owning portable filesystem API explicitly in the fsck CLI after adding its format-signature probe; Clang correctly rejected the missing declaration in 0.19.30. Keep that release's read-only identity/unsupported-format behavior and tests unchanged.
