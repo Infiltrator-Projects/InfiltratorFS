@@ -9,7 +9,7 @@ tool="$build_dir/infilfs-tool"
 fsck="$build_dir/fsck.infiltratorfs"
 api_test="$build_dir/infilfs-phase1-api"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-expected_version="$(sed -nE 's/^project\(InfiltratorFS VERSION ([0-9]+\.[0-9]+\.[0-9]+) LANGUAGES C\)$/\1/p' "$repo_root/CMakeLists.txt")"
+expected_version="$(bash "$repo_root/tools/project-version.sh" "$repo_root/CMakeLists.txt")"
 test -n "$expected_version"
 
 tmp="$(mktemp -d)"
@@ -19,6 +19,26 @@ source_file="$tmp/source.bin"
 out_file="$tmp/out.bin"
 corrupt="$tmp/corrupt.img"
 mkfs_output="$tmp/mkfs-output.txt"
+
+
+# Reject malformed requests before touching even a nonexistent volume.
+# Writable open is allowed to heal checkpoints, so dispatch must be fail-closed.
+assert_usage_before_open() {
+    local rc=0
+    "$tool" "$tmp/nonexistent.img" "$@" >"$tmp/invalid.stdout" \
+        2>"$tmp/invalid.stderr" || rc=$?
+    if [[ "$rc" != 2 ]] ||
+       ! grep -Fq 'Usage:' "$tmp/invalid.stderr" ||
+       grep -Fq 'open InfiltratorFS' "$tmp/invalid.stderr"; then
+        echo "Invalid CLI request attempted a volume open or returned the wrong status: $*" >&2
+        cat "$tmp/invalid.stderr" >&2
+        exit 1
+    fi
+}
+assert_usage_before_open unsupported-command
+assert_usage_before_open mkdir
+assert_usage_before_open ls / too-many-arguments
+assert_usage_before_open snapshot-restore old /src /dst --typo
 
 truncate -s 64M "$image"
 "$mkfs" -L SmokeTest "$image" >"$mkfs_output"
@@ -38,7 +58,7 @@ head -c 98765 /dev/urandom > "$source_file"
 "$tool" "$image" cat /docs/test.bin > "$out_file"
 cmp "$source_file" "$out_file"
 
-# Format 0.18 defines the portable component-name boundary as 1023 UTF-8
+# Format 0.19 defines the portable component-name boundary as 1023 UTF-8
 # bytes. Exercise the production path parser and directory-tree writer.
 name1023="$(head -c 1023 </dev/zero | tr '\0' n)"
 name1024="${name1023}n"

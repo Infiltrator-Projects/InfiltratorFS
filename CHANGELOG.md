@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.19.26 — 2026-10-22
+
+- Validate the CLI command, argument count and optional snapshot-restore flag before opening a filesystem. Previously an unknown command could trigger writable-open checkpoint repair; unsupported or malformed requests now exit with usage status 2 without touching storage.
+- Centralise command identity, argument arity and access mode in one dispatch table; preserve every supported command's existing operation and read/write classification.
+- Add smoke-test coverage for unsupported commands, missing/extra operands and invalid restore flags against an absent image. Use the canonical version resolver in smoke qualification and correct the current Format 0.19 test commentary.
+- No persistent Format 0.19, native VFS or Windows driver behavior changes.
+
 ## 0.19.25 — 2026-10-22
 
 - Terminate util-linux mount option parsing before source and mountpoint operands. Relative paths beginning with `-` are now passed as filenames instead of being interpreted as mount options.

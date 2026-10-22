@@ -441,111 +441,220 @@ static int command_snapshot_readlink(struct infs_volume *vol,
     return 0;
 }
 
+
+/*
+ * Validate the command before opening storage. Writable open can repair
+ * checkpoint replicas, so a typo or missing operand must never acquire
+ * mutation authority merely because it resembles a command-line request.
+ * This table owns command identity, arity and required access mode.
+ */
+enum tool_command {
+    CMD_LS,
+    CMD_STAT,
+    CMD_MKDIR,
+    CMD_PUT,
+    CMD_WRITE,
+    CMD_PUNCH,
+    CMD_RESIZE,
+    CMD_CAT,
+    CMD_MAP,
+    CMD_REFLINK,
+    CMD_SYMLINK,
+    CMD_READLINK,
+    CMD_LINK,
+    CMD_MV,
+    CMD_RM,
+    CMD_RMDIR,
+    CMD_SNAPSHOT_CREATE,
+    CMD_SNAPSHOT_LIST,
+    CMD_SNAPSHOT_DELETE,
+    CMD_SNAPSHOT_ROLLBACK,
+    CMD_SNAPSHOT_LS,
+    CMD_SNAPSHOT_STAT,
+    CMD_SNAPSHOT_CAT,
+    CMD_SNAPSHOT_READLINK,
+    CMD_SNAPSHOT_RESTORE,
+};
+
+struct command_spec {
+    const char *name;
+    enum tool_command command;
+    int min_argc;
+    int max_argc;
+    int writable;
+};
+
+static const struct command_spec commands[] = {
+    {"ls", CMD_LS, 3, 4, 0},
+    {"stat", CMD_STAT, 4, 4, 0},
+    {"mkdir", CMD_MKDIR, 4, 4, 1},
+    {"put", CMD_PUT, 5, 5, 1},
+    {"write", CMD_WRITE, 6, 6, 1},
+    {"punch", CMD_PUNCH, 6, 6, 1},
+    {"resize", CMD_RESIZE, 4, 4, 1},
+    {"cat", CMD_CAT, 4, 4, 0},
+    {"map", CMD_MAP, 5, 5, 0},
+    {"reflink", CMD_REFLINK, 5, 5, 1},
+    {"symlink", CMD_SYMLINK, 5, 5, 1},
+    {"readlink", CMD_READLINK, 4, 4, 0},
+    {"link", CMD_LINK, 5, 5, 1},
+    {"mv", CMD_MV, 5, 5, 1},
+    {"rm", CMD_RM, 4, 4, 1},
+    {"rmdir", CMD_RMDIR, 4, 4, 1},
+    {"snapshot-create", CMD_SNAPSHOT_CREATE, 4, 4, 1},
+    {"snapshot-list", CMD_SNAPSHOT_LIST, 3, 3, 0},
+    {"snapshot-delete", CMD_SNAPSHOT_DELETE, 4, 4, 1},
+    {"snapshot-rollback", CMD_SNAPSHOT_ROLLBACK, 4, 4, 1},
+    {"snapshot-ls", CMD_SNAPSHOT_LS, 4, 5, 0},
+    {"snapshot-stat", CMD_SNAPSHOT_STAT, 5, 5, 0},
+    {"snapshot-cat", CMD_SNAPSHOT_CAT, 5, 5, 0},
+    {"snapshot-readlink", CMD_SNAPSHOT_READLINK, 5, 5, 0},
+    {"snapshot-restore", CMD_SNAPSHOT_RESTORE, 6, 7, 1},
+};
+
+static const struct command_spec *parse_command(int argc, char **argv)
+{
+    if (argc < 3)
+        return NULL;
+    for (size_t i = 0; i < sizeof(commands) / sizeof(commands[0]); ++i) {
+        const struct command_spec *spec = &commands[i];
+        if (strcmp(argv[2], spec->name) != 0)
+            continue;
+        if (argc < spec->min_argc || argc > spec->max_argc)
+            return NULL;
+        if (spec->command == CMD_SNAPSHOT_RESTORE &&
+            argc == 7 && strcmp(argv[6], "--replace") != 0)
+            return NULL;
+        return spec;
+    }
+    return NULL;
+}
+
 int main(int argc, char **argv)
 {
-    if (argc < 3) {
+    const struct command_spec *spec = parse_command(argc, argv);
+    if (!spec) {
         usage(argv[0]);
         return 2;
     }
-    const char *image = argv[1];
-    const char *cmd = argv[2];
-    int writable = strcmp(cmd, "ls") != 0 && strcmp(cmd, "stat") != 0 &&
-        strcmp(cmd, "cat") != 0 && strcmp(cmd, "map") != 0 &&
-        strcmp(cmd, "readlink") != 0 && strcmp(cmd, "snapshot-list") != 0 &&
-        strcmp(cmd, "snapshot-ls") != 0 &&
-        strcmp(cmd, "snapshot-stat") != 0 &&
-        strcmp(cmd, "snapshot-cat") != 0 &&
-        strcmp(cmd, "snapshot-readlink") != 0;
 
     struct infs_volume vol;
-    infs_status status = infs_posix_volume_open(&vol, image, writable);
+    infs_status status = infs_posix_volume_open(&vol, argv[1], spec->writable);
     if (status != INFS_STATUS_OK)
         return die_status("open InfiltratorFS", status);
 
     int rc = 0;
-    if (strcmp(cmd, "ls") == 0) {
-        if (argc > 4) rc = 2; else rc = command_ls(&vol, argc == 4 ? argv[3] : "/");
-    } else if (strcmp(cmd, "stat") == 0 && argc == 4) {
+    switch (spec->command) {
+    case CMD_LS:
+        rc = command_ls(&vol, argc == 4 ? argv[3] : "/");
+        break;
+    case CMD_STAT:
         rc = command_stat(&vol, argv[3]);
-    } else if (strcmp(cmd, "mkdir") == 0 && argc == 4) {
+        break;
+    case CMD_MKDIR: {
         const struct infs_create_options options = {
             .posix_permissions = 0755,
             .posix_uid = (uint32_t)getuid(),
             .posix_gid = (uint32_t)getgid(),
         };
         status = infs_mkdir(&vol, argv[3], &options);
-        if (status != INFS_STATUS_OK) rc = die_status("mkdir", status);
-    } else if (strcmp(cmd, "put") == 0 && argc == 5) {
+        if (status != INFS_STATUS_OK)
+            rc = die_status("mkdir", status);
+        break;
+    }
+    case CMD_PUT:
         rc = command_put(&vol, argv[3], argv[4]);
-    } else if (strcmp(cmd, "write") == 0 && argc == 6) {
+        break;
+    case CMD_WRITE:
         rc = command_write(&vol, argv[3], argv[4], argv[5]);
-    } else if (strcmp(cmd, "punch") == 0 && argc == 6) {
+        break;
+    case CMD_PUNCH:
         rc = command_punch(&vol, argv[3], argv[4], argv[5]);
-    } else if (strcmp(cmd, "resize") == 0 && argc == 4) {
+        break;
+    case CMD_RESIZE:
         rc = command_resize(&vol, argv[3]);
-    } else if (strcmp(cmd, "cat") == 0 && argc == 4) {
+        break;
+    case CMD_CAT:
         rc = command_cat(&vol, argv[3]);
-    } else if (strcmp(cmd, "map") == 0 && argc == 5) {
+        break;
+    case CMD_MAP:
         rc = command_map(&vol, argv[3], argv[4]);
-    } else if (strcmp(cmd, "reflink") == 0 && argc == 5) {
+        break;
+    case CMD_REFLINK:
         status = infs_reflink_file(&vol, argv[3], argv[4]);
-        if (status != INFS_STATUS_OK) rc = die_status("reflink", status);
-    } else if (strcmp(cmd, "symlink") == 0 && argc == 5) {
+        if (status != INFS_STATUS_OK)
+            rc = die_status("reflink", status);
+        break;
+    case CMD_SYMLINK: {
         const struct infs_create_options options = {
             .posix_permissions = 0777,
             .posix_uid = (uint32_t)getuid(),
             .posix_gid = (uint32_t)getgid(),
         };
         status = infs_create_symlink(&vol, argv[4], argv[3], &options);
-        if (status != INFS_STATUS_OK) rc = die_status("symlink", status);
-    } else if (strcmp(cmd, "readlink") == 0 && argc == 4) {
+        if (status != INFS_STATUS_OK)
+            rc = die_status("symlink", status);
+        break;
+    }
+    case CMD_READLINK:
         rc = command_readlink(&vol, argv[3]);
-    } else if (strcmp(cmd, "link") == 0 && argc == 5) {
+        break;
+    case CMD_LINK:
         status = infs_link_file(&vol, argv[3], argv[4]);
-        if (status != INFS_STATUS_OK) rc = die_status("link", status);
-    } else if (strcmp(cmd, "mv") == 0 && argc == 5) {
+        if (status != INFS_STATUS_OK)
+            rc = die_status("link", status);
+        break;
+    case CMD_MV:
         status = infs_rename(&vol, argv[3], argv[4]);
-        if (status != INFS_STATUS_OK) rc = die_status("mv", status);
-    } else if (strcmp(cmd, "rm") == 0 && argc == 4) {
+        if (status != INFS_STATUS_OK)
+            rc = die_status("mv", status);
+        break;
+    case CMD_RM:
         status = infs_unlink(&vol, argv[3]);
-        if (status != INFS_STATUS_OK) rc = die_status("rm", status);
-    } else if (strcmp(cmd, "rmdir") == 0 && argc == 4) {
+        if (status != INFS_STATUS_OK)
+            rc = die_status("rm", status);
+        break;
+    case CMD_RMDIR:
         status = infs_rmdir(&vol, argv[3]);
-        if (status != INFS_STATUS_OK) rc = die_status("rmdir", status);
-    } else if (strcmp(cmd, "snapshot-create") == 0 && argc == 4) {
+        if (status != INFS_STATUS_OK)
+            rc = die_status("rmdir", status);
+        break;
+    case CMD_SNAPSHOT_CREATE:
         status = infs_snapshot_create(&vol, argv[3]);
-        if (status != INFS_STATUS_OK) rc = die_status("snapshot-create", status);
-    } else if (strcmp(cmd, "snapshot-list") == 0 && argc == 3) {
+        if (status != INFS_STATUS_OK)
+            rc = die_status("snapshot-create", status);
+        break;
+    case CMD_SNAPSHOT_LIST:
         rc = command_snapshot_list(&vol);
-    } else if (strcmp(cmd, "snapshot-delete") == 0 && argc == 4) {
+        break;
+    case CMD_SNAPSHOT_DELETE:
         status = infs_snapshot_delete(&vol, argv[3]);
-        if (status != INFS_STATUS_OK) rc = die_status("snapshot-delete", status);
-    } else if (strcmp(cmd, "snapshot-rollback") == 0 && argc == 4) {
+        if (status != INFS_STATUS_OK)
+            rc = die_status("snapshot-delete", status);
+        break;
+    case CMD_SNAPSHOT_ROLLBACK:
         status = infs_snapshot_rollback(&vol, argv[3]);
-        if (status != INFS_STATUS_OK) rc = die_status("snapshot-rollback", status);
-    } else if (strcmp(cmd, "snapshot-ls") == 0 &&
-               (argc == 4 || argc == 5)) {
+        if (status != INFS_STATUS_OK)
+            rc = die_status("snapshot-rollback", status);
+        break;
+    case CMD_SNAPSHOT_LS:
         rc = command_snapshot_ls(&vol, argv[3], argc == 5 ? argv[4] : "/");
-    } else if (strcmp(cmd, "snapshot-stat") == 0 && argc == 5) {
+        break;
+    case CMD_SNAPSHOT_STAT:
         rc = command_snapshot_stat(&vol, argv[3], argv[4]);
-    } else if (strcmp(cmd, "snapshot-cat") == 0 && argc == 5) {
+        break;
+    case CMD_SNAPSHOT_CAT:
         rc = command_snapshot_cat(&vol, argv[3], argv[4]);
-    } else if (strcmp(cmd, "snapshot-readlink") == 0 && argc == 5) {
+        break;
+    case CMD_SNAPSHOT_READLINK:
         rc = command_snapshot_readlink(&vol, argv[3], argv[4]);
-    } else if (strcmp(cmd, "snapshot-restore") == 0 &&
-               (argc == 6 || argc == 7)) {
-        int replace = argc == 7 && strcmp(argv[6], "--replace") == 0;
-        if (argc == 7 && !replace) {
-            rc = 2;
-        } else {
-            status = infs_snapshot_restore_path(
-                &vol, argv[3], argv[4], argv[5], replace);
-            if (status != INFS_STATUS_OK)
-                rc = die_status("snapshot-restore", status);
-        }
-    } else {
-        usage(argv[0]);
-        rc = 2;
+        break;
+    case CMD_SNAPSHOT_RESTORE:
+        status = infs_snapshot_restore_path(
+            &vol, argv[3], argv[4], argv[5], argc == 7);
+        if (status != INFS_STATUS_OK)
+            rc = die_status("snapshot-restore", status);
+        break;
     }
 
     infs_volume_close(&vol);
