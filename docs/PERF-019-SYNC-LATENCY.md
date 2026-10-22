@@ -1,9 +1,11 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # PERF-019 — Excessive native Linux final synchronization latency
 
-**Status:** confirmed historical measurements; bottleneck attribution and
-Format 0.19 regression qualification are **open**. This is a performance
-investigation. Format 0.19 functional mounted qualification is recorded separately in `QUALIFICATION.md`; these historical timings do not establish its performance.
+**Status:** reproducible final-sync latency on operator-tested Format 0.19
+loop-backed media; stage-level bottleneck attribution and physical-NVMe
+qualification remain **open**. Format 0.19 functional mounted qualification is
+recorded separately in `QUALIFICATION.md`. Neither clean fsck/scrub nor
+loop-backed timings establish production durability or physical-media speed.
 
 **Provenance:** operator-supplied real-machine engineering handoff, received
 18 October 2026. Numbers below are reproduced from that handoff; they have
@@ -73,6 +75,69 @@ below reported 0.01-second timing resolution.
 These are limited operator measurements, not a statistically complete
 comparison or direct proof of the bottleneck stage. Buffered-copy speed
 and SHA-256 matching do not establish power-failure durability.
+
+## 22 October 2026 — Format 0.19 mounted real-file and trace evidence
+
+**Provenance:** operator-supplied terminal output from Dell Latitude 5550,
+Linux `7.0.0-38-generic`, installed InfiltratorFS software `0.19.31`,
+newly formatted disk Format 0.19. The test target was a disposable 2 GiB
+loop-backed file **on the host's EXT4 root volume**, not the historical
+1 TB Format 0.18 NVMe partition. The original on-disk 0.18 partition
+remained unchanged. Source documents were staged from NFS
+(`192.168.1.240:/srv/nfs4/Share/Shared_Documents`) into the user's home
+directory, so the timed runs used locally staged source files.
+
+The initial Format 0.19 real-document test selected 329 files, 536,870,880
+bytes (512 MiB), before reaching its byte limit. Buffered copy took 665 ms;
+the subsequent `sync -f` took 2,725 ms. Both byte-by-byte comparisons
+(before and after remount) passed; structural `fsck -n` returned CLEAN and
+read-only deep scrub checked 329 files and 131,237 data blocks with zero
+checksum and metadata errors.
+
+A separate two-image reference run using the same staged source tree yielded:
+
+| Loop-backed target | Buffered copy (ms) | Final `sync -f` (ms) | Sum (ms) |
+|---|---:|---:|---:|
+| EXT4 reference | 392 | 237 | 629 |
+| InfiltratorFS 0.19 | 649 | 2,809 | 3,458 |
+
+Both image contents matched the source after a read-only remount;
+InfiltratorFS's structural check was CLEAN. These are **single
+observations**, not isolated physical-media measurements. A filesystem in
+a host file shares cache, allocation and durability effects with its host;
+the comparison is a latency signal, not a claim that EXT4 owns any
+InfiltratorFS semantics or is a performance specification.
+
+A third 0.19 disposable-image run produced a buffered copy of 1,020 ms and
+a final `sync -f` of 3,018 ms, with clean structural check and identical
+content. During the final sync, an isolated kernel `function_graph` trace
+covered five exposed symbols. An operator-side parser reported:
+
+| Traced function | Completed calls | Sum of inclusive durations (ms) | Longest call (ms) |
+|---|---:|---:|---:|
+| `infilfs_writeback_cluster_submit` | 378 | 2,721.76 | 38.30 |
+| `infilfs_writepages` | 288 | 2,582.19 | 48.86 |
+| `infilfs_native_pending_commit_locked` | 7 | 132.54 | 24.47 |
+| `infilfs_sync_fs` | 2 | 20.45 | 20.45 |
+
+**Interpretation boundary:** function-graph totals are *inclusive*, can
+nest and overlap across CPUs, and are not a decomposition of syscall wall
+time. The trace supports prioritising writeback/CoW preparation over the
+final `sync_fs` entry point for further attribution, but does not prove
+that compression, hashing, folio staging, allocation or device I/O is
+individually excessive. Two internal static functions
+(`infilfs_rw_tx_commit` and `infilfs_rw_write_checkpoint_replicas_sync`)
+were not separately exposed to the tracer; both are present in source,
+so that tracing limitation does **not** indicate missing filesystem
+functionality.
+
+**Engineering next step:** attribute each writeback cluster's staging,
+digest/codec preparation, reservation/CoW work, lock waits, staged I/O
+submission and completion; confirm the same workload on an explicitly
+approved *disposable* raw target before changing cache/writeback or durable
+checkpoint ordering. Do not remove the dirty-folio snapshot, transaction
+publication barriers or recovery requirements solely to reduce this
+benchmark time. No performance fix is claimed by recording these results.
 
 ## Instrumentation plan — measure before tuning
 
