@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.19.31 — 2026-10-22
+
+- Include the owning portable filesystem API explicitly in the fsck CLI after adding its format-signature probe; Clang correctly rejected the missing declaration in 0.19.30. Keep that release's read-only identity/unsupported-format behavior and tests unchanged.
+
+
 ## 0.19.30 — 2026-10-22
 
 - Separate non-mutating on-disk format **identity** from format **admission**: the portable core now exposes a bounded block-zero signature/version probe, independent of checkpoint validation and without an old-format mount, read or migration implementation.

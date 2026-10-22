@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "infilfs/check.h"
+#include "infilfs/fs.h"
 #include "infilfs/posix_io.h"
 #include "infilfs/volume.h"
 
