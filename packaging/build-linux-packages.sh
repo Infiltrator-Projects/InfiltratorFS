@@ -99,7 +99,7 @@ Architecture: ${architecture}
 Maintainer: The First Infiltrator
 X-InfiltratorFS-Build: ${build_identity}
 X-InfiltratorFS-Desktop-Integration: ${desktop_identity}
-Depends: dkms, initramfs-tools, kmod, policykit-1, util-linux, xdg-utils, fontconfig, libssl3t64 | libssl3, libgtk-3-0t64 | libgtk-3-0, libglib2.0-0t64 | libglib2.0-0${desktop_depends}
+Depends: dkms, initramfs-tools, kmod, polkitd, pkexec, util-linux, xdg-utils, fontconfig, libssl3t64 | libssl3, libgtk-3-0t64 | libgtk-3-0, libglib2.0-0t64 | libglib2.0-0${desktop_depends}
 Recommends: linux-headers-generic, udev${desktop_recommends}
 Installed-Size: ${installed_size}
 Homepage: https://github.com/Infiltrator-Projects/InfiltratorFS
@@ -224,7 +224,7 @@ if [[ "$integration_enabled" = 1 ]]; then
         }
     done
 fi
-for dependency in dkms initramfs-tools kmod policykit-1 util-linux xdg-utils fontconfig libgtk-3-0t64 libglib2.0-0t64; do
+for dependency in dkms initramfs-tools kmod polkitd pkexec util-linux xdg-utils fontconfig libgtk-3-0t64 libglib2.0-0t64; do
     grep -Eq "(^|, )${dependency}([ ,|]|$)" <<<"$depends"
 done
 if grep -Eq '(^|, )python3([ ,]|$)|python3-gi|gir1\.2-gtk-3\.0' <<<"$depends"; then

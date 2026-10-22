@@ -60,7 +60,7 @@ Windows provides native image/raw-partition access and a driverless Explorer bri
 Build on a Debian-family system with matching running-kernel headers:
 
 ```bash
-sudo apt install build-essential cmake dkms kmod libssl-dev policykit-1 util-linux \
+sudo apt install build-essential cmake dkms kmod libssl-dev polkitd pkexec util-linux \
   xdg-utils libgtk-3-dev pkg-config python3 udev udisks2 \
   linux-headers-$(uname -r)
 

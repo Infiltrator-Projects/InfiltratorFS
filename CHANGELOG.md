@@ -2,6 +2,8 @@
 
 ## 0.19.32 — 2026-10-22
 
+- Replace the removed Ubuntu 26.04 `policykit-1` transitional dependency with the distro-maintained `polkitd` and `pkexec` packages throughout CI, installer bootstrap, Linux packaging validation and build instructions. This repairs a demonstrable CI dependency-install failure without altering filesystem runtime or disk format.
+
 - Preserve operator-reported Format 0.19 mounted real-file, post-remount integrity and kernel function-graph measurements in the canonical PERF-019 investigation, distinguishing inclusive writeback timings from syscall wall time and identifying unproven optimisation hypotheses.
 - The evidence comes from disposable loop-backed media and does not close physical-NVMe performance or hardware power-loss qualification. No kernel code, persistent filesystem format, barriers or runtime behaviour changes. Advance version and release identity as required for published source.
 

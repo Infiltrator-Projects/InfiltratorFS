@@ -48,7 +48,7 @@ check_requirements() {
     command -v dpkg-deb >/dev/null 2>&1 || add_missing_package dpkg
     command -v apt-get >/dev/null 2>&1 || add_missing_package apt
     [[ -f /usr/include/openssl/evp.h ]] || add_missing_package libssl-dev
-    command -v pkexec >/dev/null 2>&1 || add_missing_package policykit-1
+    command -v pkexec >/dev/null 2>&1 || add_missing_package pkexec
     command -v findmnt >/dev/null 2>&1 || add_missing_package util-linux
     command -v mount >/dev/null 2>&1 || add_missing_package util-linux
     command -v umount >/dev/null 2>&1 || add_missing_package util-linux
