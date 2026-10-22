@@ -76,6 +76,10 @@ int infs_status_to_errno(infs_status status)
 int infs_get_size_bytes(int fd, uint64_t *size_bytes, int *is_block_device)
 {
     struct stat st;
+    if (!size_bytes || !is_block_device) {
+        errno = EINVAL;
+        return -1;
+    }
     if (fstat(fd, &st) != 0)
         return -1;
 
@@ -99,6 +103,10 @@ int infs_get_size_bytes(int fd, uint64_t *size_bytes, int *is_block_device)
 
 int infs_random_bytes(void *buf, size_t count)
 {
+    if (!buf && count) {
+        errno = EINVAL;
+        return -1;
+    }
     uint8_t *p = buf;
     while (count) {
         ssize_t n = getrandom(p, count, 0);
@@ -203,7 +211,7 @@ infs_status infs_posix_storage_adopt_fd(struct infs_storage *storage, int fd)
 {
     uint64_t bytes;
     int device;
-    if (!storage || fd < 0)
+    if (!storage || fd < 0 || storage->ops || storage->context)
         return INFS_STATUS_INVALID_ARGUMENT;
     if (infs_get_size_bytes(fd, &bytes, &device) != 0)
         return infs_status_from_errno(errno);
@@ -219,7 +227,7 @@ infs_status infs_posix_storage_adopt_fd(struct infs_storage *storage, int fd)
 infs_status infs_posix_storage_open(struct infs_storage *storage,
                                     const char *path, int writable)
 {
-    if (!storage || !path)
+    if (!storage || !path || storage->ops || storage->context)
         return INFS_STATUS_INVALID_ARGUMENT;
 
     struct infs_posix_storage_context *context = malloc(sizeof(*context));

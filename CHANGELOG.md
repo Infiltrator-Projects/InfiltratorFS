@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.19.27 — 2026-10-22
+
+- Fail closed on null POSIX geometry output pointers and nonzero random-byte requests with null buffers instead of dereferencing them; preserve the defined zero-length random no-op.
+- Require an empty destination for POSIX storage open/adoption, preventing accidental overwrite and loss of ownership of an existing descriptor. Rejected descriptor adoption leaves the caller's descriptor open.
+- Extend the existing POSIX locking regression with invalid-buffer and handle-ownership coverage. No on-disk Format 0.19, checkpoint protocol, native Linux VFS or Windows driver logic changes.
+
 ## 0.19.26 — 2026-10-22
 
 - Validate the CLI command, argument count and optional snapshot-restore flag before opening a filesystem. Previously an unknown command could trigger writable-open checkpoint repair; unsupported or malformed requests now exit with usage status 2 without touching storage.

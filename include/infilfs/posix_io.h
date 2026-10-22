@@ -17,6 +17,12 @@ struct infs_volume;
  *   errno for a portable filesystem status;
  * - storage_open() acquires a non-blocking shared/read-only or exclusive/
  *   writable advisory lock and owns the descriptor until storage_close();
+ * - storage_open() and storage_adopt_fd() require an empty, zero-initialised
+ *   destination; a failed call never replaces an existing owned handle;
+ * - storage_adopt_fd() takes ownership of an already-opened/locked descriptor
+ *   only on success, leaving it caller-owned on failure;
+ * - size/random helpers reject nonzero work with null output buffers using
+ *   EINVAL, while zero-length random requests are no-ops;
  * - volume_open() transfers the opened storage context into the volume on
  *   success; infs_volume_close() then releases it. */
 
