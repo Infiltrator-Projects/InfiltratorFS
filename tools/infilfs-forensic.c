@@ -162,7 +162,7 @@ int main(int argc, char **argv)
         return 2;
     }
 
-    struct infs_storage storage;
+    struct infs_storage storage = {0};
     infs_status status = infs_posix_storage_open(&storage, path, 0);
     if (status != INFS_STATUS_OK) {
         fprintf(stderr, "infilfs-forensic: open: %s\n",

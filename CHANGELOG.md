@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.19.28 — 2026-10-22
+
+- Initialise the forensic CLI's POSIX storage destination before acquiring its read lock, as required by the newly enforced storage ownership contract. The previous uninitialised local could cause forensic scans to reject valid media with INVALID_ARGUMENT; the existing forensic-scan and current-format-tree integration suites exercise this regression.
+- Keep the 0.19.27 pointer and descriptor-ownership guards. Format 0.19 persistent data, native Linux kernel semantics and Windows driver logic remain unchanged.
+
 ## 0.19.27 — 2026-10-22
 
 - Fail closed on null POSIX geometry output pointers and nonzero random-byte requests with null buffers instead of dereferencing them; preserve the defined zero-length random no-op.
