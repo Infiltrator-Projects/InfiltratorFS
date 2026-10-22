@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.19.29 — 2026-10-22
+
+- Make the portable image tool's `write` path use the existing bounded 256 KiB host-file transfer semantics rather than allocating an entire host file in memory; share one streaming write implementation with `put` to remove duplicated read/error-handling logic.
+- Extend the portable smoke test to verify a multi-chunk write at a nonzero offset, unchanged prefix, exact extension, empty input and preservation of the existing `put`/reflink test behaviour.
+- Preserve Format 0.19, the Linux VFS and Windows driver semantics; this is a userspace tool and regression-coverage change. Host read/write failures can leave an already committed prefix, as is already the case for `put`.
+
 ## 0.19.28 — 2026-10-22
 
 - Initialise the forensic CLI's POSIX storage destination before acquiring its read lock, as required by the newly enforced storage ownership contract. The previous uninitialised local could cause forensic scans to reject valid media with INVALID_ARGUMENT; the existing forensic-scan and current-format-tree integration suites exercise this regression.

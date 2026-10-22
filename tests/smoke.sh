@@ -58,6 +58,21 @@ head -c 98765 /dev/urandom > "$source_file"
 "$tool" "$image" cat /docs/test.bin > "$out_file"
 cmp "$source_file" "$out_file"
 
+# write must stream source data larger than the fixed I/O buffer, retain the
+# prefix before a nonzero offset, and extend the destination exactly.
+head -c 786433 /dev/urandom > "$tmp/patch.bin"
+"$tool" "$image" write "$tmp/patch.bin" /docs/test.bin 8192
+head -c 8192 "$source_file" > "$tmp/expected-patched.bin"
+cat "$tmp/patch.bin" >> "$tmp/expected-patched.bin"
+"$tool" "$image" cat /docs/test.bin > "$out_file"
+cmp "$tmp/expected-patched.bin" "$out_file"
+: > "$tmp/empty.bin"
+"$tool" "$image" write "$tmp/empty.bin" /docs/test.bin 0
+"$tool" "$image" cat /docs/test.bin > "$out_file"
+cmp "$tmp/expected-patched.bin" "$out_file"
+# Restore the original payload for the existing namespace/reflink regressions.
+"$tool" "$image" put "$source_file" /docs/test.bin
+
 # Format 0.19 defines the portable component-name boundary as 1023 UTF-8
 # bytes. Exercise the production path parser and directory-tree writer.
 name1023="$(head -c 1023 </dev/zero | tr '\0' n)"

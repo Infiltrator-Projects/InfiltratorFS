@@ -93,6 +93,35 @@ static int command_stat(struct infs_volume *vol, const char *path)
     return 0;
 }
 
+/*
+ * Both host-file commands stream through one bounded transfer path. A write
+ * may require multiple committed chunks; like put, an I/O error can leave
+ * already-written chunks visible and must be reported rather than hidden.
+ * No host-file-sized allocation is required.
+ */
+static int stream_host_file(struct infs_volume *vol, int input,
+                            const char *dest, uint64_t offset)
+{
+    uint8_t buffer[256 * 1024];
+    for (;;) {
+        ssize_t n = read(input, buffer, sizeof(buffer));
+        if (n < 0) {
+            if (errno == EINTR)
+                continue;
+            return die_errno("read host file");
+        }
+        if (n == 0)
+            return 0;
+        int64_t written = infs_write_file(vol, dest, buffer, (size_t)n, offset);
+        if (written < 0 || written != n)
+            return die_status("write destination",
+                              written < 0 ? (infs_status)written :
+                                            INFS_STATUS_IO_ERROR);
+        /* infs_write_file checks offset + length before accepting a write. */
+        offset += (uint64_t)written;
+    }
+}
+
 static int command_put(struct infs_volume *vol, const char *host, const char *dest)
 {
     int input = open(host, O_RDONLY | O_CLOEXEC);
@@ -127,68 +156,26 @@ static int command_put(struct infs_volume *vol, const char *host, const char *de
         return die_status("truncate destination", status);
     }
 
-    uint8_t buf[256 * 1024];
-    uint64_t off = 0;
-    for (;;) {
-        ssize_t n = read(input, buf, sizeof(buf));
-        if (n < 0) {
-            if (errno == EINTR)
-                continue;
-            close(input);
-            return die_errno("read host file");
-        }
-        if (n == 0)
-            break;
-        int64_t w = infs_write_file(vol, dest, buf, (size_t)n, off);
-        if (w < 0 || w != n) {
-            close(input);
-            return die_status("write destination",
-                              w < 0 ? (infs_status)w : INFS_STATUS_IO_ERROR);
-        }
-        off += w;
-    }
+    int rc = stream_host_file(vol, input, dest, 0);
     close(input);
-    return 0;
+    return rc;
 }
 
 static int command_write(struct infs_volume *vol, const char *host,
                          const char *dest, const char *offset_text)
 {
-    uint64_t off64 = 0;
+    uint64_t offset = 0;
     if (!infiltratr_parse_u64_range(
-            offset_text, 0, 0, (uint64_t)INT64_MAX, &off64)) {
+            offset_text, 0, 0, (uint64_t)INT64_MAX, &offset)) {
         errno = EINVAL;
         return die_errno("write offset");
     }
     int input = open(host, O_RDONLY | O_CLOEXEC);
     if (input < 0)
         return die_errno("open host file");
-    struct stat st;
-    if (fstat(input, &st) != 0 || st.st_size < 0 || (uintmax_t)st.st_size > SIZE_MAX) {
-        close(input);
-        if (errno == 0) errno = EFBIG;
-        return die_errno("host file size");
-    }
-    size_t size = (size_t)st.st_size;
-    uint8_t *buf = size ? malloc(size) : NULL;
-    if (size && !buf) {
-        close(input);
-        return die_errno("allocate host buffer");
-    }
-    if (size && infiltratr_read_full(input, buf, size) != 0) {
-        free(buf);
-        close(input);
-        return die_errno("read host file");
-    }
+    int rc = stream_host_file(vol, input, dest, offset);
     close(input);
-    int64_t written = infs_write_file(vol, dest, buf, size, (uint64_t)off64);
-    free(buf);
-    if (written < 0 || (size_t)written != size) {
-        return die_status("write destination",
-                          written < 0 ? (infs_status)written :
-                                        INFS_STATUS_IO_ERROR);
-    }
-    return 0;
+    return rc;
 }
 
 static int parse_resize_size(struct infs_volume *vol, const char *text,
