@@ -198,7 +198,9 @@ jobs:
 
   clang:
     name: Clang conformance
-    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","linux-native"]') }}
+    # Keep LLVM verification on a pinned image with an installed clang toolchain.
+    # The current local Linux runner has GCC but no clang executable.
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
       CC: clang
