@@ -173,6 +173,20 @@ for forbidden in ('.github/release-trigger', 'head_commit.message', 'git log -1 
         raise SystemExit(f'release request resolver contains obsolete coupling: {forbidden}')
 
 release_candidate = (wf / 'release-candidate-linux.yml').read_text()
+# Generic-APT packaging in broad CI is an independent regression check, not
+# the owner of final release bytes. It must use the same qualified distro as
+# the exact release-candidate builder; ubuntu-latest previously upgraded to
+# 26.04 and hung in APT mirror downloads until the ten-minute CI cancellation.
+ci_workflow = (wf / 'ci.yml').read_text()
+if '\n  linux-packages:\n' not in ci_workflow:
+    raise SystemExit('independent generic-APT package regression job missing')
+ci_package = ci_workflow.split('\n  linux-packages:\n', 1)[1]
+if 'sudo apt-get install -y --no-install-recommends' not in ci_package:
+    raise SystemExit('generic-APT package build must omit recommended dependencies')
+candidate_runner = re.search(r'^    runs-on: (\S+)$', release_candidate, re.MULTILINE)
+package_runner = re.search(r'^    runs-on: (\S+)$', ci_package, re.MULTILINE)
+if not candidate_runner or not package_runner or candidate_runner.group(1) != package_runner.group(1):
+    raise SystemExit('generic-APT packaging runner must match exact release-candidate runner')
 release = (wf / 'release-packages.yml').read_text()
 for name, text in {
     'release-candidate-linux.yml': release_candidate,

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.19.35 — 2026-10-23
+
+- Pin the independent generic-APT Linux package check to Ubuntu 24.04, matching the exact-release candidate's distribution. GitHub's moving ubuntu-latest had advanced to Ubuntu 26.04, whose package mirror downloads exhausted the ten-minute job limit and cancelled the overall Build and conformance workflow despite successful filesystem qualification. Keep the full packaging check and its strict release prerequisite; omit recommended APT packages to reduce unrelated provisioning cost.
+- Guard the package runner's alignment with the release-candidate runner in the CI duration policy. No kernel/filesystem code, Format 0.19 persistent bytes, checkpoint ordering, performance or mounted Windows-driver qualification changes; those remain subject to their existing evidence boundaries.
+
 ## 0.19.34 — 2026-10-22
 
 - Reuse the immutable, page-cache-owned single-kvec snapshot for ordinary single-cluster sequential append preparation as well as multi-cluster parallel preparation, avoiding a second allocation/copy where the kernel writeback caller already owns stable bytes. Both use one shared bounded borrow helper, with iterator advance/revert, fallback ownership and crash-consistency publication unchanged.

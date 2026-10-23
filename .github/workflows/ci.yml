@@ -429,7 +429,9 @@ jobs:
   linux-packages:
     name: Native Linux packages
     needs: [linux]
-    runs-on: ubuntu-latest
+    # Match the exact-release candidate's supported Noble build environment.
+    # ubuntu-latest moved to 26.04 and stalled in mirror downloads under 10m.
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Check out source
@@ -441,7 +443,7 @@ jobs:
         if: runner.environment == 'github-hosted'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake desktop-file-utils libgtk-3-dev libssl-dev pkg-config polkitd pkexec xdg-utils python3
+          sudo apt-get install -y --no-install-recommends build-essential cmake desktop-file-utils libgtk-3-dev libssl-dev pkg-config polkitd pkexec xdg-utils python3
       - name: Configure native-only userspace
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
       - name: Build
