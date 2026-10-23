@@ -31,8 +31,17 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          # GitHub's Ubuntu 24.04 Azure mirror fetched individual GTK/headers
+          # dependencies so slowly that this bounded root gate expired before
+          # any native test. Use Ubuntu's canonical archive for this cold
+          # runner, retaining official Noble package verification and all
+          # qualification steps rather than extending the ten-minute limit.
+          if grep -q 'azure.archive.ubuntu.com/ubuntu' /etc/apt/sources.list.d/ubuntu.sources; then
+            sudo sed -i 's@http://azure.archive.ubuntu.com/ubuntu@http://archive.ubuntu.com/ubuntu@g' \
+              /etc/apt/sources.list.d/ubuntu.sources
+          fi
+          sudo apt-get -o Acquire::Retries=2 update
+          sudo apt-get -o Acquire::Retries=2 install -y --no-install-recommends \
             acl attr build-essential cmake dkms e2fsprogs fontconfig initramfs-tools \
             kmod libcap2-bin libgtk-3-dev linux-headers-generic pkg-config polkitd pkexec \
             rsync util-linux xdg-utils python3
