@@ -87,11 +87,15 @@ def record_file(path, root):
 
 def sequential(rounddir, size_mib):
     target = rounddir / 'sequential.bin'
+    # Generate 16 MiB of deterministic high-entropy input before timing. The
+    # bounded rotation exceeds the native compression window and avoids charging
+    # SHAKE-256 generation time to the filesystem's buffered-write duration.
+    blocks = [hashlib.shake_256(f'{SEED}:seq:{i}'.encode()).digest(CHUNK)
+              for i in range(16)]
     start = time.perf_counter_ns()
     with target.open('xb', buffering=CHUNK) as stream:
         for i in range(size_mib):
-            # Deterministic incompressible bytes; no zero-fill speed illusion.
-            stream.write(hashlib.shake_256(f'{SEED}:seq:{i}'.encode()).digest(CHUNK))
+            stream.write(blocks[i % len(blocks)])
     buffered = elapsed_ns(start)
     start = time.perf_counter_ns()
     syncfs(target)
