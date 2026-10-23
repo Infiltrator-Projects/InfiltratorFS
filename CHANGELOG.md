@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.19.36 — 2026-10-23
+
+- Add a bounded, explicitly opted-in physical-NVMe PERF-019 evidence collector with repeatable 256 MiB incompressible sequential-write and final-sync timing, optional genuine real-file-tree copy, 4 KiB write/fsync latency distributions, and thousands of metadata operations. Retain input/device/kernel/source identity and SHA-256 manifests, and require a different mount instance to verify persistence.
+- Reject system-root, non-native, loop-backed and non-NVMe targets, write nothing by default, never format, mount, unmount or erase data, and unit-test safety refusals. This prepares physical qualification **without claiming that any real hardware benchmark, power-loss, stage-attribution or mounted Windows-driver gate has passed**. No kernel, CoW, checkpoint, on-disk format, or durability behaviour changed.
+- Retain the trusted local-runner Linux CI job routing added immediately before this version bump; its exact-source qualification must complete before release publication.
+
+
 ## 0.19.35 — 2026-10-23
 
 - Pin the independent generic-APT Linux package check to Ubuntu 24.04, matching the exact-release candidate's distribution. GitHub's moving ubuntu-latest had advanced to Ubuntu 26.04, whose package mirror downloads exhausted the ten-minute job limit and cancelled the overall Build and conformance workflow despite successful filesystem qualification. Keep the full packaging check and its strict release prerequisite; omit recommended APT packages to reduce unrelated provisioning cost.

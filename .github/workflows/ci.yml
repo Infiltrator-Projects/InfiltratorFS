@@ -33,6 +33,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 tests/ci-duration-policy.py
+          python3 tests/perf-019-policy.py
           bash tools/release/check-policy.sh .
 
   linux:
