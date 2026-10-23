@@ -197,7 +197,7 @@ jobs:
 
   clang:
     name: Clang conformance
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","linux-native"]') }}
     timeout-minutes: 10
     env:
       CC: clang
@@ -217,7 +217,7 @@ jobs:
 
   sanitizers:
     name: ASan and UBSan
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","linux-native"]') }}
     timeout-minutes: 10
     env:
       ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
@@ -241,7 +241,7 @@ jobs:
 
   analyzer:
     name: GCC static analyzer
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","linux-native"]') }}
     timeout-minutes: 10
     steps:
       - name: Check out source
