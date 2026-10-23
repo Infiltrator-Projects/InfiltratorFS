@@ -38,7 +38,9 @@ jobs:
 
   linux:
     name: Linux full suite
-    runs-on: ubuntu-latest
+    # Align the full native adapter regression suite with the release-candidate
+    # Noble image; moving ubuntu-latest caused Ubuntu 26.04 package-mirror stalls.
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Check out source
@@ -49,7 +51,7 @@ jobs:
         if: runner.environment == 'github-hosted'
         run: |
           sudo apt-get update
-          sudo apt-get install -y desktop-file-utils libgtk-3-dev libssl-dev pkg-config polkitd pkexec xdg-utils xvfb
+          sudo apt-get install -y --no-install-recommends desktop-file-utils libgtk-3-dev libssl-dev pkg-config polkitd pkexec xdg-utils xvfb
       - name: Validate Mint desktop integration
         run: desktop-file-validate packaging/infiltratorfs-manager.desktop
       - name: Validate native Manager source policy
