@@ -279,23 +279,21 @@ of acceptable efficiency **without** loss of crash correctness.
 
 ## 23 October 2026 — bounded physical-NVMe evidence entrypoint
 
-Run \`python3 tests/perf-019-qualification.py run --mount /mnt/infiltratorfs-test
---report "$HOME/perf019-report.json"\` to perform a **read-only preflight**.
+Run `python3 tests/perf-019-qualification.py run --mount /mnt/infiltratorfs-test --report "$HOME/perf019-report.json"` to perform a **read-only preflight**.
 The collector accepts only the root of an already mounted, read-write, native
 InfiltratorFS filesystem directly backed by an NVMe block device; it will never
 format, mount, unmount, power-cycle, offline-scrub or delete data.
 
 Only after checking the exact selected non-system *disposable* Format 0.19
-volume, free space, source and loaded driver, add \`--execute\` to perform
-three bounded physical-media rounds. Optional \`--tree /path/to/staged-source\`
+volume, free space, source and loaded driver, add `--execute` to perform
+three bounded physical-media rounds. Optional `--tree /path/to/staged-source`
 measures a real external source tree and records whether it contains 1,460
 regular files. No sample source tree is invented.
 
 After a **genuine unmount/remount** of that same volume, run
-\`python3 tests/perf-019-qualification.py verify --mount
-/mnt/infiltratorfs-test --report "$HOME/perf019-report.json"\`. Verification
+`python3 tests/perf-019-qualification.py verify --mount /mnt/infiltratorfs-test --report "$HOME/perf019-report.json"`. Verification
 rejects a still-live mount instance and compares every retained byte count
-and SHA-256. Offline \`fsck.infiltratorfs --scrub\` is a separate operator step
+and SHA-256. Offline `fsck.infiltratorfs --scrub` is a separate operator step
 with the volume unmounted. The tool never removes retained data automatically.
 
 This is an evidence **collection facility**, not current physical-NVMe data.
