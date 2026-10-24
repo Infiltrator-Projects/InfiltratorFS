@@ -78,7 +78,16 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system) {
     serial("STAGE_LOAD_IMAGE_BEGIN\r\n");
     st=uefi_call_wrapper(BS->LoadImage,6,FALSE,image,dp,NULL,0,&drv);
     serial("STAGE_LOAD_IMAGE_END\r\n");
-    if (EFI_ERROR(st)) {finish(0,"LOAD_DRIVER");return st;}
+    if (EFI_ERROR(st)) {
+        static const char hex[] = "0123456789abcdef";
+        char status_hex[] = "LOAD_DRIVER_STATUS=0x0000000000000000\r\n";
+        UINT64 value = (UINT64)st;
+        for (unsigned i = 0; i < 16; ++i)
+            status_hex[21 + i] = hex[(value >> (60 - i * 4)) & 0xf];
+        serial(status_hex);
+        finish(0,"LOAD_DRIVER");
+        return st;
+    }
     serial("DRIVER_LOAD_PASS\r\n");
     serial("STAGE_START_IMAGE_BEGIN\r\n");
     st=uefi_call_wrapper(BS->StartImage,3,drv,NULL,NULL);
