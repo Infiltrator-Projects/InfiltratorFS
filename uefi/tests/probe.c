@@ -61,19 +61,28 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system) {
     outs(COM1+1,0); outs(COM1+3,0x80); outs(COM1,1); outs(COM1+1,0);
     outs(COM1+3,3); outs(COM1+2,0xc7); outs(COM1+4,0x0b);
     serial("INFS_UEFI_PROBE_STARTED\r\n");
+    serial("STAGE_AFTER_SERIAL\r\n");
     EFI_GUID loaded_guid=EFI_LOADED_IMAGE_PROTOCOL_GUID;
     EFI_GUID block_guid=EFI_BLOCK_IO_PROTOCOL_GUID;
     EFI_GUID sfs_guid=EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
     EFI_LOADED_IMAGE *li=NULL;
+    serial("STAGE_HANDLE_PROTOCOL_BEGIN\r\n");
     EFI_STATUS st=uefi_call_wrapper(BS->HandleProtocol,3,image,&loaded_guid,(VOID**)&li);
+    serial("STAGE_HANDLE_PROTOCOL_END\r\n");
     if (EFI_ERROR(st) || !li) { finish(0,"HANDLE_LOADED_IMAGE"); return st; }
+    serial("STAGE_FILE_DEVICE_PATH_BEGIN\r\n");
     EFI_DEVICE_PATH *dp=FileDevicePath(li->DeviceHandle,L"\\InfiltratorFS_x64.efi");
+    serial("STAGE_FILE_DEVICE_PATH_END\r\n");
     if(!dp) {finish(0,"MAKE_DRIVER_PATH");return EFI_OUT_OF_RESOURCES;}
     EFI_HANDLE drv=NULL;
+    serial("STAGE_LOAD_IMAGE_BEGIN\r\n");
     st=uefi_call_wrapper(BS->LoadImage,6,FALSE,image,dp,NULL,0,&drv);
+    serial("STAGE_LOAD_IMAGE_END\r\n");
     if (EFI_ERROR(st)) {finish(0,"LOAD_DRIVER");return st;}
     serial("DRIVER_LOAD_PASS\r\n");
+    serial("STAGE_START_IMAGE_BEGIN\r\n");
     st=uefi_call_wrapper(BS->StartImage,3,drv,NULL,NULL);
+    serial("STAGE_START_IMAGE_END\r\n");
     if (EFI_ERROR(st)) {finish(0,"START_DRIVER");return st;}
     serial("DRIVER_START_PASS\r\n");
     EFI_HANDLE *handles=NULL;
