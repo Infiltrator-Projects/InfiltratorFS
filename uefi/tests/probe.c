@@ -54,7 +54,9 @@ static EFI_STATUS check_file(EFI_FILE_HANDLE root, CHAR16 *path, UINT64 expected
     if (done != expected_size || hash != expected_hash) return EFI_CRC_ERROR;
     return EFI_SUCCESS;
 }
-EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system) {
+/* GNU-EFI's crt0 calls efi_main through the C ABI; its startup code
+ * handles the firmware entry ABI. EFIAPI here corrupts both arguments. */
+EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system) {
     InitializeLib(image,system);
     outs(COM1+1,0); outs(COM1+3,0x80); outs(COM1,1); outs(COM1+1,0);
     outs(COM1+3,3); outs(COM1+2,0xc7); outs(COM1+4,0x0b);
