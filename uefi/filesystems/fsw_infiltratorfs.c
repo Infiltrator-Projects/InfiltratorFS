@@ -321,16 +321,23 @@ static fsw_status_t fsw_infiltratorfs_volume_mount(struct fsw_infiltratorfs_volu
     fsw_status_t status;
     infs_status infs_result;
 
+    infs_fsw_uefi_trace("INFS_CORE_MOUNT_ENTER\r\n");
     fsw_set_blocksize(vol, INFS_BLOCK_SIZE, INFS_BLOCK_SIZE);
+    infs_fsw_uefi_trace("INFS_CORE_SETBLOCK_DONE\r\n");
 
     status = fsw_alloc_zero(sizeof(*context), (void **)&context);
     if (status)
         return status;
     context->vol = vol;
+    infs_fsw_uefi_trace("INFS_CORE_CONTEXT_READY\r\n");
 
     storage.ops = &infs_fsw_storage_ops;
     storage.context = context;
+    infs_fsw_uefi_trace("INFS_CORE_OPEN_BEGIN\r\n");
     infs_result = infs_volume_open_storage(&vol->infs, &storage, 0);
+    infs_fsw_uefi_trace(infs_result == INFS_STATUS_OK ?
+                         "INFS_CORE_OPEN_SUCCESS\r\n" :
+                         "INFS_CORE_OPEN_REJECT\r\n");
     if (infs_result != INFS_STATUS_OK) {
         infs_storage_close(&storage);
         return infs_fsw_map_status(infs_result);
@@ -346,7 +353,11 @@ static fsw_status_t fsw_infiltratorfs_volume_mount(struct fsw_infiltratorfs_volu
     if (status)
         return status;
 
+    infs_fsw_uefi_trace("INFS_CORE_LOOKUP_ROOT_BEGIN\r\n");
     infs_result = infs_lookup_path(&vol->infs, "/", &root_lookup);
+    infs_fsw_uefi_trace(infs_result == INFS_STATUS_OK ?
+                         "INFS_CORE_LOOKUP_ROOT_OK\r\n" :
+                         "INFS_CORE_LOOKUP_ROOT_FAIL\r\n");
     if (infs_result != INFS_STATUS_OK)
         return infs_fsw_map_status(infs_result);
 
