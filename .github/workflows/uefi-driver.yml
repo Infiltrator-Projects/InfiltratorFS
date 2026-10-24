@@ -72,7 +72,7 @@ jobs:
         run: |
           set -euo pipefail
           make -C uefi/tests -f Makefile ARCH=x86_64
-          cp uefi/tests/BOOTX64.EFI uefi-test-out/fat/EFI/BOOT/BOOTX64.EFI
+          cp uefi/tests/probe_x64.efi uefi-test-out/fat/EFI/BOOT/BOOTX64.EFI
           cp uefi/filesystems/InfiltratorFS_x64.efi uefi-test-out/fat/InfiltratorFS_x64.efi
       - name: OVMF actually reads Format 0.19 paths and contents
         run: |
