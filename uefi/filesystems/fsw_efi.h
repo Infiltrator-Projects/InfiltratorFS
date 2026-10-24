@@ -41,6 +41,9 @@
 #include "fsw_core.h"
 #include "../include/refit_call_wrapper.h"
 
+/* Native C ABI, opt-in diagnostic output for disposable OVMF runs. */
+void infs_fsw_uefi_trace(const char *msg);
+
 #ifdef __MAKEWITH_GNUEFI
 #define CompareGuid(a, b) CompareGuid(a, b)==0
 #endif
