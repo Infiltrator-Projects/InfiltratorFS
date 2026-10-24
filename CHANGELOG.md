@@ -1,9 +1,11 @@
 # Changelog
 
-## Unreleased — Native directory opening
+## 0.19.37 — 2026-10-24
 
-- Open mounted directories via GIO's registered `inode/directory` application instead of `xdg-open`, which dispatched to an inappropriate WSL handler on a native Linux Mint workstation despite `nemo.desktop` being selected. Keep the Manager desktop-neutral rather than hardcoding Nemo.
-- Report file-manager launch failures separately from successful filesystem mounts, and do not attempt to open an unverified mount point. No format, kernel-driver or durability changes. Package and desktop testing required before release.
+- Correct the GTK Linux Manager's native folder-opening path: use the registered GIO `inode/directory` file manager rather than generic `xdg-open`, which on a native Linux Mint workstation dispatched through a nonfunctional WSL handler. Show a distinct error if desktop launching fails and refuse to open a path that could not be verified as mounted; leave the active filesystem untouched.
+- Introduce disabled-by-default PERF-019 per-mount writeback and transaction phase timing counters, preserving existing Format 0.19 and checkpoint durability semantics. Narrow initial instrumentation to respect the native code-size maintainability budget; comprehensive performance attribution and physical NVMe speedup remain unqualified.
+- Reduce redundant candidate checks in fragmented parallel data-allocation reservations by skipping overlapping starts through a known busy block, with an exhaustive deterministic allocation-search equivalence test. This is not a measured improvement to sustained sequential-write throughput.
+- Preserve the already-published immutable 0.19.36 source, Windows and Linux version mirrors, and release assets. Advance the 0.19.37 source identity across CMake and the native Windows INF for full exact-source CI and release qualification.
 
 ## 0.19.36 — 2026-10-23
 
