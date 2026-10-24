@@ -58,10 +58,10 @@ jobs:
                   h=((h^byte)*1099511628211)&0xffffffffffffffff
               return h
           Path('uefi/tests/expected.h').write_text(
-              '#define PROBE_KERNEL_SIZE 1048576ULL\\n'
-              '#define PROBE_INITRD_SIZE 3145728ULL\\n'
-              f'#define PROBE_KERNEL_HASH 0x{fnv(kernel):016x}ULL\\n'
-              f'#define PROBE_INITRD_HASH 0x{fnv(initrd):016x}ULL\\n')
+              '#define PROBE_KERNEL_SIZE 1048576ULL\n'
+              '#define PROBE_INITRD_SIZE 3145728ULL\n'
+              f'#define PROBE_KERNEL_HASH 0x{fnv(kernel):016x}ULL\n'
+              f'#define PROBE_INITRD_HASH 0x{fnv(initrd):016x}ULL\n')
           print('Canonical test-file digest contract generated')
           PY
           build-uefi-probe/infilfs-tool uefi-test-out/infiltratorfs.raw mkdir /boot
