@@ -11,12 +11,9 @@ MODULE_PARM_DESC(perf019,
     "Opt-in PERF-019 per-mount write-path timings, reported at unmount");
 
 static const char *const infilfs_perf019_stage_names[] = {
-    "writeback_staging", "writeback_native", "prepare_sha256",
-    "prepare_codec", "prepare_reservation", "prepare_block_staging",
-    "write_lock_wait", "write_lock_held", "transaction_allocation",
+    "writeback_staging", "writeback_native", "transaction_allocation",
     "transaction_dependencies", "transaction_dependency_flush",
-    "transaction_checkpoints", "file_fsync_writeback",
-    "file_fsync_publication", "syncfs_publication"
+    "transaction_checkpoints"
 };
 
 static void infilfs_perf019_report(struct super_block *sb)

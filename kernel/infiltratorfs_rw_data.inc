@@ -3016,7 +3016,6 @@ static int infilfs_native_prepare_append(
     u32 extent_flags;
     u32 i;
     int ret;
-    u64 phase_started;
     if (!sbi || !plain || !prepared || !bytes ||
         (bytes & (INFILFS_DISK_BLOCK_SIZE - 1u)) != 0)
         return -EINVAL;
@@ -3029,42 +3028,28 @@ static int infilfs_native_prepare_append(
         logical_blocks, sizeof(*prepared->digests), GFP_NOFS);
     if (!prepared->digests)
         return -ENOMEM;
-    phase_started = infilfs_perf019_start();
     for (i = 0; i < logical_blocks; ++i)
         infilfs_native_block_digest(
             plain + (size_t)i * INFILFS_DISK_BLOCK_SIZE,
             &prepared->digests[i]);
-    infilfs_perf019_stop(inode->i_sb, INFILFS_PERF019_PREP_DIGEST,
-                        phase_started);
-    phase_started = infilfs_perf019_start();
     ret = infilfs_native_encode_compression_candidate(
         sbi, plain, logical_blocks, &stored, &physical_blocks,
         &extent_flags);
-    infilfs_perf019_stop(inode->i_sb, INFILFS_PERF019_PREP_CODEC,
-                        phase_started);
     if (ret)
         goto fail;
-    phase_started = infilfs_perf019_start();
     ret = infilfs_parallel_reserve_data(
         inode->i_sb, physical_blocks, preferred, &prepared->reservation);
-    infilfs_perf019_stop(inode->i_sb, INFILFS_PERF019_PREP_RESERVE,
-                        phase_started);
     if (ret)
         goto fail;
     prepared->data_start = prepared->reservation.start;
     source = stored ? stored : plain;
-    phase_started = infilfs_perf019_start();
     for (i = 0; i < physical_blocks; ++i) {
         ret = infilfs_native_stage_block(
             inode->i_sb, prepared->data_start + i,
             source + (size_t)i * INFILFS_DISK_BLOCK_SIZE);
         if (ret)
-            break;
+            goto fail;
     }
-    infilfs_perf019_stop(inode->i_sb, INFILFS_PERF019_PREP_BLOCK_STAGE,
-                        phase_started);
-    if (ret)
-        goto fail;
     prepared->logical_blocks = logical_blocks;
     prepared->physical_blocks = physical_blocks;
     prepared->extent_flags = extent_flags;
@@ -3569,7 +3554,6 @@ static ssize_t infilfs_native_parallel_append_batch(
     size_t offset = 0;
     size_t committed = 0;
     u64 base_preferred;
-    u64 lock_started, lock_held;
     unsigned int count;
     unsigned int i;
     int ret = -EOPNOTSUPP;
@@ -3656,11 +3640,7 @@ static ssize_t infilfs_native_parallel_append_batch(
             goto revert_all;
         }
     }
-    lock_started = infilfs_perf019_start();
     down_write(&sbi->write_lock);
-    infilfs_perf019_stop(inode->i_sb, INFILFS_PERF019_WRITE_LOCK_WAIT,
-                        lock_started);
-    lock_held = infilfs_perf019_start();
     if ((u64)*position != READ_ONCE(ii->persisted_size)) {
         ret = -EOPNOTSUPP;
         goto unlock_revert;
@@ -3744,8 +3724,6 @@ static ssize_t infilfs_native_parallel_append_batch(
          */
         infilfs_mod_delayed_cpu_work(&pending->idle_work,
                          INFILFS_NATIVE_IDLE_DELAY);
-    infilfs_perf019_stop(inode->i_sb, INFILFS_PERF019_WRITE_LOCK_HELD,
-                        lock_held);
     up_write(&sbi->write_lock);
     if (committed < requested)
         iov_iter_revert(from, requested - committed);
@@ -3757,8 +3735,6 @@ static ssize_t infilfs_native_parallel_append_batch(
     goto out;
 
 unlock_revert:
-    infilfs_perf019_stop(inode->i_sb, INFILFS_PERF019_WRITE_LOCK_HELD,
-                        lock_held);
     up_write(&sbi->write_lock);
 revert_all:
     iov_iter_revert(from, requested);
@@ -3812,7 +3788,6 @@ static ssize_t infilfs_native_extent_write_iter_mode(
         size_t consumed = 0;
         u64 current_pos = (u64)pos + done;
         u64 old_size = READ_ONCE(ii->persisted_size);
-        u64 lock_started, lock_held;
         u64 compression_bytes =
             (u64)INFILFS_COMPRESSION_CLUSTER_BLOCKS *
             INFILFS_DISK_BLOCK_SIZE;
@@ -3908,11 +3883,7 @@ static ssize_t infilfs_native_extent_write_iter_mode(
                         reservation.start + reservation.count : 1u);
         }
 
-        lock_started = infilfs_perf019_start();
         down_write(&sbi->write_lock);
-        infilfs_perf019_stop(inode->i_sb,
-                            INFILFS_PERF019_WRITE_LOCK_WAIT, lock_started);
-        lock_held = infilfs_perf019_start();
         ret = infilfs_native_pending_begin_locked(pending);
         if (ret)
             goto chunk_unlock;
@@ -4025,8 +3996,6 @@ static ssize_t infilfs_native_extent_write_iter_mode(
                              INFILFS_NATIVE_IDLE_DELAY);
 
 chunk_unlock:
-        infilfs_perf019_stop(inode->i_sb, INFILFS_PERF019_WRITE_LOCK_HELD,
-                            lock_held);
         up_write(&sbi->write_lock);
 
         if (staged_bytes) {
@@ -4487,19 +4456,12 @@ static int infilfs_file_fsync(struct file *file, loff_t start, loff_t end,
                               int datasync)
 {
     int ret;
-    u64 started;
-    struct super_block *sb = file_inode(file)->i_sb;
 
     (void)datasync;
-    started = infilfs_perf019_start();
     ret = file_write_and_wait_range(file, start, end);
-    infilfs_perf019_stop(sb, INFILFS_PERF019_FSYNC_WRITEBACK, started);
     if (ret)
         return ret;
-    started = infilfs_perf019_start();
-    ret = infilfs_native_pending_flush_sb(sb);
-    infilfs_perf019_stop(sb, INFILFS_PERF019_FSYNC_PUBLICATION, started);
-    return ret;
+    return infilfs_native_pending_flush_sb(file_inode(file)->i_sb);
 }
 
 static void infilfs_rw_mount_destroy(struct super_block *sb)
@@ -4575,13 +4537,5 @@ int infilfs_native_read_expected_digest(
 
 static int infilfs_sync_fs(struct super_block *sb, int wait)
 {
-    u64 started;
-    int ret;
-
-    if (!wait)
-        return 0;
-    started = infilfs_perf019_start();
-    ret = infilfs_native_pending_flush_sb(sb);
-    infilfs_perf019_stop(sb, INFILFS_PERF019_SYNCFS_PUBLICATION, started);
-    return ret;
+    return wait ? infilfs_native_pending_flush_sb(sb) : 0;
 }
