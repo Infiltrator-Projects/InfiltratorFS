@@ -116,6 +116,21 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system) {
     serial("ESP_DRIVER_IMAGE_READ_PASS\r\n");
     /* SourceBuffer is authoritative here: do not ask firmware to resolve
      * the synthetic FAT device path again. */
+    /* Control: OVMF already booted this known-good PE image. Prove that
+     * LoadImage and our six-argument call convention work independently of
+     * the InfiltratorFS driver before interpreting its failure. */
+    EFI_DEVICE_PATH *control_dp=FileDevicePath(li->DeviceHandle,
+                                               L"\\EFI\\BOOT\\BOOTX64.EFI");
+    EFI_HANDLE control_image=NULL;
+    EFI_STATUS control_status=EFI_NOT_FOUND;
+    if(control_dp)
+        control_status=uefi_call_wrapper(BS->LoadImage,6,FALSE,image,
+                                        control_dp,NULL,0,&control_image);
+    serial("CONTROL_LOAD_IMAGE_STATUS=0x");
+    serial_hex((UINT64)control_status);
+    serial("\r\n");
+    if(!EFI_ERROR(control_status)&&control_image)
+        uefi_call_wrapper(BS->UnloadImage,1,control_image);
     st=uefi_call_wrapper(BS->LoadImage,6,FALSE,image,NULL,image_bytes,image_size,&drv);
     FreePool(image_bytes);
     serial("STAGE_LOAD_IMAGE_END\r\n");
