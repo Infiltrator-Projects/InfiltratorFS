@@ -359,7 +359,13 @@ void refresh_mount(Target *target)
     replace_string(&target->mountpoint, "");
     replace_string(&target->mount_fstype, "");
     if (target->block) {
-        const char *argv[] = { "findmnt", "-P", "-rn", "-S", target->path,
+        /*
+         * findmnt --pairs (-P) and --raw (-r) are mutually exclusive.
+         * Using both previously made this observational query fail on every
+         * mount, incorrectly clearing a valid native mount from the UI.
+         * Keep --noheadings (-n), which works with pairs output.
+         */
+        const char *argv[] = { "findmnt", "-P", "-n", "-S", target->path,
                                "-o", "TARGET,FSTYPE", NULL };
         char *output = NULL;
         if (!command_success(argv, &output) || !output) {

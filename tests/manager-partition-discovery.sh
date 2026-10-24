@@ -22,6 +22,21 @@ grep -Fq 'it is not an available non-system partition' "${manager_source}"
 grep -Fq 'gtk_application_window_new' "${manager_source}"
 grep -Fq 'gtk_stack_switcher_new' "${manager_source}"
 grep -Fq 'g_thread_new' "${manager_source}"
+
+# This exact command was invalid: findmnt --pairs and --raw conflict.
+# Executable regression: issue the chosen output mode against the active /
+# mount (read-only observation), not just a source-code string assertion.
+grep -Fq '"findmnt", "-P", "-n", "-S", target->path,' "${storage_source}"
+if grep -Fq '"findmnt", "-P", "-rn", "-S", target->path,' "${storage_source}"; then
+    echo "manager-partition-discovery: mutually exclusive findmnt flags" >&2
+    exit 1
+fi
+root_mount="$(findmnt -P -n -T / -o TARGET,FSTYPE)"
+[[ "${root_mount}" == *'TARGET="/"'* && "${root_mount}" == *'FSTYPE="'* ]] || {
+    echo "manager-partition-discovery: findmnt pairs mount lookup failed" >&2
+    exit 1
+}
+
 grep -Fq 'infilfs_manager_open_directory(path, &error)' "${manager_source}"
 ! grep -Fq '"xdg-open"' "${manager_source}"
 grep -Fq 'manager_error(manager, why)' "${manager_source}"

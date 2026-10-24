@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.19.38 — 2026-10-24
+
+- Fix the Linux Manager's native mount-status check: the version 0.19.37
+  command combined util-linux `findmnt -P` (pairs) with `-r` (raw),
+  which are mutually exclusive. The command therefore failed despite a
+  successful mount, showed `Not mounted`, and prevented `Mount and Open`
+  from dispatching the new GIO directory opener. Use `-P -n` to preserve
+  parseable pairs and omit headers without incompatible raw mode.
+- Guard the exact Manager command options in the partition-discovery
+  regression and execute an observational `findmnt -P -n` check against
+  the running system's root mount. Keep the separately validated
+  privileged mount, device identity, root permissions and existing
+  mount safety boundaries unchanged.
+- Advance the immutable Linux CMake and Windows INF version identity;
+  no Format 0.19 on-disk, native kernel-driver, CoW or durability changes.
+
+
 ## 0.19.37 — 2026-10-24
 
 - Correct the GTK Linux Manager's native folder-opening path: use the registered GIO `inode/directory` file manager rather than generic `xdg-open`, which on a native Linux Mint workstation dispatched through a nonfunctional WSL handler. Show a distinct error if desktop launching fails and refuse to open a path that could not be verified as mounted; leave the active filesystem untouched.
