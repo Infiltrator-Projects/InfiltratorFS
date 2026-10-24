@@ -40,6 +40,21 @@ jobs:
           print(f'EFI mapped image span: {image_span} bytes')
           print(f'Experimental EFI PE32+ build passes static header test: {len(b)} bytes')
           PY
+      - name: Print complete PE headers and build a disposable application-subsystem control
+        run: |
+          set -euo pipefail
+          echo '=== DRIVER SECTIONS ==='
+          objdump -h uefi/filesystems/InfiltratorFS_x64.efi
+          echo '=== DRIVER PE HEADERS ==='
+          objdump -p uefi/filesystems/InfiltratorFS_x64.efi | head -n 105
+          objcopy -j .text -j .sdata -j .data -j .dynamic -j .dynsym -j .rodata \
+            -j .rel -j .rela -j .rel.* -j .rela.* -j .reloc \
+            --strip-unneeded --output-target=efi-app-x86_64 \
+            uefi/filesystems/InfiltratorFS_x64.so uefi/filesystems/InfiltratorFS_app_probe.efi
+          echo '=== CONTROL APPLICATION SECTIONS ==='
+          objdump -h uefi/filesystems/InfiltratorFS_app_probe.efi
+          echo '=== CONTROL APPLICATION PE HEADERS ==='
+          objdump -p uefi/filesystems/InfiltratorFS_app_probe.efi | head -n 105
       - name: Build canonical Format 0.19 test filesystem image
         run: |
           set -euo pipefail
@@ -77,6 +92,7 @@ jobs:
           make -C uefi/tests -f Makefile ARCH=x86_64
           cp uefi/tests/probe_x64.efi uefi-test-out/fat/EFI/BOOT/BOOTX64.EFI
           cp uefi/filesystems/InfiltratorFS_x64.efi uefi-test-out/fat/InfiltratorFS_x64.efi
+          cp uefi/filesystems/InfiltratorFS_app_probe.efi uefi-test-out/fat/InfiltratorFS_app_probe.efi
       - name: OVMF actually reads Format 0.19 paths and contents
         run: |
           set -euo pipefail
