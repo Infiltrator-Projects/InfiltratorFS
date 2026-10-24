@@ -8,7 +8,9 @@ LOCAL_GNUEFI_CFLAGS = -DFSTYPE=infiltratorfs -I. -I../../include -I../../src/inf
  -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -include platform/uefi_libc.h \
  -DLZ4_FREESTANDING=1 -DLZ4_memcpy=memcpy -DLZ4_memset=memset -DLZ4_memmove=memmove \
  "-DEFIAPI=__attribute__((ms_abi))"
-LOCAL_GNUEFI_LDFLAGS = --gc-sections
+# Keep GNU-EFI loader/relocation glue in the standalone driver until
+# executable image relocation and protocol discovery are runtime-qualified.
+LOCAL_GNUEFI_LDFLAGS =
 OBJS = fsw_core.o fsw_efi.o fsw_efi_lib.o fsw_lib.o fsw_infiltratorfs.o \
  uefi_compat.o checksum.o locator.o status.o storage.o security.o fs.o volume.o \
  arithmetic.o core.o lz4.o
