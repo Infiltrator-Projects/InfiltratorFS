@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.19.39 — 2026-10-24
+
+- Recover the historically published standalone InfiltratorFS UEFI filesystem adapter into InfiltratorFS, its correct owning repository. Retain the historical EFI protocol bridge, freestanding runtime and third-party source/licences.
+- Add an experimental GNU-EFI build linking directly to this repository's canonical Format 0.19 portable core instead of the former separate frozen Format 0.18 copy in Filesystems; add a PR-specific EFI PE32+ driver CI build gate.
+- Compilation is a development milestone, **not** runtime qualification. OVMF mounting, file-reading integrity and Dell firmware tests remain mandatory before an InfiltratorFS driver can be installed or released. No physical media, firmware or Linux kernel runtime changes.
+
+
 ## 0.19.38 — 2026-10-24
 
 - Fix the Linux Manager's native mount-status check: the version 0.19.37
