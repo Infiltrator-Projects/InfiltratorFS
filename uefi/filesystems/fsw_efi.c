@@ -80,7 +80,7 @@ EFI_GUID gMyEfiFileSystemVolumeLabelInfoIdGuid = EFI_FILE_SYSTEM_VOLUME_LABEL_IN
 /* Early-firmware serial diagnostics for disposable OVMF qualification only.
  * Native production builds leave this routine entirely out. */
 #if defined(INFS_UEFI_TRACE) && INFS_UEFI_TRACE && defined(__x86_64__)
-static void infs_fsw_uefi_trace(const char *msg)
+void infs_fsw_uefi_trace(const char *msg)
 {
     const unsigned short port = 0x3f8;
     const unsigned short lsr = 0x3fd;
@@ -97,7 +97,10 @@ static void infs_fsw_uefi_trace(const char *msg)
     }
 }
 #else
-#define infs_fsw_uefi_trace(msg) ((void)0)
+void infs_fsw_uefi_trace(const char *msg)
+{
+    (void)msg;
+}
 #endif
 
 // function prototypes
