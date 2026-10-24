@@ -876,7 +876,8 @@ fsw_status_t fsw_shandle_read(struct fsw_shandle *shand, fsw_u32 *buffer_size_in
     // initialize vars
     buffer = buffer_in;
     buflen = *buffer_size_inout;
-    pos = (fsw_u32)shand->pos;
+    /* EFI_FILE_PROTOCOL positions are UINT64: never truncate at 4 GiB. */
+    pos = shand->pos;
     cache_level = (dno->type != FSW_DNODE_TYPE_FILE) ? 1 : 0;
     // restrict read to file size
     if (buflen > dno->size - pos)
