@@ -318,7 +318,17 @@ out_unlock:
     return 0;
 }
 
-static bool infilfs_parallel_range_free_locked(
+/*
+ * Return the first unavailable block, or start + count if the run is free.
+ * Under the shard lock and bitmap read lock, a rejected candidate allows
+ * every overlapping candidate through that exact blocker to be skipped.
+ * Advancing by one needlessly revisits the same busy blocks and can turn
+ * large near-full reservations into quadratic scans across fragmented runs.
+ *
+ * This is an in-memory search change only: the authoritative allocation
+ * bitmap, 64-shard exclusion and reservation journal are untouched.
+ */
+static u64 infilfs_parallel_first_busy_locked(
     const struct infilfs_sb_info *sbi, u64 start, u64 count)
 {
     u64 block;
@@ -326,8 +336,8 @@ static bool infilfs_parallel_range_free_locked(
     for (block = start; block < start + count; ++block)
         if (infilfs_rw_bitmap_get(sbi->bitmap, block) ||
             infilfs_parallel_bitmap_get(sbi->allocation_reservations, block))
-            return false;
-    return true;
+            return block;
+    return start + count;
 }
 
 void infilfs_parallel_note_workload(
@@ -441,12 +451,19 @@ int infilfs_parallel_reserve_data(
             if (scan_end < scan_start || count > scan_end - scan_start)
                 continue;
             for (candidate = scan_start;
-                 candidate <= scan_end - count; ++candidate) {
+                 candidate <= scan_end - count;) {
                 u64 block;
+                u64 blocked = infilfs_parallel_first_busy_locked(
+                    sbi, candidate, count);
 
-                if (!infilfs_parallel_range_free_locked(
-                        sbi, candidate, count))
+                if (blocked < candidate + count) {
+                    /*
+                     * Every start through blocked still includes this
+                     * occupied block. None can possibly fit the run.
+                     */
+                    candidate = blocked + 1u;
                     continue;
+                }
                 for (block = candidate; block < candidate + count; ++block)
                     infilfs_parallel_bitmap_set(
                         sbi->allocation_reservations, block, true);

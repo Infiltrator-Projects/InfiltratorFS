@@ -63,3 +63,11 @@ bash "$root/tests/native-unlink-ownership-index-policy.sh" "$root"
 bash "$root/tests/native-sparse-seek-policy.sh" "$root"
 
 printf 'Native parallel-allocation policy guard passed.\n'
+
+# Fragmented-space reservations must skip the known occupied block rather
+// than rechecking overlapping candidates one-by-one. The deterministic model
+// exhaustively compares the two-pass search with the former reference.
+grep -Fq 'static u64 infilfs_parallel_first_busy_locked(' "$allocator"
+grep -Fq 'candidate = blocked + 1u;' "$allocator"
+grep -Fq 'u64 blocked = infilfs_parallel_first_busy_locked(' "$allocator"
+python3 "$root/tests/native-reservation-skip-model.py"

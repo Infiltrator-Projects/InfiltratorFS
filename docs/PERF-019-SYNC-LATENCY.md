@@ -335,3 +335,19 @@ new persistent state, I/O, error path or durability reordering.
 This is instrumentation only, not a measured performance improvement.
 The acceptance gate remains repeatable physical-NVMe timing plus post-remount
 hashes, structural checking, deep scrub and crash-recovery qualification.
+
+## 24 October 2026 — fragmented-reservation search improvement
+
+The native sharded allocator previously tested adjacent candidate starts one
+block at a time. When an unavailable block lay near the end of a proposed
+reservation, that block was reconsidered by numerous subsequent overlapping
+candidates. The search now returns the first unavailable block and skips every
+start through that blocker. Both the authoritative on-disk allocation bitmap
+and volatile shard-lock/journal semantics are unchanged. The deterministic
+reference-model regression exhaustively compares old and new two-pass search
+results for all occupancy patterns through eleven blocks. CI still must
+compile and qualify the actual kernel implementation.
+
+This is a targeted improvement for **fragmented allocation search**, not
+evidence that the physical-NVMe 492 MiB/s sequential sync bottleneck has been
+resolved. That claim still requires exact-version physical measurements.
