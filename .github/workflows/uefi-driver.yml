@@ -35,6 +35,9 @@ jobs:
           opt = pe + 24
           assert struct.unpack_from('<H', b, opt)[0] == 0x20b, 'Not PE32+'
           assert struct.unpack_from('<H', b, opt+68)[0] == 11, 'Not EFI boot-service driver'
+          image_span = struct.unpack_from('<I', b, opt+56)[0]
+          assert 0 < image_span <= 16*1024*1024, f'EFI SizeOfImage unreasonable: {image_span}'
+          print(f'EFI mapped image span: {image_span} bytes')
           print(f'Experimental EFI PE32+ build passes static header test: {len(b)} bytes')
           PY
       - name: Build canonical Format 0.19 test filesystem image
