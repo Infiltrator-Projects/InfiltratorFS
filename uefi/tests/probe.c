@@ -113,8 +113,10 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system) {
     if(EFI_ERROR(st)||actual_size!=image_size){
         FreePool(image_bytes);finish(0,"ESP_DRIVER_IMAGE_READ");return EFI_DEVICE_ERROR;
     }
-    serial("ESP_DRIVER_IMAGE_READ_PASS\\r\\n");
-    st=uefi_call_wrapper(BS->LoadImage,6,FALSE,image,dp,image_bytes,image_size,&drv);
+    serial("ESP_DRIVER_IMAGE_READ_PASS\r\n");
+    /* SourceBuffer is authoritative here: do not ask firmware to resolve
+     * the synthetic FAT device path again. */
+    st=uefi_call_wrapper(BS->LoadImage,6,FALSE,image,NULL,image_bytes,image_size,&drv);
     FreePool(image_bytes);
     serial("STAGE_LOAD_IMAGE_END\r\n");
     serial("LOAD_IMAGE_STATUS=0x"); serial_hex((UINT64)st); serial("\r\n");
