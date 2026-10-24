@@ -110,7 +110,7 @@ jobs:
           test -r "$vars"
           cp "$vars" uefi-test-out/ovmf-vars.fd
           set +e
-          timeout 75 qemu-system-x86_64 -machine q35,accel=tcg -m 1024 \
+          timeout 35 qemu-system-x86_64 -machine q35,accel=tcg -m 1024 \
             -drive if=pflash,format=raw,readonly=on,file="$code" \
             -drive if=pflash,format=raw,file=uefi-test-out/ovmf-vars.fd \
             -drive if=virtio,format=raw,file=fat:rw:uefi-test-out/fat \
