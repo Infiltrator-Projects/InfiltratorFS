@@ -131,6 +131,44 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system) {
     serial("\r\n");
     if(!EFI_ERROR(control_status)&&control_image)
         uefi_call_wrapper(BS->UnloadImage,1,control_image);
+    /* Control source-buffer loading with the exact PE32+ image that OVMF
+     * has already booted. This discriminates an unsupported source-buffer
+     * path from an InfiltratorFS-specific image rejection. */
+    EFI_FILE_HANDLE control_root=NULL,control_file=NULL;
+    EFI_FILE_INFO *control_info=NULL;
+    VOID *control_bytes=NULL;
+    UINTN control_size=0;
+    EFI_STATUS cbstatus=uefi_call_wrapper(esp->OpenVolume,2,esp,&control_root);
+    if(!EFI_ERROR(cbstatus) && control_root)
+        cbstatus=uefi_call_wrapper(control_root->Open,5,control_root,
+                                  &control_file,L"\\EFI\\BOOT\\BOOTX64.EFI",EFI_FILE_MODE_READ,0);
+    if(!EFI_ERROR(cbstatus) && control_file) {
+        control_info=LibFileInfo(control_file);
+        if(control_info && control_info->FileSize &&
+           control_info->FileSize<=33554432ULL) {
+            control_size=(UINTN)control_info->FileSize;
+            control_bytes=AllocatePool(control_size);
+            if(control_bytes) {
+                UINTN received=control_size;
+                cbstatus=uefi_call_wrapper(control_file->Read,3,control_file,
+                                           &received,control_bytes);
+                if(!EFI_ERROR(cbstatus) && received==control_size) {
+                    EFI_HANDLE control_buffer_image=NULL;
+                    cbstatus=uefi_call_wrapper(BS->LoadImage,6,FALSE,image,NULL,
+                                              control_bytes,control_size,&control_buffer_image);
+                    if(!EFI_ERROR(cbstatus) && control_buffer_image)
+                        uefi_call_wrapper(BS->UnloadImage,1,control_buffer_image);
+                } else cbstatus=EFI_DEVICE_ERROR;
+            } else cbstatus=EFI_OUT_OF_RESOURCES;
+        } else cbstatus=EFI_BAD_BUFFER_SIZE;
+    }
+    serial("CONTROL_BUFFER_IMAGE_STATUS=0x");
+    serial_hex((UINT64)cbstatus);
+    serial("\r\n");
+    if(control_bytes)FreePool(control_bytes);
+    if(control_info)FreePool(control_info);
+    if(control_file)uefi_call_wrapper(control_file->Close,1,control_file);
+    if(control_root)uefi_call_wrapper(control_root->Close,1,control_root);
     st=uefi_call_wrapper(BS->LoadImage,6,FALSE,image,NULL,image_bytes,image_size,&drv);
     FreePool(image_bytes);
     serial("STAGE_LOAD_IMAGE_END\r\n");
