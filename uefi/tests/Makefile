@@ -1,6 +1,6 @@
 # Disposable UEFI probe. Never installed.
 SRCDIR = .
-TARGET = BOOTX64.EFI
+TARGET = probe_x64.efi
 OBJS = probe.o
 LOCAL_GNUEFI_CFLAGS = -I. "-DEFIAPI=__attribute__((ms_abi))"
 include ../Make.common
