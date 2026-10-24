@@ -288,6 +288,7 @@ void fsw_block_release(struct VOLSTRUCTNAME *vol, fsw_u64 phys_bno, void *buffer
 static void fsw_blockcache_free(struct fsw_volume *vol)
 {
     fsw_u32 i;
+    infs_fsw_uefi_trace("INFS_CACHEFREE_ENTER\r\n");
 
     for (i = 0; i < vol->bcache_size; i++) {
         if (vol->bcache[i].data != NULL)
@@ -298,7 +299,9 @@ static void fsw_blockcache_free(struct fsw_volume *vol)
         vol->bcache = NULL;
     }
     vol->bcache_size = 0;
+    infs_fsw_uefi_trace("INFS_CACHEFREE_BEFORE_CLEAR\r\n");
     fsw_efi_clear_cache();
+    infs_fsw_uefi_trace("INFS_CACHEFREE_AFTER_CLEAR\r\n");
 }
 
 /**
