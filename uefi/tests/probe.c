@@ -21,6 +21,13 @@ static void finish(unsigned int ok, const char *stage) {
     __asm__ volatile ("outl %0,%1"::"a"((uint32_t)(ok ? 0 : 1)),"Nd"((uint16_t)EXIT_PORT));
     for (;;) __asm__ volatile("pause");
 }
+static void serial_hex(UINT64 v) {
+    char out[17];
+    const char hex[]="0123456789abcdef";
+    for(unsigned int i=0;i<16;i++) out[i]=hex[(v>>((15-i)*4))&15];
+    out[16]=0;
+    serial(out);
+}
 static UINT64 fnv(UINT64 hash, const UINT8 *b, UINTN len) {
     UINTN i;
     for (i=0; i<len; ++i) { hash ^= b[i]; hash *= 1099511628211ULL; }
@@ -78,6 +85,7 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system) {
     serial("STAGE_LOAD_IMAGE_BEGIN\r\n");
     st=uefi_call_wrapper(BS->LoadImage,6,FALSE,image,dp,NULL,0,&drv);
     serial("STAGE_LOAD_IMAGE_END\r\n");
+    serial("LOAD_IMAGE_STATUS=0x"); serial_hex((UINT64)st); serial("\r\n");
     if (EFI_ERROR(st)) {
         static const char hex[] = "0123456789abcdef";
         char status_hex[] = "LOAD_DRIVER_STATUS=0x0000000000000000\r\n";
