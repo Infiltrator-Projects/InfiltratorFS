@@ -18,9 +18,23 @@ TARGET = InfiltratorFS_x64.efi
 
 include ../Make.common
 
+# GNU-EFI's stock linker script does not root the standalone .reloc input
+# section. With --gc-sections (required to exclude unrelated libc-dependent
+# code from the shared portable core), GNU ld discards .reloc and objcopy
+# emits IMAGE_FILE_RELOCS_STRIPPED with no PE base relocation directory.
+# OVMF then cannot safely relocate/load this EFI driver.
+# Derive a script from the host GNU-EFI toolchain rather than copying its
+# architecture-specific rules; preserve .reloc as a GC root only.
+GNUEFI_KEEP_RELOC_SCRIPT := $(CURDIR)/gnu-efi-keep-reloc.lds
+GNUEFI_LDSCRIPT := $(GNUEFI_KEEP_RELOC_SCRIPT)
+
+$(GNUEFI_KEEP_RELOC_SCRIPT): $(EFICRT0)/elf_$(ARCH)_efi.lds
+	sed 's@\*[(]\.reloc[)]@KEEP(*(.reloc))@g' "$<" > "$@"
+	grep -Fq 'KEEP(*(.reloc))' "$@"
+
 all: $(TARGET)
 
-$(SHLIB_TARGET): $(OBJS)
+$(SHLIB_TARGET): $(OBJS) $(GNUEFI_KEEP_RELOC_SCRIPT)
 	$(LD) $(GNUEFI_LDFLAGS) $(LOCAL_GNUEFI_LDFLAGS) $(SUBSYSTEM_LDFLAG) $(OBJS) -o $@ $(LOCAL_LIBS) $(GNUEFI_LIBS)
 
 $(TARGET): $(SHLIB_TARGET)
@@ -33,4 +47,4 @@ $(TARGET): $(SHLIB_TARGET)
 	chmod a-x $(TARGET)
 
 clean:
-	rm -f $(TARGET) $(SHLIB_TARGET) $(OBJS)
+	rm -f $(TARGET) $(SHLIB_TARGET) $(OBJS) $(GNUEFI_KEEP_RELOC_SCRIPT)
