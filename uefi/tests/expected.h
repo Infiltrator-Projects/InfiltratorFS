@@ -1,0 +1,8 @@
+#ifndef INFILTRATORFS_UEFI_TEST_EXPECTED_H
+#define INFILTRATORFS_UEFI_TEST_EXPECTED_H
+/* Overwritten by workflow with deterministic fixture hashes. */
+#define PROBE_KERNEL_SIZE 1048576ULL
+#define PROBE_INITRD_SIZE 3145728ULL
+#define PROBE_KERNEL_HASH 0ULL
+#define PROBE_INITRD_HASH 0ULL
+#endif

@@ -1,0 +1,128 @@
+name: Experimental Format 0.19 EFI filesystem reader
+
+on:
+  pull_request:
+    paths:
+      - 'uefi/**'
+      - 'include/infilfs/**'
+      - 'src/**'
+      - '.github/workflows/uefi-driver.yml'
+  workflow_dispatch:
+
+jobs:
+  uefi-driver-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install standalone EFI toolchain
+        run: sudo apt-get update && sudo apt-get install -y gnu-efi build-essential ovmf qemu-system-x86 cmake liblz4-dev libssl-dev
+      - name: Compile against current canonical Format 0.19 core
+        run: make -C uefi/filesystems -f Make.gnuefi ARCH=x86_64 INFS_UEFI_TRACE=1
+      - name: Inspect generated EFI file (not runtime qualification)
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import struct
+          p = Path('uefi/filesystems/InfiltratorFS_x64.efi')
+          b = p.read_bytes()
+          assert b[:2] == b'MZ', 'Missing DOS header'
+          pe = struct.unpack_from('<I', b, 0x3c)[0]
+          assert b[pe:pe+4] == b'PE\x00\x00', 'Missing PE signature'
+          assert struct.unpack_from('<H', b, pe+4)[0] == 0x8664, 'Not x86-64'
+          opt = pe + 24
+          assert struct.unpack_from('<H', b, opt)[0] == 0x20b, 'Not PE32+'
+          assert struct.unpack_from('<H', b, opt+68)[0] == 11, 'Not EFI boot-service driver'
+          characteristics = struct.unpack_from('<H', b, pe+22)[0]
+          assert not (characteristics & 1), 'PE has IMAGE_FILE_RELOCS_STRIPPED'
+          reloc_rva, reloc_size = struct.unpack_from('<II', b, opt+112+5*8)
+          assert reloc_rva > 0 and reloc_size >= 8, (
+              f'PE base relocation directory is missing: {reloc_rva:#x}/{reloc_size}'
+          )
+          print(f'EFI base relocations: RVA={reloc_rva:#x}, size={reloc_size} bytes')
+          image_span = struct.unpack_from('<I', b, opt+56)[0]
+          assert 0 < image_span <= 16*1024*1024, f'EFI SizeOfImage unreasonable: {image_span}'
+          print(f'EFI mapped image span: {image_span} bytes')
+          print(f'Experimental EFI PE32+ build passes static header test: {len(b)} bytes')
+          PY
+      - name: Print complete PE headers and build a disposable application-subsystem control
+        run: |
+          set -euo pipefail
+          echo '=== DRIVER SECTIONS ==='
+          objdump -h uefi/filesystems/InfiltratorFS_x64.efi
+          echo '=== DRIVER PE HEADERS ==='
+          objdump -p uefi/filesystems/InfiltratorFS_x64.efi | head -n 105
+          objcopy -j .text -j .sdata -j .data -j .dynamic -j .dynsym -j .rodata \
+            -j .rel -j .rela -j .rel.* -j .rela.* -j .reloc \
+            --strip-unneeded --output-target=efi-app-x86_64 \
+            uefi/filesystems/InfiltratorFS_x64.so uefi/filesystems/InfiltratorFS_app_probe.efi
+          echo '=== CONTROL APPLICATION SECTIONS ==='
+          objdump -h uefi/filesystems/InfiltratorFS_app_probe.efi
+          echo '=== CONTROL APPLICATION PE HEADERS ==='
+          objdump -p uefi/filesystems/InfiltratorFS_app_probe.efi | head -n 105
+      - name: Build canonical Format 0.19 test filesystem image
+        run: |
+          set -euo pipefail
+          cmake -S . -B build-uefi-probe -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-uefi-probe --target mkfs.infilfs infilfs-tool --parallel 4
+          mkdir -p uefi-test-out/fat/EFI/BOOT
+          truncate -s 128M uefi-test-out/infiltratorfs.raw
+          build-uefi-probe/mkfs.infilfs --force -L InfiltratorFS uefi-test-out/infiltratorfs.raw
+          python3 - <<'PY'
+          from pathlib import Path
+          out=Path('uefi-test-out')
+          kernel=bytes((i*17+(i>>13))&255 for i in range(1048576))
+          initrd=bytes(((i*31)^(i>>7))&255 for i in range(3145728))
+          (out/'vmlinuz').write_bytes(kernel)
+          (out/'initrd.img').write_bytes(initrd)
+          def fnv(data):
+              h=1469598103934665603
+              for byte in data:
+                  h=((h^byte)*1099511628211)&0xffffffffffffffff
+              return h
+          Path('uefi/tests/expected.h').write_text(
+              '#define PROBE_KERNEL_SIZE 1048576ULL\n'
+              '#define PROBE_INITRD_SIZE 3145728ULL\n'
+              f'#define PROBE_KERNEL_HASH 0x{fnv(kernel):016x}ULL\n'
+              f'#define PROBE_INITRD_HASH 0x{fnv(initrd):016x}ULL\n')
+          print('Canonical test-file digest contract generated')
+          PY
+          build-uefi-probe/infilfs-tool uefi-test-out/infiltratorfs.raw mkdir /boot
+          build-uefi-probe/infilfs-tool uefi-test-out/infiltratorfs.raw put uefi-test-out/vmlinuz /boot/vmlinuz
+          build-uefi-probe/infilfs-tool uefi-test-out/infiltratorfs.raw put uefi-test-out/initrd.img /boot/initrd.img
+          build-uefi-probe/infilfs-tool uefi-test-out/infiltratorfs.raw ls /boot
+      - name: Build disposable OVMF probe application
+        run: |
+          set -euo pipefail
+          make -C uefi/tests -f Makefile ARCH=x86_64
+          cp uefi/tests/probe_x64.efi uefi-test-out/fat/EFI/BOOT/BOOTX64.EFI
+          cp uefi/filesystems/InfiltratorFS_x64.efi uefi-test-out/fat/InfiltratorFS_x64.efi
+          cp uefi/filesystems/InfiltratorFS_app_probe.efi uefi-test-out/fat/InfiltratorFS_app_probe.efi
+      - name: OVMF actually reads Format 0.19 paths and contents
+        run: |
+          set -euo pipefail
+          code=/usr/share/OVMF/OVMF_CODE_4M.fd
+          vars=/usr/share/OVMF/OVMF_VARS_4M.fd
+          if [ ! -r "$code" ]; then code=/usr/share/OVMF/OVMF_CODE.fd; vars=/usr/share/OVMF/OVMF_VARS.fd; fi
+          test -r "$code"
+          test -r "$vars"
+          cp "$vars" uefi-test-out/ovmf-vars.fd
+          set +e
+          timeout 35 qemu-system-x86_64 -machine q35,accel=tcg -m 1024 \
+            -drive if=pflash,format=raw,readonly=on,file="$code" \
+            -drive if=pflash,format=raw,file=uefi-test-out/ovmf-vars.fd \
+            -drive if=virtio,format=raw,file=fat:rw:uefi-test-out/fat \
+            -drive if=virtio,format=raw,readonly=on,file=uefi-test-out/infiltratorfs.raw \
+            -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
+            -display none -serial file:uefi-test-out/serial.log \
+            -monitor none -net none -no-reboot
+          status=$?
+          set -e
+          cat uefi-test-out/serial.log || true
+          if [ "$status" -ne 1 ] || ! grep -Fq 'INFS_UEFI_READ PASS' uefi-test-out/serial.log; then
+              echo "OVMF EFI driver read test failed (QEMU exit code $status)"
+              exit 1
+          fi
+          echo "OVMF FORMAT 0.19 EFI READ INTEGRITY: PASS"
