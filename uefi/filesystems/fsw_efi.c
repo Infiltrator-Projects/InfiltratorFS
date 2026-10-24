@@ -559,10 +559,18 @@ fsw_status_t fsw_efi_read_block(struct fsw_volume *vol, fsw_u64 phys_bno, void *
    if (buffer == NULL)
       return (fsw_status_t) EFI_BAD_BUFFER_SIZE;
 
-   // Initialize static data structures, if necessary....
+   /* Initial state must never FreePool an unowned pointer. GNU-EFI PE
+    * section relocation can leave the historical cache globals with stale
+    * bytes before this driver ever allocates a cache buffer. */
    if (LastRead < 0) {
-      fsw_efi_clear_cache();
-   } // if
+      for (i = 0; i < NUM_CACHES; ++i) {
+         Caches[i].Cache = NULL;
+         Caches[i].CacheStart = 0;
+         Caches[i].CacheValid = FALSE;
+         Caches[i].Volume = NULL;
+      }
+      LastRead = 0;
+   }
 
    // Look for a cache hit on the current query....
    i = 0;
