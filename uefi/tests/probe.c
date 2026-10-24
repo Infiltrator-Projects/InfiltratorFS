@@ -202,10 +202,17 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system) {
     serial("DRIVER_START_PASS\r\n");
     EFI_HANDLE *handles=NULL;
     UINTN count=0;
+    serial("BLOCKIO_ENUMERATE_BEGIN\r\n");
     st=uefi_call_wrapper(BS->LocateHandleBuffer,5,ByProtocol,&block_guid,NULL,&count,&handles);
+    serial("BLOCKIO_ENUMERATE_END\r\n");
     if (EFI_ERROR(st)) {finish(0,"BLOCKIO_ENUMERATE");return st;}
-    for (UINTN i=0;i<count;i++)
-        uefi_call_wrapper(BS->ConnectController,4,handles[i],NULL,NULL,TRUE);
+    for (UINTN i=0;i<count;i++) {
+        serial("BLOCKIO_CONNECT_BEGIN=");
+        serial_hex((UINT64)i); serial("\r\n");
+        EFI_STATUS connect_status=uefi_call_wrapper(BS->ConnectController,4,handles[i],NULL,NULL,TRUE);
+        serial("BLOCKIO_CONNECT_RETURN=");
+        serial_hex((UINT64)connect_status); serial("\r\n");
+    }
     if(handles)FreePool(handles);
     serial("BLOCKIO_CONNECT_DONE\r\n");
     handles=NULL;count=0;
