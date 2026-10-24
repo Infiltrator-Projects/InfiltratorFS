@@ -17,6 +17,10 @@ OBJS = fsw_core.o fsw_efi.o fsw_efi_lib.o fsw_lib.o fsw_infiltratorfs.o \
  arithmetic.o core.o lz4.o
 TARGET = InfiltratorFS_x64.efi
 
+ifeq ($(INFS_UEFI_TRACE),1)
+LOCAL_GNUEFI_CFLAGS += -DINFS_UEFI_TRACE=1
+endif
+
 include ../Make.common
 
 # GNU-EFI's stock linker script does not root the standalone .reloc input
