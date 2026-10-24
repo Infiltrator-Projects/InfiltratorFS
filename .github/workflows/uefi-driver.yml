@@ -12,7 +12,7 @@ on:
 jobs:
   uefi-driver-build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -68,13 +68,15 @@ jobs:
           cmake -S . -B build-uefi-probe -DCMAKE_BUILD_TYPE=Release
           cmake --build build-uefi-probe --target mkfs.infilfs infilfs-tool --parallel 4
           mkdir -p uefi-test-out/fat/EFI/BOOT
-          truncate -s 128M uefi-test-out/infiltratorfs.raw
+          truncate -s 256M uefi-test-out/infiltratorfs.raw
           build-uefi-probe/mkfs.infilfs --force -L InfiltratorFS uefi-test-out/infiltratorfs.raw
           python3 - <<'PY'
           from pathlib import Path
           out=Path('uefi-test-out')
-          kernel=bytes((i*17+(i>>13))&255 for i in range(1048576))
-          initrd=bytes(((i*31)^(i>>7))&255 for i in range(3145728))
+          # Match the actual Latitude 5550 source files' byte lengths.
+          # Data is synthetic; this validates EFI read integrity, not Linux handoff.
+          kernel=bytes((i*17+(i>>13))&255 for i in range(17029512))
+          initrd=bytes(((i*31)^(i>>7))&255 for i in range(89268777))
           (out/'vmlinuz').write_bytes(kernel)
           (out/'initrd.img').write_bytes(initrd)
           def fnv(data):
@@ -83,8 +85,8 @@ jobs:
                   h=((h^byte)*1099511628211)&0xffffffffffffffff
               return h
           Path('uefi/tests/expected.h').write_text(
-              '#define PROBE_KERNEL_SIZE 1048576ULL\n'
-              '#define PROBE_INITRD_SIZE 3145728ULL\n'
+              '#define PROBE_KERNEL_SIZE 17029512ULL\n'
+              '#define PROBE_INITRD_SIZE 89268777ULL\n'
               f'#define PROBE_KERNEL_HASH 0x{fnv(kernel):016x}ULL\n'
               f'#define PROBE_INITRD_HASH 0x{fnv(initrd):016x}ULL\n')
           print('Canonical test-file digest contract generated')
@@ -110,7 +112,7 @@ jobs:
           test -r "$vars"
           cp "$vars" uefi-test-out/ovmf-vars.fd
           set +e
-          timeout 35 qemu-system-x86_64 -machine q35,accel=tcg -m 1024 \
+          timeout 210 qemu-system-x86_64 -machine q35,accel=tcg -m 1024 \
             -drive if=pflash,format=raw,readonly=on,file="$code" \
             -drive if=pflash,format=raw,file=uefi-test-out/ovmf-vars.fd \
             -drive if=virtio,format=raw,file=fat:rw:uefi-test-out/fat \
@@ -126,3 +128,19 @@ jobs:
               exit 1
           fi
           echo "OVMF FORMAT 0.19 EFI READ INTEGRITY: PASS"
+      - name: Package EFI driver proven by the full-size OVMF read test
+        run: |
+          set -euo pipefail
+          mkdir -p uefi-test-out/qualified
+          cp uefi/filesystems/InfiltratorFS_x64.efi uefi-test-out/qualified/InfiltratorFS_x64.efi
+          (cd uefi-test-out/qualified && sha256sum InfiltratorFS_x64.efi > SHA256SUMS.txt)
+          cp uefi-test-out/serial.log uefi-test-out/qualified/OVMF-serial.log
+          grep -Fq 'INFS_UEFI_READ PASS' uefi-test-out/qualified/OVMF-serial.log
+          (cd uefi-test-out/qualified && sha256sum -c SHA256SUMS.txt)
+      - name: Preserve source-owned EFI driver and runtime evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: InfiltratorFS-UEFI-qualified
+          path: uefi-test-out/qualified/
+          if-no-files-found: error
+          retention-days: 30
