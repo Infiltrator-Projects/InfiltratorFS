@@ -83,7 +83,39 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system) {
     if(!dp) {finish(0,"MAKE_DRIVER_PATH");return EFI_OUT_OF_RESOURCES;}
     EFI_HANDLE drv=NULL;
     serial("STAGE_LOAD_IMAGE_BEGIN\r\n");
-    st=uefi_call_wrapper(BS->LoadImage,6,FALSE,image,dp,NULL,0,&drv);
+    /* Open the EFI image directly from the booted FAT volume first. This
+     * distinguishes EFI_NOT_FOUND from the device-path helper from an
+     * actual PE/COFF rejection by the firmware image loader. */
+    EFI_FILE_IO_INTERFACE *esp=NULL;
+    EFI_FILE_HANDLE eroot=NULL, image_file=NULL;
+    EFI_FILE_INFO *image_info=NULL;
+    VOID *image_bytes=NULL;
+    UINTN image_size=0;
+    st=uefi_call_wrapper(BS->HandleProtocol,3,li->DeviceHandle,&sfs_guid,(VOID**)&esp);
+    if(EFI_ERROR(st)||!esp){finish(0,"ESP_FS_PROTOCOL");return st;}
+    st=uefi_call_wrapper(esp->OpenVolume,2,esp,&eroot);
+    if(EFI_ERROR(st)||!eroot){finish(0,"ESP_OPEN_VOLUME");return st;}
+    st=uefi_call_wrapper(eroot->Open,5,eroot,&image_file,
+                         L"\\InfiltratorFS_x64.efi",EFI_FILE_MODE_READ,0);
+    if(EFI_ERROR(st)||!image_file){finish(0,"ESP_DRIVER_FILE_OPEN");return st;}
+    image_info=LibFileInfo(image_file);
+    if(!image_info||!image_info->FileSize||image_info->FileSize>33554432ULL){
+        finish(0,"ESP_DRIVER_FILE_SIZE");return EFI_BAD_BUFFER_SIZE;
+    }
+    image_size=(UINTN)image_info->FileSize;
+    FreePool(image_info);
+    image_bytes=AllocatePool(image_size);
+    if(!image_bytes){finish(0,"ESP_DRIVER_IMAGE_ALLOCATION");return EFI_OUT_OF_RESOURCES;}
+    UINTN actual_size=image_size;
+    st=uefi_call_wrapper(image_file->Read,3,image_file,&actual_size,image_bytes);
+    uefi_call_wrapper(image_file->Close,1,image_file);
+    uefi_call_wrapper(eroot->Close,1,eroot);
+    if(EFI_ERROR(st)||actual_size!=image_size){
+        FreePool(image_bytes);finish(0,"ESP_DRIVER_IMAGE_READ");return EFI_DEVICE_ERROR;
+    }
+    serial("ESP_DRIVER_IMAGE_READ_PASS\\r\\n");
+    st=uefi_call_wrapper(BS->LoadImage,6,FALSE,image,dp,image_bytes,image_size,&drv);
+    FreePool(image_bytes);
     serial("STAGE_LOAD_IMAGE_END\r\n");
     serial("LOAD_IMAGE_STATUS=0x"); serial_hex((UINT64)st); serial("\r\n");
     if (EFI_ERROR(st)) {
