@@ -35,6 +35,13 @@ jobs:
           opt = pe + 24
           assert struct.unpack_from('<H', b, opt)[0] == 0x20b, 'Not PE32+'
           assert struct.unpack_from('<H', b, opt+68)[0] == 11, 'Not EFI boot-service driver'
+          characteristics = struct.unpack_from('<H', b, pe+22)[0]
+          assert not (characteristics & 1), 'PE has IMAGE_FILE_RELOCS_STRIPPED'
+          reloc_rva, reloc_size = struct.unpack_from('<II', b, opt+112+5*8)
+          assert reloc_rva > 0 and reloc_size >= 8, (
+              f'PE base relocation directory is missing: {reloc_rva:#x}/{reloc_size}'
+          )
+          print(f'EFI base relocations: RVA={reloc_rva:#x}, size={reloc_size} bytes')
           image_span = struct.unpack_from('<I', b, opt+56)[0]
           assert 0 < image_span <= 16*1024*1024, f'EFI SizeOfImage unreasonable: {image_span}'
           print(f'EFI mapped image span: {image_span} bytes')
