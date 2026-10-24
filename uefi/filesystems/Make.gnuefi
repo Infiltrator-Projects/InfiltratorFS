@@ -1,0 +1,32 @@
+# Experimental independent Format 0.19 EFI filesystem driver.
+# Single format authority: InfiltratorFS's existing include/ and src/ trees.
+SRCDIR = .
+HOSTARCH = $(shell uname -m)
+VPATH = .:platform:../../src:../../src/infiltratr-common/src:lz4
+LOCAL_GNUEFI_CFLAGS = -DFSTYPE=infiltratorfs -I. -I../../include -I../../src/infiltratr-common/include -Ilz4 \
+ -ffreestanding -fno-builtin -ffunction-sections -fdata-sections -fvisibility=hidden \
+ -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -include platform/uefi_libc.h \
+ -DLZ4_FREESTANDING=1 -DLZ4_memcpy=memcpy -DLZ4_memset=memset -DLZ4_memmove=memmove \
+ "-DEFIAPI=__attribute__((ms_abi))"
+LOCAL_GNUEFI_LDFLAGS = --gc-sections
+OBJS = fsw_core.o fsw_efi.o fsw_efi_lib.o fsw_lib.o fsw_infiltratorfs.o \
+ uefi_compat.o checksum.o locator.o status.o storage.o security.o fs.o volume.o \
+ arithmetic.o core.o lz4.o
+TARGET = InfiltratorFS_x64.efi
+
+include ../Make.common
+
+all: $(TARGET)
+
+$(SHLIB_TARGET): $(OBJS)
+	$(LD) $(GNUEFI_LDFLAGS) $(LOCAL_GNUEFI_LDFLAGS) $(SUBSYSTEM_LDFLAG) $(OBJS) -o $@ $(LOCAL_LIBS) $(GNUEFI_LIBS)
+
+$(TARGET): $(SHLIB_TARGET)
+	$(OBJCOPY) -j .text -j .sdata -j .data -j .dynamic -j .dynsym -j .rodata \
+	 -j .rel -j .rela -j .rel.* -j .rela.* -j .rel* -j .rela* \
+	 -j .reloc --strip-unneeded $(FORMAT_DRIVER) $< $@
+	$(OBJCOPY) --add-section .sbat=../infiltratorfs-sbat.csv --adjust-section-vma .sbat+10000000 $@
+	chmod a-x $(TARGET)
+
+clean:
+	rm -f $(TARGET) $(SHLIB_TARGET) $(OBJS)
