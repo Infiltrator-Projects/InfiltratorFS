@@ -99,10 +99,10 @@ EFI_STATUS EFIAPI fsw_efi_ComponentName_GetControllerName(IN  REFIND_EFI_COMPONE
                                                           IN  CHAR8                               *Language,
                                                           OUT CHAR16                              **ControllerName);
 
-void EFIAPI fsw_efi_change_blocksize(struct fsw_volume *vol,
+void fsw_efi_change_blocksize(struct fsw_volume *vol,
                               fsw_u32 old_phys_blocksize, fsw_u32 old_log_blocksize,
                               fsw_u32 new_phys_blocksize, fsw_u32 new_log_blocksize);
-fsw_status_t EFIAPI fsw_efi_read_block(struct fsw_volume *vol, fsw_u64 phys_bno, void *buffer);
+fsw_status_t fsw_efi_read_block(struct fsw_volume *vol, fsw_u64 phys_bno, void *buffer);
 
 EFI_STATUS fsw_efi_map_status(fsw_status_t fsw_status, FSW_VOLUME_DATA *Volume);
 
@@ -182,6 +182,8 @@ REFIND_EFI_COMPONENT_NAME_PROTOCOL fsw_efi_ComponentName_table = {
  * Dispatch table for our FSW host driver.
  */
 
+/* FSW callbacks are called by portable C code using the native C ABI, NOT
+ * by UEFI firmware. They must never carry EFIAPI/ms_abi on x86-64. */
 struct fsw_host_table   fsw_efi_host_table = {
     FSW_STRING_TYPE_UTF16,
 
@@ -494,7 +496,7 @@ EFI_STATUS EFIAPI fsw_efi_ComponentName_GetControllerName(IN  REFIND_EFI_COMPONE
  * when the file system driver changes the block sizes for the volume.
  */
 
-void EFIAPI fsw_efi_change_blocksize(struct fsw_volume *vol,
+void fsw_efi_change_blocksize(struct fsw_volume *vol,
                               fsw_u32 old_phys_blocksize, fsw_u32 old_log_blocksize,
                               fsw_u32 new_phys_blocksize, fsw_u32 new_log_blocksize)
 {
@@ -512,7 +514,7 @@ void EFIAPI fsw_efi_change_blocksize(struct fsw_volume *vol,
  * disk.
  */
 
-fsw_status_t EFIAPI fsw_efi_read_block(struct fsw_volume *vol, fsw_u64 phys_bno, void *buffer) {
+fsw_status_t fsw_efi_read_block(struct fsw_volume *vol, fsw_u64 phys_bno, void *buffer) {
    int              i, ReadCache = -1;
    FSW_VOLUME_DATA  *Volume = (FSW_VOLUME_DATA *)vol->host_data;
    EFI_STATUS       Status = EFI_SUCCESS;
