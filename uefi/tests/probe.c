@@ -169,6 +169,17 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system) {
     if(control_info)FreePool(control_info);
     if(control_file)uefi_call_wrapper(control_file->Close,1,control_file);
     if(control_root)uefi_call_wrapper(control_root->Close,1,control_root);
+    EFI_DEVICE_PATH *app_dp=FileDevicePath(li->DeviceHandle,
+                                           L"\\InfiltratorFS_app_probe.efi");
+    EFI_HANDLE app_image=NULL;
+    EFI_STATUS app_status=app_dp ?
+        uefi_call_wrapper(BS->LoadImage,6,FALSE,image,app_dp,NULL,0,&app_image) :
+        EFI_OUT_OF_RESOURCES;
+    serial("INFILTRATOR_APP_CONTROL_STATUS=0x");
+    serial_hex((UINT64)app_status);
+    serial("\r\n");
+    if(!EFI_ERROR(app_status)&&app_image)
+        uefi_call_wrapper(BS->UnloadImage,1,app_image);
     st=uefi_call_wrapper(BS->LoadImage,6,FALSE,image,NULL,image_bytes,image_size,&drv);
     FreePool(image_bytes);
     serial("STAGE_LOAD_IMAGE_END\r\n");
