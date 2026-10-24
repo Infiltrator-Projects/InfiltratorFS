@@ -220,7 +220,7 @@ struct fsw_host_table   fsw_efi_host_table = {
 extern struct fsw_fstype_table   FSW_FSTYPE_TABLE_NAME(FSTYPE);
 
 
-VOID EFIAPI fsw_efi_clear_cache(VOID) {
+VOID fsw_efi_clear_cache(VOID) {
    int i;
 
    // clear the cache
@@ -234,7 +234,7 @@ VOID EFIAPI fsw_efi_clear_cache(VOID) {
             Caches[i].Volume = NULL;
    }
    LastRead = -1;
-} // VOID EFIAPI fsw_efi_clear_cache();
+} // VOID fsw_efi_clear_cache();
 
 /**
  * Image entry point. Installs the Driver Binding and Component Name protocols
