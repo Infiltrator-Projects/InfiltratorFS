@@ -77,6 +77,29 @@ EFI_GUID gMyEfiFileSystemVolumeLabelInfoIdGuid = EFI_FILE_SYSTEM_VOLUME_LABEL_IN
 /** Expands to the EFI driver name given the file system type name. */
 #define FSW_EFI_DRIVER_NAME(t) L"InfiltratorFS experimental " FSW_EFI_STRINGIFY(t) L" File System Driver"
 
+/* Early-firmware serial diagnostics for disposable OVMF qualification only.
+ * Native production builds leave this routine entirely out. */
+#if defined(INFS_UEFI_TRACE) && INFS_UEFI_TRACE && defined(__x86_64__)
+static void infs_fsw_uefi_trace(const char *msg)
+{
+    const unsigned short port = 0x3f8;
+    const unsigned short lsr = 0x3fd;
+    if (!msg)
+        return;
+    while (*msg) {
+        unsigned char ready = 0;
+        for (unsigned int i = 0; i < 1000000u; ++i) {
+            __asm__ volatile("inb %1,%0" : "=a"(ready) : "Nd"(lsr));
+            if (ready & 0x20)
+                break;
+        }
+        __asm__ volatile("outb %0,%1" : : "a"((unsigned char)*msg++), "Nd"(port));
+    }
+}
+#else
+#define infs_fsw_uefi_trace(msg) ((void)0)
+#endif
+
 // function prototypes
 
 EFI_STATUS EFIAPI fsw_efi_DriverBinding_Supported(IN REFIND_EFI_DRIVER_BINDING_PROTOCOL  *This,
@@ -276,6 +299,7 @@ EFI_STATUS EFIAPI fsw_efi_DriverBinding_Supported(IN REFIND_EFI_DRIVER_BINDING_P
     EFI_STATUS          Status;
     EFI_DISK_IO         *DiskIo;
 
+    infs_fsw_uefi_trace("INFS_BIND_SUPPORTED_BEGIN\r\n");
     // we check for both DiskIO and BlockIO protocols
 
     // first, open DiskIO
@@ -301,6 +325,7 @@ EFI_STATUS EFIAPI fsw_efi_DriverBinding_Supported(IN REFIND_EFI_DRIVER_BINDING_P
                               This->DriverBindingHandle,
                               ControllerHandle,
                               EFI_OPEN_PROTOCOL_TEST_PROTOCOL);
+    infs_fsw_uefi_trace("INFS_BIND_SUPPORTED_END\r\n");
     return Status;
 }
 
@@ -330,6 +355,7 @@ EFI_STATUS EFIAPI fsw_efi_DriverBinding_Start(IN REFIND_EFI_DRIVER_BINDING_PROTO
     Print(L"fsw_efi_DriverBinding_Start\n");
 #endif
 
+    infs_fsw_uefi_trace("INFS_BIND_START_BEGIN\r\n");
     // open consumed protocols
     Status = refit_call6_wrapper(BS->OpenProtocol, ControllerHandle,
                               &gMyEfiBlockIoProtocolGuid,
@@ -361,10 +387,14 @@ EFI_STATUS EFIAPI fsw_efi_DriverBinding_Start(IN REFIND_EFI_DRIVER_BINDING_PROTO
     Volume->MediaId         = BlockIo->Media->MediaId;
     Volume->LastIOStatus    = EFI_SUCCESS;
 
+    infs_fsw_uefi_trace("INFS_BIND_MOUNT_BEGIN\r\n");
     // mount the filesystem
     Status = fsw_efi_map_status(fsw_mount(Volume, &fsw_efi_host_table,
                                           &FSW_FSTYPE_TABLE_NAME(FSTYPE), &Volume->vol),
                                 Volume);
+    infs_fsw_uefi_trace(EFI_ERROR(Status) ?
+                       "INFS_BIND_MOUNT_FAIL\r\n" :
+                       "INFS_BIND_MOUNT_OK\r\n");
     if (!EFI_ERROR(Status)) {
         // register the SimpleFileSystem protocol
         Volume->FileSystem.Revision     = EFI_FILE_IO_INTERFACE_REVISION;
@@ -389,6 +419,7 @@ EFI_STATUS EFIAPI fsw_efi_DriverBinding_Start(IN REFIND_EFI_DRIVER_BINDING_PROTO
                           This->DriverBindingHandle,
                           ControllerHandle);
     }
+    infs_fsw_uefi_trace("INFS_BIND_START_END\r\n");
     return Status;
 }
 
