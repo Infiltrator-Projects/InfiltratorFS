@@ -25,7 +25,9 @@ $(TARGET): $(SHLIB_TARGET)
 	$(OBJCOPY) -j .text -j .sdata -j .data -j .dynamic -j .dynsym -j .rodata \
 	 -j .rel -j .rela -j .rel.* -j .rela.* -j .rel* -j .rela* \
 	 -j .reloc --strip-unneeded $(FORMAT_DRIVER) $< $@
-	$(OBJCOPY) --add-section .sbat=../infiltratorfs-sbat.csv --adjust-section-vma .sbat+10000000 $@
+# Do not inject .sbat with an artificial +0x10000000 section VMA:
+# it can inflate the PE SizeOfImage and make firmware reject allocation.
+# Restore signed-image metadata only with a compact, validated section layout.
 	chmod a-x $(TARGET)
 
 clean:
