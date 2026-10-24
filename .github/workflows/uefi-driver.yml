@@ -1,0 +1,39 @@
+name: Experimental Format 0.19 EFI filesystem reader
+
+on:
+  pull_request:
+    paths:
+      - 'uefi/**'
+      - 'include/infilfs/**'
+      - 'src/**'
+      - '.github/workflows/uefi-driver.yml'
+  workflow_dispatch:
+
+jobs:
+  uefi-driver-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install standalone EFI toolchain
+        run: sudo apt-get update && sudo apt-get install -y gnu-efi build-essential
+      - name: Compile against current canonical Format 0.19 core
+        run: make -C uefi/filesystems -f Make.gnuefi ARCH=x86_64
+      - name: Inspect generated EFI file (not runtime qualification)
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import struct
+          p = Path('uefi/filesystems/InfiltratorFS_x64.efi')
+          b = p.read_bytes()
+          assert b[:2] == b'MZ', 'Missing DOS header'
+          pe = struct.unpack_from('<I', b, 0x3c)[0]
+          assert b[pe:pe+4] == b'PE\x00\x00', 'Missing PE signature'
+          assert struct.unpack_from('<H', b, pe+4)[0] == 0x8664, 'Not x86-64'
+          opt = pe + 24
+          assert struct.unpack_from('<H', b, opt)[0] == 0x20b, 'Not PE32+'
+          assert struct.unpack_from('<H', b, opt+68)[0] == 11, 'Not EFI boot-service driver'
+          print(f'Experimental EFI PE32+ build passes static header test: {len(b)} bytes')
+          PY
