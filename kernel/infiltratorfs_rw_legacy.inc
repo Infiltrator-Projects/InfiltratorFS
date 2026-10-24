@@ -1332,6 +1332,8 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
     }
     allocation_ms = div_u64(
         ktime_get_ns() - phase_started, NSEC_PER_MSEC);
+    infilfs_perf019_stop(tx->sb, INFILFS_PERF019_TX_ALLOCATION,
+                        phase_started);
     phase_started = ktime_get_ns();
 
     ret = infilfs_rw_sync_transaction_dependencies(tx);
@@ -1341,6 +1343,8 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
     }
     dependencies_ms = div_u64(
         ktime_get_ns() - phase_started, NSEC_PER_MSEC);
+    infilfs_perf019_stop(tx->sb, INFILFS_PERF019_TX_DEPENDENCIES,
+                        phase_started);
     phase_started = ktime_get_ns();
 
     /*
@@ -1358,6 +1362,8 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
     }
     dependency_flush_ms = div_u64(
         ktime_get_ns() - phase_started, NSEC_PER_MSEC);
+    infilfs_perf019_stop(tx->sb, INFILFS_PERF019_TX_DEPENDENCY_FLUSH,
+                        phase_started);
     phase_started = ktime_get_ns();
 
     sb_block = kmalloc(INFILFS_DISK_BLOCK_SIZE, GFP_NOFS);
@@ -1384,6 +1390,8 @@ static int infilfs_rw_tx_commit(struct infilfs_rw_tx *tx)
     }
     checkpoints_ms = div_u64(
         ktime_get_ns() - phase_started, NSEC_PER_MSEC);
+    infilfs_perf019_stop(tx->sb, INFILFS_PERF019_TX_CHECKPOINTS,
+                        phase_started);
     phase_started = ktime_get_ns();
 
     /* The shared publisher already completed a separate stable-media barrier

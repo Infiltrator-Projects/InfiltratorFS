@@ -442,7 +442,40 @@ struct infilfs_checkpoint_candidates {
 int infilfs_read_checkpoint_candidates(
     struct super_block *sb, struct infilfs_checkpoint_candidates *set);
 
+/*
+ * PERF-019 timing is volatile per-mount diagnostic evidence, not filesystem
+ * state. Parent/child intervals overlap and workers can run concurrently;
+ * summed stage times are not wall time or a byte-level I/O measurement.
+ */
+enum infilfs_perf019_stage {
+    INFILFS_PERF019_WB_STAGE,
+    INFILFS_PERF019_WB_NATIVE,
+    INFILFS_PERF019_PREP_DIGEST,
+    INFILFS_PERF019_PREP_CODEC,
+    INFILFS_PERF019_PREP_RESERVE,
+    INFILFS_PERF019_PREP_BLOCK_STAGE,
+    INFILFS_PERF019_WRITE_LOCK_WAIT,
+    INFILFS_PERF019_WRITE_LOCK_HELD,
+    INFILFS_PERF019_TX_ALLOCATION,
+    INFILFS_PERF019_TX_DEPENDENCIES,
+    INFILFS_PERF019_TX_DEPENDENCY_FLUSH,
+    INFILFS_PERF019_TX_CHECKPOINTS,
+    INFILFS_PERF019_FSYNC_WRITEBACK,
+    INFILFS_PERF019_FSYNC_PUBLICATION,
+    INFILFS_PERF019_SYNCFS_PUBLICATION,
+    INFILFS_PERF019_STAGE_COUNT
+};
+
+struct infilfs_perf019_counter {
+    atomic64_t calls;
+    atomic64_t sum_ns;
+    atomic64_t max_ns;
+};
+
+extern bool infilfs_perf019_enabled;
+
 struct infilfs_sb_info {
+    struct infilfs_perf019_counter perf019[INFILFS_PERF019_STAGE_COUNT];
     struct infilfs_superblock_disk disk;
     u64 device_blocks;
     struct rw_semaphore write_lock;
@@ -648,6 +681,41 @@ struct infilfs_native_read_checksum_cursor {
 static inline struct infilfs_sb_info *INFILFS_SB(struct super_block *sb)
 {
     return sb->s_fs_info;
+}
+
+/*
+ * Disabled acquisition is a single branch: no allocation, timestamp read,
+ * logging, locking or persistent write. An already-started sample finishes
+ * if an operator disables collection while the operation is in flight.
+ */
+static inline u64 infilfs_perf019_start(void)
+{
+    return unlikely(READ_ONCE(infilfs_perf019_enabled)) ?
+        ktime_get_ns() : 0;
+}
+
+static inline void infilfs_perf019_stop(struct super_block *sb,
+    enum infilfs_perf019_stage stage, u64 started)
+{
+    struct infilfs_perf019_counter *counter;
+    s64 duration, old;
+
+    if (likely(!started))
+        return;
+    duration = (s64)(ktime_get_ns() - started);
+    if (unlikely(duration < 0))
+        return;
+    counter = &INFILFS_SB(sb)->perf019[stage];
+    atomic64_inc(&counter->calls);
+    atomic64_add(duration, &counter->sum_ns);
+    old = atomic64_read(&counter->max_ns);
+    while (duration > old) {
+        s64 observed = atomic64_cmpxchg(&counter->max_ns, old, duration);
+
+        if (observed == old)
+            break;
+        old = observed;
+    }
 }
 
 static inline u64 infilfs_volume_blocks(const struct infilfs_sb_info *sbi)

@@ -300,3 +300,47 @@ This is an evidence **collection facility**, not current physical-NVMe data.
 It does not measure kernel-stage CoW/lock/writeback attribution and cannot
 qualify forced physical power interruption or native Windows mounts. Those
 gates remain unchecked until actually measured and evidenced.
+
+## Opt-in native write-path attribution (implementation, not a speedup claim)
+
+The native Linux module now has a disabled-by-default PERF-019 diagnostic
+switch, `perf019`. The switch is a module parameter, not a mount option. A
+*separately qualified new module* can be loaded with `perf019=1`; an already
+installed version that exposes the parameter can enable collection using
+`sudo sh -c 'echo 1 > /sys/module/infiltratorfs/parameters/perf019'`.
+**Do not replace or unload the module while any volume is mounted.**
+The published 0.19.36 binary does not contain this instrumentation.
+
+Every mount owns a bounded array of atomic counters. Only after explicit
+opt-in does the hot path acquire monotonic nanosecond timestamps for page-cache
+writeback staging, native CoW work, prepared-append SHA-256, codec selection,
+allocation reservations, 4 KiB buffer-head staging, global writer-lock wait
+and holding, allocation-map publication, dependency I/O, dependency durability
+flush, ordered checkpoint publication, file-fsync writeback versus publication,
+and the `sync_fs` publication callback. Samples are reported only on clean
+unmount, after final transaction drain and before the superblock state is freed:
+
+```
+journalctl -k -b --no-pager | grep 'InfiltratorFS PERF019'
+```
+
+Each line identifies a volume and phase with `calls`, `total_us`,
+`avg_us` and `max_us`. The collector does not introduce a new persistent
+format or issue an extra durability operation. When disabled it neither
+timestamps nor updates counters. A sample already in flight when capture is
+disabled is still recorded; clearing the module parameter does not clear the
+counters. Each *new* mount starts with zero counts.
+
+**Attribution limits:** stages are inclusive and sometimes nested; multiple
+preparation workers run simultaneously. Their totals must not be added to
+infer elapsed syscall time, nor used alone to estimate hardware transfer
+speed. The `sync_fs` callback excludes earlier VFS dirty-folio writeback, so
+the separate userspace `sync -f` wall timer remains indispensable. Special
+single-folio fallback and non-append writes have partial microstage coverage.
+Stage max values are per invocation, not a whole-workload maximum. Error paths
+do not necessarily produce a complete phase series.
+
+This mechanism is an experiment, not evidence of a performance improvement.
+The acceptance gate remains repeatable physical-media timing on the same NVMe
+and baseline, exact-source/provenance capture, post-remount hashes, structural
+checks, deep scrub, fault injection and durability-order verification.

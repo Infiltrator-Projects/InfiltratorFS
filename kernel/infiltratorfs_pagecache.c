@@ -1043,6 +1043,7 @@ static int infilfs_writeback_cluster_submit(
     struct iov_iter iter;
     struct kvec staged_vec;
     void *staged = NULL;
+    u64 phase_started;
     loff_t position;
     ssize_t written;
     int ret = 0;
@@ -1062,6 +1063,7 @@ static int infilfs_writeback_cluster_submit(
      * writeback pass; infilfs_pagecache_unaccount() deliberately preserves its
      * pending-CoW marker in that case.
      */
+    phase_started = infilfs_perf019_start();
     staged = kvmalloc(cluster->bytes, GFP_NOFS);
     if (!staged) {
         ret = -ENOMEM;
@@ -1074,6 +1076,8 @@ static int infilfs_writeback_cluster_submit(
         goto staging_failed;
     }
 
+    infilfs_perf019_stop(inode->i_sb, INFILFS_PERF019_WB_STAGE,
+                        phase_started);
     for (i = 0; i < cluster->count; ++i)
         folio_unlock(cluster->folios[i]);
 
@@ -1082,8 +1086,11 @@ static int infilfs_writeback_cluster_submit(
     iov_iter_kvec(
         &iter, ITER_SOURCE, &staged_vec, 1, cluster->bytes);
     position = cluster->position;
+    phase_started = infilfs_perf019_start();
     written = infilfs_native_writeback_iter(
         inode, &position, &iter, cluster->bytes);
+    infilfs_perf019_stop(inode->i_sb, INFILFS_PERF019_WB_NATIVE,
+                        phase_started);
     if (written != cluster->bytes)
         ret = written < 0 ? (int)written : -EIO;
     if (ret)
@@ -1119,6 +1126,8 @@ static int infilfs_writeback_cluster_submit(
     goto out_reset;
 
 staging_failed:
+    infilfs_perf019_stop(inode->i_sb, INFILFS_PERF019_WB_STAGE,
+                        phase_started);
     mapping_set_error(mapping, ret);
     for (i = 0; i < cluster->count; ++i) {
         struct folio *folio = cluster->folios[i];

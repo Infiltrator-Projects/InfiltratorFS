@@ -1,6 +1,49 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "infiltratorfs_internal.h"
 
+/*
+ * Opt-in, allocation-free PERF-019 aggregation. The module parameter is
+ * disabled by default; turning it on only samples volatile mount-owned state.
+ */
+bool infilfs_perf019_enabled;
+module_param_named(perf019, infilfs_perf019_enabled, bool, 0644);
+MODULE_PARM_DESC(perf019,
+    "Opt-in PERF-019 per-mount write-path timings, reported at unmount");
+
+static const char *const infilfs_perf019_stage_names[] = {
+    "writeback_staging", "writeback_native", "prepare_sha256",
+    "prepare_codec", "prepare_reservation", "prepare_block_staging",
+    "write_lock_wait", "write_lock_held", "transaction_allocation",
+    "transaction_dependencies", "transaction_dependency_flush",
+    "transaction_checkpoints", "file_fsync_writeback",
+    "file_fsync_publication", "syncfs_publication"
+};
+
+static void infilfs_perf019_report(struct super_block *sb)
+{
+    struct infilfs_sb_info *sbi = INFILFS_SB(sb);
+    unsigned int stage;
+
+    if (!sbi)
+        return;
+    for (stage = 0; stage < INFILFS_PERF019_STAGE_COUNT; ++stage) {
+        const struct infilfs_perf019_counter *counter =
+            &sbi->perf019[stage];
+        s64 calls = atomic64_read(&counter->calls);
+        u64 sum, max;
+
+        if (!calls)
+            continue;
+        sum = (u64)atomic64_read(&counter->sum_ns);
+        max = (u64)atomic64_read(&counter->max_ns);
+        pr_info("InfiltratorFS PERF019 dev=%s phase=%s calls=%lld total_us=%llu avg_us=%llu max_us=%llu\n",
+                sb->s_id, infilfs_perf019_stage_names[stage],
+                (long long)calls, (unsigned long long)(sum / 1000u),
+                (unsigned long long)(div64_u64(sum, (u64)calls) / 1000u),
+                (unsigned long long)(max / 1000u));
+    }
+}
+
 static const u8 infilfs_disk_magic[8] = {
     'I', 'N', 'F', 'S', '2', '0', '2', '6'
 };
@@ -2645,6 +2688,7 @@ static void infilfs_put_super(struct super_block *sb)
     infilfs_cancel_orphan_recovery(sb);
     infilfs_quota_mount_destroy(sb);
     infilfs_rw_mount_destroy(sb);
+    infilfs_perf019_report(sb);
     infilfs_linux_meta_cache_destroy(sb);
     kfree(sb->s_fs_info);
     sb->s_fs_info = NULL;

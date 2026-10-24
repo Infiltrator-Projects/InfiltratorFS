@@ -186,3 +186,21 @@ grep -Fq 'infilfs_ns_rebuild_directory_accounted' <<<"$meta_delete_body"
 ! grep -Fq 'infilfs_refresh_inode_blocks_after_commit' <<<"$meta_delete_body"
 
 printf 'Native sequential-write scaling policy guard passed.\n'
+
+# PERF-019 remains opt-in and has separate observations for buffered
+# writeback, preparation, lock contention, and durable publication.
+grep -Fq 'module_param_named(perf019, infilfs_perf019_enabled, bool, 0644)' "$core"
+grep -Fq 'infilfs_perf019_report(sb)' "$core"
+grep -Fq 'READ_ONCE(infilfs_perf019_enabled)' "$internal"
+grep -Fq 'INFILFS_PERF019_WB_STAGE' "$pagecache"
+grep -Fq 'INFILFS_PERF019_WB_NATIVE' "$pagecache"
+grep -Fq 'INFILFS_PERF019_PREP_DIGEST' "$data"
+grep -Fq 'INFILFS_PERF019_PREP_CODEC' "$data"
+grep -Fq 'INFILFS_PERF019_PREP_BLOCK_STAGE' "$data"
+grep -Fq 'INFILFS_PERF019_WRITE_LOCK_WAIT' "$data"
+grep -Fq 'INFILFS_PERF019_WRITE_LOCK_HELD' "$data"
+grep -Fq 'INFILFS_PERF019_FSYNC_WRITEBACK' "$data"
+grep -Fq 'INFILFS_PERF019_SYNCFS_PUBLICATION' "$data"
+grep -Fq 'INFILFS_PERF019_TX_ALLOCATION' "$legacy"
+grep -Fq 'INFILFS_PERF019_TX_DEPENDENCY_FLUSH' "$legacy"
+grep -Fq 'INFILFS_PERF019_TX_CHECKPOINTS' "$legacy"
