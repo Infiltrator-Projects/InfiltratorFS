@@ -499,7 +499,8 @@ if(UNIX)
         add_executable(infiltratorfs-manager
             tools/infiltratorfs-manager.c
             tools/manager/infiltratorfs-manager-storage.c
-            tools/manager/infiltratorfs-manager-contract.c)
+            tools/manager/infiltratorfs-manager-contract.c
+            tools/manager/infiltratorfs-manager-open.c)
         target_link_libraries(infiltratorfs-manager PRIVATE
             InfiltratrCommon::Common PkgConfig::GTK3)
         target_compile_definitions(infiltratorfs-manager PRIVATE

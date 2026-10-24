@@ -6,6 +6,7 @@
 #include "infiltratr/design.h"
 #include "infiltratr/format.h"
 #include "manager/infiltratorfs-manager-contract.h"
+#include "manager/infiltratorfs-manager-open.h"
 #include "manager/infiltratorfs-manager-storage.h"
 #include "infiltratr/posix.h"
 #include "infiltratr/posix_path.h"
@@ -514,14 +515,18 @@ static char *command_display(gchar **argv)
     return g_string_free(display, FALSE);
 }
 
-static void open_in_files(const char *path)
+static void open_in_files(Manager *manager, const char *path)
 {
-    if (!path || !*path)
-        return;
-    gchar *argv[] = { "xdg-open", (gchar *)path, NULL };
     GError *error = NULL;
-    (void)g_spawn_async(NULL, argv, NULL, G_SPAWN_SEARCH_PATH,
-                        NULL, NULL, NULL, &error);
+
+    if (!infilfs_manager_open_directory(path, &error)) {
+        const char *why = error ? error->message : "No directory opener";
+        gtk_label_set_text(GTK_LABEL(manager->status_label),
+                           "Mounted; Files did not open");
+        activity_append(manager, why);
+        activity_append(manager, "\n");
+        manager_error(manager, why);
+    }
     g_clear_error(&error);
 }
 
@@ -566,12 +571,10 @@ static gboolean job_finish_idle(gpointer data)
         if (job->after == JOB_AFTER_MOUNT && manager->target) {
             refresh_mount(manager->target);
             if (manager->target->mountpoint && *manager->target->mountpoint)
-                open_in_files(manager->target->mountpoint);
-            else {
-                char *point = mountpoint_for(manager->target);
-                open_in_files(point);
-                g_free(point);
-            }
+                open_in_files(manager, manager->target->mountpoint);
+            else
+                manager_error(manager, "Mount completed, but its mount point "
+                              "could not be verified.");
         }
         if (manager->page_stack)
             gtk_stack_set_visible_child_name(GTK_STACK(manager->page_stack), "overview");
@@ -1072,7 +1075,7 @@ static void on_mount(GtkButton *button, gpointer data)
         return;
     manager_show_target(manager);
     if (manager->target->mountpoint && *manager->target->mountpoint) {
-        open_in_files(manager->target->mountpoint);
+        open_in_files(manager, manager->target->mountpoint);
         return;
     }
     char *point = mountpoint_for(manager->target);
@@ -1727,7 +1730,7 @@ int main(int argc, char **argv)
     }
 
     static const char *required[] = {
-        "lsblk", "findmnt", "mountpoint", "pkexec", "xdg-open", "truncate", NULL
+        "lsblk", "findmnt", "mountpoint", "pkexec", "truncate", NULL
     };
     for (size_t i = 0; required[i]; ++i) {
         if (!required_command(required[i])) {

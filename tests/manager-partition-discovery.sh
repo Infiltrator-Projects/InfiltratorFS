@@ -22,6 +22,14 @@ grep -Fq 'it is not an available non-system partition' "${manager_source}"
 grep -Fq 'gtk_application_window_new' "${manager_source}"
 grep -Fq 'gtk_stack_switcher_new' "${manager_source}"
 grep -Fq 'g_thread_new' "${manager_source}"
+grep -Fq 'infilfs_manager_open_directory(path, &error)' "${manager_source}"
+! grep -Fq '"xdg-open"' "${manager_source}"
+grep -Fq 'manager_error(manager, why)' "${manager_source}"
+open_source="${repo_root}/tools/manager/infiltratorfs-manager-open.c"
+test -f "${open_source}"
+grep -Fq 'g_app_info_get_default_for_type("inode/directory", FALSE)' "${open_source}"
+grep -Fq 'g_app_info_launch(handler, &files, NULL, error)' "${open_source}"
+grep -Fq 'tools/manager/infiltratorfs-manager-open.c' "${repo_root}/CMakeLists.txt"
 
 if grep -Fqi 'zenity' "${manager_source}"; then
     echo "manager-partition-discovery: Zenity UI regression detected" >&2

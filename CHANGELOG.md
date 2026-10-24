@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased — Native directory opening
+
+- Open mounted directories via GIO's registered `inode/directory` application instead of `xdg-open`, which dispatched to an inappropriate WSL handler on a native Linux Mint workstation despite `nemo.desktop` being selected. Keep the Manager desktop-neutral rather than hardcoding Nemo.
+- Report file-manager launch failures separately from successful filesystem mounts, and do not attempt to open an unverified mount point. No format, kernel-driver or durability changes. Package and desktop testing required before release.
+
 ## 0.19.36 — 2026-10-23
 
 - Add a bounded, explicitly opted-in physical-NVMe PERF-019 evidence collector with repeatable 256 MiB incompressible sequential-write and final-sync timing, optional genuine real-file-tree copy, 4 KiB write/fsync latency distributions, and thousands of metadata operations. Retain input/device/kernel/source identity and SHA-256 manifests, and require a different mount instance to verify persistence.
