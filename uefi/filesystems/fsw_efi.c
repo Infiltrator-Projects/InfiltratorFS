@@ -534,6 +534,7 @@ void fsw_efi_change_blocksize(struct fsw_volume *vol,
                               fsw_u32 old_phys_blocksize, fsw_u32 old_log_blocksize,
                               fsw_u32 new_phys_blocksize, fsw_u32 new_log_blocksize)
 {
+    infs_fsw_uefi_trace("INFS_HOST_CHANGE_BLOCKSIZE\r\n");
     // nothing to do
 }
 
