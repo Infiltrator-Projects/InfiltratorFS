@@ -222,18 +222,29 @@ extern struct fsw_fstype_table   FSW_FSTYPE_TABLE_NAME(FSTYPE);
 
 VOID fsw_efi_clear_cache(VOID) {
    int i;
-
-   // clear the cache
-   for (i = 0; i < NUM_CACHES; i++) {
+   /* First invocation occurs before any block read, from FSW's initial
+    * fsw_set_blocksize() cache reset. Do not FreePool pointers that have
+    * never been allocated by this instance. LastRead is initialized to -1. */
+   if (LastRead < 0) {
+      for (i = 0; i < NUM_CACHES; ++i) {
+         Caches[i].Cache = NULL;
+         Caches[i].CacheStart = 0;
+         Caches[i].CacheValid = FALSE;
+         Caches[i].Volume = NULL;
+      }
+      LastRead = 0;
+      return;
+   }
+   for (i = 0; i < NUM_CACHES; ++i) {
       if (Caches[i].Cache != NULL) {
          FreePool(Caches[i].Cache);
          Caches[i].Cache = NULL;
-      } // if
-            Caches[i].CacheStart = 0;
-            Caches[i].CacheValid = FALSE;
-            Caches[i].Volume = NULL;
+      }
+      Caches[i].CacheStart = 0;
+      Caches[i].CacheValid = FALSE;
+      Caches[i].Volume = NULL;
    }
-   LastRead = -1;
+   LastRead = 0;
 } // VOID fsw_efi_clear_cache();
 
 /**
