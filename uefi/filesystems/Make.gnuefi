@@ -1,3 +1,4 @@
+.DEFAULT_GOAL := all
 # Experimental independent Format 0.19 EFI filesystem driver.
 # Single format authority: InfiltratorFS's existing include/ and src/ trees.
 SRCDIR = .
