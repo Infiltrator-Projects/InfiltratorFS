@@ -60,6 +60,7 @@ cmake --install "$build_dir" --prefix "$package_root/usr"
 install -d "$package_root/usr/share/doc/infiltratorfs"
 install -m 0644 LICENSE "$package_root/usr/share/doc/infiltratorfs/copyright"
 install -m 0644 README.md "$package_root/usr/share/doc/infiltratorfs/README.md"
+install -Dm644 docs/InfiltratorFS.pdf "$package_root/System/Resources/Documentation/InfiltratorFS.pdf"
 if [[ "$integration_enabled" = 1 ]]; then
     install -d "$package_root/usr/lib/infiltratorfs/os-integration"
     install -m 0755 "$integration_bundle/gnome-disks" "$package_root/usr/lib/infiltratorfs/os-integration/gnome-disks"
@@ -81,7 +82,7 @@ CLEAN="make KDIR=/lib/modules/\${kernelver}/build clean"
 EOF
 
 install -d "$package_root/DEBIAN"
-installed_size="$(du -sk "$package_root/usr" | cut -f1)"
+installed_size="$(du -sk "$package_root/usr" "$package_root/System" | awk '{ total += $1 } END { print total }')"
 desktop_depends=""
 desktop_recommends=", udisks2"
 desktop_identity="core-only"
@@ -140,6 +141,7 @@ dpkg-deb --contents "$dist_dir/$deb_name" > "$contents"
     exit 1
 }
 for required in \
+    'System/Resources/Documentation/InfiltratorFS.pdf$' \
     'usr/bin/infiltratorfs-manager$' \
     'usr/bin/infiltratorfs-theme$' \
     'usr/bin/infilfs-forensic$' \
@@ -191,6 +193,10 @@ for required in \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_ioctl.h$"; do
     grep -q "$required" "$contents"
 done
+test "$(head -c 5 docs/InfiltratorFS.pdf)" = '%PDF-'
+dpkg-deb --fsys-tarfile "$dist_dir/$deb_name" | \
+    tar -xOf - ./System/Resources/Documentation/InfiltratorFS.pdf | \
+    cmp - docs/InfiltratorFS.pdf
 test "$(dpkg-deb --field "$dist_dir/$deb_name" X-InfiltratorFS-Desktop-Integration)" = "$desktop_identity"
 if [[ "$integration_enabled" = 1 ]]; then
     for required in gnome-disks libbd_fs.so manifest; do

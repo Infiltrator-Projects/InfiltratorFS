@@ -42,6 +42,7 @@ sources of truth.
 
 ## Operational and specialist material
 
+- `USER-GUIDE.md` — user-oriented summary, rendered as `InfiltratorFS.pdf` and installed in `/System/Resources/Documentation/`. The README, format, roadmap and qualification documents remain authoritative.
 - `FILESYSTEM-PAPER-AUDIT-2026.md` — maintained research/quality cross-check
   against filesystem literature and its recorded Format 0.18 source baseline. It is evidence
   and design review material, not a normative format or qualification authority.

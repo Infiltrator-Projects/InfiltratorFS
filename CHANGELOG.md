@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.19.40 — 2026-11-05
+
+- Install the InfiltratorFS user guide directly as `/System/Resources/Documentation/InfiltratorFS.pdf` in generic and hardware-native Linux packages. Verify that the package contains the exact published guide.
+- Advance the Linux project and Windows INF version identity. This documentation change does not alter the filesystem format or kernel logic.
+
 ## 0.19.39 — 2026-10-24
 
 - Recover the historically published standalone InfiltratorFS UEFI filesystem adapter into InfiltratorFS, its correct owning repository. Retain the historical EFI protocol bridge, freestanding runtime and third-party source/licences.
