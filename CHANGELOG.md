@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.19.41 — 2026-11-08
+
+- Harden the source-owned Format 0.19 EFI filesystem reader against invalid BlockIo geometry, absent media and 64-bit last-block overflow before calculating partition size.
+- Prevent overflowing UTF-8 path allocation arithmetic in firmware-facing name translation. Reject corrupt volume metadata that advertises more free bytes than physical volume capacity.
+- Advance the immutable project and Windows INF version identities without changing the Format 0.19 on-disk layout, kernel module ABI or read-only EFI driver contract.
+
 ## 0.19.40 — 2026-11-05
 
 - Install the InfiltratorFS user guide directly as `/System/Resources/Documentation/InfiltratorFS.pdf` in generic and hardware-native Linux packages. Verify that the package contains the exact published guide.
