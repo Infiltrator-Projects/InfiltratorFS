@@ -170,6 +170,12 @@ static fsw_status_t infs_fsw_storage_get_size(void *opaque, uint64_t *size_bytes
     if (EFI_ERROR(status) || !block_io || !block_io->Media)
         return INFS_STATUS_IO_ERROR;
 
+    /* Validate firmware media geometry before arithmetic. LastBlock + 1
+     * must never wrap to zero and absent media is not an empty volume. */
+    if (!block_io->Media->MediaPresent)
+        return INFS_STATUS_IO_ERROR;
+    if ((UINT64)block_io->Media->LastBlock == ~(UINT64)0)
+        return INFS_STATUS_OVERFLOW;
     blocks = (UINT64)block_io->Media->LastBlock + 1ULL;
     block_size = (UINT64)block_io->Media->BlockSize;
     if (block_size == 0 || blocks > (~(UINT64)0) / block_size)
@@ -250,11 +256,14 @@ static fsw_status_t infs_fsw_child_path(struct fsw_infiltratorfs_dnode *parent,
     parent_len = infs_fsw_cstrlen(parent->path);
     name_len = (size_t)utf8.size;
     add_slash = parent_len > 0 && parent->path[parent_len - 1] != '/';
-    total = parent_len + (add_slash ? 1u : 0u) + name_len;
-    if (total >= INFS_PATH_MAX) {
+    /* Check each addend before forming the total: EFI-provided strings
+     * must never cause a wrapped size_t and undersized allocation. */
+    if (parent_len >= INFS_PATH_MAX ||
+        name_len >= INFS_PATH_MAX - parent_len - (size_t)add_slash) {
         fsw_strfree(&utf8);
         return FSW_UNSUPPORTED;
     }
+    total = parent_len + (size_t)add_slash + name_len;
 
     status = fsw_alloc((int)total + 1, (void **)&path);
     if (status) {
@@ -384,15 +393,22 @@ static void fsw_infiltratorfs_volume_free(struct fsw_infiltratorfs_volume *vol)
 static fsw_status_t fsw_infiltratorfs_volume_stat(struct fsw_infiltratorfs_volume *vol,
                                                   struct fsw_volume_stat *sb)
 {
-    uint64_t total = vol->infs.size_bytes;
-    uint64_t free_blocks = infs_le64_to_cpu(vol->infs.sb.free_blocks);
+    uint64_t total;
+    uint64_t free_blocks;
+    uint64_t free_bytes;
 
-    if (!sb)
+    if (!vol || !sb)
         return FSW_UNKNOWN_ERROR;
-    sb->total_bytes = (fsw_u64)total;
+    total = vol->infs.size_bytes;
+    free_blocks = infs_le64_to_cpu(vol->infs.sb.free_blocks);
     if (free_blocks > (~(uint64_t)0) / INFS_BLOCK_SIZE)
         return FSW_VOLUME_CORRUPTED;
-    sb->free_bytes = (fsw_u64)(free_blocks * INFS_BLOCK_SIZE);
+    free_bytes = free_blocks * INFS_BLOCK_SIZE;
+    /* Corrupt media must not advertise more free bytes than physical bytes. */
+    if (free_bytes > total)
+        return FSW_VOLUME_CORRUPTED;
+    sb->total_bytes = (fsw_u64)total;
+    sb->free_bytes = (fsw_u64)free_bytes;
     return FSW_SUCCESS;
 }
 
