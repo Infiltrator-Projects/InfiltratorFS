@@ -226,6 +226,28 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system) {
         st=check_file(root,L"\\boot\\vmlinuz",PROBE_KERNEL_SIZE,PROBE_KERNEL_HASH);
         if(st==EFI_SUCCESS){
             serial("KERNEL_READ_PASS\r\n");
+            /* A writable BlockIo test disk must never make this EFI reader
+             * writable. Check the protocol rejection, not a virtual-disk
+             * read-only flag hiding an accidental EFI write implementation. */
+            EFI_FILE_HANDLE denied=NULL;
+            EFI_STATUS denied_status=uefi_call_wrapper(
+                root->Open,5,root,&denied,L"\\boot\\vmlinuz",
+                EFI_FILE_MODE_READ|EFI_FILE_MODE_WRITE,0);
+            if(denied_status!=EFI_WRITE_PROTECTED || denied!=NULL) {
+                if(denied) uefi_call_wrapper(denied->Close,1,denied);
+                uefi_call_wrapper(root->Close,1,root);
+                finish(0,"INFS_EFI_WRITE_OPEN_REJECTION");
+                return EFI_ACCESS_DENIED;
+            }
+            UINTN write_size=1;
+            UINT8 sentinel=0xa5;
+            denied_status=uefi_call_wrapper(root->Write,3,root,&write_size,&sentinel);
+            if(denied_status!=EFI_WRITE_PROTECTED) {
+                uefi_call_wrapper(root->Close,1,root);
+                finish(0,"INFS_EFI_WRITE_REJECTION");
+                return EFI_ACCESS_DENIED;
+            }
+            serial("INFS_UEFI_READ_ONLY_PASS\r\n");
             st=check_file(root,L"\\boot\\initrd.img",PROBE_INITRD_SIZE,PROBE_INITRD_HASH);
             uefi_call_wrapper(root->Close,1,root);
             if(st==EFI_SUCCESS){finish(1,"INFS_UEFI_READ");return EFI_SUCCESS;}

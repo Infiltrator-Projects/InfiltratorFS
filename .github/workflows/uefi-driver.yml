@@ -119,18 +119,28 @@ jobs:
           test -r "$code"
           test -r "$vars"
           cp "$vars" uefi-test-out/ovmf-vars.fd
+          image_before=$(sha256sum uefi-test-out/infiltratorfs.raw | cut -d ' ' -f1)
           set +e
           timeout 210 qemu-system-x86_64 -machine q35,accel=tcg -m 1024 \
             -drive if=pflash,format=raw,readonly=on,file="$code" \
             -drive if=pflash,format=raw,file=uefi-test-out/ovmf-vars.fd \
             -drive if=virtio,format=raw,file=fat:rw:uefi-test-out/fat \
-            -drive if=virtio,format=raw,readonly=on,file=uefi-test-out/infiltratorfs.raw \
+            -drive if=virtio,format=raw,file=uefi-test-out/infiltratorfs.raw \
             -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
             -display none -serial file:uefi-test-out/serial.log \
             -monitor none -net none -no-reboot
           status=$?
           set -e
           cat uefi-test-out/serial.log || true
+          image_after=$(sha256sum uefi-test-out/infiltratorfs.raw | cut -d ' ' -f1)
+          test "$image_before" = "$image_after" || {
+            echo 'EFI driver modified an InfiltratorFS disk before the kernel booted'
+            exit 1
+          }
+          grep -Fq 'INFS_UEFI_READ_ONLY_PASS' uefi-test-out/serial.log || {
+            echo 'EFI filesystem did not reject write operations'
+            exit 1
+          }
           if [ "$status" -ne 1 ] || ! grep -Fq 'INFS_UEFI_READ PASS' uefi-test-out/serial.log; then
               echo "OVMF EFI driver read test failed (QEMU exit code $status)"
               exit 1
