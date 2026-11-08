@@ -13,7 +13,7 @@ gnome_disks_patch="$repo_root/packaging/gnome-disks-infiltratorfs.patch"
 mkfs_alias="$repo_root/tools/mkfs.infiltratorfs"
 bootstrap="$repo_root/support/installer/bootstrap.sh"
 os_helper="$repo_root/packaging/infiltratorfs-os-integration"
-mint_guard="$repo_root/packaging/patch-mintstick.py"
+mint_guard="$repo_root/packaging/patch-mintstick.cpp"
 nemo_action="$repo_root/packaging/infiltratorfs-format-partition.nemo_action"
 noble_libblockdev_patch="$repo_root/packaging/libblockdev-3.1-infiltratorfs.patch"
 noble_gnome_patch="$repo_root/packaging/gnome-disks-46-infiltratorfs.patch"
@@ -39,15 +39,9 @@ grep -Eq '^ID_FS_UUID=[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 # Standalone mkfs.infilfs and the portable formatter must advertise the same
 # current Format 0.19 compression capability. Native mounted IAC1 is gated
 # by incompatible feature bit 0x1000, so assert it from the actual checkpoint.
-python3 - "$image" <<'PY'
-import struct
-import sys
-
-with open(sys.argv[1], "rb") as image:
-    checkpoint = image.read(4096)
-flags = struct.unpack_from("<Q", checkpoint, 148)[0]
-assert flags & 0x1000, hex(flags)
-PY
+c++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror \
+    "$repo_root/tests/desktop-integration-feature.cpp" -o "$tmp/check-feature"
+"$tmp/check-feature" "$image"
 
 truncate -s 64M "$plain"
 if "$inspect" --udev "$plain" > "$tmp/plain-probe.txt" 2>/dev/null; then
@@ -105,12 +99,9 @@ bash -n "$os_helper"
 bash -n "$noble_bundle_builder"
 git apply --numstat "$noble_libblockdev_patch" >/dev/null
 git apply --numstat "$noble_gnome_patch" >/dev/null
-python3 - "$mint_guard" <<'PY'
-import ast
-import pathlib
-import sys
-ast.parse(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-PY
+# Compile the retired guard as C++, proving the fail-closed contract is native.
+c++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror \
+    "$mint_guard" -o "$tmp/mint-guard"
 grep -Fq 'dpkg-divert --package "$OWNER" --add --rename' "$os_helper"
 grep -Fq 'dpkg-divert --package "$OWNER" --remove --rename' "$os_helper"
 grep -Fq 'restart_udisks' "$os_helper"
@@ -156,7 +147,7 @@ if grep -Fq 'python3 "$MINT_PATCHER"' "$os_helper"; then
     echo 'desktop-integration: Mintstick patching unexpectedly re-enabled' >&2
     exit 1
 fi
-if python3 "$mint_guard" /dev/null /dev/null /dev/null /dev/null 2>"$tmp/mint-guard.err"; then
+if "$tmp/mint-guard" /dev/null /dev/null /dev/null /dev/null 2>"$tmp/mint-guard.err"; then
     echo 'desktop-integration: retired Mintstick patcher unexpectedly succeeded' >&2
     exit 1
 fi

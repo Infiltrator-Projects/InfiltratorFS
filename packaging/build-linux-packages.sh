@@ -212,7 +212,133 @@ if grep -q 'usr/bin/infilfs-fuse$' "$contents"; then
     echo 'Native release package unexpectedly contains infilfs-fuse.' >&2
     exit 1
 fi
-if grep -q 'usr/lib/infiltratorfs/patch-mintstick.py$' "$contents"; then
+if grep -Eq 'usr/lib/infiltratorfs/patch-mintstick(\.py|\.cpp)?
+    echo 'Release package must not install the retired whole-device Mintstick patcher.' >&2
+    exit 1
+fi
+if grep -q 'usr/share/nemo/actions/infiltratorfs-format-partition.nemo_action$' "$contents"; then
+    echo 'Release package must not install a second visible Nemo Format action.' >&2
+    exit 1
+fi
+test "$(dpkg-deb --field "$dist_dir/$deb_name" Version)" = "$package_version"
+depends="$(dpkg-deb --field "$dist_dir/$deb_name" Depends)"
+if [[ "$integration_enabled" = 1 ]]; then
+    for dependency in udisks2 gnome-disk-utility libblockdev-fs3; do
+        grep -Eq "(^|, )${dependency}([ ,|]|$)" <<<"$depends" || {
+            echo "Integrated package must depend on distro-owned ${dependency}." >&2
+            exit 1
+        }
+    done
+fi
+for dependency in dkms initramfs-tools kmod polkitd pkexec util-linux xdg-utils fontconfig libgtk-3-0t64 libglib2.0-0t64; do
+    grep -Eq "(^|, )${dependency}([ ,|]|$)" <<<"$depends"
+done
+if grep -Eq '(^|, )python3([ ,]|$)|python3-gi|gir1\.2-gtk-3\.0' <<<"$depends"; then
+    echo 'Native release package must not depend on Python/PyGObject for its Manager.' >&2
+    exit 1
+fi
+if grep -Eqi '(^|[, ])(fuse3|libfuse3-3)([, ]|$)' <<<"$depends"; then
+    echo 'Native release package unexpectedly depends on FUSE.' >&2
+    exit 1
+fi
+preinst_text="$(dpkg-deb --ctrl-tarfile "$dist_dir/$deb_name" | tar -xOf - ./preinst)"
+grep -Fq 'root_fstype="$(findmnt -n -o FSTYPE / 2>/dev/null || true)"' <<<"$preinst_text"
+grep -Fq 'umount -a -t infiltratorfs' <<<"$preinst_text"
+grep -Fq 'live root remains mounted' <<<"$preinst_text"
+grep -Fq 'clean automatic unmount complete' <<<"$preinst_text"
+grep -Fq 'volume is still busy' <<<"$preinst_text"
+# preinst runs before the replacement is unpacked, built or qualified. A
+# failed package transaction must not first destroy its working DKMS fallback.
+grep -Fq 'Keep the previous DKMS registration' <<<"$preinst_text"
+if grep -Eq 'dkms[[:space:]]+remove|rm[[:space:]]+-rf' <<<"$preinst_text"; then
+    echo 'preinst destroys previous DKMS state before replacement qualification.' >&2
+    exit 1
+fi
+if awk '
+    /^[[:space:]]*umount[[:space:]]/ {
+        for (field = 2; field <= NF; ++field)
+            if ($field ~ /^-[^-]*[fl]/ || $field == "--force" ||
+                $field == "--lazy")
+                unsafe = 1
+    }
+    END { exit unsafe ? 0 : 1 }
+' <<<"$preinst_text"; then
+    echo 'Debian preinst must never force or lazily detach mounted InfiltratorFS volumes.' >&2
+    exit 1
+fi
+postinst_text="$(dpkg-deb --ctrl-tarfile "$dist_dir/$deb_name" | tar -xOf - ./postinst)"
+grep -Fq 'update-initramfs -u -k "$kernel"' <<<"$postinst_text"
+grep -Fq 'update-initramfs -c -k "$kernel"' <<<"$postinst_text"
+grep -Fq 'offline/chroot root target staged' <<<"$postinst_text"
+grep -Fq 'root-volume upgrade staged safely' <<<"$postinst_text"
+grep -Fq 'modprobe --dry-run --verbose "$module"' <<<"$postinst_text"
+grep -Fq 'module loading is administratively disabled' <<<"$postinst_text"
+grep -Fq 'infiltratorfs-os-integration install' <<<"$postinst_text"
+prerm_text="$(dpkg-deb --ctrl-tarfile "$dist_dir/$deb_name" | tar -xOf - ./prerm)"
+grep -Fq 'refusing to remove the filesystem package while / is mounted as InfiltratorFS' <<<"$prerm_text"
+grep -Fq 'infiltratorfs-os-integration remove' <<<"$prerm_text"
+rm -f "$contents"
+
+if [[ "$emit_run" = 0 ]]; then
+    printf 'Built InfiltratorFS Debian package:\n  %s\n' "$deb_name"
+    exit 0
+fi
+
+# The .run is deliberately a small text-only, source-fetching bootstrap.
+# Git commit, recursive gitlinks and external desktop assets are fixed at
+# package-generation time. Neither source nor executable extras are attached.
+command -v git >/dev/null 2>&1 || {
+    echo 'git is required to pin native installer source.' >&2
+    exit 1
+}
+source_sha="$(git rev-parse --verify HEAD)"
+[[ "$source_sha" =~ ^[0-9a-f]{40}$ ]] || {
+    echo 'Native installer source must be a full Git commit identity.' >&2
+    exit 1
+}
+desktop_source_tag="$(head -n 1 .github/desktop-integration-release | tr -d '[:space:]')"
+[[ "$desktop_source_tag" =~ ^desktop-integration-ubuntu24\.04-[A-Za-z0-9.+_-]+$ ]] || {
+    echo 'The pinned desktop integration release identity is invalid.' >&2
+    exit 1
+}
+desktop_tag=""
+gnome_disks_sha=""
+libbd_fs_sha=""
+manifest_sha=""
+if [[ "$integration_enabled" = 1 ]]; then
+    desktop_tag="$desktop_source_tag"
+    gnome_disks_sha="$(sha256sum "$integration_bundle/gnome-disks" | cut -d' ' -f1)"
+    libbd_fs_sha="$(sha256sum "$integration_bundle/libbd_fs.so" | cut -d' ' -f1)"
+    manifest_sha="$(sha256sum "$integration_bundle/manifest" | cut -d' ' -f1)"
+fi
+template="support/installer/native-release.run.in"
+test -s "$template"
+sed -e "s/@SOURCE_SHA@/$source_sha/g" \
+    -e "s/@RELEASE_VERSION@/$version/g" \
+    -e "s/@DESKTOP_SOURCE_TAG@/$desktop_source_tag/g" \
+    -e "s/@DESKTOP_TAG@/$desktop_tag/g" \
+    -e "s/@GNOME_DISKS_SHA256@/$gnome_disks_sha/g" \
+    -e "s/@LIBBD_FS_SHA256@/$libbd_fs_sha/g" \
+    -e "s/@MANIFEST_SHA256@/$manifest_sha/g" \
+    "$template" > "$dist_dir/$run_name"
+chmod 0755 "$dist_dir/$run_name"
+bash -n "$dist_dir/$run_name"
+"$dist_dir/$run_name" --verify
+"$dist_dir/$run_name" --dry-run > "$dist_dir/native-installer-dry-run.txt"
+grep -Fq 'Dry run only; no packages will be installed' "$dist_dir/native-installer-dry-run.txt"
+grep -Fq 'Native build commands:' "$dist_dir/native-installer-dry-run.txt"
+grep -Fq 'Native kernel module commands:' "$dist_dir/native-installer-dry-run.txt"
+grep -Fq 'The completed installation is Debian-managed as infiltratorfs' "$dist_dir/native-installer-dry-run.txt"
+bash tests/native-installer-source-policy.sh "$dist_dir/$run_name" "$source_sha" "$version"
+rm -f "$dist_dir/native-installer-dry-run.txt"
+
+(
+    cd "$dist_dir"
+    sha256sum "$deb_name" > "$deb_name.sha256"
+    sha256sum "$run_name" > "$run_name.sha256"
+)
+printf 'Built native Linux release packages:\n  %s\n  %s\n' "$deb_name" "$run_name"
+ "$contents"; then
     echo 'Release package must not install the retired whole-device Mintstick patcher.' >&2
     exit 1
 fi
