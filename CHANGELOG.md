@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.19.42 — 2026-11-08
+
+- Correct the EFI reader's internal host callback ABI to use the native C calling convention while leaving firmware protocol entry points unchanged.
+- Reject disk block-offset overflow and invalid disk-read inputs; return the correct FSW status so firmware I/O failures are propagated reliably.
+- Advance the immutable release identity after 0.19.41 was published, synchronising CMake and the Windows INF without changing Format 0.19 on-disk structures or the native kernel module ABI.
+
 ## 0.19.41 — 2026-11-08
 
 - Harden the source-owned Format 0.19 EFI filesystem reader against invalid BlockIo geometry, absent media and 64-bit last-block overflow before calculating partition size.
