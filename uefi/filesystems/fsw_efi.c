@@ -210,6 +210,19 @@ REFIND_EFI_COMPONENT_NAME_PROTOCOL fsw_efi_ComponentName_table = {
 
 /* FSW callbacks are called by portable C code using the native C ABI, NOT
  * by UEFI firmware. They must never carry EFIAPI/ms_abi on x86-64. */
+typedef void (*infs_fsw_native_blocksize_fn)(struct fsw_volume *,
+                                             fsw_u32, fsw_u32, fsw_u32, fsw_u32);
+typedef fsw_status_t (*infs_fsw_native_blockread_fn)(struct fsw_volume *,
+                                                     fsw_u64, void *);
+_Static_assert(__builtin_types_compatible_p(
+                   __typeof__(((struct fsw_host_table *)0)->change_blocksize),
+                   infs_fsw_native_blocksize_fn),
+               "FSW change_blocksize callback must use native C ABI");
+_Static_assert(__builtin_types_compatible_p(
+                   __typeof__(((struct fsw_host_table *)0)->read_block),
+                   infs_fsw_native_blockread_fn),
+               "FSW read_block callback must use native C ABI");
+
 struct fsw_host_table   fsw_efi_host_table = {
     FSW_STRING_TYPE_UTF16,
 
@@ -578,13 +591,20 @@ void fsw_efi_change_blocksize(struct fsw_volume *vol,
 
 fsw_status_t fsw_efi_read_block(struct fsw_volume *vol, fsw_u64 phys_bno, void *buffer) {
    int              i, ReadCache = -1;
-   FSW_VOLUME_DATA  *Volume = (FSW_VOLUME_DATA *)vol->host_data;
+   FSW_VOLUME_DATA  *Volume = vol ? (FSW_VOLUME_DATA *)vol->host_data : NULL;
    EFI_STATUS       Status = EFI_SUCCESS;
    BOOLEAN          ReadOneBlock = FALSE;
-   UINT64           StartRead = (UINT64) phys_bno * (UINT64) vol->phys_blocksize;
+   UINT64           StartRead;
 
-   if (buffer == NULL)
-      return (fsw_status_t) EFI_BAD_BUFFER_SIZE;
+   if (Volume == NULL || Volume->DiskIo == NULL)
+      return FSW_IO_ERROR;
+   /* Never wrap an untrusted disk block index into another valid offset. */
+   if (buffer == NULL || vol->phys_blocksize == 0 ||
+       phys_bno > (~(UINT64)0) / (UINT64)vol->phys_blocksize) {
+      Volume->LastIOStatus = EFI_INVALID_PARAMETER;
+      return FSW_IO_ERROR;
+   }
+   StartRead = (UINT64)phys_bno * (UINT64)vol->phys_blocksize;
 
    /* Initial state must never FreePool an unowned pointer. GNU-EFI PE
     * section relocation can leave the historical cache globals with stale
@@ -604,8 +624,10 @@ fsw_status_t fsw_efi_read_block(struct fsw_volume *vol, fsw_u64 phys_bno, void *
    do {
       if ((Caches[i].Volume == Volume) &&
           (Caches[i].CacheValid == TRUE) &&
+          (vol->phys_blocksize <= CACHE_SIZE) &&
           (StartRead >= Caches[i].CacheStart) &&
-          ((StartRead + vol->phys_blocksize) <= (Caches[i].CacheStart + CACHE_SIZE))) {
+          ((StartRead - Caches[i].CacheStart) <=
+           (CACHE_SIZE - vol->phys_blocksize))) {
          ReadCache = i;
       }
       i++;
@@ -655,13 +677,13 @@ fsw_status_t fsw_efi_read_block(struct fsw_volume *vol, fsw_u64 phys_bno, void *
 
    if (ReadOneBlock) { // Something's failed, so try a simple disk read of one block....
       Status = refit_call5_wrapper(Volume->DiskIo->ReadDisk, Volume->DiskIo, Volume->MediaId,
-                                   phys_bno * vol->phys_blocksize,
+                                   StartRead,
                                    (UINTN) vol->phys_blocksize,
                                    (VOID*) buffer);
    }
    Volume->LastIOStatus = Status;
 
-   return Status;
+   return EFI_ERROR(Status) ? FSW_IO_ERROR : FSW_SUCCESS;
 } // fsw_status_t *fsw_efi_read_block()
 
 /**

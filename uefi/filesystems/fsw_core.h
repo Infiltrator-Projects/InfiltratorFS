@@ -339,10 +339,13 @@ struct fsw_host_table
 {
     int         native_string_type; //!< String type used by the host environment
 
-    void         EFIAPI (*change_blocksize)(struct fsw_volume *vol,
+    /* The firmware ABI belongs only to EFI-protocol entry points.
+     * FSW calls this table from ordinary C; adding EFIAPI here gives
+     * its callbacks a different x86-64 argument-register convention. */
+    void         (*change_blocksize)(struct fsw_volume *vol,
                                      fsw_u32 old_phys_blocksize, fsw_u32 old_log_blocksize,
                                      fsw_u32 new_phys_blocksize, fsw_u32 new_log_blocksize);
-    fsw_status_t EFIAPI (*read_block)(struct fsw_volume *vol, fsw_u64 phys_bno, void *buffer);
+    fsw_status_t (*read_block)(struct fsw_volume *vol, fsw_u64 phys_bno, void *buffer);
 };
 
 /**
