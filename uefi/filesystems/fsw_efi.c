@@ -392,9 +392,25 @@ EFI_STATUS EFIAPI fsw_efi_DriverBinding_Start(IN REFIND_EFI_DRIVER_BINDING_PROTO
         Print(L"Fsw ERROR: OpenProtocol(DiskIo) returned %x\n", Status);
         return Status;
     }
+    if (BlockIo == NULL || BlockIo->Media == NULL) {
+        refit_call4_wrapper(BS->CloseProtocol, ControllerHandle,
+                           &gMyEfiDiskIoProtocolGuid,
+                           This->DriverBindingHandle,
+                           ControllerHandle);
+        return EFI_DEVICE_ERROR;
+    }
 
     // allocate volume structure
     Volume = AllocateZeroPool(sizeof(FSW_VOLUME_DATA));
+    if (Volume == NULL) {
+        /* DiskIo was opened BY_DRIVER: release it when allocation fails. */
+        refit_call4_wrapper(BS->CloseProtocol, ControllerHandle,
+                           &gMyEfiDiskIoProtocolGuid,
+                           This->DriverBindingHandle,
+                           ControllerHandle);
+        infs_fsw_uefi_trace("INFS_BIND_OUT_OF_MEMORY\r\n");
+        return EFI_OUT_OF_RESOURCES;
+    }
     Volume->Signature       = FSW_VOLUME_DATA_SIGNATURE;
     Volume->Handle          = ControllerHandle;
     Volume->DiskIo          = DiskIo;
@@ -869,6 +885,10 @@ EFI_STATUS fsw_efi_dnode_to_FileHandle(IN struct fsw_dnode *dno,
     EFI_STATUS          Status;
     FSW_FILE_DATA       *File;
 
+    if (dno == NULL || NewFileHandle == NULL)
+        return EFI_INVALID_PARAMETER;
+    *NewFileHandle = NULL;
+
     // make sure the dnode has complete info
     Status = fsw_efi_map_status(fsw_dnode_fill(dno), (FSW_VOLUME_DATA *)dno->vol->host_data);
     if (EFI_ERROR(Status))
@@ -880,6 +900,8 @@ EFI_STATUS fsw_efi_dnode_to_FileHandle(IN struct fsw_dnode *dno,
 
     // allocate file structure
     File = AllocateZeroPool(sizeof(FSW_FILE_DATA));
+    if (File == NULL)
+        return EFI_OUT_OF_RESOURCES;
     File->Signature = FSW_FILE_DATA_SIGNATURE;
     if (dno->type == FSW_DNODE_TYPE_FILE)
         File->Type = FSW_EFI_FILE_TYPE_FILE;
@@ -921,6 +943,12 @@ EFI_STATUS fsw_efi_file_read(IN FSW_FILE_DATA *File,
 {
     EFI_STATUS          Status;
     fsw_u32             buffer_size;
+
+    if (BufferSize == NULL || (Buffer == NULL && *BufferSize != 0))
+        return EFI_INVALID_PARAMETER;
+    /* FSW uses a 32-bit byte count. Do not truncate a larger EFI UINTN. */
+    if (*BufferSize > 0xffffffffULL)
+        return EFI_BAD_BUFFER_SIZE;
 
 #if DEBUG_LEVEL
     Print(L"fsw_efi_file_read %d bytes\n", *BufferSize);
