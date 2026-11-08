@@ -1,6 +1,14 @@
 name: Experimental Format 0.19 EFI filesystem reader
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'uefi/**'
+      - 'include/infilfs/**'
+      - 'src/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/uefi-driver.yml'
   pull_request:
     paths:
       - 'uefi/**'
