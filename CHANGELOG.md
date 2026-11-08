@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.19.43 — 2026-11-08
+
+- Repair the native Linux package rejection guard for retired Mintstick patchers: close the shell regular expression and restore its file operand and `then`, so Debian packaging and native defragmentation policy checks parse correctly.
+- Advance immutable source and Windows INF release identities beyond published 0.19.42 without changing Format 0.19 on-disk structures, the Linux module ABI, or the EFI driver interface.
+
 ## 0.19.42 — 2026-11-08
 
 - Correct the EFI reader's internal host callback ABI to use the native C calling convention while leaving firmware protocol entry points unchanged.

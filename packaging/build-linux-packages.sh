@@ -212,7 +212,7 @@ if grep -q 'usr/bin/infilfs-fuse$' "$contents"; then
     echo 'Native release package unexpectedly contains infilfs-fuse.' >&2
     exit 1
 fi
-if grep -Eq 'usr/lib/infiltratorfs/patch-mintstick(\.py|\.cpp)?
+if grep -Eq 'usr/lib/infiltratorfs/patch-mintstick(\.py|\.cpp)?$' "$contents"; then
     echo 'Release package must not install the retired whole-device Mintstick patcher.' >&2
     exit 1
 fi
