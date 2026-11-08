@@ -70,4 +70,10 @@ printf 'Native parallel-allocation policy guard passed.\n'
 grep -Fq 'static u64 infilfs_parallel_first_busy_locked(' "$allocator"
 grep -Fq 'candidate = blocked + 1u;' "$allocator"
 grep -Fq 'u64 blocked = infilfs_parallel_first_busy_locked(' "$allocator"
-python3 "$root/tests/native-reservation-skip-model.py"
+test ! -e "$root/tests/native-reservation-skip-model.py"
+native_model_dir=$(mktemp -d "${TMPDIR:-/tmp}/infiltratorfs-reservation-model.XXXXXX")
+trap 'rm -rf -- "$native_model_dir"' EXIT
+c++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror \
+    "$root/tests/native-reservation-skip-model.cpp" \
+    -o "$native_model_dir/reservation-model"
+"$native_model_dir/reservation-model"
