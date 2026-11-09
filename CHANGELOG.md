@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.19.44 — 2026-11-10
+
+- Bound name folding to the on-disk filename limit so a malformed directory-tree lookup cannot overflow its stack digest buffer.
+- Advance immutable source and Windows driver release identities without altering Format 0.19 or the kernel module interface.
+
 ## 0.19.43 — 2026-11-08
 
 - Repair the native Linux package rejection guard for retired Mintstick patchers: close the shell regular expression and restore its file operand and `then`, so Debian packaging and native defragmentation policy checks parse correctly.
