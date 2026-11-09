@@ -71,6 +71,11 @@ static void namespace_name_digest(
     const struct infs_volume *vol, const uint8_t *name, size_t length,
     uint8_t digest[32])
 {
+    /* A malformed or unvalidated name must never overflow the fold buffer. */
+    if (!name || !digest || length == 0 || length > INFS_NAME_MAX) {
+        if (digest) memset(digest, 0, 32);
+        return;
+    }
     if (!casefold_names_enabled(vol)) {
         infs_sha256(name, length, digest);
         return;
