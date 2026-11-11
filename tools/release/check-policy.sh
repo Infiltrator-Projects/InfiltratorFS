@@ -79,7 +79,7 @@ bash tests/documentation-authority-policy.sh .
 # qualified source identity, not ambient mutable infrastructure. The same guard
 # also enforces that mounted-native evidence fails closed instead of silently
 # degrading to compile-only evidence when the running kernel cannot be built.
-python3 tests/dependency-identity-policy.py .
+bash tests/native-dependency-identity-policy.sh .
 
 # An unpublished semantic version remains a release candidate across every
 # justified follow-up commit. The candidate workflow therefore runs on every
