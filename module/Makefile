@@ -5,7 +5,7 @@ OBJCOPY ?= objcopy
 ROOT := ..
 OUT ?= $(ROOT)/build-v2
 COMMON := $(ROOT)/src/infiltratr-common
-# Exact V2 header from Libraries commit b50f493d789b840edea40ea09978d94d751533f8.
+# Exact V2 header from Libraries commit 489388567c436f70754db938ebdc4a07c10b7da0.
 INCLUDES := -Icommon -I$(ROOT)/include -I$(COMMON)/include -I$(ROOT)/uefi/filesystems/lz4
 BASE := -std=c11 -O2 -fPIC -fvisibility=hidden -ffreestanding -fno-builtin \
         -fno-stack-protector -fno-tree-loop-distribute-patterns -fno-tree-vectorize \
@@ -21,7 +21,7 @@ SOURCES := common_v2.c $(ROOT)/src/checksum.c $(ROOT)/src/locator.c \
 .PHONY: all clean verify-common
 all: verify-common $(OUT)/InfiltratorFS.so
 verify-common:
-	@printf '%s  %s\n' 692fa7bc005d855b5268dd66b952a73b76e084027ef13cf992e205a33c6930bd common/infiltratr/filesystem_module_v2.h | sha256sum -c - >/dev/null
+	@printf '%s  %s\n' e229e51c6d916f187540bb1d771aa8c007d66ad2c237557b39b2997a7bf0082b common/infiltratr/filesystem_module_v2.h | sha256sum -c - >/dev/null
 $(OUT):
 	mkdir -p $@
 # Unused floating-point helpers are discarded by --gc-sections; verify the
