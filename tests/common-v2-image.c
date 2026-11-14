@@ -26,7 +26,7 @@ static int entropy(void *opaque,void *out,uint32_t length) {
 }
 #define CHECK(x) do { if (!(x)) { fprintf(stderr,"FAIL line %d: %s\n",__LINE__,#x); return 1; } } while (0)
 int main(int argc,char **argv) {
-    CHECK(argc==4);
+    CHECK(argc==5);
     FILE *f=fopen(argv[2],"rb"); CHECK(f);
     CHECK(fseek(f,0,SEEK_END)==0); long size=ftell(f); CHECK(size>0); rewind(f);
     struct disk disk={.data=(unsigned char *)malloc((size_t)size),.size=(size_t)size,
@@ -36,6 +36,7 @@ int main(int argc,char **argv) {
     void *d=dlopen(argv[1],RTLD_NOW|RTLD_LOCAL); if (!d) { fprintf(stderr,"%s\n",dlerror()); return 1; }
     IfsFsModuleApiEntryV2 entry; *(void **)(&entry)=dlsym(d,IFS_FS_COMMON_EXPORT_V2); CHECK(entry);
     const IfsFsModuleApiV2 *api=entry(); CHECK(ifs_fs_api_v2_valid(api,"infiltratorfs"));
+    CHECK((api->runtime_profiles & (uint32_t)strtoul(argv[4],NULL,10))!=0);
     const IfsFsCoreOpsV2 *core=(const void *)ifs_fs_group_v2(api,IFS_FS_GROUP_CORE);
     IfsFsHostRuntimeV2 host={.abi_version=IFS_FS_HOST_ABI_V2,.structure_bytes=sizeof(host),
       .capabilities=IFS_FS_HOST_READ_ONLY,.volume_bytes=disk.size,.logical_sector_bytes=disk.sector,

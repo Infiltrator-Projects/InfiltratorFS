@@ -6,7 +6,8 @@ cd "$root"
 work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
 make -C module OUT="$work/module"
-module="$work/module/InfiltratorFS.so"
+module="$work/module/firmware.so"
+carrier="$work/module/InfiltratorFS.so"
 readelf -d "$module" > "$work/dynamic"
 if grep -Eq '\((NEEDED|TEXTREL)\)' "$work/dynamic"; then
     echo 'Firmware module must not depend on a host library or text relocation.' >&2; exit 1
@@ -19,6 +20,11 @@ objdump -d "$module" > "$work/disassembly"
 if grep -Eq '%(xmm|ymm|zmm|st\()' "$work/disassembly"; then
     echo 'Firmware module contains vector or floating-point registers.' >&2; exit 1
 fi
+objcopy --dump-section .infiltrator_boot="$work/embedded.so" "$carrier"
+cmp "$module" "$work/embedded.so"
+if readelf -d "$carrier" | grep -iE 'NEEDED.*fuse'; then
+    echo 'The hosted module must not depend on FUSE.' >&2; exit 1
+fi
 cc -std=c11 -O2 -ffunction-sections -fdata-sections \
     -Iinclude -Isrc/infiltratr-common/include -Iuefi/filesystems/lz4 \
     -Wl,--gc-sections tests/format-019-image.c \
@@ -29,5 +35,7 @@ cc -std=c11 -O2 -ffunction-sections -fdata-sections \
 "$work/make-image" --emit-populated-image "$work/populated.img"
 cc -std=c11 -Wall -Wextra -Werror -Imodule/common -Isrc/infiltratr-common/include \
     tests/common-v2-image.c -ldl -o "$work/test-image"
-"$work/test-image" "$module" "$work/populated.img" 512
-"$work/test-image" "$module" "$work/populated.img" 4096
+for sector in 512 4096; do
+    "$work/test-image" "$module" "$work/populated.img" "$sector" 8
+    "$work/test-image" "$carrier" "$work/populated.img" "$sector" 1
+done
