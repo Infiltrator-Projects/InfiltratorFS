@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.19.45 — 2026-11-14
+
+- Develop the Common V2 filesystem module using the portable InfiltratorFS engine, including bounded write support and disposable-image tests.
+- Keep publication paused until the V2 module, firmware upgrade and independent recovery are qualified.
+
 ## 0.19.44 — 2026-11-10
 
 - Bound name folding to the on-disk filename limit so a malformed directory-tree lookup cannot overflow its stack digest buffer.

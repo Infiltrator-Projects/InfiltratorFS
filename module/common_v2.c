@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /* Common V2 adapter over the InfiltratorFS portable format engine.
- * This interface exposes read-only access. Its firmware profile requires
- * the matching freestanding build and independent firmware qualification. */
+ * Writable access requires exclusive durable host I/O, a clock and entropy. */
 #include <infiltratr/filesystem_module_v2.h>
 #include "infilfs/fs.h"
 #include "infilfs/endian.h"
@@ -30,6 +29,7 @@ static int map_status(infs_status status)
     case INFS_STATUS_BUSY: return IFS_FS_BUSY;
     case INFS_STATUS_READ_ONLY: return IFS_FS_ACCESS;
     case INFS_STATUS_NOT_SUPPORTED: return IFS_FS_UNSUPPORTED;
+    case INFS_STATUS_ALREADY_EXISTS: return IFS_FS_EXISTS;
     default: return IFS_FS_INVALID;
     }
 }
@@ -53,8 +53,44 @@ static infs_status storage_size(void *opaque, uint64_t *bytes, int *is_device)
     *bytes = host->volume_bytes; *is_device = 1;
     return INFS_STATUS_OK;
 }
+static infs_status storage_write(void *opaque, uint64_t offset, const void *buffer, size_t length)
+{
+    const IfsFsHostRuntimeV2 *host = opaque;
+    const unsigned char *source = buffer;
+    if (length && !buffer) return INFS_STATUS_INVALID_ARGUMENT;
+    while (length) {
+        uint32_t chunk = length > UINT32_MAX ? UINT32_MAX : (uint32_t)length;
+        int result = ifs_fs_host_write_bytes_v2(host, offset, source, chunk);
+        if (result != IFS_FS_OK) return INFS_STATUS_IO_ERROR;
+        offset += chunk; source += chunk; length -= chunk;
+    }
+    return INFS_STATUS_OK;
+}
+static infs_status storage_flush(void *opaque)
+{
+    const IfsFsHostRuntimeV2 *host = opaque;
+    return host && host->flush && !host->flush(host->context) ? INFS_STATUS_OK : INFS_STATUS_IO_ERROR;
+}
+static infs_status storage_random(void *opaque, void *buffer, size_t length)
+{
+    const IfsFsHostRuntimeV2 *host = opaque;
+    if (length > UINT32_MAX) return INFS_STATUS_INVALID_ARGUMENT;
+    return ifs_fs_host_random_bytes_v2(host, buffer, (uint32_t)length) == IFS_FS_OK ?
+        INFS_STATUS_OK : INFS_STATUS_IO_ERROR;
+}
+static infs_status storage_time(void *opaque, struct infs_timestamp *time)
+{
+    const IfsFsHostRuntimeV2 *host = opaque;
+    if (!host || !time || !(host->capabilities & IFS_FS_HOST_CLOCK) || !host->realtime_ns)
+        return INFS_STATUS_INVALID_ARGUMENT;
+    uint64_t now = host->realtime_ns(host->context);
+    time->seconds = (int64_t)(now / UINT64_C(1000000000));
+    time->nanoseconds = (uint32_t)(now % UINT64_C(1000000000));
+    return INFS_STATUS_OK;
+}
 static const struct infs_storage_ops storage_ops = {
-    .read_at = storage_read, .get_size = storage_size
+    .read_at = storage_read, .write_at = storage_write, .flush = storage_flush,
+    .get_size = storage_size, .random_bytes = storage_random, .current_time = storage_time
 };
 static int valid_path(const char *path)
 {
@@ -97,12 +133,18 @@ static int mount_volume(const IfsFsHostRuntimeV2 *host, void **out, IfsFsVolumeI
     *out = NULL; USE_HOST(host);
     int result = probe(host, &variant);
     if (result != IFS_FS_OK) return result;
-    if (!(host->capabilities & IFS_FS_HOST_READ_ONLY)) return IFS_FS_ACCESS;
+    int writable = !(host->capabilities & IFS_FS_HOST_READ_ONLY);
+    if (writable) {
+        unsigned char entropy;
+        if (!(host->capabilities & IFS_FS_HOST_CLOCK) ||
+            ifs_fs_host_random_bytes_v2(host, &entropy, 1) != IFS_FS_OK)
+            return IFS_FS_UNSUPPORTED;
+    }
     struct v2_volume *v = host->allocate(host->context, sizeof(*v));
     if (!v) return IFS_FS_NO_MEMORY;
     memset(v, 0, sizeof(*v)); v->host = host;
     struct infs_storage storage = { &storage_ops, (void *)host };
-    infs_status status = infs_volume_open_storage(&v->volume, &storage, 0);
+    infs_status status = infs_volume_open_storage(&v->volume, &storage, writable);
     if (status != INFS_STATUS_OK) { host->release(host->context, v); return map_status(status); }
     *info = (IfsFsVolumeInfoV2){.structure_bytes = sizeof(*info), .variant = variant,
         .max_name_bytes = INFS_NAME_MAX, .block_bytes = INFS_BLOCK_SIZE,
@@ -165,6 +207,64 @@ static int read_file(void *volume, const char *path, uint64_t offset, void *buff
     if (result < 0) return map_status((infs_status)result);
     return (uint64_t)result == length ? IFS_FS_OK : IFS_FS_IO_ERROR;
 }
+static int write_file(void *volume, const char *path, uint64_t offset, const void *buffer, uint32_t length)
+{
+    struct v2_volume *v = volume;
+    if (!v || !valid_path(path) || (!buffer && length)) return IFS_FS_INVALID;
+    if (!v->volume.writable) return IFS_FS_ACCESS;
+    USE_HOST(v->host);
+    int64_t result = infs_write_file(&v->volume, path, buffer, length, offset);
+    if (result < 0) return map_status((infs_status)result);
+    return (uint64_t)result == length ? IFS_FS_OK : IFS_FS_IO_ERROR;
+}
+static int create_path(void *volume, const char *path, uint32_t type)
+{
+    struct v2_volume *v = volume;
+    if (!v || !valid_path(path)) return IFS_FS_INVALID;
+    if (!v->volume.writable) return IFS_FS_ACCESS;
+    USE_HOST(v->host);
+    struct infs_create_options options = {0};
+    options.posix_permissions = type == IFS_FS_ENTRY_DIRECTORY ? 0755u : 0644u;
+    if (type == IFS_FS_ENTRY_FILE) return map_status(infs_create_file(&v->volume, path, &options));
+    if (type == IFS_FS_ENTRY_DIRECTORY) return map_status(infs_mkdir(&v->volume, path, &options));
+    return IFS_FS_UNSUPPORTED;
+}
+static int remove_path(void *volume, const char *path)
+{
+    struct v2_volume *v = volume;
+    struct infs_attributes attr;
+    if (!v || !valid_path(path)) return IFS_FS_INVALID;
+    if (!v->volume.writable) return IFS_FS_ACCESS;
+    USE_HOST(v->host);
+    infs_status result = infs_get_attributes(&v->volume, path, &attr);
+    if (result != INFS_STATUS_OK) return map_status(result);
+    return map_status(attr.object_type == INFS_OBJECT_DIRECTORY ?
+                      infs_rmdir(&v->volume, path) : infs_unlink(&v->volume, path));
+}
+static int rename_path(void *volume, const char *old_path, const char *new_path)
+{
+    struct v2_volume *v = volume;
+    if (!v || !valid_path(old_path) || !valid_path(new_path)) return IFS_FS_INVALID;
+    if (!v->volume.writable) return IFS_FS_ACCESS;
+    USE_HOST(v->host);
+    return map_status(infs_rename(&v->volume, old_path, new_path));
+}
+static int truncate_path(void *volume, const char *path, uint64_t bytes)
+{
+    struct v2_volume *v = volume;
+    if (!v || !valid_path(path)) return IFS_FS_INVALID;
+    if (!v->volume.writable) return IFS_FS_ACCESS;
+    USE_HOST(v->host);
+    return map_status(infs_truncate_file(&v->volume, path, bytes));
+}
+static int sync_volume(void *volume)
+{
+    struct v2_volume *v = volume;
+    if (!v) return IFS_FS_INVALID;
+    if (!v->volume.writable) return IFS_FS_ACCESS;
+    USE_HOST(v->host);
+    return map_status(infs_volume_sync(&v->volume));
+}
 static int query_volume(void *volume, IfsFsVolumeInfoV2 *info)
 {
     struct v2_volume *v = volume;
@@ -188,13 +288,16 @@ static int label(void *volume, char *out, uint32_t capacity, uint32_t *bytes)
 }
 static const IfsFsCoreOpsV2 core = {
     .header = {IFS_FS_GROUP_ABI_V2, sizeof(core), IFS_FS_GROUP_CORE, 0,
-        IFS_FS_CORE_PROBE | IFS_FS_CORE_MOUNT | IFS_FS_CORE_STAT | IFS_FS_CORE_LIST | IFS_FS_CORE_READ},
+        IFS_FS_CORE_PROBE | IFS_FS_CORE_MOUNT | IFS_FS_CORE_STAT | IFS_FS_CORE_LIST | IFS_FS_CORE_READ |
+        IFS_FS_CORE_WRITE | IFS_FS_CORE_CREATE | IFS_FS_CORE_REMOVE | IFS_FS_CORE_RENAME | IFS_FS_CORE_TRUNCATE},
     .probe = probe, .mount = mount_volume, .unmount = unmount_volume,
-    .stat = stat_path, .directory_entry = list_path, .read = read_file
+    .stat = stat_path, .directory_entry = list_path, .read = read_file, .write = write_file,
+    .create = create_path, .remove = remove_path, .rename = rename_path, .truncate = truncate_path
 };
 static const IfsFsVolumeOpsV2 volume_ops = {
     .header = {IFS_FS_GROUP_ABI_V2, sizeof(volume_ops), IFS_FS_GROUP_VOLUME, 0,
-        IFS_FS_VOLUME_QUERY | IFS_FS_VOLUME_LABEL_GET}, .query = query_volume, .label = label
+        IFS_FS_VOLUME_QUERY | IFS_FS_VOLUME_LABEL_GET | IFS_FS_VOLUME_SYNC},
+    .query = query_volume, .label = label, .sync = sync_volume
 };
 static const IfsFsGroupHeaderV2 *query(uint32_t group, uint32_t low, uint32_t high)
 {

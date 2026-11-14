@@ -103,6 +103,10 @@ grep -Fq 'VERSION: ${{ steps.release.outputs.version }}' "$candidate" || \
 
 publisher=.github/workflows/release-packages.yml
 [[ -f "$publisher" ]] || fail 'release publisher workflow is missing'
+if [[ -f module/RELEASE_BLOCKED ]]; then
+    grep -Fq 'if [[ -f module/RELEASE_BLOCKED ]]; then' "$publisher" || \
+        fail 'unqualified Common V2 work must hold release publication'
+fi
 grep -Fq '  workflow_run:' "$publisher" || \
     fail 'release publisher must be driven by prerequisite workflow completion'
 if grep -Eq '^  (workflow_dispatch|pull_request|schedule|push):' "$publisher"; then

@@ -1,0 +1,3 @@
+The Common V2 module is under qualification. Its filesystem write path,
+firmware handoff, installation and upgrade recovery must pass their complete
+independent tests before this marker is removed and a release is published.

@@ -289,7 +289,13 @@ static int heal_checkpoints(struct infs_volume *vol)
 
 static void phase2_failpoint(const char *stage)
 {
+#ifdef INFS_FREESTANDING
+    /* Firmware has no process environment or process exit. Test crash hooks
+     * are controlled by the host-side qualification harness instead. */
+    (void)stage;
+#else
     const char *requested = getenv("INFS_TEST_CRASH_STAGE");
     if (requested && strcmp(requested, stage) == 0)
         _Exit(97);
+#endif
 }

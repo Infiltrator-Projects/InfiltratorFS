@@ -69,6 +69,14 @@ jobs:
             exit 0
           fi
 
+          # Development on main must not publish an incomplete filesystem or
+          # upgrade. Remove the marker only when its qualification is complete.
+          if [[ -f module/RELEASE_BLOCKED ]]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo 'Release held while the Common V2 module is under qualification.'
+            exit 0
+          fi
+
           api="repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${EXPECTED_SHA}&per_page=100"
           required=(
             "Build and conformance"

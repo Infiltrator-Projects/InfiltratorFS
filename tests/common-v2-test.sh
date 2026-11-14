@@ -29,4 +29,5 @@ cc -std=c11 -O2 -ffunction-sections -fdata-sections \
 "$work/make-image" --emit-populated-image "$work/populated.img"
 cc -std=c11 -Wall -Wextra -Werror -Imodule/common -Isrc/infiltratr-common/include \
     tests/common-v2-image.c -ldl -o "$work/test-image"
-"$work/test-image" "$module" "$work/populated.img"
+"$work/test-image" "$module" "$work/populated.img" 512
+"$work/test-image" "$module" "$work/populated.img" 4096
