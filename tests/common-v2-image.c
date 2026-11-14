@@ -5,7 +5,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-struct disk { unsigned char *data; size_t size; unsigned sector, writes, flushes, random, fail_after; int fail_write; };
+struct disk {
+    unsigned char *data;
+    size_t size;
+    unsigned sector, writes, flushes, random, fail_after, fail_flush_after;
+    int fail_write, fail_flush;
+};
 static int disk_read(void *opaque,uint64_t offset,void *out,uint32_t length) {
     struct disk *d=opaque;
     if(offset>d->size || length>d->size-offset || offset%d->sector || length%d->sector) return -1;
@@ -19,7 +24,11 @@ static int disk_write(void *opaque,uint64_t offset,const void *in,uint32_t lengt
        (d->fail_write && d->writes>=d->fail_after)) return -1;
     memcpy(d->data+offset,in,length); ++d->writes; return 0;
 }
-static int disk_flush(void *opaque) { struct disk *d=opaque; ++d->flushes; return 0; }
+static int disk_flush(void *opaque) {
+    struct disk *d=opaque;
+    ++d->flushes;
+    return d->fail_flush && d->flushes>=d->fail_flush_after ? -1 : 0;
+}
 static uint64_t clock_ns(void *opaque) { (void)opaque; return UINT64_C(1234567000000000); }
 static int entropy(void *opaque,void *out,uint32_t length) {
     struct disk *d=opaque; memset(out,(int)++d->random,length); return 0;
@@ -143,6 +152,34 @@ int main(int argc,char **argv) {
               memcmp(readback,changed,sizeof(payload)-1)==0);
         CHECK(core->unmount(v)==IFS_FS_OK);
     }
+    const unsigned flush_failures[]={0,1,2,3,5,8};
+    unsigned exercised_flush_failures=0;
+    for (unsigned index=0;index<sizeof(flush_failures)/sizeof(flush_failures[0]);++index) {
+        memcpy(disk.data,stable,disk.size);
+        host.capabilities=IFS_FS_HOST_EXCLUSIVE|IFS_FS_HOST_DURABLE|IFS_FS_HOST_CLOCK;
+        host.write_at=disk_write; host.flush=disk_flush;
+        host.monotonic_ns=clock_ns; host.realtime_ns=clock_ns; host.random_bytes=entropy;
+        CHECK(core->mount(&host,&v,&info)==IFS_FS_OK && v);
+        disk.fail_flush=1; disk.fail_flush_after=disk.flushes+1u+flush_failures[index];
+        int result=core->write(v,"/renamed",0,"changed",7);
+        if(disk.flushes>=disk.fail_flush_after) {
+            ++exercised_flush_failures;
+            CHECK(result!=IFS_FS_OK);
+        }
+        CHECK(core->unmount(v)==IFS_FS_OK);
+        disk.fail_flush=0;
+        host.capabilities=IFS_FS_HOST_READ_ONLY; host.write_at=NULL; host.flush=NULL;
+        host.monotonic_ns=NULL; host.realtime_ns=NULL; host.random_bytes=NULL;
+        CHECK(core->mount(&host,&v,&info)==IFS_FS_OK && v);
+        memset(readback,0,sizeof(readback));
+        CHECK(core->read(v,"/renamed",0,readback,sizeof(payload)-1)==IFS_FS_OK);
+        char changed[sizeof(payload)]; memcpy(changed,payload,sizeof(payload));
+        memcpy(changed,"changed",7);
+        CHECK(memcmp(readback,payload,sizeof(payload)-1)==0 ||
+              memcmp(readback,changed,sizeof(payload)-1)==0);
+        CHECK(core->unmount(v)==IFS_FS_OK);
+    }
+    CHECK(exercised_flush_failures>=3u);
     memcpy(disk.data,stable,disk.size); free(stable);
     disk.data[0]^=1; CHECK(core->probe(&host,&variant)==IFS_FS_OK);
     CHECK(core->mount(&host,&v,&info)==IFS_FS_OK && v);
