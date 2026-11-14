@@ -20,6 +20,11 @@ Pre-1.0 development is current-format-only. Development-format compatibility is 
 
 The badge above is the broad build/portable conformance gate. Mounted native-Linux qualification is a separate evidence boundary; see `docs/QUALIFICATION.md`.
 
+The experimental Common V2 module in `module/` uses the portable Format 0.19
+engine and currently provides read-only probe, mount, lookup and file access.
+It is not yet packaged or qualified for production upgrades, read/write
+operation or physical firmware. A disposable QEMU/OVMF test is provided.
+
 ## Engineering ethos
 
 What happens when you build a filesystem from first principles?

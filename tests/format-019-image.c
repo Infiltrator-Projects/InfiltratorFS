@@ -115,10 +115,32 @@ static void reset(struct memory_volume *m)
     m->checkpoint_pending_flush = 0;
 }
 
+/* Test fixtures contain copies of supplied files, never a real block device. */
+static void add_boot_fixture_file(struct infs_volume *volume, const char *source,
+                                  const char *target)
+{
+    FILE *input = fopen(source, "rb");
+    expect(input != NULL, "open disposable boot fixture payload");
+    expect(fseek(input, 0, SEEK_END) == 0, "seek boot fixture payload");
+    long size = ftell(input);
+    expect(size > 0, "boot fixture payload size");
+    rewind(input);
+    void *data = malloc((size_t)size);
+    expect(data != NULL, "allocate boot fixture payload");
+    expect(fread(data, 1, (size_t)size, input) == (size_t)size, "read boot fixture payload");
+    expect(fclose(input) == 0, "close boot fixture payload");
+    struct infs_create_options options = { .posix_permissions = 0644u };
+    expect(infs_create_file(volume, target, &options) == INFS_STATUS_OK, "create boot fixture file");
+    expect(infs_write_file(volume, target, data, (size_t)size, 0) == size, "write boot fixture file");
+    free(data);
+}
+
 int main(int argc, char **argv)
 {
-    if (argc != 1 && (argc != 3 || strcmp(argv[1], "--emit-image") != 0)) {
-        fprintf(stderr, "Usage: %s [--emit-image <regular-image-path>]\n",
+    if (argc != 1 && !(argc == 3 && (!strcmp(argv[1], "--emit-image") ||
+                                     !strcmp(argv[1], "--emit-populated-image"))) &&
+                     !(argc == 5 && !strcmp(argv[1], "--emit-boot-image"))) {
+        fprintf(stderr, "Usage: %s [--emit-image|--emit-populated-image <image>] | [--emit-boot-image <image> <kernel> <initrd>]\n",
                 argv[0]);
         return 2;
     }
@@ -261,6 +283,10 @@ int main(int argc, char **argv)
         expect(infs_write_file(&writer, "/written", payload,
                    sizeof(payload)-1u, 0) == (int64_t)(sizeof(payload)-1u),
                "write and commit actual 0.19 file data");
+        if (argc == 5) {
+            add_boot_fixture_file(&writer, argv[3], "/native.img");
+            add_boot_fixture_file(&writer, argv[4], "/native.initrd");
+        }
         expect(infs_volume_sync(&writer) == INFS_STATUS_OK &&
                infs_le64_to_cpu(writer.sb.generation) > 1u,
                "durably publish multiple 0.19 generations");
@@ -284,6 +310,16 @@ int main(int argc, char **argv)
                memcmp(readback, payload, sizeof(payload)-1u) == 0,
                "0.19 read-only reopen preserves committed payload bytes");
         infs_volume_close(&reader);
+        if ((argc == 3 && strcmp(argv[1], "--emit-populated-image") == 0) || argc == 5) {
+            FILE *out = fopen(argv[2], "wb");
+            expect(out != NULL, "create populated test image");
+            expect(fwrite(m.contents, 1u, IMAGE_BYTES, out) == IMAGE_BYTES,
+                   "write populated test image");
+            expect(fclose(out) == 0, "close populated test image");
+            free(m.contents);
+            puts("Format 0.19 populated image emitted: PASS");
+            return 0;
+        }
         {
             struct infs_volume denied = {0};
             struct infs_storage probe = { .ops = &ops, .context = &m };

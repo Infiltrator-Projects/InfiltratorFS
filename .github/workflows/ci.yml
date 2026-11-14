@@ -54,6 +54,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends desktop-file-utils libgtk-3-dev libssl-dev pkg-config polkitd pkexec xdg-utils xvfb
       - name: Validate Mint desktop integration
         run: desktop-file-validate packaging/infiltratorfs-manager.desktop
+      - name: Validate the Common V2 filesystem module
+        run: bash tests/common-v2-test.sh
       - name: Validate native Manager source policy
         run: |
           test -f tools/infiltratorfs-manager.c
