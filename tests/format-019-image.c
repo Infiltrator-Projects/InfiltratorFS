@@ -152,6 +152,31 @@ int main(int argc, char **argv)
     const uint8_t *bits;
     const struct infs_superblock_disk *sb;
 
+    /* A real distribution kernel is larger than the 16 MiB regression
+     * fixture. Give the firmware boot test its own disposable image. */
+    if (argc == 5) {
+        struct infs_volume writer = {0};
+        m.bytes = 128u * 1024u * 1024u;
+        m.contents = calloc(1u, (size_t)m.bytes);
+        expect(m.contents != NULL, "allocate boot image backing");
+        expect(infs_format_storage_019_test_image(&storage, "BootFixture") ==
+                   INFS_STATUS_OK, "format disposable boot image");
+        expect(infs_volume_open_storage(&writer, &storage, 1) == INFS_STATUS_OK,
+               "open disposable boot image");
+        add_boot_fixture_file(&writer, argv[3], "/native.img");
+        add_boot_fixture_file(&writer, argv[4], "/native.initrd");
+        expect(infs_volume_sync(&writer) == INFS_STATUS_OK, "sync boot image");
+        infs_volume_close(&writer);
+        FILE *out = fopen(argv[2], "wb");
+        expect(out != NULL, "create boot image file");
+        expect(fwrite(m.contents, 1u, (size_t)m.bytes, out) == m.bytes,
+               "write boot image file");
+        expect(fclose(out) == 0, "close boot image file");
+        free(m.contents);
+        puts("Format 0.19 boot image emitted: PASS");
+        return 0;
+    }
+
     m.bytes = IMAGE_BYTES;
     m.contents = calloc(1u, IMAGE_BYTES);
     expect(m.contents != NULL, "allocate image backing");
@@ -283,10 +308,6 @@ int main(int argc, char **argv)
         expect(infs_write_file(&writer, "/written", payload,
                    sizeof(payload)-1u, 0) == (int64_t)(sizeof(payload)-1u),
                "write and commit actual 0.19 file data");
-        if (argc == 5) {
-            add_boot_fixture_file(&writer, argv[3], "/native.img");
-            add_boot_fixture_file(&writer, argv[4], "/native.initrd");
-        }
         expect(infs_volume_sync(&writer) == INFS_STATUS_OK &&
                infs_le64_to_cpu(writer.sb.generation) > 1u,
                "durably publish multiple 0.19 generations");
@@ -310,7 +331,7 @@ int main(int argc, char **argv)
                memcmp(readback, payload, sizeof(payload)-1u) == 0,
                "0.19 read-only reopen preserves committed payload bytes");
         infs_volume_close(&reader);
-        if ((argc == 3 && strcmp(argv[1], "--emit-populated-image") == 0) || argc == 5) {
+        if (argc == 3 && strcmp(argv[1], "--emit-populated-image") == 0) {
             FILE *out = fopen(argv[2], "wb");
             expect(out != NULL, "create populated test image");
             expect(fwrite(m.contents, 1u, IMAGE_BYTES, out) == IMAGE_BYTES,

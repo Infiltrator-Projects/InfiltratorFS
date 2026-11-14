@@ -35,9 +35,9 @@ mkfs.fat -F32 "$work/esp.img" >/dev/null
 mmd -i "$work/esp.img" ::/EFI ::/EFI/BOOT ::/EFI/BOOT/filesystems_x64
 mcopy -i "$work/esp.img" "$boot" ::/EFI/BOOT/BOOTX64.EFI
 mcopy -i "$work/esp.img" "$work/module/InfiltratorFS.so" ::/EFI/BOOT/filesystems_x64/InfiltratorFS.so
-truncate -s 96M "$work/disk.img"
+truncate -s 208M "$work/disk.img"
 sgdisk --clear --new=1:2048:+64M --typecode=1:ef00 \
-    --new=2:133120:+16M --typecode=2:8300 "$work/disk.img" >/dev/null
+    --new=2:133120:+128M --typecode=2:8300 "$work/disk.img" >/dev/null
 uuid=$(sgdisk --info=2 "$work/disk.img" | awk '/Partition unique GUID: / {print $4}')
 [[ $uuid =~ ^[[:xdigit:]]{8}(-[[:xdigit:]]{4}){3}-[[:xdigit:]]{12}$ ]]
 cat > "$work/boot.conf" <<BOOT
@@ -73,5 +73,5 @@ fi
 grep -Fq 'validated InfiltratorFS.so' "$work/serial.log"
 grep -Fq "close /native.img: $(stat -c %s "$kernel") bytes read through module" "$work/serial.log"
 grep -Fq "close /native.initrd: $(stat -c %s "$work/native.initrd") bytes read through module" "$work/serial.log"
-dd if="$work/disk.img" bs=1M skip=65 count=16 status=none | cmp - "$work/infiltratorfs.img"
+dd if="$work/disk.img" bs=1M skip=65 count=128 status=none | cmp - "$work/infiltratorfs.img"
 echo INFILTRATORFS_V2_EFI_KERNEL_PASS
