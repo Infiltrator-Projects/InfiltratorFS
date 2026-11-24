@@ -459,3 +459,27 @@ Windows build also compiled the same portable core and passed
 `infilfs-protected-volume` and `infilfs-inline-files`; two unrelated Win32
 storage-backend callback-layout regressions were identified separately and
 subsequently repaired with designated initializers.
+
+### Operator physical-power-loss evidence preparation
+
+`tests/native-powerloss-witness.sh` provides a bounded independent-witness
+exercise on an already mounted dedicated native physical volume and a separate
+physical witness disk on a dedicated test machine. It does not format devices
+or initiate power cuts.
+
+```sh
+bash tests/native-powerloss-witness.sh write /mnt/infilfs-test /mnt/independent-witness trial-01
+# After an operator-controlled abrupt power interruption and recovery:
+bash tests/native-powerloss-witness.sh verify /mnt/infilfs-test /mnt/independent-witness trial-01
+```
+
+The writer generates and hashes data independently, then flushes each payload
+and its directory before publishing a hash record on the witness disk. A witness
+record is only acknowledged after its own flush. Verification requires a different
+boot ID and checks every contiguous record's exact length and SHA-256. Unwitnessed
+trailing writes are not claimed durable. Both directories are retained as evidence.
+A normal reboot can also satisfy the boot-ID gate; record the actual hardware
+interruption, controller/cache configuration and device identity independently.
+Repeat at different mutation and publication phases; perform offline structural
+fsck and deep scrub after recovery, and retain exact-source logs. A bounded witness
+pass does not replace full native endurance or establish production qualification.

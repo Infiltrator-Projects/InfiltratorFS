@@ -49,3 +49,21 @@ The final driver must qualify:
 10. stress under Driver Verifier plus cross-platform Format 0.19 conformance.
 
 The existing ProjFS bridge remains a useful driverless interoperability/recovery path, but it is not counted as the native-driver qualification.
+
+## Operator-run mounted smoke test
+
+On a disposable Windows VM with the native driver and companion service already
+installed and running, use the dedicated native test volume (for example X:):
+
+```powershell
+.\tests\native-windows-mounted-smoke.ps1 -DriveLetter X -DedicatedTestVolume
+```
+
+The test refuses the system volume and non-native filesystems. It creates a
+unique scratch directory, tests flushed writes, content hashes, memory mapping,
+rename, hard-link coherence, enumeration and security-descriptor queries, then
+removes only its own files after success. Failure retains the scratch evidence.
+Record actual installed driver/service binary hashes and source identity.
+This is a bounded mounted smoke test, not full Windows qualification: noncached
+and paging concurrency, ACL enforcement, service restart, surprise removal,
+Driver Verifier, cross-platform remount and recovery remain mandatory.
