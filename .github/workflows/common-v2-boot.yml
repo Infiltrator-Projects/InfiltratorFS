@@ -39,7 +39,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/boot" "$RUNNER_TEMP/kernel"
           deb="$RUNNER_TEMP/boot.deb"
           curl -fsSL --retry 3 -o "$deb" https://github.com/Infiltrator-Projects/Boot/releases/download/v0.1.50/infiltrator-boot_0.1.50_amd64.deb
-          printf '%s  %s\n' a4acd0bec605d0680f173f537e8f8a818b9b071cfc5c356e0fc5eaf0dfcb86e7 "$deb" | sha256sum -c -
+          printf '%s  %s\n' c1b67a368edf7f47dc891bf71d1e2ba44f7c6c91205f84bb287525ac1758686c "$deb" | sha256sum -c -
           dpkg-deb -x "$deb" "$RUNNER_TEMP/boot"
           image=$(apt-cache depends linux-image-generic | awk '/Depends: linux-image-[0-9]/ { image=$2 } END { print image }')
           release=${image#linux-image-}

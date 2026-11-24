@@ -9,7 +9,7 @@ struct disk {
     unsigned char *data;
     size_t size;
     unsigned sector, writes, flushes, random, fail_after, fail_flush_after;
-    int fail_write, fail_flush;
+    int fail_write, fail_flush, fail_allocate, fail_read;
 };
 static const IfsFsCoreOpsV2 *unmount_during_read;
 static void *active_volume;
@@ -22,10 +22,13 @@ static int disk_read(void *opaque,uint64_t offset,void *out,uint32_t length) {
         if (observed_unmount!=IFS_FS_BUSY) return -1;
     }
     struct disk *d=opaque;
-    if(offset>d->size || length>d->size-offset || offset%d->sector || length%d->sector) return -1;
+    if(d->fail_read || offset>d->size || length>d->size-offset || offset%d->sector || length%d->sector) return -1;
     memcpy(out,d->data+offset,length); return 0;
 }
-static void *allocate(void *context,size_t bytes) { (void)context; return malloc(bytes); }
+static void *allocate(void *context,size_t bytes) {
+    struct disk *d=context;
+    return d->fail_allocate ? NULL : malloc(bytes);
+}
 static void release(void *context,void *p) { (void)context; free(p); }
 static int disk_write(void *opaque,uint64_t offset,const void *in,uint32_t length) {
     struct disk *d=opaque;
@@ -291,7 +294,21 @@ int main(int argc,char **argv) {
     CHECK(core->mount(&host,&v,&info)==IFS_FS_OK && v);
     CHECK(core->stat(v,"/written",&file)==IFS_FS_OK);
     CHECK(core->unmount(v)==0);
+    /* Recovery with a recognizable locator must preserve resource errors
+     * rather than pretending the volume is absent. Fail the explicit volume
+     * allocation (the aligned locator-prefix reads may also allocate). */
+    disk.fail_allocate=1;
+    int probe_error=core->probe(&host,&variant);
+    CHECK(probe_error==IFS_FS_NO_MEMORY || probe_error==IFS_FS_IO_ERROR);
+    disk.fail_allocate=0;
+    /* Keep one locator signature but erase its graph and all checkpoints. */
+    memset(disk.data,0,disk.size);
+    memcpy(disk.data+4096,"INFSL019",8);
+    CHECK(core->probe(&host,&variant)==IFS_FS_CORRUPT);
     memset(disk.data,0,disk.size);
     CHECK(core->probe(&host,&variant)==IFS_FS_NOT_FOUND);
+    disk.fail_read=1;
+    CHECK(core->probe(&host,&variant)==IFS_FS_IO_ERROR);
+    disk.fail_read=0;
     dlclose(d); free(disk.data); puts("Common V2 populated and recovery image: PASS"); return 0;
 }

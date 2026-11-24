@@ -4,6 +4,7 @@
 #include <infiltratr/filesystem_module_v2.h>
 #include "infilfs/fs.h"
 #include "infilfs/endian.h"
+#include "infilfs/locator.h"
 #include "infilfs/volume.h"
 #ifndef INFS_COMMON_V2_FIRMWARE
 #include "infilfs/check.h"
@@ -146,8 +147,35 @@ static int probe(const IfsFsHostRuntimeV2 *host, uint32_t *variant)
     struct infs_storage storage = { &storage_ops, (void *)host };
     infs_status result = infs_probe_format_signature(&storage, &major, &minor);
     if (result == INFS_STATUS_NOT_FOUND) {
-        /* Recover through the owner's checkpoint reader if the primary
-         * signature is damaged but a backup remains valid. */
+        /* Distinguish foreign/blank media from recognized but damaged
+         * InfiltratorFS. Locator signatures are evidence of format identity,
+         * not authority to mount; the core must still validate the graph.
+         * Read both independently so failure of one does not hide recovery
+         * through the other. Without either signature, there is no reliable
+         * basis for identifying a destroyed filesystem as InfiltratorFS. */
+        const uint64_t positions[] = { INFS_LOCATOR_BLOCK_A, INFS_LOCATOR_BLOCK_B };
+        int recognized = 0;
+        infs_status read_error = INFS_STATUS_OK;
+        for (unsigned i = 0; i < 2u; ++i) {
+            uint8_t prefix[16];
+            uint64_t offset = positions[i] * INFS_BLOCK_SIZE;
+            if (offset > host->volume_bytes ||
+                sizeof(prefix) > host->volume_bytes - offset)
+                continue;
+            infs_status status = infs_storage_read(&storage, offset,
+                                                   prefix, sizeof(prefix));
+            if (status != INFS_STATUS_OK) {
+                if (read_error == INFS_STATUS_OK) read_error = status;
+                continue;
+            }
+            if (memcmp(prefix, "INFSL019", 8u) == 0)
+                recognized = 1;
+        }
+        if (!recognized)
+            return read_error == INFS_STATUS_OK ? IFS_FS_NOT_FOUND :
+                   map_status(read_error);
+        if (host->volume_bytes / INFS_BLOCK_SIZE < INFS_LOCATOR_MIN_VOLUME_BLOCKS)
+            return IFS_FS_CORRUPT;
         USE_HOST(host);
         struct infs_volume *volume = host->allocate(host->context, sizeof(*volume));
         if (!volume) return IFS_FS_NO_MEMORY;
@@ -159,7 +187,7 @@ static int probe(const IfsFsHostRuntimeV2 *host, uint32_t *variant)
         }
         host->release(host->context, volume);
         if (result == INFS_STATUS_OK) return IFS_FS_OK;
-        return result == INFS_STATUS_IO_ERROR ? IFS_FS_IO_ERROR : IFS_FS_NOT_FOUND;
+        return map_status(result);
     }
     if (result != INFS_STATUS_OK) return map_status(result);
     if (major != INFS_FORMAT_MAJOR || minor != INFS_FORMAT_MINOR) return IFS_FS_UNSUPPORTED;
