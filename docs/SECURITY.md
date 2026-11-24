@@ -300,3 +300,9 @@ Portable security conformance requires that:
 - unresolved principals remain stable and non-destructive;
 - ACL/security updates participate in the same transactional publication and checksum model as other critical metadata; and
 - scrub validates security-object identity, ownership/reference relationships, checksums and canonical encoding.
+
+## Future accidental-format recovery security
+
+Historical recovery records, payloads and key material must remain subject to the original confidentiality and access policy. Evaluate redundant authenticated encrypted-container headers and key wrapping as part of the new design; never store plaintext keys or bypass authentication. CRC64 on unencrypted records detects accidental corruption but is not adversarial authentication. Treat foreign-formatted and historical media as untrusted; apply bounded parsing, overflow-safe geometry and graph validation.
+
+Distinguish recoverable format, release of retained allocations, and irreversible secure/cryptographic erase. Disclose retention and space costs; releasing allocations does not imply physical erasure. A purge must invalidate all relevant recovery data or usable key copies according to its stated guarantee, with device limitations reported. Do not automatically revive purged generations or widen recovered permissions. Authorised offline export must report destination security limitations. These are future requirements, not existing Format 0.19 guarantees.

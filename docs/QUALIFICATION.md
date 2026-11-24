@@ -496,3 +496,16 @@ not a provider conformance pass. Restore and qualify BOOT's generic loader,
 then pin a compatible immutable release and execute the real QEMU/OVMF
 provider/kernel handoff. Standalone EFI-driver boot and hosted module tests do
 not substitute for this gate.
+
+### Accidental-format resilience qualification (planned)
+
+No pass is recorded. Compare alternative designs using disposable known-manifest images containing files, directories, hard links, sparse/shared/compressed data, attributes, ACLs and snapshots. Record exact source, formatter versions, actual overwrite/discard ranges, geometry and recovered-versus-expected content and metadata.
+
+- Verify zero target writes for refused/ambiguous format requests, wrong target identity, busy/mounted devices and insufficient retention space.
+- Inject interruption and torn writes at each native recoverable-format preparation, publication and release boundary; verify old-or-new authoritative state, prior-graph pinning, no discard of retained blocks, identity separation and scrub.
+- Exercise actual ext4, NTFS and exFAT quick formatters on disposable images; independently overwrite partition tables, anchor regions and essential metadata; test progressive subsequent allocation and complete-overwrite/discard negative controls. Document actual formatter behaviour rather than assuming a universal quick format.
+- Verify source byte identity after read-only scan/export; reject false verified recoveries and cross-volume or cross-generation graph mixing. Compare paths, contents and metadata with manifests. Test any in-place restoration for interruption safety.
+- Test wrong/missing keys, damaged recovery/key records, malformed media, divergent replicas, near-full and resized volumes, secure purge, and bounded resource usage.
+- Measure capacity and write-amplification overhead, recovery scan time and fidelity on representative HDD, SSD and NAS-like geometries. Physical power-loss, endurance and device discard behaviour require separate hardware evidence.
+
+Supported native recoverable-format cases require complete manifest fidelity; foreign-format cases require accurate reporting of verified, partial and unrecoverable data, not a universal success percentage. Architecture selection must consider these results before freezing a stable format.

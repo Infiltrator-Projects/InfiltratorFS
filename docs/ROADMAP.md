@@ -92,6 +92,18 @@ Pre-1.0 development is current-format-only. A development format may be replaced
 - [x] Crash-safe whole-volume rollback to a retained snapshot generation.
 - [x] Selected-object restore from a retained snapshot without rolling back the whole volume.
 
+### Accidental-format resilience (new core capability)
+
+- [ ] Compare candidate recovery architectures against real native and foreign formatter overwrite patterns; select the strongest design without requiring preservation of the pre-1.0 format or implementation.
+- [ ] Implement common non-destructive format preflight and explicit target-bound authorisation across all formatter entry points, including Common V2.
+- [ ] Design and implement distributed recovery anchors and redundant essential metadata with transactional publication, allocation accounting, resize handling and bounded overhead; introduce a new development format if appropriate.
+- [ ] Implement recoverable native quick formatting with new volume identity, validated prior-graph retention, allocation/discard protection and explicitly authorised irreversible release; fail closed when safe retention is impossible.
+- [ ] Implement independent offline historical graph reconstruction and separate-destination export, recovering verified names, hierarchy, identities, links, sparse/shared/compressed data, attributes, ACLs and snapshots where evidence survives; report missing and ambiguous data.
+- [ ] Support best-effort recovery after foreign quick formatting and repartitioning; handle encrypted metadata, recoverable key headers, authorised access and purge without weakening security.
+- [ ] Qualify interruption safety, foreign overwrite patterns, recovery fidelity, overhead and physical-media boundaries under the planned contract in `QUALIFICATION.md`.
+
+Existing checkpoints and forensic scanning are potential building blocks, not architectural constraints or proof of this capability. All gates are unqualified.
+
 ## Security and protection
 
 - [x] Versioned portable security objects with volume-level stable principals, multi-binding identity resolution, shareable descriptors and ordered ACL entries.

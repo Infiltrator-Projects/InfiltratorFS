@@ -143,3 +143,7 @@ reducing the recovery ordering barriers.
 - Accepting a locator CRC or high generation as the committed truth.
 - Treating a full multi-terabyte sector scan as ordinary fast-mount recovery.
 - Writing new anchors into block numbers that may be owned by Format 0.18.
+
+## Future design boundary: accidental formatting
+
+Format 0.19 addresses checkpoint discovery and transaction recovery, not arbitrary reformatting, partition replacement, discard or key-header destruction. Accidental-format resilience is now a separate first-class design requirement (see `ARCHITECTURE.md`). The present checkpoint/locator implementation is a candidate foundation only. A replacement pre-1.0 format, different metadata placement or recovery architecture is permissible and should be evaluated on its merits. This document continues to describe the existing Format 0.19 contract; no new persistent field, feature bit or guarantee is assigned here.

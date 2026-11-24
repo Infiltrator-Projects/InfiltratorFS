@@ -149,6 +149,17 @@ Metadata graphs must reject cycles or multiply aliased metadata pages where the 
 
 The forensic scanner is deliberately separate from authoritative recovery. It can discover independently recognizable authenticated metadata from physical media, but discovery alone does not make a structure the committed filesystem state. See `FORENSICS.md`.
 
+### Accidental-format resilience (first-class design requirement)
+
+Accidental formatting, including by a foreign filesystem, is a distinct failure class from interrupted transactions and ordinary deletion. InfiltratorFS must be designed to maximise recovery of a coherent previous filesystem identity, namespace and contents where physical evidence survives. This is a new architectural requirement, not an obligation to preserve the current implementation. Pre-1.0 development may replace Format 0.19, change checkpoint/locator layouts, allocation structures, encryption headers or recovery algorithms, and redesign the forensic tooling where justified. Existing mechanisms are candidates, not constraints. Select the design based on measured survival, integrity, overhead and recovery fidelity rather than compatibility with a superseded development format.
+
+- Prevent accidental destructive formatting through common target-bound preflight and explicit authorisation across all formatter entry points; refuse busy, mounted or ambiguous targets by default.
+- Design a recoverable native quick format with a new volume identity, a validated retained prior graph and protection of its reachable data against allocation, relocation and discard until explicit release. Refuse the operation if safe retention or adequate space cannot be established. It is not secure erase.
+- Design distributed independently discoverable recovery anchors and redundant essential graph metadata across distinct overwrite/failure regions. Evaluate placement against real foreign formatter write patterns; account for reserved space, resize, transactional publication, generation/volume identity and write amplification. No fixed anchor count, location, metadata encoding or retention mechanism is mandated by this requirement.
+- Provide independent offline reconstruction even after loss of partition tables and primary filesystem structures. Validate coherent graphs, ownership, bounds, generation and data integrity; distinguish complete, partial and ambiguous recoveries. Default to exporting to separate storage, not modifying the source.
+
+Foreign formatting is outside our control. Overwrite, discard/TRIM, secure erase, physical failure or loss of usable encryption keys can make recovery impossible. This feature is not a backup substitute. Persistent layout changes require a versioned design decision and qualification; this requirement is not a claim of existing implementation. See `FORENSICS.md`, `SECURITY.md` and `ROADMAP.md`.
+
 ## 9. Administration
 
 Online resize separates committed filesystem geometry from physical backing capacity. Grow/shrink rebuilds required allocation geometry transactionally, preserves or relocates checkpoint positions as required and refuses shrink that would discard live allocation.
