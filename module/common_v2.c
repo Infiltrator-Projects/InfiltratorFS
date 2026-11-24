@@ -437,6 +437,94 @@ static int v2_label(void *handle,char *out,uint32_t capacity,uint32_t *bytes)
     return leave_operation(label(lookup_volume(handle),out,capacity,bytes));
 }
 
+/* Common V2 carries portable signed nanoseconds, whereas native timestamps
+ * store a signed seconds component plus normalized unsigned nanoseconds.
+ * Reject unrepresentable values rather than wrapping the epoch. */
+static int time_ns(const struct infs_timestamp *t,int64_t *out)
+{
+    const int64_t scale=INT64_C(1000000000);
+    if (t->nanoseconds>=1000000000u) return 0;
+    if (t->seconds>=0) {
+        if (t->seconds>(INT64_MAX-(int64_t)t->nanoseconds)/scale)
+            return 0;
+        *out=t->seconds*scale+t->nanoseconds;
+    } else {
+        const int64_t tail=(int64_t)t->nanoseconds-scale;
+        if (t->seconds+1<INT64_MIN/scale) return 0;
+        const int64_t base=(t->seconds+1)*scale;
+        if (base<INT64_MIN-tail) return 0;
+        *out=base+tail;
+    }
+    return 1;
+}
+static uint32_t mode_type(uint16_t type)
+{
+    switch(type) {
+    case INFS_OBJECT_FILE: return 0100000u;
+    case INFS_OBJECT_DIRECTORY: return 0040000u;
+    case INFS_OBJECT_SYMLINK: return 0120000u;
+    default: return 0u;
+    }
+}
+static int metadata_get(void *handle,const char *path,IfsFsMetadataV2 *out)
+{
+    if (!out || out->structure_bytes<sizeof(*out) || !valid_path(path))
+        return IFS_FS_INVALID;
+    if (!enter_operation()) return IFS_FS_BUSY;
+    struct v2_volume *v=lookup_volume(handle);
+    if (!v) return leave_operation(IFS_FS_INVALID);
+    USE_HOST(v->host);
+    struct infs_attributes attr;
+    infs_status status=infs_get_attributes(&v->volume,path,&attr);
+    if (status!=INFS_STATUS_OK) return leave_operation(map_status(status));
+    uint32_t type=mode_type(attr.object_type);
+    if (!type) return leave_operation(IFS_FS_UNSUPPORTED);
+    IfsFsMetadataV2 result={.structure_bytes=sizeof(result),
+        .mask=IFS_FS_META_GET_MODE,
+        .mode=type|(attr.posix_permissions&07777u),
+        .owner=attr.posix_uid,.group=attr.posix_gid};
+    /* The ABI reports all four timestamps together. Leave the entire
+     * optional time group absent if any value exceeds its signed range. */
+    if (time_ns(&attr.birth_time,&result.created_ns) &&
+        time_ns(&attr.modification_time,&result.modified_ns) &&
+        time_ns(&attr.access_time,&result.accessed_ns) &&
+        time_ns(&attr.change_time,&result.changed_ns))
+        result.mask|=IFS_FS_META_GET_TIMES;
+    else
+        result.created_ns=result.modified_ns=result.accessed_ns=result.changed_ns=0;
+    *out=result;
+    return leave_operation(IFS_FS_OK);
+}
+static int metadata_set(void *handle,const char *path,const IfsFsMetadataV2 *in)
+{
+    if (!in || in->structure_bytes<sizeof(*in) || !valid_path(path))
+        return IFS_FS_INVALID;
+    /* Mode and ownership are a single native mutation. SET_TIMES is
+     * deliberately not advertised until combined atomic updates qualify. */
+    if (in->mask!=IFS_FS_META_SET_MODE) return IFS_FS_UNSUPPORTED;
+    if (in->mode&~0177777u) return IFS_FS_INVALID;
+    if (!enter_operation()) return IFS_FS_BUSY;
+    struct v2_volume *v=lookup_volume(handle);
+    if (!v) return leave_operation(IFS_FS_INVALID);
+    if (!v->volume.writable) return leave_operation(IFS_FS_ACCESS);
+    USE_HOST(v->host);
+    struct infs_attributes attr;
+    infs_status status=infs_get_attributes(&v->volume,path,&attr);
+    if (status!=INFS_STATUS_OK) return leave_operation(map_status(status));
+    const uint32_t type=in->mode&0170000u;
+    if (type && type!=mode_type(attr.object_type))
+        return leave_operation(IFS_FS_INVALID);
+    status=infs_set_posix_compat(&v->volume,path,
+        INFS_POSIX_SET_PERMISSIONS|INFS_POSIX_SET_UID|INFS_POSIX_SET_GID,
+        in->mode&07777u,in->owner,in->group);
+    return leave_operation(map_status(status));
+}
+static const IfsFsMetadataOpsV2 metadata_ops={
+    .header={IFS_FS_GROUP_ABI_V2,sizeof(metadata_ops),IFS_FS_GROUP_METADATA,0,
+        IFS_FS_META_GET_MODE|IFS_FS_META_GET_TIMES|IFS_FS_META_SET_MODE},
+    .get=metadata_get,.set=metadata_set
+};
+
 static const IfsFsCoreOpsV2 core = {
     .header = {IFS_FS_GROUP_ABI_V2, sizeof(core), IFS_FS_GROUP_CORE, 0,
         IFS_FS_CORE_PROBE | IFS_FS_CORE_MOUNT | IFS_FS_CORE_STAT | IFS_FS_CORE_LIST | IFS_FS_CORE_READ |
@@ -455,6 +543,7 @@ static const IfsFsGroupHeaderV2 *query(uint32_t group, uint32_t low, uint32_t hi
     if (low > IFS_FS_GROUP_ABI_V2 || high < IFS_FS_GROUP_ABI_V2) return NULL;
     if (group == IFS_FS_GROUP_CORE) return &core.header;
     if (group == IFS_FS_GROUP_VOLUME) return &volume_ops.header;
+    if (group == IFS_FS_GROUP_METADATA) return &metadata_ops.header;
     return NULL;
 }
 __attribute__((visibility("default")))
@@ -468,7 +557,8 @@ const IfsFsModuleApiV2 *infiltrator_filesystem_api_v2(void)
 #else
             IFS_FS_PROFILE_HOSTED,
 #endif
-        .group_mask = IFS_FS_GROUP_BIT(IFS_FS_GROUP_CORE) | IFS_FS_GROUP_BIT(IFS_FS_GROUP_VOLUME),
+        .group_mask = IFS_FS_GROUP_BIT(IFS_FS_GROUP_CORE) | IFS_FS_GROUP_BIT(IFS_FS_GROUP_VOLUME) |
+                      IFS_FS_GROUP_BIT(IFS_FS_GROUP_METADATA),
         .query_group = query
     };
     return &api;

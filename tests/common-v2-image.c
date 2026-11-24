@@ -70,6 +70,14 @@ int main(int argc,char **argv) {
     CHECK(narrow.name_bytes==0u && tiny[0]=='X' && tiny[1]=='X');
     const IfsFsVolumeOpsV2 *ops=(const void *)ifs_fs_group_v2(api,IFS_FS_GROUP_VOLUME);
     CHECK(ops && ops->label && ops->query);
+    const IfsFsMetadataOpsV2 *meta=(const void *)ifs_fs_group_v2(api,IFS_FS_GROUP_METADATA);
+    CHECK(meta && meta->get && meta->set &&
+          meta->header.capabilities==(IFS_FS_META_GET_MODE|IFS_FS_META_GET_TIMES|IFS_FS_META_SET_MODE));
+    IfsFsMetadataV2 metadata={.structure_bytes=sizeof(metadata)};
+    CHECK(meta->get(v,"/written",&metadata)==IFS_FS_OK);
+    CHECK((metadata.mask&IFS_FS_META_GET_MODE) && (metadata.mode&0170000u)==0100000u);
+    metadata.mask=IFS_FS_META_SET_MODE;
+    CHECK(meta->set(v,"/written",&metadata)==IFS_FS_ACCESS);
     uint32_t label_bytes=0; char label[128];
     CHECK(ops->label(v,label,sizeof(label),&label_bytes)==0 && strcmp(label,"Fixture19")==0);
     CHECK(ops->label(v,tiny,sizeof(tiny),&label_bytes)==IFS_FS_NO_SPACE);
@@ -128,6 +136,15 @@ int main(int argc,char **argv) {
     host.random_bytes=entropy;
     CHECK(core->mount(&host,&v,&info)==IFS_FS_OK && v);
     CHECK(core->create(v,"/created",IFS_FS_ENTRY_FILE)==IFS_FS_OK);
+    metadata.structure_bytes=sizeof(metadata);
+    CHECK(meta->get(v,"/created",&metadata)==IFS_FS_OK &&
+          metadata.mode==0100644u && (metadata.mask&IFS_FS_META_GET_TIMES) &&
+          metadata.created_ns==(int64_t)clock_ns(NULL));
+    metadata.mask=IFS_FS_META_SET_MODE;
+    metadata.mode=0100600u;metadata.owner=123u;metadata.group=456u;
+    CHECK(meta->set(v,"/created",&metadata)==IFS_FS_OK);
+    CHECK(meta->get(v,"/created",&metadata)==IFS_FS_OK &&
+          metadata.mode==0100600u && metadata.owner==123u && metadata.group==456u);
     const char payload[]="durable v2 filesystem write";
     CHECK(core->write(v,"/created",0,payload,sizeof(payload)-1)==IFS_FS_OK);
     CHECK(ops->sync(v)==IFS_FS_OK && disk.writes && disk.flushes);
@@ -136,6 +153,9 @@ int main(int argc,char **argv) {
     host.capabilities=IFS_FS_HOST_READ_ONLY; host.write_at=NULL; host.flush=NULL;
     host.monotonic_ns=NULL; host.realtime_ns=NULL; host.random_bytes=NULL;
     CHECK(core->mount(&host,&v,&info)==IFS_FS_OK && v);
+    CHECK(meta->get(v,"/renamed",&metadata)==IFS_FS_OK &&
+          metadata.mode==0100600u && metadata.owner==123u && metadata.group==456u &&
+          metadata.created_ns==(int64_t)clock_ns(NULL));
     char readback[sizeof(payload)]={0};
     CHECK(core->read(v,"/renamed",0,readback,sizeof(payload)-1)==IFS_FS_OK);
     CHECK(memcmp(readback,payload,sizeof(payload)-1)==0);
