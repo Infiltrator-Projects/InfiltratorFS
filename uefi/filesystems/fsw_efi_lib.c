@@ -106,24 +106,50 @@ VOID fsw_efi_decode_time(OUT EFI_TIME *EfiTime, IN UINT32 UnixTime)
 // String functions, used for file and volume info
 //
 
-UINTN fsw_efi_strsize(struct fsw_string *s)
+/*
+ * The wrapper's length and byte count are signed ints from filesystem
+ * metadata. An EMPTY string may have invalid remaining members. Reject
+ * negative or inconsistent counts before converting them to EFI UINTN;
+ * size the terminator using UINTN arithmetic rather than signed addition.
+ * Non-UTF16 encodings have no conversion in this EFI adapter.
+ */
+static BOOLEAN fsw_efi_valid_utf16(const struct fsw_string *s)
 {
-    if (s->type == FSW_STRING_TYPE_EMPTY)
-        return sizeof(CHAR16);
-    return (s->len + 1) * sizeof(CHAR16);
+    return s != NULL && s->type == FSW_STRING_TYPE_UTF16 &&
+           s->len >= 0 && s->size >= 0 &&
+           (UINTN)s->size % sizeof(CHAR16) == 0 &&
+           (UINTN)s->len == (UINTN)s->size / sizeof(CHAR16) &&
+           (s->size == 0 || s->data != NULL);
 }
 
-VOID fsw_efi_strcpy(CHAR16 *Dest, struct fsw_string *src)
+UINTN fsw_efi_strsize(struct fsw_string *s)
 {
-    if ((src->type == FSW_STRING_TYPE_EMPTY) | (src->size == 0)) {
-        Dest[0] = 0;
-    } else if (src->type == FSW_STRING_TYPE_UTF16) {
-        refit_call3_wrapper(gBS->CopyMem, Dest, src->data, src->size);
-        Dest[src->len] = 0;
-    } else {
-        // TODO: coerce, recurse
-        Dest[0] = 0;
-    }
+    if (!fsw_efi_valid_utf16(s))
+        return sizeof(CHAR16);
+    return (UINTN)s->size + sizeof(CHAR16);
+}
+
+/*
+ * DestSize is the actual available byte capacity of the destination.
+ * Invalid strings are represented by an empty UTF-16 string, as before
+ * for unsupported encodings. Never read data or write beyond that
+ * capacity; a too-small destination is left empty if a terminator fits.
+ */
+VOID fsw_efi_strcpy(CHAR16 *Dest, UINTN DestSize, struct fsw_string *src)
+{
+    UINTN bytes;
+
+    if (Dest == NULL || DestSize < sizeof(CHAR16))
+        return;
+    Dest[0] = 0;
+    if (!fsw_efi_valid_utf16(src))
+        return;
+    bytes = (UINTN)src->size;
+    if (bytes > DestSize - sizeof(CHAR16))
+        return;
+    if (bytes != 0)
+        refit_call3_wrapper(gBS->CopyMem, Dest, src->data, bytes);
+    Dest[bytes / sizeof(CHAR16)] = 0;
 }
 
 // EOF

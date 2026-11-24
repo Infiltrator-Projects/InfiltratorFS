@@ -1154,7 +1154,7 @@ EFI_STATUS fsw_efi_dnode_getinfo(IN FSW_FILE_DATA *File,
         FSInfo->Size        = RequiredSize;
         FSInfo->ReadOnly    = TRUE;
         FSInfo->BlockSize   = Volume->vol->log_blocksize;
-        fsw_efi_strcpy(FSInfo->VolumeLabel, &Volume->vol->label);
+        fsw_efi_strcpy(FSInfo->VolumeLabel, RequiredSize - SIZE_OF_EFI_FILE_SYSTEM_INFO, &Volume->vol->label);
 
         // get the missing info from the fs driver
         ZeroMem(&vsb, sizeof(struct fsw_volume_stat));
@@ -1181,7 +1181,7 @@ EFI_STATUS fsw_efi_dnode_getinfo(IN FSW_FILE_DATA *File,
         }
 
         // copy volume label
-        fsw_efi_strcpy(((EFI_FILE_SYSTEM_VOLUME_LABEL_INFO *)Buffer)->VolumeLabel, &Volume->vol->label);
+        fsw_efi_strcpy(((EFI_FILE_SYSTEM_VOLUME_LABEL_INFO *)Buffer)->VolumeLabel, RequiredSize - SIZE_OF_EFI_FILE_SYSTEM_VOLUME_LABEL_INFO, &Volume->vol->label);
 
         // prepare for return
         *BufferSize = RequiredSize;
@@ -1274,7 +1274,7 @@ EFI_STATUS fsw_efi_dnode_fill_FileInfo(IN FSW_VOLUME_DATA *Volume,
     FileInfo->Attribute         = 0;
     if (dno->type == FSW_DNODE_TYPE_DIR)
         FileInfo->Attribute    |= EFI_FILE_DIRECTORY;
-    fsw_efi_strcpy(FileInfo->FileName, &dno->name);
+    fsw_efi_strcpy(FileInfo->FileName, RequiredSize - SIZE_OF_EFI_FILE_INFO, &dno->name);
 
     // get the missing info from the fs driver
     ZeroMem(&sb, sizeof(struct fsw_dnode_stat));
