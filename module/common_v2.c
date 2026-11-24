@@ -559,6 +559,13 @@ static int metadata_hardlink(void *handle,const char *existing,const char *new_p
     if (!v) return leave_operation(IFS_FS_INVALID);
     if (!v->volume.writable) return leave_operation(IFS_FS_ACCESS);
     USE_HOST(v->host);
+    /* Common consumers expect creation, not the native engine's idempotent
+     * linking of an already-linked name. Hold the operation lease across
+     * both lookup and mutation so an existing destination is never replaced. */
+    struct infs_lookup destination;
+    infs_status rc=infs_lookup_path(&v->volume,new_path,&destination);
+    if (rc==INFS_STATUS_OK) return leave_operation(IFS_FS_EXISTS);
+    if (rc!=INFS_STATUS_NOT_FOUND) return leave_operation(map_status(rc));
     return leave_operation(map_status(infs_link_file(&v->volume,existing,new_path)));
 }
 static const IfsFsMetadataOpsV2 metadata_ops={
