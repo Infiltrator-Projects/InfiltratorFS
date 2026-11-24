@@ -11,7 +11,16 @@ struct disk {
     unsigned sector, writes, flushes, random, fail_after, fail_flush_after;
     int fail_write, fail_flush;
 };
+static const IfsFsCoreOpsV2 *unmount_during_read;
+static void *active_volume;
+static int observed_unmount;
 static int disk_read(void *opaque,uint64_t offset,void *out,uint32_t length) {
+    if (unmount_during_read) {
+        const IfsFsCoreOpsV2 *ops=unmount_during_read;
+        unmount_during_read=NULL;
+        observed_unmount=ops->unmount(active_volume);
+        if (observed_unmount!=IFS_FS_BUSY) return -1;
+    }
     struct disk *d=opaque;
     if(offset>d->size || length>d->size-offset || offset%d->sector || length%d->sector) return -1;
     memcpy(out,d->data+offset,length); return 0;
@@ -55,10 +64,16 @@ int main(int argc,char **argv) {
     CHECK(core->mount(&host,&v,&info)==0 && v);
     char name[512]; IfsFsEntryV2 file={.structure_bytes=sizeof(file),.name=name,.name_capacity=sizeof(name)};
     CHECK(core->stat(v,"/",&file)==0 && file.type==IFS_FS_ENTRY_DIRECTORY);
+    char tiny[2]={'X','X'};
+    IfsFsEntryV2 narrow={.structure_bytes=sizeof(narrow),.name=tiny,.name_capacity=sizeof(tiny)};
+    CHECK(core->stat(v,"/written",&narrow)==IFS_FS_NO_SPACE);
+    CHECK(narrow.name_bytes==0u && tiny[0]=='X' && tiny[1]=='X');
     const IfsFsVolumeOpsV2 *ops=(const void *)ifs_fs_group_v2(api,IFS_FS_GROUP_VOLUME);
     CHECK(ops && ops->label && ops->query);
     uint32_t label_bytes=0; char label[128];
     CHECK(ops->label(v,label,sizeof(label),&label_bytes)==0 && strcmp(label,"Fixture19")==0);
+    CHECK(ops->label(v,tiny,sizeof(tiny),&label_bytes)==IFS_FS_NO_SPACE);
+    CHECK(label_bytes==0u && tiny[0]=='X' && tiny[1]=='X');
     CHECK(ops->query(v,&info)==0 && info.total_bytes==disk.size);
     int saw_written=0;
     for (unsigned i=0;;i++) {
@@ -79,19 +94,31 @@ int main(int argc,char **argv) {
     CHECK(saw_written);
     CHECK(core->stat(v,"/not-here",&file)==IFS_FS_NOT_FOUND);
     CHECK(core->write(v,"/written",0,"x",1)==IFS_FS_ACCESS);
+    char retained_data[30]={0};
+    active_volume=v;
+    unmount_during_read=core;
+    observed_unmount=IFS_FS_INVALID;
+    CHECK(core->read(v,"/written",0,retained_data,29)==IFS_FS_OK);
+    CHECK(!unmount_during_read && observed_unmount==IFS_FS_BUSY);
+    void *expired=v;
     CHECK(core->unmount(v)==0);
+    CHECK(core->unmount(expired)==IFS_FS_INVALID);
+    CHECK(core->stat(expired,"/",&file)==IFS_FS_INVALID);
     /* An existing V2 host can supply only the original sized prefix. */
     volatile size_t prefix_bytes=IFS_FS_HOST_V2_BASE_BYTES;
     IfsFsHostRuntimeV2 *prefix=malloc(prefix_bytes);
     CHECK(prefix);
     memcpy(prefix,&host,IFS_FS_HOST_V2_BASE_BYTES);
     prefix->structure_bytes=IFS_FS_HOST_V2_BASE_BYTES;
-    CHECK(core->mount(prefix,&v,&info)==IFS_FS_OK && v);
+    CHECK(core->mount(prefix,&v,&info)==IFS_FS_OK && v && v!=expired);
+    /* The caller owns descriptor storage, not the mounted session. */
+    memset(prefix,0,prefix_bytes);
+    free(prefix);
+    CHECK(core->stat(expired,"/",&file)==IFS_FS_INVALID);
     char prefix_data[30]={0};
     CHECK(core->read(v,"/written",0,prefix_data,29)==IFS_FS_OK);
     CHECK(memcmp(prefix_data,"Format 0.19 committed payload",29)==0);
     CHECK(core->unmount(v)==IFS_FS_OK);
-    free(prefix);
     /* A writable mount requires an exclusive host, durable writes, clock and
      * genuine host-provided entropy. Absence must fail before any writes. */
     host.capabilities=IFS_FS_HOST_EXCLUSIVE|IFS_FS_HOST_DURABLE|IFS_FS_HOST_CLOCK;

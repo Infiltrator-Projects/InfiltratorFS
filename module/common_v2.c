@@ -6,6 +6,7 @@
 #include "infilfs/endian.h"
 #include "infilfs/volume.h"
 #include <limits.h>
+#include <stdatomic.h>
 #include <string.h>
 #ifdef INFS_COMMON_V2_FIRMWARE
 void infs_v2_set_host(const IfsFsHostRuntimeV2 *host);
@@ -14,9 +15,43 @@ void infs_v2_set_host(const IfsFsHostRuntimeV2 *host);
 #define USE_HOST(host) ((void)(host))
 #endif
 struct v2_volume {
+    /* Own the size-versioned host descriptor for the full mount lifetime.
+     * Callback context itself remains owned by the V2 host lease. */
+    IfsFsHostRuntimeV2 retained_host;
     const IfsFsHostRuntimeV2 *host;
     struct infs_volume volume;
 };
+
+/* Opaque generation handles are never allocator addresses. The registry
+ * and portable engine are protected by a nonblocking operation lease:
+ * a recursive callback must not tear down a live volume. The firmware
+ * allocator has a shared host binding, so even distinct mounts are
+ * serialized until that runtime becomes per-volume. */
+enum { MAX_V2_SESSIONS = 32 };
+static struct {
+    uintptr_t token;
+    struct v2_volume *volume;
+} sessions[MAX_V2_SESSIONS];
+static uintptr_t sequence;
+static atomic_flag operation_gate=ATOMIC_FLAG_INIT;
+static int enter_operation(void)
+{
+    return !atomic_flag_test_and_set_explicit(&operation_gate,memory_order_acquire);
+}
+static int leave_operation(int rc)
+{
+    USE_HOST(NULL);
+    atomic_flag_clear_explicit(&operation_gate,memory_order_release);
+    return rc;
+}
+static struct v2_volume *lookup_volume(void *handle)
+{
+    const uintptr_t token=(uintptr_t)handle;
+    if (!token) return NULL;
+    for (unsigned i=0;i<MAX_V2_SESSIONS;++i)
+        if (sessions[i].token==token) return sessions[i].volume;
+    return NULL;
+}
 static int map_status(infs_status status)
 {
     switch (status) {
@@ -37,7 +72,8 @@ static infs_status storage_read(void *opaque, uint64_t offset, void *buffer, siz
 {
     const IfsFsHostRuntimeV2 *host = opaque;
     unsigned char *destination = buffer;
-    if (length && !buffer) return INFS_STATUS_INVALID_ARGUMENT;
+    if (!host || (length && !buffer) || offset>host->volume_bytes ||
+        length>host->volume_bytes-offset) return INFS_STATUS_INVALID_ARGUMENT;
     while (length) {
         uint32_t chunk = length > UINT32_MAX ? UINT32_MAX : (uint32_t)length;
         if (ifs_fs_host_read_bytes_v2(host, offset, destination, chunk) != IFS_FS_OK)
@@ -57,7 +93,8 @@ static infs_status storage_write(void *opaque, uint64_t offset, const void *buff
 {
     const IfsFsHostRuntimeV2 *host = opaque;
     const unsigned char *source = buffer;
-    if (length && !buffer) return INFS_STATUS_INVALID_ARGUMENT;
+    if (!host || (length && !buffer) || offset>host->volume_bytes ||
+        length>host->volume_bytes-offset) return INFS_STATUS_INVALID_ARGUMENT;
     while (length) {
         uint32_t chunk = length > UINT32_MAX ? UINT32_MAX : (uint32_t)length;
         int result = ifs_fs_host_write_bytes_v2(host, offset, source, chunk);
@@ -142,8 +179,14 @@ static int mount_volume(const IfsFsHostRuntimeV2 *host, void **out, IfsFsVolumeI
     }
     struct v2_volume *v = host->allocate(host->context, sizeof(*v));
     if (!v) return IFS_FS_NO_MEMORY;
-    memset(v, 0, sizeof(*v)); v->host = host;
-    struct infs_storage storage = { &storage_ops, (void *)host };
+    memset(v, 0, sizeof(*v));
+    const size_t host_bytes=host->structure_bytes<sizeof(v->retained_host)?
+        host->structure_bytes:sizeof(v->retained_host);
+    memcpy(&v->retained_host,host,host_bytes);
+    v->retained_host.structure_bytes=(uint32_t)host_bytes;
+    v->host=&v->retained_host;
+    USE_HOST(v->host);
+    struct infs_storage storage = { &storage_ops, (void *)v->host };
     infs_status status = infs_volume_open_storage(&v->volume, &storage, writable);
     if (status != INFS_STATUS_OK) { host->release(host->context, v); return map_status(status); }
     *info = (IfsFsVolumeInfoV2){.structure_bytes = sizeof(*info), .variant = variant,
@@ -157,7 +200,10 @@ static int unmount_volume(void *volume)
     struct v2_volume *v = volume;
     if (!v) return IFS_FS_INVALID;
     const IfsFsHostRuntimeV2 *host = v->host;
-    USE_HOST(host); infs_volume_close(&v->volume); host->release(host->context, v);
+    USE_HOST(host);
+    infs_volume_close(&v->volume);
+    /* The release callback must run while its retained descriptor lives. */
+    host->release(host->context, v);
     return IFS_FS_OK;
 }
 static int stat_path(void *volume, const char *path, IfsFsEntryV2 *entry)
@@ -165,12 +211,14 @@ static int stat_path(void *volume, const char *path, IfsFsEntryV2 *entry)
     struct v2_volume *v = volume; struct infs_attributes attr;
     if (!v || !valid_path(path) || !entry || entry->structure_bytes < sizeof(*entry) || !entry->name)
         return IFS_FS_INVALID;
+    entry->name_bytes=0u;
     USE_HOST(v->host);
     infs_status status = infs_get_attributes(&v->volume, path, &attr);
     if (status != INFS_STATUS_OK) return map_status(status);
     const char *leaf = strrchr(path, '/'); leaf = leaf ? leaf + 1 : path;
     size_t length = strlen(leaf);
-    if (length >= entry->name_capacity || length > UINT32_MAX) return IFS_FS_INVALID;
+    if (length > UINT32_MAX) return IFS_FS_INVALID;
+    if (length >= entry->name_capacity) return IFS_FS_NO_SPACE;
     memcpy(entry->name, leaf, length + 1); entry->name_bytes = (uint32_t)length;
     entry->size_bytes = attr.logical_size; entry->attributes = 0;
     switch (attr.object_type) {
@@ -184,7 +232,9 @@ static int stat_path(void *volume, const char *path, IfsFsEntryV2 *entry)
 static int list_path(void *volume, const char *path, uint32_t index, IfsFsEntryV2 *entry)
 {
     struct v2_volume *v = volume; struct infs_dir_item *items = NULL; size_t count = 0;
-    if (!v || !valid_path(path) || !entry) return IFS_FS_INVALID;
+    if (!v || !valid_path(path) || !entry || entry->structure_bytes<sizeof(*entry) ||
+        !entry->name) return IFS_FS_INVALID;
+    entry->name_bytes=0u;
     USE_HOST(v->host);
     infs_status result = infs_list_dir(&v->volume, path, &items, &count);
     if (result != INFS_STATUS_OK) return map_status(result);
@@ -280,24 +330,125 @@ static int label(void *volume, char *out, uint32_t capacity, uint32_t *bytes)
 {
     struct v2_volume *v = volume;
     if (!v || !out || !bytes) return IFS_FS_INVALID;
+    *bytes=0u;
     size_t length = 0;
     while (length < INFS_LABEL_MAX && v->volume.sb.label[length]) ++length;
-    if (length >= capacity) return IFS_FS_INVALID;
+    if (length >= capacity) return IFS_FS_NO_SPACE;
     memcpy(out, v->volume.sb.label, length); out[length] = 0; *bytes = (uint32_t)length;
     return IFS_FS_OK;
 }
+/* The exported wrappers are the only entry to the registry. Internal
+ * operations can call each other without recursively acquiring the gate. */
+static int v2_probe(const IfsFsHostRuntimeV2 *host,uint32_t *variant)
+{
+    if (variant) *variant=0u;
+    if (!enter_operation()) return IFS_FS_BUSY;
+    return leave_operation(probe(host,variant));
+}
+static int v2_mount(const IfsFsHostRuntimeV2 *host,void **out,IfsFsVolumeInfoV2 *info)
+{
+    if (!out) return IFS_FS_INVALID;
+    *out=NULL;
+    if (!enter_operation()) return IFS_FS_BUSY;
+    unsigned slot=0;
+    while (slot<MAX_V2_SESSIONS && sessions[slot].token) ++slot;
+    if (slot==MAX_V2_SESSIONS || sequence==UINTPTR_MAX)
+        return leave_operation(IFS_FS_BUSY);
+    /* Consume a generation only when reserving it; never recycle a token. */
+    uintptr_t token=++sequence ^ (uintptr_t)(void *)sessions;
+    if (!token) {
+        if (sequence==UINTPTR_MAX) return leave_operation(IFS_FS_BUSY);
+        token=++sequence ^ (uintptr_t)(void *)sessions;
+    }
+    void *native=NULL;
+    int rc=mount_volume(host,&native,info);
+    if (rc!=IFS_FS_OK) return leave_operation(rc);
+    sessions[slot].volume=native;
+    sessions[slot].token=token;
+    *out=(void *)token;
+    return leave_operation(IFS_FS_OK);
+}
+static int v2_unmount(void *handle)
+{
+    if (!enter_operation()) return IFS_FS_BUSY;
+    struct v2_volume *v=lookup_volume(handle);
+    if (!v) return leave_operation(IFS_FS_INVALID);
+    for (unsigned i=0;i<MAX_V2_SESSIONS;++i)
+        if (sessions[i].token==(uintptr_t)handle) {
+            sessions[i].token=0;
+            sessions[i].volume=NULL;
+            break;
+        }
+    return leave_operation(unmount_volume(v));
+}
+static int v2_stat_path(void *handle,const char *path,IfsFsEntryV2 *entry)
+{
+    if (!enter_operation()) return IFS_FS_BUSY;
+    return leave_operation(stat_path(lookup_volume(handle),path,entry));
+}
+static int v2_list_path(void *handle,const char *path,uint32_t index,IfsFsEntryV2 *entry)
+{
+    if (!enter_operation()) return IFS_FS_BUSY;
+    return leave_operation(list_path(lookup_volume(handle),path,index,entry));
+}
+static int v2_read_file(void *handle,const char *path,uint64_t offset,void *buffer,uint32_t length)
+{
+    if (!enter_operation()) return IFS_FS_BUSY;
+    return leave_operation(read_file(lookup_volume(handle),path,offset,buffer,length));
+}
+static int v2_write_file(void *handle,const char *path,uint64_t offset,const void *buffer,uint32_t length)
+{
+    if (!enter_operation()) return IFS_FS_BUSY;
+    return leave_operation(write_file(lookup_volume(handle),path,offset,buffer,length));
+}
+static int v2_create_path(void *handle,const char *path,uint32_t type)
+{
+    if (!enter_operation()) return IFS_FS_BUSY;
+    return leave_operation(create_path(lookup_volume(handle),path,type));
+}
+static int v2_remove_path(void *handle,const char *path)
+{
+    if (!enter_operation()) return IFS_FS_BUSY;
+    return leave_operation(remove_path(lookup_volume(handle),path));
+}
+static int v2_rename_path(void *handle,const char *old_path,const char *new_path)
+{
+    if (!enter_operation()) return IFS_FS_BUSY;
+    return leave_operation(rename_path(lookup_volume(handle),old_path,new_path));
+}
+static int v2_truncate_path(void *handle,const char *path,uint64_t bytes)
+{
+    if (!enter_operation()) return IFS_FS_BUSY;
+    return leave_operation(truncate_path(lookup_volume(handle),path,bytes));
+}
+static int v2_query_volume(void *handle,IfsFsVolumeInfoV2 *info)
+{
+    if (!enter_operation()) return IFS_FS_BUSY;
+    return leave_operation(query_volume(lookup_volume(handle),info));
+}
+static int v2_sync_volume(void *handle)
+{
+    if (!enter_operation()) return IFS_FS_BUSY;
+    return leave_operation(sync_volume(lookup_volume(handle)));
+}
+static int v2_label(void *handle,char *out,uint32_t capacity,uint32_t *bytes)
+{
+    if (!enter_operation()) return IFS_FS_BUSY;
+    return leave_operation(label(lookup_volume(handle),out,capacity,bytes));
+}
+
 static const IfsFsCoreOpsV2 core = {
     .header = {IFS_FS_GROUP_ABI_V2, sizeof(core), IFS_FS_GROUP_CORE, 0,
         IFS_FS_CORE_PROBE | IFS_FS_CORE_MOUNT | IFS_FS_CORE_STAT | IFS_FS_CORE_LIST | IFS_FS_CORE_READ |
         IFS_FS_CORE_WRITE | IFS_FS_CORE_CREATE | IFS_FS_CORE_REMOVE | IFS_FS_CORE_RENAME | IFS_FS_CORE_TRUNCATE},
-    .probe = probe, .mount = mount_volume, .unmount = unmount_volume,
-    .stat = stat_path, .directory_entry = list_path, .read = read_file, .write = write_file,
-    .create = create_path, .remove = remove_path, .rename = rename_path, .truncate = truncate_path
+    .probe = v2_probe, .mount = v2_mount, .unmount = v2_unmount,
+    .stat = v2_stat_path, .directory_entry = v2_list_path, .read = v2_read_file, .write = v2_write_file,
+    .create = v2_create_path, .remove = v2_remove_path, .rename = v2_rename_path, .truncate = v2_truncate_path
 };
 static const IfsFsVolumeOpsV2 volume_ops = {
     .header = {IFS_FS_GROUP_ABI_V2, sizeof(volume_ops), IFS_FS_GROUP_VOLUME, 0,
         IFS_FS_VOLUME_QUERY | IFS_FS_VOLUME_LABEL_GET | IFS_FS_VOLUME_SYNC},
-    .query = query_volume, .label = label, .sync = sync_volume
+    .query = v2_query_volume, .label = v2_label, .sync = v2_sync_volume
 };
 static const IfsFsGroupHeaderV2 *query(uint32_t group, uint32_t low, uint32_t high)
 {
