@@ -70,6 +70,15 @@ int main(int argc,char **argv) {
     CHECK(narrow.name_bytes==0u && tiny[0]=='X' && tiny[1]=='X');
     const IfsFsVolumeOpsV2 *ops=(const void *)ifs_fs_group_v2(api,IFS_FS_GROUP_VOLUME);
     CHECK(ops && ops->label && ops->query);
+    const int hosted=(api->runtime_profiles&IFS_FS_PROFILE_HOSTED)!=0;
+    CHECK(!!ops->scrub==hosted);
+    if (hosted) {
+        uint64_t errors=UINT64_MAX;
+        unsigned writes=disk.writes;
+        CHECK(ops->scrub(v,0,&errors)==IFS_FS_OK && !errors);
+        CHECK(ops->scrub(v,1,&errors)==IFS_FS_UNSUPPORTED && !errors);
+        CHECK(disk.writes==writes);
+    }
     const IfsFsMetadataOpsV2 *meta=(const void *)ifs_fs_group_v2(api,IFS_FS_GROUP_METADATA);
     CHECK(meta && meta->get && meta->set &&
           meta->header.capabilities==(IFS_FS_META_GET_MODE|IFS_FS_META_GET_TIMES|IFS_FS_META_SET_MODE));
@@ -149,6 +158,19 @@ int main(int argc,char **argv) {
     CHECK(core->write(v,"/created",0,payload,sizeof(payload)-1)==IFS_FS_OK);
     CHECK(ops->sync(v)==IFS_FS_OK && disk.writes && disk.flushes);
     CHECK(core->rename(v,"/created","/renamed")==IFS_FS_OK);
+    /* Use non-inline, non-repeating file content so the exact physical
+     * data block can be located independently of the provider's parser. */
+    unsigned char scrub_data[8192];
+    if (hosted) {
+        uint32_t seed=0x4c318921u;
+        for(size_t i=0;i<sizeof(scrub_data);++i) {
+            seed^=seed<<13;seed^=seed>>17;seed^=seed<<5;
+            scrub_data[i]=(unsigned char)seed;
+        }
+        CHECK(core->create(v,"/scrub-data",IFS_FS_ENTRY_FILE)==IFS_FS_OK);
+        CHECK(core->write(v,"/scrub-data",0,scrub_data,sizeof(scrub_data))==IFS_FS_OK);
+        CHECK(ops->sync(v)==IFS_FS_OK);
+    }
     CHECK(core->unmount(v)==IFS_FS_OK);
     host.capabilities=IFS_FS_HOST_READ_ONLY; host.write_at=NULL; host.flush=NULL;
     host.monotonic_ns=NULL; host.realtime_ns=NULL; host.random_bytes=NULL;
@@ -159,6 +181,21 @@ int main(int argc,char **argv) {
     char readback[sizeof(payload)]={0};
     CHECK(core->read(v,"/renamed",0,readback,sizeof(payload)-1)==IFS_FS_OK);
     CHECK(memcmp(readback,payload,sizeof(payload)-1)==0);
+    if (hosted) {
+        uint64_t errors=UINT64_MAX;
+        unsigned writes=disk.writes;
+        CHECK(ops->scrub(v,0,&errors)==IFS_FS_OK && !errors);
+        size_t physical=0;
+        for(size_t at=4096u;at+4096u<=disk.size;at+=4096u)
+            if (!memcmp(disk.data+at,scrub_data,4096u)) {physical=at;break;}
+        CHECK(physical);
+        disk.data[physical+17u]^=1u;
+        int rc=ops->scrub(v,0,&errors);
+        CHECK(rc==IFS_FS_CORRUPT && errors>0u);
+        disk.data[physical+17u]^=1u;
+        CHECK(ops->scrub(v,0,&errors)==IFS_FS_OK && !errors);
+        CHECK(disk.writes==writes);
+    }
     CHECK(core->unmount(v)==IFS_FS_OK);
     host.capabilities=IFS_FS_HOST_EXCLUSIVE|IFS_FS_HOST_DURABLE|IFS_FS_HOST_CLOCK;
     host.write_at=disk_write; host.flush=disk_flush;

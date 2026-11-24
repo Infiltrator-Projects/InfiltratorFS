@@ -533,10 +533,40 @@ static const IfsFsCoreOpsV2 core = {
     .stat = v2_stat_path, .directory_entry = v2_list_path, .read = v2_read_file, .write = v2_write_file,
     .create = v2_create_path, .remove = v2_remove_path, .rename = v2_rename_path, .truncate = v2_truncate_path
 };
+#ifndef INFS_COMMON_V2_FIRMWARE
+/* Scrub the mounted committed generation and its retained snapshots using
+ * the authoritative native integrity walk. The operation gate keeps this
+ * view stable against concurrent provider mutations; scrub never repairs
+ * or writes media. Report discovered errors even if the native traversal
+ * completed successfully. Firmware deliberately does not advertise scrub. */
+static int v2_scrub(void *handle,uint32_t flags,uint64_t *errors)
+{
+    if (!errors) return IFS_FS_INVALID;
+    *errors=0;
+    if (flags) return IFS_FS_UNSUPPORTED;
+    if (!enter_operation()) return IFS_FS_BUSY;
+    struct v2_volume *v=lookup_volume(handle);
+    if (!v) return leave_operation(IFS_FS_INVALID);
+    USE_HOST(v->host);
+    struct infs_scrub_report report={0};
+    infs_status rc=infs_scrub(&v->volume,&report);
+    *errors=report.checksum_errors>UINT64_MAX-report.metadata_errors ?
+        UINT64_MAX : report.checksum_errors+report.metadata_errors;
+    if (rc!=INFS_STATUS_OK) return leave_operation(map_status(rc));
+    return leave_operation(*errors ? IFS_FS_CORRUPT : IFS_FS_OK);
+}
+#endif
 static const IfsFsVolumeOpsV2 volume_ops = {
     .header = {IFS_FS_GROUP_ABI_V2, sizeof(volume_ops), IFS_FS_GROUP_VOLUME, 0,
-        IFS_FS_VOLUME_QUERY | IFS_FS_VOLUME_LABEL_GET | IFS_FS_VOLUME_SYNC},
+        IFS_FS_VOLUME_QUERY | IFS_FS_VOLUME_LABEL_GET | IFS_FS_VOLUME_SYNC
+#ifndef INFS_COMMON_V2_FIRMWARE
+        | IFS_FS_VOLUME_SCRUB
+#endif
+    },
     .query = v2_query_volume, .label = v2_label, .sync = v2_sync_volume
+#ifndef INFS_COMMON_V2_FIRMWARE
+    , .scrub = v2_scrub
+#endif
 };
 static const IfsFsGroupHeaderV2 *query(uint32_t group, uint32_t low, uint32_t high)
 {
