@@ -81,12 +81,16 @@ int main(int argc,char **argv) {
     }
     const IfsFsMetadataOpsV2 *meta=(const void *)ifs_fs_group_v2(api,IFS_FS_GROUP_METADATA);
     CHECK(meta && meta->get && meta->set &&
-          meta->header.capabilities==(IFS_FS_META_GET_MODE|IFS_FS_META_GET_TIMES|IFS_FS_META_SET_MODE));
+          meta->symlink && meta->readlink && meta->hardlink &&
+          meta->header.capabilities==(IFS_FS_META_GET_MODE|IFS_FS_META_GET_TIMES|IFS_FS_META_SET_MODE|
+              IFS_FS_META_SYMLINK|IFS_FS_META_READLINK|IFS_FS_META_HARDLINK));
     IfsFsMetadataV2 metadata={.structure_bytes=sizeof(metadata)};
     CHECK(meta->get(v,"/written",&metadata)==IFS_FS_OK);
     CHECK((metadata.mask&IFS_FS_META_GET_MODE) && (metadata.mode&0170000u)==0100000u);
     metadata.mask=IFS_FS_META_SET_MODE;
     CHECK(meta->set(v,"/written",&metadata)==IFS_FS_ACCESS);
+    CHECK(meta->symlink(v,"/denied","written")==IFS_FS_ACCESS);
+    CHECK(meta->hardlink(v,"/written","/denied")==IFS_FS_ACCESS);
     uint32_t label_bytes=0; char label[128];
     CHECK(ops->label(v,label,sizeof(label),&label_bytes)==0 && strcmp(label,"Fixture19")==0);
     CHECK(ops->label(v,tiny,sizeof(tiny),&label_bytes)==IFS_FS_NO_SPACE);
@@ -158,6 +162,12 @@ int main(int argc,char **argv) {
     CHECK(core->write(v,"/created",0,payload,sizeof(payload)-1)==IFS_FS_OK);
     CHECK(ops->sync(v)==IFS_FS_OK && disk.writes && disk.flushes);
     CHECK(core->rename(v,"/created","/renamed")==IFS_FS_OK);
+    CHECK(meta->symlink(v,"/relative-link","renamed")==IFS_FS_OK);
+    CHECK(meta->hardlink(v,"/renamed","/hard-link")==IFS_FS_OK);
+    CHECK(meta->hardlink(v,"/renamed","/hard-link")==IFS_FS_EXISTS);
+    CHECK(core->remove(v,"/renamed")==IFS_FS_OK);
+    CHECK(core->rename(v,"/hard-link","/renamed")==IFS_FS_OK);
+    CHECK(ops->sync(v)==IFS_FS_OK);
     /* Use non-inline, non-repeating file content so the exact physical
      * data block can be located independently of the provider's parser. */
     unsigned char scrub_data[8192];
@@ -178,6 +188,14 @@ int main(int argc,char **argv) {
     CHECK(meta->get(v,"/renamed",&metadata)==IFS_FS_OK &&
           metadata.mode==0100600u && metadata.owner==123u && metadata.group==456u &&
           metadata.created_ns==(int64_t)clock_ns(NULL));
+    char target[32]={0};
+    uint32_t target_bytes=UINT32_MAX;
+    CHECK(meta->readlink(v,"/relative-link",target,sizeof(target),&target_bytes)==IFS_FS_OK &&
+          target_bytes==7u && !strcmp(target,"renamed"));
+    CHECK(meta->readlink(v,"/relative-link",tiny,sizeof(tiny),&target_bytes)==IFS_FS_NO_SPACE &&
+          !target_bytes && tiny[0]=='X' && tiny[1]=='X');
+    CHECK(meta->get(v,"/relative-link",&metadata)==IFS_FS_OK &&
+          (metadata.mode&0170000u)==0120000u);
     char readback[sizeof(payload)]={0};
     CHECK(core->read(v,"/renamed",0,readback,sizeof(payload)-1)==IFS_FS_OK);
     CHECK(memcmp(readback,payload,sizeof(payload)-1)==0);

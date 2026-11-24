@@ -519,10 +519,54 @@ static int metadata_set(void *handle,const char *path,const IfsFsMetadataV2 *in)
         in->mode&07777u,in->owner,in->group);
     return leave_operation(map_status(status));
 }
+/* Links are native namespace objects. Preserve the caller's target
+ * literally (including relative paths), leaving target validation to
+ * the filesystem engine rather than resolving it through the host OS. */
+static int metadata_symlink(void *handle,const char *path,const char *target)
+{
+    if (!valid_path(path) || !target) return IFS_FS_INVALID;
+    if (!enter_operation()) return IFS_FS_BUSY;
+    struct v2_volume *v=lookup_volume(handle);
+    if (!v) return leave_operation(IFS_FS_INVALID);
+    if (!v->volume.writable) return leave_operation(IFS_FS_ACCESS);
+    USE_HOST(v->host);
+    const struct infs_create_options options={.posix_permissions=0777u};
+    return leave_operation(map_status(infs_create_symlink(&v->volume,path,target,&options)));
+}
+static int metadata_readlink(void *handle,const char *path,char *out,
+                             uint32_t capacity,uint32_t *bytes)
+{
+    if (!bytes) return IFS_FS_INVALID;
+    *bytes=0u;
+    if (!valid_path(path) || (!out && capacity)) return IFS_FS_INVALID;
+    if (!enter_operation()) return IFS_FS_BUSY;
+    struct v2_volume *v=lookup_volume(handle);
+    if (!v) return leave_operation(IFS_FS_INVALID);
+    USE_HOST(v->host);
+    size_t length=0;
+    infs_status rc=infs_read_symlink(&v->volume,path,out,capacity,&length);
+    if (rc==INFS_STATUS_OVERFLOW) return leave_operation(IFS_FS_NO_SPACE);
+    if (rc!=INFS_STATUS_OK) return leave_operation(map_status(rc));
+    if (length>UINT32_MAX) return leave_operation(IFS_FS_NO_SPACE);
+    *bytes=(uint32_t)length;
+    return leave_operation(IFS_FS_OK);
+}
+static int metadata_hardlink(void *handle,const char *existing,const char *new_path)
+{
+    if (!valid_path(existing) || !valid_path(new_path)) return IFS_FS_INVALID;
+    if (!enter_operation()) return IFS_FS_BUSY;
+    struct v2_volume *v=lookup_volume(handle);
+    if (!v) return leave_operation(IFS_FS_INVALID);
+    if (!v->volume.writable) return leave_operation(IFS_FS_ACCESS);
+    USE_HOST(v->host);
+    return leave_operation(map_status(infs_link_file(&v->volume,existing,new_path)));
+}
 static const IfsFsMetadataOpsV2 metadata_ops={
     .header={IFS_FS_GROUP_ABI_V2,sizeof(metadata_ops),IFS_FS_GROUP_METADATA,0,
-        IFS_FS_META_GET_MODE|IFS_FS_META_GET_TIMES|IFS_FS_META_SET_MODE},
-    .get=metadata_get,.set=metadata_set
+        IFS_FS_META_GET_MODE|IFS_FS_META_GET_TIMES|IFS_FS_META_SET_MODE|
+        IFS_FS_META_SYMLINK|IFS_FS_META_READLINK|IFS_FS_META_HARDLINK},
+    .get=metadata_get,.set=metadata_set,
+    .symlink=metadata_symlink,.readlink=metadata_readlink,.hardlink=metadata_hardlink
 };
 
 static const IfsFsCoreOpsV2 core = {
