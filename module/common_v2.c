@@ -80,8 +80,11 @@ static infs_status storage_read(void *opaque, uint64_t offset, void *buffer, siz
         length>host->volume_bytes-offset) return INFS_STATUS_INVALID_ARGUMENT;
     while (length) {
         uint32_t chunk = length > UINT32_MAX ? UINT32_MAX : (uint32_t)length;
-        if (ifs_fs_host_read_bytes_v2(host, offset, destination, chunk) != IFS_FS_OK)
-            return INFS_STATUS_IO_ERROR;
+        int result = ifs_fs_host_read_bytes_v2(host, offset, destination, chunk);
+        if (result != IFS_FS_OK)
+            return result == IFS_FS_NO_MEMORY ? INFS_STATUS_NO_MEMORY :
+                   result == IFS_FS_INVALID ? INFS_STATUS_INVALID_ARGUMENT :
+                   INFS_STATUS_IO_ERROR;
         offset += chunk; destination += chunk; length -= chunk;
     }
     return INFS_STATUS_OK;
@@ -102,7 +105,10 @@ static infs_status storage_write(void *opaque, uint64_t offset, const void *buff
     while (length) {
         uint32_t chunk = length > UINT32_MAX ? UINT32_MAX : (uint32_t)length;
         int result = ifs_fs_host_write_bytes_v2(host, offset, source, chunk);
-        if (result != IFS_FS_OK) return INFS_STATUS_IO_ERROR;
+        if (result != IFS_FS_OK)
+            return result == IFS_FS_NO_MEMORY ? INFS_STATUS_NO_MEMORY :
+                   result == IFS_FS_INVALID ? INFS_STATUS_INVALID_ARGUMENT :
+                   INFS_STATUS_IO_ERROR;
         offset += chunk; source += chunk; length -= chunk;
     }
     return INFS_STATUS_OK;

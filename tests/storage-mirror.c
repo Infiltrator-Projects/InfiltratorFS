@@ -339,6 +339,20 @@ int main(void)
     ok(infs_storage_read(&mirror, 512, readback, sizeof(degraded)) ==
            INFS_STATUS_CORRUPT,
        "split-brain replicas are rejected instead of serving stale data");
+    /* Once disagreement is observed, neither ordinary writes nor flushes
+     * may manufacture a successful commit against an ambiguous mirror. */
+    unsigned old_a_flushes = a.flushes, old_b_flushes = b.flushes;
+    unsigned char old_a[sizeof(degraded)], old_b[sizeof(degraded)];
+    memcpy(old_a, a.bytes + 512, sizeof(old_a));
+    memcpy(old_b, b.bytes + 512, sizeof(old_b));
+    ok(infs_storage_write(&mirror, 512, degraded, sizeof(degraded)) ==
+           INFS_STATUS_CORRUPT &&
+       !memcmp(old_a, a.bytes + 512, sizeof(old_a)) &&
+       !memcmp(old_b, b.bytes + 512, sizeof(old_b)),
+       "split-brain write prohibition preserves both replicas");
+    ok(infs_storage_flush(&mirror) == INFS_STATUS_CORRUPT &&
+       a.flushes == old_a_flushes && b.flushes == old_b_flushes,
+       "split-brain flush never claims durability");
     infs_storage_close(&mirror);
     ok(a.closed && b.closed, "reopened mirror closes every member");
 

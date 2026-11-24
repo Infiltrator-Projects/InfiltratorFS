@@ -294,12 +294,10 @@ int main(int argc,char **argv) {
     CHECK(core->mount(&host,&v,&info)==IFS_FS_OK && v);
     CHECK(core->stat(v,"/written",&file)==IFS_FS_OK);
     CHECK(core->unmount(v)==0);
-    /* Recovery with a recognizable locator must preserve resource errors
-     * rather than pretending the volume is absent. Fail the explicit volume
-     * allocation (the aligned locator-prefix reads may also allocate). */
+    /* Host scratch-sector allocation is a resource error, not an I/O
+     * failure or a negative filesystem identification. */
     disk.fail_allocate=1;
-    int probe_error=core->probe(&host,&variant);
-    CHECK(probe_error==IFS_FS_NO_MEMORY || probe_error==IFS_FS_IO_ERROR);
+    CHECK(core->probe(&host,&variant)==IFS_FS_NO_MEMORY);
     disk.fail_allocate=0;
     /* Keep one locator signature but erase its graph and all checkpoints. */
     memset(disk.data,0,disk.size);

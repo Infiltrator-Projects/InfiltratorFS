@@ -103,6 +103,7 @@ Pre-1.0 development is current-format-only. A development format may be replaced
 - [x] Multi-device synchronous replicated storage with failover across complete replicas.
 - [x] Per-object protection classes and deterministic placement policy across multiple devices.
 - [x] Replication via synchronous complete-volume mirroring; parity remains a future optional protection mode.
+- [ ] Persistent multi-device membership, stable placement slots, durable stale-member fencing, authoritative generation selection and interruption-safe resynchronisation. The current ordered storage wrapper detects observed replica disagreement and blocks further writes/flushes, but reopening is not repair. No automatic selection or overwrite of divergent members is permitted without a qualified recovery authority.
 - [x] Authenticated whole-volume encryption with PBKDF2-derived KEK and wrapped random 256-bit volume key.
 - [x] Multiple/per-object encryption domains derived from the authenticated volume root key.
 - [x] Authenticated metadata and data for encrypted volumes through per-block AES-256-GCM.

@@ -59,6 +59,14 @@ Named streams inherit their owner's copy-count/encryption-domain class while
 retaining their own object identity and therefore their own deterministic
 member placement.
 
+The current mirror wrapper requires the caller to preserve the exact ordered
+member set. Its health/quarantine state is volatile. A byte disagreement
+observed between readable replicas latches a write and flush prohibition for
+that wrapper lifetime; it does not select a winning copy or repair media.
+Persistent replica identity, stale-member fencing and resumable resynchronisation
+remain unqualified and incomplete. Reopening a divergent set is not recovery.
+Per-object placement must not be used with a reordered or changed member set.
+
 Structural filesystem metadata and checkpoints continue to use the backend
 default policy so the filesystem can discover and authenticate object policy
 before reading object data. A non-default protected/encrypted file is kept out

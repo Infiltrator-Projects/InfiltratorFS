@@ -22,6 +22,11 @@
  * without that boundary overlapping writers could leave healthy replicas
  * containing different final bytes despite reporting success. This provides
  * deterministic consistency at the cost of concurrent I/O through one mirror.
+ * An observed byte disagreement latches a write/flush prohibition until the
+ * wrapper is closed. Reads may still inspect surviving bytes for recovery.
+ * Member order is caller-owned and must remain unchanged for per-object
+ * placement. Quarantine is volatile; this wrapper does not persist membership,
+ * choose an authoritative replica or resynchronise stale members on reopen.
  *
  * The destination must be a distinct, otherwise unused storage handle, not
  * an element of the supplied member array. Every member must independently

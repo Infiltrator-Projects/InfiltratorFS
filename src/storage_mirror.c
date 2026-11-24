@@ -11,6 +11,10 @@ struct mirror_context {
     size_t count;
     uint64_t size_bytes;
     int is_device;
+    /* A byte disagreement proves the set has lost a single authoritative
+     * view. Latch the write prohibition under operation_lock; reopening is
+     * not resynchronisation and must not be presented as such. */
+    int divergent;
     struct infs_storage_lock operation_lock;
 };
 
@@ -140,6 +144,7 @@ static infs_status mirror_read_policy_unlocked(
                 break;
             }
             if (memcmp((const uint8_t *)buffer + checked, verify, chunk) != 0) {
+                ctx->divergent = 1;
                 free(verify);
                 return INFS_STATUS_CORRUPT;
             }
@@ -184,6 +189,10 @@ static infs_status mirror_write_policy_unlocked(
     const struct infs_storage_io_policy *policy)
 {
     struct mirror_context *ctx = opaque;
+    /* A subsequent write must not silently destroy split-brain evidence or
+     * manufacture agreement at one address while other addresses disagree. */
+    if (ctx->divergent)
+        return INFS_STATUS_CORRUPT;
     /* An explicit protection class cannot silently request fewer replicas. */
     if (policy && policy->protection_copies > ctx->count)
         return INFS_STATUS_NOT_SUPPORTED;
@@ -248,6 +257,10 @@ static infs_status mirror_write(void *opaque, uint64_t offset,
 static infs_status mirror_flush_unlocked(void *opaque)
 {
     struct mirror_context *ctx = opaque;
+    /* Do not report a successful durability barrier on a known divergent
+     * set. Independent member recovery requires an external authority. */
+    if (ctx->divergent)
+        return INFS_STATUS_CORRUPT;
     infs_status result = INFS_STATUS_OK;
     int attempted = 0;
     int degraded = 0;
