@@ -23,9 +23,10 @@ The badge above is the broad build/portable conformance gate. Mounted native-Lin
 The experimental Common V2 module in `module/` uses the portable Format 0.19
 engine for filesystem reads and writes. One shared object contains both the
 hosted implementation and the freestanding BOOT profile. Disposable-image tests exercise
-transactional writes and injected I/O failures. BOOT's firmware bridge remains
-read-only, and the module is not yet packaged or qualified for production
-upgrades or physical firmware. A disposable QEMU/OVMF test is provided.
+transactional writes and injected I/O failures. The historical BOOT firmware bridge was
+read-only. Current BOOT v0.1.642 does not contain the generic Common V2 loader;
+restoration and exact-source QEMU/OVMF qualification are required before the
+module is packaged or qualified for production upgrades or physical firmware.
 
 ## Engineering ethos
 

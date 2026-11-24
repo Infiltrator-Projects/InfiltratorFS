@@ -483,3 +483,16 @@ interruption, controller/cache configuration and device identity independently.
 Repeat at different mutation and publication phases; perform offline structural
 fsck and deep scrub after recovery, and retain exact-source logs. A bounded witness
 pass does not replace full native endurance or establish production qualification.
+
+### Current Common V2 firmware dependency boundary
+
+The BOOT repository was rebuilt after the historical Common V2 integration.
+Its current released v0.1.642 package has the native EFI-driver design rather
+than the former generic Common V2 ELF loader. The old v0.1.50 tag and package
+were not reliable references to the previous integration. The firmware gate
+pins the current released package and verifies its digest and expected package
+layout. Absence of the required configuration token is a dependency failure,
+not a provider conformance pass. Restore and qualify BOOT's generic loader,
+then pin a compatible immutable release and execute the real QEMU/OVMF
+provider/kernel handoff. Standalone EFI-driver boot and hosted module tests do
+not substitute for this gate.

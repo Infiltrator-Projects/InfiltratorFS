@@ -31,16 +31,25 @@ jobs:
       - name: Install disposable VM tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-system-x86 ovmf busybox-static cpio dosfstools gdisk mtools
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 ovmf busybox-static cpio dosfstools gdisk mtools binutils
       - name: Obtain the released BOOT and a distribution test kernel
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/boot" "$RUNNER_TEMP/kernel"
           deb="$RUNNER_TEMP/boot.deb"
-          curl -fsSL --retry 3 -o "$deb" https://github.com/Infiltrator-Projects/Boot/releases/download/v0.1.50/infiltrator-boot_0.1.50_amd64.deb
-          printf '%s  %s\n' c1b67a368edf7f47dc891bf71d1e2ba44f7c6c91205f84bb287525ac1758686c "$deb" | sha256sum -c -
+          curl -fsSL --retry 3 -o "$deb" https://github.com/Infiltrator-Projects/Boot/releases/download/v0.1.642/infiltrator-boot_0.1.642_amd64.deb
+          printf '%s  %s\n' eb9f89568bbdb202d451d23e43fc4acebd50ebba20bb42a638f6ca7c8539cb46 "$deb" | sha256sum -c -
           dpkg-deb -x "$deb" "$RUNNER_TEMP/boot"
+          boot="$RUNNER_TEMP/boot/usr/share/infiltrator-boot/boot/boot_x64.efi"
+          test -s "$boot"
+          # A reset BOOT repository currently packages ordinary EFI drivers.
+          # Never treat those as Common V2 or silently skip its runtime gate.
+          strings -el "$boot" > "$RUNNER_TEMP/boot-strings"
+          if ! grep -Fq filesystem_module "$RUNNER_TEMP/boot-strings"; then
+            echo "::error::Pinned BOOT v0.1.642 has no filesystem_module configuration token; restore and release the generic Common V2 loader before repinning this test."
+            exit 1
+          fi
           image=$(apt-cache depends linux-image-generic | awk '/Depends: linux-image-[0-9]/ { image=$2 } END { print image }')
           release=${image#linux-image-}
           [[ -n $release && $release != "$image" ]]
@@ -53,5 +62,5 @@ jobs:
           set -euo pipefail
           release=$(cat "$RUNNER_TEMP/kernel/release")
           bash tests/common-v2-uefi.sh \
-            "$RUNNER_TEMP/boot/usr/lib/infiltrator-boot/EFI/BOOT/BOOTX64.EFI" \
+            "$RUNNER_TEMP/boot/usr/share/infiltrator-boot/boot/boot_x64.efi" \
             "$RUNNER_TEMP/kernel/boot/vmlinuz-$release" "$RUNNER_TEMP/v2-boot"
