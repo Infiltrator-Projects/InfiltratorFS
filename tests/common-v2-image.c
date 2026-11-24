@@ -71,10 +71,12 @@ int main(int argc,char **argv) {
     const IfsFsVolumeOpsV2 *ops=(const void *)ifs_fs_group_v2(api,IFS_FS_GROUP_VOLUME);
     CHECK(ops && ops->label && ops->query);
     const int hosted=(api->runtime_profiles&IFS_FS_PROFILE_HOSTED)!=0;
-    CHECK(!!ops->scrub==hosted);
+    CHECK(!!ops->scrub==hosted && !!ops->check==hosted && !ops->repair);
     if (hosted) {
         uint64_t errors=UINT64_MAX;
         unsigned writes=disk.writes;
+        CHECK(ops->check(v,0,&errors)==IFS_FS_OK && !errors);
+        CHECK(ops->check(v,1,&errors)==IFS_FS_UNSUPPORTED && !errors);
         CHECK(ops->scrub(v,0,&errors)==IFS_FS_OK && !errors);
         CHECK(ops->scrub(v,1,&errors)==IFS_FS_UNSUPPORTED && !errors);
         CHECK(disk.writes==writes);
@@ -208,6 +210,8 @@ int main(int argc,char **argv) {
             if (!memcmp(disk.data+at,scrub_data,4096u)) {physical=at;break;}
         CHECK(physical);
         disk.data[physical+17u]^=1u;
+        /* Structural checking is not a substitute for payload scrubbing. */
+        CHECK(ops->check(v,0,&errors)==IFS_FS_OK && !errors);
         int rc=ops->scrub(v,0,&errors);
         CHECK(rc==IFS_FS_CORRUPT && errors>0u);
         disk.data[physical+17u]^=1u;

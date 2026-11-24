@@ -5,6 +5,9 @@
 #include "infilfs/fs.h"
 #include "infilfs/endian.h"
 #include "infilfs/volume.h"
+#ifndef INFS_COMMON_V2_FIRMWARE
+#include "infilfs/check.h"
+#endif
 #include <limits.h>
 #include <stdatomic.h>
 #include <string.h>
@@ -585,6 +588,26 @@ static const IfsFsCoreOpsV2 core = {
     .create = v2_create_path, .remove = v2_remove_path, .rename = v2_rename_path, .truncate = v2_truncate_path
 };
 #ifndef INFS_COMMON_V2_FIRMWARE
+/* Fast structural check and deep payload scrub are distinct operations.
+ * The canonical check validates checkpoint replicas, permanent recovery
+ * locators, allocation ownership and namespace reachability. Its report
+ * stops at the first invalid stage: return a conservative count of one
+ * for a structural failure rather than inventing a total error count.
+ * Neither check nor scrub performs repairs or changes media. */
+static int v2_check(void *handle,uint32_t flags,uint64_t *errors)
+{
+    if (!errors) return IFS_FS_INVALID;
+    *errors=0u;
+    if (flags) return IFS_FS_UNSUPPORTED;
+    if (!enter_operation()) return IFS_FS_BUSY;
+    struct v2_volume *v=lookup_volume(handle);
+    if (!v) return leave_operation(IFS_FS_INVALID);
+    USE_HOST(v->host);
+    struct infs_check_report report={0};
+    infs_status rc=infs_check(&v->volume,&report);
+    if (rc==INFS_STATUS_CORRUPT) *errors=1u;
+    return leave_operation(map_status(rc));
+}
 /* Scrub the mounted committed generation and its retained snapshots using
  * the authoritative native integrity walk. The operation gate keeps this
  * view stable against concurrent provider mutations; scrub never repairs
@@ -611,12 +634,12 @@ static const IfsFsVolumeOpsV2 volume_ops = {
     .header = {IFS_FS_GROUP_ABI_V2, sizeof(volume_ops), IFS_FS_GROUP_VOLUME, 0,
         IFS_FS_VOLUME_QUERY | IFS_FS_VOLUME_LABEL_GET | IFS_FS_VOLUME_SYNC
 #ifndef INFS_COMMON_V2_FIRMWARE
-        | IFS_FS_VOLUME_SCRUB
+        | IFS_FS_VOLUME_SCRUB | IFS_FS_VOLUME_CHECK
 #endif
     },
     .query = v2_query_volume, .label = v2_label, .sync = v2_sync_volume
 #ifndef INFS_COMMON_V2_FIRMWARE
-    , .scrub = v2_scrub
+    , .scrub = v2_scrub, .check = v2_check
 #endif
 };
 static const IfsFsGroupHeaderV2 *query(uint32_t group, uint32_t low, uint32_t high)
