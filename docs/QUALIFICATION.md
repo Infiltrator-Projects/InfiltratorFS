@@ -570,3 +570,6 @@ The [local Linux userspace job](https://github.com/Infiltrator-Projects/Infiltra
 
 ### Atomic batch conformance (execution pending)
 The registered batch test checks multi-record and payload publication as one authority, first-transaction creation, late missing-key zero-write refusal and every simulated write/flush failure. No pass is asserted until exact-source execution.
+
+### Typed paged-volume integration (execution pending)
+The new `infilfs-format-020-paged-volume` test runs the existing file/ownership model through the authenticated variable-height tree and common batch commit, checking actual payload/metadata interruptions, shared integrity, native root reversal, two-lane loss and read-only exact unit loss. No pass is asserted before exact-source CI.

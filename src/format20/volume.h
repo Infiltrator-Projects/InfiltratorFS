@@ -2,6 +2,7 @@
 #ifndef INFS20_VOLUME_MODEL_H
 #define INFS20_VOLUME_MODEL_H
 #include "ownership.h"
+#include "paged_store.h"
 
 /*
  * Executable single-device integration model. Disposable test media only:
@@ -69,4 +70,27 @@ infs_status infs20_volume_read_range(const struct infs20_store_layout *,
 infs_status infs20_volume_recovery_visit(const struct infs20_store_layout *,
     const struct infs20_store_io *,infs20_recovery_mapping_fn,
     infs20_recovery_unit_fn,void *);
+/* The paged profile uses exactly the same canonical namespace and ownership
+ * implementation, but stores it in the variable-height authenticated tree.
+ * It is the successor to the bounded-bank regression profile. */
+infs_status infs20_paged_volume_create(const struct infs20_paged_layout *,
+    const struct infs20_store_io *,const uint8_t tx[16]);
+infs_status infs20_paged_volume_write(const struct infs20_paged_layout *,
+    const struct infs20_store_io *,const uint8_t tx[16],const char *name,const uint8_t *data,size_t size);
+infs_status infs20_paged_volume_clone(const struct infs20_paged_layout *,
+    const struct infs20_store_io *,const uint8_t tx[16],const char *source,const char *target);
+infs_status infs20_paged_volume_read(const struct infs20_paged_layout *,
+    const struct infs20_store_io *,uint64_t ordinal,const char *name,uint8_t *out,size_t capacity,size_t *size);
+infs_status infs20_paged_volume_read_range(const struct infs20_paged_layout *,
+    const struct infs20_store_io *,uint64_t ordinal,const char *name,uint64_t offset,uint8_t *out,size_t capacity,size_t *size);
+infs_status infs20_paged_volume_recovery_visit(const struct infs20_paged_layout *,
+    const struct infs20_store_io *,infs20_recovery_mapping_fn mapping_fn,infs20_recovery_unit_fn unit_fn,void *context);
+infs_status infs20_paged_volume_snapshot(const struct infs20_paged_layout *,
+    const struct infs20_store_io *,const uint8_t tx[16],uint64_t ordinal);
+infs_status infs20_paged_volume_format(const struct infs20_paged_layout *,
+    const struct infs20_store_io *,const uint8_t tx[16],uint64_t ordinal);
+infs_status infs20_paged_volume_unformat(const struct infs20_paged_layout *,
+    const struct infs20_store_io *,const uint8_t tx[16],uint64_t ordinal);
+infs_status infs20_paged_volume_relocate(const struct infs20_paged_layout *,
+    const struct infs20_store_io *,const uint8_t tx[16],const char *name);
 #endif

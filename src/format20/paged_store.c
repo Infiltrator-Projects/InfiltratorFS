@@ -347,6 +347,80 @@ infs_status infs20_paged_remove(const struct infs20_paged_layout *l,
     const struct infs20_paged_change change={key,NULL,ks,0,1};
     return infs20_paged_apply(l,io,tx,&change,1,0,NULL,NULL,out);
 }
+struct replacement {
+    const struct infs20_store_record *next;
+    size_t count,index,changes;
+    struct infs20_paged_change batch[INFS20_PAGED_BATCH_MAX];
+    uint8_t *owned[INFS20_PAGED_BATCH_MAX];
+};
+static int record_keycmp(const uint8_t *a,size_t an,const uint8_t *b,size_t bn)
+{
+    size_t n=an<bn?an:bn;
+    int cmp=memcmp(a,b,n);
+    return cmp?cmp:(an>bn)-(an<bn);
+}
+static infs_status queue_put(struct replacement *d)
+{
+    if(d->changes==INFS20_PAGED_BATCH_MAX) return INFS_STATUS_NO_SPACE;
+    const struct infs20_store_record *r=d->next+d->index++;
+    d->batch[d->changes++]=(struct infs20_paged_change){
+        r->key,r->value,r->key_size,r->value_size,0};
+    return INFS_STATUS_OK;
+}
+static infs_status diff_visit(void *opaque,const uint8_t *key,size_t ks,
+    const uint8_t *value,size_t vs)
+{
+    struct replacement *d=opaque;
+    while(d->index<d->count) {
+        const struct infs20_store_record *r=d->next+d->index;
+        int cmp=record_keycmp(r->key,r->key_size,key,ks);
+        if(cmp>0) break;
+        if(!cmp) {
+            if(r->value_size==vs && (!vs || !memcmp(r->value,value,vs))) {
+                ++d->index;
+                return INFS_STATUS_OK;
+            }
+            return queue_put(d);
+        }
+        infs_status st=queue_put(d); if(st) return st;
+    }
+    if(d->changes==INFS20_PAGED_BATCH_MAX) return INFS_STATUS_NO_SPACE;
+    /* The visitor's key is borrowed; removal must outlive this callback. */
+    uint8_t *copy=malloc(ks);
+    if(!copy) return INFS_STATUS_NO_MEMORY;
+    memcpy(copy,key,ks);
+    size_t i=d->changes++;
+    d->owned[i]=copy;
+    d->batch[i]=(struct infs20_paged_change){copy,NULL,ks,0,1};
+    return INFS_STATUS_OK;
+}
+infs_status infs20_paged_replace(const struct infs20_paged_layout *l,
+    const struct infs20_store_io *io,const uint8_t tx[16],
+    const struct infs20_store_record *records,size_t count,int create_empty,
+    infs20_store_prepare prepare_payload,void *context,struct infs20_paged_state *out)
+{
+    if(!out || !tx || zero(tx,16) || !valid_layout(l,io,1) ||
+       count>INFS20_PAGED_BATCH_MAX || (count && !records) ||
+       (create_empty!=0 && create_empty!=1)) return INFS_STATUS_INVALID_ARGUMENT;
+    for(size_t i=0;i<count;++i) {
+        const struct infs20_store_record *r=records+i;
+        if(!r->key || !r->key_size || r->key_size>INFS20_TREE_KEY_MAX ||
+           (r->value_size && !r->value) ||
+           (i && record_keycmp(records[i-1].key,records[i-1].key_size,
+                               r->key,r->key_size)>=0))
+            return INFS_STATUS_INVALID_ARGUMENT;
+    }
+    struct replacement *d=calloc(1,sizeof(*d));
+    if(!d) return INFS_STATUS_NO_MEMORY;
+    d->next=records; d->count=count;
+    infs_status st=create_empty?INFS_STATUS_OK:infs20_paged_visit(l,io,diff_visit,d);
+    while(!st && d->index<count) st=queue_put(d);
+    if(!st) st=infs20_paged_apply(l,io,tx,d->batch,d->changes,create_empty,
+                                  prepare_payload,context,out);
+    for(size_t i=0;i<d->changes;++i) free(d->owned[i]);
+    free(d);
+    return st;
+}
 infs_status infs20_paged_get(const struct infs20_paged_layout *l,
     const struct infs20_store_io *io,const uint8_t *key,size_t ks,
     uint8_t *out,size_t capacity,size_t *size)

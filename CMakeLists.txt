@@ -230,13 +230,15 @@ target_link_libraries(infilfs-format-020-ownership PRIVATE infilfs_core)
 infilfs_enable_warnings(infilfs-format-020-ownership)
 add_executable(infilfs-format-020-volume
     tests/format-020-volume.c src/format20/schema.c
-    src/format20/store.c src/format20/ownership.c src/format20/volume.c)
+    src/format20/store.c src/format20/ownership.c src/format20/volume.c
+    src/format20/tree.c src/format20/paged_store.c)
 target_include_directories(infilfs-format-020-volume PRIVATE src)
 target_link_libraries(infilfs-format-020-volume PRIVATE infilfs_core)
 infilfs_enable_warnings(infilfs-format-020-volume)
 add_executable(infilfs-format-020-multiblock
     tests/format-020-multiblock.c src/format20/schema.c
-    src/format20/store.c src/format20/ownership.c src/format20/volume.c)
+    src/format20/store.c src/format20/ownership.c src/format20/volume.c
+    src/format20/tree.c src/format20/paged_store.c)
 target_include_directories(infilfs-format-020-multiblock PRIVATE src)
 target_link_libraries(infilfs-format-020-multiblock PRIVATE infilfs_core)
 infilfs_enable_warnings(infilfs-format-020-multiblock)
@@ -257,6 +259,13 @@ add_executable(infilfs-format-020-batch
 target_include_directories(infilfs-format-020-batch PRIVATE src)
 target_link_libraries(infilfs-format-020-batch PRIVATE infilfs_core)
 infilfs_enable_warnings(infilfs-format-020-batch)
+add_executable(infilfs-format-020-paged-volume
+    tests/format-020-paged-volume.c src/format20/schema.c src/format20/store.c
+    src/format20/tree.c src/format20/paged_store.c src/format20/ownership.c
+    src/format20/volume.c)
+target_include_directories(infilfs-format-020-paged-volume PRIVATE src)
+target_link_libraries(infilfs-format-020-paged-volume PRIVATE infilfs_core)
+infilfs_enable_warnings(infilfs-format-020-paged-volume)
 
 # Real foreign formatter characterization is confined to generated regular
 # files. Build the harness on POSIX; the actual ext4 test is admitted only
@@ -264,7 +273,8 @@ infilfs_enable_warnings(infilfs-format-020-batch)
 if(UNIX AND NOT APPLE)
     add_executable(infilfs-format-020-foreign-image
         tests/format-020-foreign-image.c src/format20/schema.c
-        src/format20/store.c src/format20/ownership.c src/format20/volume.c)
+        src/format20/store.c src/format20/ownership.c src/format20/volume.c
+    src/format20/tree.c src/format20/paged_store.c)
     target_include_directories(infilfs-format-020-foreign-image PRIVATE src)
     target_link_libraries(infilfs-format-020-foreign-image PRIVATE infilfs_core)
     infilfs_enable_warnings(infilfs-format-020-foreign-image)
@@ -442,6 +452,7 @@ add_test(NAME infilfs-format-020-multiblock COMMAND infilfs-format-020-multibloc
 add_test(NAME infilfs-format-020-tree COMMAND infilfs-format-020-tree)
 add_test(NAME infilfs-format-020-paged-store COMMAND infilfs-format-020-paged-store)
 add_test(NAME infilfs-format-020-batch COMMAND infilfs-format-020-batch)
+add_test(NAME infilfs-format-020-paged-volume COMMAND infilfs-format-020-paged-volume)
 if(TARGET infilfs-format-020-foreign-image AND INFILFS_FORMAT20_EXT4)
     add_test(NAME infilfs-format-020-foreign-ext4
         COMMAND infilfs-format-020-foreign-image "${INFILFS_FORMAT20_EXT4}" ext4)

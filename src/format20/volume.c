@@ -103,13 +103,18 @@ static size_t unit_size(size_t size,size_t index)
     size_t left=size-offset;
     return left<INFS20_PAGE_BYTES?left:INFS20_PAGE_BYTES;
 }
-static infs_status validate(const struct infs20_store_layout *l,const struct volume *v)
+static infs_status validate(const struct infs20_store_layout *l,
+    const struct infs20_paged_layout *paged,const struct volume *v)
 {
     infs_status st=infs20_model_validate(l,&v->graph);
     if(st) return st;
     if(v->header!=1 || v->frontier>l->member_blocks ||
        v->files_count>INFS20_VOLUME_FILES || v->contents_count>INFS20_MODEL_NODES)
         return INFS_STATUS_CORRUPT;
+    if(paged) for(unsigned lane=0;lane<INFS20_LANE_COUNT;++lane)
+        if(!paged->arena_blocks[lane] || paged->arena_start[lane]>=l->member_blocks ||
+           paged->arena_blocks[lane]>l->member_blocks-paged->arena_start[lane])
+            return INFS_STATUS_CORRUPT;
     size_t data_count=0,strong_count=0;
     for(size_t i=0;i<v->graph.node_count;++i) {
         const struct infs20_model_node *n=&v->graph.nodes[i];
@@ -120,6 +125,12 @@ static infs_status validate(const struct infs20_store_layout *l,const struct vol
                n->blocks!=unit_count(v->contents[c].size) ||
                n->start>=v->frontier || n->blocks>v->frontier-n->start)
                 return INFS_STATUS_CORRUPT;
+            /* Metadata arenas are reserved in their entirety, including
+             * unused append capacity. No payload may overlap any arena. */
+            if(paged) for(unsigned lane=0;lane<INFS20_LANE_COUNT;++lane)
+                if(n->start<paged->arena_start[lane]+paged->arena_blocks[lane] &&
+                   paged->arena_start[lane]<n->start+n->blocks)
+                    return INFS_STATUS_CORRUPT;
         } else if(n->kind!=INFS20_MODEL_ROOT || n->blocks)
             return INFS_STATUS_CORRUPT;
     }
@@ -188,12 +199,19 @@ static infs_status decode(void *opaque,const struct infs20_record_view *r)
     } else return INFS_STATUS_NOT_SUPPORTED;
     return INFS_STATUS_OK;
 }
+static infs_status decode_paged(void *opaque,const uint8_t *key,size_t ks,
+    const uint8_t *value,size_t vs)
+{
+    const struct infs20_record_view r={INFS20_PROBE_KIND,key,ks,value,vs,0};
+    return decode(opaque,&r);
+}
 static infs_status load(const struct infs20_store_layout *l,
-    const struct infs20_store_io *io,struct volume *v)
+    const struct infs20_paged_layout *paged,const struct infs20_store_io *io,struct volume *v)
 {
     memset(v,0,sizeof(*v));
-    infs_status st=infs20_store_visit(l,io,decode,v);
-    return st?st:validate(l,v);
+    infs_status st=paged?infs20_paged_visit(paged,io,decode_paged,v):
+                         infs20_store_visit(l,io,decode,v);
+    return st?st:validate(l,paged,v);
 }
 static infs_status prepare(void *opaque)
 {
@@ -207,11 +225,25 @@ static infs_status prepare(void *opaque)
     }
     return INFS_STATUS_OK;
 }
-static infs_status commit(const struct infs20_store_layout *l,
-    const struct infs20_store_io *io,const uint8_t tx[16],
-    const struct volume *v,struct pending *p)
+struct paged_publish {
+    const struct infs20_paged_layout *layout;
+    const struct infs20_store_io *io;
+    const uint8_t *tx;
+    struct pending *payload;
+    int create;
+};
+static infs_status publish_paged(void *opaque,const struct infs20_store_record *r,size_t n)
 {
-    infs_status st=validate(l,v); if(st) return st;
+    struct paged_publish *p=opaque;
+    struct infs20_paged_state state;
+    return infs20_paged_replace(p->layout,p->io,p->tx,r,n,p->create,
+        p->payload?prepare:NULL,p->payload,&state);
+}
+static infs_status commit(const struct infs20_store_layout *l,
+    const struct infs20_paged_layout *paged,const struct infs20_store_io *io,
+    const uint8_t tx[16],const struct volume *v,struct pending *p,int create)
+{
+    infs_status st=validate(l,paged,v); if(st) return st;
     enum { MAX=1+INFS20_MODEL_NODES+INFS20_VOLUME_FILES };
     struct encoded {
         uint8_t key[17+INFS20_VOLUME_NAME_MAX],value[5+32*INFS20_VOLUME_UNITS];
@@ -237,12 +269,16 @@ static infs_status commit(const struct infs20_store_layout *l,
         memcpy(e[n].value+1,m->data,16); infs_store_le64(e[n].value+17,m->ordinal);
         r[n]=(struct infs20_store_record){e[n].key,e[n].value,(uint16_t)(17+len),25}; ++n;
     }
+    if(paged) {
+        struct paged_publish publish={paged,io,tx,p,create};
+        return infs20_model_with_records(l,&v->graph,r,n,publish_paged,&publish);
+    }
     struct infs20_store_state state;
     return infs20_model_commit_extended(l,io,tx,&v->graph,r,n,
                                          p?prepare:NULL,p,&state);
 }
 static infs_status reserve(const struct infs20_store_layout *l,
-    struct volume *v,size_t blocks,uint64_t *block)
+    const struct infs20_paged_layout *paged,struct volume *v,size_t blocks,uint64_t *block)
 {
     /* Reserve the entire contiguous run before preparing any bytes. Skip
      * lanes intersecting any part of the candidate, not merely its start.
@@ -257,6 +293,12 @@ static infs_status reserve(const struct infs20_store_layout *l,
         for(unsigned lane=0;lane<INFS20_LANE_COUNT;++lane) {
             uint64_t end=l->lane_start[lane]+INFS20_STORE_LANE_BLOCKS;
             if(at<end && l->lane_start[lane]<at+blocks) {
+                at=end; moved=1; break;
+            }
+        }
+        if(!moved && paged) for(unsigned lane=0;lane<INFS20_LANE_COUNT;++lane) {
+            uint64_t end=paged->arena_start[lane]+paged->arena_blocks[lane];
+            if(at<end && paged->arena_start[lane]<at+blocks) {
                 at=end; moved=1; break;
             }
         }
@@ -314,30 +356,32 @@ static infs_status fork_root(const struct infs20_store_layout *l,struct volume *
     }
     return INFS_STATUS_OK;
 }
-infs_status infs20_volume_create(const struct infs20_store_layout *l,
-    const struct infs20_store_io *io,const uint8_t tx[16])
+static infs_status volume_create(const struct infs20_store_layout *l,
+    const struct infs20_paged_layout *paged,    const struct infs20_store_io *io,const uint8_t tx[16])
 {
     if(!tx_valid(tx)) return INFS_STATUS_INVALID_ARGUMENT;
-    struct infs20_store_state s;
-    infs_status st=infs20_store_recover(l,io,&s);
-    if(!st) return INFS_STATUS_ALREADY_EXISTS;
-    if(st!=INFS_STATUS_NOT_FOUND) return st;
+    if(!paged) {
+        struct infs20_store_state s;
+        infs_status st=infs20_store_recover(l,io,&s);
+        if(!st) return INFS_STATUS_ALREADY_EXISTS;
+        if(st!=INFS_STATUS_NOT_FOUND) return st;
+    }
     struct volume v={0}; v.header=1;
     struct infs20_model_node *n=&v.graph.nodes[v.graph.node_count++];
     id_make(tx,'R',n->id); n->rank=2; n->kind=INFS20_MODEL_ROOT;
     n->state=INFS20_MODEL_LIVE; n->refs=1;
     struct infs20_model_edge *e=&v.graph.edges[v.graph.edge_count++];
     memcpy(e->target,n->id,16); e->ordinal=1; e->role=INFS20_MODEL_ACTIVE;
-    return commit(l,io,tx,&v,NULL);
+    return commit(l,paged,io,tx,&v,NULL,1);
 }
-infs_status infs20_volume_write(const struct infs20_store_layout *l,
-    const struct infs20_store_io *io,const uint8_t tx[16],const char *name,
+static infs_status volume_write(const struct infs20_store_layout *l,
+    const struct infs20_paged_layout *paged,    const struct infs20_store_io *io,const uint8_t tx[16],const char *name,
     const uint8_t *data,size_t size)
 {
     if(!tx_valid(tx) || !name_valid(name) || (!data && size))
         return INFS_STATUS_INVALID_ARGUMENT;
     if(size>INFS20_VOLUME_BYTES) return INFS_STATUS_FILE_TOO_LARGE;
-    struct volume v; infs_status st=load(l,io,&v); if(st) return st;
+    struct volume v; infs_status st=load(l,paged,io,&v); if(st) return st;
     uint8_t root[16],id[16]; uint64_t ordinal;
     st=fork_root(l,&v,tx,name,root,&ordinal); if(st) return st;
     if(v.graph.node_count==INFS20_MODEL_NODES || v.contents_count==INFS20_MODEL_NODES)
@@ -346,7 +390,7 @@ infs_status infs20_volume_write(const struct infs20_store_layout *l,
     struct pending *p=calloc(1,sizeof(*p));
     if(!p) return INFS_STATUS_NO_MEMORY;
     p->io=io; p->blocks=unit_count(size);
-    st=reserve(l,&v,p->blocks,&p->block);
+    st=reserve(l,paged,&v,p->blocks,&p->block);
     if(st) { free(p); return st; }
     if(size) memcpy(p->data,data,size);
     struct infs20_model_node *n=&v.graph.nodes[v.graph.node_count++];
@@ -357,16 +401,16 @@ infs_status infs20_volume_write(const struct infs20_store_layout *l,
     for(size_t i=0;i<p->blocks;++i)
         infs_sha256(p->data+i*INFS20_PAGE_BYTES,INFS20_PAGE_BYTES,c->digest[i]);
     st=add_file(&v,root,name,id,ordinal);
-    if(!st) st=commit(l,io,tx,&v,p);
+    if(!st) st=commit(l,paged,io,tx,&v,p,0);
     free(p);
     return st;
 }
-infs_status infs20_volume_clone(const struct infs20_store_layout *l,
-    const struct infs20_store_io *io,const uint8_t tx[16],const char *source,const char *target)
+static infs_status volume_clone(const struct infs20_store_layout *l,
+    const struct infs20_paged_layout *paged,    const struct infs20_store_io *io,const uint8_t tx[16],const char *source,const char *target)
 {
     if(!tx_valid(tx) || !name_valid(source) || !name_valid(target) || !strcmp(source,target))
         return INFS_STATUS_INVALID_ARGUMENT;
-    struct volume v; infs_status st=load(l,io,&v); if(st) return st;
+    struct volume v; infs_status st=load(l,paged,io,&v); if(st) return st;
     const uint8_t *active=v.graph.edges[pin(&v,0)].target;
     int i=file(&v,active,source);
     if(i<0) return INFS_STATUS_NOT_FOUND;
@@ -375,7 +419,7 @@ infs_status infs20_volume_clone(const struct infs20_store_layout *l,
     memcpy(data,v.files[i].data,16);
     st=fork_root(l,&v,tx,NULL,root,&ordinal); if(st) return st;
     st=add_file(&v,root,target,data,ordinal);
-    return st?st:commit(l,io,tx,&v,NULL);
+    return st?st:commit(l,paged,io,tx,&v,NULL,0);
 }
 /* The canonical allocation digest is indexed by decoded unit. Verify padding
  * explicitly, even though the digest also covers it, to avoid accepting a
@@ -410,12 +454,12 @@ static infs_status read_content(const struct volume *v,const struct infs20_store
     }
     return INFS_STATUS_OK;
 }
-infs_status infs20_volume_read(const struct infs20_store_layout *l,
-    const struct infs20_store_io *io,uint64_t ordinal,const char *name,
+static infs_status volume_read(const struct infs20_store_layout *l,
+    const struct infs20_paged_layout *paged,    const struct infs20_store_io *io,uint64_t ordinal,const char *name,
     uint8_t *out,size_t capacity,size_t *size)
 {
     if(!name_valid(name) || !size || (!out && capacity)) return INFS_STATUS_INVALID_ARGUMENT;
-    struct volume v; infs_status st=load(l,io,&v); if(st) return st;
+    struct volume v; infs_status st=load(l,paged,io,&v); if(st) return st;
     int p=pin(&v,ordinal); if(p<0) return INFS_STATUS_NOT_FOUND;
     int i=file(&v,v.graph.edges[p].target,name); if(i<0) return INFS_STATUS_NOT_FOUND;
     int ci=content(&v,v.files[i].data);
@@ -432,12 +476,12 @@ infs_status infs20_volume_read(const struct infs20_store_layout *l,
     free(stage);
     return st;
 }
-infs_status infs20_volume_read_range(const struct infs20_store_layout *l,
-    const struct infs20_store_io *io,uint64_t ordinal,const char *name,
+static infs_status volume_read_range(const struct infs20_store_layout *l,
+    const struct infs20_paged_layout *paged,    const struct infs20_store_io *io,uint64_t ordinal,const char *name,
     uint64_t offset,uint8_t *out,size_t capacity,size_t *size)
 {
     if(!name_valid(name) || !size || (!out && capacity)) return INFS_STATUS_INVALID_ARGUMENT;
-    struct volume v; infs_status st=load(l,io,&v); if(st) return st;
+    struct volume v; infs_status st=load(l,paged,io,&v); if(st) return st;
     int p=pin(&v,ordinal); if(p<0) return INFS_STATUS_NOT_FOUND;
     int i=file(&v,v.graph.edges[p].target,name); if(i<0) return INFS_STATUS_NOT_FOUND;
     int ci=content(&v,v.files[i].data);
@@ -462,12 +506,12 @@ infs_status infs20_volume_read_range(const struct infs20_store_layout *l,
     free(stage);
     return st;
 }
-infs_status infs20_volume_recovery_visit(const struct infs20_store_layout *l,
-    const struct infs20_store_io *io,infs20_recovery_mapping_fn mapping_fn,
+static infs_status volume_recovery_visit(const struct infs20_store_layout *l,
+    const struct infs20_paged_layout *paged,    const struct infs20_store_io *io,infs20_recovery_mapping_fn mapping_fn,
     infs20_recovery_unit_fn unit_fn,void *context)
 {
     if(!mapping_fn || !unit_fn) return INFS_STATUS_INVALID_ARGUMENT;
-    struct volume v; infs_status st=load(l,io,&v); if(st) return st;
+    struct volume v; infs_status st=load(l,paged,io,&v); if(st) return st;
     unsigned used[INFS20_MODEL_NODES]={0};
     /* Enumerate each pinned namespace, preserving pin role and stable data
      * identity. Only then visit unique data units: clones and snapshots do
@@ -507,33 +551,33 @@ infs_status infs20_volume_recovery_visit(const struct infs20_store_layout *l,
     }
     return INFS_STATUS_OK;
 }
-infs_status infs20_volume_snapshot(const struct infs20_store_layout *l,
-    const struct infs20_store_io *io,const uint8_t tx[16],uint64_t ordinal)
+static infs_status volume_snapshot(const struct infs20_store_layout *l,
+    const struct infs20_paged_layout *paged,    const struct infs20_store_io *io,const uint8_t tx[16],uint64_t ordinal)
 {
     if(!tx_valid(tx) || !ordinal || ordinal==UINT64_MAX) return INFS_STATUS_INVALID_ARGUMENT;
-    struct volume v; infs_status st=load(l,io,&v); if(st) return st;
+    struct volume v; infs_status st=load(l,paged,io,&v); if(st) return st;
     if(pin(&v,ordinal)>=0) return INFS_STATUS_ALREADY_EXISTS;
     if(v.graph.edge_count==INFS20_MODEL_EDGES) return INFS_STATUS_NO_SPACE;
     struct infs20_model_edge *e=&v.graph.edges[v.graph.edge_count++];
     memset(e,0,sizeof(*e)); memcpy(e->target,v.graph.edges[pin(&v,0)].target,16);
     e->role=INFS20_MODEL_SNAPSHOT; e->ordinal=ordinal;
     ++v.graph.nodes[node(&v,e->target)].refs;
-    return commit(l,io,tx,&v,NULL);
+    return commit(l,paged,io,tx,&v,NULL,0);
 }
-infs_status infs20_volume_format(const struct infs20_store_layout *l,
-    const struct infs20_store_io *io,const uint8_t tx[16],uint64_t ordinal)
+static infs_status volume_format(const struct infs20_store_layout *l,
+    const struct infs20_paged_layout *paged,    const struct infs20_store_io *io,const uint8_t tx[16],uint64_t ordinal)
 {
     if(!tx_valid(tx) || !ordinal || ordinal==UINT64_MAX) return INFS_STATUS_INVALID_ARGUMENT;
-    struct volume v; infs_status st=load(l,io,&v); if(st) return st;
+    struct volume v; infs_status st=load(l,paged,io,&v); if(st) return st;
     uint8_t root[16]; id_make(tx,'R',root);
     st=infs20_model_retire_activate(l,&v.graph,root,ordinal);
-    return st?st:commit(l,io,tx,&v,NULL);
+    return st?st:commit(l,paged,io,tx,&v,NULL,0);
 }
-infs_status infs20_volume_unformat(const struct infs20_store_layout *l,
-    const struct infs20_store_io *io,const uint8_t tx[16],uint64_t ordinal)
+static infs_status volume_unformat(const struct infs20_store_layout *l,
+    const struct infs20_paged_layout *paged,    const struct infs20_store_io *io,const uint8_t tx[16],uint64_t ordinal)
 {
     if(!tx_valid(tx) || !ordinal || ordinal==UINT64_MAX) return INFS_STATUS_INVALID_ARGUMENT;
-    struct volume v; infs_status st=load(l,io,&v); if(st) return st;
+    struct volume v; infs_status st=load(l,paged,io,&v); if(st) return st;
     int p=pin(&v,ordinal); if(p<0 || v.graph.edges[p].role!=INFS20_MODEL_RETIRED)
         return INFS_STATUS_NOT_FOUND;
     /* Verify all payloads that will become visible before changing authority. */
@@ -542,13 +586,13 @@ infs_status infs20_volume_unformat(const struct infs20_store_layout *l,
             st=read_content(&v,io,v.files[i].data,NULL); if(st) return st;
         }
     st=infs20_model_reactivate(l,&v.graph,ordinal);
-    return st?st:commit(l,io,tx,&v,NULL);
+    return st?st:commit(l,paged,io,tx,&v,NULL,0);
 }
-infs_status infs20_volume_relocate(const struct infs20_store_layout *l,
-    const struct infs20_store_io *io,const uint8_t tx[16],const char *name)
+static infs_status volume_relocate(const struct infs20_store_layout *l,
+    const struct infs20_paged_layout *paged,    const struct infs20_store_io *io,const uint8_t tx[16],const char *name)
 {
     if(!tx_valid(tx) || !name_valid(name)) return INFS_STATUS_INVALID_ARGUMENT;
-    struct volume v; infs_status st=load(l,io,&v); if(st) return st;
+    struct volume v; infs_status st=load(l,paged,io,&v); if(st) return st;
     int i=file(&v,v.graph.edges[pin(&v,0)].target,name);
     if(i<0) return INFS_STATUS_NOT_FOUND;
     int ci=content(&v,v.files[i].data);
@@ -557,11 +601,124 @@ infs_status infs20_volume_relocate(const struct infs20_store_layout *l,
     if(!p) return INFS_STATUS_NO_MEMORY;
     p->io=io; p->blocks=unit_count(v.contents[ci].size);
     st=read_content(&v,io,v.files[i].data,p->data);
-    if(!st) st=reserve(l,&v,p->blocks,&p->block);
+    if(!st) st=reserve(l,paged,&v,p->blocks,&p->block);
     if(!st) {
         v.graph.nodes[node(&v,v.files[i].data)].start=p->block;
-        st=commit(l,io,tx,&v,p);
+        st=commit(l,paged,io,tx,&v,p,0);
     }
     free(p);
     return st;
+}
+
+/* Both test profiles share the same semantic engine. Keep the bounded
+ * baseline as a regression oracle, not a separate production filesystem. */
+infs_status infs20_volume_create(const struct infs20_store_layout *l,
+    const struct infs20_store_io *io,const uint8_t tx[16])
+{
+    return volume_create(l,NULL,io,tx);
+}
+infs_status infs20_paged_volume_create(const struct infs20_paged_layout *l,
+    const struct infs20_store_io *io,const uint8_t tx[16])
+{
+    if(!l) return INFS_STATUS_INVALID_ARGUMENT;
+    return volume_create(&l->bootstrap,l,io,tx);
+}
+infs_status infs20_volume_write(const struct infs20_store_layout *l,
+    const struct infs20_store_io *io,const uint8_t tx[16],const char *name,const uint8_t *data,size_t size)
+{
+    return volume_write(l,NULL,io,tx,name,data,size);
+}
+infs_status infs20_paged_volume_write(const struct infs20_paged_layout *l,
+    const struct infs20_store_io *io,const uint8_t tx[16],const char *name,const uint8_t *data,size_t size)
+{
+    if(!l) return INFS_STATUS_INVALID_ARGUMENT;
+    return volume_write(&l->bootstrap,l,io,tx,name,data,size);
+}
+infs_status infs20_volume_clone(const struct infs20_store_layout *l,
+    const struct infs20_store_io *io,const uint8_t tx[16],const char *source,const char *target)
+{
+    return volume_clone(l,NULL,io,tx,source,target);
+}
+infs_status infs20_paged_volume_clone(const struct infs20_paged_layout *l,
+    const struct infs20_store_io *io,const uint8_t tx[16],const char *source,const char *target)
+{
+    if(!l) return INFS_STATUS_INVALID_ARGUMENT;
+    return volume_clone(&l->bootstrap,l,io,tx,source,target);
+}
+infs_status infs20_volume_read(const struct infs20_store_layout *l,
+    const struct infs20_store_io *io,uint64_t ordinal,const char *name,uint8_t *out,size_t capacity,size_t *size)
+{
+    return volume_read(l,NULL,io,ordinal,name,out,capacity,size);
+}
+infs_status infs20_paged_volume_read(const struct infs20_paged_layout *l,
+    const struct infs20_store_io *io,uint64_t ordinal,const char *name,uint8_t *out,size_t capacity,size_t *size)
+{
+    if(!l) return INFS_STATUS_INVALID_ARGUMENT;
+    return volume_read(&l->bootstrap,l,io,ordinal,name,out,capacity,size);
+}
+infs_status infs20_volume_read_range(const struct infs20_store_layout *l,
+    const struct infs20_store_io *io,uint64_t ordinal,const char *name,uint64_t offset,uint8_t *out,size_t capacity,size_t *size)
+{
+    return volume_read_range(l,NULL,io,ordinal,name,offset,out,capacity,size);
+}
+infs_status infs20_paged_volume_read_range(const struct infs20_paged_layout *l,
+    const struct infs20_store_io *io,uint64_t ordinal,const char *name,uint64_t offset,uint8_t *out,size_t capacity,size_t *size)
+{
+    if(!l) return INFS_STATUS_INVALID_ARGUMENT;
+    return volume_read_range(&l->bootstrap,l,io,ordinal,name,offset,out,capacity,size);
+}
+infs_status infs20_volume_recovery_visit(const struct infs20_store_layout *l,
+    const struct infs20_store_io *io,infs20_recovery_mapping_fn mapping_fn,infs20_recovery_unit_fn unit_fn,void *context)
+{
+    return volume_recovery_visit(l,NULL,io,mapping_fn,unit_fn,context);
+}
+infs_status infs20_paged_volume_recovery_visit(const struct infs20_paged_layout *l,
+    const struct infs20_store_io *io,infs20_recovery_mapping_fn mapping_fn,infs20_recovery_unit_fn unit_fn,void *context)
+{
+    if(!l) return INFS_STATUS_INVALID_ARGUMENT;
+    return volume_recovery_visit(&l->bootstrap,l,io,mapping_fn,unit_fn,context);
+}
+infs_status infs20_volume_snapshot(const struct infs20_store_layout *l,
+    const struct infs20_store_io *io,const uint8_t tx[16],uint64_t ordinal)
+{
+    return volume_snapshot(l,NULL,io,tx,ordinal);
+}
+infs_status infs20_paged_volume_snapshot(const struct infs20_paged_layout *l,
+    const struct infs20_store_io *io,const uint8_t tx[16],uint64_t ordinal)
+{
+    if(!l) return INFS_STATUS_INVALID_ARGUMENT;
+    return volume_snapshot(&l->bootstrap,l,io,tx,ordinal);
+}
+infs_status infs20_volume_format(const struct infs20_store_layout *l,
+    const struct infs20_store_io *io,const uint8_t tx[16],uint64_t ordinal)
+{
+    return volume_format(l,NULL,io,tx,ordinal);
+}
+infs_status infs20_paged_volume_format(const struct infs20_paged_layout *l,
+    const struct infs20_store_io *io,const uint8_t tx[16],uint64_t ordinal)
+{
+    if(!l) return INFS_STATUS_INVALID_ARGUMENT;
+    return volume_format(&l->bootstrap,l,io,tx,ordinal);
+}
+infs_status infs20_volume_unformat(const struct infs20_store_layout *l,
+    const struct infs20_store_io *io,const uint8_t tx[16],uint64_t ordinal)
+{
+    return volume_unformat(l,NULL,io,tx,ordinal);
+}
+infs_status infs20_paged_volume_unformat(const struct infs20_paged_layout *l,
+    const struct infs20_store_io *io,const uint8_t tx[16],uint64_t ordinal)
+{
+    if(!l) return INFS_STATUS_INVALID_ARGUMENT;
+    return volume_unformat(&l->bootstrap,l,io,tx,ordinal);
+}
+infs_status infs20_volume_relocate(const struct infs20_store_layout *l,
+    const struct infs20_store_io *io,const uint8_t tx[16],const char *name)
+{
+    return volume_relocate(l,NULL,io,tx,name);
+}
+infs_status infs20_paged_volume_relocate(const struct infs20_paged_layout *l,
+    const struct infs20_store_io *io,const uint8_t tx[16],const char *name)
+{
+    if(!l) return INFS_STATUS_INVALID_ARGUMENT;
+    return volume_relocate(&l->bootstrap,l,io,tx,name);
 }

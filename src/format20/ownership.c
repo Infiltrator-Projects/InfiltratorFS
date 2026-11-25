@@ -244,12 +244,11 @@ static int compare_records(const void *a,const void *b)
     int c=memcmp(x->key,y->key,n);
     return c?c:(x->key_size>y->key_size)-(x->key_size<y->key_size);
 }
-infs_status infs20_model_commit_extended(const struct infs20_store_layout *l,
-    const struct infs20_store_io *io,const uint8_t tx[16],
+infs_status infs20_model_with_records(const struct infs20_store_layout *l,
     const struct infs20_model_graph *g,const struct infs20_store_record *extra,
-    size_t extra_count,infs20_store_prepare prepare,void *context,
-    struct infs20_store_state *out)
+    size_t extra_count,infs20_model_records_fn visit,void *context)
 {
+    if(!visit) return INFS_STATUS_INVALID_ARGUMENT;
     infs_status st=infs20_model_validate(l,g);
     if(st) return st;
     struct encoded enc[INFS20_MODEL_NODES+INFS20_MODEL_EDGES]={0};
@@ -287,7 +286,33 @@ infs_status infs20_model_commit_extended(const struct infs20_store_layout *l,
                                          enc[i].key_size,enc[i].value_size};
     for(size_t i=0;i<extra_count;++i) r[count++]=extra[i];
     qsort(r,count,sizeof(r[0]),compare_records);
-    return infs20_store_publish_prepared(l,io,tx,r,count,prepare,context,out);
+    for(size_t i=1;i<count;++i)
+        if(!compare_records(r+i-1,r+i)) return INFS_STATUS_INVALID_ARGUMENT;
+    return visit(context,r,count);
+}
+struct bounded_publish {
+    const struct infs20_store_layout *layout;
+    const struct infs20_store_io *io;
+    const uint8_t *tx;
+    infs20_store_prepare prepare;
+    void *context;
+    struct infs20_store_state *out;
+};
+static infs_status publish_bounded(void *opaque,
+    const struct infs20_store_record *r,size_t count)
+{
+    struct bounded_publish *p=opaque;
+    return infs20_store_publish_prepared(p->layout,p->io,p->tx,r,count,
+                                        p->prepare,p->context,p->out);
+}
+infs_status infs20_model_commit_extended(const struct infs20_store_layout *l,
+    const struct infs20_store_io *io,const uint8_t tx[16],
+    const struct infs20_model_graph *g,const struct infs20_store_record *extra,
+    size_t extra_count,infs20_store_prepare prepare,void *context,
+    struct infs20_store_state *out)
+{
+    struct bounded_publish p={l,io,tx,prepare,context,out};
+    return infs20_model_with_records(l,g,extra,extra_count,publish_bounded,&p);
 }
 infs_status infs20_model_commit(const struct infs20_store_layout *l,
     const struct infs20_store_io *io,const uint8_t tx[16],

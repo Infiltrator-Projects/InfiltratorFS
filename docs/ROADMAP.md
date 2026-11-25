@@ -205,3 +205,6 @@ The detailed S0–S7 sequence in ON_DISK_FORMAT.md section 20.18 supersedes any 
 ### Atomic multi-record integration
 - [x] Variable-height tree executed at `479fb2668e6474df26fd93f9d77a53ebad1b6354`: 96 keys, six levels, 18 injected private-write failures; all seven experimental tests passed.
 - [ ] Ordered private-root batch and payload dependency hook implemented; exact-source execution pending. Migrate typed ownership and volume records to this store.
+
+### Typed paged-volume integration
+- [ ] One shared semantic volume/ownership engine integrated with paged storage; exact-source execution pending. Replace whole-model traversal/diff and bounded contiguous allocations with targeted typed updates, scalable allocation/reclamation and complete namespace before production integration.
