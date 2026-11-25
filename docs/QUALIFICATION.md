@@ -596,3 +596,15 @@ The [Linux userspace qualification](https://github.com/Infiltrator-Projects/Infi
 
 ### Expanded paged formatter characterization and replica admission (execution pending)
 The current candidate also refuses arena collection when any required tree copy is missing, and registers the same real regular-file formatter harness against the paged volume profile for available ext4, FAT32, exFAT and NTFS executables. The intact-source oracle captures ordinary committed proof references and actual payload positions before formatting. No pass is asserted for these additions before exact-source execution.
+
+### 25 November 2026 — paged foreign formatter matrix
+Exact source `c4bc7dba6f40362a81f6a92673448943cd5e0d6d`: [Linux userspace qualification](https://github.com/Infiltrator-Projects/InfiltratorFS/actions/runs/45536326548/job/138943816847) passed all 17 dedicated Format 0.20 CTests, retaining the 813 interruption cases and 32 bounded reuse cycles. The added complete-copy retirement test refuses collection without writing when one committed tree copy is missing. All four foreign formatter executables were available. Each experiment uses an isolated 64 MiB regular file, not a physical device.
+
+| Paged formatter | Changed 4 KiB blocks | Identical copies of each latest bootstrap proof slot | Identical tree proof copies | Named payloads verified |
+|---|---:|---:|---:|---:|
+| ext4 (nodiscard) | 16 | 2 | 3 | 3/3 |
+| FAT32 | 244 | 2 | 2 | 3/3 |
+| exFAT | 502 | 2 | 2 | 0/3 |
+| NTFS (quick) | 626 | 1 | 2 | 3/3 |
+
+All four discovered and selected sequence 6. exFAT preserved sufficient committed metadata but overwrote the sample payload blocks; every affected file read correctly refused with status -4. A passing characterization test therefore does not imply successful payload recovery. The measured exFAT overwrite extended through the half-open block range [20,516); FAT32 through [20,257), and NTFS included [8191,8704). These are final changed-byte observations from the specified Linux tools, not complete write/discard traces, native Windows evidence, or universal protection boundaries. Do not freeze production payload placement or claim exFAT payload survival on this basis. The separate [BOOT check](https://github.com/Infiltrator-Projects/InfiltratorFS/actions/runs/45536326518/job/138943694972) again failed because pinned BOOT v0.1.642 lacks the generic Common V2 `filesystem_module` token. This is not full production or release qualification.
