@@ -208,3 +208,6 @@ The detailed S0–S7 sequence in ON_DISK_FORMAT.md section 20.18 supersedes any 
 
 ### Typed paged-volume integration
 - [ ] One shared semantic volume/ownership engine integrated with paged storage; exact-source execution pending. Replace whole-model traversal/diff and bounded contiguous allocations with targeted typed updates, scalable allocation/reclamation and complete namespace before production integration.
+
+### Experimental image export
+- [ ] Read-only named file/verified fragment exporter and regression test implemented; exact-source execution pending. Production Unformatter, complete namespace and in-place restoration remain open.

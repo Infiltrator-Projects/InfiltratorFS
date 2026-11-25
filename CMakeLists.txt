@@ -271,6 +271,19 @@ infilfs_enable_warnings(infilfs-format-020-paged-volume)
 # files. Build the harness on POSIX; the actual ext4 test is admitted only
 # when its real formatter is present. Other tools can be run explicitly.
 if(UNIX AND NOT APPLE)
+    # Experimental read-only image exporter; deliberately not installed.
+    add_executable(infilfs-unformat-020 tools/experimental/infilfs-unformat-020.c
+        src/format20/schema.c src/format20/store.c src/format20/tree.c
+        src/format20/paged_store.c src/format20/ownership.c src/format20/volume.c)
+    target_include_directories(infilfs-unformat-020 PRIVATE src)
+    target_link_libraries(infilfs-unformat-020 PRIVATE infilfs_core)
+    infilfs_enable_warnings(infilfs-unformat-020)
+    add_executable(infilfs-format-020-export tests/format-020-export.c
+        src/format20/schema.c src/format20/store.c src/format20/tree.c
+        src/format20/paged_store.c src/format20/ownership.c src/format20/volume.c)
+    target_include_directories(infilfs-format-020-export PRIVATE src)
+    target_link_libraries(infilfs-format-020-export PRIVATE infilfs_core)
+    infilfs_enable_warnings(infilfs-format-020-export)
     add_executable(infilfs-format-020-foreign-image
         tests/format-020-foreign-image.c src/format20/schema.c
         src/format20/store.c src/format20/ownership.c src/format20/volume.c
@@ -453,6 +466,10 @@ add_test(NAME infilfs-format-020-tree COMMAND infilfs-format-020-tree)
 add_test(NAME infilfs-format-020-paged-store COMMAND infilfs-format-020-paged-store)
 add_test(NAME infilfs-format-020-batch COMMAND infilfs-format-020-batch)
 add_test(NAME infilfs-format-020-paged-volume COMMAND infilfs-format-020-paged-volume)
+if(TARGET infilfs-format-020-export)
+    add_test(NAME infilfs-format-020-export COMMAND infilfs-format-020-export
+        $<TARGET_FILE:infilfs-unformat-020>)
+endif()
 if(TARGET infilfs-format-020-foreign-image AND INFILFS_FORMAT20_EXT4)
     add_test(NAME infilfs-format-020-foreign-ext4
         COMMAND infilfs-format-020-foreign-image "${INFILFS_FORMAT20_EXT4}" ext4)

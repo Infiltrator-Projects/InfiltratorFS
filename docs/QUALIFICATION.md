@@ -573,3 +573,6 @@ The registered batch test checks multi-record and payload publication as one aut
 
 ### Typed paged-volume integration (execution pending)
 The new `infilfs-format-020-paged-volume` test runs the existing file/ownership model through the authenticated variable-height tree and common batch commit, checking actual payload/metadata interruptions, shared integrity, native root reversal, two-lane loss and read-only exact unit loss. No pass is asserted before exact-source CI.
+
+### Experimental image export (execution pending)
+The Linux export test creates a private paged image and exercises the actual command, verified original names, explicit partial fragments and source immutability; no pass is asserted before exact-source CI. This is not a production-media recovery qualification.
