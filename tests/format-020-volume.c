@@ -113,6 +113,9 @@ int main(void)
     tx(id,10); CHECK(infs20_volume_unformat(&l,&io,id,11)==0); cold(m);
     CHECK(expect(&l,&io,0,"a","changed")==0 && expect(&l,&io,0,"b","original")==0);
     CHECK(expect(&l,&io,11,"new","new data")==0 && expect(&l,&io,0,"new",NULL)==0);
+    struct infs20_store_state before_damage;
+    CHECK(infs20_store_recover(&l,&io,&before_damage)==0);
+    CHECK(before_damage.sequence==9 && before_damage.fully_protected);
     /* Two complete metadata lanes destroyed: third proves committed namespace
      * and location mappings. Read-only recovery does not write to source. */
     memset(m->disk[0],0,INFS20_STORE_LANE_BLOCKS*INFS20_PAGE_BYTES);
@@ -128,7 +131,7 @@ int main(void)
     struct infs20_raw_source source={&raw,raw.size,raw_read};
     struct infs20_store_discovery found;
     CHECK(infs20_store_discover(&source,&found)==0);
-    CHECK(found.region.start==start && found.state.sequence==10 &&
+    CHECK(found.region.start==start && found.state.sequence==before_damage.sequence &&
           !found.state.fully_protected && found.region.layout.member_blocks==BLOCKS);
     struct infs20_store_io recovered=infs20_store_region_io(&found.region);
     CHECK(!recovered.write && !recovered.flush);
