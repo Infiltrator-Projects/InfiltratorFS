@@ -611,3 +611,6 @@ All four discovered and selected sequence 6. exFAT preserved sufficient committe
 
 ### S0/S1 experimental tree/commit tests
 The isolated engine test models volatile and durable media, seven publication interruption boundaries with before/after-durability and torn-write cases, recovery with two lost copies, failure on loss of committed proof, and bounded tree range validation. These are registered tests, not a new recorded pass. Full writer/arena/physical qualification remains pending.
+
+### S1/S2 ownership reference model tests
+The `infilfs-format-020-space` CTest covers private successor state, all-or-none three-lane arena reservations, shared reference lifetime, relocation without content identity change, deferred physical reuse and negative independent recount/range checks. This is a bounded data-only model; no persistent allocation implementation or new filesystem qualification is claimed.

@@ -232,3 +232,6 @@ The detailed S0–S7 sequence in ON_DISK_FORMAT.md section 20.18 supersedes any 
 ### S0/S1 incremental implementation
 - [ ] Experimental tree references, bounded tree validation, fixed-geometry single-member commit selection and alternating-bank publication implemented; conformance execution pending.
 - [ ] Implement complete canonical typed record families, allocator-owned reservations, arena and persistent reference/reclaim state, all-lane verification/healing, then qualify before any production format switch.
+
+### S1/S2 ownership reference model
+- [ ] Bounded executable model of append reservations, direct edges, relocation, retirement pins and bounded collection implemented. Qualification and persistent tree integration remain open.
