@@ -165,4 +165,18 @@ infs_status infs20_paged_volume_rename(const struct infs20_paged_layout *,
     const char *target,int replace);
 infs_status infs20_paged_volume_release_pin(const struct infs20_paged_layout *,
     const struct infs20_store_io *,const uint8_t tx[16],uint64_t ordinal);
+/* Byte-precise native extent pages from the selected authenticated v0.20
+ * namespace; zero returned extents means EOF. Holes remain unmapped.
+ * Output is unchanged on error, including a payload checksum failure. */
+struct infs20_physical_extent {
+    uint64_t logical_offset,physical_offset,length;
+};
+infs_status infs20_paged_volume_map(const struct infs20_paged_layout *,
+    const struct infs20_store_io *,uint64_t ordinal,const char *name,
+    size_t first,struct infs20_physical_extent *,size_t capacity,size_t *count);
+/* Experimental bounded strict dense defrag. Growth 10 leaves a measured
+ * adjacent free gap at publication. No persistent reservation claim. */
+infs_status infs20_paged_volume_defragment(const struct infs20_paged_layout *,
+    const struct infs20_store_io *,const uint8_t tx[16],const char *name,
+    unsigned growth_percent,uint64_t *moved,uint64_t *growth_blocks);
 #endif

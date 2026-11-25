@@ -569,7 +569,7 @@ static infs_status find_run(const struct blocked_range *ranges,size_t count,
 static infs_status reserve(const struct infs20_store_layout *l,
     const struct infs20_paged_layout *paged,struct volume *v,size_t blocks,uint64_t *block)
 {
-    if(!blocks || blocks>INFS20_VOLUME_UNITS) return INFS_STATUS_INVALID_ARGUMENT;
+    if(!blocks || blocks>l->member_blocks) return INFS_STATUS_INVALID_ARGUMENT;
     if(!v->fully_protected) return INFS_STATUS_BUSY;
     prune_quarantine(v);
     if(v->quarantine_count>SIZE_MAX-2*INFS20_LANE_COUNT) return INFS_STATUS_OVERFLOW;
@@ -1662,4 +1662,117 @@ infs_status infs20_paged_volume_relocate(const struct infs20_paged_layout *l,
 {
     if(!l) return INFS_STATUS_INVALID_ARGUMENT;
     return volume_relocate(&l->bootstrap,l,io,tx,name);
+}
+
+/* Exact physical slice mapping of the selected committed namespace. The
+ * stable allocation ID is resolved through the validated ownership graph.
+ * Sparse holes have no physical extent and are not invented as allocated
+ * data. All referenced payload units must authenticate before output is
+ * published, even when an earlier page is requested. */
+infs_status infs20_paged_volume_map(const struct infs20_paged_layout *l,
+    const struct infs20_store_io *io,uint64_t ordinal,const char *name,
+    size_t first,struct infs20_physical_extent *out,size_t capacity,size_t *count)
+{
+    if(!l || !name_valid(name) || !out || !capacity || !count)
+        return INFS_STATUS_INVALID_ARGUMENT;
+    struct volume v={0};
+    infs_status st=load(&l->bootstrap,l,io,&v);
+    if(st)return finish_volume(&v,st);
+    int p=pin(&v,ordinal);
+    if(p<0)return finish_volume(&v,INFS_STATUS_NOT_FOUND);
+    int i=file(&v,v.graph.edges[p].target,name);
+    if(i<0)return finish_volume(&v,INFS_STATUS_NOT_FOUND);
+    const struct mapping *m=&v.files[i];
+    struct infs20_physical_extent page[INFS20_VOLUME_EXTENTS];
+    size_t used=0;
+    for(size_t j=0;j<m->count;++j) {
+        const struct extent *x=&m->ext[j];
+        if(!extent_content_valid(&v,x))return finish_volume(&v,INFS_STATUS_CORRUPT);
+        int d=node(&v,x->data);
+        const uint64_t block=v.graph.nodes[d].start;
+        if(block>UINT64_MAX/INFS20_PAGE_BYTES ||
+           x->offset>UINT64_MAX-block*INFS20_PAGE_BYTES)
+            return finish_volume(&v,INFS_STATUS_OVERFLOW);
+        const uint64_t physical=block*INFS20_PAGE_BYTES+x->offset;
+        if(x->length>UINT64_MAX-physical)
+            return finish_volume(&v,INFS_STATUS_OVERFLOW);
+        st=read_content(&v,io,x->data,NULL);
+        if(st)return finish_volume(&v,st);
+        if(used && page[used-1].logical_offset+page[used-1].length==x->logical &&
+           page[used-1].physical_offset+page[used-1].length==physical) {
+            page[used-1].length+=x->length;
+        } else page[used++]=(struct infs20_physical_extent){
+            x->logical,physical,x->length};
+    }
+    size_t n=first<used?used-first:0;
+    if(n>capacity)n=capacity;
+    if(n)memcpy(out,page+first,n*sizeof(*out));
+    *count=n;
+    return finish_volume(&v,INFS_STATUS_OK);
+}
+
+/* Strict dense-file relocation, not the existing per-allocation relocation.
+ * Reserve the whole destination plus the growth gap as ONE checked run.
+ * Each stable allocation is moved in logical order in the same authenticated
+ * CoW publication; snapshots and reflinks retain their allocation IDs.
+ * Reject slices, holes and repeated allocation IDs that cannot be physically
+ * packed with this bounded engine. No writes occur if the run does not fit.
+ * The 10% gap is unallocated adjacent capacity at publication, not a
+ * persistent per-file entitlement against later unrelated allocations. */
+infs_status infs20_paged_volume_defragment(const struct infs20_paged_layout *l,
+    const struct infs20_store_io *io,const uint8_t tx[16],const char *name,
+    unsigned growth_percent,uint64_t *moved,uint64_t *growth_blocks)
+{
+    if(!l || !tx_valid(tx) || !name_valid(name) || !moved || !growth_blocks ||
+       (growth_percent!=0 && growth_percent!=10))
+        return INFS_STATUS_INVALID_ARGUMENT;
+    struct volume v={0};
+    infs_status st=load(&l->bootstrap,l,io,&v);
+    if(st)return finish_volume(&v,st);
+    int p=pin(&v,0);
+    if(p<0)return finish_volume(&v,INFS_STATUS_CORRUPT);
+    int i=file(&v,v.graph.edges[p].target,name);
+    if(i<0)return finish_volume(&v,INFS_STATUS_NOT_FOUND);
+    const struct mapping *m=&v.files[i];
+    size_t blocks=0;
+    uint64_t logical=0;
+    int nodes[INFS20_VOLUME_EXTENTS];
+    for(size_t j=0;j<m->count;++j) {
+        const struct extent *x=&m->ext[j];
+        if(!extent_content_valid(&v,x))return finish_volume(&v,INFS_STATUS_CORRUPT);
+        int ci=content(&v,x->data),di=node(&v,x->data);
+        if(x->logical!=logical || x->offset || x->length!=v.contents[ci].size ||
+           (j+1<m->count && x->length%INFS20_PAGE_BYTES))
+            return finish_volume(&v,INFS_STATUS_NOT_SUPPORTED);
+        for(size_t k=0;k<j;++k)
+            if(nodes[k]==di)return finish_volume(&v,INFS_STATUS_NOT_SUPPORTED);
+        nodes[j]=di;
+        blocks+=unit_count(x->length);
+        logical+=x->length;
+    }
+    if(logical!=m->size)return finish_volume(&v,INFS_STATUS_NOT_SUPPORTED);
+    if(!blocks){*moved=0;*growth_blocks=0;return finish_volume(&v,INFS_STATUS_OK);}
+    const size_t gap=growth_percent?(blocks+9u)/10u:0u;
+    uint64_t target=0;
+    st=reserve(&l->bootstrap,l,&v,blocks+gap,&target);
+    if(st)return finish_volume(&v,st);
+    struct pending *pending=calloc(1,sizeof(*pending));
+    if(!pending)return finish_volume(&v,INFS_STATUS_NO_MEMORY);
+    pending->io=io;
+    uint64_t cursor=target;
+    for(size_t j=0;j<m->count && !st;++j) {
+        const struct extent *x=&m->ext[j];
+        struct infs20_model_node *n=&v.graph.nodes[nodes[j]];
+        struct pending_run *run=&pending->run[pending->count];
+        run->blocks=unit_count(x->length);
+        run->block=cursor;
+        st=read_content(&v,io,x->data,run->data);
+        if(!st)st=quarantine_range(&v,n->start,n->blocks);
+        if(!st){n->start=cursor;cursor+=run->blocks;++pending->count;}
+    }
+    if(!st && cursor!=target+blocks)st=INFS_STATUS_CORRUPT;
+    if(!st)st=commit(&l->bootstrap,l,io,tx,&v,pending,0);
+    if(!st){*moved=logical;*growth_blocks=gap;}
+    free(pending);
+    return finish_volume(&v,st);
 }

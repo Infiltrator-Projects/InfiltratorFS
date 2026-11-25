@@ -448,7 +448,56 @@ int main(void)
     struct fragmented_check frag={0};
     CHECK(!infs20_paged_volume_recovery_visit(&flayout,&io,fragmented_mapping,fragmented_unit,&frag));
     CHECK(frag.maps==1 && frag.units==12);
+    /* Refuse impossible packing without touching even a commit sector. */
+    uint64_t moved=UINT64_MAX,growth=UINT64_MAX;
+    struct infs20_physical_extent ext[16];
+    size_t ext_count=0;
+    CHECK(!infs20_paged_volume_map(&flayout,&io,0,"fragmented",0,ext,16,&ext_count) &&
+          ext_count==2 && ext[0].logical_offset==0 &&
+          ext[1].logical_offset==8u*INFS20_PAGE_BYTES &&
+          ext[0].physical_offset+ext[0].length!=ext[1].physical_offset);
+    tx(id,6002);
+    CHECK(infs20_paged_volume_defragment(&flayout,&io,id,"fragmented",0,
+          &moved,&growth)==INFS_STATUS_NO_SPACE && !m.ops &&
+          moved==UINT64_MAX && growth==UINT64_MAX);
     free(long_data); free(long_out);
+    /* Alternate native allocations to create physical fragmentation on a
+     * volume with enough contiguous free space. Verify cold payloads,
+     * physical offsets, retained clones and the actual ten-percent gap. */
+    memset(m.disk,0,bytes); cold(&m);
+    const size_t half=4u*INFS20_PAGE_BYTES,tail=5u*INFS20_PAGE_BYTES;
+    uint8_t *fragment=malloc(half+tail),*fragment_out=malloc(half+tail);
+    CHECK(fragment && fragment_out);
+    for(size_t j=0;j<half+tail;++j)fragment[j]=(uint8_t)(j*13u+j/4096u);
+    tx(id,6100); CHECK(!infs20_paged_volume_create(&l,&io,id)); cold(&m);
+    tx(id,6101); CHECK(!infs20_paged_volume_write(&l,&io,id,"frag",fragment,half)); cold(&m);
+    tx(id,6102); CHECK(!infs20_paged_volume_write(&l,&io,id,"blocker",fragment,half)); cold(&m);
+    tx(id,6103); CHECK(!infs20_paged_volume_write_range(&l,&io,id,"frag",half,fragment+half,tail)); cold(&m);
+    CHECK(!infs20_paged_volume_map(&l,&io,0,"frag",0,ext,16,&ext_count) &&
+          ext_count==2 && ext[0].physical_offset+ext[0].length!=ext[1].physical_offset);
+    tx(id,6104); CHECK(!infs20_paged_volume_clone(&l,&io,id,"frag","alias")); cold(&m);
+    tx(id,6105); CHECK(!infs20_paged_volume_snapshot(&l,&io,id,61)); cold(&m);
+    tx(id,6106); CHECK(!infs20_paged_volume_defragment(&l,&io,id,"frag",10,&moved,&growth)); cold(&m);
+    CHECK(moved==half+tail && growth==1);
+    CHECK(!infs20_paged_volume_map(&l,&io,0,"frag",0,ext,16,&ext_count) &&
+          ext_count==1 && ext[0].logical_offset==0 && ext[0].length==half+tail &&
+          !memcmp(m.disk+ext[0].physical_offset,fragment,half+tail));
+    const uint64_t gap_end=ext[0].physical_offset+ext[0].length+
+        growth*INFS20_PAGE_BYTES;
+    CHECK(!infs20_paged_volume_read(&l,&io,61,"alias",fragment_out,half+tail,&n) &&
+          n==half+tail && !memcmp(fragment_out,fragment,n));
+    tx(id,6107); CHECK(!infs20_paged_volume_write(&l,&io,id,"next",fragment,1)); cold(&m);
+    CHECK(!infs20_paged_volume_map(&l,&io,0,"next",0,ext,16,&ext_count) &&
+          ext_count==1 && ext[0].physical_offset>=gap_end);
+    /* Verify the entire chain before publishing even page zero. */
+    CHECK(!infs20_paged_volume_map(&l,&io,0,"frag",0,ext,16,&ext_count) && ext_count==1);
+    const uint64_t corrupt=ext[0].physical_offset+half+1u;
+    m.disk[corrupt]^=1u; cold(&m);
+    ext_count=99;
+    CHECK(infs20_paged_volume_map(&l,&io,0,"frag",0,ext,1,&ext_count)==
+          INFS_STATUS_CORRUPT && ext_count==99 && !m.ops);
+    m.disk[corrupt]^=1u; cold(&m);
+    free(fragment);free(fragment_out);
     /* A dense file crosses the old allocation-size boundary in one
      * publication. Check whole-file and cross-allocation range reads,
      * retained clone isolation, relocation and exact cold recovery. */
