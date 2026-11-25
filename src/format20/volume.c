@@ -6,7 +6,7 @@
 #include <stdlib.h>
 
 /*
- * Every name mapping is an owning edge from an immutable namespace root to
+ * Every name mapping is an owning edge from a namespace scope to
  * a content allocation. Its descriptor owns the logical length and digest;
  * the graph's node range is the sole physical location authority. Reflinks
  * share both. Retired physical ranges transfer into the canonical tree's
@@ -448,10 +448,11 @@ static infs_status add_file(struct volume *v,const uint8_t root[16],
     ++v->graph.nodes[d].refs; v->graph.nodes[d].state=INFS20_MODEL_LIVE;
     return INFS_STATUS_OK;
 }
-/* Fork the immutable active root. Temporarily pin the old root while copying
+/* Fork a shared namespace scope. Temporarily pin the old scope while copying
  * mappings, then drop only that temporary pin. Snapshots/retired roots remain
- * unchanged. Drain an unpinned old root's outgoing edges in this bounded
- * model; collection transfers zero-reference physical owners into quarantine. */
+ * unchanged. The caller uses this only when another committed pin owns the
+ * scope. The committed authenticated tree, not the logical scope ID, is
+ * the immutable versioned state root. */
 static infs_status fork_root(const struct infs20_store_layout *l,struct volume *v,
     const uint8_t tx[16],const char *omit,const char *also_omit,
     uint8_t fresh[16],uint64_t *ordinal)
@@ -472,16 +473,67 @@ static infs_status fork_root(const struct infs20_store_layout *l,struct volume *
     }
     st=infs20_model_drop_pin(l,&v->graph,UINT64_MAX); if(st) return st;
     int n=node(v,old);
-    if(!v->graph.nodes[n].refs) {
-        while(v->graph.nodes[n].state!=INFS20_MODEL_RELEASABLE) {
-            st=infs20_model_reclaim_step(l,&v->graph,old); if(st) return st;
-        }
-        size_t kept=0;
-        for(size_t i=0;i<v->files_count;++i)
-            if(!equal(v->files[i].root,old)) v->files[kept++]=v->files[i];
-        v->files_count=kept;
-    }
+    if(n<0 || !v->graph.nodes[n].refs) return INFS_STATUS_CORRUPT;
     return INFS_STATUS_OK;
+}
+
+/* Remove the canonical F mapping and its matching E edge together. The
+ * private graph transition performs the only reference decrement; the
+ * allocation's physical range remains owned even if its count reaches
+ * zero. Collection and fallback quarantine are the sole release path. */
+static infs_status drop_mapping(const struct infs20_store_layout *l,
+    struct volume *v,const uint8_t scope[16],const char *name)
+{
+    if(!name) return INFS_STATUS_OK;
+    int i=file(v,scope,name);
+    if(i<0) return INFS_STATUS_OK;
+    const struct mapping *m=&v->files[i];
+    infs_status st=infs20_model_drop_strong(l,&v->graph,m->root,m->ordinal,m->data);
+    if(st) return st;
+    memmove(v->files+i,v->files+i+1,
+            (v->files_count-(size_t)i-1)*sizeof(v->files[0]));
+    --v->files_count;
+    return INFS_STATUS_OK;
+}
+
+/*
+ * A stable namespace scope is not a physical metadata page identity.
+ * When only the active pin refers to that scope, path-copy publication of
+ * the global committed tree already preserves the prior state for fallback.
+ * Retain the scope and edit only the affected mappings and strong edges.
+ * When another pin shares the scope, fork before any semantic mutation so
+ * retained snapshots never observe the edit. This avoids manufacturing
+ * a new logical root and copying every unrelated mapping for ordinary
+ * writes, clones, unlinks and renames. The bounded semantic load/validation
+ * and shared-scope fork still need the future scalable mapping-root model.
+ */
+static infs_status prepare_namespace_edit(const struct infs20_store_layout *l,
+    struct volume *v,const uint8_t tx[16],const char *omit,const char *also_omit,
+    uint8_t scope[16],uint64_t *ordinal)
+{
+    int a=pin(v,0);
+    if(a<0) return INFS_STATUS_CORRUPT;
+    memcpy(scope,v->graph.edges[a].target,16);
+    int n=node(v,scope);
+    if(n<0 || !v->graph.nodes[n].refs) return INFS_STATUS_CORRUPT;
+    if(v->graph.nodes[n].refs>1)
+        return fork_root(l,v,tx,omit,also_omit,scope,ordinal);
+
+    infs_status st=drop_mapping(l,v,scope,omit);
+    if(!st) st=drop_mapping(l,v,scope,also_omit);
+    if(st) return st;
+    /* Edge ordinals are scoped identity, not an ordering key. Pick an
+     * unused positive ordinal within the bounded mapping count, without
+     * depending on the largest stored value or overflowing UINT64_MAX. */
+    for(uint64_t candidate=1;candidate<=v->files_count+1;++candidate) {
+        int used=0;
+        for(size_t i=0;i<v->files_count;++i)
+            if(equal(v->files[i].root,scope) && v->files[i].ordinal==candidate) {
+                used=1; break;
+            }
+        if(!used) { *ordinal=candidate; return INFS_STATUS_OK; }
+    }
+    return INFS_STATUS_CORRUPT;
 }
 static infs_status volume_create(const struct infs20_store_layout *l,
     const struct infs20_paged_layout *paged,const struct infs20_store_io *io,
@@ -517,7 +569,7 @@ static infs_status volume_write(const struct infs20_store_layout *l,
     if(size>INFS20_VOLUME_BYTES) return INFS_STATUS_FILE_TOO_LARGE;
     struct volume v; infs_status st=load(l,paged,io,&v); if(st) return st;
     uint8_t root[16],id[16]; uint64_t ordinal;
-    st=fork_root(l,&v,tx,name,NULL,root,&ordinal); if(st) return st;
+    st=prepare_namespace_edit(l,&v,tx,name,NULL,root,&ordinal); if(st) return st;
     if(v.graph.node_count==INFS20_MODEL_NODES || v.contents_count==INFS20_MODEL_NODES)
         return INFS_STATUS_NO_SPACE;
     id_make(tx,'D',id); if(node(&v,id)>=0 || zero(id,16)) return INFS_STATUS_BUSY;
@@ -551,7 +603,7 @@ static infs_status volume_clone(const struct infs20_store_layout *l,
     if(file(&v,active,target)>=0) return INFS_STATUS_ALREADY_EXISTS;
     uint8_t data[16],root[16]; uint64_t ordinal;
     memcpy(data,v.files[i].data,16);
-    st=fork_root(l,&v,tx,NULL,NULL,root,&ordinal); if(st) return st;
+    st=prepare_namespace_edit(l,&v,tx,NULL,NULL,root,&ordinal); if(st) return st;
     st=add_file(&v,root,target,data,ordinal);
     return st?st:commit(l,paged,io,tx,&v,NULL,0);
 }
@@ -1062,13 +1114,14 @@ static infs_status unlink_name(const struct infs20_store_layout *l,
     struct volume v; infs_status st=load(l,paged,io,&v); if(st) return st;
     if(file(&v,v.graph.edges[pin(&v,0)].target,name)<0) return INFS_STATUS_NOT_FOUND;
     uint8_t root[16]; uint64_t ordinal;
-    st=fork_root(l,&v,tx,name,NULL,root,&ordinal);
+    st=prepare_namespace_edit(l,&v,tx,name,NULL,root,&ordinal);
     return st?st:commit(l,paged,io,tx,&v,NULL,0);
 }
 /*
- * Rename changes only the namespace mapping. Fork the root once, excluding
- * both names when replacement is requested; the old roots keep their
- * original mappings and the shared allocation identity stays unchanged.
+ * Rename changes only the namespace mapping. Edit an exclusively active
+ * scope directly, or fork a shared scope once, excluding both names when
+ * replacement is requested. Retained scopes keep their original mappings
+ * and the shared allocation identity stays unchanged.
  * Unlike clone+unlink, a failure cannot publish an intermediate duplicate
  * or missing source. No file payload write is needed.
  */
@@ -1087,10 +1140,9 @@ static infs_status rename_name(const struct infs20_store_layout *l,
     if(dst>=0 && !replace) return INFS_STATUS_ALREADY_EXISTS;
     uint8_t data[16],root[16]; uint64_t ordinal;
     memcpy(data,v.files[src].data,16);
-    /* Omit both old names while constructing the new root. This avoids
-     * manufacturing and then dropping a temporary destination edge;
-     * the existing root-drain mechanism is the sole edge-removal path. */
-    st=fork_root(l,&v,tx,source,dst>=0?target:NULL,root,&ordinal);
+    /* Remove both names in the same private candidate. The shared-scope
+     * fork excludes them; the exclusive-scope path drops exact edges. */
+    st=prepare_namespace_edit(l,&v,tx,source,dst>=0?target:NULL,root,&ordinal);
     if(st) return st;
     st=add_file(&v,root,target,data,ordinal);
     return st?st:commit(l,paged,io,tx,&v,NULL,0);

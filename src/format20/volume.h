@@ -21,6 +21,8 @@
 #define INFS20_VOLUME_BYTES (INFS20_VOLUME_UNITS * INFS20_PAGE_BYTES)
 
 struct infs20_recovery_mapping {
+    /* Logical namespace scope ID; immutable state is selected by the
+     * committed authenticated tree and pin, not by this ID alone. */
     uint8_t root_id[16], allocation_id[16];
     uint64_t pin;
     uint8_t role;
@@ -125,7 +127,9 @@ infs_status infs20_paged_volume_collect(const struct infs20_paged_layout *,
     const struct infs20_store_io *,const uint8_t tx[16]);
 infs_status infs20_paged_volume_unlink(const struct infs20_paged_layout *,
     const struct infs20_store_io *,const uint8_t tx[16],const char *);
-/* Atomic rename within the active flat namespace. With replace=0 an
+/* Atomic rename within the active flat namespace. An exclusively active
+ * scope is edited through CoW publication; a shared retained scope forks.
+ * With replace=0 an
  * existing target is refused; replace=1 replaces only its active mapping.
  * Snapshots and retired roots preserve their original names and content. */
 infs_status infs20_paged_volume_rename(const struct infs20_paged_layout *,

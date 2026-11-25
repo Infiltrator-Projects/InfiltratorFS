@@ -91,6 +91,24 @@ static infs_status listed(void *opaque,const struct infs20_namespace_entry *e)
         return INFS_STATUS_CORRUPT;
     ++n->seen; return INFS_STATUS_OK;
 }
+struct scope_check {
+    uint8_t id[16];
+    size_t count;
+    int initialised;
+};
+static infs_status scope_mapping(void *opaque,const struct infs20_recovery_mapping *m)
+{
+    struct scope_check *s=opaque;
+    if(m->pin) return INFS_STATUS_OK;
+    if(!s->initialised) { memcpy(s->id,m->root_id,16); s->initialised=1; }
+    if(memcmp(s->id,m->root_id,16)) return INFS_STATUS_CORRUPT;
+    ++s->count; return INFS_STATUS_OK;
+}
+static infs_status scope_unit(void *opaque,const struct infs20_recovery_unit *u)
+{
+    (void)opaque;
+    return u->status;
+}
 int main(void)
 {
     struct medium m={0};
@@ -245,6 +263,54 @@ int main(void)
     CHECK(!infs20_paged_volume_list(&l,&io,20,0,NULL,4,listed,&names,
         &listed_count,&more,&listed_sequence));
     CHECK(names.seen==3 && listed_count==3 && !more);
+    /* Many exclusive-scope edits must not consume a logical root per
+     * operation or duplicate every unaffected namespace edge. Existing
+     * bounded node capacity is only 32: forty aliases of one allocation
+     * must fit without logical garbage collection. Metadata arena
+     * collection is independent and can run between ordinary operations. */
+    memset(m.disk,0,bytes); cold(&m);
+    tx(id,3000); CHECK(!infs20_paged_volume_create(&l,&io,id)); cold(&m);
+    tx(id,3001); CHECK(!infs20_paged_volume_write(&l,&io,id,"origin",a,LENGTH)); cold(&m);
+    struct scope_check scope={0};
+    CHECK(!infs20_paged_volume_recovery_visit(&l,&io,scope_mapping,scope_unit,&scope));
+    CHECK(scope.initialised && scope.count==1);
+    uint8_t original_scope[16]; memcpy(original_scope,scope.id,16);
+    for(unsigned i=0;i<40;++i) {
+        char name[16]; snprintf(name,sizeof(name),"alias-%02u",i);
+        tx(id,3100+i); CHECK(!infs20_paged_volume_clone(&l,&io,id,"origin",name)); cold(&m);
+        if(i%10==9) {
+            struct infs20_paged_state gc;
+            tx(id,3200+i); CHECK(!infs20_paged_collect(&l,&io,id,&gc)); cold(&m);
+        }
+    }
+    scope.count=0;
+    CHECK(!infs20_paged_volume_recovery_visit(&l,&io,scope_mapping,scope_unit,&scope));
+    CHECK(scope.count==41 && !memcmp(scope.id,original_scope,16));
+    CHECK(same(&l,&io,0,"alias-00",a) && same(&l,&io,0,"alias-39",a));
+    /* Keep retained-scope fork bounded in this regression profile. */
+    for(unsigned i=0;i<35;++i) {
+        char name[16]; snprintf(name,sizeof(name),"alias-%02u",i);
+        tx(id,3300+i); CHECK(!infs20_paged_volume_unlink(&l,&io,id,name)); cold(&m);
+        if(i%10==9) {
+            struct infs20_paged_state gc;
+            tx(id,3400+i); CHECK(!infs20_paged_collect(&l,&io,id,&gc)); cold(&m);
+        }
+    }
+    scope.count=0;
+    CHECK(!infs20_paged_volume_recovery_visit(&l,&io,scope_mapping,scope_unit,&scope));
+    CHECK(scope.count==6 && !memcmp(scope.id,original_scope,16));
+    tx(id,3500); CHECK(!infs20_paged_volume_snapshot(&l,&io,id,31)); cold(&m);
+    tx(id,3501); CHECK(!infs20_paged_volume_rename(&l,&io,id,"origin","renamed",0)); cold(&m);
+    struct scope_check forked={0};
+    CHECK(!infs20_paged_volume_recovery_visit(&l,&io,scope_mapping,scope_unit,&forked));
+    CHECK(forked.count==6 && memcmp(forked.id,original_scope,16));
+    CHECK(same(&l,&io,31,"origin",a) && same(&l,&io,31,"renamed",NULL));
+    CHECK(same(&l,&io,0,"origin",NULL) && same(&l,&io,0,"renamed",a));
+    tx(id,3502); CHECK(!infs20_paged_volume_write(&l,&io,id,"renamed",b,LENGTH)); cold(&m);
+    forked.count=0;
+    CHECK(!infs20_paged_volume_recovery_visit(&l,&io,scope_mapping,scope_unit,&forked));
+    CHECK(forked.count==6 && same(&l,&io,0,"renamed",b) &&
+          same(&l,&io,31,"origin",a) && same(&l,&io,0,"alias-39",a));
     free(raw.p); free(baseline); free(m.pending); free(m.disk);
     printf("format20-paged-volume: PASS (%u actual typed ownership/payload interruption cases)\n",cases);
     return 0;

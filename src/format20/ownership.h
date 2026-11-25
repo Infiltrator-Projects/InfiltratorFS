@@ -53,6 +53,13 @@ infs_status infs20_model_retire_activate(const struct infs20_store_layout *,
     struct infs20_model_graph *, const uint8_t new_root[16], uint64_t retired_pin);
 infs_status infs20_model_reactivate(const struct infs20_store_layout *,
     struct infs20_model_graph *, uint64_t retired_pin);
+/* Drop one verified strong child edge, never a pin. The caller supplies
+ * the expected target to avoid accidentally decrementing a different
+ * allocation after a stale namespace lookup. The private graph is unchanged
+ * on refusal. A last reference becomes pending, not immediately free. */
+infs_status infs20_model_drop_strong(const struct infs20_store_layout *,
+    struct infs20_model_graph *,const uint8_t source[16],uint64_t ordinal,
+    const uint8_t target[16]);
 infs_status infs20_model_drop_pin(const struct infs20_store_layout *,
     struct infs20_model_graph *, uint64_t ordinal);
 infs_status infs20_model_reclaim_step(const struct infs20_store_layout *,

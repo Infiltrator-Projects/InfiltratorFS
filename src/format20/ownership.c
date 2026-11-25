@@ -169,6 +169,25 @@ infs_status infs20_model_reactivate(const struct infs20_store_layout *l,
     /* Both roots remain strongly pinned; no extent or checksum is copied. */
     return finish(l,g,&next);
 }
+infs_status infs20_model_drop_strong(const struct infs20_store_layout *l,
+    struct infs20_model_graph *g,const uint8_t source[16],uint64_t ordinal,
+    const uint8_t target[16])
+{
+    if(!source || !target || zero(source,16) || zero(target,16) || !ordinal)
+        return INFS_STATUS_INVALID_ARGUMENT;
+    infs_status st=infs20_model_validate(l,g);
+    if(st) return st;
+    for(size_t i=0;i<g->edge_count;++i) {
+        const struct infs20_model_edge *e=&g->edges[i];
+        if(e->ordinal!=ordinal || memcmp(e->source,source,16)) continue;
+        if(e->role!=INFS20_MODEL_STRONG || memcmp(e->target,target,16))
+            return INFS_STATUS_CORRUPT;
+        struct infs20_model_graph next=*g;
+        remove_edge(&next,i);
+        return finish(l,g,&next);
+    }
+    return INFS_STATUS_NOT_FOUND;
+}
 infs_status infs20_model_drop_pin(const struct infs20_store_layout *l,
     struct infs20_model_graph *g,uint64_t ordinal)
 {

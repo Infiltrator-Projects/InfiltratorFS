@@ -247,3 +247,7 @@ The detailed S0–S7 sequence in ON_DISK_FORMAT.md section 20.18 supersedes any 
 - [x] Exact-source Linux runner at `7b0f572d59fa878225476c9251e55f1e35947a6c`: all 25 dedicated experimental tests passed, including 258 typed-volume interruption cases and all foreign formatter/placement characterization profiles.
 - [ ] Shared verified read helper and indexed active/retained namespace enumeration implemented; exact-source execution pending.
 - [ ] Replace flat bounded graph with the scalable object/extent/directory model; production feature parity and native qualification remain open.
+
+### Exclusive namespace updates
+- [ ] Reuse an exclusively active logical namespace scope across new immutable commits; exact strong-edge removal and path-copy record changes, with mandatory fork when retained pins share a scope. Forty-alias regression and retained-scope isolation registered; execution pending.
+- [ ] Replace remaining full-model admission/diff, bounded arrays and shared-scope copying with scalable persistent object/mapping-root ownership before production integration.

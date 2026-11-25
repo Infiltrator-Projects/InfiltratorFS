@@ -642,3 +642,6 @@ These are final-byte observations on one geometry and tiny sample corpus, not ge
 
 ### Common verified read and indexed listing (execution pending)
 The paged-volume test now adds ordered bounded listing, stale cursor refusal, retained snapshot and renamed active namespace listing, and shared allocation identity. Both read profiles invoke the same verified content routine. Record exact-source execution separately.
+
+### Exclusive namespace updates (execution pending)
+The paged-volume test additionally exercises forty aliases of one allocation without per-edit logical root allocation, 35 exact unlinks, metadata arena collection, fork on snapshot-sharing and subsequent isolated replacement. Existing actual-writer interruption matrices still apply. No pass is claimed until exact-source execution. The bounded graph and shared-scope fork are still prototype limitations.
