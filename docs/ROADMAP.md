@@ -198,3 +198,6 @@ The detailed S0–S7 sequence in ON_DISK_FORMAT.md section 20.18 supersedes any 
 ### Variable-height tree candidate
 - [x] Linux exact-source multi-unit test at `a2e607224e6cd3fac7f918c09edc95b6dae4d237`: all six experimental tests passed, including 96 write/relocation interruption cases and partial recovery.
 - [ ] Variable-height path-copy tree module and conformance test implemented; execution pending. Integrate with scalable arena/ownership and commit publication; qualify rebalancing and page retirement before replacing the bounded store.
+
+### Committed paged-tree integration
+- [ ] Variable-height tree connected to the common commit protocol and private append arena, with offline proof discovery and injected-failure conformance; exact-source results pending. Migrate typed ownership/namespace records and implement durable arena reclamation before production integration.

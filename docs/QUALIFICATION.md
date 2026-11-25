@@ -561,3 +561,6 @@ The [local Linux userspace job](https://github.com/Infiltrator-Projects/Infiltra
 
 ### Variable-height tree candidate (execution pending)
 The registered `infilfs-format-020-tree` test exercises multi-level insert/lookup/delete, immutable retained roots, bounded path copying and mixed replica recovery. Private write errors must leave the previous root usable. This module has not yet been integrated with persistent allocation or commit publication; no new pass or mounted-format claim is asserted.
+
+### Paged tree and commit integration (execution pending)
+The `infilfs-format-020-paged-store` target tests actual staged tree writes and bootstrap publication under refusal, torn/persisted writes and flush failures; two-lane loss, displaced-region full proof, missing proof and zero-write arena exhaustion. This remains an experimental fixed-geometry append profile. No new test pass is asserted before exact-source CI.
