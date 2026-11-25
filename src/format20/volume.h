@@ -7,7 +7,8 @@
 /*
  * Executable single-device integration model. Disposable test media only:
  * flat ASCII names, bounded contiguous multi-block allocations, bounded metadata,
- * append-only payload allocation (no reuse), no encryption or native mount.
+ * bounded payload reuse with fallback quarantine, no encryption or native
+ * mount. Metadata arenas remain append-only.
  * All calls require exclusive access. On an I/O failure the caller must
  * discard volatile state and recover cold before attempting another write.
  * IDs derive from a fresh nonzero transaction ID for every attempt.
@@ -93,4 +94,13 @@ infs_status infs20_paged_volume_unformat(const struct infs20_paged_layout *,
     const struct infs20_store_io *,const uint8_t tx[16],uint64_t ordinal);
 infs_status infs20_paged_volume_relocate(const struct infs20_paged_layout *,
     const struct infs20_store_io *,const uint8_t tx[16],const char *name);
+/* Explicit retention release and collection. No automatic history expiry.
+ * A later fully protected commit must retire the preceding bank before
+ * physical reuse. This bounded collector is not the production paged GC. */
+infs_status infs20_paged_volume_collect(const struct infs20_paged_layout *,
+    const struct infs20_store_io *,const uint8_t tx[16]);
+infs_status infs20_paged_volume_unlink(const struct infs20_paged_layout *,
+    const struct infs20_store_io *,const uint8_t tx[16],const char *);
+infs_status infs20_paged_volume_release_pin(const struct infs20_paged_layout *,
+    const struct infs20_store_io *,const uint8_t tx[16],uint64_t ordinal);
 #endif

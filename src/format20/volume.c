@@ -9,10 +9,10 @@
  * Every name mapping is an owning edge from an immutable namespace root to
  * a content allocation. Its descriptor owns the logical length and digest;
  * the graph's node range is the sole physical location authority. Reflinks
- * share both. This deliberately bounded model never reuses any committed
- * payload block, even after dropping a root: the previous commit bank and
- * interrupted readers cannot be invalidated by reclamation. General free
- * space reuse requires a separately qualified retirement/arena protocol.
+ * share both. Retired physical ranges transfer into the canonical tree's
+ * quarantine ledger until a later fully protected commit replaces the bank
+ * that could still reference them. Exclusive access is required throughout.
+ * This is bounded payload reuse, not production metadata-arena collection.
  */
 struct mapping {
     uint8_t root[16], data[16];
@@ -23,13 +23,17 @@ struct content {
     uint8_t id[16], digest[INFS20_VOLUME_UNITS][32];
     uint32_t size;
 };
+enum { QUARANTINE_MAX=32, QUARANTINE_VALUE=1+24*QUARANTINE_MAX };
+struct quarantine { uint64_t start,blocks,sequence; };
 struct volume {
     struct infs20_model_graph graph;
     struct mapping files[INFS20_VOLUME_FILES];
     struct content contents[INFS20_MODEL_NODES];
     size_t files_count, contents_count;
-    uint64_t frontier;
-    unsigned header;
+    uint64_t frontier,sequence;
+    struct quarantine quarantine[QUARANTINE_MAX];
+    size_t quarantine_count;
+    unsigned header,fully_protected;
 };
 struct pending {
     const struct infs20_store_io *io;
@@ -103,6 +107,11 @@ static size_t unit_size(size_t size,size_t index)
     size_t left=size-offset;
     return left<INFS20_PAGE_BYTES?left:INFS20_PAGE_BYTES;
 }
+static int overlaps(uint64_t a,uint64_t n,uint64_t b,uint64_t m)
+{
+    /* All range ends are bounded by the independently supplied geometry. */
+    return n && m && a<b+m && b<a+n;
+}
 static infs_status validate(const struct infs20_store_layout *l,
     const struct infs20_paged_layout *paged,const struct volume *v)
 {
@@ -134,7 +143,23 @@ static infs_status validate(const struct infs20_store_layout *l,
         } else if(n->kind!=INFS20_MODEL_ROOT || n->blocks)
             return INFS_STATUS_CORRUPT;
     }
-    if(data_count!=v->contents_count) return INFS_STATUS_CORRUPT;
+    if(data_count!=v->contents_count || v->quarantine_count>QUARANTINE_MAX)
+        return INFS_STATUS_CORRUPT;
+    for(size_t i=0;i<v->quarantine_count;++i) {
+        const struct quarantine *q=&v->quarantine[i];
+        if(!q->sequence || !q->blocks || q->start>=v->frontier ||
+           q->blocks>v->frontier-q->start ||
+           (i && v->quarantine[i-1].start+v->quarantine[i-1].blocks>q->start))
+            return INFS_STATUS_CORRUPT;
+        for(unsigned lane=0;lane<INFS20_LANE_COUNT;++lane)
+            if(overlaps(q->start,q->blocks,l->lane_start[lane],INFS20_STORE_LANE_BLOCKS) ||
+               (paged && overlaps(q->start,q->blocks,paged->arena_start[lane],
+                                  paged->arena_blocks[lane])))
+                return INFS_STATUS_CORRUPT;
+        for(size_t j=0;j<v->graph.node_count;++j)
+            if(overlaps(q->start,q->blocks,v->graph.nodes[j].start,
+                        v->graph.nodes[j].blocks)) return INFS_STATUS_CORRUPT;
+    }
     for(size_t i=0;i<v->contents_count;++i)
         for(size_t j=0;j<i;++j)
             if(equal(v->contents[i].id,v->contents[j].id)) return INFS_STATUS_CORRUPT;
@@ -175,6 +200,17 @@ static infs_status decode(void *opaque,const struct infs20_record_view *r)
         if(v->header || r->key_size!=1 || r->value_size!=9 || r->value[0]!=1)
             return INFS_STATUS_CORRUPT;
         v->header=1; v->frontier=infs_load_le64(r->value+1);
+    } else if(r->key[0]=='Q') {
+        /* Single ordered range ledger; independent of deleted object IDs. */
+        if(v->quarantine_count || r->key_size!=1 || r->value_size<25 ||
+           r->value[0]!=1 || (r->value_size-1)%24 ||
+           (r->value_size-1)/24>QUARANTINE_MAX) return INFS_STATUS_CORRUPT;
+        v->quarantine_count=(r->value_size-1)/24;
+        for(size_t i=0;i<v->quarantine_count;++i) {
+            const uint8_t *p=r->value+1+24*i;
+            v->quarantine[i]=(struct quarantine){
+                infs_load_le64(p),infs_load_le64(p+8),infs_load_le64(p+16)};
+        }
     } else if(r->key[0]=='D') {
         /* D version 2 stores exactly one indexed digest per logical unit.
          * This is a bounded record, not the production checksum tree.
@@ -209,9 +245,26 @@ static infs_status load(const struct infs20_store_layout *l,
     const struct infs20_paged_layout *paged,const struct infs20_store_io *io,struct volume *v)
 {
     memset(v,0,sizeof(*v));
-    infs_status st=paged?infs20_paged_visit(paged,io,decode_paged,v):
-                         infs20_store_visit(l,io,decode,v);
-    return st?st:validate(l,paged,v);
+    /* Both reads select the same authority under exclusive access. */
+    struct infs20_store_state authority;
+    infs_status st;
+    if(paged) {
+        struct infs20_paged_state state;
+        st=infs20_paged_open(paged,io,&state);
+        if(st) return st;
+        authority=state.commit;
+        st=infs20_paged_visit(paged,io,decode_paged,v);
+    } else {
+        st=infs20_store_recover(l,io,&authority);
+        if(st) return st;
+        st=infs20_store_visit(l,io,decode,v);
+    }
+    if(st) return st;
+    v->sequence=authority.sequence;
+    v->fully_protected=authority.fully_protected;
+    for(size_t i=0;i<v->quarantine_count;++i)
+        if(v->quarantine[i].sequence>v->sequence) return INFS_STATUS_CORRUPT;
+    return validate(l,paged,v);
 }
 static infs_status prepare(void *opaque)
 {
@@ -244,15 +297,31 @@ static infs_status commit(const struct infs20_store_layout *l,
     const uint8_t tx[16],const struct volume *v,struct pending *p,int create)
 {
     infs_status st=validate(l,paged,v); if(st) return st;
-    enum { MAX=1+INFS20_MODEL_NODES+INFS20_VOLUME_FILES };
+    if(v->sequence==UINT64_MAX) return INFS_STATUS_OVERFLOW;
+    for(size_t i=0;i<v->quarantine_count;++i)
+        if(v->quarantine[i].sequence>v->sequence+1) return INFS_STATUS_CORRUPT;
+    enum { MAX=2+INFS20_MODEL_NODES+INFS20_VOLUME_FILES,
+           VALUE_MAX=QUARANTINE_VALUE>5+32*INFS20_VOLUME_UNITS?
+                     QUARANTINE_VALUE:5+32*INFS20_VOLUME_UNITS };
     struct encoded {
-        uint8_t key[17+INFS20_VOLUME_NAME_MAX],value[5+32*INFS20_VOLUME_UNITS];
+        uint8_t key[17+INFS20_VOLUME_NAME_MAX],value[VALUE_MAX];
     } e[MAX];
     struct infs20_store_record r[MAX];
     memset(e,0,sizeof(e));
     size_t n=0;
     e[n].key[0]='M'; e[n].value[0]=1; infs_store_le64(e[n].value+1,v->frontier);
     r[n]=(struct infs20_store_record){e[n].key,e[n].value,1,9}; ++n;
+    if(v->quarantine_count) {
+        e[n].key[0]='Q'; e[n].value[0]=1;
+        for(size_t i=0;i<v->quarantine_count;++i) {
+            uint8_t *p=e[n].value+1+24*i;
+            infs_store_le64(p,v->quarantine[i].start);
+            infs_store_le64(p+8,v->quarantine[i].blocks);
+            infs_store_le64(p+16,v->quarantine[i].sequence);
+        }
+        r[n]=(struct infs20_store_record){e[n].key,e[n].value,1,
+            (uint16_t)(1+24*v->quarantine_count)}; ++n;
+    }
     for(size_t i=0;i<v->contents_count;++i) {
         const struct content *c=&v->contents[i];
         e[n].key[0]='D'; memcpy(e[n].key+1,c->id,16);
@@ -277,35 +346,73 @@ static infs_status commit(const struct infs20_store_layout *l,
     return infs20_model_commit_extended(l,io,tx,&v->graph,r,n,
                                          p?prepare:NULL,p,&state);
 }
-static infs_status reserve(const struct infs20_store_layout *l,
-    const struct infs20_paged_layout *paged,struct volume *v,size_t blocks,uint64_t *block)
+/*
+ * At retirement commit R the other bank still contains R-1. Only after
+ * a fully protected R+1 may those payload blocks be reused. A surviving
+ * degraded authority remains readable but cannot authorize reuse.
+ */
+static void prune_quarantine(struct volume *v)
 {
-    /* Reserve the entire contiguous run before preparing any bytes. Skip
-     * lanes intersecting any part of the candidate, not merely its start.
-     * The append frontier remains conservative even after relocation. */
-    if(!blocks || blocks>INFS20_VOLUME_UNITS)
-        return INFS_STATUS_INVALID_ARGUMENT;
-    uint64_t at=v->frontier;
+    if(!v->fully_protected) return;
+    size_t n=0;
+    for(size_t i=0;i<v->quarantine_count;++i)
+        if(v->quarantine[i].sequence>=v->sequence)
+            v->quarantine[n++]=v->quarantine[i];
+    v->quarantine_count=n;
+}
+static infs_status quarantine_range(struct volume *v,uint64_t start,uint64_t blocks)
+{
+    if(!blocks) return INFS_STATUS_OK;
+    if(!v->fully_protected) return INFS_STATUS_BUSY;
+    if(v->sequence==UINT64_MAX) return INFS_STATUS_OVERFLOW;
+    prune_quarantine(v);
+    if(v->quarantine_count==QUARANTINE_MAX) return INFS_STATUS_NO_SPACE;
+    size_t i=0;
+    while(i<v->quarantine_count && v->quarantine[i].start<start) ++i;
+    memmove(v->quarantine+i+1,v->quarantine+i,
+            (v->quarantine_count-i)*sizeof(v->quarantine[0]));
+    v->quarantine[i]=(struct quarantine){start,blocks,v->sequence+1};
+    ++v->quarantine_count;
+    return INFS_STATUS_OK;
+}
+static void skip_range(uint64_t at,size_t blocks,uint64_t start,uint64_t count,
+                       uint64_t *next)
+{
+    if(overlaps(at,blocks,start,count) && start+count>*next) *next=start+count;
+}
+static infs_status find_run(const struct infs20_store_layout *l,
+    const struct infs20_paged_layout *paged,const struct volume *v,
+    uint64_t at,size_t blocks,uint64_t *block)
+{
     for(;;) {
         if(at>=l->member_blocks || blocks>l->member_blocks-at)
             return INFS_STATUS_NO_SPACE;
-        int moved=0;
+        uint64_t next=at;
         for(unsigned lane=0;lane<INFS20_LANE_COUNT;++lane) {
-            uint64_t end=l->lane_start[lane]+INFS20_STORE_LANE_BLOCKS;
-            if(at<end && l->lane_start[lane]<at+blocks) {
-                at=end; moved=1; break;
-            }
+            skip_range(at,blocks,l->lane_start[lane],INFS20_STORE_LANE_BLOCKS,&next);
+            if(paged) skip_range(at,blocks,paged->arena_start[lane],
+                                 paged->arena_blocks[lane],&next);
         }
-        if(!moved && paged) for(unsigned lane=0;lane<INFS20_LANE_COUNT;++lane) {
-            uint64_t end=paged->arena_start[lane]+paged->arena_blocks[lane];
-            if(at<end && paged->arena_start[lane]<at+blocks) {
-                at=end; moved=1; break;
-            }
-        }
-        if(!moved) break;
+        for(size_t i=0;i<v->graph.node_count;++i)
+            skip_range(at,blocks,v->graph.nodes[i].start,v->graph.nodes[i].blocks,&next);
+        for(size_t i=0;i<v->quarantine_count;++i)
+            skip_range(at,blocks,v->quarantine[i].start,v->quarantine[i].blocks,&next);
+        if(next==at) { *block=at; return INFS_STATUS_OK; }
+        at=next;
     }
-    *block=at; v->frontier=at+blocks;
-    return INFS_STATUS_OK;
+}
+static infs_status reserve(const struct infs20_store_layout *l,
+    const struct infs20_paged_layout *paged,struct volume *v,size_t blocks,uint64_t *block)
+{
+    if(!blocks || blocks>INFS20_VOLUME_UNITS) return INFS_STATUS_INVALID_ARGUMENT;
+    if(!v->fully_protected) return INFS_STATUS_BUSY;
+    prune_quarantine(v);
+    /* Preserve append locality; on exhaustion exclude every current owner
+     * and unretired range. The bounded scan is not a production free index. */
+    infs_status st=find_run(l,paged,v,v->frontier,blocks,block);
+    if(st==INFS_STATUS_NO_SPACE) st=find_run(l,paged,v,0,blocks,block);
+    if(!st && *block+blocks>v->frontier) v->frontier=*block+blocks;
+    return st;
 }
 static infs_status add_file(struct volume *v,const uint8_t root[16],
     const char *name,const uint8_t data[16],uint64_t ordinal)
@@ -603,11 +710,103 @@ static infs_status volume_relocate(const struct infs20_store_layout *l,
     st=read_content(&v,io,v.files[i].data,p->data);
     if(!st) st=reserve(l,paged,&v,p->blocks,&p->block);
     if(!st) {
-        v.graph.nodes[node(&v,v.files[i].data)].start=p->block;
-        st=commit(l,paged,io,tx,&v,p,0);
+        struct infs20_model_node *n=&v.graph.nodes[node(&v,v.files[i].data)];
+        /* Old location remains reserved for the preceding bank. */
+        st=quarantine_range(&v,n->start,n->blocks);
+        if(!st) {
+            n->start=p->block;
+            st=commit(l,paged,io,tx,&v,p,0);
+        }
     }
     free(p);
     return st;
+}
+
+/* Explicit GC uses the existing graph transitions; the range ledger
+ * retains ownership after removal of the logical node. */
+static infs_status collect(const struct infs20_store_layout *l,
+    const struct infs20_paged_layout *paged,const struct infs20_store_io *io,
+    const uint8_t tx[16])
+{
+    if(!tx_valid(tx)) return INFS_STATUS_INVALID_ARGUMENT;
+    struct volume v; infs_status st=load(l,paged,io,&v); if(st) return st;
+    if(!v.fully_protected) return INFS_STATUS_BUSY;
+    prune_quarantine(&v);
+    for(size_t i=0;i<v.graph.node_count;) {
+        struct infs20_model_node *n=&v.graph.nodes[i];
+        if(n->refs) { ++i; continue; }
+        uint8_t id[16]; memcpy(id,n->id,16);
+        while(n->state!=INFS20_MODEL_RELEASABLE) {
+            st=infs20_model_reclaim_step(l,&v.graph,id);
+            if(st) return st;
+        }
+        if(n->kind==INFS20_MODEL_DATA) {
+            int ci=content(&v,id);
+            if(ci<0) return INFS_STATUS_CORRUPT;
+            st=quarantine_range(&v,n->start,n->blocks);
+            if(st) return st;
+            memmove(v.contents+ci,v.contents+ci+1,
+                    (v.contents_count-(size_t)ci-1)*sizeof(v.contents[0]));
+            --v.contents_count;
+        }
+        /* Logical removal is safe: physical ownership transfers to Q
+         * atomically, not directly to the free-space index. */
+        st=infs20_model_release(l,&v.graph,id,1);
+        if(st) return st;
+    }
+    return commit(l,paged,io,tx,&v,NULL,0);
+}
+static infs_status unlink_name(const struct infs20_store_layout *l,
+    const struct infs20_paged_layout *paged,const struct infs20_store_io *io,
+    const uint8_t tx[16],const char *name)
+{
+    if(!tx_valid(tx) || !name_valid(name)) return INFS_STATUS_INVALID_ARGUMENT;
+    struct volume v; infs_status st=load(l,paged,io,&v); if(st) return st;
+    if(file(&v,v.graph.edges[pin(&v,0)].target,name)<0) return INFS_STATUS_NOT_FOUND;
+    uint8_t root[16]; uint64_t ordinal;
+    st=fork_root(l,&v,tx,name,root,&ordinal);
+    return st?st:commit(l,paged,io,tx,&v,NULL,0);
+}
+static infs_status release_pin(const struct infs20_store_layout *l,
+    const struct infs20_paged_layout *paged,const struct infs20_store_io *io,
+    const uint8_t tx[16],uint64_t ordinal)
+{
+    if(!tx_valid(tx) || !ordinal || ordinal==UINT64_MAX)
+        return INFS_STATUS_INVALID_ARGUMENT;
+    struct volume v; infs_status st=load(l,paged,io,&v); if(st) return st;
+    int p=pin(&v,ordinal);
+    if(p<0) return INFS_STATUS_NOT_FOUND;
+    if(v.graph.edges[p].role!=INFS20_MODEL_SNAPSHOT &&
+       v.graph.edges[p].role!=INFS20_MODEL_RETIRED) return INFS_STATUS_BUSY;
+    uint8_t root[16]; memcpy(root,v.graph.edges[p].target,16);
+    st=infs20_model_drop_pin(l,&v.graph,ordinal); if(st) return st;
+    int n=node(&v,root);
+    if(n<0) return INFS_STATUS_CORRUPT;
+    if(!v.graph.nodes[n].refs) {
+        while(v.graph.nodes[n].state!=INFS20_MODEL_RELEASABLE) {
+            st=infs20_model_reclaim_step(l,&v.graph,root); if(st) return st;
+        }
+        size_t kept=0;
+        for(size_t i=0;i<v.files_count;++i)
+            if(!equal(v.files[i].root,root)) v.files[kept++]=v.files[i];
+        v.files_count=kept;
+    }
+    return commit(l,paged,io,tx,&v,NULL,0);
+}
+infs_status infs20_paged_volume_collect(const struct infs20_paged_layout *l,
+    const struct infs20_store_io *io,const uint8_t tx[16])
+{
+    return l?collect(&l->bootstrap,l,io,tx):INFS_STATUS_INVALID_ARGUMENT;
+}
+infs_status infs20_paged_volume_unlink(const struct infs20_paged_layout *l,
+    const struct infs20_store_io *io,const uint8_t tx[16],const char *name)
+{
+    return l?unlink_name(&l->bootstrap,l,io,tx,name):INFS_STATUS_INVALID_ARGUMENT;
+}
+infs_status infs20_paged_volume_release_pin(const struct infs20_paged_layout *l,
+    const struct infs20_store_io *io,const uint8_t tx[16],uint64_t ordinal)
+{
+    return l?release_pin(&l->bootstrap,l,io,tx,ordinal):INFS_STATUS_INVALID_ARGUMENT;
 }
 
 /* Both test profiles share the same semantic engine. Keep the bounded

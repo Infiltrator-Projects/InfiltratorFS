@@ -217,3 +217,6 @@ The detailed S0–S7 sequence in ON_DISK_FORMAT.md section 20.18 supersedes any 
 - [x] Non-installed read-only image exporter exercised with complete original names and partial verified fragments; eleven dedicated tests pass at `ce9dce04e9d3dabcd9243f5198d0f103c4858441` (see QUALIFICATION.md).
 - [ ] Replace bounded append-only arenas with scalable persistent allocation, reclaim and reserve management; complete multi-extent namespace, full portable semantics and native readers/writers.
 - [ ] Finish production Unformatter, freeze recovery geometry using actual formatter/device evidence, qualify security/protection profiles and Common V2 BOOT. The existing production 0.19 format remains active.
+
+### Payload retirement/reuse candidate
+- [ ] Explicit unlink, retention release, transactional physical quarantine and reuse after fully protected fallback-bank retirement implemented; exact-source execution pending. Scalable range indexes, persistent metadata-arena recycling and full portable/native integration remain open.
