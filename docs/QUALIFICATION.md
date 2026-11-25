@@ -658,3 +658,6 @@ The existing batch target now additionally exercises 300-record atomic insert/up
 
 ### 64-bit sparse logical mapping (execution pending)
 The paged-volume test now exercises a 5 GiB sparse logical mapping with only two initial physical allocation units, high-offset reads, shared clone, native format/undo, corrupt-unit zero-write refusal, punch and truncate. Native undo now verifies distinct mapped units rather than allocating whole-file buffers. The experimental exporter uses 64-bit logical positions. No exact-source execution is asserted until CI reports it.
+
+### Dense multi-allocation preparation (execution pending)
+The paged-volume test now creates a dense 192 KiB-plus file in one transaction, checks full and cross-allocation reads, clones it, retains a snapshot and relocates the shared allocations. The fixed-bank oracle retains its previous bound. No pass is asserted before exact-source execution.

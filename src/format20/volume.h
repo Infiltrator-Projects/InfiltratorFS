@@ -23,6 +23,9 @@
  * Signed 64-bit offsets remain representable by supported native adapters. */
 #define INFS20_LOGICAL_MAX UINT64_C(0x7fffffffffffffff)
 #define INFS20_VOLUME_EXTENTS 16u
+/* Maximum dense preparation in the current fixed-slice profile. The
+ * eventual paged extent tree must remove this representational ceiling. */
+#define INFS20_PAGED_WRITE_BYTES ((size_t)INFS20_VOLUME_EXTENTS * INFS20_VOLUME_BYTES)
 
 /* A slice references a stable allocation, not its current physical address.
  * Absent logical ranges are holes. Allocation size is independently bound. */

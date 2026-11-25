@@ -14,7 +14,7 @@
  * that could still reference them. Exclusive access is required throughout.
  * This is bounded payload reuse, not production metadata-arena collection.
  */
-/* F v2: ordered logical slices, each owning one E reference. Fixed map
+/* F v3: ordered logical slices, each owning one E reference. Fixed map
  * capacity is an experimental bound, not the eventual paged file tree. */
 struct extent {
     uint8_t data[16];
@@ -639,7 +639,10 @@ static infs_status allocate_slices(const struct infs20_store_layout *l,
         if(p->count==INFS20_VOLUME_EXTENTS || v->graph.node_count==INFS20_MODEL_NODES ||
            v->contents_count==INFS20_MODEL_NODES) return INFS_STATUS_NO_SPACE;
         struct pending_run *run=&p->run[p->count];
+        /* A file may span independently verified bounded allocations.
+         * Limit the physical preparation unit, not the logical file. */
         size_t blocks=unit_count(size);
+        if(blocks>INFS20_VOLUME_UNITS) blocks=INFS20_VOLUME_UNITS;
         infs_status st;
         do {
             st=reserve(l,paged,v,blocks,&run->block);
@@ -697,7 +700,10 @@ static infs_status volume_write(const struct infs20_store_layout *l,
 {
     if(!tx_valid(tx) || !name_valid(name) || (!data && size))
         return INFS_STATUS_INVALID_ARGUMENT;
-    if(size>INFS20_VOLUME_BYTES) return INFS_STATUS_FILE_TOO_LARGE;
+    /* Preserve the isolated fixed-bank oracle's historical contract.
+     * Paged files can consume multiple allocation descriptors atomically. */
+    if(size>(paged?INFS20_PAGED_WRITE_BYTES:INFS20_VOLUME_BYTES))
+        return INFS_STATUS_FILE_TOO_LARGE;
     struct volume v; infs_status st=load(l,paged,io,&v); if(st) return st;
     uint8_t scope[16];
     st=prepare_namespace_edit(l,&v,tx,name,NULL,scope); if(st) return st;
@@ -719,7 +725,7 @@ static infs_status volume_edit(const struct infs20_paged_layout *paged,
        (op==RANGE_WRITE && length && !data)) return INFS_STATUS_INVALID_ARGUMENT;
     if(op==RANGE_TRUNCATE || op==RANGE_WRITE) {
         if(offset>INFS20_LOGICAL_MAX || length>INFS20_LOGICAL_MAX-offset ||
-           (op==RANGE_WRITE && length>INFS20_VOLUME_BYTES))
+           (op==RANGE_WRITE && length>INFS20_PAGED_WRITE_BYTES))
             return INFS_STATUS_FILE_TOO_LARGE;
     }
     const struct infs20_store_layout *l=&paged->bootstrap;

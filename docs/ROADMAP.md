@@ -261,3 +261,6 @@ The detailed S0–S7 sequence in ON_DISK_FORMAT.md section 20.18 supersedes any 
 
 ### 64-bit logical file offsets and native undo
 - [ ] Separate sparse logical length and offset from physical allocation preparation, using F v3, and verify distinct mapped units before native root reversal without file-sized memory. A 5 GiB sparse regression covers high offsets, clone, format/undo, corrupt-unit refusal, punch and truncate. Exact-source execution pending. Dense-file allocation and scalable persistent mapping/ownership trees remain open.
+
+### Dense multi-allocation preparation
+- [ ] Paged whole-file and range writes now span multiple bounded allocation runs in a single transaction, rather than refusing all dense files above 64 KiB. Regression checks a 192 KiB-plus file, cross-allocation reads, clone/snapshot and relocation. Exact-source execution pending; general persistent extent/ownership scaling remains open.

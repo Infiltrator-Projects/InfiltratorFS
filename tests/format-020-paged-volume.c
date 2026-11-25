@@ -403,6 +403,26 @@ int main(void)
     CHECK(!infs20_paged_volume_recovery_visit(&flayout,&io,fragmented_mapping,fragmented_unit,&frag));
     CHECK(frag.maps==1 && frag.units==12);
     free(long_data); free(long_out);
+    /* A dense file crosses the old allocation-size boundary in one
+     * publication. Check whole-file and cross-allocation range reads,
+     * retained clone isolation, relocation and exact cold recovery. */
+    memset(m.disk,0,bytes); cold(&m);
+    size_t dense_size=3u*INFS20_VOLUME_BYTES+37u;
+    uint8_t *dense=malloc(dense_size),*dense_out=malloc(dense_size);
+    CHECK(dense && dense_out);
+    for(size_t j=0;j<dense_size;++j) dense[j]=(uint8_t)(j*17u+j/4096u);
+    tx(id,6500); CHECK(!infs20_paged_volume_create(&l,&io,id)); cold(&m);
+    tx(id,6501); CHECK(!infs20_paged_volume_write(&l,&io,id,"dense",dense,dense_size)); cold(&m);
+    CHECK(!infs20_paged_volume_read(&l,&io,0,"dense",dense_out,dense_size,&n) &&
+          n==dense_size && !memcmp(dense,dense_out,n));
+    CHECK(!infs20_paged_volume_read_range(&l,&io,0,"dense",INFS20_VOLUME_BYTES-13,
+          dense_out,37,&n) && n==37 && !memcmp(dense+INFS20_VOLUME_BYTES-13,dense_out,n));
+    tx(id,6502); CHECK(!infs20_paged_volume_clone(&l,&io,id,"dense","dense-copy")); cold(&m);
+    tx(id,6503); CHECK(!infs20_paged_volume_snapshot(&l,&io,id,65)); cold(&m);
+    tx(id,6504); CHECK(!infs20_paged_volume_relocate(&l,&io,id,"dense")); cold(&m);
+    CHECK(!infs20_paged_volume_read(&l,&io,65,"dense-copy",dense_out,dense_size,&n) &&
+          n==dense_size && !memcmp(dense,dense_out,n));
+    free(dense); free(dense_out);
     /* 64-bit sparse addresses are independent of physical payload size.
      * A retired 5 GiB sparse file must restore without reading its holes. */
     memset(m.disk,0,bytes); cold(&m);
