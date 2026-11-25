@@ -194,3 +194,7 @@ The detailed S0–S7 sequence in ON_DISK_FORMAT.md section 20.18 supersedes any 
 
 ### Multi-unit allocation integration
 - [ ] Bounded multi-block payloads, indexed per-unit integrity, shared relocation and read-only partial recovery visitor implemented; exact-source test results pending. General extent trees, fragmented allocations, scalable ownership/reuse and full portable namespace remain open.
+
+### Variable-height tree candidate
+- [x] Linux exact-source multi-unit test at `a2e607224e6cd3fac7f918c09edc95b6dae4d237`: all six experimental tests passed, including 96 write/relocation interruption cases and partial recovery.
+- [ ] Variable-height path-copy tree module and conformance test implemented; execution pending. Integrate with scalable arena/ownership and commit publication; qualify rebalancing and page retirement before replacing the bounded store.

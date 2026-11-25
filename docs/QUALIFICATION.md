@@ -555,3 +555,9 @@ The prior Clang run on `d2e11d217280f4a5cf4aed6e893848a7c9442a58` exposed a test
 
 ### Multi-unit allocation and partial-recovery model (execution pending)
 The new private `infilfs-format-020-multiblock` CTest exercises multi-unit dependency publication and relocation at injected write/flush failures, shared data mappings, native undo, loss of two metadata lanes, corrupt versus unreadable unit reporting, verified range reads, no source mutation and complete-run reservation. Earlier single-block tests remain registered. No pass is asserted before exact-source execution.
+
+### 25 November 2026 — multi-unit model execution
+The [local Linux userspace job](https://github.com/Infiltrator-Projects/InfiltratorFS/actions/runs/45533944845/job/138935818267) at exact source `a2e607224e6cd3fac7f918c09edc95b6dae4d237` executed all six Format 0.20 tests successfully: schema, store (66 interruption cases), ownership, volume (42 cases), multiblock (96 write/relocation cases), and the actual ext4 regular-file experiment. This is bounded experimental evidence only.
+
+### Variable-height tree candidate (execution pending)
+The registered `infilfs-format-020-tree` test exercises multi-level insert/lookup/delete, immutable retained roots, bounded path copying and mixed replica recovery. Private write errors must leave the previous root usable. This module has not yet been integrated with persistent allocation or commit publication; no new pass or mounted-format claim is asserted.
