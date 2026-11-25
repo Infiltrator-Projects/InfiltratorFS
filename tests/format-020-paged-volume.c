@@ -477,6 +477,55 @@ int main(void)
           ext_count==2 && ext[0].physical_offset+ext[0].length!=ext[1].physical_offset);
     tx(id,6104); CHECK(!infs20_paged_volume_clone(&l,&io,id,"frag","alias")); cold(&m);
     tx(id,6105); CHECK(!infs20_paged_volume_snapshot(&l,&io,id,61)); cold(&m);
+    /* Inject every write/flush interruption in both packing policies.
+     * Reopen the actual durable image, never the in-memory transaction.
+     * Every name/pin must retain its original bytes; only physical placement
+     * may change, and only as one complete committed generation. */
+    memcpy(baseline,m.disk,bytes);
+    struct infs20_physical_extent before_pack[2];
+    CHECK(!infs20_paged_volume_map(&l,&io,0,"frag",0,before_pack,2,&ext_count) && ext_count==2);
+    for(unsigned policy=0;policy<=10;policy+=10) {
+        memcpy(m.disk,baseline,bytes); cold(&m);
+        tx(id,12000+policy);
+        CHECK(!infs20_paged_volume_defragment(&l,&io,id,"frag",policy,&moved,&growth));
+        unsigned pack_cuts=m.ops; cold(&m);
+        struct infs20_physical_extent after_pack;
+        CHECK(!infs20_paged_volume_map(&l,&io,0,"frag",0,&after_pack,1,&ext_count) &&
+              ext_count==1 && after_pack.length==half+fragment_tail);
+        for(unsigned mode=0;mode<3;++mode) for(unsigned cut=1;cut<=pack_cuts;++cut) {
+            memcpy(m.disk,baseline,bytes); cold(&m); m.mode=mode; m.fail=cut;
+            tx(id,13000+policy*400+mode*500+cut);
+            moved=UINT64_MAX; growth=UINT64_MAX;
+            CHECK(infs20_paged_volume_defragment(&l,&io,id,"frag",policy,&moved,&growth)==INFS_STATUS_IO_ERROR);
+            CHECK(moved==UINT64_MAX && growth==UINT64_MAX);
+            cold(&m);
+            struct infs20_paged_state recovered;
+            CHECK(!infs20_paged_open(&l,&io,&recovered));
+            CHECK(recovered.commit.sequence==6 || recovered.commit.sequence==7);
+            int committed=recovered.commit.sequence==7;
+            CHECK(!infs20_paged_volume_map(&l,&io,0,"frag",0,ext,16,&ext_count));
+            CHECK(ext_count==(committed?1u:2u));
+            CHECK(ext[0].physical_offset==(committed?after_pack.physical_offset:before_pack[0].physical_offset));
+            if(!committed) CHECK(ext[1].physical_offset==before_pack[1].physical_offset);
+            CHECK(!infs20_paged_volume_read(&l,&io,0,"frag",fragment_out,half+fragment_tail,&n) &&
+                  n==half+fragment_tail && !memcmp(fragment,fragment_out,n));
+            CHECK(!infs20_paged_volume_read(&l,&io,0,"alias",fragment_out,half+fragment_tail,&n) &&
+                  n==half+fragment_tail && !memcmp(fragment,fragment_out,n));
+            CHECK(!infs20_paged_volume_read(&l,&io,61,"alias",fragment_out,half+fragment_tail,&n) &&
+                  n==half+fragment_tail && !memcmp(fragment,fragment_out,n));
+            CHECK(!infs20_paged_volume_read(&l,&io,0,"blocker",fragment_out,half,&n) &&
+                  n==half && !memcmp(fragment,fragment_out,n));
+            ++cases;
+        }
+        memcpy(m.disk,baseline,bytes); cold(&m);
+        m.mode=3; m.fail=2; tx(id,24000+policy);
+        CHECK(infs20_paged_volume_defragment(&l,&io,id,"frag",policy,&moved,&growth)==INFS_STATUS_CORRUPT);
+        cold(&m);
+        CHECK(!infs20_paged_volume_map(&l,&io,0,"frag",0,ext,16,&ext_count) && ext_count==2);
+        CHECK(!infs20_paged_volume_read(&l,&io,0,"frag",fragment_out,half+fragment_tail,&n) &&
+              n==half+fragment_tail && !memcmp(fragment,fragment_out,n));
+    }
+    memcpy(m.disk,baseline,bytes); cold(&m); m.mode=0;
     tx(id,6106); CHECK(!infs20_paged_volume_defragment(&l,&io,id,"frag",10,&moved,&growth)); cold(&m);
     CHECK(moved==half+fragment_tail && growth==1);
     CHECK(!infs20_paged_volume_map(&l,&io,0,"frag",0,ext,16,&ext_count) &&
