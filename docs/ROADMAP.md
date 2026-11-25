@@ -152,7 +152,7 @@ The roadmap should remain focused on broadly useful filesystem capabilities. Per
 
 ---
 
-## Proposed Format 0.20 — unified design (revision 3)
+## Proposed Format 0.20 — unified design (revisions 3–4)
 
 **Proposal only; the preceding current-format contract remains applicable to Format 0.19.** The [unified Format 0.20 specification](ON_DISK_FORMAT.md#proposed-infiltratorfs-on-disk-format-020) is the design authority for the proposed persistent model. This section specialises that model; it does not introduce a second on-disk authority or claim implementation.
 
@@ -167,3 +167,6 @@ All items below are **unchecked proposed 0.20 gates**. Existing 0.19 checkmarks 
 - [ ] Integrate same schema and capability contracts in portable, native Linux, Windows and Common V2/BOOT paths; preserve all existing portable namespace and maintenance semantics.
 - [ ] Establish actual 0.19/comparable filesystem workload baselines, measure memory, metadata overhead, clone/unlink/relocation cost, write amplification and fsync latency; pass new exact-source qualification and physical-media gates.
 - [ ] Update active implementation version and current-format documentation only when the new schema and corresponding readers/writers are qualified; retain historical evidence.
+
+### Revision 4 — dependency-ordered engineering gates
+The detailed S0–S7 sequence in ON_DISK_FORMAT.md section 20.18 supersedes any implication that the earlier checklist items can be implemented in arbitrary order. Start with isolated wire schema and commit/arena modelling, then ownership/location/trees, portable single-device parity, recovery/Unformatter, native integration, optional protection profiles and final evidence. Every gate remains open. Keep existing 0.19 release and qualification intact. No formatter or media version change until corresponding contracts are frozen and qualified.

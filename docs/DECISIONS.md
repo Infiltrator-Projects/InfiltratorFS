@@ -101,7 +101,7 @@ independently corrupted or relocated replicas.
 
 ---
 
-## Proposed Format 0.20 — unified design (revision 3)
+## Proposed Format 0.20 — unified design (revisions 3–4)
 
 **Proposal only; the preceding current-format contract remains applicable to Format 0.19.** The [unified Format 0.20 specification](ON_DISK_FORMAT.md#proposed-infiltratorfs-on-disk-format-020) is the design authority for the proposed persistent model. This section specialises that model; it does not introduce a second on-disk authority or claim implementation.
 
@@ -116,3 +116,9 @@ Adopt transactional direct-edge reference accounting with independent tracing ve
 
 ### Proposed ADR-014 — Evidence-driven durability and scalability
 One commit binds semantics, placement and ownership. A durable acknowledgement requires the selected recovery profile; ambiguous failures fence mutation. NoCoW remains conditional on provable data+digest atomicity. Demand-paged state, bounded GC, independent parallel preparation and measured overhead/latency are required. Exact schema, placement and cryptographic/membership parameters are open until model/prototype qualification. No historical pass is inherited.
+
+### Proposed ADR-015 — Membership proof is the ordinary committed tree
+Use protected immutable Merkle B+ pages and their child identities/digests as authoritative membership proof, rather than a second deterministic semantic inventory. Mixed copies may satisfy the same proof. If every copy of a required node is gone, label unsupported records salvage, not current state. A canonical export manifest tests semantic equivalence, not commit authority. This refines revision 3's ambiguous reconstruction promise.
+
+### Proposed ADR-016 — Candidate self-hosting and wire contract
+Use a reserved append-allocated CoW arena for allocator/location/reference infrastructure, direct bootstrap locators, committed frontiers and explicit segment evacuation. The 192-byte page envelope and typed record families are a prototype contract; the exact field schema/region placement/reserve formulas require modelling and measurement before freeze. Use safe CoW for committed data until NoCoW's data+digest atomicity is proven. See sections 20.13–20.20. These are decisions about the proposed architecture, not implemented features.

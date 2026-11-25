@@ -248,7 +248,7 @@ For field-level Format 0.19 details, use `ON_DISK_FORMAT.md`. For what is finish
 
 ---
 
-## Proposed Format 0.20 — unified design (revision 3)
+## Proposed Format 0.20 — unified design (revisions 3–4)
 
 **Proposal only; the preceding current-format contract remains applicable to Format 0.19.** The [unified Format 0.20 specification](ON_DISK_FORMAT.md#proposed-infiltratorfs-on-disk-format-020) is the design authority for the proposed persistent model. This section specialises that model; it does not introduce a second on-disk authority or claim implementation.
 
@@ -273,3 +273,6 @@ flowchart TB
 - **Storage:** region-aware placement, encryption and member replication operate through the common allocation/location model; selected recovery profile is mandatory. Physical durability remains a prerequisite to publication.
 
 Keep fast bounded mount, ordinary structural fsck, deep scrub and offline reconstruction distinct in cost and authority. NoCoW cannot overwrite a retained dependency or separate a data mutation from integrity/commit authority; CoW is the safe default. Preserve the native N-1 physical-core CPU budget and demand-paged caches. Historical 0.19 architecture remains above until implementation changes; the proposal supersedes only future design decisions.
+
+### Revision 4 engineering refinement
+The detailed candidate wire contract and dependency gates are in ON_DISK_FORMAT.md sections 20.13–20.20. Ordinary immutable authenticated tree pages supply membership proof; do not maintain a second canonical namespace or claim exact committed membership when every copy of a required proof node is lost. Stable allocation IDs decouple data location from semantic roots, not necessarily metadata page relocation. Direct strong lifetime edges and non-owning registry indexes are distinct. The self-hosting candidate is a reserved append-allocated CoW segment arena; publication, reader pins, fallback and release are one state machine. Until integrated NoCoW data+digest atomicity is qualified, committed writes remain CoW.
