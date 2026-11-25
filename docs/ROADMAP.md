@@ -178,3 +178,6 @@ The detailed S0–S7 sequence in ON_DISK_FORMAT.md section 20.18 supersedes any 
 ### S0/S1 executable-model progress
 - [ ] Bounded immutable record tree, three-lane commit publication, cold selection and verified copy healing implemented in isolated test target; exact-source results pending.
 - [ ] General typed scalable tree, allocator/arena and durable ownership/reclamation remain open. The fixed test banks are not a production storage design.
+
+### S2 lifetime model progress
+- [ ] Bounded persistent node/edge accounting, retained-root transitions and deferred reclaim model implemented through the S1 committed tree; exact-source execution pending. Production allocation/location engine and real native unformat remain open.

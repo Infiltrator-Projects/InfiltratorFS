@@ -526,3 +526,6 @@ The private `infilfs-format-020-schema` target registers a CTest for the experim
 
 ### Format 0.20 S0/S1 bounded executable store (unqualified at commit)
 The registered `infilfs-format-020-store` CTest drives the actual experimental writer and cold reader through injected refusal, torn/persisted writes and flush failures; it also tests lane and mixed-copy loss, verified healing, absent proof and preflight. This is a bounded in-memory storage model, not production-media or native filesystem qualification. Record exact-source execution separately. The existing schema vector is independently verified by the literal encoded preimage; no production claims follow.
+
+### Format 0.20 S2 ownership model (execution pending)
+The isolated `infilfs-format-020-ownership` test persists and reloads root retirement/reactivation, reference-count transitions and one-edge deferred reclamation using the S1 tree. Invalid counts, overlapping protected ranges and cycles must produce zero writes. The model tests explicit root pins, not the production self-hosting allocator, payload writes, automatic fallback retirement or native formatting. No new pass is asserted here.

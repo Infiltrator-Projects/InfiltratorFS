@@ -496,3 +496,28 @@ done:
     free(t);
     return st;
 }
+
+infs_status infs20_store_visit(const struct infs20_store_layout *l,
+    const struct infs20_store_io *io,infs20_store_visitor visit,void *context)
+{
+    if(!visit || !layout_valid(l,io,0)) return INFS_STATUS_INVALID_ARGUMENT;
+    struct tree_image *t=calloc(1,sizeof(*t));
+    if(!t) return INFS_STATUS_NO_MEMORY;
+    struct commit_candidate c;
+    infs_status st=load(l,io,&c,t);
+    if(st) goto done;
+    for(unsigned i=0;i<t->leaves;++i) {
+        size_t offset=LEAF_HEADER;
+        while(offset<t->leaf_size[i]) {
+            struct infs20_record_view r;
+            st=infs20_record_decode(t->leaf[i]+offset,t->leaf_size[i]-offset,&r);
+            if(st) goto done;
+            st=visit(context,&r);
+            if(st) goto done;
+            offset+=r.consumed;
+        }
+    }
+done:
+    free(t);
+    return st;
+}

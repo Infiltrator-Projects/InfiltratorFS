@@ -64,4 +64,10 @@ infs_status infs20_store_lookup(const struct infs20_store_layout *,
  * copies; an interrupted repair is safe to resume after cold recovery. */
 infs_status infs20_store_heal(const struct infs20_store_layout *,
     const struct infs20_store_io *, struct infs20_store_state *);
+/* Visit borrowed record views only after complete committed-tree validation.
+ * Visitor must not modify the source; failure can leave caller-owned visitor
+ * state partially populated, so publish output only after success. */
+typedef infs_status (*infs20_store_visitor)(void *,const struct infs20_record_view *);
+infs_status infs20_store_visit(const struct infs20_store_layout *,
+    const struct infs20_store_io *,infs20_store_visitor,void *);
 #endif
