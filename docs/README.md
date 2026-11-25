@@ -82,3 +82,11 @@ This category currently includes:
    must not be presented as current performance without remeasurement.
 6. Pre-1.0 format history is informative only; current accepted-format rules are
    defined by the current format sources.
+
+---
+
+## Proposed Format 0.20 — unified design (revision 3)
+
+**Proposal only; the preceding current-format contract remains applicable to Format 0.19.** The [unified Format 0.20 specification](ON_DISK_FORMAT.md#proposed-infiltratorfs-on-disk-format-020) is the design authority for the proposed persistent model. This section specialises that model; it does not introduce a second on-disk authority or claim implementation.
+
+The current 0.19 contracts and evidence remain authoritative for installed software. The proposed unified 0.20 specification is the single source for future persistent semantics; architecture/decision/specialist sections specialise that proposal, while ROADMAP and QUALIFICATION distinguish unimplemented requirements from evidence. Historical reports remain version-scoped. On schema freeze, reconcile exact byte definitions with the normative specification; do not maintain duplicate incompatible on-disk authorities. No code or release status changed in this documentation revision.

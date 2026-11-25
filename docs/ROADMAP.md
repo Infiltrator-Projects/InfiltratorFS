@@ -149,3 +149,21 @@ Global synchronous deduplication, distributed/network filesystem semantics and a
 ## Design guardrails
 
 The roadmap should remain focused on broadly useful filesystem capabilities. Persistent hard limits and format choices require explicit rationale; runtime policy such as placement should stay non-persistent where possible. The single-device filesystem must remain complete in its own right, while multi-device protection, replication and encryption remain optional layers rather than distortions of the core design.
+
+---
+
+## Proposed Format 0.20 — unified design (revision 3)
+
+**Proposal only; the preceding current-format contract remains applicable to Format 0.19.** The [unified Format 0.20 specification](ON_DISK_FORMAT.md#proposed-infiltratorfs-on-disk-format-020) is the design authority for the proposed persistent model. This section specialises that model; it does not introduce a second on-disk authority or claim implementation.
+
+All items below are **unchecked proposed 0.20 gates**. Existing 0.19 checkmarks retain their version-scoped meaning and are not inherited.
+
+- [ ] Freeze coherent byte schema, canonical semantic membership and location commitments, bootstrap arena/reserve, strong-edge/GC model and publication state machine.
+- [ ] Implement shared immutable allocation descriptors, location maps, indexed logical integrity, compatible reflinks and transactional relocation across retained roots.
+- [ ] Implement canonical recoverable metadata placement, independent commit/discovery paths and bounded mount; measure actual foreign formatter write/discard/first-mount patterns before fixing the profile.
+- [ ] Implement one portable ownership/transaction engine for objects, security, streams, quotas, open-orphans, snapshots, retired roots and deferred reclaim; validate NoCoW eligibility or use CoW.
+- [ ] Implement common Unformatter, native quick-format retention/reversal, foreign reconstruction/export and controlled in-place restoration; zero-write refusal for unsafe targets.
+- [ ] Integrate independent encrypted headers, key lifetime and allocation protection; implement persistent replica membership/authority/resync before claiming support for degraded writes.
+- [ ] Integrate same schema and capability contracts in portable, native Linux, Windows and Common V2/BOOT paths; preserve all existing portable namespace and maintenance semantics.
+- [ ] Establish actual 0.19/comparable filesystem workload baselines, measure memory, metadata overhead, clone/unlink/relocation cost, write amplification and fsync latency; pass new exact-source qualification and physical-media gates.
+- [ ] Update active implementation version and current-format documentation only when the new schema and corresponding readers/writers are qualified; retain historical evidence.

@@ -245,3 +245,31 @@ Format 0.19 implements versioned portable security objects, stable typed princip
 - Fail closed when integrity, durability or recovery correctness cannot be established.
 
 For field-level Format 0.19 details, use `ON_DISK_FORMAT.md`. For what is finished, use `ROADMAP.md`. For proof, use `QUALIFICATION.md`.
+
+---
+
+## Proposed Format 0.20 — unified design (revision 3)
+
+**Proposal only; the preceding current-format contract remains applicable to Format 0.19.** The [unified Format 0.20 specification](ON_DISK_FORMAT.md#proposed-infiltratorfs-on-disk-format-020) is the design authority for the proposed persistent model. This section specialises that model; it does not introduce a second on-disk authority or claim implementation.
+
+The proposed architecture is a single coordinated storage engine. Its six responsibilities are not independent subsystems with independent transaction or allocation state.
+
+```mermaid
+flowchart TB
+ A[Native OS / Common V2 adapters] --> O[Portable objects and namespace]
+ O --> G[Immutable generation roots and transaction authority]
+ G --> E[Shared allocation identity / extent integrity / ownership]
+ E --> P[Physical location and protection]
+ G --> R[Canonical recoverable metadata and commit proof]
+ R --> P
+ E --> R
+```
+
+- **Objects:** one keyed portable semantic record model for files, directories, attributes, streams, ACLs and quota policies. Indexes are rebuildable; identities, relationships and content mappings are not inferred from paths.
+- **Generations:** one monotonic set sequence; active, snapshot and retired volume roots share immutable subtrees. Rollback and native unformat select roots; reflink shares allocations.
+- **Ownership:** direct strong edges and persistent reference accounting, independently traced during scrub; one deferred release queue for payload, security, extensions and metadata. Explicit bootstrap arena for self-hosting roots, not an unrelated allocator.
+- **Extents:** allocation identity independent of physical location and referencing file. Logical SHA-256 and codec/protection descriptor are shared; location updates support defrag, resize and repair across retained roots. Policy-compatible sharing only.
+- **Recovery:** the canonical metadata itself is independently replicated/discoverable. Semantic and location commitments identify the same committed state; normal lookup trees and caches can be reconstructed. Native format pins old roots; foreign-format recovery discovers surviving committed records. No second backup namespace.
+- **Storage:** region-aware placement, encryption and member replication operate through the common allocation/location model; selected recovery profile is mandatory. Physical durability remains a prerequisite to publication.
+
+Keep fast bounded mount, ordinary structural fsck, deep scrub and offline reconstruction distinct in cost and authority. NoCoW cannot overwrite a retained dependency or separate a data mutation from integrity/commit authority; CoW is the safe default. Preserve the native N-1 physical-core CPU budget and demand-paged caches. Historical 0.19 architecture remains above until implementation changes; the proposal supersedes only future design decisions.

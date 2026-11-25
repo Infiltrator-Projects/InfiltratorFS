@@ -163,3 +163,7 @@ Before 1.0, prefer the cleanest long-term filesystem design over preserving obso
 Copyright © 1993-2026 Shannon Smith.
 
 InfiltratorFS is licensed under the GNU General Public License version 3 or, at your option, any later version (`GPL-3.0-or-later`).
+
+## Proposed Format 0.20
+
+The [unified proposed Format 0.20 architecture](docs/ON_DISK_FORMAT.md#proposed-infiltratorfs-on-disk-format-020) integrates shared allocation identity, integrity, immutable generations, intrinsic structural recovery and native/foreign unformat into one design. It is a proposal only: the current implementation and release claims remain Format 0.19. See the documentation map, roadmap and qualification ledger for design authority, outstanding gates and historical evidence.

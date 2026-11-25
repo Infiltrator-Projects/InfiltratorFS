@@ -117,3 +117,11 @@ Before adding a platform-specific persistent feature, ask:
 4. What truly remains platform-specific after that generalization?
 
 Only the final category should become adapter-specific persistent metadata.
+
+---
+
+## Proposed Format 0.20 — unified design (revision 3)
+
+**Proposal only; the preceding current-format contract remains applicable to Format 0.19.** The [unified Format 0.20 specification](ON_DISK_FORMAT.md#proposed-infiltratorfs-on-disk-format-020) is the design authority for the proposed persistent model. This section specialises that model; it does not introduce a second on-disk authority or claim implementation.
+
+The portable format owns canonical objects, allocation identities, logical checksums, protection/location, reference ownership, root publication and reconstruction. Linux/Windows adapters own native cache, credential, inode/handle, mmap and device lifecycle translation, not alternative persistent semantics. Common V2 and freestanding BOOT read the same committed metadata with bounded discovery, explicit unsupported-feature refusal and integrity checking; no V1 or FUSE runtime fallback. Formatter, defrag, trim, resize and unformat entry points share target authority and ownership rules. Platform-specific metadata remains opaque-preservable; quota APIs map to common portable policy. Qualification distinguishes native mounted/boot and driverless interoperability; no portable test substitutes for a native path.

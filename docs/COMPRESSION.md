@@ -156,3 +156,11 @@ streams, and reports unique compressed logical bytes, unique compressed
 physical bytes, and the resulting physical bytes saved. Direct-device scans
 refuse mounted block devices so the portable reader never races the native
 kernel writer.
+
+---
+
+## Proposed Format 0.20 — unified design (revision 3)
+
+**Proposal only; the preceding current-format contract remains applicable to Format 0.19.** The [unified Format 0.20 specification](ON_DISK_FORMAT.md#proposed-infiltratorfs-on-disk-format-020) is the design authority for the proposed persistent model. This section specialises that model; it does not introduce a second on-disk authority or claim implementation.
+
+Retain IAC1 v1 encoding and bounded portable decode; default adaptive physical-space-saving decision remains. Proposed 0.20 places codec ID, decoded/stored length, allocation-relative logical digest coverage and effective protection on the immutable data allocation descriptor. File/stream mappings reference its identity/slices. Reflinks and retained roots share the descriptor and checksum tree; no per-file checksum clone. Mutate a bounded affected cluster using CoW when shared or required by durability. Defrag moves the encoded run without recompression when encryption binding and verification permit; publish the current location for every owner. Canonical partial-block and EOF coverage must be frozen with shared-slice rules; holes/unwritten reservations are distinct from missing payloads. Preserve N-1 CPU work budget, cheap incompressible fallback and hardware-aware encoder/portable decoder. Compare overhead using real source/media, mixed I/O and fsync benchmarks, not historical results as new performance claims.

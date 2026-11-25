@@ -73,3 +73,11 @@ Tests must enforce that:
 10. automatic repair remains restricted to unambiguous checkpoint-replica degradation and is verified by a second structural check before reporting correction.
 
 This separation and consolidation are product requirements, not implementation details.
+
+---
+
+## Proposed Format 0.20 — unified design (revision 3)
+
+**Proposal only; the preceding current-format contract remains applicable to Format 0.19.** The [unified Format 0.20 specification](ON_DISK_FORMAT.md#proposed-infiltratorfs-on-disk-format-020) is the design authority for the proposed persistent model. This section specialises that model; it does not introduce a second on-disk authority or claim implementation.
+
+Retain one fsck executable and explicit --scrub; do not turn ordinary boot checks into offline reconstruction. Bounded mount validates selected authority and consumed dependencies; fast structural fsck validates declared root/index/accounting topology without reading every payload; scrub pins a consistent generation/location view and independently traces strong references, checks replica separation, verifies payloads and reconciliation. Deterministic validated copy healing is distinct from creating a missing semantic graph. Explicit Unformatter discovery/reconstruction may scan whole media, rebuild derived indexes and report uncertainty. No automatic activation of an ambiguous or partially salvaged root. Normal fsck success does not imply exhaustive payload/retention/recovery validation. Read-only operations never repair media.

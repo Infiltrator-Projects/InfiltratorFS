@@ -98,3 +98,21 @@ independently corrupted or relocated replicas.
 **Compatibility:** This requires a genuine new Format 0.19 layout and explicit, destructive reformat or a separately qualified migration. Format 0.18 media must not be silently reinterpreted or mutated by Format 0.19.
 
 **Status:** Implemented and exercised by Format 0.19 portable interruption tests and native Linux mounted qualification for testing. This does not establish production physical-media durability, performance or mounted Windows-driver qualification; see `ROADMAP.md` and `QUALIFICATION.md`.
+
+---
+
+## Proposed Format 0.20 — unified design (revision 3)
+
+**Proposal only; the preceding current-format contract remains applicable to Format 0.19.** The [unified Format 0.20 specification](ON_DISK_FORMAT.md#proposed-infiltratorfs-on-disk-format-020) is the design authority for the proposed persistent model. This section specialises that model; it does not introduce a second on-disk authority or claim implementation.
+
+### Proposed ADR-011 — Canonical protected metadata, not a second backup filesystem
+Ordinary canonical records shall be reconstructable from independent physical copies. Bind exact semantic membership and physical locations to committed roots. Three lanes are a baseline to qualify, not a measured optimal count. Native and foreign unformat use the same discovery/verification engine. Evidence: existing checkpoint recovery and foreign formatter discard/overwrite behavior; qualification must measure actual damage maps.
+
+### Proposed ADR-012 — Stable shared allocation identity
+Files/streams reference immutable data units with shared logical checksums and codec/protection information; current physical placement is separately transactionally resolved. Reflink and relocation need not duplicate checksums or edit every historical file mapping. The historical research audit documents checksum cloning and repeated ownership discovery costs. Cross-domain sharing requires compatible policy; otherwise copy or refuse.
+
+### Proposed ADR-013 — Unified lifetime and root retention
+Adopt transactional direct-edge reference accounting with independent tracing verification, common deferred reclaim, and explicit self-hosting bootstrap arena. This supersedes the 0.19 bitmap/tracing-only policy for the proposed format, not for the installed format. Namespace links and weak lookup indexes do not themselves define storage lifetime. Snapshots, retired roots, open-orphans and fallback pins obey the same release rules.
+
+### Proposed ADR-014 — Evidence-driven durability and scalability
+One commit binds semantics, placement and ownership. A durable acknowledgement requires the selected recovery profile; ambiguous failures fence mutation. NoCoW remains conditional on provable data+digest atomicity. Demand-paged state, bounded GC, independent parallel preparation and measured overhead/latency are required. Exact schema, placement and cryptographic/membership parameters are open until model/prototype qualification. No historical pass is inherited.

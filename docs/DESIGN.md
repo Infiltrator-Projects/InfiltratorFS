@@ -26,3 +26,11 @@ Unknown, unavailable, unsupported and invalid are distinct states. The project p
 ## Decision quality
 
 A design change should state the problem, alternatives, evidence, trade-offs and validation method. Newness alone is not a benefit. Proven mechanisms remain when they are the strongest justified choice.
+
+---
+
+## Proposed Format 0.20 — unified design (revision 3)
+
+**Proposal only; the preceding current-format contract remains applicable to Format 0.19.** The [unified Format 0.20 specification](ON_DISK_FORMAT.md#proposed-infiltratorfs-on-disk-format-020) is the design authority for the proposed persistent model. This section specialises that model; it does not introduce a second on-disk authority or claim implementation.
+
+Design new persistent structures from the common generation, identity, lifetime and integrity model, not as feature-specific appendices. The format owns semantic relationships and allocation identities; operating systems project them. The normal metadata is protected recovery information. Prefer rebuilding derived indexes over persisting competing semantic state. An ordinary committed root describes the same filesystem that the Unformatter would reconstruct. Preserve useful existing mechanisms and remove redundant work only with evidence. Require failure-mode, complexity and cost analysis of each new persistent structure, especially self-hosting ownership, shared checksum roots and metadata placement. Current implementation remains 0.19.

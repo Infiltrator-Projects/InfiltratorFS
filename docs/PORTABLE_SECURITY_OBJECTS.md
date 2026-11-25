@@ -206,3 +206,11 @@ its exact current representation.
 InfiltratorFS has not reached a stable format. Superseded development security
 payloads are rejected; no backward reader, migration path or compatibility
 shim is required.
+
+---
+
+## Proposed Format 0.20 — unified design (revision 3)
+
+**Proposal only; the preceding current-format contract remains applicable to Format 0.19.** The [unified Format 0.20 specification](ON_DISK_FORMAT.md#proposed-infiltratorfs-on-disk-format-020) is the design authority for the proposed persistent model. This section specialises that model; it does not introduce a second on-disk authority or claim implementation.
+
+Preserve principal IDs, binding uniqueness, canonical descriptor reuse, ordered ACE semantics, inheritance, opaque preservation and adapter projection. Proposed 0.20 replaces the current tracing-only lifetime mechanism with the common direct strong-reference accounting and deferred GC; tracing during scrub independently validates it. The descriptor's semantic digest is not its physical address. Namespace references, descriptor-to-principal strong references and retained roots govern lifetime; reverse credential/descriptor lookup indexes are weak/rebuildable and must not pin unreachable objects accidentally. Large ACLs and typed metadata use the common paged-value representation. Recovery reconstructs the exact original bindings/ACLs from committed records without widening rights. No independent security-object allocator or journal.
