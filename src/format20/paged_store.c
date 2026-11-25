@@ -269,9 +269,24 @@ infs_status infs20_paged_open(const struct infs20_paged_layout *l,
     if(!st) *out=s;
     return st;
 }
+struct publication_verification {
+    struct reader reader;
+    infs20_store_prepare payload_verify;
+    void *payload_context;
+};
+/* Both metadata and newly staged data must read back correctly after the
+ * dependency barrier; a successful write alone is not publication authority. */
+static infs_status verify_publication(void *opaque)
+{
+    struct publication_verification *v=opaque;
+    infs_status st=verify_protection(&v->reader);
+    if(!st && v->payload_verify) st=v->payload_verify(v->payload_context);
+    return st;
+}
 static infs_status publish(const struct infs20_paged_layout *l,
     const struct infs20_store_io *io,const uint8_t tx[16],
-    struct infs20_paged_state *s,infs20_store_prepare prepare,void *opaque)
+    struct infs20_paged_state *s,infs20_store_prepare prepare,void *opaque,
+    infs20_store_prepare payload_verify,void *payload_context)
 {
     uint8_t p[DESCRIPTOR_BYTES]; encode(l,s,p);
     struct infs20_store_record record={descriptor_key,p,sizeof(descriptor_key),
@@ -281,9 +296,9 @@ static infs_status publish(const struct infs20_paged_layout *l,
      * private root may contain pages born in the upcoming generation. */
     struct infs20_paged_state candidate=*s;
     ++candidate.commit.sequence;
-    struct reader verification={l,io,&candidate};
+    struct publication_verification verification={{l,io,&candidate},payload_verify,payload_context};
     infs_status st=infs20_store_publish_verified(&l->bootstrap,io,tx,&record,1,
-        prepare,opaque,verify_protection,&verification,&committed);
+        prepare,opaque,verify_publication,&verification,&committed);
     if(!st) s->commit=committed;
     return st;
 }
@@ -307,7 +322,7 @@ infs_status infs20_paged_create(const struct infs20_paged_layout *l,
     const struct infs20_store_io *io,const uint8_t tx[16],
     struct infs20_paged_state *out)
 {
-    return infs20_paged_apply(l,io,tx,NULL,0,1,NULL,NULL,out);
+    return infs20_paged_apply(l,io,tx,NULL,0,1,NULL,NULL,NULL,out);
 }
 static infs_status mutation_read(void *o,uint64_t b,uint8_t *p)
 {
@@ -387,7 +402,7 @@ static infs_status prepare(void *opaque)
 infs_status infs20_paged_apply(const struct infs20_paged_layout *l,
     const struct infs20_store_io *io,const uint8_t tx[16],
     const struct infs20_paged_change *changes,size_t count,int create_empty,
-    infs20_store_prepare payload_prepare,void *payload_context,
+    infs20_store_prepare payload_prepare,infs20_store_prepare payload_verify,void *payload_context,
     struct infs20_paged_state *out)
 {
     if(!out || !tx || zero(tx,16) || !valid_layout(l,io,1) ||
@@ -434,7 +449,7 @@ infs_status infs20_paged_apply(const struct infs20_paged_layout *l,
         if(st) break;
         m.state.root=root;
     }
-    if(!st) st=publish(l,io,tx,&m.state,prepare,&m);
+    if(!st) st=publish(l,io,tx,&m.state,prepare,&m,payload_verify,payload_context);
     if(!st) *out=m.state;
     free(m.pages);
     return st;
@@ -444,14 +459,14 @@ infs_status infs20_paged_put(const struct infs20_paged_layout *l,
     size_t ks,const uint8_t *value,size_t vs,struct infs20_paged_state *out)
 {
     const struct infs20_paged_change change={key,value,ks,vs,0};
-    return infs20_paged_apply(l,io,tx,&change,1,0,NULL,NULL,out);
+    return infs20_paged_apply(l,io,tx,&change,1,0,NULL,NULL,NULL,out);
 }
 infs_status infs20_paged_remove(const struct infs20_paged_layout *l,
     const struct infs20_store_io *io,const uint8_t tx[16],const uint8_t *key,
     size_t ks,struct infs20_paged_state *out)
 {
     const struct infs20_paged_change change={key,NULL,ks,0,1};
-    return infs20_paged_apply(l,io,tx,&change,1,0,NULL,NULL,out);
+    return infs20_paged_apply(l,io,tx,&change,1,0,NULL,NULL,NULL,out);
 }
 struct replacement {
     const struct infs20_store_record *next;
@@ -503,7 +518,8 @@ static infs_status diff_visit(void *opaque,const uint8_t *key,size_t ks,
 infs_status infs20_paged_replace(const struct infs20_paged_layout *l,
     const struct infs20_store_io *io,const uint8_t tx[16],
     const struct infs20_store_record *records,size_t count,int create_empty,
-    infs20_store_prepare prepare_payload,void *context,struct infs20_paged_state *out)
+    infs20_store_prepare prepare_payload,infs20_store_prepare verify_payload,
+    void *context,struct infs20_paged_state *out)
 {
     if(!out || !tx || zero(tx,16) || !valid_layout(l,io,1) ||
        count>INFS20_PAGED_BATCH_MAX || (count && !records) ||
@@ -522,7 +538,7 @@ infs_status infs20_paged_replace(const struct infs20_paged_layout *l,
     infs_status st=create_empty?INFS_STATUS_OK:infs20_paged_visit(l,io,diff_visit,d);
     while(!st && d->index<count) st=queue_put(d);
     if(!st) st=infs20_paged_apply(l,io,tx,d->batch,d->changes,create_empty,
-                                  prepare_payload,context,out);
+                                  prepare_payload,verify_payload,context,out);
     for(size_t i=0;i<d->changes;++i) free(d->owned[i]);
     free(d);
     return st;
@@ -641,7 +657,7 @@ infs_status infs20_paged_collect(const struct infs20_paged_layout *l,
     }
     if(!st) st=add_free(&s,cursor,s.used[0]);
     free(m.slots);
-    if(!st) st=publish(l,io,tx,&s,NULL,NULL);
+    if(!st) st=publish(l,io,tx,&s,NULL,NULL,NULL,NULL);
     if(!st) *out=s;
     return st;
 }

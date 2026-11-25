@@ -294,7 +294,7 @@ struct bounded_publish {
     const struct infs20_store_layout *layout;
     const struct infs20_store_io *io;
     const uint8_t *tx;
-    infs20_store_prepare prepare;
+    infs20_store_prepare prepare,verify;
     void *context;
     struct infs20_store_state *out;
 };
@@ -302,23 +302,23 @@ static infs_status publish_bounded(void *opaque,
     const struct infs20_store_record *r,size_t count)
 {
     struct bounded_publish *p=opaque;
-    return infs20_store_publish_prepared(p->layout,p->io,p->tx,r,count,
-                                        p->prepare,p->context,p->out);
+    return infs20_store_publish_verified(p->layout,p->io,p->tx,r,count,
+                                        p->prepare,p->context,p->verify,p->context,p->out);
 }
 infs_status infs20_model_commit_extended(const struct infs20_store_layout *l,
     const struct infs20_store_io *io,const uint8_t tx[16],
     const struct infs20_model_graph *g,const struct infs20_store_record *extra,
-    size_t extra_count,infs20_store_prepare prepare,void *context,
+    size_t extra_count,infs20_store_prepare prepare,infs20_store_prepare verify,void *context,
     struct infs20_store_state *out)
 {
-    struct bounded_publish p={l,io,tx,prepare,context,out};
+    struct bounded_publish p={l,io,tx,prepare,verify,context,out};
     return infs20_model_with_records(l,g,extra,extra_count,publish_bounded,&p);
 }
 infs_status infs20_model_commit(const struct infs20_store_layout *l,
     const struct infs20_store_io *io,const uint8_t tx[16],
     const struct infs20_model_graph *g,struct infs20_store_state *out)
 {
-    return infs20_model_commit_extended(l,io,tx,g,NULL,0,NULL,NULL,out);
+    return infs20_model_commit_extended(l,io,tx,g,NULL,0,NULL,NULL,NULL,out);
 }
 infs_status infs20_model_decode_record(void *opaque,const struct infs20_record_view *r)
 {

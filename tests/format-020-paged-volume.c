@@ -16,6 +16,7 @@ static infs_status wr(void *o,uint64_t b,const uint8_t *p)
 {
     struct medium *m=o; if(b>=BLOCKS) return INFS_STATUS_IO_ERROR;
     if(++m->ops==m->fail) {
+        if(m->mode==3) return INFS_STATUS_OK;
         if(m->mode) {
             size_t n=m->mode==1?INFS20_PAGE_BYTES/2:INFS20_PAGE_BYTES;
             memcpy(m->disk+b*INFS20_PAGE_BYTES,p,n);
@@ -108,6 +109,14 @@ int main(void)
         CHECK(same(&l,&io,0,"clone",a) && same(&l,&io,10,"a",a));
         ++cases;
     }
+    memcpy(m.disk,baseline,bytes); cold(&m);
+    /* The device acknowledges a dropped middle payload write. Neither
+     * checksum-valid metadata nor a successful flush can authorize it. */
+    m.mode=3; m.fail=2; tx(id,799);
+    CHECK(infs20_paged_volume_write(&l,&io,id,"a",b,LENGTH)==INFS_STATUS_CORRUPT);
+    cold(&m); struct infs20_paged_state dropped;
+    CHECK(!infs20_paged_open(&l,&io,&dropped) && dropped.commit.sequence==4);
+    CHECK(same(&l,&io,0,"a",a) && same(&l,&io,0,"clone",a) && same(&l,&io,10,"a",a));
     memcpy(m.disk,baseline,bytes); cold(&m);
     tx(id,800); CHECK(!infs20_paged_volume_write(&l,&io,id,"a",b,LENGTH)); cold(&m);
     tx(id,801); CHECK(!infs20_paged_volume_relocate(&l,&io,id,"clone")); cold(&m);

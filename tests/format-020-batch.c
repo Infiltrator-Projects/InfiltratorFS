@@ -67,12 +67,12 @@ int main(void)
     struct infs20_paged_state s;
     uint8_t id[16]; tx(id,1);
     const struct infs20_paged_change initial[]={PUT("D","old"),PUT("F","old"),PUT("N","old")};
-    CHECK(!infs20_paged_apply(&l,&io,id,initial,3,1,NULL,NULL,&s));
+    CHECK(!infs20_paged_apply(&l,&io,id,initial,3,1,NULL,NULL,NULL,&s));
     CHECK(s.commit.sequence==1); cold(&m);
     CHECK(value(&l,&io,"D","old") && value(&l,&io,"F","old") && value(&l,&io,"N","old"));
     memcpy(baseline,m.disk,bytes);
     const struct infs20_paged_change changes[]={PUT("D","new"),PUT("F","new"),DEL("N"),PUT("E","new")};
-    tx(id,2); CHECK(!infs20_paged_apply(&l,&io,id,changes,4,0,payload,&m,&s));
+    tx(id,2); CHECK(!infs20_paged_apply(&l,&io,id,changes,4,0,payload,NULL,&m,&s));
     CHECK(m.calls==1 && s.commit.sequence==2); unsigned cuts=m.ops; cold(&m);
     CHECK(value(&l,&io,"D","new") && value(&l,&io,"F","new") &&
           value(&l,&io,"N",NULL) && value(&l,&io,"E","new"));
@@ -82,7 +82,7 @@ int main(void)
         memcpy(m.disk,baseline,bytes); cold(&m); m.mode=mode; m.fail=cut;
         tx(id,100+mode*100+cut); memset(&s,0xa5,sizeof(s));
         uint8_t prior[sizeof(s)]; memcpy(prior,&s,sizeof(prior));
-        CHECK(infs20_paged_apply(&l,&io,id,changes,4,0,payload,&m,&s)==INFS_STATUS_IO_ERROR);
+        CHECK(infs20_paged_apply(&l,&io,id,changes,4,0,payload,NULL,&m,&s)==INFS_STATUS_IO_ERROR);
         CHECK(!memcmp(prior,&s,sizeof(s)));
         cold(&m); CHECK(!infs20_paged_open(&l,&io,&s));
         CHECK(s.commit.sequence==1 || s.commit.sequence==2);
@@ -97,10 +97,10 @@ int main(void)
     }
     memcpy(m.disk,baseline,bytes); cold(&m); tx(id,500);
     const struct infs20_paged_change invalid[]={PUT("D","new"),DEL("missing")};
-    CHECK(infs20_paged_apply(&l,&io,id,invalid,2,0,payload,&m,&s)==INFS_STATUS_NOT_FOUND);
+    CHECK(infs20_paged_apply(&l,&io,id,invalid,2,0,payload,NULL,&m,&s)==INFS_STATUS_NOT_FOUND);
     CHECK(!m.ops && !m.calls && value(&l,&io,"D","old"));
     tx(id,501);
-    CHECK(infs20_paged_apply(&l,&io,id,changes,4,1,payload,&m,&s)==INFS_STATUS_ALREADY_EXISTS);
+    CHECK(infs20_paged_apply(&l,&io,id,changes,4,1,payload,NULL,&m,&s)==INFS_STATUS_ALREADY_EXISTS);
     CHECK(!m.ops && !m.calls);
     free(baseline); free(m.pending); free(m.disk);
     printf("format20-batch: PASS (%u multi-record/payload interruption cases)\n",cases);

@@ -23,6 +23,7 @@ static infs_status wr(void *o,uint64_t b,const uint8_t *p)
     if(b>=BLOCKS) return INFS_STATUS_IO_ERROR;
     ++m->writes;
     if(++m->operations==m->fail) {
+        if(m->mode==3) return INFS_STATUS_OK;
         if(m->mode) {
             size_t n=m->mode==1?INFS20_PAGE_BYTES/2:INFS20_PAGE_BYTES;
             memcpy(m->disk[b],p,n); memcpy(m->pending[b],p,n);
@@ -138,6 +139,12 @@ int main(void)
         CHECK(same(&l,&io,0,"original",original,SIZE) && same(&l,&io,10,"clone",original,SIZE));
         ++cases;
     }
+    /* The same dependency admission applies to physical relocation. */
+    *m=*base; m->mode=3; m->fail=2; tx(id,799);
+    CHECK(infs20_volume_relocate(&l,&io,id,"clone")==INFS_STATUS_CORRUPT);
+    cold(m); struct infs20_store_state dropped;
+    CHECK(!infs20_store_recover(&l,&io,&dropped) && dropped.sequence==4);
+    CHECK(same(&l,&io,0,"original",original,SIZE) && same(&l,&io,10,"clone",original,SIZE));
     *m=*base; tx(id,7); CHECK(!infs20_volume_relocate(&l,&io,id,"clone")); cold(m);
     memset(m->disk[20],0,3*INFS20_PAGE_BYTES); cold(m);
     CHECK(same(&l,&io,0,"original",original,SIZE) && same(&l,&io,10,"clone",original,SIZE));

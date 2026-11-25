@@ -614,3 +614,7 @@ The paged-store test now exercises mutation refusal with one damaged current met
 
 ### Interior payload placement matrix (execution pending)
 The same real formatter harness registers two additional initial-frontier profiles per available Linux formatter. It logs the actual payload blocks, the changed block intervals and recovered named payload checks. The independent manifest enforces the intended sample placement; a pass still means truthful characterization, not guaranteed recovery. These tests are ordinary disposable regular files, not hardware traces. No new result is asserted before exact-source execution.
+
+### Format 0.20 placement matrix (2026-11-25)
+
+Exact source `a021fd897cbf89075a4473a3c02a33f50efb276f`: [Linux userspace qualification](https://github.com/Infiltrator-Projects/InfiltratorFS/actions/runs/45544220141/job/138969928070) passed all 25 dedicated tests. On the 64 MiB exFAT specimen, the default payload blocks 276 and 277 were overwritten; quarter (4096, 4097) and three-quarter (12288, 12289) placements retained all three named mappings at sequence 6. This is specimen evidence, not a universal placement guarantee. The common publication path additionally requires read-back of newly written or relocated data after the dependency flush, with silent-write-drop regressions in both bounded and paged profiles. Qualification of that successor remains pending.

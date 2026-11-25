@@ -61,7 +61,7 @@ infs_status infs20_paged_remove(const struct infs20_paged_layout *,
 infs_status infs20_paged_apply(const struct infs20_paged_layout *,
     const struct infs20_store_io *,const uint8_t tx[16],
     const struct infs20_paged_change *,size_t,int create_empty,
-    infs20_store_prepare,void *,struct infs20_paged_state *);
+    infs20_store_prepare,infs20_store_prepare,void *,struct infs20_paged_state *);
 /* Transitional bounded-model adapter: diff sorted canonical records
  * against the committed tree and apply only changed keys atomically.
  * This performs a full model traversal; production foreground operations
@@ -69,7 +69,7 @@ infs_status infs20_paged_apply(const struct infs20_paged_layout *,
 infs_status infs20_paged_replace(const struct infs20_paged_layout *,
     const struct infs20_store_io *,const uint8_t tx[16],
     const struct infs20_store_record *,size_t,int create_empty,
-    infs20_store_prepare,void *,struct infs20_paged_state *);
+    infs20_store_prepare,infs20_store_prepare,void *,struct infs20_paged_state *);
 infs_status infs20_paged_get(const struct infs20_paged_layout *,
     const struct infs20_store_io *,const uint8_t *,size_t,uint8_t *,size_t,size_t *);
 infs_status infs20_paged_visit(const struct infs20_paged_layout *,

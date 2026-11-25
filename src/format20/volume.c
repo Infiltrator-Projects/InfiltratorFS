@@ -281,6 +281,21 @@ static infs_status prepare(void *opaque)
     }
     return INFS_STATUS_OK;
 }
+/* Compare complete stored units, including deterministic tail padding, with
+ * the same immutable staging buffer used to construct the allocation digest.
+ * Run only after the common dependency flush, before any root is published. */
+static infs_status verify_payload(void *opaque)
+{
+    const struct pending *p=opaque;
+    uint8_t page[INFS20_PAGE_BYTES];
+    for(size_t i=0;i<p->blocks;++i) {
+        infs_status st=p->io->read(p->io->context,p->block+i,page);
+        if(st) return st;
+        if(memcmp(page,p->data+i*INFS20_PAGE_BYTES,sizeof(page)))
+            return INFS_STATUS_CORRUPT;
+    }
+    return INFS_STATUS_OK;
+}
 struct paged_publish {
     const struct infs20_paged_layout *layout;
     const struct infs20_store_io *io;
@@ -293,7 +308,7 @@ static infs_status publish_paged(void *opaque,const struct infs20_store_record *
     struct paged_publish *p=opaque;
     struct infs20_paged_state state;
     return infs20_paged_replace(p->layout,p->io,p->tx,r,n,p->create,
-        p->payload?prepare:NULL,p->payload,&state);
+        p->payload?prepare:NULL,p->payload?verify_payload:NULL,p->payload,&state);
 }
 static infs_status commit(const struct infs20_store_layout *l,
     const struct infs20_paged_layout *paged,const struct infs20_store_io *io,
@@ -347,7 +362,7 @@ static infs_status commit(const struct infs20_store_layout *l,
     }
     struct infs20_store_state state;
     return infs20_model_commit_extended(l,io,tx,&v->graph,r,n,
-                                         p?prepare:NULL,p,&state);
+                                         p?prepare:NULL,p?verify_payload:NULL,p,&state);
 }
 /*
  * At retirement commit R the other bank still contains R-1. Only after
