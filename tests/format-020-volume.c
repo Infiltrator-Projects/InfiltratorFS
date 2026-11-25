@@ -44,6 +44,14 @@ static void tx(uint8_t id[16],unsigned n)
 {
     memset(id,0,16); id[0]=(uint8_t)n; id[1]=(uint8_t)(n>>8); id[2]=0xb5;
 }
+struct raw_image { uint8_t *bytes; size_t size; };
+static infs_status raw_read(void *opaque,uint64_t offset,uint8_t *out,size_t n)
+{
+    struct raw_image *r=opaque;
+    if(offset>r->size || n>r->size-(size_t)offset) return INFS_STATUS_IO_ERROR;
+    memcpy(out,r->bytes+(size_t)offset,n);
+    return INFS_STATUS_OK;
+}
 static int expect(const struct infs20_store_layout *l,const struct infs20_store_io *io,
     uint64_t pin,const char *name,const char *value)
 {
@@ -111,6 +119,36 @@ int main(void)
     memset(m->disk[32],0,INFS20_STORE_LANE_BLOCKS*INFS20_PAGE_BYTES); cold(m);
     CHECK(expect(&l,&io,0,"a","changed")==0 && expect(&l,&io,11,"new","new data")==0);
     CHECK(m->ops==0);
+    /* No original partition table or caller-supplied filesystem geometry.
+     * Raw media has a 512-byte-aligned original start and two lost lanes. */
+    const size_t disk_size=sizeof(m->disk), start=512;
+    struct raw_image raw={calloc(1,start+2*disk_size+512),start+disk_size};
+    CHECK(raw.bytes);
+    memcpy(raw.bytes+start,m->disk,disk_size);
+    struct infs20_raw_source source={&raw,raw.size,raw_read};
+    struct infs20_store_discovery found;
+    CHECK(infs20_store_discover(&source,&found)==0);
+    CHECK(found.region.start==start && found.state.sequence==10 &&
+          !found.state.fully_protected && found.region.layout.member_blocks==BLOCKS);
+    struct infs20_store_io recovered=infs20_store_region_io(&found.region);
+    CHECK(!recovered.write && !recovered.flush);
+    CHECK(expect(&found.region.layout,&recovered,0,"b","original")==0);
+    CHECK(expect(&found.region.layout,&recovered,11,"new","new data")==0);
+    CHECK(!memcmp(raw.bytes+start,m->disk,disk_size));
+    /* A second valid region is ambiguous, even when it has identical IDs.
+     * No guessed selection and no output publication on refusal. */
+    memcpy(raw.bytes+start+disk_size,m->disk,disk_size);
+    raw.size=source.bytes=start+2*disk_size;
+    memset(&found,0xa5,sizeof(found));
+    uint8_t prior[sizeof(found)]; memcpy(prior,&found,sizeof(prior));
+    CHECK(infs20_store_discover(&source,&found)==INFS_STATUS_CORRUPT);
+    CHECK(!memcmp(prior,&found,sizeof(prior)));
+    raw.size=source.bytes=start+disk_size;
+    for(unsigned bank=0;bank<2;++bank)
+        memset(raw.bytes+start+(64+bank*INFS20_STORE_BANK_BLOCKS)*INFS20_PAGE_BYTES,
+               0,INFS20_PAGE_BYTES);
+    CHECK(infs20_store_discover(&source,&found)==INFS_STATUS_NOT_FOUND);
+    free(raw.bytes);
     memset(m->disk[22],0,INFS20_PAGE_BYTES); cold(m);
     uint8_t out[16]; memset(out,0x5a,sizeof(out)); size_t n=99;
     CHECK(infs20_volume_read(&l,&io,0,"b",out,sizeof(out),&n)==INFS_STATUS_CORRUPT);

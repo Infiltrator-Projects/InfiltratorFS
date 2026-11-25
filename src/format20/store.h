@@ -80,4 +80,28 @@ infs_status infs20_store_heal(const struct infs20_store_layout *,
 typedef infs_status (*infs20_store_visitor)(void *,const struct infs20_record_view *);
 infs_status infs20_store_visit(const struct infs20_store_layout *,
     const struct infs20_store_io *,infs20_store_visitor,void *);
+/* Explicit offline discovery, never a normal mount fallback. Read-only
+ * byte source permits original volume starts at 512-byte sector alignment.
+ * The source must be immutable for the complete scan and subsequent reads.
+ * Geometry is a candidate until a committed tree validates in that region.
+ * Multiple distinct valid regions are ambiguous; no automatic selection.
+ */
+struct infs20_raw_source {
+    void *context;
+    uint64_t bytes;
+    infs_status (*read_at)(void *,uint64_t,uint8_t *,size_t);
+};
+struct infs20_store_region {
+    struct infs20_raw_source source;
+    uint64_t start;
+    struct infs20_store_layout layout;
+};
+struct infs20_store_discovery {
+    struct infs20_store_region region;
+    struct infs20_store_state state;
+};
+infs_status infs20_store_discover(const struct infs20_raw_source *,
+    struct infs20_store_discovery *);
+struct infs20_store_io infs20_store_region_io(struct infs20_store_region *);
+
 #endif

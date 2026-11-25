@@ -532,3 +532,4 @@ The isolated `infilfs-format-020-ownership` test persists and reloads root retir
 
 ### Format 0.20 physical-payload integration model (execution pending)
 The registered infilfs-format-020-volume CTest covers real block writes through the existing experimental callback interface, old-or-new publication after injected failure, verified content and shared relocation, snapshot and native-format reversal, two-lane loss and missing/corrupt payload refusal. This is simulated durable storage, not physical-media qualification or a production filesystem. No pass is asserted here.
+The extended volume CTest also exercises raw-byte discovery of a displaced original region after loss of two metadata lanes, ambiguous duplicate regions, missing commit proof and byte-preserving read-only reconstruction. No physical formatter or production Unformatter qualification is asserted.

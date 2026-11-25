@@ -533,3 +533,117 @@ done:
     free(t);
     return st;
 }
+
+/*
+ * Raw offline discovery for the experimental commit profile. The envelope
+ * supplies a candidate relative address and member identity; the observed
+ * physical offset supplies the original start. A complete committed root
+ * must then validate through independently bounded region reads. Merely
+ * recognizing a metadata leaf or CRC never establishes a filesystem.
+ */
+static infs_status region_read(void *opaque,uint64_t block,uint8_t *page)
+{
+    struct infs20_store_region *r=opaque;
+    if(!r || !page || !r->source.read_at ||
+       r->start>r->source.bytes || block>=r->layout.member_blocks ||
+       block>INFS20_MAX_BLOCK)
+        return INFS_STATUS_INVALID_ARGUMENT;
+    uint64_t available=r->source.bytes-r->start;
+    uint64_t relative=block*UINT64_C(4096);
+    if(relative>available || INFS20_PAGE_BYTES>available-relative)
+        return INFS_STATUS_IO_ERROR;
+    return r->source.read_at(r->source.context,r->start+relative,
+                             page,INFS20_PAGE_BYTES);
+}
+struct infs20_store_io infs20_store_region_io(struct infs20_store_region *r)
+{
+    struct infs20_store_io io={r,region_read,NULL,NULL};
+    return io;
+}
+static int same_region(const struct infs20_store_region *a,
+                       const struct infs20_store_region *b)
+{
+    return a->start==b->start &&
+           a->layout.member_blocks==b->layout.member_blocks &&
+           !memcmp(a->layout.set_id,b->layout.set_id,16) &&
+           !memcmp(a->layout.scope_id,b->layout.scope_id,16) &&
+           !memcmp(a->layout.member_id,b->layout.member_id,16) &&
+           !memcmp(a->layout.lane_start,b->layout.lane_start,
+                   sizeof(a->layout.lane_start));
+}
+static infs_status probe_region(const struct infs20_raw_source *source,
+    uint64_t observed,const uint8_t *page,struct infs20_store_region *out)
+{
+    if(memcmp(page,"INF20S0!",8) ||
+       memcmp(page+INFS20_OFF_PAYLOAD,"C20!",4))
+        return INFS_STATUS_NOT_FOUND;
+    const uint8_t *p=page+INFS20_OFF_PAYLOAD;
+    struct infs20_store_region r={0};
+    r.source=*source;
+    r.layout.member_blocks=infs_load_le64(p+20);
+    uint64_t block=infs_load_le64(page+INFS20_OFF_BLOCK);
+    if(block>INFS20_MAX_BLOCK || !r.layout.member_blocks ||
+       r.layout.member_blocks>INFS20_MAX_MEMBER_BLOCKS ||
+       block>=r.layout.member_blocks)
+        return INFS_STATUS_CORRUPT;
+    uint64_t relative=block*UINT64_C(4096);
+    if(relative>observed) return INFS_STATUS_CORRUPT;
+    r.start=observed-relative;
+    if(r.start%512u || r.start>source->bytes ||
+       r.layout.member_blocks*UINT64_C(4096)>source->bytes-r.start)
+        return INFS_STATUS_CORRUPT;
+    memcpy(r.layout.set_id,page+INFS20_OFF_SET,16);
+    memcpy(r.layout.scope_id,page+INFS20_OFF_SCOPE,16);
+    memcpy(r.layout.member_id,page+INFS20_OFF_MEMBER,16);
+    for(unsigned i=0;i<INFS20_LANE_COUNT;++i)
+        r.layout.lane_start[i]=infs_load_le64(p+28+8u*i);
+    struct infs20_store_io io=infs20_store_region_io(&r);
+    if(!layout_valid(&r.layout,&io,0)) return INFS_STATUS_CORRUPT;
+    unsigned lane=infs_load_le16(page+INFS20_OFF_LANE);
+    uint64_t seq=infs_load_le64(page+INFS20_OFF_SEQUENCE);
+    unsigned bank=(unsigned)(seq&1u);
+    if(lane>=INFS20_LANE_COUNT || block!=address(&r.layout,lane,bank,0))
+        return INFS_STATUS_CORRUPT;
+    struct commit_candidate c;
+    infs_status st=decode_commit(&r.layout,page,lane,bank,&c);
+    if(st) return st;
+    *out=r;
+    return INFS_STATUS_OK;
+}
+infs_status infs20_store_discover(const struct infs20_raw_source *source,
+                                 struct infs20_store_discovery *out)
+{
+    if(!source || !source->read_at || !out) return INFS_STATUS_INVALID_ARGUMENT;
+    if(source->bytes<INFS20_PAGE_BYTES) return INFS_STATUS_NOT_FOUND;
+    struct infs20_store_discovery result={0};
+    uint8_t page[INFS20_PAGE_BYTES];
+    int found=0,damaged=0;
+    /* A 512-byte stride supports legacy partition alignment. This prototype
+     * intentionally favors bounded memory and simple proof over scan speed.
+     * Production recovery should batch reads and expose scan progress. */
+    for(uint64_t at=0;at<=source->bytes-INFS20_PAGE_BYTES;at+=512u) {
+        infs_status st=source->read_at(source->context,at,page,sizeof(page));
+        if(st) return st;
+        struct infs20_store_region candidate;
+        st=probe_region(source,at,page,&candidate);
+        if(st==INFS_STATUS_NOT_FOUND) continue;
+        if(st) {
+            /* Unsupported recognizable commits are not silently treated as
+             * damage to a known format. Ordinary torn copies may be skipped. */
+            if(st==INFS_STATUS_NOT_SUPPORTED) return st;
+            damaged=1;
+            continue;
+        }
+        if(found && !same_region(&result.region,&candidate))
+            return INFS_STATUS_CORRUPT;
+        result.region=candidate;
+        found=1;
+    }
+    if(!found) return damaged?INFS_STATUS_CORRUPT:INFS_STATUS_NOT_FOUND;
+    struct infs20_store_io io=infs20_store_region_io(&result.region);
+    infs_status st=infs20_store_recover(&result.region.layout,&io,&result.state);
+    /* A candidate commit with missing proof cannot become an older
+     * guessed namespace. The existing selector/validator owns authority. */
+    if(!st) *out=result;
+    return st;
+}
