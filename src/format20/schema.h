@@ -18,6 +18,8 @@
 #define INFS20_ID_BYTES 16u
 #define INFS20_DIGEST_BYTES 32u
 #define INFS20_PROBE_KIND 1u
+#define INFS20_TREE_KIND 2u
+#define INFS20_COMMIT_KIND 3u
 #define INFS20_PROBE_SCHEMA 1u
 #define INFS20_LANE_COUNT 3u
 #define INFS20_RECORD_HEADER_BYTES 8u
@@ -63,6 +65,7 @@ struct infs20_page_identity {
 struct infs20_decoded_page {
     struct infs20_page_identity identity;
     uint32_t payload_size;
+    uint16_t kind;
     uint8_t digest[INFS20_DIGEST_BYTES];
 };
 
@@ -92,6 +95,12 @@ infs_status infs20_page_encode(uint8_t *out, size_t out_size,
  * tree, or adversarial authentication. Do not pass untrusted on-page geometry
  * as the independently expected geometry.
  */
+/* Typed experimental pages share the same envelope. No production kind is registered. */
+infs_status infs20_page_encode_kind(uint8_t *out, size_t out_size,
+                                   const struct infs20_page_identity *identity,
+                                   uint16_t kind, const uint8_t *payload,
+                                   size_t payload_size);
+
 infs_status infs20_page_decode(const uint8_t *page, size_t page_size,
                               const uint8_t expected_member[INFS20_ID_BYTES],
                               uint64_t expected_block, uint64_t member_blocks,

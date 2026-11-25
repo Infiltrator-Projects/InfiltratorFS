@@ -228,3 +228,7 @@ The detailed S0–S7 sequence in ON_DISK_FORMAT.md section 20.18 supersedes any 
 - [x] Payload and metadata reuse in the same committed storage engine: 13 dedicated tests passed at exact source `8f16a57ca02ad362443e040c70e6fdf120362fd4`, including 195 payload-reuse and 87 arena-collection/reuse interruptions plus 32 two-slot reuse cycles.
 - [x] Expanded paged ext4/FAT32/exFAT/NTFS characterization and complete-copy arena retirement check passed at exact source `c4bc7dba6f40362a81f6a92673448943cd5e0d6d` (17 dedicated tests; see QUALIFICATION.md). exFAT destroyed all three sample named payloads while retaining discoverable metadata; correct refusal is a characterization pass, not a recovery success.
 - [ ] Production scalable allocation, full namespace, native integration, production placement and physical qualification remain open. The exFAT result must inform placement/protection work; it does not authorize production format activation.
+
+### S0/S1 incremental implementation
+- [ ] Experimental tree references, bounded tree validation, fixed-geometry single-member commit selection and alternating-bank publication implemented; conformance execution pending.
+- [ ] Implement complete canonical typed record families, allocator-owned reservations, arena and persistent reference/reclaim state, all-lane verification/healing, then qualify before any production format switch.
