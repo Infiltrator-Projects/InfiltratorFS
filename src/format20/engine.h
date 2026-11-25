@@ -68,6 +68,12 @@ infs_status infs20_commit_encode(uint8_t *out, size_t out_size,
 infs_status infs20_verify_tree(const struct infs20_io *io,
                                const struct infs20_ref *root,
                                uint64_t sequence, size_t *budget);
+/* Read a committed leaf payload into caller-owned storage. The expected
+ * reference comes from an already selected authority, not an untrusted scan. */
+infs_status infs20_read_leaf(const struct infs20_io *io,
+                             const struct infs20_ref *root, uint64_t sequence,
+                             size_t *budget, uint8_t *out, size_t capacity,
+                             size_t *used);
 /* Selection never heals, never falls back silently past a valid newer
  * commit whose graph is damaged, and refuses conflicting same-sequence roots. */
 infs_status infs20_select(const struct infs20_io *io, size_t budget,

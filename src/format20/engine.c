@@ -221,6 +221,24 @@ infs_status infs20_verify_tree(const struct infs20_io *io,
         return INFS_STATUS_INVALID_ARGUMENT;
     return verify_node(io,root,sequence,-1,NULL,NULL,budget,-1);
 }
+infs_status infs20_read_leaf(const struct infs20_io *io,
+                             const struct infs20_ref *root, uint64_t sequence,
+                             size_t *budget, uint8_t *out, size_t capacity,
+                             size_t *used)
+{
+    if (!io_valid(io) || !root || !sequence || !budget || !out || !used)
+        return INFS_STATUS_INVALID_ARGUMENT;
+    infs_status st=verify_node(io,root,sequence,0,NULL,NULL,budget,-1);
+    if (st) return st;
+    uint8_t page[INFS20_PAGE_BYTES];
+    struct infs20_decoded_page d;
+    st=read_ref(io,root,sequence,budget,page,&d,-1);
+    if (st) return st;
+    if (d.payload_size>capacity) return INFS_STATUS_NO_SPACE;
+    memcpy(out,page+INFS20_OFF_PAYLOAD,d.payload_size);
+    *used=d.payload_size;
+    return INFS_STATUS_OK;
+}
 static infs_status verify_roots(const struct infs20_io *io,
                                 const struct infs20_commit *c, uint64_t seq,
                                 size_t budget, int all_lanes)

@@ -235,3 +235,6 @@ The detailed S0–S7 sequence in ON_DISK_FORMAT.md section 20.18 supersedes any 
 
 ### S1/S2 ownership reference model
 - [ ] Bounded executable model of append reservations, direct edges, relocation, retirement pins and bounded collection implemented. Qualification and persistent tree integration remain open.
+
+### S1/S2 persistence bridge
+- [ ] Candidate six-root authenticated allocation-state persistence and cold readback implemented in a bounded disposable-image test. Production multi-page mutation, allocator-owned publication and actual-media qualification remain open.

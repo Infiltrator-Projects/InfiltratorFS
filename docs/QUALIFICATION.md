@@ -614,3 +614,6 @@ The isolated engine test models volatile and durable media, seven publication in
 
 ### S1/S2 ownership reference model tests
 The `infilfs-format-020-space` CTest covers private successor state, all-or-none three-lane arena reservations, shared reference lifetime, relocation without content identity change, deferred physical reuse and negative independent recount/range checks. This is a bounded data-only model; no persistent allocation implementation or new filesystem qualification is claimed.
+
+### S1/S2 persistent reference-model conformance
+The registered `infilfs-format-020-space-wire` test links the page/tree/commit and ownership models. It stages three copies of the roots inside reserved arena extents, verifies committed and historical readback, relocation/refcount preservation, derived index disagreement, geometry/sequence mismatch, and two-lane loss. The image uses an in-memory immediately durable backend; the separate engine test models volatile cache and interrupted writes. No new execution evidence is recorded here.

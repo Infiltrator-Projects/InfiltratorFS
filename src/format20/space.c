@@ -191,7 +191,9 @@ infs_status infs20_space_advance_pin(struct infs20_space *s,uint64_t oldest)
 {
     if(!s) return INFS_STATUS_INVALID_ARGUMENT;
     if(infs20_space_validate(s)) return INFS_STATUS_CORRUPT;
-    if(oldest<s->oldest_pin || oldest>s->sequence) return INFS_STATUS_INVALID_ARGUMENT;
+    /* A private successor cannot itself establish retirement authority.
+     * Reclamation may rely only on an already published older generation. */
+    if(oldest<s->oldest_pin || oldest>=s->sequence) return INFS_STATUS_INVALID_ARGUMENT;
     s->oldest_pin=oldest; return INFS_STATUS_OK;
 }
 infs_status infs20_space_collect(struct infs20_space *s,size_t limit,size_t *released)

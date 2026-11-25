@@ -227,6 +227,13 @@ add_executable(infilfs-format-020-space
 target_include_directories(infilfs-format-020-space PRIVATE src include)
 infilfs_enable_warnings(infilfs-format-020-space)
 
+add_executable(infilfs-format-020-space-wire
+    tests/format-020-space-wire.c src/format20/schema.c src/format20/engine.c
+    src/format20/space.c src/format20/space_wire.c)
+target_include_directories(infilfs-format-020-space-wire PRIVATE src)
+target_link_libraries(infilfs-format-020-space-wire PRIVATE infilfs_core)
+infilfs_enable_warnings(infilfs-format-020-space-wire)
+
 add_executable(infilfs-format-020-store
     tests/format-020-store.c src/format20/schema.c src/format20/store.c)
 target_include_directories(infilfs-format-020-store PRIVATE src)
@@ -487,6 +494,7 @@ add_test(NAME infilfs-checksum-known-answer COMMAND infilfs-checksum-test)
 add_test(NAME infilfs-format-020-schema COMMAND infilfs-format-020-schema)
 add_test(NAME infilfs-format-020-engine COMMAND infilfs-format-020-engine)
 add_test(NAME infilfs-format-020-space COMMAND infilfs-format-020-space)
+add_test(NAME infilfs-format-020-space-wire COMMAND infilfs-format-020-space-wire)
 add_test(NAME infilfs-format-020-store COMMAND infilfs-format-020-store)
 add_test(NAME infilfs-format-020-ownership COMMAND infilfs-format-020-ownership)
 add_test(NAME infilfs-format-020-volume COMMAND infilfs-format-020-volume)
