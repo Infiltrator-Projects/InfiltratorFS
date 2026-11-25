@@ -335,10 +335,11 @@ static infs_status write_node(const struct infs20_store_layout *l,
     infs_status st = encode(l, s, slot, lane, payload, size, page);
     return st ? st : io->write(io->context, address(l, lane, s->sequence, slot), page);
 }
-infs_status infs20_store_publish_prepared(const struct infs20_store_layout *l,
+infs_status infs20_store_publish_verified(const struct infs20_store_layout *l,
     const struct infs20_store_io *io, const uint8_t tx[16],
     const struct infs20_store_record *records, size_t n,
     infs20_store_prepare prepare, void *prepare_context,
+    infs20_store_prepare verify, void *verify_context,
     struct infs20_store_state *out)
 {
     if (!out || !tx || zero(tx, 16) || !layout_valid(l, io, 1))
@@ -397,10 +398,27 @@ infs_status infs20_store_publish_prepared(const struct infs20_store_layout *l,
     }
     st = io->flush(io->context);
     if (st) goto done;
+    /* Verify every declared dependency from the storage backend, not the
+     * private staging buffers. A successful write/flush return is not proof
+     * that the correct page was written to every address. No new authority
+     * may be published with a missing or silently corrupted metadata copy. */
+    struct infs20_decoded_page decoded;
+    for (unsigned lane = 0; lane < INFS20_LANE_COUNT; ++lane) {
+        for (unsigned i = 0; i < t->leaves; ++i) {
+            st = read_copy(l, io, &next, i+2, lane,
+                           t->root + ROOT_HEADER + 32u*i, page, &decoded);
+            if (st) goto done;
+        }
+        st = read_copy(l, io, &next, 1, lane, next.root_digest, page, &decoded);
+        if (st) goto done;
+    }
+    if (verify) { st = verify(verify_context); if (st) goto done; }
     for (unsigned lane = 0; lane < INFS20_LANE_COUNT; ++lane) {
         st = write_node(l, io, &next, 0, lane, commit, sizeof(commit));
         if (st) goto done;
         st = io->flush(io->context);
+        if (st) goto done;
+        st = read_copy(l, io, &next, 0, lane, next.commit_digest, page, &decoded);
         if (st) goto done;
     }
     next.fully_protected = 1;
@@ -408,6 +426,15 @@ infs_status infs20_store_publish_prepared(const struct infs20_store_layout *l,
 done:
     free(t);
     return st;
+}
+infs_status infs20_store_publish_prepared(const struct infs20_store_layout *l,
+    const struct infs20_store_io *io, const uint8_t tx[16],
+    const struct infs20_store_record *records, size_t n,
+    infs20_store_prepare prepare, void *prepare_context,
+    struct infs20_store_state *out)
+{
+    return infs20_store_publish_verified(l,io,tx,records,n,prepare,prepare_context,
+                                          NULL,NULL,out);
 }
 infs_status infs20_store_publish(const struct infs20_store_layout *l,
     const struct infs20_store_io *io, const uint8_t tx[16],

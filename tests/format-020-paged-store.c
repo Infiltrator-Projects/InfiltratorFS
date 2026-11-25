@@ -21,6 +21,8 @@ static infs_status wr(void *o,uint64_t b,const uint8_t *p)
     struct medium *m=o; if(b>=BLOCKS) return INFS_STATUS_IO_ERROR;
     ++m->writes;
     if(++m->ops==m->fail) {
+        /* Simulate a device reporting success but dropping a page write. */
+        if(m->mode==3) return INFS_STATUS_OK;
         if(m->mode) {
             size_t n=m->mode==1?INFS20_PAGE_BYTES/2:INFS20_PAGE_BYTES;
             memcpy(m->disk+b*INFS20_PAGE_BYTES,p,n);
@@ -125,6 +127,20 @@ int main(void)
         CHECK(expect(&l,&io,0,NULL) && expect(&l,&io,COUNT-1,NULL));
         ++cases;
     }
+    /* Damage a single current replica. Read-only membership still works;
+     * mutation must refuse without a payload/metadata write. */
+    memcpy(m.disk,baseline,bytes); cold(&m);
+    memset(m.disk+original.root.blocks[1]*INFS20_PAGE_BYTES,0,INFS20_PAGE_BYTES);
+    cold(&m); tx(id,898);
+    CHECK(expect(&l,&io,17,NULL));
+    CHECK(infs20_paged_put(&l,&io,id,k,KEY,changed,VALUE,&s)==INFS_STATUS_BUSY);
+    CHECK(!m.ops);
+    /* A silently dropped new leaf write must not publish new authority. */
+    memcpy(m.disk,baseline,bytes); cold(&m);
+    m.fail=1; m.mode=3; tx(id,899);
+    CHECK(infs20_paged_put(&l,&io,id,k,KEY,changed,VALUE,&s)!=INFS_STATUS_OK);
+    cold(&m); CHECK(!infs20_paged_open(&l,&io,&s));
+    CHECK(s.commit.sequence==original.commit.sequence && expect(&l,&io,17,NULL));
     memcpy(m.disk,baseline,bytes); cold(&m);
     tx(id,900); key(17,k); CHECK(!infs20_paged_remove(&l,&io,id,k,KEY,&s)); cold(&m);
     size_t size=99; uint8_t out[VALUE]; memset(out,0xa5,sizeof(out));

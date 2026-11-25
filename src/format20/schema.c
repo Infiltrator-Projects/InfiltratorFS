@@ -66,18 +66,15 @@ static uint64_t physical_crc(const uint8_t *page)
     return infs_crc64_ecma(scratch, sizeof(scratch));
 }
 
-infs_status infs20_page_encode_kind(uint8_t *out, size_t out_size,
-                                   const struct infs20_page_identity *identity,
-                                   uint16_t kind, const uint8_t *payload,
-                                   size_t payload_size)
+infs_status infs20_page_encode(uint8_t *out, size_t out_size,
+                              const struct infs20_page_identity *identity,
+                              const uint8_t *payload, size_t payload_size)
 {
     if (!out || !identity || out_size != INFS20_PAGE_BYTES ||
         (payload_size != 0 && !payload))
         return INFS_STATUS_INVALID_ARGUMENT;
     if (payload_size > INFS20_PAYLOAD_BYTES)
         return INFS_STATUS_NO_SPACE;
-    if (kind < INFS20_PROBE_KIND || kind > INFS20_COMMIT_KIND)
-        return INFS_STATUS_NOT_SUPPORTED;
     if (!identity_valid(identity))
         return INFS_STATUS_INVALID_ARGUMENT;
 
@@ -85,7 +82,7 @@ infs_status infs20_page_encode_kind(uint8_t *out, size_t out_size,
     memcpy(page + INFS20_OFF_MAGIC, probe_magic, sizeof(probe_magic));
     infs_store_le16(page + INFS20_OFF_MAJOR, 0);
     infs_store_le16(page + INFS20_OFF_MINOR, 20);
-    infs_store_le16(page + INFS20_OFF_KIND, kind);
+    infs_store_le16(page + INFS20_OFF_KIND, INFS20_PROBE_KIND);
     infs_store_le16(page + INFS20_OFF_SCHEMA, INFS20_PROBE_SCHEMA);
     infs_store_le16(page + INFS20_OFF_HEADER, INFS20_HEADER_BYTES);
     infs_store_le32(page + INFS20_OFF_PAYLOAD_SIZE, (uint32_t)payload_size);
@@ -102,14 +99,6 @@ infs_status infs20_page_encode_kind(uint8_t *out, size_t out_size,
     infs_store_le64(page + INFS20_OFF_CRC, infs_crc64_ecma(page, sizeof(page)));
     memcpy(out, page, sizeof(page));
     return INFS_STATUS_OK;
-}
-
-infs_status infs20_page_encode(uint8_t *out, size_t out_size,
-                              const struct infs20_page_identity *identity,
-                              const uint8_t *payload, size_t payload_size)
-{
-    return infs20_page_encode_kind(out, out_size, identity, INFS20_PROBE_KIND,
-                                   payload, payload_size);
 }
 
 infs_status infs20_page_decode(const uint8_t *page, size_t page_size,
@@ -131,8 +120,7 @@ infs_status infs20_page_decode(const uint8_t *page, size_t page_size,
     /* Unknown semantics are not corruption and must not be silently admitted. */
     if (infs_load_le16(page + INFS20_OFF_MAJOR) != 0 ||
         infs_load_le16(page + INFS20_OFF_MINOR) != 20 ||
-        infs_load_le16(page + INFS20_OFF_KIND) < INFS20_PROBE_KIND ||
-        infs_load_le16(page + INFS20_OFF_KIND) > INFS20_COMMIT_KIND ||
+        infs_load_le16(page + INFS20_OFF_KIND) != INFS20_PROBE_KIND ||
         infs_load_le16(page + INFS20_OFF_SCHEMA) != INFS20_PROBE_SCHEMA ||
         infs_load_le16(page + INFS20_OFF_REQUIRED_FLAGS) != 0 ||
         infs_load_le16(page + INFS20_OFF_PHYSICAL_FLAGS) != 0)
@@ -143,7 +131,6 @@ infs_status infs20_page_decode(const uint8_t *page, size_t page_size,
         return INFS_STATUS_CORRUPT;
 
     struct infs20_decoded_page decoded = {0};
-    decoded.kind = infs_load_le16(page + INFS20_OFF_KIND);
     decoded.payload_size = infs_load_le32(page + INFS20_OFF_PAYLOAD_SIZE);
     if (decoded.payload_size > INFS20_PAYLOAD_BYTES ||
         !bytes_zero(page + INFS20_OFF_PAYLOAD + decoded.payload_size,

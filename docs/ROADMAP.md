@@ -229,12 +229,5 @@ The detailed S0–S7 sequence in ON_DISK_FORMAT.md section 20.18 supersedes any 
 - [x] Expanded paged ext4/FAT32/exFAT/NTFS characterization and complete-copy arena retirement check passed at exact source `c4bc7dba6f40362a81f6a92673448943cd5e0d6d` (17 dedicated tests; see QUALIFICATION.md). exFAT destroyed all three sample named payloads while retaining discoverable metadata; correct refusal is a characterization pass, not a recovery success.
 - [ ] Production scalable allocation, full namespace, native integration, production placement and physical qualification remain open. The exFAT result must inform placement/protection work; it does not authorize production format activation.
 
-### S0/S1 incremental implementation
-- [ ] Experimental tree references, bounded tree validation, fixed-geometry single-member commit selection and alternating-bank publication implemented; conformance execution pending.
-- [ ] Implement complete canonical typed record families, allocator-owned reservations, arena and persistent reference/reclaim state, all-lane verification/healing, then qualify before any production format switch.
-
-### S1/S2 ownership reference model
-- [ ] Bounded executable model of append reservations, direct edges, relocation, retirement pins and bounded collection implemented. Qualification and persistent tree integration remain open.
-
-### S1/S2 persistence bridge
-- [ ] Candidate six-root authenticated allocation-state persistence and cold readback implemented in a bounded disposable-image test. Production multi-page mutation, allocator-owned publication and actual-media qualification remain open.
+### Consolidated protection admission
+- [ ] Common bootstrap/paged publication verifies actual stored dependencies and every declared tree lane; zero-write refusal on degraded current metadata and silent dropped-write negative cases registered. Exact-source execution pending. Continue the existing single paged engine; no alternative commit/ownership format is retained.

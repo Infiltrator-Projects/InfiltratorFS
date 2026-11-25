@@ -207,6 +207,54 @@ static struct infs20_tree_io tree_reader(struct reader *r)
     io.sequence=r->state->commit.sequence; io.read=read_tree;
     return io;
 }
+/* One replica-admission contract for mutation, publication and arena GC.
+ * Read-only traversal may combine surviving copies, but a protected writer
+ * must verify all declared lane addresses, scope, identity and digest. */
+static infs_status verify_ref_copies(const struct infs20_paged_layout *l,
+    const struct infs20_paged_state *s,const struct infs20_store_io *io,
+    const struct infs20_tree_ref *ref,uint64_t *slot_out)
+{
+    uint64_t slot=0;
+    for(unsigned lane=0;lane<INFS20_LANE_COUNT;++lane) {
+        if(ref->blocks[lane]<l->arena_start[lane]) return INFS_STATUS_CORRUPT;
+        uint64_t n=ref->blocks[lane]-l->arena_start[lane];
+        if(n>=s->used[lane] || free_slot(s,n) || (lane && n!=slot))
+            return INFS_STATUS_CORRUPT;
+        slot=n;
+        uint8_t page[INFS20_PAGE_BYTES];
+        struct infs20_decoded_page d;
+        infs_status st=io->read(io->context,ref->blocks[lane],page);
+        if(st) return st;
+        const struct infs20_store_layout *b=&l->bootstrap;
+        st=infs20_page_decode(page,sizeof(page),b->member_id,ref->blocks[lane],
+                               b->member_blocks,&d);
+        if(st || d.identity.lane!=lane || d.identity.sequence!=ref->sequence ||
+           memcmp(d.identity.set_id,b->set_id,16) ||
+           memcmp(d.identity.scope_id,b->scope_id,16) ||
+           memcmp(d.identity.page_id,ref->id,16) || memcmp(d.digest,ref->digest,32))
+            return INFS_STATUS_BUSY;
+    }
+    if(slot_out) *slot_out=slot;
+    return INFS_STATUS_OK;
+}
+struct protection_check {
+    struct reader reader;
+    uint64_t visited;
+};
+static infs_status protected_ref(void *opaque,const struct infs20_tree_ref *ref)
+{
+    struct protection_check *c=opaque;
+    if(c->visited>=c->reader.state->used[0]) return INFS_STATUS_CORRUPT;
+    ++c->visited;
+    return verify_ref_copies(c->reader.layout,c->reader.state,c->reader.storage,ref,NULL);
+}
+static infs_status verify_protection(void *opaque)
+{
+    struct reader *r=opaque;
+    struct protection_check c={*r,0};
+    struct infs20_tree_io tree=tree_reader(r);
+    return infs20_tree_visit_refs(&tree,&r->state->root,protected_ref,&c);
+}
 infs_status infs20_paged_open(const struct infs20_paged_layout *l,
     const struct infs20_store_io *io,struct infs20_paged_state *out)
 {
@@ -229,8 +277,13 @@ static infs_status publish(const struct infs20_paged_layout *l,
     struct infs20_store_record record={descriptor_key,p,sizeof(descriptor_key),
                                        DESCRIPTOR_BYTES};
     struct infs20_store_state committed;
-    infs_status st=infs20_store_publish_prepared(&l->bootstrap,io,tx,&record,1,
-                                                prepare,opaque,&committed);
+    /* Verify the candidate's real stored pages after dependency flush. The
+     * private root may contain pages born in the upcoming generation. */
+    struct infs20_paged_state candidate=*s;
+    ++candidate.commit.sequence;
+    struct reader verification={l,io,&candidate};
+    infs_status st=infs20_store_publish_verified(&l->bootstrap,io,tx,&record,1,
+        prepare,opaque,verify_protection,&verification,&committed);
     if(!st) s->commit=committed;
     return st;
 }
@@ -361,6 +414,10 @@ infs_status infs20_paged_apply(const struct infs20_paged_layout *l,
         if(!st && (!m.state.commit.fully_protected ||
                    !memcmp(tx,m.state.commit.transaction_id,16)))
             st=INFS_STATUS_BUSY;
+        /* Bounded prototype: full admission trace before any private
+         * reservation or payload callback. Production should carry verified
+         * protection state and check affected dependencies incrementally. */
+        if(!st) { struct reader current={l,io,&m.state}; st=verify_protection(&current); }
     }
     if(st) return st;
     if(m.state.commit.sequence==UINT64_MAX) return INFS_STATUS_OVERFLOW;
@@ -531,29 +588,8 @@ static infs_status mark_ref(void *opaque,const struct infs20_tree_ref *r)
 {
     struct marks *m=opaque;
     uint64_t slot=0;
-    for(unsigned lane=0;lane<INFS20_LANE_COUNT;++lane) {
-        if(r->blocks[lane]<m->layout->arena_start[lane])
-            return INFS_STATUS_CORRUPT;
-        uint64_t n=r->blocks[lane]-m->layout->arena_start[lane];
-        if(n>=m->state->used[lane] || free_slot(m->state,n) ||
-           (lane && n!=slot)) return INFS_STATUS_CORRUPT;
-        slot=n;
-        /* Traversal proves membership from a surviving copy. Collection
-         * additionally requires every declared copy before retiring the
-         * older bank, rather than acknowledging degraded protection. */
-        uint8_t page[INFS20_PAGE_BYTES];
-        struct infs20_decoded_page d;
-        infs_status st=m->storage->read(m->storage->context,r->blocks[lane],page);
-        if(st) return st;
-        const struct infs20_store_layout *b=&m->layout->bootstrap;
-        st=infs20_page_decode(page,sizeof(page),b->member_id,
-                               r->blocks[lane],b->member_blocks,&d);
-        if(st || d.identity.lane!=lane || d.identity.sequence!=r->sequence ||
-           memcmp(d.identity.set_id,b->set_id,16) ||
-           memcmp(d.identity.scope_id,b->scope_id,16) ||
-           memcmp(d.identity.page_id,r->id,16) || memcmp(d.digest,r->digest,32))
-            return INFS_STATUS_BUSY;
-    }
+    infs_status st=verify_ref_copies(m->layout,m->state,m->storage,r,&slot);
+    if(st) return st;
     if((uint64_t)m->count>=m->state->used[0])
         return INFS_STATUS_CORRUPT;
     if(m->count==m->capacity) {

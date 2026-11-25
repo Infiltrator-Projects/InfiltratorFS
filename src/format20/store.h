@@ -62,6 +62,15 @@ infs_status infs20_store_publish_prepared(const struct infs20_store_layout *,
     const struct infs20_store_record *, size_t, infs20_store_prepare, void *,
     struct infs20_store_state *);
 
+/* Same common transaction authority; verify is a read-only dependency
+ * callback after the required flush and before the first commit record.
+ * Use it to validate a higher-level authenticated root from actual storage.
+ * Any error after publication starts requires cold selection before retry. */
+infs_status infs20_store_publish_verified(const struct infs20_store_layout *,
+    const struct infs20_store_io *,const uint8_t transaction_id[16],
+    const struct infs20_store_record *,size_t,infs20_store_prepare,void *,
+    infs20_store_prepare verify,void *,struct infs20_store_state *);
+
 /* Read a value only after recovering and verifying the entire bounded
  * committed tree. Caller must keep exclusive access; no concurrent mutation.
  * NULL buffer with zero capacity is allowed for an empty value. */

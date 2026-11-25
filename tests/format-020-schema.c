@@ -96,7 +96,7 @@ static int check_page(void)
     struct mutation { size_t offset; uint8_t value; infs_status status; };
     const struct mutation mutations[] = {
         {INFS20_OFF_MINOR, 21, INFS_STATUS_NOT_SUPPORTED},
-        {INFS20_OFF_KIND, 255, INFS_STATUS_NOT_SUPPORTED},
+        {INFS20_OFF_KIND, 2, INFS_STATUS_NOT_SUPPORTED},
         {INFS20_OFF_SCHEMA, 2, INFS_STATUS_NOT_SUPPORTED},
         {INFS20_OFF_REQUIRED_FLAGS, 1, INFS_STATUS_NOT_SUPPORTED},
         {INFS20_OFF_PHYSICAL_FLAGS, 1, INFS_STATUS_NOT_SUPPORTED},
