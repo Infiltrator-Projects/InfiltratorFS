@@ -17,6 +17,12 @@ struct infs20_paged_layout {
     uint64_t arena_start[INFS20_LANE_COUNT];
     uint64_t arena_blocks[INFS20_LANE_COUNT];
 };
+#define INFS20_PAGED_BATCH_MAX 256u
+struct infs20_paged_change {
+    const uint8_t *key,*value;
+    size_t key_size,value_size;
+    int remove;
+};
 struct infs20_paged_state {
     struct infs20_store_state commit;
     struct infs20_tree_ref root;
@@ -41,6 +47,17 @@ infs_status infs20_paged_put(const struct infs20_paged_layout *,
 infs_status infs20_paged_remove(const struct infs20_paged_layout *,
     const struct infs20_store_io *,const uint8_t tx[16],
     const uint8_t *,size_t,struct infs20_paged_state *);
+/* Apply ordered changes to one private root; publish once. The optional
+ * prepare callback stages caller-reserved payload before metadata writes,
+ * under the same dependency barrier. A late invalid/missing key or arena
+ * exhaustion makes no storage writes and never calls prepare. Explicit
+ * create_empty permits a first transaction only on blank bootstrap banks.
+ * Intermediate private path pages may occupy committed arena space until
+ * the production arena collector is implemented. */
+infs_status infs20_paged_apply(const struct infs20_paged_layout *,
+    const struct infs20_store_io *,const uint8_t tx[16],
+    const struct infs20_paged_change *,size_t,int create_empty,
+    infs20_store_prepare,void *,struct infs20_paged_state *);
 infs_status infs20_paged_get(const struct infs20_paged_layout *,
     const struct infs20_store_io *,const uint8_t *,size_t,uint8_t *,size_t,size_t *);
 infs_status infs20_paged_visit(const struct infs20_paged_layout *,

@@ -201,3 +201,7 @@ The detailed S0–S7 sequence in ON_DISK_FORMAT.md section 20.18 supersedes any 
 
 ### Committed paged-tree integration
 - [ ] Variable-height tree connected to the common commit protocol and private append arena, with offline proof discovery and injected-failure conformance; exact-source results pending. Migrate typed ownership/namespace records and implement durable arena reclamation before production integration.
+
+### Atomic multi-record integration
+- [x] Variable-height tree executed at `479fb2668e6474df26fd93f9d77a53ebad1b6354`: 96 keys, six levels, 18 injected private-write failures; all seven experimental tests passed.
+- [ ] Ordered private-root batch and payload dependency hook implemented; exact-source execution pending. Migrate typed ownership and volume records to this store.

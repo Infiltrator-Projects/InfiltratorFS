@@ -564,3 +564,9 @@ The registered `infilfs-format-020-tree` test exercises multi-level insert/looku
 
 ### Paged tree and commit integration (execution pending)
 The `infilfs-format-020-paged-store` target tests actual staged tree writes and bootstrap publication under refusal, torn/persisted writes and flush failures; two-lane loss, displaced-region full proof, missing proof and zero-write arena exhaustion. This remains an experimental fixed-geometry append profile. No new test pass is asserted before exact-source CI.
+
+### 25 November 2026 — variable-height tree execution
+The [local Linux userspace job](https://github.com/Infiltrator-Projects/InfiltratorFS/actions/runs/45534244560/job/138936945614) at exact source `479fb2668e6474df26fd93f9d77a53ebad1b6354` passed all seven experimental tests. The new tree test inserted 96 keys, reached six levels and passed 18 private-write failure cases. The test covers path copying, historical roots and missing proof, not mounted filesystem qualification.
+
+### Atomic batch conformance (execution pending)
+The registered batch test checks multi-record and payload publication as one authority, first-transaction creation, late missing-key zero-write refusal and every simulated write/flush failure. No pass is asserted until exact-source execution.
