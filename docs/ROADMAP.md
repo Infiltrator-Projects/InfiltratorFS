@@ -223,3 +223,7 @@ The detailed S0–S7 sequence in ON_DISK_FORMAT.md section 20.18 supersedes any 
 
 ### Metadata arena retirement/reuse candidate
 - [ ] Explicit verified tree reachability collection, unchanged-root successor publication and committed free-run consumption implemented; exact-source execution pending. Dynamic paged arena accounting, bounded incremental GC and scalable allocation remain open.
+
+### Verified bounded physical reuse milestone (25 November 2026)
+- [x] Payload and metadata reuse in the same committed storage engine: 13 dedicated tests passed at exact source `8f16a57ca02ad362443e040c70e6fdf120362fd4`, including 195 payload-reuse and 87 arena-collection/reuse interruptions plus 32 two-slot reuse cycles.
+- [ ] Expanded paged foreign formatter matrix and complete-copy arena retirement check implemented; exact-source execution pending. Production scalable allocation, full namespace, native integration and physical qualification remain open.

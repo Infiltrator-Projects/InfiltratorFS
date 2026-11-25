@@ -523,6 +523,7 @@ infs_status infs20_paged_discover(const struct infs20_raw_source *source,
 struct marks {
     const struct infs20_paged_layout *layout;
     const struct infs20_paged_state *state;
+    const struct infs20_store_io *storage;
     uint64_t *slots;
     size_t count,capacity;
 };
@@ -537,6 +538,21 @@ static infs_status mark_ref(void *opaque,const struct infs20_tree_ref *r)
         if(n>=m->state->used[lane] || free_slot(m->state,n) ||
            (lane && n!=slot)) return INFS_STATUS_CORRUPT;
         slot=n;
+        /* Traversal proves membership from a surviving copy. Collection
+         * additionally requires every declared copy before retiring the
+         * older bank, rather than acknowledging degraded protection. */
+        uint8_t page[INFS20_PAGE_BYTES];
+        struct infs20_decoded_page d;
+        infs_status st=m->storage->read(m->storage->context,r->blocks[lane],page);
+        if(st) return st;
+        const struct infs20_store_layout *b=&m->layout->bootstrap;
+        st=infs20_page_decode(page,sizeof(page),b->member_id,
+                               r->blocks[lane],b->member_blocks,&d);
+        if(st || d.identity.lane!=lane || d.identity.sequence!=r->sequence ||
+           memcmp(d.identity.set_id,b->set_id,16) ||
+           memcmp(d.identity.scope_id,b->scope_id,16) ||
+           memcmp(d.identity.page_id,r->id,16) || memcmp(d.digest,r->digest,32))
+            return INFS_STATUS_BUSY;
     }
     if((uint64_t)m->count>=m->state->used[0])
         return INFS_STATUS_CORRUPT;
@@ -576,7 +592,7 @@ infs_status infs20_paged_collect(const struct infs20_paged_layout *l,
     if(s.commit.sequence==UINT64_MAX) return INFS_STATUS_OVERFLOW;
     struct reader r={l,io,&s};
     struct infs20_tree_io tree=tree_reader(&r);
-    struct marks m={l,&s,NULL,0,0};
+    struct marks m={l,&s,io,NULL,0,0};
     st=infs20_tree_visit_refs(&tree,&s.root,mark_ref,&m);
     if(st) { free(m.slots); return st; }
     if(m.count>1) qsort(m.slots,m.count,sizeof(*m.slots),slot_cmp);

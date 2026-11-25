@@ -8,7 +8,7 @@
  * Executable single-device integration model. Disposable test media only:
  * flat ASCII names, bounded contiguous multi-block allocations, bounded metadata,
  * bounded payload reuse with fallback quarantine, no encryption or native
- * mount. Metadata arenas remain append-only.
+ * mount. Metadata arenas use explicit verified collection.
  * All calls require exclusive access. On an I/O failure the caller must
  * discard volatile state and recover cold before attempting another write.
  * IDs derive from a fresh nonzero transaction ID for every attempt.

@@ -305,6 +305,9 @@ if(UNIX AND NOT APPLE)
     target_link_libraries(infilfs-format-020-foreign-image PRIVATE infilfs_core)
     infilfs_enable_warnings(infilfs-format-020-foreign-image)
     find_program(INFILFS_FORMAT20_EXT4 NAMES mkfs.ext4 mke2fs)
+    find_program(INFILFS_FORMAT20_FAT32 NAMES mkfs.fat mkfs.vfat)
+    find_program(INFILFS_FORMAT20_EXFAT NAMES mkfs.exfat)
+    find_program(INFILFS_FORMAT20_NTFS NAMES mkfs.ntfs mkntfs)
 endif()
 
 add_executable(infilfs-portable-core tests/portable-core.c)
@@ -489,6 +492,19 @@ if(TARGET infilfs-format-020-foreign-image AND INFILFS_FORMAT20_EXT4)
     add_test(NAME infilfs-format-020-foreign-ext4
         COMMAND infilfs-format-020-foreign-image "${INFILFS_FORMAT20_EXT4}" ext4)
     set_tests_properties(infilfs-format-020-foreign-ext4 PROPERTIES TIMEOUT 60)
+endif()
+if(TARGET infilfs-format-020-foreign-image)
+    # Only private regular-file copies are passed to external formatters.
+    foreach(profile ext4 fat32 exfat ntfs)
+        string(TOUPPER "${profile}" profile_upper)
+        if(INFILFS_FORMAT20_${profile_upper})
+            add_test(NAME infilfs-format-020-foreign-${profile}-paged
+                COMMAND infilfs-format-020-foreign-image
+                    "${INFILFS_FORMAT20_${profile_upper}}" "${profile}" paged)
+            set_tests_properties(infilfs-format-020-foreign-${profile}-paged
+                PROPERTIES TIMEOUT 60)
+        endif()
+    endforeach()
 endif()
 add_test(NAME infilfs-storage-mirror COMMAND infilfs-storage-mirror)
 add_test(NAME infilfs-storage-encrypted COMMAND infilfs-storage-encrypted)

@@ -590,3 +590,9 @@ The registered format-020-reclaim test uses two contiguous payload gaps, explici
 
 ### Metadata arena reuse (execution pending)
 The registered format-020-arena-gc test exercises a two-slot arena with no append capacity remaining, unchanged-root collection, injected failures before/after each writer barrier, reuse and 32 repeated cycles, and no-write refusal with missing tree proof. The test is an executable bounded model; no pass is asserted until exact-source CI.
+
+### 25 November 2026 — bounded payload and metadata reuse execution
+The [Linux userspace qualification](https://github.com/Infiltrator-Projects/InfiltratorFS/actions/runs/45536011049/job/138942781716) on exact source `8f16a57ca02ad362443e040c70e6fdf120362fd4` passed all 13 dedicated Format 0.20 CTests. In addition to the earlier 531 interruption cases, payload reclamation exercised 195 actual-writer cases and metadata arena reclamation 87, for 813 total reported interruption/failure cases across this suite. The arena test completed 32 repeated collection/reuse cycles with only two physical slots per lane and no append growth. The original ext4 regular-file test, read-only image export and existing cross-platform image smoke passed in the same job. This does not establish production scalability, complete feature parity or native mount qualification.
+
+### Expanded paged formatter characterization and replica admission (execution pending)
+The current candidate also refuses arena collection when any required tree copy is missing, and registers the same real regular-file formatter harness against the paged volume profile for available ext4, FAT32, exFAT and NTFS executables. The intact-source oracle captures ordinary committed proof references and actual payload positions before formatting. No pass is asserted for these additions before exact-source execution.

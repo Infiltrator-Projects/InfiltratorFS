@@ -115,6 +115,12 @@ int main(void)
         tx(id,2001+i*2); CHECK(!infs20_paged_collect(&l,&io,id,&s)); cold(&m);
         CHECK(s.free_count==1);
     }
+    /* One missing tree copy is still readable, but does not meet the
+     * protection contract required to retire a preceding bank. */
+    memset(m.disk+s.root.blocks[0]*INFS20_PAGE_BYTES,0,INFS20_PAGE_BYTES);
+    cold(&m); tx(id,2999);
+    CHECK(expect(&l,&io,34));
+    CHECK(infs20_paged_collect(&l,&io,id,&s)==INFS_STATUS_BUSY && !m.ops);
     /* Missing committed proof must prevent the collector from inventing
      * free space; read/verification failure is nonmutating. */
     for(unsigned lane=0;lane<3;++lane)
