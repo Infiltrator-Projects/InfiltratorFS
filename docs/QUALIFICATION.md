@@ -523,3 +523,6 @@ See ON_DISK_FORMAT.md sections 20.13–20.19 for golden envelope/record vectors,
 
 ### Format 0.20 S0 candidate conformance (unqualified)
 The private `infilfs-format-020-schema` target registers a CTest for the experimental envelope and framing. A fixed independent SHA-256/CRC64 vector and negative cases are included. No execution or filesystem qualification is asserted by this change; consult exact-source CI or a recorded local run. Existing 0.19 evidence is unaffected.
+
+### Format 0.20 S0/S1 bounded executable store (unqualified at commit)
+The registered `infilfs-format-020-store` CTest drives the actual experimental writer and cold reader through injected refusal, torn/persisted writes and flush failures; it also tests lane and mixed-copy loss, verified healing, absent proof and preflight. This is a bounded in-memory storage model, not production-media or native filesystem qualification. Record exact-source execution separately. The existing schema vector is independently verified by the literal encoded preimage; no production claims follow.

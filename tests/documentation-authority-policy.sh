@@ -55,7 +55,20 @@ grep -Fq "persistent Format $current_format structural contract" "$map" ||
 # ADRs and historical qualification remain historical; the following files
 # purport to describe the live current-format contract.
 for normative in docs/COMPRESSION.md docs/SECURITY.md docs/FORENSICS.md docs/INSPIRATIONS.md kernel/README.md kernel/infiltratorfs_rw.inc kernel/infiltratorfs_rw_data.inc include/infilfs/format.h; do
-    obsolete="$(grep -Eo 'Format [0-9]+\.[0-9]+' "$normative" | sort -u | grep -Fvx "Format $current_format" || true)"
+    # Specialist Markdown may explicitly append a future-design section.
+    # Keep the current-format prefix under the original strict guard; only
+    # recognise the exact proposal heading, never arbitrary prose or C code.
+    # The proposal heading must carry the explicit proposal-only disclaimer.
+    if [[ "$normative" == docs/*.md ]] &&
+       grep -Eq '^## Proposed Format [0-9]+\.[0-9]+ — unified design ' "$normative"; then
+        grep -Fq '**Proposal only; the preceding current-format contract remains applicable to Format '"$current_format"'.**' "$normative" ||
+            fail "$normative proposal lacks current-format disclaimer"
+        obsolete="$(sed '/^## Proposed Format [0-9]*\.[0-9]* — unified design /,$d' "$normative" |
+            grep -Eo 'Format [0-9]+\.[0-9]+' | sort -u |
+            grep -Fvx "Format $current_format" || true)"
+    else
+        obsolete="$(grep -Eo 'Format [0-9]+\.[0-9]+' "$normative" | sort -u | grep -Fvx "Format $current_format" || true)"
+    fi
     [[ -z "$obsolete" ]] || fail "$normative names obsolete $obsolete as a current-format contract"
 done
 

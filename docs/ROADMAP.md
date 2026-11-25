@@ -174,3 +174,7 @@ The detailed S0–S7 sequence in ON_DISK_FORMAT.md section 20.18 supersedes any 
 ### S0 implementation progress
 - [ ] Experimental envelope and probe record framing implemented in an isolated C conformance target; execution evidence pending. No production schema or feature ID registered.
 - [ ] Complete typed tree, root/commit, geometry, arena and ownership encodings and freeze after modelling/qualification. S0 remains open.
+
+### S0/S1 executable-model progress
+- [ ] Bounded immutable record tree, three-lane commit publication, cold selection and verified copy healing implemented in isolated test target; exact-source results pending.
+- [ ] General typed scalable tree, allocator/arena and durable ownership/reclamation remain open. The fixed test banks are not a production storage design.
