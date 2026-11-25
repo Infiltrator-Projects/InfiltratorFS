@@ -66,6 +66,13 @@ infs_status infs20_model_release(const struct infs20_store_layout *,
 infs_status infs20_model_commit(const struct infs20_store_layout *,
     const struct infs20_store_io *, const uint8_t tx[16],
     const struct infs20_model_graph *, struct infs20_store_state *);
+/* Integrate additional validated semantic records in the same commit.
+ * The extension caller must validate their relationships with the graph. */
+infs_status infs20_model_commit_extended(const struct infs20_store_layout *,
+    const struct infs20_store_io *, const uint8_t tx[16],
+    const struct infs20_model_graph *, const struct infs20_store_record *,
+    size_t, infs20_store_prepare, void *, struct infs20_store_state *);
+infs_status infs20_model_decode_record(void *,const struct infs20_record_view *);
 infs_status infs20_model_load(const struct infs20_store_layout *,
     const struct infs20_store_io *, struct infs20_model_graph *);
 #endif

@@ -237,14 +237,30 @@ static int compare_encoded(const void *a,const void *b)
     int c=memcmp(x->key,y->key,n);
     return c?c:(x->key_size>y->key_size)-(x->key_size<y->key_size);
 }
-infs_status infs20_model_commit(const struct infs20_store_layout *l,
+static int compare_records(const void *a,const void *b)
+{
+    const struct infs20_store_record *x=a,*y=b;
+    size_t n=x->key_size<y->key_size?x->key_size:y->key_size;
+    int c=memcmp(x->key,y->key,n);
+    return c?c:(x->key_size>y->key_size)-(x->key_size<y->key_size);
+}
+infs_status infs20_model_commit_extended(const struct infs20_store_layout *l,
     const struct infs20_store_io *io,const uint8_t tx[16],
-    const struct infs20_model_graph *g,struct infs20_store_state *out)
+    const struct infs20_model_graph *g,const struct infs20_store_record *extra,
+    size_t extra_count,infs20_store_prepare prepare,void *context,
+    struct infs20_store_state *out)
 {
     infs_status st=infs20_model_validate(l,g);
     if(st) return st;
     struct encoded enc[INFS20_MODEL_NODES+INFS20_MODEL_EDGES]={0};
-    struct infs20_store_record r[INFS20_MODEL_NODES+INFS20_MODEL_EDGES];
+    if(extra_count>128 || (extra_count && !extra)) return INFS_STATUS_INVALID_ARGUMENT;
+    for(size_t i=0;i<extra_count;++i)
+        if(!extra[i].key || !extra[i].key_size ||
+           extra[i].key_size>INFS20_STORE_KEY_MAX ||
+           (extra[i].value_size && !extra[i].value) ||
+           extra[i].key[0]=='N' || extra[i].key[0]=='E')
+            return INFS_STATUS_INVALID_ARGUMENT;
+    struct infs20_store_record r[INFS20_MODEL_NODES+INFS20_MODEL_EDGES+128];
     size_t count=0;
     for(size_t i=0;i<g->node_count;++i) {
         const struct infs20_model_node *n=&g->nodes[i];
@@ -269,9 +285,17 @@ infs_status infs20_model_commit(const struct infs20_store_layout *l,
     for(size_t i=0;i<count;++i)
         r[i]=(struct infs20_store_record){enc[i].key,enc[i].value,
                                          enc[i].key_size,enc[i].value_size};
-    return infs20_store_publish(l,io,tx,r,count,out);
+    for(size_t i=0;i<extra_count;++i) r[count++]=extra[i];
+    qsort(r,count,sizeof(r[0]),compare_records);
+    return infs20_store_publish_prepared(l,io,tx,r,count,prepare,context,out);
 }
-static infs_status decode_record(void *opaque,const struct infs20_record_view *r)
+infs_status infs20_model_commit(const struct infs20_store_layout *l,
+    const struct infs20_store_io *io,const uint8_t tx[16],
+    const struct infs20_model_graph *g,struct infs20_store_state *out)
+{
+    return infs20_model_commit_extended(l,io,tx,g,NULL,0,NULL,NULL,out);
+}
+infs_status infs20_model_decode_record(void *opaque,const struct infs20_record_view *r)
 {
     struct infs20_model_graph *g=opaque;
     if(r->key[0]=='N') {
@@ -299,7 +323,7 @@ infs_status infs20_model_load(const struct infs20_store_layout *l,
 {
     if(!out) return INFS_STATUS_INVALID_ARGUMENT;
     struct infs20_model_graph g={0};
-    infs_status st=infs20_store_visit(l,io,decode_record,&g);
+    infs_status st=infs20_store_visit(l,io,infs20_model_decode_record,&g);
     if(!st) st=infs20_model_validate(l,&g);
     if(!st) *out=g;
     return st;

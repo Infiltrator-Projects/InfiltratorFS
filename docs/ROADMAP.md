@@ -181,3 +181,6 @@ The detailed S0–S7 sequence in ON_DISK_FORMAT.md section 20.18 supersedes any 
 
 ### S2 lifetime model progress
 - [ ] Bounded persistent node/edge accounting, retained-root transitions and deferred reclaim model implemented through the S1 committed tree; exact-source execution pending. Production allocation/location engine and real native unformat remain open.
+
+### S2/S3 physical-payload integration progress
+- [ ] Bounded single-device file/physical payload, shared integrity, snapshot/reflink, relocation and recoverable root-switch model implemented; exact-source execution pending. Production paged allocation/reuse, full namespace and native integration remain open.

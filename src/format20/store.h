@@ -52,6 +52,16 @@ infs_status infs20_store_publish(const struct infs20_store_layout *,
     const struct infs20_store_record *, size_t,
     struct infs20_store_state *);
 
+/* Optional payload preparation runs after complete candidate tree encoding and
+ * authority preflight, but before any metadata write. The caller may write
+ * only private, reserved payload ranges; the dependency flush covers them.
+ * An ambiguous failure requires cold recovery before retry. */
+typedef infs_status (*infs20_store_prepare)(void *);
+infs_status infs20_store_publish_prepared(const struct infs20_store_layout *,
+    const struct infs20_store_io *, const uint8_t transaction_id[16],
+    const struct infs20_store_record *, size_t, infs20_store_prepare, void *,
+    struct infs20_store_state *);
+
 /* Read a value only after recovering and verifying the entire bounded
  * committed tree. Caller must keep exclusive access; no concurrent mutation.
  * NULL buffer with zero capacity is allowed for an empty value. */

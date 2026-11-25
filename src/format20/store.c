@@ -335,9 +335,10 @@ static infs_status write_node(const struct infs20_store_layout *l,
     infs_status st = encode(l, s, slot, lane, payload, size, page);
     return st ? st : io->write(io->context, address(l, lane, s->sequence, slot), page);
 }
-infs_status infs20_store_publish(const struct infs20_store_layout *l,
+infs_status infs20_store_publish_prepared(const struct infs20_store_layout *l,
     const struct infs20_store_io *io, const uint8_t tx[16],
     const struct infs20_store_record *records, size_t n,
+    infs20_store_prepare prepare, void *prepare_context,
     struct infs20_store_state *out)
 {
     if (!out || !tx || zero(tx, 16) || !layout_valid(l, io, 1))
@@ -382,6 +383,10 @@ infs_status infs20_store_publish(const struct infs20_store_layout *l,
     st = encode(l, &next, 0, 0, commit, sizeof(commit), page);
     if (st) goto done;
     memcpy(next.commit_digest, page + INFS20_OFF_DIGEST, 32);
+    if (prepare) {
+        st = prepare(prepare_context);
+        if (st) goto done;
+    }
     for (unsigned lane = 0; lane < INFS20_LANE_COUNT; ++lane) {
         for (unsigned i = 0; i < t->leaves; ++i) {
             st = write_node(l, io, &next, i+2, lane, t->leaf[i], t->leaf_size[i]);
@@ -403,6 +408,13 @@ infs_status infs20_store_publish(const struct infs20_store_layout *l,
 done:
     free(t);
     return st;
+}
+infs_status infs20_store_publish(const struct infs20_store_layout *l,
+    const struct infs20_store_io *io, const uint8_t tx[16],
+    const struct infs20_store_record *records, size_t n,
+    struct infs20_store_state *out)
+{
+    return infs20_store_publish_prepared(l,io,tx,records,n,NULL,NULL,out);
 }
 infs_status infs20_store_lookup(const struct infs20_store_layout *l,
     const struct infs20_store_io *io, const uint8_t *key, size_t key_size,

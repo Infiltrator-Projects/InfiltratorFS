@@ -529,3 +529,6 @@ The registered `infilfs-format-020-store` CTest drives the actual experimental w
 
 ### Format 0.20 S2 ownership model (execution pending)
 The isolated `infilfs-format-020-ownership` test persists and reloads root retirement/reactivation, reference-count transitions and one-edge deferred reclamation using the S1 tree. Invalid counts, overlapping protected ranges and cycles must produce zero writes. The model tests explicit root pins, not the production self-hosting allocator, payload writes, automatic fallback retirement or native formatting. No new pass is asserted here.
+
+### Format 0.20 physical-payload integration model (execution pending)
+The registered infilfs-format-020-volume CTest covers real block writes through the existing experimental callback interface, old-or-new publication after injected failure, verified content and shared relocation, snapshot and native-format reversal, two-lane loss and missing/corrupt payload refusal. This is simulated durable storage, not physical-media qualification or a production filesystem. No pass is asserted here.
