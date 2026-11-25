@@ -2,9 +2,54 @@
 #include "ownership.h"
 #include "infilfs/endian.h"
 #include <stdlib.h>
+#include <limits.h>
 #include <string.h>
 
 enum { NODE_KEY=17, NODE_VALUE=32, EDGE_KEY=25, EDGE_VALUE=24 };
+infs_status infs20_model_grow(void *old,size_t *capacity,size_t need,size_t item,void **result)
+{
+    if(!capacity || !item || !result || (*capacity && !old)) return INFS_STATUS_INVALID_ARGUMENT;
+    if(need<=*capacity) { *result=old; return INFS_STATUS_OK; }
+    size_t max=SIZE_MAX/item;
+    if(need>max) return INFS_STATUS_OVERFLOW;
+    size_t cap=*capacity?*capacity:8;
+    if(cap>max) cap=max;
+    while(cap<need) cap=cap>max/2?max:cap*2;
+    void *next=realloc(old,cap*item);
+    if(!next) return INFS_STATUS_NO_MEMORY;
+    *capacity=cap; *result=next; return INFS_STATUS_OK;
+}
+void infs20_model_destroy(struct infs20_model_graph *g)
+{
+    if(g) { free(g->nodes); free(g->edges); memset(g,0,sizeof(*g)); }
+}
+infs_status infs20_model_reserve(struct infs20_model_graph *g,size_t nodes,size_t edges)
+{
+    if(!g) return INFS_STATUS_INVALID_ARGUMENT;
+    /* Existing lookup APIs return signed int indices. Refuse unrepresentable
+     * working sets, not the old tiny prototype capacity. */
+    if(nodes>INT_MAX || edges>INT_MAX) return INFS_STATUS_OVERFLOW;
+    void *next;
+    infs_status st=infs20_model_grow(g->nodes,&g->node_capacity,nodes,sizeof(*g->nodes),&next);
+    if(st) return st;
+    g->nodes=next;
+    st=infs20_model_grow(g->edges,&g->edge_capacity,edges,sizeof(*g->edges),&next);
+    if(!st) g->edges=next;
+    return st;
+}
+infs_status infs20_model_copy(struct infs20_model_graph *out,const struct infs20_model_graph *g)
+{
+    if(!out || !g || out==g || g->node_count>g->node_capacity ||
+       g->edge_count>g->edge_capacity || (g->node_count && !g->nodes) ||
+       (g->edge_count && !g->edges)) return INFS_STATUS_INVALID_ARGUMENT;
+    struct infs20_model_graph next={0};
+    infs_status st=infs20_model_reserve(&next,g->node_count,g->edge_count);
+    if(st) { infs20_model_destroy(&next); return st; }
+    if(g->node_count) memcpy(next.nodes,g->nodes,g->node_count*sizeof(*g->nodes));
+    if(g->edge_count) memcpy(next.edges,g->edges,g->edge_count*sizeof(*g->edges));
+    next.node_count=g->node_count; next.edge_count=g->edge_count;
+    infs20_model_destroy(out); *out=next; return INFS_STATUS_OK;
+}
 static int zero(const uint8_t *p, size_t n)
 {
     uint8_t v=0;
@@ -35,11 +80,11 @@ static int overlap(uint64_t a,uint64_t an,uint64_t b,uint64_t bn)
     /* Inputs have already been bounded by member capacity. */
     return an && bn && a<b+bn && b<a+an;
 }
-infs_status infs20_model_validate(const struct infs20_store_layout *l,
-                                  const struct infs20_model_graph *g)
+struct graph_counter { uint64_t incoming; size_t outgoing; };
+static infs_status validate_graph(const struct infs20_store_layout *l,
+    const struct infs20_model_graph *g,struct graph_counter *counts)
 {
-    if(!l || !g || g->node_count>INFS20_MODEL_NODES ||
-       g->edge_count>INFS20_MODEL_EDGES || !l->member_blocks ||
+    if(!l->member_blocks ||
        l->member_blocks>INFS20_MAX_MEMBER_BLOCKS ||
        l->member_blocks<INFS20_STORE_LANE_BLOCKS)
         return INFS_STATUS_INVALID_ARGUMENT;
@@ -51,9 +96,7 @@ infs_status infs20_model_validate(const struct infs20_store_layout *l,
                        l->lane_start[j],INFS20_STORE_LANE_BLOCKS))
                 return INFS_STATUS_INVALID_ARGUMENT;
     }
-    uint64_t incoming[INFS20_MODEL_NODES]={0};
-    unsigned outgoing[INFS20_MODEL_NODES]={0};
-    unsigned actives=0;
+    size_t actives=0;
     for(size_t i=0;i<g->node_count;++i) {
         const struct infs20_model_node *n=&g->nodes[i];
         if(zero(n->id,16) || n->kind<INFS20_MODEL_ROOT ||
@@ -96,19 +139,32 @@ infs_status infs20_model_validate(const struct infs20_store_layout *l,
                g->nodes[src].kind==INFS20_MODEL_DATA ||
                g->nodes[src].rank<=g->nodes[dst].rank)
                 return INFS_STATUS_CORRUPT;
-            ++outgoing[src];
+            ++counts[src].outgoing;
         }
-        ++incoming[dst];
+        ++counts[dst].incoming;
     }
     if(actives!=1) return INFS_STATUS_CORRUPT;
     for(size_t i=0;i<g->node_count;++i) {
         const struct infs20_model_node *n=&g->nodes[i];
-        if(n->refs!=incoming[i] ||
-           ((n->state==INFS20_MODEL_LIVE)!=(incoming[i]!=0)) ||
-           (n->state==INFS20_MODEL_RELEASABLE && outgoing[i]))
+        if(n->refs!=counts[i].incoming ||
+           ((n->state==INFS20_MODEL_LIVE)!=(counts[i].incoming!=0)) ||
+           (n->state==INFS20_MODEL_RELEASABLE && counts[i].outgoing))
             return INFS_STATUS_CORRUPT;
     }
     return INFS_STATUS_OK;
+}
+infs_status infs20_model_validate(const struct infs20_store_layout *l,
+                                  const struct infs20_model_graph *g)
+{
+    if(!l || !g || g->node_count>g->node_capacity || g->edge_count>g->edge_capacity ||
+       g->node_count>INT_MAX || g->edge_count>INT_MAX ||
+       (g->node_count && !g->nodes) || (g->edge_count && !g->edges))
+        return INFS_STATUS_INVALID_ARGUMENT;
+    if(g->node_count>SIZE_MAX/sizeof(struct graph_counter)) return INFS_STATUS_OVERFLOW;
+    struct graph_counter *counts=calloc(g->node_count?g->node_count:1,sizeof(*counts));
+    if(!counts) return INFS_STATUS_NO_MEMORY;
+    infs_status st=validate_graph(l,g,counts);
+    free(counts); return st;
 }
 static void remove_edge(struct infs20_model_graph *g,size_t i)
 {
@@ -122,11 +178,11 @@ static void remove_edge(struct infs20_model_graph *g,size_t i)
     --g->edge_count;
 }
 static infs_status finish(const struct infs20_store_layout *l,
-    struct infs20_model_graph *g,const struct infs20_model_graph *next)
+    struct infs20_model_graph *g,struct infs20_model_graph *next)
 {
     infs_status st=infs20_model_validate(l,next);
-    if(!st) *g=*next;
-    return st;
+    if(!st) { infs20_model_destroy(g); *g=*next; memset(next,0,sizeof(*next)); }
+    infs20_model_destroy(next); return st;
 }
 infs_status infs20_model_retire_activate(const struct infs20_store_layout *l,
     struct infs20_model_graph *g,const uint8_t new_root[16],uint64_t ordinal)
@@ -136,9 +192,10 @@ infs_status infs20_model_retire_activate(const struct infs20_store_layout *l,
     if(!new_root || zero(new_root,16) || !ordinal ||
        find_pin(g,ordinal)>=0 || find_node(g,new_root)>=0)
         return INFS_STATUS_INVALID_ARGUMENT;
-    if(g->node_count==INFS20_MODEL_NODES || g->edge_count==INFS20_MODEL_EDGES)
-        return INFS_STATUS_NO_SPACE;
-    struct infs20_model_graph next=*g;
+    struct infs20_model_graph next={0};
+    st=infs20_model_copy(&next,g); if(st) return st;
+    st=infs20_model_reserve(&next,next.node_count+1,next.edge_count+1);
+    if(st) { infs20_model_destroy(&next); return st; }
     int a=active(&next);
     struct infs20_model_edge *r=&next.edges[next.edge_count++];
     memset(r,0,sizeof(*r));
@@ -160,7 +217,8 @@ infs_status infs20_model_reactivate(const struct infs20_store_layout *l,
     int r=find_pin(g,ordinal);
     if(r<0 || g->edges[r].role!=INFS20_MODEL_RETIRED)
         return INFS_STATUS_NOT_FOUND;
-    struct infs20_model_graph next=*g;
+    struct infs20_model_graph next={0};
+    st=infs20_model_copy(&next,g); if(st) return st;
     int a=active(&next);
     uint8_t former[16];
     memcpy(former,next.edges[a].target,16);
@@ -182,7 +240,8 @@ infs_status infs20_model_drop_strong(const struct infs20_store_layout *l,
         if(e->ordinal!=ordinal || memcmp(e->source,source,16)) continue;
         if(e->role!=INFS20_MODEL_STRONG || memcmp(e->target,target,16))
             return INFS_STATUS_CORRUPT;
-        struct infs20_model_graph next=*g;
+        struct infs20_model_graph next={0};
+        st=infs20_model_copy(&next,g); if(st) return st;
         remove_edge(&next,i);
         return finish(l,g,&next);
     }
@@ -196,7 +255,8 @@ infs_status infs20_model_drop_pin(const struct infs20_store_layout *l,
     int i=find_pin(g,ordinal);
     if(i<0) return INFS_STATUS_NOT_FOUND;
     if(g->edges[i].role==INFS20_MODEL_ACTIVE) return INFS_STATUS_BUSY;
-    struct infs20_model_graph next=*g;
+    struct infs20_model_graph next={0};
+    st=infs20_model_copy(&next,g); if(st) return st;
     remove_edge(&next,(size_t)i);
     return finish(l,g,&next);
 }
@@ -210,7 +270,8 @@ infs_status infs20_model_reclaim_step(const struct infs20_store_layout *l,
     if(n<0) return INFS_STATUS_NOT_FOUND;
     if(g->nodes[n].state==INFS20_MODEL_LIVE) return INFS_STATUS_BUSY;
     if(g->nodes[n].state==INFS20_MODEL_RELEASABLE) return INFS_STATUS_OK;
-    struct infs20_model_graph next=*g;
+    struct infs20_model_graph next={0};
+    st=infs20_model_copy(&next,g); if(st) return st;
     /* Remove exactly one outgoing edge. The durable edge set is the cursor:
      * replaying from a committed graph cannot remove that edge twice. */
     size_t chosen=next.edge_count;
@@ -234,7 +295,8 @@ infs_status infs20_model_release(const struct infs20_store_layout *l,
     if(i<0) return INFS_STATUS_NOT_FOUND;
     if(!retirement_proven || g->nodes[i].state!=INFS20_MODEL_RELEASABLE)
         return INFS_STATUS_BUSY;
-    struct infs20_model_graph next=*g;
+    struct infs20_model_graph next={0};
+    st=infs20_model_copy(&next,g); if(st) return st;
     memmove(next.nodes+i,next.nodes+i+1,
             (next.node_count-(size_t)i-1)*sizeof(next.nodes[0]));
     --next.node_count;
@@ -270,15 +332,20 @@ infs_status infs20_model_with_records(const struct infs20_store_layout *l,
     if(!visit) return INFS_STATUS_INVALID_ARGUMENT;
     infs_status st=infs20_model_validate(l,g);
     if(st) return st;
-    struct encoded enc[INFS20_MODEL_NODES+INFS20_MODEL_EDGES]={0};
-    if(extra_count>128 || (extra_count && !extra)) return INFS_STATUS_INVALID_ARGUMENT;
+    if(extra_count && !extra) return INFS_STATUS_INVALID_ARGUMENT;
+    if(g->node_count>SIZE_MAX-g->edge_count) return INFS_STATUS_OVERFLOW;
+    size_t owned=g->node_count+g->edge_count;
+    if(extra_count>SIZE_MAX-owned || owned>SIZE_MAX/sizeof(struct encoded) ||
+       owned+extra_count>SIZE_MAX/sizeof(struct infs20_store_record)) return INFS_STATUS_OVERFLOW;
     for(size_t i=0;i<extra_count;++i)
         if(!extra[i].key || !extra[i].key_size ||
            extra[i].key_size>INFS20_STORE_KEY_MAX ||
            (extra[i].value_size && !extra[i].value) ||
            extra[i].key[0]=='N' || extra[i].key[0]=='E')
             return INFS_STATUS_INVALID_ARGUMENT;
-    struct infs20_store_record r[INFS20_MODEL_NODES+INFS20_MODEL_EDGES+128];
+    struct encoded *enc=calloc(owned?owned:1,sizeof(*enc));
+    struct infs20_store_record *r=calloc(owned+extra_count?owned+extra_count:1,sizeof(*r));
+    if(!enc || !r) { free(enc); free(r); return INFS_STATUS_NO_MEMORY; }
     size_t count=0;
     for(size_t i=0;i<g->node_count;++i) {
         const struct infs20_model_node *n=&g->nodes[i];
@@ -306,8 +373,9 @@ infs_status infs20_model_with_records(const struct infs20_store_layout *l,
     for(size_t i=0;i<extra_count;++i) r[count++]=extra[i];
     qsort(r,count,sizeof(r[0]),compare_records);
     for(size_t i=1;i<count;++i)
-        if(!compare_records(r+i-1,r+i)) return INFS_STATUS_INVALID_ARGUMENT;
-    return visit(context,r,count);
+        if(!compare_records(r+i-1,r+i)) { st=INFS_STATUS_INVALID_ARGUMENT; break; }
+    if(!st) st=visit(context,r,count);
+    free(r); free(enc); return st;
 }
 struct bounded_publish {
     const struct infs20_store_layout *layout;
@@ -344,8 +412,9 @@ infs_status infs20_model_decode_record(void *opaque,const struct infs20_record_v
     struct infs20_model_graph *g=opaque;
     if(r->key[0]=='N') {
         if(r->key_size!=NODE_KEY || r->value_size!=NODE_VALUE ||
-           r->value[0]!=1 || r->value[3] ||
-           g->node_count==INFS20_MODEL_NODES) return INFS_STATUS_CORRUPT;
+           r->value[0]!=1 || r->value[3]) return INFS_STATUS_CORRUPT;
+        infs_status st=infs20_model_reserve(g,g->node_count+1,g->edge_count);
+        if(st) return st;
         struct infs20_model_node *n=&g->nodes[g->node_count++];
         memcpy(n->id,r->key+1,16); n->kind=r->value[1]; n->state=r->value[2];
         n->rank=infs_load_le32(r->value+4);
@@ -354,8 +423,9 @@ infs_status infs20_model_decode_record(void *opaque,const struct infs20_record_v
         n->blocks=infs_load_le64(r->value+24);
     } else if(r->key[0]=='E') {
         if(r->key_size!=EDGE_KEY || r->value_size!=EDGE_VALUE ||
-           r->value[0]!=1 || !zero(r->value+2,6) ||
-           g->edge_count==INFS20_MODEL_EDGES) return INFS_STATUS_CORRUPT;
+           r->value[0]!=1 || !zero(r->value+2,6)) return INFS_STATUS_CORRUPT;
+        infs_status st=infs20_model_reserve(g,g->node_count,g->edge_count+1);
+        if(st) return st;
         struct infs20_model_edge *e=&g->edges[g->edge_count++];
         memcpy(e->source,r->key+1,16); e->ordinal=infs_load_le64(r->key+17);
         e->role=r->value[1]; memcpy(e->target,r->value+8,16);
@@ -369,6 +439,7 @@ infs_status infs20_model_load(const struct infs20_store_layout *l,
     struct infs20_model_graph g={0};
     infs_status st=infs20_store_visit(l,io,infs20_model_decode_record,&g);
     if(!st) st=infs20_model_validate(l,&g);
-    if(!st) *out=g;
+    if(!st) { infs20_model_destroy(out); *out=g; }
+    else infs20_model_destroy(&g);
     return st;
 }

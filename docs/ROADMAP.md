@@ -267,3 +267,6 @@ The detailed S0–S7 sequence in ON_DISK_FORMAT.md section 20.18 supersedes any 
 
 ### Allocation search and retirement coalescing
 - [ ] Ordered exclusion view replaces repeated unsorted owner scans; adjacent same-generation retirement ranges coalesce without shortening fallback protection. Dense relocation regression verifies four retired allocations collapse into one ledger interval. Exact-source execution pending. Persistent scalable free-space and GC indexes remain open.
+
+### Dynamic ownership and namespace working sets
+- [ ] Replace fixed node/edge/name working arrays with checked dynamic arrays, deep-copy graph transitions, dynamically sized semantic records and export working sets. Regression creates and recovers 105 independently owned files, crosses all three former ceilings and exercises unlink/collection. Exact-source execution pending. Persistent incremental indexes, typed hierarchical namespace and scalable quarantine remain open.

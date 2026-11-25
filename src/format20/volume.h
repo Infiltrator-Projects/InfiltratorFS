@@ -14,7 +14,6 @@
  * IDs derive from a fresh nonzero transaction ID for every attempt.
  */
 #define INFS20_VOLUME_NAME_MAX 63u
-#define INFS20_VOLUME_FILES 64u
 /* Model limit only: the production design uses paged allocation/checksum
  * trees, not this fixed upper bound or a contiguous-run requirement. */
 #define INFS20_VOLUME_UNITS 16u

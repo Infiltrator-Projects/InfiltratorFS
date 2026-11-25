@@ -22,6 +22,7 @@ static infs_status fl(void *ctx) { (void)ctx; return 0; }
 static void node(struct infs20_model_graph *g,unsigned id,unsigned rank,
                  unsigned kind,unsigned refs,uint64_t start,uint64_t blocks)
 {
+    if(infs20_model_reserve(g,g->node_count+1,g->edge_count)) abort();
     struct infs20_model_node *n=&g->nodes[g->node_count++];
     memset(n,0,sizeof(*n)); n->id[0]=(uint8_t)id; n->rank=rank;
     n->kind=(uint8_t)kind; n->state=INFS20_MODEL_LIVE; n->refs=refs;
@@ -30,6 +31,7 @@ static void node(struct infs20_model_graph *g,unsigned id,unsigned rank,
 static void edge(struct infs20_model_graph *g,unsigned src,unsigned dst,
                  unsigned ordinal,unsigned role)
 {
+    if(infs20_model_reserve(g,g->node_count,g->edge_count+1)) abort();
     struct infs20_model_edge *e=&g->edges[g->edge_count++];
     memset(e,0,sizeof(*e)); e->source[0]=(uint8_t)src; e->target[0]=(uint8_t)dst;
     e->ordinal=ordinal; e->role=(uint8_t)role;
@@ -52,7 +54,7 @@ static int persist(const struct infs20_store_layout *l,const struct infs20_store
     uint8_t tx[16]={0}; tx[0]=(uint8_t)seq; tx[1]=0x42;
     struct infs20_store_state s;
     CHECK(infs20_model_commit(l,io,tx,g,&s)==0 && s.fully_protected);
-    memset(g,0xa5,sizeof(*g));
+    infs20_model_destroy(g);
     CHECK(infs20_model_load(l,io,g)==0);
     return 0;
 }
@@ -111,19 +113,19 @@ int main(void)
     CHECK(persist(&l,&io,&g,7)==0 && !get(&g,4) && current(&g)==5);
     /* Independently reject inconsistent ownership and forbid publication. */
     unsigned before=m->writes;
-    struct infs20_model_graph bad=g;
+    struct infs20_model_graph bad={0}; CHECK(!infs20_model_copy(&bad,&g));
     bad.nodes[0].refs++;
     struct infs20_store_state state;
     uint8_t tx[16]={8};
     CHECK(infs20_model_commit(&l,&io,tx,&bad,&state)==INFS_STATUS_CORRUPT);
-    bad=g;
+    CHECK(!infs20_model_copy(&bad,&g));
     node(&bad,6,0,INFS20_MODEL_DATA,1,32,1); /* overlaps metadata lane */
     edge(&bad,5,6,9,INFS20_MODEL_STRONG);
     CHECK(infs20_model_commit(&l,&io,tx,&bad,&state)==INFS_STATUS_CORRUPT);
-    bad=g;
+    CHECK(!infs20_model_copy(&bad,&g));
     edge(&bad,5,5,10,INFS20_MODEL_STRONG); /* cycle */
     CHECK(infs20_model_commit(&l,&io,tx,&bad,&state)==INFS_STATUS_CORRUPT);
     CHECK(m->writes==before);
     puts("format20-ownership: PASS (persistent root retention, shared edges, bounded reclaim)");
-    free(m); return 0;
+    infs20_model_destroy(&bad); infs20_model_destroy(&g); free(m); return 0;
 }

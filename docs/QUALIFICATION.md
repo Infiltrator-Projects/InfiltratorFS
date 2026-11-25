@@ -664,3 +664,6 @@ The paged-volume test now creates a dense 192 KiB-plus file in one transaction, 
 
 ### Ordered allocation exclusions (execution pending)
 Existing fragmented, near-full, reuse, and interruption tests cover the changed allocator search. Dense relocation now asserts one quarantine interval for four contiguous allocations retired together. No exact-source pass is asserted before CI.
+
+### Dynamic semantic working sets (execution pending)
+A 105-file paged-volume regression crosses the former 32-node, 96-edge and 64-map ceilings and verifies individual reads, recovery enumeration, unlink and collection. Graph transitions retain private-copy validation, and exporter allocation is checked dynamically. Exact-source execution is required before claiming qualification.

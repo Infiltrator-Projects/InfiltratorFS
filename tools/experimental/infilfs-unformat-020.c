@@ -39,7 +39,8 @@ struct export {
     FILE *manifest;
     struct mapping *maps;
     size_t count,capacity,complete,partial,bad,allocation_count;
-    struct allocation allocations[INFS20_MODEL_NODES];
+    struct allocation *allocations;
+    size_t allocation_capacity;
 };
 static infs_status read_at(void *opaque,uint64_t offset,uint8_t *p,size_t n)
 {
@@ -118,15 +119,11 @@ static infs_status mapping(void *opaque,const struct infs20_recovery_mapping *m)
        strchr(m->name,'\\') || !strcmp(m->name,".") || !strcmp(m->name,"..") ||
        m->size>INFS20_LOGICAL_MAX || m->extent_count>INFS20_VOLUME_EXTENTS ||
        (m->extent_count && !m->extents)) return INFS_STATUS_CORRUPT;
-    if(e->count==e->capacity) {
-        size_t cap=e->capacity?e->capacity*2:16;
-        if(cap>INFS20_VOLUME_FILES*INFS20_MODEL_EDGES)
-            cap=INFS20_VOLUME_FILES*INFS20_MODEL_EDGES;
-        if(cap<=e->count) return INFS_STATUS_NO_SPACE;
-        struct mapping *next=realloc(e->maps,cap*sizeof(*next));
-        if(!next) return INFS_STATUS_NO_MEMORY;
-        e->maps=next; e->capacity=cap;
-    }
+    if(e->count==SIZE_MAX) return INFS_STATUS_OVERFLOW;
+    void *next;
+    infs_status st=infs20_model_grow(e->maps,&e->capacity,e->count+1,sizeof(*e->maps),&next);
+    if(st) return st;
+    e->maps=next;
     struct mapping *item=e->maps+e->count++;
     memset(item,0,sizeof(*item)); memcpy(item->allocation,m->allocation_id,16);
     item->pin=m->pin; item->size=m->size; item->count=m->extent_count;
@@ -147,8 +144,12 @@ static infs_status mapping(void *opaque,const struct infs20_recovery_mapping *m)
         previous=x->logical_offset+x->length; item->ext[i]=*x;
         struct allocation *a=find_allocation(e,x->allocation_id);
         if(!a) {
-            if(e->allocation_count==INFS20_MODEL_NODES) return INFS_STATUS_NO_SPACE;
-            a=&e->allocations[e->allocation_count++];
+            if(e->allocation_count==SIZE_MAX) return INFS_STATUS_OVERFLOW;
+            st=infs20_model_grow(e->allocations,&e->allocation_capacity,e->allocation_count+1,
+                                 sizeof(*e->allocations),&next);
+            if(st) return st;
+            e->allocations=next; a=&e->allocations[e->allocation_count++];
+            memset(a,0,sizeof(*a));
             memcpy(a->id,x->allocation_id,16); a->size=x->allocation_size;
         } else if(a->size!=x->allocation_size) return INFS_STATUS_CORRUPT;
         hex(x->allocation_id,16,allocation);
@@ -332,6 +333,6 @@ int main(int argc,char **argv)
     if(fclose(e->manifest)) result=1;
     if(result==1) fputs("Export incomplete; do not interpret it as a complete recovery.\n",stderr);
 done:
-    free(e->maps); if(e->dir>=0) close(e->dir);
+    free(e->allocations); free(e->maps); if(e->dir>=0) close(e->dir);
     free(e); close(source.fd); return result;
 }

@@ -751,3 +751,6 @@ Paged whole-file and range writes split input into independently verified alloca
 
 ### Ordered physical exclusions and quarantine coalescing
 Allocation derives one ordered exclusion view from all bootstrap lanes, arenas, current physical owners and unretired quarantine intervals. First-fit append and wrap each traverse that view once rather than repeatedly scanning all owners. Quarantine insertion coalesces adjacent ranges only when their retirement sequence matches; overlapping input is refused. The current ledger representation and bounded model remain unchanged. The view is rebuilt per reservation; persistent free-range indexing remains an open production gate.
+
+### Dynamic semantic working sets
+The experimental paged implementation no longer caps its ownership graph at 32 nodes/96 edges or namespace at 64 maps. Record decoding, graph-copy transitions, allocation-exclusion views, semantic serialization and recovery enumeration use checked private allocations. Existing N/E/D/F record encodings are unchanged. This removes small fixed working-set limits, not the requirement for persistent incremental ownership, directory and extent trees; whole-graph validation remains transitional. The fixed-bank oracle still has its physical bank capacity.

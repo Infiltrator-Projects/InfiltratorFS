@@ -6,15 +6,15 @@
 #define CHECK(x) do { if(!(x)) { fprintf(stderr,"format20-paged-volume:%d: %s\n",__LINE__,#x); return 1; } } while(0)
 enum { LANE=768, BLOCKS=3*LANE, LENGTH=2*INFS20_PAGE_BYTES+73, DATA=620 };
 static const size_t bytes=(size_t)BLOCKS*INFS20_PAGE_BYTES;
-struct medium { uint8_t *disk,*pending; unsigned ops,fail,mode; };
+struct medium { uint8_t *disk,*pending; size_t bytes; unsigned ops,fail,mode; };
 static infs_status rd(void *o,uint64_t b,uint8_t *p)
 {
-    struct medium *m=o; if(b>=BLOCKS) return INFS_STATUS_IO_ERROR;
+    struct medium *m=o; if(b>=m->bytes/INFS20_PAGE_BYTES) return INFS_STATUS_IO_ERROR;
     memcpy(p,m->pending+b*INFS20_PAGE_BYTES,INFS20_PAGE_BYTES); return 0;
 }
 static infs_status wr(void *o,uint64_t b,const uint8_t *p)
 {
-    struct medium *m=o; if(b>=BLOCKS) return INFS_STATUS_IO_ERROR;
+    struct medium *m=o; if(b>=m->bytes/INFS20_PAGE_BYTES) return INFS_STATUS_IO_ERROR;
     if(++m->ops==m->fail) {
         if(m->mode==3) return INFS_STATUS_OK;
         if(m->mode) {
@@ -30,14 +30,14 @@ static infs_status fl(void *o)
 {
     struct medium *m=o;
     if(++m->ops==m->fail) {
-        if(m->mode==2) memcpy(m->disk,m->pending,bytes);
+        if(m->mode==2) memcpy(m->disk,m->pending,m->bytes);
         return INFS_STATUS_IO_ERROR;
     }
-    memcpy(m->disk,m->pending,bytes); return 0;
+    memcpy(m->disk,m->pending,m->bytes); return 0;
 }
 static void cold(struct medium *m)
 {
-    memcpy(m->pending,m->disk,bytes); m->ops=m->fail=0;
+    memcpy(m->pending,m->disk,m->bytes); m->ops=m->fail=0;
 }
 static void tx(uint8_t id[16],unsigned n)
 {
@@ -130,9 +130,40 @@ static infs_status fragmented_unit(void *o,const struct infs20_recovery_unit *u)
         return INFS_STATUS_CORRUPT;
     ++f->units; return 0;
 }
+/* More nodes, edges and names than the old fixed working graph could
+ * represent. All reads select the same durable authenticated namespace. */
+static int scale_namespace(void)
+{
+    enum { N=105, BIG_LANE=2500, BIG_BLOCKS=3*BIG_LANE };
+    struct medium m={0}; m.bytes=(size_t)BIG_BLOCKS*INFS20_PAGE_BYTES;
+    m.disk=calloc(1,m.bytes); m.pending=calloc(1,m.bytes); CHECK(m.disk && m.pending);
+    struct infs20_paged_layout l={{{1},{2},{3},BIG_BLOCKS,{0,BIG_LANE,2*BIG_LANE}},
+        {20,BIG_LANE+20,2*BIG_LANE+20},{2200,2200,2200}};
+    struct infs20_store_io io={&m,rd,wr,fl}; uint8_t id[16];
+    tx(id,10000); CHECK(!infs20_paged_volume_create(&l,&io,id)); cold(&m);
+    char name[16];
+    for(unsigned i=0;i<N;++i) {
+        CHECK(snprintf(name,sizeof(name),"file-%03u",i)==8);
+        uint8_t data=(uint8_t)i;
+        tx(id,10001+i); CHECK(!infs20_paged_volume_write(&l,&io,id,name,&data,1)); cold(&m);
+    }
+    for(unsigned i=0;i<N;++i) {
+        CHECK(snprintf(name,sizeof(name),"file-%03u",i)==8);
+        uint8_t data=0xff; size_t got=0;
+        CHECK(!infs20_paged_volume_read(&l,&io,0,name,&data,1,&got) && got==1 && data==(uint8_t)i);
+    }
+    struct scope_check check={0};
+    CHECK(!infs20_paged_volume_recovery_visit(&l,&io,scope_mapping,scope_unit,&check));
+    CHECK(check.count==N);
+    tx(id,11000); CHECK(!infs20_paged_volume_unlink(&l,&io,id,"file-104")); cold(&m);
+    tx(id,11001); CHECK(!infs20_paged_volume_collect(&l,&io,id)); cold(&m);
+    uint8_t data=0; size_t got=99;
+    CHECK(infs20_paged_volume_read(&l,&io,0,"file-104",&data,1,&got)==INFS_STATUS_NOT_FOUND && got==99);
+    free(m.pending); free(m.disk); return 0;
+}
 int main(void)
 {
-    struct medium m={0};
+    struct medium m={0}; m.bytes=bytes;
     m.disk=calloc(1,bytes); m.pending=calloc(1,bytes);
     uint8_t *baseline=malloc(bytes);
     CHECK(m.disk && m.pending && baseline);
@@ -454,6 +485,7 @@ int main(void)
     CHECK(!infs20_paged_volume_read_range(&l,&io,0,"huge",high,tail,sizeof(tail),&n));
     CHECK(n==1 && tail[0]==b[0]);
     free(raw.p); free(baseline); free(m.pending); free(m.disk);
+    CHECK(!scale_namespace());
     printf("format20-paged-volume: PASS (%u actual typed ownership/payload interruption cases)\n",cases);
     return 0;
 }

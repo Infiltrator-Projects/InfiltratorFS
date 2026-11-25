@@ -6,12 +6,10 @@
 /*
  * Executable S2 lifetime model. Records are stored in the same committed
  * metadata tree as the S1 store, not a sidecar journal or backup namespace.
- * The arrays bound model exploration only; production requires paged indexes,
- * arena accounting and real allocation/data I/O. A node is an immutable
+ * The working graph grows with admitted records; production still requires
+ * incremental paged indexes and arena accounting. A node is an immutable
  * semantic identity, with a separately versioned physical owner range.
  */
-#define INFS20_MODEL_NODES 32u
-#define INFS20_MODEL_EDGES 96u
 enum infs20_model_kind {
     INFS20_MODEL_ROOT = 1, INFS20_MODEL_PAGE = 2, INFS20_MODEL_DATA = 3
 };
@@ -36,10 +34,21 @@ struct infs20_model_edge {
     uint8_t role;
 };
 struct infs20_model_graph {
-    struct infs20_model_node nodes[INFS20_MODEL_NODES];
-    struct infs20_model_edge edges[INFS20_MODEL_EDGES];
-    size_t node_count, edge_count;
+    struct infs20_model_node *nodes;
+    struct infs20_model_edge *edges;
+    size_t node_count, edge_count, node_capacity, edge_capacity;
 };
+
+/* Zero-initialise graphs before first use; destroy them exactly once.
+ * Capacity is volatile and not part of the persistent representation.
+ * A successful reserve may move array storage. No pointers into a graph
+ * may be retained across graph transitions or reserve calls. */
+void infs20_model_destroy(struct infs20_model_graph *);
+infs_status infs20_model_reserve(struct infs20_model_graph *,size_t nodes,size_t edges);
+infs_status infs20_model_copy(struct infs20_model_graph *,const struct infs20_model_graph *);
+/* Checked generic private-array growth; on failure old storage is unchanged.
+ * On success caller must assign the returned pointer. */
+infs_status infs20_model_grow(void *old,size_t *capacity,size_t need,size_t item,void **result);
 
 /* Independent graph trace checks counts, acyclicity, unique edge keys,
  * active authority, valid roles and exclusive physical ownership. */
