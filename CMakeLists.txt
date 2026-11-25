@@ -235,6 +235,19 @@ target_include_directories(infilfs-format-020-volume PRIVATE src)
 target_link_libraries(infilfs-format-020-volume PRIVATE infilfs_core)
 infilfs_enable_warnings(infilfs-format-020-volume)
 
+# Real foreign formatter characterization is confined to generated regular
+# files. Build the harness on POSIX; the actual ext4 test is admitted only
+# when its real formatter is present. Other tools can be run explicitly.
+if(UNIX AND NOT APPLE)
+    add_executable(infilfs-format-020-foreign-image
+        tests/format-020-foreign-image.c src/format20/schema.c
+        src/format20/store.c src/format20/ownership.c src/format20/volume.c)
+    target_include_directories(infilfs-format-020-foreign-image PRIVATE src)
+    target_link_libraries(infilfs-format-020-foreign-image PRIVATE infilfs_core)
+    infilfs_enable_warnings(infilfs-format-020-foreign-image)
+    find_program(INFILFS_FORMAT20_EXT4 NAMES mkfs.ext4 mke2fs)
+endif()
+
 add_executable(infilfs-portable-core tests/portable-core.c)
 target_link_libraries(infilfs-portable-core PRIVATE infilfs_core)
 infilfs_enable_warnings(infilfs-portable-core)
@@ -402,6 +415,11 @@ add_test(NAME infilfs-format-020-schema COMMAND infilfs-format-020-schema)
 add_test(NAME infilfs-format-020-store COMMAND infilfs-format-020-store)
 add_test(NAME infilfs-format-020-ownership COMMAND infilfs-format-020-ownership)
 add_test(NAME infilfs-format-020-volume COMMAND infilfs-format-020-volume)
+if(TARGET infilfs-format-020-foreign-image AND INFILFS_FORMAT20_EXT4)
+    add_test(NAME infilfs-format-020-foreign-ext4
+        COMMAND infilfs-format-020-foreign-image "${INFILFS_FORMAT20_EXT4}" ext4)
+    set_tests_properties(infilfs-format-020-foreign-ext4 PROPERTIES TIMEOUT 60)
+endif()
 add_test(NAME infilfs-storage-mirror COMMAND infilfs-storage-mirror)
 add_test(NAME infilfs-storage-encrypted COMMAND infilfs-storage-encrypted)
 add_test(NAME infilfs-protected-volume COMMAND infilfs-protected-volume)

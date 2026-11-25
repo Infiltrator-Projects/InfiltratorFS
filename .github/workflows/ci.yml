@@ -295,6 +295,8 @@ jobs:
         run: cmake -S . -B build-local -DCMAKE_BUILD_TYPE=Release
       - name: Build
         run: cmake --build build-local --parallel
+      - name: Exercise Format 0.20 executable models and formatter evidence
+        run: ctest --test-dir build-local -R '^infilfs-format-020-' --output-on-failure --verbose
       - name: Cross-platform image smoke
         run: |
           truncate -s 64M build-local/local-cross-platform.img

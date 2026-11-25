@@ -185,3 +185,4 @@ The detailed S0–S7 sequence in ON_DISK_FORMAT.md section 20.18 supersedes any 
 ### S2/S3 physical-payload integration progress
 - [ ] Bounded single-device file/physical payload, shared integrity, snapshot/reflink, relocation and recoverable root-switch model implemented; exact-source execution pending. Production paged allocation/reuse, full namespace and native integration remain open.
 - [ ] Raw 512-byte-aligned original-region discovery and read-only reconstruction for the experimental profile implemented; exact-source execution pending. Production scan batching, geometry profiles and actual foreign-format evidence remain open.
+- [ ] Actual foreign-formatter regular-file characterization harness implemented; ext4 runs when installed, FAT32/exFAT/NTFS profiles are explicit. Record exact-source results and expand to real devices, first mounts and Windows-native formatting before selecting production placement.
