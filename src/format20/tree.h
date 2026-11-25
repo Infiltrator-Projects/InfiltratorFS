@@ -54,4 +54,10 @@ infs_status infs20_tree_get(const struct infs20_tree_io *,
  * a separate validation pass before externally publishing an export. */
 infs_status infs20_tree_visit(const struct infs20_tree_io *,
     const struct infs20_tree_ref *,infs20_tree_visitor,void *);
+/* Explicit maintenance traversal of verified immutable page references.
+ * The visitor sees each referenced node after its digest and inherited
+ * key bounds validate. No storage writes occur. */
+typedef infs_status (*infs20_tree_ref_visitor)(void *,const struct infs20_tree_ref *);
+infs_status infs20_tree_visit_refs(const struct infs20_tree_io *,
+    const struct infs20_tree_ref *,infs20_tree_ref_visitor,void *);
 #endif

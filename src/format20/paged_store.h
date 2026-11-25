@@ -8,8 +8,8 @@
  * Experimental integration of the immutable tree with the existing commit
  * authority. The fixed bootstrap banks carry only the committed descriptor
  * (root and arena frontiers), never a parallel copy of the namespace.
- * Three disjoint append-only arena ranges prove initial private allocation;
- * production needs dynamic arenas, reference reclamation and relocation.
+ * Three disjoint arena ranges support append and explicit verified reuse;
+ * production still needs dynamic arenas and scalable ownership indexes.
  * Caller holds exclusive, immutable access throughout each operation.
  */
 struct infs20_paged_layout {
@@ -18,6 +18,8 @@ struct infs20_paged_layout {
     uint64_t arena_blocks[INFS20_LANE_COUNT];
 };
 #define INFS20_PAGED_BATCH_MAX 256u
+#define INFS20_ARENA_FREE_MAX 128u
+struct infs20_arena_run { uint64_t start,blocks; };
 struct infs20_paged_change {
     const uint8_t *key,*value;
     size_t key_size,value_size;
@@ -27,6 +29,8 @@ struct infs20_paged_state {
     struct infs20_store_state commit;
     struct infs20_tree_ref root;
     uint64_t used[INFS20_LANE_COUNT];
+    size_t free_count;
+    struct infs20_arena_run free_runs[INFS20_ARENA_FREE_MAX];
 };
 
 /* No implicit creation. Create is allowed only on an explicitly empty
@@ -53,7 +57,7 @@ infs_status infs20_paged_remove(const struct infs20_paged_layout *,
  * exhaustion makes no storage writes and never calls prepare. Explicit
  * create_empty permits a first transaction only on blank bootstrap banks.
  * Intermediate private path pages may occupy committed arena space until
- * the production arena collector is implemented. */
+ * explicit arena collection retires their fallback dependencies. */
 infs_status infs20_paged_apply(const struct infs20_paged_layout *,
     const struct infs20_store_io *,const uint8_t tx[16],
     const struct infs20_paged_change *,size_t,int create_empty,
@@ -78,4 +82,12 @@ infs_status infs20_paged_visit(const struct infs20_paged_layout *,
 infs_status infs20_paged_discover(const struct infs20_raw_source *,
     struct infs20_store_region *,struct infs20_paged_layout *,
     struct infs20_paged_state *);
+/* Explicit metadata maintenance. Trace the current committed tree, then
+ * publish the SAME root in a successor bank with proven unreachable runs.
+ * Only after full publication may the next mutation consume those runs:
+ * both selectable banks then reference the same pre-collection tree.
+ * Memory is proportional to visited live metadata, not device capacity.
+ * This bounded candidate refuses an unrepresentable free-run inventory. */
+infs_status infs20_paged_collect(const struct infs20_paged_layout *,
+    const struct infs20_store_io *,const uint8_t tx[16],struct infs20_paged_state *);
 #endif

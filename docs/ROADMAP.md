@@ -220,3 +220,6 @@ The detailed S0–S7 sequence in ON_DISK_FORMAT.md section 20.18 supersedes any 
 
 ### Payload retirement/reuse candidate
 - [ ] Explicit unlink, retention release, transactional physical quarantine and reuse after fully protected fallback-bank retirement implemented; exact-source execution pending. Scalable range indexes, persistent metadata-arena recycling and full portable/native integration remain open.
+
+### Metadata arena retirement/reuse candidate
+- [ ] Explicit verified tree reachability collection, unchanged-root successor publication and committed free-run consumption implemented; exact-source execution pending. Dynamic paged arena accounting, bounded incremental GC and scalable allocation remain open.

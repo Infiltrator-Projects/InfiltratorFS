@@ -273,6 +273,12 @@ add_executable(infilfs-format-020-reclaim
 target_include_directories(infilfs-format-020-reclaim PRIVATE src)
 target_link_libraries(infilfs-format-020-reclaim PRIVATE infilfs_core)
 infilfs_enable_warnings(infilfs-format-020-reclaim)
+add_executable(infilfs-format-020-arena-gc
+    tests/format-020-arena-gc.c src/format20/schema.c src/format20/store.c
+    src/format20/tree.c src/format20/paged_store.c)
+target_include_directories(infilfs-format-020-arena-gc PRIVATE src)
+target_link_libraries(infilfs-format-020-arena-gc PRIVATE infilfs_core)
+infilfs_enable_warnings(infilfs-format-020-arena-gc)
 
 # Real foreign formatter characterization is confined to generated regular
 # files. Build the harness on POSIX; the actual ext4 test is admitted only
@@ -474,6 +480,7 @@ add_test(NAME infilfs-format-020-paged-store COMMAND infilfs-format-020-paged-st
 add_test(NAME infilfs-format-020-batch COMMAND infilfs-format-020-batch)
 add_test(NAME infilfs-format-020-paged-volume COMMAND infilfs-format-020-paged-volume)
 add_test(NAME infilfs-format-020-reclaim COMMAND infilfs-format-020-reclaim)
+add_test(NAME infilfs-format-020-arena-gc COMMAND infilfs-format-020-arena-gc)
 if(TARGET infilfs-format-020-export)
     add_test(NAME infilfs-format-020-export COMMAND infilfs-format-020-export
         $<TARGET_FILE:infilfs-unformat-020>)

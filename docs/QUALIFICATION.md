@@ -587,3 +587,6 @@ This is experimental evidence, not a release qualification. Contiguous bounded p
 
 ### Payload retirement and reuse (execution pending)
 The registered format-020-reclaim test uses two contiguous payload gaps, explicit snapshot release, collection, a successor commit and reuse of the original physical range. It exercises actual writer interruption with torn and persisted-error modes and checks prior/new authority and the unaffected live file. No result is claimed without exact-source execution. Metadata arena reclamation and physical media qualification remain outstanding.
+
+### Metadata arena reuse (execution pending)
+The registered format-020-arena-gc test exercises a two-slot arena with no append capacity remaining, unchanged-root collection, injected failures before/after each writer barrier, reuse and 32 repeated cycles, and no-write refusal with missing tree proof. The test is an executable bounded model; no pass is asserted until exact-source CI.

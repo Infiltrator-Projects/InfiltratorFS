@@ -9,12 +9,13 @@
  * P20A is the sole descriptor inside the existing commit tree. It commits
  * exact arena geometry/frontiers and the root reference. It is not a
  * second namespace: all keys and values live in the paged tree.
- * Appending never overwrites a committed page. The old root and frontier
- * remain valid until the existing store atomically publishes a successor.
- * An interrupted private suffix may be abandoned after cold authority
- * selection; fresh transaction IDs keep page incarnations distinct.
+ * Appending and consuming committed free runs never overwrite either
+ * selectable root. Explicit collection republishes the unchanged tree
+ * root into the alternate bank before its unreachable pages become free.
+ * Fresh transaction IDs distinguish aborted private page incarnations.
  */
-enum { DESCRIPTOR_BYTES=160, ROOT_OFFSET=80,
+enum { ROOT_OFFSET=80, FREE_OFFSET=168,
+       DESCRIPTOR_BYTES=FREE_OFFSET+16*INFS20_ARENA_FREE_MAX,
        PAGES_PER_CHANGE=3*(2*(INFS20_TREE_MAX_LEVEL+1)+1) };
 static const uint8_t descriptor_key[]={'P','2','0','A'};
 struct staged {
@@ -79,6 +80,15 @@ static int empty_root(const struct infs20_tree_ref *r)
     return zero(r->id,16) && zero(r->digest,32) && !r->sequence &&
            !r->blocks[0] && !r->blocks[1] && !r->blocks[2];
 }
+static int free_slot(const struct infs20_paged_state *s,uint64_t slot)
+{
+    for(size_t i=0;i<s->free_count;++i) {
+        const struct infs20_arena_run *r=&s->free_runs[i];
+        if(slot<r->start) return 0;
+        if(slot-r->start<r->blocks) return 1;
+    }
+    return 0;
+}
 static int root_valid(const struct infs20_paged_layout *l,
                       const struct infs20_paged_state *s)
 {
@@ -87,7 +97,10 @@ static int root_valid(const struct infs20_paged_layout *l,
        !s->root.sequence || s->root.sequence>s->commit.sequence) return 0;
     for(unsigned lane=0;lane<3;++lane)
         if(s->root.blocks[lane]<l->arena_start[lane] ||
-           s->root.blocks[lane]-l->arena_start[lane]>=s->used[lane])
+           s->root.blocks[lane]-l->arena_start[lane]>=s->used[lane] ||
+           s->root.blocks[lane]-l->arena_start[lane]!=
+               s->root.blocks[0]-l->arena_start[0] ||
+           free_slot(s,s->root.blocks[lane]-l->arena_start[lane]))
             return 0;
     return 1;
 }
@@ -96,7 +109,7 @@ static void encode(const struct infs20_paged_layout *l,
     const struct infs20_paged_state *s,uint8_t p[DESCRIPTOR_BYTES])
 {
     memset(p,0,DESCRIPTOR_BYTES);
-    memcpy(p,"P20A",4); infs_store_le16(p+4,1);
+    memcpy(p,"P20A",4); infs_store_le16(p+4,2);
     for(unsigned i=0;i<3;++i) {
         infs_store_le64(p+8+8*i,l->arena_start[i]);
         infs_store_le64(p+32+8*i,l->arena_blocks[i]);
@@ -107,11 +120,16 @@ static void encode(const struct infs20_paged_layout *l,
     infs_store_le64(p+ROOT_OFFSET+48,s->root.sequence);
     for(unsigned i=0;i<3;++i)
         infs_store_le64(p+ROOT_OFFSET+56+8*i,s->root.blocks[i]);
+    infs_store_le16(p+160,(uint16_t)s->free_count);
+    for(size_t i=0;i<s->free_count;++i) {
+        infs_store_le64(p+FREE_OFFSET+16*i,s->free_runs[i].start);
+        infs_store_le64(p+FREE_OFFSET+16*i+8,s->free_runs[i].blocks);
+    }
 }
 static infs_status decode(const struct infs20_paged_layout *l,
     const uint8_t p[DESCRIPTOR_BYTES],struct infs20_paged_state *s)
 {
-    if(memcmp(p,"P20A",4) || infs_load_le16(p+4)!=1)
+    if(memcmp(p,"P20A",4) || infs_load_le16(p+4)!=2)
         return INFS_STATUS_NOT_SUPPORTED;
     if(!zero(p+6,2)) return INFS_STATUS_CORRUPT;
     for(unsigned i=0;i<3;++i) {
@@ -127,6 +145,21 @@ static infs_status decode(const struct infs20_paged_layout *l,
     s->root.sequence=infs_load_le64(p+ROOT_OFFSET+48);
     for(unsigned i=0;i<3;++i)
         s->root.blocks[i]=infs_load_le64(p+ROOT_OFFSET+56+8*i);
+    s->free_count=infs_load_le16(p+160);
+    if(s->free_count>INFS20_ARENA_FREE_MAX || !zero(p+162,6))
+        return INFS_STATUS_CORRUPT;
+    for(size_t i=0;i<s->free_count;++i) {
+        struct infs20_arena_run *r=&s->free_runs[i];
+        r->start=infs_load_le64(p+FREE_OFFSET+16*i);
+        r->blocks=infs_load_le64(p+FREE_OFFSET+16*i+8);
+        if(!r->blocks || r->start>=s->used[0] ||
+           r->blocks>s->used[0]-r->start ||
+           (i && s->free_runs[i-1].start+s->free_runs[i-1].blocks>=r->start))
+            return INFS_STATUS_CORRUPT;
+    }
+    if(!zero(p+FREE_OFFSET+16*s->free_count,
+             DESCRIPTOR_BYTES-FREE_OFFSET-16*s->free_count))
+        return INFS_STATUS_CORRUPT;
     return root_valid(l,s)?INFS_STATUS_OK:INFS_STATUS_CORRUPT;
 }
 static infs_status descriptor(const struct infs20_store_layout *b,
@@ -142,6 +175,8 @@ static infs_status descriptor(const struct infs20_store_layout *b,
                            p,DESCRIPTOR_BYTES,&size);
     if(st==INFS_STATUS_NOT_FOUND) return INFS_STATUS_NOT_SUPPORTED;
     if(st) return st;
+    if(size==160 && !memcmp(p,"P20A",4) && infs_load_le16(p+4)==1)
+        return INFS_STATUS_NOT_SUPPORTED;
     return size==DESCRIPTOR_BYTES?INFS_STATUS_OK:INFS_STATUS_CORRUPT;
 }
 static int permitted(const struct infs20_paged_layout *l,
@@ -149,7 +184,8 @@ static int permitted(const struct infs20_paged_layout *l,
 {
     for(unsigned lane=0;lane<3;++lane)
         if(block>=l->arena_start[lane] &&
-           block-l->arena_start[lane]<s->used[lane]) return 1;
+           block-l->arena_start[lane]<s->used[lane] &&
+           !free_slot(s,block-l->arena_start[lane])) return 1;
     return 0;
 }
 static infs_status read_tree(void *o,uint64_t b,uint8_t *p)
@@ -233,9 +269,10 @@ static infs_status mutation_read(void *o,uint64_t b,uint8_t *p)
 static infs_status reserve(void *o,uint8_t id[16],uint64_t blocks[3])
 {
     struct mutation *m=o;
+    int append=1;
     for(unsigned i=0;i<3;++i)
-        if(m->state.used[i]==m->layout->arena_blocks[i])
-            return INFS_STATUS_NO_SPACE;
+        if(m->state.used[i]==m->layout->arena_blocks[i]) append=0;
+    if(!append && !m->state.free_count) return INFS_STATUS_NO_SPACE;
     /* IDs are transaction-scoped and never reused after uncertain write.
      * Fresh tx is a caller contract; the sequence additionally separates
      * successful generations. A private serial separates split pages. */
@@ -245,8 +282,20 @@ static infs_status reserve(void *o,uint8_t id[16],uint64_t blocks[3])
     infs_store_le64(preimage+28,++m->serial);
     infs_sha256(preimage,sizeof(preimage),digest);
     memcpy(id,digest,16);
-    for(unsigned i=0;i<3;++i)
-        blocks[i]=m->layout->arena_start[i]+m->state.used[i]++;
+    if(append) {
+        for(unsigned i=0;i<3;++i)
+            blocks[i]=m->layout->arena_start[i]+m->state.used[i]++;
+    } else {
+        /* Consume an already committed free slot in the private state.
+         * On failure the selected descriptor still owns the old free list. */
+        struct infs20_arena_run *r=&m->state.free_runs[0];
+        uint64_t slot=r->start++;
+        if(!--r->blocks) {
+            --m->state.free_count;
+            memmove(r,r+1,m->state.free_count*sizeof(*r));
+        }
+        for(unsigned i=0;i<3;++i) blocks[i]=m->layout->arena_start[i]+slot;
+    }
     return INFS_STATUS_OK;
 }
 static infs_status stage(void *o,uint64_t b,const uint8_t *p)
@@ -450,7 +499,7 @@ infs_status infs20_paged_discover(const struct infs20_raw_source *source,
     struct infs20_paged_state s={0};
     uint8_t p[DESCRIPTOR_BYTES];
     st=descriptor(&l.bootstrap,&io,p,&s.commit); if(st) return st;
-    if(memcmp(p,"P20A",4) || infs_load_le16(p+4)!=1)
+    if(memcmp(p,"P20A",4) || infs_load_le16(p+4)!=2)
         return INFS_STATUS_NOT_SUPPORTED;
     for(unsigned i=0;i<3;++i) {
         l.arena_start[i]=infs_load_le64(p+8+8*i);
@@ -463,4 +512,84 @@ infs_status infs20_paged_discover(const struct infs20_raw_source *source,
     if(st) return st;
     *region=d.region; *layout=l; *out=s;
     return INFS_STATUS_OK;
+}
+
+/* Explicit mark/retire collection. Only current-root reachability matters
+ * for the new free inventory because the same root is published again:
+ * the existing current bank remains untouched; the previous bank is
+ * overwritten completely before successful return. A cut before that point
+ * exposes either the old allocator or a degraded new authority which the
+ * mutator already refuses. No arena page is written during collection. */
+struct marks {
+    const struct infs20_paged_layout *layout;
+    const struct infs20_paged_state *state;
+    uint64_t *slots;
+    size_t count,capacity;
+};
+static infs_status mark_ref(void *opaque,const struct infs20_tree_ref *r)
+{
+    struct marks *m=opaque;
+    uint64_t slot=0;
+    for(unsigned lane=0;lane<INFS20_LANE_COUNT;++lane) {
+        if(r->blocks[lane]<m->layout->arena_start[lane])
+            return INFS_STATUS_CORRUPT;
+        uint64_t n=r->blocks[lane]-m->layout->arena_start[lane];
+        if(n>=m->state->used[lane] || free_slot(m->state,n) ||
+           (lane && n!=slot)) return INFS_STATUS_CORRUPT;
+        slot=n;
+    }
+    if((uint64_t)m->count>=m->state->used[0])
+        return INFS_STATUS_CORRUPT;
+    if(m->count==m->capacity) {
+        if(m->capacity>SIZE_MAX/2/sizeof(*m->slots)) return INFS_STATUS_OVERFLOW;
+        size_t cap=m->capacity?m->capacity*2:16;
+        uint64_t *next=realloc(m->slots,cap*sizeof(*next));
+        if(!next) return INFS_STATUS_NO_MEMORY;
+        m->slots=next; m->capacity=cap;
+    }
+    m->slots[m->count++]=slot;
+    return INFS_STATUS_OK;
+}
+static int slot_cmp(const void *a,const void *b)
+{
+    uint64_t x=*(const uint64_t *)a,y=*(const uint64_t *)b;
+    return (x>y)-(x<y);
+}
+static infs_status add_free(struct infs20_paged_state *s,uint64_t a,uint64_t b)
+{
+    if(a==b) return INFS_STATUS_OK;
+    if(a>b) return INFS_STATUS_CORRUPT;
+    if(s->free_count==INFS20_ARENA_FREE_MAX) return INFS_STATUS_NO_SPACE;
+    s->free_runs[s->free_count++]=(struct infs20_arena_run){a,b-a};
+    return INFS_STATUS_OK;
+}
+infs_status infs20_paged_collect(const struct infs20_paged_layout *l,
+    const struct infs20_store_io *io,const uint8_t tx[16],struct infs20_paged_state *out)
+{
+    if(!out || !tx || zero(tx,16) || !valid_layout(l,io,1))
+        return INFS_STATUS_INVALID_ARGUMENT;
+    struct infs20_paged_state s;
+    infs_status st=infs20_paged_open(l,io,&s);
+    if(st) return st;
+    if(!s.commit.fully_protected || !memcmp(tx,s.commit.transaction_id,16))
+        return INFS_STATUS_BUSY;
+    if(s.commit.sequence==UINT64_MAX) return INFS_STATUS_OVERFLOW;
+    struct reader r={l,io,&s};
+    struct infs20_tree_io tree=tree_reader(&r);
+    struct marks m={l,&s,NULL,0,0};
+    st=infs20_tree_visit_refs(&tree,&s.root,mark_ref,&m);
+    if(st) { free(m.slots); return st; }
+    if(m.count>1) qsort(m.slots,m.count,sizeof(*m.slots),slot_cmp);
+    s.free_count=0;
+    uint64_t cursor=0;
+    for(size_t i=0;i<m.count && !st;++i) {
+        if(m.slots[i]<cursor) { st=INFS_STATUS_CORRUPT; break; }
+        st=add_free(&s,cursor,m.slots[i]);
+        cursor=m.slots[i]+1;
+    }
+    if(!st) st=add_free(&s,cursor,s.used[0]);
+    free(m.slots);
+    if(!st) st=publish(l,io,tx,&s,NULL,NULL);
+    if(!st) *out=s;
+    return st;
 }

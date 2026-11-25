@@ -421,18 +421,20 @@ infs_status infs20_tree_get(const struct infs20_tree_io *io,
     free(n); return st;
 }
 static infs_status walk(const struct infs20_tree_io *io,const struct infs20_tree_ref *ref,
-    int level,struct bound lower,struct bound upper,infs20_tree_visitor visit,void *context)
+    int level,struct bound lower,struct bound upper,infs20_tree_visitor visit,
+    infs20_tree_ref_visitor ref_visit,void *context)
 {
     struct node *n=calloc(1,sizeof(*n));
     if(!n) return INFS_STATUS_NO_MEMORY;
     infs_status st=read_node(io,ref,n);
     if(!st) st=bounds(n,level,lower,upper);
+    if(!st && ref_visit) st=ref_visit(context,ref);
     if(!st) for(unsigned i=0;i<n->count;++i) {
         const struct entry *e=n->entries+i;
         if(n->level) {
             struct infs20_tree_ref child; ref_decode(e->value,&child);
             st=walk(io,&child,n->level-1,entry_bound(e),
-                    i+1<n->count?entry_bound(e+1):upper,visit,context);
+                    i+1<n->count?entry_bound(e+1):upper,visit,ref_visit,context);
         } else if(visit) st=visit(context,e->key,e->key_size,e->value,e->value_size);
         if(st) break;
     }
@@ -443,5 +445,12 @@ infs_status infs20_tree_visit(const struct infs20_tree_io *io,
 {
     if(!io_valid(io,0) || !root) return INFS_STATUS_INVALID_ARGUMENT;
     if(empty(root)) return INFS_STATUS_OK;
-    return walk(io,root,-1,(struct bound){0},(struct bound){0},visit,context);
+    return walk(io,root,-1,(struct bound){0},(struct bound){0},visit,NULL,context);
+}
+infs_status infs20_tree_visit_refs(const struct infs20_tree_io *io,
+    const struct infs20_tree_ref *root,infs20_tree_ref_visitor visit,void *context)
+{
+    if(!io_valid(io,0) || !root || !visit) return INFS_STATUS_INVALID_ARGUMENT;
+    if(empty(root)) return INFS_STATUS_OK;
+    return walk(io,root,-1,(struct bound){0},(struct bound){0},NULL,visit,context);
 }
