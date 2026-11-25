@@ -17,7 +17,6 @@ struct infs20_paged_layout {
     uint64_t arena_start[INFS20_LANE_COUNT];
     uint64_t arena_blocks[INFS20_LANE_COUNT];
 };
-#define INFS20_PAGED_BATCH_MAX 256u
 #define INFS20_ARENA_FREE_MAX 128u
 struct infs20_arena_run { uint64_t start,blocks; };
 struct infs20_paged_change {
@@ -56,6 +55,8 @@ infs_status infs20_paged_remove(const struct infs20_paged_layout *,
  * under the same dependency barrier. A late invalid/missing key or arena
  * exhaustion makes no storage writes and never calls prepare. Explicit
  * create_empty permits a first transaction only on blank bootstrap banks.
+ * Batches grow with actual private changes, checked addressable memory and
+ * available arena slots rather than a fixed record-count limit.
  * Intermediate private path pages may occupy committed arena space until
  * explicit arena collection retires their fallback dependencies. */
 infs_status infs20_paged_apply(const struct infs20_paged_layout *,

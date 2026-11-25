@@ -6,15 +6,15 @@
 #define CHECK(x) do { if(!(x)) { fprintf(stderr,"format20-batch:%d: %s\n",__LINE__,#x); return 1; } } while(0)
 enum { BLOCKS=192, LANE=64, DATA=63 };
 static const size_t bytes=(size_t)BLOCKS*INFS20_PAGE_BYTES;
-struct medium { uint8_t *disk,*pending; unsigned ops,fail,mode,calls; };
+struct medium { uint8_t *disk,*pending; size_t bytes; unsigned ops,fail,mode,calls; };
 static infs_status rd(void *o,uint64_t b,uint8_t *p)
 {
-    struct medium *m=o; if(b>=BLOCKS) return INFS_STATUS_IO_ERROR;
+    struct medium *m=o; if(b>=m->bytes/INFS20_PAGE_BYTES) return INFS_STATUS_IO_ERROR;
     memcpy(p,m->pending+b*INFS20_PAGE_BYTES,INFS20_PAGE_BYTES); return 0;
 }
 static infs_status wr(void *o,uint64_t b,const uint8_t *p)
 {
-    struct medium *m=o; if(b>=BLOCKS) return INFS_STATUS_IO_ERROR;
+    struct medium *m=o; if(b>=m->bytes/INFS20_PAGE_BYTES) return INFS_STATUS_IO_ERROR;
     if(++m->ops==m->fail) {
         if(m->mode) {
             size_t n=m->mode==1?INFS20_PAGE_BYTES/2:INFS20_PAGE_BYTES;
@@ -29,14 +29,14 @@ static infs_status fl(void *o)
 {
     struct medium *m=o;
     if(++m->ops==m->fail) {
-        if(m->mode==2) memcpy(m->disk,m->pending,bytes);
+        if(m->mode==2) memcpy(m->disk,m->pending,m->bytes);
         return INFS_STATUS_IO_ERROR;
     }
-    memcpy(m->disk,m->pending,bytes); return 0;
+    memcpy(m->disk,m->pending,m->bytes); return 0;
 }
 static void cold(struct medium *m)
 {
-    memcpy(m->pending,m->disk,bytes); m->ops=m->fail=m->calls=0;
+    memcpy(m->pending,m->disk,m->bytes); m->ops=m->fail=m->calls=0;
 }
 static infs_status payload(void *o)
 {
@@ -57,9 +57,49 @@ static int value(const struct infs20_paged_layout *l,const struct infs20_store_i
 }
 #define PUT(k,v) {(const uint8_t *)(k),(const uint8_t *)(v),sizeof(k)-1,sizeof(v)-1,0}
 #define DEL(k) {(const uint8_t *)(k),NULL,sizeof(k)-1,0,1}
+/* Exceed the former fixed 256-entry limit for both insertion and removal.
+ * The same immutable commit authority must expose exactly one successor. */
+static int large_batch(void)
+{
+    enum { N=300, BIG_LANE=1100, BIG_BLOCKS=3*BIG_LANE };
+    struct medium m={0}; m.bytes=(size_t)BIG_BLOCKS*INFS20_PAGE_BYTES;
+    m.disk=calloc(1,m.bytes); m.pending=calloc(1,m.bytes);
+    CHECK(m.disk && m.pending);
+    struct infs20_paged_layout l={{{1},{2},{3},BIG_BLOCKS,{0,BIG_LANE,2*BIG_LANE}},
+        {20,BIG_LANE+20,2*BIG_LANE+20},{1080,1080,1080}};
+    struct infs20_store_io io={&m,rd,wr,fl};
+    struct infs20_store_record records[N];
+    struct infs20_paged_change changes[N+1];
+    char keys[N][5];
+    for(unsigned i=0;i<N;++i) {
+        CHECK(snprintf(keys[i],sizeof(keys[i]),"%04u",i)==4);
+        records[i]=(struct infs20_store_record){(const uint8_t *)keys[i],(const uint8_t *)"a",4,1};
+        changes[i]=(struct infs20_paged_change){records[i].key,(const uint8_t *)"b",4,1,0};
+    }
+    struct infs20_paged_state s;
+    uint8_t id[16]; tx(id,601);
+    CHECK(!infs20_paged_replace(&l,&io,id,records,N,1,NULL,NULL,NULL,&s));
+    CHECK(s.commit.sequence==1); cold(&m);
+    for(unsigned i=0;i<N;++i) CHECK(value(&l,&io,keys[i],"a"));
+    /* A late refusal must not write any of the 300 staged edits. */
+    changes[N]=(struct infs20_paged_change){(const uint8_t *)"missing",NULL,7,0,1};
+    tx(id,602);
+    CHECK(infs20_paged_apply(&l,&io,id,changes,N+1,0,payload,NULL,&m,&s)==INFS_STATUS_NOT_FOUND);
+    CHECK(!m.ops && !m.calls && s.commit.sequence==1);
+    tx(id,603);
+    CHECK(!infs20_paged_apply(&l,&io,id,changes,N,0,NULL,NULL,NULL,&s));
+    CHECK(s.commit.sequence==2); cold(&m);
+    for(unsigned i=0;i<N;++i) CHECK(value(&l,&io,keys[i],"b"));
+    tx(id,604);
+    CHECK(!infs20_paged_replace(&l,&io,id,NULL,0,0,NULL,NULL,NULL,&s));
+    CHECK(s.commit.sequence==3); cold(&m);
+    for(unsigned i=0;i<N;++i) CHECK(value(&l,&io,keys[i],NULL));
+    free(m.pending); free(m.disk);
+    return 0;
+}
 int main(void)
 {
-    struct medium m={0}; m.disk=calloc(1,bytes); m.pending=calloc(1,bytes);
+    struct medium m={0}; m.bytes=bytes; m.disk=calloc(1,bytes); m.pending=calloc(1,bytes);
     uint8_t *baseline=malloc(bytes); CHECK(m.disk && m.pending && baseline);
     struct infs20_paged_layout l={{{1},{2},{3},BLOCKS,{0,LANE,2*LANE}},
         {20,LANE+20,2*LANE+20},{40,40,40}};
@@ -103,6 +143,7 @@ int main(void)
     CHECK(infs20_paged_apply(&l,&io,id,changes,4,1,payload,NULL,&m,&s)==INFS_STATUS_ALREADY_EXISTS);
     CHECK(!m.ops && !m.calls);
     free(baseline); free(m.pending); free(m.disk);
-    printf("format20-batch: PASS (%u multi-record/payload interruption cases)\n",cases);
+    CHECK(!large_batch());
+    printf("format20-batch: PASS (%u multi-record/payload interruption cases; 300-record insert/update/removal and late refusal)\n",cases);
     return 0;
 }

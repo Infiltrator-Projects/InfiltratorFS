@@ -652,3 +652,6 @@ Existing interruption and foreign-format tests are retained. Paged-volume confor
 The multi-allocation regression now explicitly exercises a twelve-block file across two eight-block data gaps and every write/flush interruption of an unaligned partial replacement with an existing snapshot and reflink. It checks exact old-or-new file bytes and unaffected pins; execution remains pending.
 
 The sparse image exporter also tests a partial recovery in which only bytes [100,150) of a verified old unit remain mapped and the second unit is damaged. It must emit exactly the fifty mapped bytes, not the entire old allocation unit; the independent sparse file remains complete. Exact-source execution pending.
+
+### Dynamic paged transaction staging (execution pending)
+The existing batch target now additionally exercises 300-record atomic insert/update/removal, exceeding the former 256-change ceiling, and a missing-key refusal after 300 privately staged edits with zero storage writes and no payload callback. The common publication and interruption tests remain unchanged. No exact-source execution is asserted until CI reports it.

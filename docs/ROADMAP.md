@@ -255,3 +255,6 @@ The detailed S0–S7 sequence in ON_DISK_FORMAT.md section 20.18 supersedes any 
 ### Multi-allocation file mapping integration
 - [ ] Ordered logical slices, sparse gaps, range writes/truncate/punch, fragmented allocation fallback, shared relocation and slice-aware recovery/export integrated with the same typed store and ownership model; exact-source execution pending.
 - [ ] Replace bounded map values and graph arrays with scalable persistent extent/namespace roots; directory, full portable semantics and production native integration remain open.
+
+### Dynamic paged transaction staging
+- [ ] Removed the fixed 256-change batch and replacement-diff ceiling; private staging is bounded by checked memory arithmetic and actual arena availability. Regression covers 300 inserted, updated and removed records with a late refusal before any write. Exact-source execution pending. The bounded ownership graph, fixed free-run descriptor and whole-model mutation path remain open.
