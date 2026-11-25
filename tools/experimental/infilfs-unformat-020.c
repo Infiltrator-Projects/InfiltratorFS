@@ -23,6 +23,7 @@ struct mapping {
     uint8_t allocation[16];
     uint64_t pin;
     size_t size,count;
+    int incomplete;
     char name[INFS20_VOLUME_NAME_MAX+1];
     struct infs20_recovery_extent ext[INFS20_VOLUME_EXTENTS];
 };
@@ -214,14 +215,14 @@ static infs_status finish_export(struct export *e)
         if(a->units!=1+(a->size-1)/INFS20_PAGE_BYTES) return INFS_STATUS_CORRUPT;
     }
     for(size_t i=0;i<e->count;++i) {
-        const struct mapping *m=&e->maps[i]; int complete=1;
+        struct mapping *m=&e->maps[i]; int complete=1;
         for(size_t j=0;j<m->count;++j) {
             struct allocation *a=find_allocation(e,m->ext[j].allocation_id);
             if(!a) return INFS_STATUS_CORRUPT;
             if(!slice_good(a,&m->ext[j])) complete=0;
         }
         if(!complete) {
-            ++e->partial;
+            ++e->partial; m->incomplete=1;
             for(size_t j=0;j<m->count;++j)
                 find_allocation(e,m->ext[j].allocation_id)->partial_needed=1;
             continue;
@@ -246,10 +247,34 @@ static infs_status finish_export(struct export *e)
             if(!(a->good&(UINT32_C(1)<<j))) continue;
             size_t off=j*INFS20_PAGE_BYTES,n=a->size-off;
             if(n>INFS20_PAGE_BYTES) n=INFS20_PAGE_BYTES;
-            char name[80]; snprintf(name,sizeof(name),"%s-%zu.bin",id,off);
-            if(file_write(fd,name,a->data+off,n)) { result=-1; break; }
-            fprintf(e->manifest,"{\"kind\":\"fragment\",\"allocation\":\"%s\",\"offset\":%zu,\"size\":%zu,\"path\":\"partial/%s\"}\n",
-                    id,off,n,name);
+            /* A valid allocation unit can contain unreferenced bytes after
+             * truncation, punching or shared slicing. Export only the union
+             * of mapped ranges of incomplete files, never the entire old
+             * allocation merely because its checksum still verifies. */
+            uint8_t covered[INFS20_PAGE_BYTES]={0};
+            for(size_t k=0;k<e->count;++k) {
+                const struct mapping *m=&e->maps[k];
+                if(!m->incomplete) continue;
+                for(size_t q=0;q<m->count;++q) {
+                    const struct infs20_recovery_extent *x=&m->ext[q];
+                    if(memcmp(x->allocation_id,a->id,16)) continue;
+                    size_t from=x->allocation_offset>off?x->allocation_offset:off;
+                    size_t end=x->allocation_offset+x->length;
+                    if(end>off+n) end=off+n;
+                    if(from<end) memset(covered+from-off,1,end-from);
+                }
+            }
+            for(size_t k=0;k<n;) {
+                if(!covered[k]) { ++k; continue; }
+                size_t start=k;
+                while(k<n && covered[k]) ++k;
+                size_t pos=off+start,length=k-start;
+                char name[80]; snprintf(name,sizeof(name),"%s-%zu.bin",id,pos);
+                if(file_write(fd,name,a->data+pos,length)) { result=-1; break; }
+                fprintf(e->manifest,"{\"kind\":\"fragment\",\"allocation\":\"%s\",\"offset\":%zu,\"size\":%zu,\"path\":\"partial/%s\"}\n",
+                        id,pos,length,name);
+            }
+            if(result) break;
         }
         if(close(fd)) result=-1;
         if(result) return INFS_STATUS_IO_ERROR;

@@ -650,3 +650,5 @@ The paged-volume test additionally exercises forty aliases of one allocation wit
 Existing interruption and foreign-format tests are retained. Paged-volume conformance additionally tests partial replacement, byte-level hole punch, sparse growth, truncate to empty, sparse write, snapshot/reflink isolation, relocation and bounds refusal; the actual image exporter tests reconstruction from independent allocation slices. No new pass is asserted until exact-source execution; production limits and physical qualification remain open.
 
 The multi-allocation regression now explicitly exercises a twelve-block file across two eight-block data gaps and every write/flush interruption of an unaligned partial replacement with an existing snapshot and reflink. It checks exact old-or-new file bytes and unaffected pins; execution remains pending.
+
+The sparse image exporter also tests a partial recovery in which only bytes [100,150) of a verified old unit remain mapped and the second unit is damaged. It must emit exactly the fifty mapped bytes, not the entire old allocation unit; the independent sparse file remains complete. Exact-source execution pending.

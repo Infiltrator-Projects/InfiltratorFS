@@ -126,7 +126,38 @@ int main(int argc,char **argv)
     snprintf(path,sizeof(path),"%s/active",complete); CHECK(!rmdir(path));
     snprintf(path,sizeof(path),"%s/manifest.jsonl",complete);
     CHECK(contains(path,"\"kind\":\"extent\"") && !unlink(path));
-    CHECK(!rmdir(complete) && !close(fd) && !unlink(image) && !rmdir(temp));
+    CHECK(!rmdir(complete));
+    /* A partial export may expose only mapped portions of a good unit.
+     * The clipped file retains bytes [100,150) and its second unit. */
+    tx[0]=15; CHECK(!infs20_paged_volume_write(&l,&io,tx,"clip",data,sizeof(data)));
+    tx[0]=16; CHECK(!infs20_paged_volume_punch(&l,&io,tx,"clip",0,100));
+    tx[0]=17; CHECK(!infs20_paged_volume_punch(&l,&io,tx,"clip",150,INFS20_PAGE_BYTES-150));
+    CHECK(!rd(&fd,DATA+3,block));
+    block[0]^=1; CHECK(!wr(&fd,DATA+3,block) && !fl(&fd));
+    CHECK(run(argv[1],image,partial)==3);
+    snprintf(path,sizeof(path),"%s/active/sparse",partial);
+    CHECK(same(path,wanted,sizeof(wanted)) && !unlink(path));
+    snprintf(path,sizeof(path),"%s/active/clip",partial); CHECK(access(path,F_OK)!=0);
+    snprintf(path,sizeof(path),"%s/active",partial); CHECK(!rmdir(path));
+    snprintf(path,sizeof(path),"%s/manifest.jsonl",partial);
+    CHECK(contains(path,"\"missing_units\":1") &&
+          contains(path,"\"offset\":100,\"size\":50,\"path\":\"partial/"));
+    manifest=fopen(path,"r"); CHECK(manifest);
+    memset(fragment,0,sizeof(fragment)); unsigned fragments=0;
+    while(fgets(line,sizeof(line),manifest)) {
+        char *p=strstr(line,"\"path\":\"partial/");
+        if(!p) continue;
+        p+=8; char *end=strchr(p,'"');
+        CHECK(end && (size_t)(end-p)<sizeof(fragment));
+        memcpy(fragment,p,(size_t)(end-p)); fragment[end-p]=0; ++fragments;
+    }
+    fclose(manifest);
+    CHECK(fragments==1 && !strncmp(fragment,"partial/",8));
+    snprintf(path,sizeof(path),"%s/%s",partial,fragment);
+    CHECK(same(path,data+100,50) && !unlink(path));
+    snprintf(path,sizeof(path),"%s/partial",partial); CHECK(!rmdir(path));
+    snprintf(path,sizeof(path),"%s/manifest.jsonl",partial); CHECK(!unlink(path));
+    CHECK(!rmdir(partial) && !close(fd) && !unlink(image) && !rmdir(temp));
     puts("format20-export: PASS (complete named files, partial verified fragments, source immutability)");
     return 0;
 }
