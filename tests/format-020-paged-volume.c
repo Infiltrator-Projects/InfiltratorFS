@@ -465,27 +465,27 @@ int main(void)
      * volume with enough contiguous free space. Verify cold payloads,
      * physical offsets, retained clones and the actual ten-percent gap. */
     memset(m.disk,0,bytes); cold(&m);
-    const size_t half=4u*INFS20_PAGE_BYTES,tail=5u*INFS20_PAGE_BYTES;
-    uint8_t *fragment=malloc(half+tail),*fragment_out=malloc(half+tail);
+    const size_t half=4u*INFS20_PAGE_BYTES,fragment_tail=5u*INFS20_PAGE_BYTES;
+    uint8_t *fragment=malloc(half+fragment_tail),*fragment_out=malloc(half+fragment_tail);
     CHECK(fragment && fragment_out);
-    for(size_t j=0;j<half+tail;++j)fragment[j]=(uint8_t)(j*13u+j/4096u);
+    for(size_t j=0;j<half+fragment_tail;++j)fragment[j]=(uint8_t)(j*13u+j/4096u);
     tx(id,6100); CHECK(!infs20_paged_volume_create(&l,&io,id)); cold(&m);
     tx(id,6101); CHECK(!infs20_paged_volume_write(&l,&io,id,"frag",fragment,half)); cold(&m);
     tx(id,6102); CHECK(!infs20_paged_volume_write(&l,&io,id,"blocker",fragment,half)); cold(&m);
-    tx(id,6103); CHECK(!infs20_paged_volume_write_range(&l,&io,id,"frag",half,fragment+half,tail)); cold(&m);
+    tx(id,6103); CHECK(!infs20_paged_volume_write_range(&l,&io,id,"frag",half,fragment+half,fragment_tail)); cold(&m);
     CHECK(!infs20_paged_volume_map(&l,&io,0,"frag",0,ext,16,&ext_count) &&
           ext_count==2 && ext[0].physical_offset+ext[0].length!=ext[1].physical_offset);
     tx(id,6104); CHECK(!infs20_paged_volume_clone(&l,&io,id,"frag","alias")); cold(&m);
     tx(id,6105); CHECK(!infs20_paged_volume_snapshot(&l,&io,id,61)); cold(&m);
     tx(id,6106); CHECK(!infs20_paged_volume_defragment(&l,&io,id,"frag",10,&moved,&growth)); cold(&m);
-    CHECK(moved==half+tail && growth==1);
+    CHECK(moved==half+fragment_tail && growth==1);
     CHECK(!infs20_paged_volume_map(&l,&io,0,"frag",0,ext,16,&ext_count) &&
-          ext_count==1 && ext[0].logical_offset==0 && ext[0].length==half+tail &&
-          !memcmp(m.disk+ext[0].physical_offset,fragment,half+tail));
+          ext_count==1 && ext[0].logical_offset==0 && ext[0].length==half+fragment_tail &&
+          !memcmp(m.disk+ext[0].physical_offset,fragment,half+fragment_tail));
     const uint64_t gap_end=ext[0].physical_offset+ext[0].length+
         growth*INFS20_PAGE_BYTES;
-    CHECK(!infs20_paged_volume_read(&l,&io,61,"alias",fragment_out,half+tail,&n) &&
-          n==half+tail && !memcmp(fragment_out,fragment,n));
+    CHECK(!infs20_paged_volume_read(&l,&io,61,"alias",fragment_out,half+fragment_tail,&n) &&
+          n==half+fragment_tail && !memcmp(fragment_out,fragment,n));
     tx(id,6107); CHECK(!infs20_paged_volume_write(&l,&io,id,"next",fragment,1)); cold(&m);
     CHECK(!infs20_paged_volume_map(&l,&io,0,"next",0,ext,16,&ext_count) &&
           ext_count==1 && ext[0].physical_offset>=gap_end);
