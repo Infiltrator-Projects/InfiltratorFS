@@ -109,7 +109,7 @@ infs_status infs20_page_decode(const uint8_t *page, size_t page_size,
     if (!page || !expected_member || !out ||
         bytes_zero(expected_member, INFS20_ID_BYTES) ||
         expected_block > INFS20_MAX_BLOCK || expected_block >= member_blocks ||
-        member_blocks - 1u > INFS20_MAX_BLOCK)
+        member_blocks > INFS20_MAX_MEMBER_BLOCKS)
         return INFS_STATUS_INVALID_ARGUMENT;
     if (page_size != INFS20_PAGE_BYTES)
         return INFS_STATUS_CORRUPT;

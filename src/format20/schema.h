@@ -21,7 +21,10 @@
 #define INFS20_PROBE_SCHEMA 1u
 #define INFS20_LANE_COUNT 3u
 #define INFS20_RECORD_HEADER_BYTES 8u
-#define INFS20_MAX_BLOCK (UINT64_MAX / UINT64_C(4096))
+/* A member's complete capacity, not merely its final byte address, must
+ * be representable by the existing unsigned 64-bit storage byte-count API. */
+#define INFS20_MAX_MEMBER_BLOCKS (UINT64_MAX / UINT64_C(4096))
+#define INFS20_MAX_BLOCK (INFS20_MAX_MEMBER_BLOCKS - UINT64_C(1))
 
 enum infs20_page_offset {
     INFS20_OFF_MAGIC = 0,

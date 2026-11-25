@@ -158,7 +158,10 @@ static int check_page(void)
     id.block = INFS20_MAX_BLOCK;
     CHECK(infs20_page_encode(copy, sizeof(copy), &id, abc, sizeof(abc)) == 0);
     CHECK(infs20_page_decode(copy, sizeof(copy), id.member_id, id.block,
-                             id.block + 1, &decoded) == 0);
+                             INFS20_MAX_MEMBER_BLOCKS, &decoded) == 0);
+    CHECK(infs20_page_decode(copy, sizeof(copy), id.member_id, id.block,
+                             INFS20_MAX_MEMBER_BLOCKS + 1, &decoded) ==
+          INFS_STATUS_INVALID_ARGUMENT);
     return 0;
 }
 
