@@ -74,7 +74,8 @@ infs_status infs20_select(const struct infs20_io *io, size_t budget,
                           struct infs20_authority *out);
 /* Dependency writer belongs to caller. It must reserve fresh pages and
  * retain current dependencies. This function flushes, verifies, then
- * publishes the other bank; after any error caller must cold-select before
+ * verifies every required metadata lane and publishes the other bank;
+ * after any error caller must cold-select before
  * mutation. Acknowledgement requires all three commit copies durable. */
 infs_status infs20_publish(const struct infs20_io *io,
                            const struct infs20_authority *previous,

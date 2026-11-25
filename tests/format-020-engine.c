@@ -91,6 +91,9 @@ static int run(void)
     uint8_t id1[16]={90}, id2[16]={91};
     CHECK(infs20_select(&io,100,&a)==INFS_STATUS_NOT_FOUND);
     CHECK(!build_roots(&io,&first,1,6));
+    d->cache[0][0]=1;
+    CHECK(infs20_publish(&io,NULL,&first,id1,100,&a)==INFS_STATUS_BUSY);
+    d->cache[0][0]=0;
     CHECK(!infs20_publish(&io,NULL,&first,id1,100,&a));
     CHECK(a.sequence==1 && a.lane_mask==7 && a.bank==0);
     cold(d);
@@ -98,6 +101,12 @@ static int run(void)
     CHECK(!memcmp(a.digest,b.digest,32));
     CHECK(infs20_select(&io,0,&b)==INFS_STATUS_BUSY);
     *baseline=*d;
+    CHECK(!build_roots(&io,&next,2,30));
+    memcpy(next.previous_digest,a.digest,32);
+    memset(d->cache[next.roots[0].blocks[1]],0,4096);
+    CHECK(infs20_publish(&io,&a,&next,id2,100,&b)==INFS_STATUS_CORRUPT);
+    cold(d);
+    CHECK(!infs20_select(&io,100,&b) && b.sequence==1);
     /* Every interruption of dependency flush, commit write or commit flush,
      * with distinct before/after durability and torn-write cases. */
     for(unsigned mode=0;mode<3;++mode) for(unsigned cut=1;cut<=7;++cut) {

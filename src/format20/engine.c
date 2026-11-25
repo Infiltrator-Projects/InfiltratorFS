@@ -144,12 +144,13 @@ static int slot_block(const struct infs20_io *io, uint64_t block)
 }
 static infs_status read_ref(const struct infs20_io *io, const struct infs20_ref *r,
                             uint64_t seq, size_t *budget, uint8_t *page,
-                            struct infs20_decoded_page *d)
+                            struct infs20_decoded_page *d, int required_lane)
 {
     if (!ref_valid(r, io->blocks)) return INFS_STATUS_CORRUPT;
     for (unsigned i = 0; i < INFS20_LANE_COUNT; ++i)
         if (slot_block(io, r->blocks[i])) return INFS_STATUS_CORRUPT;
     for (unsigned i = 0; i < INFS20_LANE_COUNT; ++i) {
+        if (required_lane >= 0 && i != (unsigned)required_lane) continue;
         if (!*budget) return INFS_STATUS_BUSY;
         --*budget;
         if (io->read(io->context, r->blocks[i], page)) continue;
@@ -170,11 +171,11 @@ static infs_status read_ref(const struct infs20_io *io, const struct infs20_ref 
 static infs_status verify_node(const struct infs20_io *io, const struct infs20_ref *r,
                                uint64_t seq, int expected_level,
                                const uint8_t *lower, const uint8_t *upper,
-                               size_t *budget)
+                               size_t *budget, int required_lane)
 {
     uint8_t page[INFS20_PAGE_BYTES];
     struct infs20_decoded_page d;
-    infs_status st = read_ref(io,r,seq,budget,page,&d);
+    infs_status st = read_ref(io,r,seq,budget,page,&d,required_lane);
     if (st) return st;
     const uint8_t *p = page + INFS20_OFF_PAYLOAD;
     size_t len = d.payload_size;
@@ -206,7 +207,7 @@ static infs_status verify_node(const struct infs20_io *io, const struct infs20_r
         if (ref_decode(p+pos+18, io->blocks, &child)) return INFS_STATUS_CORRUPT;
         size_t next = pos+18+INFS20_REF_BYTES;
         st = verify_node(io,&child,seq,(int)level-1,p+pos,
-                         i+1<count ? p+next : upper,budget);
+                         i+1<count ? p+next : upper,budget,required_lane);
         if (st) return st;
         pos = next;
     }
@@ -218,16 +219,20 @@ infs_status infs20_verify_tree(const struct infs20_io *io,
 {
     if (!io_valid(io) || !root || !sequence || !budget)
         return INFS_STATUS_INVALID_ARGUMENT;
-    return verify_node(io,root,sequence,-1,NULL,NULL,budget);
+    return verify_node(io,root,sequence,-1,NULL,NULL,budget,-1);
 }
 static infs_status verify_roots(const struct infs20_io *io,
                                 const struct infs20_commit *c, uint64_t seq,
-                                size_t budget)
+                                size_t budget, int all_lanes)
 {
-    for (unsigned i=0; i<INFS20_ROOTS; ++i) {
-        infs_status st = infs20_verify_tree(io,&c->roots[i],seq,&budget);
-        if (st) return st;
-    }
+    /* Recovery can mix surviving copies. Publication must independently
+     * traverse each lane, not infer full protection from one valid copy. */
+    for (unsigned lane=0; lane<(all_lanes ? INFS20_LANE_COUNT : 1u); ++lane)
+        for (unsigned i=0; i<INFS20_ROOTS; ++i) {
+            infs_status st = verify_node(io,&c->roots[i],seq,-1,NULL,NULL,
+                                         &budget,all_lanes ? (int)lane : -1);
+            if (st) return st;
+        }
     return INFS_STATUS_OK;
 }
 infs_status infs20_select(const struct infs20_io *io, size_t budget,
@@ -277,7 +282,7 @@ infs_status infs20_select(const struct infs20_io *io, size_t budget,
         if (seen[i].sequence==best.commit.previous_sequence &&
             memcmp(seen[i].digest,best.commit.previous_digest,32))
             return INFS_STATUS_CORRUPT;
-    infs_status st=verify_roots(io,&best.commit,best.sequence,budget);
+    infs_status st=verify_roots(io,&best.commit,best.sequence,budget,0);
     if (st) return st;
     *out=best;
     return INFS_STATUS_OK;
@@ -302,8 +307,16 @@ infs_status infs20_publish(const struct infs20_io *io,
         if (next->previous_sequence!=current.sequence ||
             memcmp(next->previous_digest,current.digest,32) ||
             !memcmp(page_id,current.page_id,16)) return INFS_STATUS_INVALID_ARGUMENT;
-    } else if (st!=INFS_STATUS_NOT_FOUND) {
-        return st ? st : INFS_STATUS_BUSY;
+    } else {
+        if (st!=INFS_STATUS_NOT_FOUND) return st ? st : INFS_STATUS_BUSY;
+        /* Genesis is not a destructive format. All authority slots must
+         * be demonstrably blank, rather than merely unrecognised. */
+        for (unsigned i=0; i<INFS20_COMMIT_SLOTS; ++i) {
+            uint8_t blank[INFS20_PAGE_BYTES];
+            st=io->read(io->context,io->slots[i/3][i%3],blank);
+            if (st) return st;
+            if (nonzero(blank,sizeof(blank))) return INFS_STATUS_BUSY;
+        }
     }
     uint64_t seq=previous?current.sequence+1:1;
     unsigned bank=previous?1u-current.bank:0;
@@ -315,7 +328,7 @@ infs_status infs20_publish(const struct infs20_io *io,
      * cannot establish those invariants without the future allocator. */
     st=io->flush(io->context);
     if (st) return st;
-    st=verify_roots(io,next,seq,budget);
+    st=verify_roots(io,next,seq,budget,1);
     if (st) return st;
     struct infs20_authority published={0};
     published.commit=*next; published.sequence=seq; published.bank=(uint8_t)bank;
