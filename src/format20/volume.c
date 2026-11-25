@@ -197,8 +197,11 @@ static infs_status decode(void *opaque,const struct infs20_record_view *r)
     if(r->key[0]=='N' || r->key[0]=='E')
         return infs20_model_decode_record(&v->graph,r);
     if(r->key[0]=='M') {
-        if(v->header || r->key_size!=1 || r->value_size!=9 || r->value[0]!=1)
+        if(v->header || r->key_size!=1 || r->value_size!=9)
             return INFS_STATUS_CORRUPT;
+        /* Old append-only media cannot prove former relocation ranges.
+         * Refuse the obsolete profile rather than infer safe free space. */
+        if(r->value[0]!=2) return INFS_STATUS_NOT_SUPPORTED;
         v->header=1; v->frontier=infs_load_le64(r->value+1);
     } else if(r->key[0]=='Q') {
         /* Single ordered range ledger; independent of deleted object IDs. */
@@ -309,7 +312,7 @@ static infs_status commit(const struct infs20_store_layout *l,
     struct infs20_store_record r[MAX];
     memset(e,0,sizeof(e));
     size_t n=0;
-    e[n].key[0]='M'; e[n].value[0]=1; infs_store_le64(e[n].value+1,v->frontier);
+    e[n].key[0]='M'; e[n].value[0]=2; infs_store_le64(e[n].value+1,v->frontier);
     r[n]=(struct infs20_store_record){e[n].key,e[n].value,1,9}; ++n;
     if(v->quarantine_count) {
         e[n].key[0]='Q'; e[n].value[0]=1;
@@ -433,7 +436,7 @@ static infs_status add_file(struct volume *v,const uint8_t root[16],
 /* Fork the immutable active root. Temporarily pin the old root while copying
  * mappings, then drop only that temporary pin. Snapshots/retired roots remain
  * unchanged. Drain an unpinned old root's outgoing edges in this bounded
- * model; retain zero-reference nodes and never release their physical ranges. */
+ * model; collection transfers zero-reference physical owners into quarantine. */
 static infs_status fork_root(const struct infs20_store_layout *l,struct volume *v,
     const uint8_t tx[16],const char *omit,uint8_t fresh[16],uint64_t *ordinal)
 {

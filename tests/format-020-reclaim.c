@@ -82,6 +82,14 @@ int main(void)
     CHECK(!m.ops && same(&l,&io,0,"b",b));
     tx(id,11); CHECK(!infs20_paged_volume_collect(&l,&io,id)); cold(&m);
     memcpy(base,m.disk,disk_bytes);
+    /* Erase one bootstrap lane, retaining a readable authority. Reuse is
+     * forbidden without a fully protected successor, even if Q is old. */
+    memset(m.disk,0,INFS20_STORE_LANE_BLOCKS*INFS20_PAGE_BYTES); cold(&m);
+    CHECK(same(&l,&io,0,"b",b));
+    tx(id,50);
+    CHECK(infs20_paged_volume_write(&l,&io,id,"c",b,BYTES)==INFS_STATUS_BUSY);
+    CHECK(!m.ops);
+    memcpy(m.disk,base,disk_bytes); cold(&m);
     tx(id,12); CHECK(!infs20_paged_volume_write(&l,&io,id,"c",b,BYTES));
     unsigned cuts=m.ops; cold(&m);
     CHECK(same(&l,&io,0,"b",b) && same(&l,&io,0,"c",b));
