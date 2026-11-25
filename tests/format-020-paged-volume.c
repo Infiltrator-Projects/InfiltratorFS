@@ -420,6 +420,11 @@ int main(void)
     tx(id,6502); CHECK(!infs20_paged_volume_clone(&l,&io,id,"dense","dense-copy")); cold(&m);
     tx(id,6503); CHECK(!infs20_paged_volume_snapshot(&l,&io,id,65)); cold(&m);
     tx(id,6504); CHECK(!infs20_paged_volume_relocate(&l,&io,id,"dense")); cold(&m);
+    /* The four old adjacent allocations share one retirement barrier and
+     * must be represented by one quarantine interval, not four entries. */
+    uint8_t qrecord[1+24*32]; size_t qsize=0;
+    CHECK(!infs20_paged_get(&l,&io,(const uint8_t *)"Q",1,
+          qrecord,sizeof(qrecord),&qsize) && qsize==25 && qrecord[0]==1);
     CHECK(!infs20_paged_volume_read(&l,&io,65,"dense-copy",dense_out,dense_size,&n) &&
           n==dense_size && !memcmp(dense,dense_out,n));
     free(dense); free(dense_out);

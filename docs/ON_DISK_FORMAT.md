@@ -748,3 +748,6 @@ The experimental F record advances to version 3: version byte 3, LE64 logical by
 
 ### Multi-allocation dense preparation
 Paged whole-file and range writes split input into independently verified allocation runs of at most 16 blocks, with fragmentation fallback inside each run and one atomic publication for all runs. The fixed-bank test oracle retains its original bound. Paged dense preparation is still bounded by 16 slices and the ownership graph; the production extent and allocation indexes remain required. No wire-format change.
+
+### Ordered physical exclusions and quarantine coalescing
+Allocation derives one ordered exclusion view from all bootstrap lanes, arenas, current physical owners and unretired quarantine intervals. First-fit append and wrap each traverse that view once rather than repeatedly scanning all owners. Quarantine insertion coalesces adjacent ranges only when their retirement sequence matches; overlapping input is refused. The current ledger representation and bounded model remain unchanged. The view is rebuilt per reservation; persistent free-range indexing remains an open production gate.

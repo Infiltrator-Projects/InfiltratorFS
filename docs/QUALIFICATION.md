@@ -661,3 +661,6 @@ The paged-volume test now exercises a 5 GiB sparse logical mapping with only two
 
 ### Dense multi-allocation preparation (execution pending)
 The paged-volume test now creates a dense 192 KiB-plus file in one transaction, checks full and cross-allocation reads, clones it, retains a snapshot and relocates the shared allocations. The fixed-bank oracle retains its previous bound. No pass is asserted before exact-source execution.
+
+### Ordered allocation exclusions (execution pending)
+Existing fragmented, near-full, reuse, and interruption tests cover the changed allocator search. Dense relocation now asserts one quarantine interval for four contiguous allocations retired together. No exact-source pass is asserted before CI.

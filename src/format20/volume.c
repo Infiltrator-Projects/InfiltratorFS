@@ -453,40 +453,72 @@ static infs_status quarantine_range(struct volume *v,uint64_t start,uint64_t blo
     if(!v->fully_protected) return INFS_STATUS_BUSY;
     if(v->sequence==UINT64_MAX) return INFS_STATUS_OVERFLOW;
     prune_quarantine(v);
-    if(v->quarantine_count==QUARANTINE_MAX) return INFS_STATUS_NO_SPACE;
+    if(start>=v->frontier || blocks>v->frontier-start)
+        return INFS_STATUS_CORRUPT;
     size_t i=0;
     while(i<v->quarantine_count && v->quarantine[i].start<start) ++i;
+    uint64_t retirement=v->sequence+1, end=start+blocks;
+    /* Adjacent intervals may share a ledger entry only if their fallback
+     * retirement barriers are identical. Never shorten a protection epoch. */
+    if((i && v->quarantine[i-1].start+v->quarantine[i-1].blocks>start) ||
+       (i<v->quarantine_count && end>v->quarantine[i].start))
+        return INFS_STATUS_CORRUPT;
+    int left=i && v->quarantine[i-1].sequence==retirement &&
+        v->quarantine[i-1].start+v->quarantine[i-1].blocks==start;
+    int right=i<v->quarantine_count && v->quarantine[i].sequence==retirement &&
+        end==v->quarantine[i].start;
+    if(left) {
+        struct quarantine *q=&v->quarantine[i-1];
+        q->blocks+=blocks;
+        if(right) {
+            q->blocks+=v->quarantine[i].blocks;
+            memmove(v->quarantine+i,v->quarantine+i+1,
+                    (v->quarantine_count-i-1)*sizeof(v->quarantine[0]));
+            --v->quarantine_count;
+        }
+        return INFS_STATUS_OK;
+    }
+    if(right) {
+        v->quarantine[i].start=start;
+        v->quarantine[i].blocks+=blocks;
+        return INFS_STATUS_OK;
+    }
+    if(v->quarantine_count==QUARANTINE_MAX) return INFS_STATUS_NO_SPACE;
     memmove(v->quarantine+i+1,v->quarantine+i,
             (v->quarantine_count-i)*sizeof(v->quarantine[0]));
-    v->quarantine[i]=(struct quarantine){start,blocks,v->sequence+1};
+    v->quarantine[i]=(struct quarantine){start,blocks,retirement};
     ++v->quarantine_count;
     return INFS_STATUS_OK;
 }
-static void skip_range(uint64_t at,size_t blocks,uint64_t start,uint64_t count,
-                       uint64_t *next)
+/* Build one ordered physical exclusion view for both append and wrap.
+ * The authoritative records remain N/Q and the arena geometry; this is
+ * a rebuildable search view, not a second persistent allocation ledger. */
+struct blocked_range { uint64_t start,end; };
+static int range_order(const void *a,const void *b)
 {
-    if(overlaps(at,blocks,start,count) && start+count>*next) *next=start+count;
+    const struct blocked_range *x=a,*y=b;
+    return (x->start>y->start)-(x->start<y->start);
 }
-static infs_status find_run(const struct infs20_store_layout *l,
-    const struct infs20_paged_layout *paged,const struct volume *v,
-    uint64_t at,size_t blocks,uint64_t *block)
+static void add_blocked(struct blocked_range *ranges,size_t *count,
+    uint64_t start,uint64_t blocks)
 {
-    for(;;) {
-        if(at>=l->member_blocks || blocks>l->member_blocks-at)
-            return INFS_STATUS_NO_SPACE;
-        uint64_t next=at;
-        for(unsigned lane=0;lane<INFS20_LANE_COUNT;++lane) {
-            skip_range(at,blocks,l->lane_start[lane],INFS20_STORE_LANE_BLOCKS,&next);
-            if(paged) skip_range(at,blocks,paged->arena_start[lane],
-                                 paged->arena_blocks[lane],&next);
+    if(blocks) ranges[(*count)++]=(struct blocked_range){start,start+blocks};
+}
+static infs_status find_run(const struct blocked_range *ranges,size_t count,
+    uint64_t capacity,uint64_t at,size_t blocks,uint64_t *block)
+{
+    for(size_t i=0;i<count;++i) {
+        const struct blocked_range *r=&ranges[i];
+        if(r->end<=at) continue;
+        if(r->start>=at && blocks<=r->start-at) {
+            *block=at; return INFS_STATUS_OK;
         }
-        for(size_t i=0;i<v->graph.node_count;++i)
-            skip_range(at,blocks,v->graph.nodes[i].start,v->graph.nodes[i].blocks,&next);
-        for(size_t i=0;i<v->quarantine_count;++i)
-            skip_range(at,blocks,v->quarantine[i].start,v->quarantine[i].blocks,&next);
-        if(next==at) { *block=at; return INFS_STATUS_OK; }
-        at=next;
+        /* Sorted start positions permit a single forward pass, even
+         * across overlapping exclusions or adjacent protected ranges. */
+        at=r->end;
     }
+    if(at>=capacity || blocks>capacity-at) return INFS_STATUS_NO_SPACE;
+    *block=at; return INFS_STATUS_OK;
 }
 static infs_status reserve(const struct infs20_store_layout *l,
     const struct infs20_paged_layout *paged,struct volume *v,size_t blocks,uint64_t *block)
@@ -494,10 +526,22 @@ static infs_status reserve(const struct infs20_store_layout *l,
     if(!blocks || blocks>INFS20_VOLUME_UNITS) return INFS_STATUS_INVALID_ARGUMENT;
     if(!v->fully_protected) return INFS_STATUS_BUSY;
     prune_quarantine(v);
-    /* Preserve append locality; on exhaustion exclude every current owner
-     * and unretired range. The bounded scan is not a production free index. */
-    infs_status st=find_run(l,paged,v,v->frontier,blocks,block);
-    if(st==INFS_STATUS_NO_SPACE) st=find_run(l,paged,v,0,blocks,block);
+    struct blocked_range ranges[2*INFS20_LANE_COUNT+INFS20_MODEL_NODES+QUARANTINE_MAX];
+    size_t count=0;
+    for(unsigned lane=0;lane<INFS20_LANE_COUNT;++lane) {
+        add_blocked(ranges,&count,l->lane_start[lane],INFS20_STORE_LANE_BLOCKS);
+        if(paged) add_blocked(ranges,&count,paged->arena_start[lane],
+                             paged->arena_blocks[lane]);
+    }
+    for(size_t i=0;i<v->graph.node_count;++i)
+        add_blocked(ranges,&count,v->graph.nodes[i].start,v->graph.nodes[i].blocks);
+    for(size_t i=0;i<v->quarantine_count;++i)
+        add_blocked(ranges,&count,v->quarantine[i].start,v->quarantine[i].blocks);
+    qsort(ranges,count,sizeof(ranges[0]),range_order);
+    /* Preserve append locality. Reuse follows only the same committed
+     * ownership and fallback exclusions, with no capacity-sized bitmap. */
+    infs_status st=find_run(ranges,count,l->member_blocks,v->frontier,blocks,block);
+    if(st==INFS_STATUS_NO_SPACE) st=find_run(ranges,count,l->member_blocks,0,blocks,block);
     if(!st && *block+blocks>v->frontier) v->frontier=*block+blocks;
     return st;
 }

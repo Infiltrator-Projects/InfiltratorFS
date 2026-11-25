@@ -264,3 +264,6 @@ The detailed S0–S7 sequence in ON_DISK_FORMAT.md section 20.18 supersedes any 
 
 ### Dense multi-allocation preparation
 - [ ] Paged whole-file and range writes now span multiple bounded allocation runs in a single transaction, rather than refusing all dense files above 64 KiB. Regression checks a 192 KiB-plus file, cross-allocation reads, clone/snapshot and relocation. Exact-source execution pending; general persistent extent/ownership scaling remains open.
+
+### Allocation search and retirement coalescing
+- [ ] Ordered exclusion view replaces repeated unsorted owner scans; adjacent same-generation retirement ranges coalesce without shortening fallback protection. Dense relocation regression verifies four retired allocations collapse into one ledger interval. Exact-source execution pending. Persistent scalable free-space and GC indexes remain open.
