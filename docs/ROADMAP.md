@@ -170,3 +170,7 @@ All items below are **unchecked proposed 0.20 gates**. Existing 0.19 checkmarks 
 
 ### Revision 4 — dependency-ordered engineering gates
 The detailed S0–S7 sequence in ON_DISK_FORMAT.md section 20.18 supersedes any implication that the earlier checklist items can be implemented in arbitrary order. Start with isolated wire schema and commit/arena modelling, then ownership/location/trees, portable single-device parity, recovery/Unformatter, native integration, optional protection profiles and final evidence. Every gate remains open. Keep existing 0.19 release and qualification intact. No formatter or media version change until corresponding contracts are frozen and qualified.
+
+### S0 implementation progress
+- [ ] Experimental envelope and probe record framing implemented in an isolated C conformance target; execution evidence pending. No production schema or feature ID registered.
+- [ ] Complete typed tree, root/commit, geometry, arena and ownership encodings and freeze after modelling/qualification. S0 remains open.

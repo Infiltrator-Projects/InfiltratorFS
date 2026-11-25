@@ -208,6 +208,14 @@ add_executable(infilfs-checksum-test tests/checksum-test.c)
 target_link_libraries(infilfs-checksum-test PRIVATE infilfs_core)
 infilfs_enable_warnings(infilfs-checksum-test)
 
+# Format 0.20 S0 is a private conformance executable, not a production reader.
+# Do not link its candidate schema into infilfs_core or install it.
+add_executable(infilfs-format-020-schema
+    tests/format-020-schema.c src/format20/schema.c)
+target_include_directories(infilfs-format-020-schema PRIVATE src)
+target_link_libraries(infilfs-format-020-schema PRIVATE infilfs_core)
+infilfs_enable_warnings(infilfs-format-020-schema)
+
 add_executable(infilfs-portable-core tests/portable-core.c)
 target_link_libraries(infilfs-portable-core PRIVATE infilfs_core)
 infilfs_enable_warnings(infilfs-portable-core)
@@ -371,6 +379,7 @@ if(UNIX)
                  ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
 add_test(NAME infilfs-checksum-known-answer COMMAND infilfs-checksum-test)
+add_test(NAME infilfs-format-020-schema COMMAND infilfs-format-020-schema)
 add_test(NAME infilfs-storage-mirror COMMAND infilfs-storage-mirror)
 add_test(NAME infilfs-storage-encrypted COMMAND infilfs-storage-encrypted)
 add_test(NAME infilfs-protected-volume COMMAND infilfs-protected-volume)

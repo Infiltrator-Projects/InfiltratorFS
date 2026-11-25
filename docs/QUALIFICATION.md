@@ -520,3 +520,6 @@ This is a planned qualification contract, not a pass record. The detailed accept
 
 ### Revision 4 — explicit candidate verification
 See ON_DISK_FORMAT.md sections 20.13–20.19 for golden envelope/record vectors, transaction and reclaim transition matrix, independent ownership tracing, recovery proof and staged acceptance. Test loss of all copies of a required proof node as a negative control: do not claim full committed reconstruction merely from valid-looking leaves. Measure actual foreign writes/discards, baseline latency percentiles and write amplification, metadata/checksum overhead and cache memory. The numerical digest/envelope overhead examples are arithmetic estimates, not empirical results. No new model, prototype or physical test is recorded as passed by this documentation revision.
+
+### Format 0.20 S0 candidate conformance (unqualified)
+The private `infilfs-format-020-schema` target registers a CTest for the experimental envelope and framing. A fixed independent SHA-256/CRC64 vector and negative cases are included. No execution or filesystem qualification is asserted by this change; consult exact-source CI or a recorded local run. Existing 0.19 evidence is unaffected.
