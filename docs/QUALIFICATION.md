@@ -645,3 +645,6 @@ The paged-volume test now adds ordered bounded listing, stale cursor refusal, re
 
 ### Exclusive namespace updates (execution pending)
 The paged-volume test additionally exercises forty aliases of one allocation without per-edit logical root allocation, 35 exact unlinks, metadata arena collection, fork on snapshot-sharing and subsequent isolated replacement. Existing actual-writer interruption matrices still apply. No pass is claimed until exact-source execution. The bounded graph and shared-scope fork are still prototype limitations.
+
+### Multi-allocation file mappings (execution pending)
+Existing interruption and foreign-format tests are retained. Paged-volume conformance additionally tests partial replacement, byte-level hole punch, sparse growth, truncate to empty, sparse write, snapshot/reflink isolation, relocation and bounds refusal; the actual image exporter tests reconstruction from independent allocation slices. No new pass is asserted until exact-source execution; production limits and physical qualification remain open.

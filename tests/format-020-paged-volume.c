@@ -311,6 +311,43 @@ int main(void)
     CHECK(!infs20_paged_volume_recovery_visit(&l,&io,scope_mapping,scope_unit,&forked));
     CHECK(forked.count==6 && same(&l,&io,0,"renamed",b) &&
           same(&l,&io,31,"origin",a) && same(&l,&io,0,"alias-39",a));
+    /* Independent allocations, byte slices and sparse gaps share one
+     * canonical map. Clone and snapshot keep the original data. */
+    memset(m.disk,0,bytes); cold(&m);
+    tx(id,4000); CHECK(!infs20_paged_volume_create(&l,&io,id)); cold(&m);
+    tx(id,4001); CHECK(!infs20_paged_volume_write(&l,&io,id,"multi",a,LENGTH)); cold(&m);
+    tx(id,4002); CHECK(!infs20_paged_volume_clone(&l,&io,id,"multi","original")); cold(&m);
+    tx(id,4003); CHECK(!infs20_paged_volume_snapshot(&l,&io,id,41)); cold(&m);
+    uint8_t expected[LENGTH],out[LENGTH+100];
+    memcpy(expected,a,LENGTH); memcpy(expected+101,b,113);
+    tx(id,4004); CHECK(!infs20_paged_volume_write_range(&l,&io,id,"multi",101,b,113)); cold(&m);
+    size_t n=99;
+    CHECK(!infs20_paged_volume_read(&l,&io,0,"multi",out,sizeof(out),&n) &&
+          n==LENGTH && !memcmp(out,expected,LENGTH));
+    CHECK(same(&l,&io,0,"original",a) && same(&l,&io,41,"multi",a));
+    tx(id,4005); CHECK(!infs20_paged_volume_punch(&l,&io,id,"multi",200,300)); cold(&m);
+    memset(expected+200,0,300);
+    CHECK(!infs20_paged_volume_read(&l,&io,0,"multi",out,sizeof(out),&n) &&
+          n==LENGTH && !memcmp(out,expected,LENGTH));
+    tx(id,4006); CHECK(!infs20_paged_volume_truncate(&l,&io,id,"multi",LENGTH+100)); cold(&m);
+    CHECK(!infs20_paged_volume_read(&l,&io,0,"multi",out,sizeof(out),&n) &&
+          n==sizeof(out) && !memcmp(out,expected,LENGTH));
+    for(size_t j=LENGTH;j<n;++j) CHECK(out[j]==0);
+    tx(id,4007); CHECK(!infs20_paged_volume_truncate(&l,&io,id,"multi",250)); cold(&m);
+    CHECK(!infs20_paged_volume_read(&l,&io,0,"multi",out,sizeof(out),&n) &&
+          n==250 && !memcmp(out,expected,n));
+    tx(id,4008); CHECK(!infs20_paged_volume_truncate(&l,&io,id,"multi",0)); cold(&m);
+    CHECK(!infs20_paged_volume_read(&l,&io,0,"multi",NULL,0,&n) && !n);
+    tx(id,4009); CHECK(!infs20_paged_volume_write_range(&l,&io,id,"multi",100,b,5)); cold(&m);
+    CHECK(!infs20_paged_volume_read(&l,&io,0,"multi",out,sizeof(out),&n) && n==105);
+    for(size_t j=0;j<100;++j) CHECK(out[j]==0);
+    CHECK(!memcmp(out+100,b,5) && same(&l,&io,0,"original",a) && same(&l,&io,41,"multi",a));
+    tx(id,4010); CHECK(!infs20_paged_volume_relocate(&l,&io,id,"multi")); cold(&m);
+    CHECK(!infs20_paged_volume_read(&l,&io,0,"multi",out,sizeof(out),&n) &&
+          n==105 && !memcmp(out+100,b,5));
+    tx(id,4011);
+    CHECK(infs20_paged_volume_write_range(&l,&io,id,"multi",UINT64_MAX,b,5)==
+          INFS_STATUS_FILE_TOO_LARGE && !m.ops);
     free(raw.p); free(baseline); free(m.pending); free(m.disk);
     printf("format20-paged-volume: PASS (%u actual typed ownership/payload interruption cases)\n",cases);
     return 0;

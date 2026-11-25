@@ -108,6 +108,24 @@ int main(int argc,char **argv)
     snprintf(path,sizeof(path),"%s/active/b",complete); CHECK(!unlink(path));
     snprintf(path,sizeof(path),"%s/active",complete); CHECK(!rmdir(path));
     snprintf(path,sizeof(path),"%s/manifest.jsonl",complete); CHECK(!unlink(path));
+    CHECK(!rmdir(complete));
+    /* Reconstruct a real sparse file from independent physical allocations. */
+    CHECK(!close(fd) && !unlink(image));
+    fd=open(image,O_RDWR|O_CREAT|O_EXCL,0600);
+    CHECK(fd>=0 && !ftruncate(fd,(off_t)BLOCKS*INFS20_PAGE_BYTES));
+    memset(tx,0,sizeof(tx)); tx[0]=11;
+    CHECK(!infs20_paged_volume_create(&l,&io,tx));
+    tx[0]=12; CHECK(!infs20_paged_volume_write(&l,&io,tx,"sparse",NULL,0));
+    tx[0]=13; CHECK(!infs20_paged_volume_write_range(&l,&io,tx,"sparse",3,data,17));
+    tx[0]=14; CHECK(!infs20_paged_volume_write_range(&l,&io,tx,"sparse",4099,data+50,11));
+    CHECK(run(argv[1],image,complete)==0);
+    uint8_t wanted[4110]={0};
+    memcpy(wanted+3,data,17); memcpy(wanted+4099,data+50,11);
+    snprintf(path,sizeof(path),"%s/active/sparse",complete);
+    CHECK(same(path,wanted,sizeof(wanted)) && !unlink(path));
+    snprintf(path,sizeof(path),"%s/active",complete); CHECK(!rmdir(path));
+    snprintf(path,sizeof(path),"%s/manifest.jsonl",complete);
+    CHECK(contains(path,"\"kind\":\"extent\"") && !unlink(path));
     CHECK(!rmdir(complete) && !close(fd) && !unlink(image) && !rmdir(temp));
     puts("format20-export: PASS (complete named files, partial verified fragments, source immutability)");
     return 0;

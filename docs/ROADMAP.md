@@ -251,3 +251,7 @@ The detailed S0–S7 sequence in ON_DISK_FORMAT.md section 20.18 supersedes any 
 ### Exclusive namespace updates
 - [ ] Reuse an exclusively active logical namespace scope across new immutable commits; exact strong-edge removal and path-copy record changes, with mandatory fork when retained pins share a scope. Forty-alias regression and retained-scope isolation registered; execution pending.
 - [ ] Replace remaining full-model admission/diff, bounded arrays and shared-scope copying with scalable persistent object/mapping-root ownership before production integration.
+
+### Multi-allocation file mapping integration
+- [ ] Ordered logical slices, sparse gaps, range writes/truncate/punch, fragmented allocation fallback, shared relocation and slice-aware recovery/export integrated with the same typed store and ownership model; exact-source execution pending.
+- [ ] Replace bounded map values and graph arrays with scalable persistent extent/namespace roots; directory, full portable semantics and production native integration remain open.

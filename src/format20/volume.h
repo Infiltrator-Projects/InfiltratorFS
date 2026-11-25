@@ -6,7 +6,7 @@
 
 /*
  * Executable single-device integration model. Disposable test media only:
- * flat ASCII names, bounded contiguous multi-block allocations, bounded metadata,
+ * flat ASCII names, bounded multi-extent files and contiguous allocation runs,
  * bounded payload reuse with fallback quarantine, no encryption or native
  * mount. Metadata arenas use explicit verified collection.
  * All calls require exclusive access. On an I/O failure the caller must
@@ -19,6 +19,14 @@
  * trees, not this fixed upper bound or a contiguous-run requirement. */
 #define INFS20_VOLUME_UNITS 16u
 #define INFS20_VOLUME_BYTES (INFS20_VOLUME_UNITS * INFS20_PAGE_BYTES)
+#define INFS20_VOLUME_EXTENTS 16u
+
+/* A slice references a stable allocation, not its current physical address.
+ * Absent logical ranges are holes. Allocation size is independently bound. */
+struct infs20_recovery_extent {
+    uint8_t allocation_id[16];
+    size_t logical_offset,length,allocation_offset,allocation_size;
+};
 
 struct infs20_recovery_mapping {
     /* Logical namespace scope ID; immutable state is selected by the
@@ -28,6 +36,10 @@ struct infs20_recovery_mapping {
     uint8_t role;
     const char *name;
     size_t size;
+    /* Borrowed ordered slices; allocation_id above is nonzero only for
+     * a file consisting of a single entire allocation. */
+    const struct infs20_recovery_extent *extents;
+    size_t extent_count;
 };
 struct infs20_recovery_unit {
     uint8_t allocation_id[16];
@@ -85,6 +97,15 @@ infs_status infs20_paged_volume_create_at(const struct infs20_paged_layout *,
     const struct infs20_store_io *,const uint8_t tx[16],uint64_t preferred_start);
 infs_status infs20_paged_volume_write(const struct infs20_paged_layout *,
     const struct infs20_store_io *,const uint8_t tx[16],const char *name,const uint8_t *data,size_t size);
+/* Atomically edit an existing file; growth leaves unmapped holes. */
+infs_status infs20_paged_volume_write_range(const struct infs20_paged_layout *,
+    const struct infs20_store_io *,const uint8_t tx[16],const char *name,
+    uint64_t offset,const uint8_t *data,size_t size);
+infs_status infs20_paged_volume_truncate(const struct infs20_paged_layout *,
+    const struct infs20_store_io *,const uint8_t tx[16],const char *name,uint64_t size);
+infs_status infs20_paged_volume_punch(const struct infs20_paged_layout *,
+    const struct infs20_store_io *,const uint8_t tx[16],const char *name,
+    uint64_t offset,uint64_t length);
 infs_status infs20_paged_volume_clone(const struct infs20_paged_layout *,
     const struct infs20_store_io *,const uint8_t tx[16],const char *source,const char *target);
 /* Ordinary indexed read verifies selected committed paths and the consumed
@@ -103,7 +124,8 @@ infs_status infs20_paged_volume_read_range(const struct infs20_paged_layout *,
 struct infs20_namespace_entry {
     const char *name;
     size_t size;
-    uint8_t allocation_id[16];
+    uint8_t allocation_id[16]; /* zero for a composite/sparse file */
+    size_t extent_count;
 };
 typedef infs_status (*infs20_namespace_fn)(void *,const struct infs20_namespace_entry *);
 infs_status infs20_paged_volume_list(const struct infs20_paged_layout *,

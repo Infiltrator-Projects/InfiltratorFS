@@ -22,17 +22,22 @@ struct source { int fd; struct stat initial; };
 struct mapping {
     uint8_t allocation[16];
     uint64_t pin;
-    size_t size;
+    size_t size,count;
     char name[INFS20_VOLUME_NAME_MAX+1];
+    struct infs20_recovery_extent ext[INFS20_VOLUME_EXTENTS];
+};
+struct allocation {
+    uint8_t id[16],data[INFS20_VOLUME_BYTES];
+    size_t size,units;
+    uint32_t good;
+    int partial_needed;
 };
 struct export {
     int dir;
     FILE *manifest;
     struct mapping *maps;
-    size_t count,capacity,units,size,complete,partial,bad;
-    uint8_t allocation[16], data[INFS20_VOLUME_BYTES];
-    uint32_t good;
-    int active;
+    size_t count,capacity,complete,partial,bad,allocation_count;
+    struct allocation allocations[INFS20_MODEL_NODES];
 };
 static infs_status read_at(void *opaque,uint64_t offset,uint8_t *p,size_t n)
 {
@@ -97,15 +102,20 @@ static int file_write(int dir,const char *name,const uint8_t *data,size_t n)
     if(failed) { (void)unlinkat(dir,name,0); return -1; }
     return fsync(dir);
 }
+static struct allocation *find_allocation(struct export *e,const uint8_t id[16])
+{
+    for(size_t i=0;i<e->allocation_count;++i)
+        if(!memcmp(e->allocations[i].id,id,16)) return &e->allocations[i];
+    return NULL;
+}
 static infs_status mapping(void *opaque,const struct infs20_recovery_mapping *m)
 {
     struct export *e=opaque;
     size_t len=strlen(m->name);
-    /* Current model names are flat validated components. Recheck at the
-     * filesystem boundary; never interpret names as destination paths. */
     if(!len || len>INFS20_VOLUME_NAME_MAX || strchr(m->name,'/') ||
        strchr(m->name,'\\') || !strcmp(m->name,".") || !strcmp(m->name,"..") ||
-       m->size>INFS20_VOLUME_BYTES) return INFS_STATUS_CORRUPT;
+       m->size>INFS20_VOLUME_BYTES || m->extent_count>INFS20_VOLUME_EXTENTS ||
+       (m->extent_count && !m->extents)) return INFS_STATUS_CORRUPT;
     if(e->count==e->capacity) {
         size_t cap=e->capacity?e->capacity*2:16;
         if(cap>INFS20_VOLUME_FILES*INFS20_MODEL_EDGES)
@@ -116,88 +126,134 @@ static infs_status mapping(void *opaque,const struct infs20_recovery_mapping *m)
         e->maps=next; e->capacity=cap;
     }
     struct mapping *item=e->maps+e->count++;
-    memcpy(item->allocation,m->allocation_id,16);
-    item->pin=m->pin; item->size=m->size; memcpy(item->name,m->name,len+1);
+    memset(item,0,sizeof(*item)); memcpy(item->allocation,m->allocation_id,16);
+    item->pin=m->pin; item->size=m->size; item->count=m->extent_count;
+    memcpy(item->name,m->name,len+1);
     char root[33],allocation[33]; hex(m->root_id,16,root); hex(m->allocation_id,16,allocation);
-    fprintf(e->manifest,"{\"kind\":\"mapping\",\"root\":\"%s\",\"allocation\":\"%s\",\"pin\":%" PRIu64 ",\"role\":%u,\"size\":%zu,\"name\":",
-            root,allocation,m->pin,(unsigned)m->role,m->size);
+    fprintf(e->manifest,"{\"kind\":\"mapping\",\"root\":\"%s\",\"allocation\":\"%s\",\"pin\":%" PRIu64 ",\"role\":%u,\"size\":%zu,\"extent_count\":%zu,\"name\":",
+            root,allocation,m->pin,(unsigned)m->role,m->size,m->extent_count);
     json_string(e->manifest,m->name); fputs("}\n",e->manifest);
+    size_t previous=0;
+    for(size_t i=0;i<m->extent_count;++i) {
+        const struct infs20_recovery_extent *x=&m->extents[i];
+        if(!x->length || x->logical_offset<previous || x->logical_offset>m->size ||
+           x->length>m->size-x->logical_offset || !x->allocation_size ||
+           x->allocation_size>INFS20_VOLUME_BYTES ||
+           x->allocation_offset>x->allocation_size ||
+           x->length>x->allocation_size-x->allocation_offset)
+            return INFS_STATUS_CORRUPT;
+        previous=x->logical_offset+x->length; item->ext[i]=*x;
+        struct allocation *a=find_allocation(e,x->allocation_id);
+        if(!a) {
+            if(e->allocation_count==INFS20_MODEL_NODES) return INFS_STATUS_NO_SPACE;
+            a=&e->allocations[e->allocation_count++];
+            memcpy(a->id,x->allocation_id,16); a->size=x->allocation_size;
+        } else if(a->size!=x->allocation_size) return INFS_STATUS_CORRUPT;
+        hex(x->allocation_id,16,allocation);
+        fprintf(e->manifest,"{\"kind\":\"extent\",\"pin\":%" PRIu64 ",\"allocation\":\"%s\",\"file_offset\":%zu,\"allocation_offset\":%zu,\"size\":%zu,\"name\":",
+                m->pin,allocation,x->logical_offset,x->allocation_offset,x->length);
+        json_string(e->manifest,m->name); fputs("}\n",e->manifest);
+    }
     return ferror(e->manifest)?INFS_STATUS_IO_ERROR:INFS_STATUS_OK;
 }
-static infs_status finish_allocation(struct export *e)
+static infs_status unit(void *opaque,const struct infs20_recovery_unit *u)
 {
-    if(!e->active) return INFS_STATUS_OK;
-    size_t expected=e->size?1+(e->size-1)/INFS20_PAGE_BYTES:1;
-    if(e->units!=expected || expected>INFS20_VOLUME_UNITS) return INFS_STATUS_CORRUPT;
-    uint32_t mask=(UINT32_C(1)<<expected)-1;
-    char id[33]; hex(e->allocation,16,id);
-    if(e->good==mask) {
-        for(size_t i=0;i<e->count;++i) {
-            const struct mapping *m=e->maps+i;
-            if(memcmp(m->allocation,e->allocation,16)) continue;
-            char dir[48],path[128];
-            if(m->pin) snprintf(dir,sizeof(dir),"pin-%" PRIu64,m->pin);
-            else strcpy(dir,"active");
-            int fd=subdir(e->dir,dir);
-            if(fd<0) return INFS_STATUS_IO_ERROR;
-            int result=file_write(fd,m->name,e->data,e->size);
-            if(close(fd)) result=-1;
-            if(result) return INFS_STATUS_IO_ERROR;
-            snprintf(path,sizeof(path),"%s/%s",dir,m->name);
-            fprintf(e->manifest,"{\"kind\":\"file\",\"allocation\":\"%s\",\"path\":",id);
-            json_string(e->manifest,path); fputs("}\n",e->manifest);
-            ++e->complete;
+    struct export *e=opaque;
+    struct allocation *a=find_allocation(e,u->allocation_id);
+    if(!a) return INFS_STATUS_CORRUPT;
+    size_t off=a->units*INFS20_PAGE_BYTES;
+    if(off>=a->size || a->units>=INFS20_VOLUME_UNITS) return INFS_STATUS_CORRUPT;
+    size_t n=a->size-off; if(n>INFS20_PAGE_BYTES) n=INFS20_PAGE_BYTES;
+    if(u->logical_offset!=off || u->logical_size!=n || (u->status==0)!=!!u->data)
+        return INFS_STATUS_CORRUPT;
+    if(!u->status) {
+        memcpy(a->data+off,u->data,n); a->good|=UINT32_C(1)<<a->units;
+    } else ++e->bad;
+    ++a->units;
+    char id[33]; hex(u->allocation_id,16,id);
+    fprintf(e->manifest,"{\"kind\":\"unit\",\"allocation\":\"%s\",\"offset\":%zu,\"size\":%zu,\"physical_block\":%" PRIu64 ",\"status\":%d}\n",
+            id,off,n,u->physical_block,(int)u->status);
+    return ferror(e->manifest)?INFS_STATUS_IO_ERROR:INFS_STATUS_OK;
+}
+/* Complete export preserves genuine sparse gaps, never substitutes holes
+ * for corrupt/missing mapped units. Verify all slices before creation. */
+static int slice_good(const struct allocation *a,const struct infs20_recovery_extent *x)
+{
+    size_t first=x->allocation_offset/INFS20_PAGE_BYTES;
+    size_t last=(x->allocation_offset+x->length-1)/INFS20_PAGE_BYTES;
+    for(size_t i=first;i<=last;++i) if(!(a->good&(UINT32_C(1)<<i))) return 0;
+    return 1;
+}
+static int write_sparse(struct export *e,int dir,const struct mapping *m)
+{
+    int fd=openat(dir,m->name,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
+    if(fd<0) return -1;
+    int failed=ftruncate(fd,(off_t)m->size)!=0;
+    for(size_t i=0;i<m->count && !failed;++i) {
+        const struct infs20_recovery_extent *x=&m->ext[i];
+        struct allocation *a=find_allocation(e,x->allocation_id);
+        if(!a || !slice_good(a,x)) { failed=1; break; }
+        size_t done=0;
+        while(done<x->length) {
+            ssize_t n=pwrite(fd,a->data+x->allocation_offset+done,
+                             x->length-done,(off_t)(x->logical_offset+done));
+            if(n<0 && errno==EINTR) continue;
+            if(n<=0) { failed=1; break; }
+            done+=(size_t)n;
         }
-    } else {
-        for(size_t i=0;i<e->count;++i)
-            if(!memcmp(e->maps[i].allocation,e->allocation,16)) ++e->partial;
-        int fd=subdir(e->dir,"partial");
-        if(fd<0) return INFS_STATUS_IO_ERROR;
+    }
+    if(!failed && fsync(fd)) failed=1;
+    if(close(fd)) failed=1;
+    if(failed) { (void)unlinkat(dir,m->name,0); return -1; }
+    return fsync(dir);
+}
+static infs_status finish_export(struct export *e)
+{
+    for(size_t i=0;i<e->allocation_count;++i) {
+        struct allocation *a=&e->allocations[i];
+        if(a->units!=1+(a->size-1)/INFS20_PAGE_BYTES) return INFS_STATUS_CORRUPT;
+    }
+    for(size_t i=0;i<e->count;++i) {
+        const struct mapping *m=&e->maps[i]; int complete=1;
+        for(size_t j=0;j<m->count;++j) {
+            struct allocation *a=find_allocation(e,m->ext[j].allocation_id);
+            if(!a) return INFS_STATUS_CORRUPT;
+            if(!slice_good(a,&m->ext[j])) complete=0;
+        }
+        if(!complete) {
+            ++e->partial;
+            for(size_t j=0;j<m->count;++j)
+                find_allocation(e,m->ext[j].allocation_id)->partial_needed=1;
+            continue;
+        }
+        char dir[48],path[128],id[33]; hex(m->allocation,16,id);
+        if(m->pin) snprintf(dir,sizeof(dir),"pin-%" PRIu64,m->pin);
+        else strcpy(dir,"active");
+        int fd=subdir(e->dir,dir); if(fd<0) return INFS_STATUS_IO_ERROR;
+        int result=write_sparse(e,fd,m); if(close(fd)) result=-1;
+        if(result) return INFS_STATUS_IO_ERROR;
+        snprintf(path,sizeof(path),"%s/%s",dir,m->name);
+        fprintf(e->manifest,"{\"kind\":\"file\",\"allocation\":\"%s\",\"path\":",id);
+        json_string(e->manifest,path); fputs("}\n",e->manifest); ++e->complete;
+    }
+    for(size_t i=0;i<e->allocation_count;++i) {
+        struct allocation *a=&e->allocations[i];
+        if(!a->partial_needed) continue;
+        char id[33]; hex(a->id,16,id);
+        int fd=subdir(e->dir,"partial"); if(fd<0) return INFS_STATUS_IO_ERROR;
         int result=0;
-        for(size_t i=0;i<expected;++i) {
-            if(!(e->good&(UINT32_C(1)<<i))) continue;
-            size_t off=i*INFS20_PAGE_BYTES,n=e->size>off?e->size-off:0;
+        for(size_t j=0;j<a->units;++j) {
+            if(!(a->good&(UINT32_C(1)<<j))) continue;
+            size_t off=j*INFS20_PAGE_BYTES,n=a->size-off;
             if(n>INFS20_PAGE_BYTES) n=INFS20_PAGE_BYTES;
             char name[80]; snprintf(name,sizeof(name),"%s-%zu.bin",id,off);
-            if(file_write(fd,name,e->data+off,n)) { result=-1; break; }
+            if(file_write(fd,name,a->data+off,n)) { result=-1; break; }
             fprintf(e->manifest,"{\"kind\":\"fragment\",\"allocation\":\"%s\",\"offset\":%zu,\"size\":%zu,\"path\":\"partial/%s\"}\n",
                     id,off,n,name);
         }
         if(close(fd)) result=-1;
         if(result) return INFS_STATUS_IO_ERROR;
     }
-    e->active=0;
-    return ferror(e->manifest)?INFS_STATUS_IO_ERROR:INFS_STATUS_OK;
-}
-static infs_status unit(void *opaque,const struct infs20_recovery_unit *u)
-{
-    struct export *e=opaque;
-    if(!e->active || memcmp(e->allocation,u->allocation_id,16)) {
-        infs_status st=finish_allocation(e); if(st) return st;
-        int found=0;
-        for(size_t i=0;i<e->count;++i) {
-            const struct mapping *m=e->maps+i;
-            if(memcmp(m->allocation,u->allocation_id,16)) continue;
-            if(found && e->size!=m->size) return INFS_STATUS_CORRUPT;
-            found=1; e->size=m->size;
-        }
-        if(!found) return INFS_STATUS_CORRUPT;
-        memcpy(e->allocation,u->allocation_id,16);
-        e->units=0; e->good=0; e->active=1;
-    }
-    size_t off=e->units*INFS20_PAGE_BYTES,n=e->size>off?e->size-off:0;
-    if(n>INFS20_PAGE_BYTES) n=INFS20_PAGE_BYTES;
-    if(e->units>=INFS20_VOLUME_UNITS || u->logical_offset!=off ||
-       u->logical_size!=n || (u->status==0)!=!!u->data)
-        return INFS_STATUS_CORRUPT;
-    if(!u->status) {
-        if(n) memcpy(e->data+off,u->data,n);
-        e->good|=UINT32_C(1)<<e->units;
-    } else ++e->bad;
-    ++e->units;
-    char id[33]; hex(u->allocation_id,16,id);
-    fprintf(e->manifest,"{\"kind\":\"unit\",\"allocation\":\"%s\",\"offset\":%zu,\"size\":%zu,\"physical_block\":%" PRIu64 ",\"status\":%d}\n",
-            id,off,n,u->physical_block,(int)u->status);
     return ferror(e->manifest)?INFS_STATUS_IO_ERROR:INFS_STATUS_OK;
 }
 int main(int argc,char **argv)
@@ -238,14 +294,14 @@ int main(int argc,char **argv)
             region.start,state.commit.sequence,digest);
     struct infs20_store_io io=infs20_store_region_io(&region);
     st=infs20_paged_volume_recovery_visit(&layout,&io,mapping,unit,e);
-    if(!st) st=finish_allocation(e);
+    if(!st) st=finish_export(e);
     if(!st && (!unchanged(&source) || e->complete+e->partial!=e->count ||
                 fsync(e->dir))) st=INFS_STATUS_IO_ERROR;
     if(!st) {
         fprintf(e->manifest,"{\"kind\":\"result\",\"status\":\"%s\",\"complete_files\":%zu,\"partial_files\":%zu,\"missing_units\":%zu}\n",
-                e->bad?"partial":"complete",e->complete,e->partial,e->bad);
+                e->partial?"partial":"complete",e->complete,e->partial,e->bad);
         if(!fflush(e->manifest) && !ferror(e->manifest) &&
-           !fsync(fileno(e->manifest))) result=e->bad?3:0;
+           !fsync(fileno(e->manifest))) result=e->partial?3:0;
     }
     if(fclose(e->manifest)) result=1;
     if(result==1) fputs("Export incomplete; do not interpret it as a complete recovery.\n",stderr);
