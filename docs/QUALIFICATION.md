@@ -670,3 +670,6 @@ A 105-file paged-volume regression crosses the former 32-node, 96-edge and 64-ma
 
 ### Indexed quarantine records (execution pending)
 The 105-file scale test additionally unlinks alternating files, collects 40 disjoint ranges under one retirement generation, reads their authenticated Q v2 keys and confirms the retained adjacent files remain intact. This exceeds the former 32-range retirement bound. No execution pass is asserted yet.
+
+### Frozen-root reclamation (execution pending)
+The arena GC regression now checks P20A v3 frozen-root frontier/cursor/eligible-slot state and the same cold interruption and full-arena reuse cases. No fixed free-run array remains. Exact-source execution is required before claiming qualification.

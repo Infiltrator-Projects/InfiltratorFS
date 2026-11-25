@@ -74,8 +74,8 @@ int main(void)
     memcpy(base,m.disk,bytes);
     tx(id,5); CHECK(!infs20_paged_collect(&l,&io,id,&s));
     unsigned cuts=m.ops; CHECK(!m.arena_writes);
-    cold(&m); CHECK(s.commit.sequence==4 && s.free_count==1 &&
-        s.free_runs[0].start==0 && s.free_runs[0].blocks==1 &&
+    cold(&m); CHECK(s.commit.sequence==4 && s.free_slots==1 &&
+        s.reclaim_cursor==0 && s.reclaim_limit==2 &&
         s.root.blocks[0]==21 && expect(&l,&io,2));
     memcpy(retired,m.disk,bytes);
     unsigned cases=0;
@@ -96,7 +96,7 @@ int main(void)
     memcpy(m.disk,retired,bytes); cold(&m);
     tx(id,900); CHECK(!put(&l,&io,id,3,&s));
     cuts=m.ops; cold(&m);
-    CHECK(s.used[0]==2 && !s.free_count && s.root.blocks[0]==20 && expect(&l,&io,3));
+    CHECK(s.used[0]==2 && !s.free_slots && s.root.blocks[0]==20 && expect(&l,&io,3));
     for(unsigned mode=0;mode<3;++mode) for(unsigned cut=1;cut<=cuts;++cut) {
         memcpy(m.disk,retired,bytes); cold(&m); m.mode=mode; m.fail=cut;
         tx(id,1000+mode*100+cut);
@@ -113,7 +113,7 @@ int main(void)
         tx(id,2000+i*2); CHECK(!put(&l,&io,id,(uint8_t)(i+3),&s)); cold(&m);
         CHECK(expect(&l,&io,(uint8_t)(i+3)) && s.used[0]==2);
         tx(id,2001+i*2); CHECK(!infs20_paged_collect(&l,&io,id,&s)); cold(&m);
-        CHECK(s.free_count==1);
+        CHECK(s.free_slots==1);
     }
     /* One missing tree copy is still readable, but does not meet the
      * protection contract required to retire a preceding bank. */

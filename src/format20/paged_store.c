@@ -14,8 +14,7 @@
  * root into the alternate bank before its unreachable pages become free.
  * Fresh transaction IDs distinguish aborted private page incarnations.
  */
-enum { ROOT_OFFSET=80, FREE_OFFSET=168,
-       DESCRIPTOR_BYTES=FREE_OFFSET+16*INFS20_ARENA_FREE_MAX,
+enum { ROOT_OFFSET=80, RECLAIM_OFFSET=160, DESCRIPTOR_BYTES=272,
        PAGES_PER_CHANGE=3*(2*(INFS20_TREE_MAX_LEVEL+1)+1) };
 static const uint8_t descriptor_key[]={'P','2','0','A'};
 struct staged {
@@ -30,6 +29,8 @@ struct mutation {
     uint64_t serial;
     struct staged *pages;
     size_t count,capacity,limit;
+    uint64_t *reclaim_slots;
+    size_t reclaim_count,reclaim_index;
     infs20_store_prepare payload_prepare;
     void *payload_context;
 };
@@ -80,56 +81,68 @@ static int empty_root(const struct infs20_tree_ref *r)
     return zero(r->id,16) && zero(r->digest,32) && !r->sequence &&
            !r->blocks[0] && !r->blocks[1] && !r->blocks[2];
 }
-static int free_slot(const struct infs20_paged_state *s,uint64_t slot)
+/* Geometry validation is independent of allocator reachability. Ordinary
+ * reads consume authenticated references, while writers prove the frozen
+ * reachability root and current-root disjointness before reservation. */
+static int ref_valid(const struct infs20_paged_layout *l,
+    const struct infs20_tree_ref *r,uint64_t limit,uint64_t sequence)
 {
-    for(size_t i=0;i<s->free_count;++i) {
-        const struct infs20_arena_run *r=&s->free_runs[i];
-        if(slot<r->start) return 0;
-        if(slot-r->start<r->blocks) return 1;
-    }
-    return 0;
+    if(empty_root(r)) return 1;
+    if(zero(r->id,16) || zero(r->digest,32) || !r->sequence || r->sequence>sequence)
+        return 0;
+    for(unsigned lane=0;lane<3;++lane)
+        if(r->blocks[lane]<l->arena_start[lane] ||
+           r->blocks[lane]-l->arena_start[lane]>=limit ||
+           r->blocks[lane]-l->arena_start[lane]!=r->blocks[0]-l->arena_start[0])
+            return 0;
+    return 1;
 }
 static int root_valid(const struct infs20_paged_layout *l,
                       const struct infs20_paged_state *s)
 {
-    if(empty_root(&s->root)) return 1;
-    if(zero(s->root.id,16) || zero(s->root.digest,32) ||
-       !s->root.sequence || s->root.sequence>s->commit.sequence) return 0;
-    for(unsigned lane=0;lane<3;++lane)
-        if(s->root.blocks[lane]<l->arena_start[lane] ||
-           s->root.blocks[lane]-l->arena_start[lane]>=s->used[lane] ||
-           s->root.blocks[lane]-l->arena_start[lane]!=
-               s->root.blocks[0]-l->arena_start[0] ||
-           free_slot(s,s->root.blocks[lane]-l->arena_start[lane]))
-            return 0;
-    return 1;
+    if(!ref_valid(l,&s->root,s->used[0],s->commit.sequence)) return 0;
+    if(!s->reclaim_epoch)
+        return empty_root(&s->reclaim_root) && !s->reclaim_limit &&
+               !s->reclaim_cursor && !s->free_slots;
+    return s->reclaim_epoch<=s->commit.sequence &&
+           s->reclaim_cursor<=s->reclaim_limit && s->reclaim_limit<=s->used[0] &&
+           s->free_slots<=s->reclaim_limit-s->reclaim_cursor &&
+           ref_valid(l,&s->reclaim_root,s->reclaim_limit,s->reclaim_epoch);
+}
+static void encode_ref(uint8_t *p,const struct infs20_tree_ref *r)
+{
+    memcpy(p,r->id,16); memcpy(p+16,r->digest,32);
+    infs_store_le64(p+48,r->sequence);
+    for(unsigned i=0;i<3;++i) infs_store_le64(p+56+8*i,r->blocks[i]);
+}
+static void decode_ref(const uint8_t *p,struct infs20_tree_ref *r)
+{
+    memcpy(r->id,p,16); memcpy(r->digest,p+16,32);
+    r->sequence=infs_load_le64(p+48);
+    for(unsigned i=0;i<3;++i) r->blocks[i]=infs_load_le64(p+56+8*i);
 }
 /* The fixed wire grammar is encoded fieldwise. No host struct padding. */
 static void encode(const struct infs20_paged_layout *l,
     const struct infs20_paged_state *s,uint8_t p[DESCRIPTOR_BYTES])
 {
     memset(p,0,DESCRIPTOR_BYTES);
-    memcpy(p,"P20A",4); infs_store_le16(p+4,2);
+    memcpy(p,"P20A",4); infs_store_le16(p+4,3);
     for(unsigned i=0;i<3;++i) {
         infs_store_le64(p+8+8*i,l->arena_start[i]);
         infs_store_le64(p+32+8*i,l->arena_blocks[i]);
         infs_store_le64(p+56+8*i,s->used[i]);
     }
-    memcpy(p+ROOT_OFFSET,s->root.id,16);
-    memcpy(p+ROOT_OFFSET+16,s->root.digest,32);
-    infs_store_le64(p+ROOT_OFFSET+48,s->root.sequence);
-    for(unsigned i=0;i<3;++i)
-        infs_store_le64(p+ROOT_OFFSET+56+8*i,s->root.blocks[i]);
-    infs_store_le16(p+160,(uint16_t)s->free_count);
-    for(size_t i=0;i<s->free_count;++i) {
-        infs_store_le64(p+FREE_OFFSET+16*i,s->free_runs[i].start);
-        infs_store_le64(p+FREE_OFFSET+16*i+8,s->free_runs[i].blocks);
-    }
+    encode_ref(p+ROOT_OFFSET,&s->root);
+    encode_ref(p+RECLAIM_OFFSET,&s->reclaim_root);
+    infs_store_le64(p+240,s->reclaim_epoch);
+    infs_store_le64(p+248,s->reclaim_limit);
+    infs_store_le64(p+256,s->reclaim_cursor);
+    infs_store_le64(p+264,s->free_slots);
 }
 static infs_status decode(const struct infs20_paged_layout *l,
     const uint8_t p[DESCRIPTOR_BYTES],struct infs20_paged_state *s)
 {
-    if(memcmp(p,"P20A",4) || infs_load_le16(p+4)!=2)
+    if(memcmp(p,"P20A",4) || infs_load_le16(p+4)!=3)
         return INFS_STATUS_NOT_SUPPORTED;
     if(!zero(p+6,2)) return INFS_STATUS_CORRUPT;
     for(unsigned i=0;i<3;++i) {
@@ -140,26 +153,12 @@ static infs_status decode(const struct infs20_paged_layout *l,
         if(s->used[i]>l->arena_blocks[i] || (i && s->used[i]!=s->used[0]))
             return INFS_STATUS_CORRUPT;
     }
-    memcpy(s->root.id,p+ROOT_OFFSET,16);
-    memcpy(s->root.digest,p+ROOT_OFFSET+16,32);
-    s->root.sequence=infs_load_le64(p+ROOT_OFFSET+48);
-    for(unsigned i=0;i<3;++i)
-        s->root.blocks[i]=infs_load_le64(p+ROOT_OFFSET+56+8*i);
-    s->free_count=infs_load_le16(p+160);
-    if(s->free_count>INFS20_ARENA_FREE_MAX || !zero(p+162,6))
-        return INFS_STATUS_CORRUPT;
-    for(size_t i=0;i<s->free_count;++i) {
-        struct infs20_arena_run *r=&s->free_runs[i];
-        r->start=infs_load_le64(p+FREE_OFFSET+16*i);
-        r->blocks=infs_load_le64(p+FREE_OFFSET+16*i+8);
-        if(!r->blocks || r->start>=s->used[0] ||
-           r->blocks>s->used[0]-r->start ||
-           (i && s->free_runs[i-1].start+s->free_runs[i-1].blocks>=r->start))
-            return INFS_STATUS_CORRUPT;
-    }
-    if(!zero(p+FREE_OFFSET+16*s->free_count,
-             DESCRIPTOR_BYTES-FREE_OFFSET-16*s->free_count))
-        return INFS_STATUS_CORRUPT;
+    decode_ref(p+ROOT_OFFSET,&s->root);
+    decode_ref(p+RECLAIM_OFFSET,&s->reclaim_root);
+    s->reclaim_epoch=infs_load_le64(p+240);
+    s->reclaim_limit=infs_load_le64(p+248);
+    s->reclaim_cursor=infs_load_le64(p+256);
+    s->free_slots=infs_load_le64(p+264);
     return root_valid(l,s)?INFS_STATUS_OK:INFS_STATUS_CORRUPT;
 }
 static infs_status descriptor(const struct infs20_store_layout *b,
@@ -170,22 +169,22 @@ static infs_status descriptor(const struct infs20_store_layout *b,
     if(st) return st;
     /* An existing different model is not an empty paged store. */
     if(s->records!=1) return INFS_STATUS_NOT_SUPPORTED;
-    size_t size=0;
+    size_t size=0; uint8_t raw[INFS20_PAGE_BYTES];
     st=infs20_store_lookup(b,io,descriptor_key,sizeof(descriptor_key),
-                           p,DESCRIPTOR_BYTES,&size);
+                           raw,sizeof(raw),&size);
     if(st==INFS_STATUS_NOT_FOUND) return INFS_STATUS_NOT_SUPPORTED;
     if(st) return st;
-    if(size==160 && !memcmp(p,"P20A",4) && infs_load_le16(p+4)==1)
+    if(size>=6 && !memcmp(raw,"P20A",4) && infs_load_le16(raw+4)!=3)
         return INFS_STATUS_NOT_SUPPORTED;
-    return size==DESCRIPTOR_BYTES?INFS_STATUS_OK:INFS_STATUS_CORRUPT;
+    if(size!=DESCRIPTOR_BYTES) return INFS_STATUS_CORRUPT;
+    memcpy(p,raw,size); return INFS_STATUS_OK;
 }
 static int permitted(const struct infs20_paged_layout *l,
     const struct infs20_paged_state *s,uint64_t block)
 {
     for(unsigned lane=0;lane<3;++lane)
         if(block>=l->arena_start[lane] &&
-           block-l->arena_start[lane]<s->used[lane] &&
-           !free_slot(s,block-l->arena_start[lane])) return 1;
+           block-l->arena_start[lane]<s->used[lane]) return 1;
     return 0;
 }
 static infs_status read_tree(void *o,uint64_t b,uint8_t *p)
@@ -218,7 +217,7 @@ static infs_status verify_ref_copies(const struct infs20_paged_layout *l,
     for(unsigned lane=0;lane<INFS20_LANE_COUNT;++lane) {
         if(ref->blocks[lane]<l->arena_start[lane]) return INFS_STATUS_CORRUPT;
         uint64_t n=ref->blocks[lane]-l->arena_start[lane];
-        if(n>=s->used[lane] || free_slot(s,n) || (lane && n!=slot))
+        if(n>=s->used[lane] || (lane && n!=slot))
             return INFS_STATUS_CORRUPT;
         slot=n;
         uint8_t page[INFS20_PAGE_BYTES];
@@ -237,23 +236,96 @@ static infs_status verify_ref_copies(const struct infs20_paged_layout *l,
     if(slot_out) *slot_out=slot;
     return INFS_STATUS_OK;
 }
-struct protection_check {
-    struct reader reader;
-    uint64_t visited;
+struct marks {
+    const struct infs20_paged_layout *layout;
+    const struct infs20_paged_state *state;
+    const struct infs20_store_io *storage;
+    uint64_t *slots;
+    size_t count,capacity;
 };
-static infs_status protected_ref(void *opaque,const struct infs20_tree_ref *ref)
+static infs_status mark_ref(void *opaque,const struct infs20_tree_ref *r)
 {
-    struct protection_check *c=opaque;
-    if(c->visited>=c->reader.state->used[0]) return INFS_STATUS_CORRUPT;
-    ++c->visited;
-    return verify_ref_copies(c->reader.layout,c->reader.state,c->reader.storage,ref,NULL);
+    struct marks *m=opaque;
+    uint64_t slot=0;
+    infs_status st=verify_ref_copies(m->layout,m->state,m->storage,r,&slot);
+    if(st) return st;
+    if((uint64_t)m->count>=m->state->used[0])
+        return INFS_STATUS_CORRUPT;
+    if(m->count==m->capacity) {
+        if(m->capacity>SIZE_MAX/2/sizeof(*m->slots)) return INFS_STATUS_OVERFLOW;
+        size_t cap=m->capacity?m->capacity*2:16;
+        uint64_t *next=realloc(m->slots,cap*sizeof(*next));
+        if(!next) return INFS_STATUS_NO_MEMORY;
+        m->slots=next; m->capacity=cap;
+    }
+    m->slots[m->count++]=slot;
+    return INFS_STATUS_OK;
+}
+static int slot_cmp(const void *a,const void *b)
+{
+    uint64_t x=*(const uint64_t *)a,y=*(const uint64_t *)b;
+    return (x>y)-(x<y);
+}
+/* Trace exactly the authenticated root; duplicate relative slots or
+ * references outside the frozen frontier cannot authorize reclamation. */
+static infs_status trace_root(struct reader *r,const struct infs20_tree_ref *root,
+    uint64_t limit,struct marks *m)
+{
+    struct infs20_tree_io tree=tree_reader(r);
+    infs_status st=infs20_tree_visit_refs(&tree,root,mark_ref,m);
+    if(st) return st;
+    if(m->count>1) qsort(m->slots,m->count,sizeof(*m->slots),slot_cmp);
+    for(size_t i=0;i<m->count;++i)
+        if(m->slots[i]>=limit || (i && m->slots[i-1]>=m->slots[i]))
+            return INFS_STATUS_CORRUPT;
+    return INFS_STATUS_OK;
+}
+static size_t lower_slot(const uint64_t *slots,size_t count,uint64_t target)
+{
+    size_t first=0,last=count;
+    while(first<last) {
+        size_t mid=first+(last-first)/2;
+        if(slots[mid]<target) first=mid+1; else last=mid;
+    }
+    return first;
+}
+static int available_slot(const struct infs20_paged_state *s,const struct marks *m,
+    uint64_t slot)
+{
+    if(!s->reclaim_epoch || slot<s->reclaim_cursor || slot>=s->reclaim_limit) return 0;
+    size_t i=lower_slot(m->slots,m->count,slot);
+    return i==m->count || m->slots[i]!=slot;
+}
+static infs_status trace_reclaim(struct reader *r,struct marks *m)
+{
+    const struct infs20_paged_state *s=r->state;
+    if(!s->reclaim_epoch) return INFS_STATUS_OK;
+    infs_status st=trace_root(r,&s->reclaim_root,s->reclaim_limit,m);
+    if(st) return st;
+    size_t first=lower_slot(m->slots,m->count,s->reclaim_cursor);
+    uint64_t occupied=(uint64_t)(m->count-first);
+    uint64_t remaining=s->reclaim_limit-s->reclaim_cursor;
+    if(occupied>remaining || remaining-occupied!=s->free_slots)
+        return INFS_STATUS_CORRUPT;
+    return INFS_STATUS_OK;
+}
+static infs_status verify_current(struct reader *r,const struct marks *reclaim)
+{
+    struct marks current={r->layout,r->state,r->storage,NULL,0,0};
+    infs_status st=trace_root(r,&r->state->root,r->state->used[0],&current);
+    if(!st) for(size_t i=0;i<current.count;++i)
+        if(available_slot(r->state,reclaim,current.slots[i])) {
+            st=INFS_STATUS_CORRUPT; break;
+        }
+    free(current.slots); return st;
 }
 static infs_status verify_protection(void *opaque)
 {
     struct reader *r=opaque;
-    struct protection_check c={*r,0};
-    struct infs20_tree_io tree=tree_reader(r);
-    return infs20_tree_visit_refs(&tree,&r->state->root,protected_ref,&c);
+    struct marks reclaim={r->layout,r->state,r->storage,NULL,0,0};
+    infs_status st=trace_reclaim(r,&reclaim);
+    if(!st) st=verify_current(r,&reclaim);
+    free(reclaim.slots); return st;
 }
 infs_status infs20_paged_open(const struct infs20_paged_layout *l,
     const struct infs20_store_io *io,struct infs20_paged_state *out)
@@ -340,7 +412,7 @@ static infs_status reserve(void *o,uint8_t id[16],uint64_t blocks[3])
     int append=1;
     for(unsigned i=0;i<3;++i)
         if(m->state.used[i]==m->layout->arena_blocks[i]) append=0;
-    if(!append && !m->state.free_count) return INFS_STATUS_NO_SPACE;
+    if(!append && !m->state.free_slots) return INFS_STATUS_NO_SPACE;
     /* IDs are transaction-scoped and never reused after uncertain write.
      * Fresh tx is a caller contract; the sequence additionally separates
      * successful generations. A private serial separates split pages. */
@@ -354,14 +426,17 @@ static infs_status reserve(void *o,uint8_t id[16],uint64_t blocks[3])
         for(unsigned i=0;i<3;++i)
             blocks[i]=m->layout->arena_start[i]+m->state.used[i]++;
     } else {
-        /* Consume an already committed free slot in the private state.
-         * On failure the selected descriptor still owns the old free list. */
-        struct infs20_arena_run *r=&m->state.free_runs[0];
-        uint64_t slot=r->start++;
-        if(!--r->blocks) {
-            --m->state.free_count;
-            memmove(r,r+1,m->state.free_count*sizeof(*r));
+        /* The frozen root remains protected even if current-root edits
+         * make some of its pages obsolete. Never recycle a mark or a slot
+         * below the committed cursor until a new collection republishes. */
+        uint64_t slot=m->state.reclaim_cursor;
+        while(m->reclaim_index<m->reclaim_count && m->reclaim_slots[m->reclaim_index]<slot)
+            ++m->reclaim_index;
+        while(m->reclaim_index<m->reclaim_count && m->reclaim_slots[m->reclaim_index]==slot) {
+            ++slot; ++m->reclaim_index;
         }
+        if(slot>=m->state.reclaim_limit) return INFS_STATUS_CORRUPT;
+        m->state.reclaim_cursor=slot+1; --m->state.free_slots;
         for(unsigned i=0;i<3;++i) blocks[i]=m->layout->arena_start[i]+slot;
     }
     return INFS_STATUS_OK;
@@ -439,10 +514,16 @@ infs_status infs20_paged_apply(const struct infs20_paged_layout *l,
         /* Bounded prototype: full admission trace before any private
          * reservation or payload callback. Production should carry verified
          * protection state and check affected dependencies incrementally. */
-        if(!st) { struct reader current={l,io,&m.state}; st=verify_protection(&current); }
+        if(!st) {
+            struct reader current={l,io,&m.state};
+            struct marks reclaim={l,&m.state,io,NULL,0,0};
+            st=trace_reclaim(&current,&reclaim);
+            if(!st) st=verify_current(&current,&reclaim);
+            m.reclaim_slots=reclaim.slots; m.reclaim_count=reclaim.count;
+        }
     }
-    if(st) return st;
-    if(m.state.commit.sequence==UINT64_MAX) return INFS_STATUS_OVERFLOW;
+    if(st) { free(m.reclaim_slots); return st; }
+    if(m.state.commit.sequence==UINT64_MAX) { free(m.reclaim_slots); return INFS_STATUS_OVERFLOW; }
     memcpy(m.tx,tx,16);
     struct reader r={l,io,&m.state};
     struct infs20_tree_io tree=tree_reader(&r);
@@ -458,7 +539,7 @@ infs_status infs20_paged_apply(const struct infs20_paged_layout *l,
     }
     if(!st) st=publish(l,io,tx,&m.state,prepare,&m,payload_verify,payload_context);
     if(!st) *out=m.state;
-    free(m.pages);
+    free(m.reclaim_slots); free(m.pages);
     return st;
 }
 infs_status infs20_paged_put(const struct infs20_paged_layout *l,
@@ -628,7 +709,7 @@ infs_status infs20_paged_discover(const struct infs20_raw_source *source,
     struct infs20_paged_state s={0};
     uint8_t p[DESCRIPTOR_BYTES];
     st=descriptor(&l.bootstrap,&io,p,&s.commit); if(st) return st;
-    if(memcmp(p,"P20A",4) || infs_load_le16(p+4)!=2)
+    if(memcmp(p,"P20A",4) || infs_load_le16(p+4)!=3)
         return INFS_STATUS_NOT_SUPPORTED;
     for(unsigned i=0;i<3;++i) {
         l.arena_start[i]=infs_load_le64(p+8+8*i);
@@ -649,44 +730,6 @@ infs_status infs20_paged_discover(const struct infs20_raw_source *source,
  * overwritten completely before successful return. A cut before that point
  * exposes either the old allocator or a degraded new authority which the
  * mutator already refuses. No arena page is written during collection. */
-struct marks {
-    const struct infs20_paged_layout *layout;
-    const struct infs20_paged_state *state;
-    const struct infs20_store_io *storage;
-    uint64_t *slots;
-    size_t count,capacity;
-};
-static infs_status mark_ref(void *opaque,const struct infs20_tree_ref *r)
-{
-    struct marks *m=opaque;
-    uint64_t slot=0;
-    infs_status st=verify_ref_copies(m->layout,m->state,m->storage,r,&slot);
-    if(st) return st;
-    if((uint64_t)m->count>=m->state->used[0])
-        return INFS_STATUS_CORRUPT;
-    if(m->count==m->capacity) {
-        if(m->capacity>SIZE_MAX/2/sizeof(*m->slots)) return INFS_STATUS_OVERFLOW;
-        size_t cap=m->capacity?m->capacity*2:16;
-        uint64_t *next=realloc(m->slots,cap*sizeof(*next));
-        if(!next) return INFS_STATUS_NO_MEMORY;
-        m->slots=next; m->capacity=cap;
-    }
-    m->slots[m->count++]=slot;
-    return INFS_STATUS_OK;
-}
-static int slot_cmp(const void *a,const void *b)
-{
-    uint64_t x=*(const uint64_t *)a,y=*(const uint64_t *)b;
-    return (x>y)-(x<y);
-}
-static infs_status add_free(struct infs20_paged_state *s,uint64_t a,uint64_t b)
-{
-    if(a==b) return INFS_STATUS_OK;
-    if(a>b) return INFS_STATUS_CORRUPT;
-    if(s->free_count==INFS20_ARENA_FREE_MAX) return INFS_STATUS_NO_SPACE;
-    s->free_runs[s->free_count++]=(struct infs20_arena_run){a,b-a};
-    return INFS_STATUS_OK;
-}
 infs_status infs20_paged_collect(const struct infs20_paged_layout *l,
     const struct infs20_store_io *io,const uint8_t tx[16],struct infs20_paged_state *out)
 {
@@ -699,19 +742,15 @@ infs_status infs20_paged_collect(const struct infs20_paged_layout *l,
         return INFS_STATUS_BUSY;
     if(s.commit.sequence==UINT64_MAX) return INFS_STATUS_OVERFLOW;
     struct reader r={l,io,&s};
-    struct infs20_tree_io tree=tree_reader(&r);
     struct marks m={l,&s,io,NULL,0,0};
-    st=infs20_tree_visit_refs(&tree,&s.root,mark_ref,&m);
-    if(st) { free(m.slots); return st; }
-    if(m.count>1) qsort(m.slots,m.count,sizeof(*m.slots),slot_cmp);
-    s.free_count=0;
-    uint64_t cursor=0;
-    for(size_t i=0;i<m.count && !st;++i) {
-        if(m.slots[i]<cursor) { st=INFS_STATUS_CORRUPT; break; }
-        st=add_free(&s,cursor,m.slots[i]);
-        cursor=m.slots[i]+1;
+    st=trace_root(&r,&s.root,s.used[0],&m);
+    if(!st) {
+        /* The previous bank will now contain this same root. The frozen
+         * proof itself consumes no new pages, even on a full arena. */
+        s.reclaim_root=s.root; s.reclaim_epoch=s.commit.sequence+1;
+        s.reclaim_limit=s.used[0]; s.reclaim_cursor=0;
+        s.free_slots=s.used[0]-(uint64_t)m.count;
     }
-    if(!st) st=add_free(&s,cursor,s.used[0]);
     free(m.slots);
     if(!st) st=publish(l,io,tx,&s,NULL,NULL,NULL,NULL);
     if(!st) *out=s;

@@ -273,3 +273,6 @@ The detailed S0–S7 sequence in ON_DISK_FORMAT.md section 20.18 supersedes any 
 
 ### Indexed quarantine records
 - [ ] Store retirement intervals individually in the authenticated paged tree rather than a fixed 32-range record; checked working allocation and existing fallback epochs are preserved. The scale regression retires 40 disjoint ranges in one commit and verifies remaining data. Exact-source execution pending; arena free inventory and production targeted allocation remain open.
+
+### Frozen-root arena reclamation
+- [ ] Replace fixed 128-run inventory with a committed frozen reachability root and monotonic reuse cursor. Collection makes no arena writes, protects both selectable roots and does not need free metadata space to construct an index. Existing interruption/reuse tests now exercise P20A v3. Exact-source qualification pending; dynamic arena geometry and incremental admission remain open.

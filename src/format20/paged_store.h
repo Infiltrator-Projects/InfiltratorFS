@@ -17,8 +17,6 @@ struct infs20_paged_layout {
     uint64_t arena_start[INFS20_LANE_COUNT];
     uint64_t arena_blocks[INFS20_LANE_COUNT];
 };
-#define INFS20_ARENA_FREE_MAX 128u
-struct infs20_arena_run { uint64_t start,blocks; };
 struct infs20_paged_change {
     const uint8_t *key,*value;
     size_t key_size,value_size;
@@ -28,8 +26,11 @@ struct infs20_paged_state {
     struct infs20_store_state commit;
     struct infs20_tree_ref root;
     uint64_t used[INFS20_LANE_COUNT];
-    size_t free_count;
-    struct infs20_arena_run free_runs[INFS20_ARENA_FREE_MAX];
+    /* Retained GC root is a frozen reachability proof, not a second
+     * namespace authority. Below limit, only its complement at/after the
+     * cursor can be allocated. The cursor never moves backwards. */
+    struct infs20_tree_ref reclaim_root;
+    uint64_t reclaim_epoch,reclaim_limit,reclaim_cursor,free_slots;
 };
 
 /* No implicit creation. Create is allowed only on an explicitly empty
@@ -108,8 +109,8 @@ infs_status infs20_paged_discover(const struct infs20_raw_source *,
  * publish the SAME root in a successor bank with proven unreachable runs.
  * Only after full publication may the next mutation consume those runs:
  * both selectable banks then reference the same pre-collection tree.
- * Memory is proportional to visited live metadata, not device capacity.
- * This bounded candidate refuses an unrepresentable free-run inventory. */
+ * Retain a frozen reachability root and monotonic allocation cursor, not
+ * a fixed free-run array. Memory scales with visited live metadata. */
 infs_status infs20_paged_collect(const struct infs20_paged_layout *,
     const struct infs20_store_io *,const uint8_t tx[16],struct infs20_paged_state *);
 #endif
