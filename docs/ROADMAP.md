@@ -186,3 +186,8 @@ The detailed S0–S7 sequence in ON_DISK_FORMAT.md section 20.18 supersedes any 
 - [ ] Bounded single-device file/physical payload, shared integrity, snapshot/reflink, relocation and recoverable root-switch model implemented; exact-source execution pending. Production paged allocation/reuse, full namespace and native integration remain open.
 - [ ] Raw 512-byte-aligned original-region discovery and read-only reconstruction for the experimental profile implemented; exact-source execution pending. Production scan batching, geometry profiles and actual foreign-format evidence remain open.
 - [ ] Actual foreign-formatter regular-file characterization harness implemented; ext4 runs when installed, FAT32/exFAT/NTFS profiles are explicit. Record exact-source results and expand to real devices, first mounts and Windows-native formatting before selecting production placement.
+
+### Verified experimental milestone (25 November 2026)
+- [x] Execute the bounded schema, store, ownership, physical-payload/native-undo and raw-discovery conformance targets together on Linux (exact source `d67cdb9c`, see QUALIFICATION.md).
+- [x] Run one real ext4 nodiscard format experiment on an isolated 64 MiB image; verify surviving proof and all three test names' payloads.
+- [ ] Complete the scalable CoW tree/arena, allocation reuse with automatic fallback retirement, multi-extent namespace and production byte schema. Integrate the full portable engine, native adapters and production Unformatter; qualify encryption, replication, geometry, real formatter matrix and physical media. Experimental checkmarks do not close S0–S7 or authorize format 0.20 publication.

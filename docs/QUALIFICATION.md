@@ -536,3 +536,19 @@ The extended volume CTest also exercises raw-byte discovery of a displaced origi
 
 ### Foreign formatter image characterization (execution pending)
 The non-installed POSIX test target invokes an actual formatter on a private generated regular-file copy, emits observed changed-block ranges and independently checks proof/payload survival against the recovery result. This is a real formatter experiment on a file image, not a physical-device trace or proof of production layout. The ext4 CTest is conditional on the real executable being present. Other explicit profiles are documented in the candidate specification. The local Linux workflow now runs all registered format-020 tests verbosely. No result is claimed without an exact-source run.
+
+### 25 November 2026 — verified experimental Format 0.20 integration baseline
+
+Exact source: `d67cdb9ca7c66dbac60ea61fe639a593e0bb2076`. The [local Linux userspace job](https://github.com/Infiltrator-Projects/InfiltratorFS/actions/runs/45526949976/job/138912582079) built the targets and executed the five registered Format 0.20 tests. All five passed. The existing cross-platform image smoke also passed in this job.
+
+| Test | Recorded result |
+|---|---|
+| schema | PASS, experimental envelope and record framing |
+| store | PASS, 66 actual experimental writer interruption cases and lane/mixed-copy recovery |
+| ownership | PASS, persistent root retention, shared edges and bounded reclaim |
+| volume | PASS, 42 payload/metadata interruption cases, shared relocation, native undo, raw region discovery and ambiguity refusal |
+| foreign-ext4 | PASS, real formatter characterization on a generated 64 MiB regular file |
+
+The ext4 command was `/usr/sbin/mkfs.ext4 -t ext4 -F -E nodiscard,lazy_itable_init=1,lazy_journal_init=1` against the private generated copy. The 16 changed 4 KiB blocks were in the half-open block ranges [0,3), [9,16), [25,26), [41,42), [1065,1066) and [16374,16377). Each of the three latest-generation proof slots (commit, root, leaf) retained two byte-identical copies. Raw discovery selected sequence 6; original, clone and later (retained pin 7) all read with verified contents. This is 100% fidelity for this three-name test dataset, not a general recovery-rate estimate. These ranges describe observed final changed blocks, not the formatter's complete write/discard trace. First mount, discard-enabled media, actual Windows format, other geometry/profile combinations, larger/fragmented datasets and production scalability remain unqualified.
+
+The prior Clang run on `d2e11d217280f4a5cf4aed6e893848a7c9442a58` exposed a test assertion confusing a transaction ID with its committed sequence. The assertion was corrected in the above verified revision; no recovery semantics were weakened. The separate BOOT job at the prior revision reported the pinned BOOT v0.1.642 lacks the filesystem_module configuration token required by Common V2. This is an outstanding integration gate, not evidence that the experimental filesystem is bootable. No native 0.20 mount, production schema freeze, physical power-loss or release qualification is claimed by these tests. The current production format remains 0.19.
