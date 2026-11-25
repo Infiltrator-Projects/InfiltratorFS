@@ -673,3 +673,6 @@ The 105-file scale test additionally unlinks alternating files, collects 40 disj
 
 ### Frozen-root reclamation (execution pending)
 The arena GC regression now checks P20A v3 frozen-root frontier/cursor/eligible-slot state and the same cold interruption and full-arena reuse cases. No fixed free-run array remains. Exact-source execution is required before claiming qualification.
+
+### Fragmented arena regression and Q v2 test migration (execution pending)
+The arena test constructs a 170-record large-value tree, rebuilds it with exactly its measured append capacity, independently traces more than 128 free gaps, collects without arena writes and exercises mandatory recycled-slot allocation. The dense relocation quarantine assertion now decodes the individual Q v2 record rather than the retired Q v1 grammar. Exact-source qualification pending.
