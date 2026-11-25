@@ -270,3 +270,6 @@ The detailed S0–S7 sequence in ON_DISK_FORMAT.md section 20.18 supersedes any 
 
 ### Dynamic ownership and namespace working sets
 - [ ] Replace fixed node/edge/name working arrays with checked dynamic arrays, deep-copy graph transitions, dynamically sized semantic records and export working sets. Regression creates and recovers 105 independently owned files, crosses all three former ceilings and exercises unlink/collection. Exact-source execution pending. Persistent incremental indexes, typed hierarchical namespace and scalable quarantine remain open.
+
+### Indexed quarantine records
+- [ ] Store retirement intervals individually in the authenticated paged tree rather than a fixed 32-range record; checked working allocation and existing fallback epochs are preserved. The scale regression retires 40 disjoint ranges in one commit and verifies remaining data. Exact-source execution pending; arena free inventory and production targeted allocation remain open.

@@ -667,3 +667,6 @@ Existing fragmented, near-full, reuse, and interruption tests cover the changed 
 
 ### Dynamic semantic working sets (execution pending)
 A 105-file paged-volume regression crosses the former 32-node, 96-edge and 64-map ceilings and verifies individual reads, recovery enumeration, unlink and collection. Graph transitions retain private-copy validation, and exporter allocation is checked dynamically. Exact-source execution is required before claiming qualification.
+
+### Indexed quarantine records (execution pending)
+The 105-file scale test additionally unlinks alternating files, collects 40 disjoint ranges under one retirement generation, reads their authenticated Q v2 keys and confirms the retained adjacent files remain intact. This exceeds the former 32-range retirement bound. No execution pass is asserted yet.

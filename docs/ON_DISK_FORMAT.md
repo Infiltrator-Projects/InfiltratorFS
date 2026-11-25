@@ -754,3 +754,6 @@ Allocation derives one ordered exclusion view from all bootstrap lanes, arenas, 
 
 ### Dynamic semantic working sets
 The experimental paged implementation no longer caps its ownership graph at 32 nodes/96 edges or namespace at 64 maps. Record decoding, graph-copy transitions, allocation-exclusion views, semantic serialization and recovery enumeration use checked private allocations. Existing N/E/D/F record encodings are unchanged. This removes small fixed working-set limits, not the requirement for persistent incremental ownership, directory and extent trees; whole-graph validation remains transitional. The fixed-bank oracle still has its physical bank capacity.
+
+### Individually indexed payload retirement ranges
+Each Q v2 record has a nine-byte key (`Q` plus BE64 start) and a 17-byte value (version 2, LE64 block count, LE64 retirement sequence). This replaces the single bounded Q v1 ledger. The numeric key orders ranges independently of host endianness; validation and allocation exclude all unretired ranges, with same-epoch adjacency coalescing. The existing fallback barrier and common publication authority are unchanged. The full working view grows with represented ranges; production still needs targeted interval queries and incremental validation. Obsolete experimental Q v1 is refused.

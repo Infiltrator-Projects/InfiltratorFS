@@ -155,10 +155,25 @@ static int scale_namespace(void)
     struct scope_check check={0};
     CHECK(!infs20_paged_volume_recovery_visit(&l,&io,scope_mapping,scope_unit,&check));
     CHECK(check.count==N);
-    tx(id,11000); CHECK(!infs20_paged_volume_unlink(&l,&io,id,"file-104")); cold(&m);
-    tx(id,11001); CHECK(!infs20_paged_volume_collect(&l,&io,id)); cold(&m);
-    uint8_t data=0; size_t got=99;
-    CHECK(infs20_paged_volume_read(&l,&io,0,"file-104",&data,1,&got)==INFS_STATUS_NOT_FOUND && got==99);
+    /* Forty disjoint retired ranges must coexist at one retirement epoch.
+     * The old single Q record refused the 33rd range. */
+    for(unsigned i=0;i<40;++i) {
+        CHECK(snprintf(name,sizeof(name),"file-%03u",i*2)==8);
+        tx(id,11000+i); CHECK(!infs20_paged_volume_unlink(&l,&io,id,name)); cold(&m);
+    }
+    tx(id,11100); CHECK(!infs20_paged_volume_collect(&l,&io,id)); cold(&m);
+    struct infs20_paged_state state; CHECK(!infs20_paged_open(&l,&io,&state));
+    for(unsigned i=0;i<40;++i) {
+        uint64_t start=2220u+2u*i; uint8_t qkey[9]={'Q'},value[17]; size_t n=0;
+        for(size_t k=8;k>0;--k) { qkey[k]=(uint8_t)start; start>>=8; }
+        CHECK(!infs20_paged_get(&l,&io,qkey,sizeof(qkey),value,sizeof(value),&n) &&
+              n==sizeof(value) && value[0]==2 && value[1]==1);
+        uint8_t data=0; size_t got=99;
+        CHECK(snprintf(name,sizeof(name),"file-%03u",i*2)==8);
+        CHECK(infs20_paged_volume_read(&l,&io,0,name,&data,1,&got)==INFS_STATUS_NOT_FOUND && got==99);
+        CHECK(snprintf(name,sizeof(name),"file-%03u",i*2+1)==8);
+        CHECK(!infs20_paged_volume_read(&l,&io,0,name,&data,1,&got) && got==1 && data==(uint8_t)(i*2+1));
+    }
     free(m.pending); free(m.disk); return 0;
 }
 int main(void)

@@ -36,7 +36,7 @@ struct content {
     uint8_t id[16], digest[INFS20_VOLUME_UNITS][32];
     uint32_t size;
 };
-enum { QUARANTINE_MAX=32, QUARANTINE_VALUE=1+24*QUARANTINE_MAX };
+enum { QUARANTINE_KEY=9, QUARANTINE_VALUE=17 };
 struct quarantine { uint64_t start,blocks,sequence; };
 struct volume {
     struct infs20_model_graph graph;
@@ -44,13 +44,13 @@ struct volume {
     struct content *contents;
     size_t files_count, contents_count, files_capacity, contents_capacity;
     uint64_t frontier,sequence;
-    struct quarantine quarantine[QUARANTINE_MAX];
-    size_t quarantine_count;
+    struct quarantine *quarantine;
+    size_t quarantine_count, quarantine_capacity;
     unsigned header,fully_protected;
 };
 static void volume_destroy(struct volume *v)
 {
-    infs20_model_destroy(&v->graph); free(v->files); free(v->contents);
+    infs20_model_destroy(&v->graph); free(v->files); free(v->contents); free(v->quarantine);
     memset(v,0,sizeof(*v));
 }
 static infs_status finish_volume(struct volume *v,infs_status st)
@@ -83,6 +83,25 @@ struct pending {
     size_t count;
     struct pending_run run[INFS20_VOLUME_EXTENTS];
 };
+/* Ordered numeric Q keys use big endian; values remain canonical LE. */
+static uint64_t quarantine_start(const uint8_t key[QUARANTINE_KEY])
+{
+    uint64_t value=0;
+    for(size_t i=1;i<QUARANTINE_KEY;++i) value=(value<<8)|key[i];
+    return value;
+}
+static void quarantine_key(uint8_t key[QUARANTINE_KEY],uint64_t start)
+{
+    key[0]='Q';
+    for(size_t i=QUARANTINE_KEY-1;i>0;--i) { key[i]=(uint8_t)start; start>>=8; }
+}
+static infs_status reserve_quarantine(struct volume *v,size_t count)
+{
+    void *next;
+    infs_status st=infs20_model_grow(v->quarantine,&v->quarantine_capacity,count,sizeof(*v->quarantine),&next);
+    if(!st) v->quarantine=next;
+    return st;
+}
 static int equal(const uint8_t *a,const uint8_t *b) { return !memcmp(a,b,16); }
 static int zero(const uint8_t *a,size_t n)
 {
@@ -208,7 +227,7 @@ static infs_status validate(const struct infs20_store_layout *l,
         } else if(n->kind!=INFS20_MODEL_ROOT || n->blocks)
             return INFS_STATUS_CORRUPT;
     }
-    if(data_count!=v->contents_count || v->quarantine_count>QUARANTINE_MAX)
+    if(data_count!=v->contents_count || v->quarantine_count>v->quarantine_capacity)
         return INFS_STATUS_CORRUPT;
     for(size_t i=0;i<v->quarantine_count;++i) {
         const struct quarantine *q=&v->quarantine[i];
@@ -275,16 +294,15 @@ static infs_status decode(void *opaque,const struct infs20_record_view *r)
         if(r->value[0]!=2) return INFS_STATUS_NOT_SUPPORTED;
         v->header=1; v->frontier=infs_load_le64(r->value+1);
     } else if(r->key[0]=='Q') {
-        /* Single ordered range ledger; independent of deleted object IDs. */
-        if(v->quarantine_count || r->key_size!=1 || r->value_size<25 ||
-           r->value[0]!=1 || (r->value_size-1)%24 ||
-           (r->value_size-1)/24>QUARANTINE_MAX) return INFS_STATUS_CORRUPT;
-        v->quarantine_count=(r->value_size-1)/24;
-        for(size_t i=0;i<v->quarantine_count;++i) {
-            const uint8_t *p=r->value+1+24*i;
-            v->quarantine[i]=(struct quarantine){
-                infs_load_le64(p),infs_load_le64(p+8),infs_load_le64(p+16)};
-        }
+        /* Each independently authenticated record owns one retired range.
+         * The old single-record ledger is a different probe grammar. */
+        if(r->key_size==1) return INFS_STATUS_NOT_SUPPORTED;
+        if(r->key_size!=QUARANTINE_KEY || r->value_size!=QUARANTINE_VALUE ||
+           r->value[0]!=2) return INFS_STATUS_CORRUPT;
+        if(v->quarantine_count==SIZE_MAX) return INFS_STATUS_OVERFLOW;
+        infs_status st=reserve_quarantine(v,v->quarantine_count+1); if(st) return st;
+        v->quarantine[v->quarantine_count++]=(struct quarantine){quarantine_start(r->key),
+            infs_load_le64(r->value+1),infs_load_le64(r->value+9)};
     } else if(r->key[0]=='D') {
         /* D version 2 stores exactly one indexed digest per logical unit.
          * This is a bounded record, not the production checksum tree.
@@ -407,9 +425,10 @@ static infs_status commit(const struct infs20_store_layout *l,
         if(v->quarantine[i].sequence>v->sequence+1) return INFS_STATUS_CORRUPT;
     enum { VALUE_MAX=QUARANTINE_VALUE>MAP_VALUE_MAX?QUARANTINE_VALUE:MAP_VALUE_MAX };
     struct encoded { uint8_t key[17+INFS20_VOLUME_NAME_MAX],value[VALUE_MAX]; };
-    if(v->contents_count>SIZE_MAX-2 || v->files_count>SIZE_MAX-2-v->contents_count)
+    if(v->contents_count>SIZE_MAX-1 || v->files_count>SIZE_MAX-1-v->contents_count ||
+       v->quarantine_count>SIZE_MAX-1-v->contents_count-v->files_count)
         return INFS_STATUS_OVERFLOW;
-    size_t max=2+v->contents_count+v->files_count;
+    size_t max=1+v->contents_count+v->files_count+v->quarantine_count;
     if(max>SIZE_MAX/sizeof(struct encoded) || max>SIZE_MAX/sizeof(struct infs20_store_record))
         return INFS_STATUS_OVERFLOW;
     struct encoded *e=calloc(max,sizeof(*e));
@@ -418,16 +437,11 @@ static infs_status commit(const struct infs20_store_layout *l,
     size_t n=0;
     e[n].key[0]='M'; e[n].value[0]=2; infs_store_le64(e[n].value+1,v->frontier);
     r[n]=(struct infs20_store_record){e[n].key,e[n].value,1,9}; ++n;
-    if(v->quarantine_count) {
-        e[n].key[0]='Q'; e[n].value[0]=1;
-        for(size_t i=0;i<v->quarantine_count;++i) {
-            uint8_t *p=e[n].value+1+24*i;
-            infs_store_le64(p,v->quarantine[i].start);
-            infs_store_le64(p+8,v->quarantine[i].blocks);
-            infs_store_le64(p+16,v->quarantine[i].sequence);
-        }
-        r[n]=(struct infs20_store_record){e[n].key,e[n].value,1,
-            (uint16_t)(1+24*v->quarantine_count)}; ++n;
+    for(size_t i=0;i<v->quarantine_count;++i) {
+        quarantine_key(e[n].key,v->quarantine[i].start); e[n].value[0]=2;
+        infs_store_le64(e[n].value+1,v->quarantine[i].blocks);
+        infs_store_le64(e[n].value+9,v->quarantine[i].sequence);
+        r[n]=(struct infs20_store_record){e[n].key,e[n].value,QUARANTINE_KEY,QUARANTINE_VALUE}; ++n;
     }
     for(size_t i=0;i<v->contents_count;++i) {
         const struct content *c=&v->contents[i];
@@ -514,7 +528,8 @@ static infs_status quarantine_range(struct volume *v,uint64_t start,uint64_t blo
         v->quarantine[i].blocks+=blocks;
         return INFS_STATUS_OK;
     }
-    if(v->quarantine_count==QUARANTINE_MAX) return INFS_STATUS_NO_SPACE;
+    if(v->quarantine_count==SIZE_MAX) return INFS_STATUS_OVERFLOW;
+    infs_status st=reserve_quarantine(v,v->quarantine_count+1); if(st) return st;
     memmove(v->quarantine+i+1,v->quarantine+i,
             (v->quarantine_count-i)*sizeof(v->quarantine[0]));
     v->quarantine[i]=(struct quarantine){start,blocks,retirement};
@@ -557,6 +572,7 @@ static infs_status reserve(const struct infs20_store_layout *l,
     if(!blocks || blocks>INFS20_VOLUME_UNITS) return INFS_STATUS_INVALID_ARGUMENT;
     if(!v->fully_protected) return INFS_STATUS_BUSY;
     prune_quarantine(v);
+    if(v->quarantine_count>SIZE_MAX-2*INFS20_LANE_COUNT) return INFS_STATUS_OVERFLOW;
     size_t fixed=2*INFS20_LANE_COUNT+v->quarantine_count;
     if(v->graph.node_count>SIZE_MAX-fixed ||
        fixed+v->graph.node_count>SIZE_MAX/sizeof(struct blocked_range)) return INFS_STATUS_OVERFLOW;
@@ -1066,8 +1082,11 @@ static infs_status indexed_mapping(const struct infs20_paged_layout *layout,
     const struct infs20_store_layout *l=&layout->bootstrap;
     key[0]='M'; infs_status st=required_record(tree,root,key,1,v); if(st) return st;
     if(!v->header || v->frontier>l->member_blocks) return INFS_STATUS_CORRUPT;
-    key[0]='Q'; st=get_record(tree,root,key,1,v);
-    if(st && st!=INFS_STATUS_NOT_FOUND) return st;
+    const uint8_t lower='Q',upper='R'; size_t seen=0; int more=0;
+    st=infs20_tree_visit_range(tree,root,&lower,1,0,&upper,1,SIZE_MAX,
+                              decode_paged,v,&seen,&more);
+    if(st) return st;
+    if(more || seen!=v->quarantine_count) return INFS_STATUS_CORRUPT;
     for(size_t i=0;i<v->quarantine_count;++i) {
         const struct quarantine *r=&v->quarantine[i];
         if(!r->sequence || r->sequence>sequence || !r->blocks ||
