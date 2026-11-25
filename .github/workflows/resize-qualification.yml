@@ -33,8 +33,8 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential cmake kmod linux-headers-generic
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- install -y build-essential cmake kmod linux-headers-generic
 
       - name: Resolve running-kernel headers
         id: headers
@@ -44,7 +44,7 @@ jobs:
           runtime_release="$(uname -r)"
           runtime_kdir="/lib/modules/${runtime_release}/build"
           if [[ ! -f "$runtime_kdir/Makefile" ]]; then
-            sudo apt-get install -y "linux-headers-${runtime_release}" || true
+            sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- install -y "linux-headers-${runtime_release}" || true
           fi
           if [[ -f "$runtime_kdir/Makefile" ]]; then
             printf 'runtime_kdir=%s\n' "$runtime_kdir" >> "$GITHUB_OUTPUT"

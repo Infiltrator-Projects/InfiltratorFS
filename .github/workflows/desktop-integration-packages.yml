@@ -42,11 +42,11 @@ jobs:
         run: |
           set -euo pipefail
           sudo sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- install -y --no-install-recommends \
             build-essential cmake devscripts dpkg-dev git libgtk-3-dev libssl-dev \
             udisks2 gnome-disk-utility libblockdev-fs3
-          sudo apt-get build-dep -y libblockdev gnome-disk-utility
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- build-dep -y libblockdev gnome-disk-utility
 
       - name: Build raw in-place integration bundle
         shell: bash

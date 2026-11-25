@@ -26,8 +26,8 @@ jobs:
 
       - name: Install kernel build dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential cmake e2fsprogs kmod linux-headers-generic
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- install -y build-essential cmake e2fsprogs kmod linux-headers-generic
 
       - name: Resolve kernel header trees
         id: headers
@@ -43,7 +43,7 @@ jobs:
           runtime_release="$(uname -r)"
           runtime_kdir="/lib/modules/${runtime_release}/build"
           if [[ ! -f "$runtime_kdir/Makefile" ]]; then
-            if sudo apt-get install -y "linux-headers-${runtime_release}"; then
+            if sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- install -y "linux-headers-${runtime_release}"; then
               :
             fi
           fi
@@ -1594,7 +1594,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get install -y attr
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- install -y attr
           bash tests/native-defrag-policy.sh .
           bash -n tests/native-defrag-qualification.sh
           bash tests/native-defrag-qualification.sh build kernel/infiltratorfs.ko
@@ -1615,8 +1615,8 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- install -y --no-install-recommends \
             bc bison build-essential flex git libelf-dev libssl-dev
 
       - name: Prepare exact upstream Linux 7.0 tree

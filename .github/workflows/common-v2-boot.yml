@@ -30,8 +30,8 @@ jobs:
           submodules: recursive
       - name: Install disposable VM tools
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-system-x86 ovmf busybox-static cpio dosfstools gdisk mtools binutils
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- install -y --no-install-recommends qemu-system-x86 ovmf busybox-static cpio dosfstools gdisk mtools binutils
       - name: Obtain the released BOOT and a distribution test kernel
         shell: bash
         run: |
@@ -53,7 +53,7 @@ jobs:
           image=$(apt-cache depends linux-image-generic | awk '/Depends: linux-image-[0-9]/ { image=$2 } END { print image }')
           release=${image#linux-image-}
           [[ -n $release && $release != "$image" ]]
-          (cd "$RUNNER_TEMP/kernel" && apt-get download "linux-image-unsigned-$release")
+          (cd "$RUNNER_TEMP/kernel" && apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- download "linux-image-unsigned-$release")
           dpkg-deb -x "$RUNNER_TEMP/kernel/"*.deb "$RUNNER_TEMP/kernel"
           printf '%s\n' "$release" > "$RUNNER_TEMP/kernel/release"
       - name: Boot the V2 provider from a disposable filesystem

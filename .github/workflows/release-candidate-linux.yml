@@ -46,8 +46,8 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- install -y --no-install-recommends \
             build-essential cmake desktop-file-utils libgtk-3-dev libssl-dev \
             pkg-config polkitd pkexec xdg-utils python3
 
@@ -207,8 +207,8 @@ jobs:
           deb="$(readlink -f "dist/infiltratorfs_${VERSION}_amd64.deb")"
           test -s "$deb"
           test "$(dpkg-deb --field "$deb" X-InfiltratorFS-Desktop-Integration)" = ubuntu24.04-mint22-bundled
-          sudo apt-get update
-          sudo apt-get install -y "$deb"
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- install -y "$deb"
           dpkg-query -W -f='${Status}\n' infiltratorfs | grep -Fxq 'install ok installed'
           dpkg-query -W -f='${Status}\n' gnome-disk-utility | grep -Fxq 'install ok installed'
           dpkg-query -W -f='${Status}\n' libblockdev-fs3 | grep -Fxq 'install ok installed'

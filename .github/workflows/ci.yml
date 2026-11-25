@@ -50,8 +50,8 @@ jobs:
       - name: Install Linux native adapter dependencies
         if: runner.environment == 'github-hosted'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends desktop-file-utils libgtk-3-dev libssl-dev pkg-config polkitd pkexec xdg-utils xvfb
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- install -y --no-install-recommends desktop-file-utils libgtk-3-dev libssl-dev pkg-config polkitd pkexec xdg-utils xvfb
       - name: Validate Mint desktop integration
         run: desktop-file-validate packaging/infiltratorfs-manager.desktop
       - name: Validate the Common V2 filesystem module
@@ -451,8 +451,8 @@ jobs:
       - name: Install package build dependencies
         if: runner.environment == 'github-hosted'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential cmake desktop-file-utils libgtk-3-dev libssl-dev pkg-config polkitd pkexec xdg-utils python3
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- install -y --no-install-recommends build-essential cmake desktop-file-utils libgtk-3-dev libssl-dev pkg-config polkitd pkexec xdg-utils python3
       - name: Configure native-only userspace
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
       - name: Build
