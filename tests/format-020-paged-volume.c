@@ -109,6 +109,27 @@ static infs_status scope_unit(void *opaque,const struct infs20_recovery_unit *u)
     (void)opaque;
     return u->status;
 }
+struct fragmented_check { unsigned maps,units; };
+static infs_status fragmented_mapping(void *o,const struct infs20_recovery_mapping *m)
+{
+    struct fragmented_check *f=o;
+    if(m->pin || strcmp(m->name,"fragmented") ||
+       m->size!=12u*INFS20_PAGE_BYTES || m->extent_count!=2 ||
+       m->extents[0].logical_offset ||
+       m->extents[0].length!=8u*INFS20_PAGE_BYTES ||
+       m->extents[1].logical_offset!=8u*INFS20_PAGE_BYTES ||
+       m->extents[1].length!=4u*INFS20_PAGE_BYTES ||
+       !memcmp(m->extents[0].allocation_id,m->extents[1].allocation_id,16))
+        return INFS_STATUS_CORRUPT;
+    ++f->maps; return 0;
+}
+static infs_status fragmented_unit(void *o,const struct infs20_recovery_unit *u)
+{
+    struct fragmented_check *f=o;
+    if(u->status || !u->data || u->logical_size!=INFS20_PAGE_BYTES)
+        return INFS_STATUS_CORRUPT;
+    ++f->units; return 0;
+}
 int main(void)
 {
     struct medium m={0};
@@ -320,8 +341,25 @@ int main(void)
     tx(id,4003); CHECK(!infs20_paged_volume_snapshot(&l,&io,id,41)); cold(&m);
     uint8_t expected[LENGTH],out[LENGTH+100];
     memcpy(expected,a,LENGTH); memcpy(expected+101,b,113);
-    tx(id,4004); CHECK(!infs20_paged_volume_write_range(&l,&io,id,"multi",101,b,113)); cold(&m);
+    memcpy(baseline,m.disk,bytes);
+    tx(id,4004); CHECK(!infs20_paged_volume_write_range(&l,&io,id,"multi",101,b,113));
+    unsigned edit_cuts=m.ops; cold(&m);
     size_t n=99;
+    for(unsigned mode=0;mode<3;++mode) for(unsigned cut=1;cut<=edit_cuts;++cut) {
+        memcpy(m.disk,baseline,bytes); cold(&m); m.mode=mode; m.fail=cut;
+        tx(id,4100+mode*300+cut);
+        CHECK(infs20_paged_volume_write_range(&l,&io,id,"multi",101,b,113)==
+              INFS_STATUS_IO_ERROR);
+        cold(&m);
+        struct infs20_paged_state selected;
+        CHECK(!infs20_paged_open(&l,&io,&selected));
+        CHECK(selected.commit.sequence==4 || selected.commit.sequence==5);
+        CHECK(same(&l,&io,0,"multi",selected.commit.sequence==4?a:expected));
+        CHECK(same(&l,&io,0,"original",a) && same(&l,&io,41,"multi",a));
+        ++cases;
+    }
+    memcpy(m.disk,baseline,bytes); cold(&m);
+    tx(id,5000); CHECK(!infs20_paged_volume_write_range(&l,&io,id,"multi",101,b,113)); cold(&m);
     CHECK(!infs20_paged_volume_read(&l,&io,0,"multi",out,sizeof(out),&n) &&
           n==LENGTH && !memcmp(out,expected,LENGTH));
     CHECK(same(&l,&io,0,"original",a) && same(&l,&io,41,"multi",a));
@@ -348,6 +386,23 @@ int main(void)
     tx(id,4011);
     CHECK(infs20_paged_volume_write_range(&l,&io,id,"multi",UINT64_MAX,b,5)==
           INFS_STATUS_FILE_TOO_LARGE && !m.ops);
+    /* Geometry exposes exactly two eight-block data gaps. A twelve-unit
+     * file cannot fit in any single run, but fits across two allocations. */
+    memset(m.disk,0,bytes); cold(&m);
+    struct infs20_paged_layout flayout={{{1},{2},{3},BLOCKS,{0,LANE,2*LANE}},
+        {20,LANE+20,2*LANE+20},{LANE-28,LANE-28,LANE-20}};
+    size_t long_size=12u*INFS20_PAGE_BYTES;
+    uint8_t *long_data=malloc(long_size),*long_out=malloc(long_size);
+    CHECK(long_data && long_out);
+    for(size_t i=0;i<long_size;++i) long_data[i]=(uint8_t)(i*11+3);
+    tx(id,6000); CHECK(!infs20_paged_volume_create(&flayout,&io,id)); cold(&m);
+    tx(id,6001); CHECK(!infs20_paged_volume_write(&flayout,&io,id,"fragmented",long_data,long_size)); cold(&m);
+    CHECK(!infs20_paged_volume_read(&flayout,&io,0,"fragmented",long_out,long_size,&n) &&
+          n==long_size && !memcmp(long_out,long_data,n));
+    struct fragmented_check frag={0};
+    CHECK(!infs20_paged_volume_recovery_visit(&flayout,&io,fragmented_mapping,fragmented_unit,&frag));
+    CHECK(frag.maps==1 && frag.units==12);
+    free(long_data); free(long_out);
     free(raw.p); free(baseline); free(m.pending); free(m.disk);
     printf("format20-paged-volume: PASS (%u actual typed ownership/payload interruption cases)\n",cases);
     return 0;
