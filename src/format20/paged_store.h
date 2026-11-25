@@ -85,6 +85,17 @@ infs_status infs20_paged_visit_range(const struct infs20_paged_layout *,
     const uint8_t *end,size_t end_size,size_t limit,infs20_tree_visitor,
     void *,size_t *seen,int *more,uint64_t *sequence);
 
+/*
+ * Run a read operation against one immutable committed view. The tree I/O
+ * and root are borrowed for the callback only; the caller must maintain
+ * exclusive immutable access. This is the common indexed-read boundary,
+ * not an independently selectable root supplied by an untrusted caller.
+ */
+typedef infs_status (*infs20_paged_view_fn)(void *,
+    const struct infs20_tree_io *,const struct infs20_tree_ref *,uint64_t);
+infs_status infs20_paged_read_view(const struct infs20_paged_layout *,
+    const struct infs20_store_io *,infs20_paged_view_fn,void *);
+
 /* Explicit offline discovery of the original experimental region. Only
  * read callbacks are exposed. The immutable raw source must remain valid
  * while using the returned region. Full tree proof is checked before

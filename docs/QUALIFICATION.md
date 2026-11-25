@@ -621,3 +621,6 @@ Exact source `a021fd897cbf89075a4473a3c02a33f50efb276f`: [Linux userspace qualif
 
 ### Indexed range traversal and namespace rename (execution pending)
 The tree/paged-store tests now exercise ordered bounded ranges, continuation across pages, a narrow scan reading fewer pages than full traversal, empty/invalid ranges and stale commit continuation refusal. The typed paged-volume regression adds atomic rename with and without replacement, no-write refusal, shared allocation preservation, retained snapshot fidelity and old-or-new namespace at every injected write/flush interruption. These are added to the existing exact-source CTest targets, not a second filesystem implementation. No pass is claimed until execution evidence is available.
+
+### Indexed committed read integration (execution pending)
+The existing paged-volume test exercises the actual indexed read path throughout the old-or-new fault matrix, retained-root reads, two-lane damage and rename tests. Additional range checks cross a unit boundary, verify EOF/unknown-pin behavior and distinguish a corrupt touched unit from an untouched unit while preserving output on failure. Full graph reconstruction is still validated separately. No exact-source execution pass is asserted by this change.

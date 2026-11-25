@@ -85,6 +85,9 @@ infs_status infs20_paged_volume_write(const struct infs20_paged_layout *,
     const struct infs20_store_io *,const uint8_t tx[16],const char *name,const uint8_t *data,size_t size);
 infs_status infs20_paged_volume_clone(const struct infs20_paged_layout *,
     const struct infs20_store_io *,const uint8_t tx[16],const char *source,const char *target);
+/* Ordinary indexed read verifies selected committed paths and the consumed
+ * payload. Full reference/ownership reconciliation remains explicit
+ * recovery/mutation validation; unrelated subtrees are not read. */
 infs_status infs20_paged_volume_read(const struct infs20_paged_layout *,
     const struct infs20_store_io *,uint64_t ordinal,const char *name,uint8_t *out,size_t capacity,size_t *size);
 infs_status infs20_paged_volume_read_range(const struct infs20_paged_layout *,

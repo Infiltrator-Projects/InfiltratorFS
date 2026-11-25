@@ -579,6 +579,15 @@ infs_status infs20_paged_visit_range(const struct infs20_paged_layout *l,
     if(!st) *sequence=s.commit.sequence;
     return st;
 }
+infs_status infs20_paged_read_view(const struct infs20_paged_layout *l,
+    const struct infs20_store_io *io,infs20_paged_view_fn visit,void *context)
+{
+    if(!visit) return INFS_STATUS_INVALID_ARGUMENT;
+    struct infs20_paged_state s;
+    infs_status st=infs20_paged_open(l,io,&s); if(st) return st;
+    struct reader r={l,io,&s}; struct infs20_tree_io tree=tree_reader(&r);
+    return visit(context,&tree,&s.root,s.commit.sequence);
+}
 infs_status infs20_paged_discover(const struct infs20_raw_source *source,
     struct infs20_store_region *region,struct infs20_paged_layout *layout,
     struct infs20_paged_state *out)

@@ -93,6 +93,24 @@ int main(void)
     CHECK(!memcmp(m.disk+(size_t)DATA*INFS20_PAGE_BYTES,a,INFS20_PAGE_BYTES));
     tx(id,3); CHECK(!infs20_paged_volume_clone(&l,&io,id,"a","clone")); cold(&m);
     tx(id,4); CHECK(!infs20_paged_volume_snapshot(&l,&io,id,10)); cold(&m);
+    uint8_t range[53]; size_t got=99;
+    CHECK(!infs20_paged_volume_read_range(&l,&io,10,"a",
+        INFS20_PAGE_BYTES-17,range,sizeof(range),&got));
+    CHECK(got==sizeof(range) && !memcmp(range,a+INFS20_PAGE_BYTES-17,got));
+    CHECK(!infs20_paged_volume_read_range(&l,&io,10,"a",UINT64_MAX,
+        range,sizeof(range),&got) && !got);
+    memset(range,0xa5,sizeof(range)); got=99;
+    CHECK(infs20_paged_volume_read_range(&l,&io,9999,"a",0,
+        range,sizeof(range),&got)==INFS_STATUS_NOT_FOUND && got==99 && range[0]==0xa5);
+    /* A corrupt touched unit refuses without publishing even a verified
+     * preceding fragment. An untouched unit is not read by a range query. */
+    m.pending[(size_t)(DATA+1)*INFS20_PAGE_BYTES+10]^=1;
+    CHECK(!infs20_paged_volume_read_range(&l,&io,0,"a",0,
+        range,sizeof(range),&got) && got==sizeof(range) && !memcmp(range,a,got));
+    memset(range,0xa5,sizeof(range)); got=99;
+    CHECK(infs20_paged_volume_read_range(&l,&io,0,"a",INFS20_PAGE_BYTES-17,
+        range,sizeof(range),&got)==INFS_STATUS_CORRUPT && got==99 && range[0]==0xa5);
+    cold(&m);
     memcpy(baseline,m.disk,bytes);
     tx(id,5); CHECK(!infs20_paged_volume_write(&l,&io,id,"a",b,LENGTH));
     unsigned cuts=m.ops; cold(&m);

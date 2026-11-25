@@ -238,3 +238,7 @@ The detailed S0–S7 sequence in ON_DISK_FORMAT.md section 20.18 supersedes any 
 ### Indexed namespace and ownership traversal
 - [ ] Bounded authenticated tree ranges with commit-sequence continuation, and atomic rename/replacement in the existing typed engine implemented. Exact-source execution pending.
 - [ ] Migrate ordinary typed lookups and mutations from whole-model scans to targeted records and bounded ownership operations. Full directories, hard links, multi-extent files, native adapters and production qualification remain open.
+
+### Indexed file read integration
+- [ ] Paged whole-file/range reads switched to one pinned authenticated lookup view; full-model validation remains the independent writer/recovery path. Exact-source execution pending.
+- [ ] Targeted scalable mutation, pin/physical-range indexes, true multi-extent files, directory and portable security semantics remain open.
