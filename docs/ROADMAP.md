@@ -258,3 +258,6 @@ The detailed S0–S7 sequence in ON_DISK_FORMAT.md section 20.18 supersedes any 
 
 ### Dynamic paged transaction staging
 - [ ] Removed the fixed 256-change batch and replacement-diff ceiling; private staging is bounded by checked memory arithmetic and actual arena availability. Regression covers 300 inserted, updated and removed records with a late refusal before any write. Exact-source execution pending. The bounded ownership graph, fixed free-run descriptor and whole-model mutation path remain open.
+
+### 64-bit logical file offsets and native undo
+- [ ] Separate sparse logical length and offset from physical allocation preparation, using F v3, and verify distinct mapped units before native root reversal without file-sized memory. A 5 GiB sparse regression covers high offsets, clone, format/undo, corrupt-unit refusal, punch and truncate. Exact-source execution pending. Dense-file allocation and scalable persistent mapping/ownership trees remain open.

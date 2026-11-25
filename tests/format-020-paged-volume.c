@@ -403,6 +403,31 @@ int main(void)
     CHECK(!infs20_paged_volume_recovery_visit(&flayout,&io,fragmented_mapping,fragmented_unit,&frag));
     CHECK(frag.maps==1 && frag.units==12);
     free(long_data); free(long_out);
+    /* 64-bit sparse addresses are independent of physical payload size.
+     * A retired 5 GiB sparse file must restore without reading its holes. */
+    memset(m.disk,0,bytes); cold(&m);
+    tx(id,7000); CHECK(!infs20_paged_volume_create(&l,&io,id)); cold(&m);
+    tx(id,7001); CHECK(!infs20_paged_volume_write(&l,&io,id,"huge",a,1)); cold(&m);
+    const uint64_t high=UINT64_C(5)*1024*1024*1024;
+    tx(id,7002); CHECK(!infs20_paged_volume_write_range(&l,&io,id,"huge",high,b,5)); cold(&m);
+    uint8_t tail[8]; n=99;
+    CHECK(!infs20_paged_volume_read_range(&l,&io,0,"huge",high-3,tail,sizeof(tail),&n));
+    CHECK(n==sizeof(tail) && !tail[0] && !tail[1] && !tail[2] && !memcmp(tail+3,b,5));
+    tx(id,7003); CHECK(!infs20_paged_volume_clone(&l,&io,id,"huge","huge-copy")); cold(&m);
+    tx(id,7004); CHECK(!infs20_paged_volume_format(&l,&io,id,72)); cold(&m);
+    /* The second payload allocation is immediately after the first. */
+    m.pending[(size_t)(DATA+1)*INFS20_PAGE_BYTES]^=1;
+    tx(id,7005); CHECK(infs20_paged_volume_unformat(&l,&io,id,72)==INFS_STATUS_CORRUPT && !m.ops);
+    cold(&m);
+    tx(id,7006); CHECK(!infs20_paged_volume_unformat(&l,&io,id,72)); cold(&m);
+    CHECK(!infs20_paged_volume_read_range(&l,&io,0,"huge-copy",high,tail,sizeof(tail),&n));
+    CHECK(n==5 && !memcmp(tail,b,n));
+    tx(id,7007); CHECK(!infs20_paged_volume_punch(&l,&io,id,"huge",high+1,3)); cold(&m);
+    CHECK(!infs20_paged_volume_read_range(&l,&io,0,"huge",high,tail,sizeof(tail),&n));
+    CHECK(n==5 && tail[0]==b[0] && !tail[1] && !tail[2] && !tail[3] && tail[4]==b[4]);
+    tx(id,7008); CHECK(!infs20_paged_volume_truncate(&l,&io,id,"huge",high+1)); cold(&m);
+    CHECK(!infs20_paged_volume_read_range(&l,&io,0,"huge",high,tail,sizeof(tail),&n));
+    CHECK(n==1 && tail[0]==b[0]);
     free(raw.p); free(baseline); free(m.pending); free(m.disk);
     printf("format20-paged-volume: PASS (%u actual typed ownership/payload interruption cases)\n",cases);
     return 0;

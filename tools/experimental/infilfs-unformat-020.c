@@ -22,7 +22,8 @@ struct source { int fd; struct stat initial; };
 struct mapping {
     uint8_t allocation[16];
     uint64_t pin;
-    size_t size,count;
+    uint64_t size;
+    size_t count;
     int incomplete;
     char name[INFS20_VOLUME_NAME_MAX+1];
     struct infs20_recovery_extent ext[INFS20_VOLUME_EXTENTS];
@@ -115,7 +116,7 @@ static infs_status mapping(void *opaque,const struct infs20_recovery_mapping *m)
     size_t len=strlen(m->name);
     if(!len || len>INFS20_VOLUME_NAME_MAX || strchr(m->name,'/') ||
        strchr(m->name,'\\') || !strcmp(m->name,".") || !strcmp(m->name,"..") ||
-       m->size>INFS20_VOLUME_BYTES || m->extent_count>INFS20_VOLUME_EXTENTS ||
+       m->size>INFS20_LOGICAL_MAX || m->extent_count>INFS20_VOLUME_EXTENTS ||
        (m->extent_count && !m->extents)) return INFS_STATUS_CORRUPT;
     if(e->count==e->capacity) {
         size_t cap=e->capacity?e->capacity*2:16;
@@ -131,10 +132,10 @@ static infs_status mapping(void *opaque,const struct infs20_recovery_mapping *m)
     item->pin=m->pin; item->size=m->size; item->count=m->extent_count;
     memcpy(item->name,m->name,len+1);
     char root[33],allocation[33]; hex(m->root_id,16,root); hex(m->allocation_id,16,allocation);
-    fprintf(e->manifest,"{\"kind\":\"mapping\",\"root\":\"%s\",\"allocation\":\"%s\",\"pin\":%" PRIu64 ",\"role\":%u,\"size\":%zu,\"extent_count\":%zu,\"name\":",
+    fprintf(e->manifest,"{\"kind\":\"mapping\",\"root\":\"%s\",\"allocation\":\"%s\",\"pin\":%" PRIu64 ",\"role\":%u,\"size\":%" PRIu64 ",\"extent_count\":%zu,\"name\":",
             root,allocation,m->pin,(unsigned)m->role,m->size,m->extent_count);
     json_string(e->manifest,m->name); fputs("}\n",e->manifest);
-    size_t previous=0;
+    uint64_t previous=0;
     for(size_t i=0;i<m->extent_count;++i) {
         const struct infs20_recovery_extent *x=&m->extents[i];
         if(!x->length || x->logical_offset<previous || x->logical_offset>m->size ||
@@ -151,7 +152,7 @@ static infs_status mapping(void *opaque,const struct infs20_recovery_mapping *m)
             memcpy(a->id,x->allocation_id,16); a->size=x->allocation_size;
         } else if(a->size!=x->allocation_size) return INFS_STATUS_CORRUPT;
         hex(x->allocation_id,16,allocation);
-        fprintf(e->manifest,"{\"kind\":\"extent\",\"pin\":%" PRIu64 ",\"allocation\":\"%s\",\"file_offset\":%zu,\"allocation_offset\":%zu,\"size\":%zu,\"name\":",
+        fprintf(e->manifest,"{\"kind\":\"extent\",\"pin\":%" PRIu64 ",\"allocation\":\"%s\",\"file_offset\":%" PRIu64 ",\"allocation_offset\":%zu,\"size\":%zu,\"name\":",
                 m->pin,allocation,x->logical_offset,x->allocation_offset,x->length);
         json_string(e->manifest,m->name); fputs("}\n",e->manifest);
     }

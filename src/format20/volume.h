@@ -19,13 +19,17 @@
  * trees, not this fixed upper bound or a contiguous-run requirement. */
 #define INFS20_VOLUME_UNITS 16u
 #define INFS20_VOLUME_BYTES (INFS20_VOLUME_UNITS * INFS20_PAGE_BYTES)
+/* Logical sparse sizes are independent of one bounded payload preparation.
+ * Signed 64-bit offsets remain representable by supported native adapters. */
+#define INFS20_LOGICAL_MAX UINT64_C(0x7fffffffffffffff)
 #define INFS20_VOLUME_EXTENTS 16u
 
 /* A slice references a stable allocation, not its current physical address.
  * Absent logical ranges are holes. Allocation size is independently bound. */
 struct infs20_recovery_extent {
     uint8_t allocation_id[16];
-    size_t logical_offset,length,allocation_offset,allocation_size;
+    uint64_t logical_offset;
+    size_t length,allocation_offset,allocation_size;
 };
 
 struct infs20_recovery_mapping {
@@ -35,7 +39,7 @@ struct infs20_recovery_mapping {
     uint64_t pin;
     uint8_t role;
     const char *name;
-    size_t size;
+    uint64_t size;
     /* Borrowed ordered slices; allocation_id above is nonzero only for
      * a file consisting of a single entire allocation. */
     const struct infs20_recovery_extent *extents;
@@ -123,7 +127,7 @@ infs_status infs20_paged_volume_read_range(const struct infs20_paged_layout *,
  * namespace roots. Earlier callback effects remain on a later failure. */
 struct infs20_namespace_entry {
     const char *name;
-    size_t size;
+    uint64_t size;
     uint8_t allocation_id[16]; /* zero for a composite/sparse file */
     size_t extent_count;
 };

@@ -655,3 +655,6 @@ The sparse image exporter also tests a partial recovery in which only bytes [100
 
 ### Dynamic paged transaction staging (execution pending)
 The existing batch target now additionally exercises 300-record atomic insert/update/removal, exceeding the former 256-change ceiling, and a missing-key refusal after 300 privately staged edits with zero storage writes and no payload callback. The common publication and interruption tests remain unchanged. No exact-source execution is asserted until CI reports it.
+
+### 64-bit sparse logical mapping (execution pending)
+The paged-volume test now exercises a 5 GiB sparse logical mapping with only two initial physical allocation units, high-offset reads, shared clone, native format/undo, corrupt-unit zero-write refusal, punch and truncate. Native undo now verifies distinct mapped units rather than allocating whole-file buffers. The experimental exporter uses 64-bit logical positions. No exact-source execution is asserted until CI reports it.
