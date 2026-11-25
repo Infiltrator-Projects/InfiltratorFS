@@ -191,3 +191,6 @@ The detailed S0–S7 sequence in ON_DISK_FORMAT.md section 20.18 supersedes any 
 - [x] Execute the bounded schema, store, ownership, physical-payload/native-undo and raw-discovery conformance targets together on Linux (exact source `d67cdb9c`, see QUALIFICATION.md).
 - [x] Run one real ext4 nodiscard format experiment on an isolated 64 MiB image; verify surviving proof and all three test names' payloads.
 - [ ] Complete the scalable CoW tree/arena, allocation reuse with automatic fallback retirement, multi-extent namespace and production byte schema. Integrate the full portable engine, native adapters and production Unformatter; qualify encryption, replication, geometry, real formatter matrix and physical media. Experimental checkmarks do not close S0–S7 or authorize format 0.20 publication.
+
+### Multi-unit allocation integration
+- [ ] Bounded multi-block payloads, indexed per-unit integrity, shared relocation and read-only partial recovery visitor implemented; exact-source test results pending. General extent trees, fragmented allocations, scalable ownership/reuse and full portable namespace remain open.

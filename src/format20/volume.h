@@ -5,7 +5,7 @@
 
 /*
  * Executable single-device integration model. Disposable test media only:
- * flat ASCII names, at most one physical block per file, bounded metadata,
+ * flat ASCII names, bounded contiguous multi-block allocations, bounded metadata,
  * append-only payload allocation (no reuse), no encryption or native mount.
  * All calls require exclusive access. On an I/O failure the caller must
  * discard volatile state and recover cold before attempting another write.
@@ -13,6 +13,31 @@
  */
 #define INFS20_VOLUME_NAME_MAX 63u
 #define INFS20_VOLUME_FILES 64u
+/* Model limit only: the production design uses paged allocation/checksum
+ * trees, not this fixed upper bound or a contiguous-run requirement. */
+#define INFS20_VOLUME_UNITS 16u
+#define INFS20_VOLUME_BYTES (INFS20_VOLUME_UNITS * INFS20_PAGE_BYTES)
+
+struct infs20_recovery_mapping {
+    uint8_t root_id[16], allocation_id[16];
+    uint64_t pin;
+    uint8_t role;
+    const char *name;
+    size_t size;
+};
+struct infs20_recovery_unit {
+    uint8_t allocation_id[16];
+    uint64_t physical_block;
+    size_t logical_offset, logical_size;
+    infs_status status;
+    /* Borrowed verified bytes, NULL on any unavailable/corrupt unit. */
+    const uint8_t *data;
+};
+typedef infs_status (*infs20_recovery_mapping_fn)(void *,
+    const struct infs20_recovery_mapping *);
+typedef infs_status (*infs20_recovery_unit_fn)(void *,
+    const struct infs20_recovery_unit *);
+
 infs_status infs20_volume_create(const struct infs20_store_layout *,
     const struct infs20_store_io *,const uint8_t tx[16]);
 infs_status infs20_volume_write(const struct infs20_store_layout *,
@@ -30,4 +55,18 @@ infs_status infs20_volume_unformat(const struct infs20_store_layout *,
     const struct infs20_store_io *,const uint8_t tx[16],uint64_t retired_pin);
 infs_status infs20_volume_relocate(const struct infs20_store_layout *,
     const struct infs20_store_io *,const uint8_t tx[16],const char *);
+/* Verify only the units intersecting the requested logical range. A request
+ * beyond EOF returns a successful short read. The output and byte count
+ * remain unchanged on failure; this is not an unverified salvage read. */
+infs_status infs20_volume_read_range(const struct infs20_store_layout *,
+    const struct infs20_store_io *,uint64_t pin,const char *,uint64_t offset,
+    uint8_t *,size_t,size_t *);
+/* Enumerate the fully validated committed namespace across active/retained
+ * pins, then each referenced allocation's units exactly once. Payload
+ * failures are reported per unit; structural errors abort before callbacks.
+ * Callbacks borrow values only during invocation. The caller must keep the
+ * source immutable/exclusive and direct exports elsewhere. No source writes. */
+infs_status infs20_volume_recovery_visit(const struct infs20_store_layout *,
+    const struct infs20_store_io *,infs20_recovery_mapping_fn,
+    infs20_recovery_unit_fn,void *);
 #endif

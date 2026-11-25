@@ -234,6 +234,12 @@ add_executable(infilfs-format-020-volume
 target_include_directories(infilfs-format-020-volume PRIVATE src)
 target_link_libraries(infilfs-format-020-volume PRIVATE infilfs_core)
 infilfs_enable_warnings(infilfs-format-020-volume)
+add_executable(infilfs-format-020-multiblock
+    tests/format-020-multiblock.c src/format20/schema.c
+    src/format20/store.c src/format20/ownership.c src/format20/volume.c)
+target_include_directories(infilfs-format-020-multiblock PRIVATE src)
+target_link_libraries(infilfs-format-020-multiblock PRIVATE infilfs_core)
+infilfs_enable_warnings(infilfs-format-020-multiblock)
 
 # Real foreign formatter characterization is confined to generated regular
 # files. Build the harness on POSIX; the actual ext4 test is admitted only
@@ -415,6 +421,7 @@ add_test(NAME infilfs-format-020-schema COMMAND infilfs-format-020-schema)
 add_test(NAME infilfs-format-020-store COMMAND infilfs-format-020-store)
 add_test(NAME infilfs-format-020-ownership COMMAND infilfs-format-020-ownership)
 add_test(NAME infilfs-format-020-volume COMMAND infilfs-format-020-volume)
+add_test(NAME infilfs-format-020-multiblock COMMAND infilfs-format-020-multiblock)
 if(TARGET infilfs-format-020-foreign-image AND INFILFS_FORMAT20_EXT4)
     add_test(NAME infilfs-format-020-foreign-ext4
         COMMAND infilfs-format-020-foreign-image "${INFILFS_FORMAT20_EXT4}" ext4)
