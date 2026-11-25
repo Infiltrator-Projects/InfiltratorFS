@@ -231,3 +231,6 @@ The detailed S0–S7 sequence in ON_DISK_FORMAT.md section 20.18 supersedes any 
 
 ### Consolidated protection admission
 - [ ] Common bootstrap/paged publication verifies actual stored dependencies and every declared tree lane; zero-write refusal on degraded current metadata and silent dropped-write negative cases registered. Exact-source execution pending. Continue the existing single paged engine; no alternative commit/ownership format is retained.
+
+### Interior data-placement experiment
+- [ ] Compare baseline with quarter and three-quarter capacity placement using real ext4/FAT32/exFAT/NTFS regular-file formatters and exact committed payload/metadata observations. Default allocator unchanged until measured evidence; Windows/device discard, larger geometry and occupancy tests remain open.

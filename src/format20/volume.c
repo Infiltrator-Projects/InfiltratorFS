@@ -467,9 +467,11 @@ static infs_status fork_root(const struct infs20_store_layout *l,struct volume *
     return INFS_STATUS_OK;
 }
 static infs_status volume_create(const struct infs20_store_layout *l,
-    const struct infs20_paged_layout *paged,    const struct infs20_store_io *io,const uint8_t tx[16])
+    const struct infs20_paged_layout *paged,const struct infs20_store_io *io,
+    const uint8_t tx[16],uint64_t preferred_start)
 {
-    if(!tx_valid(tx)) return INFS_STATUS_INVALID_ARGUMENT;
+    if(!l || !io || !tx_valid(tx) || preferred_start>=l->member_blocks)
+        return INFS_STATUS_INVALID_ARGUMENT;
     if(!paged) {
         struct infs20_store_state s;
         infs_status st=infs20_store_recover(l,io,&s);
@@ -477,6 +479,11 @@ static infs_status volume_create(const struct infs20_store_layout *l,
         if(st!=INFS_STATUS_NOT_FOUND) return st;
     }
     struct volume v={0}; v.header=1;
+    /* This is a persisted allocation preference, never a free-space claim.
+     * The existing checked allocator skips all reserved and owned ranges and
+     * can wrap on exhaustion. It supports comparable formatter experiments
+     * without hard-coding an unqualified production placement policy. */
+    v.frontier=preferred_start;
     struct infs20_model_node *n=&v.graph.nodes[v.graph.node_count++];
     id_make(tx,'R',n->id); n->rank=2; n->kind=INFS20_MODEL_ROOT;
     n->state=INFS20_MODEL_LIVE; n->refs=1;
@@ -817,13 +824,18 @@ infs_status infs20_paged_volume_release_pin(const struct infs20_paged_layout *l,
 infs_status infs20_volume_create(const struct infs20_store_layout *l,
     const struct infs20_store_io *io,const uint8_t tx[16])
 {
-    return volume_create(l,NULL,io,tx);
+    return volume_create(l,NULL,io,tx,0);
 }
 infs_status infs20_paged_volume_create(const struct infs20_paged_layout *l,
     const struct infs20_store_io *io,const uint8_t tx[16])
 {
+    return infs20_paged_volume_create_at(l,io,tx,0);
+}
+infs_status infs20_paged_volume_create_at(const struct infs20_paged_layout *l,
+    const struct infs20_store_io *io,const uint8_t tx[16],uint64_t preferred_start)
+{
     if(!l) return INFS_STATUS_INVALID_ARGUMENT;
-    return volume_create(&l->bootstrap,l,io,tx);
+    return volume_create(&l->bootstrap,l,io,tx,preferred_start);
 }
 infs_status infs20_volume_write(const struct infs20_store_layout *l,
     const struct infs20_store_io *io,const uint8_t tx[16],const char *name,const uint8_t *data,size_t size)

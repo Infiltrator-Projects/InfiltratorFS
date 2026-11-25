@@ -103,10 +103,12 @@ static void tx(uint8_t id[16],unsigned n)
     memset(id,0,16); id[0]=(uint8_t)n; id[15]=0x67;
 }
 static int seed(const struct infs20_store_layout *l,
-    const struct infs20_paged_layout *p,const struct infs20_store_io *io)
+    const struct infs20_paged_layout *p,const struct infs20_store_io *io,
+    uint64_t preferred_start)
 {
     uint8_t id[16]; tx(id,1);
-    if(p?infs20_paged_volume_create(p,io,id):infs20_volume_create(l,io,id)) return -1;
+    if(p?infs20_paged_volume_create_at(p,io,id,preferred_start):
+         infs20_volume_create(l,io,id)) return -1;
     tx(id,2);
     if(p?infs20_paged_volume_write(p,io,id,"original",(const uint8_t *)"payload-one",11):
          infs20_volume_write(l,io,id,"original",(const uint8_t *)"payload-one",11)) return -1;
@@ -214,10 +216,11 @@ static int verify_file(const struct infs20_store_layout *l,
 int main(int argc,char **argv)
 {
     if((argc!=3 && argc!=4) || argv[1][0]!='/' ||
-       (argc==4 && strcmp(argv[3],"paged")) ||
+       (argc==4 && strcmp(argv[3],"paged") && strcmp(argv[3],"paged-quarter") &&
+        strcmp(argv[3],"paged-three-quarter")) ||
        (strcmp(argv[2],"ext4") && strcmp(argv[2],"fat32") &&
         strcmp(argv[2],"exfat") && strcmp(argv[2],"ntfs"))) {
-        fprintf(stderr,"usage: %s /absolute/formatter {ext4|fat32|exfat|ntfs} [paged]\n",argv[0]); return 2;
+        fprintf(stderr,"usage: %s /absolute/formatter {ext4|fat32|exfat|ntfs} [paged|paged-quarter|paged-three-quarter]\n",argv[0]); return 2;
     }
     char dir[]="/tmp/infs20-foreign-XXXXXX";
     if(!mkdtemp(dir)) return 1;
@@ -233,12 +236,16 @@ int main(int argc,char **argv)
     struct infs20_paged_layout paged={l,{20,BLOCKS/2+20,BLOCKS-276},
                                       {256,256,256}};
     const struct infs20_paged_layout *p=argc==4?&paged:NULL;
+    const char *placement=argc==4?argv[3]:"bounded";
+    uint64_t preferred_start=0;
+    if(!strcmp(placement,"paged-quarter")) preferred_start=BLOCKS/4;
+    if(!strcmp(placement,"paged-three-quarter")) preferred_start=3*(BLOCKS/4);
     struct infs20_store_io aio={&a,rd,wr,fl};
     struct infs20_store_state original;
     struct infs20_paged_state original_paged;
     struct manifest manifest={0};
     REQUIRE(!private_file(before,&a,&aid) && !private_file(after,&b,&bid));
-    REQUIRE(!init_image(&a,&l) && !seed(&l,p,&aio));
+    REQUIRE(!init_image(&a,&l) && !seed(&l,p,&aio,preferred_start));
     REQUIRE(!infs20_store_recover(&l,&aio,&original) && original.sequence==6);
     if(p) REQUIRE(!infs20_paged_open(p,&aio,&original_paged));
     REQUIRE(!verify_file(&l,p,&aio,0,"original","payload-one",1));
@@ -248,6 +255,11 @@ int main(int argc,char **argv)
     REQUIRE(manifest.maps==3 && manifest.seen[0]==2 && manifest.seen[1]==1 &&
             manifest.units[0]==1 && manifest.units[1]==1 &&
             manifest.block[0]!=manifest.block[1]);
+    /* Prove the intended experiment actually placed both sample allocations
+     * in the chosen interior region. Do not infer placement from the hint. */
+    REQUIRE(manifest.block[0]>=preferred_start && manifest.block[1]>=preferred_start);
+    printf("placement=%s preferred_start=%" PRIu64 " payload_blocks=%" PRIu64 ",%" PRIu64 "\n",
+           placement,preferred_start,manifest.block[0],manifest.block[1]);
     uint8_t old[INFS20_PAGE_BYTES],now[INFS20_PAGE_BYTES];
     for(uint64_t i=0;i<BLOCKS;++i) REQUIRE(!rd(&a,i,old) && !wr(&b,i,old));
     REQUIRE(!fl(&b) && same_file(after,&b,&bid));
@@ -262,7 +274,7 @@ int main(int argc,char **argv)
     }
     REQUIRE(changes>0);
     printf("profile=%s store=%s image_bytes=%" PRIu64 " changed_4KiB_blocks=%" PRIu64 "\n",
-           argv[2],p?"paged":"bounded",a.bytes,changes);
+           argv[2],placement,a.bytes,changes);
     for(uint64_t i=0;i<BLOCKS;) {
         if(!changed[i]) { ++i; continue; }
         uint64_t start=i; while(i<BLOCKS && changed[i]) ++i;

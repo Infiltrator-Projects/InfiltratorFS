@@ -611,3 +611,6 @@ All four discovered and selected sequence 6. exFAT preserved sufficient committe
 
 ### Common protected-publication admission (execution pending)
 The paged-store test now exercises mutation refusal with one damaged current metadata replica while read-only lookup remains available, and a silently dropped staged leaf write that must not publish a successor. Existing interruption counts remain historical until exact-source rerun. Common dependency and commit readback verifies the addressed copies, not the hardware's power-loss guarantees. The experimental implementation remains bounded and non-installed.
+
+### Interior payload placement matrix (execution pending)
+The same real formatter harness registers two additional initial-frontier profiles per available Linux formatter. It logs the actual payload blocks, the changed block intervals and recovered named payload checks. The independent manifest enforces the intended sample placement; a pass still means truthful characterization, not guaranteed recovery. These tests are ordinary disposable regular files, not hardware traces. No new result is asserted before exact-source execution.

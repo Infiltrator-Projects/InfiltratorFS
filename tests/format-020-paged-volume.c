@@ -84,7 +84,10 @@ int main(void)
     struct infs20_store_io io={&m,rd,wr,fl};
     uint8_t id[16],a[LENGTH],b[LENGTH];
     for(size_t i=0;i<LENGTH;++i) { a[i]=(uint8_t)(i*7+3); b[i]=(uint8_t)(i*19+9); }
-    tx(id,1); CHECK(!infs20_paged_volume_create(&l,&io,id)); cold(&m);
+    tx(id,1);
+    CHECK(infs20_paged_volume_create_at(&l,&io,id,BLOCKS)==INFS_STATUS_INVALID_ARGUMENT);
+    CHECK(!m.ops);
+    CHECK(!infs20_paged_volume_create(&l,&io,id)); cold(&m);
     tx(id,2); CHECK(!infs20_paged_volume_write(&l,&io,id,"a",a,LENGTH)); cold(&m);
     CHECK(!memcmp(m.disk+(size_t)DATA*INFS20_PAGE_BYTES,a,INFS20_PAGE_BYTES));
     tx(id,3); CHECK(!infs20_paged_volume_clone(&l,&io,id,"a","clone")); cold(&m);

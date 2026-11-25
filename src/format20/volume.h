@@ -76,6 +76,11 @@ infs_status infs20_volume_recovery_visit(const struct infs20_store_layout *,
  * It is the successor to the bounded-bank regression profile. */
 infs_status infs20_paged_volume_create(const struct infs20_paged_layout *,
     const struct infs20_store_io *,const uint8_t tx[16]);
+/* Experimental placement characterization only: choose the initial
+ * data allocation frontier on a disposable image. The ordinary checked
+ * allocator still excludes reserved/owned ranges and may wrap. */
+infs_status infs20_paged_volume_create_at(const struct infs20_paged_layout *,
+    const struct infs20_store_io *,const uint8_t tx[16],uint64_t preferred_start);
 infs_status infs20_paged_volume_write(const struct infs20_paged_layout *,
     const struct infs20_store_io *,const uint8_t tx[16],const char *name,const uint8_t *data,size_t size);
 infs_status infs20_paged_volume_clone(const struct infs20_paged_layout *,

@@ -503,6 +503,15 @@ if(TARGET infilfs-format-020-foreign-image)
                     "${INFILFS_FORMAT20_${profile_upper}}" "${profile}" paged)
             set_tests_properties(infilfs-format-020-foreign-${profile}-paged
                 PROPERTIES TIMEOUT 60)
+            # Compare interior payload placements using the same actual formatter,
+            # metadata layout, files and before/after recovery oracle.
+            foreach(placement quarter three-quarter)
+                add_test(NAME infilfs-format-020-foreign-${profile}-paged-${placement}
+                    COMMAND infilfs-format-020-foreign-image
+                        "${INFILFS_FORMAT20_${profile_upper}}" "${profile}" "paged-${placement}")
+                set_tests_properties(infilfs-format-020-foreign-${profile}-paged-${placement}
+                    PROPERTIES TIMEOUT 60)
+            endforeach()
         endif()
     endforeach()
 endif()
