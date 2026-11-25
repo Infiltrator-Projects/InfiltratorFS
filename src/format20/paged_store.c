@@ -560,6 +560,25 @@ infs_status infs20_paged_visit(const struct infs20_paged_layout *l,
     struct reader r={l,io,&s}; struct infs20_tree_io tree=tree_reader(&r);
     return infs20_tree_visit(&tree,&s.root,visit,context);
 }
+infs_status infs20_paged_visit_range(const struct infs20_paged_layout *l,
+    const struct infs20_store_io *io,uint64_t expected_sequence,
+    const uint8_t *start,size_t start_size,int exclusive,
+    const uint8_t *end,size_t end_size,size_t limit,infs20_tree_visitor visit,
+    void *context,size_t *seen,int *more,uint64_t *sequence)
+{
+    if(!sequence) return INFS_STATUS_INVALID_ARGUMENT;
+    struct infs20_paged_state s;
+    infs_status st=infs20_paged_open(l,io,&s); if(st) return st;
+    /* Never resume into a different committed namespace. A caller that
+     * does not hold an exclusive pin must restart after a sequence change. */
+    if(expected_sequence && expected_sequence!=s.commit.sequence)
+        return INFS_STATUS_BUSY;
+    struct reader r={l,io,&s}; struct infs20_tree_io tree=tree_reader(&r);
+    st=infs20_tree_visit_range(&tree,&s.root,start,start_size,exclusive,end,
+                               end_size,limit,visit,context,seen,more);
+    if(!st) *sequence=s.commit.sequence;
+    return st;
+}
 infs_status infs20_paged_discover(const struct infs20_raw_source *source,
     struct infs20_store_region *region,struct infs20_paged_layout *layout,
     struct infs20_paged_state *out)

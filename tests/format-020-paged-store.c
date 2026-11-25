@@ -105,6 +105,20 @@ int main(void)
     CHECK(s.commit.sequence==COUNT+1 && s.commit.records==1);
     CHECK(s.used[0]==s.used[1] && s.used[1]==s.used[2]);
     struct walk w={0}; CHECK(!infs20_paged_visit(&l,&io,visit,&w) && w.n==COUNT);
+    uint8_t lo[KEY],hi[KEY]; key(8,lo); key(14,hi);
+    size_t count=99; int more=99; uint64_t sequence=0;
+    w.n=8;
+    CHECK(!infs20_paged_visit_range(&l,&io,0,lo,KEY,0,hi,KEY,3,
+                                   visit,&w,&count,&more,&sequence));
+    CHECK(count==3 && more && w.n==11 && sequence==s.commit.sequence);
+    key(10,lo);
+    CHECK(!infs20_paged_visit_range(&l,&io,sequence,lo,KEY,1,hi,KEY,3,
+                                   visit,&w,&count,&more,&sequence));
+    CHECK(count==3 && !more && w.n==14);
+    uint64_t stale=sequence-1; count=99; more=99;
+    CHECK(infs20_paged_visit_range(&l,&io,stale,lo,KEY,1,hi,KEY,3,
+                                  visit,&w,&count,&more,&sequence)==INFS_STATUS_BUSY);
+    CHECK(count==99 && more==99 && w.n==14 && sequence==s.commit.sequence);
     for(unsigned i=0;i<COUNT;++i) CHECK(expect(&l,&io,i,NULL));
     memcpy(baseline,m.disk,bytes); struct infs20_paged_state original=s;
     memset(changed,0x86,sizeof(changed)); key(17,k); tx(id,100);

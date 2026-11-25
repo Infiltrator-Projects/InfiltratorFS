@@ -234,3 +234,7 @@ The detailed S0–S7 sequence in ON_DISK_FORMAT.md section 20.18 supersedes any 
 
 ### Interior data-placement experiment
 - [ ] Compare baseline with quarter and three-quarter capacity placement using real ext4/FAT32/exFAT/NTFS regular-file formatters and exact committed payload/metadata observations. Default allocator unchanged until measured evidence; Windows/device discard, larger geometry and occupancy tests remain open.
+
+### Indexed namespace and ownership traversal
+- [ ] Bounded authenticated tree ranges with commit-sequence continuation, and atomic rename/replacement in the existing typed engine implemented. Exact-source execution pending.
+- [ ] Migrate ordinary typed lookups and mutations from whole-model scans to targeted records and bounded ownership operations. Full directories, hard links, multi-extent files, native adapters and production qualification remain open.

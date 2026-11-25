@@ -75,6 +75,16 @@ infs_status infs20_paged_get(const struct infs20_paged_layout *,
 infs_status infs20_paged_visit(const struct infs20_paged_layout *,
     const struct infs20_store_io *,infs20_tree_visitor,void *);
 
+/* Bounded key-range batches against one selected commit. Pass zero
+ * expected_sequence on the first call and its returned sequence on later
+ * calls. A different authority returns BUSY before any callback. This
+ * does not substitute for full offline proof or protection validation. */
+infs_status infs20_paged_visit_range(const struct infs20_paged_layout *,
+    const struct infs20_store_io *,uint64_t expected_sequence,
+    const uint8_t *start,size_t start_size,int exclusive,
+    const uint8_t *end,size_t end_size,size_t limit,infs20_tree_visitor,
+    void *,size_t *seen,int *more,uint64_t *sequence);
+
 /* Explicit offline discovery of the original experimental region. Only
  * read callbacks are exposed. The immutable raw source must remain valid
  * while using the returned region. Full tree proof is checked before

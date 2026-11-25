@@ -447,6 +447,86 @@ infs_status infs20_tree_visit(const struct infs20_tree_io *io,
     if(empty(root)) return INFS_STATUS_OK;
     return walk(io,root,-1,(struct bound){0},(struct bound){0},visit,NULL,context);
 }
+/*
+ * Range traversal uses the existing immutable membership proof. Child
+ * intervals are [entry minimum, next minimum); prune those disjoint from
+ * the requested interval before reading a child. Inherited upper bounds
+ * remain mandatory even for the rightmost child. This avoids a full-tree
+ * scan for an ownership family, a particular root's directory, or a
+ * bounded extent-key range. An unvisited subtree is NOT verified.
+ */
+struct range_walk {
+    struct bound start,end;
+    int exclusive;
+    size_t limit,seen;
+    int more;
+    infs20_tree_visitor visit;
+    void *context;
+};
+static infs_status walk_range(const struct infs20_tree_io *io,
+    const struct infs20_tree_ref *ref,int level,struct bound lower,
+    struct bound upper,struct range_walk *r)
+{
+    if((r->start.key && upper.key &&
+        keycmp(upper.key,upper.size,r->start.key,r->start.size)<=0) ||
+       (r->end.key && lower.key &&
+        keycmp(lower.key,lower.size,r->end.key,r->end.size)>=0))
+        return INFS_STATUS_OK;
+    struct node *n=calloc(1,sizeof(*n));
+    if(!n) return INFS_STATUS_NO_MEMORY;
+    infs_status st=read_node(io,ref,n);
+    if(!st) st=bounds(n,level,lower,upper);
+    if(!st) {
+        unsigned i=0;
+        if(r->start.key)
+            i=n->level ? route(n,r->start.key,r->start.size) :
+                         position(n,r->start.key,r->start.size);
+        if(!n->level && r->exclusive && r->start.key && i<n->count &&
+           !keycmp(n->entries[i].key,n->entries[i].key_size,
+                   r->start.key,r->start.size)) ++i;
+        for(;i<n->count && !r->more;++i) {
+            const struct entry *e=n->entries+i;
+            if(r->end.key && keycmp(e->key,e->key_size,r->end.key,r->end.size)>=0)
+                break;
+            if(n->level) {
+                struct infs20_tree_ref child;
+                ref_decode(e->value,&child);
+                st=walk_range(io,&child,n->level-1,entry_bound(e),
+                    i+1<n->count?entry_bound(e+1):upper,r);
+            } else if(r->seen==r->limit) {
+                /* Prove there is another matching key, not just a
+                 * potentially empty branch; continuation never guesses. */
+                r->more=1;
+            } else {
+                st=r->visit(r->context,e->key,e->key_size,e->value,e->value_size);
+                if(!st) ++r->seen;
+            }
+            if(st) break;
+        }
+    }
+    free(n);
+    return st;
+}
+infs_status infs20_tree_visit_range(const struct infs20_tree_io *io,
+    const struct infs20_tree_ref *root,const uint8_t *start,size_t start_size,
+    int exclusive,const uint8_t *end,size_t end_size,size_t limit,
+    infs20_tree_visitor visit,void *context,size_t *seen,int *more)
+{
+    if(!io_valid(io,0) || !root || !visit || !seen || !more || !limit ||
+       (!start != !start_size) || (!end != !end_size) ||
+       start_size>INFS20_TREE_KEY_MAX || end_size>INFS20_TREE_KEY_MAX ||
+       (exclusive!=0 && exclusive!=1) || (exclusive && !start) ||
+       (start && end && keycmp(start,start_size,end,end_size)>0))
+        return INFS_STATUS_INVALID_ARGUMENT;
+    struct range_walk r={{start,start_size},{end,end_size},exclusive,limit,
+                         0,0,visit,context};
+    infs_status st=INFS_STATUS_OK;
+    if(!empty(root) && !(start && end &&
+        !keycmp(start,start_size,end,end_size)))
+        st=walk_range(io,root,-1,(struct bound){0},(struct bound){0},&r);
+    if(!st) { *seen=r.seen; *more=r.more; }
+    return st;
+}
 infs_status infs20_tree_visit_refs(const struct infs20_tree_io *io,
     const struct infs20_tree_ref *root,infs20_tree_ref_visitor visit,void *context)
 {

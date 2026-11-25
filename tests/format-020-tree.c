@@ -77,6 +77,33 @@ int main(void)
     CHECK(!infs20_tree_visit(&io,&root,NULL,NULL));
     struct traversal t={0}; CHECK(!infs20_tree_visit(&io,&root,visit,&t));
     CHECK(t.seen==COUNT);
+    unsigned full_reads=m.reads;
+    t=(struct traversal){0};
+    CHECK(!infs20_tree_visit(&io,&root,visit,&t));
+    full_reads=m.reads-full_reads;
+    uint8_t lo[KEY],hi[KEY]; key(34,lo); key(40,hi);
+    size_t seen=99; int more=99;
+    unsigned range_reads=m.reads;
+    t=(struct traversal){34,0};
+    CHECK(!infs20_tree_visit_range(&io,&root,lo,KEY,0,hi,KEY,3,
+                                  visit,&t,&seen,&more));
+    CHECK(seen==3 && t.seen==3 && t.next==37 && more);
+    CHECK(m.reads-range_reads<full_reads);
+    key(36,lo);
+    CHECK(!infs20_tree_visit_range(&io,&root,lo,KEY,1,hi,KEY,3,
+                                  visit,&t,&seen,&more));
+    CHECK(seen==3 && t.next==40 && !more);
+    key(40,lo);
+    CHECK(!infs20_tree_visit_range(&io,&root,lo,KEY,0,hi,KEY,3,
+                                  visit,&t,&seen,&more) && !seen && !more);
+    key(41,lo); seen=99; more=99;
+    CHECK(infs20_tree_visit_range(&io,&root,lo,KEY,0,hi,KEY,3,
+                                 visit,&t,&seen,&more)==INFS_STATUS_INVALID_ARGUMENT);
+    CHECK(seen==99 && more==99);
+    t=(struct traversal){0};
+    CHECK(!infs20_tree_visit_range(&io,&root,NULL,0,0,NULL,0,COUNT,
+                                  visit,&t,&seen,&more));
+    CHECK(seen==COUNT && !more);
     for(unsigned i=0;i<COUNT;++i) CHECK(expect(&io,&root,i));
     CHECK(expect(&io,&retained,COUNT-1));
     key(0,k); size_t size=99; memset(out,0xa5,sizeof(out));

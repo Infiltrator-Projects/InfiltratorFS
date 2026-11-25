@@ -54,6 +54,18 @@ infs_status infs20_tree_get(const struct infs20_tree_io *,
  * a separate validation pass before externally publishing an export. */
 infs_status infs20_tree_visit(const struct infs20_tree_io *,
     const struct infs20_tree_ref *,infs20_tree_visitor,void *);
+/* Bounded ordered read-only traversal. NULL/zero bounds are unbounded.
+ * Start is inclusive unless exclusive is 1 (resume after the last emitted
+ * key); end is always exclusive. A positive limit caps callbacks; more
+ * reports a further proven matching key. Only visited proof paths are
+ * verified, not the entire tree. Callers must copy any continuation key
+ * during the callback and pin the same immutable root for all batches.
+ * Outputs are unchanged on error, but earlier callbacks may have run. */
+infs_status infs20_tree_visit_range(const struct infs20_tree_io *,
+    const struct infs20_tree_ref *,const uint8_t *start,size_t start_size,
+    int exclusive,const uint8_t *end,size_t end_size,size_t limit,
+    infs20_tree_visitor,void *,size_t *seen,int *more);
+
 /* Explicit maintenance traversal of verified immutable page references.
  * The visitor sees each referenced node after its digest and inherited
  * key bounds validate. No storage writes occur. */

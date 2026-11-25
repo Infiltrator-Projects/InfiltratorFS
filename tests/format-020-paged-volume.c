@@ -148,6 +148,43 @@ int main(void)
     CHECK(!infs20_paged_volume_recovery_visit(&found,&ro,mapping,unit,&scan));
     CHECK(scan.maps==5 && scan.units==9 && scan.bad==1 && scan.bad_block==DATA+7);
     CHECK(same(&found,&ro,0,"a",b) && same(&found,&ro,11,"new",a));
+    /* Atomic rename uses the same existing namespace and ownership model.
+     * Reinitialise the disposable image to isolate this fault matrix. */
+    memset(m.disk,0,bytes); cold(&m);
+    tx(id,900); CHECK(!infs20_paged_volume_create(&l,&io,id)); cold(&m);
+    tx(id,901); CHECK(!infs20_paged_volume_write(&l,&io,id,"src",a,LENGTH)); cold(&m);
+    tx(id,902); CHECK(!infs20_paged_volume_write(&l,&io,id,"dst",b,LENGTH)); cold(&m);
+    tx(id,903); CHECK(!infs20_paged_volume_clone(&l,&io,id,"src","alias")); cold(&m);
+    tx(id,904); CHECK(!infs20_paged_volume_snapshot(&l,&io,id,20)); cold(&m);
+    tx(id,905);
+    CHECK(infs20_paged_volume_rename(&l,&io,id,"src","dst",0)==INFS_STATUS_ALREADY_EXISTS);
+    CHECK(!m.ops);
+    CHECK(infs20_paged_volume_rename(&l,&io,id,"absent","dst",1)==INFS_STATUS_NOT_FOUND);
+    CHECK(!m.ops);
+    CHECK(!infs20_paged_volume_rename(&l,&io,id,"src","src",0) && !m.ops);
+    memcpy(baseline,m.disk,bytes);
+    tx(id,906); CHECK(!infs20_paged_volume_rename(&l,&io,id,"src","dst",1));
+    unsigned rename_cuts=m.ops; cold(&m);
+    CHECK(same(&l,&io,0,"src",NULL) && same(&l,&io,0,"dst",a));
+    CHECK(same(&l,&io,0,"alias",a) && same(&l,&io,20,"src",a) &&
+          same(&l,&io,20,"dst",b));
+    for(unsigned mode=0;mode<3;++mode) for(unsigned cut=1;cut<=rename_cuts;++cut) {
+        memcpy(m.disk,baseline,bytes); cold(&m); m.mode=mode; m.fail=cut;
+        tx(id,1000+mode*300+cut);
+        CHECK(infs20_paged_volume_rename(&l,&io,id,"src","dst",1)==INFS_STATUS_IO_ERROR);
+        cold(&m); struct infs20_paged_state current;
+        CHECK(!infs20_paged_open(&l,&io,&current));
+        CHECK(current.commit.sequence==5 || current.commit.sequence==6);
+        int changed=current.commit.sequence==6;
+        CHECK(same(&l,&io,0,"src",changed?NULL:a) && same(&l,&io,0,"dst",changed?a:b));
+        CHECK(same(&l,&io,0,"alias",a) && same(&l,&io,20,"src",a) &&
+              same(&l,&io,20,"dst",b));
+        ++cases;
+    }
+    memcpy(m.disk,baseline,bytes); cold(&m);
+    tx(id,2000); CHECK(!infs20_paged_volume_rename(&l,&io,id,"src","fresh",0)); cold(&m);
+    CHECK(same(&l,&io,0,"src",NULL) && same(&l,&io,0,"fresh",a) &&
+          same(&l,&io,0,"dst",b) && same(&l,&io,20,"src",a));
     free(raw.p); free(baseline); free(m.pending); free(m.disk);
     printf("format20-paged-volume: PASS (%u actual typed ownership/payload interruption cases)\n",cases);
     return 0;

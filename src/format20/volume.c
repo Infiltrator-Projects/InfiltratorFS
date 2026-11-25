@@ -792,6 +792,57 @@ static infs_status unlink_name(const struct infs20_store_layout *l,
     st=fork_root(l,&v,tx,name,root,&ordinal);
     return st?st:commit(l,paged,io,tx,&v,NULL,0);
 }
+/*
+ * Rename changes only the namespace mapping. Fork the root once, excluding
+ * both names when replacement is requested; the old roots keep their
+ * original mappings and the shared allocation identity stays unchanged.
+ * Unlike clone+unlink, a failure cannot publish an intermediate duplicate
+ * or missing source. No file payload write is needed.
+ */
+static infs_status rename_name(const struct infs20_store_layout *l,
+    const struct infs20_paged_layout *paged,const struct infs20_store_io *io,
+    const uint8_t tx[16],const char *source,const char *target,int replace)
+{
+    if(!tx_valid(tx) || !name_valid(source) || !name_valid(target) ||
+       (replace!=0 && replace!=1)) return INFS_STATUS_INVALID_ARGUMENT;
+    struct volume v; infs_status st=load(l,paged,io,&v); if(st) return st;
+    const uint8_t *active=v.graph.edges[pin(&v,0)].target;
+    int src=file(&v,active,source);
+    if(src<0) return INFS_STATUS_NOT_FOUND;
+    if(!strcmp(source,target)) return INFS_STATUS_OK;
+    int dst=file(&v,active,target);
+    if(dst>=0 && !replace) return INFS_STATUS_ALREADY_EXISTS;
+    uint8_t data[16],root[16]; uint64_t ordinal;
+    memcpy(data,v.files[src].data,16);
+    st=fork_root(l,&v,tx,source,root,&ordinal); if(st) return st;
+    if(dst>=0) {
+        /* Remove only the destination edge from the private new root.
+         * Retained roots still own their original destination. The
+         * ordinary deferred collector handles the now-unreferenced data. */
+        int index=file(&v,root,target);
+        if(index<0) return INFS_STATUS_CORRUPT;
+        const struct mapping *m=&v.files[index];
+        int d=node(&v,m->data);
+        if(d<0 || !v.graph.nodes[d].refs) return INFS_STATUS_CORRUPT;
+        size_t e=0;
+        for(;e<v.graph.edge_count;++e)
+            if(v.graph.edges[e].role==INFS20_MODEL_STRONG &&
+               equal(v.graph.edges[e].source,root) &&
+               v.graph.edges[e].ordinal==m->ordinal &&
+               equal(v.graph.edges[e].target,m->data)) break;
+        if(e==v.graph.edge_count) return INFS_STATUS_CORRUPT;
+        if(!--v.graph.nodes[d].refs)
+            v.graph.nodes[d].state=INFS20_MODEL_PENDING;
+        memmove(v.graph.edges+e,v.graph.edges+e+1,
+                (v.graph.edge_count-e-1)*sizeof(v.graph.edges[0]));
+        --v.graph.edge_count;
+        memmove(v.files+index,v.files+index+1,
+                (v.files_count-(size_t)index-1)*sizeof(v.files[0]));
+        --v.files_count;
+    }
+    st=add_file(&v,root,target,data,ordinal);
+    return st?st:commit(l,paged,io,tx,&v,NULL,0);
+}
 static infs_status release_pin(const struct infs20_store_layout *l,
     const struct infs20_paged_layout *paged,const struct infs20_store_io *io,
     const uint8_t tx[16],uint64_t ordinal)
@@ -827,6 +878,13 @@ infs_status infs20_paged_volume_unlink(const struct infs20_paged_layout *l,
     const struct infs20_store_io *io,const uint8_t tx[16],const char *name)
 {
     return l?unlink_name(&l->bootstrap,l,io,tx,name):INFS_STATUS_INVALID_ARGUMENT;
+}
+infs_status infs20_paged_volume_rename(const struct infs20_paged_layout *l,
+    const struct infs20_store_io *io,const uint8_t tx[16],
+    const char *source,const char *target,int replace)
+{
+    if(!l) return INFS_STATUS_INVALID_ARGUMENT;
+    return rename_name(&l->bootstrap,l,io,tx,source,target,replace);
 }
 infs_status infs20_paged_volume_release_pin(const struct infs20_paged_layout *l,
     const struct infs20_store_io *io,const uint8_t tx[16],uint64_t ordinal)

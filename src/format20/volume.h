@@ -106,6 +106,12 @@ infs_status infs20_paged_volume_collect(const struct infs20_paged_layout *,
     const struct infs20_store_io *,const uint8_t tx[16]);
 infs_status infs20_paged_volume_unlink(const struct infs20_paged_layout *,
     const struct infs20_store_io *,const uint8_t tx[16],const char *);
+/* Atomic rename within the active flat namespace. With replace=0 an
+ * existing target is refused; replace=1 replaces only its active mapping.
+ * Snapshots and retired roots preserve their original names and content. */
+infs_status infs20_paged_volume_rename(const struct infs20_paged_layout *,
+    const struct infs20_store_io *,const uint8_t tx[16],const char *source,
+    const char *target,int replace);
 infs_status infs20_paged_volume_release_pin(const struct infs20_paged_layout *,
     const struct infs20_store_io *,const uint8_t tx[16],uint64_t ordinal);
 #endif
