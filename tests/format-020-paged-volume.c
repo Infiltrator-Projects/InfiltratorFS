@@ -74,6 +74,23 @@ static infs_status unit(void *o,const struct infs20_recovery_unit *u)
     } else if(!u->data) return INFS_STATUS_CORRUPT;
     return 0;
 }
+struct names {
+    const char *expected[4];
+    size_t seen;
+    uint8_t first_id[16];
+    int shared;
+};
+static infs_status listed(void *opaque,const struct infs20_namespace_entry *e)
+{
+    struct names *n=opaque;
+    if(n->seen>=4 || !n->expected[n->seen] ||
+       strcmp(e->name,n->expected[n->seen]) || e->size!=LENGTH)
+        return INFS_STATUS_CORRUPT;
+    if(!n->seen) memcpy(n->first_id,e->allocation_id,16);
+    else if(n->shared && memcmp(n->first_id,e->allocation_id,16))
+        return INFS_STATUS_CORRUPT;
+    ++n->seen; return INFS_STATUS_OK;
+}
 int main(void)
 {
     struct medium m={0};
@@ -93,6 +110,23 @@ int main(void)
     CHECK(!memcmp(m.disk+(size_t)DATA*INFS20_PAGE_BYTES,a,INFS20_PAGE_BYTES));
     tx(id,3); CHECK(!infs20_paged_volume_clone(&l,&io,id,"a","clone")); cold(&m);
     tx(id,4); CHECK(!infs20_paged_volume_snapshot(&l,&io,id,10)); cold(&m);
+    struct names names={{"a","clone",NULL,NULL},0,{0},1};
+    size_t listed_count=99; int more=99; uint64_t listed_sequence=0;
+    CHECK(!infs20_paged_volume_list(&l,&io,10,0,NULL,1,listed,&names,
+        &listed_count,&more,&listed_sequence));
+    CHECK(names.seen==1 && listed_count==1 && more && listed_sequence==4);
+    CHECK(!infs20_paged_volume_list(&l,&io,10,listed_sequence,"a",1,listed,&names,
+        &listed_count,&more,&listed_sequence));
+    CHECK(names.seen==2 && listed_count==1 && !more && listed_sequence==4);
+    CHECK(!infs20_paged_volume_list(&l,&io,10,listed_sequence,"clone",1,listed,&names,
+        &listed_count,&more,&listed_sequence));
+    CHECK(names.seen==2 && !listed_count && !more);
+    names.seen=0; listed_count=99; more=99;
+    CHECK(infs20_paged_volume_list(&l,&io,10,3,NULL,1,listed,&names,
+        &listed_count,&more,&listed_sequence)==INFS_STATUS_BUSY);
+    CHECK(!names.seen && listed_count==99 && more==99 && listed_sequence==4);
+    CHECK(infs20_paged_volume_list(&l,&io,10,0,"a",1,listed,&names,
+        &listed_count,&more,&listed_sequence)==INFS_STATUS_INVALID_ARGUMENT);
     uint8_t range[53]; size_t got=99;
     CHECK(!infs20_paged_volume_read_range(&l,&io,10,"a",
         INFS20_PAGE_BYTES-17,range,sizeof(range),&got));
@@ -203,6 +237,14 @@ int main(void)
     tx(id,2000); CHECK(!infs20_paged_volume_rename(&l,&io,id,"src","fresh",0)); cold(&m);
     CHECK(same(&l,&io,0,"src",NULL) && same(&l,&io,0,"fresh",a) &&
           same(&l,&io,0,"dst",b) && same(&l,&io,20,"src",a));
+    names=(struct names){{"alias","dst","fresh",NULL},0,{0},0};
+    CHECK(!infs20_paged_volume_list(&l,&io,0,0,NULL,4,listed,&names,
+        &listed_count,&more,&listed_sequence));
+    CHECK(names.seen==3 && listed_count==3 && !more);
+    names=(struct names){{"alias","dst","src",NULL},0,{0},0};
+    CHECK(!infs20_paged_volume_list(&l,&io,20,0,NULL,4,listed,&names,
+        &listed_count,&more,&listed_sequence));
+    CHECK(names.seen==3 && listed_count==3 && !more);
     free(raw.p); free(baseline); free(m.pending); free(m.disk);
     printf("format20-paged-volume: PASS (%u actual typed ownership/payload interruption cases)\n",cases);
     return 0;

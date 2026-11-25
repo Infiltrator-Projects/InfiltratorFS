@@ -92,6 +92,22 @@ infs_status infs20_paged_volume_read(const struct infs20_paged_layout *,
     const struct infs20_store_io *,uint64_t ordinal,const char *name,uint8_t *out,size_t capacity,size_t *size);
 infs_status infs20_paged_volume_read_range(const struct infs20_paged_layout *,
     const struct infs20_store_io *,uint64_t ordinal,const char *name,uint64_t offset,uint8_t *out,size_t capacity,size_t *size);
+/* Indexed enumeration of the currently selected flat namespace. Names
+ * are returned in byte order; the callback borrows its entry for the call.
+ * Use the last emitted name as after and the returned commit sequence for
+ * continuation. A changed sequence refuses before callbacks. The ordinary
+ * iterator verifies consumed mappings/descriptors, not payload or unrelated
+ * namespace roots. Earlier callback effects remain on a later failure. */
+struct infs20_namespace_entry {
+    const char *name;
+    size_t size;
+    uint8_t allocation_id[16];
+};
+typedef infs_status (*infs20_namespace_fn)(void *,const struct infs20_namespace_entry *);
+infs_status infs20_paged_volume_list(const struct infs20_paged_layout *,
+    const struct infs20_store_io *,uint64_t ordinal,uint64_t expected_sequence,
+    const char *after,size_t limit,infs20_namespace_fn,void *,
+    size_t *seen,int *more,uint64_t *sequence);
 infs_status infs20_paged_volume_recovery_visit(const struct infs20_paged_layout *,
     const struct infs20_store_io *,infs20_recovery_mapping_fn mapping_fn,infs20_recovery_unit_fn unit_fn,void *context);
 infs_status infs20_paged_volume_snapshot(const struct infs20_paged_layout *,

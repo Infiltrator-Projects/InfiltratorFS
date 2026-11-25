@@ -242,3 +242,8 @@ The detailed S0–S7 sequence in ON_DISK_FORMAT.md section 20.18 supersedes any 
 ### Indexed file read integration
 - [ ] Paged whole-file/range reads switched to one pinned authenticated lookup view; full-model validation remains the independent writer/recovery path. Exact-source execution pending.
 - [ ] Targeted scalable mutation, pin/physical-range indexes, true multi-extent files, directory and portable security semantics remain open.
+
+### Verified indexed-read milestone (25 November 2026)
+- [x] Exact-source Linux runner at `7b0f572d59fa878225476c9251e55f1e35947a6c`: all 25 dedicated experimental tests passed, including 258 typed-volume interruption cases and all foreign formatter/placement characterization profiles.
+- [ ] Shared verified read helper and indexed active/retained namespace enumeration implemented; exact-source execution pending.
+- [ ] Replace flat bounded graph with the scalable object/extent/directory model; production feature parity and native qualification remain open.

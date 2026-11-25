@@ -588,57 +588,67 @@ static infs_status read_content(const struct volume *v,const struct infs20_store
     }
     return INFS_STATUS_OK;
 }
-static infs_status volume_read(const struct infs20_store_layout *l,
-    const struct infs20_paged_layout *paged,    const struct infs20_store_io *io,uint64_t ordinal,const char *name,
-    uint8_t *out,size_t capacity,size_t *size)
+/*
+ * All profiles use the same verified payload read. Only namespace resolution
+ * differs between the bounded regression oracle and indexed paged reader.
+ * The private staging buffer ensures no partial result is published if
+ * any intersecting unit fails authentication. An empty whole-file read
+ * still verifies its canonical zero unit.
+ */
+static infs_status read_selected(const struct volume *v,
+    const struct infs20_store_io *io,const uint8_t id[16],uint64_t offset,
+    uint8_t *out,size_t capacity,size_t *size,int whole)
+{
+    int ci=content(v,id);
+    if(ci<0) return INFS_STATUS_CORRUPT;
+    size_t total=v->contents[ci].size;
+    if(whole && total>capacity) return INFS_STATUS_NO_SPACE;
+    if(!whole && (offset>=total || !capacity)) {
+        *size=0; return INFS_STATUS_OK;
+    }
+    size_t from=whole?0:(size_t)offset;
+    size_t n=total-from; if(n>capacity) n=capacity;
+    uint8_t *stage=malloc(whole?unit_count(total)*INFS20_PAGE_BYTES:n);
+    if(!stage) return INFS_STATUS_NO_MEMORY;
+    infs_status st=INFS_STATUS_OK;
+    if(whole) st=read_content(v,io,id,stage);
+    else {
+        uint8_t page[INFS20_PAGE_BYTES]; size_t done=0;
+        while(done<n) {
+            size_t at=from+done,index=at/INFS20_PAGE_BYTES,skip=at%INFS20_PAGE_BYTES;
+            size_t take=INFS20_PAGE_BYTES-skip;
+            if(take>n-done) take=n-done;
+            st=read_unit(v,io,id,index,page);
+            if(st) break;
+            memcpy(stage+done,page+skip,take); done+=take;
+        }
+    }
+    if(!st) { if(n) memcpy(out,stage,n); *size=n; }
+    free(stage); return st;
+}
+static infs_status volume_read_common(const struct infs20_store_layout *l,
+    const struct infs20_paged_layout *paged,const struct infs20_store_io *io,
+    uint64_t ordinal,const char *name,uint64_t offset,uint8_t *out,
+    size_t capacity,size_t *size,int whole)
 {
     if(!name_valid(name) || !size || (!out && capacity)) return INFS_STATUS_INVALID_ARGUMENT;
     struct volume v; infs_status st=load(l,paged,io,&v); if(st) return st;
     int p=pin(&v,ordinal); if(p<0) return INFS_STATUS_NOT_FOUND;
     int i=file(&v,v.graph.edges[p].target,name); if(i<0) return INFS_STATUS_NOT_FOUND;
-    int ci=content(&v,v.files[i].data);
-    if(ci<0) return INFS_STATUS_CORRUPT;
-    size_t n=v.contents[ci].size;
-    if(n>capacity) return INFS_STATUS_NO_SPACE;
-    uint8_t *stage=malloc(unit_count(n)*INFS20_PAGE_BYTES);
-    if(!stage) return INFS_STATUS_NO_MEMORY;
-    st=read_content(&v,io,v.files[i].data,stage);
-    if(!st) {
-        if(n) memcpy(out,stage,n);
-        *size=n;
-    }
-    free(stage);
-    return st;
+    return read_selected(&v,io,v.files[i].data,offset,out,capacity,size,whole);
+}
+static infs_status volume_read(const struct infs20_store_layout *l,
+    const struct infs20_paged_layout *paged,const struct infs20_store_io *io,
+    uint64_t ordinal,const char *name,uint8_t *out,size_t capacity,size_t *size)
+{
+    return volume_read_common(l,paged,io,ordinal,name,0,out,capacity,size,1);
 }
 static infs_status volume_read_range(const struct infs20_store_layout *l,
-    const struct infs20_paged_layout *paged,    const struct infs20_store_io *io,uint64_t ordinal,const char *name,
-    uint64_t offset,uint8_t *out,size_t capacity,size_t *size)
+    const struct infs20_paged_layout *paged,const struct infs20_store_io *io,
+    uint64_t ordinal,const char *name,uint64_t offset,uint8_t *out,
+    size_t capacity,size_t *size)
 {
-    if(!name_valid(name) || !size || (!out && capacity)) return INFS_STATUS_INVALID_ARGUMENT;
-    struct volume v; infs_status st=load(l,paged,io,&v); if(st) return st;
-    int p=pin(&v,ordinal); if(p<0) return INFS_STATUS_NOT_FOUND;
-    int i=file(&v,v.graph.edges[p].target,name); if(i<0) return INFS_STATUS_NOT_FOUND;
-    int ci=content(&v,v.files[i].data);
-    if(ci<0) return INFS_STATUS_CORRUPT;
-    size_t total=v.contents[ci].size;
-    if(offset>=total || !capacity) { *size=0; return INFS_STATUS_OK; }
-    size_t from=(size_t)offset,n=total-from;
-    if(n>capacity) n=capacity;
-    uint8_t *stage=malloc(n);
-    if(!stage) return INFS_STATUS_NO_MEMORY;
-    uint8_t page[INFS20_PAGE_BYTES];
-    size_t done=0;
-    while(done<n) {
-        size_t at=from+done,index=at/INFS20_PAGE_BYTES,skip=at%INFS20_PAGE_BYTES;
-        size_t take=INFS20_PAGE_BYTES-skip;
-        if(take>n-done) take=n-done;
-        st=read_unit(&v,io,v.files[i].data,index,page);
-        if(st) break;
-        memcpy(stage+done,page+skip,take); done+=take;
-    }
-    if(!st) { memcpy(out,stage,n); *size=n; }
-    free(stage);
-    return st;
+    return volume_read_common(l,paged,io,ordinal,name,offset,out,capacity,size,0);
 }
 /*
  * Indexed read-only resolver. The old bounded full-graph loader is still
@@ -692,15 +702,15 @@ static infs_status active_visit(void *opaque,const uint8_t *key,size_t ks,
     if(a->found++) return INFS_STATUS_CORRUPT;
     return decode_paged(a->v,key,ks,value,vs);
 }
-static infs_status indexed_resolve(struct indexed_read *q,
+static infs_status indexed_root(uint64_t ordinal,
     const struct infs20_tree_io *tree,const struct infs20_tree_ref *root,
-    uint64_t sequence,struct volume *v)
+    struct volume *v)
 {
     uint8_t key[17+INFS20_VOLUME_NAME_MAX]={0};
     key[0]='E';
     infs_status st;
-    if(q->ordinal) {
-        infs_store_le64(key+17,q->ordinal);
+    if(ordinal) {
+        infs_store_le64(key+17,ordinal);
         st=get_record(tree,root,key,25,v);
         if(st) return st;
     } else {
@@ -725,13 +735,25 @@ static infs_status indexed_resolve(struct indexed_read *q,
     if(v->graph.node_count!=1 || rn->kind!=INFS20_MODEL_ROOT ||
        rn->state!=INFS20_MODEL_LIVE || !rn->refs || !rn->rank ||
        rn->start || rn->blocks) return INFS_STATUS_CORRUPT;
-    key[0]='F'; size_t n=strlen(q->name);
-    memcpy(key+17,q->name,n);
-    st=get_record(tree,root,key,17+n,v); if(st) return st;
+    return INFS_STATUS_OK;
+}
+/*
+ * Validate a decoded F record using the same authenticated strong edge,
+ * allocation descriptor and physical protection checks for both lookup
+ * and enumeration. The caller has already resolved the selected root.
+ */
+static infs_status indexed_mapping(const struct infs20_paged_layout *layout,
+    const struct infs20_tree_io *tree,const struct infs20_tree_ref *root,
+    uint64_t sequence,struct volume *v,const char *name)
+{
+    uint8_t key[25]={0},root_id[16];
+    memcpy(root_id,v->graph.edges[0].target,16);
+    memcpy(key+1,root_id,16);
+    infs_status st;
     const struct mapping *m=&v->files[0];
     if(v->files_count!=1 || !name_valid(m->name) || !m->ordinal ||
        zero(m->data,16) || !equal(m->root,root_id) ||
-       strcmp(m->name,q->name)) return INFS_STATUS_CORRUPT;
+       strcmp(m->name,name)) return INFS_STATUS_CORRUPT;
     key[0]='E'; infs_store_le64(key+17,m->ordinal);
     st=required_record(tree,root,key,25,v); if(st) return st;
     const struct infs20_model_edge *edge=&v->graph.edges[1];
@@ -744,7 +766,7 @@ static infs_status indexed_resolve(struct indexed_read *q,
     key[0]='M'; st=required_record(tree,root,key,1,v); if(st) return st;
     const struct infs20_model_node *d=&v->graph.nodes[1];
     const struct content *c=&v->contents[0];
-    const struct infs20_store_layout *l=&q->layout->bootstrap;
+    const struct infs20_store_layout *l=&layout->bootstrap;
     if(v->graph.node_count!=2 || v->contents_count!=1 || !v->header ||
        d->kind!=INFS20_MODEL_DATA || d->state!=INFS20_MODEL_LIVE ||
        !d->refs || d->rank || !equal(d->id,c->id) ||
@@ -753,8 +775,8 @@ static infs_status indexed_resolve(struct indexed_read *q,
         return INFS_STATUS_CORRUPT;
     for(unsigned lane=0;lane<INFS20_LANE_COUNT;++lane)
         if(overlaps(d->start,d->blocks,l->lane_start[lane],INFS20_STORE_LANE_BLOCKS) ||
-           overlaps(d->start,d->blocks,q->layout->arena_start[lane],
-                    q->layout->arena_blocks[lane]))
+           overlaps(d->start,d->blocks,layout->arena_start[lane],
+                    layout->arena_blocks[lane]))
             return INFS_STATUS_CORRUPT;
     key[0]='Q'; st=get_record(tree,root,key,1,v);
     if(st && st!=INFS_STATUS_NOT_FOUND) return st;
@@ -768,6 +790,18 @@ static infs_status indexed_resolve(struct indexed_read *q,
     }
     return INFS_STATUS_OK;
 }
+static infs_status indexed_resolve(struct indexed_read *q,
+    const struct infs20_tree_io *tree,const struct infs20_tree_ref *root,
+    uint64_t sequence,struct volume *v)
+{
+    infs_status st=indexed_root(q->ordinal,tree,root,v);
+    if(st) return st;
+    uint8_t key[17+INFS20_VOLUME_NAME_MAX];
+    key[0]='F'; memcpy(key+1,v->graph.edges[0].target,16);
+    size_t n=strlen(q->name); memcpy(key+17,q->name,n);
+    st=get_record(tree,root,key,17+n,v); if(st) return st;
+    return indexed_mapping(q->layout,tree,root,sequence,v,q->name);
+}
 static infs_status indexed_read_view(void *opaque,const struct infs20_tree_io *tree,
     const struct infs20_tree_ref *root,uint64_t sequence)
 {
@@ -775,34 +809,9 @@ static infs_status indexed_read_view(void *opaque,const struct infs20_tree_io *t
     struct volume *v=calloc(1,sizeof(*v));
     if(!v) return INFS_STATUS_NO_MEMORY;
     infs_status st=indexed_resolve(q,tree,root,sequence,v);
-    if(st) { free(v); return st; }
-    size_t total=v->contents[0].size;
-    if(q->whole && total>q->capacity) { free(v); return INFS_STATUS_NO_SPACE; }
-    if(!q->whole && (q->offset>=total || !q->capacity)) {
-        *q->size=0; free(v); return INFS_STATUS_OK;
-    }
-    /* Whole-file reads verify the zero block even for an empty file,
-     * matching the previous read contract. Range reads verify only
-     * intersecting logical units, and never publish partial output. */
-    size_t from=q->whole?0:(size_t)q->offset;
-    size_t n=total-from; if(n>q->capacity) n=q->capacity;
-    uint8_t *stage=malloc(q->whole?unit_count(total)*INFS20_PAGE_BYTES:n);
-    if(!stage) { free(v); return INFS_STATUS_NO_MEMORY; }
-    if(q->whole) {
-        st=read_content(v,q->io,v->files[0].data,stage);
-    } else {
-        uint8_t page[INFS20_PAGE_BYTES]; size_t done=0;
-        while(done<n) {
-            size_t at=from+done,index=at/INFS20_PAGE_BYTES,skip=at%INFS20_PAGE_BYTES;
-            size_t take=INFS20_PAGE_BYTES-skip;
-            if(take>n-done) take=n-done;
-            st=read_unit(v,q->io,v->files[0].data,index,page);
-            if(st) break;
-            memcpy(stage+done,page+skip,take); done+=take;
-        }
-    }
-    if(!st) { if(n) memcpy(q->out,stage,n); *q->size=n; }
-    free(stage); free(v); return st;
+    if(!st) st=read_selected(v,q->io,v->files[0].data,q->offset,
+                             q->out,q->capacity,q->size,q->whole);
+    free(v); return st;
 }
 static infs_status indexed_read_file(const struct infs20_paged_layout *l,
     const struct infs20_store_io *io,uint64_t ordinal,const char *name,
@@ -812,6 +821,95 @@ static infs_status indexed_read_file(const struct infs20_paged_layout *l,
         return INFS_STATUS_INVALID_ARGUMENT;
     struct indexed_read q={l,io,ordinal,offset,name,out,capacity,size,whole};
     return infs20_paged_read_view(l,io,indexed_read_view,&q);
+}
+/*
+ * An ordinary namespace iterator visits the selected root's F prefix
+ * only. The parent/root reference and each returned name's strong edge
+ * and descriptor are validated using the same lookup rules as reads.
+ * No payload I/O is necessary. The view is pinned for each batch, and the
+ * returned generation prevents a cursor silently crossing publication.
+ */
+struct indexed_list {
+    const struct infs20_paged_layout *layout;
+    uint64_t ordinal,expected_sequence,*sequence;
+    const char *after;
+    size_t limit,*seen;
+    int *more;
+    infs20_namespace_fn visit;
+    void *context;
+};
+struct list_walk {
+    struct indexed_list *request;
+    const struct infs20_tree_io *tree;
+    const struct infs20_tree_ref *root;
+    uint64_t sequence;
+    struct volume *entry;
+    struct infs20_model_node root_node;
+    struct infs20_model_edge pin;
+};
+static infs_status list_visit(void *opaque,const uint8_t *key,size_t ks,
+    const uint8_t *value,size_t vs)
+{
+    struct list_walk *w=opaque;
+    struct volume *v=w->entry;
+    /* Reset only the bounded private resolver state, not committed storage. */
+    memset(v,0,sizeof(*v));
+    v->graph.nodes[0]=w->root_node; v->graph.node_count=1;
+    v->graph.edges[0]=w->pin; v->graph.edge_count=1;
+    if(ks<=17 || key[0]!='F' || !equal(key+1,w->pin.target))
+        return INFS_STATUS_CORRUPT;
+    infs_status st=decode_paged(v,key,ks,value,vs);
+    if(st) return st;
+    st=indexed_mapping(w->request->layout,w->tree,w->root,w->sequence,v,
+                       v->files[0].name);
+    if(st) return st;
+    struct infs20_namespace_entry entry={0};
+    entry.name=v->files[0].name; entry.size=v->contents[0].size;
+    memcpy(entry.allocation_id,v->files[0].data,16);
+    return w->request->visit(w->request->context,&entry);
+}
+static infs_status list_view(void *opaque,const struct infs20_tree_io *tree,
+    const struct infs20_tree_ref *root,uint64_t sequence)
+{
+    struct indexed_list *q=opaque;
+    if(q->expected_sequence && q->expected_sequence!=sequence)
+        return INFS_STATUS_BUSY;
+    struct volume *v=calloc(1,sizeof(*v));
+    if(!v) return INFS_STATUS_NO_MEMORY;
+    infs_status st=indexed_root(q->ordinal,tree,root,v);
+    if(st) { free(v); return st; }
+    uint8_t lower[17+INFS20_VOLUME_NAME_MAX],upper[17];
+    lower[0]='F'; memcpy(lower+1,v->graph.edges[0].target,16);
+    memcpy(upper,lower,17);
+    /* Lexicographic successor of the fixed binary root prefix, including
+     * carry into the family byte if its UUID is all 0xff. */
+    size_t upper_size=sizeof(upper);
+    while(upper_size && upper[upper_size-1]==UINT8_MAX) --upper_size;
+    if(!upper_size) { free(v); return INFS_STATUS_CORRUPT; }
+    ++upper[upper_size-1];
+    size_t lower_size=17;
+    if(q->after) {
+        size_t n=strlen(q->after); memcpy(lower+17,q->after,n);
+        lower_size+=n;
+    }
+    struct list_walk walk={q,tree,root,sequence,v,v->graph.nodes[0],
+                           v->graph.edges[0]};
+    st=infs20_tree_visit_range(tree,root,lower,lower_size,q->after!=NULL,
+        upper,upper_size,q->limit,list_visit,&walk,q->seen,q->more);
+    if(!st) *q->sequence=sequence;
+    free(v); return st;
+}
+infs_status infs20_paged_volume_list(const struct infs20_paged_layout *l,
+    const struct infs20_store_io *io,uint64_t ordinal,uint64_t expected_sequence,
+    const char *after,size_t limit,infs20_namespace_fn visit,void *context,
+    size_t *seen,int *more,uint64_t *sequence)
+{
+    if(!l || (after && !name_valid(after)) || !limit || !visit ||
+       !seen || !more || !sequence || (after && !expected_sequence))
+        return INFS_STATUS_INVALID_ARGUMENT;
+    struct indexed_list q={l,ordinal,expected_sequence,sequence,after,limit,
+                           seen,more,visit,context};
+    return infs20_paged_read_view(l,io,list_view,&q);
 }
 static infs_status volume_recovery_visit(const struct infs20_store_layout *l,
     const struct infs20_paged_layout *paged,    const struct infs20_store_io *io,infs20_recovery_mapping_fn mapping_fn,

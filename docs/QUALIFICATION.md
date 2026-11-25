@@ -624,3 +624,21 @@ The tree/paged-store tests now exercise ordered bounded ranges, continuation acr
 
 ### Indexed committed read integration (execution pending)
 The existing paged-volume test exercises the actual indexed read path throughout the old-or-new fault matrix, retained-root reads, two-lane damage and rename tests. Additional range checks cross a unit boundary, verify EOF/unknown-pin behavior and distinguish a corrupt touched unit from an untouched unit while preserving output on failure. Full graph reconstruction is still validated separately. No exact-source execution pass is asserted by this change.
+
+### 25 November 2026 — verified placement and indexed namespace milestone
+
+The [exact-source Linux userspace runner](https://github.com/Infiltrator-Projects/InfiltratorFS/actions/runs/45545064304/job/138972704876) at `7b0f572d59fa878225476c9251e55f1e35947a6c` passed all 25 dedicated Format 0.20 CTests. Tree: 96 keys, six levels, 18 private-write interruption cases; paged store: 48 committed keys, 84 publication interruption cases; paged volume: 258 typed ownership/payload interruption cases, including rename. These are experimental, not production, passes.
+
+The [prior exact-source runner](https://github.com/Infiltrator-Projects/InfiltratorFS/actions/runs/45544485481/job/138970798490) at `54baa5a5098ff342ea2b2598e75da4623e26407b` passed the 25-test matrix and recorded actual sample payload locations on 64 MiB regular files. Latest committed metadata proof survived all twelve paged formatter/placement combinations. In each case three names refer to two physical payload allocations.
+
+| Linux formatter | Default blocks 276,277 | Quarter blocks 4096,4097 | Three-quarter blocks 12288,12289 |
+|---|---|---|---|
+| ext4 | 3/3 names verified | 3/3 | 3/3 |
+| FAT32 | 3/3 | 3/3 | 3/3 |
+| exFAT | 0/3, payload corruption correctly refused | 3/3 | 3/3 |
+| NTFS | 3/3 | 3/3 | 3/3 |
+
+These are final-byte observations on one geometry and tiny sample corpus, not general survival rates or actual physical discard traces. No production placement is frozen from them. Native Windows formatting, first mount, occupied/larger devices and real discard remain required. The same source's [BOOT job](https://github.com/Infiltrator-Projects/InfiltratorFS/actions/runs/45544486097/job/138970673325) failed because pinned BOOT v0.1.642 lacks the filesystem_module configuration token; generic Common V2 loader restoration/release and repinning are prerequisites. Do not mask the failure or claim BOOT compatibility.
+
+### Common verified read and indexed listing (execution pending)
+The paged-volume test now adds ordered bounded listing, stale cursor refusal, retained snapshot and renamed active namespace listing, and shared allocation identity. Both read profiles invoke the same verified content routine. Record exact-source execution separately.
