@@ -52,11 +52,68 @@ static int same(const struct infs20_paged_layout *l,const struct infs20_store_io
                     (st==INFS_STATUS_NOT_FOUND && n==99 && out[0]==0xa5);
 }
 struct raw { uint8_t *p; size_t n; };
+struct bounded_raw { struct raw raw; unsigned reads; };
 static infs_status raw_read(void *o,uint64_t off,uint8_t *p,size_t n)
 {
     struct raw *r=o;
     if(off>r->n || n>r->n-(size_t)off) return INFS_STATUS_IO_ERROR;
     memcpy(p,r->p+(size_t)off,n); return 0;
+}
+static infs_status bounded_read(void *o,uint64_t off,uint8_t *p,size_t n)
+{
+    struct bounded_raw *b=o;
+    if(++b->reads>128u || off%INFS20_PAGE_BYTES || n!=INFS20_PAGE_BYTES)
+        return INFS_STATUS_IO_ERROR;
+    return raw_read(&b->raw,off,p,n);
+}
+static int bounded_open_test(struct medium *m,const struct infs20_paged_layout *l,
+                             const uint8_t *expected)
+{
+    struct bounded_raw raw={{m->disk,m->bytes},0};
+    struct infs20_raw_source source={&raw,m->bytes,bounded_read};
+    struct infs20_store_region region;
+    struct infs20_paged_layout measured;
+    struct infs20_paged_state state;
+    memset(&region,0xa5,sizeof(region));memset(&measured,0xa5,sizeof(measured));
+    memset(&state,0xa5,sizeof(state));
+    struct infs20_store_region old_region=region;
+    struct infs20_paged_layout old_layout=measured;
+    struct infs20_paged_state old_state=state;
+    uint64_t wrong[3]={0,LANE,LANE+1u};
+    CHECK(infs20_paged_open_bounded(&source,wrong,&region,&measured,&state)
+          ==INFS_STATUS_INVALID_ARGUMENT && !raw.reads);
+    CHECK(!memcmp(&region,&old_region,sizeof(region)) &&
+          !memcmp(&measured,&old_layout,sizeof(measured)) &&
+          !memcmp(&state,&old_state,sizeof(state)));
+    CHECK(!infs20_paged_open_bounded(&source,l->bootstrap.lane_start,
+          &region,&measured,&state));
+    CHECK(!region.start && raw.reads<=128u && state.commit.sequence==2u &&
+          measured.bootstrap.member_blocks==l->bootstrap.member_blocks);
+    CHECK(!memcmp(measured.bootstrap.set_id,l->bootstrap.set_id,16));
+    struct infs20_store_io io=infs20_store_region_io(&region);
+    raw.reads=0;
+    uint8_t result[LENGTH];size_t got=0;
+    CHECK(!infs20_paged_volume_read(&measured,&io,0,"a",result,sizeof(result),&got));
+    CHECK(got==LENGTH && !memcmp(result,expected,LENGTH));
+    /* Remove both commit headers in the first lane. The remaining lanes
+     * must still select the native committed state without scanning. */
+    uint8_t saved[2][INFS20_PAGE_BYTES];
+    for(unsigned bank=0;bank<2u;++bank) {
+        uint64_t offset=(l->bootstrap.lane_start[0]+bank*INFS20_STORE_BANK_BLOCKS)*
+            INFS20_PAGE_BYTES;
+        memcpy(saved[bank],m->disk+offset,INFS20_PAGE_BYTES);
+        memset(m->disk+offset,0,INFS20_PAGE_BYTES);
+    }
+    raw.reads=0;
+    int rc=infs20_paged_open_bounded(&source,l->bootstrap.lane_start,
+          &region,&measured,&state);
+    for(unsigned bank=0;bank<2u;++bank) {
+        uint64_t offset=(l->bootstrap.lane_start[0]+bank*INFS20_STORE_BANK_BLOCKS)*
+            INFS20_PAGE_BYTES;
+        memcpy(m->disk+offset,saved[bank],INFS20_PAGE_BYTES);
+    }
+    CHECK(!rc && state.commit.sequence==2u && !state.commit.fully_protected);
+    return 0;
 }
 struct scan { unsigned maps,units,bad; uint64_t bad_block; };
 static infs_status mapping(void *o,const struct infs20_recovery_mapping *m)
@@ -192,6 +249,7 @@ int main(void)
     CHECK(!m.ops);
     CHECK(!infs20_paged_volume_create(&l,&io,id)); cold(&m);
     tx(id,2); CHECK(!infs20_paged_volume_write(&l,&io,id,"a",a,LENGTH)); cold(&m);
+    CHECK(!bounded_open_test(&m,&l,a));
     CHECK(!memcmp(m.disk+(size_t)DATA*INFS20_PAGE_BYTES,a,INFS20_PAGE_BYTES));
     tx(id,3); CHECK(!infs20_paged_volume_clone(&l,&io,id,"a","clone")); cold(&m);
     tx(id,4); CHECK(!infs20_paged_volume_snapshot(&l,&io,id,10)); cold(&m);

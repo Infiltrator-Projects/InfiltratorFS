@@ -105,6 +105,14 @@ infs_status infs20_paged_read_view(const struct infs20_paged_layout *,
 infs_status infs20_paged_discover(const struct infs20_raw_source *,
     struct infs20_store_region *,struct infs20_paged_layout *,
     struct infs20_paged_state *);
+/* Bounded normal read-only opening of the fixed-lane candidate. Commit
+ * selection and the P20A descriptor remain the existing native authority.
+ * The immutable source must survive the returned region and later indexed
+ * reads. Does not claim a final production discovery geometry. */
+infs_status infs20_paged_open_bounded(const struct infs20_raw_source *,
+    const uint64_t lane_start[INFS20_LANE_COUNT],
+    struct infs20_store_region *,struct infs20_paged_layout *,
+    struct infs20_paged_state *);
 /* Explicit metadata maintenance. Trace the current committed tree, then
  * publish the SAME root in a successor bank with proven unreachable runs.
  * Only after full publication may the next mutation consume those runs:

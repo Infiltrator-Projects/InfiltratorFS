@@ -111,6 +111,12 @@ struct infs20_store_discovery {
 };
 infs_status infs20_store_discover(const struct infs20_raw_source *,
     struct infs20_store_discovery *);
+/* Bounded discovery at the six bank-header addresses of a caller-selected
+ * fixed-lane profile. Only an exact partition-relative committed member
+ * is admitted. This is not displaced-region recovery or a production
+ * anchor-layout freeze. Output is unchanged on all errors. */
+infs_status infs20_store_open_bounded(const struct infs20_raw_source *,
+    const uint64_t lane_start[INFS20_LANE_COUNT],struct infs20_store_discovery *);
 struct infs20_store_io infs20_store_region_io(struct infs20_store_region *);
 
 #endif

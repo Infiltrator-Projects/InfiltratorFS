@@ -697,15 +697,15 @@ infs_status infs20_paged_read_view(const struct infs20_paged_layout *l,
     struct reader r={l,io,&s}; struct infs20_tree_io tree=tree_reader(&r);
     return visit(context,&tree,&s.root,s.commit.sequence);
 }
-infs_status infs20_paged_discover(const struct infs20_raw_source *source,
+/* Both normal bounded discovery and explicit offline discovery use
+ * this single committed descriptor decoder and native tree validator. */
+static infs_status open_discovered(struct infs20_store_discovery *d,
     struct infs20_store_region *region,struct infs20_paged_layout *layout,
-    struct infs20_paged_state *out)
+    struct infs20_paged_state *out,int full_tree)
 {
-    if(!region || !layout || !out) return INFS_STATUS_INVALID_ARGUMENT;
-    struct infs20_store_discovery d;
-    infs_status st=infs20_store_discover(source,&d); if(st) return st;
-    struct infs20_store_io io=infs20_store_region_io(&d.region);
-    struct infs20_paged_layout l={0}; l.bootstrap=d.region.layout;
+    struct infs20_store_io io=infs20_store_region_io(&d->region);
+    struct infs20_paged_layout l={0}; l.bootstrap=d->region.layout;
+    infs_status st;
     struct infs20_paged_state s={0};
     uint8_t p[DESCRIPTOR_BYTES];
     st=descriptor(&l.bootstrap,&io,p,&s.commit); if(st) return st;
@@ -717,11 +717,39 @@ infs_status infs20_paged_discover(const struct infs20_raw_source *source,
     }
     if(!valid_layout(&l,&io,0)) return INFS_STATUS_CORRUPT;
     st=decode(&l,p,&s); if(st) return st;
-    struct reader r={&l,&io,&s}; struct infs20_tree_io tree=tree_reader(&r);
-    st=infs20_tree_visit(&tree,&s.root,NULL,NULL);
-    if(st) return st;
-    *region=d.region; *layout=l; *out=s;
+    /* Offline discovery explicitly verifies the complete tree. Ordinary
+     * indexed access must not traverse the whole namespace at mount. */
+    if(full_tree) {
+        struct reader r={&l,&io,&s}; struct infs20_tree_io tree=tree_reader(&r);
+        st=infs20_tree_visit(&tree,&s.root,NULL,NULL);
+        if(st)return st;
+    } else {
+        struct infs20_paged_state opened;
+        st=infs20_paged_open(&l,&io,&opened);
+        if(st)return st;
+        s=opened;
+    }
+    *region=d->region; *layout=l; *out=s;
     return INFS_STATUS_OK;
+}
+infs_status infs20_paged_discover(const struct infs20_raw_source *source,
+    struct infs20_store_region *region,struct infs20_paged_layout *layout,
+    struct infs20_paged_state *out)
+{
+    if(!region || !layout || !out)return INFS_STATUS_INVALID_ARGUMENT;
+    struct infs20_store_discovery d;
+    infs_status st=infs20_store_discover(source,&d);
+    return st?st:open_discovered(&d,region,layout,out,1);
+}
+infs_status infs20_paged_open_bounded(const struct infs20_raw_source *source,
+    const uint64_t lane_start[INFS20_LANE_COUNT],
+    struct infs20_store_region *region,struct infs20_paged_layout *layout,
+    struct infs20_paged_state *out)
+{
+    if(!region || !layout || !out)return INFS_STATUS_INVALID_ARGUMENT;
+    struct infs20_store_discovery d;
+    infs_status st=infs20_store_open_bounded(source,lane_start,&d);
+    return st?st:open_discovered(&d,region,layout,out,0);
 }
 
 /* Explicit mark/retire collection. Only current-root reachability matters

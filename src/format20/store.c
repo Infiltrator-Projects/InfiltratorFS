@@ -674,3 +674,63 @@ infs_status infs20_store_discover(const struct infs20_raw_source *source,
     if(!st) *out=result;
     return st;
 }
+
+/* Bounded normal discovery for a known fixed-lane candidate profile.
+ * A lane hint is never a commit authority. Both bank headers are inspected
+ * at their exact expected addresses, and the common selector must prove
+ * membership and reject divergent commits. No scan, geometry inference
+ * from an unvalidated page, displaced-volume fallback, or storage writes. */
+infs_status infs20_store_open_bounded(const struct infs20_raw_source *source,
+    const uint64_t lane_start[INFS20_LANE_COUNT],struct infs20_store_discovery *out)
+{
+    if(!source || !source->read_at || !lane_start || !out ||
+       source->bytes%INFS20_PAGE_BYTES)
+        return INFS_STATUS_INVALID_ARGUMENT;
+    const uint64_t blocks=source->bytes/INFS20_PAGE_BYTES;
+    if(!blocks || blocks>INFS20_MAX_MEMBER_BLOCKS)
+        return INFS_STATUS_INVALID_ARGUMENT;
+    for(unsigned i=0;i<INFS20_LANE_COUNT;++i) {
+        if(lane_start[i]>=blocks ||
+           INFS20_STORE_LANE_BLOCKS>blocks-lane_start[i])
+            return INFS_STATUS_INVALID_ARGUMENT;
+        for(unsigned j=0;j<i;++j)
+            if(lane_start[i]<lane_start[j]+INFS20_STORE_LANE_BLOCKS &&
+               lane_start[j]<lane_start[i]+INFS20_STORE_LANE_BLOCKS)
+                return INFS_STATUS_INVALID_ARGUMENT;
+    }
+    struct infs20_store_discovery result={0};
+    uint8_t page[INFS20_PAGE_BYTES];
+    int found=0,damaged=0;
+    infs_status io_error=INFS_STATUS_OK;
+    for(unsigned i=0;i<INFS20_LANE_COUNT;++i) {
+        for(unsigned bank=0;bank<2u;++bank) {
+            const uint64_t block=lane_start[i]+bank*INFS20_STORE_BANK_BLOCKS;
+            const uint64_t at=block*INFS20_PAGE_BYTES;
+            infs_status st=source->read_at(source->context,at,page,sizeof(page));
+            if(st) {
+                if(st!=INFS_STATUS_IO_ERROR)return st;
+                io_error=st;
+                continue;
+            }
+            struct infs20_store_region candidate;
+            st=probe_region(source,at,page,&candidate);
+            if(st==INFS_STATUS_NOT_FOUND)continue;
+            if(st==INFS_STATUS_NOT_SUPPORTED)return st;
+            if(st){damaged=1;continue;}
+            if(candidate.start || candidate.layout.member_blocks!=blocks ||
+               memcmp(candidate.layout.lane_start,lane_start,
+                      sizeof(candidate.layout.lane_start)))
+                return INFS_STATUS_CORRUPT;
+            if(found && !same_region(&result.region,&candidate))
+                return INFS_STATUS_CORRUPT;
+            result.region=candidate;
+            found=1;
+        }
+    }
+    if(!found)return damaged?INFS_STATUS_CORRUPT:
+        io_error?io_error:INFS_STATUS_NOT_FOUND;
+    struct infs20_store_io io=infs20_store_region_io(&result.region);
+    infs_status st=infs20_store_recover(&result.region.layout,&io,&result.state);
+    if(!st)*out=result;
+    return st;
+}
