@@ -181,7 +181,11 @@ ci_workflow = (wf / 'ci.yml').read_text()
 if '\n  linux-packages:\n' not in ci_workflow:
     raise SystemExit('independent generic-APT package regression job missing')
 ci_package = ci_workflow.split('\n  linux-packages:\n', 1)[1]
-if 'sudo apt-get install -y --no-install-recommends' not in ci_package:
+# Accept explicit APT source selection before the install verb, but still
+# require --no-install-recommends on that exact command (not an update or
+# another job). Only single-token -o settings are permitted by this pattern.
+if not re.search(r'^\s*sudo apt-get(?: -o [^\s]+)* install -y --no-install-recommends(?:\s|$)',
+                 ci_package, re.MULTILINE):
     raise SystemExit('generic-APT package build must omit recommended dependencies')
 candidate_runner = re.search(r'^    runs-on: (\S+)$', release_candidate, re.MULTILINE)
 package_runner = re.search(r'^    runs-on: (\S+)$', ci_package, re.MULTILINE)
