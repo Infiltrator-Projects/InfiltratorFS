@@ -90,3 +90,8 @@ This category currently includes:
 **Proposal only; the preceding current-format contract remains applicable to Format 0.19.** The [unified Format 0.20 specification](ON_DISK_FORMAT.md#proposed-infiltratorfs-on-disk-format-020) is the design authority for the proposed persistent model. This section specialises that model; it does not introduce a second on-disk authority or claim implementation.
 
 The current 0.19 contracts and evidence remain authoritative for installed software. The proposed unified 0.20 specification is the single source for future persistent semantics; architecture/decision/specialist sections specialise that proposal, while ROADMAP and QUALIFICATION distinguish unimplemented requirements from evidence. Historical reports remain version-scoped. On schema freeze, reconcile exact byte definitions with the normative specification; do not maintain duplicate incompatible on-disk authorities. No code or release status changed in this documentation revision.
+
+
+## Supplemental teaching reference
+
+[Engineering reference (PDF)](InfiltratorFS-TECHNICAL-REFERENCE.pdf) and [editable text](InfiltratorFS-TECHNICAL-REFERENCE.md) explain Format 0.19 and the separate proposed 0.20 architecture. They do not supersede the authoritative documents above. The user guide and installed PDF remain unchanged.
