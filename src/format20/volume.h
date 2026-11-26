@@ -174,6 +174,24 @@ struct infs20_physical_extent {
 infs_status infs20_paged_volume_map(const struct infs20_paged_layout *,
     const struct infs20_store_io *,uint64_t ordinal,const char *name,
     size_t first,struct infs20_physical_extent *,size_t capacity,size_t *count);
+/* Whole-member native allocation paging from the same exclusion authority
+ * used by payload allocation. Byte cursor, zero count only at exact EOF.
+ * Pass sequence zero for the initial snapshot and the returned sequence for
+ * every continuation. On failure outputs are unchanged. Metadata arenas
+ * and fallback-quarantined ranges are RESERVED, not ordinary free space.
+ * Degraded commit protection cannot authorize a free-space classification.
+ */
+enum infs20_allocation_state {
+    INFS20_ALLOCATION_FREE=1,INFS20_ALLOCATION_ALLOCATED=2,
+    INFS20_ALLOCATION_RESERVED=3
+};
+struct infs20_allocation_range {
+    uint64_t physical_offset,length;
+    unsigned state;
+};
+infs_status infs20_paged_volume_allocation(const struct infs20_paged_layout *,
+    const struct infs20_store_io *,uint64_t expected_sequence,uint64_t first,
+    struct infs20_allocation_range *,size_t capacity,size_t *count,uint64_t *sequence);
 /* Experimental bounded strict dense defrag. Growth 10 leaves a measured
  * adjacent free gap at publication. No persistent reservation claim. */
 infs_status infs20_paged_volume_defragment(const struct infs20_paged_layout *,

@@ -531,8 +531,49 @@ int main(void)
     CHECK(!infs20_paged_volume_map(&l,&io,0,"frag",0,ext,16,&ext_count) &&
           ext_count==1 && ext[0].logical_offset==0 && ext[0].length==half+fragment_tail &&
           !memcmp(m.disk+ext[0].physical_offset,fragment,half+fragment_tail));
-    const uint64_t gap_end=ext[0].physical_offset+ext[0].length+
-        growth*INFS20_PAGE_BYTES;
+    const uint64_t gap_start=ext[0].physical_offset+ext[0].length;
+    const uint64_t gap_end=gap_start+growth*INFS20_PAGE_BYTES;
+    /* Independently prove the physical gap against the native allocator,
+     * and prove that old relocation sources remain fallback-protected. */
+    uint64_t at=0,seq=0,free_bytes=0,allocated=0,reserved=0,gap_proved=0;
+    unsigned old_protected=0;
+    for(;;) {
+        struct infs20_allocation_range page[2]={{0}};
+        size_t count=99;
+        uint64_t observed=0;
+        CHECK(!infs20_paged_volume_allocation(&l,&io,seq,at,page,2,&count,&observed));
+        CHECK(observed && (!seq || seq==observed) && count<=2);
+        seq=observed;
+        if(!count){CHECK(at==bytes);break;}
+        for(size_t j=0;j<count;++j) {
+            const struct infs20_allocation_range *r=&page[j];
+            CHECK(r->physical_offset==at && r->length && r->length<=bytes-at);
+            uint64_t end=at+r->length;
+            if(r->state==INFS20_ALLOCATION_FREE)free_bytes+=r->length;
+            else if(r->state==INFS20_ALLOCATION_ALLOCATED)allocated+=r->length;
+            else {CHECK(r->state==INFS20_ALLOCATION_RESERVED);reserved+=r->length;}
+            if(at<gap_end && gap_start<end) {
+                CHECK(r->state==INFS20_ALLOCATION_FREE);
+                const uint64_t lo=at>gap_start?at:gap_start;
+                const uint64_t hi=end<gap_end?end:gap_end;
+                gap_proved+=hi-lo;
+            }
+            for(unsigned k=0;k<2u;++k)
+                if(at<=before_pack[k].physical_offset &&
+                   end>=before_pack[k].physical_offset+before_pack[k].length) {
+                    CHECK(r->state==INFS20_ALLOCATION_RESERVED);
+                    old_protected|=1u<<k;
+                }
+            at=end;
+        }
+    }
+    CHECK(free_bytes+allocated+reserved==bytes && gap_proved==gap_end-gap_start &&
+          old_protected==3u && !m.ops);
+    struct infs20_allocation_range stale={0};
+    size_t stale_count=99;uint64_t stale_sequence=99;
+    CHECK(infs20_paged_volume_allocation(&l,&io,seq+1,0,&stale,1,
+          &stale_count,&stale_sequence)==INFS_STATUS_BUSY &&
+          stale_count==99 && stale_sequence==99 && !m.ops);
     CHECK(!infs20_paged_volume_read(&l,&io,61,"alias",fragment_out,half+fragment_tail,&n) &&
           n==half+fragment_tail && !memcmp(fragment_out,fragment,n));
     tx(id,6107); CHECK(!infs20_paged_volume_write(&l,&io,id,"next",fragment,1)); cold(&m);

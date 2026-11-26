@@ -539,16 +539,16 @@ static infs_status quarantine_range(struct volume *v,uint64_t start,uint64_t blo
 /* Build one ordered physical exclusion view for both append and wrap.
  * The authoritative records remain N/Q and the arena geometry; this is
  * a rebuildable search view, not a second persistent allocation ledger. */
-struct blocked_range { uint64_t start,end; };
+struct blocked_range { uint64_t start,end; unsigned state; };
 static int range_order(const void *a,const void *b)
 {
     const struct blocked_range *x=a,*y=b;
     return (x->start>y->start)-(x->start<y->start);
 }
 static void add_blocked(struct blocked_range *ranges,size_t *count,
-    uint64_t start,uint64_t blocks)
+    uint64_t start,uint64_t blocks,unsigned state)
 {
-    if(blocks) ranges[(*count)++]=(struct blocked_range){start,start+blocks};
+    if(blocks) ranges[(*count)++]=(struct blocked_range){start,start+blocks,state};
 }
 static infs_status find_run(const struct blocked_range *ranges,size_t count,
     uint64_t capacity,uint64_t at,size_t blocks,uint64_t *block)
@@ -566,10 +566,14 @@ static infs_status find_run(const struct blocked_range *ranges,size_t count,
     if(at>=capacity || blocks>capacity-at) return INFS_STATUS_NO_SPACE;
     *block=at; return INFS_STATUS_OK;
 }
-static infs_status reserve(const struct infs20_store_layout *l,
-    const struct infs20_paged_layout *paged,struct volume *v,size_t blocks,uint64_t *block)
+/* The allocation map and actual allocator use the same verified exclusion
+ * view. Metadata arenas and fallback-owned data are never offered as free.
+ * Retained graph objects, including pending reclamation, remain allocated.
+ */
+static infs_status allocation_exclusions(const struct infs20_store_layout *l,
+    const struct infs20_paged_layout *paged,struct volume *v,
+    struct blocked_range **out,size_t *used)
 {
-    if(!blocks || blocks>l->member_blocks) return INFS_STATUS_INVALID_ARGUMENT;
     if(!v->fully_protected) return INFS_STATUS_BUSY;
     prune_quarantine(v);
     if(v->quarantine_count>SIZE_MAX-2*INFS20_LANE_COUNT) return INFS_STATUS_OVERFLOW;
@@ -580,18 +584,37 @@ static infs_status reserve(const struct infs20_store_layout *l,
     if(!ranges) return INFS_STATUS_NO_MEMORY;
     size_t count=0;
     for(unsigned lane=0;lane<INFS20_LANE_COUNT;++lane) {
-        add_blocked(ranges,&count,l->lane_start[lane],INFS20_STORE_LANE_BLOCKS);
+        add_blocked(ranges,&count,l->lane_start[lane],INFS20_STORE_LANE_BLOCKS,
+                    INFS20_ALLOCATION_RESERVED);
         if(paged) add_blocked(ranges,&count,paged->arena_start[lane],
-                             paged->arena_blocks[lane]);
+                             paged->arena_blocks[lane],INFS20_ALLOCATION_RESERVED);
     }
     for(size_t i=0;i<v->graph.node_count;++i)
-        add_blocked(ranges,&count,v->graph.nodes[i].start,v->graph.nodes[i].blocks);
+        add_blocked(ranges,&count,v->graph.nodes[i].start,v->graph.nodes[i].blocks,
+                    INFS20_ALLOCATION_ALLOCATED);
     for(size_t i=0;i<v->quarantine_count;++i)
-        add_blocked(ranges,&count,v->quarantine[i].start,v->quarantine[i].blocks);
+        add_blocked(ranges,&count,v->quarantine[i].start,v->quarantine[i].blocks,
+                    INFS20_ALLOCATION_RESERVED);
     qsort(ranges,count,sizeof(ranges[0]),range_order);
+    for(size_t i=0;i<count;++i)
+        if(ranges[i].start>=ranges[i].end || ranges[i].end>l->member_blocks ||
+           (i && ranges[i-1].end>ranges[i].start)) {
+            free(ranges);return INFS_STATUS_CORRUPT;
+        }
+    *out=ranges;*used=count;
+    return INFS_STATUS_OK;
+}
+static infs_status reserve(const struct infs20_store_layout *l,
+    const struct infs20_paged_layout *paged,struct volume *v,size_t blocks,uint64_t *block)
+{
+    if(!blocks || blocks>l->member_blocks) return INFS_STATUS_INVALID_ARGUMENT;
+    struct blocked_range *ranges=NULL;
+    size_t count=0;
+    infs_status st=allocation_exclusions(l,paged,v,&ranges,&count);
+    if(st)return st;
     /* Preserve append locality. Reuse follows only the same committed
      * ownership and fallback exclusions, with no capacity-sized bitmap. */
-    infs_status st=find_run(ranges,count,l->member_blocks,v->frontier,blocks,block);
+    st=find_run(ranges,count,l->member_blocks,v->frontier,blocks,block);
     if(st==INFS_STATUS_NO_SPACE) st=find_run(ranges,count,l->member_blocks,0,blocks,block);
     if(!st && *block+blocks>v->frontier) v->frontier=*block+blocks;
     free(ranges); return st;
@@ -1775,4 +1798,52 @@ infs_status infs20_paged_volume_defragment(const struct infs20_paged_layout *l,
     if(!st){*moved=logical;*growth_blocks=gap;}
     free(pending);
     return finish_volume(&v,st);
+}
+
+/* Native v0.20 allocation map, expressed in member-relative bytes.
+ * A complete authenticated graph is loaded before even the first page
+ * is exposed. The cursor is valid only under the caller's immutable
+ * snapshot; generation changes are refused on continuation.
+ */
+infs_status infs20_paged_volume_allocation(const struct infs20_paged_layout *l,
+    const struct infs20_store_io *io,uint64_t expected_sequence,uint64_t first,
+    struct infs20_allocation_range *out,size_t capacity,size_t *count,uint64_t *sequence)
+{
+    if(!l || !out || !capacity || !count || !sequence ||
+       l->bootstrap.member_blocks>UINT64_MAX/INFS20_PAGE_BYTES)
+        return INFS_STATUS_INVALID_ARGUMENT;
+    const uint64_t limit=l->bootstrap.member_blocks*INFS20_PAGE_BYTES;
+    if(first>limit)return INFS_STATUS_INVALID_ARGUMENT;
+    struct volume v={0};
+    infs_status st=load(&l->bootstrap,l,io,&v);
+    if(st)return finish_volume(&v,st);
+    if(expected_sequence && expected_sequence!=v.sequence)
+        return finish_volume(&v,INFS_STATUS_BUSY);
+    struct blocked_range *ranges=NULL;
+    size_t used=0;
+    st=allocation_exclusions(&l->bootstrap,l,&v,&ranges,&used);
+    if(st)return finish_volume(&v,st);
+    uint64_t at=first;
+    size_t i=0,n=0;
+    while(at<limit) {
+        while(i<used && ranges[i].end*INFS20_PAGE_BYTES<=at)++i;
+        uint64_t end;
+        unsigned state;
+        if(i==used) {
+            end=limit;state=INFS20_ALLOCATION_FREE;
+        } else if(at<ranges[i].start*INFS20_PAGE_BYTES) {
+            end=ranges[i].start*INFS20_PAGE_BYTES;state=INFS20_ALLOCATION_FREE;
+        } else {
+            end=ranges[i].end*INFS20_PAGE_BYTES;state=ranges[i].state;
+        }
+        if(n && out[n-1].state==state)out[n-1].length+=end-at;
+        else {
+            if(n==capacity)break;
+            out[n++]=(struct infs20_allocation_range){at,end-at,state};
+        }
+        at=end;
+    }
+    free(ranges);
+    *count=n;*sequence=v.sequence;
+    return finish_volume(&v,INFS_STATUS_OK);
 }
