@@ -2,13 +2,9 @@
 
 ## 1. Purpose, architecture and format authority
 
-InfiltratorFS is an independently designed filesystem with a portable on-disk format and native operating-system adapters. Its Linux package includes a kernel driver, filesystem tools and the InfiltratorFS Manager.
+InfiltratorFS is an independently designed, platform-neutral filesystem. Its portable on-disk format defines files, directories, allocation, transactions, snapshots and integrity. Native operating-system adapters connect that format to the host. The Linux package includes the infiltratorfs.ko kernel driver, filesystem tools and the InfiltratorFS Manager.
 
-The current filesystem remains pre-1.0. Use disposable or backed-up media, and check the project's current qualification evidence before relying on a feature for important data. Formatting a partition destroys its existing contents.
-
-The portable format owns the meaning of files, directories, allocation, transactions, snapshots and integrity. Platform adapters connect that format to the host operating system. Linux uses the native infiltratorfs.ko driver; the Manager and command-line tools provide separate administration interfaces.
-
-InfiltratorFS is an independent platform-neutral filesystem. This teaching reference is based on the repository at 6ec9ff0470fc484dd4c579494bdc6bf3e915dcbb. Implemented format 0.19 and proposed format 0.20 are deliberately separated. The exact byte contract is ON_DISK_FORMAT.md together with include/infilfs/format.h and locator.h. The 0.20 candidate schema is not the production format. This unified manual explains operation and format structure without replacing the normative format, roadmap or qualification ledger.
+This unified manual covers the implemented Format 0.19 in chapters 2–15 and the experimental Format 0.20 design in chapters 16–18. The exact byte contract is ON_DISK_FORMAT.md together with include/infilfs/format.h and locator.h. The candidate 0.20 schema is not a production format. The project remains pre-1.0: use disposable or backed-up media and consult exact-source qualification evidence before relying on any feature.
 
 ## 2. Installation and device selection
 
@@ -72,7 +68,7 @@ The normal fsck.infiltratorfs check is structural: it checks checkpoints, alloca
 
 The optional --scrub mode checks data integrity more deeply and may take much longer. It is a mode of fsck.infiltratorfs, not a separate executable. FSCK-SCRUB-SEPARATION.md defines these semantics.
 
-The filesystem supports retained generations and named read-only snapshots. Linux tools include fragmentation metrics, bounded online defragmentation, online grow and bounded shrink. Check feature prerequisites in the project documentation before maintenance.
+The filesystem supports retained generations and named read-only snapshots. Linux tools include fragmentation metrics, bounded online defragmentation, online grow and bounded shrink. Native user, group and project quota rules include durable limits and reconstruction of usage on remount; multiple names for one inode must not double-charge that object. Consult ROADMAP.md and QUALIFICATION.md for the exact prerequisites and scope of these capabilities.
 
 Snapshots are not a substitute for a separate backup. Qualification applies to particular source revisions and evidence classes; older tests do not prove every later release or physical-media scenario.
 
@@ -80,7 +76,7 @@ Snapshots are not a substitute for a separate backup. Qualification applies to p
 
 Linux is the most complete mounted adapter. Windows includes image/raw-partition tooling and a driverless Explorer projection. A native Windows driver exists in source, but mounted Windows and related qualification remain outstanding.
 
-Development-format compatibility before version 1.0 is not promised. Test media may require reformatting after an on-disk-format change.
+Development-format compatibility before version 1.0 is not promised. Test media may require reformatting after an on-disk-format change. The experimental Common V2 module has hosted and freestanding integration paths. Its existence does not establish a production BOOT reader: the generic Common V2 loader and exact-source boot qualification remain separate requirements.
 
 Portable security v2 separates principal IDs, typed platform bindings and shareable descriptors with ordered ACEs. Deterministic descriptor and binding index identities use full-digest validation and bounded collision slots. Windows SID and POSIX authority-plus-ID encodings are not equivalent identities. Portable storage-policy flags use bits 48..55 for replica request and 56..63 for encryption domain. Changing policy on existing content requires a qualified data transformation, not a metadata-only reinterpretation. Adapters map native namespace and security APIs to this model. Status of each feature belongs to ROADMAP.md; qualification belongs to QUALIFICATION.md.
 
@@ -94,11 +90,11 @@ The proposal introduces storage-set, member, volume, object, allocation and page
 
 ## 17. Proposed 0.20 — experimental S0 envelope
 
-The private experimental schema uses 4096-byte pages and a 192-byte header, leaving 3904 payload bytes. Candidate offsets: magic 0, major/minor 8/10, kind/schema 12/14, header 16, required flags 18, payload size 20, set/scope/page IDs 24/40/56, sequence 72, digest 80, member ID 112, block 128, lane 136, physical flags 138, reserved 140, CRC 144, reserved 152, payload 192. These offsets are from src/format20/schema.h at the baseline; the experimental probe kind/magic are explicitly NOT production identifiers. A valid page alone does not prove membership of a committed tree.
+The private experimental schema uses 4096-byte pages and a 192-byte header, leaving 3904 payload bytes. Candidate offsets: magic 0, major/minor 8/10, kind/schema 12/14, header 16, required flags 18, payload size 20, set/scope/page IDs 24/40/56, sequence 72, digest 80, member ID 112, block 128, lane 136, physical flags 138, reserved 140, CRC 144, reserved 152, payload 192. These teaching offsets are from src/format20/schema.h at the historical 6ec9ff0470fc484dd4c579494bdc6bf3e915dcbb baseline; the experimental probe kind/magic are explicitly NOT production identifiers. A valid page alone does not prove membership of a committed tree.
 
 ## 18. Proposed 0.20 — lifetime and reconstruction
 
-Direct incoming references, immutable roots, allocation location records and retained state define ownership; a file link count is not a storage reference count. A committed Merkle path binds membership, while physical copy placement is excluded from logical commitment. Surviving leaves without missing internal membership proofs are salvage, not proof of the exact original committed hierarchy. A native quick format can preserve prior allocations only within its stated failure model. Foreign formatting can overwrite or discard all copies; no recovery promise extends to destroyed bytes or missing cryptographic keys. Validate the actual executable candidate profiles separately from these intended invariants.
+Direct incoming references, immutable roots, allocation location records and retained state define ownership; a file link count is not a storage reference count. A committed Merkle path binds membership, while physical copy placement is excluded from logical commitment. Surviving leaves without missing internal membership proofs are salvage, not proof of the exact original committed hierarchy. A native quick format can preserve prior allocations only within its stated failure model. Foreign formatting can overwrite or discard all copies; no recovery promise extends to destroyed bytes or missing cryptographic keys. Experimental results are recorded separately from the design. At ce9dce04e9d3dabcd9243f5198d0f103c4858441, eleven dedicated tests passed, including a non-installed read-only image exporter with named output and verified partial fragments. At c4bc7dba6f40362a81f6a92673448943cd5e0d6d, seventeen tests passed, including foreign formatter characterization. The exFAT experiment destroyed the sample payloads despite discoverable committed metadata; correct refusal to export was a test pass, not successful recovery. At 7b0f572d59fa878225476c9251e55f1e35947a6c, twenty-five dedicated experimental tests passed. These results do not qualify the production format, native mounting, physical media or BOOT. See QUALIFICATION.md for evidence and limits.
 
 ## 19. Installed files, sources and reading map
 
@@ -108,4 +104,4 @@ The project README gives the product overview. ON_DISK_FORMAT.md, ROADMAP.md and
 
 Project: https://github.com/Infiltrator-Projects/InfiltratorFS
 
-Current contract: https://github.com/Infiltrator-Projects/InfiltratorFS/blob/6ec9ff0470fc484dd4c579494bdc6bf3e915dcbb/docs/ON_DISK_FORMAT.md . Packed fields: include/infilfs/format.h and locator.h at that same source. Read ARCHITECTURE.md, COMPRESSION.md, PORTABLE_SECURITY_OBJECTS.md, SECURITY.md and FORMAT-0.19-RECOVERY-DESIGN.md for the complete subsystem contracts. Proposed format: section 20 of ON_DISK_FORMAT.md and experimental src/format20/schema.h. The historical research, qualification and operational documents remain in their original paths. This manual does not supersede the complete normative specification.
+Current normative contract: https://github.com/Infiltrator-Projects/InfiltratorFS/blob/main/docs/ON_DISK_FORMAT.md . Packed fields: include/infilfs/format.h and locator.h at the same source as the software being examined. The byte-layout teaching inventory in chapters 4–12 and experimental envelope in chapter 17 were derived from the historical 6ec9ff0470fc484dd4c579494bdc6bf3e915dcbb baseline; consult the exact-source headers for authoritative fields. Read ARCHITECTURE.md, COMPRESSION.md, PORTABLE_SECURITY_OBJECTS.md, SECURITY.md and FORMAT-0.19-RECOVERY-DESIGN.md for the complete subsystem contracts. Proposed format: section 20 of ON_DISK_FORMAT.md and experimental src/format20/schema.h. The historical research, qualification and operational documents remain in their original paths. This manual does not supersede the complete normative specification.

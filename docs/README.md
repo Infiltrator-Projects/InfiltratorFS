@@ -15,7 +15,7 @@ sources of truth.
 - [`PHILOSOPHY.md`](PHILOSOPHY.md) — governing engineering and documentation standard.
 - `DESIGN.md` — concise engineering-design principles and subsystem shape for contributors. It is subordinate to the canonical project philosophy, `ARCHITECTURE.md` and the byte-level format contract; it is not a separate status authority.
 - `FORMAT-0.19-RECOVERY-DESIGN.md` — implemented recovery-locator protocol and interruption invariants; byte-level constants remain in the format/locator headers.
-- `ON_DISK_FORMAT.md` — persistent Format 0.19 structural contract. Exact
+- `ON_DISK_FORMAT.md` — persistent Format 0.19 structural contract and separately labelled Format 0.20 proposal. Exact
   packed fields/constants remain authoritative in `include/infilfs/format.h`.
 - `ARCHITECTURE.md` — architecture, invariants, ownership boundaries and
   failure semantics that are broader than byte layout.
@@ -85,13 +85,13 @@ This category currently includes:
 
 ---
 
-## Proposed Format 0.20 — unified design (revision 3)
+## Proposed Format 0.20 — unified design (revisions 3–4)
 
 **Proposal only; the preceding current-format contract remains applicable to Format 0.19.** The [unified Format 0.20 specification](ON_DISK_FORMAT.md#proposed-infiltratorfs-on-disk-format-020) is the design authority for the proposed persistent model. This section specialises that model; it does not introduce a second on-disk authority or claim implementation.
 
-The current 0.19 contracts and evidence remain authoritative for installed software. The proposed unified 0.20 specification is the single source for future persistent semantics; architecture/decision/specialist sections specialise that proposal, while ROADMAP and QUALIFICATION distinguish unimplemented requirements from evidence. Historical reports remain version-scoped. On schema freeze, reconcile exact byte definitions with the normative specification; do not maintain duplicate incompatible on-disk authorities. No code or release status changed in this documentation revision.
+The current 0.19 contracts and evidence remain authoritative for installed software. The proposed unified 0.20 specification is the single source for future persistent semantics; architecture/decision/specialist sections specialise that proposal, while ROADMAP and QUALIFICATION distinguish unimplemented requirements from evidence. Historical reports remain version-scoped. On schema freeze, reconcile exact byte definitions with the normative specification; do not maintain duplicate incompatible on-disk authorities. This is not a second implementation-status or release ledger.
 
 
 ## Unified manual
 
-[PDF](InfiltratorFS.pdf) and [editable text](USER-GUIDE.md) integrate operation, Format 0.19 engineering and the separately labelled Format 0.20 proposal. Superseded editions remain in Git history; the installed path is unchanged.
+[PDF](InfiltratorFS.pdf) and [editable text](USER-GUIDE.md) integrate operation, Format 0.19 engineering and the separately labelled Format 0.20 proposal. Superseded editions remain in Git history; the installed path is unchanged. Regenerate the PDF and drawing stream together using `python3 tools/render-user-guide.py docs/USER-GUIDE.md docs/InfiltratorFS.pdf`.

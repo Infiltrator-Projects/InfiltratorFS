@@ -1,181 +1,86 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Render a project user guide from its maintained Markdown source.
-
-Requires reportlab and DejaVu Sans fonts for guide authors. Published packages install
-the checked-in PDF and do not require reportlab at runtime or package build.
-"""
-from __future__ import annotations
-
+"""Author-time deterministic rendering of the canonical InfiltratorFS guide."""
 import argparse
-import re
 from pathlib import Path
-from xml.sax.saxutils import escape
 
-from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import ParagraphStyle
-from reportlab.lib.units import mm
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.pdfgen import canvas
-from reportlab.platypus import (BaseDocTemplate, Frame, HRFlowable,
-                               PageBreak, PageTemplate, Paragraph,
-                               Preformatted, Spacer, Table, TableStyle)
-
-FONT_DIR = Path('/usr/share/fonts/truetype/dejavu')
-pdfmetrics.registerFont(TTFont('GuideSans', str(FONT_DIR / 'DejaVuSans.ttf')))
-pdfmetrics.registerFont(TTFont('GuideSans-Bold', str(FONT_DIR / 'DejaVuSans-Bold.ttf')))
-pdfmetrics.registerFont(TTFont('GuideMono', str(FONT_DIR / 'DejaVuSansMono.ttf')))
-pdfmetrics.registerFontFamily('GuideSans', normal='GuideSans', bold='GuideSans-Bold')
-
-NAVY = colors.HexColor('#142235')
-TEAL = colors.HexColor('#007E87')
-INK = colors.HexColor('#203040')
-GREY = colors.HexColor('#5C6B77')
-PALE = colors.HexColor('#EDF5F5')
-WIDTH, HEIGHT = A4
-MARGIN = 20 * mm
-BODY_WIDTH = WIDTH - MARGIN * 2
-STYLES = {
-    'kicker': ParagraphStyle('kicker', fontName='GuideSans-Bold', fontSize=9,
-                             leading=13, textColor=TEAL, spaceAfter=8),
-    'cover_title': ParagraphStyle('cover-title', fontName='GuideSans-Bold',
-                                  fontSize=32, leading=38, textColor=NAVY,
-                                  spaceAfter=10),
-    'cover_subtitle': ParagraphStyle('cover-subtitle', fontName='GuideSans',
-                                     fontSize=14, leading=20, textColor=GREY,
-                                     spaceAfter=18),
-    'heading': ParagraphStyle('heading', fontName='GuideSans-Bold', fontSize=16,
-                              leading=21, textColor=NAVY, spaceBefore=15,
-                              spaceAfter=8, keepWithNext=True),
-    'body': ParagraphStyle('body', fontName='GuideSans', fontSize=10.3,
-                           leading=15.4, textColor=INK, spaceAfter=8),
-    'bullet': ParagraphStyle('bullet', fontName='GuideSans', fontSize=10.1,
-                             leading=15, textColor=INK, leftIndent=15,
-                             firstLineIndent=-10, spaceAfter=5),
-    'small': ParagraphStyle('small', fontName='GuideSans', fontSize=9,
-                            leading=13, textColor=GREY, spaceAfter=7),
-    'code': ParagraphStyle('code', fontName='GuideMono', fontSize=8.1,
-                           leading=11.5, textColor=NAVY, leftIndent=10,
-                           spaceAfter=8),
-    'card': ParagraphStyle('card', fontName='GuideSans-Bold', fontSize=9,
-                           leading=12, textColor=NAVY, alignment=TA_CENTER),
-}
-
-
-def rich(value: str) -> str:
-    value = escape(value)
-    value = re.sub(r'`([^`]+)`', r'<font name="GuideMono">\1</font>', value)
-    value = re.sub(r'\*\*([^*]+)\*\*', r'<b>\1</b>', value)
-    return value
-
-
-class GuideCanvas(canvas.Canvas):
-    def __init__(self, *args, **kwargs):
-        kwargs['invariant'] = 1
-        super().__init__(*args, **kwargs)
-
-
-class Guide(BaseDocTemplate):
-    def __init__(self, destination: Path, title: str):
-        self.guide_title = title
-        super().__init__(str(destination), pagesize=A4, title=title + ' User Guide',
-                         author='Shannon Smith', leftMargin=MARGIN,
-                         rightMargin=MARGIN, topMargin=25 * mm,
-                         bottomMargin=22 * mm)
-        frame = Frame(MARGIN, 22 * mm, BODY_WIDTH, HEIGHT - 47 * mm,
-                      leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0)
-        self.addPageTemplates(PageTemplate(id='guide', frames=frame, onPage=self.decorate))
-
-    def decorate(self, page, doc):
-        page.saveState()
-        if doc.page > 1:
-            page.setFillColor(NAVY)
-            page.rect(0, HEIGHT - 17 * mm, WIDTH, 17 * mm, fill=1, stroke=0)
-            page.setFont('GuideSans-Bold', 9)
-            page.setFillColor(colors.white)
-            page.drawString(MARGIN, HEIGHT - 11 * mm, self.guide_title.upper() + '  /  USER GUIDE')
-            page.setFillColor(TEAL)
-            page.rect(MARGIN, HEIGHT - 17 * mm, 28 * mm, 2.5, fill=1, stroke=0)
-        page.setStrokeColor(colors.HexColor('#D2DBDE'))
-        page.line(MARGIN, 15 * mm, WIDTH - MARGIN, 15 * mm)
-        page.setFont('GuideSans', 8)
-        page.setFillColor(GREY)
-        page.drawString(MARGIN, 10 * mm, 'Infiltrator Projects  |  User guide')
-        page.drawRightString(WIDTH - MARGIN, 10 * mm, str(doc.page))
-        page.restoreState()
-
-
-def panel(title: str):
-    if title == 'Calendar':
-        labels = ['PANEL CLOCK', 'CALENDAR VIEW', 'EVENTS']
-        explanation = 'One applet, with independently installed calendar and clock resources.'
-    else:
-        labels = ['MANAGER + TOOLS', 'PORTABLE FORMAT', 'LINUX DRIVER']
-        explanation = 'A portable filesystem connected to the host through native adapters.'
-    row = [Paragraph(escape(label), STYLES['card']) for label in labels]
-    table = Table([row], colWidths=[BODY_WIDTH / 3] * 3, rowHeights=[43])
-    table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, -1), PALE),
-        ('BOX', (0, 0), (-1, -1), .6, colors.HexColor('#CCDDDF')),
-        ('INNERGRID', (0, 0), (-1, -1), .6, colors.HexColor('#CCDDDF')),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('LEFTPADDING', (0, 0), (-1, -1), 5),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 5),
-    ]))
-    return [table, Spacer(1, 3 * mm), Paragraph(explanation, STYLES['small'])]
-
-
-def render(source: Path, destination: Path):
-    lines = source.read_text(encoding='utf-8').splitlines()
-    if not lines or not lines[0].startswith('# '):
-        raise ValueError('Guide must start with a title')
-    title = lines[0][2:].strip()
-    if title not in ('Calendar', 'InfiltratorFS'):
-        raise ValueError('Unexpected guide title')
+def render(source, destination):
+    raw = source.read_text(encoding="utf-8")
+    for chars, replacement in [("–—", "-"), ("‘’", "'"), ("“”", '"'), ("→", "->"), ("×", "x"), ("≤", "<="), ("≥", ">="), ("\u00a0", " ")]:
+        for char in chars:
+            raw = raw.replace(char, replacement)
+    raw.encode("ascii")
+    def line(s, y, font="F3", size=10):
+        s = s.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+        return f"0.08 0.12 0.17 rg BT /{font} {size} Tf 43 {y} Td ({s}) Tj ET\n"
+    head = "0.07 0.13 0.20 rg 0 785 595 57 re f\n1 1 1 rg BT /F2 15 Tf 43 810 Td (InfiltratorFS | ENGINEERING AND USER MANUAL) Tj ET\n"
+    def foot(n):
+        return f"0.35 0.39 0.43 rg BT /F1 9 Tf 43 35 Td (Infiltrator Projects | {n}) Tj ET\n"
+    def wrap(s, width):
+        cur = ""
+        for word in s.split():
+            while len(word) > width:
+                if cur:
+                    yield cur
+                    cur = ""
+                yield word[:width]
+                word = word[width:]
+            if not word:
+                continue
+            if len(cur) + len(word) + 1 > width:
+                yield cur
+                cur = ""
+            cur += (" " if cur else "") + word
+        if cur:
+            yield cur
+    pages, toc, body, y = [], [], head, 755
+    def flush():
+        nonlocal body, y
+        pages.append(body + foot(len(pages) + 2))
+        body, y = head, 755
+    for ln in raw.split("\n")[1:]:
+        if not ln.strip():
+            if y < 80:
+                flush()
+            else:
+                y -= 7
+            continue
+        if ln.startswith("## "):
+            if y < 115:
+                flush()
+            toc.append((ln[3:], len(pages) + 2))
+            body += line(ln[3:], y, "F2", 13)
+            y -= 23
+            continue
+        for s in wrap(ln, 82):
+            if y < 64:
+                flush()
+            body += line(s, y)
+            y -= 13
+    if body != head:
+        flush()
+    pages.insert(0, head + line("Contents", 755, "F2", 17) + "".join(line(f"{s}  {n}", 730-i*26) for i, (s,n) in enumerate(toc)) + foot(1))
+    objects = ["<< /Type /Catalog /Pages 2 0 R >>",
+               f"<< /Type /Pages /Count {len(pages)} /Kids [" + " ".join(f"{6+i*2} 0 R" for i in range(len(pages))) + "] >>",
+               "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+               "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
+               "<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>"]
+    for i, s in enumerate(pages):
+        objects.append(f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> >> /Contents {7+i*2} 0 R >>")
+        objects.append(f"<< /Length {len(s)} >>\nstream\n{s}endstream")
+    pdf, offsets = "%PDF-1.4\n", [0]
+    for i, obj in enumerate(objects, 1):
+        offsets.append(len(pdf))
+        pdf += f"{i} 0 obj\n{obj}\nendobj\n"
+    xref = len(pdf)
+    pdf += f"xref\n0 {len(offsets)}\n0000000000 65535 f \n" + "".join(f"{v:010d} 00000 n \n" for v in offsets[1:]) + f"trailer\n<< /Size {len(offsets)} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n"
     destination.parent.mkdir(parents=True, exist_ok=True)
-    story = [Spacer(1, 20 * mm), Paragraph('INFILTRATOR PROJECTS', STYLES['kicker']),
-             Paragraph(escape(title.upper()), STYLES['cover_title']),
-             Paragraph('User guide and operating overview', STYLES['cover_subtitle']),
-             HRFlowable(width='100%', thickness=2, color=TEAL), Spacer(1, 18 * mm)]
-    story.extend(panel(title))
-    story.extend([Spacer(1, 18 * mm),
-                  Paragraph('Practical information for using the released application and its system components.', STYLES['body']),
-                  Spacer(1, 24 * mm),
-                  Paragraph('Copyright 1993-2026 Shannon Smith', STYLES['small']),
-                  PageBreak()])
-    code = []
-    def flush_code():
-        if code:
-            story.append(Preformatted('\n'.join(code), STYLES['code'], maxLineLength=94))
-            code.clear()
-    for line in lines[1:]:
-        if line.startswith('    '):
-            code.append(line[4:])
-            continue
-        flush_code()
-        line = line.strip()
-        if not line:
-            continue
-        if line.startswith('## '):
-            story.append(Paragraph(rich(line[3:]), STYLES['heading']))
-        elif line.startswith('- '):
-            story.append(Paragraph('&bull; ' + rich(line[2:]), STYLES['bullet']))
-        elif re.match(r'^\d+\. ', line):
-            story.append(Paragraph(rich(line), STYLES['bullet']))
-        else:
-            story.append(Paragraph(rich(line), STYLES['body']))
-    flush_code()
-    Guide(destination, title).build(story, canvasmaker=GuideCanvas)
-    if not destination.read_bytes().startswith(b'%PDF-'):
-        raise RuntimeError('Guide rendering did not produce a PDF')
+    destination.write_bytes(pdf.encode("ascii"))
+    destination.with_suffix(".pdfstreams").write_bytes("%%Page\n".join(pages).encode("ascii"))
 
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('source', type=Path)
-    parser.add_argument('destination', type=Path)
+    parser.add_argument("source", type=Path)
+    parser.add_argument("destination", type=Path)
     args = parser.parse_args()
     render(args.source, args.destination)
