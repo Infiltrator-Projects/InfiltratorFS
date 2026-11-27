@@ -1,0 +1,260 @@
+0.07 0.13 0.20 rg 0 785 595 57 re f
+1 1 1 rg BT /F2 15 Tf 43 810 Td (InfiltratorFS | ENGINEERING AND USER MANUAL) Tj ET
+0.08 0.12 0.17 rg BT /F2 17 Tf 43 755 Td (Contents) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 730 Td (1. Purpose, architecture and format authority) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 717 Td (2. Installation and device selection) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 704 Td (3. Mounting a volume) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 691 Td (4. Format 0.19: geometry and identity) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 678 Td (5. Checkpoint byte inventory) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 665 Td (6. Recovery locator and discovery) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 652 Td (7. Allocation-tree layout) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 639 Td (8. Persistent objects and metadata pages) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 626 Td (9. Attributes, namespace and hard links) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 613 Td (10. File representation and translation) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 600 Td (11. Checksums, compression and sharing) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 587 Td (12. Transaction publication and resizing) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 574 Td (13. Checking, scrubbing and maintenance) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 561 Td (14. Platform support and development compatibility) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 548 Td (15. Independent reader and checker exercise) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 535 Td (16. Proposed Format 0.20 - semantic model \(not production\)) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 522 Td (17. Proposed 0.20 - experimental S0 envelope) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 509 Td (18. Proposed 0.20 - lifetime and reconstruction) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 496 Td (19. Installed files, sources and reading map) Tj ET
+0.35 0.39 0.43 rg BT /F1 9 Tf 43 35 Td (Infiltrator Projects | 1) Tj ET
+%%Page
+0.07 0.13 0.20 rg 0 785 595 57 re f
+1 1 1 rg BT /F2 15 Tf 43 810 Td (InfiltratorFS | ENGINEERING AND USER MANUAL) Tj ET
+0.08 0.12 0.17 rg BT /F2 13 Tf 43 755 Td (1. Purpose, architecture and format authority) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 727 Td (InfiltratorFS is an independently designed filesystem with a portable on-disk) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 714 Td (format and native operating-system adapters. Its Linux package includes a kernel) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 701 Td (driver, filesystem tools and the InfiltratorFS Manager.) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 681 Td (The current filesystem remains pre-1.0. Use disposable or backed-up media, and) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 668 Td (check the project's current qualification evidence before relying on a feature for) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 655 Td (important data. Formatting a partition destroys its existing contents.) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 635 Td (The portable format owns the meaning of files, directories, allocation,) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 622 Td (transactions, snapshots and integrity. Platform adapters connect that format to the) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 609 Td (host operating system. Linux uses the native infiltratorfs.ko driver; the Manager) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 596 Td (and command-line tools provide separate administration interfaces.) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 576 Td (InfiltratorFS is an independent platform-neutral filesystem. This teaching) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 563 Td (reference is based on the repository at 6ec9ff0470fc484dd4c579494bdc6bf3e915dcbb.) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 550 Td (Implemented format 0.19 and proposed format 0.20 are deliberately separated. The) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 537 Td (exact byte contract is ON_DISK_FORMAT.md together with include/infilfs/format.h and) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 524 Td (locator.h. The 0.20 candidate schema is not the production format. This unified) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 511 Td (manual explains operation and format structure without replacing the normative) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 498 Td (format, roadmap or qualification ledger.) Tj ET
+0.08 0.12 0.17 rg BT /F2 13 Tf 43 470 Td (2. Installation and device selection) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 442 Td (The Debian package installs the Manager and tools, and supplies the source for the) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 429 Td (native Linux kernel module. DKMS builds and installs infiltratorfs.ko for the) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 416 Td (target kernel; matching kernel headers are required. The package also prepares) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 403 Td (initramfs integration when the host supports it.) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 383 Td (The hardware-native installer obtains the exact released source and builds on the) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 370 Td (target machine. The released Debian package can be used when an offline package is) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 357 Td (required. Release information and package assets are maintained on the project's) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 344 Td (GitHub Releases page.) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 324 Td (The Linux Manager provides a graphical interface for working with selected) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 311 Td (non-system partitions. Check the device and partition identity carefully before any) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 298 Td (operation. Formatting removes the existing data on the selected partition; maintain) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 285 Td (a separate verified backup when the data matters.) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 265 Td (On Linux Mint, the project's Nemo Format action is designed for an existing) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 252 Td (partition. The system's whole-device Mintstick formatter has different behaviour.) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 239 Td (Follow the on-screen device and partition information rather than assuming the two) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 226 Td (actions are interchangeable.) Tj ET
+0.08 0.12 0.17 rg BT /F2 13 Tf 43 198 Td (3. Mounting a volume) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 170 Td (The Linux driver can be loaded and a suitable volume mounted with the native mount) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 157 Td (helper. Replace the example device and mount point with the correct values for the) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 144 Td (target system.) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 124 Td (    sudo modprobe infiltratorfs) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 111 Td (    sudo mount -t infiltratorfs -o rw /dev/<partition> /mnt/infiltratorfs) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 98 Td (    findmnt -T /mnt/infiltratorfs -o SOURCE,FSTYPE,OPTIONS) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 78 Td (The reported filesystem type should be infiltratorfs.) Tj ET
+0.35 0.39 0.43 rg BT /F1 9 Tf 43 35 Td (Infiltrator Projects | 2) Tj ET
+%%Page
+0.07 0.13 0.20 rg 0 785 595 57 re f
+1 1 1 rg BT /F2 15 Tf 43 810 Td (InfiltratorFS | ENGINEERING AND USER MANUAL) Tj ET
+0.08 0.12 0.17 rg BT /F2 13 Tf 43 755 Td (4. Format 0.19: geometry and identity) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 727 Td (Blocks are 4096 bytes and integers are little endian. Object and filesystem) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 714 Td (identities are nonzero 128-bit values. Minimum media is 4096 blocks \(16 MiB\).) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 701 Td (Initial checkpoints are blocks 0, floor\(N/2\), N-1. Fixed locators at 1 and 2047) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 688 Td (remain reserved during resize and throughout retained generations. Committed) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 675 Td (capacity may differ from physical capacity. Example: 16384 committed blocks occupy) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 662 Td (64 MiB, with checkpoints at 0,8192,16383. Never recalculate checkpoint placement) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 649 Td (from a larger physical backing device.) Tj ET
+0.08 0.12 0.17 rg BT /F2 13 Tf 43 621 Td (5. Checkpoint byte inventory) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 593 Td (Packed checkpoint magic INFS2026 at 0; format major/minor 8/10, header size 12,) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 580 Td (shift 14, checksum type 16 \(32 bits\), generation 20 \(64\), total blocks 28, free) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 567 Td (blocks 36, allocation root 44, allocation leaf count 52, object index 60, root) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 554 Td (object block 68. Three checkpoint positions start 76; UUID 100, root object ID 116;) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 541 Td (compatible, read-only-compatible and incompatible flags at 132,140,148; label 156) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 528 Td (\(64 bytes\), checksum field 220 \(32\). Packed header occupies 252 bytes. Validate) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 515 Td (exact format, nonzero identities and canonical unused bytes; CRC64-ECMA alone does) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 502 Td (not establish graph validity.) Tj ET
+0.08 0.12 0.17 rg BT /F2 13 Tf 43 474 Td (6. Recovery locator and discovery) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 446 Td (Locator magic INFSL019; schema 8, header size 10, major 12, minor 14, generation) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 433 Td (hint 16, total blocks 24, three checkpoint positions 32, UUID 56 and CRC64 at 72.) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 420 Td (Header is 80 bytes; remaining page is zero. Independently validate both locators) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 407 Td (and primary checkpoint geometry. At most nine map-context checkpoint candidates) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 394 Td (result. Select the newest structurally complete committed graph of the correct) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 381 Td (identity; do not conceal I/O or resource errors as corruption. A read-only open) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 368 Td (never repairs metadata. If all bootstrap records are lost, normal bounded mount) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 355 Td (cannot infer the volume.) Tj ET
+0.08 0.12 0.17 rg BT /F2 13 Tf 43 327 Td (7. Allocation-tree layout) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 299 Td (Metadata allocation pages have magic INFSAL01 \(leaf\) or INFSAB01 \(branch\),) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 286 Td (generation 8, logical index 16, level 24, entry count 28, used bytes 32, checksum) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 273 Td (type 36, 32-byte checksum field 40. Header 72; payload 4024. One leaf covers 32192) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 260 Td (allocation bits. One branch holds 503 64-bit child addresses. Level-3 root is) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 247 Td (fixed. Block 35000 belongs to leaf 1 with local bit 2808. Traverse validated branch) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 234 Td (paths; reserve tail padding, checkpoint/locator regions and metadata. Zero means) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 221 Td (free, one allocated/unavailable. Runtime free extents are rebuildable, not an) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 208 Td (independent ownership authority.) Tj ET
+0.08 0.12 0.17 rg BT /F2 13 Tf 43 180 Td (8. Persistent objects and metadata pages) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 152 Td (Object header INFOBJ01 at 0, type 8, version 10, header size 12, generation 16,) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 139 Td (object ID 24, parent ID 40, payload size 56, checksum type 60, checksum field 64.) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 126 Td (Header 96 bytes. Independent metadata pages have magic 0, generation 8, owner ID) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 113 Td (16, entry count 32, bytes used 36, checksum type 40, reserved 44, checksum field) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 100 Td (48; header 80. Distinguish namespace object identity from physical page address.) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 87 Td (Object-index lookup resolves stable object IDs to current metadata blocks and type;) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 74 Td (validate index-to-object identity and generation before following payload) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 61 Td (references.) Tj ET
+0.35 0.39 0.43 rg BT /F1 9 Tf 43 35 Td (Infiltrator Projects | 3) Tj ET
+%%Page
+0.07 0.13 0.20 rg 0 785 595 57 re f
+1 1 1 rg BT /F2 15 Tf 43 810 Td (InfiltratorFS | ENGINEERING AND USER MANUAL) Tj ET
+0.08 0.12 0.17 rg BT /F2 13 Tf 43 755 Td (9. Attributes, namespace and hard links) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 727 Td (Common attributes occupy 120 bytes: logical size 0, link count 8, flags 16;) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 714 Td (timestamps at 24,40,56,72 \(signed seconds, nanoseconds, reserved\); security ID 88,) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 701 Td (extension ID 104. POSIX compatibility record follows where specified; it is not the) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 688 Td (portable security authority. Directory record header 24 bytes: size 0, name length) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 675 Td (2, type 4, flags 6, target ID 8; UTF-8 name follows, padded to eight bytes. Names) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 662 Td (1..1023 bytes; NUL, slash, dot and dot-dot are not stored components. Default) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 649 Td (comparison is byte-exact; optional casefold v1 folds ASCII only. Regular-file) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 636 Td (hard-link counts equal reachable name edges. Directories and symlinks are) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 623 Td (single-parent.) Tj ET
+0.08 0.12 0.17 rg BT /F2 13 Tf 43 595 Td (10. File representation and translation) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 567 Td (An extent is 24 bytes: logical block 0 \(64\), physical block 8 \(64\), logical count) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 554 Td (16 \(32\), flags 20 \(32\). Kind low two bits: normal 0, hole 1. Codec low bits at 2..3) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 541 Td (and extension bits 23..31; stored byte count occupies bits 4..22. Validate) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 528 Td (feature/profile and current encoding; do not rely on older comments describing the) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 515 Td (original 28-bit count field. Normal extent maps relative logical block to physical) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 502 Td (start plus displacement. Example logical 5, physical 100, length 3: logical 6 maps) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 489 Td (block 101. Holes yield zeros; compressed extents require bounded decode and use) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 476 Td (ceil\(stored bytes/4096\) physical blocks. Default storage policy permits inline data) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 463 Td (up to 3840 bytes; other policies may force extent backing.) Tj ET
+0.08 0.12 0.17 rg BT /F2 13 Tf 43 435 Td (11. Checksums, compression and sharing) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 407 Td (Logical data integrity is SHA-256 over decoded logical data according to the) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 394 Td (defined checksum contract. Metadata uses CRC64-ECMA and canonical reserved bytes.) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 381 Td (IAC1 v1 codec ID 2 is the current automatic compression choice; LZ4 ID 1 is) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 368 Td (nondefault. Compression is selected when it saves blocks. Shared ordinary extents) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 355 Td (permit reflinks; mutation breaks sharing through CoW. A compressed logical slice is) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 342 Td (not automatically a physical subrange; materialize or replace the bounded cluster) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 329 Td (as required. Reconcile metadata ownership, ordinary data sharing and snapshots) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 316 Td (before reclaim. CRC and unkeyed hashes are integrity mechanisms, not proof against) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 303 Td (arbitrary malicious whole-volume replacement.) Tj ET
+0.08 0.12 0.17 rg BT /F2 13 Tf 43 275 Td (12. Transaction publication and resizing) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 247 Td (Prepare a new allocation/object graph and flush dependencies before publishing) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 234 Td (checkpoints. Ordinary commits write/flush each copy separately with) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 221 Td (generation-rotated first copy. Resize writes locator A after dependencies are) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 208 Td (durable; then flushes new secondary 1, secondary 2, primary 0, locator B in that) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 195 Td (order. First durable new checkpoint commits the generation; resize success waits) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 182 Td (for locator B durability. Preserve old recoverable state before first commit and) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 169 Td (old primary until secondaries are durable. Publication errors forbid more mutation) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 156 Td (until close/recovery. A checker must separate structural damage, operational I/O) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 143 Td (failure and unsupported format.) Tj ET
+0.35 0.39 0.43 rg BT /F1 9 Tf 43 35 Td (Infiltrator Projects | 4) Tj ET
+%%Page
+0.07 0.13 0.20 rg 0 785 595 57 re f
+1 1 1 rg BT /F2 15 Tf 43 810 Td (InfiltratorFS | ENGINEERING AND USER MANUAL) Tj ET
+0.08 0.12 0.17 rg BT /F2 13 Tf 43 755 Td (13. Checking, scrubbing and maintenance) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 727 Td (The normal fsck.infiltratorfs check is structural: it checks checkpoints,) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 714 Td (allocation, objects, namespaces and checksum metadata. It does not read all file) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 701 Td (data or recompute every payload checksum.) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 681 Td (The optional --scrub mode checks data integrity more deeply and may take much) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 668 Td (longer. It is a mode of fsck.infiltratorfs, not a separate executable.) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 655 Td (FSCK-SCRUB-SEPARATION.md defines these semantics.) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 635 Td (The filesystem supports retained generations and named read-only snapshots. Linux) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 622 Td (tools include fragmentation metrics, bounded online defragmentation, online grow) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 609 Td (and bounded shrink. Check feature prerequisites in the project documentation before) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 596 Td (maintenance.) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 576 Td (Snapshots are not a substitute for a separate backup. Qualification applies to) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 563 Td (particular source revisions and evidence classes; older tests do not prove every) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 550 Td (later release or physical-media scenario.) Tj ET
+0.08 0.12 0.17 rg BT /F2 13 Tf 43 522 Td (14. Platform support and development compatibility) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 494 Td (Linux is the most complete mounted adapter. Windows includes image/raw-partition) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 481 Td (tooling and a driverless Explorer projection. A native Windows driver exists in) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 468 Td (source, but mounted Windows and related qualification remain outstanding.) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 448 Td (Development-format compatibility before version 1.0 is not promised. Test media may) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 435 Td (require reformatting after an on-disk-format change.) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 415 Td (Portable security v2 separates principal IDs, typed platform bindings and shareable) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 402 Td (descriptors with ordered ACEs. Deterministic descriptor and binding index) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 389 Td (identities use full-digest validation and bounded collision slots. Windows SID and) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 376 Td (POSIX authority-plus-ID encodings are not equivalent identities. Portable) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 363 Td (storage-policy flags use bits 48..55 for replica request and 56..63 for encryption) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 350 Td (domain. Changing policy on existing content requires a qualified data) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 337 Td (transformation, not a metadata-only reinterpretation. Adapters map native namespace) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 324 Td (and security APIs to this model. Status of each feature belongs to ROADMAP.md;) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 311 Td (qualification belongs to QUALIFICATION.md.) Tj ET
+0.08 0.12 0.17 rg BT /F2 13 Tf 43 283 Td (15. Independent reader and checker exercise) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 255 Td (Implement bounded little-endian field decoding and geometry validation before) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 242 Td (traversing anything. Discover checkpoint candidates, verify CRC and feature) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 229 Td (admission, then traverse the allocation root and object index. Resolve the root) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 216 Td (namespace; validate every directory edge and link count. Reconstruct extent) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 203 Td (mappings and read holes, ordinary and compressed data under bounds. Compare) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 190 Td (reachable metadata/data ownership with the allocation tree and retained snapshot) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 177 Td (state. Separate structural checking from deep data scrub. Verify against known-good) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 164 Td (independently generated fixtures and inject failures at every checkpoint) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 151 Td (publication boundary; source availability does not establish successful) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 138 Td (qualification.) Tj ET
+0.35 0.39 0.43 rg BT /F1 9 Tf 43 35 Td (Infiltrator Projects | 5) Tj ET
+%%Page
+0.07 0.13 0.20 rg 0 785 595 57 re f
+1 1 1 rg BT /F2 15 Tf 43 810 Td (InfiltratorFS | ENGINEERING AND USER MANUAL) Tj ET
+0.08 0.12 0.17 rg BT /F2 13 Tf 43 755 Td (16. Proposed Format 0.20 - semantic model \(not) Tj ET
+0.08 0.12 0.17 rg BT /F2 13 Tf 43 736 Td (production\)) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 708 Td (The proposal introduces storage-set, member, volume, object, allocation and page) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 695 Td (IDs with explicit scopes. Allocation descriptors bind content and integrity;) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 682 Td (separate location records bind physical placement. File mappings refer to) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 669 Td (allocation ID and logical slice rather than physical location. A single typed) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 656 Td (immutable page/record family, authenticated tree membership, generation publication) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 643 Td (and lifetime engine replace competing ownership models. The current document) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 630 Td (ON_DISK_FORMAT.md section 20 is the design authority; candidate revisions are not) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 617 Td (production compatibility. No claim is made that these mechanisms are installed or) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 604 Td (qualified.) Tj ET
+0.08 0.12 0.17 rg BT /F2 13 Tf 43 576 Td (17. Proposed 0.20 - experimental S0 envelope) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 548 Td (The private experimental schema uses 4096-byte pages and a 192-byte header, leaving) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 535 Td (3904 payload bytes. Candidate offsets: magic 0, major/minor 8/10, kind/schema) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 522 Td (12/14, header 16, required flags 18, payload size 20, set/scope/page IDs 24/40/56,) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 509 Td (sequence 72, digest 80, member ID 112, block 128, lane 136, physical flags 138,) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 496 Td (reserved 140, CRC 144, reserved 152, payload 192. These offsets are from) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 483 Td (src/format20/schema.h at the baseline; the experimental probe kind/magic are) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 470 Td (explicitly NOT production identifiers. A valid page alone does not prove membership) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 457 Td (of a committed tree.) Tj ET
+0.08 0.12 0.17 rg BT /F2 13 Tf 43 429 Td (18. Proposed 0.20 - lifetime and reconstruction) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 401 Td (Direct incoming references, immutable roots, allocation location records and) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 388 Td (retained state define ownership; a file link count is not a storage reference) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 375 Td (count. A committed Merkle path binds membership, while physical copy placement is) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 362 Td (excluded from logical commitment. Surviving leaves without missing internal) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 349 Td (membership proofs are salvage, not proof of the exact original committed hierarchy.) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 336 Td (A native quick format can preserve prior allocations only within its stated failure) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 323 Td (model. Foreign formatting can overwrite or discard all copies; no recovery promise) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 310 Td (extends to destroyed bytes or missing cryptographic keys. Validate the actual) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 297 Td (executable candidate profiles separately from these intended invariants.) Tj ET
+0.08 0.12 0.17 rg BT /F2 13 Tf 43 269 Td (19. Installed files, sources and reading map) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 241 Td (The Manager and tools are provided by the InfiltratorFS package. The Linux kernel) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 228 Td (module is installed through DKMS. This guide is installed as) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 215 Td (/System/Resources/Documentation/InfiltratorFS.pdf.) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 195 Td (The project README gives the product overview. ON_DISK_FORMAT.md, ROADMAP.md and) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 182 Td (QUALIFICATION.md govern the format, feature status and qualification evidence.) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 162 Td (Project: https://github.com/Infiltrator-Projects/InfiltratorFS) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 142 Td (Current contract: https://github.com/Infiltrator-Projects/InfiltratorFS/blob/6ec9ff) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 129 Td (0470fc484dd4c579494bdc6bf3e915dcbb/docs/ON_DISK_FORMAT.md . Packed fields:) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 116 Td (include/infilfs/format.h and locator.h at that same source. Read ARCHITECTURE.md,) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 103 Td (COMPRESSION.md, PORTABLE_SECURITY_OBJECTS.md, SECURITY.md and) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 90 Td (FORMAT-0.19-RECOVERY-DESIGN.md for the complete subsystem contracts. Proposed) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 77 Td (format: section 20 of ON_DISK_FORMAT.md and experimental src/format20/schema.h. The) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 64 Td (historical research, qualification and operational documents remain in their) Tj ET
+0.35 0.39 0.43 rg BT /F1 9 Tf 43 35 Td (Infiltrator Projects | 6) Tj ET
+%%Page
+0.07 0.13 0.20 rg 0 785 595 57 re f
+1 1 1 rg BT /F2 15 Tf 43 810 Td (InfiltratorFS | ENGINEERING AND USER MANUAL) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 755 Td (original paths. This manual does not supersede the complete normative) Tj ET
+0.08 0.12 0.17 rg BT /F3 10 Tf 43 742 Td (specification.) Tj ET
+0.35 0.39 0.43 rg BT /F1 9 Tf 43 35 Td (Infiltrator Projects | 7) Tj ET
