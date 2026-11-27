@@ -4,14 +4,14 @@ CC ?= cc
 OBJCOPY ?= objcopy
 ROOT := ..
 OUT ?= $(ROOT)/build-v2
-COMMON := $(ROOT)/src/infiltratr-common
+COMMON ?= $(ROOT)/src/infiltratr-common
 # Exact V2 header from Libraries commit 489388567c436f70754db938ebdc4a07c10b7da0.
 INCLUDES := -Icommon -I$(ROOT)/include -I$(COMMON)/include -I$(ROOT)/uefi/filesystems/lz4
 BASE := -std=c11 -O2 -fPIC -fvisibility=hidden -ffreestanding -fno-builtin \
         -fno-stack-protector -fno-tree-loop-distribute-patterns -fno-tree-vectorize \
         -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -mno-red-zone \
         -ffunction-sections -fdata-sections -Wall -Wextra
-EFI := $(BASE) -mgeneral-regs-only -DINFS_COMMON_V2_FIRMWARE -DINFS_FREESTANDING \
+EFI := $(BASE) -march=x86-64 -mtune=generic -fcf-protection=none -mgeneral-regs-only -DINFS_COMMON_V2_FIRMWARE -DINFS_FREESTANDING \
        -DLZ4_FREESTANDING=1 -DLZ4_memcpy=memcpy -DLZ4_memset=memset \
        -DLZ4_memmove=memmove -include $(ROOT)/uefi/filesystems/platform/uefi_libc.h
 SOURCES := common_v2.c $(ROOT)/src/checksum.c $(ROOT)/src/locator.c \
@@ -30,7 +30,7 @@ $(OUT)/core.o: $(COMMON)/src/core.c | $(OUT)
 	$(CC) $(BASE) $(INCLUDES) -c $< -o $@
 $(OUT)/firmware.so: $(SOURCES) freestanding.c $(wildcard $(ROOT)/src/volume/*.inc) $(OUT)/core.o exports.map common/infiltratr/filesystem_module_v2.h
 	$(CC) $(EFI) $(INCLUDES) -nostdlib -shared \
-	  -Wl,--gc-sections,-z,defs,--version-script=exports.map \
+	  -Wl,--gc-sections,-Bsymbolic,-z,defs,-z,noexecstack,-z,relro,-z,now,-z,nopack-relative-relocs,-z,max-page-size=4096,--version-script=exports.map \
 	  $(SOURCES) freestanding.c $(OUT)/core.o -o $@
 # The hosted profile uses the same filesystem source, with ordinary process
 # services. Do not include process-crash injection hooks in either profile.
