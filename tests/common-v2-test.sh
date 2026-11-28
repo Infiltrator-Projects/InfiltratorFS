@@ -5,6 +5,8 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
 work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
+# The production compiler and the external ABI harness must share the pinned header.
+test ! -e module/common/infiltratr/filesystem_module_v2.h
 make -C module OUT="$work/module"
 module="$work/module/firmware.so"
 carrier="$work/module/InfiltratorFS.so"
@@ -33,7 +35,7 @@ cc -std=c11 -O2 -ffunction-sections -fdata-sections \
     src/infiltratr-common/src/arithmetic.c src/infiltratr-common/src/core.c \
     uefi/filesystems/lz4/lz4.c -o "$work/make-image"
 "$work/make-image" --emit-populated-image "$work/populated.img"
-cc -std=c11 -Wall -Wextra -Werror -Imodule/common -Isrc/infiltratr-common/include \
+cc -std=c11 -Wall -Wextra -Werror -Isrc/infiltratr-common/include \
     tests/common-v2-image.c -ldl -o "$work/test-image"
 for sector in 512 4096; do
     "$work/test-image" "$module" "$work/populated.img" "$sector" 8

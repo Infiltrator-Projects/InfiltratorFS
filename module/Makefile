@@ -5,8 +5,9 @@ OBJCOPY ?= objcopy
 ROOT := ..
 OUT ?= $(ROOT)/build-v2
 COMMON ?= $(ROOT)/src/infiltratr-common
-# Exact V2 header from Libraries commit 489388567c436f70754db938ebdc4a07c10b7da0.
-INCLUDES := -Icommon -I$(ROOT)/include -I$(COMMON)/include -I$(ROOT)/uefi/filesystems/lz4
+# Both runtimes compile against the same pinned Libraries submodule as the portable core.
+COMMON_FS_HEADERS := $(COMMON)/include/infiltratr/filesystem_module_v2.h $(COMMON)/include/infiltratr/filesystem_block_map_v2.h
+INCLUDES := -I$(ROOT)/include -I$(COMMON)/include -I$(ROOT)/uefi/filesystems/lz4
 BASE := -std=c11 -O2 -fPIC -fvisibility=hidden -ffreestanding -fno-builtin \
         -fno-stack-protector -fno-tree-loop-distribute-patterns -fno-tree-vectorize \
         -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -mno-red-zone \
@@ -21,20 +22,20 @@ SOURCES := common_v2.c $(ROOT)/src/checksum.c $(ROOT)/src/locator.c \
 .PHONY: all clean verify-common
 all: verify-common $(OUT)/InfiltratorFS.so
 verify-common:
-	@printf '%s  %s\n' e229e51c6d916f187540bb1d771aa8c007d66ad2c237557b39b2997a7bf0082b common/infiltratr/filesystem_module_v2.h | sha256sum -c - >/dev/null
+	@printf '%s  %s\n' 03305195c2ae51626f923d9d1cdd03438595bd81b7676fd56ca207ca68ad2dc8 $(COMMON)/include/infiltratr/filesystem_module_v2.h | sha256sum -c - >/dev/null
 $(OUT):
 	mkdir -p $@
 # Unused floating-point helpers are discarded by --gc-sections; verify the
 # linked firmware image has no vector/floating-point instructions.
 $(OUT)/core.o: $(COMMON)/src/core.c | $(OUT)
 	$(CC) $(BASE) $(INCLUDES) -c $< -o $@
-$(OUT)/firmware.so: $(SOURCES) freestanding.c $(wildcard $(ROOT)/src/volume/*.inc) $(OUT)/core.o exports.map common/infiltratr/filesystem_module_v2.h
+$(OUT)/firmware.so: $(SOURCES) freestanding.c $(wildcard $(ROOT)/src/volume/*.inc) $(OUT)/core.o exports.map $(COMMON_FS_HEADERS)
 	$(CC) $(EFI) $(INCLUDES) -nostdlib -shared \
 	  -Wl,--gc-sections,-Bsymbolic,-z,defs,-z,noexecstack,-z,relro,-z,now,-z,nopack-relative-relocs,-z,max-page-size=4096,--version-script=exports.map \
 	  $(SOURCES) freestanding.c $(OUT)/core.o -o $@
 # The hosted profile uses the same filesystem source, with ordinary process
 # services. Do not include process-crash injection hooks in either profile.
-$(OUT)/hosted.so: $(SOURCES) $(COMMON)/src/core.c $(wildcard $(ROOT)/src/volume/*.inc) exports.map common/infiltratr/filesystem_module_v2.h | $(OUT)
+$(OUT)/hosted.so: $(SOURCES) $(COMMON)/src/core.c $(wildcard $(ROOT)/src/volume/*.inc) exports.map $(COMMON_FS_HEADERS) | $(OUT)
 	$(CC) -std=c11 -O2 -fPIC -fvisibility=hidden -DINFS_NO_PROCESS_FAILPOINTS \
 	  -ffunction-sections -fdata-sections -Wall -Wextra $(INCLUDES) -shared \
 	  -Wl,--gc-sections,-z,defs,--version-script=exports.map \

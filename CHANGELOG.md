@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Hosted and firmware Common V2 modules use the canonical Libraries submodule. The Format 0.19 provider exposes committed block allocation and reserved partition tails. An open or indeterminate transaction prevents allocation reporting until its state is resolved.
+
 ## 0.19.45 — 2026-11-14
 
 - Develop the Common V2 filesystem module using the portable InfiltratorFS engine, including bounded write support and disposable-image tests.

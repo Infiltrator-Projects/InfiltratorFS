@@ -46,6 +46,27 @@ static int entropy(void *opaque,void *out,uint32_t length) {
     struct disk *d=opaque; memset(out,(int)++d->random,length); return 0;
 }
 #define CHECK(x) do { if (!(x)) { fprintf(stderr,"FAIL line %d: %s\n",__LINE__,#x); return 1; } } while (0)
+static int verify_allocation(const IfsFsAllocationOpsV2 *ops, void *v,
+                              const IfsFsVolumeInfoV2 *info, uint64_t bytes)
+{
+    uint64_t cursor = 0, free_bytes = 0;
+    IfsFsAllocationRangeV2 r;
+    uint32_t count;
+    CHECK(ops && ops->header.capabilities == IFS_FS_ALLOCATION_MAP);
+    while (cursor < bytes) {
+        CHECK(ops->map(v,cursor,&r,1,&count)==IFS_FS_OK && count==1);
+        CHECK(r.physical_offset==cursor && r.length && r.length<=bytes-cursor && !r.reserved);
+        CHECK(r.state==IFS_FS_SPACE_FREE || r.state==IFS_FS_SPACE_ALLOCATED || r.state==IFS_FS_SPACE_RESERVED);
+        if (cursor==0) CHECK(r.state==IFS_FS_SPACE_ALLOCATED);
+        if (r.state==IFS_FS_SPACE_FREE) free_bytes+=r.length;
+        cursor+=r.length;
+    }
+    CHECK(free_bytes==info->free_bytes);
+    CHECK(ops->map(v,cursor,&r,1,&count)==IFS_FS_END && !count);
+    CHECK(ops->map(v,cursor+1,&r,1,&count)==IFS_FS_INVALID && !count);
+    CHECK(ops->map(v,11,&r,1,&count)==0 && count==1 && r.physical_offset==11);
+    return 0;
+}
 int main(int argc,char **argv) {
     CHECK(argc==5);
     FILE *f=fopen(argv[2],"rb"); CHECK(f);
@@ -65,6 +86,8 @@ int main(int argc,char **argv) {
     uint32_t variant; CHECK(core->probe(&host,&variant)==0);
     void *v=NULL; IfsFsVolumeInfoV2 info={.structure_bytes=sizeof(info)};
     CHECK(core->mount(&host,&v,&info)==0 && v);
+    const IfsFsAllocationOpsV2 *allocation=(const void *)ifs_fs_group_v2(api,IFS_FS_GROUP_ALLOCATION);
+    CHECK(verify_allocation(allocation,v,&info,host.volume_bytes)==0);
     char name[512]; IfsFsEntryV2 file={.structure_bytes=sizeof(file),.name=name,.name_capacity=sizeof(name)};
     CHECK(core->stat(v,"/",&file)==0 && file.type==IFS_FS_ENTRY_DIRECTORY);
     char tiny[2]={'X','X'};
@@ -166,6 +189,7 @@ int main(int argc,char **argv) {
     const char payload[]="durable v2 filesystem write";
     CHECK(core->write(v,"/created",0,payload,sizeof(payload)-1)==IFS_FS_OK);
     CHECK(ops->sync(v)==IFS_FS_OK && disk.writes && disk.flushes);
+    CHECK(ops->query(v,&info)==IFS_FS_OK && verify_allocation(allocation,v,&info,host.volume_bytes)==0);
     CHECK(core->rename(v,"/created","/renamed")==IFS_FS_OK);
     CHECK(meta->symlink(v,"/relative-link","renamed")==IFS_FS_OK);
     CHECK(meta->hardlink(v,"/renamed","/hard-link")==IFS_FS_OK);

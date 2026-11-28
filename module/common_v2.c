@@ -2,6 +2,7 @@
 /* Common V2 adapter over the InfiltratorFS portable format engine.
  * Writable access requires exclusive durable host I/O, a clock and entropy. */
 #include <infiltratr/filesystem_module_v2.h>
+#include <infiltratr/filesystem_block_map_v2.h>
 #include "infilfs/fs.h"
 #include "infilfs/endian.h"
 #include "infilfs/locator.h"
@@ -664,6 +665,40 @@ static int v2_scrub(void *handle,uint32_t flags,uint64_t *errors)
     return leave_operation(*errors ? IFS_FS_CORRUPT : IFS_FS_OK);
 }
 #endif
+/* Mount reconstructs the complete allocation bitmap from the selected
+ * checkpoint and verifies its free count and reserved metadata. Delayed
+ * frees and unconfirmed commits must never appear as reusable storage. */
+static uint32_t allocation_state(const void *context, uint64_t block)
+{
+    const struct infs_volume *volume = context;
+    return volume->bitmap[block/8] & (1u << (block%8)) ?
+        IFS_FS_SPACE_ALLOCATED : IFS_FS_SPACE_FREE;
+}
+
+static int v2_allocation_map(void *handle, uint64_t cursor, IfsFsAllocationRangeV2 *out,
+                             uint32_t capacity, uint32_t *written)
+{
+    if (!written) return IFS_FS_INVALID;
+    *written = 0;
+    if (!enter_operation()) return IFS_FS_BUSY;
+    struct v2_volume *v = lookup_volume(handle);
+    if (!v) return leave_operation(IFS_FS_INVALID);
+    if (v->volume.reopen_required_status != INFS_STATUS_OK)
+        return leave_operation(map_status(v->volume.reopen_required_status));
+    if (v->volume.tx_active) return leave_operation(IFS_FS_BUSY);
+    USE_HOST(v->host);
+    uint64_t blocks = infs_le64_to_cpu(v->volume.sb.total_blocks);
+    if (!v->volume.bitmap || (blocks/8 + (blocks%8 != 0)) > v->volume.bitmap_bytes)
+        return leave_operation(IFS_FS_CORRUPT);
+    return leave_operation(ifs_fs_block_map_page_v2(v->host, 0, blocks, INFS_BLOCK_SIZE,
+        &v->volume, allocation_state, cursor, out, capacity, written));
+}
+static const IfsFsAllocationOpsV2 allocation_ops = {
+    .header = {IFS_FS_GROUP_ABI_V2, sizeof(allocation_ops),
+               IFS_FS_GROUP_ALLOCATION, 0, IFS_FS_ALLOCATION_MAP},
+    .map = v2_allocation_map
+};
+
 static const IfsFsVolumeOpsV2 volume_ops = {
     .header = {IFS_FS_GROUP_ABI_V2, sizeof(volume_ops), IFS_FS_GROUP_VOLUME, 0,
         IFS_FS_VOLUME_QUERY | IFS_FS_VOLUME_LABEL_GET | IFS_FS_VOLUME_SYNC
@@ -681,6 +716,7 @@ static const IfsFsGroupHeaderV2 *query(uint32_t group, uint32_t low, uint32_t hi
     if (low > IFS_FS_GROUP_ABI_V2 || high < IFS_FS_GROUP_ABI_V2) return NULL;
     if (group == IFS_FS_GROUP_CORE) return &core.header;
     if (group == IFS_FS_GROUP_VOLUME) return &volume_ops.header;
+    if (group == IFS_FS_GROUP_ALLOCATION) return &allocation_ops.header;
     if (group == IFS_FS_GROUP_METADATA) return &metadata_ops.header;
     return NULL;
 }
@@ -696,7 +732,7 @@ const IfsFsModuleApiV2 *infiltrator_filesystem_api_v2(void)
             IFS_FS_PROFILE_HOSTED,
 #endif
         .group_mask = IFS_FS_GROUP_BIT(IFS_FS_GROUP_CORE) | IFS_FS_GROUP_BIT(IFS_FS_GROUP_VOLUME) |
-                      IFS_FS_GROUP_BIT(IFS_FS_GROUP_METADATA),
+                      IFS_FS_GROUP_BIT(IFS_FS_GROUP_METADATA) | IFS_FS_GROUP_BIT(IFS_FS_GROUP_ALLOCATION),
         .query_group = query
     };
     return &api;
