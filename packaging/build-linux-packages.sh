@@ -159,9 +159,9 @@ for required in \
     'usr/share/icons/hicolor/scalable/apps/infiltratorfs-manager.svg$' \
     'usr/share/app-install/icons/infiltratorfs.svg$' \
     'usr/lib/infiltratorfs/infiltratorfs-format-partition.nemo_action$' \
-    'usr/share/fonts/truetype/infiltratorfs/mb_corpo_a_cond_regular.ttf$' \
-    'usr/share/fonts/truetype/infiltratorfs/mb_corpo_s_bold.ttf$' \
-    'usr/share/fonts/truetype/infiltratorfs/mb_corpo_s_regular.ttf$' \
+    'usr/share/fonts/truetype/infiltratorfs/mb_corpo_a_title_cond_regular.ttf$' \
+    'usr/share/fonts/truetype/infiltratorfs/mb_corpo_s_title_bold.ttf$' \
+    'usr/share/fonts/truetype/infiltratorfs/mb_corpo_s_title_regular.ttf$' \
     "usr/src/infiltratorfs-${package_version}/dkms.conf$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_core.c$" \
     "usr/src/infiltratorfs-${package_version}/infiltratorfs_cpu.c$" \

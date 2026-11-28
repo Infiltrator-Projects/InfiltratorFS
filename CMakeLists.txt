@@ -73,7 +73,7 @@ endif()
 # packages import this contract through InfiltratrCommonConfig.cmake; vendored
 # and FetchContent builds include the same module directly from the exact
 # pinned Common source.
-if(NOT DEFINED INFILTRATR_MB_CORPO_ARCHIVE_SHA256)
+if(NOT DEFINED INFILTRATR_MB_CORPO_BRAND_REGULAR_SHA256)
     if(EXISTS
        "${CMAKE_CURRENT_SOURCE_DIR}/src/infiltratr-common/cmake/InfiltratrTypographyAssets.cmake")
         include(
@@ -108,8 +108,10 @@ FetchContent_MakeAvailable(infilfs_lz4)
 # build cannot silently substitute a different system font.
 set(INFILFS_FONT_ARCHIVE
     "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/mb-corpo-fonts.tar.xz")
+# Common pins the individual InfiltratorOS faces. This repository packages
+# those exact bytes for offline checkout and separately pins its container.
 set(INFILFS_FONT_ARCHIVE_SHA256
-    "${INFILTRATR_MB_CORPO_ARCHIVE_SHA256}")
+    "8b47b36ef32b1ff2a888b59ce0ce9d75bbcd356034cecaab66a3d4c8d83fa454")
 if(NOT EXISTS "${INFILFS_FONT_ARCHIVE}")
     message(FATAL_ERROR "Required InfiltratorFS MB Corpo font archive is missing")
 endif()

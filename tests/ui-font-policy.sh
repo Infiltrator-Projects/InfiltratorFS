@@ -18,7 +18,18 @@ test -f "$desktop"
 test -f "$icon"
 
 grep -Fq 'InfiltratrTypographyAssets.cmake' "$cmake"
-grep -Fq 'INFILTRATR_MB_CORPO_ARCHIVE_SHA256' "$cmake"
+# Verify both layers against their owners. Repacking different bytes cannot
+# pass by updating this repository's archive checksum alone.
+contract="$root/src/infiltratr-common/cmake/InfiltratrTypographyAssets.cmake"
+digest=$(sha256sum "$archive" | cut -d' ' -f1)
+grep -Fq "$digest" "$cmake"
+for family in BRAND_REGULAR UI_REGULAR UI_BOLD; do
+    name=$(sed -n "s/^set(INFILTRATR_MB_CORPO_${family}_FILE \"\([^\"]*\)\")/\1/p" "$contract")
+    expected=$(sed -n "s/^set(INFILTRATR_MB_CORPO_${family}_SHA256 \"\([^\"]*\)\")/\1/p" "$contract")
+    test -n "$name" && test -n "$expected"
+    actual=$(tar -xJOf "$archive" "$name" | sha256sum | cut -d' ' -f1)
+    test "$actual" = "$expected"
+done
 grep -Fq 'INFILTRATR_MB_CORPO_BRAND_REGULAR_FILE' "$cmake"
 grep -Fq 'INFILTRATR_MB_CORPO_UI_BOLD_FILE' "$cmake"
 grep -Fq 'INFILTRATR_MB_CORPO_UI_REGULAR_FILE' "$cmake"
