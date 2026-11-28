@@ -12,6 +12,7 @@ sources of truth.
 
 ## Normative and architectural documents
 
+- [`InfiltratorFS-TECHNICAL-REFERENCE.md`](InfiltratorFS-TECHNICAL-REFERENCE.md) is the engineering companion to the published [filesystem manual](InfiltratorFS.pdf). It explains the on-disk structures and the Common V2 adapter. The format and qualification documents below govern byte-level requirements and verified status.
 - [`PHILOSOPHY.md`](PHILOSOPHY.md) — governing engineering and documentation standard.
 - `DESIGN.md` — concise engineering-design principles and subsystem shape for contributors. It is subordinate to the canonical project philosophy, `ARCHITECTURE.md` and the byte-level format contract; it is not a separate status authority.
 - `FORMAT-0.19-RECOVERY-DESIGN.md` — implemented recovery-locator protocol and interruption invariants; byte-level constants remain in the format/locator headers.
